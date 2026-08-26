@@ -6,13 +6,16 @@ are not generated product mockups.
 ## Video
 
 [`lez-btc-ui-swap-demo.mp4`](lez-btc-ui-swap-demo.mp4) is the actual Basecamp
-UI walkthrough: 220.7 seconds, 1920 × 1080, 30 fps, H.264/yuv420p, and no
-audio stream. It records fresh run `m5arm-0825141508` from offer publication
-and acceptance through the four role-owned actions, independent route checks,
-five public effects, balance reconciliation, and zero replay submissions.
-Chain waits are visibly accelerated; the UI actions and resulting local-chain
-effects are real. Its exact secret-safe record is
-[`m3-btc-ui-run-m5arm-0825141508.json`](../docs/evidence/m3-btc-ui-run-m5arm-0825141508.json).
+UI walkthrough: 113.2 seconds, 1920 × 1080, 30 fps, H.264/yuv420p video, and
+stereo AAC music. It records fresh run `m5arm-0825151914` — the most recent
+re-recording — from offer publication and acceptance through both independent
+chain checks, settlement, five on-chain actions, balance reconciliation, and
+zero replay submissions. Live UI sections are shown at about 1.5× speed; cards
+mark Maker/Taker handoffs, animated ripples make each click visible, and plain
+captions explain what each side checks. There is music but no narration. The UI
+actions and resulting local-chain transactions are real. Its exact secret-safe
+record is
+[`m3-btc-ui-run-m5arm-0825151914.json`](../docs/evidence/m3-btc-ui-run-m5arm-0825151914.json).
 
 [`lez-btc-m1-m3-m6-submission-silent.mp4`](lez-btc-m1-m3-m6-submission-silent.mp4)
 is the reviewer presentation: 99 seconds, 1920 × 1080, 30 fps, H.264/yuv420p,
@@ -65,7 +68,7 @@ these cuts. Bitcoin is regtest and LEZ is a private v0.2 devnet.
 
 The silent submission presentation summarizes those wider JSON records but is
 not a substitute for execution footage of every refund or overlap case. The
-actual UI demo matches `m5arm-0825141508`; the screenshots and narrated
+actual UI demo matches `m5arm-0825151914`; the screenshots and narrated
 vertical cut match
 [`m3-btc-ui-run-m5arm-0820121736.json`](../docs/evidence/m3-btc-ui-run-m5arm-0820121736.json);
 the older `m5arm-08180005` files are a different passed run.

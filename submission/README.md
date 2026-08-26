@@ -8,7 +8,7 @@ and the M6 product surface without claiming unrelated milestone completion.
 
 | Artifact | Purpose |
 |---|---|
-| [Actual UI swap demo](../media/lez-btc-ui-swap-demo.mp4) | 3:40.7 Basecamp walkthrough of a fresh offer, swap, both independent route checks, settlement, and proof |
+| [Actual UI swap demo](../media/lez-btc-ui-swap-demo.mp4) | 1:53.2 Basecamp walkthrough with click ripples, role handoffs, both independent chain checks, captions, and CC BY 4.0 music |
 | [Silent video presentation](../media/lez-btc-m1-m3-m6-submission-silent.mp4) | 99-second pre-discovery milestone overview with no audio stream |
 | [Single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html) | The current 24-slide story, including the Delivery/Chat transport diagram, the four code x-rays, and the two sequence diagrams, with all CSS, JavaScript, SVGs, and screenshots embedded for sharing |
 | [Editable presentation source](presentation/index.html) | Dependency-free source deck with keyboard, touch, fullscreen, and autoplay controls |
@@ -34,11 +34,11 @@ The presentation poster is
   packages, and the branch's current BTC product journey with real local chain
   effects.
 
-The actual UI recording is fresh run `m5arm-0825141508`: 0.01 BTC ⇄ 1,000
+The actual UI recording is fresh run `m5arm-0825151914`: 0.01 BTC ⇄ 1,000
 LEZ, terminal revision 4, two Bitcoin effects, three LEZ effects, reconciled
 principal and fees, and zero replay submissions. Its exact secret-safe record
 is
-[`docs/evidence/m3-btc-ui-run-m5arm-0825141508.json`](../docs/evidence/m3-btc-ui-run-m5arm-0825141508.json).
+[`docs/evidence/m3-btc-ui-run-m5arm-0825151914.json`](../docs/evidence/m3-btc-ui-run-m5arm-0825151914.json).
 The presentation screenshots and narrated vertical cut remain bound to the
 earlier run `m5arm-0820121736` and its separate record:
 [`docs/evidence/m3-btc-ui-run-m5arm-0820121736.json`](../docs/evidence/m3-btc-ui-run-m5arm-0820121736.json).
