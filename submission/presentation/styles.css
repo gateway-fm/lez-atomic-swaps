@@ -905,9 +905,12 @@ code {
 .dir-table { border: 1px solid #26344a; border-radius: 14px; overflow: hidden; }
 .dir-row { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; border-top: 1px solid #1c2735; }
 .dir-row:first-child { border-top: 0; }
-.dir-row span { padding: .85em 1.5em; color: #8795a9; font-size: clamp(9px, .74vw, 14px); }
-.dir-row b { padding: .85em 1.5em; border-left: 1px solid #1c2735; color: #dde5ef; font-size: clamp(9px, .74vw, 14px); font-weight: 650; }
+.dir-row span { padding: .72em 1.5em; color: #8795a9; font-size: clamp(9px, .74vw, 14px); }
+.dir-row b { padding: .72em 1.5em; border-left: 1px solid #1c2735; color: #dde5ef; font-size: clamp(9px, .74vw, 14px); font-weight: 650; }
 .dir-row.head { background: #0d131c; }
 .dir-row.head b { color: #93a1b4; font: 800 clamp(8px, .64vw, 12px) "SFMono-Regular", monospace; letter-spacing: .09em; text-transform: uppercase; }
 .dir-row b.lez { color: var(--green); }
 .dir-row b.btc { color: var(--amber); }
+.dir-code.formulas { margin: 1.6% 0 1.4%; }
+.dir-code.formulas pre { font-size: clamp(6px, .55vw, 11px); line-height: 1.55; }
+.dir-table { font-size: .96em; }

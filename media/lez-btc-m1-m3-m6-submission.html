@@ -914,12 +914,15 @@ code {
 .dir-table { border: 1px solid #26344a; border-radius: 14px; overflow: hidden; }
 .dir-row { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; border-top: 1px solid #1c2735; }
 .dir-row:first-child { border-top: 0; }
-.dir-row span { padding: .85em 1.5em; color: #8795a9; font-size: clamp(9px, .74vw, 14px); }
-.dir-row b { padding: .85em 1.5em; border-left: 1px solid #1c2735; color: #dde5ef; font-size: clamp(9px, .74vw, 14px); font-weight: 650; }
+.dir-row span { padding: .72em 1.5em; color: #8795a9; font-size: clamp(9px, .74vw, 14px); }
+.dir-row b { padding: .72em 1.5em; border-left: 1px solid #1c2735; color: #dde5ef; font-size: clamp(9px, .74vw, 14px); font-weight: 650; }
 .dir-row.head { background: #0d131c; }
 .dir-row.head b { color: #93a1b4; font: 800 clamp(8px, .64vw, 12px) "SFMono-Regular", monospace; letter-spacing: .09em; text-transform: uppercase; }
 .dir-row b.lez { color: var(--green); }
 .dir-row b.btc { color: var(--amber); }
+.dir-code.formulas { margin: 1.6% 0 1.4%; }
+.dir-code.formulas pre { font-size: clamp(6px, .55vw, 11px); line-height: 1.55; }
+.dir-table { font-size: .96em; }
 
   </style>
 </head>
@@ -1360,11 +1363,31 @@ code {
           <div class="dir-row"><span>Maker funds</span><b class="lez">LEZ</b><b class="btc">Bitcoin</b></div>
           <div class="dir-row"><span>Escrow depositor</span><b class="">Maker</b><b class="">Taker</b></div>
           <div class="dir-row"><span>Escrow claimant</span><b class="">Taker</b><b class="">Maker</b></div>
-          <div class="dir-row"><span>Reveals <em>t</em> on</span><b class="lez">LEZ</b><b class="btc">Bitcoin</b></div>
-          <div class="dir-row"><span>Follow-up claim on</span><b class="btc">Bitcoin</b><b class="lez">LEZ</b></div>
           <div class="dir-row"><span>Refunds earlier</span><b class="lez">LEZ · maker-funded</b><b class="btc">Bitcoin · maker-funded</b></div>
       </div>
-      <div class="atomic-note"><b>Arrow notation is maker-side</b> — what the offer pays out, into what it takes in. <b>The invariant does not flip:</b> the Taker funds first, the Maker funds second, and the maker-funded leg always carries the earlier refund deadline — so whichever party moved first is always the last one able to recover. Everything else in the table follows from two match arms.</div>
+      <div class="dir-code formulas">
+        <div class="xray-code callouts">
+          <div class="xray-file">A · reveals on LEZ — untweaked context</div>
+          <pre>ctx = claim_adaptor_session_context(<span class="hl">Lez</span>)
+P   = KeyAgg(P_maker, P_taker)                <span class="c">// no tweak</span>
+m   = lez_terms.<span class="hl">claim_message_hash</span>
+s′  = <span class="hl">lez_presignature</span>      (65 B = R̃ ‖ s′)
+s   = observed LEZ claim signature (64 B = R̃ ‖ s)
+<span class="hl">t   = s − s′  (mod n)</span>            <span class="c">// reveal_secret</span>
+      check t·G = T,  then adapt <span class="hl">bitcoin_presignature</span></pre>
+        </div>
+        <div class="xray-code callouts">
+          <div class="xray-file">B · reveals on Bitcoin — BIP-341 tweaked context</div>
+          <pre>ctx = claim_adaptor_session_context(<span class="hl">Bitcoin</span>)
+P   = KeyAgg(P_maker, P_taker) <span class="hl">+ H_TapTweak(P, merkle_root)·G</span>
+m   = BIP-341 <span class="hl">key-spend sighash</span>
+s′  = <span class="hl">bitcoin_presignature</span>  (65 B = R̃ ‖ s′)
+s   = observed BTC claim signature (64 B = R̃ ‖ s)
+<span class="hl">t   = s − s′  (mod n)</span>            <span class="c">// reveal_secret</span>
+      check t·G = T,  then adapt <span class="hl">lez_presignature</span></pre>
+        </div>
+      </div>
+      <div class="atomic-note"><b>Arrows are maker-side</b> — what the offer pays out, into what it takes in. <b>The subtraction is identical; the context is not:</b> Bitcoin aggregates under a BIP-341 tweaked output key and records its parity, LEZ under the plain aggregate. <b>The invariant holds in both:</b> the maker-funded leg always carries the earlier deadline, so the party that moved first is the last able to recover.</div>
       <footer class="source-line">Direction · <code>btc-swap-sdk/src/sdk.rs:3161</code> · funded chain · <code>swap-core/src/lib.rs:867-879</code></footer>
     </section>
 
