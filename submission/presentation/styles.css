@@ -872,9 +872,9 @@ code {
 .rv span b { color: var(--blue); font-weight: 700; font-family: "SFMono-Regular", monospace; }
 
 /* ── Blame-style code panel ───────────────────────────────────────────── */
-.blame-panel { border: 1px solid #26344a; border-radius: 16px; background: #0a0f17; overflow: hidden; }
-.blame { display: flex; flex-direction: column; }
-.blame-row { display: grid; grid-template-columns: .40fr .60fr; border-top: 1px solid #18212e; }
+.blame-panel { display: flex; flex-direction: column; min-height: 74%; border: 1px solid #26344a; border-radius: 16px; background: #0a0f17; overflow: hidden; }
+.blame { display: flex; flex-direction: column; flex: 1; }
+.blame-row { display: grid; grid-template-columns: .40fr .60fr; align-items: center; flex: 1; border-top: 1px solid #18212e; }
 .blame-row:first-child { border-top: 0; }
 .blame-note { padding: .85em 1.2em; border-right: 1px solid #1e2937; background: #0c121b; color: #7d8b9e; font: 500 clamp(8px, .68vw, 13px)/1.5 Inter, sans-serif; }
 .blame-code { margin: 0; padding: .85em 1.3em; color: #b8c4d3; font: clamp(8px, .68vw, 13px)/1.55 "SFMono-Regular", monospace; white-space: pre; overflow: hidden; }
