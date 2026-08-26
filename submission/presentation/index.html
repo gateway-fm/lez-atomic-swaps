@@ -165,29 +165,68 @@
         </div>
         <div class="checkpoint">checkpoint <strong>m1-complete.1</strong><br><code>96b7b22</code></div>
       </header>
-      <div class="foundation-layout">
-        <div class="foundation-spine">
-          <div class="foundation-node"><span>01</span><strong>Countersigned agreement</strong><small>roles · direction · assets · messages · chain identities</small></div>
-          <div class="foundation-node"><span>02</span><strong>Verified signing material</strong><small>MuSig2 contexts · adaptor points · exact pre-signatures</small></div>
-          <div class="foundation-node"><span>03</span><strong>Recovery ready first</strong><small>signed deadlines · refund paths · durable state</small></div>
-          <div class="foundation-node"><span>04</span><strong>Funds move last.</strong><small>persist before send · canonical observation · bounded authority</small></div>
+      <div class="m1-diagram">
+        <svg viewBox="0 0 1700 322" role="img" aria-label="Four ordered gates: agreement, signing material, recovery, then funds at risk">
+          <defs>
+            <marker id="m1-arrow" markerWidth="8" markerHeight="8" refX="7.4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#4a5a72"/></marker>
+          </defs>
+          <path class="m1-link" d="M362,100 H392" marker-end="url(#m1-arrow)"/>
+          <path class="m1-link" d="M772,100 H802" marker-end="url(#m1-arrow)"/>
+          <path class="m1-link" d="M1182,100 H1212" marker-end="url(#m1-arrow)"/>
+
+          <rect class="m1-node" x="40" y="30" width="322" height="140" rx="14"/>
+          <text class="m1-num" x="64" y="64">01</text>
+          <text class="m1-title" x="64" y="104">Countersigned agreement</text>
+          <text class="m1-sub" x="64" y="128">roles · direction · assets</text>
+          <text class="m1-sub" x="64" y="147">messages · chain identities</text>
+
+          <rect class="m1-node" x="450" y="30" width="322" height="140" rx="14"/>
+          <text class="m1-num" x="474" y="64">02</text>
+          <text class="m1-title" x="474" y="104">Verified signing material</text>
+          <text class="m1-sub" x="474" y="128">MuSig2 contexts · adaptor points</text>
+          <text class="m1-sub" x="474" y="147">exact pre-signatures</text>
+
+          <rect class="m1-node" x="860" y="30" width="322" height="140" rx="14"/>
+          <text class="m1-num" x="884" y="64">03</text>
+          <text class="m1-title" x="884" y="104">Recovery ready first</text>
+          <text class="m1-sub" x="884" y="128">signed deadlines · refund paths</text>
+          <text class="m1-sub" x="884" y="147">durable state</text>
+
+          <rect class="m1-node live" x="1270" y="30" width="322" height="140" rx="14"/>
+          <text class="m1-num live" x="1294" y="64">04</text>
+          <text class="m1-title" x="1294" y="104">Funds move last</text>
+          <text class="m1-sub" x="1294" y="128">persist before send</text>
+          <text class="m1-sub" x="1294" y="147">canonical observation · bounded authority</text>
+
+          <g class="m1-gate"><rect x="393" y="86" width="28" height="28" rx="8"/><path d="M401,100 L405,105 L414,94"/></g>
+          <g class="m1-gate"><rect x="803" y="86" width="28" height="28" rx="8"/><path d="M811,100 L815,105 L824,94"/></g>
+          <g class="m1-gate"><rect x="1213" y="86" width="28" height="28" rx="8"/><path d="M1221,100 L1225,105 L1234,94"/></g>
+          <text class="m1-gate-label" x="407" y="134" text-anchor="middle">DURABLE</text>
+          <text class="m1-gate-label" x="817" y="134" text-anchor="middle">DURABLE</text>
+          <text class="m1-gate-label" x="1227" y="134" text-anchor="middle">DURABLE</text>
+
+          <path class="m1-guide" d="M1227,170 V262"/>
+          <text class="m1-axis" x="40" y="222">EXPOSURE</text>
+          <path class="m1-exposure safe" d="M40,272 H1227"/>
+          <path class="m1-exposure risk" d="M1227,272 V232 H1620"/>
+          <text class="m1-safe" x="633" y="296" text-anchor="middle">NO FUNDS AT RISK THROUGH THE FIRST THREE GATES</text>
+          <text class="m1-risk" x="1423" y="220" text-anchor="middle">VALUE AT RISK</text>
+        </svg>
+      </div>
+      <div class="m1-evidence">
+        <div class="stat-row">
+          <div><b>8</b><span>design / review docs</span></div>
+          <div><b>13</b><span>foundation ADRs</span></div>
+          <div><b>42</b><span>traced requirement IDs</span></div>
         </div>
-        <aside class="foundation-proof">
-          <div class="stat-row">
-            <div><b>8</b><span>design / review docs</span></div>
-            <div><b>13</b><span>foundation ADRs</span></div>
-            <div><b>42</b><span>traced requirement IDs</span></div>
-          </div>
-          <div class="doc-stack">
-            <span>protocol-design.md</span>
-            <span>threat-model.md</span>
-            <span>lez-escrow-design.md</span>
-            <span>parameter-profiles.md</span>
-            <span>sdk-trait-surface.md</span>
-            <span>lez-primitive-verification.md</span>
-          </div>
-          <p><strong>Each step must be durable before the next begins.</strong> A crash between them resumes; it does not improvise.</p>
-        </aside>
+        <div class="doc-stack">
+          <span>protocol-design.md</span>
+          <span>threat-model.md</span>
+          <span>lez-escrow-design.md</span>
+          <span>parameter-profiles.md</span>
+          <span>sdk-trait-surface.md</span>
+          <span>lez-primitive-verification.md</span>
+        </div>
       </div>
       <footer class="source-line">Review entry · <code>docs/milestone-1/README.md</code></footer>
     </section>
@@ -204,38 +243,58 @@
         <h2>Each side checks the other chain itself.</h2>
         <p class="lede">Taker sells 0.01 BTC for 1,000 LEZ.</p>
       </header>
-      <div class="protocol-flow">
-        <article class="flow-step preflight">
-          <span class="step-id">00</span>
-          <strong>Freeze exact terms</strong>
-          <small>Agreement fixes the BTC lock and payout, LEZ escrow, adaptor point <em>T</em>, deadlines, and refunds.</small>
-        </article>
-        <div class="flow-join">→</div>
-        <article class="flow-step bitcoin">
-          <span class="step-id">01</span><span class="role taker">TAKER</span>
-          <strong>Lock BTC</strong>
-          <small>The exact joint P2TR custody output becomes canonical.</small>
-        </article>
-        <div class="flow-join">→</div>
-        <article class="flow-step verify-btc">
-          <span class="step-id">02</span><span class="role maker">MAKER</span>
-          <strong>Verify BTC; fund LEZ</strong>
-          <small>Maker's own Bitcoin node checks network, exact outpoint, value, P2TR output, confirmations, and the fixed payout.</small>
-          <span class="fail-closed">Mismatch → stop; no LEZ.</span>
-        </article>
-        <div class="flow-join accent">→</div>
-        <article class="flow-step verify-lez">
-          <span class="step-id">03</span><span class="role taker">TAKER</span>
-          <strong>Verify LEZ; claim</strong>
-          <small>Taker's own authenticated LEZ node checks the exact escrow, asset, amount, accounts, recipients, deadlines, and finality.</small>
-          <span class="fail-closed">Mismatch → stop; no claim or <em>t</em>.</span>
-        </article>
-        <div class="flow-join">→</div>
-        <article class="flow-step bitcoin final">
-          <span class="step-id">04</span><span class="role maker">MAKER</span>
-          <strong>Complete BTC payout</strong>
-          <small>LEZ claim reveals <em>t</em>; Maker requires <em>tG = T</em> and completes only the fixed spend paying Maker.</small>
-        </article>
+      <div class="seq-diagram">
+        <svg viewBox="0 0 1700 612" role="img" aria-label="Sequence diagram: Taker, Bitcoin, LEZ and Maker exchanging locks, verifications and claims">
+          <defs>
+            <marker id="sq-a" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#f7c766"/></marker>
+            <marker id="sq-g" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#47d7a6"/></marker>
+            <marker id="sq-p" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#ef67c7"/></marker>
+          </defs>
+          <rect class="head taker" x="135" y="0" width="190" height="46" rx="12"/>
+          <text class="head-label" x="230" y="29" text-anchor="middle">TAKER</text>
+          <rect class="head btc" x="595" y="0" width="190" height="46" rx="12"/>
+          <text class="head-label" x="690" y="29" text-anchor="middle">BITCOIN</text>
+          <rect class="head lez" x="1035" y="0" width="190" height="46" rx="12"/>
+          <text class="head-label" x="1130" y="29" text-anchor="middle">LEZ</text>
+          <rect class="head maker" x="1475" y="0" width="190" height="46" rx="12"/>
+          <text class="head-label" x="1570" y="29" text-anchor="middle">MAKER</text>
+          <path class="life" d="M230,46 V600"/><path class="life" d="M690,46 V600"/>
+          <path class="life" d="M1130,46 V600"/><path class="life" d="M1570,46 V600"/>
+          <rect class="band" x="120" y="66" width="1560" height="48" rx="12"/>
+          <text class="badge-text" x="146" y="96">00</text>
+          <text class="title" x="190" y="89">Countersigned agreement</text>
+          <text class="sub" x="190" y="106">freezes the BTC lock and payout, the LEZ escrow, adaptor point <tspan class="em">T</tspan>, deadlines and refunds</text>
+          <rect class="badge" x="36" y="158" width="54" height="28" rx="8"/><text class="badge-text" x="63" y="177" text-anchor="middle">01</text>
+          <text class="title halo" x="460" y="146" text-anchor="middle">Lock BTC</text>
+          <text class="sub halo" x="460" y="163" text-anchor="middle">0.01 BTC into the joint P2TR custody output</text>
+          <path class="msg amber" d="M240,172 H678" marker-end="url(#sq-a)"/>
+          <rect class="badge" x="36" y="226" width="54" height="28" rx="8"/><text class="badge-text" x="63" y="245" text-anchor="middle">02</text>
+          <text class="title halo" x="1130" y="214" text-anchor="middle">Maker verifies on its own node</text>
+          <text class="sub halo" x="1130" y="231" text-anchor="middle">network · outpoint · value · output key · unspent · depth</text>
+          <path class="msg amber obs" d="M700,240 H1558" marker-end="url(#sq-a)"/>
+          <text class="fail halo" x="1662" y="260" text-anchor="end">mismatch → stop; no LEZ</text>
+          <text class="title halo" x="1350" y="298" text-anchor="middle">Fund the LEZ escrow</text>
+          <text class="sub halo" x="1350" y="315" text-anchor="middle">1,000 LEZ, bound to the agreement</text>
+          <path class="msg green" d="M1560,324 H1142" marker-end="url(#sq-g)"/>
+          <rect class="badge" x="36" y="376" width="54" height="28" rx="8"/><text class="badge-text" x="63" y="395" text-anchor="middle">03</text>
+          <text class="title halo" x="680" y="364" text-anchor="middle">Taker verifies on its own node</text>
+          <text class="sub halo" x="680" y="381" text-anchor="middle">program · swap · asset · amount · parties · custody · finality</text>
+          <path class="msg green obs" d="M1120,390 H242" marker-end="url(#sq-g)"/>
+          <text class="fail halo" x="138" y="410" text-anchor="start">mismatch → stop; no claim, no <tspan class="em">t</tspan></text>
+          <text class="title halo" x="680" y="448" text-anchor="middle">Claim LEZ — publishes <tspan class="em">t</tspan></text>
+          <text class="sub halo" x="680" y="465" text-anchor="middle">the adaptor secret becomes public the moment the Taker is paid</text>
+          <path class="msg green" d="M240,474 H1122" marker-end="url(#sq-g)"/>
+          <rect class="badge" x="36" y="504" width="54" height="28" rx="8"/><text class="badge-text" x="63" y="523" text-anchor="middle">04</text>
+          <text class="title halo" x="1350" y="512" text-anchor="middle">Maker extracts <tspan class="em">t</tspan>, requires <tspan class="em">t·G = T</tspan></text>
+          <path class="msg pink obs" d="M1140,522 H1558" marker-end="url(#sq-p)"/>
+          <text class="title halo" x="1130" y="562" text-anchor="middle">Complete the fixed payout</text>
+          <text class="sub halo" x="1130" y="579" text-anchor="middle">adapts the pre-signature; pays the Maker and nobody else</text>
+          <path class="msg amber" d="M1560,588 H702" marker-end="url(#sq-a)"/>
+          <path class="msg legend-line" d="M1210,610 h28"/>
+          <text class="legend" x="1246" y="614">TRANSACTION</text>
+          <path class="msg legend-line obs" d="M1420,610 h28"/>
+          <text class="legend" x="1456" y="614">OBSERVATION</text>
+        </svg>
       </div>
       <div class="protocol-rule">
         <span class="rule-mark">✓</span>

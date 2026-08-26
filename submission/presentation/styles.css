@@ -731,3 +731,55 @@ code {
 .transport-diagram .accent-lime { fill: var(--lime); }
 .transport-diagram .accent-purple { fill: var(--purple); }
 .transport-diagram .accent-amber { fill: var(--amber); }
+
+/* ── Swap algorithm sequence diagram ──────────────────────────────────── */
+.seq-diagram { height: min(56vh, 545px); min-height: 395px; margin-top: .2%; }
+.seq-diagram svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.seq-diagram .head { fill: #111b27; stroke: #34465e; stroke-width: 2; }
+.seq-diagram .head.taker { fill: rgba(157,108,255,.09); stroke: var(--purple); }
+.seq-diagram .head.btc { fill: rgba(247,199,102,.08); stroke: var(--amber); }
+.seq-diagram .head.lez { fill: rgba(71,215,166,.08); stroke: var(--green); }
+.seq-diagram .head.maker { fill: rgba(156,255,87,.08); stroke: var(--lime); }
+.seq-diagram .head-label { fill: #e8eef6; font: 800 15px Inter, sans-serif; letter-spacing: 1.7px; }
+.seq-diagram .life { fill: none; stroke: #2b3a4e; stroke-width: 1.5; stroke-dasharray: 3 7; }
+.seq-diagram .band { fill: rgba(107,184,255,.04); stroke: rgba(107,184,255,.26); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.seq-diagram .msg { fill: none; stroke-width: 2.5; }
+.seq-diagram .msg.amber { stroke: var(--amber); }
+.seq-diagram .msg.green { stroke: var(--green); }
+.seq-diagram .msg.pink { stroke: var(--pink); }
+.seq-diagram .msg.obs { stroke-width: 2; stroke-dasharray: 7 5; }
+.seq-diagram .legend-line { stroke: #66748a; stroke-width: 2; }
+.seq-diagram .grp { fill: none; stroke: #34465e; stroke-width: 1.5; }
+.seq-diagram .badge { fill: #0d141e; stroke: #34465e; stroke-width: 1.5; }
+.seq-diagram .badge-text { fill: #93a1b4; font: 800 12px "SFMono-Regular", monospace; }
+.seq-diagram .title { fill: #e8eef6; font: 650 15px Inter, sans-serif; }
+.seq-diagram .sub { fill: #8b99ad; font: 500 12px Inter, sans-serif; }
+.seq-diagram .fail { fill: var(--amber); font: 700 11.5px "SFMono-Regular", monospace; }
+.seq-diagram .legend { fill: #66748a; font: 700 11px "SFMono-Regular", monospace; letter-spacing: .8px; }
+.seq-diagram .em { fill: var(--lime); font-style: italic; }
+.seq-diagram .halo { paint-order: stroke fill; stroke: #080d15; stroke-width: 7px; stroke-linejoin: round; }
+
+/* ── M1 ordered-gate diagram ──────────────────────────────────────────── */
+.m1-diagram { height: min(42vh, 400px); min-height: 300px; margin-top: .2%; }
+.m1-diagram svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.m1-diagram .m1-node { fill: #0d141e; stroke: #2d3a4f; stroke-width: 1.5; }
+.m1-diagram .m1-node.live { fill: rgba(247,199,102,.05); stroke: rgba(247,199,102,.45); }
+.m1-diagram .m1-num { fill: var(--lime); font: 800 13px "SFMono-Regular", monospace; letter-spacing: 1px; }
+.m1-diagram .m1-num.live { fill: var(--amber); }
+.m1-diagram .m1-title { fill: #e8eef6; font: 700 19px Inter, sans-serif; }
+.m1-diagram .m1-sub { fill: #7f8da1; font: 500 13px Inter, sans-serif; }
+.m1-diagram .m1-link { fill: none; stroke: #4a5a72; stroke-width: 2; }
+.m1-diagram .m1-gate rect { fill: #0a1018; stroke: var(--lime); stroke-width: 1.8; }
+.m1-diagram .m1-gate path { fill: none; stroke: var(--lime); stroke-width: 1.8; stroke-linecap: round; }
+.m1-diagram .m1-gate-label { fill: #6c7a8f; font: 800 10px "SFMono-Regular", monospace; letter-spacing: 1.4px; }
+.m1-diagram .m1-guide { fill: none; stroke: rgba(247,199,102,.4); stroke-width: 1.5; stroke-dasharray: 4 6; }
+.m1-diagram .m1-axis { fill: #56637a; font: 800 11px "SFMono-Regular", monospace; letter-spacing: 1.6px; }
+.m1-diagram .m1-exposure { fill: none; stroke-width: 3; stroke-linejoin: round; }
+.m1-diagram .m1-exposure.safe { stroke: var(--green); }
+.m1-diagram .m1-exposure.risk { stroke: var(--amber); }
+.m1-diagram .m1-safe { fill: var(--green); font: 700 12px "SFMono-Regular", monospace; letter-spacing: .9px; }
+.m1-diagram .m1-risk { fill: var(--amber); font: 700 12px "SFMono-Regular", monospace; letter-spacing: .9px; }
+
+.m1-evidence { display: flex; align-items: center; gap: 3%; margin-top: 1.5%; padding: 1.5% 2%; border: 1px solid rgba(156,255,87,.17); border-radius: 16px; background: linear-gradient(120deg, rgba(156,255,87,.05), #0d141b 44%); }
+.m1-evidence .stat-row { display: flex; flex: none; gap: 2.6vw; padding: 0; border: 0; }
+.m1-evidence .doc-stack { margin: 0; flex: 1; justify-content: flex-end; }
