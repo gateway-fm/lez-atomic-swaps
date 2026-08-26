@@ -253,10 +253,10 @@
       <span class="divider-rule"></span>
     </section>
 
-    <section class="slide seq-slide" data-title="Swap algorithm" data-duration="9">
+    <section class="slide seq-slide" data-title="Taker sells BTC" data-duration="9">
       <header class="slide-header">
-        <p class="eyebrow purple">M3 · TAKER SELLS 0.01 BTC FOR 1,000 LEZ</p>
-        <h2>Each side checks the other chain itself.</h2>
+        <p class="eyebrow purple">M3 · SWAP ALGORITHM · DIRECTION A</p>
+        <h2>Taker sells BTC</h2>
       </header>
       <div class="seq-diagram swap-seq">
         <svg viewBox="0 0 1700 810" role="img" aria-label="Sequence diagram of the swap algorithm across Taker, Bitcoin, LEZ and Maker">
@@ -348,6 +348,70 @@
         </svg>
       </div>
       <footer class="source-line">Threats TM-0005, TM-0012, TM-0016 · ADRs 0030, 0037, 0043, 0050</footer>
+    </section>
+
+    <section class="slide seq-slide" data-title="Taker sells LEZ" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow purple">M3 · SWAP ALGORITHM · DIRECTION B</p>
+        <h2>Taker sells LEZ</h2>
+      </header>
+      <div class="seq-diagram swap-seq">
+        <svg viewBox="0 0 1700 810" role="img" aria-label="Sequence diagram, direction B: the Taker sells LEZ for Bitcoin">
+          <defs>
+            <marker id="sqb-a" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#f7c766"/></marker>
+            <marker id="sqb-g" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#47d7a6"/></marker>
+            <marker id="sqb-p" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#ef67c7"/></marker>
+          </defs>
+          <rect class="head taker" x="190" y="0" width="180" height="46" rx="12"/><text class="head-label" x="280" y="29" text-anchor="middle">TAKER</text>
+          <rect class="head btc" x="490" y="0" width="180" height="46" rx="12"/><text class="head-label" x="580" y="29" text-anchor="middle">BITCOIN</text>
+          <rect class="head lez" x="790" y="0" width="180" height="46" rx="12"/><text class="head-label" x="880" y="29" text-anchor="middle">LEZ</text>
+          <rect class="head maker" x="1090" y="0" width="180" height="46" rx="12"/><text class="head-label" x="1180" y="29" text-anchor="middle">MAKER</text>
+          <path class="life" d="M280,46 V810"/><path class="life" d="M580,46 V810"/>
+          <path class="life" d="M880,46 V810"/><path class="life" d="M1180,46 V810"/>
+          <text class="phase" x="118" y="93" text-anchor="end">Agreement</text>
+          <path class="grp" d="M140,87 h-14"/>
+          <text class="phase" x="118" y="191" text-anchor="end">First lock</text>
+          <path class="grp" d="M140,156 h-12 V214 h12"/>
+          <path class="grp" d="M140,185 h-14"/>
+          <text class="phase" x="118" y="343" text-anchor="end">Verify + lock</text>
+          <path class="grp" d="M140,258 h-12 V416 h12"/>
+          <path class="grp" d="M140,337 h-14"/>
+          <text class="phase" x="118" y="545" text-anchor="end">Verify + claim</text>
+          <path class="grp" d="M140,460 h-12 V618 h12"/>
+          <path class="grp" d="M140,539 h-14"/>
+          <text class="phase" x="118" y="737" text-anchor="end">Reveal + claim</text>
+          <path class="grp" d="M140,662 h-12 V800 h12"/>
+          <path class="grp" d="M140,731 h-14"/>
+          <rect class="band" x="190" y="62" width="1040" height="50" rx="12"/>
+          <text class="title" x="214" y="84">Countersigned agreement</text>
+          <text class="sub" x="214" y="102">freezes the LEZ escrow and its payout, the BTC lock and claim, adaptor point <tspan class="em">T</tspan>, deadlines and refunds</text>
+          <text class="title halo" x="580" y="170" text-anchor="middle">Seed and fund the LEZ escrow</text>
+          <text class="sub halo" x="580" y="188" text-anchor="middle"><tspan class="amt lez">1,000 LEZ</tspan> into the escrow the agreement names</text>
+          <path class="msg green" d="M290,206 H868" marker-end="url(#sqb-g)"/>
+          <text class="title halo" x="1030" y="272" text-anchor="middle">Maker verifies on its own node</text>
+          <text class="sub halo" x="1030" y="290" text-anchor="middle">program · swap · asset · amount · parties · custody · finality</text>
+          <path class="msg green obs" d="M890,308 H1168" marker-end="url(#sqb-g)"/>
+          <text class="fail halo" x="1220" y="328" text-anchor="end">mismatch → stop; no BTC</text>
+          <text class="title halo" x="880" y="372" text-anchor="middle">Lock BTC</text>
+          <text class="sub halo" x="880" y="390" text-anchor="middle"><tspan class="amt btc">0.01 BTC</tspan> into the joint P2TR custody output</text>
+          <path class="msg amber" d="M1170,408 H592" marker-end="url(#sqb-a)"/>
+          <text class="title halo" x="430" y="474" text-anchor="middle">Taker verifies on its own node</text>
+          <text class="sub halo" x="430" y="492" text-anchor="middle">network · outpoint · value · output key · unspent · depth</text>
+          <path class="msg amber obs" d="M570,510 H292" marker-end="url(#sqb-a)"/>
+          <text class="fail halo" x="240" y="530" text-anchor="start">mismatch → stop; no claim, no t</text>
+          <text class="title halo" x="430" y="574" text-anchor="middle">Claim BTC — publishes <tspan class="em">t</tspan></text>
+          <text class="sub halo" x="430" y="592" text-anchor="middle"><tspan class="amt btc">0.01 BTC</tspan> to the Taker; the adaptor secret becomes public</text>
+          <path class="msg amber" d="M290,610 H568" marker-end="url(#sqb-a)"/>
+          <text class="title halo" x="880" y="676" text-anchor="middle">Maker extracts <tspan class="em">t</tspan>, requires <tspan class="em">t·G = T</tspan></text>
+          <path class="msg pink obs" d="M590,712 H1168" marker-end="url(#sqb-p)"/>
+          <text class="title halo" x="1030" y="756" text-anchor="middle">Claim the LEZ escrow</text>
+          <text class="sub halo" x="1030" y="774" text-anchor="middle"><tspan class="amt lez">1,000 LEZ</tspan> to the Maker; the escrow pays the recorded claimant</text>
+          <path class="msg green" d="M1170,792 H892" marker-end="url(#sqb-g)"/>
+          <path class="msg legend-line" d="M190,806 h28"/><text class="legend" x="224" y="810">TRANSACTION</text>
+          <path class="msg legend-line obs" d="M400,806 h28"/><text class="legend" x="434" y="810">OBSERVATION</text>
+        </svg>
+      </div>
+      <footer class="source-line">Direction switch · <code>btc-swap-sdk/src/sdk.rs:3161</code> · funded chain · <code>swap-core/src/lib.rs:867-879</code></footer>
     </section>
 
     <section class="slide xray-slide" data-title="Creation" data-duration="10">
