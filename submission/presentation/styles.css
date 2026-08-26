@@ -869,3 +869,4 @@ code {
 .rv.secret { border-color: rgba(156,255,87,.45); } .rv.secret > code { color: var(--lime); }
 .rv.onchain { border-color: rgba(107,184,255,.4); } .rv.onchain > code { color: var(--blue); }
 .rv.extract { flex: 1.35; border-color: rgba(239,103,199,.45); background: rgba(239,103,199,.05); } .rv.extract > code { color: var(--pink); }
+.rv span b { color: var(--blue); font-weight: 700; font-family: "SFMono-Regular", monospace; }

@@ -350,6 +350,61 @@
       <footer class="source-line">Threats TM-0005, TM-0012, TM-0016 · ADRs 0030, 0037, 0043, 0050</footer>
     </section>
 
+    <section class="slide xray-slide" data-title="The adaptor secret" data-duration="9">
+      <header class="slide-header">
+        <p class="eyebrow lime tag">M3</p>
+        <h2>Claiming one leg hands over the key to the other.</h2>
+      </header>
+      <div class="xray">
+        <div class="xray-code">
+          <div class="xray-file">crates/adaptor-signature/src/lib.rs</div>
+          <pre><span class="c">// t is never sent. It is added — and the sum is what lands on chain.</span>
+<span class="k">pub fn</span> <span class="f">adapt_presignature</span>(context, presignature: [u8; 65],
+                          adaptor_secret: Zeroizing&lt;[u8; 32]&gt;) -&gt; Result&lt;[u8; 64]&gt; {
+    <span class="k">let</span> presignature = verified_presignature(context, &amp;presignature)?;
+    <span class="k">let</span> secret       = checked_adaptor_secret(context, adaptor_secret)?;
+    <span class="k">let</span> final_signature = <span class="hl">presignature.adapt(secret)</span>
+        .ok_or(AdaptorSessionError::AdaptationFailed)?;
+    verify_final_signature(context, bytes)?;   <span class="c">// s must be a real signature</span>
+}
+
+<span class="c">// The other side subtracts. Nobody transmitted anything secret.</span>
+<span class="k">pub fn</span> <span class="f">extract_adaptor_secret</span>(context, presignature: [u8; 65],
+                              final_signature: [u8; 64]) -&gt; Result&lt;Zeroizing&lt;[u8; 32]&gt;&gt; {
+    <span class="k">let</span> extracted: MaybeScalar = <span class="hl">presignature.reveal_secret(&amp;final_signature)</span>
+        .ok_or(AdaptorSessionError::ExtractionFailed)?;
+    <span class="k">if</span> <span class="hl">extracted.base_point_mul() != context.adaptor_point_value()?</span> {
+        <span class="k">return</span> Err(AdaptorSessionError::ExtractedScalarPointMismatch);
+    }
+    Ok(Zeroizing::new(extracted.serialize()))   <span class="c">// zeroized on drop</span>
+}
+
+<span class="c">// Both directions are point-checked against the T fixed in the agreement.</span>
+<span class="k">fn</span> <span class="f">checked_adaptor_secret</span>(context, adaptor_secret) -&gt; Result&lt;Scalar&gt; {
+    <span class="k">if</span> <span class="hl">secret.base_point_mul() != context.adaptor_point_value()?</span> {
+        <span class="k">return</span> Err(AdaptorSessionError::AdaptorSecretPointMismatch);
+    }
+}</pre>
+        </div>
+        <aside class="xray-notes">
+          <article><h3>Where the Maker calls it</h3><p><code>sdk.rs:2692</code> — after observing the counterparty claim, it rebuilds the session from the countersigned agreement, verifies the final signature, then extracts. The pre-signature it subtracts is the one it already stored: <code>prepared.claim_effects().bitcoin_presignature</code>.</p></article>
+          <article><h3>Extraction cannot be spoofed</h3><p>A recovered scalar is only returned if <em>t·G = T</em> against the <em>T</em> the agreement froze. A counterparty publishing a different signature yields either no scalar or a point mismatch — never a wrong secret that looks right.</p></article>
+          <article><h3>The session is derived, not passed</h3><p><code>claim_adaptor_session_context(Bitcoin)</code> hashes the agreement commitment with the chain tag, so the pre-signature can only be adapted or subtracted inside the session those exact signed terms define.</p></article>
+        </aside>
+      </div>
+      <div class="reveal-band">
+        <div class="reveal-lead"><b>Add on one chain, subtract on the other.</b><span>The same pre-signature is used twice: once to finish a signature, once to recover what finished it.</span></div>
+        <div class="reveal-math">
+          <div class="rv secret"><code>s = s′ + t</code><span><b>adapt_presignature</b><br>the claimant spends</span></div>
+          <i class="arr">→</i>
+          <div class="rv onchain"><code>s</code><span>public on chain<br>an ordinary signature</span></div>
+          <i class="arr">→</i>
+          <div class="rv extract"><code>t = s − s′</code><span><b>extract_adaptor_secret</b><br>the follower spends the other leg</span></div>
+        </div>
+      </div>
+      <footer class="source-line">Adaptor arithmetic · <code>crates/adaptor-signature/src/lib.rs:813-863</code> · call sites <code>crates/btc-swap-sdk/src/sdk.rs:2692, 2768</code></footer>
+    </section>
+
     <section class="slide xray-slide" data-title="LEZ escrow" data-duration="9">
       <header class="slide-header">
         <p class="eyebrow purple tag">M3</p>
