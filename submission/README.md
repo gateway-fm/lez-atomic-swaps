@@ -9,7 +9,6 @@ and the M6 product surface without claiming unrelated milestone completion.
 | Artifact | Purpose |
 |---|---|
 | [Actual UI swap demo](../media/lez-btc-ui-swap-demo.mp4) | 1:53.2 Basecamp walkthrough with click ripples, role handoffs, both independent chain checks, captions, and CC BY 4.0 music |
-| [Silent video presentation](../media/lez-btc-m1-m3-m6-submission-silent.mp4) | 99-second pre-discovery milestone overview with no audio stream |
 | [Single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html) | The current 24-slide story, including the Delivery/Chat transport diagram, the four code x-rays, and the two sequence diagrams, with all CSS, JavaScript, SVGs, and screenshots embedded for sharing |
 | [Editable presentation source](presentation/index.html) | Dependency-free source deck with keyboard, touch, fullscreen, and autoplay controls |
 | [Milestone map](MILESTONES.md) | Every current issue #121/#123/#126 deliverable mapped to repository artifacts and its submission status |

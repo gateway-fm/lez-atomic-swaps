@@ -30,8 +30,7 @@ Markdown link resolves. It is supporting provenance, not an M2 delivery claim.
 ## What a reviewer can inspect
 
 1. Open the [reviewer submission pack](../submission/README.md), the
-   [single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html), or
-   the [silent overview video](../media/lez-btc-m1-m3-m6-submission-silent.mp4),
+   [single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html),
    then watch the [fresh actual UI swap](../media/lez-btc-ui-swap-demo.mp4).
 2. Read the [M1 entry point](milestone-1/README.md) and [M1 review](milestone-1/review.md).
 3. Read the [M3 review](milestone-3-review.md) and inspect the `m3-*.json`

@@ -107,8 +107,8 @@
     "codec": "h264",
     "pixel_format": "yuv420p",
     "audio_stream_count": 0,
-    "size_bytes": 7136292,
-    "sha256": "795d25aa0901e7bb135271049bf99f8f28dd5c070b7c310fc283b286568f3742"
+    "size_bytes": 15067133,
+    "sha256": "bb5ec36055e5f8a53f367d6bf03147e4eb78f17a601d305260b30d8229275703"
   },
   "presentation": {
     "html_entry": "submission/presentation/index.html",
@@ -122,23 +122,9 @@
     ],
     "standalone_html": {
       "path": "media/lez-btc-m1-m3-m6-submission.html",
-      "size_bytes": 1874339,
+      "size_bytes": 1878643,
       "external_runtime_dependencies": 0,
-      "sha256": "e95516a50ce3cea6a21271b19ead734e2a0f88d7cff1e293b6ae5281f5458c84"
-    },
-    "video": {
-      "path": "media/lez-btc-m1-m3-m6-submission-silent.mp4",
-      "slides": 14,
-      "source_snapshot": "pre_delivery_discovery_2026-08-20",
-      "duration_seconds": 99,
-      "width": 1920,
-      "height": 1080,
-      "fps": 30,
-      "codec": "h264",
-      "pixel_format": "yuv420p",
-      "audio_stream_count": 0,
-      "size_bytes": 6618674,
-      "sha256": "81798bfa38c1229c34692f60b1cbf226eb58bfa284137c7d206cb83effaa5d1c"
+      "sha256": "8f49c1911f3dc7ede029cb6200d29d22fbfc7ed4a9b074b505274bde460ea68c"
     },
     "poster": {
       "path": "media/screenshots/lez-btc-m1-m3-m6-submission-cover.png",

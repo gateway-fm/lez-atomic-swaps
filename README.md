@@ -10,8 +10,7 @@ cross-chain bridge controls settlement.
 [![LEZ and Bitcoin M1, M3, and M6 submission presentation](media/screenshots/lez-btc-m1-m3-m6-submission-cover.png)](media/lez-btc-m1-m3-m6-submission.html)
 
 *[Open the single-file HTML presentation →](media/lez-btc-m1-m3-m6-submission.html) ·
-[Watch the 1:39 silent submission video →](media/lez-btc-m1-m3-m6-submission-silent.mp4) ·
-[Watch the 3:41 actual UI swap →](media/lez-btc-ui-swap-demo.mp4) ·
+[Watch the 1:53 actual UI swap →](media/lez-btc-ui-swap-demo.mp4) ·
 [Watch the 1:42 narrated product cut →](media/lez-btc-rfp003-proposal-vertical.mp4)*
 
 The fresh actual-UI run has two Bitcoin effects, three LEZ effects,

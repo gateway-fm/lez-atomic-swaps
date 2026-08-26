@@ -13,19 +13,7 @@ Open these files directly:
 3. [`EVIDENCE.md`](EVIDENCE.md)
 4. [`lez-btc-m1-m3-m6-submission.html`](../media/lez-btc-m1-m3-m6-submission.html), the single-file offline deck
 5. [`presentation/index.html`](presentation/index.html), the editable source deck
-6. [`lez-btc-m1-m3-m6-submission-silent.mp4`](../media/lez-btc-m1-m3-m6-submission-silent.mp4)
-7. [`lez-btc-ui-swap-demo.mp4`](../media/lez-btc-ui-swap-demo.mp4), the actual Basecamp swap walkthrough, with its exact [`m5arm-0825141508` evidence](../docs/evidence/m3-btc-ui-run-m5arm-0825141508.json)
-
-Check the video has exactly one video stream and no audio stream:
-
-```sh
-ffprobe -v error \
-  -show_entries stream=index,codec_type,codec_name,width,height,pix_fmt \
-  -of json media/lez-btc-m1-m3-m6-submission-silent.mp4
-```
-
-Expected video properties: H.264, 1920×1080, 30 fps, `yuv420p`, 99 seconds,
-and no stream whose `codec_type` is `audio`.
+6. [`lez-btc-ui-swap-demo.mp4`](../media/lez-btc-ui-swap-demo.mp4), the actual Basecamp swap walkthrough, with its exact [`m5arm-0825151914` evidence](../docs/evidence/m3-btc-ui-run-m5arm-0825151914.json)
 
 Check the actual UI recording and fully decode it:
 
@@ -37,9 +25,9 @@ ffmpeg -v error -i media/lez-btc-ui-swap-demo.mp4 -f null -
 ```
 
 Expected UI-demo properties: H.264, 1920×1080, 30 fps, `yuv420p`,
-220.700000 seconds, 6,621 frames, 7,136,292 bytes, and no audio stream. The
-burned-in run ID must be `m5arm-0825141508`, matching the linked evidence
-record.
+113.200000 seconds, 3,396 frames, 15,067,133 bytes, and one stereo AAC audio
+stream. The burned-in run ID must be `m5arm-0825151914`, matching the linked
+evidence record.
 
 ## Lane 2 — repository-local document and prototype contracts
 

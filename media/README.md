@@ -17,14 +17,6 @@ actions and resulting local-chain transactions are real. Its exact secret-safe
 record is
 [`m3-btc-ui-run-m5arm-0825151914.json`](../docs/evidence/m3-btc-ui-run-m5arm-0825151914.json).
 
-[`lez-btc-m1-m3-m6-submission-silent.mp4`](lez-btc-m1-m3-m6-submission-silent.mp4)
-is the reviewer presentation: 99 seconds, 1920 × 1080, 30 fps, H.264/yuv420p,
-and deliberately **no audio stream**. Its burned-in copy covers the M1
-foundation, M3 algorithm/refund/evidence set, M6 product surface, live stack
-validation, and explicit nonclaims. The matching interactive source is
-[`../submission/presentation/index.html`](../submission/presentation/index.html);
-the deterministic renderer is in the same directory.
-
 [`lez-btc-m1-m3-m6-submission.html`](lez-btc-m1-m3-m6-submission.html) is the
 single-file offline export: all styling, controls, SVG marks, and real
 screenshots are embedded so it can be shared without its repository tree. It
@@ -66,8 +58,8 @@ restart-survivor, and overlapping-swap cases are recorded separately under
 [`../docs/evidence/`](../docs/evidence/); they are not visually demonstrated by
 these cuts. Bitcoin is regtest and LEZ is a private v0.2 devnet.
 
-The silent submission presentation summarizes those wider JSON records but is
-not a substitute for execution footage of every refund or overlap case. The
+These cuts are not a substitute for execution footage of every refund or
+overlap case. The
 actual UI demo matches `m5arm-0825151914`; the screenshots and narrated
 vertical cut match
 [`m3-btc-ui-run-m5arm-0820121736.json`](../docs/evidence/m3-btc-ui-run-m5arm-0820121736.json);
