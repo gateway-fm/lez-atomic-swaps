@@ -21,7 +21,6 @@ const allowedFiles = new Set([
   "/assets/lez-orbit.svg",
   "/assets/maker-console.svg",
   "/assets/taker-route.svg",
-  "/assets/shield-after.svg",
 ]);
 const contentTypes = new Map([
   [".css", "text/css; charset=utf-8"],
@@ -208,11 +207,18 @@ async function text(page, selector) {
 }
 
 async function replaceInput(page, selector, value) {
-  await page.click(selector);
-  await page.keyboard.down("Control");
-  await page.keyboard.press("A");
-  await page.keyboard.up("Control");
-  await page.keyboard.type(value);
+  await page.$eval(
+    selector,
+    (input, nextValue) => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(input, nextValue);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    value,
+  );
 }
 
 async function visible(page, selector) {
@@ -229,18 +235,18 @@ async function visible(page, selector) {
   });
 }
 
-async function openZecProgress(page) {
-  await page.waitForSelector('[data-offer="offer-zec-7f2a"]');
-  await page.click('[data-offer="offer-zec-7f2a"]');
-  assert.match(await text(page, "#selected-offer-detail"), /LEZ \/ ZEC/);
+async function openBtcProgress(page) {
+  await page.waitForSelector('[data-offer="offer-btc-3bd1"]');
+  await page.click('[data-offer="offer-btc-3bd1"]');
+  assert.match(await text(page, "#selected-offer-detail"), /LEZ \/ BTC/);
   await page.click("#terms-confirm");
   assert.equal(await page.$eval("#initiate-swap", (button) => button.disabled), false);
   await page.click("#initiate-swap");
   assert.equal(await page.$eval("#initiate-dialog", (dialog) => dialog.open), true);
-  assert.match(await text(page, "#initiate-summary"), /1,820 LEZ → 2\.00 ZEC/);
+  assert.match(await text(page, "#initiate-summary"), /7,700 LEZ → 0\.005 BTC/);
   await page.click("#confirm-initiate");
   await page.waitForSelector("#taker-progress.active");
-  assert.match(await text(page, "#progress-heading"), /ZEC-7F2A/);
+  assert.match(await text(page, "#progress-heading"), /BTC-3BD1/);
 }
 
 async function advanceToTerminalAction(page) {
@@ -276,16 +282,16 @@ test("role surfaces remain isolated", async () => {
 test("Maker configures, monitors, filters history, and records manual intent", async () => {
   await withAuditedPage("/maker.html", async (page) => {
     await page.click('[data-view="maker-config"]');
-    await page.select("#maker-pair", "zcash");
+    await page.select("#maker-pair", "bitcoin");
     await replaceInput(page, "#foreign-units", "2");
     await replaceInput(page, "#lez-units", "1820");
     await page.waitForFunction(
-      () => document.querySelector("#maker-price-preview")?.textContent === "2 ZEC = 1,820 LEZ",
+      () => document.querySelector("#maker-price-preview")?.textContent === "2 BTC = 1,820 LEZ",
     );
     await page.click('#maker-config-form button[type="submit"]');
     assert.equal(await page.$eval("#maker-review-dialog", (dialog) => dialog.open), true);
-    assert.match(await text(page, "#maker-review-content"), /LEZ \/ Zcash/);
-    assert.match(await text(page, "#maker-review-content"), /2 ZEC = 1,820 LEZ/);
+    assert.match(await text(page, "#maker-review-content"), /LEZ \/ Bitcoin/);
+    assert.match(await text(page, "#maker-review-content"), /2 BTC = 1,820 LEZ/);
     await page.click("#confirm-maker-config");
     await page.waitForFunction(
       () => document.querySelector("#toast")?.textContent?.includes("revision 9 confirmed"),
@@ -310,17 +316,16 @@ test("Maker configures, monitors, filters history, and records manual intent", a
     await page.click('[data-view="maker-history"]');
     await page.select("#history-filter", "refunded");
     assert.match(await text(page, "#history-body"), /BTC-19C4/);
-    assert.doesNotMatch(await text(page, "#history-body"), /XMR-DA82|ZEC-51AF/);
-    await page.select("#history-filter", "all");
-    await replaceInput(page, "#history-search", "XMR");
-    assert.match(await text(page, "#history-body"), /XMR-DA82/);
-    assert.doesNotMatch(await text(page, "#history-body"), /BTC-19C4|ZEC-51AF/);
+    assert.doesNotMatch(await text(page, "#history-body"), /BTC-DA82/);
+    await page.select("#history-filter", "completed");
+    assert.match(await text(page, "#history-body"), /BTC-DA82/);
+    assert.doesNotMatch(await text(page, "#history-body"), /BTC-19C4/);
   });
 });
 
-test("Taker completes the ZEC claim journey and acknowledges shielding guidance", async () => {
+test("Taker completes the BTC claim journey", async () => {
   await withAuditedPage("/taker.html", async (page) => {
-    await openZecProgress(page);
+    await openBtcProgress(page);
     await advanceToTerminalAction(page);
 
     await page.click("#claim-action");
@@ -329,18 +334,13 @@ test("Taker completes the ZEC claim journey and acknowledges shielding guidance"
     await page.click("#confirm-terminal");
     await page.waitForSelector("#taker-terminal.active");
     assert.equal(await text(page, "#terminal-heading"), "Swap completed");
-    assert.equal(await visible(page, "#shield-guidance"), true);
-    assert.match(await text(page, "#shield-guidance"), /transparent-pool amounts.*public/s);
-    assert.match(await text(page, "#shield-guidance"), /separate wallet action/);
-    await page.click("#shield-checklist");
-    assert.equal(await text(page, "#shield-checklist"), "Guidance reviewed in this sample");
-    assert.equal(await page.$eval("#shield-checklist", (button) => button.disabled), true);
+    assert.match(await text(page, "#terminal-summary"), /sample claim path/);
   });
 });
 
 test("Taker can choose the mutually exclusive refund branch", async () => {
   await withAuditedPage("/taker.html", async (page) => {
-    await openZecProgress(page);
+    await openBtcProgress(page);
     await advanceToTerminalAction(page);
 
     await page.click("#refund-action");
@@ -349,24 +349,24 @@ test("Taker can choose the mutually exclusive refund branch", async () => {
     await page.click("#confirm-terminal");
     await page.waitForSelector("#taker-terminal.active");
     assert.equal(await text(page, "#terminal-heading"), "Swap refunded");
-    assert.equal(await visible(page, "#shield-guidance"), false);
     assert.match(await text(page, "#terminal-summary"), /sample refund path/);
   });
 });
 
-test("Taker can select BTC and XMR offers without cross-pair substitution", async () => {
+test("Taker can select both BTC directions without offer substitution", async () => {
   await withAuditedPage("/taker.html", async (page) => {
     await page.waitForSelector('[data-offer="offer-btc-3bd1"]');
     await page.click('[data-offer="offer-btc-3bd1"]');
     assert.match(await text(page, "#selected-offer-detail"), /LEZ \/ BTC/);
     assert.match(await text(page, "#selected-offer-detail"), /offer-btc-3bd1/);
-    assert.doesNotMatch(await text(page, "#selected-offer-detail"), /offer-zec|offer-xmr/);
+    assert.doesNotMatch(await text(page, "#selected-offer-detail"), /offer-lez/);
 
     await page.click('[data-view-jump="taker-browse"]');
-    await page.click('[data-offer="offer-xmr-da82"]');
-    assert.match(await text(page, "#selected-offer-detail"), /LEZ \/ XMR/);
-    assert.match(await text(page, "#selected-offer-detail"), /offer-xmr-da82/);
-    assert.doesNotMatch(await text(page, "#selected-offer-detail"), /offer-zec|offer-btc/);
+    await page.click('[data-direction="receive-lez"]');
+    await page.click('[data-offer="offer-lez-51af"]');
+    assert.match(await text(page, "#selected-offer-detail"), /BTC \/ LEZ/);
+    assert.match(await text(page, "#selected-offer-detail"), /offer-lez-51af/);
+    assert.doesNotMatch(await text(page, "#selected-offer-detail"), /offer-btc/);
   });
 });
 
@@ -406,7 +406,7 @@ test("mobile role journeys do not overflow horizontally", async () => {
       };
 
       await assertNoOverflow("taker-browse");
-      await page.click('[data-offer="offer-zec-7f2a"]');
+      await page.click('[data-offer="offer-btc-3bd1"]');
       await assertNoOverflow("taker-review");
       await page.click("#terms-confirm");
       await page.click("#initiate-swap");

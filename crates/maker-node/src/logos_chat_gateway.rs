@@ -432,15 +432,18 @@ struct IndexedOfferV1 {
     announcement: crate::AuthenticatedLogosOfferAnnouncementV1,
 }
 
+type OfferIdentityV1 = ([u8; 33], Box<str>);
+type OfferIndexV1 = BTreeMap<OfferIdentityV1, IndexedOfferV1>;
+
 #[derive(Debug)]
 struct PendingResponse {
     sender: oneshot::Sender<Result<Value, RemoteFailureV1>>,
-    selected_offer: Option<([u8; 33], Box<str>)>,
+    selected_offer: Option<OfferIdentityV1>,
 }
 
 #[derive(Clone, Debug)]
 struct SelectedOfferV1 {
-    key: ([u8; 33], Box<str>),
+    key: OfferIdentityV1,
     maker_chat_address: Box<str>,
 }
 
@@ -473,8 +476,8 @@ pub struct LogosChatGateway {
     pending: Mutex<BTreeMap<Box<str>, PendingResponse>>,
     inflight_maker_requests: Mutex<BTreeSet<(Box<str>, Box<str>)>>,
     cached_responses: Mutex<VecDeque<CachedResponse>>,
-    offer_index: Mutex<BTreeMap<([u8; 33], Box<str>), IndexedOfferV1>>,
-    locally_unavailable_offers: Mutex<BTreeSet<([u8; 33], Box<str>)>>,
+    offer_index: Mutex<OfferIndexV1>,
+    locally_unavailable_offers: Mutex<BTreeSet<OfferIdentityV1>>,
     selected_offer: Mutex<Option<SelectedOfferV1>>,
     trusted_clock: Arc<dyn Fn() -> Result<u64, LogosChatGatewayError> + Send + Sync>,
     sequence: AtomicU64,
@@ -650,6 +653,11 @@ impl LogosChatGateway {
     }
 
     /// Moves a temporarily unsendable head behind other conversations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input, conflict, or dependency error for a bad schema, a
+    /// non-head request, or unavailable gateway state.
     pub fn outbox_defer(
         &self,
         request: &LogosChatGatewayOutboxAckRequestV1,
@@ -1087,6 +1095,12 @@ impl LogosChatGateway {
     }
 
     /// Authenticates and indexes one exact Delivery announcement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input, conflict, capacity, or dependency error when the
+    /// announcement is invalid, regresses signed state, exceeds a bound, or
+    /// gateway state is unavailable.
     pub fn ingest_offer_announcement(
         &self,
         request: &LogosOfferIngestRequestV1,
@@ -1191,6 +1205,11 @@ impl LogosChatGateway {
     }
 
     /// Lists only live, signed, locally uncontended offers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input or dependency error for the wrong fixed role, an
+    /// unavailable trusted clock, invalid indexed data, or unavailable state.
     pub fn list_offer_announcements(
         &self,
         request: LogosOfferListRequestV1,
@@ -1280,6 +1299,11 @@ impl LogosChatGateway {
     }
 
     /// Resolves an active reviewed offer to its signed current Chat address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an input, session, conflict, or dependency error when the offer
+    /// is not live and selectable or its Chat binding cannot be used exactly.
     pub fn select_offer_announcement(
         &self,
         request: &LogosOfferSelectRequestV1,
@@ -1600,9 +1624,7 @@ mod tests {
         RequestId::new(value).unwrap()
     }
 
-    fn active_announcements_with_key(
-        signing_key_byte: u8,
-    ) -> (
+    type ActiveAnnouncementsFixture = (
         tempfile::TempDir,
         Vec<u8>,
         Vec<u8>,
@@ -1610,7 +1632,9 @@ mod tests {
         [u8; 33],
         MakerOfferId,
         u64,
-    ) {
+    );
+
+    fn active_announcements_with_key(signing_key_byte: u8) -> ActiveAnnouncementsFixture {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1679,15 +1703,7 @@ mod tests {
         )
     }
 
-    fn active_announcements() -> (
-        tempfile::TempDir,
-        Vec<u8>,
-        Vec<u8>,
-        Vec<u8>,
-        [u8; 33],
-        MakerOfferId,
-        u64,
-    ) {
+    fn active_announcements() -> ActiveAnnouncementsFixture {
         active_announcements_with_key(77)
     }
 
@@ -1835,6 +1851,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one scenario preserves correlated loser state across refresh, expiry, and reinsertion"
+    )]
     fn active_reinsert_after_lease_expiry_clears_a_correlated_local_loser_marker() {
         let (_directory, announcement, refreshed, reinserted, maker_identity, offer_id, now) =
             active_announcements();

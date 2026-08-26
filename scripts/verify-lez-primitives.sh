@@ -4,7 +4,8 @@ set -euo pipefail
 readonly LEZ_REPOSITORY="https://github.com/logos-blockchain/logos-execution-zone.git"
 readonly LEZ_COMMIT="cac4921581b37e85ae25e940f3a62412cd22308e"
 readonly LEZ_REF="${LEZ_REF:-${LEZ_COMMIT}}"
-readonly REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPOSITORY_ROOT
 
 workdir="$(mktemp -d -t lez-atomic-swaps-lez-verify.XXXXXX)"
 cleanup() {

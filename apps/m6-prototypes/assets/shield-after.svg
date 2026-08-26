@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 176" role="img" aria-labelledby="title">
-  <title id="title">Transparent Zcash output moving into a shielded wallet</title>
-  <rect x="16" y="18" width="208" height="140" rx="22" fill="#1c1b12" stroke="#f4d35e" stroke-opacity=".28"/>
-  <circle cx="58" cy="88" r="28" fill="#2d2918" stroke="#f4d35e" stroke-width="3"/><text x="58" y="97" fill="#f4d35e" font-family="system-ui,sans-serif" font-size="25" font-weight="800" text-anchor="middle">Z</text>
-  <path d="M91 88h42" stroke="#f4d35e" stroke-width="4" stroke-linecap="round" stroke-dasharray="6 8"/><path d="m126 80 9 8-9 8" fill="none" stroke="#f4d35e" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M173 45c16 11 25 13 25 13v30c0 21-10 34-25 43-15-9-25-22-25-43V58s9-2 25-13Z" fill="#14251c" stroke="#9cff57" stroke-width="3"/>
-  <path d="m162 87 8 8 15-18" fill="none" stroke="#9cff57" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M36 132h45" stroke="#f4d35e" stroke-opacity=".35" stroke-width="4" stroke-linecap="round"/><path d="M156 143h34" stroke="#9cff57" stroke-opacity=".35" stroke-width="4" stroke-linecap="round"/>
-</svg>

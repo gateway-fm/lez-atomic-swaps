@@ -5,6 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo_root="$PWD"
 
 risc0_version="3.0.5"
+risc0_rust_version="1.94.1"
 rzup_version="0.5.1"
 risc0_guest_builder_tag="r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"
 circuits_version="v0.4.2"
@@ -37,6 +38,10 @@ if [[ "$($rzup_bin --version)" != "rzup ${rzup_version}" ]]; then
   exit 1
 fi
 
+if ! RISC0_HOME="$risc0_home" "$rzup_bin" show | rg -Fq "* ${risc0_rust_version}"; then
+  RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
+    "$rzup_bin" install rust "$risc0_rust_version"
+fi
 if [[ ! -x "$r0vm_bin" ]]; then
   RISC0_HOME="$risc0_home" CARGO_HOME="$isolated_cargo_home" \
     "$rzup_bin" install r0vm "$risc0_version"

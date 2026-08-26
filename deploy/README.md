@@ -118,16 +118,12 @@ docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint no
   basecamp-ui /ui-tests/verify.mjs taker
 ```
 
-`prepare-ui-swap.sh` remains available as an optional M6 prepared-service
-exercise for Zcash. It verifies offer discovery, Maker Chat acceptance, and
-actor provisioning, but stops at `not_activated`; it is not the M3 BTC demo.
-
 ## Services
 
 | Service | Image | Notes |
 |---|---|---|
-| `bitcoin-core` | `images/bitcoin-core` | official Core 31.1 binaries (from the checksum/Guix-verified archive used by the repo's e2e flow), distroless, `txindex=1` + `txospenderindex=1` (the actors' lock observation needs the spender index), healthchecked, settlement-chain labels |
-| `bitcoin-init` | debian | one-shot datadir chown to the distroless uid |
+| `bitcoin-core` | `images/bitcoin-core` | official Core 31.1 binaries (from the checksum/Guix-verified archive used by the repo's e2e flow), digest-pinned Chainguard `glibc-dynamic`, `txindex=1` + `txospenderindex=1` (the actors' lock observation needs the spender index), healthchecked, settlement-chain labels |
+| `bitcoin-init` | debian | one-shot datadir chown to the nonroot runtime uid |
 | `btc-miner` | `images/btc-miner` | regtest coinbase miner over JSON-RPC, `MINE_INTERVAL` 120s so ambient blocks do not race swap confirmations |
 | `btc-explorer` | `images/btc-explorer` | btc-rpc-explorer 3.4.0, patched for an exhausted regtest halving schedule (post-era subsidy is 0; upstream returns `undefined` and 500s the homepage) |
 | `bedrock` | pinned multi-arch digest `91d6c5…` | LEZ v0.2 consensus node (exact pin from the repo's compose) |
@@ -165,7 +161,6 @@ All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 compose.yaml               the stack
 scripts/up.sh              one-command bring-up (+ UI verification)
 scripts/prepare-btc-m3-demo.sh publish/rerun completed LEZ/BTC M3 evidence
-scripts/prepare-ui-swap.sh optional ZEC Chat + actor-provisioning service lane
 scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
 scripts/btc-miner.sh       regtest mining loop
@@ -173,7 +168,6 @@ images/                    one dir per image (Dockerfile + payloads)
   basecamp-ui/assets/      portable Basecamp bundle, role trees, qt-mcp framework
   btc-demo-controller/     fixed-method owner-local bridge to the M3 runner
 assets/lez-source/         pinned v0.2.0 config templates (bedrock, sequencer, indexer)
-assets/taker-service.json  taker service startup config (no delivery sources)
 ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspector
   runtime/                   generated state (gitignored; wiped by --wipe)
 ```
@@ -193,7 +187,3 @@ signing keys, not persisted production wallets. The controller has no TCP
 listener and accepts only its fixed wallet-market and role-action methods over
 a mode-0600 owner socket. Its Docker socket access is local-demo infrastructure
 and is not a production boundary.
-The optional prepared ZEC
-lane is separate: it exercises real signed-offer verification, Maker Chat,
-receipt binding, and durable actor provisioning, then ends at `not_activated`
-without submitting funded chain effects.

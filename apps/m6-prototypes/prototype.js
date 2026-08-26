@@ -6,13 +6,12 @@ function toast(message) { const node = $("#toast"); if (!node) return; node.text
 function showView(id) { $$(".app-view").forEach((view) => view.classList.toggle("active", view.id === id)); $$("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === id)); const view = document.getElementById(id); const heading = view?.querySelector("h1"); if (heading) heading.focus?.({ preventScroll: true }); window.scrollTo({ top: 0, behavior: "auto" }); }
 $$('[data-view], [data-view-jump]').forEach((button) => button.addEventListener("click", () => showView(button.dataset.view || button.dataset.viewJump)));
 const makerSwaps = [
-  { id:"ZEC-7F2A", pair:"LEZ / ZEC", state:"Awaiting confirmation", status:"wait", progress:"1 / 2 confirmations", amount:"1,820 LEZ → 2.00 ZEC", action:"Claim" },
+  { id:"BTC-7F2A", pair:"LEZ / BTC", state:"Awaiting confirmation", status:"wait", progress:"1 / 2 confirmations", amount:"1,000 LEZ → 0.010 BTC", action:"Claim" },
   { id:"BTC-3BD1", pair:"LEZ / BTC", state:"Counterparty locked", status:"good", progress:"Ready to drive", amount:"7,700 LEZ → 0.005 BTC", action:"Drive" }
 ];
 const makerHistory = [
-  { id:"XMR-DA82", pair:"LEZ / XMR", route:"Maker sold LEZ", outcome:"Completed", amount:"4,240 LEZ", time:"Today 18:42" },
-  { id:"BTC-19C4", pair:"LEZ / BTC", route:"Maker sold BTC", outcome:"Refunded", amount:"0.004 BTC", time:"Yesterday 09:14" },
-  { id:"ZEC-51AF", pair:"LEZ / ZEC", route:"Maker sold LEZ", outcome:"Completed", amount:"910 LEZ", time:"Jul 31 16:07" }
+  { id:"BTC-DA82", pair:"LEZ / BTC", route:"Maker sold LEZ", outcome:"Completed", amount:"1,000 LEZ", time:"Today 18:42" },
+  { id:"BTC-19C4", pair:"LEZ / BTC", route:"Maker sold BTC", outcome:"Refunded", amount:"0.004 BTC", time:"Yesterday 09:14" }
 ];
 function swapCard(swap, active = false) { return `<button class="swap-card${active ? " active" : ""}" type="button" data-swap="${swap.id}"><header><strong>${swap.id}</strong><span class="tag ${swap.status === "good" ? "good-tag" : "wait-tag"}">${swap.state}</span></header><p>${swap.pair}</p><small>${swap.amount}</small></button>`; }
 function renderMaker() {
@@ -25,7 +24,7 @@ function renderHistory() { const body = $("#history-body"); if (!body) return; c
 function setupMaker() {
   renderMaker(); $("#history-search")?.addEventListener("input", renderHistory); $("#history-filter")?.addEventListener("change", renderHistory);
   $("#export-sample")?.addEventListener("click", () => toast("Sample export previewed in memory; no file was written."));
-  const updatePrice = () => { const pair = $("#maker-pair"); const unit = pair?.selectedOptions[0].text.replace("LEZ / ", "") || "asset"; const symbol = { Bitcoin:"BTC", Monero:"XMR", Zcash:"ZEC" }[unit] || unit; const foreign = Number($("#foreign-units")?.value || 0); const lez = Number($("#lez-units")?.value || 0); $("#maker-price-preview").textContent = `${foreign.toLocaleString()} ${symbol} = ${lez.toLocaleString()} LEZ`; };
+  const updatePrice = () => { const foreign = Number($("#foreign-units")?.value || 0); const lez = Number($("#lez-units")?.value || 0); $("#maker-price-preview").textContent = `${foreign.toLocaleString()} BTC = ${lez.toLocaleString()} LEZ`; };
   ["#maker-pair","#foreign-units","#lez-units"].forEach((selector) => $(selector)?.addEventListener("input", updatePrice));
   $("#maker-config-form")?.addEventListener("reset", () => setTimeout(updatePrice));
   $("#maker-config-form")?.addEventListener("submit", (event) => { event.preventDefault(); $("#maker-review-content").innerHTML = `<dl class="detail-list"><div><dt>Pair</dt><dd>${$("#maker-pair").selectedOptions[0].text}</dd></div><div><dt>Direction</dt><dd>${$("#maker-direction").selectedOptions[0].text}</dd></div><div><dt>Price</dt><dd>${$("#maker-price-preview").textContent}</dd></div></dl>`; $("#maker-review-dialog").showModal(); });
@@ -33,10 +32,8 @@ function setupMaker() {
   $("#maker-refresh")?.addEventListener("click", () => { makerSwaps[0].state = makerSwaps[0].state === "Awaiting confirmation" ? "Claim available" : "Awaiting confirmation"; makerSwaps[0].progress = makerSwaps[0].state === "Claim available" ? "2 / 2 confirmations" : "1 / 2 confirmations"; makerSwaps[0].status = makerSwaps[0].state === "Claim available" ? "good" : "wait"; renderMaker(); toast("Deterministic sample projection advanced; no RPC was opened."); });
 }
 const offers = [
-  { id:"offer-zec-7f2a", asset:"ZEC", icon:"Z", cls:"zec", pair:"LEZ / ZEC", receive:"2.00 ZEC", send:"1,820 LEZ", rate:"1 ZEC = 910 LEZ", direction:"receive-foreign", maker:"Maker 7E4C", expiry:"12:42" },
   { id:"offer-btc-3bd1", asset:"BTC", icon:"₿", cls:"btc", pair:"LEZ / BTC", receive:"0.005 BTC", send:"7,700 LEZ", rate:"1 BTC = 1,540,000 LEZ", direction:"receive-foreign", maker:"Maker A91D", expiry:"08:19" },
-  { id:"offer-xmr-da82", asset:"XMR", icon:"ɱ", cls:"xmr", pair:"LEZ / XMR", receive:"1.00 XMR", send:"4,240 LEZ", rate:"1 XMR = 4,240 LEZ", direction:"receive-foreign", maker:"Maker 18BF", expiry:"19:03" },
-  { id:"offer-lez-51af", asset:"ZEC", icon:"Z", cls:"zec", pair:"ZEC / LEZ", receive:"9,100 LEZ", send:"10.00 ZEC", rate:"1 ZEC = 910 LEZ", direction:"receive-lez", maker:"Maker C62A", expiry:"14:20" }
+  { id:"offer-lez-51af", asset:"BTC", icon:"₿", cls:"btc", pair:"BTC / LEZ", receive:"9,100 LEZ", send:"0.006 BTC", rate:"1 BTC = 1,516,667 LEZ", direction:"receive-lez", maker:"Maker C62A", expiry:"14:20" }
 ];
 let offerDirection = "receive-foreign"; let selectedOffer = offers[0]; let progressStep = 1; let terminalIntent = "claim";
 const timelineLabels = ["Acceptance receipt persisted", "First lock confirmed", "Counterparty lock finalized", "Terminal action available", "Terminal projection complete"];
@@ -52,7 +49,6 @@ function setupTaker() {
   $("#confirm-initiate")?.addEventListener("click", () => { progressStep = 1; renderTimeline(); showView("taker-progress"); toast("Private sample receipt created in browser memory; no negotiation occurred."); });
   $("#advance-progress")?.addEventListener("click", () => { progressStep = Math.min(3, progressStep + 1); renderTimeline(); $("#aside-confirmations").textContent = progressStep >= 2 ? "2 / 2 sample" : "1 / 2 sample"; toast("Deterministic sample advanced without chain or wallet access."); });
   ["claim","refund"].forEach((intent) => $(`#${intent}-action`)?.addEventListener("click", () => { terminalIntent = intent; $("#terminal-dialog-title").textContent = `${intent[0].toUpperCase() + intent.slice(1)} sample funds?`; $("#terminal-dialog-copy").textContent = `The production role would admit one generation-fenced ${intent} intent. This only changes browser sample state.`; $("#confirm-terminal").textContent = `Confirm sample ${intent}`; $("#terminal-dialog").showModal(); }));
-  $("#confirm-terminal")?.addEventListener("click", () => { progressStep = 4; $("#terminal-heading").textContent = terminalIntent === "claim" ? "Swap completed" : "Swap refunded"; $("#terminal-summary").textContent = `The sample ${terminalIntent} path reached its terminal projection. No funds moved.`; $("#shield-guidance").hidden = !(terminalIntent === "claim" && selectedOffer.asset === "ZEC" && selectedOffer.direction === "receive-foreign"); showView("taker-terminal"); toast(`Sample ${terminalIntent} completed; no chain command ran.`); });
-  $("#shield-checklist")?.addEventListener("click", (event) => { event.currentTarget.textContent = "Guidance reviewed in this sample"; event.currentTarget.disabled = true; });
+  $("#confirm-terminal")?.addEventListener("click", () => { progressStep = 4; $("#terminal-heading").textContent = terminalIntent === "claim" ? "Swap completed" : "Swap refunded"; $("#terminal-summary").textContent = `The sample ${terminalIntent} path reached its terminal projection. No funds moved.`; showView("taker-terminal"); toast(`Sample ${terminalIntent} completed; no chain command ran.`); });
 }
 const role = document.body.dataset.prototype; if (role === "maker") setupMaker(); if (role === "taker") setupTaker();

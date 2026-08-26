@@ -744,6 +744,7 @@ mod tests {
                 private_root: taker_root.clone(),
                 lez_owner_account: hex::encode([2; 32]),
                 shared_view_key_file: None,
+                agreement_key_file: None,
                 public_packet: taker_packet.clone(),
             },
         })
@@ -755,6 +756,7 @@ mod tests {
                 private_root: directory.path().join("maker-private"),
                 lez_owner_account: hex::encode([1; 32]),
                 shared_view_key_file: Some(taker_root.join("monero-view.key")),
+                agreement_key_file: None,
                 public_packet: maker_packet.clone(),
             },
         })

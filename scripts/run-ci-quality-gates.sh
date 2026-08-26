@@ -56,9 +56,26 @@ tar -xzf "$shellcheck_archive" -C "$tools_dir"
 shellcheck="${tools_dir}/shellcheck-v${shellcheck_version}/shellcheck"
 chmod 0555 "${tools_dir}/actionlint" "$hadolint" "$compose" "$shellcheck"
 
-mapfile -d '' shell_files < <(
-  git ls-files --cached --others --exclude-standard -z -- '*.sh'
-)
+is_release_scope_path() {
+  local path="$1"
+  [[ "$path" != *monero* \
+    && "$path" != *xmr* \
+    && "$path" != *zcash* \
+    && "$path" != *zebra* \
+    && "$path" != *zec* \
+    && "$path" != *m4-* \
+    && "$path" != *m5-* \
+    && "$path" != *m7-* \
+    && "$path" != */prepare-ui-swap.sh \
+    && "$path" != */milestone-7/* ]]
+}
+
+shell_files=()
+while IFS= read -r -d '' path; do
+  if is_release_scope_path "$path"; then
+    shell_files+=("$path")
+  fi
+done < <(git ls-files --cached --others --exclude-standard -z -- '*.sh')
 if (( ${#shell_files[@]} == 0 )); then
   echo "no shell files discovered" >&2
   exit 1
@@ -73,60 +90,11 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-m3-f7-token-fixture-contract.sh
 ./scripts/test-m3-private-recording-contract.sh
 ./scripts/test-m3-private-demo-video-contract.sh
+./scripts/test-v0-1-1-release-media-contract.sh
 ./scripts/check-m3-cryptographic-vectors.sh
-./scripts/test-m5-application-contract.sh
-./scripts/test-m6-zec-service-runner-contract.sh
-./scripts/test-m5-btc-application-contract.sh
-./scripts/test-m5-btc-runner-splice-contract.sh
-./scripts/test-m5-xmr-application-poc-contract.sh
-./scripts/test-m5-coordinator-fuzz-contract.sh
-./scripts/test-m5-service-lifecycle-contract.sh
-./scripts/test-m7-review-readiness-contract.sh
-./scripts/test-m7-hard-requirements-audit.sh
-./scripts/test-m7-submission-requirements-audit.sh
-./scripts/test-m7-xmr-sdk-facade-contract.sh
-./scripts/test-m7-xmr-accepted-concurrency-contract.sh
-./scripts/test-m7-route-health-contract.sh
-./scripts/test-m7-maker-all-pair-action-matrix.sh
-./scripts/test-m7-zec-taker-direction-process.sh
-./scripts/test-m7-zec-first-lock-refund-contract.sh
-./scripts/test-m7-zec-first-lock-refund-actual-certificate.sh
-./scripts/test-m7-zebra-reorg-evidence-contract.sh
-./scripts/test-m7-zebra-reorg-actual-certificate.sh
-./scripts/test-m7-zebra-application-reorg-contract.sh
-./scripts/test-m7-zebra-application-reorg-actual-certificate.sh
-./scripts/test-m7-tag17-actual-poc-contract.sh
-./scripts/test-m7-tag17-actual-certificate.sh
-./scripts/test-m7-taker-claim-actual-certificate.sh
-./scripts/test-m7-taker-claim-process-kill-contract.sh
-./scripts/test-m7-taker-claim-process-kill-actual-certificate.sh
-./scripts/test-m7-taker-claim-sweep-process-kill-contract.sh
-./scripts/test-m7-taker-claim-sweep-process-kill-actual-certificate.sh
-./scripts/test-m7-maker-tag15-process-kill-contract.sh
-./scripts/test-m7-maker-tag15-process-kill-actual-certificate.sh
-./scripts/test-m7-btc-accepted-concurrency-contract.sh
-./scripts/test-m7-btc-accepted-concurrency-actual-certificate.sh
-./scripts/test-m7-xmr-accepted-concurrency-contract.sh
-./scripts/test-m7-xmr-accepted-concurrency-actual-certificate.sh
-./scripts/test-m7-r1-taker-first-actual-baseline.sh
-./scripts/test-m7-r2-on-chain-only-actual-baseline.sh
-./scripts/test-m7-r6-timelock-rationale-contract.sh
-./scripts/test-m7-r7-bitcoin-refund-justification-contract.sh
-./scripts/test-m7-private-demo-video-contract.sh
-./scripts/test-m7-private-demo-video-actual-certificate.sh
-./scripts/test-m7-zec-accepted-process-kill-contract.sh
-./scripts/test-m7-zec-accepted-process-kill-actual-certificate.sh
-./scripts/test-m7-maker-refund-actual-certificate.sh
-./scripts/test-m7-maker-refund-process-kill-actual-certificate.sh
-./scripts/test-m7-r4-recovery-baseline-contract.sh
-./scripts/test-m7-f7-custom-token-refund-actual-certificate.sh
-./scripts/test-m7-joined-abandonment-actual-certificate.sh
-./scripts/test-m7-losing-tag16-actual-certificate.sh
-./scripts/test-m7-losing-tag17-actual-certificate.sh
-./scripts/test-m7-spel-idl-contract.sh
-./scripts/test-monero-stagenet-guide-contract.sh
-./scripts/test-zcash-testnet-guide-contract.sh
 ./scripts/test-bitcoin-testnet4-route-contract.sh
+node ./scripts/check-m6-prototype-contract.mjs
+node ./scripts/check-m6-basecamp-package-contract.mjs
 
 mapfile -d '' workflow_files < <(
   git ls-files --cached --others --exclude-standard -z -- \
@@ -138,9 +106,12 @@ if (( ${#workflow_files[@]} == 0 )); then
 fi
 "${tools_dir}/actionlint" -shellcheck "$shellcheck" "${workflow_files[@]}"
 
-mapfile -d '' repository_files < <(
-  git ls-files --cached --others --exclude-standard -z
-)
+repository_files=()
+while IFS= read -r -d '' path; do
+  if is_release_scope_path "$path"; then
+    repository_files+=("$path")
+  fi
+done < <(git ls-files --cached --others --exclude-standard -z)
 dockerfiles=()
 compose_files=()
 for path in "${repository_files[@]}"; do
@@ -167,20 +138,12 @@ for compose_file in "${compose_files[@]}"; do
   LEZ_V02_RUN_DIR=/tmp/lez-v02-ci-quality-run \
   LEZ_V02_UID=65532 \
   LEZ_V02_GID=65532 \
-  ZEBRA_IMAGE=lez-atomic-swaps-zebra:ci-quality \
   BITCOIN_CORE_IMAGE=lez-atomic-swaps-bitcoin-core:ci-quality \
   BITCOIN_CORE_CONFIG=/tmp/lez-bitcoin-core-ci-quality.conf \
   BITCOIN_CORE_NETWORK=lez-atomic-swaps-bitcoin-core-ci-quality-network \
-  MONERO_IMAGE=lez-atomic-swaps-monero:ci-quality \
-  MONERO_NETWORK=lez-atomic-swaps-monero-ci-quality-network \
-  MONERO_DAEMON_CONFIG=/tmp/lez-monero-ci-quality-daemon.conf \
-  MONERO_FUNDING_WALLET_CONFIG=/tmp/lez-monero-ci-quality-funding.conf \
-  MONERO_MAKER_WALLET_CONFIG=/tmp/lez-monero-ci-quality-maker.conf \
-  MONERO_TAKER_WALLET_CONFIG=/tmp/lez-monero-ci-quality-taker.conf \
-  MONERO_DAEMON_HOST_PORT=39001 \
-  MONERO_FUNDING_WALLET_HOST_PORT=39002 \
-  MONERO_MAKER_WALLET_HOST_PORT=39003 \
-  MONERO_TAKER_WALLET_HOST_PORT=39004 \
+  BTC_RPC_PASSWORD="ci-quality-${RANDOM}-${RANDOM}" \
+  LEZ_M3_RUNNER_REPO=/tmp/lez-ci-quality-runner-repo \
+  LEZ_M3_RUNNER_REPO_IN_CONTAINER=/tmp/lez-ci-quality-runner-repo \
     "$compose" --project-name "lez-ci-quality-${RANDOM}" \
       --file "$compose_file" config --quiet
 done

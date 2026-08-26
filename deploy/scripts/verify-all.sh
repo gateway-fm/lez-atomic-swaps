@@ -9,11 +9,12 @@
 # It starts no swaps and submits no chain effects. The market check creates and
 # withdraws one uniquely named offer; the controller retains that audit row.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit
 
 env_file=runtime/runtime.env
 [[ -f "$env_file" ]] || { echo "missing $env_file; run ./scripts/up.sh first" >&2; exit 1; }
 set -a
+# shellcheck source=/dev/null
 source "$env_file"
 set +a
 compose=(docker compose --env-file "$env_file")

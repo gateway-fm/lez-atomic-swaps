@@ -420,7 +420,7 @@ fn service_packaging_uses_locked_sources_and_a_digest_pinned_runtime() {
     );
     assert_eq!(
         packaging.runtime_base_reference,
-        "gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7"
+        "cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b"
     );
     assert_eq!(packaging.r0vm_version, "3.0.5");
     assert_eq!(
@@ -450,7 +450,7 @@ fn service_packaging_uses_locked_sources_and_a_digest_pinned_runtime() {
     );
     assert_eq!(
         packaging.runtime_smoke_status,
-        "distroless_services_executed_isolated_service_readiness_green"
+        "minimal_runtime_base_digest_pinned_ci_service_smoke_required"
     );
     assert_eq!(
         packaging.cli_smoke_security,

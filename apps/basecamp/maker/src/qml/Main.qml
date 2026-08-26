@@ -1092,6 +1092,7 @@ Item {
                                 onPicked: root.showOpen = !root.showOpen
                             }
                             FilterTab {
+                                objectName: "makerHistory"
                                 label: "DONE"; count: root.marketCount("done")
                                 active: root.showDone
                                 onPicked: {
@@ -1467,7 +1468,7 @@ Item {
                                 Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 7
                                 FieldLabel { text: "FOREIGN ASSET" }
                                 FieldLabel { text: "TAKER DIRECTION" }
-                                LuxeCombo { id: pair; objectName: "makerPair"; model: ["Zcash", "Bitcoin", "Monero"]; Layout.fillWidth: true }
+                                LuxeCombo { id: pair; objectName: "makerPair"; model: ["Bitcoin"]; Layout.fillWidth: true }
                                 LuxeCombo { id: direction; objectName: "makerDirection"; model: ["TakerSellsLez", "TakerSellsForeign"]; Layout.fillWidth: true }
                                 FieldLabel { text: "MINIMUM FOREIGN UNITS" }
                                 FieldLabel { text: "MAXIMUM FOREIGN UNITS" }

@@ -85,13 +85,20 @@ for function_name in process_matches_registry process_group_matches_registry \
 done
 # shellcheck source=/dev/null
 source "$extracted"
+# This contract exercises only fresh, per-run node startup. Attach-mode
+# behavior has its own runner contracts and would bypass the child lifecycle.
+# shellcheck disable=SC2034 # consumed by the extracted start_actual_nodes function
+readonly attach_mode=0
 
 start_source="$(sed -n '/^start_actual_nodes() {$/,/^}$/p' "$runner")"
 [[ -n "$start_source" ]] || fail "runner is missing start_actual_nodes"
 bitcoin_line="$(rg -n -F '"$bitcoin_service_driver"' <<<"$start_source" | cut -d: -f1)"
 lez_line="$(rg -n -F '"$lez_service_driver"' <<<"$start_source" | cut -d: -f1)"
 wait_line="$(rg -n -F 'wait_for_node_child' <<<"$start_source" | cut -d: -f1)"
-reconcile_line="$(rg -n -F 'reconcile_node_resource_inventories' <<<"$start_source" | cut -d: -f1)"
+# Attach mode reconciles without launching children; the final occurrence is
+# the fresh-start reconciliation that must follow the exact child wait.
+reconcile_line="$(rg -n -F 'reconcile_node_resource_inventories' \
+  <<<"$start_source" | cut -d: -f1 | tail -n 1)"
 [[ "$bitcoin_line" =~ ^[0-9]+$ && "$lez_line" =~ ^[0-9]+$ &&
    "$wait_line" =~ ^[0-9]+$ && "$reconcile_line" =~ ^[0-9]+$ ]] ||
   fail "node startup lacks fixed child, wait, or reconciliation calls"
@@ -154,7 +161,7 @@ if [[ "$name" == owned-INT || "$name" == owned-TERM ]]; then
   bash -c 'trap "" TERM; printf "%s\n" "$$" >"$1"; while :; do sleep 0.05; done' \
     _ "${root}/${name}.grandchild-pid" &
 fi
-while [[ ! -f "${root}/${name}.release" ]]; do sleep 0.01; done
+IFS= read -r _ <"${root}/${name}.release" || true
 printf 'completed\n' >"${root}/${name}.completed"
 exit "$status"
 FAKE_CHILD
@@ -188,6 +195,7 @@ printf 'started\n' >"${state}.started"
 if [[ "$role" == bitcoin && -f "${root}/${base}.signal" ]]; then
   signal_name="$(<"${root}/${base}.signal")"
   kill -s "$signal_name" "$PPID"
+  printf 'sent\n' >"${state}.signal-sent"
   while :; do sleep 0.05; done
 fi
 for _ in {1..1000}; do
@@ -260,10 +268,16 @@ service_launcher_hashes_stable ||
 
 start_fake_child() {
   local name="$1" status="$2" output_variable="$3" pid
+  mkfifo -m 0600 "${test_root}/${name}.release"
   setsid "$fake_child_script" "$test_root" "$name" "$status" &
   pid=$!
   test_process_groups+=("$pid")
   printf -v "$output_variable" '%s' "$pid"
+}
+
+release_fake_child() {
+  local name="$1"
+  printf 'release\n' >"${test_root}/${name}.release"
 }
 
 untrack_test_process_group() {
@@ -299,7 +313,7 @@ jq -e --argjson expected_parent "$BASHPID" '
 ' "$process_registry" >/dev/null ||
   fail "registrar did not bind the direct child to its owning shell and exact session"
 bitcoin_status=0
-touch "${test_root}/success-lez.release"
+release_fake_child success-lez
 lez_status=""
 wait_for_node_child "$lez_pid" lez_status || fail "both-success exact LEZ wait failed"
 untrack_test_process_group "$lez_pid"
@@ -313,7 +327,7 @@ register_owned_process node-lez startup "$lez_pid" "$test_bash_executable" true 
   fail "could not register the successful LEZ sibling"
 bitcoin_status=7
 kill -0 "$lez_pid" 2>/dev/null || fail "foreground Core failure killed its LEZ sibling"
-touch "${test_root}/sibling-lez.release"
+release_fake_child sibling-lez
 lez_status=""
 wait_for_node_child "$lez_pid" lez_status || fail "Core-failure path lost successful LEZ wait"
 untrack_test_process_group "$lez_pid"
@@ -327,7 +341,7 @@ wait_for_file "${test_root}/failed-lez.started"
 register_owned_process node-lez startup "$lez_pid" "$test_bash_executable" true true ||
   fail "could not register the failing LEZ child"
 bitcoin_status=0
-touch "${test_root}/failed-lez.release"
+release_fake_child failed-lez
 lez_status=""
 if wait_for_node_child "$lez_pid" lez_status; then fail "failing LEZ returned success"; fi
 untrack_test_process_group "$lez_pid"
@@ -339,7 +353,7 @@ wait_for_file "${test_root}/both-fail-lez.started"
 register_owned_process node-lez startup "$lez_pid" "$test_bash_executable" true true ||
   fail "could not register the both-fail LEZ child"
 bitcoin_status=12
-touch "${test_root}/both-fail-lez.release"
+release_fake_child both-fail-lez
 lez_status=""
 if wait_for_node_child "$lez_pid" lez_status; then fail "both-fail LEZ returned success"; fi
 untrack_test_process_group "$lez_pid"
@@ -357,7 +371,7 @@ stop_owned_processes || fail "exact process-group cleanup failed"
 untrack_test_process_group "$owned_pid"
 wait_for_file "${test_root}/owned-stop.terminated"
 kill -0 "$foreign_pid" 2>/dev/null || fail "foreign process-group sentinel was killed"
-touch "${test_root}/foreign-stop.release"
+release_fake_child foreign-stop
 wait "$foreign_pid" || true
 untrack_test_process_group "$foreign_pid"
 
@@ -370,7 +384,7 @@ jq -c '.start_ticks = "0"' "$process_registry" >"${process_registry}.mutated"
 mv "${process_registry}.mutated" "$process_registry"
 stop_owned_processes || fail "mismatched registry cleanup returned failure"
 kill -0 "$mutated_pid" 2>/dev/null || fail "mismatched process identity was signalled"
-touch "${test_root}/mutated-identity.release"
+release_fake_child mutated-identity
 wait "$mutated_pid" || true
 untrack_test_process_group "$mutated_pid"
 
@@ -400,6 +414,7 @@ cleanup_supervisor() {
 trap cleanup_supervisor EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+mkfifo -m 0600 "${root}/owned-${signal_name}.release"
 setsid "$fake_child" "$root" "owned-${signal_name}" 0 &
 child_pid=$!
 register_owned_process node-lez startup "$child_pid" "$bash_executable" true true
@@ -441,7 +456,7 @@ for signal_name in INT TERM; do
   kill -0 "$signal_foreign_pid" 2>/dev/null ||
     fail "${signal_name} supervisor killed the foreign sentinel"
 done
-touch "${test_root}/signal-foreign.release"
+release_fake_child signal-foreign
 wait "$signal_foreign_pid" || true
 untrack_test_process_group "$signal_foreign_pid"
 
@@ -988,9 +1003,22 @@ run_behavior_registration_failure_case() {
     printf '%s\n' "$signal_name" >"$test_root/$run_id.signal"
     : >"$test_root/$run_id.spawn-grandchild"
   fi
-  rm -- "$process_registry"
-  mkdir -m 0700 "$process_registry"
   if (
+    jq() {
+      local arguments=" $* "
+      if [[ "${1:-}" == -nc &&
+            "$arguments" == *' --arg role node-bitcoin '* ]]; then
+        if [[ "$signal_name" != NONE ]]; then
+          for _ in {1..500}; do
+            [[ -f "$test_root/service-$bitcoin_run_id.signal-sent" ]] && break
+            sleep 0.01
+          done
+          [[ -f "$test_root/service-$bitcoin_run_id.signal-sent" ]] || return 99
+        fi
+        return 1
+      fi
+      command jq "$@"
+    }
     trap cleanup EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM

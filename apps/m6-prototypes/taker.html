@@ -30,7 +30,7 @@
         <main id="main" class="view-stack">
           <section id="taker-browse" class="app-view active" aria-labelledby="browse-heading">
             <div class="section-intro browse-intro"><div><div class="eyebrow">Signed offer projection</div><h1 id="browse-heading">Choose what you want to receive</h1><p>Compare explicit sample terms before any role state is created.</p></div></div>
-            <div class="offer-toolbar"><div class="segmented compact" id="offer-direction"><button class="active" type="button" data-direction="receive-foreign">Receive BTC / XMR / ZEC</button><button type="button" data-direction="receive-lez">Receive LEZ</button></div><label class="search-field"><span aria-hidden="true">⌕</span><input id="offer-search" type="search" placeholder="Filter sample offers" aria-label="Filter offers"></label></div>
+            <div class="offer-toolbar"><div class="segmented compact" id="offer-direction"><button class="active" type="button" data-direction="receive-foreign">Receive BTC</button><button type="button" data-direction="receive-lez">Receive LEZ</button></div><label class="search-field"><span aria-hidden="true">⌕</span><input id="offer-search" type="search" placeholder="Filter sample BTC offers" aria-label="Filter offers"></label></div>
             <div class="offer-grid" id="offer-grid"></div>
             <div class="notice info"><span class="notice-icon">i</span><div><strong>Sample discovery only</strong><br>Production discovery will authenticate the Maker identity and exact signed offer through a key-pinned Delivery boundary.</div></div>
           </section>
@@ -45,30 +45,26 @@
           </section>
 
           <section id="taker-progress" class="app-view" aria-labelledby="progress-heading">
-            <div class="section-intro"><div><div class="eyebrow">Receipt-bound progress</div><h1 id="progress-heading">Swap <span id="progress-short-id">ZEC-7F2A</span></h1><p id="progress-description">Waiting for the sample first-lock confirmation.</p></div><span id="progress-status" class="tag wait-tag">In progress</span></div>
+            <div class="section-intro"><div><div class="eyebrow">Receipt-bound progress</div><h1 id="progress-heading">Swap <span id="progress-short-id">BTC-3BD1</span></h1><p id="progress-description">Waiting for the sample first-lock confirmation.</p></div><span id="progress-status" class="tag wait-tag">In progress</span></div>
             <div class="content-grid wide-left">
               <article class="panel progress-panel">
-                <div class="swap-hero"><div class="asset-pair"><span class="asset-icon lez">L</span><span class="pair-line">⇄</span><span id="progress-asset-icon" class="asset-icon zec">Z</span></div><div><small>You send</small><strong>1,820 LEZ</strong></div><div><small>You receive</small><strong id="progress-receive">2.00 ZEC</strong></div></div>
+                <div class="swap-hero"><div class="asset-pair"><span class="asset-icon lez">L</span><span class="pair-line">⇄</span><span id="progress-asset-icon" class="asset-icon btc">₿</span></div><div><small>You send</small><strong>7,700 LEZ</strong></div><div><small>You receive</small><strong id="progress-receive">0.005 BTC</strong></div></div>
                 <ol class="timeline" id="swap-timeline"></ol>
                 <div id="terminal-actions" class="terminal-actions"><div><strong>Terminal action available in this sample</strong><small>Choose one mutually exclusive role action.</small></div><button id="refund-action" class="button danger-secondary" type="button">Refund sample</button><button id="claim-action" class="button primary" type="button">Claim sample funds</button></div>
                 <button id="advance-progress" class="button secondary full" type="button">Advance deterministic sample</button>
               </article>
-              <aside class="panel context-panel" id="progress-aside"><div class="eyebrow">Application boundary</div><h2>Progress is a secret-free projection.</h2><p>Closing this browser would not control a real swap. In production, the private receipt and role state remain authoritative.</p><dl class="detail-list"><div><dt>Pair</dt><dd id="aside-pair">LEZ / ZEC</dd></div><div><dt>Direction</dt><dd>You receive ZEC</dd></div><div><dt>Confirmations</dt><dd id="aside-confirmations">1 / 2 sample</dd></div><div><dt>Recovery</dt><dd>Sample window 38 min</dd></div></dl></aside>
+              <aside class="panel context-panel" id="progress-aside"><div class="eyebrow">Application boundary</div><h2>Progress is a secret-free projection.</h2><p>Closing this browser would not control a real swap. In production, the private receipt and role state remain authoritative.</p><dl class="detail-list"><div><dt>Pair</dt><dd id="aside-pair">LEZ / BTC</dd></div><div><dt>Direction</dt><dd>You receive BTC</dd></div><div><dt>Confirmations</dt><dd id="aside-confirmations">1 / 2 sample</dd></div><div><dt>Recovery</dt><dd>Sample window 38 min</dd></div></dl></aside>
             </div>
           </section>
 
           <section id="taker-terminal" class="app-view terminal-view" aria-labelledby="terminal-heading">
             <div class="terminal-mark">✓</div><div class="eyebrow">Sample terminal state</div><h1 id="terminal-heading">Swap completed</h1><p id="terminal-summary">The sample claim path reached its terminal projection. No funds moved.</p>
-            <article id="shield-guidance" class="shield-card">
-              <img src="assets/shield-after.svg" alt="Transparent ZEC moving into a shielded wallet" width="190" height="150">
-              <div><div class="eyebrow">ZEC privacy follow-up</div><h2>Shield after the swap</h2><p><strong>Zcash transparent-pool amounts, scripts, addresses, and linkage are public.</strong> Shielding is a separate wallet action and is not a privacy property of the atomic swap.</p><ol><li>Wait for your wallet to recognize the received transparent output.</li><li>Choose a shielded address you control in a supported Zcash wallet.</li><li>Review wallet fees and confirmations, then submit the separate shielding transaction.</li></ol><button id="shield-checklist" class="button secondary" type="button">Mark guidance reviewed</button></div>
-            </article>
             <div class="terminal-buttons"><button class="button primary" type="button" data-view-jump="taker-browse">Browse another sample offer</button><button class="button ghost" type="button" data-view-jump="taker-receipts">View sample receipt</button></div>
           </section>
 
           <section id="taker-receipts" class="app-view" aria-labelledby="receipts-heading">
             <div class="section-intro"><div><div class="eyebrow">Local projection</div><h1 id="receipts-heading">Sample receipts</h1><p>These cards demonstrate safe display fields, not downloadable authority.</p></div></div>
-            <div class="receipt-grid"><article class="receipt-card"><span class="asset-icon zec">Z</span><div><small>Completed sample</small><h2>ZEC-7F2A</h2><p>1,820 LEZ → 2.00 ZEC</p></div><span class="tag good-tag">Completed</span></article><article class="receipt-card"><span class="asset-icon btc">₿</span><div><small>Refunded sample</small><h2>BTC-19C4</h2><p>0.004 BTC → 6,100 LEZ</p></div><span class="tag neutral-tag">Refunded</span></article></div>
+            <div class="receipt-grid"><article class="receipt-card"><span class="asset-icon btc">₿</span><div><small>Completed sample</small><h2>BTC-DA82</h2><p>1,000 LEZ → 0.010 BTC</p></div><span class="tag good-tag">Completed</span></article><article class="receipt-card"><span class="asset-icon btc">₿</span><div><small>Refunded sample</small><h2>BTC-19C4</h2><p>0.004 BTC → 6,100 LEZ</p></div><span class="tag neutral-tag">Refunded</span></article></div>
             <div class="notice warning"><span class="notice-icon">P</span><div><strong>Prototype receipt boundary</strong><br>Cards omit private paths, keys, evidence payloads, and effect authority. They are deterministic display samples only.</div></div>
           </section>
         </main>

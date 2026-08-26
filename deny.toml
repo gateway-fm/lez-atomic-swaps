@@ -1,3 +1,18 @@
+[graph]
+# The public v0.1.1 baseline certifies M1/M3/M6 and ships only the BTC
+# corridor. Future external-chain workspace members are intentionally excluded
+# as graph roots and dependencies until their milestone releases restore them.
+targets = ["x86_64-unknown-linux-gnu"]
+exclude = [
+    "lez-xmr-monero-adapter",
+    "lez-xmr-release-authority",
+    "xmr-reference-actor",
+    "lez-xmr-swap-sdk",
+    "lez-zebra-node-adapter",
+    "zec-reference-actor",
+    "lez-zec-swap-sdk",
+]
+
 [advisories]
 unmaintained = "workspace"
 yanked = "deny"

@@ -2020,6 +2020,81 @@ fn register_pair_and_price_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::
     Ok(())
 }
 
+fn offer_announcement_snapshot(
+    context: &MakerRpc,
+    request: &LogosOfferAnnouncementSnapshotRequestV1,
+) -> RpcResult<LogosOfferAnnouncementSnapshotV1> {
+    if request.schema_version != 1 {
+        return Err(invalid_request("unsupported offer announcement snapshot"));
+    }
+    let delivery = context
+        .delivery
+        .as_ref()
+        .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker Delivery signer is unavailable"))?;
+    let now_unix_seconds = if let Some(clock) = context.offer_snapshot_clock.as_ref() {
+        clock()?
+    } else {
+        trusted_now_unix_seconds()?
+    };
+    let mut records = context
+        .store
+        .lock()
+        .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
+        .list_retryable_maker_offers(now_unix_seconds)
+        .map_err(application_store_error)?;
+    records.sort_by(|left, right| left.offer().id().as_str().cmp(right.offer().id().as_str()));
+    let records = records
+        .iter()
+        .filter(|record| {
+            (record.status() != MakerOfferStatus::Active
+                || record.offer().created_at_unix_seconds() <= now_unix_seconds)
+                && request
+                    .after_offer_id
+                    .as_ref()
+                    .is_none_or(|cursor| record.offer().id().as_str() > cursor.as_str())
+        })
+        .collect::<Vec<_>>();
+    let mut announcements_base64 = Vec::new();
+    let mut payload_bytes = 0_usize;
+    for record in records
+        .iter()
+        .take(MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES)
+    {
+        let encoded = delivery
+            .sign_logos_offer_announcement(record, &request.maker_chat_address, now_unix_seconds)
+            .map_err(|error| delivery_error(&error))?;
+        let announcement = BASE64_STANDARD.encode(encoded).into_boxed_str();
+        let next_payload_bytes = payload_bytes
+            .checked_add(announcement.len())
+            .and_then(|bytes| bytes.checked_add(3))
+            .ok_or_else(|| rpc_error(RESULT_LIMIT_EXCEEDED, "offer snapshot page exceeds limit"))?;
+        if next_payload_bytes > MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES {
+            if announcements_base64.is_empty() {
+                return Err(rpc_error(
+                    RESULT_LIMIT_EXCEEDED,
+                    "one signed offer announcement exceeds the owner RPC page budget",
+                ));
+            }
+            break;
+        }
+        payload_bytes = next_payload_bytes;
+        announcements_base64.push(announcement);
+    }
+    let next_after_offer_id = if announcements_base64.len() < records.len() {
+        let last_index = announcements_base64.len().saturating_sub(1);
+        Some(records[last_index].offer().id().clone())
+    } else {
+        None
+    };
+    Ok(LogosOfferAnnouncementSnapshotV1 {
+        schema_version: 1,
+        content_topic: LOGOS_OFFER_CONTENT_TOPIC_V1.into(),
+        rebroadcast_after_seconds: LOGOS_OFFER_REBROADCAST_SECONDS_V1,
+        announcements_base64,
+        next_after_offer_id,
+    })
+}
+
 fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<MakerOfferCommit>, _>(
         "maker_offer_publish",
@@ -2076,82 +2151,7 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
         "maker_offer_announcement_snapshot_v1",
         |params, context, _| {
             let request: LogosOfferAnnouncementSnapshotRequestV1 = params.one()?;
-            if request.schema_version != 1 {
-                return Err(invalid_request("unsupported offer announcement snapshot"));
-            }
-            let delivery = context
-                .delivery
-                .as_ref()
-                .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker Delivery signer is unavailable"))?;
-            let now_unix_seconds = if let Some(clock) = context.offer_snapshot_clock.as_ref() {
-                clock()?
-            } else {
-                trusted_now_unix_seconds()?
-            };
-            let mut records = context
-                .store
-                .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
-                .list_retryable_maker_offers(now_unix_seconds)
-                .map_err(application_store_error)?;
-            records
-                .sort_by(|left, right| left.offer().id().as_str().cmp(right.offer().id().as_str()));
-            let records = records
-                .iter()
-                .filter(|record| {
-                    (record.status() != MakerOfferStatus::Active
-                        || record.offer().created_at_unix_seconds() <= now_unix_seconds)
-                        && request
-                            .after_offer_id
-                            .as_ref()
-                            .is_none_or(|cursor| record.offer().id().as_str() > cursor.as_str())
-                })
-                .collect::<Vec<_>>();
-            let mut announcements_base64 = Vec::new();
-            let mut payload_bytes = 0_usize;
-            for record in records
-                .iter()
-                .take(MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES)
-            {
-                let encoded = delivery
-                    .sign_logos_offer_announcement(
-                        record,
-                        &request.maker_chat_address,
-                        now_unix_seconds,
-                    )
-                    .map_err(|error| delivery_error(&error))?;
-                let announcement = BASE64_STANDARD.encode(encoded).into_boxed_str();
-                let next_payload_bytes = payload_bytes
-                    .checked_add(announcement.len())
-                    .and_then(|bytes| bytes.checked_add(3))
-                    .ok_or_else(|| {
-                        rpc_error(RESULT_LIMIT_EXCEEDED, "offer snapshot page exceeds limit")
-                    })?;
-                if next_payload_bytes > MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES {
-                    if announcements_base64.is_empty() {
-                        return Err(rpc_error(
-                            RESULT_LIMIT_EXCEEDED,
-                            "one signed offer announcement exceeds the owner RPC page budget",
-                        ));
-                    }
-                    break;
-                }
-                payload_bytes = next_payload_bytes;
-                announcements_base64.push(announcement);
-            }
-            let next_after_offer_id = if announcements_base64.len() < records.len() {
-                let last_index = announcements_base64.len().saturating_sub(1);
-                Some(records[last_index].offer().id().clone())
-            } else {
-                None
-            };
-            Ok(LogosOfferAnnouncementSnapshotV1 {
-                schema_version: 1,
-                content_topic: LOGOS_OFFER_CONTENT_TOPIC_V1.into(),
-                rebroadcast_after_seconds: LOGOS_OFFER_REBROADCAST_SECONDS_V1,
-                announcements_base64,
-                next_after_offer_id,
-            })
+            offer_announcement_snapshot(context.as_ref(), &request)
         },
     )?;
     module.register_blocking_method::<RpcResult<MakerOfferCommit>, _>(

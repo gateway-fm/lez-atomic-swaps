@@ -41,6 +41,13 @@ required_compose_terms=(
   'expose: ["18080"]'
   'expose: ["3040"]'
   'expose: ["8779"]'
+  'target: 18080'
+  'target: 3040'
+  'target: 8779'
+  'published: "0"'
+  'host_ip: 127.0.0.1'
+  'protocol: tcp'
+  'mode: host'
   'org.logos-co.atomic-swaps.run'
   'user: "${LEZ_V02_UID:?LEZ_V02_UID is required}:${LEZ_V02_GID:?LEZ_V02_GID is required}"'
   'read_only: true'
@@ -66,8 +73,13 @@ if rg -q '^\s*container_name:' "$compose_file"; then
   exit 1
 fi
 
-if rg -q '^\s*ports:' "$compose_file"; then
-  echo "Compose host publication is forbidden; the runner owns effective ephemeral bindings" >&2
+if [[ "$(rg -c '^    ports:' "$compose_file")" != 3 ]]; then
+  echo "exactly three LEZ RPC services must use dynamic loopback publication" >&2
+  exit 1
+fi
+
+if rg -q 'published: "?[1-9][0-9]*"?' "$compose_file"; then
+  echo "fixed LEZ host RPC ports are forbidden" >&2
   exit 1
 fi
 
@@ -77,7 +89,7 @@ if rg -q '^\s*cap_add:' "$compose_file"; then
 fi
 
 required_dockerfile_terms=(
-  'gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7'
+  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
   'COPY --chmod=0555 sequencer_service /usr/local/bin/sequencer_service'
   'COPY --chmod=0555 indexer_service /usr/local/bin/indexer_service'
   'COPY --chmod=0555 r0vm /usr/local/bin/r0vm'
@@ -106,9 +118,10 @@ required_runner_terms=(
   'Bedrock cryptarchia did not advance after readiness within 60 seconds'
   'docker network create'
   '--opt com.docker.network.bridge.enable_ip_masquerade=false'
-  '--publish "127.0.0.1::18080"'
-  '--publish "127.0.0.1::3040"'
-  '--publish "127.0.0.1::8779"'
+  'docker compose --project-name "$project" --file "$compose_file" create'
+  'containers[bedrock]="$(docker ps -aq --filter "name=${project}-bedrock" | head -1)"'
+  'containers[indexer]="$(docker ps -aq --filter "name=${project}-indexer" | head -1)"'
+  'containers[sequencer]="$(docker ps -aq --filter "name=${project}-sequencer" | head -1)"'
   'docker container rm --force "$container_id"'
   'docker network rm "$network"'
   '/cryptarchia/info'

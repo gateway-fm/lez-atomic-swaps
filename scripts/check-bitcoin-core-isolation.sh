@@ -6,12 +6,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 readonly compose_file="tests/e2e/bitcoin-core/compose.yml"
 readonly dockerfile="tests/e2e/bitcoin-core/Dockerfile"
 readonly provenance_file="tests/e2e/bitcoin-core/provenance.env"
+readonly aarch64_provenance_file="tests/e2e/bitcoin-core/provenance-aarch64.env"
 readonly verifier_file="scripts/verify-bitcoin-core-release.sh"
 readonly runner_file="scripts/run-bitcoin-core-e2e.sh"
 readonly service_mode_policy="scripts/test-bitcoin-core-service-mode-policy.sh"
 
 for required_file in \
-  "$compose_file" "$dockerfile" "$provenance_file" "$verifier_file" "$runner_file" \
+  "$compose_file" "$dockerfile" "$provenance_file" "$aarch64_provenance_file" \
+  "$verifier_file" "$runner_file" \
   "$service_mode_policy"; do
   if [[ ! -f "$required_file" ]]; then
     echo "missing isolated Bitcoin Core fixture: ${required_file}" >&2
@@ -89,11 +91,12 @@ if rg -q '^\s*cap_add:' "$compose_file"; then
 fi
 
 required_dockerfile_terms=(
-  'gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7'
+  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
   'org.opencontainers.image.source="https://github.com/bitcoin/bitcoin"'
   'org.opencontainers.image.version="31.1"'
   'org.opencontainers.image.revision="9be056a8a72b624dae9623b2f7bded92c2a21c91"'
-  'org.logos-co.atomic-swaps.release-archive-sha256="b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e"'
+  'ARG BITCOIN_CORE_ARCHIVE_SHA256'
+  'org.logos-co.atomic-swaps.release-archive-sha256="${BITCOIN_CORE_ARCHIVE_SHA256}"'
   'org.opencontainers.image.licenses="MIT"'
   'org.logos-co.atomic-swaps.guix-sigs-commit="11fb5156a16f27d71b61d18e23c5ffeb29cc6ee1"'
   'COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind'
@@ -117,15 +120,51 @@ required_provenance_terms=(
   'BITCOIN_CORE_ARCHIVE_NAME=bitcoin-31.1-x86_64-linux-gnu.tar.gz'
   'BITCOIN_CORE_ARCHIVE_URL=https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-x86_64-linux-gnu.tar.gz'
   'BITCOIN_CORE_ARCHIVE_SHA256=b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e'
+  'BITCOIN_CORE_ARCHIVE_SIZE=90293352'
   'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
   'BITCOIN_CORE_GUIX_SIGS_COMMIT=11fb5156a16f27d71b61d18e23c5ffeb29cc6ee1'
   'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
-  'BITCOIN_CORE_RUNTIME_BASE=gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7'
+  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
 )
 
 for term in "${required_provenance_terms[@]}"; do
   if ! rg -Fxq "$term" "$provenance_file"; then
     echo "Bitcoin Core provenance contract is missing exact pin: ${term}" >&2
+    exit 1
+  fi
+done
+
+required_aarch64_provenance_terms=(
+  'BITCOIN_CORE_VERSION=31.1'
+  'BITCOIN_CORE_TAG=v31.1'
+  'BITCOIN_CORE_SOURCE_URL=https://github.com/bitcoin/bitcoin.git'
+  'BITCOIN_CORE_SOURCE_COMMIT=9be056a8a72b624dae9623b2f7bded92c2a21c91'
+  'BITCOIN_CORE_ARCHIVE_NAME=bitcoin-31.1-aarch64-linux-gnu.tar.gz'
+  'BITCOIN_CORE_ARCHIVE_URL=https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-aarch64-linux-gnu.tar.gz'
+  'BITCOIN_CORE_ARCHIVE_SHA256=dcf1873f2208ba4f962f3398d47e154c39c0084be8f4553e05c940d0ace3d004'
+  'BITCOIN_CORE_ARCHIVE_SIZE=85851107'
+  'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
+  'BITCOIN_CORE_GUIX_SIGS_COMMIT=11fb5156a16f27d71b61d18e23c5ffeb29cc6ee1'
+  'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
+  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+)
+
+for term in "${required_aarch64_provenance_terms[@]}"; do
+  if ! rg -Fxq "$term" "$aarch64_provenance_file"; then
+    echo "Bitcoin Core ARM64 provenance contract is missing exact pin: ${term}" >&2
+    exit 1
+  fi
+done
+
+required_runner_architecture_terms=(
+  'x86_64) provenance_file="tests/e2e/bitcoin-core/provenance.env"'
+  'arm64 | aarch64) provenance_file="tests/e2e/bitcoin-core/provenance-aarch64.env"'
+  'export BITCOIN_CORE_PROVENANCE_FILE="$provenance_file"'
+  '--build-arg "BITCOIN_CORE_ARCHIVE_SHA256=${BITCOIN_CORE_ARCHIVE_SHA256}"'
+)
+for term in "${required_runner_architecture_terms[@]}"; do
+  if ! rg -Fq -- "$term" "$runner_file"; then
+    echo "Bitcoin Core runner is missing architecture/provenance binding: ${term}" >&2
     exit 1
   fi
 done
@@ -164,19 +203,15 @@ done
 required_runner_runtime_terms=(
   "--label 'org.logos-co.atomic-swaps.component=bitcoin-core-image'"
   'docker volume create'
-  'container_id="$(docker create'
-  "--publish '127.0.0.1::18443'"
-  "--user '65532:65532'"
-  '--read-only'
-  '--cap-drop ALL'
-  '--security-opt no-new-privileges=true'
-  '--pids-limit 256'
-  '--memory 2g'
-  '--cpus 2'
+  'readonly -a compose=(docker compose --project-name "$project" --file "$compose_file")'
+  '"${compose[@]}" config --quiet'
+  '"${compose[@]}" create'
+  'container_id="$(docker ps -aq --filter "name=${project}-bitcoin_core" | head -1)"'
+  'docker start "$container_id"'
   'docker container rm --force "$container_id"'
   'docker volume rm "$volume"'
   'docker image rm "$image"'
-  'lifecycle: "exact_id_native_docker"'
+  'lifecycle: "exact_id_compose_create"'
   'compose_contract_validated: true'
 )
 for term in "${required_runner_runtime_terms[@]}"; do

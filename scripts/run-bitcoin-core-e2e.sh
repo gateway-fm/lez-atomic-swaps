@@ -8,8 +8,24 @@ umask 077
 
 readonly compose_file="tests/e2e/bitcoin-core/compose.yml"
 readonly dockerfile="tests/e2e/bitcoin-core/Dockerfile"
-readonly provenance_file="tests/e2e/bitcoin-core/provenance.env"
-# shellcheck source=tests/e2e/bitcoin-core/provenance.env
+provenance_file="${BITCOIN_CORE_PROVENANCE_FILE:-}"
+if [[ -z "$provenance_file" ]]; then
+  case "$(uname -m)" in
+    x86_64) provenance_file="tests/e2e/bitcoin-core/provenance.env" ;;
+    arm64 | aarch64) provenance_file="tests/e2e/bitcoin-core/provenance-aarch64.env" ;;
+    *)
+      echo "unsupported Bitcoin Core E2E host architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+fi
+readonly provenance_file
+if [[ ! -f "$provenance_file" || -L "$provenance_file" ]]; then
+  echo "missing regular Bitcoin Core provenance contract: ${provenance_file}" >&2
+  exit 1
+fi
+export BITCOIN_CORE_PROVENANCE_FILE="$provenance_file"
+# shellcheck source=/dev/null
 source "$provenance_file"
 
 run_id="${RUN_ID:-local-$(date -u +%Y%m%d%H%M%S)-$$}"
@@ -607,7 +623,7 @@ finish_service_mode() {
       },
       isolation: {
         docker_resource_scope: $project,
-        lifecycle: "exact_id_native_docker",
+        lifecycle: "exact_id_compose_create",
         compose_contract_validated: true,
         container_id: $container_id,
         network: $network,
@@ -806,6 +822,7 @@ write_core_config "$network_cidr" "$maker_auth" "$taker_auth"
 
 docker build \
   --file "$dockerfile" \
+  --build-arg "BITCOIN_CORE_ARCHIVE_SHA256=${BITCOIN_CORE_ARCHIVE_SHA256}" \
   --label "org.logos-co.atomic-swaps.run=${run_id}" \
   --label 'org.logos-co.atomic-swaps.scope=bitcoin-core-regtest-e2e' \
   --label 'org.logos-co.atomic-swaps.component=bitcoin-core-image' \
@@ -843,7 +860,7 @@ if [[ -z "$container_id" ]]; then
 fi
 docker start "$container_id" >/dev/null
 ready=0
-for _ in {1..60}; do
+for _ in {1..120}; do
   if core_cli getblockchaininfo >"${evidence_dir}/initial-chain.json" 2>/dev/null; then
     ready=1
     break
@@ -851,7 +868,7 @@ for _ in {1..60}; do
   sleep 1
 done
 if [[ "$ready" != "1" ]]; then
-  echo "Bitcoin Core RPC did not become ready within 60 seconds" >&2
+  echo "Bitcoin Core RPC did not become ready within 120 seconds" >&2
   exit 1
 fi
 
@@ -1548,7 +1565,7 @@ jq -n \
     },
     isolation: {
       docker_resource_scope: $project,
-      lifecycle: "exact_id_native_docker",
+      lifecycle: "exact_id_compose_create",
       compose_contract_validated: true,
       container_id: $container_id,
       network: $network,

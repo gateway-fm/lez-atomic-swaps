@@ -26,8 +26,7 @@ for reproducing the same URLs during review.
 - Maker: configure a pair and sample price, inspect active swap progress, and
   filter durable-history-shaped sample rows.
 - Taker: browse sample offers, review and initiate a swap, advance receipt-bound
-  sample progress, choose a terminal claim/refund action, and review the ZEC
-  shield-after-swap privacy guidance.
+  sample progress, and choose a terminal BTC claim/refund action.
 
 Keyboard users can tab through all controls. `Escape` closes open dialogs.
 
