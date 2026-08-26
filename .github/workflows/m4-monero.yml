@@ -1,0 +1,150 @@
+name: m4-monero
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["m4-complete*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m4-monero-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  monero-regtest:
+    name: isolated Monero 0.18.5.1 Regtest topology bootstrap (not a swap)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUN_ID: github-xmr-${{ github.run_id }}-${{ github.run_attempt }}
+      MONERO_E2E_KEEP_RUNNING: "1"
+      MONERO_E2E_REQUIRE_CLEAN: "1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - name: Verify Monero release snapshots and isolation contract
+        run: ./scripts/check-monero-isolation.sh
+      - name: Verify signed release and bootstrap isolated role-aware topology
+        run: ./scripts/run-monero-e2e.sh
+      - name: Validate secret-safe Monero topology evidence
+        run: |
+          set -euo pipefail
+          evidence_dir=".e2e/${RUN_ID}/monero/evidence"
+          provenance="${evidence_dir}/provenance.json"
+          runtime="${evidence_dir}/runtime.json"
+          test "$(stat -c '%a' "$provenance")" = 600
+          test "$(stat -c '%a' "$runtime")" = 600
+          jq -e '
+            .schema_version == 1
+            and .result == "passed"
+            and .release.version == "0.18.5.1"
+            and .release.source_commit == "4f92268d7c16741cfb41e5bbe2aa46cc260a9ea5"
+            and .consumed_archive.sha256 == "22a7dda7b0cb699fdd6b7674c3b4a4465b337cc98a54983523b759e1e7cc9958"
+            and .signed_manifest.signer_primary_fingerprint == "81AC591FE9C4B65C5806AFC3F0AF4D462A0BDF92"
+            and .extracted_binaries.version_output_matched == true
+          ' "$provenance" >/dev/null
+          jq -e --arg run_id "$RUN_ID" '
+            .schema_version == 1
+            and .result == "passed"
+            and .run_id == $run_id
+            and .milestone == "M4"
+            and .scope == "Monero local-functional Regtest topology bootstrap; not an atomic swap"
+            and .chain.nettype == "fakechain"
+            and .chain.offline == true
+            and .chain.peers == 0
+            and .chain.daemon_wallet_height_agreement == true
+            and .isolation.ip_masquerade == false
+            and .isolation.public_p2p_ports == []
+            and .isolation.public_zmq_ports == []
+            and .isolation.rpc_bindings_literal_loopback_only == true
+            and .isolation.distinct_wallet_rpc_credentials == true
+            and .isolation.crossed_maker_to_taker_http_code == 401
+            and .wallets.distinct_addresses == true
+            and .local_funding.maker_unlocked == true
+            and .local_funding.taker_unlocked == true
+            and .runtime_external_resources == []
+            and .public_rpc_used == false
+            and .faucet_used == false
+            and .public_funds_used == false
+          ' "$runtime" >/dev/null
+          (
+            cd "$evidence_dir"
+            sha256sum provenance.json runtime.json | sort -k2 >ci-evidence.sha256
+            chmod 0600 ci-evidence.sha256
+          )
+      - name: Scan exact verified Monero image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: lez-atomic-swaps-monero:github-xmr-${{ github.run_id }}-${{ github.run_attempt }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Remove only the exact Monero CI resources
+        if: always()
+        run: |
+          set -u
+          status=0
+          project="lez-atomic-swaps-monero-${RUN_ID}"
+          image="lez-atomic-swaps-monero:${RUN_ID}"
+          network="${project}-private"
+          sentinel="${project}-foreign-sentinel"
+          mapfile -t containers < <(docker container ls --all --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")
+          for container in "${containers[@]}"; do
+            docker container rm --force "$container" >/dev/null 2>&1 || status=1
+          done
+          mapfile -t volumes < <(docker volume ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")
+          for volume in "${volumes[@]}"; do
+            docker volume rm "$volume" >/dev/null 2>&1 || status=1
+          done
+          for owned_network in "$network" "$sentinel"; do
+            if docker network inspect "$owned_network" >/dev/null 2>&1; then
+              docker network rm "$owned_network" >/dev/null 2>&1 || status=1
+            fi
+          done
+          if docker image inspect "$image" >/dev/null 2>&1; then
+            docker image rm "$image" >/dev/null 2>&1 || status=1
+          fi
+          test -z "$(docker container ls --all --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")" || status=1
+          test -z "$(docker network ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")" || status=1
+          test -z "$(docker volume ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")" || status=1
+          evidence_dir=".e2e/${RUN_ID}/monero/evidence"
+          if [[ -d "$evidence_dir" && ! -L "$evidence_dir" ]]; then
+            if [[ "$status" == 0 ]]; then
+              passed=true
+            else
+              passed=false
+            fi
+            jq -n --argjson passed "$passed" '
+              {
+                schema_version: 1,
+                result: (if $passed then "passed" else "failed" end),
+                exact_run_resources_absent: $passed,
+                broad_cleanup_used: false,
+                cleanup_owner: "github_actions_exact_run_cleanup"
+              }
+            ' >"${evidence_dir}/ci-cleanup.json"
+            chmod 0600 "${evidence_dir}/ci-cleanup.json"
+          fi
+          exit "$status"
+      - name: Retain secret-safe Monero topology evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m4-monero-topology-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .e2e/${{ env.RUN_ID }}/monero/evidence/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

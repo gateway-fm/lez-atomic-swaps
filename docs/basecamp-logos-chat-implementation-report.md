@@ -2,7 +2,7 @@
 
 Date: 2026-08-26
 
-Delivery branch: `m3-plus`
+Delivery branch: `main`
 
 Scope: independent role-agreement implementation, real Basecamp Logos Chat
 transport, and signed Logos Delivery offer discovery
@@ -26,36 +26,23 @@ Chat-backed application path.
 ## Commit and branch correction
 
 The earlier independent-role implementation is exactly
-`2f7869bab70aee9a7ddef1ff75324418d3754250`. It is represented on the delivery
-branch by merge commit `d0c75e65b42fcc5a273691eff6a037757aa1f43e`, whose
-second parent is that exact implementation commit and whose first-parent tree
-adds runner patch `0035` plus the reproducibility metadata.
+`2f7869bab70aee9a7ddef1ff75324418d3754250`. Its history remains reachable, and
+its Rust source is now present directly in the default branch workspace.
 
 The Logos Chat source implementation is exactly
-`7ecd8d3ebe16f84c5a187908902fc3de33be523f`. It is represented by runner patch
-`0036`, which applies directly after patch `0035`, and by merge commit
-`fc74f2131bfdd36f2815eb4ed7aa1d038624ce0b`, whose parents are `d0c75e6` and
-`7ecd8d3`.
+`7ecd8d3ebe16f84c5a187908902fc3de33be523f`. Its history remains reachable, and
+the gateway, Maker/Taker integration, tests, and manifests are checked in at
+their normal paths.
 
 The signed Delivery discovery implementation is exactly
-`e67522c8d27c274bcb94b92f90420983c83d0f5b`. It is represented by runner patch
-`0037` and by this report's final `m3-plus` merge commit, whose first parent is
-`44db961` (the preserved presentation series, itself descending from `fc74f21`)
-and second parent is `e67522c8`; its curated tree also contains the richer M3
-Basecamp UI port, ADRs, report, and diagram presentation.
+`e67522c8d27c274bcb94b92f90420983c83d0f5b`. Its history remains reachable and
+the default branch combines the implementation with the richer M3 Basecamp UI,
+ADRs, report, deployment, and diagram presentation.
 
-Remote policy at completion:
-
-- `gateway/m3-plus` and `origin/m3-plus` point to the same final delivery
-  commit;
-- the three source implementations remain reachable through the delivery
-  commits' second-parent ancestry;
-- no per-implementation delivery branch is required.
-
-The patch series was reconstructed from base `5c384a5`. Applying patches
-`0001` through `0037` produces source tree
-`ae28b574b925e2555b47dd255e6d8565f8cbd7d9`, exactly matching the tree of
-source commit `e67522c8`.
+Remote policy at completion: Gateway's `main` is the real public submission and
+open-source branch. The personal repository remains a separate upstream source
+of future implementation work; the public branch contains ordinary source
+files and does not depend on that remote to build.
 
 ## Why the old path was fixture-only
 
@@ -256,9 +243,9 @@ Completed checks:
 - Basecamp package contract — green: 2 `ui_qml` packages, 18 typed slots,
   pinned E2EE Chat plus owner-local gateway;
 - source Basecamp Maker and Taker Nix packages — built offline;
-- richer `m3-plus` Maker and Taker Nix packages — built offline;
-- ordered patch reconstruction — patches `0001`–`0036` reproduce tree
-  `eec5693c31520fa2a35762d2f730c02e3b5b56a2` exactly.
+- richer M3+ Maker and Taker Nix packages — built offline;
+- direct-source workspace and package manifests — verified from a clean
+  checkout without a reconstruction step.
 
 A full all-target Clippy run still reports two unrelated pre-existing warnings:
 an unused `provision_maker_claim` in `maker_xmr_tag17_supervisor` and an
@@ -270,7 +257,7 @@ change; the changed library and new binary are warning-clean.
 OpenCode with `zai-coding-plan/glm-5.3` reviewed the source and delivery diffs.
 Its substantive findings were repaired as follows:
 
-- missing patch `0036` and untracked delivery sources: packaged and verified;
+- missing published source material: checked in directly and verified;
 - 1 MiB frame/RPC envelope mismatch: separate 4 MiB control envelope with the
   1 MiB frame/proxy authority retained;
 - 500 ms Qt ingest versus long Maker call: fast accept plus bounded asynchronous
@@ -298,13 +285,11 @@ were repaired by removing Taker event authority, adding create/rebind recovery,
 forwarding only validated bounded daemon errors, sharing one 500 ms deadline,
 and deferring binding plus ingest to the next event-loop turn.
 
-The final focused reviews of source commit `7ecd8d3`, its staged delivery, and
-the regenerated patch returned `CLEAN` from both Claude Code Fable and OpenCode
-GLM-5.3. Each independently confirmed the six final closures; GLM additionally
-reconstructed all 36 patches to tree `eec5693c31520fa2a35762d2f730c02e3b5b56a2`.
-Fable's topology check is satisfied by forming the delivery commit with
-`commit-tree`, first parent `d0c75e6` and second parent `7ecd8d3`, rather than a
-single-parent commit of the staged index.
+The final focused reviews of source commit `7ecd8d3` and its staged publication
+returned `CLEAN` from both Claude Code Fable and OpenCode GLM-5.3. Each
+independently confirmed the six final closures. The implementation is now
+reviewable directly in the default branch rather than through publication
+indirection.
 
 ## Operating the live PoC
 
@@ -358,11 +343,8 @@ store/protocol boundary.
 Source implementation commit:
 `e67522c8d27c274bcb94b92f90420983c83d0f5b`.
 
-`m3-plus` delivery commit: this report's merge commit; its exact object ID is
-recorded in the final handoff because a commit cannot contain its own hash.
-
-Remote policy: this follow-up is delivered as the same `m3-plus` branch tip to
-both `origin` and `gateway`, per the final publication instruction.
+Public delivery branch: Gateway `main`. The personal origin remains the source
+feed and is not the public submission remote.
 
 ### Wire format and trust boundary
 
@@ -581,14 +563,9 @@ the unrelated UI-demo MP4 checksum mismatch already existed at the baseline.
 ADR 0211 records this design and its rejected alternatives; ADR 0210 now points
 to it as the production discovery successor.
 
-### Patch-series provenance
+### Direct-source provenance
 
-Patch `0037-feat-basecamp-discover-offers-over-Logos-Delivery.patch` is the exact
-`git format-patch` representation of source commit
-`e67522c8d27c274bcb94b92f90420983c83d0f5b`. Applying all 37 ordered patches to
-base `5c384a5` in a detached task-private worktree produced tree
-`ae28b574b925e2555b47dd255e6d8565f8cbd7d9`, byte-identical to the source commit's
-tree. The integration branch carries that patch plus the curated Basecamp files,
-ADRs, report, and diagram presentation; the delivery commit uses the source
-commit as its second parent so provenance remains visible without adding another
-first-parent commit to `m3-plus`.
+The signed Delivery implementation remains attributable to source commit
+`e67522c8d27c274bcb94b92f90420983c83d0f5b`. Gateway `main` now carries that
+implementation and the rest of the buildable workspace as ordinary files,
+alongside the Basecamp UI, ADRs, report, deployment, and presentation.

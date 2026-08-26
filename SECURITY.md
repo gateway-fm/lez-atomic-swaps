@@ -1,11 +1,10 @@
 # Security policy
 
-This policy supersedes security-reporting instructions in historical commits
-and in the reconstructed milestone source tree.
+This policy supersedes security-reporting instructions in historical commits.
 
 ## Supported versions
 
-`m3-plus` is a local-functional proof of concept. The current default branch
+`main` is a local-functional proof of concept. The current default branch
 receives security fixes, but no version is approved for production custody,
 mainnet funds, or an Internet-exposed deployment. Historical milestone tags
 and commits are unsupported.

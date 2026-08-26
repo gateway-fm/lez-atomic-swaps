@@ -1,0 +1,46 @@
+name: upstream-compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-lez-semantics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: pinned
+            lez_ref: cac4921581b37e85ae25e940f3a62412cd22308e
+            sequencer: "1"
+          - lane: current-dev
+            lez_ref: dev
+            sequencer: "0"
+    name: LEZ semantics (${{ matrix.lane }})
+    env:
+      CARGO_BUILD_JOBS: "2"
+      LEZ_REF: ${{ matrix.lez_ref }}
+      LEZ_VERIFY_SEQUENCER: ${{ matrix.sequencer }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - name: Install pinned RISC Zero runtime for native sequencer lane
+        if: matrix.sequencer == '1'
+        run: |
+          cargo install --locked --git https://github.com/risc0/risc0 \
+            --rev 8eb06ab020a92dc5b63ba6dd0836d432aba6d890 \
+            rzup --no-default-features --features cli,install
+          rzup install r0vm 3.0.5
+      - run: ./scripts/verify-lez-primitives.sh

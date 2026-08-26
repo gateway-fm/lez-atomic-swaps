@@ -1,0 +1,49 @@
+services:
+  bitcoin_core:
+    image: "${BITCOIN_CORE_IMAGE:?BITCOIN_CORE_IMAGE is required}"
+    command:
+      - "-conf=/run-config/bitcoin.conf"
+      - "-datadir=/var/lib/bitcoin"
+    environment:
+      HOME: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: bitcoin-core-regtest-e2e
+      org.logos-co.atomic-swaps.component: bitcoin-core
+    ports:
+      - target: 18443
+        published: "0"
+        host_ip: 127.0.0.1
+        protocol: tcp
+        mode: host
+    volumes:
+      - "${BITCOIN_CORE_CONFIG:?BITCOIN_CORE_CONFIG is required}:/run-config/bitcoin.conf:ro"
+      - core_data:/var/lib/bitcoin
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    networks: [bitcoin_core_private]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    cpus: 2.0
+    mem_limit: 2g
+    stop_grace_period: 30s
+
+networks:
+  bitcoin_core_private:
+    name: "${BITCOIN_CORE_NETWORK:?BITCOIN_CORE_NETWORK is required}"
+    external: true
+
+volumes:
+  core_data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=65532,gid=65532,mode=0700,noexec,nosuid,nodev,size=1073741824"
+    labels:
+      org.logos-co.atomic-swaps.run: "${RUN_ID:?RUN_ID is required}"
+      org.logos-co.atomic-swaps.scope: bitcoin-core-regtest-e2e
+      org.logos-co.atomic-swaps.component: bitcoin-core-data

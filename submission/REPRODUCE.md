@@ -117,23 +117,16 @@ Expected PDF properties: 28 pages, 960 × 540 pt (16:9), with no network fetch.
 
 ### Important prerequisite
 
-This submission branch is a curated package, not a complete copy of the
-historical Rust workspace. The M3 application runner must be provisioned as an
-external checkout at base commit
-`5c384a5`, with the 38 ordered patches under
-[`deploy/full-swap/patches/`](../deploy/full-swap/patches/) applied. The expected
-resulting tree is `c747dafbdf39ed4615d92b005e63552a32bb60bf`. Patches
-0001–0037 reproduce source commit
-`e67522c8d27c274bcb94b92f90420983c83d0f5b` and tree
-`ae28b574b925e2555b47dd255e6d8565f8cbd7d9`; patch 0038 then applies the
-publication-time advisory fix to all seven affected locked dependency graphs
-and refreshes their Cargo 1.96 metadata, including the previously stale
-isolated XMR lock.
+The complete Rust workspace and application sources are checked in directly on
+Gateway's default `main` branch. Use the repository root itself as the M3
+application runner; no second checkout, patch application, or reconstruction
+step is required. Confirm the direct source contract before provisioning the
+runtime:
 
-The runner source chain is retained as the second-parent ancestry of the
-Gateway `m3-plus` delivery history. It can therefore be checked out by exact
-commit from a clean clone even though the curated first-parent tree does not
-duplicate the complete Rust workspace.
+```sh
+./scripts/verify-public-repository.sh
+cargo metadata --locked --no-deps
+```
 
 The runner-work root must be mounted at the same absolute path on the host and
 inside `lez-runner-arm`; the runner talks to the host Docker socket and nested
@@ -144,8 +137,8 @@ arm64 prover inputs must also be provisioned as described in
 After provisioning:
 
 ```sh
-export LEZ_M3_RUNNER_REPO=/absolute/path/to/runner-work/repo
-export LEZ_M3_RUNNER_REPO_IN_CONTAINER=/the/same/absolute/path/to/runner-work/repo
+export LEZ_M3_RUNNER_REPO="$PWD"
+export LEZ_M3_RUNNER_REPO_IN_CONTAINER="$PWD"
 
 cd deploy
 ./scripts/up.sh

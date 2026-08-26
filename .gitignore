@@ -1,6 +1,25 @@
-target/
+/target/
+/compat/*/target/
+/compat/**/target/
+/crates/**/target/
 apps/preview/build/
 build/
 result-*/
+.env
+.direnv/
+.idea/
+.vscode/
+*.swp
+*.tmp
+*.log
 .DS_Store
 __pycache__/
+
+# Local chain data and generated test artefacts
+/.e2e/
+/artifacts/
+/coverage/
+/node_modules/
+/fuzz/artifacts/
+/fuzz/coverage/
+/fuzz/target/

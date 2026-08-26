@@ -927,7 +927,7 @@ def render(model: dict[str, Any]) -> str:
             "",
             "Boundary shorthand: B1-B3 show the production trust target, and B3 is "
             "repeated as separate Maker and Taker instances. Private-local evidence and "
-            "the m3-plus demo may collapse parts of B1-B3; TM-0001 tracks that gap.",
+            "the M3+ demo may collapse parts of B1-B3; TM-0001 tracks that gap.",
         ]
     )
 

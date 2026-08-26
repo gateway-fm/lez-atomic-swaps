@@ -1,0 +1,44 @@
+[package]
+name = "zec-reference-actor"
+version = "0.1.0"
+description = "One-shot role-fixed reference actor for LEZ and Zcash atomic swaps"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+test-crash-hooks = []
+
+[dependencies]
+anyhow = "1.0.102"
+bs58 = "0.5.1"
+clap = { version = "4.6.0", features = ["derive"] }
+getrandom = "0.3.4"
+hex = "0.4.3"
+lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
+lez-bridge-adapter = { version = "0.1.0", path = "../lez-bridge-adapter" }
+lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-swap-store = { version = "0.1.0", path = "../swap-store" }
+lez-zebra-node-adapter = { version = "0.1.0", path = "../zebra-node-adapter" }
+lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+sha2 = "=0.10.9"
+thiserror = "2.0.18"
+tokio = { version = "1.48.0", features = ["macros", "rt"] }
+url = { version = "2.5.4", features = ["serde"] }
+zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
+zcash_protocol = { version = "=0.9.0", default-features = false }
+zcash_transparent = { version = "=0.8.0", default-features = false, features = ["transparent-inputs"] }
+zeroize = "1.9.0"
+
+[dev-dependencies]
+command-fds = "=0.3.3"
+tempfile = "3.27.0"

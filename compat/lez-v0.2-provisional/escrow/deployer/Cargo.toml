@@ -1,0 +1,36 @@
+[workspace]
+
+[package]
+name = "lez-zec-escrow-v02-deployer"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "=1.0.103"
+ata_core = { package = "associated_token_account_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+clap = { version = "=4.6.1", features = ["derive"] }
+common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+hex = "=0.4.3"
+hmac = "=0.12.1"
+lez-zec-escrow-v02 = { version = "=0.0.0", path = ".." }
+lez-zec-escrow-v02-methods = { version = "=0.0.0", path = "../methods" }
+nssa = { package = "lee", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+nssa_core = { package = "lee_core", version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["host"] }
+risc0-zkvm = { version = "=3.0.5", features = ["std"] }
+sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["client"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+sha2 = "=0.10.9"
+tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "time"] }
+toml = "=0.8.23"
+tempfile = "=3.27.0"
+url = "=2.5.8"
+zeroize = "=1.9.0"
+
+[dev-dependencies]
+jsonrpsee = { version = "=0.26.0", features = ["server"] }
+sequencer_service_protocol = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["server"] }

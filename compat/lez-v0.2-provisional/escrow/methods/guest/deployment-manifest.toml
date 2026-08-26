@@ -1,0 +1,39 @@
+format_version = 1
+program = "zec_escrow_v02"
+artifact_status = "locally-built-artifact-checked"
+
+[source]
+lez_tag = "v0.2.0"
+lez_commit = "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+spel_pr = 238
+spel_commit = "df17acd98436be4f09c55877dae1fe2e73cbcdca"
+risc0_version = "3.0.5"
+risc0_guest_builder = "risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"
+
+[target]
+rpc_url = "https://testnet.lez.logos.co"
+channel_id = "0101010101010101010101010101010101010101010101010101010101010101"
+authenticated_transfer_program_id = [3170810844, 2526647253, 999807262, 1205602179, 3401962591, 3484055895, 2106546407, 1900691388]
+token_program_id = [2282739141, 348907455, 1046946228, 3735699860, 585462133, 3426087150, 772528164, 2090518099]
+# `getProgramIds` omits this built-in on the public v0.2 endpoint. These words
+# are the checked ImageID of LEZ v0.2.0's official associated-token-account ELF;
+# deployment tooling must report the omission rather than claim RPC attestation.
+associated_token_account_program_id = [3357312149, 3615960253, 3351583505, 2234166003, 4153433811, 2743238177, 2886052503, 4160755157]
+associated_token_account_identity_source = "lez-v0.2.0-checked-elf-rpc-map-omits-key"
+
+[artifact]
+elf_sha256 = "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
+image_id = "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+program_id_words = [2020800695, 692721555, 2892920765, 1939332543, 3171832288, 739263404, 2755389879, 855903226]
+
+[interface]
+idl_sha256 = "04895050affb173d3e87329994ecbbed54781a38d5454ce5b36e155916e4134f"
+generated_client_sha256 = "bcc0d3898343317bdd3bcc0987ec9559db7f4060c4e9fb45f096d1bcd34b48ac"
+instruction_count = 18
+initialize_token_witnessed_variant = 11
+claim_token_witnessed_variant = 12
+
+[deployment]
+transaction_hash = "pending"
+inclusion_block_id = 0
+inclusion_block_hash = "pending"

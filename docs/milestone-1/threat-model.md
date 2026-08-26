@@ -11,7 +11,7 @@ One global threat model for the integrated M1-M7 implementation. Milestones reco
 
 Implementation: M7 functional baseline 5c384a5151f59bef1a2f19421ef6ab2b004db3d4 plus the runnable application tree 2888e8cf818143a7dce903f343fdbe70de9e267a.
 
-Package: The m3-plus package and deployment are reviewed at a8a3d6de3c8d9b5a5e0557c2de53cd53fa2dbbe8. Its narrower submission claims do not narrow this model.
+Package: The M3+ package and deployment are reviewed at a8a3d6de3c8d9b5a5e0557c2de53cd53fa2dbbe8. Its narrower submission claims do not narrow this model.
 
 Method: Shostack's four questions, with STRIDE for security, LINDDUN for privacy, and route-state analysis for atomicity.
 
@@ -127,10 +127,10 @@ flowchart LR
     E24 <-->|"Maker socket and same-UID process access"| E4
     E24 <-->|"Taker socket and same-UID process access"| E5
     E24 <-->|"controller socket and local process access"| E18
-    E17 -->|"runner source, binaries, patches, and configuration"| E23
+    E17 -->|"runner source, binaries, and configuration"| E23
 ```
 
-Boundary shorthand: B1-B3 show the production trust target, and B3 is repeated as separate Maker and Taker instances. Private-local evidence and the m3-plus demo may collapse parts of B1-B3; TM-0001 tracks that gap.
+Boundary shorthand: B1-B3 show the production trust target, and B3 is repeated as separate Maker and Taker instances. Private-local evidence and the M3+ demo may collapse parts of B1-B3; TM-0001 tracks that gap.
 
 ## Invariants
 
@@ -160,7 +160,7 @@ The table shows production inherent → current residual risk. Exact phases, pro
 
 | ID | Area | Risk | What can go wrong | Response / owner |
 |---|---|---|---|---|
-| TM-0001 | Local access and control | Critical → High | A local UI, service, sidecar, compatibility process, or test controller acts with another role's authority. | Role-fixed owner services, Unix-socket custody, actor locks, and narrow signer routes limit authority.<br>Next: The m3-plus and private-local lanes still combine roles or UIDs, share sockets and prep state, handle a Maker key through Taker init, expose default VNC, and grant controller Docker authority; keep them zero-value only.<br>application-security / open |
+| TM-0001 | Local access and control | Critical → High | A local UI, service, sidecar, compatibility process, or test controller acts with another role's authority. | Role-fixed owner services, Unix-socket custody, actor locks, and narrow signer routes limit authority.<br>Next: The M3+ and private-local lanes still combine roles or UIDs, share sockets and prep state, handle a Maker key through Taker init, expose default VNC, and grant controller Docker authority; keep them zero-value only.<br>application-security / open |
 | TM-0002 | Local access and control | High → High | Keys or recovery secrets leak from files, memory, logs, arguments, dumps, backups, or diagnostics. | Some role secrets use encrypted envelopes; owner-only paths, redacted logs, and zeroizing wrappers reduce exposure.<br>Next: The BTC MuSig2 nonce journal and raw wallet or Delivery keys remain plaintext. Rollback fencing, rotation, restore drills, upstream formatting, dump policy, and long-lived custody also need production proof.<br>key-custody / checking |
 | TM-0003 | Local access and control | High → High | The local control plane is flooded or accepts an unsafe price, pair, route, or exposure setting. | Schema bounds, stale-price rejection, route health, admission limits, and per-route exposure caps fail closed.<br>Next: Public load limits, aggregate value caps, and price-failure drills need calibration.<br>maker-service / checking |
 | TM-0004 | Trade setup | Critical → High | A fake peer or changed, replayed, or cross-swapped offer, agreement, or receipt is accepted. | Role signatures and unique session IDs bind the complete agreement before any effect; later inputs are derived from those bytes.<br>Next: Adversarial identity possession, cross-route substitution, and stale-offer tests remain part of independent review.<br>negotiation / checking |
@@ -187,5 +187,5 @@ The table shows production inherent → current residual risk. Exact phases, pro
 | TM-0025 | Nodes, consensus, and time | High → Medium | A node, wallet, indexer, sequencer, or chain is unavailable before either party locks. | Route health fails closed and removes unhealthy offers before any lock.<br>Next: Public outage thresholds and independent failover policy need calibration.<br>operations / checking |
 | TM-0026 | Nodes, consensus, and time | Critical → High | A node, wallet, indexer, sequencer, miner, or chain censors or fails after funds lock. | Durable recovery workers keep exact actions ready, stop new offers, and alert when observation or inclusion margin is unsafe.<br>Next: This is not liveness-only after locking. Public censorship, failover, fee, and safety-window drills remain release gates.<br>recovery-operations / working |
 | TM-0027 | Nodes, consensus, and time | Critical → High | Chains, providers, counterparties, or published facts link both swap legs, amounts, addresses, and users. | Fresh keys and wallets reduce reuse; self-hosted nodes reduce provider visibility; the UI states route-specific public facts.<br>Next: BTC remains graph-linkable, ZEC is deterministically linked by its shared preimage, and XMR privacy still depends on counterparty, wallet, RPC, network, and evidence metadata.<br>privacy / open |
-| TM-0028 | Build, deployment, and evidence | Critical → High | A dependency, builder, image, binary, update, UI package, runner, or deployment controller is malicious or substituted. | Locked inputs, exact program identities, consumer pins, clean builds, vulnerability checks, and immutable review commits constrain artifacts.<br>Next: The m3-plus stack still contains mutable inputs and a Docker-socket controller; SBOM, signed provenance, independent builds, and S12/S13 review remain open.<br>release-security / open |
-| TM-0029 | Build, deployment, and evidence | High → High | Action history or published evidence is forged, replaced, deleted, or exposes secrets and unnecessary cross-chain linkage. | Private roots are separated from reviewed exports; packets bind public effects to a source commit and reject known secret fields.<br>Next: The m3-plus evidence file is writable and unsigned, and the explorer can read the private run tree. Export-only mounts, owner-only publication, signatures, and privacy review remain open.<br>evidence-security / open |
+| TM-0028 | Build, deployment, and evidence | Critical → High | A dependency, builder, image, binary, update, UI package, runner, or deployment controller is malicious or substituted. | Locked inputs, exact program identities, consumer pins, clean builds, vulnerability checks, and immutable review commits constrain artifacts.<br>Next: The M3+ stack still contains mutable inputs and a Docker-socket controller; SBOM, signed provenance, independent builds, and S12/S13 review remain open.<br>release-security / open |
+| TM-0029 | Build, deployment, and evidence | High → High | Action history or published evidence is forged, replaced, deleted, or exposes secrets and unnecessary cross-chain linkage. | Private roots are separated from reviewed exports; packets bind public effects to a source commit and reject known secret fields.<br>Next: The M3+ evidence file is writable and unsigned, and the explorer can read the private run tree. Export-only mounts, owner-only publication, signatures, and privacy review remain open.<br>evidence-security / open |

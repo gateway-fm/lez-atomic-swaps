@@ -1,0 +1,55 @@
+[workspace]
+members = [
+    "crates/adaptor-signature",
+    "crates/adaptor-role-runner",
+    "crates/btc-core-adapter",
+    "crates/btc-local-poc-provision",
+    "crates/btc-role-preflight",
+    "crates/btc-reference-actor",
+    "crates/btc-swap-sdk",
+    "crates/lez-bridge-adapter",
+    "crates/lez-bridge-client",
+    "crates/lez-bridge-protocol",
+    "crates/logos-price-c-api",
+    "crates/maker-node",
+    "crates/swap-core",
+    "crates/swap-sdk-core",
+    "crates/swap-store",
+    "crates/xmr-monero-adapter",
+    "crates/xmr-release-authority",
+    "crates/xmr-reference-actor",
+    "crates/xmr-swap-sdk",
+    "crates/zebra-node-adapter",
+    "crates/zec-reference-actor",
+    "crates/zec-swap-sdk",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gateway-fm/lez-atomic-swaps"
+rust-version = "1.96"
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# XMR role/process tests repeatedly verify cross-curve DLEQ proofs. Optimize
+# only those portable crypto kernels in development builds; release artifacts,
+# debug assertions, overflow checks, and every non-XMR dependency are unchanged.
+[profile.dev.package.lez-xmr-swap-sdk]
+opt-level = 3
+
+[profile.dev.package.sigma_fun]
+opt-level = 3
+
+[profile.dev.package.secp256kfun]
+opt-level = 3
+
+[profile.dev.package.curve25519-dalek-ng]
+opt-level = 3

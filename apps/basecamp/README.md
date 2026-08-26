@@ -82,8 +82,7 @@ reliable. Production distribution additionally remains subject to LOGOS-025.
 
 ## Run app-lifetime Logos Chat sessions and offer discovery
 
-Build `lez-logos-chat-gateway` from the reconstructed runner worktree after
-applying the ordered `deploy/full-swap/patches` series. Each role runs its own
+Build `lez-logos-chat-gateway` directly from this repository. Each role runs its own
 endpoint. The Taker endpoint keeps one direct conversation and a bounded signed
 offer index; the Maker endpoint keeps up to 32 direct conversations so
 competing Takers receive separately correlated results. Start an endpoint with
@@ -251,8 +250,8 @@ See [ADR 0147](../../docs/architecture/0147-isolate-basecamp-role-packages-over-
 and the [M6 package evidence](../../docs/evidence/m6-basecamp-role-packages-20260804.json).
 
 The Chat negotiation process E2E uses only Unix-domain sockets and deterministic
-local role roots. From the reconstructed runner worktree it can be run after a
-one-time dependency warm-up with Cargo networking disabled:
+local role roots. From the repository root it can be run after a one-time
+dependency warm-up with Cargo networking disabled:
 
 ```sh
 CARGO_NET_OFFLINE=true cargo test -p lez-maker-node \

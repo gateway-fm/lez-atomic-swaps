@@ -4,7 +4,7 @@
     "name": "LEZ atomic swaps",
     "scope": "One global threat model for the integrated M1-M7 implementation. Milestones record where a feature entered; they do not limit threat scope. The model covers the full application, protocol, recovery, deployment, and evidence system. Public and production profiles remain in scope even when their controls are not yet verified.",
     "implementation": "M7 functional baseline 5c384a5151f59bef1a2f19421ef6ab2b004db3d4 plus the runnable application tree 2888e8cf818143a7dce903f343fdbe70de9e267a.",
-    "package": "The m3-plus package and deployment are reviewed at a8a3d6de3c8d9b5a5e0557c2de53cd53fa2dbbe8. Its narrower submission claims do not narrow this model.",
+    "package": "The M3+ package and deployment are reviewed at a8a3d6de3c8d9b5a5e0557c2de53cd53fa2dbbe8. Its narrower submission claims do not narrow this model.",
     "method": "Shostack's four questions, with STRIDE for security, LINDDUN for privacy, and route-state analysis for atomicity.",
     "exclusions": [
       "XMR-first swaps; admission must reject them.",
@@ -52,7 +52,7 @@
     {
       "id": "integrated-local",
       "name": "Integrated local",
-      "meaning": "The full application on isolated private nodes and the m3-plus product stack, using test assets only."
+      "meaning": "The full application on isolated private nodes and the M3+ product stack, using test assets only."
     },
     {
       "id": "public-testnet",
@@ -266,7 +266,7 @@
     { "id": "F36", "from": "E25", "to": "E05", "data": "Maker socket and same-UID process access", "two_way": true },
     { "id": "F37", "from": "E25", "to": "E06", "data": "Taker socket and same-UID process access", "two_way": true },
     { "id": "F38", "from": "E25", "to": "E19", "data": "controller socket and local process access", "two_way": true },
-    { "id": "F39", "from": "E18", "to": "E24", "data": "runner source, binaries, patches, and configuration", "two_way": false }
+    { "id": "F39", "from": "E18", "to": "E24", "data": "runner source, binaries, and configuration", "two_way": false }
   ],
   "assets": [
     { "id": "AS-FUNDS", "name": "Maker and Taker principal" },
@@ -357,7 +357,7 @@
       ],
       "control": "Role-fixed owner services, Unix-socket custody, actor locks, and narrow signer routes limit authority.",
       "proofs": ["docs/architecture/0147-isolate-basecamp-role-packages-over-owner-services.md", "docs/evidence/m6-basecamp-role-packages-20260804.json", "deploy/compose.yaml"],
-      "remaining": "The m3-plus and private-local lanes still combine roles or UIDs, share sockets and prep state, handle a Maker key through Taker init, expose default VNC, and grant controller Docker authority; keep them zero-value only.",
+      "remaining": "The M3+ and private-local lanes still combine roles or UIDs, share sockets and prep state, handle a Maker key through Taker init, expose default VNC, and grant controller Docker authority; keep them zero-value only.",
       "owner": "application-security",
       "state": "open"
     },
@@ -1058,7 +1058,7 @@
       ],
       "control": "Locked inputs, exact program identities, consumer pins, clean builds, vulnerability checks, and immutable review commits constrain artifacts.",
       "proofs": ["docs/upstream-production-blockers.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md", "deploy/full-swap/README.md"],
-      "remaining": "The m3-plus stack still contains mutable inputs and a Docker-socket controller; SBOM, signed provenance, independent builds, and S12/S13 review remain open.",
+      "remaining": "The M3+ stack still contains mutable inputs and a Docker-socket controller; SBOM, signed provenance, independent builds, and S12/S13 review remain open.",
       "owner": "release-security",
       "state": "open"
     },
@@ -1084,7 +1084,7 @@
       ],
       "control": "Private roots are separated from reviewed exports; packets bind public effects to a source commit and reject known secret fields.",
       "proofs": ["docs/architecture/0052-bind-private-demo-videos-to-actual-node-evidence.md", "docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json", "deploy/compose.yaml", "deploy/images/btc-demo-controller/controller.py"],
-      "remaining": "The m3-plus evidence file is writable and unsigned, and the explorer can read the private run tree. Export-only mounts, owner-only publication, signatures, and privacy review remain open.",
+      "remaining": "The M3+ evidence file is writable and unsigned, and the explorer can read the private run tree. Export-only mounts, owner-only publication, signatures, and privacy review remain open.",
       "owner": "evidence-security",
       "state": "open"
     }

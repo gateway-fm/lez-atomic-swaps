@@ -12,6 +12,9 @@ required=(
   LICENSE LICENSE-MIT LICENSE-APACHE NOTICE THIRD_PARTY_NOTICES
   README.md CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md
   .github/CODEOWNERS .github/pull_request_template.md
+  Cargo.toml Cargo.lock rust-toolchain.toml deny.toml
+  crates/swap-core/src/lib.rs crates/btc-swap-sdk/src/lib.rs
+  crates/adaptor-signature/src/lib.rs crates/maker-node/src/lib.rs
 )
 for path in "${required[@]}"; do
   [[ -s "$repo_root/$path" ]] || fail "missing or empty ${path}"
@@ -33,14 +36,4 @@ fi
 [[ "$media_hash" == "6467ae09a7ed2e95e021031d230cfc71175b9081845d2778c2c0240feb8f3c94" ]] \
   || fail "Bit Quest source hash does not match its attribution record"
 
-task_tmp="$(mktemp -d "${TMPDIR:-/tmp}/lez-public-verify.XXXXXX")"
-cleanup() {
-  case "$task_tmp" in
-    */lez-public-verify.*) rm -rf -- "$task_tmp" ;;
-    *) echo "refusing unexpected cleanup path: ${task_tmp}" >&2 ;;
-  esac
-}
-trap cleanup EXIT
-
-"$repo_root/scripts/reconstruct-source.sh" "$task_tmp/source"
 echo "public repository contract passed"

@@ -1,0 +1,512 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["m*-complete*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-quality:
+    name: shell, workflow, Dockerfile, and Compose quality
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - run: ./scripts/test-lez-cost-evidence.sh
+      - run: ./scripts/test-ci-hardening-policy.sh
+      - run: ./scripts/test-m7-review-readiness-contract.sh
+      - run: ./scripts/test-spin-lock-remediation.sh
+      - run: ./scripts/check-github-action-pins.sh
+      - run: ./scripts/run-ci-quality-gates.sh
+      - run: ./scripts/check-bitcoin-core-isolation.sh
+      - run: ./scripts/check-lez-v02-docker-isolation.sh
+
+  container-security:
+    name: Runtime findings fail-hard; classified upstream findings remain visible
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - name: Scan repository-owned runtime base for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: gcr.io/distroless/cc-debian13:nonroot@sha256:aded2458d026e046cb68199db0e5793e1028ffa143f7258f3c4278253e20add7
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      # This build-only upstream image currently has disclosed findings. Its
+      # digest and output ELF are pinned; production release remains blocked
+      # until TOOLCHAIN-001 is closed, while the local-functional PoC stays testable.
+      - name: Report pinned Risc0 guest builder high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be
+          format: table
+          exit-code: "0"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Report high and critical vulnerabilities in exact Logos Bedrock dependency
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f
+          format: table
+          exit-code: "0"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+  rust:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: "2"
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
+      - name: Install pinned Node tooling
+        run: npm ci
+      - name: Audit Node tooling dependencies
+        run: npm audit --audit-level=moderate
+      - name: Audit Node tooling licenses
+        run: npm run audit:licenses
+      - name: Exercise M6 clickable role prototypes
+        env:
+          M6_UI_TEST_ROOT: ${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          google-chrome --version
+          npm run test:m6:prototype
+      - name: Verify M6 Basecamp package boundary
+        run: npm run test:m6:basecamp:contract
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --workspace --all-targets
+      - name: Exercise feature-gated actor crash seam
+        run: cargo test --locked -p zec-reference-actor --features test-crash-hooks --test crash_hook
+      - name: Exercise feature-gated daemon actor crash routing
+        run: cargo test --locked -p lez-maker-node --features test-crash-hooks --test daemon_actor_supervisor_cli
+      - name: Verify M3 official cryptographic vectors
+        run: |
+          ./scripts/check-m3-cryptographic-vectors.sh
+          cargo test --locked -p lez-btc-swap-sdk --test bip340_vectors --test bip327_vectors --test adaptor_vectors
+      - name: Verify Bitcoin Testnet4 route contract
+        run: ./scripts/test-bitcoin-testnet4-route-contract.sh
+      - name: Reject Rust documentation warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --all-features --no-deps
+      - run: ./scripts/check-requirements-traceability.sh
+      - run: ./scripts/check-architecture-diagrams.sh
+      - run: ./scripts/check-docker-isolation.sh
+
+  coordinator-fuzz:
+    name: coordinator fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: nightly-2026-07-01
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Run bounded coordinator fuzz smoke
+        env:
+          FUZZ_SMOKE_RUNS: "512"
+          FUZZ_MAX_LEN: "512"
+          FUZZ_TIMEOUT_SECONDS: "2"
+        run: ./scripts/run-m5-coordinator-fuzz-smoke.sh
+
+  dependencies:
+    name: dependency vulnerabilities, licenses, bans, and sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - run: ./scripts/check-spin-lock-remediation.sh
+      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          command: check advisories bans licenses sources
+          arguments: --all-features
+      - name: Audit isolated coordinator fuzz graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: fuzz/Cargo.toml
+          command: check
+          command-arguments: --config fuzz/deny.toml advisories bans licenses sources
+      - name: Audit pinned SPEL/LEZ compatibility graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/spel-zec-escrow/Cargo.toml
+          command: check
+          arguments: --all-features
+          command-arguments: --config compat/spel-zec-escrow/deny.toml advisories bans licenses sources
+      - name: Audit deployable Risc0 guest graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/spel-zec-escrow/methods/guest/Cargo.toml
+          command: check
+          command-arguments: --config compat/spel-zec-escrow/deny.toml advisories bans licenses sources
+      - name: Audit Risc0 methods wrapper graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/spel-zec-escrow/methods/Cargo.toml
+          command: check
+          command-arguments: --config compat/spel-zec-escrow/deny.toml advisories bans licenses sources
+      - name: Audit standalone sequencer E2E graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-standalone-e2e/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-standalone-e2e/deny.toml advisories bans licenses sources
+      - name: Audit official LEZ v0.1.2 sidecar graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0_1_2-sidecar/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0_1_2-sidecar/deny.toml advisories bans licenses sources
+      - name: Audit official LEZ v0.2 sidecar graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0_2-sidecar/Cargo.toml
+          command: check
+          arguments: --all-features
+          command-arguments: --config compat/lez-v0_2-sidecar/deny.toml advisories bans licenses sources
+      - name: Audit provisional LEZ v0.2 compatibility graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-provisional/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0.2-provisional/deny.toml advisories bans licenses sources
+      # Nested v0.2 graphs do not inherit the root compile-only policy. Any
+      # Logos-owned exception is justified in that graph's own deny.toml and
+      # paired with the verifier's feature/reachability checks.
+      - name: Audit provisional LEZ v0.2 Risc0 methods graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-provisional/escrow/methods/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0.2-provisional/escrow/methods/deny.toml advisories bans licenses sources
+      - name: Audit provisional LEZ v0.2 guest graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0.2-provisional/escrow/methods/guest/deny.toml advisories bans licenses sources
+      - name: Audit provisional LEZ v0.2 deployer graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
+          command: check
+          command-arguments: --config compat/lez-v0.2-provisional/escrow/deployer/deny.toml advisories bans licenses sources
+      - name: Audit isolated LEZ v0.2 XMR release worker graph
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0_2-xmr-release-service/Cargo.toml
+          command: check
+          arguments: --locked --all-features
+          command-arguments: --config compat/lez-v0_2-xmr-release-service/deny.toml advisories bans licenses sources
+
+  spel-compatibility:
+    name: pinned SPEL and LEZ compatibility
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - run: ./scripts/verify-spel-compatibility.sh
+
+  lez-v012-sidecar:
+    name: isolated official LEZ v0.1.2 sidecar contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_DIR: /tmp/lez-v012-sidecar-target-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - run: cargo fmt --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all --check
+      - run: cargo clippy --locked --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all-targets --all-features
+      - name: Reject sidecar documentation warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --manifest-path compat/lez-v0_1_2-sidecar/Cargo.toml --all-features --no-deps
+
+  lez-v02-sidecar:
+    name: isolated official LEZ v0.2 sidecar contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BINDGEN_EXTRA_CLANG_ARGS: -I/usr/lib/gcc/x86_64-linux-gnu/13/include
+      CARGO_BUILD_JOBS: "2"
+      CARGO_DENY_ARCHIVE_SHA256: f1f8eedc2a3ac297c540873f93785d4104b102c0079506b2a6b3221b7ec956af
+      CARGO_DENY_ARCHIVE_URL: https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.9/cargo-deny-0.19.9-x86_64-unknown-linux-musl.tar.gz
+      CARGO_HOME: /tmp/lez-v02-sidecar-cargo-${{ github.run_id }}-${{ github.run_attempt }}
+      CARGO_TARGET_DIR: /tmp/lez-v02-sidecar-target-${{ github.run_id }}-${{ github.run_attempt }}
+      RAPIDSNARK_ARCHIVE_SHA256: 59bdd709eed96235de061f352893f4650c923b54b591052118593012bb1cd831
+      RAPIDSNARK_ARCHIVE_URL: https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip
+      RAPIDSNARK_LIB_DIR: /tmp/lez-v02-rapidsnark-${{ github.run_id }}-${{ github.run_attempt }}/rapidsnark-linux-x86_64-pic-v0.0.8/lib
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - name: Provision checksum-verified sidecar native and audit inputs
+        run: |
+          set -euo pipefail
+          rapidsnark_archive="${RUNNER_TEMP}/rapidsnark-linux-x86_64-pic-v0.0.8.zip"
+          rapidsnark_root="${RAPIDSNARK_LIB_DIR%/rapidsnark-linux-x86_64-pic-v0.0.8/lib}"
+          cargo_deny_archive="${RUNNER_TEMP}/cargo-deny-0.19.9-x86_64-unknown-linux-musl.tar.gz"
+          cargo_deny_dir="${RUNNER_TEMP}/cargo-deny-0.19.9"
+          mkdir -p "${rapidsnark_root}" "${cargo_deny_dir}"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "${rapidsnark_archive}" "${RAPIDSNARK_ARCHIVE_URL}"
+          printf '%s  %s\n' "${RAPIDSNARK_ARCHIVE_SHA256}" "${rapidsnark_archive}" \
+            | sha256sum --check --strict
+          unzip -q "${rapidsnark_archive}" -d "${rapidsnark_root}"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "${cargo_deny_archive}" "${CARGO_DENY_ARCHIVE_URL}"
+          printf '%s  %s\n' "${CARGO_DENY_ARCHIVE_SHA256}" "${cargo_deny_archive}" \
+            | sha256sum --check --strict
+          tar -xzf "${cargo_deny_archive}" -C "${cargo_deny_dir}" --strip-components=1
+          chmod 0555 "${cargo_deny_dir}/cargo-deny"
+          test -d "${RAPIDSNARK_LIB_DIR}"
+          test -d /usr/lib/gcc/x86_64-linux-gnu/13/include
+          printf '%s\n' "${cargo_deny_dir}" >>"${GITHUB_PATH}"
+      - name: Fetch exact locked sidecar sources and advisory database
+        run: |
+          set -euo pipefail
+          cargo +1.96.0 fetch \
+            --locked \
+            --manifest-path compat/lez-v0_2-sidecar/Cargo.toml
+          cargo-deny --version | rg -Fx 'cargo-deny 0.19.9'
+          cargo-deny \
+            --log-level error \
+            --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+            --locked \
+            --all-features \
+            check \
+            --config compat/lez-v0_2-sidecar/deny.toml \
+            advisories
+      - name: Verify LEZ v0.2 sidecar with Cargo offline
+        run: ./scripts/verify-lez-v02-sidecar.sh
+
+  lez-v02-xmr-release-worker:
+    name: isolated LEZ v0.2 XMR release worker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_TARGET_DIR: /tmp/lez-v02-xmr-release-worker-target-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - run: cargo fmt --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml --all --check
+      - run: cargo clippy --locked --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml --all-targets --all-features --no-deps -- -D warnings
+      - run: cargo test --locked --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml --all-targets --all-features
+      - run: ./scripts/test-m4-xmr-release-worker-process.sh
+      - name: Reject release-worker documentation warnings
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --manifest-path compat/lez-v0_2-xmr-release-service/Cargo.toml --all-features --no-deps --document-private-items
+
+  lez-v02-provisional:
+    name: provisional LEZ v0.2 compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+      CARGO_TARGET_DIR: /tmp/lez-v02-provisional-target-${{ github.run_id }}-${{ github.run_attempt }}
+      LEZ_V02_GUEST_TARGET_DIR: /tmp/lez-v02-provisional-guest-target-${{ github.run_id }}-${{ github.run_attempt }}
+      LEZ_V02_ARTIFACT_TARGET_DIR: /tmp/lez-v02-provisional-artifact-target-${{ github.run_id }}-${{ github.run_attempt }}
+      LEZ_V02_TOOL_DIR: /tmp/lez-v02-provisional-tools-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - run: ./scripts/test-m4-lez-local-deployment-contract.sh
+      - run: ./scripts/verify-lez-v02-provisional.sh
+
+  lez-standalone:
+    name: deployable guest on isolated LEZ standalone
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+      LEZ_E2E_TOOL_DIR: /tmp/lez-risc0-3.0.5-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+          components: clippy, rustfmt
+      - run: ./scripts/run-lez-standalone-e2e.sh
+
+  zebra-regtest:
+    name: isolated Zebra actor consensus and maker restart E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: github-${{ github.run_id }}-${{ github.run_attempt }}
+      ZEBRA_IMAGE: lez-atomic-swaps-zebra:github-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - name: Build provenance-pinned minimal Zebra image
+        run: docker build --file tests/e2e/zebra/Dockerfile --tag "$ZEBRA_IMAGE" tests/e2e/zebra
+      - name: Scan minimal Zebra image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.ZEBRA_IMAGE }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - run: ./scripts/run-zebra-e2e.sh
+
+  bitcoin-core-regtest:
+    name: isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUN_ID: github-btc-${{ github.run_id }}-${{ github.run_attempt }}
+      BITCOIN_CORE_E2E_KEEP_RUNNING: "1"
+      BITCOIN_CORE_E2E_REQUIRE_CLEAN: "1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - name: Verify release and run role-aware MuSig2 adaptor P2TR funding and claim
+        run: ./scripts/run-bitcoin-core-e2e.sh
+      - name: Scan exact Bitcoin Core image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Remove only the exact Core CI resources
+        if: always()
+        run: |
+          set -euo pipefail
+          project="lez-atomic-swaps-bitcoin-core-${RUN_ID}"
+          container="${project}-bitcoin-core"
+          volume="${project}_core_data"
+          network="${project}_bitcoin_core_private"
+          image="lez-atomic-swaps-bitcoin-core:${RUN_ID}"
+          docker container rm --force "${container}" >/dev/null 2>&1 || true
+          docker volume rm "${volume}" >/dev/null 2>&1 || true
+          docker network rm "${network}" >/dev/null 2>&1 || true
+          docker image rm "${image}" >/dev/null 2>&1 || true
+          test -z "$(docker container ls --all --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+          test -z "$(docker network ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+          test -z "$(docker volume ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"

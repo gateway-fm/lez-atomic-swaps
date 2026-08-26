@@ -47,42 +47,16 @@ docker exec \
 `verify-lez-v02-provisional.sh` (digest-enforced) and then drives
 `run-m3-actor-local-poc.sh` in M5 application mode.
 
-## The local patch series
+## Source contract
 
-`patches/` contains the 38 commits applied on top of `main` (`5c384a5`) that
-make the pinned verification lane work on an Apple-Silicon host:
+The runner and every repository-owned binary are built directly from the
+top-level workspace. There is no patch-application or source-reconstruction
+step. Arm64 pins, host-specific guards, bidirectional application logic,
+independent Chat negotiation, Delivery discovery, and dependency updates live
+in their normal source, manifest, lockfile, and script locations.
 
-1. **arm64 pins** (0001–0007): native rebuild hashes for the LEZ services,
-   r0vm, rapidsnark libs, and the official Core 31.1 aarch64 archive (hash
-   from the same signed SHA256SUMS / Guix attestation set); a
-   `LEZ_NATIVE_TOOLS` lane with source-built `cargo-risczero` (upstream ships
-   no aarch64-linux release assets) and an aarch64 circuits release.
-2. **host quirks** (0008–0016): per-run `/tmp` GPG home (virtiofs cannot
-   host gpg-agent locks), container creation through compose so published
-   ports use `mode: host` (this engine's docker-proxy ports are unreachable
-   from `--network host` processes), and an exec-wait for the 344 MB
-   mount-backed binaries before the `/proc/<pid>/exe` drift check.
-3. **prepared ZEC UI corridor** (0017–0023): deterministic fixtures, isolated
-   Taker authority, and offer-TTL handling for the optional prepared-service
-   exercise.
-4. **long-standing-chain attach mode** (0024–0026): injectable chain run IDs,
-   persistent wallet identities, idempotent bootstrap reuse, cumulative
-   opening balances, and shared-chain Bitcoin confirmation handling.
-5. **bidirectional application runs** (0027–0034): direction selection,
-   direction-aware funding sources, replay assertions, and evidence maps for
-   both bounded LEZ/BTC economic routes.
-6. **independent negotiation** (0035–0037): independently signed role
-   contributions, real Logos Chat transport, and signed Delivery offer
-   discovery with deterministic one-winner conflict resolution.
-7. **publication dependency closure** (0038): all seven independent locked
-   HTTP/2 dependency graphs are advanced to the advisory-fixed patch release
-   and refreshed with Cargo 1.96. That refresh also repairs missing
-   already-declared path dependencies in the stale isolated XMR lock and
-   normalizes target-specific `windows-sys`/`socket2` selections; no manifest
-   or application-code dependency changes are included.
-
-Guest ELF/ImageID digests and all on-chain assertions remain exactly as
-upstream pinned them.
+Guest ELF/ImageID digests and all on-chain assertions remain pinned and are
+verified by the repository checks before a run.
 
 ## Surfacing the swap in the UI
 

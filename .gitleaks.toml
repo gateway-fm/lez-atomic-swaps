@@ -1,0 +1,38 @@
+[extend]
+useDefault = true
+
+# These exact fields contain deterministic local-test material or public
+# cryptographic identifiers. Requiring both an approved path and an approved
+# line shape keeps new values and new locations visible to the default rules.
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Reviewed deterministic fixtures and public cryptographic identifiers"
+condition = "AND"
+regexTarget = "line"
+paths = [
+  '''^crates/btc-swap-sdk/tests/vectors/lez-btc-adaptor-v1\.json$''',
+  '''^scripts/check-lez-v02-docker-isolation\.sh$''',
+  '''^scripts/check-monero-isolation\.sh$''',
+  '''^scripts/run-bitcoin-core-e2e\.sh$''',
+  '''^scripts/run-lez-v02-stack\.sh$''',
+  '''^scripts/run-m3-actor-local-poc\.sh$''',
+  '''^scripts/run-m3-lez-bootstrap\.sh$''',
+  '''^scripts/test-m3-actor-local-poc-contract\.sh$''',
+  '''^scripts/test-m3-f7-token-fixture-contract\.sh$''',
+  '''^tests/e2e/monero/provenance\.env$''',
+]
+regexes = [
+  '''aggregate_internal_key["'':= .]+[0-9a-f]{64}''',
+  '''taproot_output_key["'':= .]+[0-9a-f]{64}''',
+  '''bedrock_signing_key_hex["'':= .]+[0-9a-f]{64}''',
+  '''expected_bedrock_signing_key_sha256["'':= .]+[0-9a-f]{64}''',
+  '''MONERO_SIGNING_KEY_SHA256["'':= .]+[0-9a-f]{64}''',
+  '''auth_transfer_program_id["'':= .]+[0-9a-f]{64}''',
+  '''M3_F7_TOKEN_FIXTURE_RUN_ID["'':= .]+m3f7badroute''',
+  '''funding_key["'':= .]+[0-9a-f]{64}''',
+  '''\.(?:internal_key|refund_key|output_key)["'':= .]+[0-9a-f]{64}''',
+  '''lez_token_program_id["'':= .]+[0-9a-f]{64}''',
+  '''token_program_id["'':= .]+[0-9a-f]{64}''',
+]

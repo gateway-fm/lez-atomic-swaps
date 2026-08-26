@@ -1,0 +1,848 @@
+use std::{fmt, net::IpAddr, sync::Arc, time::Duration};
+
+use async_trait::async_trait;
+use common::{HashType, block::Block, transaction::LeeTransaction};
+use lez_bridge_protocol::{
+    ChainClock, Hex32, Participant, PreparedTransaction, RuntimeCompatibility, RuntimeDescriptor,
+};
+use nssa::{Account, AccountId, PublicTransaction};
+use sequencer_service_rpc::{RpcClient as _, SequencerClient, SequencerClientBuilder};
+use url::{Host, Url};
+
+const MAX_EXACT_TRANSACTION_BYTES: usize = 2_000_000;
+const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
+const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
+const NODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const TRANSACTION_INCLUSION_TIMEOUT: Duration = Duration::from_secs(30);
+const OFFICIAL_PUBLIC_NODE_ENDPOINT: &str = "https://testnet.lez.logos.co/";
+
+/// Fail-closed errors at the official LEZ v0.2 runtime boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum RuntimeBoundaryError {
+    /// The configured graph is not the separately locked LEZ v0.2 graph.
+    #[error("runtime compatibility is not pinned LEE v0.2.0")]
+    WrongCompatibility,
+    /// The configured descriptor and isolated process roles differ.
+    #[error("runtime role does not match the isolated sidecar role")]
+    WrongRole,
+    /// The descriptor does not identify the official isolated signer.
+    #[error("runtime signer does not match the isolated official signer")]
+    WrongSigner,
+    /// A required runtime identity is the impossible all-zero value.
+    #[error("runtime descriptor contains an invalid zero identity")]
+    InvalidRuntimeIdentity,
+    /// The official node endpoint does not match its selected route profile.
+    #[error("official node endpoint does not match the selected route profile")]
+    InvalidNodeEndpoint,
+    /// The official sequencer health or channel RPC was unavailable.
+    #[error("official LEZ v0.2 node health is unavailable")]
+    NodeUnavailable,
+    /// The official sequencer returned a different configured channel.
+    #[error("official LEZ v0.2 node channel does not match the runtime descriptor")]
+    WrongChannel,
+    /// The official sequencer changed height while the account snapshot was read.
+    #[error("official LEZ v0.2 account snapshot was not from one sequencer tip")]
+    InconsistentSnapshot,
+    /// Exact bytes were not one canonical, signed official LEE public transaction.
+    #[error("bytes are not a canonical signed official LEE v0.2 public transaction")]
+    InvalidOfficialTransaction,
+    /// The sequencer returned a transaction identity other than the canonical prepared ID.
+    #[error("official sequencer returned a non-canonical transaction identity")]
+    WrongTransactionId,
+    /// The canonical lookup returned different transaction bytes for the prepared ID.
+    #[error("official sequencer returned substituted transaction bytes")]
+    WrongIncludedTransaction,
+}
+
+/// Source-correct facts returned by the official v0.2 sequencer health boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeHealth {
+    channel_id: [u8; 32],
+}
+
+impl RuntimeHealth {
+    /// Creates a health result from the official sequencer `ChannelId` bytes.
+    #[must_use]
+    pub const fn new(channel_id: [u8; 32]) -> Self {
+        Self { channel_id }
+    }
+
+    /// Returns the exact official channel identity observed with the health check.
+    #[must_use]
+    pub const fn channel_id(&self) -> &[u8; 32] {
+        &self.channel_id
+    }
+}
+
+/// Supplies official sequencer health and channel facts without synthetic fallback.
+#[async_trait]
+pub trait HealthProbe: Send + Sync {
+    /// Calls the source-correct v0.2 health boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when either required official RPC fact is unavailable.
+    async fn check_health(&self) -> Result<RuntimeHealth, RuntimeBoundaryError>;
+}
+
+/// Exact descriptor, role, signer, and official-node health binding for one actor.
+pub struct RuntimeBoundary {
+    descriptor: RuntimeDescriptor,
+    role: Participant,
+    signer_account_id: AccountId,
+    health_probe: Arc<dyn HealthProbe>,
+}
+
+impl fmt::Debug for RuntimeBoundary {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RuntimeBoundary")
+            .field("descriptor", &self.descriptor)
+            .field("role", &self.role)
+            .field("signer_account_id", &self.signer_account_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RuntimeBoundary {
+    /// Binds a complete v0.2 descriptor to one official LEE account and role.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a legacy/cross-wired graph, role, signer, or zero identity.
+    pub fn new(
+        descriptor: RuntimeDescriptor,
+        role: Participant,
+        signer_account_id: AccountId,
+        health_probe: Arc<dyn HealthProbe>,
+    ) -> Result<Self, RuntimeBoundaryError> {
+        if descriptor.compatibility != RuntimeCompatibility::LeeV0_2_0 {
+            return Err(RuntimeBoundaryError::WrongCompatibility);
+        }
+        if descriptor.sidecar_role != role {
+            return Err(RuntimeBoundaryError::WrongRole);
+        }
+        if descriptor.signer_account_id != Hex32::from_bytes(signer_account_id.into_value()) {
+            return Err(RuntimeBoundaryError::WrongSigner);
+        }
+        if [
+            descriptor.chain_id,
+            descriptor.channel_id,
+            descriptor.genesis_block_hash,
+            descriptor.escrow_program_id,
+            descriptor.signer_account_id,
+        ]
+        .iter()
+        .any(|identity| identity.as_bytes() == &[0; 32])
+        {
+            return Err(RuntimeBoundaryError::InvalidRuntimeIdentity);
+        }
+        Ok(Self {
+            descriptor,
+            role,
+            signer_account_id,
+            health_probe,
+        })
+    }
+
+    /// Returns the exact immutable descriptor served by `describe_runtime`.
+    pub const fn describe(&self) -> &RuntimeDescriptor {
+        &self.descriptor
+    }
+
+    /// Proves official sequencer health and exact channel identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error rather than treating an unavailable or different channel as healthy.
+    pub async fn verify_health(&self) -> Result<RuntimeHealth, RuntimeBoundaryError> {
+        let health = self.health_probe.check_health().await?;
+        if health.channel_id != *self.descriptor.channel_id.as_bytes() {
+            return Err(RuntimeBoundaryError::WrongChannel);
+        }
+        Ok(health)
+    }
+}
+
+/// Direct, bounded client for the official v0.2 sequencer health RPCs.
+#[derive(Clone)]
+pub struct OfficialNodeRpc {
+    client: SequencerClient,
+    local_profile: bool,
+}
+
+/// Live, same-tip sequencer facts needed to prepare one Vault Claim.
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct OfficialVaultClaimFacts {
+    channel_id: [u8; 32],
+    genesis_block_hash: [u8; 32],
+    owner_account: Account,
+    vault_account: Account,
+    sequencer_tip: u64,
+}
+
+/// Same-tip live facts for one checked native escrow lifecycle.
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct OfficialNativeEscrowFacts {
+    channel_id: [u8; 32],
+    genesis_block_hash: [u8; 32],
+    tip_block_hash: [u8; 32],
+    tip_timestamp_ms: u64,
+    sequencer_tip: u64,
+    metadata_account: Account,
+    custody_account: Account,
+    depositor_account: Account,
+    claimant_account: Account,
+}
+
+/// Stable live identity and consensus-clock facts from the official node.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OfficialCurrentClockFacts {
+    channel_id: [u8; 32],
+    genesis_block_hash: [u8; 32],
+    clock: ChainClock,
+}
+
+impl OfficialCurrentClockFacts {
+    /// Returns the live official channel identity.
+    #[must_use]
+    pub(crate) const fn channel_id(&self) -> [u8; 32] {
+        self.channel_id
+    }
+
+    /// Returns the live official genesis block hash.
+    #[must_use]
+    pub(crate) const fn genesis_block_hash(&self) -> [u8; 32] {
+        self.genesis_block_hash
+    }
+
+    /// Returns the current clock whose block was stable across the RPC bracket.
+    pub(crate) const fn clock(&self) -> ChainClock {
+        self.clock
+    }
+}
+
+impl OfficialNativeEscrowFacts {
+    /// Returns the exact official channel identity.
+    #[must_use]
+    pub const fn channel_id(&self) -> [u8; 32] {
+        self.channel_id
+    }
+
+    /// Returns the official genesis block hash.
+    #[must_use]
+    pub const fn genesis_block_hash(&self) -> [u8; 32] {
+        self.genesis_block_hash
+    }
+
+    /// Returns the same-tip block hash bracketing all account reads.
+    #[must_use]
+    pub const fn tip_block_hash(&self) -> [u8; 32] {
+        self.tip_block_hash
+    }
+
+    /// Returns the consensus-visible timestamp on that tip.
+    #[must_use]
+    pub const fn tip_timestamp_ms(&self) -> u64 {
+        self.tip_timestamp_ms
+    }
+
+    /// Returns the common sequencer tip bracketing all account reads.
+    #[must_use]
+    pub const fn sequencer_tip(&self) -> u64 {
+        self.sequencer_tip
+    }
+
+    /// Returns the metadata PDA account snapshot.
+    #[must_use]
+    pub const fn metadata_account(&self) -> &Account {
+        &self.metadata_account
+    }
+
+    /// Returns the custody PDA account snapshot.
+    #[must_use]
+    pub const fn custody_account(&self) -> &Account {
+        &self.custody_account
+    }
+
+    /// Returns the depositor account snapshot.
+    #[must_use]
+    pub const fn depositor_account(&self) -> &Account {
+        &self.depositor_account
+    }
+
+    /// Returns the claimant account snapshot.
+    #[must_use]
+    pub const fn claimant_account(&self) -> &Account {
+        &self.claimant_account
+    }
+}
+
+impl OfficialVaultClaimFacts {
+    /// Returns the live official channel identity.
+    #[must_use]
+    pub const fn channel_id(&self) -> [u8; 32] {
+        self.channel_id
+    }
+
+    /// Returns the block hash observed at the official genesis block ID.
+    #[must_use]
+    pub const fn genesis_block_hash(&self) -> [u8; 32] {
+        self.genesis_block_hash
+    }
+
+    /// Returns the live owner account snapshot.
+    #[must_use]
+    pub const fn owner_account(&self) -> &Account {
+        &self.owner_account
+    }
+
+    /// Returns the live owner-derived Vault account snapshot.
+    #[must_use]
+    pub const fn vault_account(&self) -> &Account {
+        &self.vault_account
+    }
+
+    /// Returns the common sequencer tip bracketing both account reads.
+    #[must_use]
+    pub const fn sequencer_tip(&self) -> u64 {
+        self.sequencer_tip
+    }
+}
+
+impl fmt::Debug for OfficialNodeRpc {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OfficialNodeRpc")
+            .finish_non_exhaustive()
+    }
+}
+
+impl OfficialNodeRpc {
+    /// Connects to an explicit local sequencer without retries.
+    ///
+    /// This compatibility constructor retains the pre-profile local behavior.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any non-HTTP, non-loopback, credentialed, ambiguous, or portless URL.
+    pub fn connect(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
+        Self::connect_local(endpoint)
+    }
+
+    /// Connects to a node selected by the local route profile.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any non-HTTP, non-loopback, credentialed, ambiguous, or portless URL.
+    pub fn connect_local(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
+        validate_local_node_endpoint(endpoint)?;
+        Self::connect_validated(endpoint, true)
+    }
+
+    /// Connects to the one allowlisted official public node origin.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every value except the exact uncredentialed root HTTPS URL
+    /// `https://testnet.lez.logos.co/`.
+    pub fn connect_official_public(endpoint: &str) -> Result<Self, RuntimeBoundaryError> {
+        Self::validate_official_public_endpoint(endpoint)?;
+        Self::connect_validated(endpoint, false)
+    }
+
+    /// Validates the one outbound official-public node origin without I/O.
+    ///
+    /// # Errors
+    ///
+    /// Rejects remote HTTP, generic domains, credentials, paths, queries,
+    /// fragments, alternate ports, and local endpoints.
+    pub fn validate_official_public_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
+        let parsed = Url::parse(endpoint).map_err(|_| RuntimeBoundaryError::InvalidNodeEndpoint)?;
+        if endpoint != OFFICIAL_PUBLIC_NODE_ENDPOINT
+            || parsed.scheme() != "https"
+            || parsed.host_str() != Some("testnet.lez.logos.co")
+            || parsed.port().is_some()
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.path() != "/"
+            || parsed.query().is_some()
+            || parsed.fragment().is_some()
+        {
+            return Err(RuntimeBoundaryError::InvalidNodeEndpoint);
+        }
+        Ok(())
+    }
+
+    fn connect_validated(
+        endpoint: &str,
+        local_profile: bool,
+    ) -> Result<Self, RuntimeBoundaryError> {
+        let client = SequencerClientBuilder::default()
+            .max_request_size(MAX_NODE_REQUEST_BYTES)
+            .max_response_size(MAX_NODE_RESPONSE_BYTES)
+            .request_timeout(NODE_REQUEST_TIMEOUT)
+            .max_concurrent_requests(1)
+            .build(endpoint)
+            .map_err(|_| RuntimeBoundaryError::InvalidNodeEndpoint)?;
+        Ok(Self {
+            client,
+            local_profile,
+        })
+    }
+
+    /// Returns true only for the validated literal-loopback node profile.
+    #[must_use]
+    pub const fn is_local_profile(&self) -> bool {
+        self.local_profile
+    }
+
+    /// Reads the live channel, genesis hash, and owner/Vault accounts at one
+    /// unchanged sequencer tip.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when any official RPC is unavailable, genesis is absent,
+    /// or the sequencer advances while the two account snapshots are read.
+    pub async fn vault_claim_facts(
+        &self,
+        owner_account_id: AccountId,
+        vault_account_id: AccountId,
+    ) -> Result<OfficialVaultClaimFacts, RuntimeBoundaryError> {
+        self.client
+            .check_health()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let channel = self
+            .client
+            .get_channel_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let genesis: Block = self
+            .client
+            .get_block(nssa::GENESIS_BLOCK_ID)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        if genesis.header.block_id != nssa::GENESIS_BLOCK_ID {
+            return Err(RuntimeBoundaryError::NodeUnavailable);
+        }
+        let tip_before = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let owner_account = self
+            .client
+            .get_account(owner_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let vault_account = self
+            .client
+            .get_account(vault_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let tip_after = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if tip_before != tip_after {
+            return Err(RuntimeBoundaryError::InconsistentSnapshot);
+        }
+        Ok(OfficialVaultClaimFacts {
+            channel_id: channel.0,
+            genesis_block_hash: genesis.header.hash.0,
+            owner_account,
+            vault_account,
+            sequencer_tip: tip_after,
+        })
+    }
+
+    /// Reads one stable current consensus clock from the official sequencer.
+    ///
+    /// The current block is read twice between three height reads. This rejects
+    /// both ordinary height movement and same-height block replacement instead
+    /// of presenting either race as an authoritative clock.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when health, runtime identity, genesis, or current block is
+    /// unavailable, or when height/block identity changes across the bracket.
+    pub(crate) async fn stable_current_clock(
+        &self,
+    ) -> Result<OfficialCurrentClockFacts, RuntimeBoundaryError> {
+        self.client
+            .check_health()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let channel = self
+            .client
+            .get_channel_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let genesis = self
+            .client
+            .get_block(nssa::GENESIS_BLOCK_ID)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        if genesis.header.block_id != nssa::GENESIS_BLOCK_ID {
+            return Err(RuntimeBoundaryError::NodeUnavailable);
+        }
+
+        let height_before = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let block_before = self
+            .client
+            .get_block(height_before)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let height_middle = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if height_before != height_middle || block_before.header.block_id != height_before {
+            return Err(RuntimeBoundaryError::InconsistentSnapshot);
+        }
+        let block_after = self
+            .client
+            .get_block(height_middle)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let height_after = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if height_middle != height_after
+            || block_after.header.block_id != height_middle
+            || block_before.header.hash != block_after.header.hash
+            || block_before.header.prev_block_hash != block_after.header.prev_block_hash
+            || block_before.header.timestamp != block_after.header.timestamp
+        {
+            return Err(RuntimeBoundaryError::InconsistentSnapshot);
+        }
+        Ok(OfficialCurrentClockFacts {
+            channel_id: channel.0,
+            genesis_block_hash: genesis.header.hash.0,
+            clock: ChainClock::new(
+                Hex32::from_bytes(block_after.header.hash.0),
+                height_after,
+                block_after.header.timestamp,
+            ),
+        })
+    }
+
+    /// Reads runtime identity, consensus clock, and four native escrow accounts
+    /// under one unchanged sequencer tip.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when any official RPC is unavailable, genesis/tip blocks
+    /// are absent, or the tip advances during the account snapshot.
+    pub async fn native_escrow_facts(
+        &self,
+        metadata_account_id: AccountId,
+        custody_account_id: AccountId,
+        depositor_account_id: AccountId,
+        claimant_account_id: AccountId,
+    ) -> Result<OfficialNativeEscrowFacts, RuntimeBoundaryError> {
+        self.client
+            .check_health()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let channel = self
+            .client
+            .get_channel_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let genesis = self
+            .client
+            .get_block(nssa::GENESIS_BLOCK_ID)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let tip_before = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let tip_block = self
+            .client
+            .get_block(tip_before)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        let metadata_account = self
+            .client
+            .get_account(metadata_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let custody_account = self
+            .client
+            .get_account(custody_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let depositor_account = self
+            .client
+            .get_account(depositor_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let claimant_account = self
+            .client
+            .get_account(claimant_account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let tip_after = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if tip_before != tip_after || tip_block.header.block_id != tip_before {
+            return Err(RuntimeBoundaryError::InconsistentSnapshot);
+        }
+        Ok(OfficialNativeEscrowFacts {
+            channel_id: channel.0,
+            genesis_block_hash: genesis.header.hash.0,
+            tip_block_hash: tip_block.header.hash.0,
+            tip_timestamp_ms: tip_block.header.timestamp,
+            sequencer_tip: tip_after,
+            metadata_account,
+            custody_account,
+            depositor_account,
+            claimant_account,
+        })
+    }
+
+    /// Reads one bounded inclusive official sequencer block range for the
+    /// crate's higher-level canonical observation boundary.
+    pub(crate) async fn block_range(
+        &self,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<Block>, RuntimeBoundaryError> {
+        self.client
+            .get_block_range(start, end)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)
+    }
+
+    /// Reads the official sequencer's current tip block without exposing its
+    /// raw JSON-RPC client outside this runtime module.
+    pub(crate) async fn tip_block(&self) -> Result<Block, RuntimeBoundaryError> {
+        let height = self
+            .client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let block = self
+            .client
+            .get_block(height)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        if block.header.block_id != height {
+            return Err(RuntimeBoundaryError::NodeUnavailable);
+        }
+        Ok(block)
+    }
+
+    /// Submits one exact, signed, canonical prepared public transaction.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed bytes, a stored ID mismatch, node failure, or a
+    /// sequencer response that differs from the canonical transaction hash.
+    pub async fn submit_prepared_transaction(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<(), RuntimeBoundaryError> {
+        let transaction = decode_official_public_transaction(prepared.exact_bytes.as_slice())?;
+        if transaction.hash() != *prepared.transaction_id.as_bytes() {
+            return Err(RuntimeBoundaryError::WrongTransactionId);
+        }
+        let expected = HashType(transaction.hash());
+        let submitted = self
+            .client
+            .send_transaction(LeeTransaction::Public(transaction))
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        if submitted != expected {
+            return Err(RuntimeBoundaryError::WrongTransactionId);
+        }
+        Ok(())
+    }
+
+    /// Queries canonical sequencer storage for one exact prepared transaction.
+    ///
+    /// `false` means only not-yet-observed; it does not prove rejection or
+    /// permanent absence.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed prepared bytes, ID substitution, node failure, or
+    /// different canonical bytes under the requested hash.
+    pub async fn prepared_transaction_is_included(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<bool, RuntimeBoundaryError> {
+        let transaction = decode_official_public_transaction(prepared.exact_bytes.as_slice())?;
+        if transaction.hash() != *prepared.transaction_id.as_bytes() {
+            return Err(RuntimeBoundaryError::WrongTransactionId);
+        }
+        let expected = LeeTransaction::Public(transaction);
+        let observed = self
+            .client
+            .get_transaction(HashType(*prepared.transaction_id.as_bytes()))
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        match observed {
+            None => Ok(false),
+            Some(observed) if observed == expected => Ok(true),
+            Some(_) => Err(RuntimeBoundaryError::WrongIncludedTransaction),
+        }
+    }
+
+    /// Polls canonical storage for inclusion without resubmitting.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable error if the bounded poll expires or any exact
+    /// transaction invariant fails.
+    pub async fn wait_prepared_transaction_inclusion(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<(), RuntimeBoundaryError> {
+        tokio::time::timeout(TRANSACTION_INCLUSION_TIMEOUT, async {
+            loop {
+                if self.prepared_transaction_is_included(prepared).await? {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+    }
+}
+
+#[async_trait]
+impl HealthProbe for OfficialNodeRpc {
+    async fn check_health(&self) -> Result<RuntimeHealth, RuntimeBoundaryError> {
+        self.client
+            .check_health()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        let channel = self
+            .client
+            .get_channel_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        Ok(RuntimeHealth::new(channel.0))
+    }
+}
+
+#[async_trait]
+impl crate::vault_claim_prepare::VaultClaimNonceSource for OfficialNodeRpc {
+    async fn account_nonce(
+        &self,
+        account_id: AccountId,
+    ) -> Result<u128, crate::vault_claim_prepare::VaultClaimPrepareError> {
+        self.client
+            .get_account(account_id)
+            .await
+            .map(|account| u128::from(account.nonce))
+            .map_err(|_| crate::vault_claim_prepare::VaultClaimPrepareError::NonceUnavailable)
+    }
+}
+
+#[async_trait]
+impl crate::native_prepare::NonceSource for OfficialNodeRpc {
+    async fn account_nonce(
+        &self,
+        account_id: AccountId,
+    ) -> Result<u128, crate::native_prepare::NativePrepareError> {
+        self.client
+            .get_account(account_id)
+            .await
+            .map(|account| u128::from(account.nonce))
+            .map_err(|_| crate::native_prepare::NativePrepareError::NonceUnavailable)
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[async_trait]
+impl crate::effect_submission::SequencerSubmitApi for OfficialNodeRpc {
+    async fn send_transaction(
+        &self,
+        transaction: LeeTransaction,
+    ) -> Result<HashType, jsonrpsee::core::ClientError> {
+        self.client.send_transaction(transaction).await
+    }
+}
+
+/// Decodes and statelessly validates exact bytes with official v0.2 LEE types.
+///
+/// This deliberately does not expose a bridge method yet. It establishes that
+/// later planners consume the upstream `PublicTransaction` and `LeeTransaction`
+/// representations rather than a hand-copied wire model.
+///
+/// # Errors
+///
+/// Rejects empty/oversized, noncanonical, or invalidly signed public transactions.
+pub fn decode_official_public_transaction(
+    exact_bytes: &[u8],
+) -> Result<PublicTransaction, RuntimeBoundaryError> {
+    if exact_bytes.is_empty() || exact_bytes.len() > MAX_EXACT_TRANSACTION_BYTES {
+        return Err(RuntimeBoundaryError::InvalidOfficialTransaction);
+    }
+    let transaction = PublicTransaction::from_bytes(exact_bytes)
+        .map_err(|_| RuntimeBoundaryError::InvalidOfficialTransaction)?;
+    if transaction.to_bytes() != exact_bytes {
+        return Err(RuntimeBoundaryError::InvalidOfficialTransaction);
+    }
+    LeeTransaction::Public(transaction.clone())
+        .transaction_stateless_check()
+        .map_err(|_| RuntimeBoundaryError::InvalidOfficialTransaction)?;
+    Ok(transaction)
+}
+
+fn validate_local_node_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
+    let parsed = Url::parse(endpoint).map_err(|_| RuntimeBoundaryError::InvalidNodeEndpoint)?;
+    let loopback = match parsed.host() {
+        Some(Host::Ipv4(address)) => IpAddr::V4(address).is_loopback(),
+        Some(Host::Ipv6(address)) => IpAddr::V6(address).is_loopback(),
+        Some(Host::Domain(_)) | None => false,
+    };
+    if parsed.scheme() != "http"
+        || !loopback
+        || parsed.port().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || parsed.path() != "/"
+    {
+        return Err(RuntimeBoundaryError::InvalidNodeEndpoint);
+    }
+    Ok(())
+}
+
+/// Validates the shared uncredentialed literal-loopback HTTP endpoint grammar.
+///
+/// # Errors
+///
+/// Rejects domains, non-loopback IPs, HTTPS, credentials, missing ports, and
+/// any query, fragment, or non-root path.
+pub fn validate_loopback_http_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
+    validate_local_node_endpoint(endpoint)
+}

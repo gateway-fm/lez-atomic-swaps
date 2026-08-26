@@ -1,0 +1,26 @@
+[package]
+name = "lez-adaptor-role-runner"
+version = "0.1.0"
+description = "PoC one-shot role runner for durable chain adaptor signing"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "=4.6.1", features = ["derive"] }
+hex = "=0.4.3"
+lez-adaptor-signature = { version = "0.1.0", path = "../adaptor-signature" }
+lez-swap-store = { version = "0.1.0", path = "../swap-store" }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+subtle = "=2.6.1"
+thiserror = "=2.0.18"
+zeroize = "=1.9.0"
+
+[dev-dependencies]
+secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
+tempfile = "=3.27.0"

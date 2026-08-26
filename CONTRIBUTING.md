@@ -6,19 +6,22 @@ journey and add a regression test for every behavioural change.
 
 ## Repository topology
 
-The default `m3-plus` branch is a curated submission and provenance tree. The
-complete buildable Rust workspace is reconstructed from base commit `5c384a5`
-and the ordered patches under `deploy/full-swap/patches/`. Use:
+The default `main` branch contains the complete buildable source tree. Rust
+workspace manifests, crates, compatibility packages, Basecamp applications,
+tests, and build scripts are all checked in at their conventional paths. A
+fresh clone can inspect and build the implementation directly:
 
 ```sh
-./scripts/reconstruct-source.sh /tmp/lez-atomic-swaps-source
+cargo metadata --locked --no-deps
+./scripts/run-public-offline-e2e.sh
 ```
 
-The command performs no network access and verifies the exact resulting tree.
-Run source tests in that reconstructed checkout. Changes to the implementation
-must be represented by the next ordered patch, accompanied by an updated
-expected tree hash and documentation; do not silently edit only the curated
-snapshot or only a private worktree.
+Implementation changes must edit this tree normally and include tests and
+documentation in the same pull request. Do not submit generated build outputs,
+private evidence roots, or a patch-only substitute for the changed source.
+The owner-process hardening uses Linux-only APIs; on macOS, use the isolated
+Docker wrapper above instead of expecting the complete workspace to compile
+natively.
 
 ## Developer Certificate of Origin
 
@@ -38,7 +41,7 @@ new contributions.
 
 ## Before opening a pull request
 
-From the curated checkout, run:
+From the repository root, run:
 
 ```sh
 ./scripts/verify-public-repository.sh
@@ -49,10 +52,10 @@ The offline E2E wrapper uses a cached Rust image and dependency registry in an
 auto-removed Docker container with no network. It never starts, stops, or joins
 the demo Compose stack.
 
-From the reconstructed source, also run the relevant formatting, Clippy, unit,
-integration, documentation, dependency, and architecture checks documented in
-that tree. Never commit keys, wallet seeds, testnet credentials, chain data,
-generated proofs, Docker volumes, or private evidence roots.
+Also run the relevant formatting, Clippy, unit, integration, documentation,
+dependency, and architecture checks. Never commit keys, wallet seeds, testnet
+credentials, chain data, generated proofs, Docker volumes, or private evidence
+roots.
 
 Architecture changes affecting protocol safety, persistence, cryptography,
 external interfaces, or operations require an ADR. If AI-assisted tooling was

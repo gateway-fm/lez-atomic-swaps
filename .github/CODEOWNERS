@@ -1,5 +1,5 @@
 # Two Gateway teams own the public project. The publication ruleset requires
-# two approving reviews and code-owner approval before m3-plus can change.
+# two approving reviews and code-owner approval before main can change.
 * @gateway-fm/core-r-d @gateway-fm/security-admin
 
 /.github/ @gateway-fm/security-admin @gateway-fm/core-r-d
@@ -7,4 +7,7 @@
 /LICENSE* @gateway-fm/security-admin @gateway-fm/core-r-d
 /NOTICE @gateway-fm/security-admin @gateway-fm/core-r-d
 /THIRD_PARTY_NOTICES @gateway-fm/security-admin @gateway-fm/core-r-d
-/deploy/full-swap/patches/ @gateway-fm/core-r-d @gateway-fm/security-admin
+/Cargo.toml @gateway-fm/core-r-d @gateway-fm/security-admin
+/Cargo.lock @gateway-fm/core-r-d @gateway-fm/security-admin
+/crates/ @gateway-fm/core-r-d @gateway-fm/security-admin
+/compat/ @gateway-fm/core-r-d @gateway-fm/security-admin
