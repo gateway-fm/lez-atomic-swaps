@@ -389,9 +389,21 @@
         </div>
         <aside class="xray-notes">
           <article><h3>Windows are consensus, not code</h3><p>The claim carries <code>.with_timestamp_validity_window(..state.refund_at)</code> and the refund carries <code>(state.refund_at..)</code>. Disjoint and exhaustive — no block can hold both, and the escrow never needs an <code>if now &lt; deadline</code>.</p></article>
-          <article><h3>Why <code>account_id == state.claimant</code> fails</h3><p>If the claimant were also the aggregate authority, one party could claim alone. The clause forces the claim to prove a signature under the <em>joint</em> key, which is what makes the LEZ claim reveal <em>t</em>.</p></article>
+          <article><h3>Why <code>account_id == state.claimant</code> fails</h3><p>If the claimant were also the aggregate authority it could claim alone, and no joint signature would ever appear. The clause forces the claim to carry a signature under the <em>joint</em> key — which is the mechanism below.</p></article>
           <article><h3>Permissionless, not unrestricted</h3><p>Anyone may submit the refund — a watchtower, the counterparty, a stranger. It still pays only the recorded depositor, so recovery survives the counterparty vanishing and needs no operator online.</p></article>
         </aside>
+      </div>
+      <div class="reveal-band">
+        <div class="reveal-lead"><b>The escrow never sees <em>t</em>.</b><span>It only accepts a complete signature under the joint key — and adding <em>t</em> is the only way to make one.</span></div>
+        <div class="reveal-math">
+          <div class="rv"><code>s′</code><span>pre-signature<br>both parties hold it</span></div>
+          <i>+</i>
+          <div class="rv secret"><code>t</code><span>adaptor secret<br>Taker only</span></div>
+          <i>=</i>
+          <div class="rv onchain"><code>s</code><span>valid aggregate signature<br>published on LEZ</span></div>
+          <i class="arr">→</i>
+          <div class="rv extract"><code>t = s − s′</code><span>the Maker already had <code>s′</code><br>so the claim hands it <em>t</em></span></div>
+        </div>
       </div>
       <footer class="source-line">Escrow program · <code>compat/lez-v0.2-provisional/escrow/src/lib.rs</code> · lines 90-98, 181-188, 977-1021</footer>
     </section>
