@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "rfp003_m1_m3_m6_submission_pack",
-  "generated_at": "2026-08-25T14:51:42Z",
+  "generated_at": "2026-08-26T11:53:34Z",
   "repository": {
     "remote": "git@github.com:gateway-fm/lez-atomic-swaps.git",
     "branch": "m3-plus",
@@ -58,6 +58,14 @@
       "gateway_owned_base_ref_at_generation": false
     }
   },
+  "public_source_reconstruction": {
+    "base_commit": "5c384a5151f59bef1a2f19421ef6ab2b004db3d4",
+    "milestone_result_commit": "e67522c8d27c274bcb94b92f90420983c83d0f5b",
+    "milestone_result_tree": "ae28b574b925e2555b47dd255e6d8565f8cbd7d9",
+    "ordered_patch_count": 38,
+    "advisory_fix_patch": "deploy/full-swap/patches/0038-chore-deps-update-h2-to-0.4.16.patch",
+    "result_tree": "c747dafbdf39ed4615d92b005e63552a32bb60bf"
+  },
   "matching_product_run": {
     "run_id": "m5arm-0820121736",
     "evidence": "docs/evidence/m3-btc-ui-run-m5arm-0820121736.json",
@@ -82,12 +90,12 @@
   },
   "actual_ui_demo": {
     "path": "media/lez-btc-ui-swap-demo.mp4",
-    "run_id": "m5arm-0825141508",
-    "evidence": "docs/evidence/m3-btc-ui-run-m5arm-0825141508.json",
-    "evidence_sha256": "6b10bac20554a78c15a89f73c0d1e9bcbc28279db4c3482979b1f0b27c02d46c",
+    "run_id": "m5arm-0825151914",
+    "evidence": "docs/evidence/m3-btc-ui-run-m5arm-0825151914.json",
+    "evidence_sha256": "169adac160307105c58b85e781b6eac254f66187301aac3eba40432628c2eff4",
     "result": "passed",
     "direction": "TakerSellsForeign",
-    "completed_at": "2026-08-25T14:24:31Z",
+    "completed_at": "2026-08-25T15:30:48Z",
     "amounts": {
       "bitcoin_sats": 1000000,
       "lez_units": 1000
@@ -99,14 +107,14 @@
     },
     "replay_resubmission_count": 0,
     "private_material_disclosed": false,
-    "duration_seconds": 220.7,
+    "duration_seconds": 113.2,
     "width": 1920,
     "height": 1080,
     "fps": 30,
-    "frame_count": 6621,
+    "frame_count": 3396,
     "codec": "h264",
     "pixel_format": "yuv420p",
-    "audio_stream_count": 0,
+    "audio_stream_count": 1,
     "size_bytes": 15067133,
     "sha256": "bb5ec36055e5f8a53f367d6bf03147e4eb78f17a601d305260b30d8229275703"
   },
@@ -122,9 +130,9 @@
     ],
     "standalone_html": {
       "path": "media/lez-btc-m1-m3-m6-submission.html",
-      "size_bytes": 1878643,
+      "size_bytes": 1886599,
       "external_runtime_dependencies": 0,
-      "sha256": "8f49c1911f3dc7ede029cb6200d29d22fbfc7ed4a9b074b505274bde460ea68c"
+      "sha256": "054fee42dfe8ff1f70cb0b9b14608bd9a5810a645dd2a14d56d6bb8494ce91ea"
     },
     "poster": {
       "path": "media/screenshots/lez-btc-m1-m3-m6-submission-cover.png",
@@ -133,8 +141,8 @@
       "sha256": "cc6fcae71fffe6d7b44ddc912c824c2421ac823ba73d01a8845a6988c579a3c2"
     },
     "source_hashes": {
-      "index_html": "a95e94e374783b5e588b1bda825fc4a087351e1a7c9676af066e8fd59b8ee1dd",
-      "styles_css": "da4eca2431252a4fa39ec5537315533dd9a45d64e234f2f988d4aa69acb5e26d",
+      "index_html": "cc16cb5b290f901d4b4601114cb95078752036ab3727e0b7de159791b6d1279e",
+      "styles_css": "021cdd5d981f852a3c056cec8f389936bf676f37b0bfde76f6c6dec3547d6594",
       "deck_js": "86e04da5713207532ff682079ec0201e1c0bbcdb7bc9c57bc7c2214f1e458dc1",
       "standalone_builder": "43b33578d51a9acae81ffacda6a7b972e3a88bd4a66a3a8ea7653f309b8f30d9",
       "render_script": "8763c038ea97a86c0e0e35fa25961a623619983e24a32293987a19bd3f0eb427"

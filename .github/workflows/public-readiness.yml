@@ -1,0 +1,178 @@
+name: public-readiness
+
+on:
+  pull_request:
+  push:
+    branches: [m3-plus]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-readiness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-contract:
+    name: repository and reconstruction contract
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - run: ./scripts/verify-public-repository.sh
+
+  dco:
+    name: developer certificate of origin
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require an author-matching sign-off on every commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            BASE_SHA="$(git rev-parse "${HEAD_SHA}^" 2>/dev/null || true)"
+          fi
+          if [[ -n "$BASE_SHA" ]]; then
+            commit_list="$(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}")"
+          else
+            commit_list="$HEAD_SHA"
+          fi
+          failed=0
+          while IFS= read -r commit; do
+            [[ -n "$commit" ]] || continue
+            author="$(git show -s --format='%an <%ae>' "$commit")"
+            if ! git show -s --format='%B' "$commit" \
+              | sed -n 's/^Signed-off-by:[[:space:]]*//Ip' \
+              | grep -Fxi -- "$author" >/dev/null; then
+              echo "${commit} lacks an author-matching DCO sign-off" >&2
+              failed=1
+            fi
+          done <<<"$commit_list"
+          test "$failed" = 0
+
+  secret-history:
+    name: full reachable-history secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Install checksum-pinned Gitleaks 8.30.1
+        env:
+          ARCHIVE_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          install_dir="${RUNNER_TEMP}/gitleaks"
+          mkdir -p "$install_dir"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "$archive" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          printf '%s  %s\n' "$ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$install_dir" gitleaks
+          "$install_dir/gitleaks" git . --no-banner --redact --exit-code 1
+
+  dependency-policy:
+    name: reconstructed dependency vulnerabilities and licences
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24.18.0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - name: Reconstruct exact source
+        run: ./scripts/reconstruct-source.sh "${RUNNER_TEMP}/source"
+      - name: Audit Node dependency and licence policy
+        working-directory: ${{ runner.temp }}/source
+        run: |
+          npm audit --audit-level=moderate
+          npm run audit:licenses
+      - name: Audit Rust advisories, bans, licences, and sources
+        working-directory: ${{ runner.temp }}/source
+        env:
+          ARCHIVE_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/cargo-deny.tar.gz"
+          install_dir="${RUNNER_TEMP}/cargo-deny"
+          mkdir -p "$install_dir"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "$archive" \
+            https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz
+          printf '%s  %s\n' "$ARCHIVE_SHA256" "$archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          audit_graph() {
+            local manifest="$1"
+            local config="$2"
+            local features="$3"
+            local args=(
+              --manifest-path "$manifest"
+              --config "$config"
+              --locked
+            )
+            if [[ "$features" == all ]]; then
+              args+=(--all-features)
+            fi
+            "$install_dir/cargo-deny" "${args[@]}" \
+              check advisories bans licenses sources
+          }
+
+          audit_graph Cargo.toml deny.toml all
+          audit_graph fuzz/Cargo.toml fuzz/deny.toml default
+          audit_graph compat/spel-zec-escrow/Cargo.toml \
+            compat/spel-zec-escrow/deny.toml all
+          audit_graph compat/spel-zec-escrow/methods/guest/Cargo.toml \
+            compat/spel-zec-escrow/deny.toml default
+          audit_graph compat/spel-zec-escrow/methods/Cargo.toml \
+            compat/spel-zec-escrow/deny.toml default
+          audit_graph compat/lez-standalone-e2e/Cargo.toml \
+            compat/lez-standalone-e2e/deny.toml default
+          audit_graph compat/lez-v0_1_2-sidecar/Cargo.toml \
+            compat/lez-v0_1_2-sidecar/deny.toml default
+          audit_graph compat/lez-v0_2-sidecar/Cargo.toml \
+            compat/lez-v0_2-sidecar/deny.toml all
+          audit_graph compat/lez-v0.2-provisional/Cargo.toml \
+            compat/lez-v0.2-provisional/deny.toml default
+          audit_graph compat/lez-v0.2-provisional/escrow/methods/Cargo.toml \
+            compat/lez-v0.2-provisional/escrow/methods/deny.toml default
+          audit_graph compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml \
+            compat/lez-v0.2-provisional/escrow/methods/guest/deny.toml default
+          audit_graph compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+            compat/lez-v0.2-provisional/escrow/deployer/deny.toml default
+          audit_graph compat/lez-v0_2-xmr-release-service/Cargo.toml \
+            compat/lez-v0_2-xmr-release-service/deny.toml all
+
+  chat-delivery:
+    name: reconstructed Chat and Delivery tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.96.0
+      - run: ./scripts/reconstruct-source.sh "${RUNNER_TEMP}/source"
+      - name: Test independent-role Chat, Delivery discovery, and conflict resolution
+        working-directory: ${{ runner.temp }}/source
+        run: >-
+          cargo test --locked -p lez-maker-node
+          --lib
+          --test btc_chat_process
+          --test logos_offer_discovery
+          --test run_local_delivery

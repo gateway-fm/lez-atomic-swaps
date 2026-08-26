@@ -57,7 +57,26 @@ and discloses no private material. It carries the source replay count into the
 exported record; the interactive controller separately validates and attaches
 wallet-balance and fee reconciliation.
 
-## Run the private-local stack
+## Source and branch layout
+
+`m3-plus` is the intended public default branch and the reviewer-facing
+submission snapshot. It intentionally keeps the runnable implementation as an
+auditable ordered patch series instead of duplicating a second mutable source
+tree.
+
+Reconstruct the complete buildable workspace, without contacting a network:
+
+```sh
+./scripts/reconstruct-source.sh /tmp/lez-atomic-swaps-source
+```
+
+The script checks out the reachable base commit `5c384a5`, applies all 38
+patches in order, and refuses a result whose tree object is not
+`c747dafbdf39ed4615d92b005e63552a32bb60bf`. See the
+[patch-series contract](deploy/full-swap/patches/README.md) and
+[contribution guide](CONTRIBUTING.md).
+
+## Run the local stack
 
 The runnable lane brings up Bitcoin Core 31.1 regtest, the LEZ v0.2 stack,
 explorers, the real Maker daemon and Taker service, the M3 actor runner, and the
@@ -155,4 +174,8 @@ M4 Monero, complete M5 operations, or M7 mainnet readiness.
 
 ## License
 
-MIT OR Apache-2.0.
+Project-authored source and media are available under MIT OR Apache-2.0. The
+root [licence notice](LICENSE) explains the choice; complete terms are in
+[LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). Third-party
+material, including the demo music, remains under the terms recorded in
+[THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).

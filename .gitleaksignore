@@ -1,0 +1,32 @@
+# Reviewed historical findings. Each entry binds one rule, commit, path, and
+# line; changed or newly introduced values are not suppressed.
+0c78f3dacc2aa31461658af3f714890cd523c810:crates/btc-swap-sdk/tests/vectors/lez-btc-adaptor-v1.json:generic-api-key:23
+0c78f3dacc2aa31461658af3f714890cd523c810:crates/btc-swap-sdk/tests/vectors/lez-btc-adaptor-v1.json:generic-api-key:24
+96f9684c22af22fd080b771830a3a3e6f9891030:deploy/assets/lez-source/bedrock/node-config.yaml:generic-api-key:5
+f23a15e6c7314ae0cf74e7c9cffc3ccbeb6688ec:deploy/full-swap/patches/0001-local-arm64-native-pins-for-LEZ-services-r0vm-rebuil.patch:generic-api-key:38
+049fb475a5d340ab76a9255fc875f5795a656660:deploy/full-swap/patches/0027-local-selectable-single-direction-for-M5-BTC-applica.patch:generic-api-key:106
+96f9684c22af22fd080b771830a3a3e6f9891030:deploy/scripts/gen-config.sh:generic-api-key:15
+f93b69e27c57a915c9ab8ab8d9fd0d7201d7ceea:deploy/scripts/market-bootstrap.sh:generic-api-key:19
+24e9ff24f2f7b12730292064b74f9c9d4deb1bd6:docs/architecture/0073-compose-xmr-stage-material-through-role-journals.md:generic-api-key:24
+5d9c81627012f20809fca7b520e5fdeb311d50e6:docs/evidence/m4-actual-claim-poc-20260721.json:generic-api-key:139
+a58ef9651e2fc174c9b97439d836bc6df8bb4253:docs/m3-local-poc-operator-guide.md:generic-api-key:281
+0486489c6893362c1b53e9b500b47ac437636b11:docs/m3-local-poc-operator-guide.md:generic-api-key:681
+ac45a96c65d48b2699af91aff4cea0a66779d7d0:docs/requirements-traceability.md:generic-api-key:112
+d547d040211d32e3e376e9cb650d86d2de88e39f:docs/requirements-traceability.md:generic-api-key:112
+b04df3599a9219be47cbd72c725f34f81b05ec4e:scripts/check-lez-v02-docker-isolation.sh:generic-api-key:111
+49e3897b9916f3b2509ead41c0877c3df1e09136:scripts/check-monero-isolation.sh:generic-api-key:114
+4f7b6b3e5bde8b740c28ad09eb37b46ea4114940:scripts/run-bitcoin-core-e2e.sh:generic-api-key:1322
+f5a9caa66b04b0bec1a86cb732f5a64f63852e6e:scripts/run-bitcoin-core-e2e.sh:generic-api-key:1351
+a7393dfb74dc4113a0cb58a54528b3fd6268d0ef:scripts/run-bitcoin-core-e2e.sh:generic-api-key:46
+4f7b6b3e5bde8b740c28ad09eb37b46ea4114940:scripts/run-bitcoin-core-e2e.sh:generic-api-key:462
+4f7b6b3e5bde8b740c28ad09eb37b46ea4114940:scripts/run-bitcoin-core-e2e.sh:generic-api-key:463
+f5a9caa66b04b0bec1a86cb732f5a64f63852e6e:scripts/run-bitcoin-core-e2e.sh:generic-api-key:468
+4f7b6b3e5bde8b740c28ad09eb37b46ea4114940:scripts/run-bitcoin-core-e2e.sh:generic-api-key:470
+f5a9caa66b04b0bec1a86cb732f5a64f63852e6e:scripts/run-bitcoin-core-e2e.sh:generic-api-key:476
+b04df3599a9219be47cbd72c725f34f81b05ec4e:scripts/run-lez-v02-stack.sh:generic-api-key:12
+b04df3599a9219be47cbd72c725f34f81b05ec4e:scripts/run-lez-v02-stack.sh:generic-api-key:13
+80f0bcc2ea7da1ab17b05770276398f7d342d50f:scripts/run-m3-actor-local-poc.sh:generic-api-key:134
+d777d352855dec9a1b58984512fe43d7aa92208a:scripts/run-m3-lez-bootstrap.sh:generic-api-key:11
+80f0bcc2ea7da1ab17b05770276398f7d342d50f:scripts/test-m3-actor-local-poc-contract.sh:generic-api-key:1382
+71371d6dc30888cd327f74ef8b5442ac564eb4d8:scripts/test-m3-f7-token-fixture-contract.sh:generic-api-key:217
+49e3897b9916f3b2509ead41c0877c3df1e09136:tests/e2e/monero/provenance.env:generic-api-key:14

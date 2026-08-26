@@ -1,0 +1,59 @@
+Third-party notices
+===================
+
+Bit Quest
+---------
+
+"Bit Quest" by Kevin MacLeod (incompetech.com), ISRC USUAN1500073, is
+licensed under the Creative Commons Attribution 4.0 International licence:
+https://creativecommons.org/licenses/by/4.0/
+
+The unmodified source recording is at media/music/bit-quest.mp3. An edited
+version is synchronized with media/lez-btc-ui-swap-demo.mp4. Attribution is
+also present in the matching caption track and media documentation.
+
+Contributor Covenant
+--------------------
+
+CODE_OF_CONDUCT.md is adapted from Contributor Covenant version 2.1,
+copyright Coraline Ada Ehmke and released under CC BY 4.0:
+https://www.contributor-covenant.org/version/2/1/code_of_conduct/
+
+Upstream software and test data
+-------------------------------
+
+The reconstructable source tree contains dependencies and test-vector data
+from upstream projects, including Bitcoin, RustCrypto, Zcash, Monero, RISC
+Zero, and Logos projects. Their copyright and licence files remain with the
+corresponding material and are not replaced by this repository's dual licence.
+The dependency lockfiles pin provenance; they do not relicense dependencies.
+
+The committed Bitcoin explorer screenshot depicts btc-rpc-explorer 3.4.0 by
+Janoside, distributed under the MIT licence:
+https://github.com/janoside/btc-rpc-explorer. The page includes its upstream
+attribution and a quotation attributed there to Hal Finney.
+
+Logos components and marks
+--------------------------
+
+The Basecamp source refers to and pins Logos Chat, Delivery, design-system,
+module-builder, and runtime inputs. Those projects and the Logos marks remain
+under their upstream terms. This repository does not grant a separate licence
+to Logos-owned material and does not distribute compiled Logos-derived
+packages as part of this release.
+
+At review time, GitHub did not detect a repository licence for several
+transitive Nix inputs (`logos-lidl`, `logos-plugin-qt`, `logos-protocol`,
+`logos-qt-sdk`, `logos-test-framework`, and
+`nix-bundle-logos-module-install`). They are referenced by immutable lockfile
+metadata but are not vendored or redistributed in this source-only release.
+Building or redistributing outputs that incorporate them requires a separate
+upstream licence review.
+
+Distribution boundary
+---------------------
+
+This repository release publishes source, documentation, test data, and
+project media only. It does not publish Docker images, packages, compiled
+binaries, or separately attached release assets. Git hosting services may
+automatically provide archives of the repository source.

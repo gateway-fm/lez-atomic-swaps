@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a public, non-security enhancement
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Which user or operator journey needs improvement?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Describe behavior and acceptance criteria, not private implementation details.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Protocol and security impact
+      description: Note affected roles, chains, authority, persistence, or recovery behavior.
+    validations:
+      required: true

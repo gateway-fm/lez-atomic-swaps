@@ -49,7 +49,7 @@ docker exec \
 
 ## The local patch series
 
-`patches/` contains the 34 commits applied on top of `main` (`5c384a5`) that
+`patches/` contains the 38 commits applied on top of `main` (`5c384a5`) that
 make the pinned verification lane work on an Apple-Silicon host:
 
 1. **arm64 pins** (0001–0007): native rebuild hashes for the LEZ services,
@@ -71,6 +71,15 @@ make the pinned verification lane work on an Apple-Silicon host:
 5. **bidirectional application runs** (0027–0034): direction selection,
    direction-aware funding sources, replay assertions, and evidence maps for
    both bounded LEZ/BTC economic routes.
+6. **independent negotiation** (0035–0037): independently signed role
+   contributions, real Logos Chat transport, and signed Delivery offer
+   discovery with deterministic one-winner conflict resolution.
+7. **publication dependency closure** (0038): all seven independent locked
+   HTTP/2 dependency graphs are advanced to the advisory-fixed patch release
+   and refreshed with Cargo 1.96. That refresh also repairs missing
+   already-declared path dependencies in the stale isolated XMR lock and
+   normalizes target-specific `windows-sys`/`socket2` selections; no manifest
+   or application-code dependency changes are included.
 
 Guest ELF/ImageID digests and all on-chain assertions remain exactly as
 upstream pinned them.

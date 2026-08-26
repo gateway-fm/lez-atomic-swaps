@@ -1,0 +1,541 @@
+From 7fcd9f130f24f7994179ead424613186529af5c1 Mon Sep 17 00:00:00 2001
+From: Igor Mandrigin <i@mandrigin.ru>
+Date: Wed, 26 Aug 2026 13:41:31 +0200
+Subject: [PATCH] chore(deps): fix h2 advisory and refresh lock metadata
+
+Signed-off-by: Igor Mandrigin <i@mandrigin.ru>
+
+Update h2 in every affected graph. The Cargo 1.96 refresh also records
+already-declared path-package dependencies missing from the stale isolated XMR
+lockfile and normalizes target-specific windows-sys/socket2 references. No
+manifest or application-code change is included.
+---
+ Cargo.lock                                    | 12 +++++-----
+ compat/lez-standalone-e2e/Cargo.lock          | 18 +++++++-------
+ compat/lez-v0.2-provisional/Cargo.lock        | 24 +++++++++----------
+ .../escrow/deployer/Cargo.lock                | 24 +++++++++----------
+ compat/lez-v0_1_2-sidecar/Cargo.lock          |  4 ++--
+ compat/lez-v0_2-sidecar/Cargo.lock            | 24 +++++++++----------
+ .../lez-v0_2-xmr-release-service/Cargo.lock   | 15 +++++++-----
+ 7 files changed, 62 insertions(+), 59 deletions(-)
+
+diff --git a/Cargo.lock b/Cargo.lock
+index 1a14d07..007fd6d 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -936,7 +936,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -1236,9 +1236,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "h2"
+-version = "0.4.15"
++version = "0.4.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
++checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
+ dependencies = [
+  "atomic-waker",
+  "bytes",
+@@ -2928,7 +2928,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -3558,7 +3558,7 @@ dependencies = [
+  "getrandom 0.4.3",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -4064,7 +4064,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+diff --git a/compat/lez-standalone-e2e/Cargo.lock b/compat/lez-standalone-e2e/Cargo.lock
+index cf481c2..114c9b7 100644
+--- a/compat/lez-standalone-e2e/Cargo.lock
++++ b/compat/lez-standalone-e2e/Cargo.lock
+@@ -1585,7 +1585,7 @@ dependencies = [
+  "libc",
+  "option-ext",
+  "redox_users",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -1790,7 +1790,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -2118,9 +2118,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "h2"
+-version = "0.4.15"
++version = "0.4.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
++checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
+ dependencies = [
+  "atomic-waker",
+  "bytes",
+@@ -3981,7 +3981,7 @@ version = "0.50.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -4595,7 +4595,7 @@ dependencies = [
+  "once_cell",
+  "socket2",
+  "tracing",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -5191,7 +5191,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -5955,7 +5955,7 @@ dependencies = [
+  "getrandom 0.4.3",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -6780,7 +6780,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+diff --git a/compat/lez-v0.2-provisional/Cargo.lock b/compat/lez-v0.2-provisional/Cargo.lock
+index 7d0abc1..a934a8b 100644
+--- a/compat/lez-v0.2-provisional/Cargo.lock
++++ b/compat/lez-v0.2-provisional/Cargo.lock
+@@ -1681,7 +1681,7 @@ dependencies = [
+  "libc",
+  "option-ext",
+  "redox_users",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -1911,7 +1911,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -2316,9 +2316,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "h2"
+-version = "0.4.15"
++version = "0.4.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
++checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
+ dependencies = [
+  "atomic-waker",
+  "bytes",
+@@ -2655,7 +2655,7 @@ dependencies = [
+  "libc",
+  "percent-encoding",
+  "pin-project-lite",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "tokio",
+  "tower-service",
+  "tracing",
+@@ -5076,7 +5076,7 @@ version = "0.50.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -5819,7 +5819,7 @@ dependencies = [
+  "quinn-udp",
+  "rustc-hash",
+  "rustls",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "thiserror 2.0.18",
+  "tokio",
+  "tracing",
+@@ -5857,9 +5857,9 @@ dependencies = [
+  "cfg_aliases",
+  "libc",
+  "once_cell",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "tracing",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -6527,7 +6527,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -7422,7 +7422,7 @@ dependencies = [
+  "getrandom 0.4.3",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -8425,7 +8425,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+diff --git a/compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock b/compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock
+index 6944363..c9f4810 100644
+--- a/compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock
++++ b/compat/lez-v0.2-provisional/escrow/deployer/Cargo.lock
+@@ -1491,7 +1491,7 @@ dependencies = [
+  "libc",
+  "option-ext",
+  "redox_users",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -1703,7 +1703,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -2092,9 +2092,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "h2"
+-version = "0.4.15"
++version = "0.4.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
++checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
+ dependencies = [
+  "atomic-waker",
+  "bytes",
+@@ -2406,7 +2406,7 @@ dependencies = [
+  "libc",
+  "percent-encoding",
+  "pin-project-lite",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "tokio",
+  "tower-service",
+  "tracing",
+@@ -4667,7 +4667,7 @@ version = "0.50.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -5321,7 +5321,7 @@ dependencies = [
+  "quinn-udp",
+  "rustc-hash",
+  "rustls",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "thiserror 2.0.18",
+  "tokio",
+  "tracing",
+@@ -5359,9 +5359,9 @@ dependencies = [
+  "cfg_aliases",
+  "libc",
+  "once_cell",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "tracing",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -6000,7 +6000,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -6799,7 +6799,7 @@ dependencies = [
+  "getrandom 0.4.3",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -7695,7 +7695,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+diff --git a/compat/lez-v0_1_2-sidecar/Cargo.lock b/compat/lez-v0_1_2-sidecar/Cargo.lock
+index 2d19b1b..35a8947 100644
+--- a/compat/lez-v0_1_2-sidecar/Cargo.lock
++++ b/compat/lez-v0_1_2-sidecar/Cargo.lock
+@@ -1801,9 +1801,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "h2"
+-version = "0.4.15"
++version = "0.4.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
++checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
+ dependencies = [
+  "atomic-waker",
+  "bytes",
+diff --git a/compat/lez-v0_2-sidecar/Cargo.lock b/compat/lez-v0_2-sidecar/Cargo.lock
+index bd87f80..c9d1c74 100644
+--- a/compat/lez-v0_2-sidecar/Cargo.lock
++++ b/compat/lez-v0_2-sidecar/Cargo.lock
+@@ -1747,7 +1747,7 @@ dependencies = [
+  "libc",
+  "option-ext",
+  "redox_users",
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -1977,7 +1977,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -2407,9 +2407,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "h2"
+-version = "0.4.15"
++version = "0.4.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
++checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
+ dependencies = [
+  "atomic-waker",
+  "bytes",
+@@ -2805,7 +2805,7 @@ dependencies = [
+  "libc",
+  "percent-encoding",
+  "pin-project-lite",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "tokio",
+  "tower-service",
+  "tracing",
+@@ -5347,7 +5347,7 @@ version = "0.50.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.59.0",
+ ]
+ 
+ [[package]]
+@@ -6091,7 +6091,7 @@ dependencies = [
+  "quinn-udp",
+  "rustc-hash",
+  "rustls",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "thiserror 2.0.18",
+  "tokio",
+  "tracing",
+@@ -6129,9 +6129,9 @@ dependencies = [
+  "cfg_aliases",
+  "libc",
+  "once_cell",
+- "socket2 0.6.4",
++ "socket2 0.5.10",
+  "tracing",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -6820,7 +6820,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -7842,7 +7842,7 @@ dependencies = [
+  "getrandom 0.4.3",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -8874,7 +8874,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+diff --git a/compat/lez-v0_2-xmr-release-service/Cargo.lock b/compat/lez-v0_2-xmr-release-service/Cargo.lock
+index 14589dd..f0d4b9a 100644
+--- a/compat/lez-v0_2-xmr-release-service/Cargo.lock
++++ b/compat/lez-v0_2-xmr-release-service/Cargo.lock
+@@ -853,7 +853,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+ dependencies = [
+  "libc",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -1208,9 +1208,9 @@ dependencies = [
+ 
+ [[package]]
+ name = "h2"
+-version = "0.4.15"
++version = "0.4.16"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "6cb093c84e8bd9b188d4c4a8cb6579fc016968d14c99882163cd3ff402a4f155"
++checksum = "a9f37a958b41b3b19ee2707c06439c0e9e547e847223eb791ecb0cb821c65e27"
+ dependencies = [
+  "atomic-waker",
+  "bytes",
+@@ -2142,15 +2142,18 @@ dependencies = [
+ name = "lez-zec-swap-sdk"
+ version = "0.1.0"
+ dependencies = [
++ "anyhow",
+  "async-trait",
+  "borsh",
+  "chacha20poly1305",
++ "clap",
+  "hkdf",
+  "lez-swap-core",
+  "orchard",
+  "sapling-crypto",
+  "secp256k1 0.29.1",
+  "serde",
++ "serde_json",
+  "sha2 0.10.9",
+  "subtle",
+  "thiserror 2.0.18",
+@@ -2789,7 +2792,7 @@ dependencies = [
+  "errno",
+  "libc",
+  "linux-raw-sys",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -3461,7 +3464,7 @@ dependencies = [
+  "getrandom 0.4.3",
+  "once_cell",
+  "rustix",
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+@@ -3962,7 +3965,7 @@ version = "0.1.11"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
+ dependencies = [
+- "windows-sys 0.61.2",
++ "windows-sys 0.52.0",
+ ]
+ 
+ [[package]]
+-- 
+2.50.1 (Apple Git-155)

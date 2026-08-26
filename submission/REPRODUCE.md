@@ -110,15 +110,20 @@ runtime dependency.
 This submission branch is a curated package, not a complete copy of the
 historical Rust workspace. The M3 application runner must be provisioned as an
 external checkout at base commit
-`5c384a5`, with the 37 ordered patches under
+`5c384a5`, with the 38 ordered patches under
 [`deploy/full-swap/patches/`](../deploy/full-swap/patches/) applied. The expected
-result is commit `e67522c8d27c274bcb94b92f90420983c83d0f5b` and tree
-`ae28b574b925e2555b47dd255e6d8565f8cbd7d9`.
+resulting tree is `c747dafbdf39ed4615d92b005e63552a32bb60bf`. Patches
+0001–0037 reproduce source commit
+`e67522c8d27c274bcb94b92f90420983c83d0f5b` and tree
+`ae28b574b925e2555b47dd255e6d8565f8cbd7d9`; patch 0038 then applies the
+publication-time advisory fix to all seven affected locked dependency graphs
+and refreshes their Cargo 1.96 metadata, including the previously stale
+isolated XMR lock.
 
 The runner source chain is retained as the second-parent ancestry of the
-`m3-plus` delivery commit on both remotes. It can therefore be checked out by
-exact commit from a clean clone even though the curated first-parent tree does
-not duplicate the complete Rust workspace.
+Gateway `m3-plus` delivery history. It can therefore be checked out by exact
+commit from a clean clone even though the curated first-parent tree does not
+duplicate the complete Rust workspace.
 
 The runner-work root must be mounted at the same absolute path on the host and
 inside `lez-runner-arm`; the runner talks to the host Docker socket and nested
