@@ -10,7 +10,7 @@ and the M6 product surface without claiming unrelated milestone completion.
 |---|---|
 | [Actual UI swap demo](../media/lez-btc-ui-swap-demo.mp4) | 3:40.7 Basecamp walkthrough of a fresh offer, swap, both independent route checks, settlement, and proof |
 | [Silent video presentation](../media/lez-btc-m1-m3-m6-submission-silent.mp4) | 99-second pre-discovery milestone overview with no audio stream |
-| [Single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html) | The current 22-slide story, including the Delivery/Chat transport diagram, with all CSS, JavaScript, SVGs, and screenshots embedded for sharing |
+| [Single-file HTML presentation](../media/lez-btc-m1-m3-m6-submission.html) | The current 24-slide story, including the Delivery/Chat transport diagram, the four code x-rays, and the two sequence diagrams, with all CSS, JavaScript, SVGs, and screenshots embedded for sharing |
 | [Editable presentation source](presentation/index.html) | Dependency-free source deck with keyboard, touch, fullscreen, and autoplay controls |
 | [Milestone map](MILESTONES.md) | Every current issue #121/#123/#126 deliverable mapped to repository artifacts and its submission status |
 | [Evidence index](EVIDENCE.md) | Human-readable map of M3 scenarios, the matching UI run, explorers, and M6 certificates |
@@ -77,7 +77,7 @@ Rebuild the standalone HTML with:
 node submission/presentation/build-standalone.mjs
 ```
 
-The checked-in MP4 predates the Delivery/Chat slide; rebuilding it produces a
+The checked-in MP4 predates the code x-ray slides; rebuilding it produces a
 new current-deck artifact whose digest and duration must be reviewed before the
 submission manifest is updated. The renderer uses local Google Chrome and
 ffmpeg, loads no CDN, burns all copy

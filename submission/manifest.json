@@ -112,7 +112,7 @@
   },
   "presentation": {
     "html_entry": "submission/presentation/index.html",
-    "slides": 22,
+    "slides": 24,
     "external_runtime_dependencies": 0,
     "controls": [
       "keyboard",
