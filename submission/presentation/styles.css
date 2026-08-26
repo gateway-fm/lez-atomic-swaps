@@ -914,3 +914,11 @@ code {
 .dir-code.formulas { margin: 1.6% 0 1.4%; }
 .dir-code.formulas pre { font-size: clamp(6px, .55vw, 11px); line-height: 1.55; }
 .dir-table { font-size: .96em; }
+.swap-seq .fx-card { fill: #151d2a; stroke: rgba(239,103,199,.42); stroke-width: 1.5; }
+.swap-seq .fx-head { fill: var(--pink); font: 800 11px "SFMono-Regular", monospace; letter-spacing: 1.1px; }
+.swap-seq .fx-line { fill: #b8c4d3; font: 11.5px/1 "SFMono-Regular", monospace; }
+.swap-seq .fx-line.hl { fill: var(--lime); font-weight: 700; }
+.swap-seq .fx-line.c { fill: #6d7b90; font-style: italic; }
+.swap-seq .fx-link { fill: none; stroke: rgba(239,103,199,.45); stroke-width: 1.5; stroke-dasharray: 3 4; }
+.swap-seq .fx-dot { fill: rgba(239,103,199,.7); }
+.swap-seq .cm-card.fx { stroke: rgba(239,103,199,.42); }

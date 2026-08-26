@@ -923,6 +923,14 @@ code {
 .dir-code.formulas { margin: 1.6% 0 1.4%; }
 .dir-code.formulas pre { font-size: clamp(6px, .55vw, 11px); line-height: 1.55; }
 .dir-table { font-size: .96em; }
+.swap-seq .fx-card { fill: #151d2a; stroke: rgba(239,103,199,.42); stroke-width: 1.5; }
+.swap-seq .fx-head { fill: var(--pink); font: 800 11px "SFMono-Regular", monospace; letter-spacing: 1.1px; }
+.swap-seq .fx-line { fill: #b8c4d3; font: 11.5px/1 "SFMono-Regular", monospace; }
+.swap-seq .fx-line.hl { fill: var(--lime); font-weight: 700; }
+.swap-seq .fx-line.c { fill: #6d7b90; font-style: italic; }
+.swap-seq .fx-link { fill: none; stroke: rgba(239,103,199,.45); stroke-width: 1.5; stroke-dasharray: 3 4; }
+.swap-seq .fx-dot { fill: rgba(239,103,199,.7); }
+.swap-seq .cm-card.fx { stroke: rgba(239,103,199,.42); }
 
   </style>
 </head>
@@ -1220,10 +1228,11 @@ code {
           <text class="sub halo" x="580" y="492" text-anchor="middle">program · swap · asset · amount · parties · custody · finality</text>
           <path class="msg green obs" d="M870,510 H292" marker-end="url(#sq-g)"/>
           <text class="fail halo" x="240" y="530" text-anchor="start">mismatch → stop; no claim, no t</text>
-          <text class="title halo" x="580" y="574" text-anchor="middle">Claim LEZ — publishes <tspan class="em">t</tspan></text>
-          <text class="sub halo" x="580" y="592" text-anchor="middle"><tspan class="amt lez">1,000 LEZ</tspan> to the Taker; the adaptor secret becomes public</text>
+          <text class="title halo" x="580" y="574" text-anchor="middle">Claim LEZ — publishes <tspan class="em">s</tspan></text>
+          <text class="sub halo" x="580" y="592" text-anchor="middle"><tspan class="amt lez">1,000 LEZ</tspan> to the Taker; <tspan class="em">s</tspan> = <tspan class="em">s′ + t</tspan> lands in the block</text>
           <path class="msg green" d="M290,610 H868" marker-end="url(#sq-g)"/>
-          <text class="title halo" x="1030" y="676" text-anchor="middle">Maker extracts <tspan class="em">t</tspan>, requires <tspan class="em">t·G = T</tspan></text>
+          <text class="title halo" x="1030" y="676" text-anchor="middle"><tspan class="em">t = s − s′</tspan></text>
+          <text class="sub halo" x="1030" y="694" text-anchor="middle">the Maker subtracts; requires <tspan class="em">t·G = T</tspan></text>
           <path class="msg pink obs" d="M890,712 H1168" marker-end="url(#sq-p)"/>
           <text class="title halo" x="880" y="756" text-anchor="middle">Complete the fixed payout</text>
           <text class="sub halo" x="880" y="774" text-anchor="middle">adapts the pre-signature; the locked <tspan class="amt btc">0.01 BTC</tspan> pays the Maker and nobody else</text>
@@ -1248,13 +1257,14 @@ code {
           <text class="cm-body" x="1270" y="353">payment and never reveals the branch.</text>
           <path class="cm-link" d="M1186,712 H1215 V467 H1250"/>
           <circle class="cm-dot" cx="1186" cy="712" r="4"/>
-          <rect class="cm-card" x="1250" y="396" width="440" height="143" rx="12"/>
-          <text class="cm-head" x="1270" y="422">What is a pre-signature?</text>
-          <text class="cm-body" x="1270" y="444">A Bitcoin signature complete except for one scalar.</text>
-          <text class="cm-body" x="1270" y="463">Adding the secret finishes it, s = s′ + t, and anyone</text>
-          <text class="cm-body" x="1270" y="482">seeing the finished signature can subtract to recover</text>
-          <text class="cm-body" x="1270" y="501">t = s − s′. That subtraction is how the secret crosses</text>
-          <text class="cm-body" x="1270" y="520">from LEZ to Bitcoin.</text>
+          <rect class="cm-card fx" x="1250" y="396" width="440" height="152" rx="12"/>
+          <text class="fx-head" x="1270" y="418">WHERE s′ LIVES · LEZ SESSION</text>
+          <text xml:space="preserve" class="fx-line c" x="1270" y="439">not in the agreement — it</text>
+          <text xml:space="preserve" class="fx-line c" x="1270" y="457">carries only the point T</text>
+          <text xml:space="preserve" class="fx-line " x="1270" y="475">BtcPreparedClaimEffectsV1 {</text>
+          <text xml:space="preserve" class="fx-line hl" x="1270" y="493">  lez_presignature: 65 B</text>
+          <text xml:space="preserve" class="fx-line " x="1270" y="511">}  off chain, one per side</text>
+          <text xml:space="preserve" class="fx-line hl" x="1270" y="529">public material, not a secret</text>
           <path class="msg legend-line" d="M190,806 h28"/><text class="legend" x="224" y="810">TRANSACTION</text>
           <path class="msg legend-line obs" d="M400,806 h28"/><text class="legend" x="434" y="810">OBSERVATION</text>
           <rect class="cm-card rule" x="1250" y="563" width="440" height="124" rx="12"/>
@@ -1317,16 +1327,27 @@ code {
           <text class="sub halo" x="430" y="492" text-anchor="middle">network · outpoint · value · output key · unspent · depth</text>
           <path class="msg amber obs" d="M570,510 H292" marker-end="url(#sqb-a)"/>
           <text class="fail halo" x="240" y="530" text-anchor="start">mismatch → stop; no claim, no t</text>
-          <text class="title halo" x="430" y="574" text-anchor="middle">Claim BTC — publishes <tspan class="em">t</tspan></text>
-          <text class="sub halo" x="430" y="592" text-anchor="middle"><tspan class="amt btc">0.01 BTC</tspan> to the Taker; the adaptor secret becomes public</text>
+          <text class="title halo" x="430" y="574" text-anchor="middle">Claim BTC — publishes <tspan class="em">s</tspan></text>
+          <text class="sub halo" x="430" y="592" text-anchor="middle"><tspan class="amt btc">0.01 BTC</tspan> to the Taker; <tspan class="em">s</tspan> = <tspan class="em">s′ + t</tspan> lands in the block</text>
           <path class="msg amber" d="M290,610 H568" marker-end="url(#sqb-a)"/>
-          <text class="title halo" x="880" y="676" text-anchor="middle">Maker extracts <tspan class="em">t</tspan>, requires <tspan class="em">t·G = T</tspan></text>
+          <text class="title halo" x="880" y="676" text-anchor="middle"><tspan class="em">t = s − s′</tspan></text>
+          <text class="sub halo" x="880" y="694" text-anchor="middle">the Maker subtracts; requires <tspan class="em">t·G = T</tspan></text>
           <path class="msg pink obs" d="M590,712 H1168" marker-end="url(#sqb-p)"/>
           <text class="title halo" x="1030" y="756" text-anchor="middle">Claim the LEZ escrow</text>
           <text class="sub halo" x="1030" y="774" text-anchor="middle"><tspan class="amt lez">1,000 LEZ</tspan> to the Maker; the escrow pays the recorded claimant</text>
           <path class="msg green" d="M1170,792 H892" marker-end="url(#sqb-g)"/>
           <path class="msg legend-line" d="M190,806 h28"/><text class="legend" x="224" y="810">TRANSACTION</text>
           <path class="msg legend-line obs" d="M400,806 h28"/><text class="legend" x="434" y="810">OBSERVATION</text>
+          <path class="fx-link" d="M1196,712 H1330 V712 H1372"/>
+          <circle class="fx-dot" cx="1196" cy="712" r="4"/>
+          <rect class="cm-card fx" x="1372" y="630" width="318" height="152" rx="12"/>
+          <text class="fx-head" x="1392" y="652">WHERE s′ LIVES · BITCOIN SESSION</text>
+          <text xml:space="preserve" class="fx-line c" x="1392" y="673">not in the agreement — it</text>
+          <text xml:space="preserve" class="fx-line c" x="1392" y="691">carries only the point T</text>
+          <text xml:space="preserve" class="fx-line " x="1392" y="709">BtcPreparedClaimEffectsV1 {</text>
+          <text xml:space="preserve" class="fx-line hl" x="1392" y="727">  bitcoin_presignature: 65 B</text>
+          <text xml:space="preserve" class="fx-line " x="1392" y="745">}  off chain, one per side</text>
+          <text xml:space="preserve" class="fx-line hl" x="1392" y="763">public material, not a secret</text>
         </svg>
       </div>
       <footer class="source-line">Direction switch · <code>btc-swap-sdk/src/sdk.rs:3161</code> · funded chain · <code>swap-core/src/lib.rs:867-879</code></footer>
