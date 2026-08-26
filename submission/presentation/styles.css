@@ -379,12 +379,6 @@ code {
 .foundation-node small { margin-top: .25em; color: #7f8da1; font-size: clamp(9px, .72vw, 14px); }
 
 .foundation-proof { padding: 5%; border: 1px solid rgba(156,255,87,.19); border-radius: 18px; background: linear-gradient(155deg, rgba(156,255,87,.055), #0d141b 45%); }
-.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2%; padding-bottom: 5%; border-bottom: 1px solid #263448; }
-.stat-row div { display: flex; flex-direction: column; }
-.stat-row b { color: var(--lime); font-size: clamp(28px, 2.65vw, 51px); letter-spacing: -.06em; }
-.stat-row span { color: #7f8da1; font-size: clamp(8px, .66vw, 13px); line-height: 1.35; }
-.doc-stack { display: flex; flex-wrap: wrap; gap: 9px; margin: 6% 0; }
-.doc-stack span { padding: .65em .8em; border: 1px solid #2a384d; border-radius: 8px; color: #b8c4d3; background: #0a1018; font: clamp(8px, .62vw, 12px) "SFMono-Regular", monospace; }
 .foundation-proof p { margin: 0; color: #95a4b7; font-size: clamp(10px, .83vw, 16px); line-height: 1.5; }
 .foundation-proof p strong { color: var(--ink); }
 
@@ -759,27 +753,17 @@ code {
 .seq-diagram .em { fill: var(--lime); font-style: italic; }
 .seq-diagram .halo { paint-order: stroke fill; stroke: #080d15; stroke-width: 7px; stroke-linejoin: round; }
 
-/* ── M1 ordered-gate diagram ──────────────────────────────────────────── */
-.m1-diagram { height: min(42vh, 400px); min-height: 300px; margin-top: .2%; }
-.m1-diagram svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.m1-diagram .m1-node { fill: #0d141e; stroke: #2d3a4f; stroke-width: 1.5; }
-.m1-diagram .m1-node.live { fill: rgba(247,199,102,.05); stroke: rgba(247,199,102,.45); }
-.m1-diagram .m1-num { fill: var(--lime); font: 800 13px "SFMono-Regular", monospace; letter-spacing: 1px; }
-.m1-diagram .m1-num.live { fill: var(--amber); }
-.m1-diagram .m1-title { fill: #e8eef6; font: 700 19px Inter, sans-serif; }
-.m1-diagram .m1-sub { fill: #7f8da1; font: 500 13px Inter, sans-serif; }
-.m1-diagram .m1-link { fill: none; stroke: #4a5a72; stroke-width: 2; }
-.m1-diagram .m1-gate rect { fill: #0a1018; stroke: var(--lime); stroke-width: 1.8; }
-.m1-diagram .m1-gate path { fill: none; stroke: var(--lime); stroke-width: 1.8; stroke-linecap: round; }
-.m1-diagram .m1-gate-label { fill: #6c7a8f; font: 800 10px "SFMono-Regular", monospace; letter-spacing: 1.4px; }
-.m1-diagram .m1-guide { fill: none; stroke: rgba(247,199,102,.4); stroke-width: 1.5; stroke-dasharray: 4 6; }
-.m1-diagram .m1-axis { fill: #56637a; font: 800 11px "SFMono-Regular", monospace; letter-spacing: 1.6px; }
-.m1-diagram .m1-exposure { fill: none; stroke-width: 3; stroke-linejoin: round; }
-.m1-diagram .m1-exposure.safe { stroke: var(--green); }
-.m1-diagram .m1-exposure.risk { stroke: var(--amber); }
-.m1-diagram .m1-safe { fill: var(--green); font: 700 12px "SFMono-Regular", monospace; letter-spacing: .9px; }
-.m1-diagram .m1-risk { fill: var(--amber); font: 700 12px "SFMono-Regular", monospace; letter-spacing: .9px; }
+/* ── M1 sequence diagram + design-evidence strip ──────────────────────── */
 
-.m1-evidence { display: flex; align-items: center; gap: 3%; margin-top: 1.5%; padding: 1.5% 2%; border: 1px solid rgba(156,255,87,.17); border-radius: 16px; background: linear-gradient(120deg, rgba(156,255,87,.05), #0d141b 44%); }
-.m1-evidence .stat-row { display: flex; flex: none; gap: 2.6vw; padding: 0; border: 0; }
-.m1-evidence .doc-stack { margin: 0; flex: 1; justify-content: flex-end; }
+.seq-diagram.m1-seq { height: min(74vh, 782px); min-height: 460px; }
+.m1-seq .msg.purple { stroke: var(--purple); }
+.m1-seq .note { fill: rgba(156,255,87,.045); stroke: rgba(156,255,87,.28); stroke-width: 1.5; }
+.m1-seq .persist { fill: #0a1018; stroke: var(--lime); stroke-width: 2; }
+.m1-seq .persist-label { fill: var(--lime); font: 700 11px "SFMono-Regular", monospace; letter-spacing: .9px; }
+.m1-seq .note.risk { fill: rgba(247,199,102,.05); stroke: rgba(247,199,102,.4); }
+.m1-seq .title.risk { fill: var(--amber); }
+.m1-seq .callout { fill: #0a1018; stroke: rgba(157,108,255,.32); stroke-width: 1.2; }
+.m1-seq .callout-text { fill: #9aa8bb; font: 600 12.5px "SFMono-Regular", monospace; }
+.m1-seq .title { font-size: 17px; }
+.m1-seq .sub { font-size: 13px; }
+.m1-seq .head-label { font-size: 16px; }

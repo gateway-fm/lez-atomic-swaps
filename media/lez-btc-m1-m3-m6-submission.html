@@ -388,12 +388,6 @@ code {
 .foundation-node small { margin-top: .25em; color: #7f8da1; font-size: clamp(9px, .72vw, 14px); }
 
 .foundation-proof { padding: 5%; border: 1px solid rgba(156,255,87,.19); border-radius: 18px; background: linear-gradient(155deg, rgba(156,255,87,.055), #0d141b 45%); }
-.stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2%; padding-bottom: 5%; border-bottom: 1px solid #263448; }
-.stat-row div { display: flex; flex-direction: column; }
-.stat-row b { color: var(--lime); font-size: clamp(28px, 2.65vw, 51px); letter-spacing: -.06em; }
-.stat-row span { color: #7f8da1; font-size: clamp(8px, .66vw, 13px); line-height: 1.35; }
-.doc-stack { display: flex; flex-wrap: wrap; gap: 9px; margin: 6% 0; }
-.doc-stack span { padding: .65em .8em; border: 1px solid #2a384d; border-radius: 8px; color: #b8c4d3; background: #0a1018; font: clamp(8px, .62vw, 12px) "SFMono-Regular", monospace; }
 .foundation-proof p { margin: 0; color: #95a4b7; font-size: clamp(10px, .83vw, 16px); line-height: 1.5; }
 .foundation-proof p strong { color: var(--ink); }
 
@@ -768,30 +762,20 @@ code {
 .seq-diagram .em { fill: var(--lime); font-style: italic; }
 .seq-diagram .halo { paint-order: stroke fill; stroke: #080d15; stroke-width: 7px; stroke-linejoin: round; }
 
-/* ── M1 ordered-gate diagram ──────────────────────────────────────────── */
-.m1-diagram { height: min(42vh, 400px); min-height: 300px; margin-top: .2%; }
-.m1-diagram svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.m1-diagram .m1-node { fill: #0d141e; stroke: #2d3a4f; stroke-width: 1.5; }
-.m1-diagram .m1-node.live { fill: rgba(247,199,102,.05); stroke: rgba(247,199,102,.45); }
-.m1-diagram .m1-num { fill: var(--lime); font: 800 13px "SFMono-Regular", monospace; letter-spacing: 1px; }
-.m1-diagram .m1-num.live { fill: var(--amber); }
-.m1-diagram .m1-title { fill: #e8eef6; font: 700 19px Inter, sans-serif; }
-.m1-diagram .m1-sub { fill: #7f8da1; font: 500 13px Inter, sans-serif; }
-.m1-diagram .m1-link { fill: none; stroke: #4a5a72; stroke-width: 2; }
-.m1-diagram .m1-gate rect { fill: #0a1018; stroke: var(--lime); stroke-width: 1.8; }
-.m1-diagram .m1-gate path { fill: none; stroke: var(--lime); stroke-width: 1.8; stroke-linecap: round; }
-.m1-diagram .m1-gate-label { fill: #6c7a8f; font: 800 10px "SFMono-Regular", monospace; letter-spacing: 1.4px; }
-.m1-diagram .m1-guide { fill: none; stroke: rgba(247,199,102,.4); stroke-width: 1.5; stroke-dasharray: 4 6; }
-.m1-diagram .m1-axis { fill: #56637a; font: 800 11px "SFMono-Regular", monospace; letter-spacing: 1.6px; }
-.m1-diagram .m1-exposure { fill: none; stroke-width: 3; stroke-linejoin: round; }
-.m1-diagram .m1-exposure.safe { stroke: var(--green); }
-.m1-diagram .m1-exposure.risk { stroke: var(--amber); }
-.m1-diagram .m1-safe { fill: var(--green); font: 700 12px "SFMono-Regular", monospace; letter-spacing: .9px; }
-.m1-diagram .m1-risk { fill: var(--amber); font: 700 12px "SFMono-Regular", monospace; letter-spacing: .9px; }
+/* ── M1 sequence diagram + design-evidence strip ──────────────────────── */
 
-.m1-evidence { display: flex; align-items: center; gap: 3%; margin-top: 1.5%; padding: 1.5% 2%; border: 1px solid rgba(156,255,87,.17); border-radius: 16px; background: linear-gradient(120deg, rgba(156,255,87,.05), #0d141b 44%); }
-.m1-evidence .stat-row { display: flex; flex: none; gap: 2.6vw; padding: 0; border: 0; }
-.m1-evidence .doc-stack { margin: 0; flex: 1; justify-content: flex-end; }
+.seq-diagram.m1-seq { height: min(74vh, 782px); min-height: 460px; }
+.m1-seq .msg.purple { stroke: var(--purple); }
+.m1-seq .note { fill: rgba(156,255,87,.045); stroke: rgba(156,255,87,.28); stroke-width: 1.5; }
+.m1-seq .persist { fill: #0a1018; stroke: var(--lime); stroke-width: 2; }
+.m1-seq .persist-label { fill: var(--lime); font: 700 11px "SFMono-Regular", monospace; letter-spacing: .9px; }
+.m1-seq .note.risk { fill: rgba(247,199,102,.05); stroke: rgba(247,199,102,.4); }
+.m1-seq .title.risk { fill: var(--amber); }
+.m1-seq .callout { fill: #0a1018; stroke: rgba(157,108,255,.32); stroke-width: 1.2; }
+.m1-seq .callout-text { fill: #9aa8bb; font: 600 12.5px "SFMono-Regular", monospace; }
+.m1-seq .title { font-size: 17px; }
+.m1-seq .sub { font-size: 13px; }
+.m1-seq .head-label { font-size: 16px; }
 
   </style>
 </head>
@@ -952,70 +936,65 @@ code {
         </div>
         <div class="checkpoint">checkpoint <strong>m1-complete.1</strong><br><code>96b7b22</code></div>
       </header>
-      <div class="m1-diagram">
-        <svg viewBox="0 0 1700 322" role="img" aria-label="Four ordered gates: agreement, signing material, recovery, then funds at risk">
+      <div class="seq-diagram m1-seq">
+        <svg viewBox="0 0 1700 782" role="img" aria-label="Sequence diagram: Taker and Maker complete the agreement, signing material and recovery before any funds move">
           <defs>
-            <marker id="m1-arrow" markerWidth="8" markerHeight="8" refX="7.4" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#4a5a72"/></marker>
+            <marker id="m1-p" markerWidth="9" markerHeight="9" refX="8.4" refY="4.5" orient="auto-start-reverse"><path d="M0,0 L9,4.5 L0,9 Z" fill="#9d6cff"/></marker>
           </defs>
-          <path class="m1-link" d="M362,100 H392" marker-end="url(#m1-arrow)"/>
-          <path class="m1-link" d="M772,100 H802" marker-end="url(#m1-arrow)"/>
-          <path class="m1-link" d="M1182,100 H1212" marker-end="url(#m1-arrow)"/>
-
-          <rect class="m1-node" x="40" y="30" width="322" height="140" rx="14"/>
-          <text class="m1-num" x="64" y="64">01</text>
-          <text class="m1-title" x="64" y="104">Countersigned agreement</text>
-          <text class="m1-sub" x="64" y="128">roles · direction · assets</text>
-          <text class="m1-sub" x="64" y="147">messages · chain identities</text>
-
-          <rect class="m1-node" x="450" y="30" width="322" height="140" rx="14"/>
-          <text class="m1-num" x="474" y="64">02</text>
-          <text class="m1-title" x="474" y="104">Verified signing material</text>
-          <text class="m1-sub" x="474" y="128">MuSig2 contexts · adaptor points</text>
-          <text class="m1-sub" x="474" y="147">exact pre-signatures</text>
-
-          <rect class="m1-node" x="860" y="30" width="322" height="140" rx="14"/>
-          <text class="m1-num" x="884" y="64">03</text>
-          <text class="m1-title" x="884" y="104">Recovery ready first</text>
-          <text class="m1-sub" x="884" y="128">signed deadlines · refund paths</text>
-          <text class="m1-sub" x="884" y="147">durable state</text>
-
-          <rect class="m1-node live" x="1270" y="30" width="322" height="140" rx="14"/>
-          <text class="m1-num live" x="1294" y="64">04</text>
-          <text class="m1-title" x="1294" y="104">Funds move last</text>
-          <text class="m1-sub" x="1294" y="128">persist before send</text>
-          <text class="m1-sub" x="1294" y="147">canonical observation · bounded authority</text>
-
-          <g class="m1-gate"><rect x="393" y="86" width="28" height="28" rx="8"/><path d="M401,100 L405,105 L414,94"/></g>
-          <g class="m1-gate"><rect x="803" y="86" width="28" height="28" rx="8"/><path d="M811,100 L815,105 L824,94"/></g>
-          <g class="m1-gate"><rect x="1213" y="86" width="28" height="28" rx="8"/><path d="M1221,100 L1225,105 L1234,94"/></g>
-          <text class="m1-gate-label" x="407" y="134" text-anchor="middle">DURABLE</text>
-          <text class="m1-gate-label" x="817" y="134" text-anchor="middle">DURABLE</text>
-          <text class="m1-gate-label" x="1227" y="134" text-anchor="middle">DURABLE</text>
-
-          <path class="m1-guide" d="M1227,170 V262"/>
-          <text class="m1-axis" x="40" y="222">EXPOSURE</text>
-          <path class="m1-exposure safe" d="M40,272 H1227"/>
-          <path class="m1-exposure risk" d="M1227,272 V232 H1620"/>
-          <text class="m1-safe" x="633" y="296" text-anchor="middle">NO FUNDS AT RISK THROUGH THE FIRST THREE GATES</text>
-          <text class="m1-risk" x="1423" y="220" text-anchor="middle">VALUE AT RISK</text>
+          <rect class="head taker" x="315" y="0" width="210" height="52" rx="13"/>
+          <text class="head-label" x="420" y="33" text-anchor="middle">TAKER</text>
+          <rect class="head maker" x="1235" y="0" width="210" height="52" rx="13"/>
+          <text class="head-label" x="1340" y="33" text-anchor="middle">MAKER</text>
+          <path class="life" d="M420,52 V772"/><path class="life" d="M1340,52 V772"/>
+          <rect class="badge" x="222" y="252" width="58" height="30" rx="9"/>
+          <text class="badge-text" x="251" y="272" text-anchor="middle">01</text>
+          <path class="grp" d="M310,131 h-12 V404 h12"/>
+          <path class="grp" d="M298,267 h-18"/>
+          <rect class="badge" x="222" y="506" width="58" height="30" rx="9"/>
+          <text class="badge-text" x="251" y="526" text-anchor="middle">02</text>
+          <path class="grp" d="M310,433 h-12 V610 h12"/>
+          <path class="grp" d="M298,521 h-18"/>
+          <rect class="badge" x="222" y="650" width="58" height="30" rx="9"/>
+          <text class="badge-text" x="251" y="670" text-anchor="middle">03</text>
+          <path class="grp" d="M298,665 h-18"/>
+          <rect class="badge" x="222" y="726" width="58" height="30" rx="9"/>
+          <text class="badge-text" x="251" y="746" text-anchor="middle">04</text>
+          <path class="grp" d="M298,741 h-18"/>
+          <text class="title halo" x="880" y="131" text-anchor="middle">Unsigned draft</text>
+          <text class="sub halo" x="880" y="151" text-anchor="middle">roles · direction · assets · chain identities</text>
+          <path class="msg purple" d="M430,175 H1328" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="650" y="185" width="460" height="27" rx="8"/>
+          <text class="callout-text" x="880" y="203" text-anchor="middle">swap_id = SHA-256(domain ‖ offer_commitment ‖ reservation_id)</text>
+          <text class="title halo" x="880" y="227" text-anchor="middle">Maker-signed proposal</text>
+          <text class="sub halo" x="880" y="247" text-anchor="middle">checked against the live signed offer, then signed</text>
+          <path class="msg purple" d="M1330,271 H432" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="689" y="281" width="382" height="27" rx="8"/>
+          <text class="callout-text" x="880" y="299" text-anchor="middle">BIP-340 Schnorr over SHA-256(domain ‖ borsh(body))</text>
+          <text class="title halo" x="880" y="323" text-anchor="middle">Countersigned agreement</text>
+          <text class="sub halo" x="880" y="343" text-anchor="middle">both roles sign the same 32-byte commitment</text>
+          <path class="msg purple" d="M430,367 H1328" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="654" y="377" width="453" height="27" rx="8"/>
+          <text class="callout-text" x="880" y="395" text-anchor="middle">complete() re-runs the full wire validation, both signatures</text>
+          <text class="title halo" x="880" y="433" text-anchor="middle">Nonce commitments</text>
+          <text class="sub halo" x="880" y="453" text-anchor="middle">committed before either public nonce is revealed</text>
+          <path class="msg purple" d="M432,477 H1328" marker-start="url(#m1-p)" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="668" y="487" width="424" height="27" rx="8"/>
+          <text class="callout-text" x="880" y="505" text-anchor="middle">SHA-256(domain ‖ role ‖ session_id ‖ keys ‖ msg ‖ T ‖ R)</text>
+          <text class="title halo" x="880" y="529" text-anchor="middle">Nonces, partials, pre-signatures</text>
+          <text class="sub halo" x="880" y="549" text-anchor="middle">MuSig2 contexts · adaptor point T</text>
+          <path class="msg purple" d="M432,573 H1328" marker-start="url(#m1-p)" marker-end="url(#m1-p)"/>
+          <rect class="callout" x="672" y="583" width="417" height="27" rx="8"/>
+          <text class="callout-text" x="880" y="601" text-anchor="middle">66-byte nonce · 32-byte partial · 65-byte pre-signature</text>
+          <rect class="note" x="340" y="637" width="1080" height="56" rx="13"/>
+          <text class="title" x="370" y="663">Recovery ready first</text>
+          <text class="sub" x="370" y="683">signed deadlines · exact refund paths · a refund needing no counterparty signature</text>
+          <rect class="note risk" x="340" y="713" width="1080" height="56" rx="13"/>
+          <rect class="persist" x="370" y="732" width="17" height="17" rx="5"/>
+          <text class="title risk" x="404" y="739">Funds move last</text>
+          <text class="sub" x="404" y="759">persist before send · canonical observation · bounded authority</text>
         </svg>
       </div>
-      <div class="m1-evidence">
-        <div class="stat-row">
-          <div><b>8</b><span>design / review docs</span></div>
-          <div><b>13</b><span>foundation ADRs</span></div>
-          <div><b>42</b><span>traced requirement IDs</span></div>
-        </div>
-        <div class="doc-stack">
-          <span>protocol-design.md</span>
-          <span>threat-model.md</span>
-          <span>lez-escrow-design.md</span>
-          <span>parameter-profiles.md</span>
-          <span>sdk-trait-surface.md</span>
-          <span>lez-primitive-verification.md</span>
-        </div>
-      </div>
-      <footer class="source-line">Review entry · <code>docs/milestone-1/README.md</code></footer>
+      <footer class="source-line">Review entry · <code>docs/milestone-1/README.md</code> · 8 design docs · 13 foundation ADRs · 42 traced requirement IDs</footer>
     </section>
 
     <section class="slide divider m3" data-title="LEZ ⇄ Bitcoin leg" data-duration="3">
