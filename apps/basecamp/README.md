@@ -9,7 +9,8 @@ completed transaction and balance evidence. The older prepared-corridor
 controls remain available as an advanced lane. Each QML view is
 unprivileged. Its process-isolated C++ backend calls a fixed role allowlist over
 an owner-only Unix socket. The negotiation path uses pinned Logos Chat `v0.2.2`
-and its pinned Delivery runtime for the peer-to-peer E2EE transport; the Rust
+and its pinned Delivery runtime for signed public offer broadcasts plus the
+peer-to-peer E2EE transport; the Rust
 stores, signatures, role contributions, and chain-identity checks remain the
 protocol authority.
 
@@ -79,14 +80,17 @@ The clone and cold Nix fetch are setup-only public dependencies. Pinning the
 commit prevents silent source drift; it does not make an unavailable cache
 reliable. Production distribution additionally remains subject to LOGOS-025.
 
-## Run one app-lifetime Logos Chat session
+## Run app-lifetime Logos Chat sessions and offer discovery
 
 Build `lez-logos-chat-gateway` from the reconstructed runner worktree after
-applying `deploy/full-swap/patches/0001-0036`. Each role runs its own endpoint;
-the endpoint contains only bounded in-memory queues and one pinned direct
-conversation. Start it with the app and stop it when the app exits. Chat
-identity, conversation, and history are intentionally session-scoped; the
-countersigned agreement and replay authority stay durable in the Rust stores.
+applying the ordered `deploy/full-swap/patches` series. Each role runs its own
+endpoint. The Taker endpoint keeps one direct conversation and a bounded signed
+offer index; the Maker endpoint keeps up to 32 direct conversations so
+competing Takers receive separately correlated results. Start an endpoint with
+its app and stop it when the app exits. Chat identity, conversations, history,
+and the Taker discovery index are intentionally session-scoped; signed offer
+state, the countersigned agreement, and replay authority stay durable in the
+Rust stores.
 
 Maker terminal (the Maker daemon's existing `--chat-socket` is the final
 owner-local authority):
@@ -117,14 +121,17 @@ taker_chat_pid=$!
 trap 'kill -INT "$taker_chat_pid" 2>/dev/null || true; wait "$taker_chat_pid" 2>/dev/null || true' EXIT
 ```
 
-Open both apps with separate Basecamp `--user-dir` values. In the Maker app,
-refresh Chat and copy its current address. Paste that address into the Taker
-app and connect. Closing either app calls `chat.shutdown()`; also stop its
-paired gateway endpoint so the next launch starts with no stale binding.
-If an unintended peer binds first, use **Reset Chat** while no request is in
-flight, then share/paste the intended current address again. The owner-local
-reset clears the gateway binding, outbox, and response cache without changing
-any durable agreement state.
+Open both apps with separate Basecamp `--user-dir` values. Once Chat's shared
+Delivery node is online, the Maker signs its current offer states and current
+app-lifetime Chat address, broadcasts them on
+`/lez-atomic-swaps/1/offers/json`, and repeats every 10 seconds. The Taker's
+**Browse authenticated offers** action reads only its verified in-memory
+Delivery index and automatically creates a private conversation with the
+selected offer's signed address; no pasted address or filesystem offer index is
+part of this production Basecamp path. Closing either app calls
+`chat.shutdown()`; also stop its paired gateway endpoint so the next launch
+starts with no stale binding. **Reset Chat** remains an idle-only recovery
+control and does not change durable offer or agreement state.
 
 ## Run the Maker package as a real user
 
@@ -190,7 +197,8 @@ For the separate optional prepared Zcash service lane:
    **Browse authenticated offers**;
 2. review the automatically selected newest offer; its ID, compressed Maker
    identity, signed-envelope SHA-256, foreign units, and expected LEZ units are
-   populated into the exact review form without manual transcription;
+   populated into the exact review form without manual transcription, while
+   the exact signed live announcement is retained as admission proof;
 3. click **Confirm and initiate** once and retain the returned swap ID;
 4. repeat the unchanged click to observe exact durable replay;
 5. use the automatically adopted current swap ID and click **Monitor**;
@@ -198,7 +206,9 @@ For the separate optional prepared Zcash service lane:
    generation. For transparent ZEC claims, follow the displayed shielding
    reminder in the wallet after the swap.
 
-Initiation commits registry authority before Chat/filesystem effects. A lost
+Production Basecamp initiation re-verifies that exact live signed Delivery
+proof; the filesystem source remains a legacy CLI/offline seam. Initiation
+commits registry authority before Chat/Delivery effects. A lost
 response is recovered by the same request ID and immutable payload; changing a
 field conflicts. Claim and Refund are mutually exclusive at the registry and
 actor-journal layers.
@@ -222,9 +232,15 @@ framework, one role install tree, and one real owner socket. It covers:
 - Maker health, atomic route save, and history through `lez-maker-daemon`;
 - wallet-indexed Maker inventory and the Taker order book;
 - Taker completed M3 BTC evidence, including all five unique transaction IDs;
-- Taker health and optional offer list through `lez-taker-service`;
+- Taker health plus optional browsing through the gateway's live signed Delivery index;
 - prepared Taker initiation, exact replay, list, monitor, and a durable registry
-  assertion for request `taker-ui-initiate-001`.
+  assertion for the digest-derived `taker-ui-initiate-*` request.
+
+For the prepared Taker case, `M6_TAKER_FIXTURE_JSON` also carries
+`logos_offer_announcement_base64`: a freshly signed, unexpired announcement
+obtained from the Maker snapshot RPC. The harness admits that exact proof through
+`LEZ_LOGOS_CHAT_GATEWAY_SOCKET` before browsing, so confirm-time refresh tests
+the production live index without internet access or a filesystem offer fixture.
 
 The optional prepared-service Basecamp run stops at admitted/monitored ZEC swap
 composition. Its terminal Claim and Refund remain separate service/actor

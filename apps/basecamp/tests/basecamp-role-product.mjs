@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 
 const framework = process.env.LOGOS_QT_MCP;
 if (!framework) throw new Error("LOGOS_QT_MCP must select the pinned official test framework");
@@ -26,6 +27,9 @@ const expectService = process.env.M6_BASECAMP_EXPECT_SERVICE === "1";
 const takerFixture = role === "taker" && process.env.M6_TAKER_FIXTURE_JSON
   ? JSON.parse(readFileSync(process.env.M6_TAKER_FIXTURE_JSON, "utf8"))
   : null;
+if (role === "taker" && expectService && !takerFixture) {
+  throw new Error("M6_TAKER_FIXTURE_JSON is required for the prepared Taker product test");
+}
 
 const { test, run } = await import(resolve(framework, "test-framework/framework.mjs"));
 
@@ -77,6 +81,53 @@ async function evaluateIn(app, objectName, expression) {
   if (response.error) throw new Error(`evaluate in ${objectName}: ${response.error}`);
 }
 
+async function gatewayRpc(method, parameter) {
+  const socketPath = process.env.LEZ_LOGOS_CHAT_GATEWAY_SOCKET;
+  if (!socketPath?.startsWith("/")) {
+    throw new Error("LEZ_LOGOS_CHAT_GATEWAY_SOCKET must select the owner-local gateway");
+  }
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [parameter] });
+  return new Promise((resolveRequest, rejectRequest) => {
+    const request = httpRequest({
+      socketPath,
+      path: "/",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+        Connection: "close",
+      },
+    }, (response) => {
+      const chunks = [];
+      let received = 0;
+      response.on("data", (chunk) => {
+        received += chunk.length;
+        if (received > 4 * 1024 * 1024) {
+          request.destroy(new Error("gateway response exceeds the product-test limit"));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => {
+        try {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if (response.statusCode !== 200 || payload.error || !("result" in payload)) {
+            throw new Error(`gateway ${method} failed: ${JSON.stringify(payload)}`);
+          }
+          resolveRequest(payload.result);
+        } catch (error) {
+          rejectRequest(error);
+        }
+      });
+    });
+    request.on("error", rejectRequest);
+    request.setTimeout(5000, () => {
+      request.destroy(new Error(`gateway ${method} timed out`));
+    });
+    request.end(body);
+  });
+}
+
 test(`${role}: pinned Basecamp discovers and loads the role package`, async (app) => {
   await app.waitFor(async () => app.expectTexts([expected.launcher]), {
     timeout: 20000,
@@ -113,6 +164,28 @@ if (expectService) {
           && result.terminal?.phase === "completed"
           && result.effects?.length === 5);
       if (takerFixture) {
+        const announcement = String(takerFixture.logos_offer_announcement_base64 ?? "");
+        if (!announcement) {
+          throw new Error("M6_TAKER_FIXTURE_JSON must contain logos_offer_announcement_base64");
+        }
+        await gatewayRpc("logos_offer_ingest_v1", {
+          schema_version: 1,
+          payload_base64: announcement,
+        });
+        const indexed = await gatewayRpc("logos_offer_list_v1", {
+          schema_version: 1,
+          route: null,
+        });
+        const offers = indexed.offers ?? [];
+        if (offers.length !== 1 || indexed.omitted_offers !== 0) {
+          throw new Error("the isolated live offer index must contain exactly the signed fixture");
+        }
+        const exact = offers[0];
+        if (String(exact.offer?.id) !== String(takerFixture.offer_id)
+            || String(exact.maker_identity) !== String(takerFixture.maker_identity)
+            || String(exact.announcement_base64) !== announcement) {
+          throw new Error("the exact signed fixture is absent from the live offer index");
+        }
         await evaluateIn(app, "takerReview", "pair.currentIndex = 1; direction.currentIndex = 1; true");
         await invokeSuccessfully(app, "Browse authenticated offers", "offer browsing");
         await evaluateIn(app, "takerReview", [

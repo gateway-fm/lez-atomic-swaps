@@ -96,7 +96,7 @@ LezAtomicSwapMakerBackend::~LezAtomicSwapMakerBackend() = default;
 
 void LezAtomicSwapMakerBackend::onContextReady()
 {
-    chat_->initialise(modules().chat_module);
+    chat_->initialise(modules().chat_module, modules().delivery_module);
 }
 
 QString LezAtomicSwapMakerBackend::health()

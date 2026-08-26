@@ -16,6 +16,7 @@ public:
     QString health() override;
     QString chatStatus() override;
     QString connectChat(QString peerAddress) override;
+    QString connectOffer(QString makerIdentity, QString offerId) override;
     QString resetChat() override;
     QString btcEvidence() override;
     QString btcMarket(QString walletId) override;
@@ -25,7 +26,7 @@ public:
     QString listOffers(QString pair, QString direction) override;
     QString initiate(QString requestId, QString offerId, QString pair, QString direction,
                      QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits,
-                     QString expectedLezUnits) override;
+                     QString expectedLezUnits, QString logosOfferAnnouncementBase64) override;
     QString listSwaps() override;
     QString monitor(QString swapId) override;
     QString claim(QString requestId, QString swapId, QString expectedGeneration) override;

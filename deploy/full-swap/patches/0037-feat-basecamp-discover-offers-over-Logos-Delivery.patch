@@ -1,0 +1,4241 @@
+From e67522c8d27c274bcb94b92f90420983c83d0f5b Mon Sep 17 00:00:00 2001
+From: Patch Verifier <patch-verifier@localhost>
+Date: Wed, 26 Aug 2026 12:12:53 +0200
+Subject: [PATCH] feat(basecamp): discover offers over Logos Delivery
+
+---
+ apps/basecamp/README.md                       |   23 +-
+ apps/basecamp/common/logos_chat_bridge.cpp    |  334 +++--
+ apps/basecamp/common/logos_chat_bridge.h      |   42 +-
+ .../src/lez_atomic_swap_maker_backend.cpp     |    2 +-
+ .../taker/src/lez_atomic_swap_taker.rep       |    3 +-
+ .../src/lez_atomic_swap_taker_backend.cpp     |   43 +-
+ .../taker/src/lez_atomic_swap_taker_backend.h |    3 +-
+ apps/basecamp/taker/src/qml/Main.qml          |   56 +-
+ apps/basecamp/tests/basecamp-role-product.mjs |   75 ++
+ .../src/bin/lez-logos-chat-gateway.rs         |    3 +-
+ crates/maker-node/src/lib.rs                  |  160 ++-
+ crates/maker-node/src/logos_chat_gateway.rs   | 1175 ++++++++++++++++-
+ crates/maker-node/src/run_local_delivery.rs   |  323 ++++-
+ crates/maker-node/src/taker_facade.rs         |    7 +
+ crates/maker-node/src/taker_service.rs        |   76 +-
+ .../maker-node/tests/logos_offer_discovery.rs |  279 ++++
+ crates/maker-node/tests/run_local_delivery.rs |   74 ++
+ crates/maker-node/tests/taker_initiate_rpc.rs |   63 +-
+ .../maker-node/tests/taker_service_process.rs |    1 +
+ crates/maker-node/tests/zec_chat_process.rs   |    1 +
+ ...ute-role-agreement-chat-over-logos-chat.md |   16 +-
+ ...211-discover-offers-over-logos-delivery.md |  125 ++
+ docs/architecture/README.md                   |    3 +
+ .../check-m6-basecamp-package-contract.mjs    |   83 +-
+ 24 files changed, 2749 insertions(+), 221 deletions(-)
+ create mode 100644 crates/maker-node/tests/logos_offer_discovery.rs
+ create mode 100644 docs/architecture/0211-discover-offers-over-logos-delivery.md
+
+diff --git a/apps/basecamp/README.md b/apps/basecamp/README.md
+index 8d447f4..186620a 100644
+--- a/apps/basecamp/README.md
++++ b/apps/basecamp/README.md
+@@ -6,7 +6,7 @@ The Taker route browses authenticated offers, admits a prepared swap, monitors
+ it, and exposes the generation-fenced terminal controls. Each QML view is
+ unprivileged. Its process-isolated C++ backend calls a fixed role allowlist over
+ an owner-only Unix socket. Negotiation messages use pinned Logos Chat `v0.2.2`
+-and its followed Delivery runtime for peer-to-peer E2EE transport; the Rust
++and its followed Delivery runtime for signed offer broadcasts plus peer-to-peer E2EE transport; the Rust
+ stores, signatures, role contributions, and chain-identity checks remain the
+ protocol authority.
+ 
+@@ -167,9 +167,10 @@ In Basecamp:
+ 1. open **LEZ Atomic Swap Taker** and confirm **Backend connected**;
+ 2. click **Service health**, choose the pair/direction, and click
+    **Browse authenticated offers**;
+-3. copy the chosen offer ID, compressed Maker identity, signed-envelope
+-   SHA-256, foreign atomic units, and expected LEZ atomic units into the exact
+-   review form;
++3. review the automatically populated offer ID, compressed Maker identity,
++   signed-envelope SHA-256, foreign atomic units, and expected LEZ atomic
++   units; Basecamp retains the exact signed live announcement as admission
++   proof without exposing private actor material;
+ 4. click **Confirm and initiate** once and retain the returned swap ID;
+ 5. repeat the unchanged click to observe exact durable replay;
+ 6. click **List my swaps**, enter the swap ID, and click **Monitor**;
+@@ -177,7 +178,9 @@ In Basecamp:
+    generation. For transparent ZEC claims, follow the displayed shielding
+    reminder in the wallet after the swap.
+ 
+-Initiation commits registry authority before Chat/filesystem effects. A lost
++Production Basecamp initiation re-verifies the exact live signed Delivery proof;
++the filesystem source remains a legacy CLI/offline seam. Initiation commits
++registry authority before Chat/Delivery effects. A lost
+ response is recovered by the same request ID and immutable payload; changing a
+ field conflicts. Claim and Refund are mutually exclusive at the registry and
+ actor-journal layers.
+@@ -199,9 +202,15 @@ framework, one role install tree, and one real owner socket. It covers:
+ 
+ - both missing-service fail-closed paths;
+ - Maker health, atomic route save, and history through `lez-maker-daemon`;
+-- Taker health and offer list through `lez-taker-service`;
++- Taker health plus browsing through the gateway's live signed Delivery index;
+ - prepared Taker initiation, exact replay, list, monitor, and a durable registry
+-  assertion for request `taker-ui-initiate-001`.
++  assertion for the digest-derived `taker-ui-initiate-*` request.
++
++For the prepared Taker case, `M6_TAKER_FIXTURE_JSON` also carries
++`logos_offer_announcement_base64`: a freshly signed, unexpired announcement
++obtained from the Maker snapshot RPC. The harness admits that exact proof through
++`LEZ_LOGOS_CHAT_GATEWAY_SOCKET` before browsing, so confirm-time refresh tests
++the production live index without internet access or a filesystem offer fixture.
+ 
+ This Basecamp run stops at admitted/monitored swap composition. Terminal
+ actual-node Claim and Refund are retained as separate service/actor certificates
+diff --git a/apps/basecamp/common/logos_chat_bridge.cpp b/apps/basecamp/common/logos_chat_bridge.cpp
+index a51824c..7b21d74 100644
+--- a/apps/basecamp/common/logos_chat_bridge.cpp
++++ b/apps/basecamp/common/logos_chat_bridge.cpp
+@@ -1,16 +1,26 @@
+ #include "logos_chat_bridge.h"
+ 
++#include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonParseError>
++#include <QScopedValueRollback>
+ 
+ namespace {
+ constexpr qsizetype kMaximumGatewayFrameBytes = 1024 * 1024;
+ constexpr qsizetype kMaximumGatewayRpcMessageBytes = 4 * 1024 * 1024;
+ constexpr qsizetype kMaximumAddressBytes = 16 * 1024;
+ constexpr qsizetype kMaximumConversationIdBytes = 4 * 1024;
++constexpr qsizetype kMaximumOfferAnnouncementBytes = 32 * 1024;
++constexpr qsizetype kMaximumOfferIdBytes = 256;
+ constexpr int kPollIntervalMs = 50;
++constexpr int kOfferRebroadcastIntervalMs = 10000;
++// Process at most one owner-RPC page per event-loop turn. A retained cursor and
++// zero-delay continuation keep large sweeps moving without monopolising Qt.
++constexpr int kMaximumOfferSnapshotPagesPerTurn = 1;
++constexpr int kMaximumPendingOfferIngests = 64;
+ constexpr int kInitialSendRetryTicks = 20;
+ constexpr int kMaximumSendRetryTicks = 100;
++const QString kOfferContentTopic = QStringLiteral("/lez-atomic-swaps/1/offers/json");
+ 
+ QJsonObject parseSuccess(const QString& encoded)
+ {
+@@ -19,9 +29,7 @@ QJsonObject parseSuccess(const QString& encoded)
+     if (error.error != QJsonParseError::NoError || !document.isObject()) return {};
+     const QJsonObject envelope = document.object();
+     if (!envelope.value(QStringLiteral("ok")).toBool(false)
+-        || !envelope.contains(QStringLiteral("result"))) {
+-        return {};
+-    }
++        || !envelope.contains(QStringLiteral("result"))) return {};
+     return envelope;
+ }
+ 
+@@ -36,15 +44,24 @@ LogosChatBridge::LogosChatBridge(QString role, QObject* parent)
+     , role_(std::move(role))
+     , gatewayRpc_(QStringLiteral("LEZ_LOGOS_CHAT_GATEWAY_SOCKET"),
+                   kMaximumGatewayRpcMessageBytes, 50, 500)
++    , makerRpc_(QStringLiteral("LEZ_MAKER_RPC_SOCKET"),
++                kMaximumGatewayRpcMessageBytes, 50, 500)
+ {
+     pollTimer_.setParent(this);
+     pollTimer_.setInterval(kPollIntervalMs);
+     connect(&pollTimer_, &QTimer::timeout, this, &LogosChatBridge::pollOutbox);
++    offerTimer_.setParent(this);
++    offerTimer_.setInterval(kOfferRebroadcastIntervalMs);
++    connect(&offerTimer_, &QTimer::timeout, this, [this] {
++        if (offerSubscribed_) broadcastOffers();
++        else subscribeOfferTopic();
++    });
+ }
+ 
+ LogosChatBridge::~LogosChatBridge()
+ {
+     pollTimer_.stop();
++    offerTimer_.stop();
+     if (initialised_ && shutdown_) shutdown_();
+ }
+ 
+@@ -54,49 +71,91 @@ QString LogosChatBridge::statusJson() const
+                              {QStringLiteral("role"), role_},
+                              {QStringLiteral("state"), state_},
+                              {QStringLiteral("online"), online_},
++                             {QStringLiteral("offer_subscribed"), offerSubscribed_},
+                              {QStringLiteral("session_bound"), sessionBound_},
++                             {QStringLiteral("session_count"), boundConversations_.size()},
+                              {QStringLiteral("address"), localAddress_},
+-                             {QStringLiteral("peer_configured"), !peerAddress_.isEmpty()},
+-                             {QStringLiteral("conversation_ready"), !conversationId_.isEmpty()}};
++                             {QStringLiteral("peer_configured"),
++                              role_ == QStringLiteral("maker") ? !makerPeers_.isEmpty()
++                                                               : !peerAddress_.isEmpty()},
++                             {QStringLiteral("conversation_ready"),
++                              role_ == QStringLiteral("maker") ? !makerPeers_.isEmpty()
++                                                               : !conversationId_.isEmpty()}};
+     return response(true, QString(), result);
+ }
+ 
+ QString LogosChatBridge::connectPeer(const QString& peerAddress)
+ {
+-    if (role_ != QStringLiteral("taker")) {
++    if (role_ != QStringLiteral("taker"))
+         return response(false, QStringLiteral("role_forbidden"), {});
+-    }
+-    if (!validText(peerAddress, kMaximumAddressBytes)) {
++    if (!validText(peerAddress, kMaximumAddressBytes))
+         return response(false, QStringLiteral("invalid_peer_address"), {});
+-    }
+-    if (!peerAddress_.isEmpty() && peerAddress_ != peerAddress) {
++    if (!peerAddress_.isEmpty() && peerAddress_ != peerAddress)
+         return response(false, QStringLiteral("session_conflict"), {});
+-    }
+     peerAddress_ = peerAddress;
+     if (!online_ || !createConversation_) {
+         state_ = QStringLiteral("waiting for Chat delivery");
+         return response(false, QStringLiteral("chat_not_online"), {});
+     }
+     createPeerConversation();
+-    bindSession();
+-    if (conversationId_.isEmpty()) {
++    if (!conversationId_.isEmpty()) (void)bindSession(conversationId_, peerAddress_);
++    if (conversationId_.isEmpty())
+         return response(false, QStringLiteral("conversation_failed"), {});
+-    }
+     return sessionBound_ ? statusJson()
+                          : response(false, QStringLiteral("gateway_unavailable"), {});
+ }
+ 
++QString LogosChatBridge::connectOffer(const QString& makerIdentity, const QString& offerId)
++{
++    if (role_ != QStringLiteral("taker"))
++        return response(false, QStringLiteral("role_forbidden"), {});
++    const QJsonObject envelope = parseSuccess(selectOffer(makerIdentity, offerId));
++    const QJsonObject selected = envelope.value(QStringLiteral("result"))
++                                     .toObject()
++                                     .value(QStringLiteral("selected"))
++                                     .toObject();
++    const QString address = selected.value(QStringLiteral("maker_chat_address")).toString();
++    if (!validText(address, kMaximumAddressBytes))
++        return response(false, QStringLiteral("offer_unavailable"), {});
++    if (!peerAddress_.isEmpty() && peerAddress_ != address)
++        return response(false, QStringLiteral("session_busy"), {});
++    return connectPeer(address);
++}
++
++QString LogosChatBridge::selectOffer(const QString& makerIdentity, const QString& offerId)
++{
++    if (role_ != QStringLiteral("taker"))
++        return response(false, QStringLiteral("role_forbidden"), {});
++    return gatewayRpc_.call(
++        QStringLiteral("logos_offer_select_v1"),
++        compact({{QStringLiteral("schema_version"), 1},
++                 {QStringLiteral("maker_identity"), makerIdentity},
++                 {QStringLiteral("offer_id"), offerId}}));
++}
++
++QString LogosChatBridge::listOffers(const QString& pair, const QString& direction)
++{
++    if (role_ != QStringLiteral("taker"))
++        return response(false, QStringLiteral("role_forbidden"), {});
++    return gatewayRpc_.call(QStringLiteral("logos_offer_list_v1"),
++        compact({{QStringLiteral("schema_version"), 1},
++                 {QStringLiteral("route"),
++                  QJsonObject{{QStringLiteral("pair"), pair},
++                              {QStringLiteral("direction"), direction}}}}));
++}
++
+ QString LogosChatBridge::resetSession()
+ {
+     const QString encoded = gatewayRpc_.call(
+         QStringLiteral("logos_chat_reset_session_v1"),
+         QStringLiteral("{\"schema_version\":1}"));
+-    if (parseSuccess(encoded).isEmpty()) {
++    if (parseSuccess(encoded).isEmpty())
+         return response(false, QStringLiteral("reset_failed"), {});
+-    }
+     sessionBound_ = false;
+     peerAddress_.clear();
+     conversationId_.clear();
++    makerPeers_.clear();
++    boundConversations_.clear();
+     polling_ = false;
+     bindRetryTicks_ = 0;
+     sendRetryTicks_ = 0;
+@@ -109,16 +168,14 @@ QString LogosChatBridge::resetSession()
+ void LogosChatBridge::createPeerConversation()
+ {
+     if (role_ != QStringLiteral("taker") || !online_ || peerAddress_.isEmpty()
+-        || !conversationId_.isEmpty() || !createConversation_) {
+-        return;
+-    }
++        || !conversationId_.isEmpty() || !createConversation_) return;
+     const auto [ok, value] = createConversation_(peerAddress_);
+     if (!ok || !validText(value, kMaximumConversationIdBytes)) {
+         state_ = QStringLiteral("error: conversation creation failed");
+         return;
+     }
+     conversationId_ = value;
+-    bindSession();
++    (void)bindSession(conversationId_, peerAddress_);
+ }
+ 
+ void LogosChatBridge::deliveryStateChanged(const QVariantList& values)
+@@ -126,15 +183,19 @@ void LogosChatBridge::deliveryStateChanged(const QVariantList& values)
+     if (values.size() < 2) return;
+     state_ = values.at(0).toString();
+     online_ = state_ == QStringLiteral("online");
+-    if (online_) {
+-        // Chat v0.2.2 forbids synchronous module calls from an event callback.
+-        QTimer::singleShot(0, this, [this] {
+-            if (!online_) return;
+-            if (localAddress_.isEmpty() && getAddress_) localAddress_ = getAddress_();
+-            createPeerConversation();
+-            bindSession();
+-        });
++    if (!online_) {
++        offerSubscribed_ = false;
++        offerTimer_.stop();
++        return;
+     }
++    QTimer::singleShot(0, this, [this] {
++        if (!online_) return;
++        if (localAddress_.isEmpty() && getAddress_) localAddress_ = getAddress_();
++        offerTimer_.start();
++        subscribeOfferTopic();
++        createPeerConversation();
++        if (!conversationId_.isEmpty()) (void)bindSession(conversationId_, peerAddress_);
++    });
+ }
+ 
+ void LogosChatBridge::conversationCreated(const QVariantList& values)
+@@ -142,16 +203,7 @@ void LogosChatBridge::conversationCreated(const QVariantList& values)
+     if (values.size() < 6 || values.at(3).toString() != QStringLiteral("direct")) return;
+     const QString conversation = values.at(0).toString();
+     if (!validText(conversation, kMaximumConversationIdBytes)) return;
+-    // `create_conversation` returns the Taker's exact conversation id, so an
+-    // event cannot add authority there. The Maker pins both identities from
+-    // the first structurally valid frame and authenticated sender instead.
+-    if (role_ != QStringLiteral("maker") || peerAddress_.isEmpty()) return;
+-    if (!conversationId_.isEmpty() && conversationId_ != conversation) return;
+-    conversationId_ = conversation;
+-    // `peer_label` is only a shortened conversation label in chat_module v0.2.2,
+-    // not the peer address. The initiator already has the exact address; the
+-    // recipient pins it from the first authenticated message_received sender.
+-    if (!peerAddress_.isEmpty()) QTimer::singleShot(0, this, [this] { bindSession(); });
++    // The Maker binds only from message_received's authenticated sender.
+ }
+ 
+ void LogosChatBridge::messageReceived(const QVariantList& values)
+@@ -163,63 +215,173 @@ void LogosChatBridge::messageReceived(const QVariantList& values)
+     if (!validText(conversation, kMaximumConversationIdBytes)
+         || !validText(sender, kMaximumAddressBytes) || content.isEmpty()
+         || content.toUtf8().size() > kMaximumGatewayFrameBytes
+-        || !validInboundFrameEnvelope(content)) {
+-        return;
+-    }
+-    if (conversationId_.isEmpty() && role_ == QStringLiteral("maker")
+-        && peerAddress_.isEmpty()) {
+-        conversationId_ = conversation;
+-        peerAddress_ = sender;
+-    } else if (conversation != conversationId_ || sender != peerAddress_) {
+-        return;
+-    }
++        || !validInboundFrameEnvelope(content)) return;
++    if (role_ == QStringLiteral("maker")) {
++        const auto existing = makerPeers_.constFind(conversation);
++        if (existing != makerPeers_.constEnd() && existing.value() != sender) return;
++        if (existing == makerPeers_.constEnd() && makerPeers_.size() >= 32) return;
++    } else if (conversation != conversationId_ || sender != peerAddress_) return;
+     QTimer::singleShot(0, this, [this, conversation, sender, content] {
+-        bindSession();
+-        if (!sessionBound_) return;
++        if (!bindSession(conversation, sender)) return;
++        if (role_ == QStringLiteral("maker")) makerPeers_.insert(conversation, sender);
+         ingest(conversation, sender, content);
+     });
+ }
+ 
+-void LogosChatBridge::bindSession()
++void LogosChatBridge::offerMessageReceived(const QVariantList& values)
+ {
+-    if (sessionBound_ || !validText(localAddress_, kMaximumAddressBytes)
+-        || !validText(peerAddress_, kMaximumAddressBytes)
+-        || !validText(conversationId_, kMaximumConversationIdBytes)) {
++    if (role_ != QStringLiteral("taker") || values.size() < 4
++        || values.at(1).toString() != kOfferContentTopic) return;
++    const QByteArray payload = values.at(2).toByteArray();
++    if (payload.isEmpty() || payload.size() > kMaximumOfferAnnouncementBytes) return;
++    if (pendingOfferIngests_ >= kMaximumPendingOfferIngests) {
++        state_ = QStringLiteral("warning: offer ingest queue is full");
+         return;
+     }
++    ++pendingOfferIngests_;
++    const QString payloadBase64 = QString::fromLatin1(payload.toBase64());
++    QTimer::singleShot(0, this, [this, payloadBase64] {
++        const QString encoded = gatewayRpc_.call(
++            QStringLiteral("logos_offer_ingest_v1"),
++            compact({{QStringLiteral("schema_version"), 1},
++                     {QStringLiteral("payload_base64"), payloadBase64}}));
++        if (parseSuccess(encoded).isEmpty())
++            state_ = QStringLiteral("warning: rejected offer announcement");
++        --pendingOfferIngests_;
++    });
++}
++
++void LogosChatBridge::offerConnectionStateChanged(const QVariantList& values)
++{
++    if (values.size() < 2) return;
++    const QString state = values.at(0).toString();
++    if (state == QStringLiteral("online"))
++        QTimer::singleShot(0, this, [this] {
++            if (!online_) return;
++            offerTimer_.start();
++            subscribeOfferTopic();
++        });
++    else if (state == QStringLiteral("offline")) {
++        offerSubscribed_ = false;
++        offerTimer_.stop();
++    }
++}
++
++void LogosChatBridge::subscribeOfferTopic()
++{
++    if (!online_ || offerSubscribed_ || !subscribeOffers_) return;
++    const auto outcome = subscribeOffers_(kOfferContentTopic);
++    if (!outcome.first) {
++        state_ = QStringLiteral("error: offer topic subscription failed");
++        return;
++    }
++    offerSubscribed_ = true;
++    if (role_ == QStringLiteral("maker")) {
++        QTimer::singleShot(0, this, [this] { broadcastOffers(); });
++    }
++}
++
++void LogosChatBridge::broadcastOffers()
++{
++    if (role_ != QStringLiteral("maker") || !online_ || !offerSubscribed_
++        || !validText(localAddress_, kMaximumAddressBytes) || !sendOffer_
++        || broadcastingOffers_) return;
++    QScopedValueRollback<bool> broadcastingGuard(broadcastingOffers_, true);
++    QString cursor = offerBroadcastCursor_;
++    bool hadAnnouncementFailure = false;
++    for (int page = 0; page < kMaximumOfferSnapshotPagesPerTurn; ++page) {
++        QJsonObject request{{QStringLiteral("schema_version"), 1},
++                            {QStringLiteral("maker_chat_address"), localAddress_}};
++        if (!cursor.isEmpty()) request.insert(QStringLiteral("after_offer_id"), cursor);
++        const QJsonObject envelope = parseSuccess(makerRpc_.call(
++            QStringLiteral("maker_offer_announcement_snapshot_v1"), compact(request)));
++        const QJsonObject snapshot = envelope.value(QStringLiteral("result")).toObject();
++        if (snapshot.value(QStringLiteral("content_topic")).toString() != kOfferContentTopic
++            || !snapshot.value(QStringLiteral("announcements_base64")).isArray()) {
++            state_ = QStringLiteral("error: offer snapshot unavailable");
++            return;
++        }
++        const QJsonArray announcements =
++            snapshot.value(QStringLiteral("announcements_base64")).toArray();
++        for (const QJsonValue& value : announcements) {
++            const QByteArray canonical = value.toString().toLatin1();
++            const QByteArray payload = QByteArray::fromBase64(
++                canonical, QByteArray::AbortOnBase64DecodingErrors);
++            if (payload.isEmpty() || payload.size() > kMaximumOfferAnnouncementBytes
++                || payload.toBase64() != canonical) {
++                hadAnnouncementFailure = true;
++                continue;
++            }
++            const auto outcome = sendOffer_(kOfferContentTopic, payload);
++            if (!outcome.first) {
++                hadAnnouncementFailure = true;
++                continue;
++            }
++        }
++        const QString next = snapshot.value(QStringLiteral("next_after_offer_id")).toString();
++        if (next.isEmpty()) {
++            offerBroadcastCursor_.clear();
++            if (hadAnnouncementFailure)
++                state_ = QStringLiteral("offer rebroadcast completed with retryable omissions");
++            return;
++        }
++        if (announcements.isEmpty() || !validText(next, kMaximumOfferIdBytes)
++            || (!cursor.isEmpty() && next <= cursor)) {
++            state_ = QStringLiteral("error: invalid offer snapshot cursor");
++            return;
++        }
++        cursor = next;
++        offerBroadcastCursor_ = cursor;
++    }
++    state_ = hadAnnouncementFailure
++        ? QStringLiteral("offer rebroadcast continuing after retryable omissions")
++        : QStringLiteral("offer rebroadcast sweep will continue");
++    QTimer::singleShot(0, this, [this] { broadcastOffers(); });
++}
++
++bool LogosChatBridge::bindSession(const QString& conversationId, const QString& peerAddress)
++{
++    if (!validText(localAddress_, kMaximumAddressBytes)
++        || !validText(peerAddress, kMaximumAddressBytes)
++        || !validText(conversationId, kMaximumConversationIdBytes)) return false;
+     const QString encoded = gatewayRpc_.call(
+         QStringLiteral("logos_chat_bind_session_v1"),
+         compact({{QStringLiteral("schema_version"), 1},
+-                 {QStringLiteral("conversation_id"), conversationId_},
++                 {QStringLiteral("conversation_id"), conversationId},
+                  {QStringLiteral("local_address"), localAddress_},
+-                 {QStringLiteral("peer_address"), peerAddress_}}));
+-    sessionBound_ = !parseSuccess(encoded).isEmpty();
+-    if (sessionBound_) bindRetryTicks_ = 0;
+-    if (!sessionBound_) state_ = QStringLiteral("error: local gateway unavailable");
++                 {QStringLiteral("peer_address"), peerAddress}}));
++    const bool bound = !parseSuccess(encoded).isEmpty();
++    if (bound) {
++        boundConversations_.insert(conversationId);
++        sessionBound_ = true;
++        bindRetryTicks_ = 0;
++    } else state_ = QStringLiteral("error: local gateway unavailable");
++    return bound;
+ }
+ 
+ void LogosChatBridge::pollOutbox()
+ {
+-    if (online_ && !sessionBound_ && !peerAddress_.isEmpty()
+-        && ++bindRetryTicks_ >= 20) {
++    if (role_ == QStringLiteral("taker") && online_ && !sessionBound_
++        && !peerAddress_.isEmpty() && ++bindRetryTicks_ >= 20) {
+         bindRetryTicks_ = 0;
+-        if (conversationId_.isEmpty()) {
+-            createPeerConversation();
+-        } else {
+-            bindSession();
+-        }
++        if (conversationId_.isEmpty()) createPeerConversation();
++        else (void)bindSession(conversationId_, peerAddress_);
+     }
+     if (sendRetryTicks_ > 0) {
+         --sendRetryTicks_;
+         return;
+     }
+-    if (polling_ || !online_ || !sessionBound_ || conversationId_.isEmpty() || !sendMessage_) return;
++    if (polling_ || !online_ || !sendMessage_
++        || (role_ == QStringLiteral("taker")
++            && (!sessionBound_ || conversationId_.isEmpty()))) return;
+     polling_ = true;
+     const QJsonObject envelope = parseSuccess(gatewayRpc_.call(
+         QStringLiteral("logos_chat_outbox_peek_v1"),
+         QStringLiteral("{\"schema_version\":1}")));
+     if (envelope.isEmpty()) {
+         sessionBound_ = false;
++        boundConversations_.clear();
++        if (role_ == QStringLiteral("maker")) makerPeers_.clear();
+         bindRetryTicks_ = 0;
+         state_ = QStringLiteral("error: local gateway unavailable");
+         polling_ = false;
+@@ -231,16 +393,31 @@ void LogosChatBridge::pollOutbox()
+     }
+     const QJsonObject item = envelope.value(QStringLiteral("result")).toObject();
+     const QString frameId = item.value(QStringLiteral("frame_id")).toString();
++    const QString targetConversation = item.value(QStringLiteral("conversation_id")).toString();
+     const QString content = item.value(QStringLiteral("content")).toString();
+-    if (frameId.size() != 64 || content.isEmpty()
++    const bool targetKnown = role_ == QStringLiteral("maker")
++        ? validText(targetConversation, kMaximumConversationIdBytes)
++        : targetConversation == conversationId_;
++    if (frameId.size() != 64 || !targetKnown || content.isEmpty()
+         || content.toUtf8().size() > kMaximumGatewayFrameBytes) {
+         state_ = QStringLiteral("error: invalid local gateway frame");
+         polling_ = false;
+         return;
+     }
+-    const auto [sent, error] = sendMessage_(conversationId_, content);
+-    if (!sent) {
+-        state_ = QStringLiteral("error: Chat send failed");
++    if (role_ == QStringLiteral("maker")) {
++        boundConversations_.insert(targetConversation);
++        sessionBound_ = true;
++    }
++    const auto outcome = sendMessage_(targetConversation, content);
++    if (!outcome.first) {
++        const QString deferred = gatewayRpc_.call(
++            QStringLiteral("logos_chat_outbox_defer_v1"),
++            compact({{QStringLiteral("schema_version"), 1},
++                     {QStringLiteral("frame_id"), frameId},
++                     {QStringLiteral("conversation_id"), targetConversation}}));
++        state_ = parseSuccess(deferred).isEmpty()
++            ? QStringLiteral("error: local gateway deferral failed")
++            : QStringLiteral("error: Chat send failed");
+         sendFailureCount_ = qMin(sendFailureCount_ + 1, 4);
+         const int shift = sendFailureCount_ - 1;
+         sendRetryTicks_ = qMin(kInitialSendRetryTicks << shift, kMaximumSendRetryTicks);
+@@ -252,10 +429,10 @@ void LogosChatBridge::pollOutbox()
+     const QString acknowledged = gatewayRpc_.call(
+         QStringLiteral("logos_chat_outbox_ack_v1"),
+         compact({{QStringLiteral("schema_version"), 1},
+-                 {QStringLiteral("frame_id"), frameId}}));
+-    if (parseSuccess(acknowledged).isEmpty()) {
++                 {QStringLiteral("frame_id"), frameId},
++                 {QStringLiteral("conversation_id"), targetConversation}}));
++    if (parseSuccess(acknowledged).isEmpty())
+         state_ = QStringLiteral("error: local gateway acknowledgement failed");
+-    }
+     polling_ = false;
+ }
+ 
+@@ -271,9 +448,7 @@ bool LogosChatBridge::validInboundFrameEnvelope(const QString& content) const
+     for (const QChar character : frameId) {
+         const ushort value = character.unicode();
+         if (!((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')
+-              || (value >= 'A' && value <= 'F'))) {
+-            return false;
+-        }
++              || (value >= 'A' && value <= 'F'))) return false;
+     }
+     const QString senderRole = frame.value(QStringLiteral("sender_role")).toString();
+     const QString recipientRole = frame.value(QStringLiteral("recipient_role")).toString();
+@@ -310,9 +485,8 @@ bool LogosChatBridge::validText(const QString& value, qsizetype maximum) const
+ QString LogosChatBridge::response(bool ok, const QString& code, const QJsonObject& result) const
+ {
+     QJsonObject envelope{{QStringLiteral("ok"), ok}};
+-    if (ok) {
+-        envelope.insert(QStringLiteral("result"), result);
+-    } else {
++    if (ok) envelope.insert(QStringLiteral("result"), result);
++    else {
+         envelope.insert(QStringLiteral("code"), code);
+         envelope.insert(QStringLiteral("message"), QStringLiteral("Logos Chat operation failed"));
+     }
+diff --git a/apps/basecamp/common/logos_chat_bridge.h b/apps/basecamp/common/logos_chat_bridge.h
+index 07e4944..3fc9895 100644
+--- a/apps/basecamp/common/logos_chat_bridge.h
++++ b/apps/basecamp/common/logos_chat_bridge.h
+@@ -2,9 +2,12 @@
+ 
+ #include "local_json_rpc_client.h"
+ 
++#include <QByteArray>
+ #include <QJsonObject>
++#include <QHash>
+ #include <QObject>
+ #include <QPointer>
++#include <QSet>
+ #include <QString>
+ #include <QTimer>
+ #include <QVariantList>
+@@ -19,8 +22,8 @@ public:
+     explicit LogosChatBridge(QString role, QObject* parent = nullptr);
+     ~LogosChatBridge() override;
+ 
+-    template <typename ChatClient>
+-    void initialise(ChatClient& chat)
++    template <typename ChatClient, typename DeliveryClient>
++    void initialise(ChatClient& chat, DeliveryClient& delivery)
+     {
+         if (initialised_) return;
+         QPointer<LogosChatBridge> self(this);
+@@ -33,6 +36,12 @@ public:
+         chat.on("message_received", [self](const QVariantList& values) {
+             if (self) self->messageReceived(values);
+         });
++        delivery.on("messageReceived", [self](const QVariantList& values) {
++            if (self) self->offerMessageReceived(values);
++        });
++        delivery.on("connectionStateChanged", [self](const QVariantList& values) {
++            if (self) self->offerConnectionStateChanged(values);
++        });
+ 
+         sendMessage_ = [&chat](const QString& conversationId, const QString& content) {
+             const auto result = chat.send_message(conversationId, content);
+@@ -47,6 +56,16 @@ public:
+         };
+         getAddress_ = [&chat] { return chat.get_address(); };
+         shutdown_ = [&chat] { (void)chat.shutdown(); };
++        subscribeOffers_ = [&delivery](const QString& topic) {
++            const auto result = delivery.subscribe(topic);
++            return std::pair<bool, QString>{result.success,
++                result.success ? QString() : result.template getError<QString>()};
++        };
++        sendOffer_ = [&delivery](const QString& topic, const QByteArray& payload) {
++            const auto result = delivery.send(topic, payload);
++            return std::pair<bool, QString>{result.success,
++                result.success ? QString() : result.template getError<QString>()};
++        };
+ 
+         QString preset = qEnvironmentVariable("LEZ_LOGOS_CHAT_PRESET");
+         if (preset.isEmpty()) preset = QStringLiteral("logos.test");
+@@ -69,14 +88,21 @@ public:
+ 
+     [[nodiscard]] QString statusJson() const;
+     [[nodiscard]] QString connectPeer(const QString& peerAddress);
++    [[nodiscard]] QString connectOffer(const QString& makerIdentity, const QString& offerId);
++    [[nodiscard]] QString selectOffer(const QString& makerIdentity, const QString& offerId);
++    [[nodiscard]] QString listOffers(const QString& pair, const QString& direction);
+     [[nodiscard]] QString resetSession();
+ 
+ private:
+     void deliveryStateChanged(const QVariantList& values);
+     void conversationCreated(const QVariantList& values);
+     void messageReceived(const QVariantList& values);
++    void offerMessageReceived(const QVariantList& values);
++    void offerConnectionStateChanged(const QVariantList& values);
++    void subscribeOfferTopic();
++    void broadcastOffers();
+     void createPeerConversation();
+-    void bindSession();
++    [[nodiscard]] bool bindSession(const QString& conversationId, const QString& peerAddress);
+     void pollOutbox();
+     void ingest(const QString& conversationId, const QString& sender, const QString& content);
+     [[nodiscard]] bool validInboundFrameEnvelope(const QString& content) const;
+@@ -85,21 +111,31 @@ private:
+ 
+     QString role_;
+     LocalJsonRpcClient gatewayRpc_;
++    LocalJsonRpcClient makerRpc_;
+     QTimer pollTimer_;
++    QTimer offerTimer_;
+     QString state_ = QStringLiteral("not_initialised");
+     QString localAddress_;
+     QString peerAddress_;
+     QString conversationId_;
++    QString offerBroadcastCursor_;
+     bool initialised_ = false;
+     bool online_ = false;
+     bool sessionBound_ = false;
++    bool offerSubscribed_ = false;
+     bool polling_ = false;
++    bool broadcastingOffers_ = false;
++    int pendingOfferIngests_ = 0;
+     int bindRetryTicks_ = 0;
+     int sendRetryTicks_ = 0;
+     int sendFailureCount_ = 0;
++    QHash<QString, QString> makerPeers_;
++    QSet<QString> boundConversations_;
+     std::function<std::pair<bool, QString>(const QString&, const QString&)> sendMessage_;
+     std::function<std::pair<bool, QString>(const QString&)> createConversation_;
+     std::function<QString()> getAddress_;
++    std::function<std::pair<bool, QString>(const QString&)> subscribeOffers_;
++    std::function<std::pair<bool, QString>(const QString&, const QByteArray&)> sendOffer_;
+     // The owning backend destroys this member before its LogosUiPluginContext
+     // base, so these generated-module closures remain valid through shutdown.
+     std::function<void()> shutdown_;
+diff --git a/apps/basecamp/maker/src/lez_atomic_swap_maker_backend.cpp b/apps/basecamp/maker/src/lez_atomic_swap_maker_backend.cpp
+index 3d56ba6..e6e0767 100644
+--- a/apps/basecamp/maker/src/lez_atomic_swap_maker_backend.cpp
++++ b/apps/basecamp/maker/src/lez_atomic_swap_maker_backend.cpp
+@@ -37,7 +37,7 @@ LezAtomicSwapMakerBackend::~LezAtomicSwapMakerBackend() = default;
+ 
+ void LezAtomicSwapMakerBackend::onContextReady()
+ {
+-    chat_->initialise(modules().chat_module);
++    chat_->initialise(modules().chat_module, modules().delivery_module);
+ }
+ 
+ QString LezAtomicSwapMakerBackend::health()
+diff --git a/apps/basecamp/taker/src/lez_atomic_swap_taker.rep b/apps/basecamp/taker/src/lez_atomic_swap_taker.rep
+index 8ec0e6c..f4e5604 100644
+--- a/apps/basecamp/taker/src/lez_atomic_swap_taker.rep
++++ b/apps/basecamp/taker/src/lez_atomic_swap_taker.rep
+@@ -3,9 +3,10 @@ class LezAtomicSwapTaker
+     SLOT(QString health())
+     SLOT(QString chatStatus())
+     SLOT(QString connectChat(QString peerAddress))
++    SLOT(QString connectOffer(QString makerIdentity, QString offerId))
+     SLOT(QString resetChat())
+     SLOT(QString listOffers(QString pair, QString direction))
+-    SLOT(QString initiate(QString requestId, QString offerId, QString pair, QString direction, QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits, QString expectedLezUnits))
++    SLOT(QString initiate(QString requestId, QString offerId, QString pair, QString direction, QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits, QString expectedLezUnits, QString logosOfferAnnouncementBase64))
+     SLOT(QString listSwaps())
+     SLOT(QString monitor(QString swapId))
+     SLOT(QString claim(QString requestId, QString swapId, QString expectedGeneration))
+diff --git a/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.cpp b/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.cpp
+index 473179e..839c683 100644
+--- a/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.cpp
++++ b/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.cpp
+@@ -4,8 +4,11 @@
+ #include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonObject>
++#include <QJsonParseError>
+ 
+ namespace {
++constexpr qsizetype kMaximumOfferAnnouncementBytes = 32 * 1024;
++
+ QString compact(const QJsonObject& value)
+ {
+     return QString::fromUtf8(QJsonDocument(value).toJson(QJsonDocument::Compact));
+@@ -22,6 +25,11 @@ QString invalid()
+ {
+     return QStringLiteral("{\"ok\":false,\"code\":\"invalid_input\",\"message\":\"Review fields are invalid or exceed the exact UI range\"}");
+ }
++
++QString unavailable()
++{
++    return QStringLiteral("{\"ok\":false,\"code\":\"offer_unavailable\",\"message\":\"The selected signed offer is no longer live\"}");
++}
+ }
+ 
+ LezAtomicSwapTakerBackend::LezAtomicSwapTakerBackend()
+@@ -35,7 +43,7 @@ LezAtomicSwapTakerBackend::~LezAtomicSwapTakerBackend() = default;
+ 
+ void LezAtomicSwapTakerBackend::onContextReady()
+ {
+-    chat_->initialise(modules().chat_module);
++    chat_->initialise(modules().chat_module, modules().delivery_module);
+ }
+ 
+ QString LezAtomicSwapTakerBackend::health()
+@@ -53,6 +61,11 @@ QString LezAtomicSwapTakerBackend::connectChat(QString peerAddress)
+     return chat_->connectPeer(peerAddress);
+ }
+ 
++QString LezAtomicSwapTakerBackend::connectOffer(QString makerIdentity, QString offerId)
++{
++    return chat_->connectOffer(makerIdentity, offerId);
++}
++
+ QString LezAtomicSwapTakerBackend::resetChat()
+ {
+     return chat_->resetSession();
+@@ -60,25 +73,45 @@ QString LezAtomicSwapTakerBackend::resetChat()
+ 
+ QString LezAtomicSwapTakerBackend::listOffers(QString pair, QString direction)
+ {
+-    return rpc_.call("taker_offer_list_v1", compact({{"schema_version", 1},
+-        {"route", QJsonObject{{"pair", pair}, {"direction", direction}}}}));
++    return chat_->listOffers(pair, direction);
+ }
+ 
+ QString LezAtomicSwapTakerBackend::initiate(
+     QString requestId, QString offerId, QString pair, QString direction, QString makerIdentity,
+-    QString signedEnvelopeSha256, QString foreignUnits, QString expectedLezUnits)
++    QString signedEnvelopeSha256, QString foreignUnits, QString expectedLezUnits,
++    QString logosOfferAnnouncementBase64)
+ {
+     qulonglong foreign = 0, lez = 0;
+     if (!exactUnsigned(foreignUnits, foreign) || !exactUnsigned(expectedLezUnits, lez)) return invalid();
+     const QByteArray digest = QByteArray::fromHex(signedEnvelopeSha256.toLatin1());
+     if (digest.size() != 32 || QString::fromLatin1(digest.toHex()) != signedEnvelopeSha256) return invalid();
++    QJsonParseError selectionError;
++    const QJsonDocument selectionDocument = QJsonDocument::fromJson(
++        chat_->selectOffer(makerIdentity, offerId).toUtf8(), &selectionError);
++    if (selectionError.error != QJsonParseError::NoError || !selectionDocument.isObject())
++        return unavailable();
++    const QJsonObject selectionEnvelope = selectionDocument.object();
++    const QString refreshed = selectionEnvelope.value(QStringLiteral("result"))
++                                  .toObject()
++                                  .value(QStringLiteral("selected"))
++                                  .toObject()
++                                  .value(QStringLiteral("announcement_base64"))
++                                  .toString();
++    if (!selectionEnvelope.value(QStringLiteral("ok")).toBool(false) || refreshed.isEmpty())
++        return unavailable();
++    logosOfferAnnouncementBase64 = refreshed;
++    const QByteArray announcement = QByteArray::fromBase64(
++        logosOfferAnnouncementBase64.toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
++    if (announcement.isEmpty() || announcement.size() > kMaximumOfferAnnouncementBytes
++        || announcement.toBase64() != logosOfferAnnouncementBase64.toLatin1()) return invalid();
+     QJsonArray digestBytes;
+     for (const char byte : digest) digestBytes.append(static_cast<unsigned char>(byte));
+     return rpc_.call("taker_swap_initiate_v1", compact({{"schema_version", 1},
+         {"request_id", requestId}, {"offer_id", offerId},
+         {"route", QJsonObject{{"pair", pair}, {"direction", direction}}},
+         {"maker_identity", makerIdentity}, {"signed_envelope_sha256", digestBytes},
+-        {"foreign_units", static_cast<qint64>(foreign)}, {"expected_lez_units", static_cast<qint64>(lez)}}));
++        {"foreign_units", static_cast<qint64>(foreign)}, {"expected_lez_units", static_cast<qint64>(lez)},
++        {"logos_offer_announcement_base64", logosOfferAnnouncementBase64}}));
+ }
+ 
+ QString LezAtomicSwapTakerBackend::listSwaps()
+diff --git a/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.h b/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.h
+index 054f70d..c8a2ce6 100644
+--- a/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.h
++++ b/apps/basecamp/taker/src/lez_atomic_swap_taker_backend.h
+@@ -16,11 +16,12 @@ public:
+     QString health() override;
+     QString chatStatus() override;
+     QString connectChat(QString peerAddress) override;
++    QString connectOffer(QString makerIdentity, QString offerId) override;
+     QString resetChat() override;
+     QString listOffers(QString pair, QString direction) override;
+     QString initiate(QString requestId, QString offerId, QString pair, QString direction,
+                      QString makerIdentity, QString signedEnvelopeSha256, QString foreignUnits,
+-                     QString expectedLezUnits) override;
++                     QString expectedLezUnits, QString logosOfferAnnouncementBase64) override;
+     QString listSwaps() override;
+     QString monitor(QString swapId) override;
+     QString claim(QString requestId, QString swapId, QString expectedGeneration) override;
+diff --git a/apps/basecamp/taker/src/qml/Main.qml b/apps/basecamp/taker/src/qml/Main.qml
+index ab3a243..0d08315 100644
+--- a/apps/basecamp/taker/src/qml/Main.qml
++++ b/apps/basecamp/taker/src/qml/Main.qml
+@@ -7,6 +7,7 @@ Item {
+     readonly property var backend: logos.module("lez_atomic_swap_taker")
+     property bool ready: false
+     property string output: "Browse authenticated offers to begin"
++    property string selectedAnnouncementBase64: ""
+ 
+     Connections {
+         target: logos
+@@ -29,6 +30,53 @@ Item {
+             function(error) { root.output = "Backend failure: " + String(error) })
+     }
+ 
++    function browseOffers() {
++        if (!root.ready) return
++        root.output = "Waiting for signed Delivery broadcasts..."
++        logos.watch(root.backend.listOffers(pair.currentText, direction.currentText),
++            function(value) {
++                var envelope
++                try { envelope = JSON.parse(String(value)) }
++                catch (error) { root.output = "Offer index returned invalid JSON"; return }
++                if (envelope.ok !== true) {
++                    root.selectedAnnouncementBase64 = ""
++                    root.output = "Offer index unavailable: " + String(envelope.code ?? "gateway_error")
++                    return
++                }
++                var offers = envelope.result.offers ?? []
++                if (offers.length === 0) {
++                    root.selectedAnnouncementBase64 = ""
++                    var unavailable = Number(envelope.result.unavailable_offers ?? 0)
++                        + Number(envelope.result.locally_contended_offers ?? 0)
++                    root.output = unavailable > 0
++                        ? String(unavailable) + " offer(s) are already negotiating, taken, or unavailable"
++                        : "No live signed offers; Maker rebroadcasts repair missed messages"
++                    return
++                }
++                var selected = offers[0]
++                var offer = selected.offer
++                root.selectedAnnouncementBase64 = String(selected.announcement_base64 ?? "")
++                offerId.text = String(offer.id)
++                makerIdentity.text = String(selected.maker_identity)
++                envelopeDigest.text = (selected.signed_envelope_sha256 ?? []).map(function(byte) {
++                    return Number(byte).toString(16).padStart(2, "0")
++                }).join("")
++                foreignUnits.text = String(offer.pair_configuration.minimum_foreign_units)
++                var price = offer.price
++                var numerator = Number(foreignUnits.text) * Number(price.lez_units_per_lot)
++                var divisor = Number(price.foreign_units_per_lot)
++                lezUnits.text = Number.isSafeInteger(numerator) && Number.isSafeInteger(divisor)
++                    && divisor > 0 && numerator % divisor === 0
++                    && Number.isSafeInteger(numerator / divisor)
++                    ? String(numerator / divisor) : ""
++                root.output = "Authenticated live offer selected; connecting its signed Chat address"
++                logos.watch(root.backend.connectOffer(makerIdentity.text, offerId.text),
++                    function(connection) { root.output = String(connection) },
++                    function(error) { root.output = "Chat connection failed: " + String(error) })
++            },
++            function(error) { root.output = "Offer index failure: " + String(error) })
++    }
++
+     Rectangle {
+         anchors.fill: parent
+         color: "#111827"
+@@ -52,7 +100,7 @@ Item {
+                         objectName: "takerOffers"
+                         text: "Browse authenticated offers"
+                         enabled: root.ready
+-                        onClicked: root.invoke(root.backend.listOffers(pair.currentText, direction.currentText))
++                        onClicked: root.browseOffers()
+                     }
+                     Button { text: "Service health"; onClicked: root.invoke(root.backend.health()) }
+                 }
+@@ -138,9 +186,11 @@ Item {
+                             enabled: root.ready
+                             Layout.columnSpan: 2
+                             onClicked: root.invoke(root.backend.initiate(
+-                                "taker-ui-initiate-001", offerId.text, pair.currentText,
++                                "taker-ui-initiate-" + envelopeDigest.text.slice(0, 32),
++                                offerId.text, pair.currentText,
+                                 direction.currentText, makerIdentity.text, envelopeDigest.text,
+-                                foreignUnits.text, lezUnits.text))
++                                foreignUnits.text, lezUnits.text,
++                                root.selectedAnnouncementBase64))
+                         }
+                     }
+                 }
+diff --git a/apps/basecamp/tests/basecamp-role-product.mjs b/apps/basecamp/tests/basecamp-role-product.mjs
+index 75e977f..a5303ed 100644
+--- a/apps/basecamp/tests/basecamp-role-product.mjs
++++ b/apps/basecamp/tests/basecamp-role-product.mjs
+@@ -1,5 +1,6 @@
+ import { resolve } from "node:path";
+ import { readFileSync } from "node:fs";
++import { request as httpRequest } from "node:http";
+ 
+ const framework = process.env.LOGOS_QT_MCP;
+ if (!framework) throw new Error("LOGOS_QT_MCP must select the pinned official test framework");
+@@ -26,6 +27,9 @@ const expectService = process.env.M6_BASECAMP_EXPECT_SERVICE === "1";
+ const takerFixture = role === "taker" && process.env.M6_TAKER_FIXTURE_JSON
+   ? JSON.parse(readFileSync(process.env.M6_TAKER_FIXTURE_JSON, "utf8"))
+   : null;
++if (role === "taker" && expectService && !takerFixture) {
++  throw new Error("M6_TAKER_FIXTURE_JSON is required for the prepared Taker product test");
++}
+ 
+ const { test, run } = await import(resolve(framework, "test-framework/framework.mjs"));
+ 
+@@ -77,6 +81,53 @@ async function evaluateIn(app, objectName, expression) {
+   if (response.error) throw new Error(`evaluate in ${objectName}: ${response.error}`);
+ }
+ 
++async function gatewayRpc(method, parameter) {
++  const socketPath = process.env.LEZ_LOGOS_CHAT_GATEWAY_SOCKET;
++  if (!socketPath?.startsWith("/")) {
++    throw new Error("LEZ_LOGOS_CHAT_GATEWAY_SOCKET must select the owner-local gateway");
++  }
++  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [parameter] });
++  return new Promise((resolveRequest, rejectRequest) => {
++    const request = httpRequest({
++      socketPath,
++      path: "/",
++      method: "POST",
++      headers: {
++        "Content-Type": "application/json",
++        "Content-Length": Buffer.byteLength(body),
++        Connection: "close",
++      },
++    }, (response) => {
++      const chunks = [];
++      let received = 0;
++      response.on("data", (chunk) => {
++        received += chunk.length;
++        if (received > 4 * 1024 * 1024) {
++          request.destroy(new Error("gateway response exceeds the product-test limit"));
++          return;
++        }
++        chunks.push(chunk);
++      });
++      response.on("end", () => {
++        try {
++          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
++          if (response.statusCode !== 200 || payload.error || !("result" in payload)) {
++            throw new Error(`gateway ${method} failed: ${JSON.stringify(payload)}`);
++          }
++          resolveRequest(payload.result);
++        } catch (error) {
++          rejectRequest(error);
++        }
++      });
++    });
++    request.on("error", rejectRequest);
++    request.setTimeout(5000, () => {
++      request.destroy(new Error(`gateway ${method} timed out`));
++    });
++    request.end(body);
++  });
++}
++
+ test(`${role}: pinned Basecamp discovers and loads the role package`, async (app) => {
+   await app.waitFor(async () => app.expectTexts([expected.launcher]), {
+     timeout: 20000,
+@@ -98,6 +149,30 @@ if (expectService) {
+       await invokeSuccessfully(app, "Save route atomically", "atomic route save");
+       await invokeSuccessfully(app, "Refresh swap history", "history");
+     } else {
++      if (takerFixture) {
++        const announcement = String(takerFixture.logos_offer_announcement_base64 ?? "");
++        if (!announcement) {
++          throw new Error("M6_TAKER_FIXTURE_JSON must contain logos_offer_announcement_base64");
++        }
++        await gatewayRpc("logos_offer_ingest_v1", {
++          schema_version: 1,
++          payload_base64: announcement,
++        });
++        const indexed = await gatewayRpc("logos_offer_list_v1", {
++          schema_version: 1,
++          route: null,
++        });
++        const offers = indexed.offers ?? [];
++        if (offers.length !== 1 || indexed.omitted_offers !== 0) {
++          throw new Error("the isolated live offer index must contain exactly the signed fixture");
++        }
++        const exact = offers[0];
++        if (String(exact.offer?.id) !== String(takerFixture.offer_id)
++            || String(exact.maker_identity) !== String(takerFixture.maker_identity)
++            || String(exact.announcement_base64) !== announcement) {
++          throw new Error("the exact signed fixture is absent from the live offer index");
++        }
++      }
+       await invokeSuccessfully(app, "Browse authenticated offers", "offer browsing");
+       if (takerFixture) {
+         await evaluateIn(app, "takerReview", [
+diff --git a/crates/maker-node/src/bin/lez-logos-chat-gateway.rs b/crates/maker-node/src/bin/lez-logos-chat-gateway.rs
+index 922d4d4..63aef9f 100644
+--- a/crates/maker-node/src/bin/lez-logos-chat-gateway.rs
++++ b/crates/maker-node/src/bin/lez-logos-chat-gateway.rs
+@@ -367,7 +367,7 @@ async fn transfer_one(
+         "logos_chat_ingest_v1",
+         &LogosChatGatewayIngestRequestV1 {
+             schema_version: LOCAL_RELAY_SCHEMA_VERSION,
+-            conversation_id: "local-e2e-conversation-v1".into(),
++            conversation_id: frame.conversation_id.clone(),
+             sender_address: sender_address.into(),
+             content: frame.content,
+         },
+@@ -379,6 +379,7 @@ async fn transfer_one(
+         &LogosChatGatewayOutboxAckRequestV1 {
+             schema_version: LOCAL_RELAY_SCHEMA_VERSION,
+             frame_id: frame.frame_id,
++            conversation_id: frame.conversation_id,
+         },
+     )
+     .await?;
+diff --git a/crates/maker-node/src/lib.rs b/crates/maker-node/src/lib.rs
+index 0855652..9ef9640 100644
+--- a/crates/maker-node/src/lib.rs
++++ b/crates/maker-node/src/lib.rs
+@@ -38,15 +38,18 @@ pub use logos_chat_gateway::{
+     LogosChatGatewayBindRequestV1, LogosChatGatewayError, LogosChatGatewayIngestRequestV1,
+     LogosChatGatewayOutboxAckRequestV1, LogosChatGatewayOutboxItemV1,
+     LogosChatGatewayOutboxRequestV1, LogosChatGatewayResetRequestV1, LogosChatGatewayRoleV1,
+-    LogosChatGatewayStatusRequestV1, LogosChatGatewayStatusV1,
+-    logos_chat_gateway_control_rpc_module, logos_chat_gateway_proxy_rpc_module,
++    LogosChatGatewayStatusRequestV1, LogosChatGatewayStatusV1, LogosOfferIngestRequestV1,
++    LogosOfferListRequestV1, LogosOfferListV1, LogosOfferSelectRequestV1, LogosOfferSelectionV1,
++    LogosOfferViewV1, logos_chat_gateway_control_rpc_module, logos_chat_gateway_proxy_rpc_module,
+ };
+ pub use logos_price_source::ProcessLogosPriceSource;
+ pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
+ pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
+ pub use run_local_delivery::{
+-    AuthenticatedOfferRefV1, DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery,
+-    RunLocalDeliveryError,
++    AuthenticatedLogosOfferAnnouncementV1, AuthenticatedOfferRefV1, DeliveryOfferQueryV1,
++    DeliveryPublicationV1, LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1, LOGOS_OFFER_CONTENT_TOPIC_V1,
++    LOGOS_OFFER_REBROADCAST_SECONDS_V1, RunLocalDelivery, RunLocalDeliveryError,
++    verify_logos_offer_announcement,
+ };
+ pub use service_control::{
+     MakerServiceAction, MakerServiceControlError, MakerServiceControlV1, control_maker_service,
+@@ -88,6 +91,7 @@ use std::{
+ };
+ 
+ use anyhow::Context as _;
++use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+ use btc_reference_actor::{
+     ActorConfig as BtcActorConfig, ActorRole as BtcActorRole, provision_btc_maker_actor_from_config,
+ };
+@@ -132,9 +136,17 @@ use sha2::{Digest as _, Sha256};
+ use zec_reference_actor::{ActorConfig, ActorRole, provision_zec_maker_actor_from_config};
+ const NOT_FOUND: i32 = -32_004;
+ const CONFLICT: i32 = -32_009;
++const RESULT_LIMIT_EXCEEDED: i32 = -32_011;
++const OFFER_UNAVAILABLE: i32 = -32_018;
+ const INTERNAL_ERROR: i32 = -32_603;
+ 
+ const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
++const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES: usize = 128;
++const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES: usize = 48 * 1024;
++const _: () = assert!(
++    run_local_delivery::MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES + 3
++        <= MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES
++);
+ /// RPC context owned by one maker daemon.
+ #[derive(Clone)]
+ pub struct MakerRpc {
+@@ -142,6 +154,7 @@ pub struct MakerRpc {
+     route_health_probe: Option<Arc<dyn MakerRouteHealthProbe>>,
+     logos_price_source: Option<Arc<ProcessLogosPriceSource>>,
+     delivery: Option<Arc<RunLocalDelivery>>,
++    offer_snapshot_clock: Option<Arc<dyn Fn() -> RpcResult<u64> + Send + Sync>>,
+     chat_socket: Option<Arc<PathBuf>>,
+     chat_signing_key: Option<Arc<SecretKey>>,
+     btc_chat_signing_key: Option<Arc<SecretKey>>,
+@@ -167,6 +180,10 @@ impl std::fmt::Debug for MakerRpc {
+                 &self.logos_price_source.as_ref().map(|_| "configured"),
+             )
+             .field("delivery", &self.delivery)
++            .field(
++                "offer_snapshot_clock",
++                &self.offer_snapshot_clock.as_ref().map(|_| "configured"),
++            )
+             .field("chat_socket", &self.chat_socket)
+             .field(
+                 "chat_signing_key",
+@@ -216,6 +233,7 @@ impl MakerRpc {
+             route_health_probe: None,
+             logos_price_source: None,
+             delivery: None,
++            offer_snapshot_clock: None,
+             chat_socket: None,
+             chat_signing_key: None,
+             zec_completion_store: None,
+@@ -257,6 +275,7 @@ impl MakerRpc {
+             route_health_probe: None,
+             logos_price_source: None,
+             delivery: Some(Arc::new(delivery)),
++            offer_snapshot_clock: None,
+             chat_socket: None,
+             chat_signing_key: Some(Arc::new(chat_signing_key)),
+             btc_chat_signing_key: None,
+@@ -269,6 +288,18 @@ impl MakerRpc {
+         }
+     }
+ 
++    /// Injects the trusted time used only for signed offer snapshots.
++    /// Production daemons retain the host clock; deterministic local tests use this seam.
++    #[doc(hidden)]
++    #[must_use]
++    pub fn with_offer_snapshot_clock<F>(mut self, clock: F) -> Self
++    where
++        F: Fn() -> RpcResult<u64> + Send + Sync + 'static,
++    {
++        self.offer_snapshot_clock = Some(Arc::new(clock));
++        self
++    }
++
+     /// Attaches ZEC agreement acceptance and Maker actor authority.
+     #[must_use]
+     pub fn with_zec_chat_authority(
+@@ -898,6 +929,35 @@ pub struct OfferWithdrawRequest {
+     pub expected_revision: u64,
+ }
+ 
++/// Owner-local request for one signed Delivery rebroadcast snapshot.
++#[derive(Debug, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferAnnouncementSnapshotRequestV1 {
++    /// Must be one for this DTO shape.
++    pub schema_version: u16,
++    /// Current app-lifetime Chat address returned by `chat_module.get_address`.
++    pub maker_chat_address: Box<str>,
++    /// Last offer identifier returned by the preceding page, if any.
++    #[serde(default)]
++    pub after_offer_id: Option<MakerOfferId>,
++}
++
++/// Bounded signed announcements ready for exact `delivery_module.send` calls.
++#[derive(Clone, Debug, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferAnnouncementSnapshotV1 {
++    /// This response schema version.
++    pub schema_version: u16,
++    /// Exact content topic that the Taker index subscribes to.
++    pub content_topic: Box<str>,
++    /// Maker refresh cadence; each announcement carries a longer signed lease.
++    pub rebroadcast_after_seconds: u64,
++    /// Canonical signed announcement bytes encoded as standard Base64.
++    pub announcements_base64: Vec<Box<str>>,
++    /// Cursor for the next transport-bounded page, absent on the final page.
++    pub next_after_offer_id: Option<MakerOfferId>,
++}
++
+ /// Versioned untrusted taker request for one maker-first ZEC proposal.
+ #[derive(Debug, Deserialize, Serialize)]
+ #[serde(deny_unknown_fields)]
+@@ -2012,6 +2072,88 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
+                 .map_err(application_store_error)
+         },
+     )?;
++    module.register_blocking_method::<RpcResult<LogosOfferAnnouncementSnapshotV1>, _>(
++        "maker_offer_announcement_snapshot_v1",
++        |params, context, _| {
++            let request: LogosOfferAnnouncementSnapshotRequestV1 = params.one()?;
++            if request.schema_version != 1 {
++                return Err(invalid_request("unsupported offer announcement snapshot"));
++            }
++            let delivery = context
++                .delivery
++                .as_ref()
++                .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker Delivery signer is unavailable"))?;
++            let now_unix_seconds = if let Some(clock) = context.offer_snapshot_clock.as_ref() {
++                clock()?
++            } else {
++                trusted_now_unix_seconds()?
++            };
++            let mut records = context
++                .store
++                .lock()
++                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
++                .list_retryable_maker_offers(now_unix_seconds)
++                .map_err(application_store_error)?;
++            records
++                .sort_by(|left, right| left.offer().id().as_str().cmp(right.offer().id().as_str()));
++            let records = records
++                .iter()
++                .filter(|record| {
++                    (record.status() != MakerOfferStatus::Active
++                        || record.offer().created_at_unix_seconds() <= now_unix_seconds)
++                        && request
++                            .after_offer_id
++                            .as_ref()
++                            .is_none_or(|cursor| record.offer().id().as_str() > cursor.as_str())
++                })
++                .collect::<Vec<_>>();
++            let mut announcements_base64 = Vec::new();
++            let mut payload_bytes = 0_usize;
++            for record in records
++                .iter()
++                .take(MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES)
++            {
++                let encoded = delivery
++                    .sign_logos_offer_announcement(
++                        record,
++                        &request.maker_chat_address,
++                        now_unix_seconds,
++                    )
++                    .map_err(|error| delivery_error(&error))?;
++                let announcement = BASE64_STANDARD.encode(encoded).into_boxed_str();
++                let next_payload_bytes = payload_bytes
++                    .checked_add(announcement.len())
++                    .and_then(|bytes| bytes.checked_add(3))
++                    .ok_or_else(|| {
++                        rpc_error(RESULT_LIMIT_EXCEEDED, "offer snapshot page exceeds limit")
++                    })?;
++                if next_payload_bytes > MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES {
++                    if announcements_base64.is_empty() {
++                        return Err(rpc_error(
++                            RESULT_LIMIT_EXCEEDED,
++                            "one signed offer announcement exceeds the owner RPC page budget",
++                        ));
++                    }
++                    break;
++                }
++                payload_bytes = next_payload_bytes;
++                announcements_base64.push(announcement);
++            }
++            let next_after_offer_id = if announcements_base64.len() < records.len() {
++                let last_index = announcements_base64.len().saturating_sub(1);
++                Some(records[last_index].offer().id().clone())
++            } else {
++                None
++            };
++            Ok(LogosOfferAnnouncementSnapshotV1 {
++                schema_version: 1,
++                content_topic: LOGOS_OFFER_CONTENT_TOPIC_V1.into(),
++                rebroadcast_after_seconds: LOGOS_OFFER_REBROADCAST_SECONDS_V1,
++                announcements_base64,
++                next_after_offer_id,
++            })
++        },
++    )?;
+     module.register_blocking_method::<RpcResult<MakerOfferCommit>, _>(
+         "maker_offer_withdraw",
+         |params, context, _| {
+@@ -2611,6 +2753,11 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
+         | StoreError::MakerPriceRevisionConflict
+         | StoreError::StaleMakerOffer { .. } => rpc_error(CONFLICT, error.to_string()),
+         StoreError::MissingMakerOffer => rpc_error(NOT_FOUND, error.to_string()),
++        StoreError::MakerOfferExpired
++        | StoreError::MakerOfferUnavailable
++        | StoreError::MakerOfferReservationConflict => {
++            rpc_error(OFFER_UNAVAILABLE, error.to_string())
++        }
+         StoreError::MakerConfiguration(_)
+         | StoreError::MakerOffer(_)
+         | StoreError::MissingMakerPair
+@@ -2618,10 +2765,7 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
+         | StoreError::MakerLocalRouteMismatch
+         | StoreError::MakerPriceSourceMismatch
+         | StoreError::MakerRouteDisabled
+-        | StoreError::MakerOfferExpired
+-        | StoreError::MakerOfferUnavailable
+-        | StoreError::MakerOfferSwapMismatch
+-        | StoreError::MakerOfferReservationConflict => invalid_request(error),
++        | StoreError::MakerOfferSwapMismatch => invalid_request(error),
+         other => internal_store_error(other),
+     }
+ }
+diff --git a/crates/maker-node/src/logos_chat_gateway.rs b/crates/maker-node/src/logos_chat_gateway.rs
+index 6925cd8..37bf925 100644
+--- a/crates/maker-node/src/logos_chat_gateway.rs
++++ b/crates/maker-node/src/logos_chat_gateway.rs
+@@ -12,17 +12,23 @@ use std::{
+         Arc, Mutex,
+         atomic::{AtomicU64, Ordering},
+     },
+-    time::Duration,
++    time::{Duration, SystemTime, UNIX_EPOCH},
+ };
+ 
++use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+ use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
++use lez_swap_store::{MakerOfferId, MakerOfferStatus, MakerRouteV1};
+ use serde::{Deserialize, Serialize};
+ use serde_json::{Value, json};
+ use sha2::{Digest as _, Sha256};
+ use thiserror::Error;
+ use tokio::sync::oneshot;
+ 
+-use crate::{call_local_chat_rpc, local_rpc::LocalRpcRemoteError};
++use crate::{
++    TakerMakerIdentityV1, call_local_chat_rpc, local_rpc::LocalRpcRemoteError,
++    run_local_delivery::MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES,
++    verify_logos_offer_announcement,
++};
+ 
+ const GATEWAY_SCHEMA_VERSION_V1: u16 = 1;
+ const MAXIMUM_FRAME_BYTES: usize = 1024 * 1024;
+@@ -30,6 +36,10 @@ const MAXIMUM_QUEUED_FRAMES: usize = 64;
+ const MAXIMUM_PENDING_REQUESTS: usize = 32;
+ const MAXIMUM_INFLIGHT_MAKER_REQUESTS: usize = 32;
+ const MAXIMUM_CACHED_RESPONSES: usize = 128;
++const MAXIMUM_MAKER_SESSIONS: usize = 32;
++const MAXIMUM_INDEXED_OFFERS: usize = 1_024;
++const MAXIMUM_INDEXED_OFFERS_PER_MAKER: usize = 128;
++const MAXIMUM_LISTED_OFFERS: usize = 16;
+ const MAXIMUM_ADDRESS_BYTES: usize = 16 * 1024;
+ const MAXIMUM_CONVERSATION_ID_BYTES: usize = 4 * 1024;
+ const MAXIMUM_REMOTE_FAILURE_MESSAGE_BYTES: usize = 4 * 1024;
+@@ -41,6 +51,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
+ const INVALID_PARAMS_CODE: i32 = -32_602;
+ const DEPENDENCY_UNAVAILABLE_CODE: i32 = -32_010;
+ const CONFLICT_CODE: i32 = -32_012;
++const MAKER_APPLICATION_CONFLICT_CODE: i32 = -32_009;
++const MAKER_OFFER_UNAVAILABLE_CODE: i32 = -32_018;
+ 
+ /// The exact application Chat methods allowed through the transport bridge.
+ pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 8] = [
+@@ -173,7 +185,10 @@ impl LogosChatFrameV1 {
+         Ok(())
+     }
+ 
+-    fn to_outbox(&self) -> Result<LogosChatGatewayOutboxItemV1, LogosChatGatewayError> {
++    fn to_outbox(
++        &self,
++        conversation_id: Box<str>,
++    ) -> Result<LogosChatGatewayOutboxItemV1, LogosChatGatewayError> {
+         let content =
+             serde_json::to_string(self).map_err(|_| LogosChatGatewayError::InvalidInput)?;
+         if content.len() > MAXIMUM_FRAME_BYTES {
+@@ -182,6 +197,7 @@ impl LogosChatFrameV1 {
+         Ok(LogosChatGatewayOutboxItemV1 {
+             schema_version: GATEWAY_SCHEMA_VERSION_V1,
+             frame_id: self.frame_id.clone(),
++            conversation_id,
+             content: content.into_boxed_str(),
+         })
+     }
+@@ -239,6 +255,8 @@ pub struct LogosChatGatewayOutboxItemV1 {
+     pub schema_version: u16,
+     /// Content-addressed frame identifier used for exact acknowledgement.
+     pub frame_id: Box<str>,
++    /// Exact direct conversation that must carry this frame.
++    pub conversation_id: Box<str>,
+     /// UTF-8 JSON passed unchanged to `chat_module.send_message`.
+     pub content: Box<str>,
+ }
+@@ -270,6 +288,8 @@ pub struct LogosChatGatewayOutboxAckRequestV1 {
+     pub schema_version: u16,
+     /// Must match the current outbox head.
+     pub frame_id: Box<str>,
++    /// Must match the current outbox head's exact Chat destination.
++    pub conversation_id: Box<str>,
+ }
+ 
+ /// One Chat event submitted by the Basecamp module.
+@@ -308,10 +328,14 @@ pub struct LogosChatGatewayStatusV1 {
+     pub role: LogosChatGatewayRoleV1,
+     /// Whether one exact direct session has been pinned.
+     pub session_bound: bool,
++    /// Number of exact direct sessions (Maker may serve several Takers).
++    pub session_count: u16,
+     /// Number of unsent frames.
+     pub queued_frames: u16,
+     /// Number of Taker calls awaiting a peer response.
+     pub pending_requests: u16,
++    /// Number of live authenticated offers retained by a Taker endpoint.
++    pub discovered_offers: u16,
+ }
+ 
+ /// Idempotent control acknowledgement.
+@@ -323,9 +347,101 @@ pub struct LogosChatGatewayAckV1 {
+     pub was_replay: bool,
+ }
+ 
++/// Exact Delivery event bytes forwarded by the Basecamp adapter.
++#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferIngestRequestV1 {
++    /// Fixed request schema.
++    pub schema_version: u16,
++    /// Standard-Base64 canonical announcement payload from Delivery.
++    pub payload_base64: Box<str>,
++}
++
++/// Route-filtered read of the bounded app-lifetime offer index.
++#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferListRequestV1 {
++    /// Fixed request schema.
++    pub schema_version: u16,
++    /// Optional exact route filter.
++    pub route: Option<MakerRouteV1>,
++}
++
++/// Exact indexed offer selected before automatic direct-Chat connection.
++#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferSelectRequestV1 {
++    /// Fixed request schema.
++    pub schema_version: u16,
++    /// Maker identity displayed in the authenticated order book.
++    pub maker_identity: TakerMakerIdentityV1,
++    /// Immutable offer identifier displayed in the authenticated order book.
++    pub offer_id: MakerOfferId,
++}
++
++/// Secret-free active announcement returned to Basecamp.
++#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferViewV1 {
++    /// Complete immutable offer terms from the nested signed envelope.
++    pub offer: lez_swap_store::MakerOfferV1,
++    /// Compressed Maker identity authenticating offer and Chat address.
++    pub maker_identity: TakerMakerIdentityV1,
++    /// Agreement commitment to the exact nested signed offer envelope.
++    pub signed_envelope_sha256: [u8; 32],
++    /// Current app-lifetime direct Chat address signed by the Maker.
++    pub maker_chat_address: Box<str>,
++    /// Monotonic durable offer revision.
++    pub offer_revision: u64,
++    /// Current signed lifecycle projection.
++    pub availability: MakerOfferStatus,
++    /// Exclusive local-index lease boundary.
++    pub valid_until_unix_seconds: u64,
++    /// Exact signed announcement proof for owner-service admission.
++    pub announcement_base64: Box<str>,
++}
++
++/// Bounded active-order-book projection plus visible conflict counters.
++#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferListV1 {
++    /// Fixed response schema.
++    pub schema_version: u16,
++    /// Authenticated active entries in deterministic Maker/offer order.
++    pub offers: Vec<LogosOfferViewV1>,
++    /// Signed non-active entries still inside their short lease.
++    pub unavailable_offers: u16,
++    /// Offers hidden immediately after a correlated losing negotiation response.
++    pub locally_contended_offers: u16,
++    /// Additional matching active offers omitted to preserve the RPC response bound.
++    pub omitted_offers: u16,
++}
++
++/// Selected order-book entry used to connect Chat without address transcription.
++#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct LogosOfferSelectionV1 {
++    /// Fixed response schema.
++    pub schema_version: u16,
++    /// Exact active view selected from the authenticated index.
++    pub selected: LogosOfferViewV1,
++}
++
++#[derive(Clone, Debug)]
++struct IndexedOfferV1 {
++    announcement: crate::AuthenticatedLogosOfferAnnouncementV1,
++}
++
+ #[derive(Debug)]
+ struct PendingResponse {
+     sender: oneshot::Sender<Result<Value, RemoteFailureV1>>,
++    selected_offer: Option<([u8; 33], Box<str>)>,
++}
++
++#[derive(Clone, Debug)]
++struct SelectedOfferV1 {
++    key: ([u8; 33], Box<str>),
++    maker_chat_address: Box<str>,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -334,16 +450,33 @@ struct CachedResponse {
+     outbox: LogosChatGatewayOutboxItemV1,
+ }
+ 
++struct InflightMakerRequestGuard {
++    gateway: Arc<LogosChatGateway>,
++    request_key: (Box<str>, Box<str>),
++}
++
++impl Drop for InflightMakerRequestGuard {
++    fn drop(&mut self) {
++        if let Ok(mut inflight) = self.gateway.inflight_maker_requests.lock() {
++            inflight.remove(&self.request_key);
++        }
++    }
++}
++
+ /// In-memory, session-scoped bridge state shared by the control and Taker proxy sockets.
+ pub struct LogosChatGateway {
+     role: LogosChatGatewayRoleV1,
+     maker_chat_socket: Option<PathBuf>,
+     lifecycle: Mutex<()>,
+-    session: Mutex<Option<SessionBindingV1>>,
++    sessions: Mutex<BTreeMap<Box<str>, SessionBindingV1>>,
+     outbox: Mutex<VecDeque<LogosChatGatewayOutboxItemV1>>,
+     pending: Mutex<BTreeMap<Box<str>, PendingResponse>>,
+-    inflight_maker_requests: Mutex<BTreeSet<Box<str>>>,
++    inflight_maker_requests: Mutex<BTreeSet<(Box<str>, Box<str>)>>,
+     cached_responses: Mutex<VecDeque<CachedResponse>>,
++    offer_index: Mutex<BTreeMap<([u8; 33], Box<str>), IndexedOfferV1>>,
++    locally_unavailable_offers: Mutex<BTreeSet<([u8; 33], Box<str>)>>,
++    selected_offer: Mutex<Option<SelectedOfferV1>>,
++    trusted_clock: Arc<dyn Fn() -> Result<u64, LogosChatGatewayError> + Send + Sync>,
+     sequence: AtomicU64,
+ }
+ 
+@@ -369,6 +502,22 @@ impl LogosChatGateway {
+         role: LogosChatGatewayRoleV1,
+         maker_chat_socket: Option<PathBuf>,
+     ) -> Result<Self, LogosChatGatewayError> {
++        Self::new_with_clock(role, maker_chat_socket, || {
++            trusted_now().map_err(|()| LogosChatGatewayError::DependencyUnavailable)
++        })
++    }
++
++    /// Creates a gateway with an injected trusted clock for deterministic local tests.
++    /// Production endpoints use [`Self::new`] and the host wall clock.
++    #[doc(hidden)]
++    pub fn new_with_clock<F>(
++        role: LogosChatGatewayRoleV1,
++        maker_chat_socket: Option<PathBuf>,
++        trusted_clock: F,
++    ) -> Result<Self, LogosChatGatewayError>
++    where
++        F: Fn() -> Result<u64, LogosChatGatewayError> + Send + Sync + 'static,
++    {
+         let valid = match (role, maker_chat_socket.as_ref()) {
+             (LogosChatGatewayRoleV1::Maker, Some(path)) => path.is_absolute(),
+             (LogosChatGatewayRoleV1::Taker, None) => true,
+@@ -381,11 +530,15 @@ impl LogosChatGateway {
+             role,
+             maker_chat_socket,
+             lifecycle: Mutex::new(()),
+-            session: Mutex::new(None),
++            sessions: Mutex::new(BTreeMap::new()),
+             outbox: Mutex::new(VecDeque::new()),
+             pending: Mutex::new(BTreeMap::new()),
+             inflight_maker_requests: Mutex::new(BTreeSet::new()),
+             cached_responses: Mutex::new(VecDeque::new()),
++            offer_index: Mutex::new(BTreeMap::new()),
++            locally_unavailable_offers: Mutex::new(BTreeSet::new()),
++            selected_offer: Mutex::new(None),
++            trusted_clock: Arc::new(trusted_clock),
+             sequence: AtomicU64::new(0),
+         })
+     }
+@@ -416,24 +569,34 @@ impl LogosChatGateway {
+             local_address: request.local_address.clone(),
+             peer_address: request.peer_address.clone(),
+         };
+-        let mut current = self
+-            .session
++        let mut sessions = self
++            .sessions
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
+-        match current.as_ref() {
+-            Some(existing) if existing == &binding => Ok(LogosChatGatewayAckV1 {
+-                schema_version: GATEWAY_SCHEMA_VERSION_V1,
+-                was_replay: true,
+-            }),
+-            Some(_) => Err(LogosChatGatewayError::SessionConflict),
+-            None => {
+-                *current = Some(binding);
++        if let Some(existing) = sessions.get(&request.conversation_id) {
++            return if existing == &binding {
+                 Ok(LogosChatGatewayAckV1 {
+                     schema_version: GATEWAY_SCHEMA_VERSION_V1,
+-                    was_replay: false,
++                    was_replay: true,
+                 })
+-            }
++            } else {
++                Err(LogosChatGatewayError::SessionConflict)
++            };
+         }
++        if self.role == LogosChatGatewayRoleV1::Taker && !sessions.is_empty()
++            || sessions.values().any(|existing| {
++                existing.local_address != binding.local_address
++                    || existing.peer_address == binding.peer_address
++            })
++            || sessions.len() >= MAXIMUM_MAKER_SESSIONS
++        {
++            return Err(LogosChatGatewayError::SessionConflict);
++        }
++        sessions.insert(binding.conversation_id.clone(), binding);
++        Ok(LogosChatGatewayAckV1 {
++            schema_version: GATEWAY_SCHEMA_VERSION_V1,
++            was_replay: false,
++        })
+     }
+ 
+     /// Returns, without removing, the oldest frame awaiting Chat send.
+@@ -476,7 +639,7 @@ impl LogosChatGateway {
+                 was_replay: true,
+             });
+         };
+-        if head.frame_id != request.frame_id {
++        if head.frame_id != request.frame_id || head.conversation_id != request.conversation_id {
+             return Err(LogosChatGatewayError::SessionConflict);
+         }
+         outbox.pop_front();
+@@ -486,6 +649,38 @@ impl LogosChatGateway {
+         })
+     }
+ 
++    /// Moves a temporarily unsendable head behind other conversations.
++    pub fn outbox_defer(
++        &self,
++        request: &LogosChatGatewayOutboxAckRequestV1,
++    ) -> Result<LogosChatGatewayAckV1, LogosChatGatewayError> {
++        validate_schema(request.schema_version)?;
++        let mut outbox = self
++            .outbox
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
++        let Some(head) = outbox.front() else {
++            return Ok(LogosChatGatewayAckV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                was_replay: true,
++            });
++        };
++        if head.frame_id != request.frame_id || head.conversation_id != request.conversation_id {
++            return Err(LogosChatGatewayError::SessionConflict);
++        }
++        let was_replay = outbox.len() <= 1;
++        if !was_replay {
++            let head = outbox
++                .pop_front()
++                .ok_or(LogosChatGatewayError::DependencyUnavailable)?;
++            outbox.push_back(head);
++        }
++        Ok(LogosChatGatewayAckV1 {
++            schema_version: GATEWAY_SCHEMA_VERSION_V1,
++            was_replay,
++        })
++    }
++
+     /// Returns a path-free status snapshot.
+     ///
+     /// # Errors
+@@ -507,19 +702,28 @@ impl LogosChatGateway {
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
+             .len();
+-        let session_bound = self
+-            .session
++        let session_count = self
++            .sessions
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
++            .len();
++        let discovered_offers = self
++            .offer_index
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
+-            .is_some();
++            .len();
+         Ok(LogosChatGatewayStatusV1 {
+             schema_version: GATEWAY_SCHEMA_VERSION_V1,
+             role: self.role,
+-            session_bound,
++            session_bound: session_count > 0,
++            session_count: u16::try_from(session_count)
++                .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?,
+             queued_frames: u16::try_from(queued_frames)
+                 .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?,
+             pending_requests: u16::try_from(pending_requests)
+                 .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?,
++            discovered_offers: u16::try_from(discovered_offers)
++                .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?,
+         })
+     }
+ 
+@@ -553,11 +757,14 @@ impl LogosChatGateway {
+             return Err(LogosChatGatewayError::SessionConflict);
+         }
+         let was_replay = self
+-            .session
++            .sessions
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
++            .is_empty();
++        self.sessions
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
+-            .take()
+-            .is_none();
++            .clear();
+         self.outbox
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
+@@ -566,6 +773,10 @@ impl LogosChatGateway {
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
+             .clear();
++        *self
++            .selected_offer
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)? = None;
+         Ok(LogosChatGatewayAckV1 {
+             schema_version: GATEWAY_SCHEMA_VERSION_V1,
+             was_replay,
+@@ -578,17 +789,24 @@ impl LogosChatGateway {
+             .lifecycle
+             .lock()
+             .map_err(|_| remote_failure(LogosChatGatewayError::DependencyUnavailable))?;
+-        let session_bound = self
+-            .session
++        let session = self
++            .sessions
+             .lock()
+             .map_err(|_| remote_failure(LogosChatGatewayError::DependencyUnavailable))?
+-            .is_some();
+-        if self.role != LogosChatGatewayRoleV1::Taker || !session_bound {
++            .values()
++            .next()
++            .cloned();
++        if self.role != LogosChatGatewayRoleV1::Taker || session.is_none() {
+             return Err(remote_failure(LogosChatGatewayError::SessionUnavailable));
+         }
++        let session = session.expect("checked Taker session");
+         if !LOGOS_CHAT_GATEWAY_METHODS_V1.contains(&method) || !parameter.is_object() {
+             return Err(remote_failure(LogosChatGatewayError::InvalidInput));
+         }
++        let selected_offer = parameter
++            .get("offer_id")
++            .and_then(Value::as_str)
++            .and_then(|offer_id| self.selected_offer_key_for_peer(&session.peer_address, offer_id));
+         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
+         let message = LogosChatMessageV1::Request {
+             nonce: sequence,
+@@ -596,7 +814,9 @@ impl LogosChatGateway {
+             parameter,
+         };
+         let frame = LogosChatFrameV1::new(self.role, message).map_err(remote_failure)?;
+-        let outbox = frame.to_outbox().map_err(remote_failure)?;
++        let outbox = frame
++            .to_outbox(session.conversation_id.clone())
++            .map_err(remote_failure)?;
+         let frame_id = frame.frame_id.clone();
+         let (sender, receiver) = oneshot::channel();
+         {
+@@ -607,7 +827,13 @@ impl LogosChatGateway {
+             if pending.len() >= MAXIMUM_PENDING_REQUESTS {
+                 return Err(remote_failure(LogosChatGatewayError::Capacity));
+             }
+-            pending.insert(frame_id.clone(), PendingResponse { sender });
++            pending.insert(
++                frame_id.clone(),
++                PendingResponse {
++                    sender,
++                    selected_offer,
++                },
++            );
+         }
+         if let Err(error) = self.enqueue(outbox) {
+             if let Ok(mut pending) = self.pending.lock() {
+@@ -660,7 +886,12 @@ impl LogosChatGateway {
+                     method,
+                     parameter,
+                 },
+-            ) => self.accept_maker_request(frame.frame_id, method, parameter),
++            ) => self.accept_maker_request(
++                request.conversation_id.clone(),
++                frame.frame_id,
++                method,
++                parameter,
++            ),
+             (
+                 LogosChatGatewayRoleV1::Taker,
+                 LogosChatMessageV1::Response {
+@@ -678,16 +909,14 @@ impl LogosChatGateway {
+         conversation_id: &str,
+         sender_address: &str,
+     ) -> Result<(), LogosChatGatewayError> {
+-        let session = self
+-            .session
++        let sessions = self
++            .sessions
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
+-        let Some(session) = session.as_ref() else {
++        let Some(session) = sessions.get(conversation_id) else {
+             return Err(LogosChatGatewayError::SessionUnavailable);
+         };
+-        if session.conversation_id.as_ref() != conversation_id
+-            || session.peer_address.as_ref() != sender_address
+-        {
++        if session.peer_address.as_ref() != sender_address {
+             return Err(LogosChatGatewayError::SessionConflict);
+         }
+         Ok(())
+@@ -695,6 +924,7 @@ impl LogosChatGateway {
+ 
+     fn accept_maker_request(
+         self: &Arc<Self>,
++        conversation_id: Box<str>,
+         request_frame_id: Box<str>,
+         method: Box<str>,
+         parameter: Value,
+@@ -703,7 +933,8 @@ impl LogosChatGateway {
+             .inflight_maker_requests
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
+-        if inflight.contains(&request_frame_id) {
++        let request_key = (conversation_id.clone(), request_frame_id.clone());
++        if inflight.contains(&request_key) {
+             return Ok(LogosChatGatewayAckV1 {
+                 schema_version: GATEWAY_SCHEMA_VERSION_V1,
+                 was_replay: true,
+@@ -714,7 +945,10 @@ impl LogosChatGateway {
+             .lock()
+             .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
+             .iter()
+-            .find(|cached| cached.request_frame_id == request_frame_id)
++            .find(|cached| {
++                cached.request_frame_id == request_frame_id
++                    && cached.outbox.conversation_id == conversation_id
++            })
+             .cloned();
+         if let Some(cached) = cached {
+             drop(inflight);
+@@ -727,17 +961,23 @@ impl LogosChatGateway {
+         if inflight.len() >= MAXIMUM_INFLIGHT_MAKER_REQUESTS {
+             return Err(LogosChatGatewayError::Capacity);
+         }
+-        inflight.insert(request_frame_id.clone());
++        inflight.insert(request_key.clone());
+         drop(inflight);
+ 
+         let gateway = Arc::clone(self);
+         let _task = tokio::spawn(async move {
++            let _inflight_guard = InflightMakerRequestGuard {
++                gateway: Arc::clone(&gateway),
++                request_key,
++            };
+             let _ = gateway
+-                .process_maker_request(request_frame_id.clone(), &method, &parameter)
++                .process_maker_request(
++                    conversation_id,
++                    request_frame_id.clone(),
++                    &method,
++                    &parameter,
++                )
+                 .await;
+-            if let Ok(mut inflight) = gateway.inflight_maker_requests.lock() {
+-                inflight.remove(&request_frame_id);
+-            }
+         });
+         Ok(LogosChatGatewayAckV1 {
+             schema_version: GATEWAY_SCHEMA_VERSION_V1,
+@@ -747,6 +987,7 @@ impl LogosChatGateway {
+ 
+     async fn process_maker_request(
+         &self,
++        conversation_id: Box<str>,
+         request_frame_id: Box<str>,
+         method: &str,
+         parameter: &Value,
+@@ -774,7 +1015,7 @@ impl LogosChatGateway {
+                 },
+             };
+         let response_frame = LogosChatFrameV1::new(self.role, response)?;
+-        let outbox = match response_frame.to_outbox() {
++        let outbox = match response_frame.to_outbox(conversation_id.clone()) {
+             Ok(outbox) => outbox,
+             Err(LogosChatGatewayError::InvalidInput) => LogosChatFrameV1::new(
+                 self.role,
+@@ -784,7 +1025,7 @@ impl LogosChatGateway {
+                     error: Some(remote_failure(LogosChatGatewayError::DependencyUnavailable)),
+                 },
+             )?
+-            .to_outbox()?,
++            .to_outbox(conversation_id)?,
+             Err(error) => return Err(error),
+         };
+         self.enqueue(outbox.clone())?;
+@@ -819,6 +1060,20 @@ impl LogosChatGateway {
+                 was_replay: true,
+             });
+         };
++        if error.as_ref().is_some_and(|failure| {
++            failure.code == MAKER_OFFER_UNAVAILABLE_CODE
++                || failure.code == MAKER_APPLICATION_CONFLICT_CODE
++        }) && let Some(key) = pending.selected_offer.clone()
++            && let Ok(index) = self.offer_index.lock()
++            && let Ok(mut unavailable) = self.locally_unavailable_offers.lock()
++        {
++            unavailable.retain(|existing| index.contains_key(existing));
++            if index.contains_key(&key)
++                && (unavailable.contains(&key) || unavailable.len() < MAXIMUM_INDEXED_OFFERS)
++            {
++                unavailable.insert(key);
++            }
++        }
+         let response = match (result, error) {
+             (Some(result), None) => Ok(result),
+             (None, Some(error)) => Err(error),
+@@ -831,6 +1086,271 @@ impl LogosChatGateway {
+         })
+     }
+ 
++    /// Authenticates and indexes one exact Delivery announcement.
++    pub fn ingest_offer_announcement(
++        &self,
++        request: &LogosOfferIngestRequestV1,
++    ) -> Result<LogosChatGatewayAckV1, LogosChatGatewayError> {
++        validate_schema(request.schema_version)?;
++        if self.role != LogosChatGatewayRoleV1::Taker
++            || request.payload_base64.is_empty()
++            || request.payload_base64.len() > MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES
++        {
++            return Err(LogosChatGatewayError::InvalidInput);
++        }
++        let encoded = BASE64_STANDARD
++            .decode(request.payload_base64.as_bytes())
++            .map_err(|_| LogosChatGatewayError::InvalidInput)?;
++        if BASE64_STANDARD.encode(&encoded) != request.payload_base64.as_ref() {
++            return Err(LogosChatGatewayError::InvalidInput);
++        }
++        let now = (self.trusted_clock)()?;
++        let announcement = verify_logos_offer_announcement(&encoded, now)
++            .map_err(|_| LogosChatGatewayError::InvalidInput)?;
++        let key = (
++            *announcement.offer().maker_identity(),
++            announcement.offer().offer().id().as_str().into(),
++        );
++        let mut index = self
++            .offer_index
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
++        index.retain(|_, entry| entry.announcement.valid_until_unix_seconds() > now);
++        let clear_local_unavailable;
++        if let Some(existing) = index.get(&key) {
++            let immutable_matches = existing.announcement.offer().signed_envelope()
++                == announcement.offer().signed_envelope();
++            if !immutable_matches {
++                return Err(LogosChatGatewayError::SessionConflict);
++            }
++            let existing_order = (
++                existing.announcement.offer_revision(),
++                existing.announcement.announced_at_unix_seconds(),
++            );
++            let new_order = (
++                announcement.offer_revision(),
++                announcement.announced_at_unix_seconds(),
++            );
++            if new_order < existing_order {
++                return Ok(LogosChatGatewayAckV1 {
++                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                    was_replay: true,
++                });
++            }
++            if new_order == existing_order {
++                if existing.announcement.encoded() != announcement.encoded() {
++                    return Err(LogosChatGatewayError::SessionConflict);
++                }
++                return Ok(LogosChatGatewayAckV1 {
++                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                    was_replay: true,
++                });
++            }
++            if existing.announcement.status() != MakerOfferStatus::Active
++                && announcement.status() == MakerOfferStatus::Active
++            {
++                return Err(LogosChatGatewayError::SessionConflict);
++            }
++            clear_local_unavailable = announcement.status() == MakerOfferStatus::Active;
++        } else {
++            let same_maker_entries = index.keys().filter(|existing| existing.0 == key.0).count();
++            if same_maker_entries >= MAXIMUM_INDEXED_OFFERS_PER_MAKER
++                || index.len() >= MAXIMUM_INDEXED_OFFERS
++            {
++                // Never erase a still-live signed ordering state to admit an
++                // unrelated key. Existing entries continue to accept newer
++                // signed revisions; lease expiry deterministically frees slots.
++                return Err(LogosChatGatewayError::Capacity);
++            }
++            clear_local_unavailable = announcement.status() == MakerOfferStatus::Active;
++            index.insert(key.clone(), IndexedOfferV1 { announcement });
++            drop(index);
++            if clear_local_unavailable {
++                self.locally_unavailable_offers
++                    .lock()
++                    .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
++                    .remove(&key);
++            }
++            return Ok(LogosChatGatewayAckV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                was_replay: false,
++            });
++        }
++        index.insert(key.clone(), IndexedOfferV1 { announcement });
++        drop(index);
++        if clear_local_unavailable {
++            self.locally_unavailable_offers
++                .lock()
++                .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
++                .remove(&key);
++        }
++        Ok(LogosChatGatewayAckV1 {
++            schema_version: GATEWAY_SCHEMA_VERSION_V1,
++            was_replay: false,
++        })
++    }
++
++    /// Lists only live, signed, locally uncontended offers.
++    pub fn list_offer_announcements(
++        &self,
++        request: LogosOfferListRequestV1,
++    ) -> Result<LogosOfferListV1, LogosChatGatewayError> {
++        validate_schema(request.schema_version)?;
++        if self.role != LogosChatGatewayRoleV1::Taker {
++            return Err(LogosChatGatewayError::InvalidInput);
++        }
++        let now = (self.trusted_clock)()?;
++        let unavailable_snapshot = self
++            .locally_unavailable_offers
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
++            .clone();
++        let (offers, unavailable_offers, locally_contended_offers, omitted_offers, live_keys) = {
++            let mut index = self
++                .offer_index
++                .lock()
++                .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
++            index.retain(|_, entry| entry.announcement.valid_until_unix_seconds() > now);
++            let live_keys = index.keys().cloned().collect::<BTreeSet<_>>();
++            let mut unavailable_offers = 0_u16;
++            let mut locally_contended_offers = 0_u16;
++            let mut active = Vec::new();
++            for (key, entry) in index.iter() {
++                let announcement = &entry.announcement;
++                if request
++                    .route
++                    .is_some_and(|route| route != announcement.offer().offer().route())
++                {
++                    continue;
++                }
++                if announcement.status() != MakerOfferStatus::Active {
++                    unavailable_offers = unavailable_offers.saturating_add(1);
++                } else if unavailable_snapshot.contains(key) {
++                    locally_contended_offers = locally_contended_offers.saturating_add(1);
++                } else {
++                    active.push(announcement);
++                }
++            }
++            active.sort_by(|left, right| {
++                right
++                    .offer()
++                    .offer()
++                    .created_at_unix_seconds()
++                    .cmp(&left.offer().offer().created_at_unix_seconds())
++                    .then_with(|| {
++                        left.offer()
++                            .offer()
++                            .id()
++                            .as_str()
++                            .cmp(right.offer().offer().id().as_str())
++                    })
++                    .then_with(|| {
++                        left.offer()
++                            .maker_identity()
++                            .cmp(right.offer().maker_identity())
++                    })
++            });
++            let omitted_offers = u16::try_from(active.len().saturating_sub(MAXIMUM_LISTED_OFFERS))
++                .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
++            let offers = active
++                .into_iter()
++                .take(MAXIMUM_LISTED_OFFERS)
++                .map(offer_view)
++                .collect::<Result<Vec<_>, _>>()?;
++            (
++                offers,
++                unavailable_offers,
++                locally_contended_offers,
++                omitted_offers,
++                live_keys,
++            )
++        };
++        let mut unavailable = self
++            .locally_unavailable_offers
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
++        unavailable.retain(|key| live_keys.contains(key));
++        Ok(LogosOfferListV1 {
++            schema_version: GATEWAY_SCHEMA_VERSION_V1,
++            offers,
++            unavailable_offers,
++            locally_contended_offers,
++            omitted_offers,
++        })
++    }
++
++    /// Resolves an active reviewed offer to its signed current Chat address.
++    pub fn select_offer_announcement(
++        &self,
++        request: &LogosOfferSelectRequestV1,
++    ) -> Result<LogosOfferSelectionV1, LogosChatGatewayError> {
++        validate_schema(request.schema_version)?;
++        if self.role != LogosChatGatewayRoleV1::Taker {
++            return Err(LogosChatGatewayError::InvalidInput);
++        }
++        let now = (self.trusted_clock)()?;
++        let key = (
++            *request.maker_identity.as_bytes(),
++            request.offer_id.as_str().into(),
++        );
++        if self
++            .locally_unavailable_offers
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
++            .contains(&key)
++        {
++            return Err(LogosChatGatewayError::SessionConflict);
++        }
++        let index = self
++            .offer_index
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?;
++        let announcement = &index
++            .get(&key)
++            .ok_or(LogosChatGatewayError::SessionUnavailable)?
++            .announcement;
++        if announcement.status() != MakerOfferStatus::Active
++            || announcement.valid_until_unix_seconds() <= now
++        {
++            return Err(LogosChatGatewayError::SessionUnavailable);
++        }
++        let selected = offer_view(announcement)?;
++        let marker = SelectedOfferV1 {
++            key,
++            maker_chat_address: announcement.maker_chat_address().into(),
++        };
++        drop(index);
++        if self
++            .sessions
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)?
++            .values()
++            .next()
++            .is_some_and(|session| session.peer_address != marker.maker_chat_address)
++        {
++            return Err(LogosChatGatewayError::SessionConflict);
++        }
++        *self
++            .selected_offer
++            .lock()
++            .map_err(|_| LogosChatGatewayError::DependencyUnavailable)? = Some(marker);
++        Ok(LogosOfferSelectionV1 {
++            schema_version: GATEWAY_SCHEMA_VERSION_V1,
++            selected,
++        })
++    }
++
++    fn selected_offer_key_for_peer(
++        &self,
++        peer_address: &str,
++        offer_id: &str,
++    ) -> Option<([u8; 33], Box<str>)> {
++        let selected = self.selected_offer.lock().ok()?.clone()?;
++        (selected.maker_chat_address.as_ref() == peer_address
++            && selected.key.1.as_ref() == offer_id)
++            .then_some(selected.key)
++    }
++
+     fn enqueue(&self, frame: LogosChatGatewayOutboxItemV1) -> Result<(), LogosChatGatewayError> {
+         let mut outbox = self
+             .outbox
+@@ -839,16 +1359,41 @@ impl LogosChatGateway {
+         if outbox.len() >= MAXIMUM_QUEUED_FRAMES {
+             return Err(LogosChatGatewayError::Capacity);
+         }
+-        if !outbox
+-            .iter()
+-            .any(|queued| queued.frame_id == frame.frame_id)
+-        {
++        if !outbox.iter().any(|queued| {
++            queued.frame_id == frame.frame_id && queued.conversation_id == frame.conversation_id
++        }) {
+             outbox.push_back(frame);
+         }
+         Ok(())
+     }
+ }
+ 
++fn offer_view(
++    announcement: &crate::AuthenticatedLogosOfferAnnouncementV1,
++) -> Result<LogosOfferViewV1, LogosChatGatewayError> {
++    let maker_identity = TakerMakerIdentityV1::new(*announcement.offer().maker_identity())
++        .map_err(|_| LogosChatGatewayError::InvalidInput)?;
++    Ok(LogosOfferViewV1 {
++        offer: announcement.offer().offer().clone(),
++        maker_identity,
++        signed_envelope_sha256: announcement.offer().commitment(),
++        maker_chat_address: announcement.maker_chat_address().into(),
++        offer_revision: announcement.offer_revision(),
++        availability: announcement.status(),
++        valid_until_unix_seconds: announcement.valid_until_unix_seconds(),
++        announcement_base64: BASE64_STANDARD
++            .encode(announcement.encoded())
++            .into_boxed_str(),
++    })
++}
++
++fn trusted_now() -> Result<u64, ()> {
++    SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map(|duration| duration.as_secs())
++        .map_err(|_| ())
++}
++
+ fn validate_schema(schema_version: u16) -> Result<(), LogosChatGatewayError> {
+     if schema_version == GATEWAY_SCHEMA_VERSION_V1 {
+         Ok(())
+@@ -936,6 +1481,12 @@ pub fn logos_chat_gateway_control_rpc_module(
+             .map_err(|_| rpc_error(LogosChatGatewayError::InvalidInput))?;
+         gateway.outbox_ack(&request).map_err(rpc_error)
+     })?;
++    module.register_method("logos_chat_outbox_defer_v1", |params, gateway, _| {
++        let request: LogosChatGatewayOutboxAckRequestV1 = params
++            .one()
++            .map_err(|_| rpc_error(LogosChatGatewayError::InvalidInput))?;
++        gateway.outbox_defer(&request).map_err(rpc_error)
++    })?;
+     module.register_method("logos_chat_ingest_v1", |params, gateway, _| {
+         let request: LogosChatGatewayIngestRequestV1 = params
+             .one()
+@@ -954,6 +1505,28 @@ pub fn logos_chat_gateway_control_rpc_module(
+             .map_err(|_| rpc_error(LogosChatGatewayError::InvalidInput))?;
+         gateway.reset_session(request).map_err(rpc_error)
+     })?;
++    module.register_method("logos_offer_ingest_v1", |params, gateway, _| {
++        let request: LogosOfferIngestRequestV1 = params
++            .one()
++            .map_err(|_| rpc_error(LogosChatGatewayError::InvalidInput))?;
++        gateway
++            .ingest_offer_announcement(&request)
++            .map_err(rpc_error)
++    })?;
++    module.register_method("logos_offer_list_v1", |params, gateway, _| {
++        let request: LogosOfferListRequestV1 = params
++            .one()
++            .map_err(|_| rpc_error(LogosChatGatewayError::InvalidInput))?;
++        gateway.list_offer_announcements(request).map_err(rpc_error)
++    })?;
++    module.register_method("logos_offer_select_v1", |params, gateway, _| {
++        let request: LogosOfferSelectRequestV1 = params
++            .one()
++            .map_err(|_| rpc_error(LogosChatGatewayError::InvalidInput))?;
++        gateway
++            .select_offer_announcement(&request)
++            .map_err(rpc_error)
++    })?;
+     Ok(module)
+ }
+ 
+@@ -988,19 +1561,136 @@ pub fn logos_chat_gateway_proxy_rpc_module(
+ 
+ #[cfg(test)]
+ mod tests {
+-    use std::sync::Arc;
++    use std::{
++        collections::BTreeSet,
++        sync::{
++            Arc,
++            atomic::{AtomicU64, Ordering},
++        },
++        time::{Duration, SystemTime, UNIX_EPOCH},
++    };
+ 
++    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
++    use lez_bridge_protocol::RequestId;
++    use lez_swap_core::{Pair, SwapDirection};
++    use lez_swap_store::{
++        LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
++        SqliteSwapStore,
++    };
++    use secp256k1::{PublicKey, Secp256k1, SecretKey};
+     use serde_json::{Value, json};
++    use tokio::sync::oneshot;
+ 
+-    use crate::local_rpc::LocalRpcRemoteError;
++    use crate::{
++        RunLocalDelivery, TakerMakerIdentityV1, local_rpc::LocalRpcRemoteError,
++        run_local_delivery::MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES,
++        verify_logos_offer_announcement,
++    };
+ 
+     use super::{
+-        GATEWAY_SCHEMA_VERSION_V1, LogosChatFrameV1, LogosChatGateway,
++        GATEWAY_SCHEMA_VERSION_V1, IndexedOfferV1, LogosChatFrameV1, LogosChatGateway,
+         LogosChatGatewayBindRequestV1, LogosChatGatewayError, LogosChatGatewayIngestRequestV1,
++        LogosChatGatewayOutboxAckRequestV1, LogosChatGatewayOutboxRequestV1,
+         LogosChatGatewayResetRequestV1, LogosChatGatewayRoleV1, LogosChatMessageV1,
+-        maker_remote_failure,
++        LogosOfferIngestRequestV1, LogosOfferSelectRequestV1, MAKER_OFFER_UNAVAILABLE_CODE,
++        MAXIMUM_INDEXED_OFFERS, PendingResponse, RemoteFailureV1, maker_remote_failure,
+     };
+ 
++    fn request_id(value: &str) -> RequestId {
++        RequestId::new(value).unwrap()
++    }
++
++    fn active_announcements_with_key(
++        signing_key_byte: u8,
++    ) -> (
++        tempfile::TempDir,
++        Vec<u8>,
++        Vec<u8>,
++        Vec<u8>,
++        [u8; 33],
++        MakerOfferId,
++        u64,
++    ) {
++        let now = SystemTime::now()
++            .duration_since(UNIX_EPOCH)
++            .unwrap()
++            .as_secs();
++        let directory = tempfile::tempdir().unwrap();
++        let mut store = SqliteSwapStore::open(directory.path().join("offers.sqlite3")).unwrap();
++        let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
++        let disabled = MakerPairConfigurationV1::new(
++            route,
++            false,
++            MakerPriceSourceKind::Local,
++            10,
++            10_000,
++            300,
++        )
++        .unwrap();
++        store
++            .configure_maker_pair(&request_id("loser-pair-create"), None, &disabled)
++            .unwrap();
++        store
++            .set_local_price(
++                &request_id("loser-price-create"),
++                None,
++                &LocalPriceV1::new(route, 5, 2).unwrap(),
++            )
++            .unwrap();
++        let enabled = MakerPairConfigurationV1::new(
++            route,
++            true,
++            MakerPriceSourceKind::Local,
++            10,
++            10_000,
++            300,
++        )
++        .unwrap();
++        store
++            .configure_maker_pair(&request_id("loser-pair-enable"), Some(1), &enabled)
++            .unwrap();
++        let offer_id = MakerOfferId::new("loser-marker-offer-001").unwrap();
++        store
++            .publish_local_offer(&request_id("loser-publish"), &offer_id, route, now)
++            .unwrap();
++        let record = store.list_maker_offer_history(now).unwrap().remove(0);
++        let signing_key = SecretKey::from_slice(&[signing_key_byte; 32]).unwrap();
++        let maker_identity =
++            PublicKey::from_secret_key(&Secp256k1::signing_only(), &signing_key).serialize();
++        let publisher =
++            RunLocalDelivery::publisher(directory.path().join("delivery"), signing_key).unwrap();
++        let announcement = publisher
++            .sign_logos_offer_announcement(&record, "logos://maker-recovered", now)
++            .unwrap();
++        let refreshed = publisher
++            .sign_logos_offer_announcement(&record, "logos://maker-recovered", now + 1)
++            .unwrap();
++        let reinserted = publisher
++            .sign_logos_offer_announcement(&record, "logos://maker-recovered", now + 31)
++            .unwrap();
++        (
++            directory,
++            announcement,
++            refreshed,
++            reinserted,
++            maker_identity,
++            offer_id,
++            now,
++        )
++    }
++
++    fn active_announcements() -> (
++        tempfile::TempDir,
++        Vec<u8>,
++        Vec<u8>,
++        Vec<u8>,
++        [u8; 33],
++        MakerOfferId,
++        u64,
++    ) {
++        active_announcements_with_key(77)
++    }
++
+     #[test]
+     fn frame_is_content_addressed_and_rejects_mutation() {
+         let frame = LogosChatFrameV1::new(
+@@ -1012,7 +1702,7 @@ mod tests {
+             },
+         )
+         .unwrap();
+-        let outbox = frame.to_outbox().unwrap();
++        let outbox = frame.to_outbox("conversation-1".into()).unwrap();
+         assert_eq!(
+             LogosChatFrameV1::from_content(&outbox.content).unwrap(),
+             frame
+@@ -1041,6 +1731,55 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn failed_conversation_head_defers_behind_another_peer() {
++        let directory = tempfile::tempdir().unwrap();
++        let gateway = LogosChatGateway::new(
++            LogosChatGatewayRoleV1::Maker,
++            Some(directory.path().join("maker-chat.sock")),
++        )
++        .unwrap();
++        for (nonce, conversation) in [(1, "conversation-a"), (2, "conversation-b")] {
++            let frame = LogosChatFrameV1::new(
++                LogosChatGatewayRoleV1::Maker,
++                LogosChatMessageV1::Response {
++                    request_frame_id: format!("{nonce:064x}").into(),
++                    result: Some(json!({"nonce": nonce})),
++                    error: None,
++                },
++            )
++            .unwrap()
++            .to_outbox(conversation.into())
++            .unwrap();
++            gateway.enqueue(frame).unwrap();
++        }
++        let first = gateway
++            .outbox_peek(LogosChatGatewayOutboxRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++            })
++            .unwrap()
++            .unwrap();
++        assert_eq!(first.conversation_id.as_ref(), "conversation-a");
++        gateway
++            .outbox_defer(&LogosChatGatewayOutboxAckRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                frame_id: first.frame_id,
++                conversation_id: first.conversation_id,
++            })
++            .unwrap();
++        assert_eq!(
++            gateway
++                .outbox_peek(LogosChatGatewayOutboxRequestV1 {
++                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                })
++                .unwrap()
++                .unwrap()
++                .conversation_id
++                .as_ref(),
++            "conversation-b"
++        );
++    }
++
+     #[test]
+     fn bounded_maker_rpc_error_keeps_its_diagnostic() {
+         let error = anyhow::Error::new(LocalRpcRemoteError {
+@@ -1095,6 +1834,237 @@ mod tests {
+         assert!(!gateway.bind_session(&conflicting).unwrap().was_replay);
+     }
+ 
++    #[test]
++    fn active_reinsert_after_lease_expiry_clears_a_correlated_local_loser_marker() {
++        let (_directory, announcement, refreshed, reinserted, maker_identity, offer_id, now) =
++            active_announcements();
++        let clock = Arc::new(AtomicU64::new(now));
++        let gateway_clock = Arc::clone(&clock);
++        let gateway =
++            LogosChatGateway::new_with_clock(LogosChatGatewayRoleV1::Taker, None, move || {
++                Ok(gateway_clock.load(Ordering::Relaxed))
++            })
++            .unwrap();
++        let payload_base64 = BASE64_STANDARD.encode(&announcement).into_boxed_str();
++        gateway
++            .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                payload_base64: payload_base64.clone(),
++            })
++            .unwrap();
++        let key = (maker_identity, offer_id.as_str().into());
++        let (sender, _receiver) = oneshot::channel();
++        gateway.pending.lock().unwrap().insert(
++            "correlated-frame".into(),
++            PendingResponse {
++                sender,
++                selected_offer: Some(key.clone()),
++            },
++        );
++        gateway
++            .ingest_taker_response(
++                "correlated-frame",
++                None,
++                Some(RemoteFailureV1 {
++                    code: MAKER_OFFER_UNAVAILABLE_CODE,
++                    message: "offer unavailable".into(),
++                }),
++            )
++            .unwrap();
++        assert!(
++            gateway
++                .locally_unavailable_offers
++                .lock()
++                .unwrap()
++                .contains(&key)
++        );
++        assert!(matches!(
++            gateway.select_offer_announcement(&LogosOfferSelectRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                maker_identity: TakerMakerIdentityV1::new(maker_identity).unwrap(),
++                offer_id: offer_id.clone(),
++            }),
++            Err(LogosChatGatewayError::SessionConflict)
++        ));
++
++        gateway
++            .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                payload_base64: BASE64_STANDARD.encode(&refreshed).into(),
++            })
++            .unwrap();
++        assert!(
++            !gateway
++                .locally_unavailable_offers
++                .lock()
++                .unwrap()
++                .contains(&key)
++        );
++
++        let (sender, _receiver) = oneshot::channel();
++        gateway.pending.lock().unwrap().insert(
++            "second-correlated-frame".into(),
++            PendingResponse {
++                sender,
++                selected_offer: Some(key.clone()),
++            },
++        );
++        gateway
++            .ingest_taker_response(
++                "second-correlated-frame",
++                None,
++                Some(RemoteFailureV1 {
++                    code: MAKER_OFFER_UNAVAILABLE_CODE,
++                    message: "offer unavailable".into(),
++                }),
++            )
++            .unwrap();
++
++        clock.store(now + 31, Ordering::Relaxed);
++        let expired = gateway
++            .list_offer_announcements(super::LogosOfferListRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                route: None,
++            })
++            .unwrap();
++        assert!(expired.offers.is_empty());
++        assert!(
++            !gateway
++                .locally_unavailable_offers
++                .lock()
++                .unwrap()
++                .contains(&key)
++        );
++        gateway
++            .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                payload_base64: BASE64_STANDARD.encode(reinserted).into(),
++            })
++            .unwrap();
++        assert!(
++            !gateway
++                .locally_unavailable_offers
++                .lock()
++                .unwrap()
++                .contains(&key)
++        );
++        gateway
++            .select_offer_announcement(&LogosOfferSelectRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                maker_identity: TakerMakerIdentityV1::new(maker_identity).unwrap(),
++                offer_id,
++            })
++            .unwrap();
++    }
++
++    #[test]
++    fn full_index_preserves_live_ordering_state_and_rejects_unrelated_keys() {
++        let (_directory, announcement, _, _, maker_identity, offer_id, now) =
++            active_announcements();
++        let gateway =
++            LogosChatGateway::new_with_clock(LogosChatGatewayRoleV1::Taker, None, move || Ok(now))
++                .unwrap();
++        let indexed = IndexedOfferV1 {
++            announcement: verify_logos_offer_announcement(&announcement, now).unwrap(),
++        };
++        {
++            let mut index = gateway.offer_index.lock().unwrap();
++            for marker in 0..MAXIMUM_INDEXED_OFFERS {
++                let mut synthetic_maker = [0_u8; 33];
++                synthetic_maker[0] = 2;
++                synthetic_maker[1..9].copy_from_slice(&(marker as u64).to_be_bytes());
++                assert_ne!(synthetic_maker, maker_identity);
++                index.insert(
++                    (
++                        synthetic_maker,
++                        format!("synthetic-offer-{marker:04}").into(),
++                    ),
++                    indexed.clone(),
++                );
++            }
++        }
++        assert_eq!(
++            gateway.offer_index.lock().unwrap().len(),
++            MAXIMUM_INDEXED_OFFERS
++        );
++        assert_eq!(
++            gateway.ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                payload_base64: BASE64_STANDARD.encode(&announcement).into(),
++            }),
++            Err(LogosChatGatewayError::Capacity)
++        );
++        let index = gateway.offer_index.lock().unwrap();
++        assert_eq!(index.len(), MAXIMUM_INDEXED_OFFERS);
++        assert!(!index.contains_key(&(maker_identity, offer_id.as_str().into())));
++    }
++
++    #[test]
++    fn offer_ingest_bounds_and_canonicalizes_base64_before_indexing() {
++        let gateway = LogosChatGateway::new_with_clock(LogosChatGatewayRoleV1::Taker, None, || {
++            Ok(2_000_000_000)
++        })
++        .unwrap();
++        assert_eq!(
++            gateway.ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                payload_base64: "A"
++                    .repeat(MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES + 1)
++                    .into(),
++            }),
++            Err(LogosChatGatewayError::InvalidInput)
++        );
++        assert_eq!(
++            gateway.ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                payload_base64: "AB==".into(),
++            }),
++            Err(LogosChatGatewayError::InvalidInput)
++        );
++        assert!(gateway.offer_index.lock().unwrap().is_empty());
++    }
++
++    #[test]
++    fn exact_selected_identity_survives_a_chat_address_and_offer_id_collision() {
++        let (_victim_dir, victim, _, _, victim_identity, offer_id, now) =
++            active_announcements_with_key(77);
++        let (_attacker_dir, attacker, _, _, attacker_identity, _, attacker_now) =
++            active_announcements_with_key(78);
++        assert_ne!(victim_identity, attacker_identity);
++        let gateway =
++            LogosChatGateway::new_with_clock(LogosChatGatewayRoleV1::Taker, None, move || {
++                Ok(now.max(attacker_now))
++            })
++            .unwrap();
++        for announcement in [victim, attacker] {
++            gateway
++                .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                    payload_base64: BASE64_STANDARD.encode(announcement).into(),
++                })
++                .unwrap();
++        }
++        gateway
++            .select_offer_announcement(&LogosOfferSelectRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                maker_identity: TakerMakerIdentityV1::new(victim_identity).unwrap(),
++                offer_id: offer_id.clone(),
++            })
++            .unwrap();
++        gateway
++            .bind_session(&LogosChatGatewayBindRequestV1 {
++                schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                conversation_id: "collision-resistant-selection".into(),
++                local_address: "logos://taker-collision-test".into(),
++                peer_address: "logos://maker-recovered".into(),
++            })
++            .unwrap();
++        assert_eq!(
++            gateway.selected_offer_key_for_peer("logos://maker-recovered", offer_id.as_str()),
++            Some((victim_identity, offer_id.as_str().into()))
++        );
++    }
++
+     #[tokio::test]
+     async fn duplicate_maker_frame_is_replay_while_owner_call_is_inflight() {
+         let directory = tempfile::tempdir().unwrap();
+@@ -1124,10 +2094,99 @@ mod tests {
+             schema_version: GATEWAY_SCHEMA_VERSION_V1,
+             conversation_id: "conversation-1".into(),
+             sender_address: "local://taker".into(),
+-            content: frame.to_outbox().unwrap().content,
++            content: frame.to_outbox("conversation-1".into()).unwrap().content,
+         };
+ 
+         assert!(!gateway.ingest(&request).unwrap().was_replay);
+         assert!(gateway.ingest(&request).unwrap().was_replay);
+     }
++
++    #[tokio::test]
++    async fn maker_routes_concurrent_taker_failures_to_their_exact_conversations() {
++        let directory = tempfile::tempdir().unwrap();
++        let gateway = Arc::new(
++            LogosChatGateway::new(
++                LogosChatGatewayRoleV1::Maker,
++                Some(directory.path().join("absent-maker-chat.sock")),
++            )
++            .unwrap(),
++        );
++        for marker in ["a", "b"] {
++            gateway
++                .bind_session(&LogosChatGatewayBindRequestV1 {
++                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                    conversation_id: format!("conversation-{marker}").into(),
++                    local_address: "local://maker".into(),
++                    peer_address: format!("local://taker-{marker}").into(),
++                })
++                .unwrap();
++            let frame = LogosChatFrameV1::new(
++                LogosChatGatewayRoleV1::Taker,
++                LogosChatMessageV1::Request {
++                    nonce: u64::from(marker.as_bytes()[0]),
++                    method: "btc_chat_propose_v2".into(),
++                    parameter: json!({
++                        "schema_version": 2,
++                        "offer_id": "concurrent-offer-001",
++                        "request_marker": marker,
++                    }),
++                },
++            )
++            .unwrap();
++            gateway
++                .ingest(&LogosChatGatewayIngestRequestV1 {
++                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                    conversation_id: format!("conversation-{marker}").into(),
++                    sender_address: format!("local://taker-{marker}").into(),
++                    content: frame
++                        .to_outbox(format!("conversation-{marker}").into())
++                        .unwrap()
++                        .content,
++                })
++                .unwrap();
++        }
++
++        let mut targets = BTreeSet::new();
++        for _ in 0..100 {
++            if let Some(item) = gateway
++                .outbox_peek(LogosChatGatewayOutboxRequestV1 {
++                    schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                })
++                .unwrap()
++            {
++                targets.insert(item.conversation_id.clone());
++                let wrong_conversation = if item.conversation_id.as_ref() == "conversation-a" {
++                    "conversation-b"
++                } else {
++                    "conversation-a"
++                };
++                assert_eq!(
++                    gateway.outbox_ack(&LogosChatGatewayOutboxAckRequestV1 {
++                        schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                        frame_id: item.frame_id.clone(),
++                        conversation_id: wrong_conversation.into(),
++                    }),
++                    Err(LogosChatGatewayError::SessionConflict)
++                );
++                gateway
++                    .outbox_ack(&LogosChatGatewayOutboxAckRequestV1 {
++                        schema_version: GATEWAY_SCHEMA_VERSION_V1,
++                        frame_id: item.frame_id,
++                        conversation_id: item.conversation_id,
++                    })
++                    .unwrap();
++                if targets.len() == 2 {
++                    break;
++                }
++            }
++            tokio::time::sleep(Duration::from_millis(10)).await;
++        }
++        assert_eq!(
++            targets,
++            BTreeSet::from([
++                Box::<str>::from("conversation-a"),
++                Box::<str>::from("conversation-b"),
++            ])
++        );
++    }
+ }
+diff --git a/crates/maker-node/src/run_local_delivery.rs b/crates/maker-node/src/run_local_delivery.rs
+index d8e7028..a64af94 100644
+--- a/crates/maker-node/src/run_local_delivery.rs
++++ b/crates/maker-node/src/run_local_delivery.rs
+@@ -9,7 +9,9 @@ use std::{
+ 
+ use async_trait::async_trait;
+ use lez_swap_sdk_core::OfferDiscovery;
+-use lez_swap_store::{MakerOfferError, MakerOfferV1, MakerRouteV1};
++use lez_swap_store::{
++    MakerOfferError, MakerOfferRecordV1, MakerOfferStatus, MakerOfferV1, MakerRouteV1,
++};
+ use secp256k1::{Message, PublicKey, Secp256k1, SecretKey, ecdsa::Signature};
+ use serde::{Deserialize, Serialize};
+ use sha2::{Digest as _, Sha256};
+@@ -18,10 +20,27 @@ use thiserror::Error;
+ 
+ const DELIVERY_OFFER_SCHEMA_V1: u16 = 1;
+ const DELIVERY_OFFER_DOMAIN_V1: &[u8] = b"lez-atomic-swaps/run-local-delivery/offer/v1";
++const LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1: u16 = 1;
++const LOGOS_OFFER_ANNOUNCEMENT_DOMAIN_V1: &[u8] =
++    b"lez-atomic-swaps/logos-delivery/offer-announcement/v1";
+ const MAXIMUM_ENVELOPE_BYTES: u64 = 65_536;
++// Keep the canonical bytes small enough that standard Base64 plus JSON framing
++// always fits one 48 KiB snapshot page on the 64 KiB owner-local RPC.
++pub(crate) const MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES: usize = 32 * 1024;
++pub(crate) const MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES: usize =
++    4 * MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES.div_ceil(3);
++const MAXIMUM_CHAT_ADDRESS_BYTES: usize = 1024;
++const MAXIMUM_ANNOUNCEMENT_CLOCK_SKEW_SECONDS: u64 = 5;
+ const MAXIMUM_DISCOVERY_ENTRIES: usize = 1_024;
+ const OFFER_FILE_SUFFIX: &str = ".offer.json";
+ 
++/// Exact LIP-23-style content topic used by the Basecamp offer index.
++pub const LOGOS_OFFER_CONTENT_TOPIC_V1: &str = "/lez-atomic-swaps/1/offers/json";
++/// Maker refresh interval; live announcements expire if three refreshes are missed.
++pub const LOGOS_OFFER_REBROADCAST_SECONDS_V1: u64 = 10;
++/// Signed app-lifetime availability lease carried by each announcement.
++pub const LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1: u64 = 30;
++
+ /// One store-produced offer plus the publisher's trusted local timestamp.
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub struct DeliveryPublicationV1 {
+@@ -110,6 +129,83 @@ struct SignedOfferEnvelopeV1 {
+     signature: Vec<u8>,
+ }
+ 
++#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
++#[serde(deny_unknown_fields)]
++struct LogosOfferAnnouncementBodyV1 {
++    schema_version: u16,
++    maker_public_key: Vec<u8>,
++    maker_chat_address: Box<str>,
++    offer_revision: u64,
++    status: MakerOfferStatus,
++    announced_at_unix_seconds: u64,
++    valid_until_unix_seconds: u64,
++    signed_offer_envelope: Vec<u8>,
++}
++
++#[derive(Debug, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++struct SignedLogosOfferAnnouncementV1 {
++    #[serde(flatten)]
++    body: LogosOfferAnnouncementBodyV1,
++    signature: Vec<u8>,
++}
++
++/// Authenticated Delivery announcement retained by the Taker app-lifetime index.
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct AuthenticatedLogosOfferAnnouncementV1 {
++    offer: AuthenticatedOfferRefV1,
++    maker_chat_address: Box<str>,
++    offer_revision: u64,
++    status: MakerOfferStatus,
++    announced_at_unix_seconds: u64,
++    valid_until_unix_seconds: u64,
++    encoded: Vec<u8>,
++}
++
++impl AuthenticatedLogosOfferAnnouncementV1 {
++    /// Exact immutable offer and its original signed offer envelope.
++    #[must_use]
++    pub const fn offer(&self) -> &AuthenticatedOfferRefV1 {
++        &self.offer
++    }
++
++    /// Current app-lifetime direct Chat address signed by the offer Maker.
++    #[must_use]
++    pub const fn maker_chat_address(&self) -> &str {
++        &self.maker_chat_address
++    }
++
++    /// Monotonic durable offer revision advertised by the Maker store.
++    #[must_use]
++    pub const fn offer_revision(&self) -> u64 {
++        self.offer_revision
++    }
++
++    /// Advisory lifecycle projection; the Maker store remains authoritative.
++    #[must_use]
++    pub const fn status(&self) -> MakerOfferStatus {
++        self.status
++    }
++
++    /// Maker timestamp covered by the signature.
++    #[must_use]
++    pub const fn announced_at_unix_seconds(&self) -> u64 {
++        self.announced_at_unix_seconds
++    }
++
++    /// Exclusive local-index lease boundary covered by the signature.
++    #[must_use]
++    pub const fn valid_until_unix_seconds(&self) -> u64 {
++        self.valid_until_unix_seconds
++    }
++
++    /// Exact canonical announcement bytes received from Delivery.
++    #[must_use]
++    pub fn encoded(&self) -> &[u8] {
++        &self.encoded
++    }
++}
++
+ /// Failure at the owner-private run-local Delivery boundary.
+ #[derive(Debug, Error)]
+ pub enum RunLocalDeliveryError {
+@@ -137,6 +233,11 @@ pub enum RunLocalDeliveryError {
+     /// An envelope exceeded its explicit wire/storage bound.
+     #[error("Delivery envelope exceeds the {MAXIMUM_ENVELOPE_BYTES}-byte bound")]
+     OversizedEnvelope,
++    /// A live Delivery announcement exceeded its explicit wire bound.
++    #[error(
++        "Logos Delivery announcement exceeds the {MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES}-byte bound"
++    )]
++    OversizedAnnouncement,
+     /// An envelope was malformed, non-canonical, or used an unsupported schema.
+     #[error("Delivery envelope is malformed or unsupported")]
+     MalformedEnvelope,
+@@ -242,6 +343,74 @@ impl RunLocalDelivery {
+         verify_envelope(encoded, &self.expected_maker)
+     }
+ 
++    /// Signs one canonical, short-lived Logos Delivery announcement from the
++    /// durable offer record and binds it to the Maker app's current Chat address.
++    ///
++    /// The nested offer envelope remains the immutable agreement commitment;
++    /// the outer signature prevents substitution of Chat address, revision, or
++    /// availability state. Reservation and swap identifiers are never exposed.
++    ///
++    /// # Errors
++    ///
++    /// Rejects discovery-only instances, malformed records or addresses, time
++    /// overflow, and oversized/noncanonical signed output.
++    pub fn sign_logos_offer_announcement(
++        &self,
++        record: &MakerOfferRecordV1,
++        maker_chat_address: &str,
++        now_unix_seconds: u64,
++    ) -> Result<Vec<u8>, RunLocalDeliveryError> {
++        let signing_key = self
++            .signing_key
++            .as_ref()
++            .ok_or(RunLocalDeliveryError::DiscoveryOnly)?;
++        validate_chat_address(maker_chat_address)?;
++        record.offer().validate()?;
++        if record.revision() == 0 || now_unix_seconds > i64::MAX as u64 {
++            return Err(RunLocalDeliveryError::InvalidOffer);
++        }
++        let mut valid_until_unix_seconds = now_unix_seconds
++            .checked_add(LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1)
++            .ok_or(RunLocalDeliveryError::InvalidOffer)?;
++        if record.status() == MakerOfferStatus::Active {
++            if now_unix_seconds < record.offer().created_at_unix_seconds()
++                || now_unix_seconds >= record.offer().expires_at_unix_seconds()
++            {
++                return Err(RunLocalDeliveryError::InvalidOffer);
++            }
++            valid_until_unix_seconds =
++                valid_until_unix_seconds.min(record.offer().expires_at_unix_seconds());
++        }
++        let signed_offer_envelope =
++            signed_offer_envelope(record.offer(), &self.expected_maker, signing_key)?;
++        let body = LogosOfferAnnouncementBodyV1 {
++            schema_version: LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1,
++            maker_public_key: self.expected_maker.serialize().to_vec(),
++            maker_chat_address: maker_chat_address.into(),
++            offer_revision: record.revision(),
++            status: record.status(),
++            announced_at_unix_seconds: now_unix_seconds,
++            valid_until_unix_seconds,
++            signed_offer_envelope,
++        };
++        let signature = Secp256k1::signing_only()
++            .sign_ecdsa(
++                &Message::from_digest(logos_offer_announcement_digest(&body)?),
++                signing_key,
++            )
++            .serialize_compact();
++        let envelope = SignedLogosOfferAnnouncementV1 {
++            body,
++            signature: signature.to_vec(),
++        };
++        let encoded =
++            serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
++        if encoded.len() > MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES {
++            return Err(RunLocalDeliveryError::OversizedAnnouncement);
++        }
++        Ok(encoded)
++    }
++
+     /// Publishes an offer or verifies that a prior crash/restart published the exact same offer.
+     ///
+     /// # Errors
+@@ -419,24 +588,7 @@ impl RunLocalDelivery {
+             return Err(RunLocalDeliveryError::InvalidOffer);
+         }
+ 
+-        let offer_json = serde_json::to_vec(&publication.offer)
+-            .map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+-        let maker_public_key = self.expected_maker.serialize();
+-        let digest = offer_digest(&maker_public_key, &offer_json);
+-        let signature = Secp256k1::signing_only()
+-            .sign_ecdsa(&Message::from_digest(digest), signing_key)
+-            .serialize_compact();
+-        let envelope = SignedOfferEnvelopeV1 {
+-            schema_version: DELIVERY_OFFER_SCHEMA_V1,
+-            maker_public_key: maker_public_key.to_vec(),
+-            offer_json,
+-            signature: signature.to_vec(),
+-        };
+-        let encoded =
+-            serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+-        if encoded.len() as u64 > MAXIMUM_ENVELOPE_BYTES {
+-            return Err(RunLocalDeliveryError::OversizedEnvelope);
+-        }
++        let encoded = signed_offer_envelope(&publication.offer, &self.expected_maker, signing_key)?;
+         let destination = offer_path(&self.directory, publication.offer.id().as_str());
+         if destination.exists() {
+             return Err(RunLocalDeliveryError::AlreadyExists);
+@@ -518,13 +670,144 @@ impl OfferDiscovery for RunLocalDelivery {
+     }
+ }
+ 
++/// Verifies one exact canonical Delivery announcement at trusted local time.
++///
++/// Maker identities are self-authenticating at discovery time: the outer key
++/// must authenticate both the live Chat binding and the nested immutable offer
++/// envelope. The same identity and signed-offer digest are then reviewed and
++/// bound into negotiation, so Delivery routing never becomes protocol authority.
++///
++/// # Errors
++///
++/// Rejects malformed, noncanonical, oversized, expired, far-future, wrongly
++/// signed, address-substituted, or internally inconsistent announcements.
++pub fn verify_logos_offer_announcement(
++    encoded: &[u8],
++    now_unix_seconds: u64,
++) -> Result<AuthenticatedLogosOfferAnnouncementV1, RunLocalDeliveryError> {
++    if encoded.len() > MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BYTES {
++        return Err(RunLocalDeliveryError::OversizedAnnouncement);
++    }
++    let envelope: SignedLogosOfferAnnouncementV1 =
++        serde_json::from_slice(encoded).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
++    if serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?
++        != encoded
++        || envelope.body.schema_version != LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1
++        || envelope.body.offer_revision == 0
++    {
++        return Err(RunLocalDeliveryError::MalformedEnvelope);
++    }
++    validate_chat_address(&envelope.body.maker_chat_address)?;
++    let maximum_future = now_unix_seconds
++        .checked_add(MAXIMUM_ANNOUNCEMENT_CLOCK_SKEW_SECONDS)
++        .ok_or(RunLocalDeliveryError::InvalidOffer)?;
++    if envelope.body.announced_at_unix_seconds > maximum_future
++        || envelope.body.valid_until_unix_seconds <= now_unix_seconds
++        || envelope.body.valid_until_unix_seconds <= envelope.body.announced_at_unix_seconds
++        || envelope.body.valid_until_unix_seconds - envelope.body.announced_at_unix_seconds
++            > LOGOS_OFFER_ANNOUNCEMENT_TTL_SECONDS_V1
++    {
++        return Err(RunLocalDeliveryError::InvalidOffer);
++    }
++    if envelope.body.maker_public_key.len() != 33 {
++        return Err(RunLocalDeliveryError::Authentication);
++    }
++    let public_key = PublicKey::from_slice(&envelope.body.maker_public_key)
++        .map_err(|_| RunLocalDeliveryError::Authentication)?;
++    let signature = Signature::from_compact(&envelope.signature)
++        .map_err(|_| RunLocalDeliveryError::Authentication)?;
++    let mut normalized = signature;
++    normalized.normalize_s();
++    if normalized != signature {
++        return Err(RunLocalDeliveryError::Authentication);
++    }
++    Secp256k1::verification_only()
++        .verify_ecdsa(
++            &Message::from_digest(logos_offer_announcement_digest(&envelope.body)?),
++            &signature,
++            &public_key,
++        )
++        .map_err(|_| RunLocalDeliveryError::Authentication)?;
++    let offer = verify_envelope(&envelope.body.signed_offer_envelope, &public_key)?;
++    if envelope.body.status == MakerOfferStatus::Active
++        && (offer.offer().created_at_unix_seconds() > now_unix_seconds
++            || now_unix_seconds >= offer.offer().expires_at_unix_seconds()
++            || envelope.body.valid_until_unix_seconds > offer.offer().expires_at_unix_seconds())
++    {
++        return Err(RunLocalDeliveryError::InvalidOffer);
++    }
++    Ok(AuthenticatedLogosOfferAnnouncementV1 {
++        offer,
++        maker_chat_address: envelope.body.maker_chat_address,
++        offer_revision: envelope.body.offer_revision,
++        status: envelope.body.status,
++        announced_at_unix_seconds: envelope.body.announced_at_unix_seconds,
++        valid_until_unix_seconds: envelope.body.valid_until_unix_seconds,
++        encoded: encoded.to_vec(),
++    })
++}
++
++fn signed_offer_envelope(
++    offer: &MakerOfferV1,
++    maker: &PublicKey,
++    signing_key: &SecretKey,
++) -> Result<Vec<u8>, RunLocalDeliveryError> {
++    offer.validate()?;
++    let offer_json =
++        serde_json::to_vec(offer).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
++    let maker_public_key = maker.serialize();
++    let signature = Secp256k1::signing_only()
++        .sign_ecdsa(
++            &Message::from_digest(offer_digest(&maker_public_key, &offer_json)),
++            signing_key,
++        )
++        .serialize_compact();
++    let envelope = SignedOfferEnvelopeV1 {
++        schema_version: DELIVERY_OFFER_SCHEMA_V1,
++        maker_public_key: maker_public_key.to_vec(),
++        offer_json,
++        signature: signature.to_vec(),
++    };
++    let encoded =
++        serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
++    if encoded.len() as u64 > MAXIMUM_ENVELOPE_BYTES {
++        return Err(RunLocalDeliveryError::OversizedEnvelope);
++    }
++    Ok(encoded)
++}
++
++fn logos_offer_announcement_digest(
++    body: &LogosOfferAnnouncementBodyV1,
++) -> Result<[u8; 32], RunLocalDeliveryError> {
++    let encoded = serde_json::to_vec(body).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
++    let mut hasher = Sha256::new();
++    hasher.update(LOGOS_OFFER_ANNOUNCEMENT_DOMAIN_V1);
++    hasher.update(LOGOS_OFFER_ANNOUNCEMENT_SCHEMA_V1.to_be_bytes());
++    hasher.update((encoded.len() as u64).to_be_bytes());
++    hasher.update(encoded);
++    Ok(hasher.finalize().into())
++}
++
++fn validate_chat_address(value: &str) -> Result<(), RunLocalDeliveryError> {
++    if value.is_empty()
++        || value.len() > MAXIMUM_CHAT_ADDRESS_BYTES
++        || value.chars().any(char::is_control)
++    {
++        Err(RunLocalDeliveryError::MalformedEnvelope)
++    } else {
++        Ok(())
++    }
++}
++
+ fn verify_envelope(
+     encoded: &[u8],
+     expected_maker: &PublicKey,
+ ) -> Result<AuthenticatedOfferRefV1, RunLocalDeliveryError> {
+     let envelope: SignedOfferEnvelopeV1 =
+         serde_json::from_slice(encoded).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?;
+-    if envelope.schema_version != DELIVERY_OFFER_SCHEMA_V1
++    if serde_json::to_vec(&envelope).map_err(|_| RunLocalDeliveryError::MalformedEnvelope)?
++        != encoded
++        || envelope.schema_version != DELIVERY_OFFER_SCHEMA_V1
+         || envelope.maker_public_key.as_slice() != expected_maker.serialize()
+     {
+         return Err(RunLocalDeliveryError::Authentication);
+diff --git a/crates/maker-node/src/taker_facade.rs b/crates/maker-node/src/taker_facade.rs
+index 11983cd..f8b620d 100644
+--- a/crates/maker-node/src/taker_facade.rs
++++ b/crates/maker-node/src/taker_facade.rs
+@@ -152,6 +152,13 @@ pub struct TakerSwapInitiateRequestV1 {
+     pub foreign_units: u64,
+     /// Exact integer LEZ quote reviewed by the user without rounding.
+     pub expected_lez_units: u128,
++    /// Exact signed live Delivery announcement selected by Basecamp.
++    ///
++    /// Legacy CLI callers may omit this and retain the configured filesystem
++    /// discovery seam. Production Basecamp supplies it so initiation does not
++    /// depend on that compatibility path.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub logos_offer_announcement_base64: Option<Box<str>>,
+ }
+ 
+ /// Parameters for reading one receipt-bound lifecycle projection.
+diff --git a/crates/maker-node/src/taker_service.rs b/crates/maker-node/src/taker_service.rs
+index 13bf175..ded3549 100644
+--- a/crates/maker-node/src/taker_service.rs
++++ b/crates/maker-node/src/taker_service.rs
+@@ -6,12 +6,13 @@ use std::{
+     time::{SystemTime, UNIX_EPOCH},
+ };
+ 
++use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+ use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
+ use lez_bridge_protocol::RequestId;
+ use lez_swap_core::{Phase, SwapId};
+ use lez_swap_store::{
+-    MakerActorHeldLock, TakerActionAdmissionV1, TakerFacadeActionV1, TakerFacadeStoreError,
+-    TakerInitiationAdmissionV1, TakerInitiationFactsV1,
++    MakerActorHeldLock, MakerOfferStatus, TakerActionAdmissionV1, TakerFacadeActionV1,
++    TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
+ };
+ use lez_zec_swap_sdk::ZecLifecycleAction;
+ use secp256k1::PublicKey;
+@@ -28,7 +29,9 @@ use crate::{
+     TakerHealthRequestV1, TakerInitiationCommitV1, TakerOfferListRequestV1, TakerRefundRequestV1,
+     TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+     TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
++    run_local_delivery::MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES,
+     secure_file::read_private_file_snapshot,
++    verify_logos_offer_announcement,
+     zec_taker_accept::{
+         ZecTakeInput, load_taker_actor_from_receipt_for_monitor,
+         take_zec_with_authenticated_offer_and_actor_config,
+@@ -1165,22 +1168,27 @@ async fn initiate(
+         .backend
+         .trusted_now_for_offer_list(&offer_request)
+         .map_err(InitiationError::Backend)?;
+-    let offers = state
+-        .backend
+-        .offer_list_at(&offer_request, now)
+-        .await
+-        .map_err(InitiationError::Backend)?;
+-    let live_match = offers.offers.iter().any(|candidate| {
+-        candidate.offer.id() == &request.offer_id
+-            && candidate.offer.route() == request.route
+-            && candidate.maker_identity == request.maker_identity
+-            && candidate.signed_envelope_sha256 == request.signed_envelope_sha256
+-            && candidate
+-                .offer
+-                .quote_foreign_amount(request.foreign_units)
+-                .ok()
+-                == Some(request.expected_lez_units)
+-    });
++    let live_match = match live_broadcast_offer_matches(&request, now)? {
++        Some(matches) => matches,
++        None => state
++            .backend
++            .offer_list_at(&offer_request, now)
++            .await
++            .map_err(InitiationError::Backend)?
++            .offers
++            .iter()
++            .any(|candidate| {
++                candidate.offer.id() == &request.offer_id
++                    && candidate.offer.route() == request.route
++                    && candidate.maker_identity == request.maker_identity
++                    && candidate.signed_envelope_sha256 == request.signed_envelope_sha256
++                    && candidate
++                        .offer
++                        .quote_foreign_amount(request.foreign_units)
++                        .ok()
++                        == Some(request.expected_lez_units)
++            }),
++    };
+     if !live_match {
+         return Err(InitiationError::SelectionMismatch);
+     }
+@@ -1212,6 +1220,38 @@ async fn initiate(
+     Ok(commit_from_admission(&admission, progress))
+ }
+ 
++fn live_broadcast_offer_matches(
++    request: &TakerSwapInitiateRequestV1,
++    now_unix_seconds: u64,
++) -> Result<Option<bool>, InitiationError> {
++    let Some(proof_base64) = request.logos_offer_announcement_base64.as_deref() else {
++        return Ok(None);
++    };
++    if proof_base64.is_empty() || proof_base64.len() > MAXIMUM_LOGOS_OFFER_ANNOUNCEMENT_BASE64_BYTES
++    {
++        return Err(InitiationError::SelectionMismatch);
++    }
++    let encoded = BASE64_STANDARD
++        .decode(proof_base64.as_bytes())
++        .map_err(|_| InitiationError::SelectionMismatch)?;
++    if BASE64_STANDARD.encode(&encoded) != proof_base64 {
++        return Err(InitiationError::SelectionMismatch);
++    }
++    let announcement = verify_logos_offer_announcement(&encoded, now_unix_seconds)
++        .map_err(|_| InitiationError::SelectionMismatch)?;
++    let authenticated = announcement.offer();
++    let offer = authenticated.offer();
++    Ok(Some(
++        announcement.status() == MakerOfferStatus::Active
++            && offer.id() == &request.offer_id
++            && offer.route() == request.route
++            && authenticated.maker_identity() == request.maker_identity.as_bytes()
++            && authenticated.commitment() == request.signed_envelope_sha256
++            && offer.quote_foreign_amount(request.foreign_units).ok()
++                == Some(request.expected_lez_units),
++    ))
++}
++
+ async fn lookup_replay(
+     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+     request_id: &RequestId,
+diff --git a/crates/maker-node/tests/logos_offer_discovery.rs b/crates/maker-node/tests/logos_offer_discovery.rs
+new file mode 100644
+index 0000000..2680795
+--- /dev/null
++++ b/crates/maker-node/tests/logos_offer_discovery.rs
+@@ -0,0 +1,279 @@
++//! Signed Delivery offer-index and concurrent Chat-session contracts.
++
++use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
++use lez_bridge_protocol::RequestId;
++use lez_maker_node::{
++    LogosChatGateway, LogosChatGatewayBindRequestV1, LogosChatGatewayError, LogosChatGatewayRoleV1,
++    LogosChatGatewayStatusRequestV1, LogosOfferAnnouncementSnapshotRequestV1,
++    LogosOfferAnnouncementSnapshotV1, LogosOfferIngestRequestV1, LogosOfferListRequestV1,
++    LogosOfferSelectRequestV1, MakerRpc, RunLocalDelivery, TakerMakerIdentityV1, rpc_module,
++};
++use lez_swap_core::{Pair, SwapDirection};
++use lez_swap_store::{
++    LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
++    SqliteSwapStore,
++};
++use secp256k1::{PublicKey, Secp256k1, SecretKey};
++use tempfile::{TempDir, tempdir};
++
++fn request(value: &str) -> RequestId {
++    RequestId::new(value).unwrap()
++}
++
++fn signing_key(byte: u8) -> SecretKey {
++    SecretKey::from_slice(&[byte; 32]).unwrap()
++}
++
++fn configured_offer(now: u64) -> (TempDir, SqliteSwapStore, MakerOfferId) {
++    let run = tempdir().unwrap();
++    let mut store = SqliteSwapStore::open(run.path().join("offers.sqlite3")).unwrap();
++    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
++    let disabled =
++        MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 10, 10_000, 300)
++            .unwrap();
++    store
++        .configure_maker_pair(&request("logos-index-pair-create"), None, &disabled)
++        .unwrap();
++    store
++        .set_local_price(
++            &request("logos-index-price-create"),
++            None,
++            &LocalPriceV1::new(route, 5, 2).unwrap(),
++        )
++        .unwrap();
++    let enabled =
++        MakerPairConfigurationV1::new(route, true, MakerPriceSourceKind::Local, 10, 10_000, 300)
++            .unwrap();
++    store
++        .configure_maker_pair(&request("logos-index-pair-enable"), Some(1), &enabled)
++        .unwrap();
++    let offer_id = MakerOfferId::new("logos-index-offer-001").unwrap();
++    store
++        .publish_local_offer(&request("logos-index-publish"), &offer_id, route, now)
++        .unwrap();
++    (run, store, offer_id)
++}
++
++#[test]
++fn signed_rebroadcast_is_active_until_the_one_winner_state_advances() {
++    let now = 2_000_000_000;
++    let (run, mut store, offer_id) = configured_offer(now);
++    let key = signing_key(41);
++    let maker_identity = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key).serialize();
++    let publisher = RunLocalDelivery::publisher(run.path().join("delivery"), key).unwrap();
++    let active = store.list_maker_offer_history(now).unwrap().remove(0);
++    let active_wire = publisher
++        .sign_logos_offer_announcement(&active, "logos://maker-live", now)
++        .unwrap();
++    let gateway =
++        LogosChatGateway::new_with_clock(LogosChatGatewayRoleV1::Taker, None, move || Ok(now))
++            .unwrap();
++    let first = gateway
++        .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++            schema_version: 1,
++            payload_base64: BASE64_STANDARD.encode(&active_wire).into(),
++        })
++        .unwrap();
++    assert!(!first.was_replay);
++
++    let listed = gateway
++        .list_offer_announcements(LogosOfferListRequestV1 {
++            schema_version: 1,
++            route: Some(active.offer().route()),
++        })
++        .unwrap();
++    assert_eq!(listed.offers.len(), 1);
++    assert_eq!(
++        listed.offers[0].maker_chat_address.as_ref(),
++        "logos://maker-live"
++    );
++    gateway
++        .select_offer_announcement(&LogosOfferSelectRequestV1 {
++            schema_version: 1,
++            maker_identity: TakerMakerIdentityV1::new(maker_identity).unwrap(),
++            offer_id: offer_id.clone(),
++        })
++        .unwrap();
++
++    store
++        .reserve_maker_offer(
++            &request("logos-index-reserve"),
++            &offer_id,
++            1,
++            &request("logos-index-winning-negotiation"),
++            now + 1,
++        )
++        .unwrap();
++    let reserved = store.list_maker_offer_history(now + 1).unwrap().remove(0);
++    let reserved_wire = publisher
++        .sign_logos_offer_announcement(&reserved, "logos://maker-live", now + 1)
++        .unwrap();
++    gateway
++        .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++            schema_version: 1,
++            payload_base64: BASE64_STANDARD.encode(reserved_wire).into(),
++        })
++        .unwrap();
++
++    let after = gateway
++        .list_offer_announcements(LogosOfferListRequestV1 {
++            schema_version: 1,
++            route: None,
++        })
++        .unwrap();
++    assert!(after.offers.is_empty());
++    assert_eq!(after.unavailable_offers, 1);
++    assert!(matches!(
++        gateway.select_offer_announcement(&LogosOfferSelectRequestV1 {
++            schema_version: 1,
++            maker_identity: TakerMakerIdentityV1::new(maker_identity).unwrap(),
++            offer_id,
++        }),
++        Err(LogosChatGatewayError::SessionUnavailable)
++    ));
++    assert!(
++        gateway
++            .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: 1,
++                payload_base64: BASE64_STANDARD.encode(active_wire).into(),
++            })
++            .unwrap()
++            .was_replay,
++        "late active rebroadcast cannot resurrect a reserved offer"
++    );
++}
++
++#[test]
++fn maker_gateway_binds_multiple_takers_but_never_aliases_a_peer() {
++    let run = tempdir().unwrap();
++    let gateway = LogosChatGateway::new(
++        LogosChatGatewayRoleV1::Maker,
++        Some(run.path().join("maker-chat.sock")),
++    )
++    .unwrap();
++    for marker in ["a", "b"] {
++        assert!(
++            !gateway
++                .bind_session(&LogosChatGatewayBindRequestV1 {
++                    schema_version: 1,
++                    conversation_id: format!("conversation-{marker}").into(),
++                    local_address: "logos://maker".into(),
++                    peer_address: format!("logos://taker-{marker}").into(),
++                })
++                .unwrap()
++                .was_replay
++        );
++    }
++    let status = gateway
++        .status(LogosChatGatewayStatusRequestV1 { schema_version: 1 })
++        .unwrap();
++    assert_eq!(status.session_count, 2);
++    assert!(matches!(
++        gateway.bind_session(&LogosChatGatewayBindRequestV1 {
++            schema_version: 1,
++            conversation_id: "conversation-c".into(),
++            local_address: "logos://maker".into(),
++            peer_address: "logos://taker-a".into(),
++        }),
++        Err(LogosChatGatewayError::SessionConflict)
++    ));
++}
++
++#[tokio::test]
++async fn owner_rpc_snapshot_is_exactly_what_the_taker_gateway_indexes() {
++    let now = 2_000_000_000;
++    let (run, mut store, _offer_id) = configured_offer(now);
++    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
++    for index in 2..=140 {
++        store
++            .publish_local_offer(
++                &request(&format!("logos-index-publish-{index:03}")),
++                &MakerOfferId::new(format!("logos-index-offer-{index:03}")).unwrap(),
++                route,
++                now,
++            )
++            .unwrap();
++    }
++    let delivery =
++        RunLocalDelivery::publisher(run.path().join("delivery-rpc"), signing_key(51)).unwrap();
++    let module = rpc_module(
++        MakerRpc::with_delivery_transport(store, delivery, signing_key(52))
++            .with_offer_snapshot_clock(move || Ok(now)),
++    )
++    .unwrap();
++    let mut after_offer_id = None;
++    let mut announcements = Vec::new();
++    let mut page_count = 0;
++    loop {
++        let snapshot: LogosOfferAnnouncementSnapshotV1 = module
++            .call(
++                "maker_offer_announcement_snapshot_v1",
++                [LogosOfferAnnouncementSnapshotRequestV1 {
++                    schema_version: 1,
++                    maker_chat_address: "logos://maker-rpc-live".into(),
++                    after_offer_id,
++                }],
++            )
++            .await
++            .unwrap();
++        assert!(serde_json::to_vec(&snapshot).unwrap().len() < 64 * 1024);
++        page_count += 1;
++        announcements.extend(snapshot.announcements_base64);
++        after_offer_id = snapshot.next_after_offer_id;
++        if after_offer_id.is_none() {
++            break;
++        }
++    }
++    assert!(page_count > 1);
++    assert_eq!(announcements.len(), 140);
++    let gateway =
++        LogosChatGateway::new_with_clock(LogosChatGatewayRoleV1::Taker, None, move || Ok(now))
++            .unwrap();
++    for announcement in announcements.iter().take(24) {
++        gateway
++            .ingest_offer_announcement(&LogosOfferIngestRequestV1 {
++                schema_version: 1,
++                payload_base64: announcement.clone(),
++            })
++            .unwrap();
++    }
++    let list = gateway
++        .list_offer_announcements(LogosOfferListRequestV1 {
++            schema_version: 1,
++            route: None,
++        })
++        .unwrap();
++    assert_eq!(list.offers.len(), 16);
++    assert_eq!(list.omitted_offers, 8);
++    assert!(serde_json::to_vec(&list).unwrap().len() < 4 * 1024 * 1024);
++    assert_eq!(
++        list.offers[0].maker_chat_address.as_ref(),
++        "logos://maker-rpc-live"
++    );
++}
++
++#[tokio::test]
++async fn owner_rpc_snapshot_skips_future_active_rows_without_aborting() {
++    let now = 2_000_000_000;
++    let (run, store, _offer_id) = configured_offer(now + 1);
++    let delivery =
++        RunLocalDelivery::publisher(run.path().join("delivery-skew"), signing_key(61)).unwrap();
++    let module = rpc_module(
++        MakerRpc::with_delivery_transport(store, delivery, signing_key(62))
++            .with_offer_snapshot_clock(move || Ok(now)),
++    )
++    .unwrap();
++    let snapshot: LogosOfferAnnouncementSnapshotV1 = module
++        .call(
++            "maker_offer_announcement_snapshot_v1",
++            [LogosOfferAnnouncementSnapshotRequestV1 {
++                schema_version: 1,
++                maker_chat_address: "logos://maker-skewed-row".into(),
++                after_offer_id: None,
++            }],
++        )
++        .await
++        .unwrap();
++    assert!(snapshot.announcements_base64.is_empty());
++    assert!(snapshot.next_after_offer_id.is_none());
++}
+diff --git a/crates/maker-node/tests/run_local_delivery.rs b/crates/maker-node/tests/run_local_delivery.rs
+index a522883..8c1979c 100644
+--- a/crates/maker-node/tests/run_local_delivery.rs
++++ b/crates/maker-node/tests/run_local_delivery.rs
+@@ -5,6 +5,7 @@ use std::{fs, os::unix::fs::PermissionsExt as _, process::Command};
+ use lez_bridge_protocol::RequestId;
+ use lez_maker_node::{
+     DeliveryOfferQueryV1, DeliveryPublicationV1, RunLocalDelivery, RunLocalDeliveryError,
++    verify_logos_offer_announcement,
+ };
+ use lez_swap_core::{Pair, SwapDirection};
+ use lez_swap_sdk_core::OfferDiscovery as _;
+@@ -60,6 +61,47 @@ fn offer() -> lez_swap_store::MakerOfferV1 {
+         .clone()
+ }
+ 
++fn active_record(
++    now: u64,
++) -> (
++    tempfile::TempDir,
++    SqliteSwapStore,
++    lez_swap_store::MakerOfferRecordV1,
++) {
++    let run = tempdir().expect("isolated announcement store");
++    let mut store = SqliteSwapStore::open(run.path().join("announcement.sqlite3")).unwrap();
++    let route = zec_route();
++    let disabled =
++        MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 10, 10_000, 300)
++            .unwrap();
++    store
++        .configure_maker_pair(&request("announcement-pair-create-001"), None, &disabled)
++        .unwrap();
++    store
++        .set_local_price(
++            &request("announcement-price-create-001"),
++            None,
++            &LocalPriceV1::new(route, 5, 2).unwrap(),
++        )
++        .unwrap();
++    let enabled =
++        MakerPairConfigurationV1::new(route, true, MakerPriceSourceKind::Local, 10, 10_000, 300)
++            .unwrap();
++    store
++        .configure_maker_pair(&request("announcement-pair-enable-001"), Some(1), &enabled)
++        .unwrap();
++    store
++        .publish_local_offer(
++            &request("announcement-offer-publish-001"),
++            &MakerOfferId::new("announcement-offer-001").unwrap(),
++            route,
++            now,
++        )
++        .unwrap();
++    let record = store.list_maker_offer_history(now).unwrap().remove(0);
++    (run, store, record)
++}
++
+ fn signing_key(byte: u8) -> SecretKey {
+     SecretKey::from_slice(&[byte; 32]).expect("valid deterministic test key")
+ }
+@@ -107,6 +149,38 @@ async fn maker_publishes_and_taker_discovers_an_authenticated_expiring_offer() {
+     ));
+ }
+ 
++#[test]
++fn logos_announcement_binds_offer_state_and_current_chat_address() {
++    let run = tempdir().unwrap();
++    let publisher =
++        RunLocalDelivery::publisher(run.path().join("delivery"), signing_key(31)).unwrap();
++    let (_store_root, _store, record) = active_record(10_000);
++    let encoded = publisher
++        .sign_logos_offer_announcement(&record, "logos://maker-session-1", 10_001)
++        .unwrap();
++    let verified = verify_logos_offer_announcement(&encoded, 10_001).unwrap();
++    assert_eq!(verified.offer().offer(), record.offer());
++    assert_eq!(verified.offer_revision(), 1);
++    assert_eq!(verified.status(), lez_swap_store::MakerOfferStatus::Active);
++    assert_eq!(verified.maker_chat_address(), "logos://maker-session-1");
++
++    let mut substituted = encoded.clone();
++    let marker = b"logos://maker-session-1";
++    let offset = substituted
++        .windows(marker.len())
++        .position(|window| window == marker)
++        .unwrap();
++    substituted[offset + marker.len() - 1] = b'2';
++    assert!(matches!(
++        verify_logos_offer_announcement(&substituted, 10_001),
++        Err(RunLocalDeliveryError::Authentication)
++    ));
++    assert!(matches!(
++        verify_logos_offer_announcement(&encoded, 10_031),
++        Err(RunLocalDeliveryError::InvalidOffer)
++    ));
++}
++
+ #[tokio::test]
+ async fn discovery_rejects_tampering_and_the_wrong_maker_identity() {
+     let run = tempdir().expect("isolated Delivery root");
+diff --git a/crates/maker-node/tests/taker_initiate_rpc.rs b/crates/maker-node/tests/taker_initiate_rpc.rs
+index bdb18f2..9568509 100644
+--- a/crates/maker-node/tests/taker_initiate_rpc.rs
++++ b/crates/maker-node/tests/taker_initiate_rpc.rs
+@@ -8,6 +8,7 @@ use std::{
+     time::{SystemTime, UNIX_EPOCH},
+ };
+ 
++use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+ use jsonrpsee::RpcModule;
+ use lez_bridge_protocol::RequestId;
+ use lez_maker_node::{
+@@ -144,6 +145,42 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
+     assert_redacted(&changed_response, &fixture);
+ }
+ 
++#[tokio::test]
++async fn signed_broadcast_proof_admits_without_the_filesystem_offer_index() {
++    let fixture = Fixture::new();
++    let module =
++        taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
++    fs::remove_file(&fixture.delivery_offer).unwrap();
++
++    let mut request = fixture.request("m6-live-broadcast-initiation-001");
++    request.logos_offer_announcement_base64 = Some(fixture.announcement_base64.clone());
++    let commit: TakerInitiationCommitV1 = module
++        .call("taker_swap_initiate_v1", [request.clone()])
++        .await
++        .expect("the exact live signed broadcast replaces filesystem discovery");
++    assert!(!commit.was_replay);
++
++    let mut tampered = fixture.request("m6-live-broadcast-initiation-tampered");
++    let mut proof = BASE64_STANDARD
++        .decode(fixture.announcement_base64.as_bytes())
++        .unwrap();
++    let last = proof.len() - 1;
++    proof[last] ^= 1;
++    tampered.logos_offer_announcement_base64 = Some(BASE64_STANDARD.encode(proof).into_boxed_str());
++    let response = rpc_response(
++        &module,
++        "taker_swap_initiate_v1",
++        serde_json::to_value([tampered]).unwrap(),
++    )
++    .await;
++    assert_rpc_error(
++        &response,
++        INVALID_PARAMS,
++        "Invalid params",
++        "initiation_selection_mismatch",
++    );
++}
++
+ #[tokio::test]
+ async fn replay_rejects_same_byte_signing_key_inode_drift() {
+     let fixture = Fixture::new();
+@@ -268,6 +305,7 @@ struct Fixture {
+     route: MakerRouteV1,
+     maker: [u8; 33],
+     commitment: [u8; 32],
++    announcement_base64: Box<str>,
+ }
+ 
+ impl Fixture {
+@@ -286,11 +324,18 @@ impl Fixture {
+         let maker =
+             PublicKey::from_secret_key(&Secp256k1::signing_only(), &maker_secret).serialize();
+         let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+-        let offer = prepared_offer(&root, route, now);
++        let (offer, record) = prepared_offer(&root, route, now);
+         let publisher = RunLocalDelivery::publisher(delivery.clone(), maker_secret).unwrap();
+         let authenticated = publisher
+             .publish_or_verify(&DeliveryPublicationV1::new(offer, now))
+             .unwrap();
++        let announcement_base64 = BASE64_STANDARD
++            .encode(
++                publisher
++                    .sign_logos_offer_announcement(&record, "logos://maker-test-session", now)
++                    .unwrap(),
++            )
++            .into_boxed_str();
+         let commitment = authenticated.commitment();
+         let delivery_offer = delivery.join("m6-zec-offer-001.offer.json");
+ 
+@@ -340,6 +385,7 @@ impl Fixture {
+             route,
+             maker,
+             commitment,
++            announcement_base64,
+         }
+     }
+ 
+@@ -353,6 +399,7 @@ impl Fixture {
+             signed_envelope_sha256: self.commitment,
+             foreign_units: 42,
+             expected_lez_units: 84,
++            logos_offer_announcement_base64: None,
+         }
+     }
+ }
+@@ -400,7 +447,14 @@ fn assert_redacted(response: &Value, fixture: &Fixture) {
+     }
+ }
+ 
+-fn prepared_offer(root: &Path, route: MakerRouteV1, now: u64) -> lez_swap_store::MakerOfferV1 {
++fn prepared_offer(
++    root: &Path,
++    route: MakerRouteV1,
++    now: u64,
++) -> (
++    lez_swap_store::MakerOfferV1,
++    lez_swap_store::MakerOfferRecordV1,
++) {
+     let mut store = SqliteSwapStore::open(root.join("offer.sqlite3")).unwrap();
+     let disabled =
+         MakerPairConfigurationV1::new(route, false, MakerPriceSourceKind::Local, 1, 10_000, 300)
+@@ -437,9 +491,8 @@ fn prepared_offer(root: &Path, route: MakerRouteV1, now: u64) -> lez_swap_store:
+             now,
+         )
+         .unwrap();
+-    store.list_discoverable_maker_offers(now).unwrap()[0]
+-        .offer()
+-        .clone()
++    let record = store.list_discoverable_maker_offers(now).unwrap().remove(0);
++    (record.offer().clone(), record)
+ }
+ 
+ fn digest_binding(path: &Path) -> Value {
+diff --git a/crates/maker-node/tests/taker_service_process.rs b/crates/maker-node/tests/taker_service_process.rs
+index 36ac79d..d977c47 100644
+--- a/crates/maker-node/tests/taker_service_process.rs
++++ b/crates/maker-node/tests/taker_service_process.rs
+@@ -521,6 +521,7 @@ impl ProcessInitiationFixture {
+             signed_envelope_sha256: self.commitment,
+             foreign_units: 42,
+             expected_lez_units: 84,
++            logos_offer_announcement_base64: None,
+         }
+     }
+ }
+diff --git a/crates/maker-node/tests/zec_chat_process.rs b/crates/maker-node/tests/zec_chat_process.rs
+index 5183881..ff5dd48 100644
+--- a/crates/maker-node/tests/zec_chat_process.rs
++++ b/crates/maker-node/tests/zec_chat_process.rs
+@@ -299,6 +299,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response()
+         signed_envelope_sha256: authenticated.commitment(),
+         foreign_units: 10_000,
+         expected_lez_units: 25_000,
++        logos_offer_announcement_base64: None,
+     };
+ 
+     let module =
+diff --git a/docs/architecture/0210-route-role-agreement-chat-over-logos-chat.md b/docs/architecture/0210-route-role-agreement-chat-over-logos-chat.md
+index 66d65f9..b4bd35b 100644
+--- a/docs/architecture/0210-route-role-agreement-chat-over-logos-chat.md
++++ b/docs/architecture/0210-route-role-agreement-chat-over-logos-chat.md
+@@ -57,9 +57,10 @@ Only these application methods can cross the bridge:
+ - `zec_chat_propose_v1` and `zec_chat_complete_v1`;
+ - `xmr_chat_stage_a_v1` and `xmr_chat_activate_v1`.
+ 
+-One gateway process pins exactly one direct conversation, one local address,
+-one peer address, and one role direction. An exact repeated bind is a replay;
+-a different bind conflicts. The Maker learns an incoming peer address only
++The Taker gateway pins exactly one direct conversation. The Maker gateway pins
++up to 32 independent direct conversations under one local address so competing
++Takers receive their own correlated result. An exact repeated bind is a replay;
++conversation/peer aliasing conflicts. The Maker learns an incoming peer address only
+ from the authenticated `message_received.sender` event. It does not treat
+ Chat's `peer_label` as an address because Chat `v0.2.2` uses a shortened
+ conversation label there.
+@@ -141,7 +142,8 @@ task-owned builder from Docker networking.
+ 
+ The PoC now exercises real Logos Chat APIs and E2EE in Basecamp while retaining
+ the independently signed application protocol. The local relay is test-only;
+-it cannot become production actor authority. Offer discovery remains the
+-existing signed Delivery/filesystem mechanism in this change. Chat sessions
+-are not resumable across app restarts, which is accepted for this PoC and must
+-be reconsidered before production use.
++it cannot become production actor authority. ADR 0211 subsequently replaces
++the production filesystem offer index with signed Delivery broadcasts while
++retaining the filesystem adapter only as an offline compatibility/test seam.
++Chat sessions are not resumable across app restarts, which is accepted for this
++PoC and must be reconsidered before production use.
+diff --git a/docs/architecture/0211-discover-offers-over-logos-delivery.md b/docs/architecture/0211-discover-offers-over-logos-delivery.md
+new file mode 100644
+index 0000000..24957c4
+--- /dev/null
++++ b/docs/architecture/0211-discover-offers-over-logos-delivery.md
+@@ -0,0 +1,125 @@
++# ADR 0211: Discover signed offers over Logos Delivery
++
++- Status: accepted for the Basecamp PoC
++- Date: 2026-08-26
++- Scope: broadcast order-book discovery and competing negotiation admission
++
++## Context
++
++ADR 0210 moved private negotiation messages to Logos Chat but deliberately left
++offer discovery on the signed run-local filesystem adapter. That meant a real
++Basecamp installation still needed shared storage and a manually transcribed
++Maker Chat address before it could start the otherwise real peer flow.
++
++Chat direct/group conversations are not a public order-book primitive. The
++pinned Delivery module already exposes content-topic subscribe/send/events and
++shares Chat's node, so the Maker can broadcast an advisory offer projection
++without creating another network identity or node.
++
++## Decision
++
++Use exact topic `/lez-atomic-swaps/1/offers/json`. The Maker app asks the owner
++daemon for a bounded signed snapshot and sends each canonical byte string
++through `delivery_module.send`. The snapshot is cursor-paged below a 48 KiB
++payload budget so every owner-RPC response remains inside the daemon's 64 KiB
++transport bound. It refreshes every 10 seconds. Each entry has a 30-second
++signed lease, so three missed refreshes remove it from an app-lifetime Taker
++index without requiring Delivery history queries.
++
++The announcement signature uses the existing Maker protocol identity key and covers:
++
++- the exact nested signed immutable offer envelope;
++- Maker public identity and current app-lifetime Chat address;
++- durable offer revision and `active`, `reserved`, `consumed`, `withdrawn`, or
++  `expired` projection;
++- announcement and exclusive lease times.
++
++The Taker gateway verifies canonical encoding, both signatures, low-S ECDSA,
++bounds, times, identity equality, immutable offer validation, and monotonic
++`(revision, announcement time)` ordering before indexing. The key is
++`(Maker identity, offer ID)`, so different Makers may use the same local ID.
++Non-active signed updates remain briefly visible as unavailable and can never
++be replaced by a later active replay. Selecting an active entry resolves the
++signed Chat address and creates the direct conversation automatically. The
++exact announcement bytes also cross the unprivileged UI as a public proof and
++are refreshed from the selected live index entry when the user confirms, then
++verified again by the Taker owner service at admission. Reviewed terms remain
++pinned by the expected envelope digest, route, Maker identity, and exact quote.
++Thus a normal review can outlive the original 30-second proof without weakening
++freshness; a failed refresh stops initiation instead of falling back to the
++browse-time proof. The production Basecamp initiate path does not re-read the
++legacy filesystem offer index.
++
++The Delivery timestamp and network path are advisory. Trusted local time
++applies the lease; the nested signed offer digest remains the agreement
++commitment; and the Maker SQLite store remains the only reservation authority.
++
++## Conflict semantics
++
++Several Takers can receive the same active rebroadcast and begin concurrently.
++The Maker gateway keeps up to 32 peer-isolated conversations and keys in-flight
++and replay state by `(conversation ID, frame ID)`. Responses carry their exact
++conversation in the outbox, so identical frames/results from different Takers
++cannot be deduplicated across peers. A temporarily unsendable head is moved
++behind other conversations, and an unwind guard always releases its in-flight
++key, preventing one failed peer from permanently blocking the other Maker
++sessions.
++
++The pair-specific Maker staging transaction uses SQLite `IMMEDIATE`, checks
++revision/state, inserts the negotiation, and conditionally transitions the
++offer from active to reserved. Exactly one request commits revision 2. A loser
++gets explicit code `-32018` for unavailable/expired/reservation conflict (or
++the existing stale-revision conflict), never a successful proposal. Its Taker
++index suppresses that offer immediately. The next signed reserved/consumed
++rebroadcast converges every listening Taker; an already-committed winner keeps
++its private Chat session and completes through durable replay rules.
++If a broad conflict response leaves an offer Active, the next strictly newer
++signed Active rebroadcast clears that local marker; a fresh Active insert after
++lease expiry also clears it.
++Browsing a different Maker never resets an existing Taker session
++automatically; switching peers requires the explicit idle-only reset control.
++
++## Consequences, bounds, and lifetime
++
++Announcements are at most 32 KiB and Chat addresses at most 1 KiB, so one
++standard-Base64 record always fits the 48 KiB snapshot payload budget. Each page
++contains at most 128 retryable unexpired records. A bounded sweep keeps its
++cursor across event-loop turns, skips a malformed/temporarily unsendable record
++without starving later records, and retries omissions on the next complete
++sweep, so a large live set reaches the lexicographic tail without monopolizing
++the Qt event loop.
++
++Taker indexes hold at most 1,024 entries with at most 128 per Maker, list
++responses return at most 16 newest matching entries, and Maker sessions number
++at most 32. A full index does not evict a still-live signed ordering state to
++admit an unrelated key: existing keys may advance, new keys fail closed, and
++lease expiry frees capacity. This prevents a later Sybil burst from resurrecting
++an evicted stale Active state. Without an admitted identity set, first-arrival
++capacity occupation remains an explicit permissionless-PoC availability limit.
++Complete historical rows are never rebroadcast, so lifetime offer count cannot
++disable discovery. No reservation ID, swap ID, private role material, or chain
++secret appears in the broadcast.
++
++Indexes, addresses, conversations, and announcements live only while the apps
++and their gateways live. A clean shutdown does not need a reliable withdrawal:
++lease expiry removes a crashed Maker, while an explicit signed state update
++for reservation or consumption removes an offer sooner; withdrawal and expiry
++converge at the active lease boundary. Durable offers, negotiations, agreements,
++and actors remain in SQLite/role stores.
++
++## Offline verification
++
++Codec/index tests transfer the exact production announcement bytes through the
++owner-local gateway API, cover address/signature tampering, lease expiry,
++active-to-reserved convergence, late active replay suppression, correlated loser
++marker clearing, 140-record snapshot paging, bounded list projection, and two
++Maker conversations. Snapshot and gateway clocks are injectable only through
++explicit test seams, removing the 30-second wall-clock flake window. Existing
++one-winner store concurrency tests remain authoritative for reservation
++linearization. All process tests use Unix sockets/local nodes,
++`CARGO_NET_OFFLINE=true`, and a task-owned container with `--network none`.
++
++The filesystem Delivery adapter remains available only for legacy CLI fixtures,
++prepared private-material custody, and deterministic offline tests. Basecamp's
++production offer-list call reads the signed in-memory Delivery index and its
++initiation call supplies the same signed live proof to the owner service.
+diff --git a/docs/architecture/README.md b/docs/architecture/README.md
+index b2f3ca3..0b96cac 100644
+--- a/docs/architecture/README.md
++++ b/docs/architecture/README.md
+@@ -434,3 +434,6 @@ flowchart TB
+ | [0206](0206-give-concurrent-takers-distinct-lez-identities.md) | Give concurrent accepted XMR Takers distinct LEZ signers, Vaults, and nonce domains | Accepted and actual-node F3 GREEN on `m7xmrconc-d8efb7ca` |
+ | [0207](0207-certify-literal-reliability-acceptance.md) | Bind R1/R2/R6/R7 to their literal RFP criteria and retained executable evidence | Accepted; all four private-local functional Reliability gates GREEN, production calibration remains explicit |
+ | [0208](0208-bind-private-m7-demos-to-actual-node-evidence.md) | Render six private M7 demos only from hash-bound executable evidence, preserving the layered ZEC concurrency limit | Accepted; six-scenario contract and exact pushed-source live bundle GREEN |
++| [0209](0209-bind-btc-chat-to-independent-role-contributions.md) | Bind BTC Chat to independently generated role contributions before either role effect begins | Accepted for the pre-effect application boundary |
++| [0210](0210-route-role-agreement-chat-over-logos-chat.md) | Route private role-agreement negotiation over app-lifetime Logos Chat sessions | Accepted for the Basecamp PoC |
++| [0211](0211-discover-offers-over-logos-delivery.md) | Broadcast signed leased offers over Logos Delivery and preserve store-authoritative one-winner admission | Accepted for the Basecamp PoC |
+diff --git a/scripts/check-m6-basecamp-package-contract.mjs b/scripts/check-m6-basecamp-package-contract.mjs
+index 40251db..48632ec 100644
+--- a/scripts/check-m6-basecamp-package-contract.mjs
++++ b/scripts/check-m6-basecamp-package-contract.mjs
+@@ -54,14 +54,13 @@ const packages = [
+     environment: "LEZ_TAKER_RPC_SOCKET",
+     methods: [
+       "taker_health",
+-      "taker_offer_list_v1",
+       "taker_swap_initiate_v1",
+       "taker_swap_list_v1",
+       "taker_swap_monitor_v1",
+       "taker_swap_claim_v1",
+       "taker_swap_refund_v1",
+     ],
+-    slots: ["health", "chatStatus", "connectChat", "resetChat", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
++    slots: ["health", "chatStatus", "connectChat", "connectOffer", "resetChat", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
+     objects: [
+       "takerConnection",
+       "takerChat",
+@@ -237,8 +236,19 @@ for (const [pattern, message] of [
+   [/logos_chat_bind_session_v1/, "must pin the owner-local gateway session"],
+   [/logos_chat_outbox_peek_v1/, "must read only the fixed gateway outbox"],
+   [/logos_chat_outbox_ack_v1/, "must acknowledge only an accepted Chat send"],
++  [/logos_chat_outbox_defer_v1/, "must prevent one unavailable Maker conversation from blocking the others"],
+   [/logos_chat_ingest_v1/, "must submit inbound frames to the fixed gateway method"],
+   [/logos_chat_reset_session_v1/, "must expose an owner-local recovery from an unintended peer binding"],
++  [/delivery\.subscribe\s*\(/, "must subscribe to the signed Delivery offer topic"],
++  [/delivery\.send\s*\(/, "must rebroadcast signed offer announcements through Delivery"],
++  [/maker_offer_announcement_snapshot_v1/, "must obtain announcements from the Maker signer and durable store"],
++  [/next_after_offer_id/, "must page Maker snapshots within the owner RPC response bound"],
++  [/offerBroadcastCursor_/, "must continue bounded rebroadcast sweeps across timer cycles"],
++  [/QScopedValueRollback/, "must prevent overlapping synchronous Maker rebroadcast loops"],
++  [/kMaximumPendingOfferIngests/, "must bound deferred inbound Delivery work"],
++  [/logos_offer_ingest_v1/, "must authenticate Delivery payloads in the Taker gateway"],
++  [/logos_offer_list_v1/, "must browse the bounded live Delivery index"],
++  [/logos_offer_select_v1/, "must resolve the signed Chat address without transcription"],
+   [/QTimer::singleShot/, "must defer inbound processing out of the Chat event callback"],
+ ]) {
+   requirePattern(chatSource, chatContractText, pattern, message);
+@@ -344,6 +354,7 @@ for (const pkg of packages) {
+     "must inherit the generated QtRO source and LogosUiPluginContext",
+   );
+   requirePattern(backendSource, source, /modules\(\)\.chat_module/, "must use the generated Chat module wrapper");
++  requirePattern(backendSource, source, /modules\(\)\.delivery_module/, "must use the generated Delivery module wrapper");
+   requirePattern(
+     backendSource,
+     source,
+@@ -358,6 +369,32 @@ for (const pkg of packages) {
+       `must delegate through fixed RPC method ${method}`,
+     );
+   }
++  if (pkg.directory === "taker") {
++    requirePattern(
++      backendSource,
++      source,
++      /logos_offer_announcement_base64/,
++      "must carry the exact signed Delivery proof into Taker admission",
++    );
++    requirePattern(
++      backendSource,
++      source,
++      /selectOffer\s*\(\s*makerIdentity\s*,\s*offerId\s*\)/,
++      "must refresh the short-lived signed proof when the user confirms initiation",
++    );
++    requirePattern(
++      backendSource,
++      source,
++      /offer_unavailable/,
++      "must fail closed when the live selected proof cannot be refreshed",
++    );
++    rejectPattern(
++      backendSource,
++      source,
++      /taker_offer_list_v1/,
++      "must not use the filesystem offer index for Basecamp discovery",
++    );
++  }
+   for (const [pattern, message] of [
+     [/QProcess|\bsystem\s*\(|\bpopen\s*\(|\bexec[a-z]*\s*\(/, "must not spawn commands"],
+     [/QTcpSocket|QNetworkAccessManager|QWebSocket/, "must not open non-local transports"],
+@@ -383,6 +420,14 @@ for (const pkg of packages) {
+       `missing actor-test objectName ${objectName}`,
+     );
+   }
++  if (pkg.directory === "taker") {
++    requirePattern(
++      qmlFile,
++      qml,
++      /"taker-ui-initiate-"\s*\+\s*envelopeDigest\.text\.slice\(0,\s*32\)/,
++      "must derive a stable replay id within the 64-byte RequestId bound",
++    );
++  }
+   for (const [pattern, message] of [
+     [/XMLHttpRequest|WebSocket|QtWebSockets|QtNetwork/, "must not open transport from QML"],
+     [/LocalStorage|Settings\s*\{|Qt\.labs\.settings/, "must not persist authority in QML"],
+@@ -402,6 +447,38 @@ for (const pkg of packages) {
+ }
+ 
+ read(resolve(basecampRoot, "README.md"), "Basecamp package build and operator guide");
++const productTestFile = resolve(basecampRoot, "tests/basecamp-role-product.mjs");
++const productTest = read(productTestFile, "official Basecamp product test");
++requirePattern(
++  productTestFile,
++  productTest,
++  /gatewayRpc\(\s*"logos_offer_ingest_v1"/,
++  "must seed the live Delivery index before exercising prepared Taker initiation",
++);
++requirePattern(
++  productTestFile,
++  productTest,
++  /logos_offer_announcement_base64/,
++  "must carry the exact short-lived signed announcement in the Taker fixture",
++);
++requirePattern(
++  productTestFile,
++  productTest,
++  /expectService\s*&&\s*!takerFixture/,
++  "must not silently skip the prepared Taker discovery journey",
++);
++requirePattern(
++  productTestFile,
++  productTest,
++  /gatewayRpc\(\s*"logos_offer_list_v1"/,
++  "must prove the exact fixture was projected by the live index",
++);
++requirePattern(
++  productTestFile,
++  productTest,
++  /request\.setTimeout\(/,
++  "must bound direct gateway calls made by the product harness",
++);
+ 
+ if (errors.length > 0) {
+   process.stderr.write(
+@@ -411,6 +488,6 @@ if (errors.length > 0) {
+   process.exitCode = 1;
+ } else {
+   process.stdout.write(
+-    "M6 Basecamp package contract: GREEN (2 ui_qml packages, 18 typed slots, pinned E2EE Chat plus owner-local gateway)\n",
++    "M6 Basecamp package contract: GREEN (2 ui_qml packages, 19 typed slots, pinned E2EE Chat plus signed Delivery discovery)\n",
+   );
+ }

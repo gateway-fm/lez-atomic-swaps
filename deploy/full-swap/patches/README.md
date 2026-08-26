@@ -17,9 +17,9 @@ git -C runner-work/repo am \
   "$workspace_root"/submission/deploy/full-swap/patches/*.patch
 ```
 
-Applying all 36 patches to `5c384a5` reproduces tree
-`eec5693c31520fa2a35762d2f730c02e3b5b56a2` exactly — the same implementation
-tree the Logos-Chat-enabled role-agreement demo
+Applying all 37 patches to `5c384a5` reproduces tree
+`ae28b574b925e2555b47dd255e6d8565f8cbd7d9` exactly — the same implementation
+tree the Logos-Chat-and-Delivery-enabled role-agreement demo
 runs against.
 
 ## What the series contains
@@ -36,6 +36,7 @@ runs against.
 | **0027-0034** | **Bidirectional runner**: one selected LEZ/BTC direction flows through funding discovery, application replay, terminal assertions, and exported journey evidence |
 | **0035** | **Independent role agreements**: Maker and Taker construct separately signed contributions, bind messages and assets to chain identities and direction, and finalize the same agreement without a fixture actor holding both roles |
 | **0036** | **Real Logos Chat transport**: Basecamp Chat v0.2.2 and its Delivery runtime carry content-addressed role-agreement frames through bounded role-fixed gateways while the signed Rust stores remain authoritative; includes a Unix-only offline E2E relay |
+| **0037** | **Signed Delivery discovery**: Makers broadcast short-lived signed offer projections over the Chat-owned Delivery node; Takers verify a bounded live index, resolve the signed Chat address, and converge competing negotiations through the store-authoritative one-winner reservation |
 
 Patches 0024-0026 make the demo persistent-chain-shaped: without them the
 runner provisions and destroys a chain pair per swap. This is still a local

@@ -1,10 +1,11 @@
 # Basecamp role agreements over Logos Chat — implementation report
 
-Date: 2026-08-25
+Date: 2026-08-26
 
 Delivery branch: `m3-plus`
 
-Scope: independent role-agreement implementation plus real Basecamp Logos Chat transport
+Scope: independent role-agreement implementation, real Basecamp Logos Chat
+transport, and signed Logos Delivery offer discovery
 
 ## Outcome
 
@@ -32,21 +33,29 @@ adds runner patch `0035` plus the reproducibility metadata.
 
 The Logos Chat source implementation is exactly
 `7ecd8d3ebe16f84c5a187908902fc3de33be523f`. It is represented by runner patch
-`0036`, which applies directly after patch `0035`. The final `m3-plus` delivery
-commit has `d0c75e6` as first parent and `7ecd8d3` as second parent, while its
-tree also contains the richer M3 Basecamp UI port and this report.
+`0036`, which applies directly after patch `0035`, and by merge commit
+`fc74f2131bfdd36f2815eb4ed7aa1d038624ce0b`, whose parents are `d0c75e6` and
+`7ecd8d3`.
+
+The signed Delivery discovery implementation is exactly
+`e67522c8d27c274bcb94b92f90420983c83d0f5b`. It is represented by runner patch
+`0037` and by this report's final `m3-plus` merge commit, whose first parent is
+`44db961` (the preserved presentation series, itself descending from `fc74f21`)
+and second parent is `e67522c8`; its curated tree also contains the richer M3
+Basecamp UI port, ADRs, report, and diagram presentation.
 
 Remote policy at completion:
 
-- `gateway/m3-plus` stops at `d0c75e6`, so it receives the requested earlier
-  implementation but not the new Chat integration;
-- `origin/m3-plus` contains both delivery commits;
+- `gateway/m3-plus` and `origin/m3-plus` point to the same final delivery
+  commit;
+- the three source implementations remain reachable through the delivery
+  commits' second-parent ancestry;
 - no per-implementation delivery branch is required.
 
 The patch series was reconstructed from base `5c384a5`. Applying patches
-`0001` through `0036` produces source tree
-`eec5693c31520fa2a35762d2f730c02e3b5b56a2`, exactly matching the tree of
-source commit `7ecd8d3`.
+`0001` through `0037` produces source tree
+`ae28b574b925e2555b47dd255e6d8565f8cbd7d9`, exactly matching the tree of
+source commit `e67522c8`.
 
 ## Why the old path was fixture-only
 
@@ -306,10 +315,12 @@ socket path in `LEZ_LOGOS_CHAT_GATEWAY_SOCKET` for the corresponding Basecamp
 process. `LEZ_LOGOS_CHAT_PRESET` accepts only `logos.test` (default) or
 `logos.dev`.
 
-Once both Basecamp apps are open, refresh the Maker Chat status, copy its
-current address, paste it into the Taker Chat panel, and connect. Closing either
-app calls `chat.shutdown()`; stopping its paired endpoint guarantees the next
-launch has no inherited peer binding. Exact commands are in
+Once both Basecamp apps are open, the Maker publishes signed offer announcements
+containing its current Chat address. The Taker browses that authenticated
+in-memory index and automatically connects to the selected Maker. Manual address
+copy/paste remains a diagnostic control, not the production discovery path.
+Closing either app calls `chat.shutdown()`; stopping its paired endpoint
+guarantees the next launch has no inherited peer binding. Exact commands are in
 `apps/basecamp/README.md`.
 
 ## Accepted PoC limitations
@@ -318,13 +329,266 @@ launch has no inherited peer binding. Exact commands are in
   E2EE network itself is intentionally not contacted by offline tests.
 - The offline Nix proof is a post-warm-up build from the pinned local closure,
   not a claim that a cold machine can fetch dependencies without Internet.
-- A gateway supports one direct peer per application lifetime and has no session
-  resumption after restart.
+- A Taker gateway supports one direct peer per application lifetime; a Maker
+  gateway supports up to 32 concurrent direct peers. Neither resumes sessions
+  after restart.
 - The first structurally valid gateway request received by an unbound Maker
   establishes its peer; the full frame hash, role, method, signatures, agreement
   facts, chain identities, and replay remain validated downstream.
-- Offer discovery remains on the existing signed Delivery/filesystem path; this
-  change moves negotiation messages, not the offer-index architecture.
+- The live offer index is in memory and rebuilt from Maker rebroadcasts after an
+  app restart. The filesystem adapter remains only for legacy CLI and isolated
+  test compatibility, not Basecamp production discovery.
 
 The architectural rationale and invariants are recorded in
 `docs/architecture/0210-route-role-agreement-chat-over-logos-chat.md`.
+
+## 2026-08-26 follow-up: signed Delivery offer broadcasts
+
+### Outcome
+
+Basecamp no longer calls `taker_offer_list_v1` for production discovery. The
+Maker periodically broadcasts a short-lived, independently verifiable view of
+each relevant durable offer through the Delivery node already owned by Chat;
+the Taker verifies and indexes the exact received bytes, reviews the terms, and
+resolves the selected offer to the Maker's signed current Chat address. Delivery
+is discovery transport only: offer reservation, application agreement,
+countersignature, replay, and actor authority remain in the existing Rust
+store/protocol boundary.
+
+Source implementation commit:
+`e67522c8d27c274bcb94b92f90420983c83d0f5b`.
+
+`m3-plus` delivery commit: this report's merge commit; its exact object ID is
+recorded in the final handoff because a commit cannot contain its own hash.
+
+Remote policy: this follow-up is delivered as the same `m3-plus` branch tip to
+both `origin` and `gateway`, per the final publication instruction.
+
+### Wire format and trust boundary
+
+The exact content topic is
+`/lez-atomic-swaps/1/offers/json`. Every message is canonical JSON, at most
+32 KiB, and contains:
+
+- the existing exact signed immutable offer envelope;
+- the compressed Maker secp256k1 public identity;
+- the Maker's current app-lifetime Chat address;
+- the durable offer-local revision and projected status;
+- the announcement time and an exclusive short lease boundary;
+- a low-S secp256k1 signature over every field above.
+
+The Taker rejects malformed or noncanonical JSON, invalid nested or outer
+signatures, identity mismatch, address substitution, oversized input, expired
+leases, excessive future clock skew, inconsistent active-offer expiry, and
+same-revision equivocation. The immutable offer signature is still the
+negotiation commitment; the outer signature adds live address and lifecycle
+binding without granting Delivery any signing or reservation authority.
+
+### Runtime steps
+
+1. Basecamp registers Delivery event handlers before `chat.init()`.
+2. Chat creates and owns the one shared Delivery node; the consumer does not
+   call Delivery `createNode`, `start`, or `stop`.
+3. When that node is online, both roles subscribe to the exact offer topic.
+4. Every 10 seconds, and once immediately after subscription, the Maker asks its
+   owner-only daemon RPC for cursor-paged snapshots signed at trusted local time;
+   each page keeps its encoded announcement payload below 48 KiB so the complete
+   JSON-RPC response stays within the daemon's 64 KiB transport boundary. A
+   compile-time assertion couples the 32 KiB canonical-record limit to the
+   worst-case standard-Base64 record plus page framing.
+5. Basecamp decodes each exact Base64 record and passes the bytes unchanged to
+   Delivery `send(topic, payload)`. It processes one snapshot page per Qt event
+   turn, retains the lexicographic cursor between turns, skips an individually
+   malformed or temporarily unsendable record, and retries omissions on the next
+   full sweep instead of starving every later offer.
+6. A Taker forwards each `messageReceived` payload unchanged to its owner-only
+   Rust gateway through a bounded 64-item deferred queue; the gateway verifies
+   it and updates a stable 1,024-entry index with a 128-entry per-Maker quota;
+   a full index preserves live ordering state and rejects unrelated new keys
+   until a lease expires rather than allowing a later Sybil burst to evict it.
+7. **Browse authenticated offers** reads that live index, filters the requested
+   route, returns at most the newest 16 entries plus an explicit omitted count,
+   fills the reviewed fields, selects a signed current Chat address, and retains
+   the exact public announcement proof inside the 4 MiB gateway response bound.
+8. Basecamp creates the E2EE direct conversation automatically; negotiation then
+   follows the previously implemented Chat request/response path.
+9. **Confirm and initiate** refreshes the proof from the selected live index
+   entry, then supplies it to the Taker owner service, which verifies its
+   signature, lease, route, amounts, Maker identity, and envelope commitment
+   again instead of consulting the filesystem offer index. The reviewed terms
+   remain pinned, while a human review may safely outlive the original
+   30-second lease. A failed refresh stops initiation; the backend never falls
+   back to its browse-time proof.
+
+Announcements carry 30-second leases and are refreshed every 10 seconds. An
+active lease is additionally clamped to the immutable offer expiry. Snapshots
+contain only retryable unexpired active/reserved/consumed records, never the
+Maker's unbounded lifetime history, and split at deterministic offer-ID cursors
+rather than overflowing the owner socket. A page contains at most 128 records;
+the Basecamp bridge retains the page cursor while yielding after every page, so
+the retryable set may be arbitrarily larger than one event-loop turn without
+making its tail unreachable or blocking the UI through an entire sweep. No
+reservation identifier, swap identifier, private actor material, or signing key
+is broadcast. Delivery `storeQuery` is not used because the pinned API does not
+provide a stable application contract for it.
+
+### Conflict and convergence behavior
+
+The Maker store is the sole one-winner compare-and-set boundary. Multiple
+Takers may legitimately discover the same active announcement and open
+different conversations; the Maker gateway therefore supports 32 bounded
+conversation/peer bindings and keys in-flight/replay work by both conversation
+and frame identity.
+
+| Event | Winning Taker | Losing Taker | Other listeners |
+|---|---|---|---|
+| Concurrent proposal | atomic reservation succeeds | correlated `-32018` unavailable or `-32009` conflict | may still show the current active lease briefly |
+| Local result | continues the agreement | suppresses that indexed offer immediately | unchanged until broadcast |
+| Next Maker poll | receives signed revision/status | receives signed revision/status | receives signed reserved/consumed status |
+| Missing update | existing state remains until lease end | local suppression remains | stale active entry expires after at most 30 seconds |
+
+The index orders updates by `(offer_revision, announced_at)`, rejects immutable
+term changes, treats exact repeats as replay, ignores older announcements, and
+rejects non-active-to-active resurrection while the newer signed state is
+retained. A strictly newer signed Active rebroadcast clears an earlier local
+loser marker even when the durable revision is unchanged; a fresh Active insert
+after the old lease leaves the index clears it too. This gives immediate loser
+feedback and bounded eventual convergence for observers without claiming that
+broadcast delivery itself serializes negotiation.
+
+Conflict suppression is correlated to the exact `(Maker identity, offer ID)`
+chosen from the authenticated index and retained by the Taker gateway. It is
+not reconstructed from the Maker Chat address: another valid identity can reuse
+the same address and local offer-ID string without hiding the selected offer's
+loser marker. Marker storage is pruned against the bounded live index before an
+insert and can never exceed the 1,024-entry index bound.
+
+### Session and failure behavior
+
+The Taker retains one selected direct session. Browsing an offer at a different
+signed Maker address returns `session_busy`; the user must invoke the explicit
+idle-only reset before switching, so a pause between negotiation RPCs cannot
+silently discard the current peer. The Maker accepts up to 32 authenticated
+`message_received.sender` bindings. Outbox records carry their exact
+conversation identifier, response caches and in-flight keys are
+conversation-scoped, a failed Chat send defers only that head behind other
+conversation work, and an unwind guard releases every in-flight Maker key. The
+offline relay forwards the same target rather than using a fixture conversation
+constant.
+
+All indexes, Chat identities, bindings, conversations, and message queues remain
+app-lifetime as requested. Durable offer states, signed contributions,
+countersigned agreements, replay journals, and actor roots survive independently
+in their existing stores. Snapshot pages and list responses are transport
+bounded; index pressure preserves every live entry and its local marker until
+signed advancement or lease expiry. Permissionless identities can still occupy
+capacity if they arrive first; preventing that requires an admission policy that
+this PoC deliberately does not invent.
+
+### Product harness and presentation
+
+The prepared Taker Basecamp product test no longer merely types filesystem
+fixture values into QML. Service mode requires a fresh
+`logos_offer_announcement_base64`, sends it over the owner-only gateway Unix
+socket with a five-second timeout, requires the isolated live index to contain
+exactly that one signed entry with no omissions, and only then exercises Browse,
+confirm/initiate, exact replay, list, and monitor. The test is local-network-only
+and does not require Internet access.
+
+The requested presentation now includes the diagram slide **Broadcast to
+discover. Chat to negotiate.** in the basics section. Its public lane shows a
+signed 30-second offer rebroadcast every 10 seconds through Logos Delivery to
+multiple Takers; its private lane shows two E2EE Chat conversations converging
+at one atomic Maker reservation, with one countersigned winner and one busy
+loser. The diagram lives in the editable presentation source as well as the
+generated standalone, so rebuilding no longer deletes it. The 22-slide
+standalone, manifest, README, source hashes, and checksum entry were regenerated
+together and rendered at 1600×900. The older 2026-08-20 stack slide is explicitly
+labelled as an earlier capture where Chat was disabled, while this follow-up's
+offline verification is dated 2026-08-26. The exact user-requested local deck at
+`lez-atomic-swaps/media/lez-btc-m1-m3-m6-submission.html` was recovered separately
+as a diagram and was intentionally not staged from that already-dirty worktree.
+
+### Offline and non-disruptive verification
+
+The full application protocol E2E runs with independent Maker/Taker role roots,
+real gateway processes, exact Chat frames, Unix-domain relay transport, and no
+fixture actor authority. Network-denial checks set Cargo offline mode and run in
+uniquely named, auto-removed Docker containers with `--network none`,
+read-only source/Cargo mounts, and a task-private target directory. No existing
+Compose service, container, network, volume, or port is started, stopped,
+restarted, or modified.
+
+Evidence for this follow-up:
+
+- full Maker-node library/integration suite: green under
+  `cargo test -p lez-maker-node --lib --tests` in a network-disabled container;
+  40/40 library tests and every non-external process/integration test passed,
+  with exactly two declared external-infrastructure tests ignored (the pinned
+  Basecamp product driver and the two-Zebra restart case);
+- independent-role Chat-v2 process E2E: green;
+- signed announcement/index/conflict regression tests: green;
+- exact selected-identity collision and future-created Active skip regressions:
+  green;
+- Basecamp static package contract: green, 2 packages and 19 typed slots;
+- Node syntax check for the product harness: green;
+- generated standalone presentation count/source parity: green, 22/22;
+- `cargo fmt --all -- --check`: green;
+- `git diff --check` in both worktrees: green;
+- Basecamp/Nix compile: unavailable on this host because the Nix CLI/closure is
+  absent; no networked cold build was substituted for the offline claim.
+
+### Review disposition
+
+Claude Code Fable and OpenCode GLM-5.3 reviewed the source and integration diffs
+in parallel through repeated read-only passes. The first review found and drove
+the following material corrections:
+
+- C++ session binding now replays the owner-gateway bind after a gateway restart
+  instead of trusting only a cached local flag;
+- index pressure never evicts unrelated live signed ordering state, preventing a
+  stale Active resurrection after a Sybil burst;
+- canonical announcements are limited to 32 KiB and Chat addresses to 1 KiB,
+  standard Base64 is bounded before decode and round-trip canonicalized, and a
+  compile-time invariant proves one maximum record fits the 48 KiB page budget;
+- snapshot and gateway clocks have production-default/test-only seams, future
+  Active rows are skipped rather than aborting a page, and lease-expiry tests no
+  longer depend on a 30-second wall-clock race;
+- the Maker bridge carries its cursor across pages, yields after each page, and
+  continues after an individual invalid/failed announcement instead of wedging
+  the tail;
+- a Taker's loser marker is tied to the exact selected Maker identity and offer
+  ID, so a second identity cannot suppress it by choosing the same Chat address;
+- the live index and the local loser-marker subset are bounded and preserve
+  state until signed advancement or lease expiry;
+- the official product journey now requires a fresh signed announcement,
+  injects it through the real gateway Unix socket with a five-second timeout,
+  proves the isolated index contains exactly that entry, and only then performs
+  Browse/initiate/replay/list/monitor;
+- ADR 0211, the authoritative source-tree ADR index, the editable presentation
+  source, standalone hashes, slide count, and dated capture qualification were
+  corrected together.
+
+After those changes, Fable returned **CLEAN** for both the source and integration
+trees. GLM returned **CLEAN** for all implementation focus areas, requested one
+missing ADR-0209 source-index row, and returned **CLEAN** after that row was added;
+its separate curated-integration link audit also returned **CLEAN**. The final
+accepted reviewer observations are non-blocking only: app-lifetime state is an
+explicit PoC choice, first-arrival permissionless identities can consume bounded
+index capacity, the checked-in silent MP4 intentionally predates this slide, and
+the unrelated UI-demo MP4 checksum mismatch already existed at the baseline.
+
+ADR 0211 records this design and its rejected alternatives; ADR 0210 now points
+to it as the production discovery successor.
+
+### Patch-series provenance
+
+Patch `0037-feat-basecamp-discover-offers-over-Logos-Delivery.patch` is the exact
+`git format-patch` representation of source commit
+`e67522c8d27c274bcb94b92f90420983c83d0f5b`. Applying all 37 ordered patches to
+base `5c384a5` in a detached task-private worktree produced tree
+`ae28b574b925e2555b47dd255e6d8565f8cbd7d9`, byte-identical to the source commit's
+tree. The integration branch carries that patch plus the curated Basecamp files,
+ADRs, report, and diagram presentation; the delivery commit uses the source
+commit as its second parent so provenance remains visible without adding another
+first-parent commit to `m3-plus`.

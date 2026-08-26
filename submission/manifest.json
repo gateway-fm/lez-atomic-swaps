@@ -52,9 +52,9 @@
     },
     "application_runner": {
       "base_commit": "5c384a5",
-      "result_commit": "2888e8cf818143a7dce903f343fdbe70de9e267a",
-      "result_tree": "c3bc49ad802328455ef7c8843d3c7a4ee81bade9",
-      "ordered_patch_count": 34,
+      "result_commit": "e67522c8d27c274bcb94b92f90420983c83d0f5b",
+      "result_tree": "ae28b574b925e2555b47dd255e6d8565f8cbd7d9",
+      "ordered_patch_count": 37,
       "gateway_owned_base_ref_at_generation": false
     }
   },
@@ -112,7 +112,7 @@
   },
   "presentation": {
     "html_entry": "submission/presentation/index.html",
-    "slides": 14,
+    "slides": 22,
     "external_runtime_dependencies": 0,
     "controls": [
       "keyboard",
@@ -122,12 +122,14 @@
     ],
     "standalone_html": {
       "path": "media/lez-btc-m1-m3-m6-submission.html",
-      "size_bytes": 1822487,
+      "size_bytes": 1874339,
       "external_runtime_dependencies": 0,
-      "sha256": "abf17475ed0e9c271ffcd184e76763889ab7ea8ddc2a9faaad072234fc92914d"
+      "sha256": "e95516a50ce3cea6a21271b19ead734e2a0f88d7cff1e293b6ae5281f5458c84"
     },
     "video": {
       "path": "media/lez-btc-m1-m3-m6-submission-silent.mp4",
+      "slides": 14,
+      "source_snapshot": "pre_delivery_discovery_2026-08-20",
       "duration_seconds": 99,
       "width": 1920,
       "height": 1080,
@@ -145,11 +147,11 @@
       "sha256": "cc6fcae71fffe6d7b44ddc912c824c2421ac823ba73d01a8845a6988c579a3c2"
     },
     "source_hashes": {
-      "index_html": "6aedbc5b48a01662d68c607ed67c8b1ee10b72e05165a26d94615adace0bd944",
-      "styles_css": "c90a52a06d966fd81d9f7a4c267e5740d30c1dda38aa99030b98b7837e3ef093",
+      "index_html": "a95e94e374783b5e588b1bda825fc4a087351e1a7c9676af066e8fd59b8ee1dd",
+      "styles_css": "da4eca2431252a4fa39ec5537315533dd9a45d64e234f2f988d4aa69acb5e26d",
       "deck_js": "86e04da5713207532ff682079ec0201e1c0bbcdb7bc9c57bc7c2214f1e458dc1",
       "standalone_builder": "43b33578d51a9acae81ffacda6a7b972e3a88bd4a66a3a8ea7653f309b8f30d9",
-      "render_script": "ee9b9c1560f23cdad73aa3d5207a22c1a27fe57478ca02df87cd70e6897c0971"
+      "render_script": "8763c038ea97a86c0e0e35fa25961a623619983e24a32293987a19bd3f0eb427"
     }
   },
   "live_validation": {

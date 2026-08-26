@@ -16,6 +16,7 @@ Item {
     property string statusTitle: "Connecting securely"
     property string statusDetail: "Establishing the owner-local service channel"
     property string selectedOffer: ""
+    property string selectedAnnouncementBase64: ""
     property string selectedExpiry: ""
     property int availableOffers: 0
     property string currentState: ""
@@ -439,9 +440,16 @@ Item {
         root.availableOffers = entries.length
         if (entries.length === 0) {
             root.selectedOffer = ""
-            root.statusMode = "neutral"
-            root.statusTitle = "No offers available"
-            root.statusDetail = "Prepare a local swap or choose another market"
+            root.selectedAnnouncementBase64 = ""
+            var unavailable = Number(result.unavailable_offers ?? 0)
+                + Number(result.locally_contended_offers ?? 0)
+            root.statusMode = unavailable > 0 ? "working" : "neutral"
+            root.statusTitle = unavailable > 0
+                ? "Offer is already negotiating or taken"
+                : "No offers available"
+            root.statusDetail = unavailable > 0
+                ? String(unavailable) + " signed offer state update(s) suppressed stale availability"
+                : "Wait for a Maker rebroadcast or choose another market"
             return
         }
         var selected = entries[0]
@@ -452,23 +460,35 @@ Item {
                 selected = entries[index]
         }
         var offer = selected.offer ?? selected
+        root.selectedAnnouncementBase64 = String(selected.announcement_base64 ?? "")
         var configuration = offer.pair_configuration ?? {}
         var price = offer.price ?? {}
         offerId.text = String(offer.id ?? "")
         makerIdentity.text = String(selected.maker_identity ?? selected.maker_public_key ?? "")
         envelopeDigest.text = root.digestHex(selected.signed_envelope_sha256)
         foreignUnits.text = String(configuration.minimum_foreign_units ?? "")
-        if (Number(price.foreign_units_per_lot ?? 0) > 0) {
-            var expected = Number(configuration.minimum_foreign_units)
-                * Number(price.lez_units_per_lot) / Number(price.foreign_units_per_lot)
-            lezUnits.text = String(expected)
-        }
+        var numerator = Number(configuration.minimum_foreign_units)
+            * Number(price.lez_units_per_lot)
+        var divisor = Number(price.foreign_units_per_lot)
+        lezUnits.text = Number.isSafeInteger(numerator) && Number.isSafeInteger(divisor)
+            && divisor > 0 && numerator % divisor === 0
+            && Number.isSafeInteger(numerator / divisor)
+            ? String(numerator / divisor) : ""
         root.selectedOffer = offerId.text
         root.selectedExpiry = Number(offer.expires_at_unix_seconds ?? 0) > 0
             ? new Date(Number(offer.expires_at_unix_seconds) * 1000).toLocaleTimeString(Qt.locale(), "HH:mm") : "—"
         root.statusMode = "success"
         root.statusTitle = "Newest offer selected"
-        root.statusDetail = "Signature verified · exact terms filled automatically"
+        root.statusDetail = "Signature and live Chat address verified · connecting automatically"
+        root.run(root.backend.connectOffer(makerIdentity.text, offerId.text),
+            "Connecting the selected Maker", function(connection) {
+                root.chatState = String(connection.state ?? "online")
+                root.statusMode = connection.session_bound === true ? "success" : "working"
+                root.statusTitle = connection.session_bound === true
+                    ? "Offer selected · private Chat connected"
+                    : "Offer selected · conversation starting"
+                root.statusDetail = "The signed Maker address was resolved from the Delivery broadcast"
+            })
     }
 
     function browse() {
@@ -631,9 +651,11 @@ Item {
 
     function initiate() {
         root.run(root.backend.initiate(
-            "taker-ui-initiate-001", offerId.text, pair.currentText,
+            "taker-ui-initiate-" + envelopeDigest.text.slice(0, 32),
+            offerId.text, pair.currentText,
             direction.currentText, makerIdentity.text, envelopeDigest.text,
-            foreignUnits.text, lezUnits.text), "Securing the swap agreement", function(result) {
+            foreignUnits.text, lezUnits.text, root.selectedAnnouncementBase64),
+            "Securing the swap agreement", function(result) {
                 var swap = result.swap ?? result
                 root.currentSwap = String(swap.swap_id ?? swap.id ?? "")
                 root.currentState = String(swap.state ?? swap.swap_state ?? "not_activated")
@@ -1399,8 +1421,8 @@ Item {
                 }
 
                 GridLayout {
-                    // Non-Bitcoin routes are parked while the M3 demo is BTC-only.
-                    visible: false
+                    // Authenticated cross-pair offer discovery remains available
+                    // below the primary Bitcoin desk for the complete Basecamp PoC.
                     Layout.fillWidth: true
                     columns: width > 1040 ? 2 : 1
                     columnSpacing: 16
