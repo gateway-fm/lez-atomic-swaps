@@ -1170,7 +1170,7 @@ code {
 
     <section class="slide seq-slide" data-title="Taker sells BTC" data-duration="9">
       <header class="slide-header">
-        <p class="eyebrow purple">M3 · SWAP ALGORITHM · DIRECTION A</p>
+        <p class="eyebrow purple">M3 · SWAP ALGORITHM · DIRECTION A · LEZ → BTC</p>
         <h2>Taker sells BTC</h2>
       </header>
       <div class="seq-diagram swap-seq">
@@ -1267,7 +1267,7 @@ code {
 
     <section class="slide seq-slide" data-title="Taker sells LEZ" data-duration="9">
       <header class="slide-header">
-        <p class="eyebrow purple">M3 · SWAP ALGORITHM · DIRECTION B</p>
+        <p class="eyebrow purple">M3 · SWAP ALGORITHM · DIRECTION B · BTC → LEZ</p>
         <h2>Taker sells LEZ</h2>
       </header>
       <div class="seq-diagram swap-seq">
@@ -1355,7 +1355,7 @@ code {
         </div>
       </div>
       <div class="dir-table">
-          <div class="dir-row head"><span></span><b>Direction A · Taker sells BTC</b><b>Direction B · Taker sells LEZ</b></div>
+          <div class="dir-row head"><span></span><b>A · Taker sells BTC · LEZ → BTC</b><b>B · Taker sells LEZ · BTC → LEZ</b></div>
           <div class="dir-row"><span>Taker funds</span><b class="btc">Bitcoin</b><b class="lez">LEZ</b></div>
           <div class="dir-row"><span>Maker funds</span><b class="lez">LEZ</b><b class="btc">Bitcoin</b></div>
           <div class="dir-row"><span>Escrow depositor</span><b class="">Maker</b><b class="">Taker</b></div>
@@ -1364,7 +1364,7 @@ code {
           <div class="dir-row"><span>Follow-up claim on</span><b class="btc">Bitcoin</b><b class="lez">LEZ</b></div>
           <div class="dir-row"><span>Refunds earlier</span><b class="lez">LEZ · maker-funded</b><b class="btc">Bitcoin · maker-funded</b></div>
       </div>
-      <div class="atomic-note"><b>The invariant does not flip:</b> the Taker funds first, the Maker funds second, and the maker-funded leg always carries the earlier refund deadline — so whichever party moved first is always the last one able to recover. Everything else in the table follows from two match arms.</div>
+      <div class="atomic-note"><b>Arrow notation is maker-side</b> — what the offer pays out, into what it takes in. <b>The invariant does not flip:</b> the Taker funds first, the Maker funds second, and the maker-funded leg always carries the earlier refund deadline — so whichever party moved first is always the last one able to recover. Everything else in the table follows from two match arms.</div>
       <footer class="source-line">Direction · <code>btc-swap-sdk/src/sdk.rs:3161</code> · funded chain · <code>swap-core/src/lib.rs:867-879</code></footer>
     </section>
 
