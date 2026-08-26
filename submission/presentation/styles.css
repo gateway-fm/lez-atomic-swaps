@@ -833,7 +833,7 @@ code {
 
 /* ── Code x-ray slides ────────────────────────────────────────────────── */
 .xray-slide .slide-header { margin-bottom: 1.6%; }
-.xray { display: grid; grid-template-columns: 1.42fr .58fr; gap: 2.2%; min-height: 60%; }
+.xray { display: grid; grid-template-columns: 1.42fr .58fr; gap: 2.2%; min-height: 52%; }
 .xray-code { position: relative; border: 1px solid #26344a; border-radius: 16px; background: #0a0f17; overflow: hidden; }
 .xray-file { padding: .7em 1.1em; border-bottom: 1px solid #1e2a3a; color: #64738a; background: #0d131c; font: 700 clamp(8px, .62vw, 12px) "SFMono-Regular", monospace; letter-spacing: .06em; }
 .xray-code pre { margin: 0; padding: 1.15em 1.3em; color: #b8c4d3; font: clamp(8px, .69vw, 13.5px)/1.62 "SFMono-Regular", monospace; white-space: pre; overflow: hidden; }
@@ -881,13 +881,13 @@ code {
 .blame-row.pub { background: rgba(156,255,87,.06); }
 .blame-row.pub .blame-note { background: rgba(156,255,87,.05); color: #b9c8d8; border-right-color: rgba(156,255,87,.28); }
 .blame-row.pub .pub-line { color: var(--lime); font-weight: 700; }
-.xray-code.callouts pre { font-size: clamp(6px, .55vw, 10.8px); line-height: 1.62; }
+.xray-code.callouts pre { font-size: clamp(6px, .53vw, 10.4px); line-height: 1.52; }
 .xray-code .n, .xray-notes .n { display: inline-block; width: 1.55em; height: 1.55em; line-height: 1.55em; border-radius: 50%; background: rgba(157,108,255,.2); border: 1px solid rgba(157,108,255,.55); color: #d9c9ff; font: 800 .82em "SFMono-Regular", monospace; text-align: center; }
 .xray-notes.numbered { justify-content: space-between; gap: 0; }
-.xray-notes.numbered article { padding: 3.2% 5%; border-left-color: rgba(157,108,255,.45); }
+.xray-notes.numbered article { padding: 2.5% 4.6%; border-left-color: rgba(157,108,255,.45); }
 .xray-notes.numbered h3 { display: flex; align-items: center; gap: .55em; margin-bottom: .4em; font-size: clamp(10px, .82vw, 15px); }
 .xray-notes.numbered .n { flex: none; font-size: .78em; }
-.xray-notes.numbered p { font-size: clamp(8px, .64vw, 12.5px); line-height: 1.45; }
+.xray-notes.numbered p { font-size: clamp(7px, .6vw, 11.6px); line-height: 1.42; }
 
 .flow-ctx { display: flex; align-items: center; flex-wrap: wrap; gap: .55em; margin: 0 0 1.2%; color: #5f6d83; font: 700 clamp(7px, .58vw, 11px) "SFMono-Regular", monospace; letter-spacing: .06em; text-transform: uppercase; }
 .flow-ctx i { color: #35435a; font-style: normal; }

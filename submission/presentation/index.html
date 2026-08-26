@@ -397,12 +397,22 @@
         <aside class="xray-notes numbered">
           <article><h3><span class="n">1</span>Both addresses are the swap id</h3><p>Metadata at <code>pda = swap_id</code>, the vault at <code>["custody", swap_id]</code>. Nobody chooses either; both sides — and any observer — derive the same two.</p></article>
           <article><h3><span class="n">2</span>Only the depositor seeds it</h3><p>The one signer on the instruction. You cannot lock someone else's balance into a swap they never agreed to.</p></article>
-          <article><h3><span class="n">3</span>The joint key is recorded now</h3><p>The aggregate x-only key and its account are written at creation, so the claim later has something fixed to check against rather than something a caller supplies.</p></article>
+          <article><h3><span class="n">3</span>The joint key — not <em>T</em></h3><p>What is recorded is the aggregate MuSig2 key. The escrow never stores, receives or checks <em>T</em>, and has no idea an adaptor secret exists. It demands one thing: a signature under this key.</p></article>
           <article><h3><span class="n">4</span>No escrow without terms</h3><p>Zero amount, missing deadline or unbound <code>terms_hash</code> are refused. The record cannot exist in a state the claim or refund would have to interpret.</p></article>
           <article><h3><span class="n">5</span>And never self-claimable</h3><p><code>valid_claim_authority</code> requires <code>account_id != claimant</code>. A swap whose claimant could claim alone is rejected at seeding — not caught at payout.</p></article>
           <article><h3><span class="n">6</span>The vault must be empty</h3><p>A balance already at that address means the swap id has been used. Re-seeding over a live escrow is impossible.</p></article>
           <article><h3><span class="n">7</span>Written once</h3><p>Amount, deadline, both parties, custody and the claim authority land in one record and are never rewritten. Every later check reads from here.</p></article>
         </aside>
+      </div>
+      <div class="reveal-band">
+        <div class="reveal-lead"><b>So where is <em>T</em> armed?</b><span>Not in the escrow. Two places, both before this instruction runs.</span></div>
+        <div class="reveal-math">
+          <div class="rv secret"><code>agreement.adaptor_point = T</code><span>frozen in the body both<br>roles countersigned</span></div>
+          <i class="arr">→</i>
+          <div class="rv onchain"><code>AdaptorSessionContext(… , T)</code><span>the MuSig2 rounds build s′<br>against that exact T</span></div>
+          <i class="arr">→</i>
+          <div class="rv extract"><code>s′ alone is not a signature</code><span>so the escrow's demand for one<br>can only be met by adding <em>t</em></span></div>
+        </div>
       </div>
       <footer class="source-line">Seeding · <code>escrow/src/lib.rs:824-860</code> · terms gate <code>:353-370</code> · authority gate <code>:105-115</code></footer>
     </section>
@@ -413,21 +423,44 @@
         <h2>Happy path</h2>
       </header>
         <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>Taker locks BTC</span><i>→</i><span>Maker seeds the LEZ escrow</span><i>→</i><span>Taker verifies LEZ</span><i>→</i><span class="here">Taker claims LEZ</span><i>→</i><span>Maker claims BTC</span></div>
-      <div class="blame-panel">
-        <div class="xray-file">where t comes from and where it becomes public · the claiming actor calls claim_native_witnessed through the same generated client</div>
-        <div class="blame">
-          <div class="blame-row "><div class="blame-note">t is born here, inside the revealing actor's owner-private secrets. Nothing sends it.</div><pre class="blame-code"><span class="k">let</span> <span class="hl">adaptor_secret</span> = secret_key(&amp;secrets.adaptor, <span class="s">"adaptor scalar"</span>)?;</pre></div>
-          <div class="blame-row "><div class="blame-note">T = t·G. This is the only value derived from t that is ever published.</div><pre class="blame-code"><span class="k">let</span> <span class="hl">adaptor_point</span> = PublicKey::from_secret_key(&amp;secp, &amp;adaptor_secret).serialize();</pre></div>
-          <div class="blame-row "><div class="blame-note">T travels inside the agreement body and is countersigned by both roles. Now both sides know which secret opens the swap — and neither knows t but one.</div><pre class="blame-code">BtcAgreementBodyV1 { <span class="hl">adaptor_point: [u8; 33]</span>, … }</pre></div>
-          <div class="blame-row "><div class="blame-note">The escrow refuses to run unless the joint account signed the transaction. It never receives t, or any signature, as an argument.</div><pre class="blame-code"><span class="hl">#[account(signer)] aggregate_authority</span>: AccountWithMetadata,</pre></div>
-          <div class="blame-row "><div class="blame-note">…and that signer must be the key recorded at initialize.</div><pre class="blame-code"><span class="k">if</span> witnessed_account_id(&amp;x_only) != account_id
-    || account_id != aggregate_authority { <span class="k">return</span> Err(…) }</pre></div>
-          <div class="blame-row "><div class="blame-note">t is added to the pre-signature here, on the claimant's own machine. Still private.</div><pre class="blame-code"><span class="k">let</span> final_signature = <span class="hl">presignature.adapt(secret)</span>;   <span class="c">// s = s′ + t</span></pre></div>
-          <div class="blame-row "><div class="blame-note">s must verify under the joint key before it is worth submitting.</div><pre class="blame-code">verify_final_signature(context, bytes)?;</pre></div>
-          <div class="blame-row pub"><div class="blame-note">This is where t becomes public. Not as a message — folded into the signature the chain stores to prove the claim was authorised.</div><pre class="blame-code"><span class="pub-line">tx.signature = s</span>   <span class="c">// the LEZ claim, now in a block</span></pre></div>
-          <div class="blame-row "><div class="blame-note">The follower subtracts the pre-signature it has held since the signing rounds.</div><pre class="blame-code"><span class="k">let</span> extracted = <span class="hl">presignature.reveal_secret(&amp;final_signature)</span>;  <span class="c">// t = s − s′</span></pre></div>
-          <div class="blame-row "><div class="blame-note">Checked against the same T frozen two steps up. A different signature yields no scalar, never a wrong one.</div><pre class="blame-code"><span class="k">if</span> extracted.base_point_mul() != context.<span class="hl">adaptor_point_value()</span>? { <span class="k">return</span> Err(…) }</pre></div>
+      <div class="xray">
+        <div class="xray-code callouts">
+          <div class="xray-file">escrow/src/lib.rs · called by the claiming actor, which holds t</div>
+          <pre><span class="k">pub fn</span> <span class="f">claim_native_witnessed</span>(_ctx, metadata, custody,
+    <span class="a">#[account(mut)]</span> claimant: AccountWithMetadata,
+    <span class="a">#[account(signer)]</span> aggregate_authority: AccountWithMetadata,       <span class="n">1</span>
+    swap_id: [u8; 32]) -&gt; SpelResult
+{
+    <span class="k">let</span> state = validated_native_claim_state(&amp;metadata, &amp;custody, &amp;claimant,
+        swap_id, ClaimProof::AggregateWitness(aggregate_authority.account_id))?; <span class="n">2</span>
+    <span class="k">let</span> transfer = native_transfer_call(state.asset_program, custody.clone(),
+        claimant.clone(), state.amount, <span class="k">true</span>, &amp;swap_id);
+    state.status = EscrowStatus::Claimed;
+    Ok(SpelOutput::execute(…).with_timestamp_validity_window(..state.refund_at)) <span class="n">3</span>
+}
+
+<span class="k">fn</span> <span class="f">require_aggregate_witness_authority</span>(state, aggregate_authority) {
+    <span class="k">if</span> witnessed_account_id(&amp;x_only_public_key) != account_id                 <span class="n">4</span>
+        || account_id != aggregate_authority
+        || account_id == state.claimant                                       <span class="n">5</span>
+    { <span class="k">return</span> Err(custom_error(ERROR_ACCOUNT_BINDING, …)); }
+}
+
+<span class="c">// adaptor-signature/src/lib.rs — how the claimant produced that signature</span>
+<span class="k">let</span> final_signature = presignature.adapt(secret)?;       <span class="c">// s = s′ + t</span>  <span class="n">6</span>
+
+<span class="c">// …and how the follower reads t back out of the block afterwards</span>
+<span class="k">let</span> extracted = presignature.reveal_secret(&amp;final_signature)?; <span class="c">// t = s − s′</span> <span class="n">7</span></pre>
         </div>
+        <aside class="xray-notes numbered">
+          <article><h3><span class="n">1</span>The escrow takes no signature argument</h3><p>It requires the transaction itself to be signed by the aggregate account. No parameter carries <em>s</em>, and none carries <em>t</em>.</p></article>
+          <article><h3><span class="n">2</span>Bindings before cryptography</h3><p>Eight account checks run first, so a valid signature still cannot claim into the wrong account or against a drained vault.</p></article>
+          <article><h3><span class="n">3</span>Strictly before the deadline</h3><p>Consensus refuses to include this after <code>refund_at</code>. A late claim is not a race — it is not a valid transaction.</p></article>
+          <article><h3><span class="n">4</span>The signer is the key from creation</h3><p>Recomputed by hashing, not trusted from the caller. It must equal what <code>initialize</code> wrote.</p></article>
+          <article><h3><span class="n">5</span>…and it is not the claimant</h3><p>This clause forces a <em>joint</em> signature to exist on chain. Without it the claimant could sign alone and nothing would be revealed.</p></article>
+          <article><h3><span class="n">6</span>Only adding <em>t</em> makes that signature</h3><p>The claimant holds one MuSig2 partial. The pre-signature plus <em>t</em> is the only complete signature it can produce under the joint key.</p></article>
+          <article><h3><span class="n">7</span>What if the Taker refuses to reveal?</h3><p>Then it does not get paid. There is no other signature it can build: a fresh MuSig2 session would need the Maker's partial, and the Maker only ever gave a <em>pre</em>-signature. Claiming and revealing are the same act — and after <code>refund_at</code> the escrow returns the LEZ to the Maker.</p></article>
+        </aside>
       </div>
       <div class="reveal-band">
         <div class="reveal-lead"><b>Nothing is transmitted.</b><span>The Taker gets paid; the Maker reads the receipt.</span></div>
@@ -439,7 +472,7 @@
           <div class="rv extract"><code>t = s − s′</code><span>the Maker spends the<br>Bitcoin leg with it</span></div>
         </div>
       </div>
-      <footer class="source-line">Claim instruction · <code>escrow/src/lib.rs:943-973</code> · gate <code>:181-188</code> · arithmetic <code>adaptor-signature/src/lib.rs:813, 846</code></footer>
+      <footer class="source-line">Claim · <code>escrow/src/lib.rs:942-973</code> · gate <code>:167-188</code> · arithmetic <code>adaptor-signature/src/lib.rs:813, 846</code></footer>
     </section>
 
     <section class="slide xray-slide" data-title="Permissionless methods" data-duration="10">
@@ -447,19 +480,41 @@
         <p class="eyebrow purple">M3 · LEZ ESCROW DESIGN</p>
         <h2>Permissionless methods</h2>
       </header>
-      <div class="blame-panel">
-        <div class="xray-file">what an outsider can do while the maker or taker is offline</div>
-        <div class="blame">
-          <div class="blame-row pub"><div class="blame-note">No signer anywhere in the signature. Anyone holding the swap id can submit this instruction.</div><pre class="blame-code"><span class="k">pub fn</span> <span class="f">refund_native</span>(_ctx, metadata, custody,
-    <span class="hl">#[account(mut)] depositor</span>: AccountWithMetadata, swap_id)  <span class="c">// ← no signer</span></pre></div>
-          <div class="blame-row "><div class="blame-note">It still pays only the recorded depositor. A stranger who submits it spends the fee and moves nobody else's money.</div><pre class="blame-code"><span class="k">if</span> … || <span class="hl">state.depositor != depositor.account_id</span> || … { <span class="k">return</span> Err(…) }</pre></div>
-          <div class="blame-row "><div class="blame-note">Both addresses come from the swap id, so a watchtower needs no registry, no API key and no cooperation from either party.</div><pre class="blame-code">pda = arg(<span class="s">"swap_id"</span>)   ·   pda = [literal(<span class="s">"custody"</span>), arg(<span class="s">"swap_id"</span>)]</pre></div>
-          <div class="blame-row "><div class="blame-note">The window bounds what an outsider can do: never before the deadline, so a live swap cannot be pre-empted.</div><pre class="blame-code">.with_timestamp_validity_window(<span class="hl">state.refund_at..</span>)</pre></div>
-          <div class="blame-row "><div class="blame-note">The claim is the exception — it demands the joint signature, so no outsider can push funds to the claimant early or late.</div><pre class="blame-code"><span class="a">#[account(signer)]</span> aggregate_authority: AccountWithMetadata,</pre></div>
-          <div class="blame-row "><div class="blame-note">Taker offline after the deadline: anyone recovers its deposit for it. Maker daemon down: the same. Neither outage strands funds, because the recovering transaction needs nothing either party holds.</div><pre class="blame-code"><span class="c">// outage ⇒ someone else submits the identical transaction</span></pre></div>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>one or both legs locked</span><i>→</i><span>no reveal</span><i>→</i><span>deadline passes</span><i>→</i><span class="here">refund</span></div>
+      <div class="xray">
+        <div class="xray-code callouts">
+          <div class="xray-file">escrow/src/lib.rs · refund_native — the whole instruction, as an outsider would call it</div>
+          <pre><span class="k">pub fn</span> <span class="f">refund_native</span>(_ctx: ProgramContext,
+    <span class="a">#[account(mut, owner = self_program_id, pda = arg("swap_id"))]</span> metadata, <span class="n">1</span>
+    <span class="a">#[account(mut, pda = [literal("custody"), arg("swap_id")])]</span> custody,
+    <span class="a">#[account(mut)]</span> depositor: AccountWithMetadata,    <span class="c">// ← no signer</span>    <span class="n">2</span>
+    swap_id: [u8; 32]) -&gt; SpelResult
+{
+    <span class="k">let mut</span> state = read_metadata(&amp;metadata)?;
+    require_funded(&amp;state)?;
+    <span class="k">if</span> state.swap_id != swap_id
+        || state.asset_program != state.custody_program
+        || state.depositor != depositor.account_id                            <span class="n">3</span>
+        || state.custody != custody.account_id
+        || custody.account.balance != state.amount
+    { <span class="k">return</span> Err(custom_error(ERROR_ACCOUNT_BINDING,
+        <span class="s">"native refund account binding mismatch"</span>)); }
+
+    <span class="k">let</span> transfer = native_transfer_call(state.asset_program, custody.clone(),
+        depositor.clone(), state.amount, <span class="k">true</span>, &amp;swap_id);
+    state.status = EscrowStatus::Refunded;
+    Ok(SpelOutput::execute(…).with_timestamp_validity_window(state.refund_at..)) <span class="n">4</span>
+}</pre>
         </div>
+        <aside class="xray-notes numbered">
+          <article><h3><span class="n">1</span>No registry to consult</h3><p>Both addresses derive from the swap id, so a watchtower computes them itself — no API key, no index, no cooperation from either party.</p></article>
+          <article><h3><span class="n">2</span>No signer anywhere</h3><p>The only instruction in the program without <code>#[account(signer)]</code>. Anyone holding the swap id can submit it.</p></article>
+          <article><h3><span class="n">3</span>Still bound to the depositor</h3><p>Permissionless is not unrestricted. A stranger who submits it pays the fee and moves nobody else's money.</p></article>
+          <article><h3><span class="n">4</span>And only after the deadline</h3><p>Consensus will not include it earlier, so an outsider cannot pre-empt a live swap. The claim stays closed to outsiders — it needs the joint signature.</p></article>
+          <article><h3><span class="n">5</span>What that survives</h3><p>Taker offline: anyone recovers its deposit for it. Maker daemon down: the same. Neither outage strands funds, because the recovering transaction needs nothing either party holds.</p></article>
+        </aside>
       </div>
-      <footer class="source-line">Signer surface · <code>escrow/src/lib.rs:977-1021</code> · windows <code>:973, 1021</code></footer>
+      <footer class="source-line">Refund instruction · <code>escrow/src/lib.rs:977-1021</code> · claim signer <code>:949</code></footer>
     </section>
 
     <section class="slide xray-slide" data-title="Refunds" data-duration="10">
@@ -467,21 +522,40 @@
         <p class="eyebrow purple">M3 · LEZ ESCROW DESIGN</p>
         <h2>Refunds</h2>
       </header>
-      <div class="blame-panel">
-        <div class="xray-file">which refunds exist, and how each one is made</div>
-        <div class="blame">
-          <div class="blame-row "><div class="blame-note">LEZ, after the deadline. Consensus will not include it earlier, and will not include a claim later — the two windows tile the timeline.</div><pre class="blame-code"><span class="hl">.with_timestamp_validity_window(state.refund_at..)</span>   <span class="c">// refund</span>
-.with_timestamp_validity_window(..state.refund_at)    <span class="c">// claim</span></pre></div>
-          <div class="blame-row "><div class="blame-note">The whole recorded amount goes back to the depositor. There is no partial refund and no fee taken out of it.</div><pre class="blame-code">native_transfer_call(state.asset_program, custody,
-    <span class="hl">depositor</span>, <span class="hl">state.amount</span>, <span class="k">true</span>, &amp;swap_id)</pre></div>
-          <div class="blame-row "><div class="blame-note">One-way. Replaying the instruction is not a second refund.</div><pre class="blame-code">state.status = <span class="hl">EscrowStatus::Refunded</span>;</pre></div>
-          <div class="blame-row "><div class="blame-note">Bitcoin, after a relative block delay: the funder's own key, alone, through the script path. A different mechanism for the same job.</div><pre class="blame-code">Builder::new().push_sequence(delay).push_opcode(<span class="hl">OP_CSV</span>)
-    .push_opcode(OP_DROP).push_x_only_key(&amp;<span class="hl">refund_key</span>).push_opcode(OP_CHECKSIG)</pre></div>
-          <div class="blame-row "><div class="blame-note">Only the first leg was ever funded: it refunds on its own deadline, with nothing on the other chain to unwind.</div><pre class="blame-code"><span class="c">// first-lock refund — the second leg never existed</span></pre></div>
-          <div class="blame-row pub"><div class="blame-note">Both legs funded, no reveal: the leg funded second carries the earlier deadline, so it recovers first and the party who moved first is always last out.</div><pre class="blame-code"><span class="c">// ordered refunds — deadlines staggered in the agreement, not in the escrow</span></pre></div>
+        <div class="flow-ctx"><span>agreement countersigned</span><i>→</i><span>one or both legs locked</span><i>→</i><span>no reveal</span><i>→</i><span>deadline passes</span><i>→</i><span class="here">refund</span></div>
+      <div class="xray">
+        <div class="xray-code callouts">
+          <div class="xray-file">the two refund mechanisms, one per chain</div>
+          <pre><span class="c">// LEZ — the windows tile the timeline; consensus enforces both ends.</span>
+Ok(SpelOutput::execute(…).with_timestamp_validity_window(<span class="hl">..state.refund_at</span>)) <span class="c">// claim</span>
+Ok(SpelOutput::execute(…).with_timestamp_validity_window(<span class="hl">state.refund_at..</span>)) <span class="c">// refund</span> <span class="n">1</span>
+
+<span class="c">// The whole recorded amount, back to the recorded depositor.</span>
+<span class="k">let</span> transfer = native_transfer_call(state.asset_program, custody.clone(),
+    <span class="hl">depositor.clone()</span>, <span class="hl">state.amount</span>, <span class="k">true</span>, &amp;swap_id);                  <span class="n">2</span>
+state.status = EscrowStatus::Refunded;                                       <span class="n">3</span>
+
+<span class="c">// refund_at is fixed at initialize and never rewritten.</span>
+<span class="k">pub</span> refund_at: u64,      <span class="c">// EscrowMetadata field</span>
+<span class="k">if</span> … || <span class="hl">refund_at == 0</span> { <span class="k">return</span> Err(ERROR_INVALID_TERMS) }                <span class="n">4</span>
+
+<span class="c">// ── Bitcoin, btc-swap-sdk/src/p2tr.rs — script path of the same output</span>
+<span class="k">let</span> refund_script = Builder::new()
+    .push_sequence(refund_delay.bitcoin_sequence())
+    .push_opcode(<span class="hl">OP_CSV</span>).push_opcode(OP_DROP)                             <span class="n">5</span>
+    .push_x_only_key(&amp;<span class="hl">refund_key</span>.0).push_opcode(OP_CHECKSIG)
+    .into_script();                                                         <span class="n">6</span></pre>
         </div>
+        <aside class="xray-notes numbered">
+          <article><h3><span class="n">1</span>Disjoint and exhaustive</h3><p><code>..refund_at</code> and <code>refund_at..</code> leave no overlap and no gap, so the LEZ side has no claim-versus-refund race at all.</p></article>
+          <article><h3><span class="n">2</span>Full amount, one recipient</h3><p>No partial refunds exist. Exactly what was recorded goes back to exactly the account that funded it.</p></article>
+          <article><h3><span class="n">3</span>One-way</h3><p>Replaying the instruction is not a second refund.</p></article>
+          <article><h3><span class="n">4</span>The deadline cannot move</h3><p>Validated non-zero at creation and never rewritten. Neither party can extend or shorten it afterwards.</p></article>
+          <article><h3><span class="n">5</span>Bitcoin: a relative delay</h3><p><code>OP_CSV</code> counts blocks from the funding output, not wall-clock. Different mechanism, same job.</p></article>
+          <article><h3><span class="n">6</span>…and a single key</h3><p>The funder's own refund key signs alone. Revealing this leaf also reveals the control block, which is why the cooperative path never touches it.</p></article>
+        </aside>
       </div>
-      <footer class="source-line">LEZ refund · <code>escrow/src/lib.rs:977-1021</code> · Bitcoin leaf · <code>btc-swap-sdk/src/p2tr.rs:234-240</code></footer>
+      <footer class="source-line">LEZ refund · <code>escrow/src/lib.rs:973, 1021</code> · Bitcoin leaf · <code>btc-swap-sdk/src/p2tr.rs:234-240</code></footer>
     </section>
 
     <section class="slide xray-slide" data-title="P2TR custody" data-duration="9">
