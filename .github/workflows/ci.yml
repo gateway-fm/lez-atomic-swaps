@@ -18,7 +18,7 @@ jobs:
     name: shell, workflow, Dockerfile, and Compose quality
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
@@ -35,7 +35,7 @@ jobs:
     name: Runtime findings fail-hard; classified upstream findings remain visible
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
@@ -78,7 +78,7 @@ jobs:
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
       PUPPETEER_SKIP_DOWNLOAD: "true"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
@@ -150,7 +150,7 @@ jobs:
     name: dependency vulnerabilities, licenses, bans, and sources
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
@@ -215,7 +215,7 @@ jobs:
       RAPIDSNARK_ARCHIVE_URL: https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip
       RAPIDSNARK_LIB_DIR: /tmp/lez-v02-rapidsnark-${{ github.run_id }}-${{ github.run_attempt }}/rapidsnark-linux-x86_64-pic-v0.0.8/lib
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
@@ -276,7 +276,7 @@ jobs:
       LEZ_V02_ARTIFACT_TARGET_DIR: /tmp/lez-v02-provisional-artifact-target-${{ github.run_id }}-${{ github.run_attempt }}
       LEZ_V02_TOOL_DIR: /tmp/lez-v02-provisional-tools-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
@@ -296,7 +296,7 @@ jobs:
       BITCOIN_CORE_E2E_KEEP_RUNNING: "1"
       BITCOIN_CORE_E2E_REQUIRE_CLEAN: "1"
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
