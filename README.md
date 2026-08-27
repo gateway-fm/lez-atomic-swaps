@@ -143,7 +143,9 @@ cargo metadata --locked --no-deps
 After its pinned container image and dependency cache are available, the
 offline suite runs in a one-off Linux container with Docker networking disabled.
 That is the supported path for Linux-only process hardening on macOS and does
-not touch the long-running demo stack.
+not touch the long-running demo stack. The cached image must match Docker's
+architecture; set `LEZ_OFFLINE_RUST_IMAGE` to a cached native Rust 1.96.0 image
+when using a custom image cache.
 
 Useful focused gates:
 

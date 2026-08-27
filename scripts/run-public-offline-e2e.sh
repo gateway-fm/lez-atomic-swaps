@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 offline_image="${LEZ_OFFLINE_RUST_IMAGE:-rust:1.96.0}"
 cargo_registry="${LEZ_OFFLINE_CARGO_REGISTRY:-${CARGO_HOME:-${HOME}/.cargo}/registry}"
+allow_emulation="${LEZ_OFFLINE_ALLOW_EMULATION:-false}"
 
 fail() {
   echo "offline E2E failed: $*" >&2
@@ -13,6 +14,20 @@ fail() {
 command -v docker >/dev/null 2>&1 || fail "Docker is required"
 docker image inspect "$offline_image" >/dev/null 2>&1 \
   || fail "cached image not found (the test never pulls): ${offline_image}"
+
+normalize_arch() {
+  case "$1" in
+    aarch64) echo "arm64" ;;
+    x86_64) echo "amd64" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+image_arch="$(normalize_arch "$(docker image inspect "$offline_image" --format '{{.Architecture}}')")"
+docker_arch="$(normalize_arch "$(docker info --format '{{.Architecture}}')")"
+if [[ "$image_arch" != "$docker_arch" && "$allow_emulation" != "true" ]]; then
+  fail "cached image ${offline_image} is ${image_arch}, but Docker is ${docker_arch}; use a cached native image via LEZ_OFFLINE_RUST_IMAGE or explicitly set LEZ_OFFLINE_ALLOW_EMULATION=true"
+fi
 [[ -d "$cargo_registry/cache" ]] \
   || fail "cached Cargo archives not found: ${cargo_registry}/cache"
 [[ -d "$cargo_registry/index" ]] \
@@ -53,9 +68,25 @@ docker run --rm --pull never --name "$container_name" \
   -w /workspace \
   "$offline_image" /bin/bash -c '
     set -euo pipefail
-    toolchain_dir="$(find /usr/local/rustup/toolchains -mindepth 1 -maxdepth 1 -type d -name "1.96.0-*" -print -quit)"
-    test -n "$toolchain_dir"
-    export PATH="$toolchain_dir/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    toolchain_dir=""
+    for rustup_root in "${RUSTUP_HOME:-}" "${HOME:-}/.rustup" /usr/local/rustup; do
+      test -n "$rustup_root" || continue
+      candidate="$(find "$rustup_root/toolchains" -mindepth 1 -maxdepth 1 -type d -name "1.96.0-*" -print -quit 2>/dev/null || true)"
+      if test -n "$candidate"; then
+        toolchain_dir="$candidate"
+        break
+      fi
+    done
+    test -n "$toolchain_dir" || {
+      echo "offline E2E failed: rustc 1.96.0 is not installed in ${offline_image}" >&2
+      exit 1
+    }
+    export PATH="$toolchain_dir/bin:$PATH"
+    rustc_version="$(rustc --version)"
+    case "$rustc_version" in
+      "rustc 1.96.0 "*) ;;
+      *) echo "offline E2E failed: expected rustc 1.96.0, got ${rustc_version}" >&2; exit 1 ;;
+    esac
     cargo test --locked --offline -p lez-maker-node \
       --lib \
       --test btc_chat_process \
