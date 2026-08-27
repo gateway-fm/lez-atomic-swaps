@@ -106,7 +106,7 @@ require_fixed 'ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz' "$ripgrep_instal
 require_fixed '4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e' "$ripgrep_installer"
 require_fixed 'npm audit --audit-level=moderate' "$ci_workflow"
 require_fixed 'npm run audit:licenses' "$ci_workflow"
-require_fixed 'actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444' "$ci_workflow"
+require_fixed 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020' "$ci_workflow"
 require_fixed 'node-version: 24.18.0' "$ci_workflow"
 require_fixed 'gitleaks_8.30.1_linux_x64.tar.gz' "$public_workflow"
 require_fixed '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' "$public_workflow"
