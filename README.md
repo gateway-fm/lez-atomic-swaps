@@ -1,184 +1,196 @@
-# LEZ ⇄ Bitcoin
+# LEZ Atomic Swaps
 
-**Bilateral atomic swaps with Taproot adaptor signatures, ordered refunds, and
-an operator-facing Logos Basecamp flow.** No custodian, wrapped asset, or
-cross-chain bridge controls settlement.
+Swap native Bitcoin and LEZ without handing settlement to a custodian, wrapped
+asset, or bridge operator.
 
-`M3+ submission` · `Bitcoin Core regtest` · `LEZ v0.2 private devnet` ·
-`Basecamp Maker + Taker mini-apps`
+This repository contains the protocol, Rust services, local chains, Maker and
+Taker Basecamp apps, and reproducible evidence for a complete BTC → LEZ swap.
+It uses Taproot/MuSig2 adaptor signatures on Bitcoin, witnessed escrow on LEZ,
+signed offer discovery over Logos Delivery, and private negotiation over Logos
+Chat.
 
-[![LEZ and Bitcoin M1, M3, and M6 submission presentation](media/screenshots/lez-btc-m1-m3-m6-submission-cover.png)](media/lez-btc-m1-m3-m6-submission.html)
+[**Watch the 1:53 product walkthrough**](media/lez-btc-ui-swap-demo.mp4) ·
+[**Open the interactive deck**](media/lez-btc-m1-m3-m6-submission.html) ·
+[**Get the latest release**](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest) ·
+[**Read the protocol diagrams**](docs/diagrams.md)
 
-*[Open the single-file HTML presentation →](media/lez-btc-m1-m3-m6-submission.html) ·
-[Download the PDF deck →](media/lez-btc-m1-m3-m6-submission.pdf) ·
-[Watch the 1:53 actual UI swap →](media/lez-btc-ui-swap-demo.mp4) ·
-[Watch the 1:42 narrated product cut →](media/lez-btc-rfp003-proposal-vertical.mp4)*
+[![Maker and Taker complete a BTC-to-LEZ swap](media/screenshots/lez-btc-m1-m3-m6-submission-cover.png)](media/lez-btc-ui-swap-demo.mp4)
 
-The fresh actual-UI run has two Bitcoin effects, three LEZ effects,
-reconciled wallet balances, and zero replay submissions. Its
-[secret-safe evidence record](docs/evidence/m3-btc-ui-run-m5arm-0825151914.json)
-contains the exact public transaction and block identities shown in the media.
-The presentation screenshots and narrated cut remain bound to the separate
-[`m5arm-0820121736` record](docs/evidence/m3-btc-ui-run-m5arm-0820121736.json).
+> **Project status:** the private-local BTC/LEZ product path works end to end
+> and is covered by real-chain, recovery, concurrency, UI, and offline tests.
+> Public-network operation, production key management, and an independent
+> cryptographic audit are still in progress.
 
-## The product flow
+## What works today
 
-| Maker publishes wallet-owned liquidity | Taker discovers and accepts an offer |
+| Product capability | Current implementation |
 |---|---|
-| ![Maker offer desk](media/screenshots/maker-offer-desk.png) | ![Taker market](media/screenshots/taker-market.png) |
+| Native BTC ↔ LEZ settlement | Bitcoin Core regtest plus a private LEZ v0.2 devnet; no wrapped asset |
+| Maker liquidity | Wallet-owned offers, inventory, withdrawal, active swaps, and history |
+| Taker flow | Authenticated discovery, offer acceptance, progress, and role-owned actions |
+| Network transport | Signed offer broadcasts over Logos Delivery and private per-Taker negotiation over Logos Chat |
+| Atomic completion | Taproot/MuSig2 adaptor flow reveals the value needed to complete the Bitcoin leg |
+| Recovery | Ordered two-lock refunds, first-lock-only recovery, durable replay, and fresh-process continuation |
+| Evidence | Explorer-linked transaction identities, balance reconciliation, fees, and replay counters |
 
-For the direction shown in the demo, the Taker pays **0.01 BTC** for **1,000
-LEZ**:
+The recorded product run completes with **two Bitcoin effects, three LEZ
+effects, reconciled wallet balances, and zero replay submissions**. Its
+[secret-safe evidence record](docs/evidence/m3-btc-ui-run-m5arm-0825151914.json)
+contains the public transaction and block identities shown in the walkthrough.
+
+## Run the product locally
+
+The packaged stack currently targets arm64, including Apple Silicon and arm64
+Linux. It requires Docker with Compose; the first build downloads pinned
+dependencies and images.
+
+```sh
+git clone https://github.com/gateway-fm/lez-atomic-swaps.git
+cd lez-atomic-swaps/deploy
+./scripts/up.sh
+./scripts/prepare-btc-m3-demo.sh
+```
+
+Open the Basecamp desktop on macOS:
+
+```sh
+open vnc://127.0.0.1:5901
+```
+
+Or connect any VNC client to `127.0.0.1:5901`. The default password is
+`lezswap`; override it with `VNC_PASSWORD` before starting the stack.
+
+The local product also exposes:
+
+| Surface | Address |
+|---|---|
+| Bitcoin explorer | <http://127.0.0.1:3002> |
+| LEZ explorer and evidence | <http://127.0.0.1:3003/#/evidence> |
+| Maker owner RPC | `/run/lez/maker.sock` inside the stack |
+| Taker owner service | owner-only Unix socket inside the stack |
+
+### Complete a swap
+
+1. In **LEZ / BTC Maker**, select a wallet and publish an offer.
+2. In **LEZ / BTC Taker**, select a wallet and take that authenticated offer.
+3. Follow the four role-owned actions: **Lock BTC → Fund LEZ → Claim LEZ →
+   Claim Bitcoin**.
+4. Open the local proof and inspect the five chain effects, balances, and fees.
+
+Each dashboard exposes only the action owned by that role. The standing local
+chains persist between swaps, so balances and history accumulate like they do
+on long-lived networks.
+
+Verify the running product without starting another swap:
+
+```sh
+./scripts/verify-all.sh
+docker compose --env-file runtime/runtime.env ps
+docker compose --env-file runtime/runtime.env logs --tail=200 \
+  maker-node taker-service btc-demo-controller
+```
+
+Stop it with `./scripts/down.sh`. Add `--wipe` only when you intentionally want
+to remove generated local chain and wallet state.
+
+## How the swap becomes atomic
+
+For the direction shown in the walkthrough, the Taker buys **1,000 LEZ** for
+**0.01 BTC**:
 
 1. The Taker locks Bitcoin into the agreed Taproot output.
-2. After that lock is confirmed, the Maker funds the LEZ escrow.
-3. The Taker claims LEZ with the final signature produced from the verified
-   LEZ adaptor pre-signature.
-4. The Maker combines that canonical final signature with its retained exact
-   pre-signature, parity-aware extracts and point-checks `t`, and uses `t` to
-   complete the Bitcoin claim without another Taker message.
+2. After the Bitcoin lock is canonical, the Maker funds the LEZ escrow.
+3. The Taker claims LEZ using the verified adaptor pre-signature path.
+4. The canonical LEZ claim reveals the value the Maker needs to complete the
+   Bitcoin signature and claim BTC—without another Taker message.
 
-The same construction supports the reverse economic direction. The party in
-the Taker role always funds the first leg; the Maker funds the second leg and
-receives the earlier refund deadline.
+The reverse economic direction uses the same role ordering. The Taker funds the
+first leg; the Maker funds the second and receives the earlier refund deadline.
+If the happy path stops, the protocol uses canonical chain observations and
+ordered refund windows so the second leg resolves before the first.
 
-## Proof, not a simulated receipt
+```mermaid
+flowchart LR
+    M[Maker Basecamp] --> MD[Maker daemon]
+    T[Taker Basecamp] --> TS[Taker service]
+    MD -- signed offers --> D[Logos Delivery]
+    D -- authenticated discovery --> TS
+    MD <-->|private negotiation| C[Logos Chat]
+    C <-->|private negotiation| TS
+    MD --> R[Durable swap state]
+    TS --> R
+    R --> B[Bitcoin Core]
+    R --> L[LEZ v0.2]
+    B --> E[Explorers and evidence]
+    L --> E
+```
 
-The completed screen is backed by public transaction identities from the two
-local chains. The UI links directly to both explorers and to the exported
-evidence record.
+Delivery and Chat move discovery and negotiation messages. Rust signatures,
+role contributions, countersigned agreements, chain identities, durable
+effects, and replay authority remain the protocol source of truth. Chat
+sessions intentionally live only as long as their apps; accepted agreements
+and settlement state survive restarts.
 
-| Bitcoin P2TR claim | LEZ revealing claim | Evidence view |
-|---|---|---|
-| ![Bitcoin claim in the regtest explorer](media/screenshots/bitcoin-claim-explorer.png) | ![LEZ claim in the local explorer](media/screenshots/lez-claim-explorer.png) | ![LEZ claim evidence](media/screenshots/lez-claim-evidence.png) |
+## Build and test
 
-The evidence exporter fails closed unless the source is a passed Bitcoin run
-completed at revision 4, contains exactly two Bitcoin and three LEZ effects,
-and discloses no private material. It carries the source replay count into the
-exported record; the interactive controller separately validates and attaches
-wallet-balance and fee reconciliation.
-
-## Source layout
-
-`main` is the public default branch and contains the complete buildable source
-tree directly. The Rust workspace starts at [`Cargo.toml`](Cargo.toml), with
-protocol and application crates under [`crates/`](crates/), isolated upstream
-compatibility packages under [`compat/`](compat/), Basecamp applications under
-[`apps/`](apps/), and integration tests under [`tests/`](tests/).
-
-No source reconstruction or external repository checkout is required:
+Inspect the complete Rust workspace directly from a fresh checkout:
 
 ```sh
 cargo metadata --locked --no-deps
 ./scripts/run-public-offline-e2e.sh
 ```
 
-The offline E2E runs the Linux-only process-hardening code in a one-off Docker
-container with networking disabled, including on macOS. See the
-[contribution guide](CONTRIBUTING.md) for native-Linux and focused security
-gates.
+After its pinned container image and dependency cache are available, the
+offline suite runs in a one-off Linux container with Docker networking disabled.
+That is the supported path for Linux-only process hardening on macOS and does
+not touch the long-running demo stack.
 
-## Run the local stack
-
-The runnable lane brings up Bitcoin Core 31.1 regtest, the LEZ v0.2 stack,
-explorers, the real Maker daemon and Taker service, the M3 actor runner, and the
-Basecamp UI:
+Useful focused gates:
 
 ```sh
-cd deploy
-./scripts/up.sh
-./scripts/prepare-btc-m3-demo.sh
+./scripts/verify-public-repository.sh
+./scripts/test-v0-1-1-release-media-contract.sh
+./scripts/check-bitcoin-core-isolation.sh
+./scripts/check-lez-v02-docker-isolation.sh
+npm run test:m6:basecamp:contract
 ```
 
-Then open:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for formatting, Clippy, dependency,
+licence, architecture, DCO, and security-review requirements.
 
-- Basecamp: `vnc://127.0.0.1:5901` (default password `lezswap`)
-- Bitcoin explorer: <http://127.0.0.1:3002>
-- LEZ explorer and evidence: <http://127.0.0.1:3003/#/evidence>
+## Find your way around
 
-Useful inspection commands:
-
-```sh
-docker compose --env-file runtime/runtime.env ps
-docker compose --env-file runtime/runtime.env logs --tail=200 \
-  maker-node taker-service btc-demo-controller
-jq . full-swap/evidence-m5arm-08180005.json
-./scripts/verify-all.sh
-```
-
-Stop the stack with `./scripts/down.sh`; pass `--wipe` only when you intend to
-remove its generated local state.
-
-## Refunds and atomicity
-
-This is a conditional cross-chain protocol, not one ACID transaction spanning
-two ledgers.
-
-- Before the first lock, either party can stop with no funds exposed.
-- If the Taker's first lock is the only lock, refund authority requires the
-  signed Maker-lock cutoff, two matching fresh observations of canonical
-  second-lock absence, and a fresh canonical, unspent, eligible first-lock
-  check. Pending, ambiguous, moving-tip, or late-present second locks fail
-  closed.
-- If both locks exist and no claim reveals `t`, the Maker refunds the second
-  leg first; the Taker may refund the first leg only after that exact earlier
-  refund is canonical and the later bound is reached.
-- Once the revealing claim is canonical, the Maker combines the canonical
-  final signature with the retained pre-signature, point-checks `t`, and must
-  obtain follow-up inclusion before the later refund boundary.
-
-Safety depends on the documented confirmation, fee-inclusion, key-secrecy,
-state-durability, chain-finality, and reaction-window assumptions. Near or
-after a refund boundary, a Bitcoin key-path claim and refund can be competing
-spends; the protocol's safety margin is designed to keep the normal flow out
-of that race. See the [success and refund diagrams](docs/diagrams.md) and the
-[M3 security mapping](docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md).
-
-## Submission package
-
-This branch presents three milestone areas as one reviewable vertical slice:
-
-| Area | What is included |
+| Path | What lives there |
 |---|---|
-| **M1 foundation** | [Accepted design packet](docs/milestone-1/README.md), threat model, primitive verification, SDK surface, parameter profiles, and ADRs 0001–0013 |
-| **M3 Bitcoin** | [Milestone review](docs/milestone-3-review.md), operator guide, security ADRs, both-direction happy paths and ordered refunds, first-lock-only recovery, one post-reveal fresh-process Maker continuation, and one opposite-direction two-swap overlap run |
-| **M6 experience** | Existing Basecamp Maker/Taker packages, clickable prototypes, [prototype review](docs/m6-prototype-review.md), and public evidence packets |
+| [`crates/`](crates/) | Protocol types, Bitcoin swap SDK, durable stores, Maker daemon, Taker service, and runners |
+| [`compat/`](compat/) | Isolated compatibility packages for pinned LEZ interfaces |
+| [`apps/basecamp/`](apps/basecamp/) | Buildable Maker and Taker Logos Basecamp packages |
+| [`apps/m6-prototypes/`](apps/m6-prototypes/) | Fast, no-effects product journey prototypes |
+| [`deploy/`](deploy/) | Dockerized chains, services, explorers, UI, evidence, and operator scripts |
+| [`tests/`](tests/) | Local-chain, UI, transport, security, and integration tests |
+| [`docs/architecture/`](docs/architecture/) | Protocol decisions, safety arguments, and operational design |
+| [`docs/evidence/`](docs/evidence/) | Secret-safe records from real local runs |
+| [`submission/`](submission/) | M1/M3/M6 reviewer map, evidence index, reproduction guide, and release checksums |
+| [`media/`](media/) | Interactive deck, PDF, walkthrough, captions, and screenshots |
 
-The live BTC demo also integrates M5-derived daemon, service, persistence, and
-runner components. It is not presented here as proof that the complete M5
-scope is delivered. Start with the reviewer-facing
-[submission pack](submission/README.md), then see
-[the `v0.1.1` release evidence map](submission/RELEASE-v0.1.1.md) and
-[submission scope and provenance](docs/submission.md) for exact source
-checkpoints and nonclaims.
+The current public release covers the M1 protocol foundation, the M3 BTC/LEZ
+vertical slice, and the M6 Maker/Taker experience. Additional asset protocols
+and public-network operations are being developed separately and will return in
+their own reviewed releases.
 
-## Scope boundary
+## Contributing and security
 
-The video demonstrates the **M3 BTC happy path through the branch's current
-Basecamp BTC UI** on Bitcoin regtest and a private LEZ devnet. The repository
-evidence additionally covers both economic directions, two-lock refunds,
-first-lock recovery, one fresh-process continuation after reveal, and one
-opposite-direction two-swap overlap run. This package does **not** claim a
-public-network deployment, production custody, independent audit, M2 Zcash,
-M4 Monero, complete M5 operations, or M7 mainnet readiness.
+Issues and focused pull requests are welcome. Behaviour changes should name the
+affected Maker, Taker, operator, or recovery journey and include a regression
+test. All commits require a [Developer Certificate of Origin](https://developercertificate.org/)
+sign-off; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Repository map
-
-| Path | Purpose |
-|---|---|
-| [`apps/basecamp/`](apps/basecamp/) | Maker and Taker QML packages over owner-local RPC |
-| [`apps/m6-prototypes/`](apps/m6-prototypes/) | Clickable, no-effects journey prototypes |
-| [`deploy/`](deploy/) | Dockerized chains, services, explorers, UI, evidence, and verification |
-| [`docs/milestone-1/`](docs/milestone-1/) | M1 design and review packet |
-| [`docs/evidence/`](docs/evidence/) | Public M3/M6 records plus the M2 prerequisite records referenced by M3 |
-| [`docs/architecture/`](docs/architecture/) | Milestone ADRs and security arguments |
-| [`media/`](media/) | Proposal video and secret-free screenshots from real local runs |
-| [`submission/`](submission/) | Reviewer map, milestone/evidence indexes, limitations, HTML deck, and render recipe |
+Please do not open a public issue for a suspected vulnerability. Follow the
+private process in [SECURITY.md](SECURITY.md).
 
 ## License
 
-Project-authored source and media are available under MIT OR Apache-2.0. The
-root [licence notice](LICENSE) explains the choice; complete terms are in
-[LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE). Third-party
-material, including the demo music, remains under the terms recorded in
+Project-authored source and media are available under MIT OR Apache-2.0. See
+[LICENSE](LICENSE), [LICENSE-MIT](LICENSE-MIT),
+[LICENSE-APACHE](LICENSE-APACHE), and
 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
