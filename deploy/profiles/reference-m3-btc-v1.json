@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "profile_id": "reference-m3-btc-v1",
+  "stability": "reference",
+  "description": "Bounded M3 Bitcoin evidence job, not a standing product service.",
+  "artifact_identity_policy": "Each evidence run records the exact source commit and SHA-256 identities of actor, sidecar, node, and guest artifacts.",
+  "components": [
+    {"id":"btc-maker-actor","lifecycle":"one_shot","executable":"lez-btc-maker-actor","role":"maker","pair":"bitcoin","sockets":[],"state":[{"path":".e2e/<run-id>/m3-actor-poc/maker","backup":"evidence"}],"credentials":["Maker actor configuration"],"public_identities":[],"health":"status command","depends_on":[]},
+    {"id":"btc-taker-actor","lifecycle":"one_shot","executable":"lez-btc-taker-actor","role":"taker","pair":"bitcoin","sockets":[],"state":[{"path":".e2e/<run-id>/m3-actor-poc/taker","backup":"evidence"}],"credentials":["Taker actor configuration"],"public_identities":[],"health":"status command","depends_on":[]},
+    {"id":"adaptor-role-runner","lifecycle":"one_shot","executable":"lez-adaptor-role-runner","role":"both","pair":"bitcoin","sockets":[],"state":[],"credentials":["one monotonic signing phase"],"public_identities":[],"health":"exit status and typed output","depends_on":["btc-maker-actor","btc-taker-actor"]}
+  ],
+  "verification_commands": ["M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.sh"],
+  "nonclaims": ["Not a standing service", "Not a production package", "Role-fixed actors share one implementation without sharing authority"]
+}

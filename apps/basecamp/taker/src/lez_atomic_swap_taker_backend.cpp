@@ -125,12 +125,13 @@ QString LezAtomicSwapTakerBackend::btcEvidence()
         bitcoinEffects += chain == QStringLiteral("Bitcoin") ? 1 : 0;
         lezEffects += chain == QStringLiteral("LEZ") ? 1 : 0;
     }
+    const QString direction = evidence.value(QStringLiteral("direction")).toString();
     if (evidence.value(QStringLiteral("schema_version")).toInt() != 1
         || evidence.value(QStringLiteral("kind")).toString()
             != QStringLiteral("m3_btc_ui_evidence")
         || evidence.value(QStringLiteral("pair")).toString() != QStringLiteral("Bitcoin")
-        || evidence.value(QStringLiteral("direction")).toString()
-            != QStringLiteral("TakerSellsForeign")
+        || (direction != QStringLiteral("TakerSellsForeign")
+            && direction != QStringLiteral("TakerSellsLez"))
         || evidence.value(QStringLiteral("result")).toString() != QStringLiteral("passed")
         || terminal.value(QStringLiteral("phase")).toString() != QStringLiteral("completed")
         || terminal.value(QStringLiteral("revision")).toInt() != 4 || !effectsValid

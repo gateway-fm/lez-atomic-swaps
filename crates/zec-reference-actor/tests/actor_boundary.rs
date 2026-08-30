@@ -880,7 +880,7 @@ fn real_binary_reads_only_the_fully_sealed_inherited_config() {
     let config_fd = fully_sealed_config(&config_bytes);
     private_bytes(&fixture.maker_config, b"replaced deployment path");
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_zec-reference-actor"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-zec-maker-actor"));
     command.args(["--config-fd", "196", "status"]);
     command
         .fd_mappings(vec![FdMapping {
@@ -903,7 +903,7 @@ fn real_binary_reads_only_the_fully_sealed_inherited_config() {
         &config_bytes,
         SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW,
     );
-    let mut command = Command::new(env!("CARGO_BIN_EXE_zec-reference-actor"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-zec-maker-actor"));
     command.args(["--config-fd", "196", "status"]);
     command
         .fd_mappings(vec![FdMapping {
@@ -917,7 +917,7 @@ fn real_binary_reads_only_the_fully_sealed_inherited_config() {
     assert_eq!(rejected.stderr, b"actor configuration is unavailable\n");
 
     let ordinary = File::open(&fixture.maker_config).expect("open ordinary config file");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_zec-reference-actor"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-zec-maker-actor"));
     command.args(["--config-fd", "196", "status"]);
     command
         .fd_mappings(vec![FdMapping {

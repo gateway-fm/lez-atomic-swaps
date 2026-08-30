@@ -829,7 +829,7 @@ local runner now reproduces either direction through `POC_DIRECTION`.
 |---|---|---|
 | ZEC SDK agreement/activation/locks/claims/refunds | Canonical bounded dual-signed terms, separate role stores, exact lock recovery, and direction-fixed effects complete both actual-node happy directions; deterministic lanes additionally cover refunds | Runs 14o and reverse 14c are 2 of 2 PoC directions. Both ended with two independent revision-4 `Completed` stores |
 | LEZ bridge and Zebra funding/claim/refund contracts | The authenticated bridge and context-owning SDK ports compose through live actor `activate`/`drive`; direct Zebra ports complete funding and claim in the same actor boundary | Run 14o completed after one bounded payload-free `moving_tip` retry; reverse 14c completed without a same-run retry. Both have separate LEZ finality and exact Zcash funding/spend evidence. No public endpoint, faucet, or fixed bridge port is used |
-| Maker operator create/status/restart | Actual `lez-maker` process, authenticated loopback RPC, actual `lez-maker-daemon`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
+| Maker operator create/status/restart | Actual `lez-maker-cli` process, authenticated loopback RPC, actual `lez-maker-node`, and persisted SQLite state | This creates negotiated swap state only; it does not run a taker or submit chain transactions |
 | Zcash watcher/store reconciliation | Direction-derived maker runtime, immutable profile/output binding, schema-v10 SQLite journal/alerts plus the production role-fixed SDK recovery adapter, restart replay, both funded roles, removals, replacements, terminal outcomes, and exact replay; actual two-Zebra close/reopen/requery/removal passes | The daemon polling loop, LEZ SDK-port/refund composition, and independent maker/taker processes remain pending |
 | Zcash fund/claim/refund/fork | Locally constructed NU6.2 transparent transactions submitted by fixed test actors to two actual pinned Zebra processes | The actors live in one Rust acceptance fixture; they are not yet independent maker/taker processes |
 | LEZ native and token claim/refund | Real genesis actor keys submit public transactions to an ephemeral-port LEZ v0.1.2 standalone sequencer. The last corrected full runner exited `0` after the reusable external process published a private schema-v2 handoff containing the exact deployment transaction and canonical block, the built-in-only `getProgramIds` result, and two funded deterministic actors | The native/two-definition lifecycle and corrected external-node handoff are GREEN with ELF SHA-256 `a324355c...7006` and ImageID `c14c978a...4483`. A later actor-contract RED replaced the agreement-invalid zero channel with one nonempty deterministic identity; its focused suite passes and the exact full runner must be repeated before using the handoff as current corridor evidence. No reference SDK actor consumes that handoff in a composed LEZ/Zebra flow yet, and this local v0.1.2 evidence is not LEZ v0.2 public-testnet evidence |
@@ -866,7 +866,7 @@ descriptor-bound.
 ```mermaid
 sequenceDiagram
     actor Operator as Maker operator
-    participant CLI as lez-maker CLI
+    participant CLI as lez-maker-cli
     participant Daemon as Maker daemon + SQLite
     actor Taker as Taker actor
     participant MakerDB as Maker SQLite v10
@@ -2263,15 +2263,16 @@ actual Zebra process; the separate isolated Zebra suite remains the full consens
 The development runner now drives the real local Zebra and LEZ v0.2 stack to
 terminal `Completed` in both directions.
 
-The `zec-reference-actor` CLI spelling is
-`zec-reference-actor --config PRIVATE_JSON activate|drive|status`. `status`
-performs existing-only store recovery with chain access impossible by type;
-`activate` and `drive` now compose descriptor-bound SQLite, a fresh role bridge
-client, and direct Zebra. Use them only through fresh private configs and the
-development runner. Typed Drive-stage errors, bounded retry, terminal evidence,
-and both happy directions are complete; restart/refund/chaos and live public
-execution remain owner-gated. Dormant public route construction is locally
-GREEN without public calls.
+The role-fixed Zcash CLI spellings are
+`lez-zec-maker-actor --config PRIVATE_JSON activate|drive|status` and
+`lez-zec-taker-actor --config PRIVATE_JSON activate|drive|status`. Each rejects
+an opposite-role configuration. `status` performs existing-only store recovery
+with chain access impossible by type; `activate` and `drive` compose
+descriptor-bound SQLite, a fresh role bridge client, and direct Zebra. Use them
+only through fresh private configs and the development runner. Typed Drive-stage
+errors, bounded retry, terminal evidence, and both happy directions are
+complete; restart/refund/chaos and live public execution remain owner-gated.
+Dormant public route construction is locally GREEN without public calls.
 
 For a direct **LEZ sidecar** launch, create the parent directory for the state file and
 supply the six required flags shown by the test fixture:
@@ -2307,7 +2308,7 @@ export RUN_ID=manual-operator-20260711-a
 export RUN_DIR="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
 export LEZ_MAKER_RPC_TOKEN=manual-maker-owner-capability-20260711-a
 mkdir -p "$RUN_DIR"
-target/debug/lez-maker-daemon \
+target/debug/lez-maker-node \
   --listen 127.0.0.1:0 \
   --database "$RUN_DIR/maker.sqlite3" \
   --ready-file "$RUN_DIR/maker.ready"
@@ -2321,7 +2322,7 @@ export RUN_DIR="${TMPDIR:-/tmp}/lez-atomic-swaps-${RUN_ID}"
 export LEZ_MAKER_RPC_TOKEN=manual-maker-owner-capability-20260711-a
 export MAKER_RPC_URL="$(cat "$RUN_DIR/maker.ready")"
 
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
+target/debug/lez-maker-cli --rpc-url "$MAKER_RPC_URL" create-swap \
   --id manual-zec-reverse-1 \
   --pair zcash \
   --direction taker-sells-lez \
@@ -2332,7 +2333,7 @@ target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
   --later-refund-earliest 1200 \
   --required-margin 100
 
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" status \
+target/debug/lez-maker-cli --rpc-url "$MAKER_RPC_URL" status \
   --id manual-zec-reverse-1
 ```
 
@@ -2344,7 +2345,7 @@ The other currently accepted operator constructions use these exact argument
 shapes:
 
 ```sh
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
+target/debug/lez-maker-cli --rpc-url "$MAKER_RPC_URL" create-swap \
   --id manual-btc-forward-1 \
   --pair bitcoin \
   --direction taker-sells-foreign \
@@ -2355,7 +2356,7 @@ target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
   --later-refund-earliest 1200 \
   --required-margin 100
 
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" create-swap \
+target/debug/lez-maker-cli --rpc-url "$MAKER_RPC_URL" create-swap \
   --id manual-xmr-lez-first-1 \
   --pair monero \
   --direction taker-sells-lez \
@@ -2374,7 +2375,7 @@ query status again:
 
 ```sh
 export MAKER_RPC_URL="$(cat "$RUN_DIR/maker.ready")"
-target/debug/lez-maker --rpc-url "$MAKER_RPC_URL" status \
+target/debug/lez-maker-cli --rpc-url "$MAKER_RPC_URL" status \
   --id manual-zec-reverse-1
 ```
 
@@ -2560,13 +2561,13 @@ daemon, and acknowledge the same alert. A wrong bearer token must be rejected.
 For an equivalent already-running daemon, the owner commands are:
 
 ```sh
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker-cli --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
   status --id "$SWAP_ID"
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker-cli --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
   alerts --id "$SWAP_ID"
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker-cli --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
   acknowledge-alert --id "$SWAP_ID" --alert "$ALERT_SEQUENCE"
-target/debug/lez-maker --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
+target/debug/lez-maker-cli --rpc-url "$RPC_URL" --rpc-token "$RPC_TOKEN" \
   alerts --id "$SWAP_ID" --all
 ```
 

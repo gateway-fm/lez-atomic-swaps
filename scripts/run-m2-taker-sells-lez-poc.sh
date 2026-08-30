@@ -9,12 +9,12 @@ readonly LEZ_INDEXER_URL="${LEZ_INDEXER_URL:-http://127.0.0.1:32829}"
 readonly ZEBRA_RPC_URL="${ZEBRA_RPC_URL:-http://127.0.0.1:32830}"
 readonly LEZ_CHAIN_ID="${LEZ_CHAIN_ID:-b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748}"
 readonly LEZ_GENESIS_HASH="${LEZ_GENESIS_HASH:-e24c5a4a2d08a747b96cebefa1304cbe80e42dac9ced3a52c2330b22797e10d9}"
-readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433}"
+readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b}"
 readonly AUTHENTICATED_TRANSFER_PROGRAM_HEX="${AUTHENTICATED_TRANSFER_PROGRAM_HEX:-dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71}"
 readonly AUTHENTICATED_TRANSFER_PROGRAM_BASE58="${AUTHENTICATED_TRANSFER_PROGRAM_BASE58:-FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg}"
 readonly MAKER_ACCOUNT_BASE58="${MAKER_ACCOUNT_BASE58:-B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd}"
 readonly TAKER_ACCOUNT_BASE58="${TAKER_ACCOUNT_BASE58:-34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib}"
-readonly M5_LEZ_GUEST_SHA256="${M5_LEZ_GUEST_SHA256:-ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee}"
+readonly M5_LEZ_GUEST_SHA256="${M5_LEZ_GUEST_SHA256:-237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0}"
 readonly M5_LEZ_DEPLOYMENT_EVIDENCE_FILE="${M5_LEZ_DEPLOYMENT_EVIDENCE_FILE:-}"
 readonly M5_LEZ_FINALITY_EVIDENCE_FILE="${M5_LEZ_FINALITY_EVIDENCE_FILE:-}"
 readonly M5_LEZ_ONBOARDING_EVIDENCE_FILE="${M5_LEZ_ONBOARDING_EVIDENCE_FILE:-}"
@@ -406,12 +406,12 @@ capture_m5_supervised_maker_status() {
       echo 'M5 supervised Maker status failed outside the exact retriable class' >&2
       return 1
     fi
-    jq -nc --arg label "$label" --argjson attempt "$attempt" \
+    jq -nc --arg event_label "$label" --argjson attempt "$attempt" \
       --arg error_class "$error_class" '
       {
         schema_version: 1,
         event: "supervised_maker_status_retry",
-        label: $label,
+        label: $event_label,
         attempt: $attempt,
         error_class: $error_class
       }' >>"${evidence_dir}/m5-maker-status-retries.ndjson"
@@ -824,6 +824,8 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
       --release -p lez-maker-node --features test-crash-hooks --bins
     CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
+      --release -p lez-taker-node --features test-crash-hooks --bins
+    CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
       --release -p lez-maker-node --features test-crash-hooks --example maker-actor-inspect
     CARGO_TARGET_DIR="$workspace_target_root" cargo +1.96.0 build --locked --offline \
       --release -p lez-maker-node --features test-crash-hooks \
@@ -833,6 +835,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
       --locked --offline --release --bin lez-v02-bridge-poc
   else
     cargo +1.96.0 build --locked --offline --release -p lez-maker-node --bins
+    cargo +1.96.0 build --locked --offline --release -p lez-taker-node --bins
     cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-actor-inspect
     cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-zec-lock-intent-inspect
     cargo +1.96.0 build \
@@ -847,16 +850,16 @@ fi
 
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
-    actor_bin="$(readlink -f "${workspace_target_root}/release/zec-reference-actor")"
+    actor_bin="$(readlink -f "${workspace_target_root}/release/lez-zec-maker-actor")"
     provisioner_bin="$(readlink -f "${workspace_target_root}/release/zec-local-poc-provision")"
     sidecar_bin="$(readlink -f "${sidecar_target_root}/release/lez-v02-bridge-poc")"
   else
-    actor_bin="$(readlink -f target/release/zec-reference-actor)"
+    actor_bin="$(readlink -f target/release/lez-zec-maker-actor)"
     provisioner_bin="$(readlink -f target/release/zec-local-poc-provision)"
     sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/release/lez-v02-bridge-poc)"
   fi
 else
-  actor_bin="$(readlink -f target/debug/zec-reference-actor)"
+  actor_bin="$(readlink -f target/debug/lez-zec-maker-actor)"
   provisioner_bin="$(readlink -f target/debug/zec-local-poc-provision)"
   sidecar_bin="$(readlink -f compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc)"
 fi
@@ -864,18 +867,18 @@ readonly actor_bin provisioner_bin sidecar_bin
 required_binaries=("$actor_bin" "$provisioner_bin" "$sidecar_bin")
 if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   if [[ "$M7_ZEC_ACCEPTED_PROCESS_KILL_AFTER_SUBMISSION" == 1 ]]; then
-    maker_daemon_bin="$(readlink -f "${workspace_target_root}/release/lez-maker-daemon")"
-    maker_cli_bin="$(readlink -f "${workspace_target_root}/release/lez-maker")"
-    taker_bin="$(readlink -f "${workspace_target_root}/release/lez-taker")"
+    maker_daemon_bin="$(readlink -f "${workspace_target_root}/release/lez-maker-node")"
+    maker_cli_bin="$(readlink -f "${workspace_target_root}/release/lez-maker-cli")"
+    taker_bin="$(readlink -f "${workspace_target_root}/release/lez-taker-cli")"
     chat_draft_bin="$(readlink -f "${workspace_target_root}/release/zec-local-poc-chat-draft")"
     chat_finalize_bin="$(readlink -f "${workspace_target_root}/release/zec-local-poc-chat-finalize")"
     actor_inspector_bin="$(readlink -f "${workspace_target_root}/release/examples/maker-actor-inspect")"
     m5_pair_inspector_bin="$(readlink -f "${workspace_target_root}/release/zec-actor-pair-inspect")"
     m5_intent_inspector_bin="$(readlink -f "${workspace_target_root}/release/examples/maker-zec-lock-intent-inspect")"
   else
-    maker_daemon_bin="$(readlink -f target/release/lez-maker-daemon)"
-    maker_cli_bin="$(readlink -f target/release/lez-maker)"
-    taker_bin="$(readlink -f target/release/lez-taker)"
+    maker_daemon_bin="$(readlink -f target/release/lez-maker-node)"
+    maker_cli_bin="$(readlink -f target/release/lez-maker-cli)"
+    taker_bin="$(readlink -f target/release/lez-taker-cli)"
     chat_draft_bin="$(readlink -f target/release/zec-local-poc-chat-draft)"
     chat_finalize_bin="$(readlink -f target/release/zec-local-poc-chat-finalize)"
     actor_inspector_bin="$(readlink -f target/release/examples/maker-actor-inspect)"
@@ -885,7 +888,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   readonly maker_daemon_bin maker_cli_bin taker_bin chat_draft_bin chat_finalize_bin
   readonly actor_inspector_bin m5_pair_inspector_bin m5_intent_inspector_bin
   if [[ "$M6_TAKER_SERVICE_MODE" == 1 ]]; then
-    m6_service_bin="$(readlink -f target/release/lez-taker-service)"
+    m6_service_bin="$(readlink -f target/release/lez-taker-node)"
     m6_registry_init_bin="$(readlink -f target/release/lez-taker-registry-init)"
     readonly m6_service_bin m6_registry_init_bin
   fi
@@ -1010,10 +1013,10 @@ start_m6_taker_service() {
   source_config="${provision_actors_root}/taker/actor-config.json"
   agreement_output="${application_root}/final-agreement.borsh"
   actor_root="${application_root}/taker-actors"
-  m6_service_registry="${application_root}/taker-service.sqlite3"
-  m6_service_config="${application_root}/taker-service.json"
-  m6_service_socket="${application_root}/runtime/taker-service.sock"
-  m6_service_log="${evidence_dir}/m6-taker-service.log"
+  m6_service_registry="${application_root}/taker-node.sqlite3"
+  m6_service_config="${application_root}/taker-role.json"
+  m6_service_socket="${application_root}/runtime/taker-node.sock"
+  m6_service_log="${evidence_dir}/m6-taker-node.log"
 
   jq -e --arg offer "$offer_id" --arg maker "$maker_key" \
     --arg direction "$direction_json" '
@@ -1066,7 +1069,7 @@ start_m6_taker_service() {
   ' >"$m6_service_config"
   chmod 0600 "$m6_service_config"
 
-  "$m6_service_bin" --config "$m6_service_config" --socket "$m6_service_socket" \
+  "$m6_service_bin" --role-config "$m6_service_config" --socket "$m6_service_socket" \
     >"$m6_service_log" 2>&1 &
   m6_service_pid=$!
   m6_service_start_ticks="$(process_start_ticks "$m6_service_pid")"
@@ -1260,7 +1263,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
   m5_lez_taker_vault_claim_block_id="$(jq -er '.actors.taker.finalized_block_id | numbers' "$m5_lez_actor_onboarding")"
   m5_actor_deployment_root="$private_base/actor-deployment"
   mkdir -m 0700 "$m5_actor_deployment_root"
-  m5_actor_program="$m5_actor_deployment_root/zec-reference-actor"
+  m5_actor_program="$m5_actor_deployment_root/lez-zec-maker-actor"
   install -m 0700 "$actor_bin" "$m5_actor_program"
   strip --strip-all "$m5_actor_program"
   chmod 0500 "$m5_actor_program"
@@ -1412,7 +1415,7 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     --output-actors-root "$actors_root" \
     --application-root "$application_root" \
     --evidence-dir "$evidence_dir" \
-    --maker-daemon-bin "$maker_daemon_bin" \
+    --maker-node-bin "$maker_daemon_bin" \
     --maker-cli-bin "$maker_cli_bin" \
     --taker-bin "$taker_bin" \
     --draft-bin "$chat_draft_bin" \
@@ -1461,12 +1464,12 @@ if [[ "$M5_APPLICATION_MODE" == 1 ]]; then
     exit 2
   }
   remaining_budget_milliseconds 'm5-handoff-after' >/dev/null
-  m5_daemon_pid="$(jq -er '.transport_cutover.maker_daemon_pid | numbers' \
+  m5_daemon_pid="$(jq -er '.transport_cutover.maker_node_pid | numbers' \
     "${evidence_dir}/m5-chat-handoff.json")"
   m5_daemon_start_ticks="$(jq -er \
-    '.transport_cutover.maker_daemon_start_ticks | strings | select(test("^[0-9]+$"))' \
+    '.transport_cutover.maker_node_start_ticks | strings | select(test("^[0-9]+$"))' \
     "${evidence_dir}/m5-chat-handoff.json")"
-  m5_daemon_bin="$(jq -er '.transport_cutover.maker_daemon_bin | strings' \
+  m5_daemon_bin="$(jq -er '.transport_cutover.maker_node_bin | strings' \
     "${evidence_dir}/m5-chat-handoff.json")"
   m5_maker_socket="$(jq -er '.transport_cutover.maker_socket | strings' \
     "${evidence_dir}/m5-chat-handoff.json")"

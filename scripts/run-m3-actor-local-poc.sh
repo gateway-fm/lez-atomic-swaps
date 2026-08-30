@@ -239,8 +239,8 @@ readonly m3_f7_lez_guest_sha256="bc2ea18eaacb917727934fcf0366dd54c1f9a2b69b61ea5
 readonly m3_f7_lez_program_id="f3ead24b95d316ce91980cb3531a70b83a27fd1640f47c1b857757aef26c244e"
 readonly m3_f7_lez_deployer_sha256="c594ea1ec34fc0227e8e1b6ced9917ad4df5c5e4dfac7616565aae830d3f5cbd"
 if [[ "$m5_btc_application_mode" == 1 ]]; then
-  expected_lez_guest_sha256="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
-  expected_lez_program_id="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+  expected_lez_guest_sha256="237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0"
+  expected_lez_program_id="431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b"
   expected_lez_deployer_sha256="${M5_LEZ_DEPLOYER_SHA256:-}"
   expected_lez_deployment_profile="m4_checked_local"
 else
@@ -2128,7 +2128,8 @@ prebuild() {
     fail "offline M3 prebuild failed; populate the pinned Cargo cache before certification"
   fi
   if [[ "$m5_btc_application_mode" == 1 ]] &&
-     ! cargo +"$toolchain" build --locked --offline -p lez-maker-node --bins; then
+     ! cargo +"$toolchain" build --locked --offline \
+       -p lez-maker-node --bins -p lez-taker-node --bins; then
     fail "offline M5 BTC application prebuild failed; populate the pinned Cargo cache"
   fi
   if ! cargo +"$toolchain" build --locked --offline \
@@ -2206,7 +2207,8 @@ prebuild() {
   fi
 }
 
-readonly actor_bin="${repo_root}/target/debug/btc-reference-actor"
+readonly maker_actor_bin="${repo_root}/target/debug/lez-btc-maker-actor"
+readonly taker_actor_bin="${repo_root}/target/debug/lez-btc-taker-actor"
 readonly provisioner_bin="${repo_root}/target/debug/btc-local-poc-provision"
 readonly role_runner_bin="${repo_root}/target/debug/lez-adaptor-role-runner"
 readonly core_fixture_bin="${repo_root}/target/debug/examples/btc-core-p2tr-fixture"
@@ -2218,13 +2220,13 @@ readonly native_escrow_bin="${sidecar_target}/lez-v02-native-escrow-poc"
 readonly identity_bin="${sidecar_target}/examples/lez-v02-local-actor-identity"
 readonly nssa_mapping_bin="${sidecar_target}/examples/lez-v02-account-id"
 readonly account_codec_bin="${sidecar_target}/examples/lez-v02-account-codec"
-readonly maker_daemon_bin="${repo_root}/target/debug/lez-maker-daemon"
-readonly maker_cli_bin="${repo_root}/target/debug/lez-maker"
-readonly taker_cli_bin="${repo_root}/target/debug/lez-taker"
+readonly maker_daemon_bin="${repo_root}/target/debug/lez-maker-node"
+readonly maker_cli_bin="${repo_root}/target/debug/lez-maker-cli"
+readonly taker_cli_bin="${repo_root}/target/debug/lez-taker-cli"
 
 assert_prebuilt() {
   local binary
-  for binary in "$actor_bin" "$provisioner_bin" "$role_runner_bin" \
+  for binary in "$maker_actor_bin" "$taker_actor_bin" "$provisioner_bin" "$role_runner_bin" \
     "$core_fixture_bin" "$lez_operator_bin" "$sidecar_bin" "$vault_claim_bin" \
     "$native_escrow_bin" "$identity_bin" "$nssa_mapping_bin" "$lez_deployer"; do
     [[ -x "$binary" && ! -L "$binary" ]] || fail "prebuilt binary is missing: ${binary}"
@@ -3087,7 +3089,8 @@ with_direction_environment() {
   M3_POC_SECURE_STATE_ROOT="${secure_state_root}/directions/${direction}" \
   M3_POC_EVIDENCE_DIR="$evidence_dir" \
   M3_POC_PROCESS_REGISTRY="$process_registry" \
-  M3_POC_ACTOR_BIN="$actor_bin" \
+  M3_POC_MAKER_ACTOR_BIN="$maker_actor_bin" \
+  M3_POC_TAKER_ACTOR_BIN="$taker_actor_bin" \
   M3_POC_PROVISIONER_BIN="$provisioner_bin" \
   M3_POC_M5_APPLICATION_ROOT="${direction_root}/application" \
   M3_POC_M7_APPLICATION_ROOT="${private_dir}/m7-application" \
@@ -3509,7 +3512,7 @@ assert_terminal_and_replay() {
   local direction_root="${directions_dir}/${direction}"
   local counts_before="${evidence_dir}/${direction}-submission-counts-before-replay.json"
   local counts_after="${evidence_dir}/${direction}-submission-counts-after-replay.json"
-  local role config terminal replay after expected_bitcoin expected_lez
+  local role config actor_bin terminal replay after expected_bitcoin expected_lez
 
   with_direction_environment "$direction" "$direction_driver" submission-counts >"$counts_before"
   chmod 0600 "$counts_before"
@@ -3527,6 +3530,8 @@ assert_terminal_and_replay() {
     replay="${evidence_dir}/${direction}-${role}-replay-${replay_command}.json"
     after="${evidence_dir}/${direction}-${role}-after-replay.json"
     [[ -f "$config" && ! -L "$config" ]] || fail "${role} actor config is unavailable"
+    actor_bin="$maker_actor_bin"
+    [[ "$role" == taker ]] && actor_bin="$taker_actor_bin"
     "$actor_bin" --config "$config" status >"$terminal"
     assert_actor_terminal_status "$terminal" "$role"
     "$actor_bin" --config "$config" "$replay_command" >"$replay"

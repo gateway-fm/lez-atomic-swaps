@@ -769,10 +769,10 @@ async fn returned_hash_mismatch_fails_after_exactly_one_submission() {
         .await
         .expect_err("noncanonical returned hash must fail closed");
 
+    let error_chain = format!("{error:#}");
     assert!(
-        error
-            .to_string()
-            .contains("different from the locally checked")
+        error_chain.contains("different from the locally checked"),
+        "unexpected returned-hash error: {error_chain}"
     );
     assert_eq!(mock.submissions().len(), 1);
     handle.stop().unwrap();
@@ -831,23 +831,23 @@ fn f7_public_idl_and_artifact_identity_are_exact_and_append_only() {
 
     assert_eq!(
         manifest.artifact.elf_sha256,
-        "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
+        "237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0"
     );
     assert_eq!(
         manifest.artifact.image_id,
-        "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+        "431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b"
     );
     assert_eq!(
         manifest.artifact.program_id_words,
         [
-            2_020_800_695,
-            692_721_555,
-            2_892_920_765,
-            1_939_332_543,
-            3_171_832_288,
-            739_263_404,
-            2_755_389_879,
-            855_903_226,
+            2_931_366_467,
+            1_713_222_340,
+            4_174_089_960,
+            489_718_715,
+            214_758_494,
+            4_221_570_028,
+            178_961_014,
+            195_164_615,
         ]
     );
     assert_eq!(interface.instruction_count, 18);

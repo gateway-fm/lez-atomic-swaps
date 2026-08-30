@@ -14,7 +14,8 @@ and signing journals, and actual transactions on both local chains.
 This is a functional PoC recipe, not an automated full-lifecycle application.
 The Taker externally submits the direction-selected first lock. Only the
 schema-4 Maker config carries `maker_lock` material. A fresh
-`btc-reference-actor` process reconstructs and durably journals the exact
+role-fixed `lez-btc-maker-actor` and `lez-btc-taker-actor` processes reconstruct
+and durably journal the exact
 direction-shaped plan, rechecks the first lock and signed cutoff, and submits
 the Maker second lock. The controller may confirm, mine, wait for finality, and
 invoke another one-shot process; it cannot submit that lock for the Maker.
@@ -353,11 +354,12 @@ Build the root one-shot tools:
 
 ~~~sh
 cargo build --locked -p lez-adaptor-role-runner
-cargo build --locked -p btc-reference-actor
+cargo build --locked -p btc-reference-actor --bins
 cargo build --locked -p lez-btc-swap-sdk --example btc-core-p2tr-fixture
 cargo build --locked -p lez-bridge-client --example m3_witnessed_lez_operator
 export ROLE_RUNNER="$PWD/target/debug/lez-adaptor-role-runner"
-export BTC_ACTOR="$PWD/target/debug/btc-reference-actor"
+export BTC_MAKER_ACTOR="$PWD/target/debug/lez-btc-maker-actor"
+export BTC_TAKER_ACTOR="$PWD/target/debug/lez-btc-taker-actor"
 export BTC_FIXTURE="$PWD/target/debug/examples/btc-core-p2tr-fixture"
 export LEZ_OPERATOR="$PWD/target/debug/examples/m3_witnessed_lez_operator"
 ~~~

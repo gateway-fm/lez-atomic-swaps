@@ -6,7 +6,7 @@ export LC_ALL=C
 umask 077
 
 readonly runner="scripts/run-m4-lez-actor-onboarding.sh"
-readonly expected_program="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+readonly expected_program="431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b"
 channel="$(printf '6%.0s' {1..64})"
 maker_tx="$(printf 'a%.0s' {1..64})"
 taker_tx="$(printf 'b%.0s' {1..64})"

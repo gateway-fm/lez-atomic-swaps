@@ -5,7 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly process_test="crates/maker-node/tests/zec_chat_process.rs"
 readonly registry="crates/swap-store/src/taker_facade_registry.rs"
-readonly service="crates/maker-node/src/taker_service_config.rs"
+readonly service="crates/taker-node/src/taker_service_config.rs"
 readonly decision="docs/architecture/0198-derive-zec-taker-direction-from-authenticated-offer.md"
 
 fail() {

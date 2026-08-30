@@ -360,7 +360,7 @@ fn cli_exposes_repeatable_activate_drive_and_status_commands() {
         ("status", ActorCommand::Status),
     ] {
         let cli = ActorCli::try_parse_from([
-            "btc-reference-actor",
+            "lez-btc-taker-actor",
             "--config",
             "/tmp/private-actor.json",
             command,
@@ -369,11 +369,11 @@ fn cli_exposes_repeatable_activate_drive_and_status_commands() {
         assert_eq!(cli.command, expected);
     }
     assert!(
-        ActorCli::try_parse_from(["btc-reference-actor", "--config-fd", "196", "status"]).is_ok()
+        ActorCli::try_parse_from(["lez-btc-taker-actor", "--config-fd", "196", "status"]).is_ok()
     );
     assert!(
         ActorCli::try_parse_from([
-            "btc-reference-actor",
+            "lez-btc-taker-actor",
             "--config",
             "/tmp/private-actor.json",
             "--config-fd",
@@ -383,7 +383,7 @@ fn cli_exposes_repeatable_activate_drive_and_status_commands() {
         .is_err()
     );
     assert!(
-        ActorCli::try_parse_from(["btc-reference-actor", "--config-fd", "195", "status"]).is_err()
+        ActorCli::try_parse_from(["lez-btc-taker-actor", "--config-fd", "195", "status"]).is_err()
     );
 }
 
@@ -391,7 +391,7 @@ fn cli_exposes_repeatable_activate_drive_and_status_commands() {
 fn binary_repeats_offline_status_and_idempotent_activation_from_disk() {
     let fixture = ActorFixture::new(BridgeParticipant::Taker, BridgeParticipant::Taker);
     let invoke = |command: &str| {
-        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_btc-reference-actor"))
+        let output = ProcessCommand::new(env!("CARGO_BIN_EXE_lez-btc-taker-actor"))
             .args([
                 "--config",
                 fixture.config_path.to_str().expect("UTF-8 test path"),
@@ -496,7 +496,7 @@ fn real_binary_reads_only_commitment_bound_fully_sealed_config() {
 }
 
 fn run_with_config_fd(config: OwnedFd, command_name: &str) -> std::process::Output {
-    let mut command = ProcessCommand::new(env!("CARGO_BIN_EXE_btc-reference-actor"));
+    let mut command = ProcessCommand::new(env!("CARGO_BIN_EXE_lez-btc-taker-actor"));
     command.args(["--config-fd", "196", command_name]);
     command
         .fd_mappings(vec![FdMapping {

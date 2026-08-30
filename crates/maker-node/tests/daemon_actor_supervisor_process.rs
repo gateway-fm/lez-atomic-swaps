@@ -125,7 +125,7 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
 
     let health_started = Instant::now();
     let health = command_output_with_timeout(
-        Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+        Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
             .arg("--socket")
             .arg(&socket)
             .arg("health"),
@@ -341,7 +341,7 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         Some(child_pid)
     );
     let health = command_output_with_timeout(
-        Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+        Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
             .arg("--socket")
             .arg(&socket)
             .arg("health"),
@@ -527,7 +527,7 @@ fn daemon_leases_two_accepted_xmr_applications_concurrently_across_restart() {
              test -r /proc/self/fd/198 || exit 94\n\
              printf '%s\\n' \"$3\" >> \"{}\"\n\
              case \"$3\" in\n\
-               status) printf '%s\\n' \"$$\" > \"{}\"; while test ! -f \"{}\"; do /usr/bin/sleep 0.01; done; printf '%s\\n' '{{\"schema_version\":1,\"actor_program\":\"xmr-maker-actor\",\"actor_abi\":\"lez_maker_xmr_pre_effect_v1\",\"role\":\"maker\",\"state\":\"active\",\"phase\":\"offered\",\"revision\":0,\"next_action\":\"xmr_chain_effects_not_yet_composed\",\"chain_effect_executed\":false}}' ;;\n\
+               status) printf '%s\\n' \"$$\" > \"{}\"; while test ! -f \"{}\"; do /usr/bin/sleep 0.01; done; printf '%s\\n' '{{\"schema_version\":1,\"actor_program\":\"lez-xmr-maker-actor\",\"actor_abi\":\"lez_maker_xmr_pre_effect_v1\",\"role\":\"maker\",\"state\":\"active\",\"phase\":\"offered\",\"revision\":0,\"next_action\":\"xmr_chain_effects_not_yet_composed\",\"chain_effect_executed\":false}}' ;;\n\
                claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}' ;;\n\
                *) exit 95 ;;\n\
              esac\n",
@@ -800,7 +800,7 @@ impl TestDaemon {
         failure_backoff_seconds: u64,
         worker_count: u16,
     ) -> Self {
-        let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+        let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
             .arg("--socket")
             .arg(socket)
             .arg("--database")

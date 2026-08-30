@@ -1,5 +1,8 @@
 //! Acceptance tests for the run-local Delivery-compatible adapter.
 
+#[path = "support/cross_role_binary.rs"]
+mod cross_role;
+
 use std::{fs, os::unix::fs::PermissionsExt as _, process::Command};
 
 use lez_bridge_protocol::RequestId;
@@ -269,7 +272,7 @@ async fn separate_taker_process_discovers_only_key_pinned_live_route_offers() {
         .await
         .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .args([
             "--delivery-directory",
             directory.to_str().unwrap(),
@@ -303,7 +306,7 @@ async fn separate_taker_process_discovers_only_key_pinned_live_route_offers() {
     );
 
     let identity_hex = hex::encode(identity.serialize());
-    let expired = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let expired = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .args([
             "--delivery-directory",
             directory.to_str().unwrap(),

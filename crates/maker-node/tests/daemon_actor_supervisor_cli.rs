@@ -106,5 +106,5 @@ fn configured_output(database: &std::path::Path, marker: &std::path::Path) -> Ou
 }
 
 fn daemon() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+    Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
 }

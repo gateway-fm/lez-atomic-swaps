@@ -53,7 +53,7 @@ const APPLICATION_JOURNAL_MAX_BYTES: u64 = 64 * 1024 * 1024;
 pub const XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES: u64 = 16 * 1024;
 
 /// Program identifier pinned by the Maker supervisor and one-shot child.
-pub const XMR_MAKER_ACTOR_PROGRAM_ID: &str = "xmr-maker-actor";
+pub const XMR_MAKER_ACTOR_PROGRAM_ID: &str = "lez-xmr-maker-actor";
 /// Pre-effect ABI pinned by the Maker supervisor and one-shot child.
 pub const XMR_MAKER_ACTOR_ABI_V1: &str = "lez_maker_xmr_pre_effect_v1";
 /// Current bounded action: validate authority without publishing a chain effect.

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "profile_id": "local-btc-demo-v1",
+  "stability": "local_demo",
+  "description": "Integrated local BTC/LEZ application with a separately provisioned evidence runner.",
+  "artifact_identity_policy": "Pinned upstream image digests plus SHA-256-verified staged Rust and LEZ service binaries; scripts/stage-assets.sh is the profile gate.",
+  "components": [
+    {"id":"bitcoin-init","lifecycle":"one_shot_init","executable":"chown","role":"shared","pair":"bitcoin","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":[]},
+    {"id":"bitcoin-core","lifecycle":"service","executable":"bitcoind","role":"shared","pair":"bitcoin","sockets":[],"state":[{"path":"volume:lez-bitcoin-core-data","backup":"critical"}],"credentials":["BTC RPC password"],"public_identities":[],"health":"bitcoin-cli getblockchaininfo","depends_on":["bitcoin-init"]},
+    {"id":"btc-miner","lifecycle":"service","executable":"btc-miner.sh","role":"shared","pair":"bitcoin","sockets":[],"state":[],"credentials":["BTC RPC password"],"public_identities":[],"health":"process","depends_on":["bitcoin-core"]},
+    {"id":"btc-explorer","lifecycle":"service","executable":"btc-rpc-explorer","role":"observer","pair":"bitcoin","sockets":[],"state":[],"credentials":["read-only BTC RPC password"],"public_identities":[],"health":"HTTP UI","depends_on":["bitcoin-core"]},
+    {"id":"bedrock","lifecycle":"service","executable":"logos-blockchain-node","role":"shared","pair":"lez","sockets":[],"state":[{"path":"deploy/runtime/bedrock","backup":"recreatable"}],"credentials":[],"public_identities":[],"health":"sequencer/indexer observation","depends_on":[]},
+    {"id":"sequencer","lifecycle":"service","executable":"sequencer_service","role":"shared","pair":"lez","sockets":[],"state":[{"path":"deploy/runtime/sequencer","backup":"recreatable"}],"credentials":[],"public_identities":[],"health":"getBlock(1)","depends_on":["bedrock"]},
+    {"id":"indexer","lifecycle":"service","executable":"indexer_service","role":"shared","pair":"lez","sockets":[],"state":[{"path":"deploy/runtime/indexer","backup":"recreatable"}],"credentials":[],"public_identities":[],"health":"getLastFinalizedBlockId","depends_on":["sequencer"]},
+    {"id":"lez-explorer","lifecycle":"service","executable":"node","role":"observer","pair":"lez","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"HTTP UI","depends_on":["indexer"]},
+    {"id":"maker-init","lifecycle":"one_shot_init","executable":"chown","role":"maker","pair":"all","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":[]},
+    {"id":"maker-node","lifecycle":"service","executable":"lez-maker-node","role":"maker","pair":"all","sockets":["/run/lez/maker/node.sock"],"state":[{"path":"volume:lez-maker-state","backup":"critical"}],"credentials":["Maker-owned Delivery signing key"],"public_identities":["/delivery/maker-delivery-identity.pub"],"health":"maker_health","depends_on":["maker-init","bitcoin-core","indexer"]},
+    {"id":"taker-init","lifecycle":"one_shot_init","executable":"bash","role":"taker","pair":"all","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":["maker-node"]},
+    {"id":"taker-node","lifecycle":"service","executable":"lez-taker-node","role":"taker","pair":"all","sockets":["/run/lez/taker/node.sock"],"state":[{"path":"volume:lez-taker-state","backup":"critical"}],"credentials":["No private key in discovery-only profile"],"public_identities":["Read-only Maker Delivery public identity"],"health":"taker_health","depends_on":["taker-init"]},
+    {"id":"btc-demo-init","lifecycle":"one_shot_init","executable":"chown","role":"shared","pair":"bitcoin","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":[]},
+    {"id":"btc-demo-launcher","lifecycle":"service","executable":"launcher.py","role":"shared","pair":"bitcoin","sockets":["/run/lez-btc-launcher/launcher.sock"],"state":[],"credentials":["host Docker socket"],"public_identities":[],"health":"runner_status v1","depends_on":[]},
+    {"id":"btc-demo-controller","lifecycle":"service","executable":"controller.py","role":"shared","pair":"bitcoin","sockets":["/run/lez-btc-demo/controller.sock"],"state":[{"path":"volume:lez-btc-demo-socket/market.sqlite3","backup":"demo"}],"credentials":[],"public_identities":[],"health":"btc_market_health_v1","depends_on":["btc-demo-init","btc-demo-launcher"]},
+    {"id":"basecamp-ui","lifecycle":"service","executable":"lez-maker-ui + lez-taker-ui","role":"both","pair":"all","sockets":[],"state":[],"credentials":["Role-local Chat/Delivery identities"],"public_identities":[],"health":"role package smoke tests","depends_on":["maker-node","taker-node","btc-demo-controller"]}
+  ],
+  "verification_commands": ["./scripts/check-runtime-profiles.py", "docker compose -f deploy/compose.yaml config --quiet"],
+  "nonclaims": ["Not safe for untrusted hosts", "Not a public-network deployment", "The external runner remains demo/evidence authority"]
+}

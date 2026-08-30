@@ -276,7 +276,8 @@ preflight() {
     command -v "$command_name" >/dev/null || fail "missing required tool: ${command_name}"
   done
   for binary in scripts/run-m3-actor-direction.sh target/debug/btc-local-poc-provision \
-    target/debug/btc-reference-actor target/debug/lez-adaptor-role-runner \
+    target/debug/lez-btc-maker-actor target/debug/lez-btc-taker-actor \
+    target/debug/lez-adaptor-role-runner \
     target/debug/examples/m3_witnessed_lez_operator \
     compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc \
     compat/lez-v0_2-sidecar/target/debug/lez-v02-native-escrow-poc; do
@@ -302,7 +303,7 @@ require_environment() {
   local -a required=(
     M3_POC_RUN_ID M3_POC_DIRECTION M3_POC_JOURNEY M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT
     M3_POC_EVIDENCE_DIR
-    M3_POC_PROCESS_REGISTRY M3_POC_ACTOR_BIN M3_POC_PROVISIONER_BIN
+    M3_POC_PROCESS_REGISTRY M3_POC_MAKER_ACTOR_BIN M3_POC_TAKER_ACTOR_BIN M3_POC_PROVISIONER_BIN
     M3_POC_ROLE_RUNNER_BIN M3_POC_LEZ_SIDECAR_BIN M3_POC_LEZ_OPERATOR_BIN
     M3_POC_LEZ_NATIVE_ESCROW_BIN M3_POC_BITCOIN_MANIFEST M3_POC_BITCOIN_RPC_URL
     M3_POC_BITCOIN_MAKER_CURL_CONFIG M3_POC_BITCOIN_TAKER_CURL_CONFIG
@@ -363,7 +364,7 @@ require_environment() {
   fi
   for variable in M3_POC_DIRECTION_ROOT M3_POC_SECURE_STATE_ROOT M3_POC_EVIDENCE_DIR \
     M3_POC_PROCESS_REGISTRY \
-    M3_POC_ACTOR_BIN M3_POC_PROVISIONER_BIN M3_POC_ROLE_RUNNER_BIN \
+    M3_POC_MAKER_ACTOR_BIN M3_POC_TAKER_ACTOR_BIN M3_POC_PROVISIONER_BIN M3_POC_ROLE_RUNNER_BIN \
     M3_POC_LEZ_SIDECAR_BIN M3_POC_LEZ_OPERATOR_BIN M3_POC_LEZ_NATIVE_ESCROW_BIN \
     M3_POC_BITCOIN_MANIFEST M3_POC_BITCOIN_MAKER_CURL_CONFIG \
     M3_POC_BITCOIN_TAKER_CURL_CONFIG M3_POC_BITCOIN_MAKER_BASIC \
@@ -1988,6 +1989,14 @@ assert_survivor_actor_invocation_allowed() {
   fi
 }
 
+actor_binary() {
+  case "$1" in
+    maker) printf '%s\n' "$M3_POC_MAKER_ACTOR_BIN" ;;
+    taker) printf '%s\n' "$M3_POC_TAKER_ACTOR_BIN" ;;
+    *) fail "unsupported actor role: $1" ;;
+  esac
+}
+
 actor_invoke() {
   local role="$1" command="$2" label="$3"
   local config
@@ -1995,7 +2004,7 @@ actor_invoke() {
   assert_survivor_actor_invocation_allowed "$role" "$label"
   actor_last_output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-${label}-${role}.json"
   [[ ! -e "$actor_last_output" ]] || fail "refusing to overwrite actor evidence: ${label}/${role}"
-  "$M3_POC_ACTOR_BIN" --config "$config" "$command" >"$actor_last_output"
+  "$(actor_binary "$role")" --config "$config" "$command" >"$actor_last_output"
   chmod 0600 "$actor_last_output"
 }
 
@@ -2033,7 +2042,7 @@ actor_invoke_awaiting_retry() {
       fail "Maker-lock retry observed an out-of-bound durable submission count"
     attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
     attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
-    if "$M3_POC_ACTOR_BIN" --config "$config" "$command" \
+    if "$(actor_binary "$role")" --config "$config" "$command" \
         >"$attempt_output" 2>"$attempt_error"; then
       chmod 0600 "$attempt_output" "$attempt_error"
       [[ ! -s "$attempt_error" ]] ||
@@ -2119,7 +2128,7 @@ actor_invoke_bitcoin_lock_awaiting_retry() {
 
     attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
     attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
-    if "$M3_POC_ACTOR_BIN" --config "$config" "$command" \
+    if "$(actor_binary "$role")" --config "$config" "$command" \
         >"$attempt_output" 2>"$attempt_error"; then
       chmod 0600 "$attempt_output" "$attempt_error"
       [[ ! -s "$attempt_error" ]] ||
@@ -2177,7 +2186,7 @@ actor_invoke_observation_retry() {
   for attempt in {1..120}; do
     attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
     attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
-    if "$M3_POC_ACTOR_BIN" --config "$config" drive \
+    if "$(actor_binary "$role")" --config "$config" drive \
         >"$attempt_output" 2>"$attempt_error"; then
       chmod 0600 "$attempt_output" "$attempt_error"
       if jq -e --arg role "$role" --arg chain "$chain" \
@@ -2221,7 +2230,7 @@ actor_invoke_recovery_retry() {
   for attempt in {1..120}; do
     attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
     attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
-    if "$M3_POC_ACTOR_BIN" --config "$config" recover \
+    if "$(actor_binary "$role")" --config "$config" recover \
         >"$attempt_output" 2>"$attempt_error"; then
       chmod 0600 "$attempt_output" "$attempt_error"
       if jq -e --arg role "$role" --arg chain "$chain" \
@@ -2268,7 +2277,7 @@ actor_invoke_recovery_pending_retry() {
   for attempt in {1..120}; do
     attempt_output="${actor_last_output%.json}-attempt-${attempt}.json"
     attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
-    if "$M3_POC_ACTOR_BIN" --config "$config" recover \
+    if "$(actor_binary "$role")" --config "$config" recover \
         >"$attempt_output" 2>"$attempt_error"; then
       chmod 0600 "$attempt_output" "$attempt_error"
       jq -e --arg role "$role" --arg chain "$chain" --argjson revision "$predecessor" '
@@ -2310,7 +2319,7 @@ assert_recovery_pending_both() {
     [[ ! -e "$output" && ! -L "$output" && ! -e "$error" && ! -L "$error" &&
        ! -e "$status" && ! -L "$status" ]] ||
       fail "refusing to overwrite pre-eligibility recovery evidence: ${label}/${role}"
-    if "$M3_POC_ACTOR_BIN" --config "$config" recover >"$output" 2>"$error"; then
+    if "$(actor_binary "$role")" --config "$config" recover >"$output" 2>"$error"; then
       chmod 0600 "$output" "$error"
       jq -e --arg role "$role" --arg chain "$chain" --argjson revision "$predecessor" '
         .schema_version == 1 and .role == $role and .command == "recover"
@@ -2324,7 +2333,7 @@ assert_recovery_pending_both() {
     error_text="$(tr -d '\r\n' <"$error")"
     [[ "$error_text" == "actor chain observation is unavailable" && ! -s "$output" ]] ||
       fail "${role} actor pre-eligibility recovery failed with a non-retryable typed error"
-    "$M3_POC_ACTOR_BIN" --config "$config" status >"$status"
+    "$(actor_binary "$role")" --config "$config" status >"$status"
     chmod 0600 "$status"
     jq -e --arg role "$role" --arg phase "$expected_phase" --arg action "$expected_action" \
       --argjson revision "$predecessor" '
@@ -2350,7 +2359,7 @@ actor_reconcile_bitcoin_claim_submission() {
     attempt_error="${actor_last_output%.json}-attempt-${attempt}.stderr"
     mempool_output="${actor_last_output%.json}-attempt-${attempt}-mempool.json"
     actor_succeeded=0
-    if "$M3_POC_ACTOR_BIN" --config "$config" drive \
+    if "$(actor_binary "$role")" --config "$config" drive \
         >"$attempt_output" 2>"$attempt_error"; then
       actor_succeeded=1
       chmod 0600 "$attempt_output" "$attempt_error"
@@ -4234,7 +4243,7 @@ complete_m7_btc_application_handoff() {
   local owner_root="${shared_root}/owner"
   local maker_actor_root="${owner_root}/maker-actors"
   local actor_program_root="${shared_root}/actor-program"
-  local actor_program="${actor_program_root}/btc-reference-actor"
+  local actor_program="${actor_program_root}/lez-btc-maker-actor"
   local actor_sha daemon_log="${shared_root}/chat-daemon.log"
   local delivery_key maker_signing_key maker_public_key
   local daemon_pid direction direction_root direction_application fixture_root direction_owner
@@ -4290,8 +4299,8 @@ complete_m7_btc_application_handoff() {
      ! -e "$handoff_partial" && ! -L "$handoff_partial" ]] ||
     fail "M7 BTC shared handoff output already exists"
   mkdir -m 0700 "$runtime_root" "$owner_root" "$maker_actor_root" "$actor_program_root"
-  actor_sha="$(sha256sum "$M3_POC_ACTOR_BIN" | sed 's/ .*//')"
-  cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"
+  actor_sha="$(sha256sum "$M3_POC_MAKER_ACTOR_BIN" | sed 's/ .*//')"
+  cp --reflink=auto -- "$M3_POC_MAKER_ACTOR_BIN" "$actor_program"
   chmod 0700 "$actor_program"
   [[ "$(stat -c '%u:%a:%h' "$actor_program")" == "$(id -u):700:1" &&
      "$(sha256sum "$actor_program" | sed 's/ .*//')" == "$actor_sha" ]] ||
@@ -4422,7 +4431,7 @@ complete_m5_btc_application_handoff() {
   local maker_signing_key="$delivery_key"
   local taker_signing_key="${fixture_root}/private/taker-signing.key"
   local actor_program_root="${M3_POC_SECURE_STATE_ROOT}/m5-btc-actor-program"
-  local actor_program="${actor_program_root}/btc-reference-actor"
+  local actor_program="${actor_program_root}/lez-btc-maker-actor"
   local maker_source_config="${M3_POC_DIRECTION_ROOT}/actors/maker/actor-config.json"
   local taker_source_config="${M3_POC_DIRECTION_ROOT}/actors/taker/actor-config.json"
   local maker_actor_root="${owner_root}/maker-actors"
@@ -4492,12 +4501,12 @@ complete_m5_btc_application_handoff() {
   source_taker_sha="$(sha256sum "$taker_source_config" | sed 's/ .*//')"
   source_maker_inode="$(stat -c '%d:%i' "$maker_source_config")"
   source_taker_inode="$(stat -c '%d:%i' "$taker_source_config")"
-  actor_sha="$(sha256sum "$M3_POC_ACTOR_BIN" | sed 's/ .*//')"
+  actor_sha="$(sha256sum "$M3_POC_MAKER_ACTOR_BIN" | sed 's/ .*//')"
   [[ "$actor_sha" =~ ^[0-9a-f]{64}$ ]] || fail "M5 BTC actor digest is invalid"
   [[ ! -e "$actor_program_root" && ! -L "$actor_program_root" ]] ||
     fail "M5 BTC staged actor runtime already exists"
   mkdir -m 0700 "$actor_program_root"
-  cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"
+  cp --reflink=auto -- "$M3_POC_MAKER_ACTOR_BIN" "$actor_program"
   chmod 0700 "$actor_program"
   [[ "$(stat -c '%u:%a:%h' "$actor_program")" == "$(id -u):700:1" &&
      "$(sha256sum "$actor_program" | sed 's/ .*//')" == "$actor_sha" ]] ||

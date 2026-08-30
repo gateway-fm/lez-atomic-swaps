@@ -11,10 +11,9 @@ the owning Maker or Taker dashboard; no request text becomes a shell command.
 from __future__ import annotations
 
 import datetime as dt
+import base64
 import hashlib
-import http.client
 import http.server
-import io
 import json
 import os
 import pathlib
@@ -22,19 +21,15 @@ import re
 import socket
 import socketserver
 import sqlite3
-import tarfile
 import threading
 import time
-import urllib.parse
 
 
 SOCKET_PATH = pathlib.Path(os.environ.get(
     "LEZ_BTC_DEMO_SOCKET", "/run/lez-btc-demo/controller.sock"))
 DATABASE_PATH = SOCKET_PATH.with_name("market.sqlite3")
-DOCKER_SOCKET = os.environ.get("DOCKER_HOST_SOCKET", "/var/run/docker.sock")
-DOCKER_API = os.environ.get("DOCKER_API_VERSION", "/v1.41")
-RUNNER_NAME = os.environ.get("LEZ_M3_RUNNER_CONTAINER", "lez-runner-arm")
-RUNNER_REPO = os.environ["LEZ_M3_RUNNER_REPO_IN_CONTAINER"]
+LAUNCHER_SOCKET = os.environ.get(
+    "LEZ_BTC_LAUNCHER_SOCKET", "/run/lez-btc-launcher/launcher.sock")
 EVIDENCE_ROOT = pathlib.Path(os.environ.get("LEZ_M3_EVIDENCE_ROOT", "/runner-repo"))
 EVIDENCE_OUTPUT = pathlib.Path(os.environ.get(
     "LEZ_M3_BTC_EVIDENCE_FILE", "/run/evidence/m3-btc-ui-evidence.json"))
@@ -418,71 +413,35 @@ def compact(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-class DockerUnixConnection(http.client.HTTPConnection):
-    def connect(self) -> None:
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        self.sock.connect(DOCKER_SOCKET)
-
-
-def docker_request(method: str, route: str, payload: object | bytes | None = None,
-                   content_type: str = "application/json") -> tuple[int, bytes]:
-    if isinstance(payload, bytes):
-        body = payload
-    elif payload is None:
-        body = None
-    else:
-        body = compact(payload).encode()
-    headers = {"Content-Type": content_type}
-    if body is not None:
-        headers["Content-Length"] = str(len(body))
-    connection = DockerUnixConnection("localhost", timeout=15)
+def launcher_call(request: dict) -> dict:
+    """Calls the bounded host launcher over its owner-only Unix socket."""
+    request = {"schema_version": 1, **request}
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(15)
     try:
-        connection.request(method, DOCKER_API + route, body=body, headers=headers)
-        response = connection.getresponse()
-        return response.status, response.read()
+        client.connect(LAUNCHER_SOCKET)
+        client.sendall(compact(request).encode() + b"\n")
+        raw = client.makefile("rb").readline(65537)
     finally:
-        connection.close()
-
-
-def docker_json(method: str, route: str, payload: object | None = None,
-                expected: tuple[int, ...] = (200, 201)) -> object:
-    status, raw = docker_request(method, route, payload)
-    if status not in expected:
-        detail = raw.decode("utf-8", "replace")[:300]
-        raise RuntimeError(f"Docker API {method} {route} returned {status}: {detail}")
-    return json.loads(raw) if raw else {}
+        client.close()
+    if not raw or len(raw) > 65536:
+        raise RuntimeError("runner launcher returned an invalid response")
+    response = json.loads(raw)
+    if response.get("schema_version") != 1 or response.get("ok") is not True:
+        raise RuntimeError(str(response.get("error", "runner launcher failed"))[:300])
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("runner launcher result is invalid")
+    return result
 
 
 def runner_info() -> dict:
-    encoded = urllib.parse.quote(RUNNER_NAME, safe="")
     try:
-        status, raw = docker_request("GET", f"/containers/{encoded}/json")
-        if status != 200:
-            return {"ready": False, "busy": False,
-                    "reason": "runner container is unavailable"}
-        running = json.loads(raw).get("State", {}).get("Running") is True
-        busy = False
-        if running:
-            top_status, top_raw = docker_request(
-                "GET", f"/containers/{encoded}/top?ps_args=-eo%20args")
-            if top_status == 200:
-                processes = json.loads(top_raw).get("Processes", [])
-                busy = any(
-                    "run-m3-actor-local-poc.sh" in " ".join(process)
-                    or "lez-interactive-m3-outer.sh" in " ".join(process)
-                    or "lez-run-full-btc-ui.sh" in " ".join(process)
-                    for process in processes
-                )
-        return {
-            "ready": running,
-            "busy": busy,
-            "reason": "an M3 run is active" if busy
-                else "ready" if running else "runner container is not running",
-        }
+        result = launcher_call({"operation": "runner_status"})
+        return {key: result[key] for key in ("ready", "busy", "reason")}
     except Exception:
         return {"ready": False, "busy": False,
-                "reason": "Docker runner control is unavailable"}
+                "reason": "bounded runner launcher is unavailable"}
 
 
 def replace_once(source: str, old: str, new: str, label: str) -> str:
@@ -770,59 +729,9 @@ def interactive_runner_scripts(run_id: str, direction: str) -> dict[str, bytes]:
     }
 
 
-def upload_bundle(files: dict[str, bytes], directory: str = "/tmp") -> None:
-    archive = io.BytesIO()
-    with tarfile.open(fileobj=archive, mode="w") as bundle:
-        for name, data in files.items():
-            item = tarfile.TarInfo(name=name)
-            item.size = len(data)
-            item.mode = 0o700 if name.endswith(".sh") else 0o600
-            # The provisioned runner executes as its non-root `lez` account.
-            # Docker's archive endpoint otherwise extracts root-owned 0700
-            # files, which correctly fail closed but cannot be executed.
-            item.uid = 501
-            item.gid = 20
-            item.uname = "lez"
-            item.gname = "dialout"
-            item.mtime = int(time.time())
-            bundle.addfile(item, io.BytesIO(data))
-    encoded = urllib.parse.quote(RUNNER_NAME, safe="")
-    status, raw = docker_request(
-        "PUT", f"/containers/{encoded}/archive?path={urllib.parse.quote(directory)}",
-        archive.getvalue(), "application/x-tar")
-    if status != 200:
-        raise RuntimeError(
-            f"Docker API could not stage fixed demo files ({status}): "
-            + raw.decode("utf-8", "replace")[:300])
-
-
-def create_exec(command: list[str], environment: list[str] | None = None) -> str:
-    encoded = urllib.parse.quote(RUNNER_NAME, safe="")
-    result = docker_json("POST", f"/containers/{encoded}/exec", {
-        "AttachStdout": False, "AttachStderr": False, "Tty": False,
-        "Cmd": command, "Env": environment or [], "WorkingDir": RUNNER_REPO,
-    })
-    exec_id = str(result.get("Id", ""))
-    if not re.fullmatch(r"[0-9a-f]{64}", exec_id):
-        raise RuntimeError("Docker API returned an invalid execution identity")
-    return exec_id
-
-
-def start_exec(exec_id: str) -> None:
-    docker_json("POST", f"/exec/{exec_id}/start", {"Detach": True, "Tty": False})
-
-
-def inspect_exec(exec_id: str) -> dict:
-    return dict(docker_json("GET", f"/exec/{exec_id}/json"))
-
-
 def wait_exec(exec_id: str) -> int:
-    while True:
-        inspection = inspect_exec(exec_id)
-        if inspection.get("Running") is not True:
-            value = inspection.get("ExitCode")
-            return int(value) if isinstance(value, int) else -1
-        time.sleep(2)
+    result = launcher_call({"operation": "wait_swap", "exec_id": exec_id})
+    return int(result["exit_code"])
 
 
 def validate_public_evidence(value: dict, run_id: str, direction: str) -> None:
@@ -1397,16 +1306,11 @@ class Market:
                 if not isinstance(run_id, str) or not RUN_RE.fullmatch(run_id):
                     raise RuntimeError("active run identity is unavailable")
                 revision = spec["ordered"].index(action)
-                permit = compact({
-                    "schema_version": 1, "run_id": run_id, "role": role,
-                    "action": action, "expected_revision": revision,
-                    "approved_at": utc_now(),
-                }).encode() + b"\n"
-                runner_dir = (
-                    f"{RUNNER_REPO}/.e2e/{run_id}/m3-actor-poc/private/"
-                    f"directions/{row['direction']}/interactive-gates"
-                )
-                upload_bundle({f"{action}.permit.json": permit}, runner_dir)
+                launcher_call({
+                    "operation": "approve_action", "run_id": run_id,
+                    "direction": row["direction"], "role": role, "action": action,
+                    "expected_revision": revision, "approved_at": utc_now(),
+                })
                 connection.execute(
                     "UPDATE swaps SET state=?, action_required=NULL WHERE ui_swap_id=?",
                     (action_spec["working_state"], ui_swap_id),
@@ -1438,25 +1342,23 @@ class Market:
                 break
         if not RUN_RE.fullmatch(run_id):
             raise RuntimeError("a unique local run identity is unavailable")
-        upload_bundle(interactive_runner_scripts(run_id, direction))
+        scripts = interactive_runner_scripts(run_id, direction)
         reservation = "ui-reserve-" + hashlib.sha256(
             queued["ui_swap_id"].encode()).hexdigest()[:20]
-        exec_id = create_exec(
-            ["bash", runner_script_paths(run_id)["run"]],
-            [
-                f"LEZ_M3_RUN_ID={run_id}",
-                "LEZ_M3_INTERACTIVE=1",
-                "LEZ_M3_ATTACH=1",
-                "LEZ_INTERACTIVE_UI_GATES=1",
-                "LEZ_INTERACTIVE_DIRECTION=" + direction,
-                f"LEZ_INTERACTIVE_REPO_ROOT={RUNNER_REPO}",
-                f"LEZ_INTERACTIVE_OFFER_ID={queued['offer_id']}",
-                f"LEZ_INTERACTIVE_RESERVATION_ID={reservation}",
-                f"LEZ_INTERACTIVE_MAKER_WALLET={queued['maker_wallet_id']}",
-                f"LEZ_INTERACTIVE_TAKER_WALLET={queued['taker_wallet_id']}",
-            ],
-        )
-        start_exec(exec_id)
+        run_result = launcher_call({
+            "operation": "run_swap", "run_id": run_id, "direction": direction,
+            "offer_id": queued["offer_id"], "reservation_id": reservation,
+            "maker_wallet_id": queued["maker_wallet_id"],
+            "taker_wallet_id": queued["taker_wallet_id"],
+            "files": {
+                name: base64.b64encode(data).decode("ascii")
+                for name, data in scripts.items()
+            },
+        })
+        if run_result.get("kind") != "RunSwapResultV1" \
+                or run_result.get("run_id") != run_id:
+            raise RuntimeError("runner returned an invalid RunSwapResultV1")
+        exec_id = str(run_result.get("exec_id", ""))
         connection.execute(
             "UPDATE swaps SET state='preparing',run_id=?,exec_id=?,started_at=?,error=NULL "
             "WHERE ui_swap_id=?",
@@ -1475,13 +1377,12 @@ class Market:
             exit_code = wait_exec(exec_id)
             if exit_code != 0:
                 raise RuntimeError(f"interactive M3 runner exited with status {exit_code}")
-            source = f"{RUNNER_REPO}/.e2e/{run_id}/m3-actor-poc/evidence"
-            generated = f"{source}/m3-btc-ui-evidence.json"
-            export_exec = create_exec([
-                "bash", RUNNER_EXPORT_SCRIPT, source, generated,
-            ], ["LEZ_UI_EVIDENCE_DIRECTION=" + direction])
-            start_exec(export_exec)
-            if wait_exec(export_exec) != 0:
+            export_result = launcher_call({
+                "operation": "collect_result", "run_id": run_id,
+                "direction": direction,
+            })
+            if export_result.get("kind") != "CollectSwapResultV1" \
+                    or export_result.get("exit_code") != 0:
                 raise RuntimeError("public evidence export failed")
             generated_on_mount = (
                 EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" /
@@ -1586,7 +1487,15 @@ class RpcHandler(http.server.BaseHTTPRequestHandler):
             params = params_list[0]
             if params.get("schema_version") != 2:
                 raise ValueError("unsupported wallet-market schema version")
-            if method == "btc_market_snapshot_v1":
+            if method == "btc_market_health_v1":
+                runner = runner_info()
+                result = {
+                    "schema_version": 1,
+                    "ready": runner["ready"],
+                    "degraded": not runner["ready"],
+                    "runner": runner,
+                }
+            elif method == "btc_market_snapshot_v1":
                 result = MARKET.snapshot(params)
             elif method == "btc_offer_create_v1":
                 result = MARKET.create_offers(params)

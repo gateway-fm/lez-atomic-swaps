@@ -154,9 +154,17 @@ for (const value of ["maker", "taker"]) {
   requirePattern(
     rootFlake,
     flakeSource,
-    new RegExp(`${value}-install\\s*=.*\\.install`),
+    new RegExp(`lez-${value}-ui-install\\s*=.*\\.install`),
     `must expose the official ${value} developer-install tree`,
   );
+  for (const suffix of ["", "-lgx", "-install", "-integration-test"]) {
+    requirePattern(
+      rootFlake,
+      flakeSource,
+      new RegExp(`lez-${value}-ui${suffix}\\s*=`),
+      `must expose canonical lez-${value}-ui${suffix}`,
+    );
+  }
 }
 requirePattern(
   rootFlake,
@@ -164,6 +172,14 @@ requirePattern(
   /commonSource/,
   "must inject shared local-RPC and Chat bridge sources into both isolated package builds",
 );
+for (const [pattern, message] of [
+  [/withShortRuntimePath/, "must wrap both official UI checks with a short runtime path"],
+  [/export TMPDIR=\/tmp\/lez-ui/, "must keep Qt local sockets below Linux's AF_UNIX path limit"],
+  [/export XDG_RUNTIME_DIR="\$TMPDIR"/, "must give Qt one explicit private runtime directory"],
+  [/chmod 0700 "\$TMPDIR"/, "must keep the UI-test runtime directory owner-private"],
+]) {
+  requirePattern(rootFlake, flakeSource, pattern, message);
+}
 requirePattern(rootFlake, flakeSource, /delivery_module\s*=\s*logos-delivery-module/, "must map the Delivery runtime dependency");
 rejectPattern(
   rootFlake,
@@ -394,6 +410,12 @@ for (const pkg of packages) {
       /taker_offer_list_v1/,
       "must not use the filesystem offer index for Basecamp discovery",
     );
+    requirePattern(
+      backendSource,
+      source,
+      /direction\s*!=\s*QStringLiteral\("TakerSellsForeign"\)[\s\S]*direction\s*!=\s*QStringLiteral\("TakerSellsLez"\)/,
+      "must accept completed BTC → LEZ and LEZ → BTC evidence",
+    );
   }
   for (const [pattern, message] of [
     [/QProcess|\bsystem\s*\(|\bpopen\s*\(|\bexec[a-z]*\s*\(/, "must not spawn commands"],
@@ -447,6 +469,29 @@ for (const pkg of packages) {
 }
 
 read(resolve(basecampRoot, "README.md"), "Basecamp package build and operator guide");
+const packageFile = resolve(repositoryRoot, "package.json");
+const packageManifest = parseJson(packageFile, "root package manifest");
+if (
+  packageManifest?.scripts?.["test:m6:basecamp:integration"] !==
+  "./scripts/test-m6-basecamp-integration.sh"
+) {
+  report(packageFile, "must expose the Maker and Taker Basecamp integration runner");
+}
+const integrationRunnerFile = resolve(repositoryRoot, "scripts/test-m6-basecamp-integration.sh");
+const integrationRunner = read(integrationRunnerFile, "Basecamp integration runner");
+try {
+  if ((statSync(integrationRunnerFile).mode & 0o111) === 0) {
+    report(integrationRunnerFile, "Basecamp integration runner must be executable");
+  }
+} catch {}
+for (const [pattern, message] of [
+  [/checks\.\$\{system\}\.lez-maker-ui/, "must build the Maker check"],
+  [/checks\.\$\{system\}\.lez-taker-ui/, "must build the Taker check"],
+  [/static\.crates\.io/, "must repair retired pinned crate endpoints from the immutable archive"],
+  [/nix[^\n]*build[^\n]*\"\$maker\" \"\$taker\"/, "must realize both role checks in one invocation"],
+]) {
+  requirePattern(integrationRunnerFile, integrationRunner, pattern, message);
+}
 const productTestFile = resolve(basecampRoot, "tests/basecamp-role-product.mjs");
 const productTest = read(productTestFile, "official Basecamp product test");
 requirePattern(

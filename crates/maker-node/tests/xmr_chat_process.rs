@@ -5,6 +5,9 @@
 //! proves reservation, activation, actor handoff, replay, and restart behavior
 //! without hiding any Monero/LEZ RPC dependency behind a fake endpoint.
 
+#[path = "support/cross_role_binary.rs"]
+mod cross_role;
+
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
@@ -101,7 +104,7 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
         binary_swap_id,
         FOREIGN_UNITS_PICONERO,
         LEZ_UNITS,
-        Path::new(env!("CARGO_BIN_EXE_lez-maker")),
+        Path::new(env!("CARGO_BIN_EXE_lez-maker-cli")),
     );
     let role_journals = RoleJournalSnapshot::capture(&fixture);
     let authority = XmrDaemonAuthority {
@@ -542,7 +545,7 @@ async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
         binary_swap_id,
         FOREIGN_UNITS_PICONERO,
         LEZ_UNITS,
-        Path::new(env!("CARGO_BIN_EXE_lez-maker")),
+        Path::new(env!("CARGO_BIN_EXE_lez-maker-cli")),
     );
     let authority = XmrDaemonAuthority {
         maker_public_key: &fixture.maker_public_key_file,
@@ -741,7 +744,7 @@ async fn configure_live_route(socket: &Path, route: MakerRouteV1) {
 }
 
 fn publish_offer(socket: &Path, offer_id: &MakerOfferId) {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .arg("publish-offer")
@@ -787,7 +790,7 @@ fn run_taker(
     maker_key: &PublicKey,
     accepted_at: u64,
 ) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("--delivery-directory")
         .arg(delivery)
         .arg("--maker-public-key")
@@ -844,7 +847,7 @@ fn run_taker_with_effect(
     accepted_at: u64,
     effect: &XmrTakerEffectFixture,
 ) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("--delivery-directory")
         .arg(delivery)
         .arg("--maker-public-key")
@@ -912,7 +915,7 @@ fn run_taker_monitor(receipt: &Path) -> Value {
 }
 
 fn run_taker_lifecycle(action: &str, receipt: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg(action)
         .arg("--receipt")
         .arg(receipt)
@@ -1349,7 +1352,7 @@ struct XmrDaemonAuthority<'a> {
 }
 
 fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"));
     command
         .arg("--socket")
         .arg(paths.socket)

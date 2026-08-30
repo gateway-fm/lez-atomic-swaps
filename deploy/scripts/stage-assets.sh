@@ -38,13 +38,26 @@ MISSING
     exit 1
 fi
 
-# ---- maker-node: the repo's own bins, native arm64 debug build -------------
-if [[ ! -x images/maker-node/lez-maker-daemon ]]; then
+# ---- role Nodes: separate native-arm64 image payloads ---------------------
+if [[ ! -x images/maker-node/lez-maker-node \
+   || ! -x images/maker-node/lez-maker-cli \
+   || ! -x images/maker-node/lez-maker-chat-gateway \
+   || ! -x images/maker-node/lez-runtime-healthcheck \
+   || ! -x images/taker-node/lez-taker-node \
+   || ! -x images/taker-node/lez-taker-cli \
+   || ! -x images/taker-node/lez-taker-chat-gateway \
+   || ! -x images/taker-node/lez-taker-registry-init \
+   || ! -x images/taker-node/lez-runtime-healthcheck \
+   || ! -x images/lez-services/lez-runtime-healthcheck ]]; then
     cat >&2 <<'MISSING'
 Build the workspace binaries natively (repo root):
-  cargo build --locked -p lez-maker-node --bins
-Then copy target/debug/{lez-maker,lez-maker-daemon,lez-taker,
-lez-taker-service,lez-taker-registry-init} -> images/maker-node/
+  cargo build --locked -p lez-maker-node --bins -p lez-taker-node --bins \
+    -p lez-runtime-healthcheck
+Then copy target/debug/{lez-maker-cli,lez-maker-node,lez-maker-chat-gateway,
+lez-runtime-healthcheck} -> images/maker-node/ and
+target/debug/{lez-taker-cli,lez-taker-node,lez-taker-chat-gateway,
+lez-taker-registry-init,lez-runtime-healthcheck} -> images/taker-node/.
+Also copy target/debug/lez-runtime-healthcheck -> images/lez-services/.
 MISSING
     exit 1
 fi
@@ -54,8 +67,8 @@ if [[ ! -d images/basecamp-ui/assets/bundle ]]; then
     cat >&2 <<'MISSING'
 Build with the pinned flakes (nix, experimental-features enabled):
   nix build path:../basecamp#bin-bundle-dir-inspector -o bundle
-  nix build path:apps/basecamp#maker-install -o maker-user
-  nix build path:apps/basecamp#taker-install -o taker-user
+  nix build path:apps/basecamp#lez-maker-ui-install -o maker-user
+  nix build path:apps/basecamp#lez-taker-ui-install -o taker-user
   nix build path:../basecamp#logos-qt-mcp -o qt-mcp
 Then copy:
   bundle/     -> images/basecamp-ui/assets/bundle

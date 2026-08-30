@@ -53,7 +53,7 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
 {
     const QByteArray socketPath = qEnvironmentVariable(environmentVariable_.toUtf8().constData()).toUtf8();
     if (!socketPath.startsWith('/') || !isOwnerSocket(socketPath)) {
-        return failure("endpoint_unavailable", "Owner-local service endpoint is unavailable");
+        return failure("endpoint_unavailable", "Owner-local Node endpoint is unavailable");
     }
 
     QJsonParseError parameterError;
@@ -77,7 +77,7 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
     QLocalSocket socket;
     socket.connectToServer(QString::fromUtf8(socketPath), QIODevice::ReadWrite);
     if (!socket.waitForConnected(connectTimeoutMs_)) {
-        return failure("endpoint_unavailable", "Owner-local service did not accept the connection");
+        return failure("endpoint_unavailable", "Owner-local Node did not accept the connection");
     }
     QDeadlineTimer ioDeadline(ioTimeoutMs_);
     if (socket.write(wire) != wire.size()
@@ -94,7 +94,7 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
     }
     const QByteArray header = response.left(headerEnd);
     if (!header.startsWith("HTTP/1.1 200 ") && !header.startsWith("HTTP/1.0 200 ")) {
-        return failure("rpc_failure", "Owner-local service rejected the request");
+        return failure("rpc_failure", "Owner-local Node rejected the request");
     }
     if (header.toLower().contains("transfer-encoding:")) {
         return failure("invalid_response", "Unsupported local response framing");
@@ -133,15 +133,15 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
     QJsonParseError responseError;
     const QJsonDocument rpc = QJsonDocument::fromJson(responseBody, &responseError);
     if (responseError.error != QJsonParseError::NoError || !rpc.isObject()) {
-        return failure("invalid_response", "Local service returned invalid JSON");
+        return failure("invalid_response", "Local Node returned invalid JSON");
     }
     const QJsonObject object = rpc.object();
     if (object.value("jsonrpc").toString() != "2.0" || object.value("id").toInt(-1) != 1
         || object.contains("result") == object.contains("error")) {
-        return failure("invalid_response", "Local service returned an invalid JSON-RPC envelope");
+        return failure("invalid_response", "Local Node returned an invalid JSON-RPC envelope");
     }
     if (object.contains("error")) {
-        return failure("rpc_failure", "Owner-local service rejected the operation");
+        return failure("rpc_failure", "Owner-local Node rejected the operation");
     }
     QJsonObject success{{"ok", true}, {"result", object.value("result")}};
     return QString::fromUtf8(QJsonDocument(success).toJson(QJsonDocument::Compact));

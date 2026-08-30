@@ -1,11 +1,20 @@
 [package]
 name = "btc-reference-actor"
+autobins = false
 version = "0.1.0"
 description = "One-shot role-fixed reference actor for LEZ and Bitcoin atomic swaps"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[[bin]]
+name = "lez-btc-maker-actor"
+path = "src/bin/lez-btc-maker-actor.rs"
+
+[[bin]]
+name = "lez-btc-taker-actor"
+path = "src/bin/lez-btc-taker-actor.rs"
 
 [lints]
 workspace = true

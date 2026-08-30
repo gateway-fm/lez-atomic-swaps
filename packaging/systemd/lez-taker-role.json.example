@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "delivery_sources": [
+    {
+      "directory": "/var/lib/lez/taker/delivery",
+      "maker_public_key": "REPLACE_WITH_COMPRESSED_MAKER_PUBLIC_KEY",
+      "source_id": "configured-maker"
+    }
+  ],
+  "maximum_offers": 16
+}

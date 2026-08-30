@@ -11,10 +11,10 @@ cleanup() {
 trap cleanup EXIT
 
 cargo build --locked -p lez-maker-node --bins
-cargo build --locked -p zec-reference-actor --bin zec-reference-actor
+cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor
 SOURCE_BIN_DIR="${SOURCE_BIN_DIR:-target/debug}" \
 DESTDIR="$stage" \
-  ./scripts/install-m5-maker-service.sh
+  ./scripts/install-maker-node-service.sh
 
 install -d -m 0755 "$stage/etc"
 printf '%s\n' \
@@ -26,21 +26,20 @@ printf '%s\n' \
   'lez-swap:x:991:' \
   >"$stage/etc/group"
 
-readonly installed_unit="$stage/usr/lib/systemd/system/lez-maker-daemon.service"
-readonly verified_unit="$stage/lez-maker-daemon-verify.service"
+readonly installed_unit="$stage/usr/lib/systemd/system/lez-maker-node.service"
+readonly verified_unit="$stage/lez-maker-node-verify.service"
 sed \
   -e "s#^User=lez-swap#User=$(id -un)#" \
   -e "s#^Group=lez-swap#Group=$(id -gn)#" \
-  -e "s#^ExecStart=/usr/bin/lez-maker-daemon#ExecStart=$stage/usr/bin/lez-maker-daemon#" \
+  -e "s#^ExecStart=/usr/bin/lez-maker-node#ExecStart=$stage/usr/bin/lez-maker-node#" \
   "$installed_unit" >"$verified_unit"
 systemd-analyze verify "$verified_unit"
 
-test "$(stat -c '%a' "$stage/usr/bin/lez-maker-daemon")" = 755
-test "$(stat -c '%a' "$stage/usr/bin/lez-maker")" = 755
-test "$(stat -c '%a' "$stage/usr/bin/lez-taker")" = 755
-test "$(stat -c '%a' "$stage/usr/lib/systemd/system/lez-maker-daemon.service")" = 644
-test "$(stat -c '%a' "$stage/usr/bin/zec-reference-actor")" = 755
-test "$(stat -c '%a' "$stage/etc/lez-atomic-swaps/credentials")" = 700
-test "$(stat -c '%a' "$stage/etc/lez-atomic-swaps/zec-actor.env.example")" = 600
+test "$(stat -c '%a' "$stage/usr/bin/lez-maker-node")" = 755
+test "$(stat -c '%a' "$stage/usr/bin/lez-maker-cli")" = 755
+test "$(stat -c '%a' "$stage/usr/lib/systemd/system/lez-maker-node.service")" = 644
+test "$(stat -c '%a' "$stage/usr/bin/lez-zec-maker-actor")" = 755
+test "$(stat -c '%a' "$stage/etc/lez/maker/credentials")" = 700
+test "$(stat -c '%a' "$stage/etc/lez/maker/node.json.example")" = 600
 
 echo "M5 maker service staged-install and systemd verification passed"

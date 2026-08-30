@@ -12,7 +12,7 @@ readonly compose_sha256="f9ebc6ebdb19d769b793c245a736caaeb198c62587f13b25c660c13
 readonly shellcheck_version="0.11.0"
 readonly shellcheck_sha256="b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6"
 
-for command in bash curl flock git id jq ldd readelf rustup script scriptreplay \
+for command in bash curl flock git id jq ldd python3 readelf rustup script scriptreplay \
   sed sha256sum stat tar; do
   command -v "$command" >/dev/null || {
     echo "${command} is required by the CI quality gate" >&2
@@ -93,6 +93,10 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/test-v0-1-1-release-media-contract.sh
 ./scripts/check-m3-cryptographic-vectors.sh
 ./scripts/test-bitcoin-testnet4-route-contract.sh
+./scripts/check-runtime-profiles.py
+python3 -m unittest \
+  deploy/images/btc-demo-controller/test_controller.py \
+  deploy/images/btc-demo-launcher/test_launcher.py
 node ./scripts/check-m6-prototype-contract.mjs
 node ./scripts/check-m6-basecamp-package-contract.mjs
 

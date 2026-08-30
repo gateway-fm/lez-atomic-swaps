@@ -58,8 +58,8 @@ fn xmr_pre_effect_cycle_validates_real_authority_and_never_invokes_an_effect() {
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
     let swap_bytes = [0x5a; 32];
     let swap_id = hex::encode(swap_bytes);
-    let built_actor_program = std::path::Path::new(env!("CARGO_BIN_EXE_xmr-maker-actor"));
-    let actor_program = root.path().join("xmr-maker-actor");
+    let built_actor_program = std::path::Path::new(env!("CARGO_BIN_EXE_lez-xmr-maker-actor"));
+    let actor_program = root.path().join("lez-xmr-maker-actor");
     fs::copy(built_actor_program, &actor_program).unwrap();
     fs::set_permissions(&actor_program, fs::Permissions::from_mode(0o700)).unwrap();
     let fixture = XmrChatFixture::new(root.path(), swap_bytes, 1_000_000, 25_000, &actor_program);
@@ -143,7 +143,7 @@ fn queued_xmr_recover_overrides_typed_blocked_status_without_generic_effect() {
          test \"$2\" = \"196\" || exit 92\n\
          printf \"%s\\n\" \"$3\" >> \"{}\"\n\
          case \"$3\" in\n\
-           status) printf \"%s\\n\" \"{{\\\"schema_version\\\":1,\\\"actor_program\\\":\\\"xmr-maker-actor\\\",\\\"actor_abi\\\":\\\"lez_maker_xmr_pre_effect_v1\\\",\\\"role\\\":\\\"maker\\\",\\\"state\\\":\\\"active\\\",\\\"phase\\\":\\\"offered\\\",\\\"revision\\\":0,\\\"next_action\\\":\\\"xmr_chain_effects_not_yet_composed\\\",\\\"chain_effect_executed\\\":false}}\" ;;\n\
+           status) printf \"%s\\n\" \"{{\\\"schema_version\\\":1,\\\"actor_program\\\":\\\"lez-xmr-maker-actor\\\",\\\"actor_abi\\\":\\\"lez_maker_xmr_pre_effect_v1\\\",\\\"role\\\":\\\"maker\\\",\\\"state\\\":\\\"active\\\",\\\"phase\\\":\\\"offered\\\",\\\"revision\\\":0,\\\"next_action\\\":\\\"xmr_chain_effects_not_yet_composed\\\",\\\"chain_effect_executed\\\":false}}\" ;;\n\
            recover) printf \"%s\\n\" \"{{\\\"schema_version\\\":1,\\\"role\\\":\\\"maker\\\",\\\"command\\\":\\\"recover\\\",\\\"outcome\\\":\\\"awaiting_observation\\\",\\\"phase\\\":\\\"maker_recovery_available\\\",\\\"revision\\\":1,\\\"next_action\\\":\\\"xmr_chain_effects_not_yet_composed\\\"}}\" ;;\n\
            *) exit 95 ;;\n\
          esac\n",
@@ -714,7 +714,7 @@ fn wait_for_matrix_daemon(daemon: &mut Child, ready: &Path, label: &str) {
 }
 
 fn spawn_matrix_daemon(database: &Path, socket: &Path, ready: &Path, supervise: bool) -> Child {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"));
     command
         .arg("--socket")
         .arg(socket)
@@ -736,7 +736,7 @@ fn spawn_matrix_daemon(database: &Path, socket: &Path, ready: &Path, supervise: 
 }
 
 fn matrix_maker_cli(socket: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .args(arguments)
@@ -828,7 +828,7 @@ fn matrix_actor_program(case: ManualActionMatrixCase, invocation_log: &Path) -> 
             r#"{"schema_version":1,"role":"maker","state":"active","phase":"offered","revision":0,"next_action":"observe_taker_first_lock"}"#
         }
         MakerActorKindV1::Monero => {
-            r#"{"schema_version":1,"actor_program":"xmr-maker-actor","actor_abi":"lez_maker_xmr_pre_effect_v1","role":"maker","state":"active","phase":"offered","revision":0,"next_action":"xmr_chain_effects_not_yet_composed","chain_effect_executed":false}"#
+            r#"{"schema_version":1,"actor_program":"lez-xmr-maker-actor","actor_abi":"lez_maker_xmr_pre_effect_v1","role":"maker","state":"active","phase":"offered","revision":0,"next_action":"xmr_chain_effects_not_yet_composed","chain_effect_executed":false}"#
         }
         MakerActorKindV1::Zcash => {
             r#"{"schema_version":1,"role":"maker","state":"active","phase":"both_legs_locked","revision":3,"next_action":"wait"}"#

@@ -113,7 +113,7 @@ fn private_tempdir() -> tempfile::TempDir {
 }
 
 fn delivery_identity(socket: &Path, key: &Path) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .arg("delivery-identity")

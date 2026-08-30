@@ -38,20 +38,27 @@ Regtest nodes with deterministic local funds.
 From this directory, with Nix flakes enabled:
 
 ```sh
-nix build --no-update-lock-file .#maker -o result-maker
-nix build --no-update-lock-file .#taker -o result-taker
-nix build --no-update-lock-file .#maker-lgx -o result-maker-lgx
-nix build --no-update-lock-file .#taker-lgx -o result-taker-lgx
-nix build --no-update-lock-file .#maker-install -o result-maker-install
-nix build --no-update-lock-file .#taker-install -o result-taker-install
-nix build --no-update-lock-file .#maker-integration-test
-nix build --no-update-lock-file .#taker-integration-test
+nix build --no-update-lock-file .#lez-maker-ui -o result-lez-maker-ui
+nix build --no-update-lock-file .#lez-taker-ui -o result-lez-taker-ui
+nix build --no-update-lock-file .#lez-maker-ui-lgx -o result-lez-maker-ui-lgx
+nix build --no-update-lock-file .#lez-taker-ui-lgx -o result-lez-taker-ui-lgx
+nix build --no-update-lock-file .#lez-maker-ui-install -o result-lez-maker-ui-install
+nix build --no-update-lock-file .#lez-taker-ui-install -o result-lez-taker-ui-install
+nix build --no-update-lock-file .#lez-maker-ui-integration-test
+nix build --no-update-lock-file .#lez-taker-ui-integration-test
 ```
 
 The `*-lgx` outputs are the distributable package archives. The `*-install`
 outputs are developer-install trees for an isolated Basecamp `--user-dir`.
 Do not put both roles into one evidence directory: separate user directories
 make role discovery, socket authority, and cleanup auditable.
+
+From the repository root, the same two official integration checks run through
+the pinned Nix environment used by CI:
+
+```sh
+npm run test:m6:basecamp
+```
 
 ## Install into isolated Basecamp user directories
 
@@ -62,8 +69,8 @@ export M6_ROOT="${TMPDIR:-/tmp}/lez-m6-manual-$UID"
 export M6_MAKER_USER="$M6_ROOT/basecamp-maker"
 export M6_TAKER_USER="$M6_ROOT/basecamp-taker"
 install -d -m 0700 "$M6_ROOT" "$M6_MAKER_USER" "$M6_TAKER_USER"
-cp -a result-maker-install/. "$M6_MAKER_USER/"
-cp -a result-taker-install/. "$M6_TAKER_USER/"
+cp -a result-lez-maker-ui-install/. "$M6_MAKER_USER/"
+cp -a result-lez-taker-ui-install/. "$M6_TAKER_USER/"
 ```
 
 Build pinned Basecamp from its exact source checkout and record the output path:
@@ -82,7 +89,7 @@ reliable. Production distribution additionally remains subject to LOGOS-025.
 
 ## Run app-lifetime Logos Chat sessions and offer discovery
 
-Build `lez-logos-chat-gateway` directly from this repository. Each role runs its own
+Build the role-fixed Chat gateways directly from this repository. Each role runs its own
 endpoint. The Taker endpoint keeps one direct conversation and a bounded signed
 offer index; the Maker endpoint keeps up to 32 direct conversations so
 competing Takers receive separately correlated results. Start an endpoint with
@@ -91,29 +98,27 @@ and the Taker discovery index are intentionally session-scoped; signed offer
 state, the countersigned agreement, and replay authority stay durable in the
 Rust stores.
 
-Maker terminal (the Maker daemon's existing `--chat-socket` is the final
+Maker terminal (the Maker Node's existing `--chat-socket` is the final
 owner-local authority):
 
 ```sh
 export LEZ_LOGOS_CHAT_PRESET=logos.test
 export LEZ_LOGOS_CHAT_GATEWAY_SOCKET="$M6_ROOT/runtime-maker/logos-chat-control.sock"
-"$RUNNER_ROOT/target/release/lez-logos-chat-gateway" endpoint \
-  --role maker \
+"$RUNNER_ROOT/target/release/lez-maker-chat-gateway" endpoint \
   --control-socket "$LEZ_LOGOS_CHAT_GATEWAY_SOCKET" \
   --maker-chat-socket "$M6_ROOT/runtime-maker/chat.sock" &
 maker_chat_pid=$!
 trap 'kill -INT "$maker_chat_pid" 2>/dev/null || true; wait "$maker_chat_pid" 2>/dev/null || true' EXIT
 ```
 
-Taker terminal (configure `lez-taker-service`'s `chat_socket` to the proxy path
+Taker terminal (configure `lez-taker-node`'s `chat_socket` to the proxy path
 before starting that service):
 
 ```sh
 export LEZ_LOGOS_CHAT_PRESET=logos.test
 export LEZ_LOGOS_CHAT_GATEWAY_SOCKET="$M6_ROOT/runtime-taker/logos-chat-control.sock"
 export LEZ_LOGOS_CHAT_PROXY_SOCKET="$M6_ROOT/runtime-taker/logos-chat-proxy.sock"
-"$RUNNER_ROOT/target/release/lez-logos-chat-gateway" endpoint \
-  --role taker \
+"$RUNNER_ROOT/target/release/lez-taker-chat-gateway" endpoint \
   --control-socket "$LEZ_LOGOS_CHAT_GATEWAY_SOCKET" \
   --proxy-socket "$LEZ_LOGOS_CHAT_PROXY_SOCKET" &
 taker_chat_pid=$!
@@ -134,14 +139,14 @@ control and does not change durable offer or agreement state.
 
 ## Run the Maker package as a real user
 
-Build and start the real Maker daemon using the normal Maker configuration from
+Build and start the real Maker Node using the normal Maker configuration from
 [the manual user flows](../../docs/manual-user-flows.md). Its owner RPC defaults
-to `/run/lez-atomic-swaps/maker.sock`; a run-private absolute socket is safer for
+to `/run/lez/maker/node.sock`; a run-private absolute socket is safer for
 parallel local work. Verify its directory is mode 0700, its socket is mode 0600,
 and both are owned by your effective UID. Then launch:
 
 ```sh
-export LEZ_MAKER_RPC_SOCKET="$M6_ROOT/runtime-maker/maker.sock"
+export LEZ_MAKER_RPC_SOCKET="$M6_ROOT/runtime-maker/node.sock"
 export M6_BASECAMP_USER_DIR="$M6_MAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
@@ -171,24 +176,30 @@ four actor-owned actions are supplied by the Docker deployment's bounded
 controller at `LEZ_BTC_DEMO_RPC_SOCKET`; a standalone package without that
 mode-0600 socket remains a safe evidence viewer and shows the market offline.
 For the optional
-prepared-corridor controls, also create the strict owner-private Taker service
+prepared-corridor controls, also create the strict owner-private Taker Node role
 configuration described in
 [Flow 1Y](../../docs/manual-user-flows.md#flow-1y-run-the-actual-taker-owner-service-and-prepared-acceptance),
-start `lez-taker-service` as the current user, and select its mode-0600 socket:
+start `lez-taker-node` as the current user, and select its mode-0600 socket:
 
 ```sh
-export LEZ_TAKER_RPC_SOCKET="$M6_ROOT/runtime-taker/taker.sock"
+export LEZ_TAKER_RPC_SOCKET="$M6_ROOT/runtime-taker/node.sock"
 export LEZ_M3_BTC_EVIDENCE_FILE="$PWD/../../deploy/full-swap/evidence-m5arm-08180005-ui.json"
 export M6_BASECAMP_USER_DIR="$M6_TAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
 
 In Basecamp, open **LEZ / BTC Taker**, select Zurich Wallet 01 or Limmat Wallet
-02, and take a pending Maker offer. Use **Lock 0.01000000 BTC** and later
-**Claim 1,000 LEZ** only when those actions appear. Move to the Maker desk for
-the intervening Maker actions. After the fourth action, verify terminal revision
-`4 · completed`, two Bitcoin plus three LEZ transaction hashes, and the wallet
-balance proof showing opening → closing balances, signed deltas, and BTC fees.
+02, and take a pending Maker offer. Move between the two desks only when that
+role's next action appears:
+
+| Direction | Maker composer | Role-owned action order |
+|---|---|---|
+| BTC → LEZ (`TakerSellsForeign`) | Sell LEZ | Taker: Lock BTC → Maker: Fund LEZ → Taker: Claim LEZ → Maker: Claim Bitcoin |
+| LEZ → BTC (`TakerSellsLez`) | Sell BTC | Taker: Lock LEZ → Maker: Lock BTC → Taker: Claim Bitcoin → Maker: Claim LEZ |
+
+After the fourth action, verify terminal revision `4 · completed`, two Bitcoin
+plus three LEZ transaction hashes, and the wallet balance proof showing opening
+→ closing balances, signed deltas, and BTC fees.
 
 Production Basecamp initiation re-verifies that exact live signed Delivery
 proof; the filesystem source remains a legacy CLI/offline seam. Initiation
@@ -213,7 +224,7 @@ evidence recipe with `LOGOS_QT_MCP` pointing at the pinned Basecamp MCP test
 framework, one role install tree, and one real owner socket. It covers:
 
 - both missing-service fail-closed paths;
-- Maker health, atomic route save, and history through `lez-maker-daemon`;
+- Maker health, atomic route save, and history through `lez-maker-node`;
 - wallet-indexed Maker inventory and the Taker order book;
 - Taker completed M3 BTC evidence, including all five unique transaction IDs;
 - Taker health plus BTC browsing through the gateway's live signed Delivery index;
@@ -244,7 +255,7 @@ CARGO_NET_OFFLINE=true cargo test -p lez-maker-node \
 
 For a physical network-denial check, run that same command in the dedicated
 runner image with Docker `--network none`, a read-only source mount, and a
-task-private target directory. The test launches only its own Maker daemon,
+task-private target directory. The test launches only its own Maker Node,
 Maker/Taker gateway endpoints, and the gateway's Unix-only local relay; it does
 not use Chat's Delivery network, public RPC, or any running Compose service.
 
@@ -254,8 +265,8 @@ After stopping only the processes started for this run:
 
 ```sh
 rm -rf "$M6_ROOT"
-rm -f result-maker result-taker result-maker-lgx result-taker-lgx
-rm -f result-maker-install result-taker-install
+rm -f result-lez-maker-ui result-lez-taker-ui result-lez-maker-ui-lgx result-lez-taker-ui-lgx
+rm -f result-lez-maker-ui-install result-lez-taker-ui-install
 ```
 
 Do not run a global Docker or Nix prune on a shared machine. Remove only the

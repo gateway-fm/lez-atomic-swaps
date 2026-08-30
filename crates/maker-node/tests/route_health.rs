@@ -237,7 +237,7 @@ async fn daemon_periodically_withdraws_without_a_health_request() {
     let socket = run.path().join("maker.sock");
     let ready = run.path().join("ready");
     let database = run.path().join("maker.sqlite3");
-    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
         .arg("--socket")
         .arg(&socket)
         .arg("--database")

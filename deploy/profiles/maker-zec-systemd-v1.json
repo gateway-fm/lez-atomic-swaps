@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "profile_id": "maker-zec-systemd-v1",
+  "stability": "experimental",
+  "description": "Hardened Linux Maker host skeleton with supervised ZEC reference actor authority.",
+  "artifact_identity_policy": "The package manifest records SHA-256 for /usr/bin/lez-maker-node and /usr/bin/lez-zec-maker-actor; the actor digest must equal the value in the strict Maker Node configuration.",
+  "components": [
+    {"id":"maker-node","lifecycle":"service","executable":"lez-maker-node","role":"maker","pair":"zcash","sockets":["/run/lez/maker/node.sock","/run/lez/maker/chat.sock"],"state":[{"path":"/var/lib/lez/maker/maker.sqlite3","backup":"critical"}],"credentials":["Delivery key","Maker claim key","Maker claim preimage"],"public_identities":["Maker Delivery public identity"],"health":"maker_health","depends_on":[]},
+    {"id":"zec-maker-actor","lifecycle":"one_shot_child","executable":"lez-zec-maker-actor","role":"maker","pair":"zcash","sockets":[],"state":[{"path":"/var/lib/lez/maker/actors","backup":"critical"}],"credentials":["sealed Maker actor config fd 196"],"public_identities":[],"health":"bounded status invocation","depends_on":["maker-node"]}
+  ],
+  "verification_commands": ["./scripts/check-linux-runtime.sh", "systemd-analyze verify packaging/systemd/lez-maker-node.service"],
+  "nonclaims": ["Not an all-pair deployment", "No packaged Taker Node", "Taker keys and processes are not mirrored into this Maker-only profile"]
+}

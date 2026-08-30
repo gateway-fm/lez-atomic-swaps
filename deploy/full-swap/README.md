@@ -19,7 +19,9 @@ end-to-end and then surfaced in the Basecamp UI.
 ## How to reproduce
 
 Everything runs inside a native arm64 runner container against the host's
-Docker socket. The runner-work root is mounted at the same absolute path on
+Docker socket. In the Compose application, only `btc-demo-launcher` can reach
+that socket; the controller submits typed `RunSwapJobV1` requests over an
+owner-only Unix socket. The runner-work root is mounted at the same absolute path on
 both sides because nested Docker bind mounts are resolved by the host daemon.
 From a workspace containing `submission/`, `runner-work/`, and provisioned
 `provision/data/` directories:

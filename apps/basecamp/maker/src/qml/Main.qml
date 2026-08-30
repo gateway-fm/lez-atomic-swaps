@@ -14,7 +14,7 @@ Item {
     property string output: "No operation submitted"
     property string statusMode: "neutral"
     property string statusTitle: "Connecting securely"
-    property string statusDetail: "Establishing the owner-local daemon channel"
+    property string statusDetail: "Establishing the owner-local Node channel"
     property int routeCount: 0
     property int swapCount: 0
     property string currentState: ""
@@ -453,7 +453,7 @@ Item {
             root.ready = isReady && root.backend !== null
             if (root.ready) {
                 root.statusMode = "success"
-                root.statusTitle = "Maker daemon connected"
+                root.statusTitle = "Maker Node connected"
                 root.statusDetail = "Loading this wallet's offer inventory and swap actions"
                 btcMarketBootstrapTimer.restart()
             }
@@ -464,7 +464,7 @@ Item {
         root.ready = root.backend !== null && logos.isViewModuleReady("lez_atomic_swap_maker")
         if (root.ready) {
             root.statusMode = "success"
-            root.statusTitle = "Maker daemon connected"
+            root.statusTitle = "Maker Node connected"
             root.statusDetail = "Loading this wallet's offer inventory and swap actions"
             btcMarketBootstrapTimer.restart()
         }
@@ -473,20 +473,20 @@ Item {
     function decode(raw) {
         var envelope = JSON.parse(String(raw))
         if (envelope.ok !== true)
-            throw new Error(envelope.message || envelope.code || "The daemon rejected this request")
+            throw new Error(envelope.message || envelope.code || "The Maker Node rejected this request")
         return envelope.result ?? {}
     }
 
     function run(operation, pendingTitle, onSuccess) {
         if (!root.ready) {
-            root.output = "Maker service backend is not ready"
+            root.output = "Maker Node backend is not ready"
             root.statusMode = "error"
-            root.statusTitle = "Daemon unavailable"
+            root.statusTitle = "Maker Node unavailable"
             root.statusDetail = "Wait for the owner-local connection and try again"
             return
         }
         root.busy = true
-        root.output = "Waiting for owner-local service..."
+        root.output = "Waiting for owner-local Node..."
         root.statusMode = "working"
         root.statusTitle = pendingTitle
         root.statusDetail = "Committing the request over the owner-only channel"
@@ -509,7 +509,7 @@ Item {
                 root.btcMarketBusy = false
                 root.output = "Backend failure: " + String(error)
                 root.statusMode = "error"
-                root.statusTitle = "Secure daemon error"
+                root.statusTitle = "Secure Maker Node error"
                 root.statusDetail = String(error)
                 root.technicalVisible = true
             })
@@ -612,7 +612,7 @@ Item {
     }
 
     function health() {
-        root.run(root.backend.health(), "Checking daemon health", function(result) {
+        root.run(root.backend.health(), "Checking Maker Node health", function(result) {
             root.routeCount = (result.routes ?? []).length
             root.statusMode = result.ready === true && result.degraded !== true ? "success" : "error"
             root.statusTitle = result.degraded === true ? "Maker is operating in degraded mode" : "Maker systems ready"
@@ -839,7 +839,7 @@ Item {
                             }
                             LuxeButton {
                                 objectName: "makerHealth"
-                                text: "Check service"
+                                text: "Check Node"
                                 quiet: true
                                 enabled: root.ready && !root.busy
                                 onClicked: root.health()
@@ -1434,7 +1434,7 @@ Item {
                 Label {
                     // Non-Bitcoin routes are parked while the M3 demo is BTC-only.
                     visible: false
-                    text: "ADVANCED SERVICE CONTROLS · PREPARED NON-BITCOIN ROUTES"
+                    text: "ADVANCED NODE CONTROLS · PREPARED NON-BITCOIN ROUTES"
                     color: "#566377"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.1
                     Layout.topMargin: 4
                 }
@@ -1675,7 +1675,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label { text: "Technical evidence"; color: "#C7CED9"; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                Label { text: "Raw owner-daemon response for audit and debugging"; color: "#657184"; font.pixelSize: 10 }
+                                Label { text: "Raw owner-Node response for audit and debugging"; color: "#657184"; font.pixelSize: 10 }
                             }
                             LuxeButton {
                                 text: root.technicalVisible ? "Hide technical details" : "Show technical details"

@@ -1,7 +1,7 @@
 # lez-swap-stack — fully dockerized local LEZ ↔ BTC swap environment
 
 One compose project: LEZ v0.2 devnet + Bitcoin Core regtest + explorers for
-both chains + the real maker daemon and taker service + the real Basecamp UI
+both chains + the canonical Maker/Taker Nodes + the real Basecamp UI
 (drivable over VNC and by automated end-to-end tests). All native arm64,
 started with one command.
 
@@ -14,7 +14,7 @@ started with one command.
 ```
 
 `up.sh` ends with the repo-style UI verification (real Basecamp driven through
-its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`.
+its QML inspector against the live Maker and Taker Nodes). Skip with `SKIP_UI_VERIFY=1`.
 
 | What | Where |
 |---|---|
@@ -22,7 +22,7 @@ its QML inspector against the live daemon/service). Skip with `SKIP_UI_VERIFY=1`
 | BTC explorer | http://127.0.0.1:3002 |
 | LEZ explorer + M3 evidence | http://127.0.0.1:3003/#/evidence |
 | **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (password `lezswap`; override with `VNC_PASSWORD`) |
-| Maker daemon | `docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health` |
+| Maker Node | `docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health` |
 | UI verify | `docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
 | Switch UI role | `BASECAMP_ROLE=taker docker compose --env-file runtime/runtime.env up -d basecamp-ui` |
 | Logs | `docker compose --env-file runtime/runtime.env logs -f <service>` |
@@ -38,9 +38,15 @@ Basecamp microapps are the control surface:
 3. Open **LEZ / BTC Taker**, select a Taker wallet, and click **Take offer** on
    one or more order-book rows. Accepted offers are indexed to that Taker wallet
    and queue while the local runner handles one swap at a time.
-4. Advance the active swap like two real users: **Taker: Lock BTC → Maker: Fund
-   LEZ → Taker: Claim LEZ → Maker: Claim Bitcoin**. Each dashboard exposes only
-   its own ready action.
+4. Advance either active swap like two real users. Each dashboard exposes only
+   its own ready action:
+
+   | Direction | Maker composer | Role-owned action order |
+   |---|---|---|
+   | BTC → LEZ (`TakerSellsForeign`) | Sell LEZ | Taker: Lock BTC → Maker: Fund LEZ → Taker: Claim LEZ → Maker: Claim Bitcoin |
+   | LEZ → BTC (`TakerSellsLez`) | Sell BTC | Taker: Lock LEZ → Maker: Lock BTC → Taker: Claim Bitcoin → Maker: Claim LEZ |
+
+   The direction changes assets and authorities, not the four-gate lifecycle.
 5. After completion, inspect the five transaction hashes and the wallet balance
    proof: BTC/LEZ opening → closing values, signed deltas, principal, and both
    Bitcoin fees. **Open local proof** links to the explorer at
@@ -109,13 +115,21 @@ funded accounts.
 | settlement chains | both chains are advancing and the Bitcoin spender index is present |
 | `verify-explorers.py` | each certified swap's transactions are *displayed* — Bitcoin ones in a real block on the Bitcoin explorer (rendered content, hidden markup excluded), LEZ ones as live transactions with program and accounts. Runs predating the settlement chains are checked against the certified proof endpoint, since their chains no longer exist |
 | `verify-market.py` | controller validation, idempotent replay, request-identity reuse, wallet ownership, offer lifecycle, role gating and the wallet ledger |
-| UI regressions | the two Basecamp suites against the live daemon and service |
+| UI regressions | the two Basecamp suites against the live Maker and Taker Nodes |
 
 The BTC view can be driven automatically:
 
 ```sh
 docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint node \
   basecamp-ui /ui-tests/verify.mjs taker
+```
+
+For a completed reverse-flow evidence file, select its exact UI contract while
+running either role suite:
+
+```sh
+M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
+  run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs taker
 ```
 
 ## Services
@@ -129,13 +143,14 @@ docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint no
 | `bedrock` | pinned multi-arch digest `91d6c5…` | LEZ v0.2 consensus node (exact pin from the repo's compose) |
 | `sequencer` / `indexer` | `images/lez-services` | built from pinned `logos-execution-zone` v0.2.0 (a58fbce), native rebuild + arm64 r0vm |
 | `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves any certified run's transaction hashes |
-| `maker-init` / `taker-init` | debian | one-shot volume chowns (0700 socket dirs, 0600 taker config) |
-| `maker-node` | `images/maker-node` | real `lez-maker-daemon` + CLIs; owner socket on a shared volume |
-| `taker-service` | `images/maker-node` | real `lez-taker-service`: health, authenticated offer discovery, Chat acceptance, durable admission, list, monitor, and fenced terminal actions |
-| `btc-demo-controller` | `images/btc-demo-controller` | owner-local SQLite wallet market: create/withdraw/take plus four role-gated M3 actions; queues accepted swaps and publishes validated transaction and balance evidence |
-| `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the daemon uid (4713) so the owner-only socket checks pass |
+| `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
+| `maker-node` | `images/maker-node` | Maker-only image: canonical Node, CLI, Chat gateway, strict versioned config, and owner socket |
+| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, authenticated discovery, durable admission, monitoring, and fenced terminal actions |
+| `btc-demo-launcher` | `images/btc-demo-launcher` | local-demo-only allowlisted `RunSwapJobV1` boundary; sole component with the Docker socket |
+| `btc-demo-controller` | `images/btc-demo-controller` | unprivileged owner-local SQLite wallet market; calls the launcher over a mode-0600 UDS and publishes validated evidence |
+| `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass |
 
-The UI reaches the role services and demo controller through shared named
+The UI reaches the role Nodes and demo controller through shared named
 socket volumes mounted read-only in Basecamp. The C++ backends enforce
 `uid == socket owner && mode 0600`, hence the shared uid.
 
@@ -179,11 +194,24 @@ must resolve identically on the host and inside that container.
 
 ## Demo boundary
 
+The checked component inventory and exact support claims live in
+`profiles/local-btc-demo-v1.json`; every Cargo executable is classified in
+`executables.json`. Validate both with `../scripts/check-runtime-profiles.py`.
+
+| State | Owner | Backup class |
+|---|---|---|
+| `lez-maker-state` | Maker Node | Critical: DB and Delivery signing identity |
+| `lez-taker-state` | Taker Node | Critical after admission |
+| `lez-bitcoin-core-data` | Bitcoin Core | Critical for retained local chain evidence |
+| `runtime/{bedrock,indexer,sequencer}` | LEZ devnet | Recreatable before funding; preserve with retained chain evidence |
+| `runner-work/market` and per-run `.e2e` roots | External evidence runner | Critical identities plus retained evidence |
+| `lez-btc-demo-socket/market.sqlite3` | BTC demo controller | Demo book; not chain authority |
+
 The primary M3 microapps gate the repository's fixed, genuine local LEZ/BTC
 actor workflow and then present its completed evidence. They do not yet expose
 arbitrary amounts, external wallets, public networks, or production signing.
 The named profiles are local wallet-index aliases backed by fresh run-owned
 signing keys, not persisted production wallets. The controller has no TCP
 listener and accepts only its fixed wallet-market and role-action methods over
-a mode-0600 owner socket. Its Docker socket access is local-demo infrastructure
-and is not a production boundary.
+a mode-0600 owner socket. It has no Docker socket; the separate local-demo
+launcher owns that authority and rejects jobs outside the frozen v1 schema.

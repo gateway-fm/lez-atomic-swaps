@@ -14,7 +14,7 @@ Item {
     property string output: "Browse authenticated offers to begin"
     property string statusMode: "neutral"
     property string statusTitle: "Connecting securely"
-    property string statusDetail: "Establishing the owner-local service channel"
+    property string statusDetail: "Establishing the owner-local Node channel"
     property string selectedOffer: ""
     property string selectedAnnouncementBase64: ""
     property string selectedExpiry: ""
@@ -363,7 +363,7 @@ Item {
             root.ready = isReady && root.backend !== null
             if (root.ready) {
                 root.statusMode = "success"
-                root.statusTitle = "Private service connected"
+                root.statusTitle = "Taker Node connected"
                 root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
                 btcEvidenceTimer.restart()
                 btcMarketBootstrapTimer.restart()
@@ -375,7 +375,7 @@ Item {
         root.ready = root.backend !== null && logos.isViewModuleReady("lez_atomic_swap_taker")
         if (root.ready) {
             root.statusMode = "success"
-            root.statusTitle = "Private service connected"
+            root.statusTitle = "Taker Node connected"
             root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
             btcEvidenceTimer.restart()
             btcMarketBootstrapTimer.restart()
@@ -393,20 +393,20 @@ Item {
     function decode(raw) {
         var envelope = JSON.parse(String(raw))
         if (envelope.ok !== true)
-            throw new Error(envelope.message || envelope.code || "The service rejected this request")
+            throw new Error(envelope.message || envelope.code || "The Taker Node rejected this request")
         return envelope.result ?? {}
     }
 
     function run(operation, pendingTitle, onSuccess) {
         if (!root.ready) {
-            root.output = "Taker service backend is not ready"
+            root.output = "Taker Node backend is not ready"
             root.statusMode = "error"
-            root.statusTitle = "Service unavailable"
+            root.statusTitle = "Taker Node unavailable"
             root.statusDetail = "Wait for the secure local connection and try again"
             return
         }
         root.busy = true
-        root.output = "Waiting for owner-local service..."
+        root.output = "Waiting for owner-local Node..."
         root.statusMode = "working"
         root.statusTitle = pendingTitle
         root.statusDetail = "Verifying the request over the owner-only channel"
@@ -429,7 +429,7 @@ Item {
                 root.btcMarketBusy = false
                 root.output = "Backend failure: " + String(error)
                 root.statusMode = "error"
-                root.statusTitle = "Secure service error"
+                root.statusTitle = "Secure Taker Node error"
                 root.statusDetail = String(error)
                 root.technicalVisible = true
             })
@@ -497,9 +497,9 @@ Item {
     }
 
     function health() {
-        root.run(root.backend.health(), "Checking service health", function(result) {
+        root.run(root.backend.health(), "Checking Taker Node health", function(result) {
             root.statusMode = result.ready === true ? "success" : "error"
-            root.statusTitle = result.ready === true ? "All systems ready" : "Service needs attention"
+            root.statusTitle = result.ready === true ? "All systems ready" : "Taker Node needs attention"
             root.statusDetail = "Offer delivery: " + String(result.delivery ?? "unknown")
         })
     }
@@ -876,7 +876,7 @@ Item {
                         }
                         LuxeButton {
                             objectName: "takerHealth"
-                            text: "Service health"
+                            text: "Check Node"
                             quiet: true
                             enabled: root.ready && !root.busy
                             implicitHeight: 38
@@ -919,10 +919,10 @@ Item {
                                 color: "#0D141E"; border.width: 1; border.color: "#263144"
                                 RowLayout {
                                     anchors.fill: parent; anchors.margins: 12
-                                    Label { text: "BUY"; color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
-                                    Label { text: "1,000 LEZ"; color: "#F5F7FA"; font.pixelSize: 13; font.weight: Font.DemiBold }
-                                    Label { text: "FOR"; color: "#6F7A8B"; font.pixelSize: 9; font.weight: Font.Bold }
-                                    Label { text: "0.01000000 BTC"; color: "#B997FF"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                    Label { text: "TRADE"; color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
+                                    Label { text: "BTC"; color: "#B997FF"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                    Label { text: "↔"; color: "#6F7A8B"; font.pixelSize: 12; font.weight: Font.Bold }
+                                    Label { text: "LEZ"; color: "#7EE100"; font.pixelSize: 13; font.weight: Font.DemiBold }
                                     Item { Layout.fillWidth: true }
                                     Label { text: "REGTEST / PRIVATE LOCAL"; color: "#657184"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                                 }
@@ -941,7 +941,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label { text: "My orders"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                Label { text: "Offers this wallet has taken. You control only Lock BTC and Claim LEZ; Maker actions appear on the other dashboard."; color: "#7F8A9B"; font.pixelSize: 11 }
+                                Label { text: "Offers this wallet has taken. Direction-specific Taker actions appear here; Maker actions appear on the other dashboard."; color: "#7F8A9B"; font.pixelSize: 11 }
                             }
                         }
 
@@ -1466,7 +1466,7 @@ Item {
                                 onClicked: pair.currentText === "Bitcoin" ? root.loadBtcEvidence() : root.browse()
                             }
                             LuxeButton {
-                                text: "Check prepared service"
+                                text: "Check prepared Node"
                                 quiet: true
                                 enabled: root.ready && !root.busy
                                 Layout.fillWidth: true
@@ -1753,7 +1753,7 @@ Item {
                             ColumnLayout {
                                 Layout.fillWidth: true; spacing: 2
                                 Label { text: "Technical evidence"; color: "#C7CED9"; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                Label { text: "Raw owner-service response for audit and debugging"; color: "#657184"; font.pixelSize: 10 }
+                                Label { text: "Raw owner-Node response for audit and debugging"; color: "#657184"; font.pixelSize: 10 }
                             }
                             LuxeButton {
                                 text: root.technicalVisible ? "Hide technical details" : "Show technical details"

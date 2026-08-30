@@ -7,7 +7,7 @@ export LC_ALL=C
 readonly runner="scripts/run-m2-taker-sells-lez-poc.sh"
 readonly handoff="scripts/run-m5-zec-chat-handoff.sh"
 readonly wrapper="scripts/run-m7-zec-taker-first-lock-refund-poc.sh"
-readonly facade="crates/maker-node/src/taker_facade.rs"
+readonly facade="crates/taker-node/src/taker_facade.rs"
 
 fail() {
   echo "M7 ZEC first-lock refund contract failed: $*" >&2

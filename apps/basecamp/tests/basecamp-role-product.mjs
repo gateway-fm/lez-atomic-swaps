@@ -9,13 +9,13 @@ const roles = {
   maker: {
     launcher: "LEZ / BTC Maker",
     heading: "LEZ / BTC — Maker Desk",
-    health: "Check service",
+    health: "Check Node",
     output: "makerOutput",
   },
   taker: {
     launcher: "LEZ / BTC Taker",
     heading: "LEZ / BTC — Taker Desk",
-    health: "Service health",
+    health: "Check Node",
     output: "takerOutput",
   },
 };
@@ -58,7 +58,7 @@ async function invokeSuccessfully(app, button, action, predicate = () => true) {
   let envelope;
   await app.waitFor(async () => {
     const raw = await property(app, expected.output, "text");
-    if (raw === before || raw === "Waiting for owner-local service...") {
+    if (raw === before || raw === "Waiting for owner-local Node...") {
       throw new Error(`${action} has not completed`);
     }
     envelope = JSON.parse(raw);
@@ -209,10 +209,10 @@ if (expectService) {
     }
   });
 } else {
-  test(`${role}: missing owner-local service fails closed without crashing the UI`, async (app) => {
+  test(`${role}: missing owner-local Node fails closed without crashing the UI`, async (app) => {
     await app.click(expected.health);
     await app.waitFor(async () => app.expectTexts([
-      '{"code":"endpoint_unavailable","message":"Owner-local service endpoint is unavailable","ok":false}',
+      '{"code":"endpoint_unavailable","message":"Owner-local Node endpoint is unavailable","ok":false}',
     ]), {
       timeout: 10000,
       interval: 300,

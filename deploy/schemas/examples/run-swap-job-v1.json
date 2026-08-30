@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "operation": "run_swap",
+  "run_id": "m5arm-0830123456",
+  "direction": "taker_sells_foreign",
+  "offer_id": "offer-example-btc",
+  "reservation_id": "ui-reserve-example",
+  "maker_wallet_id": "maker-munich-01",
+  "taker_wallet_id": "taker-zurich-01",
+  "files": {
+    "lez-run-full-btc-ui-m5arm-0830123456.sh": "IyEvYmluL2Jhc2gK",
+    "lez-interactive-m3-outer-m5arm-0830123456.sh": "IyEvYmluL2Jhc2gK",
+    "lez-interactive-m3-direction-m5arm-0830123456.sh": "IyEvYmluL2Jhc2gK",
+    "lez-export-btc-ui-evidence.sh": "IyEvYmluL2Jhc2gK"
+  }
+}

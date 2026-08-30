@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "arguments": [
+    "--socket",
+    "/run/lez/maker/node.sock",
+    "--database",
+    "/var/lib/lez/maker/maker.sqlite3",
+    "--ready-file",
+    "/run/lez/maker/ready",
+    "--delivery-directory",
+    "/delivery",
+    "--delivery-signing-key-file",
+    "/var/lib/lez/maker/delivery-signing.key"
+  ]
+}

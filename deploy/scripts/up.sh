@@ -37,20 +37,20 @@ until docker exec lez-bitcoin-core /usr/local/bin/bitcoin-cli -conf=/run-config/
   sleep 3; elapsed=$((elapsed + 3))
   [[ $elapsed -lt $timeout ]] || { echo "bitcoin-core RPC never became ready"; docker compose logs --tail 30 bitcoin-core; exit 1; }
 done
-until docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health >/dev/null 2>&1; do
+until docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health >/dev/null 2>&1; do
   sleep 3; elapsed=$((elapsed + 3))
-  [[ $elapsed -lt $timeout ]] || { echo "maker daemon never became ready"; docker compose logs --tail 30 maker-node; exit 1; }
+  [[ $elapsed -lt $timeout ]] || { echo "Maker Node never became ready"; docker compose logs --tail 30 maker-node; exit 1; }
 done
-until docker exec lez-taker-service curl -sf --max-time 3 --unix-socket /run/lez/taker.sock \
+until docker exec lez-taker-node curl -sf --max-time 3 --unix-socket /run/lez/taker/node.sock \
     --header 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"taker_health","params":[{}]}' \
     http://localhost/ >/dev/null 2>&1; do
   sleep 3; elapsed=$((elapsed + 3))
-  [[ $elapsed -lt $timeout ]] || { echo "taker service never became ready"; docker compose logs --tail 30 taker-service; exit 1; }
+  [[ $elapsed -lt $timeout ]] || { echo "Taker Node never became ready"; docker compose logs --tail 30 taker-node; exit 1; }
 done
 
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
-  echo "[5/5] verifying Basecamp UI against the real daemon…"
+  echo "[5/5] verifying Basecamp UI against both real Nodes…"
   set -a; source runtime/runtime.env; set +a
   docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs maker \
     | grep -viE "locale|Qt depends|reconfigure|manual"
@@ -70,7 +70,7 @@ cat <<BANNER
    LEZ + M3 proof UI     http://127.0.0.1:3003/#/evidence
    Basecamp UI (VNC)     vnc://127.0.0.1:5901     (password: ${vnc_password}; role: ${role_now})
    BTC swap flow         Maker publishes → Taker takes → four role-owned actions
-   Maker daemon          docker exec lez-maker-node lez-maker --socket /run/lez/maker.sock health
+   Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
    UI verification       docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker|taker]
 
  switch UI role:  BASECAMP_ROLE=taker docker compose up -d basecamp-ui

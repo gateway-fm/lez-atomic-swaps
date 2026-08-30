@@ -87,7 +87,7 @@ Verify the running product without starting another swap:
 ./scripts/verify-all.sh
 docker compose --env-file runtime/runtime.env ps
 docker compose --env-file runtime/runtime.env logs --tail=200 \
-  maker-node taker-service btc-demo-controller
+  maker-node taker-node btc-demo-controller
 ```
 
 Stop it with `./scripts/down.sh`. Add `--wipe` only when you intentionally want

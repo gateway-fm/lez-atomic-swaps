@@ -98,6 +98,8 @@ done
 
 require_fixed 'tags: ["m*-complete*"]' "$ci_workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$ci_workflow"
+require_fixed 'deploy/images/btc-demo-controller/test_controller.py' "$ci_workflow"
+require_fixed 'deploy/images/btc-demo-launcher/test_launcher.py' "$ci_workflow"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$ci_workflow"
 require_fixed './scripts/check-spin-lock-remediation.sh' "$ci_workflow"
 require_fixed './scripts/check-github-action-pins.sh' "$ci_workflow"
@@ -119,6 +121,9 @@ require_fixed 'PUPPETEER_SKIP_DOWNLOAD: "true"' "$ci_workflow"
 require_fixed 'M6_UI_TEST_ROOT: ${{ runner.temp }}/lez-m6-ui-${{ github.run_id }}-${{ github.run_attempt }}' "$ci_workflow"
 require_fixed 'npm run test:m6:prototype' "$ci_workflow"
 require_fixed 'npm run test:m6:basecamp:contract' "$ci_workflow"
+require_fixed 'Maker and Taker Basecamp integration' "$ci_workflow"
+require_fixed 'bash /repo/scripts/test-m6-basecamp-integration.sh' "$ci_workflow"
+require_fixed 'nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21' "$ci_workflow"
 require_fixed 'cargo fmt --all --check' "$ci_workflow"
 require_fixed 'cargo clippy --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo test --locked --workspace --all-targets' "$ci_workflow"
@@ -175,6 +180,12 @@ require_fixed 'LEZ_M3_RUNNER_REPO_IN_CONTAINER=/tmp/lez-ci-quality-runner-repo' 
 
 if rg -F 'COPY --chmod=0555 zec-' deploy/images/maker-node/Dockerfile >/dev/null; then
   fail "the public BTC Basecamp image must not package future ZEC executables"
+fi
+if rg -F 'lez-taker-' deploy/images/maker-node/Dockerfile >/dev/null; then
+  fail "the Maker image must not package Taker executables"
+fi
+if rg -F 'lez-maker-' deploy/images/taker-node/Dockerfile >/dev/null; then
+  fail "the Taker image must not package Maker executables"
 fi
 
 require_fixed 'Verify M3 official cryptographic vectors' "$ci_workflow"
@@ -280,10 +291,10 @@ require_fixed 'export RISC0_DOCKER_CONTAINER_TAG="$risc0_guest_builder_tag"' "$p
 require_fixed 'risc0_build::embed_methods_with_options' "$provisional_methods_build"
 require_fixed 'r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' "$provisional_methods_build"
 require_fixed '.root_dir("../..")' "$provisional_methods_build"
-require_fixed 'expected_elf_sha256="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"' "$provisional_verifier"
-require_fixed 'expected_image_id="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"' "$provisional_verifier"
-require_fixed 'elf_sha256 = "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"' "$provisional_artifact_manifest"
-require_fixed 'image_id = "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"' "$provisional_artifact_manifest"
+require_fixed 'expected_elf_sha256="237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0"' "$provisional_verifier"
+require_fixed 'expected_image_id="431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b"' "$provisional_verifier"
+require_fixed 'elf_sha256 = "237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0"' "$provisional_artifact_manifest"
+require_fixed 'image_id = "431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b"' "$provisional_artifact_manifest"
 if rg -Fq 'risc0_build::embed_methods();' "$provisional_methods_build"; then
   fail "v0.2 methods must embed the canonical Docker-built guest"
 fi

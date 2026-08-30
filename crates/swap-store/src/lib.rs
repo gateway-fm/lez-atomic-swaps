@@ -1,5 +1,10 @@
 //! Persistent swap repository.
 
+#[cfg(not(target_os = "linux"))]
+compile_error!(
+    "lez-swap-store runtime authority is Linux-only: it requires memfd seals and openat2; run scripts/check-linux-runtime.sh"
+);
+
 use std::{path::Path, time::Duration};
 
 #[cfg(unix)]
@@ -16,6 +21,7 @@ mod btc_recovery;
 mod maker_actor_process;
 mod maker_application;
 mod maker_offer;
+mod platform_contract;
 mod public_effect_journal;
 mod taker_facade_registry;
 mod xmr_effect_workflow_journal;
