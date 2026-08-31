@@ -1,5 +1,7 @@
 //! Black-box acceptance tests at the maker operator process boundary.
 
+#[path = "support/cross_role_binary.rs"]
+mod cross_role;
 mod support;
 
 use std::{
@@ -788,7 +790,7 @@ fn start_daemon(run: &Path, database: &Path, name: &str) -> (Daemon, PathBuf) {
         Err(error) => panic!("create Delivery signing key: {error}"),
     }
     let actor = actor_deployment(run, "m5-integration-authority-001");
-    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
         .arg("--socket")
         .arg(&socket)
         .arg("--database")
@@ -844,7 +846,7 @@ fn assert_delivery_offer(run: &Path, expected: bool) {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("--delivery-directory")
         .arg(run.join("delivery"))
         .arg("--maker-public-key")
@@ -866,7 +868,7 @@ fn assert_delivery_offer(run: &Path, expected: bool) {
 }
 
 fn maker_cli(socket: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .args(arguments)

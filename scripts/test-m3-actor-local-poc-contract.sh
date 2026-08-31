@@ -170,7 +170,7 @@ for staged_actor_term in \
   'local socket="${runtime_root}/m.sock"' \
   'local chat_socket="${runtime_root}/c.sock"' \
   'local ready_file="${runtime_root}/m.ready"' \
-  'cp --reflink=auto -- "$M3_POC_ACTOR_BIN" "$actor_program"' \
+  'cp --reflink=auto -- "$M3_POC_MAKER_ACTOR_BIN" "$actor_program"' \
   'stat -c '\''%u:%a:%h'\'' "$actor_program"' \
   '--btc-actor-program "$actor_program"' \
   'and .state == "not_activated"' \
@@ -978,7 +978,8 @@ run_recovery_pending_fixture() {
       export M3_POC_DIRECTION_ROOT="$2"
       export M3_POC_EVIDENCE_DIR="$2/evidence"
       export M3_POC_DIRECTION=taker_sells_foreign
-      export M3_POC_ACTOR_BIN="$3"
+      export M3_POC_MAKER_ACTOR_BIN="$3"
+      export M3_POC_TAKER_ACTOR_BIN="$3"
       assert_recovery_pending_both lez "$4" "$5"
     ' pending-harness "$direction_driver" "$fixture_root" \
       "${PWD}/scripts/test-m3-actor-local-poc-contract.sh" "$predecessor" "$label" \
@@ -1079,7 +1080,8 @@ run_lez_refund_retry_fixture() {
       export M3_POC_DIRECTION_ROOT="$2"
       export M3_POC_EVIDENCE_DIR="$2/evidence"
       export M3_POC_DIRECTION=taker_sells_foreign
-      export M3_POC_ACTOR_BIN="$3"
+      export M3_POC_MAKER_ACTOR_BIN="$3"
+      export M3_POC_TAKER_ACTOR_BIN="$3"
       submission_count_file="$4"
       lez_successful_submission_count() { tr -d "\\r\\n" <"$submission_count_file"; }
       actor_invoke_recovery_pending_retry maker 2 lez "$5"
@@ -1383,7 +1385,8 @@ run_bitcoin_lock_retry_fixture() {
       export M3_POC_DIRECTION_ROOT="$2"
       export M3_POC_EVIDENCE_DIR="$2/evidence"
       export M3_POC_DIRECTION=taker_sells_lez
-      export M3_POC_ACTOR_BIN="$3"
+      export M3_POC_MAKER_ACTOR_BIN="$3"
+      export M3_POC_TAKER_ACTOR_BIN="$3"
       core_rpc() {
         local role="$1" method="$2"
         [[ "$role" == "taker" && "$method" == "getrawmempool" ]] || return 64
@@ -2506,7 +2509,8 @@ required_terms=(
   'scripts/run-bitcoin-core-e2e.sh'
   'scripts/run-lez-v02-stack.sh'
   'btc-local-poc-provision'
-  'btc-reference-actor'
+  'lez-btc-maker-actor'
+  'lez-btc-taker-actor'
   'lez-adaptor-role-runner'
   'lez-v02-bridge-poc'
   'local socket="${secure_state_root}/m5-btc-maker.sock"'

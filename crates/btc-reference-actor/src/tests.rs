@@ -28,6 +28,14 @@ use lez_bridge_protocol::{
     WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, WitnessedClaimInstructionFacts,
     WitnessedEscrowMetadataFacts, WitnessedLezAssetV2,
 };
+
+#[test]
+fn role_fixed_entrypoints_reject_the_opposite_role() {
+    assert!(entrypoint_role_matches(ActorRole::Maker, ActorRole::Maker));
+    assert!(entrypoint_role_matches(ActorRole::Taker, ActorRole::Taker));
+    assert!(!entrypoint_role_matches(ActorRole::Maker, ActorRole::Taker));
+    assert!(!entrypoint_role_matches(ActorRole::Taker, ActorRole::Maker));
+}
 use lez_btc_swap_sdk::{
     AdaptorSessionContext, BTC_AGREEMENT_SCHEMA_V1, BTC_LEZ_ASSET_EXTENSION_SCHEMA_V1,
     BtcAgreementBodyV1, BtcAgreementRecordV1, BtcChainPolicyV1, BtcClaimTermsV1, BtcFundingTermsV1,

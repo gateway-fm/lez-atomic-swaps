@@ -1,17 +1,34 @@
 [package]
 name = "lez-maker-node"
 version = "0.1.0"
-description = "Headless maker daemon and operator CLI for LEZ atomic swaps"
+description = "Role-fixed Maker Node and operator CLI for LEZ atomic swaps"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+autobins = false
 
 [lints]
 workspace = true
 
 [features]
 test-crash-hooks = ["zec-reference-actor/test-crash-hooks"]
+
+[[bin]]
+name = "lez-maker-node"
+path = "src/bin/lez-maker-node.rs"
+
+[[bin]]
+name = "lez-maker-cli"
+path = "src/bin/lez-maker-cli.rs"
+
+[[bin]]
+name = "lez-maker-chat-gateway"
+path = "src/bin/lez-maker-chat-gateway.rs"
+
+[[bin]]
+name = "lez-xmr-maker-actor"
+path = "src/bin/xmr-maker-actor.rs"
 
 [[example]]
 name = "m5-systemd-fault-actor"
@@ -33,6 +50,7 @@ getrandom = "=0.3.4"
 hyper = { version = "1.10.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 jsonrpsee = { version = "0.26.0", features = ["client-core", "server"] }
+lez-node-common = { version = "0.1.0", path = "../node-common" }
 lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-logos-price-c-api = { version = "0.1.0", path = "../logos-price-c-api", default-features = false }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
@@ -57,6 +75,7 @@ zcash_primitives = { version = "=0.28.0", default-features = false, features = [
 
 [dev-dependencies]
 lez-adaptor-role-runner = { version = "0.1.0", path = "../adaptor-role-runner" }
+lez-taker-node = { version = "0.1.0", path = "../taker-node" }
 bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
 hex = "0.4.3"
 jsonrpsee-http-client = { version = "0.26.0", default-features = false }

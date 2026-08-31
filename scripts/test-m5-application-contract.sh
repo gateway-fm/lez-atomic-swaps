@@ -47,15 +47,16 @@ fi
 for required in \
   'cargo +1.96.0 build --locked --offline --release -p zec-reference-actor --bins' \
   'cargo +1.96.0 build --locked --offline --release -p lez-maker-node --bins' \
+  'cargo +1.96.0 build --locked --offline --release -p lez-taker-node --bins' \
   'cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-actor-inspect' \
   'cargo +1.96.0 build --locked --offline --release -p lez-maker-node --example maker-zec-lock-intent-inspect' \
   '--locked --offline --release --bin lez-v02-bridge-poc' \
-  'target/release/zec-reference-actor' \
+  'target/release/lez-zec-maker-actor' \
   'target/release/zec-local-poc-provision' \
   'compat/lez-v0_2-sidecar/target/release/lez-v02-bridge-poc' \
-  'target/release/lez-maker-daemon' \
-  'target/release/lez-maker' \
-  'target/release/lez-taker' \
+  'target/release/lez-maker-node' \
+  'target/release/lez-maker-cli' \
+  'target/release/lez-taker-cli' \
   'target/release/zec-local-poc-chat-draft' \
   'target/release/zec-local-poc-chat-finalize' \
   'target/release/examples/maker-actor-inspect' \
@@ -66,7 +67,7 @@ for required in \
 done
 
 for required in \
-  'target/debug/zec-reference-actor' \
+  'target/debug/lez-zec-maker-actor' \
   'target/debug/zec-local-poc-provision' \
   'compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc'; do
   rg -Fq -- "$required" "$runner" ||
@@ -194,8 +195,8 @@ rg -Fq -- "$required" "$handoff" ||
   fail "M5 handoff must return a queued actor before supervision: ${required}"
 
 for required in \
-  'ESCROW_PROGRAM_ID:-b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433' \
-  'M5_LEZ_GUEST_SHA256:-ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee' \
+  'ESCROW_PROGRAM_ID:-431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b' \
+  'M5_LEZ_GUEST_SHA256:-237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0' \
   'M5_LEZ_DEPLOYMENT_EVIDENCE_FILE' \
   'M5_LEZ_FINALITY_EVIDENCE_FILE' \
   'M5_LEZ_ONBOARDING_EVIDENCE_FILE' \

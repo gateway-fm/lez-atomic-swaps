@@ -8,8 +8,8 @@ readonly wrapper="scripts/run-m5-xmr-application-poc.sh"
 readonly runner="scripts/run-m4-actual-claim-poc.sh"
 readonly sidecar_lock="compat/lez-v0_2-sidecar/Cargo.lock"
 readonly release_lock="compat/lez-v0_2-xmr-release-service/Cargo.lock"
-readonly taker_cli="crates/maker-node/src/bin/lez-taker.rs"
-readonly xmr_receipt_loader="crates/maker-node/src/bin/support/taker_accept_xmr.rs"
+readonly taker_cli="crates/taker-node/src/bin/lez-taker.rs"
+readonly xmr_receipt_loader="crates/taker-node/src/bin/support/taker_accept_xmr.rs"
 readonly xmr_process_test="crates/maker-node/tests/xmr_chat_process.rs"
 readonly xmr_application_provision="crates/xmr-reference-actor/src/application_provision.rs"
 
@@ -154,11 +154,13 @@ for required in \
   'M5_XMR_APPLICATION_MODE must be unset, 0, or 1' \
   'RUN_ID="$artifact_run_id" "$artifact_runner" verify-source' \
   'cargo +1.96.0 build --release --locked --offline -p lez-maker-node' \
-  '--bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor' \
-  'stage_executable "${workspace_target}/release/lez-maker" "$m5_lez_maker_binary"' \
-  'stage_executable "${workspace_target}/release/lez-maker-daemon"' \
-  'stage_executable "${workspace_target}/release/lez-taker" "$m5_lez_taker_binary"' \
-  'stage_executable "${workspace_target}/release/xmr-maker-actor"' \
+  '--bin lez-maker-cli --bin lez-maker-node --bin lez-xmr-maker-actor' \
+  'cargo +1.96.0 build --release --locked --offline -p lez-taker-node' \
+  '--bin lez-taker-cli' \
+  'stage_executable "${workspace_target}/release/lez-maker-cli" "$m5_lez_maker_binary"' \
+  'stage_executable "${workspace_target}/release/lez-maker-node"' \
+  'stage_executable "${workspace_target}/release/lez-taker-cli" "$m5_lez_taker_binary"' \
+  'stage_executable "${workspace_target}/release/lez-xmr-maker-actor"' \
   '.binary_sha256 += {m5_lez_maker:$maker,m5_lez_maker_daemon:$daemon,m5_lez_taker:$taker,m5_xmr_maker_actor:$xmr_actor}' \
   'prepare_m5_xmr_delivery_plan() {' \
   'delivery-identity --signing-key-file "$m5_xmr_delivery_key"' \
@@ -300,7 +302,7 @@ for required_edge in command-fds lez-btc-swap-sdk lez-xmr-swap-sdk rustix; do
     fail "release lock omits swap-store runtime edge: ${required_edge}"
 done
 
-[[ "$(rg -Fo -- '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' "$runner" | wc -l)" == 4 ]] ||
+[[ "$(rg -Fo -- '--shared-wallet-url "${monero_env[MONERO_FUNDING_WALLET_ENDPOINT]}"' "$runner" | wc -l | tr -d '[:space:]')" == 4 ]] ||
   fail 'runner must restore the shared XMR wallet only on the neutral provisioner RPC for two-swap funding and both role-correct sweeps'
 require_runner_source '--funding-wallet-url "${monero_env[MONERO_MAKER_WALLET_ENDPOINT]}"' 'Maker funding and claim-mining wallet role'
 rg -Fq -- '--taker-wallet-url "${monero_env[MONERO_TAKER_WALLET_ENDPOINT]}"' "$runner" ||

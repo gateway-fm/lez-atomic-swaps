@@ -14,7 +14,7 @@ usage() {
     'usage: run-m5-zec-chat-handoff.sh' \
     '  --run-id ID --direction DIRECTION --source-actors-root DIR --source-provision-summary FILE' \
     '  --output-actors-root NEW_DIR --application-root NEW_DIR --evidence-dir DIR' \
-    '  --maker-daemon-bin FILE --maker-cli-bin FILE --taker-bin FILE' \
+    '  --maker-node-bin FILE --maker-cli-bin FILE --taker-bin FILE' \
     '  --draft-bin FILE --finalize-bin FILE' \
     '  --actor-program FILE --actor-program-sha256 HEX32' \
     '  --actor-inspector-bin FILE --pair-inspector-bin FILE' \
@@ -28,7 +28,7 @@ source_provision_summary=''
 output_actors_root=''
 application_root=''
 evidence_dir=''
-maker_daemon_bin=''
+maker_node_bin=''
 maker_cli_bin=''
 taker_bin=''
 draft_bin=''
@@ -48,7 +48,7 @@ while (( $# > 0 )); do
     --output-actors-root) output_actors_root="${2:-}"; shift 2 ;;
     --application-root) application_root="${2:-}"; shift 2 ;;
     --evidence-dir) evidence_dir="${2:-}"; shift 2 ;;
-    --maker-daemon-bin) maker_daemon_bin="${2:-}"; shift 2 ;;
+    --maker-node-bin) maker_node_bin="${2:-}"; shift 2 ;;
     --maker-cli-bin) maker_cli_bin="${2:-}"; shift 2 ;;
     --taker-bin) taker_bin="${2:-}"; shift 2 ;;
     --draft-bin) draft_bin="${2:-}"; shift 2 ;;
@@ -65,7 +65,7 @@ while (( $# > 0 )); do
 done
 
 for value in run_id direction source_actors_root source_provision_summary output_actors_root \
-  application_root evidence_dir maker_daemon_bin maker_cli_bin taker_bin draft_bin \
+  application_root evidence_dir maker_node_bin maker_cli_bin taker_bin draft_bin \
   finalize_bin actor_program actor_program_sha256 actor_inspector_bin \
   pair_inspector_bin; do
   [[ -n "${!value}" ]] || fail "missing --${value//_/-}"
@@ -87,7 +87,7 @@ esac
 readonly direction_cli direction_json maker_claim_preimage_file
 for path in "$source_actors_root" "$source_provision_summary" \
   "$output_actors_root" "$application_root" "$evidence_dir" \
-  "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
+  "$maker_node_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
   "$finalize_bin" "$actor_program" "$actor_inspector_bin" \
   "$pair_inspector_bin"; do
   [[ "$path" == /* ]] || fail "path must be absolute: $path"
@@ -100,7 +100,7 @@ done
   fail 'output actors root already exists'
 [[ ! -e "$application_root" && ! -L "$application_root" ]] || \
   fail 'application root already exists'
-for binary in "$maker_daemon_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
+for binary in "$maker_node_bin" "$maker_cli_bin" "$taker_bin" "$draft_bin" \
   "$finalize_bin" "$actor_inspector_bin" "$pair_inspector_bin"; do
   [[ -f "$binary" && -x "$binary" && ! -L "$binary" ]] || \
     fail "binary is unavailable or unsafe: $binary"
@@ -203,7 +203,7 @@ daemon_is_owned() {
   [[ -n "$daemon_pid" && -n "$daemon_start_ticks" && \
      -r "/proc/${daemon_pid}/stat" ]] || return 1
   [[ "$(process_start_ticks "$daemon_pid")" == "$daemon_start_ticks" ]] || return 1
-  [[ "$(readlink -f "/proc/${daemon_pid}/exe" 2>/dev/null)" == "$maker_daemon_bin" ]]
+  [[ "$(readlink -f "/proc/${daemon_pid}/exe" 2>/dev/null)" == "$maker_node_bin" ]]
 }
 
 stop_daemon() {
@@ -291,7 +291,7 @@ start_daemon() {
     health_arguments=(--route-health-config "$route_health_config"
       --route-health-poll-milliseconds "$route_health_poll_milliseconds")
   fi
-  "$maker_daemon_bin" \
+  "$maker_node_bin" \
     --socket "$maker_socket" \
     --chat-socket "$chat_socket" \
     --database "$database" \
@@ -607,7 +607,7 @@ jq -n \
   --arg swap_id "$(jq -er '.swap_id' "$taker_receipt")" \
   --arg agreement_sha256 "$(jq -er '.signed_agreement_sha256' "$finalize_receipt")" \
   --arg maker_public_key "$maker_public_key" --arg taker_public_key "$taker_public_key" \
-  --arg maker_daemon_bin "$maker_daemon_bin" --arg maker_socket "$maker_socket" \
+  --arg maker_node_bin "$maker_node_bin" --arg maker_socket "$maker_socket" \
   --arg application_database "$database" \
   --arg acceptance_receipt_file "$acceptance_receipt" \
   --arg acceptance_receipt_sha256 "$acceptance_receipt_sha256" \
@@ -630,7 +630,7 @@ jq -n \
     accepted_at_unix_seconds: $accepted_at,
     agreement_sha256: $agreement_sha256,
     role_public_keys: {maker:$maker_public_key,taker:$taker_public_key},
-    real_processes: {maker_daemon:true,maker_cli:true,taker_cli:true},
+    real_processes: {maker_node:true,maker_cli:true,taker_cli:true},
     actor_pair_validated: true,
     effect_actor_pair_validated: true,
     effect_actor_pair_receipt_sha256: $effect_actor_pair_receipt_sha256,
@@ -647,9 +647,9 @@ jq -n \
     scheduled_maker_actor: $queued[0][0],
     transport_cutover: {
       state:"armed_after_restart",
-      maker_daemon_bin:$maker_daemon_bin,
-      maker_daemon_pid:$daemon_pid,
-      maker_daemon_start_ticks:$daemon_start_ticks,
+      maker_node_bin:$maker_node_bin,
+      maker_node_pid:$daemon_pid,
+      maker_node_start_ticks:$daemon_start_ticks,
       maker_socket:$maker_socket,
       application_database:$application_database,
       chat_socket:$chat_socket,
@@ -676,8 +676,8 @@ jq -e '.result == "passed" and .actor_pair_validated == true
   and .scheduled_maker_actor.schedule_state == "queued"
   and .scheduled_maker_actor.swap_id == .swap_id
   and .scheduled_maker_actor.child_identity_absent == true
-  and (.transport_cutover.maker_daemon_pid | numbers) > 1
-  and (.transport_cutover.maker_daemon_start_ticks | test("^[0-9]+$"))
+  and (.transport_cutover.maker_node_pid | numbers) > 1
+  and (.transport_cutover.maker_node_start_ticks | test("^[0-9]+$"))
   and .public_rpc_or_faucet_used == false
   and .private_material_disclosed == false' "$result_receipt" >/dev/null
 

@@ -52,6 +52,7 @@ here.
 | [0029](0029-m3-bitcoin-local-poc-entry.md)–[0052](0052-bind-private-demo-videos-to-actual-node-evidence.md) | M3 Bitcoin entry, exact lock/claim evidence, adaptor security properties, recovery, replay, concurrency, and demo evidence |
 | [0128](0128-enter-m6-through-current-basecamp-qml.md)–[0147](0147-isolate-basecamp-role-packages-over-owner-services.md) | M6 role services, terminal actions/refunds, Basecamp toolchain pinning, and isolated packages |
 | [0210](0210-route-role-agreement-chat-over-logos-chat.md)–[0211](0211-discover-offers-over-logos-delivery.md) | App-lifetime Logos Chat negotiation and signed Delivery offer discovery |
+| [0212](0212-version-runtime-components.md) | Checked runtime profiles, symmetric public names, and least-privilege demo launch |
 
 The [system architecture](system-architecture.md) and
 [deployment/RPC map](deployment-components-and-rpcs.md) are the detailed M3

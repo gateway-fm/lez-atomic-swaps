@@ -1,4 +1,4 @@
-// End-to-end UI verification against the REAL maker daemon / taker service.
+// End-to-end UI verification against the real Maker Node / Taker Node pair.
 // Mirrors apps/basecamp/tests/basecamp-role-product.mjs from the repo, but
 // self-contained: spawns Basecamp offscreen with a fresh copy of the role
 // user dir, drives it through the QML inspector, and asserts live RPC results.
@@ -15,12 +15,17 @@ const framework = "/opt/qt-mcp/test-framework/framework.mjs";
 const { test, run } = await import(framework);
 
 const role = process.argv[2] === "taker" ? "taker" : "maker";
+const uiDirection = process.env.M3_UI_DIRECTION || "TakerSellsForeign";
+if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
+  throw new Error("M3_UI_DIRECTION must be TakerSellsForeign or TakerSellsLez");
+}
+const reverseDirection = uiDirection === "TakerSellsLez";
 
 const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
 // both plugins in one app: the product shape (maker + taker in the sidebar)
 cpSync(`/var/lez-assets/both-user`, freshUserDir, { recursive: true });
 process.env.BASECAMP_USER_DIR = freshUserDir;
-const appBin = "/usr/local/bin/basecamp-maker";
+const appBin = `/usr/local/bin/lez-${role}-ui`;
 
 // spawn the app ourselves (the framework's --ci mode waits only 15s; cold
 // module loading needs longer), then attach in normal mode
@@ -77,7 +82,7 @@ async function outputAfterClick(
     await new Promise((r) => setTimeout(r, 700));
     const raw = await property(app, objectNameOutput, "text");
     if ((allowIdenticalResult || raw !== before)
-        && !raw.startsWith("Waiting for owner-local service")) {
+        && !raw.startsWith("Waiting for owner-local Node")) {
       try {
         if (predicate(JSON.parse(raw))) return raw;
       } catch {}
@@ -97,7 +102,7 @@ async function outputAfterSignal(app, objectName, objectNameOutput, predicate) {
   for (;;) {
     await new Promise((r) => setTimeout(r, 700));
     const raw = await property(app, objectNameOutput, "text");
-    if (!raw.startsWith("Waiting for owner-local service")) {
+    if (!raw.startsWith("Waiting for owner-local Node")) {
       try {
         if (predicate(JSON.parse(raw))) return raw;
       } catch {}
@@ -153,7 +158,7 @@ async function publishOfferOnce(app, predicate) {
   for (;;) {
     await new Promise((r) => setTimeout(r, 700));
     const raw = await property(app, "makerOutput", "text");
-    if (raw !== before && !raw.startsWith("Waiting for owner-local service")) {
+    if (raw !== before && !raw.startsWith("Waiting for owner-local Node")) {
       try { if (predicate(JSON.parse(raw))) return raw; } catch {}
     }
     if (Date.now() > deadline) throw new Error(`publish did not complete (last: ${raw.slice(0, 200)})`);
@@ -171,8 +176,8 @@ if (role === "maker") {
     });
   });
 
-  test("maker: real daemon health", async (app) => {
-    await app.click("Check service");
+  test("maker: real Node health", async (app) => {
+    await app.click("Check Node");
     await app.waitFor(async () => app.expectTexts(["Maker systems ready"]), {
       timeout: 15000, interval: 300, description: "Maker health status",
     });
@@ -180,6 +185,13 @@ if (role === "maker") {
   });
 
   test("maker: wallet-indexed BTC offer inventory", async (app) => {
+    if (reverseDirection) {
+      const sellLeg = await app.findByProperty("objectName", "makerSellLegLez");
+      if (sellLeg.error || sellLeg.matches?.length !== 1) {
+        throw new Error("Maker direction composer was not found");
+      }
+      await evaluateIn(app, sellLeg.matches[0].id, 'root.sellSide = "btc"');
+    }
     const wallet = await app.findByProperty("objectName", "makerBtcWallet");
     if (wallet.matches?.length !== 1) {
       throw new Error("Maker wallet selector was not found");
@@ -227,10 +239,12 @@ if (role === "maker") {
     console.log(`  wallet inventory: Munich >=3 · Basel >=2 · market=${basel.summary.pending_offers}`);
   });
 
-  if (["fund_lez", "claim_btc"].includes(process.env.INTERACTIVE_ACTION)) {
+  const makerActions = reverseDirection
+    ? { lock_btc: ["Lock 0.01000000 BTC", "locking_btc"], claim_lez: ["Claim 1,000 LEZ", "claiming_lez"] }
+    : { fund_lez: ["Fund 1,000 LEZ", "funding_lez"], claim_btc: ["Claim Bitcoin", "claiming_btc"] };
+  if (Object.hasOwn(makerActions, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
-    const label = action === "fund_lez" ? "Fund 1,000 LEZ" : "Claim Bitcoin";
-    const working = action === "fund_lez" ? "funding_lez" : "claiming_btc";
+    const [label, working] = makerActions[action];
     test(`maker: perform ${action}`, async (app) => {
       const wallet = await app.findByProperty("objectName", "makerBtcWallet");
       if (wallet.error || wallet.matches?.length !== 1) throw new Error("Maker wallet selector is unavailable");
@@ -246,7 +260,7 @@ if (role === "maker") {
     });
     await app.click("LEZ / BTC Taker");
     await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Taker Desk", "Backend connected"]), {
-      timeout: 25000, interval: 500, description: "taker view + live service",
+      timeout: 25000, interval: 500, description: "taker view + live Node",
     });
     // Let the intentional one-shot evidence preload settle before a later
     // button assertion observes the shared diagnostic output field.
@@ -271,8 +285,8 @@ if (role === "maker") {
     console.log("  order book: both Maker wallets visible to the selected Taker wallet");
   });
 
-  test("taker: real service health", async (app) => {
-    await app.click("Service health");
+  test("taker: real Node health", async (app) => {
+    await app.click("Check Node");
     await app.waitFor(async () => app.expectTexts(["All systems ready"]), {
       timeout: 15000, interval: 300, description: "Taker health status",
     });
@@ -291,7 +305,7 @@ if (role === "maker") {
     const ids = evidence.effects.map((effect) => effect.transaction_id);
     const bitcoin = evidence.effects.filter((effect) => effect.chain === "Bitcoin");
     const lez = evidence.effects.filter((effect) => effect.chain === "LEZ");
-    if (evidence.pair !== "Bitcoin" || evidence.direction !== "TakerSellsForeign"
+    if (evidence.pair !== "Bitcoin" || evidence.direction !== uiDirection
         || evidence.terminal?.phase !== "completed" || evidence.terminal?.revision !== 4
         || evidence.private_material_disclosed !== false || evidence.replay_resubmission_count !== 0
         || ids.length !== 5 || new Set(ids).size !== 5 || bitcoin.length !== 2 || lez.length !== 3
@@ -318,7 +332,8 @@ if (role === "maker") {
         throw new Error(`no takeable order-book row: ${JSON.stringify(buttons)}`);
       }
       await evaluateIn(app, buttons.matches[0].id, "clicked()");
-      await app.waitFor(async () => app.expectTexts(["Lock 0.01000000 BTC"]), {
+      const firstAction = reverseDirection ? "Lock 1,000 LEZ" : "Lock 0.01000000 BTC";
+      await app.waitFor(async () => app.expectTexts([firstAction]), {
         timeout: 600000,
         interval: 2000,
         description: "real M3 runner preparation and Taker lock gate",
@@ -327,10 +342,12 @@ if (role === "maker") {
     });
   }
 
-  if (["lock_btc", "claim_lez"].includes(process.env.INTERACTIVE_ACTION)) {
+  const takerActions = reverseDirection
+    ? { lock_lez: ["Lock 1,000 LEZ", "locking_lez"], claim_btc: ["Claim Bitcoin", "claiming_btc"] }
+    : { lock_btc: ["Lock 0.01000000 BTC", "locking_btc"], claim_lez: ["Claim 1,000 LEZ", "claiming_lez"] };
+  if (Object.hasOwn(takerActions, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
-    const label = action === "lock_btc" ? "Lock 0.01000000 BTC" : "Claim 1,000 LEZ";
-    const working = action === "lock_btc" ? "locking_btc" : "claiming_lez";
+    const [label, working] = takerActions[action];
     test(`taker: perform ${action}`, async (app) => {
       await triggerVisibleAction(app, "takerSwapAction", label, "takerOutput", working);
       console.log(`  interactive M3: Taker ${action} submitted`);

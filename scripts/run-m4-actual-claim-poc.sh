@@ -101,7 +101,7 @@ emit_contract() {
         provisioning_order: "post_tag13_and_sidecars_before_actor_registration",
         actor_requeue_seconds: {isolated_test: 1, default: 3600},
         operator_branch_selector: false,
-        owner_action: "lez-maker refund",
+        owner_action: "lez-maker-cli refund",
         sender_abi: "lez_xmr_monero_refund_sweep_v3",
         observer_abi: "lez_xmr_monero_verify_v2",
         external_confirmation_blocks: 10,
@@ -146,7 +146,7 @@ emit_contract() {
       m7_xmr_tag15_process_kill: {
         mode_flag: "M7_XMR_TAG15_PROCESS_KILL_AFTER_SUBMISSION",
         requires_semantic_claim: true,
-        owner_action: "lez-maker claim",
+        owner_action: "lez-maker-cli claim",
         feature_gated_crash_hook: true,
         crash_boundary: "submitted_before_actor_stdout",
         restart_same_database_and_registry: true,
@@ -1105,11 +1105,17 @@ build_identity_and_artifact() {
       CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
         cargo +1.96.0 build --release --locked --offline -p lez-maker-node \
           --features test-crash-hooks \
-          --bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor
+          --bin lez-maker-cli --bin lez-maker-node --bin lez-xmr-maker-actor
+      CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+        cargo +1.96.0 build --release --locked --offline -p lez-taker-node \
+          --features test-crash-hooks --bin lez-taker-cli
     else
       CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
         cargo +1.96.0 build --release --locked --offline -p lez-maker-node \
-          --bin lez-maker --bin lez-maker-daemon --bin lez-taker --bin xmr-maker-actor
+          --bin lez-maker-cli --bin lez-maker-node --bin lez-xmr-maker-actor
+      CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
+        cargo +1.96.0 build --release --locked --offline -p lez-taker-node \
+          --bin lez-taker-cli
     fi
   fi
   CARGO_TARGET_DIR="$workspace_target" CARGO_NET_OFFLINE=true \
@@ -1162,18 +1168,18 @@ build_identity_and_artifact() {
   readonly classifier_binary="${staged_binary_root}/lez-v02-xmr-classify-finalized"
   readonly vault_claim_staged_binary="${staged_binary_root}/lez-v02-vault-claim-poc"
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
-    readonly m5_lez_maker_binary="${staged_binary_root}/lez-maker"
-    readonly m5_lez_maker_daemon_binary="${staged_binary_root}/lez-maker-daemon"
-    readonly m5_lez_taker_binary="${staged_binary_root}/lez-taker"
-    readonly m5_xmr_maker_actor_binary="${staged_binary_root}/xmr-maker-actor"
+    readonly m5_lez_maker_binary="${staged_binary_root}/lez-maker-cli"
+    readonly m5_lez_maker_daemon_binary="${staged_binary_root}/lez-maker-node"
+    readonly m5_lez_taker_binary="${staged_binary_root}/lez-taker-cli"
+    readonly m5_xmr_maker_actor_binary="${staged_binary_root}/lez-xmr-maker-actor"
   fi
   stage_executable "$vault_claim_binary" "$vault_claim_staged_binary" "Vault Claim"
   if [[ "$m5_xmr_application_mode" == 1 ]]; then
-    stage_executable "${workspace_target}/release/lez-maker" "$m5_lez_maker_binary" "M5 Maker CLI"
-    stage_executable "${workspace_target}/release/lez-maker-daemon" \
+    stage_executable "${workspace_target}/release/lez-maker-cli" "$m5_lez_maker_binary" "M5 Maker CLI"
+    stage_executable "${workspace_target}/release/lez-maker-node" \
       "$m5_lez_maker_daemon_binary" "M5 Maker daemon"
-    stage_executable "${workspace_target}/release/lez-taker" "$m5_lez_taker_binary" "M5 Taker CLI"
-    stage_executable "${workspace_target}/release/xmr-maker-actor" \
+    stage_executable "${workspace_target}/release/lez-taker-cli" "$m5_lez_taker_binary" "M5 Taker CLI"
+    stage_executable "${workspace_target}/release/lez-xmr-maker-actor" \
       "$m5_xmr_maker_actor_binary" "M5 XMR Maker actor"
   fi
   stage_executable "${workspace_target}/debug/xmr-reference-actor" \

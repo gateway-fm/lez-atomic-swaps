@@ -2031,9 +2031,11 @@ dependencies = [
  "lez-bridge-protocol",
  "lez-btc-swap-sdk",
  "lez-logos-price-c-api",
+ "lez-node-common",
  "lez-swap-core",
  "lez-swap-sdk-core",
  "lez-swap-store",
+ "lez-taker-node",
  "lez-xmr-swap-sdk",
  "lez-zec-swap-sdk",
  "rusqlite",
@@ -2054,6 +2056,44 @@ dependencies = [
  "zcash_transparent",
  "zec-reference-actor",
  "zeroize",
+]
+
+[[package]]
+name = "lez-node-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "clap",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "jsonrpsee",
+ "lez-bridge-protocol",
+ "lez-swap-core",
+ "lez-swap-sdk-core",
+ "lez-swap-store",
+ "lez-xmr-swap-sdk",
+ "rustix",
+ "secp256k1 0.29.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "wait-timeout",
+ "zeroize",
+]
+
+[[package]]
+name = "lez-runtime-healthcheck"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -2108,6 +2148,55 @@ dependencies = [
  "zcash_primitives",
  "zcash_protocol",
  "zcash_transparent",
+ "zeroize",
+]
+
+[[package]]
+name = "lez-taker-node"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bitcoin",
+ "btc-reference-actor",
+ "btc-role-preflight",
+ "bytes",
+ "clap",
+ "getrandom 0.3.4",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "jsonrpsee",
+ "jsonrpsee-http-client",
+ "lez-adaptor-role-runner",
+ "lez-bridge-protocol",
+ "lez-btc-swap-sdk",
+ "lez-logos-price-c-api",
+ "lez-node-common",
+ "lez-swap-core",
+ "lez-swap-sdk-core",
+ "lez-swap-store",
+ "lez-xmr-swap-sdk",
+ "lez-zec-swap-sdk",
+ "rusqlite",
+ "rustix",
+ "sd-notify",
+ "secp256k1 0.29.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "wait-timeout",
+ "xmr-reference-actor",
+ "zcash_encoding",
+ "zcash_primitives",
+ "zcash_protocol",
+ "zcash_transparent",
+ "zec-reference-actor",
  "zeroize",
 ]
 

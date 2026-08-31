@@ -5,7 +5,7 @@ use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, ListRequest,
     LocalPriceSetRequest, MakerActorActionCommitV1, MakerActorActionRequestV1,
-    MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, MakerServiceAction,
+    MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, NodeServiceAction,
     OfferPublishRequest, OfferWithdrawRequest, OperatorAlertView, PairConfigureRequest,
     PriceQuoteRequest, PriceQuoteV1, RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
     control_maker_service, secure_file::load_secp256k1_secret,
@@ -19,9 +19,9 @@ use secp256k1::{PublicKey, Secp256k1};
 use serde::Serialize;
 
 #[derive(Parser)]
-#[command(about = "Operator CLI for the LEZ atomic-swap maker daemon")]
+#[command(about = "Operator CLI for the LEZ atomic-swap Maker Node")]
 struct Arguments {
-    #[arg(long, default_value = "/run/lez-atomic-swaps/maker.sock")]
+    #[arg(long, default_value = "/run/lez/maker/node.sock")]
     socket: PathBuf,
     #[command(subcommand)]
     command: Command,
@@ -29,15 +29,15 @@ struct Arguments {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Derives the public Delivery identity without contacting the Maker daemon.
+    /// Derives the public Delivery identity without contacting the Maker Node.
     DeliveryIdentity {
         /// Existing owner-private raw or hexadecimal secp256k1 signing key.
         #[arg(long, value_name = "PRIVATE_KEY")]
         signing_key_file: PathBuf,
     },
-    /// Starts only the packaged lez-maker-daemon.service through systemd.
+    /// Starts only the packaged lez-maker-node.service through systemd.
     Start,
-    /// Stops only the packaged lez-maker-daemon.service through systemd.
+    /// Stops only the packaged lez-maker-node.service through systemd.
     Stop,
     ConfigurePair {
         #[arg(long)]
@@ -77,7 +77,7 @@ enum Command {
     Pairs,
     /// Lists durable local prices in stable route order.
     Prices,
-    /// Probes the daemon and its `SQLite` reader through owner-local RPC.
+    /// Probes the Maker Node and its `SQLite` reader through owner-local RPC.
     Health,
     /// Reads one exact route quote through the configured runtime boundary.
     Quote {
@@ -388,8 +388,8 @@ async fn maker_actor_action(
 
 fn control_service(command: &Command) -> anyhow::Result<serde_json::Value> {
     let action = match command {
-        Command::Start => MakerServiceAction::Start,
-        Command::Stop => MakerServiceAction::Stop,
+        Command::Start => NodeServiceAction::Start,
+        Command::Stop => NodeServiceAction::Stop,
         _ => unreachable!("service helper receives only lifecycle commands"),
     };
     serde_json::to_value(control_maker_service(action)?).map_err(Into::into)

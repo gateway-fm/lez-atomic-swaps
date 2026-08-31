@@ -5,6 +5,9 @@
 //! exact agreement, publish role-fixed actor authority, and make the resulting
 //! receipt usable by the offline monitor before chain lifecycle work begins.
 
+#[path = "support/cross_role_binary.rs"]
+mod cross_role;
+
 use std::{
     fs::{self, OpenOptions},
     io::Write as _,
@@ -599,10 +602,8 @@ impl LocalLogosChatHarness {
         let maker_control_socket = runtime.join("logos-chat-maker-control.sock");
         let taker_control_socket = runtime.join("logos-chat-taker-control.sock");
         let proxy_socket = runtime.join("logos-chat-taker-proxy.sock");
-        let mut maker = Command::new(env!("CARGO_BIN_EXE_lez-logos-chat-gateway"))
+        let mut maker = Command::new(env!("CARGO_BIN_EXE_lez-maker-chat-gateway"))
             .arg("endpoint")
-            .arg("--role")
-            .arg("maker")
             .arg("--control-socket")
             .arg(&maker_control_socket)
             .arg("--maker-chat-socket")
@@ -610,10 +611,8 @@ impl LocalLogosChatHarness {
             .spawn()
             .expect("start isolated Maker Logos Chat gateway");
         wait_process_socket(&mut maker, &maker_control_socket, "Maker gateway");
-        let mut taker = Command::new(env!("CARGO_BIN_EXE_lez-logos-chat-gateway"))
+        let mut taker = Command::new(cross_role::workspace_binary("lez-taker-chat-gateway"))
             .arg("endpoint")
-            .arg("--role")
-            .arg("taker")
             .arg("--control-socket")
             .arg(&taker_control_socket)
             .arg("--proxy-socket")
@@ -622,7 +621,7 @@ impl LocalLogosChatHarness {
             .expect("start isolated Taker Logos Chat gateway");
         wait_process_socket(&mut taker, &taker_control_socket, "Taker gateway control");
         wait_process_socket(&mut taker, &proxy_socket, "Taker gateway proxy");
-        let relay = Command::new(env!("CARGO_BIN_EXE_lez-logos-chat-gateway"))
+        let relay = Command::new(cross_role::workspace_binary("lez-chat-relay"))
             .arg("local-relay")
             .arg("--maker-control-socket")
             .arg(&maker_control_socket)
@@ -863,7 +862,7 @@ async fn configure_live_route(socket: &Path, route: MakerRouteV1) {
 }
 
 fn publish_offer(socket: &Path, offer_id: &MakerOfferId, direction: &str) {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .arg("publish-offer")
@@ -893,7 +892,7 @@ fn plan_btc_offer(
     planned_at: u64,
     direction: &str,
 ) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("--delivery-directory")
         .arg(delivery)
         .arg("--maker-public-key")
@@ -987,7 +986,7 @@ fn run_taker(
     maker_key: &PublicKey,
     accepted_at: u64,
 ) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("--delivery-directory")
         .arg(delivery)
         .arg("--maker-public-key")
@@ -1043,7 +1042,7 @@ fn run_contribution_taker(
     final_agreement: &Path,
     direction: &str,
 ) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("--delivery-directory")
         .arg(delivery)
         .arg("--maker-public-key")
@@ -1289,7 +1288,7 @@ impl ArtifactSnapshot {
 }
 
 fn assert_offline_receipt_monitor(receipt: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("monitor")
         .arg("--receipt")
         .arg(receipt)
@@ -1369,7 +1368,7 @@ impl DaemonBase<'_> {
 }
 
 fn delivery_only_daemon_command(base: &DaemonBase<'_>) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"));
     command
         .arg("--socket")
         .arg(base.socket)
@@ -1450,7 +1449,7 @@ fn stop_delivery_only_daemon(daemon: &mut Child, base: &DaemonBase<'_>) {
 }
 
 fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"));
     command
         .arg("--socket")
         .arg(paths.socket)

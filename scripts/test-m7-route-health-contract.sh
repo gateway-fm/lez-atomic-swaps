@@ -9,7 +9,7 @@ fail() {
 }
 
 readonly source="crates/maker-node/src/route_health.rs"
-readonly daemon="crates/maker-node/src/bin/lez-maker-daemon.rs"
+readonly daemon="crates/maker-node/src/bin/lez-maker-node.rs"
 readonly policy_test="crates/maker-node/tests/route_health.rs"
 readonly adr="docs/architecture/0150-withdraw-only-unhealthy-route-advertisements.md"
 readonly outage_runner="scripts/run-m7-unaffected-pair-outage-poc.sh"

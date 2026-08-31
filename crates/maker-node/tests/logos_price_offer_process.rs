@@ -1,5 +1,7 @@
 //! Black-box daemon/CLI/Delivery journey for the Logos C-API price source.
 
+#[path = "support/cross_role_binary.rs"]
+mod cross_role;
 mod support;
 
 use std::{
@@ -163,7 +165,7 @@ fn start_daemon(
         0o600,
     );
     let actor = actor_deployment(run, "m5-integration-authority-001");
-    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
         .arg("--socket")
         .arg(&socket)
         .arg("--database")
@@ -226,7 +228,7 @@ fn assert_signed_discovery(run: &Path, module_sha256: [u8; 32], expected: usize)
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("--delivery-directory")
         .arg(run.join("delivery"))
         .arg("--maker-public-key")
@@ -268,7 +270,7 @@ fn remove_delivery_files(directory: &Path) {
 }
 
 fn maker_cli(socket: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .args(args)

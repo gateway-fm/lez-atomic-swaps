@@ -18,9 +18,9 @@ COPY assets/qt-mcp /opt/qt-mcp
 COPY entrypoint.sh /entrypoint.sh
 
 RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp \
-    && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/basecamp-maker \
-    && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/basecamp-taker \
-    && chmod 0755 /usr/local/bin/basecamp-maker /usr/local/bin/basecamp-taker \
+    && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui \
+    && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui \
+    && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui \
     && mkdir -p /var/lez \
     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user \
     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user \
@@ -33,8 +33,8 @@ RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp \
 
 ENV DISPLAY=:0 \
     LIBGL_ALWAYS_SOFTWARE=1 \
-    LEZ_MAKER_RPC_SOCKET=/run/lez-maker/maker.sock \
-    LEZ_TAKER_RPC_SOCKET=/run/lez-taker/taker.sock \
+    LEZ_MAKER_RPC_SOCKET=/run/lez/maker/node.sock \
+    LEZ_TAKER_RPC_SOCKET=/run/lez/taker/node.sock \
     BASECAMP_ROLE=maker \
     VNC_GEOMETRY=1680x1050
 

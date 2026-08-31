@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly runner="scripts/run-m4-actual-claim-poc.sh"
-readonly taker="crates/maker-node/src/bin/lez-taker.rs"
+readonly taker="crates/taker-node/src/bin/lez-taker.rs"
 
 fail() {
   echo "M7 Taker-claim process-kill contract failed: $*" >&2

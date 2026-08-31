@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logos.co/lez/schemas/run-swap-job-v1.schema.json",
+  "title": "RunSwapJobV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operation", "run_id", "direction", "offer_id", "reservation_id", "maker_wallet_id", "taker_wallet_id", "files"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "operation": {"const": "run_swap"},
+    "run_id": {"type": "string", "pattern": "^m5arm-[0-9]{10}$"},
+    "direction": {"enum": ["taker_sells_foreign", "taker_sells_lez"]},
+    "offer_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+    "reservation_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+    "maker_wallet_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+    "taker_wallet_id": {"type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$"},
+    "files": {"type": "object", "minProperties": 4, "maxProperties": 4, "additionalProperties": {"type": "string", "contentEncoding": "base64"}}
+  }
+}

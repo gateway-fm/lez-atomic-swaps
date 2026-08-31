@@ -3,23 +3,21 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-readonly unit="packaging/systemd/lez-maker-daemon.service"
-readonly installer="scripts/install-m5-maker-service.sh"
+readonly unit="packaging/systemd/lez-maker-node.service"
+readonly node_config="packaging/systemd/lez-maker-node.json.example"
+readonly installer="scripts/install-maker-node-service.sh"
 readonly staged_rehearsal="scripts/rehearse-m5-maker-service-install.sh"
 readonly transient_rehearsal="scripts/run-m5-maker-systemd-transient.sh"
 readonly lifecycle="crates/maker-node/src/daemon_lifecycle.rs"
-readonly service_control="crates/maker-node/src/service_control.rs"
+readonly service_control="crates/node-common/src/service_control.rs"
 readonly operator_cli="crates/maker-node/src/bin/lez-maker.rs"
 readonly service_cli_test="crates/maker-node/tests/maker_service_cli.rs"
 readonly process_test="crates/maker-node/tests/daemon_lifecycle.rs"
 readonly daemon="crates/maker-node/src/bin/lez-maker-daemon.rs"
-readonly secure_file="crates/maker-node/src/secure_file.rs"
+readonly secure_file="crates/node-common/src/secure_file.rs"
 readonly manifest="crates/maker-node/Cargo.toml"
-readonly manual="docs/manual-user-flows.md"
-readonly decision="docs/architecture/0097-supervise-one-maker-daemon-lifecycle.md"
-readonly service_control_decision="docs/architecture/0117-control-the-fixed-maker-system-service.md"
+readonly runtime_contract_decision="docs/architecture/0212-version-runtime-components.md"
 readonly actual_chain_crash_runner="scripts/run-m4-actual-claim-poc.sh"
-readonly actual_chain_crash_decision="docs/architecture/0177-reconcile-killed-monero-refund-actors.md"
 
 fail() {
   echo "M5 service lifecycle contract failed: $*" >&2
@@ -27,10 +25,9 @@ fail() {
 }
 
 for path in \
-  "$unit" "$installer" "$staged_rehearsal" "$transient_rehearsal" \
+  "$unit" "$node_config" "$installer" "$staged_rehearsal" "$transient_rehearsal" \
   "$lifecycle" "$service_control" "$operator_cli" "$service_cli_test" \
-  "$process_test" "$decision" "$service_control_decision" \
-  "$actual_chain_crash_runner" "$actual_chain_crash_decision"; do
+  "$process_test" "$runtime_contract_decision" "$actual_chain_crash_runner"; do
   test -f "$path" || fail "missing $path"
 done
 for token in \
@@ -45,8 +42,6 @@ for token in \
   rg -Fq -- "$token" "$actual_chain_crash_runner" ||
     fail "actual-chain refund crash recovery is missing $token"
 done
-rg -Fq 'Flow 1ZJ: Kill and restart the submitted Maker Monero refund' "$manual" ||
-  fail "manual actual-chain refund crash flow is missing"
 for script in "$installer" "$staged_rehearsal" "$transient_rehearsal"; do
   test -x "$script" || fail "$script is not executable"
   bash -n "$script"
@@ -57,9 +52,9 @@ for directive in \
   'NotifyAccess=main' \
   'User=lez-swap' \
   'Group=lez-swap' \
-  'RuntimeDirectory=lez-atomic-swaps' \
+  'RuntimeDirectory=lez/maker' \
   'RuntimeDirectoryMode=0700' \
-  'StateDirectory=lez-atomic-swaps' \
+  'StateDirectory=lez/maker' \
   'StateDirectoryMode=0700' \
   'KillMode=control-group' \
   'MemoryDenyWriteExecute=yes' \
@@ -80,14 +75,19 @@ for directive in \
   'LoadCredentialEncrypted=delivery-signing.key:' \
   'LoadCredentialEncrypted=maker-claim-recovery.key:' \
   'LoadCredentialEncrypted=maker-claim-preimage.key:' \
-  'EnvironmentFile=/etc/lez-atomic-swaps/zec-actor.env' \
-  '--actor-supervisor' \
-  '--zec-source-maker-config /var/lib/lez-atomic-swaps/authority/zec-maker.json' \
-  '--zec-maker-actor-root /var/lib/lez-atomic-swaps/actors' \
-  '--zec-actor-program /usr/bin/zec-reference-actor' \
-  '--zec-actor-program-sha256 ${ZEC_ACTOR_PROGRAM_SHA256}' \
-  '--ready-file /run/lez-atomic-swaps/ready'; do
+  'ExecStart=/usr/bin/lez-maker-node --config /etc/lez/maker/node.json'; do
   rg -Fq -- "$directive" "$unit" || fail "unit is missing $directive"
+done
+
+for directive in \
+  '--actor-supervisor' \
+  '/var/lib/lez/maker/authority/zec-maker.json' \
+  '/var/lib/lez/maker/actors' \
+  '/usr/bin/lez-zec-maker-actor' \
+  '--zec-actor-program-sha256' \
+  '--ready-file' \
+  '/run/lez/maker/ready'; do
+  rg -Fq -- "$directive" "$node_config" || fail "Node config is missing $directive"
 done
 
 for token in \
@@ -95,9 +95,9 @@ for token in \
   'DESTDIR' \
   'install -D -m 0755' \
   'install -D -m 0644' \
-  'zec-reference-actor' \
-  'lez-maker-daemon.env.example' \
-  'lez-maker-daemon.service'; do
+  'lez-zec-maker-actor' \
+  'lez-maker-node.json.example' \
+  'lez-maker-node.service'; do
   rg -Fq -- "$token" "$installer" || fail "installer is missing $token"
 done
 
@@ -116,7 +116,7 @@ done
 
 for token in \
   'const SYSTEMCTL_PROGRAM: &str = "/usr/bin/systemctl"' \
-  'const MAKER_UNIT: &str = "lez-maker-daemon.service"' \
+  'const MAKER_UNIT: &str = "lez-maker-node.service"' \
   'const SYSTEMCTL_TIMEOUT: Duration = Duration::from_secs(30)' \
   'Command::new(SYSTEMCTL_PROGRAM)' \
   '.wait_timeout(SYSTEMCTL_TIMEOUT)' \
@@ -179,9 +179,4 @@ for token in \
   rg -Fq -- "$token" "$transient_rehearsal" ||
     fail "actual actor crash/restart rehearsal is missing $token"
 done
-rg -Fq 'systemd-analyze verify' "$manual" || fail "manual install verification is missing"
-rg -Fq 'Logos Core daemon mode' "$manual" || fail "manual upstream boundary is missing"
-rg -Fq 'systemd-creds encrypt' "$manual" || fail "encrypted credential provisioning is missing"
-rg -Fq 'sudo -u lez-swap' "$manual" || fail "service-user CLI flow is missing"
-
 echo "M5 service lifecycle contract passed"

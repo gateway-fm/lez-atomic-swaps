@@ -56,6 +56,33 @@ jq -e '
   }
 ' <<<"$contract" >/dev/null || fail "outer runner emitted the wrong M5 BTC contract"
 
+reverse_contract="$(
+  RUN_ID=m5btc-reverse-contract \
+  M5_BTC_APPLICATION_MODE=1 \
+  M3_ACTOR_POC_MODE=contract \
+  M3_ACTOR_POC_ASSET_MODE=native \
+  M3_ACTOR_POC_SCHEDULE=sequential \
+  M3_ACTOR_POC_JOURNEY=claim \
+  M3_ACTOR_POC_DIRECTIONS=taker_sells_lez \
+    "$runner"
+)" || fail "outer runner rejected the supported reverse M5 BTC contract"
+
+jq -e '
+  .execution_performed == false and
+  .m5_btc_application_mode == true and
+  .directions == ["taker_sells_lez"] and
+  .application_route == {
+    pair: "bitcoin",
+    direction: "taker_sells_lez",
+    delivery_before_stage_two: true,
+    authenticated_swap_id: true,
+    real_maker_cli: true,
+    real_taker_cli: true,
+    schema_6_role_provisioning: true
+  }
+' <<<"$reverse_contract" >/dev/null ||
+  fail "outer runner emitted the wrong reverse M5 BTC contract"
+
 for required in \
   'M5_LEZ_DEPLOYER_SHA256 is required' \
   'M5_LEZ_DEPLOYER_SHA256 must be a lowercase SHA-256 digest'; do
@@ -64,8 +91,8 @@ for required in \
 done
 
 for required in \
-  'ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee' \
-  'b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433' \
+  '237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0' \
+  '431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b' \
   'deployment_profile="m4_checked_local"' \
   'deployment_command="deploy-m4-local"' \
   'selected_deployer_sha256="${M5_LEZ_DEPLOYER_SHA256:-}"'; do
@@ -76,9 +103,9 @@ m5_bootstrap_contract="$(M5_BTC_APPLICATION_MODE=1 "$bootstrap_driver" contract)
   fail "LEZ bootstrap rejected the M5 checked deployment profile"
 jq -e '
   .embedded_guest_sha256 ==
-    "ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee" and
+    "237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0" and
   .escrow_program_id ==
-    "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433" and
+    "431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b" and
   .deployment_profile == "m4_checked_local"
 ' <<<"$m5_bootstrap_contract" >/dev/null ||
   fail "LEZ bootstrap emitted the wrong M5 checked deployment profile"
@@ -96,10 +123,10 @@ jq -e '
 
 for required in 'm5_btc_application_local_poc' \
   'if [[ "$m5_btc_application_mode" != 1 ]]; then' \
-  '$m7_btc_accepted_concurrency != "1" then .[0:1] else . end' \
+  'map(select(.direction == $selected_directions_first))' \
   '$m7_btc_accepted_concurrency != "1" then 1 else 2 end'; do
   rg -Fq -- "$required" "$runner" ||
-    fail "M5 final evidence remains two-direction-only: ${required}"
+    fail "M5 final evidence is not bound to the selected direction: ${required}"
 done
 
 

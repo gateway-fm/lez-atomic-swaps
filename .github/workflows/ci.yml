@@ -30,6 +30,11 @@ jobs:
       - run: ./scripts/run-ci-quality-gates.sh
       - run: ./scripts/check-bitcoin-core-isolation.sh
       - run: ./scripts/check-lez-v02-docker-isolation.sh
+      - run: ./scripts/check-runtime-profiles.py
+      - run: >-
+          python3 -m unittest
+          deploy/images/btc-demo-controller/test_controller.py
+          deploy/images/btc-demo-launcher/test_launcher.py
 
   container-security:
     name: Runtime findings fail-hard; classified upstream findings remain visible
@@ -145,6 +150,22 @@ jobs:
           --exclude lez-zec-swap-sdk
       - run: ./scripts/check-requirements-traceability.sh
       - run: ./scripts/check-architecture-diagrams.sh
+
+  basecamp-ui:
+    name: Maker and Taker Basecamp integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run both role packages in the official Basecamp test harness
+        run: >-
+          docker run --rm
+          --volume "${GITHUB_WORKSPACE}:/repo:ro"
+          --workdir /repo
+          nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21
+          bash /repo/scripts/test-m6-basecamp-integration.sh
 
   dependencies:
     name: dependency vulnerabilities, licenses, bans, and sources

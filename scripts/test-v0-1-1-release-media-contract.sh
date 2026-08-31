@@ -77,7 +77,7 @@ for source_contract in \
   'crates/btc-swap-sdk/src/sdk.rs:verify_adaptor_presignature' \
   'compat/lez-v0.2-provisional/escrow/src/lib.rs:claim_native_witnessed' \
   'compat/lez-v0.2-provisional/escrow/src/lib.rs:refund_native' \
-  'crates/maker-node/src/run_local_delivery.rs:/lez-atomic-swaps/1/offers/json'; do
+  'crates/node-common/src/run_local_delivery.rs:/lez-atomic-swaps/1/offers/json'; do
   path="${source_contract%%:*}"
   term="${source_contract#*:}"
   [[ -f "$path" ]] || fail "deck implementation source is missing: ${path}"

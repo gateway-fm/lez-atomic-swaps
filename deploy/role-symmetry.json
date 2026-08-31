@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "shared_node_flags": ["--config", "--socket", "--ready-file"],
+  "swap_directions": {
+    "btc_to_lez": "TakerSellsForeign",
+    "lez_to_btc": "TakerSellsLez"
+  },
+  "roles": {
+    "maker": {
+      "node": "lez-maker-node",
+      "image": "lez-maker-node:local",
+      "cli": "lez-maker-cli",
+      "ui": "lez-maker-ui",
+      "chat_gateway": "lez-maker-chat-gateway",
+      "systemd_unit": "lez-maker-node.service",
+      "node_config": "deploy/assets/maker-node.json",
+      "runtime_directory": "/run/lez/maker",
+      "state_directory": "/var/lib/lez/maker",
+      "socket": "/run/lez/maker/node.sock",
+      "ready_file": "/run/lez/maker/ready",
+      "private_authority": ["Maker Delivery signing key", "pair-specific Maker actor keys"],
+      "peer_material": []
+    },
+    "taker": {
+      "node": "lez-taker-node",
+      "image": "lez-taker-node:local",
+      "cli": "lez-taker-cli",
+      "ui": "lez-taker-ui",
+      "chat_gateway": "lez-taker-chat-gateway",
+      "systemd_unit": "lez-taker-node.service",
+      "node_config": "deploy/assets/taker-node.json",
+      "runtime_directory": "/run/lez/taker",
+      "state_directory": "/var/lib/lez/taker",
+      "socket": "/run/lez/taker/node.sock",
+      "ready_file": "/run/lez/taker/ready",
+      "private_authority": ["role-local Chat/Delivery identity", "pair-specific Taker actor keys after admission"],
+      "peer_material": ["Maker Delivery public identity"]
+    }
+  },
+  "intentional_asymmetries": [
+    "Maker publishes priced offers and therefore owns the offer-signing Delivery key.",
+    "The discovery-only Taker Node has no private swap key before admission.",
+    "Pair actor and signer keys exist only for supported role and pair profiles.",
+    "No role may mount, copy, or parse the other role's private key material."
+  ]
+}

@@ -162,7 +162,7 @@ jobs:
           toolchain: 1.96.0
       - name: Test independent-role Chat, Delivery discovery, and conflict resolution
         run: >-
-          cargo test --locked -p lez-maker-node
+          cargo test --locked -p lez-node-common -p lez-maker-node -p lez-taker-node
           --lib
           --test btc_chat_process
           --test logos_offer_discovery

@@ -127,7 +127,7 @@ wait_for_terminal_actors() {
 }
 
 cargo build --locked -p lez-maker-node --features test-crash-hooks \
-  --bin lez-maker-daemon --bin lez-maker \
+  --bin lez-maker-node --bin lez-maker-cli \
   --example m5-systemd-fault-actor --example m5-systemd-actor-store
 chmod 0700 "$run_root"
 write_secret "$signing_key" 08
@@ -138,9 +138,9 @@ install -D -m 0700 target/debug/examples/m5-systemd-fault-actor \
 strip --strip-debug "$run_root/bin/m5-systemd-fault-actor"
 chmod 0500 "$run_root/bin/m5-systemd-fault-actor"
 
-daemon="$(realpath target/debug/lez-maker-daemon)"
+daemon="$(realpath target/debug/lez-maker-node)"
 readonly daemon
-maker="$(realpath target/debug/lez-maker)"
+maker="$(realpath target/debug/lez-maker-cli)"
 readonly maker
 actor_program="$(realpath "$run_root/bin/m5-systemd-fault-actor")"
 readonly actor_program

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logos.co/lez/schemas/run-swap-result-v1.schema.json",
+  "title": "RunSwapResultV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "run_id", "exec_id"],
+  "properties": {
+    "kind": {"const": "RunSwapResultV1"},
+    "run_id": {"type": "string", "pattern": "^m5arm-[0-9]{10}$"},
+    "exec_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

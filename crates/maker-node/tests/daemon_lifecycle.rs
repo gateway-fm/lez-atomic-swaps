@@ -98,7 +98,7 @@ async fn one_database_has_one_process_lifetime_writer_lease() {
 #[test]
 fn launch_config_rejects_relative_paths_before_process_creation() {
     let result = MakerDaemonLaunchConfig::new(
-        "lez-maker-daemon",
+        "lez-maker-node",
         "/tmp/maker.sqlite3",
         "/tmp/maker.sock",
         "/tmp/ready",
@@ -123,7 +123,7 @@ fn config(
         .expect("create owner-only runtime");
     let socket = runtime.join("maker.sock");
     let ready = runtime.join("ready");
-    let executable = Path::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+    let executable = Path::new(env!("CARGO_BIN_EXE_lez-maker-node"))
         .canonicalize()
         .expect("canonical daemon executable");
     let config = MakerDaemonLaunchConfig::new(

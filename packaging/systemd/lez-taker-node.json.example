@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "arguments": [
+    "--socket", "/run/lez/taker/node.sock",
+    "--ready-file", "/run/lez/taker/ready",
+    "--role-config", "/etc/lez/taker/role.json"
+  ]
+}

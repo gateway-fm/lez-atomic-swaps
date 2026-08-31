@@ -12,8 +12,8 @@ readonly rzup_version="0.5.1"
 readonly circuits_version="v0.4.2"
 readonly circuits_sha256="e9131ffac8b08a80e1a7152b34fdd5d5c52674d4cb396e8162131ca5dd7c858d"
 readonly builder_tag="r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be"
-readonly expected_elf_sha256="ade4af8426040b7e5c171b559a382a15a3fa72e27531a93fe89742689a1bbcee"
-readonly expected_image_id="b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433"
+readonly expected_elf_sha256="237037e1a54187697e7e67a9bf589dfb3eb88c475c7f9b62eb2396144e87c6d0"
+readonly expected_image_id="431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b"
 readonly run_id="${RUN_ID:-local-$$}"
 readonly manifest="compat/lez-v0.2-provisional/escrow/methods/guest/m4-deployment-manifest.toml"
 readonly methods_manifest="compat/lez-v0.2-provisional/escrow/methods/Cargo.toml"
@@ -59,21 +59,21 @@ verify_source_boundary() {
     "compat/lez-v0.2-provisional/escrow/src/lib.rs"
   require_sha256 "ad2d8d2c16d7c785c813c11e8a4fa96ede4d94de8acbe2684779d1e8d1d3a412" \
     "compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml"
-  require_sha256 "bfe0509a33cfefd748c2b90fdb0fc2e1dfc187999b51a0f71658ac2bf6ad0b05" \
+  require_sha256 "a583b83d3ae19f8bce44b925c6baccea931fe25d5518605e1d90d03ec7cb3ed0" \
     "compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.lock"
   require_sha256 "8266638301f2179a808d0dd295e9c0e946e13ad12fbaf6a0321182299e1e49df" \
     "compat/lez-v0.2-provisional/escrow/methods/guest/src/bin/zec_escrow_v02.rs"
   require_sha256 "b837b231477f79d3a765d95d8760dc3466726183d2a8bd63e889f0d9aafe02f9" \
     "compat/lez-v0.2-provisional/escrow/methods/Cargo.toml"
-  require_sha256 "93596182ff1405f172bdd7064f0260f17a54c593766bc0b1d88489a69becce96" \
+  require_sha256 "b7b91ff6bdc695fa2c8112b2b6b27513d6dd249262b3af9b2ed891e317528a36" \
     "compat/lez-v0.2-provisional/escrow/methods/Cargo.lock"
   require_sha256 "ad63e5ee71b2173785a241e5f565313155b96c92e37e9d7ea6e42537f80e0ddc" \
     "compat/lez-v0.2-provisional/escrow/methods/build.rs"
   require_sha256 "0e127c21a387c17fa7f221cfbf4759c44d818786f5707c9051531ade1c515f27" \
     "compat/lez-v0.2-provisional/escrow/methods/tests/recursive_witnessed_claim.rs"
-  require_sha256 "432fc4c1b81ffb5fa88d1afddd9d4be0c3da184442d141ef22777c3f14ee194a" \
+  require_sha256 "1c31e428a263bcf93e4b5332c8667d8e93810d6ffa7588f0d915414ec7b24849" \
     "compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"
-  require_sha256 "9ef12e113d9f64d62015c0fcb5138b06a9870d74a3bca28f7e2b3719288ce6a8" \
+  require_sha256 "64b88aa1221a75b1dfbb10c3ed57cf723821e311f094b43d90cc7ad623a86f43" \
     "scripts/run-m3-lez-bootstrap.sh"
 
   require_manifest_line 'artifact_status = "local-checked-artifact"'
@@ -89,9 +89,9 @@ verify_source_boundary() {
   require_manifest_line 'refund_native_xmr_variant = 16'
   require_manifest_line 'punish_native_xmr_variant = 17'
   require_manifest_line 'deployment_manifest = "compat/lez-v0.2-provisional/escrow/methods/guest/deployment-manifest.toml"'
-  require_manifest_line 'deployment_manifest_sha256 = "432fc4c1b81ffb5fa88d1afddd9d4be0c3da184442d141ef22777c3f14ee194a"'
+  require_manifest_line 'deployment_manifest_sha256 = "1c31e428a263bcf93e4b5332c8667d8e93810d6ffa7588f0d915414ec7b24849"'
   require_manifest_line 'm3_bootstrap = "scripts/run-m3-lez-bootstrap.sh"'
-  require_manifest_line 'm3_bootstrap_sha256 = "9ef12e113d9f64d62015c0fcb5138b06a9870d74a3bca28f7e2b3719288ce6a8"'
+  require_manifest_line 'm3_bootstrap_sha256 = "64b88aa1221a75b1dfbb10c3ed57cf723821e311f094b43d90cc7ad623a86f43"'
   require_manifest_line 'runtime_external_resources = []'
   require_manifest_line "elf_sha256 = \"${expected_elf_sha256}\""
   require_manifest_line "image_id = \"${expected_image_id}\""

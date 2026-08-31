@@ -7,18 +7,18 @@ use crate::{BridgeRuntimeError, FinalizedIndexerApi, HistoricalAccount, M4StageA
 
 /// Exact checked M4 escrow image identifier from the source-controlled deployment manifest.
 pub const CHECKED_M4_ESCROW_PROGRAM_ID_HEX: &str =
-    "b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433";
+    "431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b";
 
 /// Word encoding of [`CHECKED_M4_ESCROW_PROGRAM_ID_HEX`] accepted by official LEZ v0.2.
 pub const CHECKED_M4_ESCROW_PROGRAM_ID: [u32; 8] = [
-    0x7872_f8b7,
-    0x294a_1793,
-    0xac6e_77bd,
-    0x7397_ddbf,
-    0xbd0e_51e0,
-    0x2c10_43ac,
-    0xa43b_e9b7,
-    0x3304_0bfa,
+    0xaeb9_1a43,
+    0x661d_b2c4,
+    0xf8cb_8ee8,
+    0x1d30_83bb,
+    0x0ccc_f45e,
+    0xfba0_0bec,
+    0x0aaa_ba76,
+    0x0ba1_f9c7,
 ];
 
 const FINALIZED_SNAPSHOT_BRACKET: &str =

@@ -2,91 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{Context as _, ensure};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
-use serde::{Deserializer, Serializer, de::Error as _};
-
 use super::*;
+use anyhow::{Context as _, ensure};
 
 const MAX_XMR_MAKER_AUTHORITIES: usize = 256;
-
-fn serialize_bounded_base64<S, const MAXIMUM: usize>(
-    bytes: &[u8],
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    if bytes.len() > MAXIMUM {
-        return Err(serde::ser::Error::custom(
-            "XMR wire exceeds its binary bound",
-        ));
-    }
-    serializer.serialize_str(&BASE64_STANDARD.encode(bytes))
-}
-
-fn deserialize_bounded_base64<'de, D, const MAXIMUM: usize>(
-    deserializer: D,
-) -> Result<Vec<u8>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let encoded = Box::<str>::deserialize(deserializer)?;
-    if encoded.len() > MAXIMUM.saturating_add(2) / 3 * 4 {
-        return Err(D::Error::custom("XMR wire exceeds its encoded bound"));
-    }
-    let bytes = BASE64_STANDARD
-        .decode(encoded.as_bytes())
-        .map_err(|_| D::Error::custom("XMR wire is not canonical Base64"))?;
-    if bytes.len() > MAXIMUM || BASE64_STANDARD.encode(&bytes).as_str() != encoded.as_ref() {
-        return Err(D::Error::custom(
-            "XMR wire exceeds its binary bound or is noncanonical",
-        ));
-    }
-    Ok(bytes)
-}
-
-mod stage_a_wire_base64 {
-    use super::{
-        Deserializer, MAX_XMR_AGREEMENT_WIRE_BYTES, Serializer, deserialize_bounded_base64,
-        serialize_bounded_base64,
-    };
-
-    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serialize_bounded_base64::<S, MAX_XMR_AGREEMENT_WIRE_BYTES>(bytes, serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserialize_bounded_base64::<D, MAX_XMR_AGREEMENT_WIRE_BYTES>(deserializer)
-    }
-}
-
-mod activation_wire_base64 {
-    use super::{
-        Deserializer, MAX_XMR_ACTIVATION_WIRE_BYTES, Serializer, deserialize_bounded_base64,
-        serialize_bounded_base64,
-    };
-
-    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serialize_bounded_base64::<S, MAX_XMR_ACTIVATION_WIRE_BYTES>(bytes, serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserialize_bounded_base64::<D, MAX_XMR_ACTIVATION_WIRE_BYTES>(deserializer)
-    }
-}
 
 /// Daemon-owned XMR role material and immutable actor manifests.
 ///
@@ -162,84 +81,6 @@ impl XmrMakerChatAuthority {
             && body.monero().public_view_key() == self.private_view_key.public_key()
             && self.actor_for(&swap_id).is_some()
     }
-}
-
-/// Taker request carrying one canonical dual-signed XMR Stage-A agreement.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct XmrChatStageARequestV1 {
-    /// Must be one for this DTO shape.
-    pub schema_version: u16,
-    /// Global exact-replay identity for reservation.
-    pub request_id: RequestId,
-    /// Selected immutable offer identity.
-    pub offer_id: MakerOfferId,
-    /// Current active offer revision, normally one.
-    pub expected_offer_revision: u64,
-    /// Winning reservation and Chat-session identity.
-    pub reservation_id: RequestId,
-    /// Exact selected Monero amount in piconero.
-    pub foreign_units: u64,
-    /// Exact signed Delivery envelope authenticated by the Taker.
-    pub signed_offer_envelope: Vec<u8>,
-    /// Canonical dual-signed Stage-A agreement.
-    #[serde(with = "stage_a_wire_base64")]
-    pub stage_a_wire: Vec<u8>,
-}
-
-/// Secret-free durable result of XMR Stage-A reservation.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct XmrChatStageAResponseV1 {
-    /// Response schema version.
-    pub schema_version: u16,
-    /// Durable reserved offer revision.
-    pub offer_revision: u64,
-    /// Whether the exact request was already committed.
-    pub was_replay: bool,
-    /// Winning reservation identity.
-    pub reservation_id: RequestId,
-    /// Exact no-rounding LEZ amount.
-    pub lez_units: u128,
-    /// Delivery-and-reservation-derived public swap identity.
-    pub swap_id: Box<str>,
-    /// Canonical Stage-A commitment signed by both roles.
-    pub agreement_commitment: [u8; 32],
-}
-
-/// Taker request carrying canonical countersigned XMR Stage B.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct XmrChatActivateRequestV1 {
-    /// Must be one for this DTO shape.
-    pub schema_version: u16,
-    /// Global exact-replay identity for atomic activation.
-    pub request_id: RequestId,
-    /// Reserved immutable offer identity.
-    pub offer_id: MakerOfferId,
-    /// Current reserved offer revision, normally two.
-    pub expected_offer_revision: u64,
-    /// Winning reservation identity.
-    pub reservation_id: RequestId,
-    /// Canonical dual-signed Stage-B activation wire.
-    #[serde(with = "activation_wire_base64")]
-    pub activation_wire: Vec<u8>,
-}
-
-/// Secret-free durable result returned after Stage B and actor registration commit.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct XmrChatActivateResponseV1 {
-    /// Response schema version.
-    pub schema_version: u16,
-    /// Durable consumed offer revision.
-    pub offer_revision: u64,
-    /// Whether the exact activation request was already committed.
-    pub was_replay: bool,
-    /// SDK-derived application swap identity.
-    pub swap_id: Box<str>,
-    /// Canonical Stage-B commitment signed by both roles.
-    pub activation_commitment: [u8; 32],
 }
 
 pub(super) fn register_xmr_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {

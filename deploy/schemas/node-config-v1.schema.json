@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://logos.co/lez/schemas/node-config-v1.schema.json",
+  "title": "NodeConfigV1",
+  "description": "Shared strict startup envelope for Maker and Taker Nodes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "arguments"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "arguments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"type": "string", "minLength": 1, "maxLength": 4096, "not": {"const": "--config"}}
+    }
+  }
+}

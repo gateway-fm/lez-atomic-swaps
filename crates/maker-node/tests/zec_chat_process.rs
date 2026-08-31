@@ -1,5 +1,7 @@
 //! Separate-process happy-path proof for the run-local ZEC Chat boundary.
 
+#[path = "support/cross_role_binary.rs"]
+mod cross_role;
 mod support;
 
 use std::{
@@ -20,11 +22,8 @@ use jsonrpsee::RpcModule;
 use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, ListRequest, LocalPriceSetRequest,
-    PairConfigureRequest, RunLocalDelivery, TakerClaimRequestV1, TakerHealthRequestV1,
-    TakerHealthV1, TakerInitiationCommitV1, TakerMakerIdentityV1, TakerRefundRequestV1,
-    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
-    TakerSwapStateV1, TakerSwapViewV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_rpc,
-    load_taker_service_context, taker_service_rpc_module,
+    PairConfigureRequest, RunLocalDelivery, TakerMakerIdentityV1, ZecChatProposalV1,
+    ZecChatProposeRequestV1, call_local_rpc,
 };
 use lez_swap_core::{Pair, Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
@@ -33,6 +32,12 @@ use lez_swap_store::{
     MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
     MakerZecNegotiationStatus, SqliteSwapStore, SqliteTakerFacadeStore, SqliteZecRecoveryStore,
     TakerFacadeActionV1, maker_zec_chat_session_id,
+};
+use lez_taker_node::{
+    TakerClaimRequestV1, TakerHealthRequestV1, TakerHealthV1, TakerInitiationCommitV1,
+    TakerRefundRequestV1, TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1,
+    TakerSwapMonitorRequestV1, TakerSwapStateV1, TakerSwapViewV1, load_taker_service_context,
+    taker_service_rpc_module,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
@@ -1390,7 +1395,7 @@ fn maker_publish_command(
     offer_id: &MakerOfferId,
     direction: SwapDirection,
 ) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"));
     command
         .arg("--socket")
         .arg(socket)
@@ -1410,7 +1415,7 @@ fn maker_publish_command(
 }
 
 fn run_maker_health(socket: &std::path::Path) -> Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    let output = Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .arg("health")
@@ -1948,7 +1953,7 @@ fn taker_command_with_overrides(
     chat_socket: &Path,
     receipt: &Path,
 ) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-taker"));
+    let mut command = Command::new(cross_role::workspace_binary("lez-taker-cli"));
     command
         .arg("--delivery-directory")
         .arg(taker.delivery)
@@ -1994,7 +1999,7 @@ fn assert_private_receipt(path: &Path) {
 }
 
 fn assert_receipt_monitor_is_offline(receipt: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_lez-taker"))
+    let output = Command::new(cross_role::workspace_binary("lez-taker-cli"))
         .arg("monitor")
         .arg("--receipt")
         .arg(receipt)
@@ -2206,7 +2211,7 @@ struct DaemonPaths<'a> {
 }
 
 fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"));
     command
         .arg("--socket")
         .arg(paths.socket)

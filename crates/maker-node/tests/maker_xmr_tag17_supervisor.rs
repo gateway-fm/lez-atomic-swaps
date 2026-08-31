@@ -37,9 +37,9 @@ use xmr_maker_effect_fixture::{provision_maker_refund, provision_maker_tag17};
 fn real_maker_actor_executes_both_recovery_branches_once_then_reconciles() {
     let root = tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    let actor_program = root.path().join("xmr-maker-actor");
+    let actor_program = root.path().join("lez-xmr-maker-actor");
     fs::copy(
-        Path::new(env!("CARGO_BIN_EXE_xmr-maker-actor")),
+        Path::new(env!("CARGO_BIN_EXE_lez-xmr-maker-actor")),
         &actor_program,
     )
     .unwrap();
@@ -236,9 +236,9 @@ fn real_maker_actor_executes_both_recovery_branches_once_then_reconciles() {
 fn killed_refund_actor_reconciles_durable_submission_without_resend() {
     let root = tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    let actor_program = root.path().join("xmr-maker-actor");
+    let actor_program = root.path().join("lez-xmr-maker-actor");
     fs::copy(
-        Path::new(env!("CARGO_BIN_EXE_xmr-maker-actor")),
+        Path::new(env!("CARGO_BIN_EXE_lez-xmr-maker-actor")),
         &actor_program,
     )
     .unwrap();
@@ -370,9 +370,9 @@ fn killed_refund_actor_reconciles_durable_submission_without_resend() {
 fn killed_tag15_actor_reconciles_durable_submission_without_resend() {
     let root = tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    let actor_program = root.path().join("xmr-maker-actor");
+    let actor_program = root.path().join("lez-xmr-maker-actor");
     fs::copy(
-        Path::new(env!("CARGO_BIN_EXE_xmr-maker-actor")),
+        Path::new(env!("CARGO_BIN_EXE_lez-xmr-maker-actor")),
         &actor_program,
     )
     .unwrap();

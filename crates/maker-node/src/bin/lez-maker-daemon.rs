@@ -1,7 +1,7 @@
 use std::{
     ffi::OsString,
     fs::{self, File},
-    io::{self, Write as _},
+    io,
     os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     sync::Arc,
@@ -17,7 +17,11 @@ use lez_maker_node::{
     MakerActorSupervisorConfig, MakerRpc, ProcessLogosPriceSource, ProcessRouteHealthProbe,
     RunLocalDelivery, XmrMakerChatAuthority, ZecMakerActorProvisioner, chat_rpc_module,
     import_terminal_zec_maker_projection,
-    owner_rpc_server::{OwnedPath, bind_owner_socket, server_config, validate_runtime_directory},
+    node_config::load_node_arguments,
+    owner_rpc_server::{
+        OwnedPath, bind_owner_socket, publish_ready_file, server_config,
+        validate_runtime_directory,
+    },
     rpc_module,
     secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file},
     supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
@@ -41,7 +45,6 @@ use xmr_reference_actor::{
 };
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
-
 type BtcChatAuthority = (
     SecretKey,
     Option<BtcMakerActorProvisioner>,
@@ -68,7 +71,7 @@ struct XmrActorManifestEntryV1 {
 
 #[derive(Parser)]
 #[command(
-    about = "Headless LEZ atomic-swap maker daemon",
+    about = "Owner-local LEZ atomic-swap Maker Node",
     group(ArgGroup::new("pair_chat_authority")
         .args([
             "maker_claim_key_id",
@@ -79,7 +82,7 @@ struct XmrActorManifestEntryV1 {
 )]
 struct Arguments {
     /// Owner-only Unix-domain control socket.
-    #[arg(long, default_value = "/run/lez-atomic-swaps/maker.sock")]
+    #[arg(long, default_value = "/run/lez/maker/node.sock")]
     socket: PathBuf,
     #[arg(long)]
     database: PathBuf,
@@ -500,7 +503,7 @@ fn run_actor_supervisors(
 #[tokio::main]
 #[allow(clippy::too_many_lines)] // Keep startup, select, cancellation, and teardown order auditable.
 async fn main() -> anyhow::Result<()> {
-    let arguments = Arguments::parse();
+    let arguments = load_arguments()?;
     let logos_price_source = configured_logos_price_source(&arguments)?;
     let route_health_probe = configured_route_health_probe(&arguments)?;
     let zec_actor_provisioner = configured_zec_actor_provisioner(&arguments)?;
@@ -538,7 +541,7 @@ async fn main() -> anyhow::Result<()> {
     let _ready_guard = arguments
         .ready_file
         .as_deref()
-        .map(|path| create_ready_file(path, &arguments.socket))
+        .map(|path| publish_ready_file(path, &arguments.socket, "Maker"))
         .transpose()?;
     let (stop_handle, server_handle) = stop_channel();
     let service = ServerBuilder::default()
@@ -672,6 +675,15 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+fn load_arguments() -> anyhow::Result<Arguments> {
+    load_node_arguments("Maker")
+}
+
+#[cfg(test)]
+fn parse_daemon_config(bytes: &[u8], executable: OsString) -> anyhow::Result<Arguments> {
+    lez_maker_node::node_config::parse_node_config(bytes, executable, "Maker")
+}
+
 async fn shutdown_signal() -> io::Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
@@ -700,7 +712,7 @@ fn notify_ready() -> anyhow::Result<()> {
 fn notify_stopping() {
     let _ = sd_notify::notify(&[
         NotifyState::Stopping,
-        NotifyState::Status("maker daemon is stopping"),
+        NotifyState::Status("Maker Node is stopping"),
     ]);
 }
 
@@ -1169,40 +1181,14 @@ fn trusted_now_unix_seconds() -> anyhow::Result<u64> {
         .map(|duration| duration.as_secs())
 }
 
-fn create_ready_file(path: &Path, socket: &Path) -> anyhow::Result<OwnedPath> {
-    ensure!(path.is_absolute(), "maker readiness path must be absolute");
-    ensure!(
-        path.parent() == socket.parent(),
-        "maker readiness file must share the socket runtime directory"
-    );
-    let parent = path
-        .parent()
-        .context("maker readiness path has no parent")?;
-    let mut staged = tempfile::Builder::new()
-        .prefix(".maker-ready.")
-        .tempfile_in(parent)
-        .context("stage maker readiness file")?;
-    writeln!(staged, "{}", socket.display()).context("write maker readiness file")?;
-    staged
-        .as_file_mut()
-        .sync_all()
-        .context("sync staged maker readiness file")?;
-    staged
-        .persist_noclobber(path)
-        .map_err(|error| error.error)
-        .context("publish maker readiness file without clobber")?;
-    File::open(parent)?.sync_all()?;
-    let guard = OwnedPath::capture(path).context("capture maker readiness file identity")?;
-    Ok(guard)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::Arguments;
+    use super::{Arguments, parse_daemon_config};
     use clap::{Parser as _, error::ErrorKind};
+    use std::ffi::OsString;
 
     fn daemon_arguments() -> Vec<&'static str> {
-        vec!["lez-maker-daemon", "--database", "/tmp/maker.sqlite3"]
+        vec!["lez-maker-node", "--database", "/tmp/maker.sqlite3"]
     }
 
     fn assert_cli_error(arguments: Vec<&'static str>, expected: ErrorKind) {
@@ -1214,7 +1200,7 @@ mod tests {
 
     fn chat_arguments() -> Vec<&'static str> {
         vec![
-            "lez-maker-daemon",
+            "lez-maker-node",
             "--database",
             "/tmp/maker.sqlite3",
             "--delivery-directory",
@@ -1258,7 +1244,7 @@ mod tests {
     #[test]
     fn chat_cli_requires_complete_xmr_authority() {
         let complete = vec![
-            "lez-maker-daemon",
+            "lez-maker-node",
             "--database",
             "/tmp/maker.sqlite3",
             "--delivery-directory",
@@ -1356,6 +1342,26 @@ mod tests {
             let mut arguments = daemon_arguments();
             arguments.extend(["--actor-supervisor", flag, value]);
             assert_cli_error(arguments, ErrorKind::ValueValidation);
+        }
+    }
+
+    #[test]
+    fn strict_daemon_config_parses_only_schema_one_clap_arguments() {
+        parse_daemon_config(
+            br#"{"schema_version":1,"arguments":["--database","/tmp/maker.sqlite3"]}"#,
+            OsString::from("lez-maker-node"),
+        )
+        .expect("strict schema-one configuration parses");
+        for invalid in [
+            br#"{"schema_version":2,"arguments":["--database","/tmp/maker.sqlite3"]}"#.as_slice(),
+            br#"{"schema_version":1,"arguments":["--config","recursive.json"]}"#.as_slice(),
+            br#"{"schema_version":1,"arguments":["--unknown"]}"#.as_slice(),
+            br#"{"schema_version":1,"arguments":[],"extra":true}"#.as_slice(),
+        ] {
+            assert!(
+                parse_daemon_config(invalid, OsString::from("lez-maker-node")).is_err(),
+                "invalid or recursive daemon configuration must fail closed"
+            );
         }
     }
 }

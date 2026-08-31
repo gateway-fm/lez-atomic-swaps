@@ -5,7 +5,7 @@
 # M6_TAKER_SERVICE_MODE=1) and the zec_chat_process.rs service test:
 # provisions the deterministic local ZEC corridor fixture, restarts the maker
 # daemon with its real Chat authority, publishes a ZEC offer, prepares the
-# taker's unsigned draft + actor source, and rewrites the taker service
+# taker's unsigned draft + actor source, and rewrites the Taker Node
 # configuration with a prepared entry (execute_prepared_zec: true).
 #
 # This is not the M3 BTC chain demo. After this runs once, the secondary
@@ -54,15 +54,15 @@ rm -rf /prep/${TOKEN}/actors
 AGREEMENT="/prep/${TOKEN}/actors/shared/agreement-v2.borsh"
 log "fixture provisioned (agreement at ${AGREEMENT})"
 
-# ------------------------------------------------- 2. maker daemon: chat on
-log "enabling the maker daemon ZEC Chat authority"
+# --------------------------------------------------- 2. Maker Node: Chat on
+log "enabling the Maker Node ZEC Chat authority"
 PROG_SHA="$(compose run --rm --no-deps --entrypoint bash maker-node -c '
 if [ ! -f /prep/actor-program ]; then cp /usr/bin/true /prep/actor-program && chmod 0555 /prep/actor-program; fi
 sha256sum /prep/actor-program' | tail -1 | cut -d' ' -f1)"
 CLAIM_KEY_ID="$(compose run --rm --no-deps --entrypoint bash maker-node -c '
 set -e
 if [ ! -s /prep/maker-claim-key-id ]; then
-  existing="$(grep -aoE "ui-zec-claim-ui[0-9]{10}-[0-9]+" /var/lib/lez/maker.sqlite3 2>/dev/null | head -1 || true)"
+  existing="$(grep -aoE "ui-zec-claim-ui[0-9]{10}-[0-9]+" /var/lib/lez/maker/maker.sqlite3 2>/dev/null | head -1 || true)"
   printf "%s\n" "${existing:-ui-zec-claim-local}" > /prep/maker-claim-key-id
   chmod 0600 /prep/maker-claim-key-id
 fi
@@ -74,37 +74,50 @@ mkdir -p /prep/${TOKEN}/maker-actors
 chmod 700 /prep/${TOKEN}/maker-actors
 # The authenticated Delivery identity is also the Maker Zcash agreement key.
 # Pin the local-only daemon to the deterministic fixture key before publishing.
-cp /prep/${TOKEN}/actors/maker/zcash.key /var/lib/lez/delivery-signing.key
-chmod 0600 /var/lib/lez/delivery-signing.key
+cp /prep/${TOKEN}/actors/maker/zcash.key /var/lib/lez/maker/delivery-signing.key
+chmod 0600 /var/lib/lez/maker/delivery-signing.key
 # Advertisements signed by a previous local identity cannot be reconciled.
 find /delivery -maxdepth 1 -type f -name '*.offer.json' -delete
-# concrete args file consumed by the daemon command in compose.yaml
-cat > /prep/daemon-args.sh <<EOF
---chat-socket /run/lez/chat.sock
---maker-claim-key-id ${CLAIM_KEY_ID}
---maker-claim-key-file /prep/${TOKEN}/actors/maker/claim-recovery.key
---maker-claim-preimage-file /prep/${TOKEN}/actors/maker/claim-preimage.key
---zec-source-maker-config /prep/${TOKEN}/actors/maker/actor-config.json
---zec-maker-actor-root /prep/${TOKEN}/maker-actors
---zec-actor-program /prep/actor-program
---zec-actor-program-sha256 ${PROG_SHA}
+# Strict versioned daemon configuration consumed directly by Rust. Publish by
+# atomic rename so a restart cannot observe a partially written argument set.
+cat > /prep/maker-node.json.partial <<EOF
+{
+  \"schema_version\": 1,
+  \"arguments\": [
+    \"--socket\", \"/run/lez/maker/node.sock\",
+    \"--database\", \"/var/lib/lez/maker/maker.sqlite3\",
+    \"--ready-file\", \"/run/lez/maker/ready\",
+    \"--delivery-directory\", \"/delivery\",
+    \"--delivery-signing-key-file\", \"/var/lib/lez/maker/delivery-signing.key\",
+    \"--chat-socket\", \"/run/lez/maker/chat.sock\",
+    \"--maker-claim-key-id\", \"${CLAIM_KEY_ID}\",
+    \"--maker-claim-key-file\", \"/prep/${TOKEN}/actors/maker/claim-recovery.key\",
+    \"--maker-claim-preimage-file\", \"/prep/${TOKEN}/actors/maker/claim-preimage.key\",
+    \"--zec-source-maker-config\", \"/prep/${TOKEN}/actors/maker/actor-config.json\",
+    \"--zec-maker-actor-root\", \"/prep/${TOKEN}/maker-actors\",
+    \"--zec-actor-program\", \"/prep/actor-program\",
+    \"--zec-actor-program-sha256\", \"${PROG_SHA}\"
+  ]
+}
 EOF
+chmod 0600 /prep/maker-node.json.partial
+mv -f /prep/maker-node.json.partial /prep/maker-node.json
 " >/dev/null
 compose up -d maker-node >/dev/null
 maker_ready=0
 for i in $(seq 1 40); do
-  if compose exec -T maker-node lez-maker --socket /run/lez/maker.sock health >/dev/null 2>&1; then
+  if compose exec -T maker-node lez-maker-cli --socket /run/lez/maker/node.sock health >/dev/null 2>&1; then
     maker_ready=1
     break
   fi
   sleep 1
 done
 [[ "$maker_ready" == 1 ]] || { compose logs --tail 40 maker-node >&2; exit 1; }
-log "maker daemon is back with chat authority"
+log "Maker Node is back with Chat authority"
 
 # --------------------------------------------------------- 3. publish offer
 log "publishing the ZEC offer"
-CLI=(compose exec -T maker-node lez-maker --socket /run/lez/maker.sock)
+CLI=(compose exec -T maker-node lez-maker-cli --socket /run/lez/maker/node.sock)
 rev=""
 if cfg_out="$("${CLI[@]}" configure-pair --request-id "cfg-${TOKEN}-off" --pair zcash --direction "$DIRECTION_CLI" \
       --enabled false --price-source local --minimum-foreign-units "$FOREIGN_UNITS" \
@@ -138,9 +151,9 @@ log "offer ${OFFER_ID} published"
 # ---------------------------------------------------- 4. discovery + draft
 log "discovering the signed offer and preparing the taker draft"
 MAKER_KEY="$(compose run --rm --no-deps --entrypoint bash maker-node -c \
-  '/usr/local/bin/lez-maker delivery-identity --signing-key-file /var/lib/lez/delivery-signing.key | tr -d " \n" | grep -o "02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}"')"
+  '/usr/local/bin/lez-maker-cli delivery-identity --signing-key-file /var/lib/lez/maker/delivery-signing.key | tr -d " \n" | grep -o "02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}"')"
 DISCOVERY="$(compose run --rm --no-deps --entrypoint bash maker-node -c "
-  /usr/local/bin/lez-taker --delivery-directory /delivery --maker-public-key ${MAKER_KEY} \
+  /usr/local/bin/lez-taker-cli --delivery-directory /delivery --maker-public-key ${MAKER_KEY} \
     --now-unix-seconds \$(date -u +%s) --pair zcash --direction ${DIRECTION_CLI}")"
 COMMITMENT="$(jq -er --arg offer "$OFFER_ID" '.offers[] | select(.offer.id == $offer) | .signed_envelope_sha256' <<<"$DISCOVERY")"
 EXPIRES="$(jq -er --arg offer "$OFFER_ID" '.offers[] | select(.offer.id == $offer) | .offer.expires_at_unix_seconds' <<<"$DISCOVERY")"
@@ -158,17 +171,17 @@ set -e
 log "draft bound to offer commitment ${COMMITMENT:0:16}…"
 
 # ------------------------------------------- 5. registry + service config
-log "writing the taker service prepared configuration"
+log "writing the Taker Node prepared configuration"
 compose run --rm --no-deps --entrypoint bash \
   -v lez-prep-state:/prep -v lez-taker-state:/t -v lez-delivery-dir:/delivery maker-node -c "
 set -e
 mkdir -p /t/registry && chmod 700 /t/registry
-REG=/t/registry/taker-service.sqlite3
+REG=/t/registry/node.sqlite3
 rm -f \"\$REG\" \"\$REG-wal\" \"\$REG-shm\" \"\$REG-journal\"
 /usr/local/bin/lez-taker-registry-init --database \"\$REG\" >/dev/null
 jq -n \
-  --arg maker '${MAKER_KEY}' --arg chat /run/lez-maker-chat/chat.sock \
-  --arg registry /var/lib/lez-taker/registry/taker-service.sqlite3 --arg swap '${SWAP_ID}' --arg offer '${OFFER_ID}' \
+  --arg maker '${MAKER_KEY}' --arg chat /run/lez/maker/chat.sock \
+  --arg registry /var/lib/lez/taker/registry/node.sqlite3 --arg swap '${SWAP_ID}' --arg offer '${OFFER_ID}' \
   --arg reservation '${RESERVATION_ID}' \
   --arg envelope '${SIGNED_ENVELOPE}' --arg envelope_sha '${COMMITMENT}' \
   --arg draft /prep/${TOKEN}/unsigned-draft.borsh \
@@ -190,15 +203,15 @@ jq -n \
         signing_key:{path:\$key},
         source_config:{path:\$src, sha256:\$src_sha},
         agreement_output:\$agreement, actor_root:\$actor_root, receipt_output:\$receipt}]}}' \
-  > /t/taker-service.json
-chmod 0600 /t/taker-service.json
+  > /t/role.json
+chmod 0600 /t/role.json
 " >/dev/null
 
-compose stop taker-service >/dev/null
-compose up -d taker-service >/dev/null
+compose stop taker-node >/dev/null
+compose up -d taker-node >/dev/null
 taker_ready=0
 for i in $(seq 1 40); do
-  if compose exec -T taker-service curl -sf --max-time 2 --unix-socket /run/lez/taker.sock \
+  if compose exec -T taker-node curl -sf --max-time 2 --unix-socket /run/lez/taker/node.sock \
       --header 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"taker_health","params":[{"schema_version":1}]}' \
       http://localhost/ >/dev/null 2>&1; then
@@ -207,7 +220,7 @@ for i in $(seq 1 40); do
   fi
   sleep 1
 done
-[[ "$taker_ready" == 1 ]] || { compose logs --tail 40 taker-service >&2; exit 1; }
+[[ "$taker_ready" == 1 ]] || { compose logs --tail 40 taker-node >&2; exit 1; }
 
 cat <<BANNER
 

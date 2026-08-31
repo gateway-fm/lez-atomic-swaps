@@ -1,11 +1,36 @@
 [package]
 name = "zec-reference-actor"
+autobins = false
 version = "0.1.0"
 description = "One-shot role-fixed reference actor for LEZ and Zcash atomic swaps"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[[bin]]
+name = "lez-zec-maker-actor"
+path = "src/bin/lez-zec-maker-actor.rs"
+
+[[bin]]
+name = "lez-zec-taker-actor"
+path = "src/bin/lez-zec-taker-actor.rs"
+
+[[bin]]
+name = "zec-actor-pair-inspect"
+path = "src/bin/zec-actor-pair-inspect.rs"
+
+[[bin]]
+name = "zec-local-poc-chat-draft"
+path = "src/bin/zec-local-poc-chat-draft.rs"
+
+[[bin]]
+name = "zec-local-poc-chat-finalize"
+path = "src/bin/zec-local-poc-chat-finalize.rs"
+
+[[bin]]
+name = "zec-local-poc-provision"
+path = "src/bin/zec-local-poc-provision.rs"
 
 [lints]
 workspace = true

@@ -146,6 +146,41 @@ pub struct ActorCli {
     pub command: ActorCommand,
 }
 
+/// Runs one actor command for the executable's fixed protocol role.
+pub fn run_actor_process(expected_role: ActorRole) {
+    let cli = ActorCli::parse();
+    let config = match (cli.config.as_ref(), cli.config_fd) {
+        (Some(path), None) => {
+            ActorConfig::load_private(path).unwrap_or_else(|error| exit_with(error))
+        }
+        (None, Some(fd)) => ActorConfig::load_private_fd(fd)
+            .unwrap_or_else(|_| exit_with("actor configuration is unavailable")),
+        (Some(_), Some(_)) | (None, None) => exit_with("actor configuration is unavailable"),
+    };
+    if !entrypoint_role_matches(expected_role, config.role()) {
+        exit_with("role-fixed Bitcoin actor rejects the opposite role");
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| exit_with("actor runtime is unavailable"));
+    let output = runtime
+        .block_on(execute_actor_command(&config, cli.command))
+        .unwrap_or_else(|error| exit_with(error));
+    let json =
+        serde_json::to_string(&output).unwrap_or_else(|_| exit_with("actor output is unavailable"));
+    println!("{json}");
+}
+
+fn entrypoint_role_matches(expected: ActorRole, actual: ActorRole) -> bool {
+    expected == actual
+}
+
+fn exit_with(message: impl fmt::Display) -> ! {
+    eprintln!("{message}");
+    std::process::exit(2);
+}
+
 impl fmt::Debug for ActorCli {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

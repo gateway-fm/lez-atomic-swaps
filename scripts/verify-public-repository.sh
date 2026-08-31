@@ -14,7 +14,8 @@ required=(
   .github/CODEOWNERS .github/pull_request_template.md
   Cargo.toml Cargo.lock rust-toolchain.toml deny.toml
   crates/swap-core/src/lib.rs crates/btc-swap-sdk/src/lib.rs
-  crates/adaptor-signature/src/lib.rs crates/maker-node/src/lib.rs
+  crates/adaptor-signature/src/lib.rs crates/node-common/src/lib.rs
+  crates/maker-node/src/lib.rs crates/taker-node/src/lib.rs
 )
 for path in "${required[@]}"; do
   [[ -s "$repo_root/$path" ]] || fail "missing or empty ${path}"

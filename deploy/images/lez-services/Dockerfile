@@ -9,6 +9,7 @@ LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 COPY --chmod=0555 sequencer_service /usr/local/bin/sequencer_service
 COPY --chmod=0555 indexer_service /usr/local/bin/indexer_service
 COPY --chmod=0555 r0vm /usr/local/bin/r0vm
+COPY --chmod=0555 lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
 
 ENV HOME=/tmp
 ENV RISC0_SERVER_PATH=/usr/local/bin/r0vm

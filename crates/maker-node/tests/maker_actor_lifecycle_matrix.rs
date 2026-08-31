@@ -319,7 +319,7 @@ fn start_daemon(root: &Path, database: &Path, label: &str) -> (Daemon, PathBuf) 
     fs::DirBuilder::new().mode(0o700).create(&runtime).unwrap();
     let socket = runtime.join("maker.sock");
     let ready = runtime.join("ready");
-    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-daemon"))
+    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
         .arg("--socket")
         .arg(&socket)
         .arg("--database")
@@ -353,7 +353,7 @@ fn monitor(socket: &Path, swap_id: &str) -> Value {
 }
 
 fn maker_cli(socket: &Path, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_lez-maker"))
+    Command::new(env!("CARGO_BIN_EXE_lez-maker-cli"))
         .arg("--socket")
         .arg(socket)
         .args(arguments)

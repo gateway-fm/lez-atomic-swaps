@@ -7,7 +7,7 @@ readonly process_test="crates/maker-node/tests/daemon_actor_supervisor_process.r
 readonly wrapper="scripts/run-m7-xmr-accepted-concurrency-poc.sh"
 readonly delegated_runner="scripts/run-m4-actual-claim-poc.sh"
 readonly funding_source="compat/lez-v0_2-sidecar/src/bin/lez-v02-xmr-regtest-fund.rs"
-readonly taker_cli_source="crates/maker-node/src/bin/lez-taker.rs"
+readonly taker_cli_source="crates/taker-node/src/bin/lez-taker.rs"
 
 fail() {
   echo "M7 XMR accepted-concurrency contract failed: $*" >&2

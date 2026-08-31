@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "arguments": [
+    "--socket", "/run/lez/maker/node.sock",
+    "--database", "/var/lib/lez/maker/maker.sqlite3",
+    "--ready-file", "/run/lez/maker/ready",
+    "--delivery-directory", "/var/lib/lez/maker/delivery",
+    "--delivery-signing-key-file", "/run/credentials/lez-maker-node.service/delivery-signing.key",
+    "--chat-socket", "/run/lez/maker/chat.sock",
+    "--maker-claim-key-id", "systemd-v1",
+    "--maker-claim-key-file", "/run/credentials/lez-maker-node.service/maker-claim-recovery.key",
+    "--maker-claim-preimage-file", "/run/credentials/lez-maker-node.service/maker-claim-preimage.key",
+    "--actor-supervisor",
+    "--zec-source-maker-config", "/var/lib/lez/maker/authority/zec-maker.json",
+    "--zec-maker-actor-root", "/var/lib/lez/maker/actors",
+    "--zec-actor-program", "/usr/bin/lez-zec-maker-actor",
+    "--zec-actor-program-sha256", "REPLACE_WITH_64_HEX_CHARACTERS"
+  ]
+}

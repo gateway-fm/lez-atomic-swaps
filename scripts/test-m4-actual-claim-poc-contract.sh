@@ -114,7 +114,7 @@ jq -e '
   and .m7_supervised_refund.provisioning_order == "post_tag13_and_sidecars_before_actor_registration"
   and .m7_supervised_refund.actor_requeue_seconds == {isolated_test:1,default:3600}
   and .m7_supervised_refund.operator_branch_selector == false
-  and .m7_supervised_refund.owner_action == "lez-maker refund"
+  and .m7_supervised_refund.owner_action == "lez-maker-cli refund"
   and .m7_supervised_refund.sender_abi == "lez_xmr_monero_refund_sweep_v3"
   and .m7_supervised_refund.observer_abi == "lez_xmr_monero_verify_v2"
   and .m7_supervised_refund.external_confirmation_blocks == 10
@@ -218,7 +218,7 @@ build_source="$(function_source build_identity_and_artifact)"
 [[ -n "$build_source" ]] || fail "build/staging function is unavailable"
 rg -Fq 'cargo +1.96.0 build --release --locked --offline -p lez-maker-node' \
   <<<"$build_source" || fail "Maker application artifacts are not built in release mode"
-for release_binary in lez-maker lez-maker-daemon lez-taker xmr-maker-actor; do
+for release_binary in lez-maker-cli lez-maker-node lez-taker-cli lez-xmr-maker-actor; do
   rg -Fq '"${workspace_target}/release/'"${release_binary}"'"' \
     <<<"$build_source" || fail "${release_binary} is not staged from the release profile"
 done

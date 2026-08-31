@@ -7,7 +7,9 @@
     "test:m6:prototype:contract": "node scripts/check-m6-prototype-contract.mjs",
     "test:m6:prototype:e2e": "node --test --test-concurrency=1 tests/ui/m6-prototype.e2e.test.mjs",
     "test:m6:prototype": "npm run test:m6:prototype:contract && npm run test:m6:prototype:e2e",
-    "test:m6:basecamp:contract": "node scripts/check-m6-basecamp-package-contract.mjs"
+    "test:m6:basecamp:contract": "node scripts/check-m6-basecamp-package-contract.mjs",
+    "test:m6:basecamp:integration": "./scripts/test-m6-basecamp-integration.sh",
+    "test:m6:basecamp": "npm run test:m6:basecamp:contract && npm run test:m6:basecamp:integration"
   },
   "devDependencies": {
     "@mermaid-js/mermaid-cli": "11.16.0",
