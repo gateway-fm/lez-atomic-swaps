@@ -9,7 +9,7 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
-use lez_swap_core::{Phase, SwapId};
+use lez_swap_core::{Pair, Phase, SwapId};
 use lez_swap_store::{
     MakerActorHeldLock, MakerOfferStatus, TakerActionAdmissionV1, TakerFacadeActionV1,
     TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
@@ -1100,6 +1100,7 @@ fn map_monitoring_error(error: MonitoringError) -> ErrorObjectOwned {
 #[derive(Clone, Copy, Debug)]
 enum InitiationError {
     UnsupportedSchemaVersion,
+    UnsupportedPair,
     SelectionMismatch,
     Conflict,
     Backend(TakerBackendError),
@@ -1114,6 +1115,9 @@ async fn initiate(
     request
         .validate_schema_version()
         .map_err(|_| InitiationError::UnsupportedSchemaVersion)?;
+    if request.route.pair() != Pair::Zcash {
+        return Err(InitiationError::UnsupportedPair);
+    }
     let initiation = state.initiation.clone().ok_or(InitiationError::Internal)?;
 
     // Durable lookup deliberately precedes catalog selection, time, and Delivery.
@@ -1483,6 +1487,11 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
             INVALID_PARAMS_CODE,
             "Invalid params",
             "unsupported_schema_version",
+        ),
+        InitiationError::UnsupportedPair => rpc_error(
+            INVALID_PARAMS_CODE,
+            "Invalid params",
+            "initiation_unsupported_pair",
         ),
         InitiationError::SelectionMismatch => rpc_error(
             INVALID_PARAMS_CODE,

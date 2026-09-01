@@ -18,7 +18,8 @@ use lez_swap_store::{
 };
 use lez_taker_node::{
     DeliveryPublicationV1, RunLocalDelivery, TakerHealthRequestV1, TakerHealthV1,
-    TakerInitiationCommitV1, TakerMakerIdentityV1, TakerSwapInitiateRequestV1, TakerSwapStateV1,
+    TakerInitiationCapabilityV1, TakerInitiationCommitV1, TakerMakerIdentityV1,
+    TakerSwapInitiateRequestV1, TakerSwapStateV1, TakerTerminalActionCapabilityV1,
     load_taker_service_context, taker_service_rpc_module,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
@@ -59,6 +60,24 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
     assert!(methods.monitor());
     assert!(methods.claim());
     assert!(methods.refund());
+    let bitcoin = health.pair_capabilities()[0];
+    assert_eq!(bitcoin.pair(), Pair::Bitcoin);
+    assert_eq!(
+        bitcoin.initiation(),
+        TakerInitiationCapabilityV1::OwnerCliOrDemo
+    );
+    assert_eq!(
+        bitcoin.claim(),
+        TakerTerminalActionCapabilityV1::OwnerCliOrDemo
+    );
+    assert_eq!(
+        bitcoin.refund(),
+        TakerTerminalActionCapabilityV1::OwnerCliOrDemo
+    );
+    assert_eq!(
+        health.pair_capabilities()[2].claim(),
+        TakerTerminalActionCapabilityV1::FullLifecycle
+    );
 
     let mut mismatch = fixture.request("m6-initiation-mismatch-001");
     mismatch.signed_envelope_sha256[0] ^= 0xff;
@@ -143,6 +162,49 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
         "initiation_conflict",
     );
     assert_redacted(&changed_response, &fixture);
+}
+
+#[tokio::test]
+async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry() {
+    let fixture = Fixture::new();
+    let module =
+        taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
+    for (label, pair, direction) in [
+        (
+            "m6-btc-initiate-rejected-001",
+            Pair::Bitcoin,
+            SwapDirection::TakerSellsForeign,
+        ),
+        (
+            "m6-xmr-initiate-rejected-001",
+            Pair::Monero,
+            SwapDirection::TakerSellsLez,
+        ),
+    ] {
+        let mut request = fixture.request(label);
+        request.route = MakerRouteV1::new(pair, direction).unwrap();
+        let response = rpc_response(
+            &module,
+            "taker_swap_initiate_v1",
+            serde_json::to_value([request.clone()]).unwrap(),
+        )
+        .await;
+        assert_rpc_error(
+            &response,
+            INVALID_PARAMS,
+            "Invalid params",
+            "initiation_unsupported_pair",
+        );
+        assert_redacted(&response, &fixture);
+        assert_eq!(
+            SqliteTakerFacadeStore::open_existing(&fixture.registry)
+                .unwrap()
+                .lookup_initiation(&request.request_id)
+                .unwrap(),
+            None,
+            "unsupported {pair:?} initiate mutated the registry"
+        );
+    }
 }
 
 #[tokio::test]

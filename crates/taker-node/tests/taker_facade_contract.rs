@@ -105,31 +105,41 @@ fn pair_capabilities_report_only_current_role_fixed_semantics() {
         &capabilities[0],
         Pair::Bitcoin,
         SwapDirection::TakerSellsForeign,
-        TakerTerminalActionCapabilityV1::FullLifecycle,
+        TakerInitiationCapabilityV1::OwnerCliOrDemo,
+        TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
     );
     assert_capability(
         &capabilities[1],
         Pair::Monero,
         SwapDirection::TakerSellsLez,
+        TakerInitiationCapabilityV1::OwnerCliOrDemo,
         TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
     );
     assert_capability(
         &capabilities[2],
         Pair::Zcash,
         SwapDirection::TakerSellsLez,
+        TakerInitiationCapabilityV1::PreparedPrivateMaterial,
         TakerTerminalActionCapabilityV1::FullLifecycle,
     );
     assert_capability(
         &capabilities[3],
         Pair::Zcash,
         SwapDirection::TakerSellsForeign,
+        TakerInitiationCapabilityV1::PreparedPrivateMaterial,
         TakerTerminalActionCapabilityV1::FullLifecycle,
     );
 
     let encoded = serde_json::to_value(&capabilities).unwrap();
     assert_secret_and_authority_free(&encoded);
+    assert_eq!(encoded[0]["initiation"], "owner_cli_or_demo");
+    assert_eq!(encoded[0]["claim"], "owner_cli_or_demo");
+    assert_eq!(encoded[0]["refund"], "owner_cli_or_demo");
+    assert_eq!(encoded[1]["initiation"], "owner_cli_or_demo");
     assert_eq!(encoded[1]["claim"], "effect_checkpoint_only");
     assert_eq!(encoded[1]["refund"], "effect_checkpoint_only");
+    assert_eq!(encoded[2]["claim"], "full_lifecycle");
+    assert_eq!(encoded[3]["claim"], "full_lifecycle");
 }
 
 #[test]
@@ -351,15 +361,13 @@ fn assert_capability(
     capability: &TakerPairCapabilityV1,
     pair: Pair,
     direction: SwapDirection,
+    initiation: TakerInitiationCapabilityV1,
     action: TakerTerminalActionCapabilityV1,
 ) {
     assert_eq!(capability.pair(), pair);
     assert_eq!(capability.supported_direction(), direction);
     assert!(capability.authenticated_offer_browsing());
-    assert_eq!(
-        capability.initiation(),
-        TakerInitiationCapabilityV1::PreparedPrivateMaterial
-    );
+    assert_eq!(capability.initiation(), initiation);
     assert_eq!(
         capability.monitoring(),
         TakerMonitoringCapabilityV1::ReceiptBound

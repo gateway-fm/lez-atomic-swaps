@@ -1,8 +1,9 @@
-//! Secret-free typed contract for a future role-fixed Taker facade.
+//! Secret-free typed contract for the owner-local Taker Node facade.
 //!
 //! This module deliberately contains no transport, filesystem, receipt, key,
-//! actor, or chain authority. It fixes the messages that a later owner-local
-//! service may expose without granting callers generic execution authority.
+//! actor, or chain authority. It fixes the messages the service may expose
+//! without granting callers generic execution authority. Pair capabilities
+//! describe the current Node, CLI, and demo ownership of each route.
 
 use lez_bridge_protocol::RequestId;
 use lez_node_common::TakerMakerIdentityV1;
@@ -334,6 +335,9 @@ pub enum TakerDependencyStateV1 {
 pub enum TakerInitiationCapabilityV1 {
     /// Private drafts, keys, role templates, and effect material must be preprovisioned.
     PreparedPrivateMaterial,
+    /// Acceptance is composed by `lez-taker-cli` and the local demo controller,
+    /// not by `taker_swap_initiate_v1` on this Node.
+    OwnerCliOrDemo,
 }
 
 /// Current monitoring boundary supported by one pair adapter.
@@ -352,6 +356,9 @@ pub enum TakerTerminalActionCapabilityV1 {
     FullLifecycle,
     /// Only a role-fixed effect checkpoint exists; it is not terminal swap proof.
     EffectCheckpointOnly,
+    /// Terminal progression is owned by `lez-taker-cli` and the local demo
+    /// controller, not by `taker_swap_claim_v1` / `taker_swap_refund_v1`.
+    OwnerCliOrDemo,
 }
 
 /// Exact JSON-RPC methods registered by the current Taker service.
@@ -513,9 +520,11 @@ impl TakerPairCapabilityV1 {
 
 /// Returns the exact current route capabilities in stable pair/direction order.
 ///
-/// Bitcoin and Zcash expose complete receipt-bound lifecycle commands. Monero
-/// currently exposes only role-fixed tag-14/tag-16 effect checkpoints; neither
-/// checkpoint alone is represented as terminal cross-chain completion.
+/// Bitcoin settlement on this Node is discovery-only: Basecamp and the CLI
+/// drive BTC through the demo controller and `lez-taker-cli`. Zcash exposes
+/// complete receipt-bound lifecycle commands when initiation is configured.
+/// Monero currently exposes only role-fixed tag-14/tag-16 effect checkpoints;
+/// neither checkpoint alone is represented as terminal cross-chain completion.
 #[must_use]
 pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 4] {
     [
@@ -523,16 +532,16 @@ pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 4] {
             pair: Pair::Bitcoin,
             supported_direction: SwapDirection::TakerSellsForeign,
             authenticated_offer_browsing: true,
-            initiation: TakerInitiationCapabilityV1::PreparedPrivateMaterial,
+            initiation: TakerInitiationCapabilityV1::OwnerCliOrDemo,
             monitoring: TakerMonitoringCapabilityV1::ReceiptBound,
-            claim: TakerTerminalActionCapabilityV1::FullLifecycle,
-            refund: TakerTerminalActionCapabilityV1::FullLifecycle,
+            claim: TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
+            refund: TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
         },
         TakerPairCapabilityV1 {
             pair: Pair::Monero,
             supported_direction: SwapDirection::TakerSellsLez,
             authenticated_offer_browsing: true,
-            initiation: TakerInitiationCapabilityV1::PreparedPrivateMaterial,
+            initiation: TakerInitiationCapabilityV1::OwnerCliOrDemo,
             monitoring: TakerMonitoringCapabilityV1::ReceiptBound,
             claim: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
             refund: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
