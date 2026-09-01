@@ -86,6 +86,14 @@ async fn health_and_offer_list_use_the_real_authenticated_delivery_backend() {
     assert!(!methods.monitor());
     assert!(!methods.claim());
     assert!(!methods.refund());
+    assert_eq!(
+        health.pair_capabilities()[2].claim(),
+        lez_taker_node::TakerTerminalActionCapabilityV1::NotOnThisNode
+    );
+    assert_eq!(
+        health.pair_capabilities()[0].claim(),
+        lez_taker_node::TakerTerminalActionCapabilityV1::OwnerCliOrDemo
+    );
 
     let listed: TakerOfferListV1 = module
         .call(

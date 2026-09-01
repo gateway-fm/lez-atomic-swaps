@@ -12,6 +12,7 @@ use lez_taker_node::{
     TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
     taker_pair_capabilities_v1,
 };
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
@@ -106,6 +107,7 @@ fn pair_capabilities_report_only_current_role_fixed_semantics() {
         Pair::Bitcoin,
         SwapDirection::TakerSellsForeign,
         TakerInitiationCapabilityV1::OwnerCliOrDemo,
+        TakerMonitoringCapabilityV1::OwnerCliOrDemo,
         TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
     );
     assert_capability(
@@ -113,6 +115,7 @@ fn pair_capabilities_report_only_current_role_fixed_semantics() {
         Pair::Monero,
         SwapDirection::TakerSellsLez,
         TakerInitiationCapabilityV1::OwnerCliOrDemo,
+        TakerMonitoringCapabilityV1::OwnerCliOrDemo,
         TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
     );
     assert_capability(
@@ -120,26 +123,75 @@ fn pair_capabilities_report_only_current_role_fixed_semantics() {
         Pair::Zcash,
         SwapDirection::TakerSellsLez,
         TakerInitiationCapabilityV1::PreparedPrivateMaterial,
-        TakerTerminalActionCapabilityV1::FullLifecycle,
+        TakerMonitoringCapabilityV1::NotOnThisNode,
+        TakerTerminalActionCapabilityV1::NotOnThisNode,
     );
     assert_capability(
         &capabilities[3],
         Pair::Zcash,
         SwapDirection::TakerSellsForeign,
         TakerInitiationCapabilityV1::PreparedPrivateMaterial,
-        TakerTerminalActionCapabilityV1::FullLifecycle,
+        TakerMonitoringCapabilityV1::NotOnThisNode,
+        TakerTerminalActionCapabilityV1::NotOnThisNode,
     );
 
     let encoded = serde_json::to_value(&capabilities).unwrap();
     assert_secret_and_authority_free(&encoded);
     assert_eq!(encoded[0]["initiation"], "owner_cli_or_demo");
+    assert_eq!(encoded[0]["monitoring"], "owner_cli_or_demo");
     assert_eq!(encoded[0]["claim"], "owner_cli_or_demo");
     assert_eq!(encoded[0]["refund"], "owner_cli_or_demo");
     assert_eq!(encoded[1]["initiation"], "owner_cli_or_demo");
     assert_eq!(encoded[1]["claim"], "effect_checkpoint_only");
     assert_eq!(encoded[1]["refund"], "effect_checkpoint_only");
-    assert_eq!(encoded[2]["claim"], "full_lifecycle");
-    assert_eq!(encoded[3]["claim"], "full_lifecycle");
+    assert_eq!(encoded[2]["monitoring"], "not_on_this_node");
+    assert_eq!(encoded[2]["claim"], "not_on_this_node");
+    assert_eq!(encoded[3]["claim"], "not_on_this_node");
+
+    let lifecycle = TakerHealthV1::new(
+        true,
+        TakerDependencyStateV1::Available,
+        TakerDependencyStateV1::Available,
+    )
+    .with_zec_lifecycle_registered();
+    assert_eq!(
+        lifecycle.pair_capabilities()[2].claim(),
+        TakerTerminalActionCapabilityV1::FullLifecycle
+    );
+    assert_eq!(
+        lifecycle.pair_capabilities()[2].monitoring(),
+        TakerMonitoringCapabilityV1::ReceiptBound
+    );
+}
+
+#[test]
+fn health_capability_strings_are_additive_on_schema_one() {
+    let health = TakerHealthV1::new(
+        true,
+        TakerDependencyStateV1::Available,
+        TakerDependencyStateV1::Disabled,
+    )
+    .with_zec_lifecycle_registered();
+    let value = serde_json::to_value(&health).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    let as_json: Value = serde_json::from_str(&value.to_string()).unwrap();
+    assert_eq!(
+        as_json["pair_capabilities"][0]["claim"],
+        "owner_cli_or_demo"
+    );
+    assert_eq!(as_json["pair_capabilities"][2]["claim"], "full_lifecycle");
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum ClosedTerminalBeforeThisRelease {
+        FullLifecycle,
+        EffectCheckpointOnly,
+    }
+    assert!(
+        serde_json::from_value::<ClosedTerminalBeforeThisRelease>(json!("owner_cli_or_demo"))
+            .is_err(),
+        "typed closed enums must be updated; untyped JSON clients keep working"
+    );
 }
 
 #[test]
@@ -157,6 +209,10 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
     assert!(!methods.monitor());
     assert!(!methods.claim());
     assert!(!methods.refund());
+    assert_eq!(
+        health.pair_capabilities()[2].claim(),
+        TakerTerminalActionCapabilityV1::NotOnThisNode
+    );
     let lifecycle = health.clone().with_zec_lifecycle_registered();
     let lifecycle_methods = lifecycle.registered_methods();
     assert!(lifecycle_methods.health());
@@ -362,16 +418,14 @@ fn assert_capability(
     pair: Pair,
     direction: SwapDirection,
     initiation: TakerInitiationCapabilityV1,
+    monitoring: TakerMonitoringCapabilityV1,
     action: TakerTerminalActionCapabilityV1,
 ) {
     assert_eq!(capability.pair(), pair);
     assert_eq!(capability.supported_direction(), direction);
     assert!(capability.authenticated_offer_browsing());
     assert_eq!(capability.initiation(), initiation);
-    assert_eq!(
-        capability.monitoring(),
-        TakerMonitoringCapabilityV1::ReceiptBound
-    );
+    assert_eq!(capability.monitoring(), monitoring);
     assert_eq!(capability.claim(), action);
     assert_eq!(capability.refund(), action);
 }

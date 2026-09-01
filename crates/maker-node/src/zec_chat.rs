@@ -2,7 +2,7 @@
 
 use std::{fs, os::unix::fs::MetadataExt as _, path::PathBuf};
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 
 use super::*;
 

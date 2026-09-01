@@ -60,7 +60,7 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
     assert!(methods.monitor());
     assert!(methods.claim());
     assert!(methods.refund());
-    let bitcoin = health.pair_capabilities()[0];
+    let bitcoin = &health.pair_capabilities()[0];
     assert_eq!(bitcoin.pair(), Pair::Bitcoin);
     assert_eq!(
         bitcoin.initiation(),
@@ -73,6 +73,10 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
     assert_eq!(
         bitcoin.refund(),
         TakerTerminalActionCapabilityV1::OwnerCliOrDemo
+    );
+    assert_eq!(
+        bitcoin.monitoring(),
+        lez_taker_node::TakerMonitoringCapabilityV1::OwnerCliOrDemo
     );
     assert_eq!(
         health.pair_capabilities()[2].claim(),
