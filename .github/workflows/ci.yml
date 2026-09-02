@@ -181,13 +181,13 @@ jobs:
       - name: Install checksum-pinned ripgrep
         run: ./scripts/install-ci-ripgrep.sh
       - run: ./scripts/check-spin-lock-remediation.sh
-      - uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           rust-version: "1.96.0"
           command: check advisories bans licenses sources
           arguments: --all-features
       - name: Audit official LEZ v0.2 sidecar graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0_2-sidecar/Cargo.toml
@@ -195,7 +195,7 @@ jobs:
           arguments: --all-features
           command-arguments: --config compat/lez-v0_2-sidecar/deny.toml advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 compatibility graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/Cargo.toml
@@ -205,21 +205,21 @@ jobs:
       # Logos-owned exception is justified in that graph's own deny.toml and
       # paired with the verifier's feature/reachability checks.
       - name: Audit provisional LEZ v0.2 Risc0 methods graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/escrow/methods/Cargo.toml
           command: check
           command-arguments: --config compat/lez-v0.2-provisional/escrow/methods/deny.toml advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 guest graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml
           command: check
           command-arguments: --config compat/lez-v0.2-provisional/escrow/methods/guest/deny.toml advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 deployer graph
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           rust-version: "1.96.0"
           manifest-path: compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml
