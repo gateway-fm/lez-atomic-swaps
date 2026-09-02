@@ -532,7 +532,7 @@ impl TakerPairCapabilityV1 {
 /// initiation is configured. [`TakerHealthV1::with_zec_lifecycle_registered`]
 /// upgrades the Zcash rows when those methods are actually registered.
 ///
-/// Capability enums on schema 1 are additive snake_case strings. In-tree
+/// Capability enums on schema 1 are additive `snake_case` strings. In-tree
 /// Basecamp and CLI decode health as untyped JSON; typed consumers must tolerate
 /// unknown values rather than assuming a closed set.
 #[must_use]
