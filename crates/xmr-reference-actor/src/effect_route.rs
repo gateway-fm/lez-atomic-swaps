@@ -4,8 +4,8 @@ use std::process::Command;
 
 use anyhow::{Context as _, Result, bail, ensure};
 use lez_swap_store::{
-    MakerActorHeldLock, SqliteXmrWorkflowJournal, XmrWorkflowDecision,
-    XmrWorkflowReconciliationSource, XmrWorkflowStep,
+    ActorHeldLock, SqliteXmrWorkflowJournal, XmrWorkflowDecision, XmrWorkflowReconciliationSource,
+    XmrWorkflowStep,
 };
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -230,8 +230,8 @@ impl ValidatedXmrEffectExecutionV3 {
     pub fn prepare_effect_preflight(
         &self,
         step: XmrWorkflowStep,
-        actor_lock: &MakerActorHeldLock,
-        workflow_lock: &MakerActorHeldLock,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
     ) -> Result<Option<Command>> {
         ensure!(
             (self.effect_authority().role() == ActorRole::Taker
@@ -318,8 +318,8 @@ impl ValidatedXmrEffectExecutionV3 {
     pub fn prepare_effect_invocation(
         &self,
         step: XmrWorkflowStep,
-        actor_lock: &MakerActorHeldLock,
-        workflow_lock: &MakerActorHeldLock,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
     ) -> Result<XmrPreparedEffectInvocationV1> {
         let tool = select_tool(self.effect_authority(), step)?;
         let digest = tool_plan_identity(self, step, tool);
@@ -420,8 +420,8 @@ impl ValidatedXmrEffectExecutionV3 {
     pub fn prepare_effect_observation(
         &self,
         step: XmrWorkflowStep,
-        actor_lock: &MakerActorHeldLock,
-        workflow_lock: &MakerActorHeldLock,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
     ) -> Result<XmrPreparedEffectObservationV1> {
         let sending_tool = select_tool(self.effect_authority(), step)?;
         let (observer, reconciliation_source) = select_observer(self.effect_authority(), step)?;

@@ -1,4 +1,5 @@
-//! Owner-private startup configuration for the read-only Taker service.
+//! Owner-private startup configuration for the Taker Node: discovery-only by
+//! default, prepared-route lifecycle when a validated catalog is configured.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -457,7 +458,7 @@ pub fn load_taker_service_context(
     })
 }
 
-/// Loads, validates, and constructs one read-only Taker service backend.
+/// Loads, validates, and constructs the discovery-only Taker backend.
 ///
 /// Private locations and pinned Maker identities remain inside the returned
 /// backend and are omitted from its Debug implementation.

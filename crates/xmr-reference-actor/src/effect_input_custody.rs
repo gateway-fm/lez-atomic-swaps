@@ -26,7 +26,7 @@ use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
 
 #[cfg(feature = "sessions")]
-use lez_swap_store::{MakerActorHeldLock, PinnedChildFdPlan, PinnedExecutable};
+use lez_swap_store::{ActorHeldLock, PinnedChildFdPlan, PinnedExecutable};
 
 use crate::{
     ActorRole, ValidatedXmrEffectAuthorityV1, ValidatedXmrEffectExecutionV3,
@@ -179,8 +179,8 @@ impl PinnedXmrTag14ReleaseInputsV1 {
     pub(crate) fn into_command(
         self,
         executable: PinnedExecutable,
-        actor_lock: &MakerActorHeldLock,
-        workflow_lock: &MakerActorHeldLock,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
     ) -> Result<Command> {
         let descriptors = vec![
             (self.invocation, XMR_TAG14_RELEASE_INVOCATION_FD),
@@ -589,8 +589,8 @@ impl PinnedXmrEffectInputsV1 {
     pub fn into_command(
         self,
         executable: PinnedExecutable,
-        actor_lock: &MakerActorHeldLock,
-        workflow_lock: &MakerActorHeldLock,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
     ) -> Result<Command> {
         let Self {
             runtime_bytes: _,

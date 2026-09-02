@@ -13,7 +13,7 @@ use clap::Parser as _;
 use lez_adaptor_role_runner::{Cli as RunnerCli, execute as execute_runner};
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{
-    MakerActorHeldLock, SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision,
+    ActorHeldLock, SqliteXmrWorkflowJournal, XmrWorkflowBranch, XmrWorkflowDecision,
     XmrWorkflowIdentityV1, XmrWorkflowReconciliationSource, XmrWorkflowReconciliationV2,
     XmrWorkflowStep,
 };
@@ -1333,9 +1333,9 @@ fn route_fixture_for_mode(
 #[test]
 fn maker_refund_route_receives_signature_and_share_only_for_invocation() {
     let fixture = maker_refund_route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Maker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Maker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -1416,9 +1416,9 @@ fn maker_refund_route_receives_signature_and_share_only_for_invocation() {
 #[test]
 fn maker_tag17_route_preflights_invokes_once_and_observes_without_private_share() {
     let fixture = maker_punish_route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Maker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Maker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -1491,9 +1491,9 @@ fn maker_tag17_route_preflights_invokes_once_and_observes_without_private_share(
 #[test]
 fn semantic_tag14_preflight_is_least_privilege_and_does_not_consume_cas() {
     let fixture = semantic_release_route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Taker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Taker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -1541,9 +1541,9 @@ fn semantic_tag14_preflight_is_least_privilege_and_does_not_consume_cas() {
 #[test]
 fn taker_tag16_invocation_alone_receives_the_validated_xmr_share() {
     let fixture = refund_route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Taker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Taker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -1574,9 +1574,9 @@ fn taker_tag16_invocation_alone_receives_the_validated_xmr_share() {
 #[test]
 fn failed_tag16_preflight_does_not_consume_the_one_attempt_cas() {
     let fixture = refund_route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Taker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Taker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -1606,9 +1606,9 @@ fn failed_tag16_preflight_does_not_consume_the_one_attempt_cas() {
 #[test]
 fn taker_tag14_effect_route_pins_before_authorizing_and_never_rearms() {
     let fixture = route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Taker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Taker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -1739,9 +1739,9 @@ fn assert_sender_material_and_plan(fixture: &RouteFixture, first_plan: [u8; 32],
 #[test]
 fn taker_observer_route_is_read_only_role_fixed_and_uses_sending_plan_identity() {
     let fixture = route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Taker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Taker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
@@ -1837,10 +1837,8 @@ fn taker_observer_route_is_read_only_role_fixed_and_uses_sending_plan_identity()
 #[test]
 fn taker_observer_rejects_maker_step_without_workflow_mutation() {
     let fixture = route_fixture();
-    let actor_lock =
-        MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state).unwrap();
-    let workflow_lock =
-        MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow).unwrap();
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state).unwrap();
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow).unwrap();
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,
         &fixture.effect_bytes,
@@ -1866,9 +1864,9 @@ fn taker_observer_rejects_maker_step_without_workflow_mutation() {
 #[test]
 fn taker_monero_observer_uses_wallet_evidence_and_the_sending_plan() {
     let fixture = route_fixture();
-    let actor_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
+    let actor_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.actor_state)
         .expect("acquire Taker state lock");
-    let workflow_lock = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
+    let workflow_lock = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.workflow)
         .expect("acquire Taker workflow lock");
     let execution = load_validated_xmr_effect_execution_v3_bytes(
         &fixture.manifest_bytes,

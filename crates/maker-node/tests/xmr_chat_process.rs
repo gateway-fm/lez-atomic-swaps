@@ -36,7 +36,7 @@ use lez_maker_node::{
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    LocalPriceV1, MakerActorHeldLock, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
+    ActorHeldLock, LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
     MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
     MakerXmrNegotiationStatus, SqliteSwapStore, SqliteXmrWorkflowJournal, XmrWorkflowBranch,
     XmrWorkflowDecision, XmrWorkflowReconciliationSource, XmrWorkflowReconciliationV2,
@@ -375,7 +375,7 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
         );
     }
 
-    let held_state = MakerActorHeldLock::acquire_for(&fixture.swap_id, &fixture.taker_journal)
+    let held_state = ActorHeldLock::acquire_for(&fixture.swap_id, &fixture.taker_journal)
         .expect("hold exact adaptor-state lock");
     let state_locked = run_taker_lifecycle("monitor", &effect.receipt);
     assert!(!state_locked.status.success());
@@ -386,7 +386,7 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     );
     drop(held_state);
 
-    let held_workflow = MakerActorHeldLock::acquire_for(&fixture.swap_id, &effect.workflow_journal)
+    let held_workflow = ActorHeldLock::acquire_for(&fixture.swap_id, &effect.workflow_journal)
         .expect("hold exact workflow lock");
     let workflow_locked = run_taker_lifecycle("monitor", &effect.receipt);
     assert!(!workflow_locked.status.success());
@@ -466,7 +466,7 @@ async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically(
     // A live owner of the exact role-state lock excludes the monitor before
     // any semantic read/output, matching the scheduler's concurrency boundary.
     let swap_id = SwapId::new(hex::encode(binary_swap_id)).unwrap();
-    let held = MakerActorHeldLock::acquire_for(&swap_id, &fixture.taker_journal).unwrap();
+    let held = ActorHeldLock::acquire_for(&swap_id, &fixture.taker_journal).unwrap();
     let locked = run_taker_lifecycle("monitor", &fixture.receipt);
     assert!(!locked.status.success());
     assert!(locked.stdout.is_empty());

@@ -11,7 +11,7 @@ use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, Phase, SwapId};
 use lez_swap_store::{
-    MakerActorHeldLock, MakerOfferStatus, TakerActionAdmissionV1, TakerFacadeActionV1,
+    ActorHeldLock, MakerOfferStatus, TakerActionAdmissionV1, TakerFacadeActionV1,
     TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
 };
 use lez_zec_swap_sdk::ZecLifecycleAction;
@@ -266,7 +266,10 @@ async fn terminal_action(
 
     let output = execute_actor_command(&config, ActorCommand::Status)
         .await
-        .map_err(|_| ActionError::DependencyUnavailable)?;
+        .map_err(|error| {
+            report_actor_failure("status", &error);
+            ActionError::DependencyUnavailable
+        })?;
     held_lock
         .validate_for_state(config.swap_id(), config.role_state_db())
         .map_err(|_| ActionError::DependencyUnavailable)?;
@@ -349,7 +352,7 @@ async fn resolve_action_authority(
 async fn load_bound_action_actor(
     prepared: &PreparedZecTakerInitiationV1,
     receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
-) -> Result<(ActorConfig, MakerActorHeldLock), ActionError> {
+) -> Result<(ActorConfig, ActorHeldLock), ActionError> {
     let receipt = prepared.execution().receipt_output().to_path_buf();
     let actor_root = prepared.execution().actor_root().to_path_buf();
     let swap_id = prepared.swap_id().clone();
@@ -365,7 +368,7 @@ async fn load_bound_action_actor(
             receipt_identity.inode(),
         )
         .map_err(|_| ActionError::DependencyUnavailable)?;
-        let held_lock = MakerActorHeldLock::acquire_for(before.swap_id(), before.role_state_db())
+        let held_lock = ActorHeldLock::acquire_for(before.swap_id(), before.role_state_db())
             .map_err(|_| ActionError::DependencyUnavailable)?;
         let config = load_taker_actor_from_receipt_for_monitor(
             &receipt,
@@ -396,7 +399,7 @@ async fn reload_action_actor_custody(
     prepared: &PreparedZecTakerInitiationV1,
     receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
     config: &ActorConfig,
-    held_lock: &MakerActorHeldLock,
+    held_lock: &ActorHeldLock,
 ) -> Result<ActorConfig, ActionError> {
     let receipt = prepared.execution().receipt_output().to_path_buf();
     let actor_root = prepared.execution().actor_root().to_path_buf();
@@ -433,7 +436,7 @@ async fn revalidate_action_custody(
     prepared: &PreparedZecTakerInitiationV1,
     receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
     config: &ActorConfig,
-    held_lock: &MakerActorHeldLock,
+    held_lock: &ActorHeldLock,
 ) -> Result<(), ActionError> {
     reload_action_actor_custody(prepared, receipt_binding, config, held_lock)
         .await
@@ -442,7 +445,7 @@ async fn revalidate_action_custody(
 
 async fn replay_actor_effect_is_required(
     config: &ActorConfig,
-    held_lock: &MakerActorHeldLock,
+    held_lock: &ActorHeldLock,
     action: TakerTerminalActionV1,
     expected_generation: u64,
 ) -> Result<bool, ActionError> {
@@ -564,7 +567,7 @@ async fn admit_terminal_action(
 
 async fn execute_terminal_actor_command(
     config: &ActorConfig,
-    held_lock: &MakerActorHeldLock,
+    held_lock: &ActorHeldLock,
     action: TakerTerminalActionV1,
 ) -> Result<(), ActionError> {
     let command = match action {
@@ -573,13 +576,31 @@ async fn execute_terminal_actor_command(
     };
     let output = execute_actor_command(config, command)
         .await
-        .map_err(|_| ActionError::DependencyUnavailable)?;
+        .map_err(|error| {
+            report_actor_failure("effect", &error);
+            ActionError::DependencyUnavailable
+        })?;
     let ActorCommandOutputV1::Effect(_) = output else {
         return Err(ActionError::DependencyUnavailable);
     };
     held_lock
         .validate_for_state(config.swap_id(), config.role_state_db())
-        .map_err(|_| ActionError::DependencyUnavailable)
+        .map_err(|error| {
+            report_actor_failure("custody", &error);
+            ActionError::DependencyUnavailable
+        })
+}
+
+/// Names one failed actor step on stderr so `docker compose logs` explains
+/// what the RPC caller only sees as `taker_action_execution_unavailable`.
+/// Only the error's variant name is printed, never its payload.
+fn report_actor_failure(step: &str, error: &dyn std::fmt::Debug) {
+    let rendered = format!("{error:?}");
+    let class = rendered.split(['(', '{', ' ']).next().unwrap_or_default();
+    eprintln!(
+        "{}",
+        json!({"event": "taker_actor_command_failed", "step": step, "class": class})
+    );
 }
 
 const fn facade_action(action: TakerTerminalActionV1) -> TakerFacadeActionV1 {
@@ -786,7 +807,7 @@ async fn project_receipt_bound_swap(
             receipt_identity.inode(),
         )
         .map_err(|_| MonitoringError::DependencyUnavailable)?;
-        let held_lock = MakerActorHeldLock::acquire_for(before.swap_id(), before.role_state_db())
+        let held_lock = ActorHeldLock::acquire_for(before.swap_id(), before.role_state_db())
             .map_err(|_| MonitoringError::DependencyUnavailable)?;
         let config = load_taker_actor_from_receipt_for_monitor(
             &receipt,

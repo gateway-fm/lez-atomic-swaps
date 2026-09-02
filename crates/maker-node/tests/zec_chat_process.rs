@@ -28,7 +28,7 @@ use lez_maker_node::{
 use lez_swap_core::{Pair, Participant, Phase, SwapDirection, SwapId, UnixSeconds};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    LocalPriceV1, MakerActorHeldLock, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
+    ActorHeldLock, LocalPriceV1, MakerActorKindV1, MakerActorScheduleState, MakerOfferId,
     MakerOfferStatus, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
     MakerZecNegotiationStatus, SqliteSwapStore, SqliteTakerFacadeStore, SqliteZecRecoveryStore,
     TakerFacadeActionV1, maker_zec_chat_session_id,
@@ -405,7 +405,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
 
     let monitor_config = ActorConfig::load_private(&canonical_artifacts.config_path).unwrap();
     let actor_lock =
-        MakerActorHeldLock::acquire_for(monitor_config.swap_id(), monitor_config.role_state_db())
+        ActorHeldLock::acquire_for(monitor_config.swap_id(), monitor_config.role_state_db())
             .unwrap();
     let locked_actor_response = service_rpc_response(
         &replay_module,

@@ -350,7 +350,7 @@ impl MakerActorLeaseV1 {
 }
 
 /// Non-cloneable proof that this process owns one exact per-swap kernel lock.
-pub struct MakerActorHeldLock {
+pub struct ActorHeldLock {
     swap_id: SwapId,
     state_database_path: PathBuf,
     lock_path: PathBuf,
@@ -359,16 +359,16 @@ pub struct MakerActorHeldLock {
     inode: u64,
 }
 
-impl std::fmt::Debug for MakerActorHeldLock {
+impl std::fmt::Debug for ActorHeldLock {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("MakerActorHeldLock")
+            .debug_struct("ActorHeldLock")
             .field("swap_id", &self.swap_id)
             .finish_non_exhaustive()
     }
 }
 
-impl MakerActorHeldLock {
+impl ActorHeldLock {
     /// Securely creates or opens and non-blockingly locks one deterministic file.
     ///
     /// # Errors
@@ -687,8 +687,8 @@ impl PinnedExecutable {
     /// failures before a child can be spawned.
     pub fn into_command_with_locks(
         self,
-        actor_lock: &MakerActorHeldLock,
-        workflow_lock: &MakerActorHeldLock,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
     ) -> Result<Command, MakerActorProcessError> {
         actor_lock.validate_identity()?;
         workflow_lock.validate_identity()?;
@@ -729,8 +729,8 @@ impl PinnedExecutable {
     /// descriptors; invalid child targets; and mapping failures before spawn.
     pub fn into_command_with_locks_and_fd_plan(
         self,
-        actor_lock: &MakerActorHeldLock,
-        workflow_lock: &MakerActorHeldLock,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
         plan: PinnedChildFdPlan,
     ) -> Result<Command, MakerActorProcessError> {
         actor_lock.validate_identity()?;
@@ -873,7 +873,7 @@ impl MakerActorArtifacts {
     /// failure.
     pub fn into_command(
         self,
-        held_lock: &MakerActorHeldLock,
+        held_lock: &ActorHeldLock,
     ) -> Result<Command, MakerActorProcessError> {
         held_lock.validate_for(&self.record)?;
         validate_actor_state(self.record.manifest().state_database_path(), &self.state)?;
@@ -907,7 +907,7 @@ impl MakerActorArtifacts {
     /// failure.
     pub fn into_effect_command(
         self,
-        held_lock: &MakerActorHeldLock,
+        held_lock: &ActorHeldLock,
     ) -> Result<Command, MakerActorProcessError> {
         held_lock.validate_for(&self.record)?;
         validate_actor_state(self.record.manifest().state_database_path(), &self.state)?;
@@ -1889,7 +1889,7 @@ impl SqliteSwapStore {
     pub fn recover_abandoned_maker_actor(
         &mut self,
         lease: &MakerActorLeaseV1,
-        held_lock: &MakerActorHeldLock,
+        held_lock: &ActorHeldLock,
         new_owner: MakerActorLeaseOwner,
         now: u64,
     ) -> Result<MakerActorLeaseV1, MakerActorProcessError> {

@@ -17,7 +17,7 @@ use std::{
 
 use lez_swap_core::SwapId;
 use lez_swap_store::{
-    MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
+    ActorHeldLock, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
     MakerActorLeaseV1, MakerActorManualAction, MakerActorProcessError,
     MakerActorProgressObservationV1, SqliteSwapStore,
 };
@@ -349,7 +349,7 @@ pub fn supervise_one_abandoned_maker_actor_until(
         if cancellation.is_cancelled() || config.effect_cutoff_reached() {
             return Ok(None);
         }
-        let held_lock = match MakerActorHeldLock::acquire(lease.record()) {
+        let held_lock = match ActorHeldLock::acquire(lease.record()) {
             Ok(lock) => lock,
             Err(MakerActorProcessError::LockUnavailable) => continue,
             Err(error) => return Err(error.into()),
@@ -449,7 +449,7 @@ enum ClaimedAttempt {
 struct ClaimedAttemptResult {
     attempt: ClaimedAttempt,
     progress: Option<MakerActorProgressObservationV1>,
-    held_lock: Option<MakerActorHeldLock>,
+    held_lock: Option<ActorHeldLock>,
 }
 
 enum ClaimedAttemptError {
@@ -500,7 +500,7 @@ fn run_claimed_attempt(
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<ClaimedAttemptResult, ClaimedAttemptError> {
-    let held_lock = match MakerActorHeldLock::acquire(lease.record()) {
+    let held_lock = match ActorHeldLock::acquire(lease.record()) {
         Ok(lock) => lock,
         Err(MakerActorProcessError::LockUnavailable) => {
             return Ok(ClaimedAttemptResult {
@@ -523,7 +523,7 @@ fn run_claimed_attempt(
 fn run_claimed_attempt_with_lock(
     store: &mut SqliteSwapStore,
     lease: &MakerActorLeaseV1,
-    held_lock: MakerActorHeldLock,
+    held_lock: ActorHeldLock,
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,
 ) -> Result<ClaimedAttemptResult, ClaimedAttemptError> {
@@ -657,7 +657,7 @@ fn ensure_invocation_admitted(
 fn run_child(
     store: &mut SqliteSwapStore,
     lease: &MakerActorLeaseV1,
-    held_lock: &MakerActorHeldLock,
+    held_lock: &ActorHeldLock,
     invocation: ActorInvocation,
     config: &MakerActorSupervisorConfig,
     cancellation: &MakerActorSupervisorCancellation,

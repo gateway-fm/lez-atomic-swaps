@@ -122,6 +122,11 @@ pub enum MakerOfferStatus {
 }
 
 /// Immutable offer terms snapshotted from one enabled route and exact price.
+///
+/// This one serde shape is the persisted record, the signed Delivery payload,
+/// and the Taker and Chat views. Any change to its serialized bytes changes
+/// every offer commitment (`signed_envelope_sha256`), so add fields only as
+/// `Option` with `#[serde(default)]` and never reorder or rename existing ones.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MakerOfferV1 {
     id: MakerOfferId,

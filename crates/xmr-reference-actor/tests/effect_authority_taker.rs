@@ -9,7 +9,7 @@ use std::{
 };
 
 use lez_swap_core::SwapId;
-use lez_swap_store::MakerActorHeldLock;
+use lez_swap_store::ActorHeldLock;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
@@ -556,9 +556,9 @@ done
     let actor_state = root.path().join("actor-state.sqlite3");
     let workflow_state = root.path().join("workflow-state.sqlite3");
     let actor_lock =
-        MakerActorHeldLock::acquire_for(&swap_id, &actor_state).expect("acquire actor lock");
+        ActorHeldLock::acquire_for(&swap_id, &actor_state).expect("acquire actor lock");
     let workflow_lock =
-        MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).expect("acquire workflow lock");
+        ActorHeldLock::acquire_for(&swap_id, &workflow_state).expect("acquire workflow lock");
 
     fs::write(&program, b"#!/bin/sh\nexit 99\n").expect("replace named program bytes");
     fs::write(&runtime, b"{\"generation\":2}\n").expect("replace named runtime bytes");
@@ -593,11 +593,11 @@ done
     drop(actor_lock);
     drop(workflow_lock);
     assert!(
-        MakerActorHeldLock::acquire_for(&swap_id, &actor_state).is_err(),
+        ActorHeldLock::acquire_for(&swap_id, &actor_state).is_err(),
         "the live child alone retains the actor lock"
     );
     assert!(
-        MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).is_err(),
+        ActorHeldLock::acquire_for(&swap_id, &workflow_state).is_err(),
         "the live child alone retains the workflow lock"
     );
 
@@ -607,8 +607,8 @@ done
         .expect("collect composed child output");
     assert_effect_child_output(output, secret_values);
 
-    drop(MakerActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
-    drop(MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
+    drop(ActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
+    drop(ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
 }
 
 fn assert_effect_child_output(output: std::process::Output, secret_values: Vec<Vec<u8>>) {

@@ -19,8 +19,8 @@ use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
-    MakerActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, StoreError,
-    XmrWorkflowReconciliationV2, XmrWorkflowStep, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+    ActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, StoreError, XmrWorkflowReconciliationV2,
+    XmrWorkflowStep, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
 };
 use lez_taker_node::{
     DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, call_local_rpc,
@@ -963,7 +963,7 @@ async fn execute_zec_lifecycle(
         config.role() == ActorRole::Taker,
         "Taker actor configuration has the wrong role"
     );
-    let _held_lock = MakerActorHeldLock::acquire_for(config.swap_id(), config.role_state_db())
+    let _held_lock = ActorHeldLock::acquire_for(config.swap_id(), config.role_state_db())
         .map_err(|_| anyhow::anyhow!("Taker actor is already running or unsafe"))?;
     let command = match action {
         LifecycleAction::Monitor => ZecActorCommand::Status,
@@ -988,7 +988,7 @@ async fn execute_btc_lifecycle(
     let swap_id = config
         .supervised_swap_id()
         .map_err(|_| anyhow::anyhow!("BTC Taker actor agreement is unavailable"))?;
-    let _held_lock = MakerActorHeldLock::acquire_for(&swap_id, config.state_db())
+    let _held_lock = ActorHeldLock::acquire_for(&swap_id, config.state_db())
         .map_err(|_| anyhow::anyhow!("BTC Taker actor is already running or unsafe"))?;
     let command = match action {
         LifecycleAction::Monitor => BtcActorCommand::Status,
@@ -1012,7 +1012,7 @@ fn execute_xmr_lifecycle(
     selector: &XmrTakerReceiptSelector,
     action: LifecycleAction,
 ) -> anyhow::Result<()> {
-    let _held_lock = MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
+    let _held_lock = ActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
         .map_err(|_| anyhow::anyhow!("XMR Taker actor is already running or unsafe"))?;
     let authority = load_validated_xmr_taker_authority_bytes(selector.manifest_bytes())
         .map_err(|_| anyhow::anyhow!("XMR Taker actor authority is unavailable or unsafe"))?;
@@ -1043,11 +1043,10 @@ fn execute_xmr_effect_lifecycle(
     selector: &XmrTakerEffectReceiptSelector,
     action: LifecycleAction,
 ) -> anyhow::Result<()> {
-    let state_lock = MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
+    let state_lock = ActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())
         .map_err(|_| anyhow::anyhow!("XMR Taker actor is already running or unsafe"))?;
-    let workflow_lock =
-        MakerActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())
-            .map_err(|_| anyhow::anyhow!("XMR Taker workflow is already running or unsafe"))?;
+    let workflow_lock = ActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())
+        .map_err(|_| anyhow::anyhow!("XMR Taker workflow is already running or unsafe"))?;
     let execution = selector
         .validate_execution()
         .map_err(|_| anyhow::anyhow!("XMR Taker effect authority is unavailable or unsafe"))?;
@@ -1107,8 +1106,8 @@ fn execute_xmr_taker_effect(
     run_id: &str,
     execution: &ValidatedXmrEffectExecutionV3,
     step: XmrWorkflowStep,
-    state_lock: &MakerActorHeldLock,
-    workflow_lock: &MakerActorHeldLock,
+    state_lock: &ActorHeldLock,
+    workflow_lock: &ActorHeldLock,
 ) -> anyhow::Result<()> {
     let (action, step_name) = match step {
         XmrWorkflowStep::AuthorizeLezTag14 => ("claim", "authorize_lez_tag14"),
@@ -1252,8 +1251,8 @@ fn execute_xmr_taker_preflight(
     execution: &ValidatedXmrEffectExecutionV3,
     step: XmrWorkflowStep,
     action: &'static str,
-    state_lock: &MakerActorHeldLock,
-    workflow_lock: &MakerActorHeldLock,
+    state_lock: &ActorHeldLock,
+    workflow_lock: &ActorHeldLock,
 ) -> anyhow::Result<()> {
     let Some(mut command) = execution
         .prepare_effect_preflight(step, state_lock, workflow_lock)
@@ -1294,8 +1293,8 @@ fn observe_xmr_taker_effect(
     execution: &ValidatedXmrEffectExecutionV3,
     step: XmrWorkflowStep,
     expected_plan: [u8; 32],
-    state_lock: &MakerActorHeldLock,
-    workflow_lock: &MakerActorHeldLock,
+    state_lock: &ActorHeldLock,
+    workflow_lock: &ActorHeldLock,
 ) -> anyhow::Result<(&'static str, [u8; 32], bool)> {
     let prepared = execution
         .prepare_effect_observation(step, state_lock, workflow_lock)
