@@ -295,6 +295,22 @@ def call_healthcheck() -> None:
         raise RuntimeError("launcher health request failed")
 
 
+def hand_to_controller(path: pathlib.Path, mode: int) -> None:
+    """Keeps root ownership of `path` and opens it to the controller's group.
+
+    The launcher runs as root with every capability but CAP_CHOWN dropped, so
+    it must stay the owner to unlink and bind the socket on restart; the
+    controller reaches the socket through group 4713 (directory 0710, socket
+    0660). Mode and group change only when they differ, so restarts are
+    idempotent.
+    """
+    current = os.stat(path)
+    if current.st_mode & 0o7777 != mode:
+        os.chmod(path, mode)
+    if current.st_gid != CONTROLLER_GID:
+        os.chown(path, 0, CONTROLLER_GID)
+
+
 def main() -> None:
     if len(os.sys.argv) == 2 and os.sys.argv[1] == "--healthcheck":
         call_healthcheck()
@@ -302,15 +318,13 @@ def main() -> None:
     if len(os.sys.argv) != 1:
         raise SystemExit("launcher accepts only --healthcheck")
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    os.chown(SOCKET_PATH.parent, CONTROLLER_UID, CONTROLLER_GID)
-    os.chmod(SOCKET_PATH.parent, 0o700)
+    hand_to_controller(SOCKET_PATH.parent, 0o710)
     try:
         SOCKET_PATH.unlink()
     except FileNotFoundError:
         pass
     server = Server(str(SOCKET_PATH), Handler)
-    os.chown(SOCKET_PATH, CONTROLLER_UID, CONTROLLER_GID)
-    os.chmod(SOCKET_PATH, 0o600)
+    hand_to_controller(SOCKET_PATH, 0o660)
     server.serve_forever()
 
 

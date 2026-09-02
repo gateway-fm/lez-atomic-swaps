@@ -411,6 +411,9 @@ services:
     networks: [chains]
     read_only: true
     cap_drop: [ALL]
+    # The launcher starts as root to reach the host Docker socket and opens its
+    # own socket to the controller's group; changing that group needs CAP_CHOWN.
+    cap_add: [CHOWN]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "python3", "/app/launcher.py", "--healthcheck"]
