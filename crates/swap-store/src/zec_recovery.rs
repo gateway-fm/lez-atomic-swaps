@@ -379,38 +379,6 @@ impl SqliteZecRecoveryStore {
         }))
     }
 
-    /// Atomically completes one staged maker-first ZEC negotiation.
-    ///
-    /// The countersigned agreement, initial coordinator, immutable ZEC binding,
-    /// protected first-claim material, completed negotiation, consumed offer,
-    /// and global replay result share one `BEGIN IMMEDIATE` transaction. No
-    /// actor is registered by this legacy migration/test entry point, and no
-    /// first-lock authority exists until this method commits.
-    ///
-    /// # Errors
-    ///
-    /// Fails closed on role, revision, reservation, identity, session, offer,
-    /// amount, expiry, proposal, agreement, preimage, replay, or `SQLite` errors.
-    pub fn complete_maker_zec_negotiation(
-        &self,
-        request_id: &RequestId,
-        offer_id: &MakerOfferId,
-        expected_offer_revision: u64,
-        reservation_id: &RequestId,
-        accepted: &AcceptedZecAgreementV1,
-        preimage: &ClaimPreimage,
-    ) -> Result<MakerZecAcceptanceCommit, StoreError> {
-        self.complete_maker_zec_negotiation_inner(
-            request_id,
-            offer_id,
-            expected_offer_revision,
-            reservation_id,
-            accepted,
-            Some(preimage),
-            None,
-        )
-    }
-
     /// Atomically accepts a staged maker-first ZEC negotiation and schedules its actor.
     ///
     /// The immutable actor registration participates in the same `BEGIN IMMEDIATE`

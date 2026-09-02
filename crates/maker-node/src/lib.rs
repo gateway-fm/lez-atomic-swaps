@@ -195,23 +195,6 @@ impl MakerRpc {
         }
     }
 
-    /// Creates a shared maker context for Delivery and the isolated Chat RPC module.
-    #[must_use]
-    pub fn with_delivery(
-        store: SqliteSwapStore,
-        delivery: RunLocalDelivery,
-        chat_signing_key: SecretKey,
-        zec_completion_store: SqliteZecRecoveryStore,
-        maker_claim_preimage: ClaimPreimage,
-        zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
-    ) -> Self {
-        Self::with_delivery_transport(store, delivery, chat_signing_key).with_zec_chat_authority(
-            zec_completion_store,
-            maker_claim_preimage,
-            zec_actor_provisioner,
-        )
-    }
-
     /// Creates a shared Delivery and isolated-Chat transport without pair authority.
     #[must_use]
     pub fn with_delivery_transport(
@@ -279,18 +262,6 @@ impl MakerRpc {
         self.zec_completion_store = Some(Arc::new(completion_store));
         self.maker_claim_preimage = maker_claim_preimage.map(Arc::new);
         self.zec_actor_provisioner = actor_provisioner.map(Arc::new);
-        self
-    }
-
-    /// Attaches BTC Schnorr agreement signing and Maker actor authority.
-    #[must_use]
-    pub fn with_btc_chat_authority(
-        mut self,
-        signing_key: SecretKey,
-        actor_provisioner: BtcMakerActorProvisioner,
-    ) -> Self {
-        self.btc_chat_signing_key = Some(Arc::new(signing_key));
-        self.btc_actor_provisioner = Some(Arc::new(actor_provisioner));
         self
     }
 

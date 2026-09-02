@@ -128,17 +128,6 @@ pub async fn take_zec(input: ZecTakeInput<'_>) -> anyhow::Result<ZecAcceptanceOu
     take_zec_inner(input, None, None).await
 }
 
-/// Runs ZEC acceptance using one exact caller-retained authenticated offer.
-///
-/// The retained signed envelope is revalidated against the selected route,
-/// trusted timestamp, maker, amount, draft, and Chat proposal before use.
-pub async fn take_zec_with_authenticated_offer(
-    input: ZecTakeInput<'_>,
-    authenticated_offer: &AuthenticatedOfferRefV1,
-) -> anyhow::Result<ZecAcceptanceOutput> {
-    take_zec_inner(input, Some(authenticated_offer), None).await
-}
-
 /// Runs exact-offer ZEC acceptance using an already authenticated actor config.
 ///
 /// This entry point preserves the caller's digest-pinned actor authority across
