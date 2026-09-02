@@ -166,6 +166,13 @@ fn pair_capabilities_report_only_current_role_fixed_semantics() {
 
 #[test]
 fn health_capability_strings_are_additive_on_schema_one() {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum ClosedTerminalBeforeThisRelease {
+        FullLifecycle,
+        EffectCheckpointOnly,
+    }
+
     let health = TakerHealthV1::new(
         true,
         TakerDependencyStateV1::Available,
@@ -180,13 +187,6 @@ fn health_capability_strings_are_additive_on_schema_one() {
         "owner_cli_or_demo"
     );
     assert_eq!(as_json["pair_capabilities"][2]["claim"], "full_lifecycle");
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    enum ClosedTerminalBeforeThisRelease {
-        FullLifecycle,
-        EffectCheckpointOnly,
-    }
     assert!(
         serde_json::from_value::<ClosedTerminalBeforeThisRelease>(json!("owner_cli_or_demo"))
             .is_err(),
