@@ -946,6 +946,57 @@ mod tests {
     use crate::{TakerPrivacyGuidanceV1, TakerTerminalActionV1};
 
     #[test]
+    fn backend_failures_map_to_fixed_codes_and_categories_without_private_details() {
+        let expectations = [
+            (
+                TakerBackendError::UnsupportedSchemaVersion,
+                INVALID_PARAMS_CODE,
+                "unsupported_schema_version",
+            ),
+            (
+                TakerBackendError::UnsupportedRoute,
+                INVALID_PARAMS_CODE,
+                "unsupported_route",
+            ),
+            (
+                TakerBackendError::TrustedTimeUnavailable,
+                DEPENDENCY_UNAVAILABLE_CODE,
+                "trusted_time_unavailable",
+            ),
+            (
+                TakerBackendError::DeliveryUnavailable,
+                DEPENDENCY_UNAVAILABLE_CODE,
+                "authenticated_delivery_unavailable",
+            ),
+            (
+                TakerBackendError::OfferLimitExceeded,
+                RESULT_LIMIT_EXCEEDED_CODE,
+                "offer_limit_exceeded",
+            ),
+            (
+                TakerBackendError::ConflictingAuthenticatedOffer,
+                AUTHENTICATED_OFFER_CONFLICT_CODE,
+                "conflicting_authenticated_offer",
+            ),
+            (
+                TakerBackendError::InvalidConfiguration,
+                INTERNAL_ERROR_CODE,
+                "invalid_backend_configuration",
+            ),
+        ];
+        for (error, code, category) in expectations {
+            let mapped = map_backend_error(error);
+            assert_eq!(mapped.code(), code, "{error}");
+            let data = mapped.data().map_or_else(String::new, |raw| raw.get().to_owned());
+            assert_eq!(data, format!("{{\"category\":\"{category}\"}}"), "{error}");
+            let wire = format!("{} {data}", mapped.message()).to_ascii_lowercase();
+            for forbidden in ["/", "path", "file", "socket", "endpoint", "credential"] {
+                assert!(!wire.contains(forbidden), "{error}: {wire}");
+            }
+        }
+    }
+
+    #[test]
     fn zec_taker_projection_advertises_only_role_valid_terminal_actions() {
         assert_eq!(
             normalized_actor_progress(Phase::Offered, ZecLifecycleAction::CreateAndFundLez),
