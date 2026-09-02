@@ -1,4 +1,6 @@
-use std::{io::Read as _, path::PathBuf, process::Stdio, str::FromStr as _, time::Duration};
+#[cfg(feature = "pair-xmr")]
+use std::{io::Read as _, process::Stdio, time::Duration};
+use std::{path::PathBuf, str::FromStr as _};
 
 #[cfg(feature = "test-crash-hooks")]
 use std::{
@@ -18,9 +20,11 @@ use clap::{ArgGroup, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
+use lez_swap_store::{ActorHeldLock, MakerRouteV1, maker_btc_chat_swap_id};
+#[cfg(feature = "pair-xmr")]
 use lez_swap_store::{
-    ActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, StoreError, XmrWorkflowReconciliationV2,
-    XmrWorkflowStep, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+    SqliteXmrWorkflowJournal, StoreError, XmrWorkflowReconciliationV2, XmrWorkflowStep,
+    maker_xmr_chat_swap_id,
 };
 use lez_taker_node::{
     DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, call_local_rpc,
@@ -28,33 +32,41 @@ use lez_taker_node::{
 };
 use secp256k1::PublicKey;
 use serde::Serialize;
+#[cfg(feature = "pair-xmr")]
 use wait_timeout::ChildExt as _;
+#[cfg(feature = "pair-xmr")]
 use xmr_reference_actor::{
     ValidatedXmrEffectExecutionV3, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverStateV1,
     XmrPreparedEffectInvocationV1, load_validated_xmr_taker_authority_bytes,
     parse_xmr_effect_observer_result_v1,
 };
+#[cfg(feature = "pair-zec")]
 use zec_reference_actor::{
     ActorCommand as ZecActorCommand, ActorConfig, ActorRole, execute_actor_command,
 };
 
+#[cfg(feature = "pair-zec")]
 #[path = "support/taker_accept.rs"]
 mod taker_accept;
 #[path = "support/taker_accept_btc.rs"]
 mod taker_accept_btc;
+#[cfg(feature = "pair-xmr")]
 #[path = "support/taker_accept_xmr.rs"]
 mod taker_accept_xmr;
 use taker_accept_btc::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
+#[cfg(feature = "pair-xmr")]
 use taker_accept_xmr::{
     XmrEffectTakeInput, XmrTakeInput, XmrTakerEffectReceiptSelector, XmrTakerReceiptSelector,
     load_xmr_taker_effect_receipt_selector, load_xmr_taker_receipt_selector, take_xmr,
 };
 
+#[cfg(feature = "pair-zec")]
 use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
 
 // Exact LEZ observation verifies finalized block proofs locally. The dual-XMR
 // actual-node run measured valid observations exceeding the generic 30-second
 // effect-invocation bound, so observation gets its own bounded allowance.
+#[cfg(feature = "pair-xmr")]
 const XMR_EFFECT_OBSERVATION_TIMEOUT: Duration = Duration::from_mins(2);
 
 #[derive(Parser)]
@@ -84,15 +96,18 @@ struct Arguments {
     /// Plan this exact BTC offer before constructing its chain-complete draft.
     #[arg(long)]
     plan_btc_offer: Option<String>,
+    #[cfg(feature = "pair-xmr")]
     /// Plan this exact XMR offer before composing role-separated Stage A/B.
     #[arg(long)]
     plan_xmr_offer: Option<String>,
+    #[cfg(feature = "pair-zec")]
     /// Accept this exact ZEC offer instead of only listing discovery results.
     #[arg(long)]
     accept_zec_offer: Option<String>,
     /// Accept this exact BTC offer instead of only listing discovery results.
     #[arg(long)]
     accept_btc_offer: Option<String>,
+    #[cfg(feature = "pair-xmr")]
     /// Accept this exact XMR offer using already role-separated Stage A/B material.
     #[arg(long)]
     accept_xmr_offer: Option<String>,
@@ -126,12 +141,15 @@ struct Arguments {
     /// New owner-private file for the exact countersigned agreement.
     #[arg(long)]
     agreement_output_file: Option<PathBuf>,
+    #[cfg(feature = "pair-zec")]
     /// Owner-private source Taker actor authority template.
     #[arg(long)]
     zec_source_taker_config: Option<PathBuf>,
+    #[cfg(feature = "pair-zec")]
     /// New owner-private root for the accepted Taker actor bundle.
     #[arg(long)]
     zec_taker_actor_root: Option<PathBuf>,
+    #[cfg(feature = "pair-zec")]
     /// New owner-private acceptance receipt written after Maker completion.
     #[arg(long)]
     zec_acceptance_receipt: Option<PathBuf>,
@@ -144,39 +162,51 @@ struct Arguments {
     /// New owner-private Bitcoin acceptance receipt written after Maker completion.
     #[arg(long)]
     btc_acceptance_receipt: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Owner-private canonical dual-signed XMR Stage-A agreement.
     #[arg(long)]
     xmr_stage_a_file: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Owner-private canonical dual-signed XMR Stage-B activation.
     #[arg(long)]
     xmr_activation_file: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Existing owner-private Taker XMR role root.
     #[arg(long)]
     xmr_source_taker_root: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Existing Taker public role packet.
     #[arg(long)]
     xmr_taker_public_packet: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Existing Maker public role packet.
     #[arg(long)]
     xmr_maker_public_packet: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Existing owner-private completed Taker adaptor-session journal.
     #[arg(long)]
     xmr_taker_role_journal: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// New owner-private root for the accepted Taker XMR actor bundle.
     #[arg(long)]
     xmr_taker_actor_root: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// New owner-private XMR acceptance receipt written after Maker completion.
     #[arg(long)]
     xmr_acceptance_receipt: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Immutable owner-private role-fixed XMR chain-effect authority.
     #[arg(long)]
     xmr_effect_authority_file: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// New owner-private schema-v3 XMR effect manifest.
     #[arg(long)]
     xmr_effect_manifest_file: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// New or exactly replayed owner-private XMR workflow journal.
     #[arg(long)]
     xmr_workflow_journal: Option<PathBuf>,
+    #[cfg(feature = "pair-xmr")]
     /// Run identity bound into XMR effect authority and workflow state.
     #[arg(long)]
     xmr_run_id: Option<String>,
@@ -264,6 +294,7 @@ struct BtcPlanOutput {
     private_material_disclosed: bool,
 }
 
+#[cfg(feature = "pair-xmr")]
 #[derive(Serialize)]
 struct XmrPlanOutput {
     schema_version: u16,
@@ -308,7 +339,7 @@ async fn execute() -> anyhow::Result<()> {
     let zec_take_requested = zec_take_was_requested(&arguments);
     let xmr_take_requested = xmr_take_was_requested(&arguments);
     let btc_plan_requested = arguments.plan_btc_offer.is_some();
-    let xmr_plan_requested = arguments.plan_xmr_offer.is_some();
+    let xmr_plan_requested = xmr_plan_was_requested(&arguments);
     ensure!(
         usize::from(btc_take_requested)
             + usize::from(zec_take_requested)
@@ -332,14 +363,17 @@ async fn execute() -> anyhow::Result<()> {
         )
         .await;
     }
-    if xmr_plan_requested {
-        return execute_xmr_plan(
-            &arguments,
-            &expected_maker,
-            delivery_directory.context("XMR planning requires --delivery-directory")?,
-            now_unix_seconds,
-        )
-        .await;
+    #[cfg(feature = "pair-xmr")]
+    {
+        if xmr_plan_requested {
+            return execute_xmr_plan(
+                &arguments,
+                &expected_maker,
+                delivery_directory.context("XMR planning requires --delivery-directory")?,
+                now_unix_seconds,
+            )
+            .await;
+        }
     }
     if btc_take_requested {
         return execute_btc_take(
@@ -350,24 +384,35 @@ async fn execute() -> anyhow::Result<()> {
         )
         .await;
     }
-    if xmr_take_requested {
-        return execute_xmr_take(
-            &arguments,
-            &expected_maker,
-            delivery_directory,
-            now_unix_seconds,
-        )
-        .await;
+    #[cfg(feature = "pair-xmr")]
+    {
+        if xmr_take_requested {
+            return execute_xmr_take(
+                &arguments,
+                &expected_maker,
+                delivery_directory,
+                now_unix_seconds,
+            )
+            .await;
+        }
     }
-    if zec_take_requested || shared_take_was_requested(&arguments) {
-        return execute_zec_take(
-            &arguments,
-            &expected_maker,
-            delivery_directory.context("ZEC acceptance requires --delivery-directory")?,
-            now_unix_seconds,
-        )
-        .await;
+    #[cfg(feature = "pair-zec")]
+    {
+        if zec_take_requested || shared_take_was_requested(&arguments) {
+            return execute_zec_take(
+                &arguments,
+                &expected_maker,
+                delivery_directory.context("ZEC acceptance requires --delivery-directory")?,
+                now_unix_seconds,
+            )
+            .await;
+        }
     }
+    #[cfg(not(feature = "pair-zec"))]
+    ensure!(
+        !shared_take_was_requested(&arguments),
+        "ZEC acceptance is not available in this build"
+    );
     let delivery_directory =
         delivery_directory.context("discovery requires --delivery-directory")?;
     let delivery = RunLocalDelivery::subscriber(delivery_directory.to_path_buf(), expected_maker)?;
@@ -400,6 +445,7 @@ async fn execute() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "pair-zec")]
 async fn execute_zec_take(
     arguments: &Arguments,
     expected_maker: &PublicKey,
@@ -567,6 +613,7 @@ async fn execute_btc_take(
     Ok(())
 }
 
+#[cfg(feature = "pair-xmr")]
 async fn execute_xmr_take(
     arguments: &Arguments,
     expected_maker: &PublicKey,
@@ -696,9 +743,7 @@ async fn execute_btc_plan(
             && arguments.btc_role_root.is_none()
             && arguments.taker_signing_key_file.is_none()
             && arguments.agreement_output_file.is_none()
-            && arguments.zec_source_taker_config.is_none()
-            && arguments.zec_taker_actor_root.is_none()
-            && arguments.zec_acceptance_receipt.is_none()
+            && !zec_actor_arguments_present(arguments)
             && arguments.btc_source_taker_config.is_none()
             && arguments.btc_taker_actor_root.is_none()
             && arguments.btc_acceptance_receipt.is_none(),
@@ -746,6 +791,7 @@ async fn execute_btc_plan(
     Ok(())
 }
 
+#[cfg(feature = "pair-xmr")]
 async fn execute_xmr_plan(
     arguments: &Arguments,
     expected_maker: &PublicKey,
@@ -769,9 +815,7 @@ async fn execute_xmr_plan(
             && arguments.btc_role_root.is_none()
             && arguments.taker_signing_key_file.is_none()
             && arguments.agreement_output_file.is_none()
-            && arguments.zec_source_taker_config.is_none()
-            && arguments.zec_taker_actor_root.is_none()
-            && arguments.zec_acceptance_receipt.is_none()
+            && !zec_actor_arguments_present(arguments)
             && arguments.btc_source_taker_config.is_none()
             && arguments.btc_taker_actor_root.is_none()
             && arguments.btc_acceptance_receipt.is_none(),
@@ -817,9 +861,12 @@ async fn execute_xmr_plan(
 }
 
 enum LoadedTakerActor {
+    #[cfg(feature = "pair-zec")]
     Zec(Box<ActorConfig>),
     Btc(Box<BtcActorConfig>),
+    #[cfg(feature = "pair-xmr")]
     XmrMonitor(Box<XmrTakerReceiptSelector>),
+    #[cfg(feature = "pair-xmr")]
     XmrEffect(Box<XmrTakerEffectReceiptSelector>),
 }
 
@@ -830,6 +877,7 @@ struct BtcLifecycleOutput {
     output: btc_reference_actor::ActorCommandOutputV1,
 }
 
+#[cfg(feature = "pair-xmr")]
 #[derive(Serialize)]
 struct XmrTakerMonitorOutput {
     schema_version: u16,
@@ -841,6 +889,7 @@ struct XmrTakerMonitorOutput {
     refund_session: &'static str,
 }
 
+#[cfg(feature = "pair-xmr")]
 #[derive(Serialize)]
 struct XmrTakerEffectMonitorOutput<'a> {
     schema_version: u16,
@@ -852,6 +901,7 @@ struct XmrTakerEffectMonitorOutput<'a> {
     effect_authority: &'static str,
 }
 
+#[cfg(feature = "pair-xmr")]
 #[derive(Serialize)]
 struct XmrTakerEffectActionOutput<'a> {
     schema_version: u16,
@@ -909,52 +959,67 @@ async fn execute_actor_lifecycle(
     action: LifecycleAction,
 ) -> anyhow::Result<()> {
     match load_taker_actor(arguments)? {
+        #[cfg(feature = "pair-zec")]
         LoadedTakerActor::Zec(config) => execute_zec_lifecycle(&config, action).await,
         LoadedTakerActor::Btc(config) => execute_btc_lifecycle(&config, action).await,
+        #[cfg(feature = "pair-xmr")]
         LoadedTakerActor::XmrMonitor(selector) => execute_xmr_lifecycle(&selector, action),
+        #[cfg(feature = "pair-xmr")]
         LoadedTakerActor::XmrEffect(selector) => execute_xmr_effect_lifecycle(&selector, action),
     }
 }
 
 fn load_taker_actor(arguments: &LifecycleArguments) -> anyhow::Result<LoadedTakerActor> {
-    let config = match (arguments.actor_config.as_ref(), arguments.receipt.as_ref()) {
-        (Some(path), None) => match (
-            ActorConfig::load_private(path),
-            BtcActorConfig::load_private(path),
-        ) {
-            (Ok(config), Err(_)) => LoadedTakerActor::Zec(Box::new(config)),
-            (Err(_), Ok(config)) => LoadedTakerActor::Btc(Box::new(config)),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Taker actor configuration is unavailable or ambiguous"
-                ));
+    // Every compiled pair tries the source; exactly one must recognise it.
+    let mut candidates = Vec::new();
+    match (arguments.actor_config.as_ref(), arguments.receipt.as_ref()) {
+        (Some(path), None) => {
+            #[cfg(feature = "pair-zec")]
+            if let Ok(config) = ActorConfig::load_private(path) {
+                candidates.push(LoadedTakerActor::Zec(Box::new(config)));
             }
-        },
-        (None, Some(path)) => match (
-            load_taker_actor_from_receipt(path).ok(),
-            load_btc_taker_actor_from_receipt(path).ok(),
-            load_xmr_taker_receipt_selector(path).ok(),
-            load_xmr_taker_effect_receipt_selector(path).ok(),
-        ) {
-            (Some(config), None, None, None) => LoadedTakerActor::Zec(Box::new(config)),
-            (None, Some(config), None, None) => LoadedTakerActor::Btc(Box::new(config)),
-            (None, None, Some(selector), None) => LoadedTakerActor::XmrMonitor(Box::new(selector)),
-            (None, None, None, Some(selector)) => LoadedTakerActor::XmrEffect(Box::new(selector)),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Taker acceptance receipt is unavailable or ambiguous"
-                ));
+            if let Ok(config) = BtcActorConfig::load_private(path) {
+                candidates.push(LoadedTakerActor::Btc(Box::new(config)));
             }
-        },
+            ensure!(
+                candidates.len() == 1,
+                "Taker actor configuration is unavailable or ambiguous"
+            );
+        }
+        (None, Some(path)) => {
+            #[cfg(feature = "pair-zec")]
+            if let Ok(config) = load_taker_actor_from_receipt(path) {
+                candidates.push(LoadedTakerActor::Zec(Box::new(config)));
+            }
+            if let Ok(config) = load_btc_taker_actor_from_receipt(path) {
+                candidates.push(LoadedTakerActor::Btc(Box::new(config)));
+            }
+            #[cfg(feature = "pair-xmr")]
+            {
+                if let Ok(selector) = load_xmr_taker_receipt_selector(path) {
+                    candidates.push(LoadedTakerActor::XmrMonitor(Box::new(selector)));
+                }
+                if let Ok(selector) = load_xmr_taker_effect_receipt_selector(path) {
+                    candidates.push(LoadedTakerActor::XmrEffect(Box::new(selector)));
+                }
+            }
+            ensure!(
+                candidates.len() == 1,
+                "Taker acceptance receipt is unavailable or ambiguous"
+            );
+        }
         _ => {
             return Err(anyhow::anyhow!(
                 "exactly one Taker actor source is required"
             ));
         }
-    };
-    Ok(config)
+    }
+    candidates
+        .pop()
+        .context("Taker actor source is unavailable")
 }
 
+#[cfg(feature = "pair-zec")]
 async fn execute_zec_lifecycle(
     config: &ActorConfig,
     action: LifecycleAction,
@@ -1008,6 +1073,7 @@ async fn execute_btc_lifecycle(
     Ok(())
 }
 
+#[cfg(feature = "pair-xmr")]
 fn execute_xmr_lifecycle(
     selector: &XmrTakerReceiptSelector,
     action: LifecycleAction,
@@ -1039,6 +1105,7 @@ fn execute_xmr_lifecycle(
     Ok(())
 }
 
+#[cfg(feature = "pair-xmr")]
 fn execute_xmr_effect_lifecycle(
     selector: &XmrTakerEffectReceiptSelector,
     action: LifecycleAction,
@@ -1084,6 +1151,7 @@ fn execute_xmr_effect_lifecycle(
     Ok(())
 }
 
+#[cfg(feature = "pair-xmr")]
 fn select_xmr_taker_claim_step(
     execution: &ValidatedXmrEffectExecutionV3,
 ) -> anyhow::Result<XmrWorkflowStep> {
@@ -1102,6 +1170,7 @@ fn select_xmr_taker_claim_step(
     }
 }
 
+#[cfg(feature = "pair-xmr")]
 fn execute_xmr_taker_effect(
     run_id: &str,
     execution: &ValidatedXmrEffectExecutionV3,
@@ -1192,7 +1261,7 @@ fn execute_xmr_taker_effect(
     Ok(())
 }
 
-#[cfg(not(feature = "test-crash-hooks"))]
+#[cfg(all(feature = "pair-xmr", not(feature = "test-crash-hooks")))]
 fn pause_xmr_taker_after_invoked(_step: XmrWorkflowStep) {}
 
 #[cfg(feature = "test-crash-hooks")]
@@ -1247,6 +1316,7 @@ fn pause_xmr_taker_after_invoked(step: XmrWorkflowStep) -> anyhow::Result<()> {
     }
 }
 
+#[cfg(feature = "pair-xmr")]
 fn execute_xmr_taker_preflight(
     execution: &ValidatedXmrEffectExecutionV3,
     step: XmrWorkflowStep,
@@ -1289,6 +1359,7 @@ fn execute_xmr_taker_preflight(
     Ok(())
 }
 
+#[cfg(feature = "pair-xmr")]
 fn observe_xmr_taker_effect(
     execution: &ValidatedXmrEffectExecutionV3,
     step: XmrWorkflowStep,
@@ -1372,6 +1443,7 @@ fn observe_xmr_taker_effect(
     }
 }
 
+#[cfg(feature = "pair-xmr")]
 fn mark_xmr_effect_unknown(
     execution: &ValidatedXmrEffectExecutionV3,
     step: XmrWorkflowStep,
@@ -1397,6 +1469,7 @@ fn btc_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.taker_contribution_file.is_some()
 }
 
+#[cfg(feature = "pair-xmr")]
 fn xmr_actor_bundle_is_durable(path: &std::path::Path) -> anyhow::Result<bool> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -1405,6 +1478,7 @@ fn xmr_actor_bundle_is_durable(path: &std::path::Path) -> anyhow::Result<bool> {
     }
 }
 
+#[cfg(feature = "pair-xmr")]
 fn xmr_take_was_requested(arguments: &Arguments) -> bool {
     arguments.accept_xmr_offer.is_some()
         || arguments.xmr_stage_a_file.is_some()
@@ -1421,6 +1495,7 @@ fn xmr_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.xmr_run_id.is_some()
 }
 
+#[cfg(feature = "pair-zec")]
 fn zec_take_was_requested(arguments: &Arguments) -> bool {
     arguments.accept_zec_offer.is_some()
         || arguments.zec_source_taker_config.is_some()
@@ -1439,6 +1514,39 @@ fn shared_take_was_requested(arguments: &Arguments) -> bool {
         || arguments.agreement_output_file.is_some()
 }
 
+#[cfg(feature = "pair-zec")]
+fn zec_actor_arguments_present(arguments: &Arguments) -> bool {
+    arguments.zec_source_taker_config.is_some()
+        || arguments.zec_taker_actor_root.is_some()
+        || arguments.zec_acceptance_receipt.is_some()
+}
+
+#[cfg(not(feature = "pair-zec"))]
+const fn zec_actor_arguments_present(_arguments: &Arguments) -> bool {
+    false
+}
+
+#[cfg(not(feature = "pair-zec"))]
+const fn zec_take_was_requested(_arguments: &Arguments) -> bool {
+    false
+}
+
+#[cfg(feature = "pair-xmr")]
+fn xmr_plan_was_requested(arguments: &Arguments) -> bool {
+    arguments.plan_xmr_offer.is_some()
+}
+
+#[cfg(not(feature = "pair-xmr"))]
+const fn xmr_plan_was_requested(_arguments: &Arguments) -> bool {
+    false
+}
+
+#[cfg(not(feature = "pair-xmr"))]
+const fn xmr_take_was_requested(_arguments: &Arguments) -> bool {
+    false
+}
+
+#[cfg(feature = "pair-zec")]
 fn required_path<'a>(
     value: Option<&'a std::path::Path>,
     flag: &str,
@@ -1446,6 +1554,7 @@ fn required_path<'a>(
     value.with_context(|| format!("ZEC acceptance requires {flag}"))
 }
 
+#[cfg(feature = "pair-xmr")]
 fn required_xmr_path<'a>(
     value: Option<&'a std::path::Path>,
     flag: &str,
@@ -1460,7 +1569,7 @@ fn required_btc_path<'a>(
     value.with_context(|| format!("BTC acceptance requires {flag}"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "pair-xmr"))]
 mod xmr_cli_tests {
     use super::xmr_actor_bundle_is_durable;
 

@@ -27,7 +27,7 @@ use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::taker_accept::{
+use lez_taker_node::acceptance_files::{
     MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, normalized_absolute, publish_exact_new,
     resolved_new_path,
 };

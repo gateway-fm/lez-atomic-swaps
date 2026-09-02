@@ -1,3 +1,6 @@
+//! Exercises the ZEC reference actor; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Real-node restart proof for the maker Zcash observation runtime.
 
 use std::{

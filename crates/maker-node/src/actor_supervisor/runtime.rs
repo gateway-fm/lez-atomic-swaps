@@ -26,6 +26,7 @@ use rustix::time::{ClockId, clock_gettime};
 use serde_json::Value;
 use thiserror::Error;
 use wait_timeout::ChildExt as _;
+#[cfg(feature = "pair-xmr")]
 use xmr_reference_actor::{
     XMR_MAKER_ACTOR_ABI_V1, XMR_MAKER_ACTOR_NEXT_ACTION, XMR_MAKER_ACTOR_PROGRAM_ID,
 };
@@ -860,6 +861,7 @@ enum StatusDecision {
     Terminal,
 }
 
+#[cfg(feature = "pair-xmr")]
 fn exact_xmr_pre_effect_status_shape(value: &Value) -> bool {
     const KEYS: [&str; 9] = [
         "schema_version",
@@ -883,11 +885,7 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
     if value.get("schema_version").and_then(Value::as_u64) != Some(1)
         || value.get("role").and_then(Value::as_str) != Some("maker")
-        || (kind == MakerActorKindV1::Monero
-            && (!exact_xmr_pre_effect_status_shape(&value)
-                || value.get("actor_program").and_then(Value::as_str)
-                    != Some(XMR_MAKER_ACTOR_PROGRAM_ID)
-                || value.get("actor_abi").and_then(Value::as_str) != Some(XMR_MAKER_ACTOR_ABI_V1)))
+        || (kind == MakerActorKindV1::Monero && !xmr_status_accepted(&value))
     {
         return Err(());
     }
@@ -907,8 +905,7 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
                 return Err(());
             }
             let decision = if kind == MakerActorKindV1::Monero {
-                if phase != "offered" || revision != 0 || next_action != XMR_MAKER_ACTOR_NEXT_ACTION
-                {
+                if phase != "offered" || revision != 0 || !xmr_next_action_accepted(next_action) {
                     return Err(());
                 }
                 StatusDecision::Blocked
@@ -1130,7 +1127,9 @@ fn known_phase(phase: &str) -> bool {
 
 fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
     match kind {
-        MakerActorKindV1::Monero => matches!(next_action, XMR_MAKER_ACTOR_NEXT_ACTION | "complete"),
+        MakerActorKindV1::Monero => {
+            xmr_next_action_accepted(next_action) || next_action == "complete"
+        }
         MakerActorKindV1::Zcash => matches!(
             next_action,
             "wait"
@@ -1152,6 +1151,31 @@ fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
                 | "complete"
         ),
     }
+}
+
+/// Accepts only the exact pre-effect status shape, program, and ABI the XMR
+/// Maker actor publishes.
+#[cfg(feature = "pair-xmr")]
+fn xmr_status_accepted(value: &Value) -> bool {
+    exact_xmr_pre_effect_status_shape(value)
+        && value.get("actor_program").and_then(Value::as_str) == Some(XMR_MAKER_ACTOR_PROGRAM_ID)
+        && value.get("actor_abi").and_then(Value::as_str) == Some(XMR_MAKER_ACTOR_ABI_V1)
+}
+
+/// Monero actors are not compiled into this build, so no XMR status is accepted.
+#[cfg(not(feature = "pair-xmr"))]
+const fn xmr_status_accepted(_value: &Value) -> bool {
+    false
+}
+
+#[cfg(feature = "pair-xmr")]
+fn xmr_next_action_accepted(next_action: &str) -> bool {
+    next_action == XMR_MAKER_ACTOR_NEXT_ACTION
+}
+
+#[cfg(not(feature = "pair-xmr"))]
+const fn xmr_next_action_accepted(_next_action: &str) -> bool {
+    false
 }
 
 fn terminal_phase(phase: &str) -> bool {
@@ -1233,6 +1257,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(feature = "pair-xmr")]
     fn xmr_pre_effect_status() -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "schema_version": 1,
@@ -1248,6 +1273,7 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(feature = "pair-xmr")]
     #[test]
     fn xmr_pre_effect_status_is_typed_blocked_and_binds_program_abi() {
         let parsed = parse_status(&xmr_pre_effect_status(), MakerActorKindV1::Monero).unwrap();
@@ -1315,6 +1341,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "pair-xmr")]
     #[test]
     fn xmr_recover_effect_is_exactly_nonterminal_until_finalized() {
         let pending = effect(

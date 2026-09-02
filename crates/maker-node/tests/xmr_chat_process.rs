@@ -1,3 +1,6 @@
+//! Exercises the XMR reference actor; compiled only with `pair-xmr`.
+#![cfg(feature = "pair-xmr")]
+
 //! Separate-process proof for the M5 XMR Chat application handoff.
 //!
 //! The test intentionally stops before chain effects: it uses only temporary

@@ -1,3 +1,6 @@
+//! Exercises the prepared-ZEC lifecycle; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Contract for the prepared ZEC Taker service context.
 
 use std::{

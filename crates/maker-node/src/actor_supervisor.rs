@@ -13,7 +13,9 @@ use btc_reference_actor::validate_maker_manifest_config_bytes as validate_btc_co
 use lez_swap_store::{
     MakerActorArtifacts, MakerActorKindV1, MakerActorProcessError, MakerActorProcessRecordV1,
 };
+#[cfg(feature = "pair-xmr")]
 use xmr_reference_actor::validate_maker_manifest_config_bytes as validate_xmr_config;
+#[cfg(feature = "pair-zec")]
 use zec_reference_actor::validate_maker_manifest_config_bytes as validate_zec_config;
 
 /// Prepares one exact deployment after pair-specific manifest validation.
@@ -36,6 +38,7 @@ pub fn prepare_maker_actor(
             validate_btc_config(config, manifest.swap_id(), manifest.state_database_path())
                 .map_err(|_| ())
         }
+        #[cfg(feature = "pair-xmr")]
         MakerActorKindV1::Monero => {
             let mut expected_swap_id = [0_u8; 32];
             hex::decode_to_slice(manifest.swap_id().as_str(), &mut expected_swap_id)
@@ -43,9 +46,13 @@ pub fn prepare_maker_actor(
             validate_xmr_config(config, expected_swap_id, manifest.state_database_path())
                 .map_err(|_| ())
         }
+        #[cfg(feature = "pair-zec")]
         MakerActorKindV1::Zcash => {
             validate_zec_config(config, manifest.swap_id(), manifest.state_database_path())
                 .map_err(|_| ())
         }
+        // Pairs that are not compiled into this build never reach a child process.
+        #[cfg(not(all(feature = "pair-xmr", feature = "pair-zec")))]
+        _ => Err(()),
     })
 }

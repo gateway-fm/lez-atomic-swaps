@@ -1,3 +1,6 @@
+//! Exercises the prepared-ZEC lifecycle; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Black-box contract for post-lock Taker lifecycle commands.
 
 use std::{

@@ -25,7 +25,7 @@ use xmr_reference_actor::{
 };
 use zeroize::Zeroizing;
 
-use super::taker_accept::{
+use lez_taker_node::acceptance_files::{
     MAX_TAKER_RECEIPT_BYTES, decode_sha256, normalized_absolute, publish_exact_new,
     resolved_new_path,
 };

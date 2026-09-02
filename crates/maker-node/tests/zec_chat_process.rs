@@ -1,3 +1,6 @@
+//! Exercises the ZEC reference actor; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Separate-process happy-path proof for the run-local ZEC Chat boundary.
 
 #[path = "support/cross_role_binary.rs"]

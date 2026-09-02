@@ -11,34 +11,51 @@ use std::{
 use anyhow::{Context as _, bail, ensure};
 use clap::{ArgGroup, Parser};
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
+#[cfg(feature = "pair-xmr")]
+use lez_maker_node::XmrMakerChatAuthority;
+#[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+use lez_maker_node::secure_file::load_raw_secret;
 use lez_maker_node::{
     BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority, MakerActorSupervisorCancellation,
     MakerActorSupervisorConfig, MakerRpc, ProcessLogosPriceSource, ProcessRouteHealthProbe,
-    RunLocalDelivery, XmrMakerChatAuthority, ZecMakerActorProvisioner, chat_rpc_module,
-    import_terminal_zec_maker_projection,
+    RunLocalDelivery, chat_rpc_module,
     node_config::load_node_arguments,
     owner_rpc_server::{
         OwnedPath, bind_owner_socket, publish_ready_file, server_config, validate_runtime_directory,
     },
     rpc_module,
-    secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file},
+    secure_file::{load_secp256k1_secret, read_private_file},
     supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
     supervise_one_due_maker_actor_until,
 };
-use lez_swap_core::{Participant, SwapId};
+#[cfg(feature = "pair-zec")]
+use lez_maker_node::{ZecMakerActorProvisioner, import_terminal_zec_maker_projection};
+#[cfg(feature = "pair-zec")]
+use lez_swap_core::Participant;
+#[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+use lez_swap_core::SwapId;
+#[cfg(feature = "pair-zec")]
+use lez_swap_store::SqliteZecRecoveryStore;
+#[cfg(feature = "pair-xmr")]
+use lez_swap_store::{MakerActorKindV1, MakerActorManifestV1, validate_maker_actor_program};
 use lez_swap_store::{
-    MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1, SqliteSwapStore,
-    SqliteZecRecoveryStore, is_owner_private_regular_file, open_no_symlinks,
-    validate_maker_actor_program,
+    MakerActorLeaseOwner, SqliteSwapStore, is_owner_private_regular_file, open_no_symlinks,
 };
+#[cfg(feature = "pair-xmr")]
 use lez_xmr_swap_sdk::MoneroPrivateViewKey;
+#[cfg(feature = "pair-zec")]
 use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
 use rustix::fs::{FlockOperation, Mode, OFlags, flock};
 use sd_notify::NotifyState;
-use secp256k1::{PublicKey, SecretKey};
+#[cfg(feature = "pair-xmr")]
+use secp256k1::PublicKey;
+use secp256k1::SecretKey;
+#[cfg(feature = "pair-xmr")]
 use serde::Deserialize;
+#[cfg(feature = "pair-xmr")]
 use sha2::{Digest as _, Sha256};
 use tokio::{net::UnixListener, task::JoinSet};
+#[cfg(feature = "pair-xmr")]
 use xmr_reference_actor::{
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, validate_maker_manifest_config_bytes,
 };
@@ -50,6 +67,7 @@ type BtcChatAuthority = (
     Option<BtcMakerRoleAgreementAuthority>,
 );
 
+#[cfg(feature = "pair-xmr")]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct XmrActorManifestRegistryV1 {
@@ -57,6 +75,7 @@ struct XmrActorManifestRegistryV1 {
     actors: Vec<XmrActorManifestEntryV1>,
 }
 
+#[cfg(feature = "pair-xmr")]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct XmrActorManifestEntryV1 {
@@ -71,13 +90,7 @@ struct XmrActorManifestEntryV1 {
 #[derive(Parser)]
 #[command(
     about = "Owner-local LEZ atomic-swap Maker Node",
-    group(ArgGroup::new("pair_chat_authority")
-        .args([
-            "maker_claim_key_id",
-            "btc_maker_signing_key_file",
-            "xmr_actor_manifest_registry_file",
-        ])
-        .multiple(true))
+    group(ArgGroup::new("pair_chat_authority").multiple(true))
 )]
 struct Arguments {
     /// Owner-only Unix-domain control socket.
@@ -105,48 +118,6 @@ struct Arguments {
         ]
     )]
     chat_socket: Option<PathBuf>,
-    /// Non-secret rotation identifier for the maker claim-recovery key.
-    #[arg(
-        long,
-        requires_all = [
-            "delivery_directory",
-            "maker_claim_key_file",
-            "zec_source_maker_config",
-            "zec_maker_actor_root",
-            "zec_actor_program",
-            "zec_actor_program_sha256"
-        ]
-    )]
-    maker_claim_key_id: Option<Box<str>>,
-    /// Owner-only file containing one raw 32-byte claim-recovery key.
-    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id"])]
-    maker_claim_key_file: Option<PathBuf>,
-    /// Owner-only file containing the maker-owned 32-byte claim preimage.
-    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
-    maker_claim_preimage_file: Option<PathBuf>,
-    /// Existing owner-private per-swap Maker configs used as authority templates.
-    #[arg(
-        long,
-        action = clap::ArgAction::Append,
-        requires_all = [
-            "delivery_directory",
-            "maker_claim_key_id",
-            "maker_claim_key_file",
-            "zec_maker_actor_root",
-            "zec_actor_program",
-            "zec_actor_program_sha256"
-        ]
-    )]
-    zec_source_maker_config: Vec<PathBuf>,
-    /// Existing owner-private mode-0700 base for deterministic per-swap actor bundles.
-    #[arg(long, requires_all = ["zec_source_maker_config", "zec_actor_program", "zec_actor_program_sha256"])]
-    zec_maker_actor_root: Option<PathBuf>,
-    /// Absolute exact ZEC one-shot actor executable.
-    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program_sha256"])]
-    zec_actor_program: Option<PathBuf>,
-    /// Exact 32-byte SHA-256 identity of the ZEC actor executable.
-    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program"])]
-    zec_actor_program_sha256: Option<Box<str>>,
     /// Existing owner-private per-swap BTC Maker configs used as authority templates.
     #[arg(
         long,
@@ -161,7 +132,7 @@ struct Arguments {
     )]
     btc_source_maker_config: Vec<PathBuf>,
     /// Owner-only raw or hexadecimal secp256k1 key used to sign BTC agreements.
-    #[arg(long, requires = "delivery_directory")]
+    #[arg(long, group = "pair_chat_authority", requires = "delivery_directory")]
     btc_maker_signing_key_file: Option<PathBuf>,
     /// Existing owner-private role root created before Chat v2 negotiation.
     #[arg(
@@ -178,48 +149,14 @@ struct Arguments {
     /// Exact 32-byte SHA-256 identity of the BTC actor executable.
     #[arg(long, requires_all = ["btc_source_maker_config", "btc_maker_signing_key_file", "btc_maker_actor_root", "btc_actor_program"])]
     btc_actor_program_sha256: Option<Box<str>>,
-    /// Owner-only compressed secp256k1 Maker agreement public key.
-    #[arg(
-        long,
-        requires_all = [
-            "delivery_directory",
-            "xmr_private_view_key_file",
-            "xmr_actor_manifest_registry_file"
-        ]
-    )]
-    xmr_maker_agreement_public_key_file: Option<PathBuf>,
-    /// Owner-only raw 32-byte shared Monero private view key.
-    #[arg(
-        long,
-        requires_all = [
-            "delivery_directory",
-            "xmr_maker_agreement_public_key_file",
-            "xmr_actor_manifest_registry_file"
-        ]
-    )]
-    xmr_private_view_key_file: Option<PathBuf>,
-    /// Owner-only bounded JSON registry of Maker-only XMR actor manifests.
-    #[arg(
-        long,
-        requires_all = [
-            "delivery_directory",
-            "xmr_maker_agreement_public_key_file",
-            "xmr_private_view_key_file"
-        ]
-    )]
-    xmr_actor_manifest_registry_file: Option<PathBuf>,
-    /// Stopped owner-private Maker actor database imported only as a terminal operator view.
-    #[arg(long, requires_all = ["terminal_zec_swap_id", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
-    terminal_zec_maker_state_db: Option<PathBuf>,
-    /// Exact swap ID expected in both the stopped actor and completed Maker Chat history.
-    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
-    terminal_zec_swap_id: Option<Box<str>>,
-    /// Rotation ID for the stopped Maker actor's claim-recovery key.
-    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_swap_id", "terminal_zec_claim_key_file"])]
-    terminal_zec_claim_key_id: Option<Box<str>>,
-    /// Owner-only raw 32-byte claim key for offline terminal history replay.
-    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_swap_id", "terminal_zec_claim_key_id"])]
-    terminal_zec_claim_key_file: Option<PathBuf>,
+    /// ZEC pair authority; compiled only with the `pair-zec` feature.
+    #[cfg(feature = "pair-zec")]
+    #[command(flatten)]
+    zec: ZecArguments,
+    /// XMR pair authority; compiled only with the `pair-xmr` feature.
+    #[cfg(feature = "pair-xmr")]
+    #[command(flatten)]
+    xmr: XmrArguments,
     /// Absolute crash-isolated worker executable for one pinned Logos price module.
     #[arg(long, requires_all = ["logos_price_module", "logos_price_module_sha256"])]
     logos_price_worker: Option<PathBuf>,
@@ -285,6 +222,105 @@ struct Arguments {
     #[cfg(feature = "test-crash-hooks")]
     #[arg(long, hide = true, requires_all = ["actor_supervisor", "actor_test_pause_swap_id", "actor_test_pause_operation"])]
     actor_test_pause_marker: Option<PathBuf>,
+}
+
+/// Maker-owned ZEC claim, actor-deployment, and terminal-projection flags.
+#[cfg(feature = "pair-zec")]
+#[derive(clap::Args)]
+struct ZecArguments {
+    /// Non-secret rotation identifier for the maker claim-recovery key.
+    #[arg(
+        long,
+        group = "pair_chat_authority",
+        requires_all = [
+            "delivery_directory",
+            "maker_claim_key_file",
+            "zec_source_maker_config",
+            "zec_maker_actor_root",
+            "zec_actor_program",
+            "zec_actor_program_sha256"
+        ]
+    )]
+    maker_claim_key_id: Option<Box<str>>,
+    /// Owner-only file containing one raw 32-byte claim-recovery key.
+    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id"])]
+    maker_claim_key_file: Option<PathBuf>,
+    /// Owner-only file containing the maker-owned 32-byte claim preimage.
+    #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
+    maker_claim_preimage_file: Option<PathBuf>,
+    /// Existing owner-private per-swap Maker configs used as authority templates.
+    #[arg(
+        long,
+        action = clap::ArgAction::Append,
+        requires_all = [
+            "delivery_directory",
+            "maker_claim_key_id",
+            "maker_claim_key_file",
+            "zec_maker_actor_root",
+            "zec_actor_program",
+            "zec_actor_program_sha256"
+        ]
+    )]
+    zec_source_maker_config: Vec<PathBuf>,
+    /// Existing owner-private mode-0700 base for deterministic per-swap actor bundles.
+    #[arg(long, requires_all = ["zec_source_maker_config", "zec_actor_program", "zec_actor_program_sha256"])]
+    zec_maker_actor_root: Option<PathBuf>,
+    /// Absolute exact ZEC one-shot actor executable.
+    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program_sha256"])]
+    zec_actor_program: Option<PathBuf>,
+    /// Exact 32-byte SHA-256 identity of the ZEC actor executable.
+    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program"])]
+    zec_actor_program_sha256: Option<Box<str>>,
+    /// Stopped owner-private Maker actor database imported only as a terminal operator view.
+    #[arg(long, requires_all = ["terminal_zec_swap_id", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
+    terminal_zec_maker_state_db: Option<PathBuf>,
+    /// Exact swap ID expected in both the stopped actor and completed Maker Chat history.
+    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
+    terminal_zec_swap_id: Option<Box<str>>,
+    /// Rotation ID for the stopped Maker actor's claim-recovery key.
+    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_swap_id", "terminal_zec_claim_key_file"])]
+    terminal_zec_claim_key_id: Option<Box<str>>,
+    /// Owner-only raw 32-byte claim key for offline terminal history replay.
+    #[arg(long, requires_all = ["terminal_zec_maker_state_db", "terminal_zec_swap_id", "terminal_zec_claim_key_id"])]
+    terminal_zec_claim_key_file: Option<PathBuf>,
+}
+
+/// Maker-owned Monero agreement, view-key, and actor-registry flags.
+#[cfg(feature = "pair-xmr")]
+#[allow(clippy::struct_field_names)] // The field names are the public --xmr-* flags.
+#[derive(clap::Args)]
+struct XmrArguments {
+    /// Owner-only compressed secp256k1 Maker agreement public key.
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
+            "xmr_private_view_key_file",
+            "xmr_actor_manifest_registry_file"
+        ]
+    )]
+    xmr_maker_agreement_public_key_file: Option<PathBuf>,
+    /// Owner-only raw 32-byte shared Monero private view key.
+    #[arg(
+        long,
+        requires_all = [
+            "delivery_directory",
+            "xmr_maker_agreement_public_key_file",
+            "xmr_actor_manifest_registry_file"
+        ]
+    )]
+    xmr_private_view_key_file: Option<PathBuf>,
+    /// Owner-only bounded JSON registry of Maker-only XMR actor manifests.
+    #[arg(
+        long,
+        group = "pair_chat_authority",
+        requires_all = [
+            "delivery_directory",
+            "xmr_maker_agreement_public_key_file",
+            "xmr_private_view_key_file"
+        ]
+    )]
+    xmr_actor_manifest_registry_file: Option<PathBuf>,
 }
 
 struct ActorSupervisorRuntime {
@@ -502,22 +538,15 @@ async fn main() -> anyhow::Result<()> {
     let arguments = load_arguments()?;
     let logos_price_source = configured_logos_price_source(&arguments)?;
     let route_health_probe = configured_route_health_probe(&arguments)?;
-    let zec_actor_provisioner = configured_zec_actor_provisioner(&arguments)?;
-    let btc_chat_authority = configured_btc_chat_authority(&arguments)?;
-    let xmr_chat_authority = configured_xmr_chat_authority(&arguments)?;
+    let pair_authorities = PairAuthorities::configured(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
+    #[cfg(feature = "pair-zec")]
     import_terminal_projection(&arguments).await?;
     let actor_supervisor = configured_actor_supervisor(&arguments)?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;
     let (chat_listener, _chat_socket_guard) =
         bind_optional_owner_socket(arguments.chat_socket.as_deref())?;
-    let context = maker_context(
-        &arguments,
-        zec_actor_provisioner,
-        btc_chat_authority,
-        xmr_chat_authority,
-        logos_price_source,
-    )?;
+    let context = maker_context(&arguments, pair_authorities, logos_price_source)?;
     let context = attach_chat_health(context, arguments.chat_socket.as_deref());
     let context = match route_health_probe {
         Some(probe) => context.with_route_health_probe(Arc::new(probe)),
@@ -752,12 +781,13 @@ fn acquire_state_lease(database: &Path) -> anyhow::Result<StateLease> {
     Ok(StateLease { _file: file })
 }
 
+#[cfg(feature = "pair-zec")]
 async fn import_terminal_projection(arguments: &Arguments) -> anyhow::Result<()> {
     let configured = (
-        arguments.terminal_zec_maker_state_db.as_deref(),
-        arguments.terminal_zec_swap_id.as_deref(),
-        arguments.terminal_zec_claim_key_id.as_deref(),
-        arguments.terminal_zec_claim_key_file.as_deref(),
+        arguments.zec.terminal_zec_maker_state_db.as_deref(),
+        arguments.zec.terminal_zec_swap_id.as_deref(),
+        arguments.zec.terminal_zec_claim_key_id.as_deref(),
+        arguments.zec.terminal_zec_claim_key_file.as_deref(),
     );
     let (Some(actor_database), Some(swap_id), Some(key_id), Some(key_file)) = configured else {
         ensure!(
@@ -839,15 +869,16 @@ fn configured_route_health_probe(
         .map(Some)
 }
 
+#[cfg(feature = "pair-zec")]
 fn configured_zec_actor_provisioner(
     arguments: &Arguments,
 ) -> anyhow::Result<Option<ZecMakerActorProvisioner>> {
     let deployment = (
-        arguments.zec_maker_actor_root.as_ref(),
-        arguments.zec_actor_program.as_ref(),
-        arguments.zec_actor_program_sha256.as_deref(),
+        arguments.zec.zec_maker_actor_root.as_ref(),
+        arguments.zec.zec_actor_program.as_ref(),
+        arguments.zec.zec_actor_program_sha256.as_deref(),
     );
-    if arguments.zec_source_maker_config.is_empty() {
+    if arguments.zec.zec_source_maker_config.is_empty() {
         ensure!(
             deployment == (None, None, None),
             "ZEC actor templates, root, program, and SHA-256 must be configured together"
@@ -871,7 +902,7 @@ fn configured_zec_actor_provisioner(
     hex::decode_to_slice(program_sha256, &mut identity)
         .context("decode ZEC actor program SHA-256")?;
     ZecMakerActorProvisioner::new(
-        &arguments.zec_source_maker_config,
+        &arguments.zec.zec_source_maker_config,
         root.clone(),
         program.clone(),
         identity,
@@ -946,13 +977,14 @@ fn configured_btc_chat_authority(
     Ok(Some((signing_key, actor_provisioner, role_authority)))
 }
 
+#[cfg(feature = "pair-xmr")]
 fn configured_xmr_chat_authority(
     arguments: &Arguments,
 ) -> anyhow::Result<Option<XmrMakerChatAuthority>> {
     let configured = (
-        arguments.xmr_maker_agreement_public_key_file.as_deref(),
-        arguments.xmr_private_view_key_file.as_deref(),
-        arguments.xmr_actor_manifest_registry_file.as_deref(),
+        arguments.xmr.xmr_maker_agreement_public_key_file.as_deref(),
+        arguments.xmr.xmr_private_view_key_file.as_deref(),
+        arguments.xmr.xmr_actor_manifest_registry_file.as_deref(),
     );
     let (public_key_file, view_key_file, registry_file) = match configured {
         (None, None, None) => return Ok(None),
@@ -1021,6 +1053,7 @@ fn configured_xmr_chat_authority(
         .map(Some)
 }
 
+#[cfg(feature = "pair-xmr")]
 fn load_compressed_public_key(path: &Path) -> anyhow::Result<[u8; 33]> {
     let encoded = read_private_file(path, 66, "XMR Maker agreement public key")?;
     let mut bytes = [0_u8; 33];
@@ -1039,6 +1072,7 @@ fn load_compressed_public_key(path: &Path) -> anyhow::Result<[u8; 33]> {
     Ok(bytes)
 }
 
+#[cfg(feature = "pair-xmr")]
 fn decode_sha256(encoded: &str, purpose: &str) -> anyhow::Result<[u8; 32]> {
     ensure!(
         encoded.len() == 64,
@@ -1049,47 +1083,72 @@ fn decode_sha256(encoded: &str, purpose: &str) -> anyhow::Result<[u8; 32]> {
     Ok(digest)
 }
 
-fn maker_context(
+/// Every pair authority the daemon was asked to serve, validated before any
+/// socket is bound. Pairs that are not compiled in have no field at all.
+struct PairAuthorities {
+    #[cfg(feature = "pair-zec")]
+    zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
+    btc_chat: Option<BtcChatAuthority>,
+    #[cfg(feature = "pair-xmr")]
+    xmr_chat: Option<XmrMakerChatAuthority>,
+}
+
+impl PairAuthorities {
+    fn configured(arguments: &Arguments) -> anyhow::Result<Self> {
+        Ok(Self {
+            #[cfg(feature = "pair-zec")]
+            zec_actor_provisioner: configured_zec_actor_provisioner(arguments)?,
+            btc_chat: configured_btc_chat_authority(arguments)?,
+            #[cfg(feature = "pair-xmr")]
+            xmr_chat: configured_xmr_chat_authority(arguments)?,
+        })
+    }
+
+    fn any_configured(&self) -> bool {
+        #[cfg(feature = "pair-zec")]
+        let zec = self.zec_actor_provisioner.is_some();
+        #[cfg(not(feature = "pair-zec"))]
+        let zec = false;
+        #[cfg(feature = "pair-xmr")]
+        let xmr = self.xmr_chat.is_some();
+        #[cfg(not(feature = "pair-xmr"))]
+        let xmr = false;
+        self.btc_chat.is_some() || zec || xmr
+    }
+}
+
+/// Whether the ZEC claim flags are absent; trivially true when ZEC is not built.
+#[cfg(feature = "pair-zec")]
+fn zec_claim_arguments_absent(arguments: &Arguments) -> bool {
+    arguments.zec.maker_claim_key_id.is_none()
+        && arguments.zec.maker_claim_key_file.is_none()
+        && arguments.zec.maker_claim_preimage_file.is_none()
+}
+
+#[cfg(not(feature = "pair-zec"))]
+const fn zec_claim_arguments_absent(_arguments: &Arguments) -> bool {
+    true
+}
+
+#[cfg(feature = "pair-zec")]
+type ZecAuthority = (
+    SqliteZecRecoveryStore,
+    Option<ClaimPreimage>,
+    ZecMakerActorProvisioner,
+);
+
+#[cfg(feature = "pair-zec")]
+fn configured_zec_authority(
     arguments: &Arguments,
     zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
-    btc_chat_authority: Option<BtcChatAuthority>,
-    xmr_chat_authority: Option<XmrMakerChatAuthority>,
-    logos_price_source: Option<ProcessLogosPriceSource>,
-) -> anyhow::Result<MakerRpc> {
-    let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
-    let delivery_configured = (
-        arguments.delivery_directory.as_deref(),
-        arguments.delivery_signing_key_file.as_deref(),
-    );
-    let (directory, signing_file) = match delivery_configured {
-        (Some(directory), Some(signing_file)) => (directory, signing_file),
-        (None, None) => {
-            ensure!(
-                arguments.chat_socket.is_none()
-                    && arguments.maker_claim_key_id.is_none()
-                    && arguments.maker_claim_key_file.is_none()
-                    && arguments.maker_claim_preimage_file.is_none()
-                    && zec_actor_provisioner.is_none()
-                    && btc_chat_authority.is_none()
-                    && xmr_chat_authority.is_none(),
-                "Delivery, Chat, and pair authority require a complete Delivery transport"
-            );
-            let context = MakerRpc::new(store);
-            return Ok(match logos_price_source {
-                Some(source) => context.with_logos_price_source(source),
-                None => context,
-            });
-        }
-        _ => bail!("Delivery directory and signing key must be configured together"),
-    };
-
-    let zec_authority = match (
-        arguments.maker_claim_key_id.as_deref(),
-        arguments.maker_claim_key_file.as_deref(),
-        arguments.maker_claim_preimage_file.as_deref(),
+) -> anyhow::Result<Option<ZecAuthority>> {
+    match (
+        arguments.zec.maker_claim_key_id.as_deref(),
+        arguments.zec.maker_claim_key_file.as_deref(),
+        arguments.zec.maker_claim_preimage_file.as_deref(),
         zec_actor_provisioner,
     ) {
-        (None, None, None, None) => None,
+        (None, None, None, None) => Ok(None),
         (Some(claim_key_id), Some(claim_key_file), preimage_file, Some(provisioner)) => {
             let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
             let claim_key = ProtectedClaimKey::new(claim_key_id, *claim_key_material)
@@ -1106,20 +1165,61 @@ fn maker_context(
                 claim_key,
             )
             .context("open maker ZEC recovery store")?;
-            Some((recovery_store, preimage, provisioner))
+            Ok(Some((recovery_store, preimage, provisioner)))
         }
         _ => bail!(
             "ZEC claim, preimage, templates, root, program, and SHA-256 authority must be configured together"
         ),
+    }
+}
+
+fn maker_context(
+    arguments: &Arguments,
+    pairs: PairAuthorities,
+    logos_price_source: Option<ProcessLogosPriceSource>,
+) -> anyhow::Result<MakerRpc> {
+    let store = SqliteSwapStore::open(&arguments.database).context("open maker database")?;
+    let delivery_configured = (
+        arguments.delivery_directory.as_deref(),
+        arguments.delivery_signing_key_file.as_deref(),
+    );
+    let (directory, signing_file) = match delivery_configured {
+        (Some(directory), Some(signing_file)) => (directory, signing_file),
+        (None, None) => {
+            ensure!(
+                arguments.chat_socket.is_none()
+                    && zec_claim_arguments_absent(arguments)
+                    && !pairs.any_configured(),
+                "Delivery, Chat, and pair authority require a complete Delivery transport"
+            );
+            let context = MakerRpc::new(store);
+            return Ok(match logos_price_source {
+                Some(source) => context.with_logos_price_source(source),
+                None => context,
+            });
+        }
+        _ => bail!("Delivery directory and signing key must be configured together"),
     };
+
+    #[cfg(feature = "pair-zec")]
+    let zec_authority = configured_zec_authority(arguments, pairs.zec_actor_provisioner)?;
+    #[cfg(feature = "pair-zec")]
+    let zec_configured = zec_authority.is_some();
+    #[cfg(not(feature = "pair-zec"))]
+    let zec_configured = false;
+    #[cfg(feature = "pair-xmr")]
+    let xmr_configured = pairs.xmr_chat.is_some();
+    #[cfg(not(feature = "pair-xmr"))]
+    let xmr_configured = false;
+    let pair_authority_configured = pairs.btc_chat.is_some() || zec_configured || xmr_configured;
     if arguments.chat_socket.is_some() {
         ensure!(
-            zec_authority.is_some() || btc_chat_authority.is_some() || xmr_chat_authority.is_some(),
+            pair_authority_configured,
             "Chat requires at least one complete pair authority"
         );
     } else {
         ensure!(
-            zec_authority.is_none() && btc_chat_authority.is_none() && xmr_chat_authority.is_none(),
+            !pair_authority_configured,
             "pair authority requires a Chat socket"
         );
     }
@@ -1138,19 +1238,21 @@ fn maker_context(
         .reconcile(&active, now_unix_seconds)
         .context("reconcile Delivery advertisements")?;
     let context = MakerRpc::with_delivery_transport(store, delivery, signing_key);
+    #[cfg(feature = "pair-zec")]
     let context = match zec_authority {
         Some((recovery_store, preimage, provisioner)) => {
             context.with_directional_zec_chat_authority(recovery_store, preimage, Some(provisioner))
         }
         None => context,
     };
-    let context = match btc_chat_authority {
+    let context = match pairs.btc_chat {
         Some((signing_key, provisioner, role_authority)) => {
             context.with_btc_chat_authorities(signing_key, provisioner, role_authority)
         }
         None => context,
     };
-    let context = match xmr_chat_authority {
+    #[cfg(feature = "pair-xmr")]
+    let context = match pairs.xmr_chat {
         Some(authority) => context.with_xmr_chat_authority(authority),
         None => context,
     };
@@ -1188,6 +1290,7 @@ mod tests {
         assert_eq!(error.kind(), expected, "{error}");
     }
 
+    #[cfg(feature = "pair-zec")]
     fn chat_arguments() -> Vec<&'static str> {
         vec![
             "lez-maker-node",
@@ -1208,6 +1311,7 @@ mod tests {
         ]
     }
 
+    #[cfg(feature = "pair-zec")]
     #[test]
     fn chat_cli_requires_complete_zec_actor_deployment() {
         assert!(
@@ -1231,6 +1335,7 @@ mod tests {
         Arguments::try_parse_from(complete).expect("per-swap source registry parses");
     }
 
+    #[cfg(feature = "pair-xmr")]
     #[test]
     fn chat_cli_requires_complete_xmr_authority() {
         let complete = vec![

@@ -1,3 +1,6 @@
+//! Exercises the XMR reference actor; compiled only with `pair-xmr`.
+#![cfg(feature = "pair-xmr")]
+
 #[allow(dead_code)]
 #[path = "support/xmr_chat_fixture.rs"]
 mod xmr_chat_fixture;

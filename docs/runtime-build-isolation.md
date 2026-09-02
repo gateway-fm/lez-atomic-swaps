@@ -8,6 +8,10 @@ run the supported container check:
 ./scripts/check-linux-runtime.sh
 ```
 
+The two Nodes build the BTC↔LEZ path by default. Zcash and Monero code is
+behind the `pair-zec` and `pair-xmr` Cargo features on `lez-maker-node` and
+`lez-taker-node`; CI checks `--all-features` separately so both states compile.
+
 `lez-runtime-healthcheck` is independently distributed and therefore lives in
 its own dependency-light package. Role-neutral RPC, configuration, secure-file,
 Delivery, and Chat contracts live in `lez-node-common`. Maker authority and

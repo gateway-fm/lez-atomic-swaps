@@ -63,6 +63,18 @@ identity stays with its role-local UI/gateway. Taker setup receives only the
 Maker public Delivery identity. Profile manifests must explain every
 role-specific credential instead of adding an unused mirror secret.
 
+## Pair features
+
+`main` ships BTC↔LEZ. `lez-maker-node` and `lez-taker-node` therefore build
+only the Bitcoin path by default; the Zcash and Monero reference actors, their
+SDK types, Chat methods, daemon flags, CLI arms, and the Taker Node's
+prepared-ZEC lifecycle compile only with the `pair-zec` and `pair-xmr`
+features. Pair code that is not compiled cannot be reached: an actor manifest
+for an absent pair is rejected before any child starts, and a Chat request for
+an absent pair has no registered method. CI lints and tests both Nodes with
+`--all-features` so the gated code cannot rot while it is out of the product.
+The `maker-zec-systemd-v1` profile is built with `--features pair-zec`.
+
 ## Migration
 
 There is no legacy executable compatibility surface. Runtime consumers, tests,

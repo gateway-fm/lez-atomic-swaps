@@ -1,3 +1,6 @@
+//! Exercises the prepared-ZEC lifecycle; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Direct RED contract for service-wired, admission-only Taker initiation.
 
 use std::{

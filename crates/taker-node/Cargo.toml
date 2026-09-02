@@ -12,7 +12,11 @@ autobins = false
 workspace = true
 
 [features]
-test-crash-hooks = ["zec-reference-actor/test-crash-hooks"]
+# BTC<->LEZ is always built. Each other pair compiles only when requested.
+default = []
+pair-zec = ["dep:zec-reference-actor", "dep:lez-zec-swap-sdk"]
+pair-xmr = ["dep:xmr-reference-actor", "dep:lez-xmr-swap-sdk"]
+test-crash-hooks = ["pair-xmr", "pair-zec", "zec-reference-actor/test-crash-hooks"]
 
 [[bin]]
 name = "lez-taker-node"
@@ -51,10 +55,10 @@ lez-logos-price-c-api = { version = "0.1.0", path = "../logos-price-c-api", defa
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
-lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk" }
-lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
-xmr-reference-actor = { version = "0.1.0", path = "../xmr-reference-actor", features = ["sessions"] }
-zec-reference-actor = { version = "0.1.0", path = "../zec-reference-actor" }
+lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk", optional = true }
+lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk", optional = true }
+xmr-reference-actor = { version = "0.1.0", path = "../xmr-reference-actor", features = ["sessions"], optional = true }
+zec-reference-actor = { version = "0.1.0", path = "../zec-reference-actor", optional = true }
 rustix = { version = "1.1.4", features = ["fs", "process", "time"] }
 secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -66,7 +70,6 @@ tokio = { version = "1.52.0", features = ["macros", "net", "rt-multi-thread", "s
 thiserror = "2.0.18"
 wait-timeout = "=0.2.1"
 zeroize = "=1.9.0"
-zcash_primitives = { version = "=0.28.0", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 lez-adaptor-role-runner = { version = "0.1.0", path = "../adaptor-role-runner" }

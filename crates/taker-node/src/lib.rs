@@ -6,6 +6,9 @@ mod taker_service;
 mod taker_service_config;
 
 #[doc(hidden)]
+pub mod acceptance_files;
+#[cfg(feature = "pair-zec")]
+#[doc(hidden)]
 pub mod zec_taker_accept;
 
 pub use lez_node_common::*;
@@ -25,8 +28,11 @@ pub use taker_facade::{
 };
 pub use taker_service::taker_service_rpc_module;
 pub use taker_service_config::{
-    ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
-    OwnerChatSocketProbe, PreparedZecExecutionV1, PreparedZecTakerInitiationV1,
+    ConfiguredTakerFacadeBackend, ConfiguredTakerServiceContext, OwnerChatSocketProbe,
     SystemTakerTrustedTime, TakerServiceStartupError, load_taker_service_backend,
     load_taker_service_context,
+};
+#[cfg(feature = "pair-zec")]
+pub use taker_service_config::{
+    ConfiguredTakerInitiationContext, PreparedZecExecutionV1, PreparedZecTakerInitiationV1,
 };

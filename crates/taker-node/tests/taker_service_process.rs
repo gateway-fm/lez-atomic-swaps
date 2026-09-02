@@ -2,40 +2,45 @@
 
 use std::{
     env, fs,
-    io::Write as _,
     os::unix::{
-        fs::{
-            DirBuilderExt as _, FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _,
-            PermissionsExt as _,
-        },
+        fs::{DirBuilderExt as _, FileTypeExt as _, MetadataExt as _, PermissionsExt as _},
         net::UnixListener,
     },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+#[cfg(feature = "pair-zec")]
+use std::{io::Write as _, os::unix::fs::OpenOptionsExt as _};
 
 use lez_taker_node::{
     TakerDependencyStateV1, TakerHealthRequestV1, TakerHealthV1, TakerOfferListRequestV1,
-    TakerOfferListV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
-    TakerSwapStateV1, TakerSwapViewV1, call_local_rpc,
+    TakerOfferListV1, call_local_rpc,
 };
 use rustix::process::{Pid, Signal, kill_process};
 use serde_json::{Value, json};
 
+#[cfg(feature = "pair-zec")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "pair-zec")]
 use lez_bridge_protocol::RequestId;
+#[cfg(feature = "pair-zec")]
 use lez_swap_core::{Pair, SwapDirection, SwapId};
+#[cfg(feature = "pair-zec")]
 use lez_swap_store::{
     LocalPriceV1, MakerOfferId, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
     SqliteSwapStore, SqliteTakerFacadeStore,
 };
+#[cfg(feature = "pair-zec")]
 use lez_taker_node::{
     DeliveryPublicationV1, RunLocalDelivery, TakerInitiationCommitV1, TakerMakerIdentityV1,
-    TakerSwapInitiateRequestV1,
+    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1,
 };
+#[cfg(feature = "pair-zec")]
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
+#[cfg(feature = "pair-zec")]
 use sha2::{Digest as _, Sha256};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
@@ -122,6 +127,7 @@ async fn owner_service_serves_only_read_methods_and_cleans_exact_socket_on_sigte
     fs::remove_file(&socket).unwrap();
 }
 
+#[cfg(feature = "pair-zec")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn configured_initiation_survives_process_restart_without_live_delivery() {
     let fixture = ProcessInitiationFixture::new();
@@ -204,6 +210,7 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
     assert!(!socket.exists());
 }
 
+#[cfg(feature = "pair-zec")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires the external pinned-Basecamp product driver"]
 async fn basecamp_prepared_offer_rendezvous_drives_the_production_taker_service() {
@@ -265,6 +272,7 @@ async fn basecamp_prepared_offer_rendezvous_drives_the_production_taker_service(
     assert!(!socket.exists());
 }
 
+#[cfg(feature = "pair-zec")]
 async fn assert_initiating_reads_are_public_and_effect_free(
     socket: &Path,
     expected: &TakerSwapViewV1,
@@ -426,6 +434,7 @@ fn startup_requires_private_config_and_rejects_invalid_or_relative_socket_before
     assert!(!run.path().join("relative.sock").exists());
 }
 
+#[cfg(feature = "pair-zec")]
 struct ProcessInitiationFixture {
     _run: tempfile::TempDir,
     root: PathBuf,
@@ -437,6 +446,7 @@ struct ProcessInitiationFixture {
     commitment: [u8; 32],
 }
 
+#[cfg(feature = "pair-zec")]
 impl ProcessInitiationFixture {
     fn new() -> Self {
         let now = SystemTime::now()
@@ -526,6 +536,7 @@ impl ProcessInitiationFixture {
     }
 }
 
+#[cfg(feature = "pair-zec")]
 fn process_prepared_offer(
     root: &Path,
     route: MakerRouteV1,
@@ -572,6 +583,7 @@ fn process_prepared_offer(
         .clone()
 }
 
+#[cfg(feature = "pair-zec")]
 fn process_digest_binding(path: &Path) -> Value {
     json!({
         "path": path,
@@ -579,6 +591,7 @@ fn process_digest_binding(path: &Path) -> Value {
     })
 }
 
+#[cfg(feature = "pair-zec")]
 fn process_private_file(path: PathBuf, bytes: &[u8]) -> PathBuf {
     fs::write(&path, bytes).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
