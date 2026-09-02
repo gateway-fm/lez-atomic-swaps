@@ -987,7 +987,9 @@ mod tests {
         for (error, code, category) in expectations {
             let mapped = map_backend_error(error);
             assert_eq!(mapped.code(), code, "{error}");
-            let data = mapped.data().map_or_else(String::new, |raw| raw.get().to_owned());
+            let data = mapped
+                .data()
+                .map_or_else(String::new, |raw| raw.get().to_owned());
             assert_eq!(data, format!("{{\"category\":\"{category}\"}}"), "{error}");
             let wire = format!("{} {data}", mapped.message()).to_ascii_lowercase();
             for forbidden in ["/", "path", "file", "socket", "endpoint", "credential"] {

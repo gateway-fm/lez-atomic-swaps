@@ -7,11 +7,10 @@ compile_error!(
 
 use std::{path::Path, time::Duration};
 
-#[cfg(unix)]
 use std::{
     fs::{self, File, OpenOptions},
     io,
-    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _},
 };
 
 mod adaptor_session_journal;
@@ -22,6 +21,7 @@ mod maker_actor_process;
 mod maker_application;
 mod maker_offer;
 mod platform_contract;
+pub use platform_contract::{is_owner_private_regular_file, open_no_symlinks};
 mod public_effect_journal;
 mod taker_facade_registry;
 mod xmr_effect_workflow_journal;
@@ -1513,7 +1513,6 @@ fn open_configured_connection_with_mode(
     Ok(connection)
 }
 
-#[cfg(unix)]
 struct PreparedDatabaseFile {
     identity: DatabaseFileIdentity,
     // Retaining a newly created descriptor prevents its inode from disappearing
@@ -1522,14 +1521,12 @@ struct PreparedDatabaseFile {
     _creation_guard: Option<File>,
 }
 
-#[cfg(unix)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DatabaseFileIdentity {
     device: u64,
     inode: u64,
 }
 
-#[cfg(unix)]
 fn prepare_database_file(
     path: &Path,
     mode: DatabaseOpenMode,
@@ -1549,7 +1546,6 @@ fn prepare_database_file(
     }
 }
 
-#[cfg(unix)]
 fn create_private_database_file(path: &Path) -> Result<PreparedDatabaseFile, StoreError> {
     match OpenOptions::new()
         .read(true)
@@ -1579,7 +1575,6 @@ fn create_private_database_file(path: &Path) -> Result<PreparedDatabaseFile, Sto
     }
 }
 
-#[cfg(unix)]
 fn verify_database_file(path: &Path, prepared: &PreparedDatabaseFile) -> Result<(), StoreError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -1596,40 +1591,16 @@ fn verify_database_file(path: &Path, prepared: &PreparedDatabaseFile) -> Result<
     }
 }
 
-#[cfg(unix)]
 fn validate_private_database_metadata(
     metadata: &fs::Metadata,
 ) -> Result<DatabaseFileIdentity, StoreError> {
-    if !metadata.file_type().is_file()
-        || metadata.nlink() != 1
-        || metadata.permissions().mode() & 0o7777 != 0o600
-    {
+    if !is_owner_private_regular_file(metadata, 0o600) {
         return Err(StoreError::UnsafeDatabaseFile);
     }
     Ok(DatabaseFileIdentity {
         device: metadata.dev(),
         inode: metadata.ino(),
     })
-}
-
-#[cfg(not(unix))]
-struct PreparedDatabaseFile;
-
-#[cfg(not(unix))]
-fn prepare_database_file(
-    path: &Path,
-    mode: DatabaseOpenMode,
-) -> Result<PreparedDatabaseFile, StoreError> {
-    if mode == DatabaseOpenMode::ExistingOnly && !path.exists() {
-        Err(StoreError::DatabaseFileUnavailable)
-    } else {
-        Ok(PreparedDatabaseFile)
-    }
-}
-
-#[cfg(not(unix))]
-fn verify_database_file(_path: &Path, _prepared: &PreparedDatabaseFile) -> Result<(), StoreError> {
-    Ok(())
 }
 
 struct AlertEventIds {

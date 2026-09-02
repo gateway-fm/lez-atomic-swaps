@@ -2,14 +2,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use lez_bridge_protocol::{RequestId, RunId};
+use lez_swap_core::{Pair, SwapDirection, SwapId};
+use lez_swap_sdk_core::OfferDiscovery as _;
+use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_xmr_chat_swap_id};
 use lez_taker_node::{
     DeliveryOfferQueryV1, RunLocalDelivery, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
     XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
     secure_file::read_private_file,
 };
-use lez_swap_core::{Pair, SwapDirection, SwapId};
-use lez_swap_sdk_core::OfferDiscovery as _;
-use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_xmr_chat_swap_id};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrAgreementV1, XmrSwapDirectionV1,
 };

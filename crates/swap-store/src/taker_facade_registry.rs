@@ -16,12 +16,12 @@ use lez_swap_core::{Pair, SwapId};
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension as _, Transaction, TransactionBehavior, params,
 };
-use rustix::fs::{CWD, Mode, OFlags, ResolveFlags, openat2};
+use rustix::fs::{Mode, OFlags};
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{MakerOfferId, MakerRouteV1};
+use crate::{MakerOfferId, MakerRouteV1, is_owner_private_regular_file, open_no_symlinks};
 
 const APPLICATION_ID: i64 = 0x4c54_4652;
 const SCHEMA_VERSION: i64 = 1;
@@ -573,14 +573,12 @@ impl SqliteTakerFacadeStore {
     pub fn create_new(path: impl AsRef<Path>) -> Result<Self, TakerFacadeStoreError> {
         let path = path.as_ref();
         validate_database_path(path)?;
-        let guard = match openat2(
-            CWD,
+        let guard = match open_no_symlinks(
             path,
-            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            OFlags::RDWR | OFlags::CREATE | OFlags::EXCL,
             Mode::RUSR | Mode::WUSR,
-            ResolveFlags::NO_SYMLINKS,
         ) {
-            Ok(descriptor) => File::from(descriptor),
+            Ok(file) => file,
             Err(error) if error == rustix::io::Errno::EXIST => {
                 classify_existing(path)?;
                 return Err(TakerFacadeStoreError::DatabaseAlreadyExists);
@@ -1790,15 +1788,7 @@ fn normalized_absolute_file_path(path: &Path) -> bool {
 }
 
 fn open_checked(path: &Path) -> Result<File, TakerFacadeStoreError> {
-    openat2(
-        CWD,
-        path,
-        OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS,
-    )
-    .map(File::from)
-    .map_err(|error| {
+    open_no_symlinks(path, OFlags::RDWR, Mode::empty()).map_err(|error| {
         if error == rustix::io::Errno::LOOP {
             TakerFacadeStoreError::UnsafeDatabaseFile
         } else {
@@ -1816,11 +1806,7 @@ fn validate_database_file(file: &File) -> Result<FileIdentity, TakerFacadeStoreE
     let metadata = file
         .metadata()
         .map_err(|_| TakerFacadeStoreError::UnsafeDatabaseFile)?;
-    if !metadata.file_type().is_file()
-        || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.permissions().mode() & 0o7777 != 0o600
-        || metadata.nlink() != 1
-    {
+    if !is_owner_private_regular_file(&metadata, 0o600) {
         return Err(TakerFacadeStoreError::UnsafeDatabaseFile);
     }
     Ok(FileIdentity {
@@ -1830,15 +1816,12 @@ fn validate_database_file(file: &File) -> Result<FileIdentity, TakerFacadeStoreE
 }
 
 fn sync_parent(path: &Path) -> Result<(), TakerFacadeStoreError> {
-    openat2(
-        CWD,
+    open_no_symlinks(
         path.parent()
             .ok_or(TakerFacadeStoreError::DatabaseUnavailable)?,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDONLY | OFlags::DIRECTORY,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS,
     )
-    .map(File::from)
     .map_err(|_| TakerFacadeStoreError::DatabaseUnavailable)?
     .sync_all()
     .map_err(|_| TakerFacadeStoreError::DatabaseUnavailable)

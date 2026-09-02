@@ -2,7 +2,6 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io,
-    os::unix::fs::MetadataExt as _,
     path::{Path, PathBuf},
     sync::Arc,
     thread,
@@ -19,8 +18,7 @@ use lez_maker_node::{
     import_terminal_zec_maker_projection,
     node_config::load_node_arguments,
     owner_rpc_server::{
-        OwnedPath, bind_owner_socket, publish_ready_file, server_config,
-        validate_runtime_directory,
+        OwnedPath, bind_owner_socket, publish_ready_file, server_config, validate_runtime_directory,
     },
     rpc_module,
     secure_file::{load_raw_secret, load_secp256k1_secret, read_private_file},
@@ -30,11 +28,12 @@ use lez_maker_node::{
 use lez_swap_core::{Participant, SwapId};
 use lez_swap_store::{
     MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1, SqliteSwapStore,
-    SqliteZecRecoveryStore, validate_maker_actor_program,
+    SqliteZecRecoveryStore, is_owner_private_regular_file, open_no_symlinks,
+    validate_maker_actor_program,
 };
 use lez_xmr_swap_sdk::MoneroPrivateViewKey;
 use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
-use rustix::fs::{CWD, FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
+use rustix::fs::{FlockOperation, Mode, OFlags, flock};
 use sd_notify::NotifyState;
 use secp256k1::{PublicKey, SecretKey};
 use serde::Deserialize;
@@ -371,10 +370,7 @@ fn configured_actor_supervisor(
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error).context("inspect actor test pause marker"),
                     Ok(metadata) => ensure!(
-                        metadata.file_type().is_file()
-                            && metadata.uid() == rustix::process::geteuid().as_raw()
-                            && metadata.mode() & 0o7777 == 0o600
-                            && metadata.nlink() == 1,
+                        is_owner_private_regular_file(&metadata, 0o600),
                         "existing actor test pause marker must be an owner-only single-link file"
                     ),
                 }
@@ -740,21 +736,15 @@ fn acquire_state_lease(database: &Path) -> anyhow::Result<StateLease> {
     let mut lease_name = OsString::from(database.as_os_str());
     lease_name.push(".lock");
     let lease_path = PathBuf::from(lease_name);
-    let file = openat2(
-        CWD,
+    let file = open_no_symlinks(
         &lease_path,
-        OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDWR | OFlags::CREATE,
         Mode::RUSR | Mode::WUSR,
-        ResolveFlags::NO_SYMLINKS,
     )
-    .map(File::from)
     .context("open maker database lease")?;
     let metadata = file.metadata().context("inspect maker database lease")?;
     ensure!(
-        metadata.file_type().is_file()
-            && metadata.uid() == rustix::process::geteuid().as_raw()
-            && metadata.mode() & 0o7777 == 0o600
-            && metadata.nlink() == 1,
+        is_owner_private_regular_file(&metadata, 0o600),
         "maker database lease must be an owner-owned, single-link mode-0600 regular file"
     );
     flock(&file, FlockOperation::NonBlockingLockExclusive)

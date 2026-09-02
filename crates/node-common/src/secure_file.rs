@@ -3,7 +3,8 @@
 use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _, path::Path};
 
 use anyhow::{Context as _, ensure};
-use rustix::fs::{CWD, Mode, OFlags, ResolveFlags, openat2};
+use lez_swap_store::open_no_symlinks;
+use rustix::fs::{Mode, OFlags};
 use secp256k1::SecretKey;
 use zeroize::Zeroizing;
 
@@ -127,15 +128,8 @@ fn read_private_file_snapshot_inner(
 }
 
 fn open_private_file(path: &Path, purpose: &str) -> anyhow::Result<File> {
-    openat2(
-        CWD,
-        path,
-        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS,
-    )
-    .map(File::from)
-    .with_context(|| format!("open {purpose}"))
+    open_no_symlinks(path, OFlags::RDONLY | OFlags::NONBLOCK, Mode::empty())
+        .with_context(|| format!("open {purpose}"))
 }
 
 fn private_file_identity(metadata: &std::fs::Metadata) -> PrivateFileIdentity {

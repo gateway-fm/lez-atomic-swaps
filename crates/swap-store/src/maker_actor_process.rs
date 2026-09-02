@@ -16,15 +16,15 @@ use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, SwapCoordinator, SwapId};
 use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, TransactionBehavior, params};
 use rustix::fs::{
-    CWD, FlockOperation, MemfdFlags, Mode, OFlags, ResolveFlags, SealFlags, fcntl_add_seals,
-    fcntl_get_seals, flock, memfd_create, openat2,
+    FlockOperation, MemfdFlags, Mode, OFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, flock,
+    memfd_create,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use crate::{SqliteSwapStore, StoreError};
+use crate::{SqliteSwapStore, StoreError, is_owner_private_regular_file, open_no_symlinks};
 
 const MANIFEST_VERSION: i64 = 1;
 const MAX_PATH_BYTES: usize = 4_096;
@@ -396,14 +396,11 @@ impl MakerActorHeldLock {
             .ok_or(MakerActorProcessError::UnsafeLock)?;
         validate_lock_root(parent)?;
         let lock_path = lock_file_path(&state_database_path);
-        let file = openat2(
-            CWD,
+        let file = open_no_symlinks(
             &lock_path,
-            OFlags::RDWR | OFlags::CREATE | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            OFlags::RDWR | OFlags::CREATE,
             Mode::RUSR | Mode::WUSR,
-            ResolveFlags::NO_SYMLINKS,
         )
-        .map(File::from)
         .map_err(|_| MakerActorProcessError::UnsafeLock)?;
         validate_lock_file(&file, &lock_path)?;
         flock(&file, FlockOperation::NonBlockingLockExclusive)
@@ -2534,15 +2531,8 @@ fn read_verified_artifact(
     expected_sha256: [u8; 32],
 ) -> Result<Zeroizing<Vec<u8>>, MakerActorProcessError> {
     validate_artifact_parent(path, kind)?;
-    let mut file = openat2(
-        CWD,
-        path,
-        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS,
-    )
-    .map(File::from)
-    .map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
+    let mut file = open_no_symlinks(path, OFlags::RDONLY | OFlags::NONBLOCK, Mode::empty())
+        .map_err(|_| MakerActorProcessError::UnsafeArtifact)?;
     validate_named_artifact(&file, path, kind, Some(maximum_bytes))?;
     let mut bytes = Zeroizing::new(Vec::new());
     std::io::Read::by_ref(&mut file)
@@ -2637,15 +2627,8 @@ fn validate_named_artifact(
 
 fn bind_actor_state(path: &Path) -> Result<MakerActorStateBinding, MakerActorProcessError> {
     validate_artifact_parent(path, MakerActorArtifactKind::State)?;
-    match openat2(
-        CWD,
-        path,
-        OFlags::RDWR | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS,
-    ) {
-        Ok(descriptor) => {
-            let file = File::from(descriptor);
+    match open_no_symlinks(path, OFlags::RDWR | OFlags::NONBLOCK, Mode::empty()) {
+        Ok(file) => {
             validate_named_artifact(&file, path, MakerActorArtifactKind::State, None)?;
             validate_artifact_parent(path, MakerActorArtifactKind::State)?;
             Ok(MakerActorStateBinding::Existing(file))
@@ -2758,11 +2741,8 @@ fn validate_lock_file(file: &File, path: &Path) -> Result<(), MakerActorProcessE
         .metadata()
         .map_err(|_| MakerActorProcessError::UnsafeLock)?;
     let named = fs::symlink_metadata(path).map_err(|_| MakerActorProcessError::UnsafeLock)?;
-    if !opened.file_type().is_file()
+    if !is_owner_private_regular_file(&opened, 0o600)
         || !named.file_type().is_file()
-        || opened.uid() != rustix::process::geteuid().as_raw()
-        || opened.permissions().mode() & 0o7777 != 0o600
-        || opened.nlink() != 1
         || !same_inode(&opened, &named)
     {
         return Err(MakerActorProcessError::UnsafeLock);

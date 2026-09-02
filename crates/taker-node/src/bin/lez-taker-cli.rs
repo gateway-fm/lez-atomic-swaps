@@ -16,15 +16,15 @@ use btc_reference_actor::{
 };
 use clap::{ArgGroup, Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use lez_bridge_protocol::RequestId;
-use lez_taker_node::{
-    DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, call_local_rpc,
-    control_taker_service,
-};
 use lez_swap_core::{Pair, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{
     MakerActorHeldLock, MakerRouteV1, SqliteXmrWorkflowJournal, StoreError,
     XmrWorkflowReconciliationV2, XmrWorkflowStep, maker_btc_chat_swap_id, maker_xmr_chat_swap_id,
+};
+use lez_taker_node::{
+    DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, call_local_rpc,
+    control_taker_service,
 };
 use secp256k1::PublicKey;
 use serde::Serialize;
@@ -865,7 +865,10 @@ struct XmrTakerEffectActionOutput<'a> {
     chain_effect_finalized: bool,
 }
 
-async fn execute_lifecycle(command: LifecycleCommand, socket: &std::path::Path) -> anyhow::Result<()> {
+async fn execute_lifecycle(
+    command: LifecycleCommand,
+    socket: &std::path::Path,
+) -> anyhow::Result<()> {
     match command {
         LifecycleCommand::Health => execute_taker_health(socket).await,
         LifecycleCommand::Start => execute_taker_service_action(NodeServiceAction::Start),
@@ -894,7 +897,10 @@ async fn execute_taker_health(socket: &std::path::Path) -> anyhow::Result<()> {
 }
 
 fn execute_taker_service_action(action: NodeServiceAction) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string(&control_taker_service(action)?)?);
+    println!(
+        "{}",
+        serde_json::to_string(&control_taker_service(action)?)?
+    );
     Ok(())
 }
 

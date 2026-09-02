@@ -14,15 +14,15 @@ use lez_btc_swap_sdk::{
     BtcRoleContributionV1, MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES,
     derive_btc_pre_session_id_v1,
 };
+use lez_swap_core::{Pair, Participant, SwapDirection};
+use lez_swap_sdk_core::OfferDiscovery as _;
+use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_btc_chat_swap_id};
 use lez_taker_node::{
     BtcChatCompleteRequestV1, BtcChatCompleteRequestV2, BtcChatCompleteResponseV1,
     BtcChatCompleteResponseV2, BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1,
     BtcChatProposeRequestV2, DeliveryOfferQueryV1, RunLocalDelivery, call_local_chat_rpc,
     secure_file::{load_raw_secret, read_private_file},
 };
-use lez_swap_core::{Pair, Participant, SwapDirection};
-use lez_swap_sdk_core::OfferDiscovery as _;
-use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_btc_chat_swap_id};
 use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
