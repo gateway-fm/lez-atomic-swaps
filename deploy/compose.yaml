@@ -248,8 +248,7 @@ services:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
       - delivery_dir:/delivery
-      - prep_state:/prep
-    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/maker /run/lez/maker /delivery /prep && chmod 0700 /run/lez/maker /delivery /prep"]
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/maker /run/lez/maker /delivery && chmod 0700 /run/lez/maker /delivery"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -281,14 +280,11 @@ services:
         printf '%s\n' "$${identity}" > /delivery/.maker-delivery-identity.pub.tmp
         chmod 0444 /delivery/.maker-delivery-identity.pub.tmp
         mv -f /delivery/.maker-delivery-identity.pub.tmp /delivery/maker-delivery-identity.pub
-        config=/run-config/maker-node.json
-        if [ -s /prep/maker-node.json ]; then config=/prep/maker-node.json; fi
-        exec /usr/local/bin/lez-maker-node --config "$${config}"
+        exec /usr/local/bin/lez-maker-node --config /run-config/maker-node.json
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
       - delivery_dir:/delivery
-      - prep_state:/prep
       - ./assets/maker-node.json:/run-config/maker-node.json:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
@@ -304,10 +300,6 @@ services:
       start_period: 15s
     restart: unless-stopped
     logging: *default-logging
-
-  # Chat authority for UI-initiated swaps: scripts/prepare-ui-swap.sh writes
-  # /prep/maker-node.json and restarts this service; those flags turn on the
-  # ZEC claim + Chat socket that the Taker Node's initiate executes.
 
   taker-init:
     build: ./images/taker-node
@@ -365,8 +357,6 @@ services:
     depends_on:
       taker-init:
         condition: service_completed_successfully
-    environment:
-      RUST_LOG: debug
     command:
       - /bin/bash
       - -c
@@ -376,8 +366,6 @@ services:
       - taker_socket:/run/lez/taker
       - delivery_dir:/delivery:ro
       - maker_socket:/run/lez/maker
-      # Prepared acceptance writes the agreement, receipt, and actor bundle.
-      - prep_state:/prep
       - ./assets/taker-node.json:/run-config/taker-node.json:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
@@ -522,8 +510,6 @@ volumes:
     name: lez-taker-socket
   delivery_dir:
     name: lez-delivery-dir
-  prep_state:
-    name: lez-prep-state
   btc_demo_socket:
     name: lez-btc-demo-socket
   btc_launcher_socket:
