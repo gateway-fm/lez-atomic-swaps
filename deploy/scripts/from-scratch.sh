@@ -49,8 +49,14 @@ readonly RUST_IMAGE="rust:1.96.0-bookworm"
 readonly RISC0_TAG=v3.0.5
 readonly RAPIDSNARK_URL="https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-aarch64-pic-v0.0.8.zip"
 readonly RAPIDSNARK_LIB_SHA256="43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657"
-# LEZ program identity of the escrow guest this repository pins.
-readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433}"
+# The escrow guest's pinned digests come from the commit under test (its
+# runner script carries them), so the artifact, the market bootstrap and the
+# swaps agree on one program.
+pinned() { sed -n "s/^ *${1}=\"\([0-9a-f]\{64\}\)\".*/\1/p" "$REPO_ROOT/scripts/run-m3-actor-local-poc.sh" | head -1; }
+ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-$(pinned expected_lez_program_id)}"
+GUEST_ELF_SHA256="$(pinned expected_lez_guest_sha256)"
+[[ "$ESCROW_PROGRAM_ID" =~ ^[0-9a-f]{64}$ && "$GUEST_ELF_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot read the escrow pins" >&2; exit 1; }
+readonly ESCROW_PROGRAM_ID GUEST_ELF_SHA256
 # The runner scripts address these container paths; volumes keep them.
 readonly RUNNER_SERVICES_DIR=/tmp/lez-v02-services-a58fbce2-20260713
 readonly RUNNER_ARTIFACT_DIR=/tmp/lez-m3-artifact-arm
@@ -297,10 +303,11 @@ phase_runner() {
   # risc0-build asks rzup for a default Rust toolchain even for Docker guest builds
   runner_exec 'mkdir -p /tmp/lez-risc0-home/toolchains/v1.94.1-rust-aarch64-unknown-linux-gnu && printf "[default_versions]\nrust = \"1.94.1\"\n" > /tmp/lez-risc0-home/settings.toml'
 
-  # the escrow artifact: deployer + digest-checked guest ELF
-  if ! runner_exec "test -x $RUNNER_ARTIFACT_DIR/debug/lez-zec-escrow-v02-deployer && test -f $RUNNER_ARTIFACT_DIR/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"; then
-    log "building the escrow artifact (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
-    runner_exec "set -e; cd '$RUNNER_REPO'; rm -rf $RUNNER_ARTIFACT_DIR/docker-guest-source;
+  # the escrow artifact: deployer + guest ELF at the commit's pinned digest
+  local guest_elf="$RUNNER_ARTIFACT_DIR/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"
+  if ! runner_exec "test -x $RUNNER_ARTIFACT_DIR/debug/lez-zec-escrow-v02-deployer && [[ \"\$(sha256sum $guest_elf 2>/dev/null | cut -c1-64)\" == $GUEST_ELF_SHA256 ]]"; then
+    log "building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
+    runner_exec "set -e; cd '$RUNNER_REPO'; rm -rf $RUNNER_ARTIFACT_DIR/docker-guest-source $RUNNER_ARTIFACT_DIR/riscv-guest $RUNNER_ARTIFACT_DIR/debug/lez-zec-escrow-v02-deployer;
       RUN_ID=arm-rebuild LEZ_NATIVE_TOOLS=1 LEZ_V02_ARTIFACT_TARGET_DIR=$RUNNER_ARTIFACT_DIR LEZ_V02_TOOL_DIR=$RUNNER_TOOL_DIR \
       CARGO_TARGET_DIR=$RUNNER_TARGET_DIR CARGO_BUILD_JOBS=6 scripts/verify-lez-v02-provisional.sh 2>&1 | tail -3"
   fi
@@ -309,7 +316,7 @@ phase_runner() {
   log "warming the runner's cargo caches"
   runner_exec "set -e; cd '$RUNNER_REPO'; cargo fetch --locked -q; cargo fetch --locked -q --manifest-path compat/lez-v0_2-sidecar/Cargo.toml;
     cargo +1.96.0 build -q --locked --offline -p btc-local-poc-provision -p btc-reference-actor -p lez-adaptor-role-runner --bins;
-    cargo +1.96.0 build -q --locked --offline -p lez-maker-node --bins;
+    cargo +1.96.0 build -q --locked --offline -p lez-maker-node -p lez-taker-node --bins;
     cargo +1.96.0 build -q --locked --offline -p lez-btc-swap-sdk --example btc-core-p2tr-fixture;
     cargo +1.96.0 build -q --locked --offline -p lez-bridge-client --example m3_witnessed_lez_operator;
     cargo +1.96.0 build -q --locked --offline --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc \

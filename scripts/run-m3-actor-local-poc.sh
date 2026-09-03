@@ -2129,7 +2129,7 @@ prebuild() {
   fi
   if [[ "$m5_btc_application_mode" == 1 ]] &&
      ! cargo +"$toolchain" build --locked --offline \
-       -p lez-maker-node --bins -p lez-taker-node --bins; then
+       -p lez-maker-node -p lez-taker-node --bins; then
     fail "offline M5 BTC application prebuild failed; populate the pinned Cargo cache"
   fi
   if ! cargo +"$toolchain" build --locked --offline \

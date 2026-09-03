@@ -53,8 +53,11 @@ chmod 0700 "$MARKET_ROOT" "$MARKET_ROOT/bootstrap"
 
 # ── 1. escrow program deployment (once per chain) ──────────────────────────
 deployment_evidence="$MARKET_ROOT/bootstrap/deployment.json"
+# Evidence for another program (a chain recreated since, or another pinned
+# guest) does not count: deploy again and record the new transaction.
 if [[ -s "$deployment_evidence" ]] \
-   && jq -e '.transaction_hash | test("^[0-9a-f]{64}$")' "$deployment_evidence" >/dev/null 2>&1; then
+   && jq -e --arg program "$ESCROW_PROGRAM_ID" '.preflight.image_id == $program
+        and (.transaction_hash | test("^[0-9a-f]{64}$"))' "$deployment_evidence" >/dev/null 2>&1; then
   echo "escrow program already deployed: $(jq -r '.transaction_hash' "$deployment_evidence")"
 else
   [[ -x "$DEPLOYER" ]] || fail "deployer missing: $DEPLOYER"
