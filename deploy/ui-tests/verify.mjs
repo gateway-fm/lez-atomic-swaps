@@ -54,20 +54,26 @@ await new Promise((r) => setTimeout(r, 2000));
 
 // The swap belongs to whichever Maker wallet published the offer the Taker
 // took, so select the wallet whose market snapshot carries the Maker's action.
+// The action becomes pending only once the runner reaches the Maker's gate,
+// so keep cycling through the wallets for as long as a gate may take.
 async function selectMakerWalletWithAction(app, walletId) {
   const wallets = ["maker-munich-01", "maker-basel-02"];
-  for (const [index, expected] of wallets.entries()) {
-    await evaluateIn(app, walletId, `currentIndex = ${index}; root.refreshBtcMarket(false)`);
-    const deadline = Date.now() + 15000;
-    while (Date.now() < deadline) {
-      let envelope = null;
-      try { envelope = JSON.parse(await property(app, "makerOutput", "text")); } catch { /* not yet a snapshot */ }
-      if (envelope?.ok === true && envelope.result?.selected_wallet_id === expected) {
-        if ((envelope.result.swaps ?? []).some((swap) => swap.action_role === "maker")) return;
-        break;
+  const deadline = Date.now() + 600000;
+  while (Date.now() < deadline) {
+    for (const [index, expected] of wallets.entries()) {
+      await evaluateIn(app, walletId, `currentIndex = ${index}; root.refreshBtcMarket(false)`);
+      const settled = Date.now() + 15000;
+      while (Date.now() < settled) {
+        let envelope = null;
+        try { envelope = JSON.parse(await property(app, "makerOutput", "text")); } catch { /* not yet a snapshot */ }
+        if (envelope?.ok === true && envelope.result?.selected_wallet_id === expected) {
+          if ((envelope.result.swaps ?? []).some((swap) => swap.action_role === "maker")) return;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
     }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   throw new Error("no Maker wallet holds a pending action");
 }
