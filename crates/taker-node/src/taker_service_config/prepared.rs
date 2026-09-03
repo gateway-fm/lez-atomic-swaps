@@ -1,5 +1,7 @@
-//! Prepared-ZEC initiation catalog: owner-configured authorities the Taker Node
-//! may admit and execute. Compiled only with `pair-zec`.
+//! Prepared initiation catalog: owner-configured authorities the Taker Node may
+//! admit and execute, one entry per swap, for the Bitcoin route and (with
+//! `pair-zec`) the Zcash route. Every entry carries the same private material;
+//! the pair decides which take path and which actor run it.
 
 use super::{TakerServiceStartupError, validate_normalized_absolute};
 use std::{
@@ -24,54 +26,62 @@ use crate::{
     secure_file::{PrivateFileIdentity, PrivateFileSnapshot, read_private_file_snapshot},
 };
 
-const MAX_PREPARED_ZEC_INITIATIONS: usize = 256;
+const MAX_PREPARED_INITIATIONS: usize = 256;
 const MAX_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const MAX_PREPARED_RECEIPT_BYTES: u64 = 16 * 1024;
 const MAX_SIGNING_KEY_BYTES: u64 = 32;
 
 /// Existing registry plus a bounded static catalog of prepared ZEC authorities.
 pub struct ConfiguredTakerInitiationContext {
-    execute_prepared_zec: bool,
+    execute_prepared: bool,
     registry: SqliteTakerFacadeStore,
-    prepared_zec_by_offer: BTreeMap<Box<str>, PreparedZecTakerInitiationV1>,
+    prepared_by_offer: BTreeMap<Box<str>, PreparedTakerInitiationV1>,
 }
 
 impl ConfiguredTakerInitiationContext {
     /// Whether admitted prepared ZEC swaps execute Chat acceptance before response.
     #[must_use]
     pub const fn execution_enabled(&self) -> bool {
-        self.execute_prepared_zec
+        self.execute_prepared
+    }
+
+    /// Reports whether at least one prepared entry runs the given pair.
+    #[must_use]
+    pub fn has_pair(&self, pair: Pair) -> bool {
+        self.prepared_by_offer
+            .values()
+            .any(|prepared| prepared.facts().route().pair() == pair)
     }
 
     /// Number of configured role-fixed ZEC initiation entries.
     #[must_use]
-    pub fn prepared_zec_count(&self) -> usize {
-        self.prepared_zec_by_offer.len()
+    pub fn prepared_count(&self) -> usize {
+        self.prepared_by_offer.len()
     }
 
     /// Looks up one fixed entry by authenticated offer identity.
     #[must_use]
-    pub fn prepared_zec_for_offer(
+    pub fn prepared_for_offer(
         &self,
         offer_id: &MakerOfferId,
-    ) -> Option<&PreparedZecTakerInitiationV1> {
-        self.prepared_zec_by_offer.get(offer_id.as_str())
+    ) -> Option<&PreparedTakerInitiationV1> {
+        self.prepared_by_offer.get(offer_id.as_str())
     }
 
     /// Looks up one fixed entry by application swap identity.
     ///
     /// Startup validation rejects duplicate swap identities and bounds the catalog.
     #[must_use]
-    pub fn prepared_zec_for_swap(&self, swap_id: &SwapId) -> Option<&PreparedZecTakerInitiationV1> {
-        self.prepared_zec_by_offer
+    pub fn prepared_for_swap(&self, swap_id: &SwapId) -> Option<&PreparedTakerInitiationV1> {
+        self.prepared_by_offer
             .values()
             .find(|prepared| prepared.swap_id() == swap_id)
     }
 
     /// Captures or revalidates the completed receipt for this process incarnation.
-    pub(crate) fn bind_prepared_zec_receipt(&mut self, swap_id: &SwapId) -> Result<(), ()> {
+    pub(crate) fn bind_prepared_receipt(&mut self, swap_id: &SwapId) -> Result<(), ()> {
         let prepared = self
-            .prepared_zec_by_offer
+            .prepared_by_offer
             .values_mut()
             .find(|prepared| prepared.swap_id() == swap_id)
             .ok_or(())?;
@@ -99,23 +109,23 @@ impl fmt::Debug for ConfiguredTakerInitiationContext {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ConfiguredTakerInitiationContext")
-            .field("execution_enabled", &self.execute_prepared_zec)
+            .field("execution_enabled", &self.execute_prepared)
             .field("registry", &"[REDACTED]")
-            .field("prepared_zec_count", &self.prepared_zec_by_offer.len())
+            .field("prepared_count", &self.prepared_by_offer.len())
             .finish_non_exhaustive()
     }
 }
 
 /// Static service-owned authority selected after a client supplies public facts.
 #[derive(Clone)]
-pub struct PreparedZecTakerInitiationV1 {
+pub struct PreparedTakerInitiationV1 {
     facts: TakerInitiationFactsV1,
     reservation_id: RequestId,
     authority: TakerInitiationAuthorityV1,
-    execution: PreparedZecExecutionV1,
+    execution: PreparedExecutionV1,
 }
 
-impl PreparedZecTakerInitiationV1 {
+impl PreparedTakerInitiationV1 {
     /// Exact route-fixed public facts prepared by the owner.
     #[must_use]
     pub const fn facts(&self) -> &TakerInitiationFactsV1 {
@@ -153,15 +163,15 @@ impl PreparedZecTakerInitiationV1 {
 
     /// Borrows the redacted execution-ready material retained at startup.
     #[must_use]
-    pub const fn execution(&self) -> &PreparedZecExecutionV1 {
+    pub const fn execution(&self) -> &PreparedExecutionV1 {
         &self.execution
     }
 }
 
-impl fmt::Debug for PreparedZecTakerInitiationV1 {
+impl fmt::Debug for PreparedTakerInitiationV1 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PreparedZecTakerInitiationV1")
+            .debug_struct("PreparedTakerInitiationV1")
             .field("configured", &true)
             .finish_non_exhaustive()
     }
@@ -190,7 +200,7 @@ impl PreparedReceiptBindingV1 {
 /// this crate can borrow private bytes or configured paths, while `Debug`
 /// never reveals either.
 #[derive(Clone)]
-pub struct PreparedZecExecutionV1 {
+pub struct PreparedExecutionV1 {
     authenticated_offer: AuthenticatedOfferRefV1,
     unsigned_draft_path: PathBuf,
     unsigned_draft: Zeroizing<Vec<u8>>,
@@ -206,7 +216,7 @@ pub struct PreparedZecExecutionV1 {
     receipt_binding: Option<PreparedReceiptBindingV1>,
 }
 
-impl PreparedZecExecutionV1 {
+impl PreparedExecutionV1 {
     pub(crate) const fn authenticated_offer(&self) -> &AuthenticatedOfferRefV1 {
         &self.authenticated_offer
     }
@@ -260,10 +270,10 @@ impl PreparedZecExecutionV1 {
     }
 }
 
-impl fmt::Debug for PreparedZecExecutionV1 {
+impl fmt::Debug for PreparedExecutionV1 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PreparedZecExecutionV1")
+            .debug_struct("PreparedExecutionV1")
             .field("configured", &true)
             .finish_non_exhaustive()
     }
@@ -272,15 +282,32 @@ impl fmt::Debug for PreparedZecExecutionV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct InitiationConfigurationV1 {
-    #[serde(default)]
-    execute_prepared_zec: bool,
+    /// Execute the prepared take when an initiation is admitted (`execute_prepared_zec`
+    /// is the historical spelling and still accepted).
+    #[serde(default, alias = "execute_prepared_zec")]
+    execute_prepared: bool,
     registry_database: PathBuf,
-    prepared_zec: Vec<PreparedZecConfigurationV1>,
+    #[cfg(feature = "pair-zec")]
+    #[serde(default)]
+    prepared_zec: Vec<PreparedConfigurationV1>,
+    #[serde(default)]
+    prepared_btc: Vec<PreparedConfigurationV1>,
+}
+
+impl InitiationConfigurationV1 {
+    /// Every configured entry with the pair its array names.
+    fn entries(&self) -> impl Iterator<Item = (Pair, &PreparedConfigurationV1)> {
+        #[cfg(feature = "pair-zec")]
+        let zec = self.prepared_zec.iter().map(|entry| (Pair::Zcash, entry));
+        #[cfg(not(feature = "pair-zec"))]
+        let zec = std::iter::empty();
+        zec.chain(self.prepared_btc.iter().map(|entry| (Pair::Bitcoin, entry)))
+    }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PreparedZecConfigurationV1 {
+struct PreparedConfigurationV1 {
     source_id: Box<str>,
     swap_id: SwapId,
     offer_id: MakerOfferId,
@@ -318,9 +345,9 @@ pub(super) fn build_initiation_context(
 ) -> Result<ConfiguredTakerInitiationContext, TakerServiceStartupError> {
     let registry = SqliteTakerFacadeStore::open_existing(&configuration.registry_database)
         .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
-    let mut prepared_zec_by_offer = BTreeMap::new();
+    let mut prepared_by_offer = BTreeMap::new();
 
-    for configured in &configuration.prepared_zec {
+    for (expected_pair, configured) in configuration.entries() {
         let (source_index, maker_identity) = source_bindings
             .get(&configured.source_id)
             .copied()
@@ -337,7 +364,7 @@ pub(super) fn build_initiation_context(
         let route = authenticated.offer().route();
         if authenticated.maker_identity() != &maker_identity
             || authenticated.offer().id() != &configured.offer_id
-            || route.pair() != Pair::Zcash
+            || route.pair() != expected_pair
             || authenticated
                 .offer()
                 .quote_foreign_amount(configured.foreign_units)
@@ -379,7 +406,7 @@ pub(super) fn build_initiation_context(
             configured.lez_units,
         )
         .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
-        let execution = PreparedZecExecutionV1 {
+        let execution = PreparedExecutionV1 {
             authenticated_offer: authenticated,
             unsigned_draft_path: configured.unsigned_draft.path.clone(),
             unsigned_draft: unsigned_draft_snapshot.into_bytes(),
@@ -396,13 +423,13 @@ pub(super) fn build_initiation_context(
             receipt_output: configured.receipt_output.clone(),
             receipt_binding: load_optional_receipt_binding(&configured.receipt_output)?,
         };
-        let entry = PreparedZecTakerInitiationV1 {
+        let entry = PreparedTakerInitiationV1 {
             facts,
             reservation_id: configured.reservation_id.clone(),
             authority,
             execution,
         };
-        if prepared_zec_by_offer
+        if prepared_by_offer
             .insert(configured.offer_id.as_str().into(), entry)
             .is_some()
         {
@@ -411,9 +438,9 @@ pub(super) fn build_initiation_context(
     }
 
     Ok(ConfiguredTakerInitiationContext {
-        execute_prepared_zec: configuration.execute_prepared_zec,
+        execute_prepared: configuration.execute_prepared,
         registry,
-        prepared_zec_by_offer,
+        prepared_by_offer,
     })
 }
 
@@ -524,9 +551,10 @@ pub(super) fn validate_initiation(
     source_ids: &BTreeSet<&str>,
     chat_socket_configured: bool,
 ) -> Result<(), TakerServiceStartupError> {
-    if initiation.prepared_zec.len() > MAX_PREPARED_ZEC_INITIATIONS
+    let entry_count = initiation.entries().count();
+    if entry_count > MAX_PREPARED_INITIATIONS
         || !validate_normalized_absolute(&initiation.registry_database)
-        || (!initiation.prepared_zec.is_empty() && !chat_socket_configured)
+        || (entry_count > 0 && !chat_socket_configured)
     {
         return Err(TakerServiceStartupError::InvalidConfiguration);
     }
@@ -535,7 +563,7 @@ pub(super) fn validate_initiation(
     let mut offers = BTreeSet::new();
     let mut reservations = BTreeSet::new();
     let mut paths = BTreeSet::from([initiation.registry_database.as_path()]);
-    for prepared in &initiation.prepared_zec {
+    for (_, prepared) in initiation.entries() {
         if !source_ids.contains(prepared.source_id.as_ref())
             || !swaps.insert(prepared.swap_id.as_str())
             || !offers.insert(prepared.offer_id.as_str())

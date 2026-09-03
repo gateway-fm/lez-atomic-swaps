@@ -11,6 +11,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::{
+    AuthenticatedOfferRefV1, BtcChatCompleteRequestV1, BtcChatCompleteRequestV2,
+    BtcChatCompleteResponseV1, BtcChatCompleteResponseV2, BtcChatProposalV1, BtcChatProposalV2,
+    BtcChatProposeRequestV1, BtcChatProposeRequestV2, DeliveryOfferQueryV1, RunLocalDelivery,
+    call_local_chat_rpc,
+    secure_file::{load_raw_secret, read_private_file, read_private_file_snapshot},
+};
 use anyhow::{Context as _, ensure};
 use btc_reference_actor::{
     ActorConfig, ActorRole, BtcActorProvisionV1, provision_btc_taker_actor_from_config,
@@ -22,15 +29,9 @@ use lez_btc_swap_sdk::{
     BtcRoleContributionV1, MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES,
     derive_btc_pre_session_id_v1,
 };
-use lez_swap_core::{Pair, Participant, SwapDirection};
+use lez_swap_core::{Pair, Participant, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_btc_chat_swap_id};
-use crate::{
-    BtcChatCompleteRequestV1, BtcChatCompleteRequestV2, BtcChatCompleteResponseV1,
-    BtcChatCompleteResponseV2, BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1,
-    BtcChatProposeRequestV2, DeliveryOfferQueryV1, RunLocalDelivery, call_local_chat_rpc,
-    secure_file::{load_raw_secret, read_private_file},
-};
 use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -143,29 +144,78 @@ struct BtcAcceptanceReceiptV1 {
 ///
 /// Returns the first failed step with context suitable for the owner CLI.
 pub async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAcceptanceOutput> {
+    take_btc_inner(input, None, None).await
+}
+
+/// Runs exact-offer BTC acceptance using an already authenticated offer and an
+/// already digest-pinned Taker actor configuration.
+///
+/// The Taker Node's Bitcoin route calls this so acceptance and provisioning
+/// keep the caller's authenticated authority instead of reopening Delivery or
+/// the source configuration path.
+///
+/// # Errors
+///
+/// Returns the first failed step with context suitable for the owner CLI.
+pub async fn take_btc_with_authenticated_offer_and_actor_config(
+    input: BtcTakeInput<'_>,
+    authenticated_offer: &AuthenticatedOfferRefV1,
+    source_actor_config: &ActorConfig,
+) -> anyhow::Result<BtcAcceptanceOutput> {
+    take_btc_inner(input, Some(authenticated_offer), Some(source_actor_config)).await
+}
+
+#[allow(clippy::too_many_lines)]
+async fn take_btc_inner(
+    input: BtcTakeInput<'_>,
+    authenticated_offer: Option<&AuthenticatedOfferRefV1>,
+    source_actor_config: Option<&ActorConfig>,
+) -> anyhow::Result<BtcAcceptanceOutput> {
     validate_acceptance_paths(&input)?;
     let offer_id = MakerOfferId::new(input.offer_id)?;
     let reservation_id = RequestId::new(input.reservation_id)?;
     ensure!(input.foreign_units > 0, "BTC principal must be nonzero");
 
     match fs::symlink_metadata(input.agreement_output_file) {
-        Ok(_) => return resume_persisted_btc(&input, offer_id, reservation_id).await,
+        Ok(_) => {
+            return resume_persisted_btc(&input, offer_id, reservation_id, source_actor_config)
+                .await;
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error).context("inspect persisted BTC agreement"),
     }
 
     let route = MakerRouteV1::new(Pair::Bitcoin, input.direction)?;
-    let selected = input
-        .delivery
-        .context("fresh BTC acceptance requires Delivery")?
-        .discover(&DeliveryOfferQueryV1::for_route(
-            route,
-            input.now_unix_seconds,
-        ))
-        .await?
-        .into_iter()
-        .find(|candidate| candidate.offer().id() == &offer_id)
-        .context("selected BTC offer is unavailable, expired, or not authentic")?;
+    let discovered = if authenticated_offer.is_none() {
+        Some(
+            input
+                .delivery
+                .context("fresh BTC acceptance requires Delivery")?
+                .discover(&DeliveryOfferQueryV1::for_route(
+                    route,
+                    input.now_unix_seconds,
+                ))
+                .await?
+                .into_iter()
+                .find(|candidate| candidate.offer().id() == &offer_id)
+                .context("selected BTC offer is unavailable, expired, or not authentic")?,
+        )
+    } else {
+        None
+    };
+    let selected = match authenticated_offer {
+        Some(offer) => offer,
+        None => discovered
+            .as_ref()
+            .context("selected BTC offer is unavailable")?,
+    };
+    ensure!(
+        selected.offer().id() == &offer_id
+            && selected.offer().route() == route
+            && selected.offer().created_at_unix_seconds() <= input.now_unix_seconds
+            && input.now_unix_seconds < selected.offer().expires_at_unix_seconds(),
+        "authenticated BTC offer does not match the selected route or is not live"
+    );
     let expected_lez_units = selected.offer().quote_foreign_amount(input.foreign_units)?;
     let draft_wire = read_private_file(
         input.unsigned_draft_file,
@@ -296,6 +346,7 @@ pub async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAcceptanceOu
         proposal,
         maker_proposal,
         taker_secret,
+        source_actor_config,
     )
     .await
 }
@@ -386,6 +437,7 @@ fn validate_fresh_draft(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn complete_btc(
     input: &BtcTakeInput<'_>,
     offer_id: MakerOfferId,
@@ -393,6 +445,7 @@ async fn complete_btc(
     proposal: BtcChatProposalV1,
     maker_proposal: BtcMakerAgreementProposalV1,
     mut taker_secret: SecretKey,
+    source_actor_config: Option<&ActorConfig>,
 ) -> anyhow::Result<BtcAcceptanceOutput> {
     let secp = Secp256k1::signing_only();
     let mut signing_aux = [0_u8; 32];
@@ -447,7 +500,7 @@ async fn complete_btc(
             agreement_binding: Some(binding),
         });
     }
-    let provisioned = provision_taker_actor(input, &final_wire)?;
+    let provisioned = provision_taker_actor(input, &final_wire, source_actor_config)?;
     let completion = complete_with_maker(
         input,
         &offer_id,
@@ -477,6 +530,7 @@ async fn resume_persisted_btc(
     input: &BtcTakeInput<'_>,
     offer_id: MakerOfferId,
     reservation_id: RequestId,
+    source_actor_config: Option<&ActorConfig>,
 ) -> anyhow::Result<BtcAcceptanceOutput> {
     let final_wire = read_private_file(
         input.agreement_output_file,
@@ -540,7 +594,7 @@ async fn resume_persisted_btc(
             agreement_binding: Some(binding),
         });
     }
-    let provisioned = provision_taker_actor(input, &final_wire)?;
+    let provisioned = provision_taker_actor(input, &final_wire, source_actor_config)?;
     let completion = complete_with_maker(input, &offer_id, &reservation_id, 2, &final_wire).await?;
     validate_completion(&completion, &agreement)?;
     let replay = ReplayOutput {
@@ -672,6 +726,7 @@ fn bind_taker_role(
 fn provision_taker_actor(
     input: &BtcTakeInput<'_>,
     final_wire: &[u8],
+    source_actor_config: Option<&ActorConfig>,
 ) -> anyhow::Result<BtcActorProvisionV1> {
     let source_file = input
         .source_taker_config_file
@@ -679,14 +734,22 @@ fn provision_taker_actor(
     let actor_root = input
         .taker_actor_root
         .context("legacy BTC acceptance requires a Taker actor root")?;
-    let source = ActorConfig::load_private(source_file)
-        .map_err(|_| anyhow::anyhow!("BTC source Taker config is unavailable"))?;
+    // A caller that already pinned the source configuration by digest keeps
+    // that authority; the CLI reopens the path.
+    let loaded;
+    let source = if let Some(source) = source_actor_config {
+        source
+    } else {
+        loaded = ActorConfig::load_private(source_file)
+            .map_err(|_| anyhow::anyhow!("BTC source Taker config is unavailable"))?;
+        &loaded
+    };
     ensure!(
         source.role() == ActorRole::Taker,
         "BTC source actor is not Taker"
     );
     let provisioned = provision_btc_taker_actor_from_config(
-        &source,
+        source,
         final_wire,
         input.now_unix_seconds,
         actor_root,
@@ -804,6 +867,53 @@ pub fn load_btc_taker_actor_from_receipt(path: &Path) -> anyhow::Result<ActorCon
             && config.state_db() == receipt.actor_state_database
             && config.agreement_sha256() == Some(agreement_sha256),
         "receipt-bound BTC Taker actor semantics changed"
+    );
+    Ok(config)
+}
+
+/// Reloads the receipt-bound BTC Taker actor for the Node, re-pinning the
+/// receipt's digest and file identity and confining every path to the actor
+/// root the service configured.
+///
+/// # Errors
+///
+/// Returns an error when the receipt, its identity, or the bundle it names
+/// changed, or when a path escapes the configured actor root.
+pub fn load_btc_taker_actor_from_receipt_for_monitor(
+    path: &Path,
+    expected_actor_root: &Path,
+    expected_swap_id: &SwapId,
+    expected_sha256: [u8; 32],
+    expected_device: u64,
+    expected_inode: u64,
+) -> anyhow::Result<ActorConfig> {
+    let snapshot = read_private_file_snapshot(
+        path,
+        MAX_TAKER_RECEIPT_BYTES,
+        "BTC Taker acceptance receipt",
+    )?;
+    let identity = snapshot.identity();
+    ensure!(
+        Sha256::digest(snapshot.bytes()).as_slice() == expected_sha256
+            && identity.device() == expected_device
+            && identity.inode() == expected_inode,
+        "BTC Taker acceptance receipt identity changed"
+    );
+    let receipt: BtcAcceptanceReceiptV1 =
+        serde_json::from_slice(snapshot.bytes()).context("decode BTC Taker acceptance receipt")?;
+    ensure!(
+        receipt.swap_id.as_ref() == expected_swap_id.as_str()
+            && receipt.actor_config_file.starts_with(expected_actor_root)
+            && receipt
+                .actor_state_database
+                .starts_with(expected_actor_root),
+        "BTC Taker acceptance receipt does not match service authority"
+    );
+    let config = load_btc_taker_actor_from_receipt(path)?;
+    ensure!(
+        config.supervised_swap_id()? == *expected_swap_id
+            && config.state_db().starts_with(expected_actor_root),
+        "receipt-bound BTC Taker actor is outside service authority"
     );
     Ok(config)
 }

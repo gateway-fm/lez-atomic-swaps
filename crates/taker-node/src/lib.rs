@@ -33,7 +33,6 @@ pub use taker_service_config::{
     SystemTakerTrustedTime, TakerServiceStartupError, load_taker_service_backend,
     load_taker_service_context,
 };
-#[cfg(feature = "pair-zec")]
 pub use taker_service_config::{
-    ConfiguredTakerInitiationContext, PreparedZecExecutionV1, PreparedZecTakerInitiationV1,
+    ConfiguredTakerInitiationContext, PreparedExecutionV1, PreparedTakerInitiationV1,
 };

@@ -1,17 +1,13 @@
 //! Owner-private startup configuration for the Taker Node: discovery-only by
 //! default, prepared-route lifecycle when a validated catalog is configured.
-//! The prepared-ZEC catalog lives in [`prepared_zec`] under the `pair-zec` feature.
+//! The prepared catalog lives in [`prepared`]; its Zcash entries need `pair-zec`.
 
-#[cfg(feature = "pair-zec")]
-mod prepared_zec;
+mod prepared;
 
-#[cfg(feature = "pair-zec")]
-use prepared_zec::InitiationConfigurationV1;
-#[cfg(feature = "pair-zec")]
-pub(crate) use prepared_zec::PreparedReceiptBindingV1;
-#[cfg(feature = "pair-zec")]
-pub use prepared_zec::{
-    ConfiguredTakerInitiationContext, PreparedZecExecutionV1, PreparedZecTakerInitiationV1,
+use prepared::InitiationConfigurationV1;
+pub(crate) use prepared::PreparedReceiptBindingV1;
+pub use prepared::{
+    ConfiguredTakerInitiationContext, PreparedExecutionV1, PreparedTakerInitiationV1,
 };
 
 use std::{
@@ -112,12 +108,10 @@ pub type ConfiguredTakerFacadeBackend =
 /// Complete owner-private dependencies for the isolated Taker service.
 pub struct ConfiguredTakerServiceContext {
     backend: ConfiguredTakerFacadeBackend,
-    #[cfg(feature = "pair-zec")]
     initiation: Option<ConfiguredTakerInitiationContext>,
 }
 
 impl ConfiguredTakerServiceContext {
-    #[cfg(feature = "pair-zec")]
     /// Borrows the optional mutation context.
     #[must_use]
     pub const fn initiation(&self) -> Option<&ConfiguredTakerInitiationContext> {
@@ -130,7 +124,6 @@ impl ConfiguredTakerServiceContext {
         self.backend
     }
 
-    #[cfg(feature = "pair-zec")]
     /// Consumes the context into its read and optional mutation dependencies.
     #[must_use]
     pub fn into_parts(
@@ -147,7 +140,6 @@ impl fmt::Debug for ConfiguredTakerServiceContext {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = formatter.debug_struct("ConfiguredTakerServiceContext");
         debug.field("backend", &self.backend);
-        #[cfg(feature = "pair-zec")]
         debug.field("initiation_configured", &self.initiation.is_some());
         debug.finish_non_exhaustive()
     }
@@ -184,12 +176,11 @@ pub fn load_taker_service_context(
         delivery_sources.push(subscriber);
     }
 
-    #[cfg(feature = "pair-zec")]
     let initiation = configuration
         .initiation
         .as_ref()
         .map(|configured| {
-            prepared_zec::build_initiation_context(
+            prepared::build_initiation_context(
                 configured,
                 &source_bindings,
                 &delivery_sources,
@@ -211,7 +202,6 @@ pub fn load_taker_service_context(
     .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
     Ok(ConfiguredTakerServiceContext {
         backend,
-        #[cfg(feature = "pair-zec")]
         initiation,
     })
 }
@@ -229,11 +219,8 @@ pub fn load_taker_service_backend(
     path: &Path,
 ) -> Result<ConfiguredTakerFacadeBackend, TakerServiceStartupError> {
     let context = load_taker_service_context(path)?;
-    #[cfg(feature = "pair-zec")]
-    {
-        if context.initiation.is_some() {
-            return Err(TakerServiceStartupError::InvalidConfiguration);
-        }
+    if context.initiation.is_some() {
+        return Err(TakerServiceStartupError::InvalidConfiguration);
     }
     Ok(context.into_backend())
 }
@@ -266,15 +253,12 @@ fn validate_configuration(
         }
     }
 
-    #[cfg(feature = "pair-zec")]
-    {
-        if let Some(initiation) = &configuration.initiation {
-            prepared_zec::validate_initiation(
-                initiation,
-                &source_ids,
-                configuration.chat_socket.is_some(),
-            )?;
-        }
+    if let Some(initiation) = &configuration.initiation {
+        prepared::validate_initiation(
+            initiation,
+            &source_ids,
+            configuration.chat_socket.is_some(),
+        )?;
     }
     Ok(())
 }
@@ -287,7 +271,6 @@ struct StartupConfigurationV1 {
     #[serde(default)]
     chat_socket: Option<PathBuf>,
     maximum_offers: usize,
-    #[cfg(feature = "pair-zec")]
     #[serde(default)]
     initiation: Option<InitiationConfigurationV1>,
 }
