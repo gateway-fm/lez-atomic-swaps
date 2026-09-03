@@ -241,6 +241,32 @@ services:
     logging: *default-logging
 
   # ─── swap application ───────────────────────────────────────────────────
+  # Loopback routes inside bitcoin-core's network namespace: the role sidecars
+  # (and only they) accept literal-loopback LEZ node endpoints, so the
+  # sequencer and indexer appear at 127.0.0.1 for every Node sharing the
+  # namespace. Pure plumbing; it holds no keys and sees no secrets.
+  lez-routes:
+    image: alpine/socat:1.8.0.0
+    container_name: lez-routes
+    depends_on:
+      bitcoin-core:
+        condition: service_healthy
+      sequencer:
+        condition: service_healthy
+      indexer:
+        condition: service_healthy
+    network_mode: "service:bitcoin-core"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
+        exec socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+    logging: *default-logging
+
   maker-init:
     image: debian:bookworm-slim
     container_name: lez-maker-init
@@ -264,31 +290,28 @@ services:
         condition: service_healthy
       indexer:
         condition: service_healthy
-    command:
-      - /bin/bash
-      - -c
-      - |
-        rm -f /run/lez/maker/node.sock /run/lez/maker/ready /run/lez/maker/chat.sock
-        if [ ! -s /var/lib/lez/maker/delivery-signing.key ]; then
-          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /var/lib/lez/maker/delivery-signing.key
-          chmod 0600 /var/lib/lez/maker/delivery-signing.key
-        fi
-        identity="$$(/usr/local/bin/lez-maker-cli delivery-identity \
-          --signing-key-file /var/lib/lez/maker/delivery-signing.key \
-          | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
-        [ -n "$${identity}" ] || { echo "could not publish maker identity" >&2; exit 1; }
-        printf '%s\n' "$${identity}" > /delivery/.maker-delivery-identity.pub.tmp
-        chmod 0444 /delivery/.maker-delivery-identity.pub.tmp
-        mv -f /delivery/.maker-delivery-identity.pub.tmp /delivery/maker-delivery-identity.pub
-        exec /usr/local/bin/lez-maker-node --config /run-config/maker-node.json
+      lez-routes:
+        condition: service_started
+    # Shares bitcoin-core's network namespace: the actor and the funding wallet
+    # reach Core at literal loopback, and the role's LEZ sidecar listens on
+    # loopback too. Everything else reaches this Node over its Unix sockets.
+    network_mode: "service:bitcoin-core"
+    command: ["/usr/local/bin/node-entrypoint.sh", "maker"]
+    environment:
+      LEZ_SIDECAR_PORT_BASE: "19000"
+      LEZ_SEQUENCER_URL: http://127.0.0.1:3040
+      LEZ_INDEXER_URL: http://127.0.0.1:8779
+      LEZ_V02_CHANNEL_ID: ${LEZ_V02_CHANNEL_ID}
+      LEZ_BTC_WALLET: lez-maker
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
       - delivery_dir:/delivery
-      - ./assets/maker-node.json:/run-config/maker-node.json:ro
+      - ./runtime/lez/maker:/run-lez-identity:ro
+      - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
+      - ${LEZ_MARKET_ROOT}:/run-market:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
-    networks: [chains]
     user: lez
     read_only: true
     security_opt: ["no-new-privileges:true"]
@@ -306,47 +329,10 @@ services:
     image: lez-taker-node:local
     container_name: lez-taker-init
     user: "0:0"
-    depends_on:
-      maker-node:
-        condition: service_healthy
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
-      - delivery_dir:/delivery:ro
-    command:
-      - /bin/bash
-      - -c
-      - |
-        chown 4713:4713 /var/lib/lez/taker /run/lez/taker
-        chmod 0700 /run/lez/taker
-        if [ -s /var/lib/lez/taker/role.json ]; then
-          echo "taker config already present (prepared lane); keeping it"
-          exit 0
-        fi
-        for _ in $(seq 1 60); do
-          [ -s /delivery/maker-delivery-identity.pub ] && break
-          sleep 1
-        done
-        identity="$$(tr -d ' \n' < /delivery/maker-delivery-identity.pub)"
-        if ! printf '%s\n' "$$identity" | grep -Eq '^(02|03)[0-9a-f]{64}$$'; then
-          echo "maker public identity is unavailable or invalid" >&2; exit 1
-        fi
-        echo "maker delivery identity: $$identity"
-        cat > /var/lib/lez/taker/role.json <<JSON
-        {
-          "schema_version": 1,
-          "delivery_sources": [
-            {
-              "directory": "/delivery",
-              "maker_public_key": "$$identity",
-              "source_id": "local-maker"
-            }
-          ],
-          "maximum_offers": 16
-        }
-        JSON
-        chown 4713:4713 /var/lib/lez/taker/role.json
-        chmod 0600 /var/lib/lez/taker/role.json
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/taker /run/lez/taker && chmod 0700 /var/lib/lez/taker /run/lez/taker"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -357,19 +343,26 @@ services:
     depends_on:
       taker-init:
         condition: service_completed_successfully
-    command:
-      - /bin/bash
-      - -c
-      - rm -f /run/lez/taker/node.sock /run/lez/taker/ready; exec /usr/local/bin/lez-taker-node --config /run-config/taker-node.json
+      maker-node:
+        condition: service_healthy
+    network_mode: "service:bitcoin-core"
+    command: ["/usr/local/bin/node-entrypoint.sh", "taker"]
+    environment:
+      LEZ_SIDECAR_PORT_BASE: "19500"
+      LEZ_SEQUENCER_URL: http://127.0.0.1:3040
+      LEZ_INDEXER_URL: http://127.0.0.1:8779
+      LEZ_V02_CHANNEL_ID: ${LEZ_V02_CHANNEL_ID}
+      LEZ_BTC_WALLET: lez-taker
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
       - delivery_dir:/delivery:ro
       - maker_socket:/run/lez/maker
-      - ./assets/taker-node.json:/run-config/taker-node.json:ro
+      - ./runtime/lez/taker:/run-lez-identity:ro
+      - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
+      - ${LEZ_MARKET_ROOT}:/run-market:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
-    networks: [chains]
     user: lez
     read_only: true
     security_opt: ["no-new-privileges:true"]

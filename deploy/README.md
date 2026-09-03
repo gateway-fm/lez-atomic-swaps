@@ -174,8 +174,9 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 | `sequencer` / `indexer` | `images/lez-services` | built from pinned `logos-execution-zone` v0.2.0 (a58fbce), native rebuild + arm64 r0vm |
 | `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves any certified run's transaction hashes |
 | `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
-| `maker-node` | `images/maker-node` | Maker-only image: canonical Node, CLI, Chat gateway, strict versioned config, and owner socket |
-| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, authenticated discovery, durable admission, monitoring, and fenced terminal actions |
+| `lez-routes` | `alpine/socat` | loopback routes inside `bitcoin-core`'s network namespace (127.0.0.1:3040 → sequencer, :8779 → indexer): the role sidecars accept only literal-loopback LEZ endpoints |
+| `maker-node` | `images/maker-node` | Maker-only image: canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; shares `bitcoin-core`'s network namespace so the actor, the funding wallet and the sidecars reach Core and the LEZ routes at loopback |
+| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, the role sidecar and `node-entrypoint.sh`; same shared namespace |
 | `btc-demo-launcher` | `images/btc-demo-launcher` | local-demo-only allowlisted `RunSwapJobV1` boundary; sole component with the Docker socket |
 | `btc-demo-controller` | `images/btc-demo-controller` | unprivileged owner-local SQLite wallet market; calls the launcher over a mode-0600 UDS and publishes validated evidence |
 | `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass |
@@ -225,6 +226,48 @@ The external `runner-work` root must be mounted into `lez-runner-arm` at the
 same absolute path recorded in `runtime/runtime.env`. The runner talks to the
 host Docker daemon, so nested bind sources such as `runner-work/lez-source`
 must resolve identically on the host and inside that container.
+
+## Node-owned Bitcoin swaps (ADR 0213)
+
+Both Nodes settle a BTC↔LEZ swap themselves: no runner, no demo controller.
+`node-entrypoint.sh` renders each role's inputs into its state volume — the
+LEZ identity (`runtime/lez/<role>`, the Maker is wallet `maker-munich-01`, the
+Taker `taker-zurich-01`), the Bitcoin RPC cookie and, once
+`market-bootstrap.sh` has recorded the escrow deployment in
+`runner-work/market/market-bootstrap.env`, the `btc-role.json` that names the
+Bitcoin network, endpoints, wallet, policy, LEZ chain identity and the sidecar
+program. Chains are chosen only by those inputs. Each Node spawns one LEZ role
+sidecar per swap (own loopback port, capability, state directory and log under
+the swap directory; run id derived from the reservation id) because a sidecar
+holds one durable escrow and one claim reservation per state directory. The
+Maker runs with `--chat-socket`, `--btc-role-config` and `--actor-supervisor`;
+the Taker's `role.json` points at the Maker's Chat socket and the same role
+config.
+
+```
+scripts/node-swap.sh            # publish an offer, take it, lock BTC, wait for both actors
+scripts/node-swap.sh --no-wait  # stop after the Taker's lock
+```
+
+The Taker's `taker_swap_initiate_v1` performs the reservation
+(`btc_reserve_v1`), plans its Bitcoin funding from Core wallet `lez-taker`,
+prepares its LEZ claim through its sidecar, composes the draft, negotiates
+(`btc_chat_propose_v2` / `btc_chat_complete_v2`), runs the three ceremony
+rounds and activates its actor; `taker_swap_lock_v1` broadcasts the exact
+funding transaction. The Maker's supervisor drives its actor (LEZ funding,
+Bitcoin claim) as the actor's status calls for it; the Taker Node's observer
+drives its actor's chain observations and, after `taker_swap_claim_v1`, the
+claim's follow-up, so `taker_swap_monitor_v1` reaches `completed` without
+the runner. `maker_actor_monitor_v1` and `taker_swap_monitor_v1` show
+progress.
+
+Bitcoin Core wallets: `lez-taker`, `lez-maker` (descriptor wallets) and
+`lez-miner`, which imports the deterministic mining key
+(`rawtr(cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA)`) so the
+mined coins fund the Taker; regtest's subsidy is exhausted past height 11k, so
+mining to a fresh address yields nothing. Stage-1 limit: an aborted take
+leaves its swap directory and sidecar behind; the next take is a new
+reservation with its own sidecar, so nothing needs to be reset.
 
 ## Demo boundary
 

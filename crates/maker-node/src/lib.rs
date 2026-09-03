@@ -319,7 +319,9 @@ impl MakerRpc {
     /// ceremony, actor synthesis) for this Maker role.
     #[must_use]
     pub fn with_btc_lifecycle(mut self, lifecycle: BtcMakerLifecycle) -> Self {
-        self.btc_lifecycle = Some(Arc::new(lifecycle));
+        let lifecycle = Arc::new(lifecycle);
+        lifecycle.spawn_sidecar_keepalive();
+        self.btc_lifecycle = Some(lifecycle);
         self
     }
 

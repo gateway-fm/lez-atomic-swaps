@@ -187,7 +187,10 @@ impl BitcoinWallet {
         let address = Address::from_script(&script, self.network).context("contract address")?;
         let amount = Amount::from_sat(value_sat);
         let outputs = serde_json::json!([{ address.to_string(): amount.to_string_in(bitcoin::Denomination::Bitcoin) }]);
-        let options = serde_json::json!({ "replaceable": true, "lockUnspents": true });
+        // Inputs are not locked in the wallet: a plan that never broadcasts (an
+        // aborted take) must not strand the wallet's coins until Core restarts.
+        // One swap at a time per role keeps the plans from colliding.
+        let options = serde_json::json!({ "replaceable": true });
         let funded: FundedPsbt = wallet
             .request(
                 "walletcreatefundedpsbt",

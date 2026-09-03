@@ -16,15 +16,17 @@ use lez_bridge_client::validate_prepared_witnessed_claim;
 use lez_bridge_protocol::PrepareWitnessedClaimResult;
 use lez_btc_role_lifecycle::{
     BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, MakerCeremony,
-    PreparedEscrow, SwapLayout,
+    PreparedEscrow, SwapLayout, SwapSidecar,
     actor::{ActorSynthesis, MakerLockMaterial, activate, synthesize},
     layout::{read_private, write_private_exact},
-    lez::{PlanningTermsInput, agreement_terms, planning_terms},
+    lez::{
+        PlanningTermsInput, agreement_terms, planning_escrow_funding_placeholder, planning_terms,
+    },
+    swap_run_id,
     wire::{
         BtcCeremonyNonceRequestV1, BtcCeremonyNonceResponseV1, BtcCeremonyPartialRequestV1,
         BtcCeremonyPartialResponseV1, BtcCeremonyReserveRequestV1, BtcCeremonyReserveResponseV1,
-        BtcFundingFactsV1, BtcPrepareClaimRequestV1, BtcPrepareClaimResponseV1,
-        BtcReserveRequestV1, BtcReserveResponseV1, BtcSwapPlanV1,
+        BtcFundingFactsV1, BtcReserveRequestV1, BtcReserveResponseV1, BtcSwapPlanV1,
     },
 };
 use lez_btc_swap_sdk::{
@@ -68,6 +70,52 @@ impl BtcMakerLifecycle {
             runtime: BtcRoleRuntime::load(Participant::Maker, config_file)?,
             rounds: tokio::sync::Mutex::new(()),
         })
+    }
+
+    /// Keeps every activated swap's sidecar running (respawning after a Node
+    /// restart) so the supervised actors' LEZ observations have a peer. Runs
+    /// on the current async runtime when one is available.
+    pub fn spawn_sidecar_keepalive(self: &Arc<Self>) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            eprintln!(
+                "maker BTC lifecycle: no async runtime; swap sidecars respawn only on demand"
+            );
+            return;
+        };
+        let lifecycle = Arc::clone(self);
+        handle.spawn(async move {
+            loop {
+                let runtime_root = lifecycle.runtime.config().swaps_root.clone();
+                let lifecycle_for_pass = Arc::clone(&lifecycle);
+                let _ = tokio::task::spawn_blocking(move || {
+                    for swap in lez_btc_role_lifecycle::sidecar::recorded_swaps(&runtime_root)
+                        .unwrap_or_default()
+                    {
+                        if !swap.join("round-ceremony-partial.json").is_file() {
+                            continue;
+                        }
+                        let Some(name) = swap.file_name().and_then(|name| name.to_str()) else {
+                            continue;
+                        };
+                        let Ok(reservation_id) = RequestId::new(name.to_owned()) else {
+                            continue;
+                        };
+                        let layout = lifecycle_for_pass.layout(&reservation_id);
+                        if let Err(error) = SwapSidecar::ensure(
+                            &lifecycle_for_pass.runtime,
+                            &layout,
+                            &reservation_id,
+                        ) {
+                            eprintln!(
+                                "maker BTC lifecycle: sidecar for {name} unavailable: {error:#}"
+                            );
+                        }
+                    }
+                })
+                .await;
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            }
+        });
     }
 
     pub(super) fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
@@ -200,8 +248,18 @@ impl BtcMakerLifecycle {
         Ok(Zeroizing::new(key.secret_bytes()))
     }
 
-    fn sidecar(&self) -> RpcResult<LezSidecar> {
-        LezSidecar::connect(&self.runtime).map_err(|error| internal(&error))
+    /// The swap's own sidecar (spawned on first use, respawned when gone).
+    fn sidecar(
+        &self,
+        layout: &SwapLayout,
+        reservation_id: &RequestId,
+    ) -> RpcResult<(SwapSidecar, LezSidecar)> {
+        let sidecar = SwapSidecar::ensure(&self.runtime, layout, reservation_id)
+            .map_err(|error| internal(&error))?;
+        let client = sidecar
+            .client(&self.runtime)
+            .map_err(|error| internal(&error))?;
+        Ok((sidecar, client))
     }
 
     fn wallet(&self) -> RpcResult<BitcoinWallet> {
@@ -230,11 +288,8 @@ struct ReservationRecordV1 {
     taker_contribution_sha256: [u8; 32],
     plan: BtcSwapPlanV1,
     funding_plan: Option<FundingPlan>,
-    /// The planning escrow's funding id (Maker deposits LEZ).
-    planning_escrow_funding_transaction_id: Option<[u8; 32]>,
     /// The claim hash the Maker prepared (Maker is LEZ claimant).
     maker_claim_message_hash: Option<[u8; 32]>,
-    taker_escrow_funding_transaction_id: Option<[u8; 32]>,
     sessions: Option<LegSessions>,
     actor_activated: bool,
 }
@@ -324,6 +379,7 @@ fn internal(error: &dyn std::fmt::Display) -> ErrorObjectOwned {
 fn plan_is_acceptable(
     plan: &BtcSwapPlanV1,
     runtime: &BtcRoleRuntime,
+    reservation_id: &RequestId,
     now: u64,
     lez_units: u128,
 ) -> Result<(), &'static str> {
@@ -337,8 +393,10 @@ fn plan_is_acceptable(
     if plan.claim_fee_sat != config.bitcoin.claim_fee_sat {
         return Err("plan claim fee differs from policy");
     }
-    if plan.bridge_run_id != runtime.bridge_run_id().as_str() {
-        return Err("plan bridge run id differs from this Node's sidecar run");
+    if swap_run_id(reservation_id).is_ok_and(|expected| plan.bridge_run_id != expected.as_str())
+        || swap_run_id(reservation_id).is_err()
+    {
+        return Err("plan bridge run id is not the swap's derived run id");
     }
     let within = |value: u64, offset: u64| {
         let expected = now.saturating_add(offset);
@@ -424,8 +482,14 @@ pub(super) async fn reserve(
     let lez_units = offer
         .quote_foreign_amount(request.plan.foreign_units)
         .map_err(invalid_request)?;
-    plan_is_acceptable(&request.plan, &lifecycle.runtime, now, lez_units)
-        .map_err(invalid_request)?;
+    plan_is_acceptable(
+        &request.plan,
+        &lifecycle.runtime,
+        &request.reservation_id,
+        now,
+        lez_units,
+    )
+    .map_err(invalid_request)?;
     let lez_refund_seconds = lez_refund_seconds(request.direction, &request.plan);
     if request.plan.lez_refund_at_ms != lez_refund_seconds.saturating_mul(1000) {
         return Err(invalid_request(
@@ -482,9 +546,11 @@ pub(super) async fn reserve(
         .map_err(invalid_request)?;
     let swap_id = *pair.swap_id();
 
-    // Facts only the Maker holds.
+    // Facts only the Maker holds. The LEZ escrow itself waits for the bound
+    // agreement: the sidecar plans it under the final terms hash and holds one
+    // active escrow, so nothing is prepared against planning terms.
     let mut funding_plan = None;
-    let mut planning_escrow = None;
+    let mut maker_claim_message_hash = None;
     match request.direction {
         SwapDirection::TakerSellsLez => {
             let contract = P2trSwapOutput::new(
@@ -513,17 +579,16 @@ pub(super) async fn reserve(
             )
             .map_err(|error| internal(&error))?;
             funding_plan = Some(plan);
-        }
-        SwapDirection::TakerSellsForeign => {
+            // The Maker claims LEZ: prepare the claim now; the draft binds its hash.
             let terms = planning_terms(&PlanningTermsInput {
                 swap_id,
                 terms_hash: expected_pre_session,
-                depositor: Participant::Maker,
-                depositor_account: lifecycle.runtime.lez_owner_account(),
-                claimant: Participant::Taker,
-                claimant_account: *participants
+                depositor: Participant::Taker,
+                depositor_account: *participants
                     .for_participant(Participant::Taker)
                     .lez_owner_account(),
+                claimant: Participant::Maker,
+                claimant_account: lifecycle.runtime.lez_owner_account(),
                 aggregate_x_only: aggregate,
                 amount: lez_units,
                 refund_at_ms: request.plan.lez_refund_at_ms,
@@ -533,13 +598,19 @@ pub(super) async fn reserve(
                     .authenticated_transfer_program_id(),
             })
             .map_err(|error| internal(&error))?;
-            let escrow = lifecycle
-                .sidecar()?
-                .prepare_escrow(terms)
+            let (_, sidecar) = lifecycle.sidecar(&layout, &request.reservation_id)?;
+            let prepared = sidecar
+                .prepare_claim(terms, planning_escrow_funding_placeholder(&swap_id))
                 .await
                 .map_err(|error| internal(&error))?;
-            planning_escrow = Some(escrow.funding_transaction_id());
+            write_private_exact(
+                &layout.prepared_claim_file(),
+                &serde_json::to_vec(&prepared).map_err(|error| internal(&error))?,
+            )
+            .map_err(|error| internal(&error))?;
+            maker_claim_message_hash = Some(*prepared.claim.message_hash.as_bytes());
         }
+        SwapDirection::TakerSellsForeign => {}
     }
     let record = ReservationRecordV1 {
         schema_version: 1,
@@ -551,9 +622,7 @@ pub(super) async fn reserve(
         taker_contribution_sha256: Sha256::digest(&request.taker_contribution_wire).into(),
         plan: request.plan.clone(),
         funding_plan: funding_plan.clone(),
-        planning_escrow_funding_transaction_id: planning_escrow,
-        maker_claim_message_hash: None,
-        taker_escrow_funding_transaction_id: None,
+        maker_claim_message_hash,
         sessions: None,
         actor_activated: false,
     };
@@ -568,93 +637,11 @@ pub(super) async fn reserve(
             value_sat: plan.value_sat,
             anchor_height: plan.anchor_height,
         }),
-        maker_lez_escrow_funding_transaction_id: planning_escrow,
+        maker_claim_message_hash,
         swap_id,
     };
     record_round(&layout, "reserve", digest, &response)?;
     Ok(response)
-}
-
-pub(super) async fn prepare_claim(
-    request: BtcPrepareClaimRequestV1,
-    context: Arc<MakerRpc>,
-) -> RpcResult<BtcPrepareClaimResponseV1> {
-    if request.schema_version != 1 {
-        return Err(invalid_request("unsupported BTC claim preparation"));
-    }
-    let lifecycle = context
-        .btc_lifecycle
-        .as_ref()
-        .ok_or_else(|| invalid_request("maker BTC lifecycle is unavailable"))?;
-    let _serial = lifecycle.rounds.lock().await;
-    let layout = lifecycle.layout(&request.reservation_id);
-    if !layout.exists() {
-        return Err(invalid_request("unknown BTC reservation"));
-    }
-    let digest = request_digest(&request)?;
-    if let Some(response) = replay::<BtcPrepareClaimResponseV1>(&layout, "prepare-claim", digest)? {
-        return Ok(BtcPrepareClaimResponseV1 {
-            was_replay: true,
-            ..response
-        });
-    }
-    let mut record = ReservationRecordV1::load(&layout).map_err(|error| internal(&error))?;
-    if record.direction != SwapDirection::TakerSellsLez {
-        return Err(invalid_request(
-            "the Maker is not the LEZ claimant for this reservation",
-        ));
-    }
-    let terms = planning_terms(&PlanningTermsInput {
-        swap_id: record.swap_id,
-        terms_hash: record.pre_session_id,
-        depositor: Participant::Taker,
-        depositor_account: record_taker_owner_account(&layout, &record)?,
-        claimant: Participant::Maker,
-        claimant_account: lifecycle.runtime.lez_owner_account(),
-        aggregate_x_only: record.aggregate_x_only,
-        amount: record.plan.lez_units,
-        refund_at_ms: record.plan.lez_refund_at_ms,
-        authenticated_transfer_program_id: *lifecycle
-            .runtime
-            .lez_identity()
-            .authenticated_transfer_program_id(),
-    })
-    .map_err(|error| internal(&error))?;
-    let prepared = lifecycle
-        .sidecar()?
-        .prepare_claim(terms, request.taker_lez_escrow_funding_transaction_id)
-        .await
-        .map_err(|error| internal(&error))?;
-    let hash = *prepared.claim.message_hash.as_bytes();
-    record.maker_claim_message_hash = Some(hash);
-    record.taker_escrow_funding_transaction_id =
-        Some(request.taker_lez_escrow_funding_transaction_id);
-    record.store(&layout).map_err(|error| internal(&error))?;
-    let response = BtcPrepareClaimResponseV1 {
-        schema_version: 1,
-        was_replay: false,
-        claim_message_hash: hash,
-    };
-    record_round(&layout, "prepare-claim", digest, &response)?;
-    Ok(response)
-}
-
-/// The Taker's LEZ owner account, from the Taker contribution recorded at
-/// reservation time (kept next to the reservation record).
-fn record_taker_owner_account(
-    layout: &SwapLayout,
-    record: &ReservationRecordV1,
-) -> RpcResult<[u8; 32]> {
-    let wire = read_private(
-        &layout.root().join("taker-contribution.borsh"),
-        MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES,
-    )
-    .map_err(|error| internal(&error))?;
-    if <[u8; 32]>::from(Sha256::digest(&wire)) != record.taker_contribution_sha256 {
-        return Err(internal(&"recorded Taker contribution digest mismatch"));
-    }
-    let taker = BtcRoleContributionV1::from_wire(&wire).map_err(|error| internal(&error))?;
-    Ok(*taker.body().participant_identity().lez_owner_account())
 }
 
 fn load_bound_agreement(layout: &SwapLayout) -> RpcResult<(BtcAgreementV1, Vec<u8>)> {
@@ -706,7 +693,7 @@ pub(super) async fn ceremony_reserve(
         ));
     }
     let final_terms = agreement_terms(&agreement).map_err(|error| internal(&error))?;
-    let sidecar = lifecycle.sidecar()?;
+    let (_, sidecar) = lifecycle.sidecar(&layout, &request.reservation_id)?;
     let mut maker_prepared_claim = None;
     match agreement.lez_claimant() {
         Participant::Taker => {
@@ -718,7 +705,8 @@ pub(super) async fn ceremony_reserve(
             }
             let prepared: PrepareWitnessedClaimResult = serde_json::from_slice(bytes)
                 .map_err(|_| invalid_request("prepared claim is not valid JSON"))?;
-            if prepared.context.run_id != *lifecycle.runtime.bridge_run_id()
+            if swap_run_id(&request.reservation_id)
+                .is_ok_and(|expected| prepared.context.run_id != expected)
                 || prepared.context.sidecar_role
                     != lez_btc_role_lifecycle::config::bridge_participant(Participant::Taker)
                 || prepared.context.request_id != prepared.claim.preparation_request_id
@@ -734,20 +722,15 @@ pub(super) async fn ceremony_reserve(
                 .map_err(|error| internal(&error))?;
         }
         Participant::Maker => {
-            let escrow_funding = record.taker_escrow_funding_transaction_id.ok_or_else(|| {
-                invalid_request("the Taker never asked for the Maker's claim preparation")
-            })?;
-            let prepared = sidecar
-                .prepare_claim(final_terms.clone(), escrow_funding)
-                .await
+            // Prepared at reservation; its hash is what the agreement binds.
+            let bytes = read_private(&layout.prepared_claim_file(), MAX_PREPARED_CLAIM_BYTES)
                 .map_err(|error| internal(&error))?;
+            let prepared: PrepareWitnessedClaimResult =
+                serde_json::from_slice(&bytes).map_err(|error| internal(&error))?;
             if prepared.claim.message_hash.as_bytes() != agreement.lez_terms().claim_message_hash()
             {
-                return Err(internal(&"final claim hash differs from the agreement"));
+                return Err(internal(&"prepared claim hash differs from the agreement"));
             }
-            let bytes = serde_json::to_vec(&prepared).map_err(|error| internal(&error))?;
-            write_private_exact(&layout.prepared_claim_file(), &bytes)
-                .map_err(|error| internal(&error))?;
             maker_prepared_claim = Some(bytes);
         }
     }
@@ -882,7 +865,7 @@ pub(super) async fn ceremony_partial(
         .map_err(|error| invalid_request(format!("ceremony partial round failed: {error}")))?;
 
     // Both legs are presigned: synthesize and activate the Maker actor.
-    let sidecar = lifecycle.sidecar()?;
+    let (swap_sidecar, sidecar) = lifecycle.sidecar(&layout, &request.reservation_id)?;
     let start_height = sidecar
         .finalized_height()
         .await
@@ -913,6 +896,7 @@ pub(super) async fn ceremony_partial(
         layout: &layout,
         agreement: &agreement,
         agreement_wire: &agreement_wire,
+        sidecar: &swap_sidecar,
         sessions,
         accepted_at_unix_seconds: accepted_at,
         lez_discovery_start_height: start_height,
@@ -966,10 +950,6 @@ pub(super) fn register_btc_lifecycle_methods(
     module.register_async_method("btc_reserve_v1", |params, context, _| async move {
         let request: BtcReserveRequestV1 = params.one()?;
         reserve(request, context).await
-    })?;
-    module.register_async_method("btc_prepare_claim_v1", |params, context, _| async move {
-        let request: BtcPrepareClaimRequestV1 = params.one()?;
-        prepare_claim(request, context).await
     })?;
     module.register_async_method("btc_ceremony_reserve_v1", |params, context, _| async move {
         let request: BtcCeremonyReserveRequestV1 = params.one()?;

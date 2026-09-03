@@ -64,6 +64,18 @@ impl ConfiguredTakerInitiationContext {
         self.dynamic_btc.clone()
     }
 
+    /// Node-owned Bitcoin swaps whose actor is activated (receipt bound):
+    /// the swaps the Taker observer keeps driving.
+    pub(crate) fn dynamic_bound_swaps(&self) -> Vec<PreparedTakerInitiationV1> {
+        self.prepared_by_offer
+            .values()
+            .filter(|prepared| {
+                prepared.execution().dynamic() && prepared.execution().receipt_binding().is_some()
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Adds a swap prepared at take time; the same offer may not be prepared twice.
     pub(crate) fn insert_prepared(
         &mut self,
@@ -422,20 +434,34 @@ pub(super) fn build_initiation_context(
         .transpose()?
         .map(std::sync::Arc::new);
     if let Some(dynamic) = &dynamic_btc {
+        // A swap this Node prepared earlier stays visible as long as its files
+        // still verify; one that no longer does (an aborted take under an older
+        // role configuration) is reported and skipped rather than keeping the
+        // whole Node from starting.
         for configured in dynamic.persisted_entries() {
-            let entry = load_prepared_entry(
+            match load_prepared_entry(
                 Pair::Bitcoin,
                 &configured,
                 source_bindings,
                 delivery_sources,
                 chat_socket,
                 true,
-            )?;
-            if prepared_by_offer
-                .insert(configured.offer_id.as_str().into(), entry)
-                .is_some()
-            {
-                return Err(TakerServiceStartupError::InvalidConfiguration);
+            ) {
+                Ok(entry) => {
+                    if prepared_by_offer
+                        .insert(configured.offer_id.as_str().into(), entry)
+                        .is_some()
+                    {
+                        eprintln!(
+                            "taker: persisted swap {} duplicates an offer; keeping the newest",
+                            configured.swap_id.as_str()
+                        );
+                    }
+                }
+                Err(error) => eprintln!(
+                    "taker: persisted swap {} no longer loads ({error}); skipped",
+                    configured.swap_id.as_str()
+                ),
             }
         }
     }

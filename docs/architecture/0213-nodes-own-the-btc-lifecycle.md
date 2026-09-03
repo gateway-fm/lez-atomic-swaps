@@ -94,19 +94,26 @@ S1.3 Ceremony over Chat. The survey of 2026-09-03 fixed the shape: the
   1. `btc_reserve_v1` (reservation id, direction, Taker contribution, plan):
      the Maker bootstraps a per-reservation role root (agreement key = its
      offer-bound MuSig2 key, fresh refund/claim/funding keys) and answers
-     with its contribution plus the facts only it holds — the Bitcoin
-     funding outpoint and anchor height when it funds Bitcoin, the prepared
-     LEZ escrow funding id when it deposits LEZ.
-  2. `btc_prepare_claim_v1` only when the Maker is the LEZ claimant: the
-     Taker sends its escrow funding id, the Maker returns the claim message
-     hash from its sidecar.
+     with its contribution plus the facts only it holds: the Bitcoin funding
+     outpoint and anchor height when it funds Bitcoin, and the LEZ claim
+     message hash its sidecar prepared when it claims LEZ.
+  2. The LEZ claimant prepares its witnessed claim once, before the draft,
+     against a nonzero placeholder funding id: the sidecar's claim message
+     binds the escrow accounts, the claimant and the authority nonce, never
+     the terms hash or the funding id, and the prepared claim carries no
+     funding id, so that result is also the actor's prepared claim. The LEZ
+     escrow is planned only under the bound agreement (its transaction binds
+     the terms hash), and the sidecar holds one active escrow and one active
+     claim per process, so nothing is prepared against planning terms.
   3. `btc_chat_propose_v2` / `btc_chat_complete_v2` unchanged: the Taker
      composes the draft in-process (`compose_agreement_draft`) and both roles
      bind the countersigned agreement.
-  4. `btc_ceremony_reserve_v1`: two fresh session ids, the claimant's final
-     `PrepareWitnessedClaimResult` (its message hash must equal the
+  4. `btc_ceremony_reserve_v1`: two fresh session ids, the Taker's prepared
+     claim when it is the LEZ claimant (its message hash must equal the
      agreement's), and the Taker's nonce commitments for both legs; the
-     Maker answers with its commitments.
+     Maker plans its escrow under the agreement when it deposits LEZ and
+     answers with its commitments (and its own prepared claim when it is
+     the claimant).
   5. `btc_ceremony_nonce_v1`: the Taker's public nonces; the Maker verifies
      them against the commitments, reveals its nonces and returns its
      partial signatures (both nonces are fixed by then).
@@ -118,9 +125,21 @@ S1.3 Ceremony over Chat. The survey of 2026-09-03 fixed the shape: the
   The ceremony itself runs on `CeremonySeat` (in-process, journal-backed;
   the CLI is a wrapper). The Bitcoin funder builds and signs the funding
   transaction from its own Bitcoin Core wallet and broadcasts it as its lock
-  effect; the refund is presigned by the actor from the role root's key
-  (ADR 0044). Both sidecars share one configured bridge run id in stage 1;
-  a per-swap run id waits for per-swap sidecars in stage 3.
+  effect (`taker_swap_lock_v1`); the refund is presigned by the actor from
+  the role root's key (ADR 0044).
+  Each Node spawns one LEZ role sidecar per swap (loopback port, capability,
+  state directory and log under the swap directory; bridge run id
+  `swap-<reservation id>`): the sidecar keeps one active escrow and one
+  active claim per process and one durable reservation per kind per state
+  directory, so a shared sidecar cannot serve two swaps. Recorded ports stay
+  reserved per swap across restarts and both Nodes respawn missing sidecars.
+  The Maker's actor is handed to its supervisor, which observes and drives
+  every effect; the Taker Node runs an observer that drives its actor only
+  in observation phases (and after its own claim, marked in the swap
+  directory), so the revealing claim stays a user action.
+  Verified 2026-09-03 on the local stack with `deploy/scripts/node-swap.sh`:
+  Taker lock 0.01 BTC → Maker LEZ escrow → Taker LEZ claim → Maker Bitcoin
+  claim, both actors terminal at revision 4, no runner, no controller.
 S1.4 Maker Node: discriminated manual actions (`fund_lez`, `claim_btc`,
   `lock_btc`, `claim_lez`) instead of one `claim → drive`; a swap view with
   turn, progress and effects; v2 role binding continues into a scheduled

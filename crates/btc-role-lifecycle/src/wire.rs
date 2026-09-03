@@ -22,7 +22,7 @@ pub struct BtcSwapPlanV1 {
     pub earlier_refund_latest_unix_seconds: u64,
     pub later_refund_earliest_unix_seconds: u64,
     pub required_margin_seconds: u64,
-    /// The bridge run id both sidecars run under (stage 1: configured).
+    /// The bridge run id both swap sidecars run under: `swap_run_id(reservation_id)`.
     pub bridge_run_id: String,
     /// Bitcoin facts when the Taker funds Bitcoin; `None` otherwise.
     pub taker_bitcoin_funding: Option<BtcFundingFactsV1>,
@@ -61,28 +61,11 @@ pub struct BtcReserveResponseV1 {
     pub maker_contribution_wire: Vec<u8>,
     /// Present when the Maker funds Bitcoin.
     pub maker_bitcoin_funding: Option<BtcFundingFactsV1>,
-    /// Present when the Maker deposits LEZ: its prepared escrow funding id.
-    pub maker_lez_escrow_funding_transaction_id: Option<[u8; 32]>,
+    /// Present when the Maker is the LEZ claimant: the claim message hash its
+    /// sidecar prepared, which the draft binds.
+    pub maker_claim_message_hash: Option<[u8; 32]>,
     /// The joint swap id both contributions derive.
     pub swap_id: [u8; 32],
-}
-
-/// Only when the Maker is the LEZ claimant (Taker deposits LEZ).
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct BtcPrepareClaimRequestV1 {
-    pub schema_version: u16,
-    pub request_id: RequestId,
-    pub reservation_id: RequestId,
-    pub taker_lez_escrow_funding_transaction_id: [u8; 32],
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct BtcPrepareClaimResponseV1 {
-    pub schema_version: u16,
-    pub was_replay: bool,
-    pub claim_message_hash: [u8; 32],
 }
 
 /// One packet per leg, canonical adaptor-runner JSON bytes.
@@ -101,8 +84,8 @@ pub struct BtcCeremonyReserveRequestV1 {
     pub reservation_id: RequestId,
     pub bitcoin_session_id: [u8; 32],
     pub lez_session_id: [u8; 32],
-    /// The claimant's final `PrepareWitnessedClaimResult` JSON, when the
-    /// Taker is the LEZ claimant; the Maker's own otherwise (`None`).
+    /// The claimant's `PrepareWitnessedClaimResult` JSON when the Taker is
+    /// the LEZ claimant; `None` when the Maker is (it answers with its own).
     pub prepared_claim_result: Option<Vec<u8>>,
     pub taker_commitments: LegPacketsV1,
 }
@@ -155,9 +138,8 @@ pub struct BtcCeremonyPartialResponseV1 {
 }
 
 /// Method names both gateways allow through.
-pub const BTC_LIFECYCLE_METHODS_V1: [&str; 5] = [
+pub const BTC_LIFECYCLE_METHODS_V1: [&str; 4] = [
     "btc_reserve_v1",
-    "btc_prepare_claim_v1",
     "btc_ceremony_reserve_v1",
     "btc_ceremony_nonce_v1",
     "btc_ceremony_partial_v1",

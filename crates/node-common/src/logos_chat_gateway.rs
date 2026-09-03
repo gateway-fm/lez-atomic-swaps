@@ -55,13 +55,12 @@ const MAKER_APPLICATION_CONFLICT_CODE: i32 = -32_009;
 const MAKER_OFFER_UNAVAILABLE_CODE: i32 = -32_018;
 
 /// The exact application Chat methods allowed through the transport bridge.
-pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 13] = [
+pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 12] = [
     "btc_chat_propose_v1",
     "btc_chat_propose_v2",
     "btc_chat_complete_v1",
     "btc_chat_complete_v2",
     "btc_reserve_v1",
-    "btc_prepare_claim_v1",
     "btc_ceremony_reserve_v1",
     "btc_ceremony_nonce_v1",
     "btc_ceremony_partial_v1",

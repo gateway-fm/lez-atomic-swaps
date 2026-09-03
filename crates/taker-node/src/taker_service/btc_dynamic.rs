@@ -22,18 +22,19 @@ use btc_role_preflight::{
 };
 use lez_bridge_protocol::RequestId;
 use lez_btc_role_lifecycle::{
-    BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, SwapLayout, TakerCeremony,
+    BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, SwapLayout, SwapSidecar,
+    TakerCeremony,
     actor::{ActorSynthesis, activate, synthesize},
     layout::{read_private, write_private_exact},
     lez::{
         PlanningTermsInput, aggregate_authority_account, agreement_terms, escrow_accounts,
-        planning_terms,
+        planning_escrow_funding_placeholder, planning_terms,
     },
+    swap_run_id,
     wire::{
         BtcCeremonyNonceRequestV1, BtcCeremonyNonceResponseV1, BtcCeremonyPartialRequestV1,
         BtcCeremonyPartialResponseV1, BtcCeremonyReserveRequestV1, BtcCeremonyReserveResponseV1,
-        BtcPrepareClaimRequestV1, BtcPrepareClaimResponseV1, BtcReserveRequestV1,
-        BtcReserveResponseV1, BtcSwapPlanV1,
+        BtcReserveRequestV1, BtcReserveResponseV1, BtcSwapPlanV1,
     },
 };
 use lez_btc_swap_sdk::{
@@ -212,8 +213,15 @@ impl DynamicBtcRole {
         )
     }
 
-    fn sidecar(&self) -> Result<LezSidecar> {
-        LezSidecar::connect(&self.runtime)
+    /// The swap's own sidecar (spawned on first use, respawned when gone).
+    fn sidecar(
+        &self,
+        layout: &SwapLayout,
+        reservation_id: &RequestId,
+    ) -> Result<(SwapSidecar, LezSidecar)> {
+        let sidecar = SwapSidecar::ensure(&self.runtime, layout, reservation_id)?;
+        let client = sidecar.client(&self.runtime)?;
+        Ok((sidecar, client))
     }
 }
 
@@ -240,9 +248,7 @@ struct TakerSwapRecordV1 {
     aggregate_x_only: Option<[u8; 32]>,
     plan: Option<BtcSwapPlanV1>,
     maker_bitcoin_funding: Option<lez_btc_role_lifecycle::wire::BtcFundingFactsV1>,
-    maker_escrow_funding_transaction_id: Option<[u8; 32]>,
     funding_plan: Option<FundingPlan>,
-    taker_escrow_funding_transaction_id: Option<[u8; 32]>,
     claim_message_hash: Option<[u8; 32]>,
     sessions: Option<LegSessions>,
     actor_activated: bool,
@@ -288,11 +294,12 @@ pub(super) fn reservation_id_for(request_id: &RequestId) -> Result<RequestId> {
 
 fn now_plan(
     runtime: &BtcRoleRuntime,
+    reservation_id: &RequestId,
     direction: SwapDirection,
     now: u64,
     foreign_units: u64,
     lez_units: u128,
-) -> BtcSwapPlanV1 {
+) -> Result<BtcSwapPlanV1> {
     let policy = runtime.config().recovery;
     let earlier = now + policy.earlier_refund_latest_seconds;
     let later = now + policy.later_refund_earliest_seconds;
@@ -300,7 +307,7 @@ fn now_plan(
         SwapDirection::TakerSellsForeign => earlier,
         SwapDirection::TakerSellsLez => later,
     };
-    BtcSwapPlanV1 {
+    Ok(BtcSwapPlanV1 {
         foreign_units,
         lez_units,
         refund_csv_blocks: runtime.config().bitcoin.refund_csv_blocks,
@@ -310,9 +317,9 @@ fn now_plan(
         earlier_refund_latest_unix_seconds: earlier,
         later_refund_earliest_unix_seconds: later,
         required_margin_seconds: policy.required_margin_seconds,
-        bridge_run_id: runtime.bridge_run_id().as_str().to_owned(),
+        bridge_run_id: swap_run_id(reservation_id)?.as_str().to_owned(),
         taker_bitcoin_funding: None,
-    }
+    })
 }
 
 /// Reserves with the Maker, plans, composes the draft and persists the swap
@@ -387,11 +394,12 @@ pub(super) async fn prepare(
     } else {
         let plan = now_plan(
             &dynamic.runtime,
+            &reservation_id,
             direction,
             now,
             request.foreign_units,
             request.expected_lez_units,
-        );
+        )?;
         record.plan = Some(plan.clone());
         record.direction = Some(direction);
         record.store(&layout)?;
@@ -438,7 +446,6 @@ pub(super) async fn prepare(
     record.swap_id = Some(reserve.swap_id);
     record.aggregate_x_only = Some(aggregate);
     record.maker_bitcoin_funding = reserve.maker_bitcoin_funding;
-    record.maker_escrow_funding_transaction_id = reserve.maker_lez_escrow_funding_transaction_id;
     record.store(&layout)?;
 
     // Facts for the draft.
@@ -503,12 +510,10 @@ pub(super) async fn prepare(
     let claim_hash = if let Some(hash) = record.claim_message_hash {
         hash
     } else {
-        let sidecar = dynamic.sidecar()?;
         let hash = match direction {
             SwapDirection::TakerSellsForeign => {
-                let escrow_funding = reserve
-                    .maker_lez_escrow_funding_transaction_id
-                    .context("the Maker deposits LEZ but sent no escrow funding id")?;
+                // The Taker claims LEZ: its sidecar prepares the claim once; the
+                // result is the actor's prepared claim and the draft binds its hash.
                 let terms = planning_terms(&PlanningTermsInput {
                     swap_id: reserve.swap_id,
                     terms_hash: *pair.maker().body().pre_session_id(),
@@ -526,48 +531,19 @@ pub(super) async fn prepare(
                         .lez_identity()
                         .authenticated_transfer_program_id(),
                 })?;
-                *sidecar
-                    .prepare_claim(terms, escrow_funding)
-                    .await?
-                    .claim
-                    .message_hash
-                    .as_bytes()
+                let (_, sidecar) = dynamic.sidecar(&layout, &reservation_id)?;
+                let prepared = sidecar
+                    .prepare_claim(terms, planning_escrow_funding_placeholder(&reserve.swap_id))
+                    .await?;
+                write_private_exact(
+                    &layout.prepared_claim_file(),
+                    &serde_json::to_vec(&prepared)?,
+                )?;
+                *prepared.claim.message_hash.as_bytes()
             }
-            SwapDirection::TakerSellsLez => {
-                let terms = planning_terms(&PlanningTermsInput {
-                    swap_id: reserve.swap_id,
-                    terms_hash: *pair.maker().body().pre_session_id(),
-                    depositor: Participant::Taker,
-                    depositor_account: dynamic.runtime.lez_owner_account(),
-                    claimant: Participant::Maker,
-                    claimant_account: *participants
-                        .for_participant(Participant::Maker)
-                        .lez_owner_account(),
-                    aggregate_x_only: aggregate,
-                    amount: request.expected_lez_units,
-                    refund_at_ms: plan.lez_refund_at_ms,
-                    authenticated_transfer_program_id: *dynamic
-                        .runtime
-                        .lez_identity()
-                        .authenticated_transfer_program_id(),
-                })?;
-                let escrow = sidecar.prepare_escrow(terms).await?;
-                record.taker_escrow_funding_transaction_id = Some(escrow.funding_transaction_id());
-                record.store(&layout)?;
-                let answer: BtcPrepareClaimResponseV1 = call_local_chat_rpc(
-                    &dynamic.chat_socket,
-                    "btc_prepare_claim_v1",
-                    &BtcPrepareClaimRequestV1 {
-                        schema_version: 1,
-                        request_id: derived_request_id(&reservation_id, "btc", b"prepare-claim")?,
-                        reservation_id: reservation_id.clone(),
-                        taker_lez_escrow_funding_transaction_id: escrow.funding_transaction_id(),
-                    },
-                )
-                .await
-                .context("btc_prepare_claim_v1")?;
-                answer.claim_message_hash
-            }
+            SwapDirection::TakerSellsLez => reserve
+                .maker_claim_message_hash
+                .context("the Maker claims LEZ but sent no claim hash")?,
         };
         record.claim_message_hash = Some(hash);
         record.store(&layout)?;
@@ -749,27 +725,13 @@ pub(super) async fn execute(
     let agreement = BtcAgreementV1::from_wire(&agreement_wire)?;
 
     // Final LEZ material under the agreement.
-    let sidecar = dynamic.sidecar()?;
+    let (swap_sidecar, sidecar) = dynamic.sidecar(&layout, reservation_id)?;
     let final_terms = agreement_terms(&agreement)?;
-    let prepared_claim_json = if layout.prepared_claim_file().exists() {
+    let prepared_claim_json = if agreement.lez_claimant() == Participant::Taker {
         Some(read_private(
             &layout.prepared_claim_file(),
             MAX_PREPARED_CLAIM_BYTES,
         )?)
-    } else if agreement.lez_claimant() == Participant::Taker {
-        let escrow_funding = record
-            .maker_escrow_funding_transaction_id
-            .context("missing the Maker's escrow funding id")?;
-        let prepared = sidecar
-            .prepare_claim(final_terms.clone(), escrow_funding)
-            .await?;
-        ensure!(
-            prepared.claim.message_hash.as_bytes() == agreement.lez_terms().claim_message_hash(),
-            "final claim hash differs from the agreement"
-        );
-        let bytes = serde_json::to_vec(&prepared)?;
-        write_private_exact(&layout.prepared_claim_file(), &bytes)?;
-        Some(bytes)
     } else {
         None
     };
@@ -819,7 +781,7 @@ pub(super) async fn execute(
             let prepared: lez_bridge_protocol::PrepareWitnessedClaimResult =
                 serde_json::from_slice(&bytes)?;
             ensure!(
-                prepared.context.run_id == *dynamic.runtime.bridge_run_id()
+                prepared.context.run_id == *swap_sidecar.run_id()
                     && prepared.context.request_id == prepared.claim.preparation_request_id
                     && lez_bridge_client::validate_prepared_witnessed_claim(&prepared.claim)
                         .is_ok()
@@ -873,6 +835,7 @@ pub(super) async fn execute(
             layout: &layout,
             agreement: &agreement,
             agreement_wire: &agreement_wire,
+            sidecar: &swap_sidecar,
             sessions,
             accepted_at_unix_seconds: now,
             lez_discovery_start_height: start_height,
@@ -921,6 +884,14 @@ pub(super) async fn lock(
     record.funding_broadcast_transaction_id = Some(txid.clone());
     record.store(&layout)?;
     Ok((txid, false))
+}
+
+/// Keeps the swap's sidecar running (respawns it after a Node restart) so the
+/// actor's LEZ observations have somewhere to go.
+pub(super) fn ensure_sidecar(dynamic: &DynamicBtcRole, reservation_id: &RequestId) -> Result<()> {
+    let layout = dynamic.layout(reservation_id);
+    ensure!(layout.exists(), "unknown swap");
+    SwapSidecar::ensure(&dynamic.runtime, &layout, reservation_id).map(|_| ())
 }
 
 /// Whether this swap's Taker funds Bitcoin (has a lock to perform).

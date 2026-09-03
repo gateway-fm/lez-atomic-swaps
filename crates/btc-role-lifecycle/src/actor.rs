@@ -15,6 +15,7 @@ use crate::{
     config::BtcRoleRuntime,
     layout::{SwapLayout, write_private_exact},
     lez::PreparedEscrow,
+    sidecar::SwapSidecar,
 };
 
 /// The Maker's lock material for its direction.
@@ -33,6 +34,8 @@ pub struct ActorSynthesis<'a> {
     pub layout: &'a SwapLayout,
     pub agreement: &'a BtcAgreementV1,
     pub agreement_wire: &'a [u8],
+    /// The swap's own sidecar the actor observes and submits through.
+    pub sidecar: &'a SwapSidecar,
     pub sessions: LegSessions,
     pub accepted_at_unix_seconds: u64,
     pub lez_discovery_start_height: u64,
@@ -135,9 +138,9 @@ pub fn synthesize(input: &ActorSynthesis<'_>) -> Result<ActorConfig> {
             "connectivity": config.bitcoin.network.actor_connectivity(),
         },
         "lez_bridge": {
-            "endpoint": config.lez.sidecar_endpoint,
-            "capability_file": config.lez.sidecar_capability_file,
-            "run_id": input.runtime.bridge_run_id(),
+            "endpoint": input.sidecar.endpoint(),
+            "capability_file": input.sidecar.capability_file(),
+            "run_id": input.sidecar.run_id(),
             "runtime": input.runtime.runtime_descriptor(),
             "request_timeout_millis": config.lez.request_timeout_millis,
             "discovery_start_height": input.lez_discovery_start_height,

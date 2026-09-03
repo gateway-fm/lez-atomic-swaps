@@ -18,6 +18,7 @@ pub mod config;
 pub mod funding;
 pub mod layout;
 pub mod lez;
+pub mod sidecar;
 pub mod wire;
 
 pub use ceremony::{
@@ -27,3 +28,4 @@ pub use config::{BitcoinNetworkName, BtcRoleConfigV1, BtcRoleRuntime, RecoveryPo
 pub use funding::{BitcoinWallet, FundingPlan};
 pub use layout::SwapLayout;
 pub use lez::{LezRole, LezSidecar, PreparedEscrow};
+pub use sidecar::{SwapSidecar, swap_run_id};

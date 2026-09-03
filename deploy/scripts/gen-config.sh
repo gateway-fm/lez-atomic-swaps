@@ -149,8 +149,33 @@ cat >"$RUNTIME/secrets/mining.key" <<'EOF'
 0000000000000000000000000000000000000000000000000000000000000001
 EOF
 chmod 0600 "$RUNTIME/secrets/mining.key" || exit 1
+# Bitcoin Core credentials in cookie form for the Nodes and their actors
+# (rewritten in place: bind mounts pin the inode).
+printf 'lezrpc:%s\n' "$btc_rpc_password" >"$RUNTIME/secrets/btc-rpc-cookie"
+chmod 0644 "$RUNTIME/secrets/btc-rpc-cookie"
 
 # --- maker/taker runtime ----------------------------------------------------
+# Per-role LEZ identities for the Node-owned Bitcoin lifecycle (ADR 0213): the
+# Maker settles as maker-munich-01 and the Taker as taker-zurich-01, the two
+# funded market wallets, so their balances move on the standing chain.
+identities_root="${LEZ_WALLET_IDENTITIES:-}"
+if [[ -z "$identities_root" ]]; then
+  for candidate in "$DEPLOY_ROOT/../runner-work/market/identities" "$DEPLOY_ROOT/../../runner-work/market/identities"; do
+    [[ -d "$candidate" ]] && { identities_root="$(cd "$candidate" && pwd -P)"; break; }
+  done
+fi
+for pair in maker:maker-munich-01 taker:taker-zurich-01; do
+  role="${pair%%:*}"; wallet="${pair##*:}"
+  mkdir -p "$RUNTIME/lez/$role"
+  if [[ -n "$identities_root" && -f "$identities_root/$wallet/lez-signer.key" ]]; then
+    cp "$identities_root/$wallet/lez-signer.key" "$RUNTIME/lez/$role/lez-signer.key"
+    cp "$identities_root/$wallet/identity.json" "$RUNTIME/lez/$role/identity.json"
+  else
+    echo "warning: $wallet identity unavailable; $role Node runs without the Bitcoin lifecycle" >&2
+  fi
+  # Bind mounts keep host ownership; the entrypoint copies these owner-private.
+  chmod 0644 "$RUNTIME/lez/$role"/* 2>/dev/null || true
+done
 mkdir -p "$RUNTIME/sockets"
 rm -f "$RUNTIME/runtime.env"
 runner_repo="${LEZ_M3_RUNNER_REPO:-}"
@@ -181,6 +206,7 @@ printf '%s\n' \
   "LEZ_M3_RUNNER_REPO=$runner_repo" \
   "LEZ_M3_RUNNER_REPO_IN_CONTAINER=$runner_repo_in_container" \
   "LEZ_M3_RUNNER_CONTAINER=${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}" \
+  "LEZ_MARKET_ROOT=$(cd "$(dirname "$runner_repo")" && pwd -P)/market" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
 

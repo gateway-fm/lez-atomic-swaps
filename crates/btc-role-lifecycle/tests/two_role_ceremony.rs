@@ -22,8 +22,9 @@ use btc_role_preflight::{
 use lez_adaptor_signature::verify_adaptor_presignature;
 use lez_bridge_protocol::RequestId;
 use lez_btc_role_lifecycle::{
-    BtcRoleRuntime, LegSessions, MakerCeremony, SwapLayout, TakerCeremony,
+    BtcRoleRuntime, LegSessions, MakerCeremony, SwapLayout, SwapSidecar, TakerCeremony,
     actor::{ActorSynthesis, synthesize},
+    sidecar::{SidecarRecordV1, swap_run_id},
 };
 use lez_btc_swap_sdk::{
     BtcAgreementDraftV1, BtcAgreementV1, BtcChainPolicyV1, BtcLezChainIdentityV1,
@@ -51,7 +52,14 @@ fn bootstrap_input(role: Participant, owner: u8) -> RoleBootstrapInput {
         direction: SwapDirection::TakerSellsForeign,
         offer_commitment: [0x20; 32],
         reservation_binding: b"delivery-reservation-17".to_vec(),
-        bitcoin: BtcChainPolicyV1::new([0x21; 32], 2),
+        bitcoin: BtcChainPolicyV1::new(
+            bitcoin::hashes::Hash::to_byte_array(
+                "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206"
+                    .parse::<bitcoin::BlockHash>()
+                    .unwrap(),
+            ),
+            2,
+        ),
         lez: BtcLezChainIdentityV1::new([0x22; 32], [0x23; 32], [0x24; 32], [0x25; 32]),
         lez_owner_account: [owner; 32],
         expires_at_unix_seconds: 2_000_000_000,
@@ -87,7 +95,7 @@ fn role_config(root: &Path, wallet: Option<&str>) -> std::path::PathBuf {
             "endpoint": "http://127.0.0.1:18443/",
             "cookie_file": root.join("cookie"),
             "wallet": wallet,
-            "genesis_block_hash": hex::encode([0x21; 32]),
+            "genesis_block_hash": "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
             "required_confirmations": 2,
             "refund_csv_blocks": 144,
             "claim_fee_sat": 1000
@@ -97,9 +105,11 @@ fn role_config(root: &Path, wallet: Option<&str>) -> std::path::PathBuf {
             "genesis_block_hash": hex::encode([0x22; 32]),
             "escrow_program_id": hex::encode([0x24; 32]),
             "authenticated_transfer_program_id": hex::encode([0x25; 32]),
-            "sidecar_endpoint": "http://127.0.0.1:19000/",
-            "sidecar_capability_file": root.join("capability"),
-            "bridge_run_id": "local-stack-run-1",
+            "sidecar_program": "/usr/local/bin/lez-v02-bridge-poc",
+            "sequencer_url": "http://127.0.0.1:3040",
+            "indexer_url": "http://127.0.0.1:8779",
+            "sidecar_port_base": 19000,
+            "sidecar_port_count": 100,
             "signer_key_file": root.join("lez-signer.key"),
             "request_timeout_millis": 5000,
             "discovery_max_blocks": 512
@@ -251,11 +261,25 @@ fn both_roles_converge_and_synthesize_actor_configurations() {
 
     // Actor synthesis on both sides passes the actor's strict loader.
     let claim_json = br#"{"placeholder":true}"#;
+    let sidecar_for = |layout: &SwapLayout| {
+        SwapSidecar::from_record(SidecarRecordV1 {
+            schema_version: 1,
+            port: 19000,
+            run_id: swap_run_id(&reservation).unwrap().as_str().to_owned(),
+            capability_file: layout.root().join("sidecar-capability"),
+            state_directory: layout.root().join("sidecar-state"),
+            log_file: layout.root().join("sidecar.log"),
+        })
+        .unwrap()
+    };
+    let taker_sidecar = sidecar_for(&taker_layout);
+    let maker_sidecar = sidecar_for(&maker_layout);
     let taker_config = synthesize(&ActorSynthesis {
         runtime: &taker_runtime,
         layout: &taker_layout,
         agreement: &agreement,
         agreement_wire: &agreement_wire,
+        sidecar: &taker_sidecar,
         sessions,
         accepted_at_unix_seconds: 1_700_000_000,
         lez_discovery_start_height: 4_600,
@@ -274,6 +298,7 @@ fn both_roles_converge_and_synthesize_actor_configurations() {
         layout: &maker_layout,
         agreement: &agreement,
         agreement_wire: &agreement_wire,
+        sidecar: &maker_sidecar,
         sessions,
         accepted_at_unix_seconds: 1_700_000_000,
         lez_discovery_start_height: 4_600,

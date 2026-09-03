@@ -9,7 +9,7 @@ use std::{
 
 use anyhow::{Context as _, Result, ensure};
 use lez_bridge_protocol::{
-    Hex32, Participant as BridgeParticipant, RunId, RuntimeCompatibility, RuntimeDescriptor,
+    Hex32, Participant as BridgeParticipant, RuntimeCompatibility, RuntimeDescriptor,
 };
 use lez_btc_swap_sdk::{BtcChainPolicyV1, BtcLezChainIdentityV1};
 use lez_swap_core::Participant;
@@ -62,7 +62,7 @@ pub struct BitcoinConfigV1 {
     /// Bitcoin. Absent when the role never funds Bitcoin.
     #[serde(default)]
     pub wallet: Option<String>,
-    /// Expected genesis block hash (hex); refused when the node disagrees.
+    /// Expected genesis block hash as Core displays it (`getblockhash 0`).
     pub genesis_block_hash: String,
     pub required_confirmations: u32,
     pub refund_csv_blocks: u32,
@@ -78,11 +78,14 @@ pub struct LezConfigV1 {
     pub genesis_block_hash: String,
     pub escrow_program_id: String,
     pub authenticated_transfer_program_id: String,
-    /// The role sidecar (`lez-v02-bridge-poc`) endpoint.
-    pub sidecar_endpoint: String,
-    pub sidecar_capability_file: PathBuf,
-    /// Bridge run id both roles configure identically in stage 1.
-    pub bridge_run_id: String,
+    /// The role sidecar program (`lez-v02-bridge-poc`) the Node spawns per swap.
+    pub sidecar_program: PathBuf,
+    /// Literal-loopback LEZ node endpoints the sidecars talk to.
+    pub sequencer_url: String,
+    pub indexer_url: String,
+    /// Loopback ports the swaps' sidecars may listen on.
+    pub sidecar_port_base: u16,
+    pub sidecar_port_count: u16,
     /// Hex LEZ signer key; its account is this role's LEZ owner account.
     pub signer_key_file: PathBuf,
     pub request_timeout_millis: u64,
@@ -128,7 +131,6 @@ pub struct BtcRoleRuntime {
     bitcoin_policy: BtcChainPolicyV1,
     lez_identity: BtcLezChainIdentityV1,
     lez_owner_account: [u8; 32],
-    bridge_run_id: RunId,
 }
 
 impl BtcRoleRuntime {
@@ -170,11 +172,15 @@ impl BtcRoleRuntime {
             config.lez.request_timeout_millis > 0,
             "request_timeout_millis must be nonzero"
         );
+        // Bitcoin hashes are configured as Core displays them (reversed); the
+        // agreement and the actor compare internal byte order.
+        let bitcoin_genesis: bitcoin::BlockHash = config
+            .bitcoin
+            .genesis_block_hash
+            .parse()
+            .context("Bitcoin genesis block hash")?;
         let bitcoin_policy = BtcChainPolicyV1::new(
-            parse_hex32(
-                &config.bitcoin.genesis_block_hash,
-                "Bitcoin genesis block hash",
-            )?,
+            bitcoin::hashes::Hash::to_byte_array(bitcoin_genesis),
             config.bitcoin.required_confirmations,
         );
         let lez_identity = BtcLezChainIdentityV1::new(
@@ -188,15 +194,20 @@ impl BtcRoleRuntime {
         );
         let signer = lez::read_hex_secret(&config.lez.signer_key_file).context("LEZ signer key")?;
         let lez_owner_account = lez::signer_account(&signer)?;
-        let bridge_run_id =
-            RunId::new(config.lez.bridge_run_id.clone()).context("bridge run id")?;
+        ensure!(
+            config.lez.sidecar_port_count > 0,
+            "sidecar_port_count must be nonzero"
+        );
+        ensure!(
+            config.lez.sidecar_program.is_absolute(),
+            "sidecar_program must be absolute"
+        );
         Ok(Self {
             role,
             config,
             bitcoin_policy,
             lez_identity,
             lez_owner_account,
-            bridge_run_id,
         })
     }
 
@@ -223,10 +234,6 @@ impl BtcRoleRuntime {
     #[must_use]
     pub const fn lez_owner_account(&self) -> [u8; 32] {
         self.lez_owner_account
-    }
-
-    pub const fn bridge_run_id(&self) -> &RunId {
-        &self.bridge_run_id
     }
 
     #[must_use]

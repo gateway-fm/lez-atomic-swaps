@@ -265,6 +265,23 @@ impl RouteActor {
         }
     }
 
+    /// One bounded observation drive of the BTC actor in a phase where the
+    /// Taker has no effect to make (its own lock, the Maker's lock). Never
+    /// called at `BothLegsLocked`, where a drive would be the revealing claim.
+    async fn observe(&self) -> Result<(), ()> {
+        match self {
+            Self::Btc { config, .. } => {
+                use btc_reference_actor::{ActorCommand, execute_actor_command};
+                execute_actor_command(config, ActorCommand::Drive)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| report_actor_failure("observe", &error))
+            }
+            #[cfg(feature = "pair-zec")]
+            Self::Zec(_) => Ok(()),
+        }
+    }
+
     /// Activates a freshly provisioned actor; a replay is not an error.
     async fn activate(&self) -> Result<(), ()> {
         match self {
@@ -335,6 +352,7 @@ pub(super) fn register(
     if state.initiation.is_none() {
         return Ok(());
     }
+    spawn_dynamic_observer(Arc::clone(state));
     let list_state = Arc::clone(state);
     module.register_async_method("taker_swap_list_v1", move |params, _, _| {
         let state = Arc::clone(&list_state);
@@ -789,6 +807,11 @@ async fn execute_terminal_actor_command(
     config
         .effect(action)
         .await
+        .inspect(|()| {
+            if action == TakerTerminalActionV1::Claim {
+                mark_claim_submitted(config.state_db());
+            }
+        })
         .map_err(|()| ActionError::DependencyUnavailable)?;
     held_lock
         .validate_for_state(config.swap_id(), config.state_db())
@@ -796,6 +819,23 @@ async fn execute_terminal_actor_command(
             report_actor_failure("custody", &error);
             ActionError::DependencyUnavailable
         })
+}
+
+/// The marker a Node-owned Bitcoin swap keeps once its revealing claim was
+/// submitted, so the observer may drive `BothLegsLocked` afterwards (the
+/// drive then only observes the claim) but never before (it would claim).
+fn claim_submitted_marker(state_db: &Path) -> Option<PathBuf> {
+    Some(state_db.parent()?.parent()?.join("claim-submitted"))
+}
+
+fn mark_claim_submitted(state_db: &Path) {
+    if let Some(marker) = claim_submitted_marker(state_db) {
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(marker);
+    }
 }
 
 /// Names one failed actor step on stderr so `docker compose logs` explains
@@ -1429,6 +1469,95 @@ async fn lock_swap(
         transaction_id: transaction_id.into(),
         was_replay,
     })
+}
+
+/// Phases in which the Taker's next drive only observes chains: before both
+/// legs are locked, and after its own revealing claim while the Maker's
+/// follow-up claim is awaited.
+const fn taker_observation_phase(phase: Phase) -> bool {
+    matches!(
+        phase,
+        Phase::Offered
+            | Phase::AwaitingTakerConfirmations
+            | Phase::TakerLockConfirmed
+            | Phase::AwaitingMakerConfirmations
+            | Phase::ClaimEvidenceAvailable
+    )
+}
+
+/// Drives every Node-owned Bitcoin swap that is waiting on a chain
+/// observation, once per pass, under the same held lock the monitor uses.
+async fn observe_dynamic_swaps(state: &TakerServiceState) {
+    let Some(initiation) = state.initiation.clone() else {
+        return;
+    };
+    let (swaps, dynamic) = {
+        let Ok(context) = initiation.lock() else {
+            return;
+        };
+        (context.dynamic_bound_swaps(), context.dynamic_btc())
+    };
+    let Some(dynamic) = dynamic else {
+        return;
+    };
+    for prepared in swaps {
+        let Some(receipt_binding) = prepared.execution().receipt_binding() else {
+            continue;
+        };
+        if let Err(error) = btc_dynamic::ensure_sidecar(&dynamic, prepared.reservation_id()) {
+            eprintln!(
+                "taker observer: sidecar for {} unavailable: {error:#}",
+                prepared.swap_id().as_str()
+            );
+            continue;
+        }
+        let receipt = prepared.execution().receipt_output().to_path_buf();
+        let actor_root = prepared.execution().actor_root().to_path_buf();
+        let swap_id = prepared.swap_id().clone();
+        let loaded = tokio::task::spawn_blocking(move || {
+            let config = RouteActor::load_for_monitor(
+                Pair::Bitcoin,
+                &receipt,
+                &actor_root,
+                &swap_id,
+                receipt_binding.sha256(),
+                receipt_binding.identity().device(),
+                receipt_binding.identity().inode(),
+            )
+            .map_err(|_| ())?;
+            let held_lock =
+                ActorHeldLock::acquire_for(config.swap_id(), config.state_db()).map_err(|_| ())?;
+            Ok::<_, ()>((config, held_lock))
+        })
+        .await;
+        let Ok(Ok((config, held_lock))) = loaded else {
+            continue;
+        };
+        let Ok(LifecycleStatus::Active { phase, .. }) = config.status().await else {
+            continue;
+        };
+        let claim_submitted =
+            claim_submitted_marker(config.state_db()).is_some_and(|marker| marker.is_file());
+        if taker_observation_phase(phase) || (phase == Phase::BothLegsLocked && claim_submitted) {
+            let _ = config.observe().await;
+        }
+        drop(held_lock);
+    }
+}
+
+/// Starts the Taker observer when a runtime is available; the monitor and the
+/// terminal actions stay the only user-facing surface.
+fn spawn_dynamic_observer(state: Arc<TakerServiceState>) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        eprintln!("taker observer: no async runtime; observation drives run only on demand");
+        return;
+    };
+    handle.spawn(async move {
+        loop {
+            Box::pin(observe_dynamic_swaps(&state)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        }
+    });
 }
 
 /// Pairs whose lifecycle this Node runs itself.

@@ -18,6 +18,7 @@ use lez_zec_swap_sdk::{
     derive_lez_public_account_v0_2,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use sha2::Digest as _;
 use zeroize::Zeroizing;
 
 use crate::config::{BtcRoleRuntime, bridge_participant};
@@ -98,6 +99,18 @@ pub fn program_id_words(bytes: &[u8; 32]) -> [u32; 8] {
         *word = u32::from_le_bytes(le);
     }
     words
+}
+
+/// The nonzero funding id a claim is prepared against before the escrow
+/// exists. The sidecar's claim message binds the escrow accounts, the
+/// claimant and the authority nonce, never the funding id, and the prepared
+/// claim carries no funding id, so the placeholder never reaches the actor.
+#[must_use]
+pub fn planning_escrow_funding_placeholder(swap_id: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"lez-atomic-swaps/planning-escrow-funding/v1\0");
+    hasher.update(swap_id);
+    hasher.finalize().into()
 }
 
 /// The facts both roles agree on before the agreement exists.
@@ -205,31 +218,35 @@ impl std::fmt::Debug for LezSidecar {
 }
 
 impl LezSidecar {
-    /// Connects to the sidecar named by the role configuration.
+    /// Connects to one swap's sidecar at `endpoint` with its capability.
     ///
     /// # Errors
     ///
     /// Fails when the capability file is unreadable or the client config is
     /// invalid. Performs no network I/O.
-    pub fn connect(runtime: &BtcRoleRuntime) -> Result<Self> {
-        let lez = &runtime.config().lez;
-        let capability_bytes = fs::read(&lez.sidecar_capability_file)
-            .with_context(|| format!("read {}", lez.sidecar_capability_file.display()))?;
+    pub fn connect_to(
+        runtime: &BtcRoleRuntime,
+        endpoint: &str,
+        capability_file: &Path,
+        run_id: RunId,
+    ) -> Result<Self> {
+        let capability_bytes = fs::read(capability_file)
+            .with_context(|| format!("read {}", capability_file.display()))?;
         let capability =
             SidecarCapability::new(String::from_utf8(capability_bytes)?.trim().to_owned())
                 .context("sidecar capability")?;
         let descriptor = runtime.runtime_descriptor();
         let client = BridgeClient::connect(BridgeClientConfig::new(
-            lez.sidecar_endpoint.clone(),
+            endpoint.to_owned(),
             capability,
-            runtime.bridge_run_id().clone(),
+            run_id.clone(),
             descriptor.clone(),
             runtime.request_timeout(),
         ))
         .context("connect LEZ sidecar client")?;
         Ok(Self {
             client,
-            run_id: runtime.bridge_run_id().clone(),
+            run_id,
             runtime: descriptor,
         })
     }
