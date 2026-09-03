@@ -66,6 +66,19 @@ class LauncherContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             launcher.dispatch(invalid)
 
+    @mock.patch.object(launcher, "docker_json")
+    def test_wait_returns_within_budget_while_the_run_continues(self, docker: mock.Mock) -> None:
+        exec_id = "a" * 64
+        launcher.EXEC_DEADLINES[exec_id] = launcher.time.monotonic() + 60
+        docker.return_value = {"Running": True}
+        self.assertIsNone(launcher.poll_exec(exec_id, budget_seconds=0))
+        docker.return_value = {"Running": False, "ExitCode": 3}
+        self.assertEqual(launcher.dispatch({
+            "schema_version": 1, "operation": "wait_swap", "exec_id": exec_id,
+        }), {"kind": "WaitSwapResultV1", "exit_code": 3})
+        with self.assertRaises(ValueError):
+            launcher.poll_exec(exec_id)
+
     @mock.patch.object(launcher, "upload_bundle")
     def test_action_approval_path_is_derived_not_supplied(self, upload: mock.Mock) -> None:
         result = launcher.dispatch({

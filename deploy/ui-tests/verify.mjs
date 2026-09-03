@@ -52,6 +52,26 @@ async function waitInspector(ms) {
 await waitInspector(90000);
 await new Promise((r) => setTimeout(r, 2000));
 
+// The swap belongs to whichever Maker wallet published the offer the Taker
+// took, so select the wallet whose market snapshot carries the Maker's action.
+async function selectMakerWalletWithAction(app, walletId) {
+  const wallets = ["maker-munich-01", "maker-basel-02"];
+  for (const [index, expected] of wallets.entries()) {
+    await evaluateIn(app, walletId, `currentIndex = ${index}; root.refreshBtcMarket(false)`);
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      let envelope = null;
+      try { envelope = JSON.parse(await property(app, "makerOutput", "text")); } catch { /* not yet a snapshot */ }
+      if (envelope?.ok === true && envelope.result?.selected_wallet_id === expected) {
+        if ((envelope.result.swaps ?? []).some((swap) => swap.action_role === "maker")) return;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+  throw new Error("no Maker wallet holds a pending action");
+}
+
 async function property(app, objectName, propertyName) {
   const found = await app.findByProperty("objectName", objectName);
   if (found.error || !found.matches || found.matches.length !== 1) {
@@ -177,7 +197,11 @@ if (role === "maker") {
   });
 
   test("maker: real Node health", async (app) => {
-    await app.click("Check Node");
+    // Signal-invoke by objectName: text-targeted clicks do not reliably reach
+    // controls under the offscreen platform once the inventory has rendered.
+    const check = await app.findByProperty("objectName", "makerHealth");
+    if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
+    await evaluateIn(app, check.matches[0].id, "clicked()");
     await app.waitFor(async () => app.expectTexts(["Maker systems ready"]), {
       timeout: 15000, interval: 300, description: "Maker health status",
     });
@@ -248,7 +272,7 @@ if (role === "maker") {
     test(`maker: perform ${action}`, async (app) => {
       const wallet = await app.findByProperty("objectName", "makerBtcWallet");
       if (wallet.error || wallet.matches?.length !== 1) throw new Error("Maker wallet selector is unavailable");
-      await evaluateIn(app, wallet.matches[0].id, "currentIndex = 0; root.refreshBtcMarket(false)");
+      await selectMakerWalletWithAction(app, wallet.matches[0].id);
       await triggerVisibleAction(app, "makerSwapAction", label, "makerOutput", working);
       console.log(`  interactive M3: Maker ${action} submitted`);
     });

@@ -730,8 +730,11 @@ def interactive_runner_scripts(run_id: str, direction: str) -> dict[str, bytes]:
 
 
 def wait_exec(exec_id: str) -> int:
-    result = launcher_call({"operation": "wait_swap", "exec_id": exec_id})
-    return int(result["exit_code"])
+    """Polls in bounded launcher calls: a swap outlives the launcher socket timeout."""
+    while True:
+        result = launcher_call({"operation": "wait_swap", "exec_id": exec_id})
+        if result.get("exit_code") is not None:
+            return int(result["exit_code"])
 
 
 def validate_public_evidence(value: dict, run_id: str, direction: str) -> None:
@@ -1382,7 +1385,7 @@ class Market:
                 "direction": direction,
             })
             if export_result.get("kind") != "CollectSwapResultV1" \
-                    or export_result.get("exit_code") != 0:
+                    or wait_exec(str(export_result.get("exec_id", ""))) != 0:
                 raise RuntimeError("public evidence export failed")
             generated_on_mount = (
                 EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" /
