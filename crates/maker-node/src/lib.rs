@@ -272,22 +272,6 @@ impl MakerRpc {
     }
 
     #[cfg(feature = "pair-zec")]
-    /// Attaches ZEC agreement acceptance and Maker actor authority.
-    #[must_use]
-    pub fn with_zec_chat_authority(
-        self,
-        completion_store: SqliteZecRecoveryStore,
-        maker_claim_preimage: ClaimPreimage,
-        actor_provisioner: Option<ZecMakerActorProvisioner>,
-    ) -> Self {
-        self.with_directional_zec_chat_authority(
-            completion_store,
-            Some(maker_claim_preimage),
-            actor_provisioner,
-        )
-    }
-
-    #[cfg(feature = "pair-zec")]
     /// Attaches direction-aware ZEC agreement and Maker actor authority.
     ///
     /// The Maker preimage is absent when the accepted direction assigns that

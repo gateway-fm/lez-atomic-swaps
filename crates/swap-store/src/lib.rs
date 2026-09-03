@@ -90,7 +90,9 @@ pub use zec_recovery::{
     MakerZecAcceptanceCommit, MakerZecAcceptanceReplay, SqliteZecRecoveryStore,
 };
 
-use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
+use lez_swap_core::{
+    Pair, Participant, Phase, SwapCoordinator, SwapDirection, SwapId, UnixSeconds,
+};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimError, ClaimRecordError, FirstLockRecordError, MakerLockError,
     MakerLockRecordError, ObservationRecordError, ObservedMakerLockError,
@@ -613,9 +615,6 @@ pub enum StoreError {
     /// A claim transition has no matching retained intent.
     #[error("SDK claim intent does not exist")]
     MissingZecClaimIntent,
-    /// An owner refund transition has no matching pending exact intent.
-    #[error("SDK refund intent does not exist")]
-    MissingZecRefundIntent,
     /// An exact claim predecessor slot contains different evidence.
     #[error("SDK claim transition conflicts with durable evidence")]
     ConflictingZecClaimTransition,
@@ -1790,6 +1789,30 @@ fn participant_name(participant: Participant) -> &'static str {
         Participant::Maker => "maker",
         Participant::Taker => "taker",
     }
+}
+
+const fn pair_name(pair: Pair) -> &'static str {
+    match pair {
+        Pair::Bitcoin => "bitcoin",
+        Pair::Monero => "monero",
+        Pair::Zcash => "zcash",
+    }
+}
+
+const fn direction_name(direction: SwapDirection) -> &'static str {
+    match direction {
+        SwapDirection::TakerSellsForeign => "taker_sells_foreign",
+        SwapDirection::TakerSellsLez => "taker_sells_lez",
+    }
+}
+
+fn normalized_schema_sql(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches(';')
+        .split_ascii_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn revision_from_sql(value: i64) -> Result<u64, StoreError> {

@@ -37,5 +37,5 @@ pub use run_local_delivery::{
 };
 pub use service_control::{
     NodeServiceAction, NodeServiceControlError, NodeServiceControlV1, control_maker_service,
-    control_taker_service,
+    control_taker_service, shutdown_signal,
 };

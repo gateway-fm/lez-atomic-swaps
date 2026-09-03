@@ -124,13 +124,6 @@ impl ConfiguredTakerServiceContext {
         self.initiation.as_ref()
     }
 
-    #[cfg(feature = "pair-zec")]
-    /// Mutably borrows the optional mutation context.
-    #[must_use]
-    pub const fn initiation_mut(&mut self) -> Option<&mut ConfiguredTakerInitiationContext> {
-        self.initiation.as_mut()
-    }
-
     /// Consumes the context and returns the read backend.
     #[must_use]
     pub fn into_backend(self) -> ConfiguredTakerFacadeBackend {

@@ -397,20 +397,6 @@ impl TakerRegisteredMethodsV1 {
         }
     }
 
-    /// Returns the honest method set of a receipt-monitoring admission service.
-    #[must_use]
-    pub const fn read_with_initiation() -> Self {
-        Self {
-            health: true,
-            offer_list: true,
-            swap_list: true,
-            initiate: true,
-            monitor: true,
-            claim: false,
-            refund: false,
-        }
-    }
-
     /// Returns the honest method set of a complete receipt-bound ZEC service.
     #[must_use]
     pub const fn full_zec_lifecycle() -> Self {
@@ -622,13 +608,6 @@ impl TakerHealthV1 {
             pair_capabilities: taker_pair_capabilities_v1(),
             registered_methods: TakerRegisteredMethodsV1::read_only(),
         }
-    }
-
-    /// Reports that the service registered initiation and receipt-bound reads.
-    #[must_use]
-    pub const fn with_initiation_registered(mut self) -> Self {
-        self.registered_methods = TakerRegisteredMethodsV1::read_with_initiation();
-        self
     }
 
     /// Reports that the service registered the complete receipt-bound ZEC lifecycle.

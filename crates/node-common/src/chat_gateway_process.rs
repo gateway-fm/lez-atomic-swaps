@@ -1,4 +1,4 @@
-use std::{io, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, ensure};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -9,6 +9,7 @@ use lez_node_common::{
     LogosChatGatewayOutboxRequestV1, LogosChatGatewayRoleV1, call_local_chat_gateway_rpc,
     logos_chat_gateway_control_rpc_module, logos_chat_gateway_proxy_rpc_module,
     owner_rpc_server::{OwnedPath, bind_owner_socket, server_config},
+    shutdown_signal,
 };
 use tokio::{net::UnixListener, task::JoinSet};
 
@@ -433,15 +434,6 @@ fn finish_connection(
         .map_err(|error| anyhow::anyhow!("serve gateway RPC connection: {error}"))
 }
 
-async fn shutdown_signal() -> io::Result<()> {
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        received = terminate.recv() => received.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM signal stream closed")
-        }),
-    }
-}
 
 #[cfg(test)]
 mod role_tests {

@@ -1,7 +1,6 @@
 use std::{
     ffi::OsString,
     fs::{self, File},
-    io,
     path::{Path, PathBuf},
     sync::Arc,
     thread,
@@ -30,6 +29,7 @@ use lez_maker_node::{
 };
 #[cfg(feature = "pair-zec")]
 use lez_maker_node::{ZecMakerActorProvisioner, import_terminal_zec_maker_projection};
+use lez_node_common::shutdown_signal;
 #[cfg(feature = "pair-zec")]
 use lez_swap_core::Participant;
 #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
@@ -403,7 +403,7 @@ fn configured_actor_supervisor(
                     "actor test pause marker parent must be canonical"
                 );
                 match fs::symlink_metadata(marker) {
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error).context("inspect actor test pause marker"),
                     Ok(metadata) => ensure!(
                         is_owner_private_regular_file(&metadata, 0o600),
@@ -707,16 +707,6 @@ fn load_arguments() -> anyhow::Result<Arguments> {
 #[cfg(test)]
 fn parse_daemon_config(bytes: &[u8], executable: OsString) -> anyhow::Result<Arguments> {
     lez_maker_node::node_config::parse_node_config(bytes, executable, "Maker")
-}
-
-async fn shutdown_signal() -> io::Result<()> {
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        received = terminate.recv() => received.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM signal stream closed")
-        }),
-    }
 }
 
 fn attach_chat_health(context: MakerRpc, socket: Option<&Path>) -> MakerRpc {

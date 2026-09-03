@@ -14,7 +14,7 @@ use std::{
 use lez_swap_core::{Participant, SwapId};
 use rusqlite::{Connection, OpenFlags, OptionalExtension as _, TransactionBehavior, params};
 
-use crate::{StoreError, participant_name};
+use crate::{StoreError, normalized_schema_sql, participant_name};
 
 const APPLICATION_ID: i64 = 0x4c58_5752;
 const SCHEMA_VERSION: i64 = 3;
@@ -1029,15 +1029,6 @@ fn validate_connection(connection: &Connection) -> Result<(), StoreError> {
     }
     validate_identity_count(connection)?;
     validate_all_steps(connection)
-}
-
-fn normalized_schema_sql(value: &str) -> String {
-    value
-        .trim()
-        .trim_end_matches(';')
-        .split_ascii_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn configure(connection: &Connection) -> Result<(), StoreError> {

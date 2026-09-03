@@ -1,8 +1,9 @@
-use std::{io, path::PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 use clap::Parser;
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
+use lez_node_common::shutdown_signal;
 use lez_taker_node::{
     load_taker_service_context,
     node_config::load_node_arguments,
@@ -119,14 +120,4 @@ fn finish_connection(
     completed
         .context("join Taker RPC connection")?
         .map_err(|error| anyhow::anyhow!("serve Taker RPC connection: {error}"))
-}
-
-async fn shutdown_signal() -> io::Result<()> {
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result,
-        received = terminate.recv() => received.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM signal stream closed")
-        }),
-    }
 }

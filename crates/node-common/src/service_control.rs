@@ -10,6 +10,20 @@ use serde::Serialize;
 use thiserror::Error;
 use wait_timeout::ChildExt as _;
 
+/// Resolves when the process receives SIGINT or SIGTERM.
+///
+/// # Errors
+/// Returns the error from installing or reading the signal streams.
+pub async fn shutdown_signal() -> io::Result<()> {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        received = terminate.recv() => received.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM signal stream closed")
+        }),
+    }
+}
+
 const SYSTEMCTL_PROGRAM: &str = "/usr/bin/systemctl";
 const MAKER_UNIT: &str = "lez-maker-node.service";
 const TAKER_UNIT: &str = "lez-taker-node.service";

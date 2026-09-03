@@ -206,7 +206,6 @@ pub struct PreparedZecExecutionV1 {
     receipt_binding: Option<PreparedReceiptBindingV1>,
 }
 
-#[allow(dead_code)]
 impl PreparedZecExecutionV1 {
     pub(crate) const fn authenticated_offer(&self) -> &AuthenticatedOfferRefV1 {
         &self.authenticated_offer

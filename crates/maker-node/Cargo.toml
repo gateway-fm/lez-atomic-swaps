@@ -42,11 +42,6 @@ path = "examples/m5-systemd-fault-actor.rs"
 required-features = ["test-crash-hooks"]
 
 [[example]]
-name = "m5-systemd-actor-fixture"
-path = "examples/m5-systemd-actor-fixture.rs"
-required-features = ["pair-zec"]
-
-[[example]]
 name = "m5-systemd-actor-store"
 path = "examples/m5-systemd-actor-store.rs"
 required-features = ["pair-zec"]

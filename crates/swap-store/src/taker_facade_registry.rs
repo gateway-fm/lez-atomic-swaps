@@ -21,7 +21,10 @@ use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{MakerOfferId, MakerRouteV1, is_owner_private_regular_file, open_no_symlinks};
+use crate::{
+    MakerOfferId, MakerRouteV1, is_owner_private_regular_file, normalized_schema_sql,
+    open_no_symlinks,
+};
 
 const APPLICATION_ID: i64 = 0x4c54_4652;
 const SCHEMA_VERSION: i64 = 1;
@@ -1735,15 +1738,6 @@ fn pragma(connection: &Connection, name: &str) -> Result<i64, TakerFacadeStoreEr
     connection
         .pragma_query_value(None, name, |row| row.get(0))
         .map_err(|_| TakerFacadeStoreError::StorageUnavailable)
-}
-
-fn normalized_schema_sql(value: &str) -> String {
-    value
-        .trim()
-        .trim_end_matches(';')
-        .split_ascii_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn encode<T: Serialize>(value: &T) -> Result<String, TakerFacadeStoreError> {
