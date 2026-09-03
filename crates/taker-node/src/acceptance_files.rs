@@ -10,7 +10,9 @@ use std::{
 };
 
 use anyhow::{Context as _, ensure};
+use lez_bridge_protocol::RequestId;
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::secure_file::read_private_file;
@@ -23,6 +25,25 @@ pub struct ReplayOutput {
     pub proposal: bool,
     pub completion: bool,
     pub agreement_file: bool,
+}
+
+/// Derives the Chat request identity for one step of a reservation.
+///
+/// The pair tag keeps the three corridors' request identities apart.
+///
+/// # Errors
+/// Returns the error when the encoded digest is not a valid request identity.
+pub fn derived_request_id(
+    reservation_id: &RequestId,
+    pair: &str,
+    label: &[u8],
+) -> anyhow::Result<RequestId> {
+    let mut digest = Sha256::new();
+    digest.update(format!("lez-atomic-swaps/{pair}-taker-chat-request/v1\0"));
+    digest.update(reservation_id.as_str().as_bytes());
+    digest.update([0]);
+    digest.update(label);
+    RequestId::new(hex::encode(digest.finalize())).map_err(Into::into)
 }
 
 pub fn decode_sha256(value: &str, label: &str) -> anyhow::Result<[u8; 32]> {

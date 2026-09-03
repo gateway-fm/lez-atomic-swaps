@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use lez_taker_node::acceptance_files::{
-    MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, normalized_absolute, publish_exact_new,
-    resolved_new_path,
+    MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, derived_request_id, normalized_absolute,
+    publish_exact_new, resolved_new_path,
 };
 
 pub(crate) struct BtcTakeInput<'a> {
@@ -171,7 +171,7 @@ pub(crate) async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAccep
             "btc_chat_propose_v2",
             &BtcChatProposeRequestV2 {
                 schema_version: 2,
-                request_id: derived_request_id(&reservation_id, b"propose-v2")?,
+                request_id: derived_request_id(&reservation_id, "btc", b"propose-v2")?,
                 offer_id: offer_id.clone(),
                 expected_offer_revision: 1,
                 reservation_id: reservation_id.clone(),
@@ -218,7 +218,7 @@ pub(crate) async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAccep
             "btc_chat_propose_v1",
             &BtcChatProposeRequestV1 {
                 schema_version: 1,
-                request_id: derived_request_id(&reservation_id, b"propose")?,
+                request_id: derived_request_id(&reservation_id, "btc", b"propose")?,
                 offer_id: offer_id.clone(),
                 expected_offer_revision: 1,
                 reservation_id: reservation_id.clone(),
@@ -529,7 +529,7 @@ async fn complete_with_maker(
         "btc_chat_complete_v1",
         &BtcChatCompleteRequestV1 {
             schema_version: 1,
-            request_id: derived_request_id(reservation_id, b"complete")?,
+            request_id: derived_request_id(reservation_id, "btc", b"complete")?,
             offer_id: offer_id.clone(),
             expected_offer_revision,
             reservation_id: reservation_id.clone(),
@@ -551,7 +551,7 @@ async fn complete_with_maker_v2(
         "btc_chat_complete_v2",
         &BtcChatCompleteRequestV2 {
             schema_version: 2,
-            request_id: derived_request_id(reservation_id, b"complete-v2")?,
+            request_id: derived_request_id(reservation_id, "btc", b"complete-v2")?,
             offer_id: offer_id.clone(),
             expected_offer_revision,
             reservation_id: reservation_id.clone(),
@@ -805,13 +805,4 @@ fn validate_acceptance_paths(input: &BtcTakeInput<'_>) -> anyhow::Result<()> {
         "BTC acceptance receipt must be outside actor authority and agreement paths"
     );
     Ok(())
-}
-
-fn derived_request_id(reservation_id: &RequestId, label: &[u8]) -> anyhow::Result<RequestId> {
-    let mut digest = Sha256::new();
-    digest.update(b"lez-atomic-swaps/btc-taker-chat-request/v1\0");
-    digest.update(reservation_id.as_str().as_bytes());
-    digest.update([0]);
-    digest.update(label);
-    RequestId::new(hex::encode(digest.finalize())).map_err(Into::into)
 }

@@ -26,8 +26,8 @@ use xmr_reference_actor::{
 use zeroize::Zeroizing;
 
 use lez_taker_node::acceptance_files::{
-    MAX_TAKER_RECEIPT_BYTES, decode_sha256, normalized_absolute, publish_exact_new,
-    resolved_new_path,
+    MAX_TAKER_RECEIPT_BYTES, decode_sha256, derived_request_id, normalized_absolute,
+    publish_exact_new, resolved_new_path,
 };
 
 pub(crate) struct XmrTakeInput<'a> {
@@ -526,7 +526,7 @@ pub(crate) async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAccep
             "xmr_chat_stage_a_v1",
             &XmrChatStageARequestV1 {
                 schema_version: 1,
-                request_id: derived_request_id(&reservation_id, b"stage-a")?,
+                request_id: derived_request_id(&reservation_id, "xmr", b"stage-a")?,
                 offer_id: offer_id.clone(),
                 expected_offer_revision: 1,
                 reservation_id: reservation_id.clone(),
@@ -568,7 +568,7 @@ pub(crate) async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAccep
         "xmr_chat_activate_v1",
         &XmrChatActivateRequestV1 {
             schema_version: 1,
-            request_id: derived_request_id(&reservation_id, b"activate")?,
+            request_id: derived_request_id(&reservation_id, "xmr", b"activate")?,
             offer_id: offer_id.clone(),
             expected_offer_revision: 2,
             reservation_id: reservation_id.clone(),
@@ -750,15 +750,6 @@ fn validate_acceptance_paths(input: &XmrTakeInput<'_>) -> anyhow::Result<()> {
         );
     }
     Ok(())
-}
-
-fn derived_request_id(reservation_id: &RequestId, label: &[u8]) -> anyhow::Result<RequestId> {
-    let mut digest = Sha256::new();
-    digest.update(b"lez-atomic-swaps/xmr-taker-chat-request/v1\0");
-    digest.update(reservation_id.as_str().as_bytes());
-    digest.update([0]);
-    digest.update(label);
-    RequestId::new(hex::encode(digest.finalize())).map_err(Into::into)
 }
 #[cfg(test)]
 mod receipt_v2_tests {
