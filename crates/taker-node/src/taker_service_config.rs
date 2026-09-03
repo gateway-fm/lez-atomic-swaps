@@ -2,7 +2,7 @@
 //! default, prepared-route lifecycle when a validated catalog is configured.
 //! The prepared catalog lives in [`prepared`]; its Zcash entries need `pair-zec`.
 
-mod prepared;
+pub(crate) mod prepared;
 
 use prepared::InitiationConfigurationV1;
 pub(crate) use prepared::PreparedReceiptBindingV1;

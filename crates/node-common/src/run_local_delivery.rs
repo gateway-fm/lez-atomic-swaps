@@ -277,6 +277,14 @@ pub struct RunLocalDelivery {
     signing_key: Option<SecretKey>,
 }
 
+impl RunLocalDelivery {
+    /// The Delivery directory this transport reads or writes.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
 impl std::fmt::Debug for RunLocalDelivery {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

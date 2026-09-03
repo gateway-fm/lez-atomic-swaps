@@ -129,6 +129,32 @@ pub struct TakerClaimRequestV1 {
     pub expected_generation: u64,
 }
 
+/// Parameters for the Taker's own first lock (Bitcoin funding broadcast).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerLockRequestV1 {
+    /// Request schema version; must be one.
+    pub schema_version: u16,
+    /// Stable application swap identity.
+    pub swap_id: SwapId,
+}
+
+/// The exact lock effect the Taker Node performed or found already done.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerLockCommitV1 {
+    /// Response schema version; currently one.
+    pub schema_version: u16,
+    /// Stable application swap identity.
+    pub swap_id: SwapId,
+    /// The chain the lock was broadcast on.
+    pub chain: Box<str>,
+    /// Display transaction id of the lock.
+    pub transaction_id: Box<str>,
+    /// Whether the lock had already been broadcast by an earlier call.
+    pub was_replay: bool,
+}
+
 /// Parameters for an explicit generation-fenced Taker refund.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -380,6 +406,9 @@ pub struct TakerRegisteredMethodsV1 {
     monitor: bool,
     claim: bool,
     refund: bool,
+    /// `taker_swap_lock_v1`: the Taker's own first lock for Node-owned swaps.
+    #[serde(default)]
+    lock: bool,
 }
 
 impl TakerRegisteredMethodsV1 {
@@ -394,6 +423,7 @@ impl TakerRegisteredMethodsV1 {
             monitor: false,
             claim: false,
             refund: false,
+            lock: false,
         }
     }
 
@@ -410,7 +440,14 @@ impl TakerRegisteredMethodsV1 {
             monitor: true,
             claim: true,
             refund: true,
+            lock: true,
         }
+    }
+
+    /// Reports whether the Taker's own lock method is registered.
+    #[must_use]
+    pub const fn lock(self) -> bool {
+        self.lock
     }
 
     /// Reports whether health is registered.

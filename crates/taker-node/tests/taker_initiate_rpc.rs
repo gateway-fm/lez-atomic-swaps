@@ -47,6 +47,7 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
             "taker_swap_claim_v1",
             "taker_swap_initiate_v1",
             "taker_swap_list_v1",
+            "taker_swap_lock_v1",
             "taker_swap_monitor_v1",
             "taker_swap_refund_v1",
         ])

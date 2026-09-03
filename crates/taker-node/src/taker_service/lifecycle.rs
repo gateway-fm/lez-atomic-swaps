@@ -29,6 +29,7 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 
+use super::btc_dynamic;
 #[cfg(feature = "pair-zec")]
 use crate::zec_taker_accept::{
     ZecTakeInput, load_taker_actor_from_receipt_for_monitor,
@@ -36,10 +37,10 @@ use crate::zec_taker_accept::{
 };
 use crate::{
     ConfiguredTakerInitiationContext, PreparedTakerInitiationV1, TakerActionCommitV1,
-    TakerBackendError, TakerClaimRequestV1, TakerInitiationCommitV1, TakerOfferListRequestV1,
-    TakerPrivacyGuidanceV1, TakerRefundRequestV1, TakerSwapInitiateRequestV1,
-    TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1, TakerSwapStateV1,
-    TakerSwapViewV1, TakerTerminalActionV1,
+    TakerBackendError, TakerClaimRequestV1, TakerInitiationCommitV1, TakerLockCommitV1,
+    TakerLockRequestV1, TakerOfferListRequestV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
+    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
     btc_taker_accept::{
         BtcTakeInput, load_btc_taker_actor_from_receipt_for_monitor,
         take_btc_with_authenticated_offer_and_actor_config,
@@ -367,7 +368,9 @@ pub(super) fn register(
             let request: TakerSwapInitiateRequestV1 = params
                 .one()
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
-            initiate(state, request).await.map_err(map_initiation_error)
+            Box::pin(initiate(state, request))
+                .await
+                .map_err(map_initiation_error)
         }
     })?;
 
@@ -420,6 +423,17 @@ fn register_terminal_methods(
             ))
             .await
             .map_err(map_action_error)
+        }
+    })?;
+
+    let lock_state = Arc::clone(state);
+    module.register_async_method("taker_swap_lock_v1", move |params, _, _| {
+        let state = Arc::clone(&lock_state);
+        async move {
+            let request: TakerLockRequestV1 = params
+                .one()
+                .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
+            lock_swap(state, request).await
         }
     })?;
     Ok(())
@@ -1215,7 +1229,7 @@ async fn initiate(
         )
         .await?;
         let state = if execution_enabled || receipt_present {
-            execute_prepared(&prepared, admitted_at).await?;
+            execute_prepared(&initiation, &prepared, admitted_at).await?;
             bind_prepared_receipt(&initiation, prepared.swap_id()).await?;
             TakerSwapStateV1::NotActivated
         } else {
@@ -1228,16 +1242,24 @@ async fn initiate(
     // before authenticated Delivery performs asynchronous I/O.
     let offer_id = request.offer_id.clone();
     let selection_context = Arc::clone(&initiation);
-    let prepared = tokio::task::spawn_blocking(move || {
-        selection_context
+    let (catalog_entry, dynamic) = tokio::task::spawn_blocking(move || {
+        let context = selection_context
             .lock()
-            .map_err(|_| InitiationError::Internal)?
-            .prepared_for_offer(&offer_id)
-            .cloned()
-            .ok_or(InitiationError::SelectionMismatch)
+            .map_err(|_| InitiationError::Internal)?;
+        Ok::<_, InitiationError>((
+            context.prepared_for_offer(&offer_id).cloned(),
+            context.dynamic_btc(),
+        ))
     })
     .await
     .map_err(|_| InitiationError::Internal)??;
+    let prepared = match (catalog_entry, dynamic) {
+        (Some(prepared), _) => prepared,
+        (None, Some(dynamic)) if request.route.pair() == Pair::Bitcoin => {
+            prepare_dynamic_btc(&state, &request, &initiation, &dynamic).await?
+        }
+        (None, _) => return Err(InitiationError::SelectionMismatch),
+    };
     if !request_matches_facts(&request, prepared.facts()) {
         return Err(InitiationError::SelectionMismatch);
     }
@@ -1265,13 +1287,148 @@ async fn initiate(
     .await
     .map_err(|_| InitiationError::Internal)??;
     let progress = if execution_enabled {
-        execute_prepared(&prepared, now).await?;
+        execute_prepared(&initiation, &prepared, now).await?;
         bind_prepared_receipt(&initiation, prepared.swap_id()).await?;
         TakerSwapStateV1::NotActivated
     } else {
         TakerSwapStateV1::Initiating
     };
     Ok(commit_from_admission(&admission, progress))
+}
+
+/// Prepares a Bitcoin swap for any live offer at take time (ADR 0213) and
+/// registers it in the catalog, so the rest of the initiation is shared.
+async fn prepare_dynamic_btc(
+    state: &TakerServiceState,
+    request: &TakerSwapInitiateRequestV1,
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    dynamic: &Arc<btc_dynamic::DynamicBtcRole>,
+) -> Result<PreparedTakerInitiationV1, InitiationError> {
+    let (now, live_match) = selected_offer_is_live(state, request).await?;
+    if !live_match {
+        return Err(InitiationError::SelectionMismatch);
+    }
+    let announcement = match request.logos_offer_announcement_base64.as_deref() {
+        Some(proof_base64) => {
+            let encoded = BASE64_STANDARD
+                .decode(proof_base64.as_bytes())
+                .map_err(|_| InitiationError::SelectionMismatch)?;
+            Some(
+                verify_logos_offer_announcement(&encoded, now)
+                    .map_err(|_| InitiationError::SelectionMismatch)?
+                    .offer()
+                    .clone(),
+            )
+        }
+        None => None,
+    };
+    let take = btc_dynamic::TakeRequest {
+        request_id: request.request_id.clone(),
+        offer_id: request.offer_id.clone(),
+        route: request.route,
+        maker_identity: *request.maker_identity.as_bytes(),
+        signed_envelope_sha256: request.signed_envelope_sha256,
+        foreign_units: request.foreign_units,
+        expected_lez_units: request.expected_lez_units,
+        announcement,
+    };
+    let prepared = btc_dynamic::prepare(dynamic, &take, now)
+        .await
+        .map_err(|error| {
+            eprintln!("taker BTC reservation failed: {error:#}");
+            InitiationError::ExecutionUnavailable
+        })?;
+    let entry = dynamic
+        .load_entry(&prepared.configured)
+        .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    let context = Arc::clone(initiation);
+    let inserted = entry.clone();
+    tokio::task::spawn_blocking(move || {
+        context
+            .lock()
+            .map_err(|_| InitiationError::Internal)?
+            .insert_prepared(inserted)
+            .map_err(|()| InitiationError::Conflict)
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)??;
+    Ok(entry)
+}
+
+/// The Taker's own first lock for a Node-owned Bitcoin swap.
+async fn lock_swap(
+    state: Arc<TakerServiceState>,
+    request: TakerLockRequestV1,
+) -> Result<TakerLockCommitV1, ErrorObjectOwned> {
+    if request.schema_version != 1 {
+        return Err(rpc_error(
+            INVALID_PARAMS_CODE,
+            "Invalid params",
+            "unsupported_schema_version",
+        ));
+    }
+    let initiation = state.initiation.clone().ok_or_else(|| {
+        rpc_error(
+            INTERNAL_ERROR_CODE,
+            "Internal error",
+            "initiation_registry_unavailable",
+        )
+    })?;
+    let swap_id = request.swap_id.clone();
+    let (reservation_id, dynamic) = tokio::task::spawn_blocking(move || {
+        let context = initiation.lock().map_err(|_| {
+            rpc_error(
+                INTERNAL_ERROR_CODE,
+                "Internal error",
+                "initiation_registry_unavailable",
+            )
+        })?;
+        let prepared = context
+            .prepared_for_swap(&swap_id)
+            .filter(|prepared| prepared.execution().dynamic())
+            .ok_or_else(|| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "lock_swap_unknown"))?;
+        let dynamic = context.dynamic_btc().ok_or_else(|| {
+            rpc_error(
+                DEPENDENCY_UNAVAILABLE_CODE,
+                "Taker dependency unavailable",
+                "lock_unavailable",
+            )
+        })?;
+        Ok::<_, ErrorObjectOwned>((prepared.reservation_id().clone(), dynamic))
+    })
+    .await
+    .map_err(|_| {
+        rpc_error(
+            INTERNAL_ERROR_CODE,
+            "Internal error",
+            "initiation_registry_unavailable",
+        )
+    })??;
+    if !btc_dynamic::funds_bitcoin(&dynamic, &reservation_id) {
+        return Err(rpc_error(
+            INVALID_PARAMS_CODE,
+            "Invalid params",
+            "lock_not_this_role",
+        ));
+    }
+    let (transaction_id, was_replay) =
+        btc_dynamic::lock(&dynamic, &reservation_id)
+            .await
+            .map_err(|error| {
+                eprintln!("taker BTC lock failed: {error:#}");
+                rpc_error(
+                    DEPENDENCY_UNAVAILABLE_CODE,
+                    "Taker dependency unavailable",
+                    "lock_unavailable",
+                )
+            })?;
+    Ok(TakerLockCommitV1 {
+        schema_version: 1,
+        swap_id: request.swap_id,
+        chain: "bitcoin".into(),
+        transaction_id: transaction_id.into(),
+        was_replay,
+    })
 }
 
 /// Pairs whose lifecycle this Node runs itself.
@@ -1451,10 +1608,30 @@ async fn bind_prepared_receipt(
 }
 
 async fn execute_prepared(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     prepared: &PreparedTakerInitiationV1,
     admitted_at: u64,
 ) -> Result<(), InitiationError> {
     match prepared.facts().route().pair() {
+        Pair::Bitcoin if prepared.execution().dynamic() => {
+            let dynamic = initiation
+                .lock()
+                .map_err(|_| InitiationError::Internal)?
+                .dynamic_btc()
+                .ok_or(InitiationError::ExecutionUnavailable)?;
+            btc_dynamic::execute(
+                &dynamic,
+                prepared.reservation_id(),
+                prepared.execution().authenticated_offer(),
+                prepared.facts().foreign_units(),
+                admitted_at,
+            )
+            .await
+            .map_err(|error| {
+                eprintln!("taker BTC take failed: {error:#}");
+                InitiationError::ExecutionUnavailable
+            })
+        }
         Pair::Bitcoin => execute_prepared_btc(prepared, admitted_at).await,
         #[cfg(feature = "pair-zec")]
         Pair::Zcash => execute_prepared_zec(prepared, admitted_at).await,

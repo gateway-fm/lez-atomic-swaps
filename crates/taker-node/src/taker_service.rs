@@ -4,7 +4,10 @@
 //! prepared-route lifecycle lives in [`lifecycle`]: Bitcoin swaps always,
 //! Zcash swaps with the `pair-zec` feature.
 
+mod btc_dynamic;
 mod lifecycle;
+
+pub(crate) use btc_dynamic::DynamicBtcRole;
 
 use std::sync::{Arc, Mutex};
 
