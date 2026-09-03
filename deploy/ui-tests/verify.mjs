@@ -270,14 +270,12 @@ if (role === "maker") {
   });
 
   test("taker: wallet-indexed BTC order book is ready", async (app) => {
-    await app.expectTexts([
-      "ACCOUNT",
-      "My orders",
-      "Available orders",
-      "Zurich Wallet 01 · Taker",
-      "0.01000000 BTC",
-      "1,000 LEZ",
-    ]);
+    await app.expectTexts(["ACCOUNT", "My orders", "Available orders", "Zurich Wallet 01 · Taker"]);
+    // The order book arrives with the first market snapshot after the view
+    // opens; wait for the rendered rows instead of racing that request.
+    await app.waitFor(async () => app.expectTexts(["0.01000000 BTC", "1,000 LEZ"]), {
+      timeout: 15000, interval: 500, description: "first market snapshot rendered",
+    });
     await app.click("Refresh wallet market");
     await app.waitFor(async () => app.expectTexts(["Munich Vault 01", "Basel Vault 02"]), {
       timeout: 15000, interval: 500, description: "multi-Maker order book",
@@ -286,7 +284,11 @@ if (role === "maker") {
   });
 
   test("taker: real Node health", async (app) => {
-    await app.click("Check Node");
+    // Signal-invoke by objectName: text-targeted clicks do not reliably reach
+    // controls under the offscreen platform once the order book has grown.
+    const check = await app.findByProperty("objectName", "takerHealth");
+    if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
+    await evaluateIn(app, check.matches[0].id, "clicked()");
     await app.waitFor(async () => app.expectTexts(["All systems ready"]), {
       timeout: 15000, interval: 300, description: "Taker health status",
     });

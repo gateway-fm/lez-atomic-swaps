@@ -17,7 +17,7 @@ const packages = [
   {
     directory: "maker",
     name: "lez_atomic_swap_maker",
-    displayName: "LEZ Atomic Swap Maker",
+    displayName: "LEZ / BTC Maker",
     main: "lez_atomic_swap_maker_plugin",
     icon: "icons/maker-console.svg",
     environment: "LEZ_MAKER_RPC_SOCKET",
@@ -48,7 +48,7 @@ const packages = [
   {
     directory: "taker",
     name: "lez_atomic_swap_taker",
-    displayName: "LEZ Atomic Swap Taker",
+    displayName: "LEZ / BTC Taker",
     main: "lez_atomic_swap_taker_plugin",
     icon: "icons/taker-route.svg",
     environment: "LEZ_TAKER_RPC_SOCKET",

@@ -72,11 +72,10 @@ Build with the pinned flakes (nix, experimental-features enabled):
   nix build path:../basecamp#logos-qt-mcp -o qt-mcp
 Then copy:
   bundle/     -> images/basecamp-ui/assets/bundle
-  maker-user/ -> images/basecamp-ui/assets/maker-user
-  taker-user/ -> images/basecamp-ui/assets/taker-user
   qt-mcp/     -> images/basecamp-ui/assets/qt-mcp
-and rename the role package variant tags linux-arm64-dev -> linux-arm64
-(variant file + manifest.json main/hashes keys).
+and stage the two role packages (this pins the variant tag):
+  scripts/stage-basecamp-package.sh maker-user maker
+  scripts/stage-basecamp-package.sh taker-user taker
 MISSING
     exit 1
 fi
