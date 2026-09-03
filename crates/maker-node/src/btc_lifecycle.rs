@@ -844,6 +844,7 @@ pub(super) async fn ceremony_nonce(
     Ok(response)
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) async fn ceremony_partial(
     request: BtcCeremonyPartialRequestV1,
     context: Arc<MakerRpc>,
@@ -920,6 +921,33 @@ pub(super) async fn ceremony_partial(
     })
     .map_err(|error| internal(&error))?;
     activate(&config).await.map_err(|error| internal(&error))?;
+    // Hand the activated actor to the Maker's supervisor, which observes it
+    // and drives every next effect (LEZ funding, Bitcoin claim) on schedule.
+    let program = &lifecycle.runtime.config().actor;
+    let mut program_sha256 = [0_u8; 32];
+    hex::decode_to_slice(&program.program_sha256, &mut program_sha256)
+        .map_err(|_| internal(&"actor program digest is not 32 bytes of hex"))?;
+    let config_sha256 = lez_btc_role_lifecycle::actor::file_sha256(&layout.actor_config_file())
+        .map_err(|error| internal(&error))?;
+    let manifest = MakerActorManifestV1::new(
+        agreement.coordinator().id().clone(),
+        MakerActorKindV1::Bitcoin,
+        layout.actor_config_file(),
+        config_sha256,
+        program.program.clone(),
+        program_sha256,
+        layout.actor_state_db(),
+    )
+    .map_err(|error| internal(&error))?;
+    {
+        let mut store = context
+            .store
+            .lock()
+            .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+        store
+            .register_maker_actor(&manifest, accepted_at)
+            .map_err(|error| internal(&error))?;
+    }
     record.actor_activated = true;
     record.store(&layout).map_err(|error| internal(&error))?;
     let response = BtcCeremonyPartialResponseV1 {
