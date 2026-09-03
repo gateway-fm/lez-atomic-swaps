@@ -1976,6 +1976,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-btc-role-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bitcoin",
+ "btc-reference-actor",
+ "btc-role-preflight",
+ "getrandom 0.3.4",
+ "hex",
+ "jsonrpsee",
+ "jsonrpsee-http-client",
+ "lez-adaptor-role-runner",
+ "lez-adaptor-signature",
+ "lez-bridge-client",
+ "lez-bridge-protocol",
+ "lez-btc-swap-sdk",
+ "lez-swap-core",
+ "lez-zec-swap-sdk",
+ "rustix",
+ "secp256k1 0.29.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "lez-btc-swap-sdk"
 version = "0.1.0"
 dependencies = [
