@@ -818,6 +818,80 @@ pub struct ActorStatusV1 {
     state: ActorStateV1,
 }
 
+/// Typed, secret-free view of durable actor lifecycle state.
+///
+/// In-process callers (the role Nodes) gate on this projection instead of the
+/// JSON encoding, exactly as the ZEC actor's projection is consumed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActorStatusProjectionV1 {
+    /// No durable activation exists for this actor yet.
+    NotActivated,
+    /// The actor has durable lifecycle state.
+    Active {
+        /// Current protocol phase.
+        phase: Phase,
+        /// Monotonic durable-state revision.
+        revision: u64,
+        /// Next safe high-level step for this role.
+        next_action: ActorNextActionV1,
+    },
+}
+
+impl ActorStatusV1 {
+    /// Returns the role permanently bound to this status.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
+    }
+
+    /// Projects the wire-oriented status into typed lifecycle values.
+    #[must_use]
+    pub const fn projection(&self) -> ActorStatusProjectionV1 {
+        match self.state {
+            ActorStateV1::NotActivated => ActorStatusProjectionV1::NotActivated,
+            ActorStateV1::Active {
+                phase,
+                revision,
+                next_action,
+            } => ActorStatusProjectionV1::Active {
+                phase: phase.as_phase(),
+                revision,
+                next_action,
+            },
+        }
+    }
+}
+
+impl ActorEffectOutputV1 {
+    /// Returns the role permanently bound to this effect output.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
+    }
+
+    /// Projects the durable state the effect left behind.
+    #[must_use]
+    pub const fn projection(&self) -> ActorStatusProjectionV1 {
+        ActorStatusProjectionV1::Active {
+            phase: self.phase.as_phase(),
+            revision: self.revision,
+            next_action: self.next_action,
+        }
+    }
+
+    /// Reports whether the effect changed durable state on this invocation.
+    #[must_use]
+    pub const fn changed_durable_state(&self) -> bool {
+        match self.outcome {
+            ActorEffectOutcomeV1::Activated { was_replay }
+            | ActorEffectOutcomeV1::ObservedThenProjected { was_replay, .. } => !was_replay,
+            ActorEffectOutcomeV1::AwaitingObservation { .. }
+            | ActorEffectOutcomeV1::ConvergedOnExistingProjection { .. }
+            | ActorEffectOutcomeV1::NotYetComposed { .. } => false,
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum ActorStateV1 {
@@ -829,9 +903,10 @@ enum ActorStateV1 {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+/// Next safe high-level step for the actor's role, derived from durable state.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ActorNextActionV1 {
+pub enum ActorNextActionV1 {
     ObserveTakerFirstLock,
     ObserveMakerSecondLockOrRecoverTakerLeg,
     ObserveRevealingClaim,
@@ -874,6 +949,26 @@ enum ActorPhaseV1 {
     TakerLegRefunded,
     Refunded,
     MakerRecoveryAvailable,
+}
+
+impl ActorPhaseV1 {
+    const fn as_phase(self) -> Phase {
+        match self {
+            Self::Offered => Phase::Offered,
+            Self::AwaitingTakerConfirmations => Phase::AwaitingTakerConfirmations,
+            Self::TakerLockConfirmed => Phase::TakerLockConfirmed,
+            Self::AwaitingMakerConfirmations => Phase::AwaitingMakerConfirmations,
+            Self::BothLegsLocked => Phase::BothLegsLocked,
+            Self::TakerLockReorged => Phase::TakerLockReorged,
+            Self::MakerLockReorged => Phase::MakerLockReorged,
+            Self::ClaimEvidenceAvailable => Phase::ClaimEvidenceAvailable,
+            Self::Completed => Phase::Completed,
+            Self::MakerLegRefunded => Phase::MakerLegRefunded,
+            Self::TakerLegRefunded => Phase::TakerLegRefunded,
+            Self::Refunded => Phase::Refunded,
+            Self::MakerRecoveryAvailable => Phase::MakerRecoveryAvailable,
+        }
+    }
 }
 
 impl From<Phase> for ActorPhaseV1 {
