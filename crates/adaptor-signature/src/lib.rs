@@ -174,6 +174,13 @@ impl AdaptorSessionContext {
         self.ordered_public_keys
     }
 
+    /// The Taproot merkle root this context tweaks the aggregate key with, or
+    /// `None` for an untweaked (LEZ) context.
+    #[must_use]
+    pub const fn taproot_merkle_root(&self) -> Option<[u8; 32]> {
+        self.taproot_merkle_root
+    }
+
     /// Domain-separated commitment to every SDK input that affects signing.
     ///
     /// A durable actor stores this value alongside the serialized secret nonce
