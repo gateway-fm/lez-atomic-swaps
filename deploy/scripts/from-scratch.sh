@@ -269,7 +269,7 @@ phase_runner() {
       --package sequencer_service --package indexer_service 2>&1 | tail -2;
       mkdir -p /provision/lez-services; install -m 0755 /provision/build-arm/release/{sequencer_service,indexer_service} /provision/lez-services/"
   fi
-  runner_exec "mkdir -p $RUNNER_SERVICES_DIR/release && cp /provision/lez-services/{sequencer_service,indexer_service} $RUNNER_SERVICES_DIR/release/"
+  runner_exec "mkdir -p $RUNNER_SERVICES_DIR/release && install -m 0755 /provision/lez-services/{sequencer_service,indexer_service} $RUNNER_SERVICES_DIR/release/"
 
   # r0vm from the risc0 v3.0.5 tag (no arm64 release asset exists)
   if [[ ! -x "$PROVISION/tools-arm/bin/r0vm" ]]; then
