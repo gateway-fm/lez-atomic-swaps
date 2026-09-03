@@ -1394,8 +1394,12 @@ class Market:
                 "operation": "collect_result", "run_id": run_id,
                 "direction": direction,
             })
-            if export_result.get("kind") != "CollectSwapResultV1" \
-                    or wait_exec(str(export_result.get("exec_id", ""))) != 0:
+            if export_result.get("kind") != "CollectSwapResultV1":
+                raise RuntimeError("public evidence export failed")
+            export_code = export_result.get("exit_code")
+            if export_code is None:
+                export_code = wait_exec(str(export_result.get("exec_id", "")))
+            if export_code != 0:
                 raise RuntimeError("public evidence export failed")
             generated_on_mount = (
                 EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" /

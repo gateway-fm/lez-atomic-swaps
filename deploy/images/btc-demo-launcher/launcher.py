@@ -155,7 +155,8 @@ def poll_exec(exec_id: str, budget_seconds: float = 10.0) -> int | None:
     """Returns the exit code, or None while the execution is still running.
 
     One call stays well inside the controller's socket timeout; the controller
-    keeps calling until the code arrives. The run deadline spans the calls.
+    keeps calling until the code arrives, and may ask again after it has. The
+    run deadline spans the calls.
     """
     if not EXEC_RE.fullmatch(exec_id):
         raise ValueError("execution identity is invalid")
@@ -166,7 +167,6 @@ def poll_exec(exec_id: str, budget_seconds: float = 10.0) -> int | None:
     while True:
         inspection = dict(docker_json("GET", f"/exec/{exec_id}/json"))
         if inspection.get("Running") is not True:
-            EXEC_DEADLINES.pop(exec_id, None)
             value = inspection.get("ExitCode")
             return int(value) if isinstance(value, int) else -1
         if time.monotonic() >= deadline:

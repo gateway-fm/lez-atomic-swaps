@@ -76,8 +76,9 @@ class LauncherContractTests(unittest.TestCase):
         self.assertEqual(launcher.dispatch({
             "schema_version": 1, "operation": "wait_swap", "exec_id": exec_id,
         }), {"kind": "WaitSwapResultV1", "exit_code": 3})
+        self.assertEqual(launcher.poll_exec(exec_id), 3)
         with self.assertRaises(ValueError):
-            launcher.poll_exec(exec_id)
+            launcher.poll_exec("b" * 64)
 
     @mock.patch.object(launcher, "upload_bundle")
     def test_action_approval_path_is_derived_not_supplied(self, upload: mock.Mock) -> None:

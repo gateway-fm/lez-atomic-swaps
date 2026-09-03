@@ -26,6 +26,15 @@ payload, then runs `up.sh`, the market bootstrap, both UI suites and
 The cold path builds several Rust toolchains' worth of code and takes a few
 hours on Apple silicon; a rerun takes minutes.
 
+Two macOS specifics. If Docker Desktop keeps a Docker Hub login in the
+Keychain (`credsStore: "desktop"` in `~/.docker/config.json`), every pull and
+every BuildKit `FROM` lookup asks the Keychain, and macOS raises a prompt in
+the terminal's name; unattended runs then hang or fail with
+`DeadlineExceeded`. Click "Always Allow" once, or `docker logout` so public
+pulls stay anonymous. And the Docker VM disk fills up from build caches over
+time: `docker builder prune` and `docker image prune` are safe, volumes are
+not (the market and the runner's caches live there).
+
 ## Quick start
 
 ```sh
