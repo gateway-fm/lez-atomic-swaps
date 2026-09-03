@@ -1,5 +1,13 @@
+//! BTC↔LEZ Taker acceptance: authenticated offer selection, the Chat
+//! proposal/countersignature exchange with the Maker, role binding or actor
+//! provisioning, and the durable acceptance receipt. Shared by the Taker CLI
+//! and the Taker Node's Bitcoin route (ADR 0213).
+//!
+//! Errors carry `anyhow` context for the CLI; the Node maps them to fixed
+//! categories before they reach a socket.
+
 use std::{
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
@@ -17,7 +25,7 @@ use lez_btc_swap_sdk::{
 use lez_swap_core::{Pair, Participant, SwapDirection};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_btc_chat_swap_id};
-use lez_taker_node::{
+use crate::{
     BtcChatCompleteRequestV1, BtcChatCompleteRequestV2, BtcChatCompleteResponseV1,
     BtcChatCompleteResponseV2, BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1,
     BtcChatProposeRequestV2, DeliveryOfferQueryV1, RunLocalDelivery, call_local_chat_rpc,
@@ -27,31 +35,47 @@ use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use lez_taker_node::acceptance_files::{
+use crate::acceptance_files::{
     MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, derived_request_id, normalized_absolute,
     publish_exact_new, resolved_new_path,
 };
 
-pub(crate) struct BtcTakeInput<'a> {
-    pub(crate) direction: SwapDirection,
-    pub(crate) delivery: Option<&'a RunLocalDelivery>,
-    pub(crate) now_unix_seconds: u64,
-    pub(crate) offer_id: &'a str,
-    pub(crate) chat_socket: &'a Path,
-    pub(crate) reservation_id: &'a str,
-    pub(crate) foreign_units: u64,
-    pub(crate) unsigned_draft_file: &'a Path,
-    pub(crate) contribution_files: Option<(&'a Path, &'a Path)>,
-    pub(crate) role_root: Option<&'a Path>,
-    pub(crate) source_taker_config_file: Option<&'a Path>,
-    pub(crate) taker_actor_root: Option<&'a Path>,
-    pub(crate) acceptance_receipt_file: Option<&'a Path>,
-    pub(crate) taker_signing_key_file: &'a Path,
-    pub(crate) agreement_output_file: &'a Path,
+/// Inputs of one BTC take: which offer, over which Chat socket, with which
+/// private material, and where the durable outputs go.
+pub struct BtcTakeInput<'a> {
+    pub direction: SwapDirection,
+    pub delivery: Option<&'a RunLocalDelivery>,
+    pub now_unix_seconds: u64,
+    pub offer_id: &'a str,
+    pub chat_socket: &'a Path,
+    pub reservation_id: &'a str,
+    pub foreign_units: u64,
+    pub unsigned_draft_file: &'a Path,
+    pub contribution_files: Option<(&'a Path, &'a Path)>,
+    pub role_root: Option<&'a Path>,
+    pub source_taker_config_file: Option<&'a Path>,
+    pub taker_actor_root: Option<&'a Path>,
+    pub acceptance_receipt_file: Option<&'a Path>,
+    pub taker_signing_key_file: &'a Path,
+    pub agreement_output_file: &'a Path,
 }
 
+impl fmt::Debug for BtcTakeInput<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BtcTakeInput")
+            .field("direction", &self.direction)
+            .field("delivery_configured", &self.delivery.is_some())
+            .field("offer_id", &self.offer_id)
+            .field("reservation_id", &self.reservation_id)
+            .field("foreign_units", &self.foreign_units)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Secret-free result of one BTC take.
 #[derive(Serialize)]
-pub(crate) struct BtcAcceptanceOutput {
+pub struct BtcAcceptanceOutput {
     schema_version: u16,
     offer_id: String,
     offer_revision: u64,
@@ -67,6 +91,18 @@ pub(crate) struct BtcAcceptanceOutput {
     actor: Option<BtcAcceptanceActorOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     agreement_binding: Option<BtcAgreementBindingOutput>,
+}
+
+impl fmt::Debug for BtcAcceptanceOutput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BtcAcceptanceOutput")
+            .field("offer_id", &self.offer_id)
+            .field("offer_revision", &self.offer_revision)
+            .field("swap_id", &self.swap_id)
+            .field("ready_for_public_effects", &self.ready_for_public_effects)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Serialize)]
@@ -100,7 +136,13 @@ struct BtcAcceptanceReceiptV1 {
 }
 
 #[allow(clippy::too_many_lines)]
-pub(crate) async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAcceptanceOutput> {
+/// Takes one authenticated BTC offer end to end, resuming an interrupted take
+/// from its persisted agreement.
+///
+/// # Errors
+///
+/// Returns the first failed step with context suitable for the owner CLI.
+pub async fn take_btc(input: BtcTakeInput<'_>) -> anyhow::Result<BtcAcceptanceOutput> {
     validate_acceptance_paths(&input)?;
     let offer_id = MakerOfferId::new(input.offer_id)?;
     let reservation_id = RequestId::new(input.reservation_id)?;
@@ -726,7 +768,13 @@ fn publish_acceptance_receipt(
     })
 }
 
-pub(crate) fn load_btc_taker_actor_from_receipt(path: &Path) -> anyhow::Result<ActorConfig> {
+/// Reloads the Taker's BTC actor configuration through its acceptance receipt,
+/// re-pinning the config digest, role, swap and agreement.
+///
+/// # Errors
+///
+/// Returns an error when the receipt or the actor bundle it names changed.
+pub fn load_btc_taker_actor_from_receipt(path: &Path) -> anyhow::Result<ActorConfig> {
     let bytes = read_private_file(
         path,
         MAX_TAKER_RECEIPT_BYTES,
