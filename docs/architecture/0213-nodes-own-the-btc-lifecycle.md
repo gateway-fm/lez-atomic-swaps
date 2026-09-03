@@ -85,11 +85,42 @@ S1.2 Taker Node: `btc_taker_accept` moves from the CLI into the library; the
   name) on a per-swap registry; a Taker actor supervisor spawns
   `lez-btc-taker-actor` on FD 196/197 like the Maker's; the capability model
   gains per-pair, per-method entries.
-S1.3 Ceremony over Chat: `btc_ceremony_reserve_v1`, `_commitment_v1`,
-  `_nonce_v1`, `_partial_v1` per leg, journal-backed and idempotent on
-  `(reservation_id, leg, round)`; role preflight (contribution, keys) runs
-  inside each Node at take time; the presigned refund and the funding plan
-  come out of the ceremony, not out of fixtures.
+S1.3 Ceremony over Chat. The survey of 2026-09-03 fixed the shape: the
+  agreement body already binds the Bitcoin funding outpoint and the LEZ claim
+  message hash, so those facts must exist before the draft, and every
+  ceremony round needs a full session context. The Taker-initiated
+  request/response sequence, all methods idempotent on the Maker's replay
+  table and the role-local journals, is:
+  1. `btc_reserve_v1` (reservation id, direction, Taker contribution, plan):
+     the Maker bootstraps a per-reservation role root (agreement key = its
+     offer-bound MuSig2 key, fresh refund/claim/funding keys) and answers
+     with its contribution plus the facts only it holds — the Bitcoin
+     funding outpoint and anchor height when it funds Bitcoin, the prepared
+     LEZ escrow funding id when it deposits LEZ.
+  2. `btc_prepare_claim_v1` only when the Maker is the LEZ claimant: the
+     Taker sends its escrow funding id, the Maker returns the claim message
+     hash from its sidecar.
+  3. `btc_chat_propose_v2` / `btc_chat_complete_v2` unchanged: the Taker
+     composes the draft in-process (`compose_agreement_draft`) and both roles
+     bind the countersigned agreement.
+  4. `btc_ceremony_reserve_v1`: two fresh session ids, the claimant's final
+     `PrepareWitnessedClaimResult` (its message hash must equal the
+     agreement's), and the Taker's nonce commitments for both legs; the
+     Maker answers with its commitments.
+  5. `btc_ceremony_nonce_v1`: the Taker's public nonces; the Maker verifies
+     them against the commitments, reveals its nonces and returns its
+     partial signatures (both nonces are fixed by then).
+  6. `btc_ceremony_partial_v1`: the Taker's partials; the Maker verifies,
+     aggregates and returns its presignatures; the Taker requires byte
+     equality with its own. Each Node then synthesizes a schema-6 actor
+     config from its role root (journals, prepared claim, hex copies of the
+     refund key and adaptor scalar, LEZ lock material) and activates.
+  The ceremony itself runs on `CeremonySeat` (in-process, journal-backed;
+  the CLI is a wrapper). The Bitcoin funder builds and signs the funding
+  transaction from its own Bitcoin Core wallet and broadcasts it as its lock
+  effect; the refund is presigned by the actor from the role root's key
+  (ADR 0044). Both sidecars share one configured bridge run id in stage 1;
+  a per-swap run id waits for per-swap sidecars in stage 3.
 S1.4 Maker Node: discriminated manual actions (`fund_lez`, `claim_btc`,
   `lock_btc`, `claim_lez`) instead of one `claim → drive`; a swap view with
   turn, progress and effects; v2 role binding continues into a scheduled
