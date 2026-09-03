@@ -15,9 +15,9 @@ use lez_maker_node::XmrMakerChatAuthority;
 #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
 use lez_maker_node::secure_file::load_raw_secret;
 use lez_maker_node::{
-    BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority, MakerActorSupervisorCancellation,
-    MakerActorSupervisorConfig, MakerRpc, ProcessLogosPriceSource, ProcessRouteHealthProbe,
-    RunLocalDelivery, chat_rpc_module,
+    BtcMakerActorProvisioner, BtcMakerLifecycle, BtcMakerRoleAgreementAuthority,
+    MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerRpc,
+    ProcessLogosPriceSource, ProcessRouteHealthProbe, RunLocalDelivery, chat_rpc_module,
     node_config::load_node_arguments,
     owner_rpc_server::{
         OwnedPath, bind_owner_socket, publish_ready_file, server_config, validate_runtime_directory,
@@ -65,6 +65,7 @@ type BtcChatAuthority = (
     SecretKey,
     Option<BtcMakerActorProvisioner>,
     Option<BtcMakerRoleAgreementAuthority>,
+    Option<BtcMakerLifecycle>,
 );
 
 #[cfg(feature = "pair-xmr")]
@@ -141,6 +142,13 @@ struct Arguments {
     )]
     btc_maker_role_root: Option<PathBuf>,
     /// Existing owner-private mode-0700 base for deterministic BTC actor bundles.
+    /// Node-owned Bitcoin lifecycle configuration (ADR 0213): per-reservation
+    /// role roots, funding wallet, LEZ sidecar, ceremony and actor synthesis.
+    #[arg(
+        long,
+        requires_all = ["delivery_directory", "btc_maker_signing_key_file"]
+    )]
+    btc_role_config: Option<PathBuf>,
     #[arg(long, requires_all = ["btc_source_maker_config", "btc_maker_signing_key_file", "btc_actor_program", "btc_actor_program_sha256"])]
     btc_maker_actor_root: Option<PathBuf>,
     /// Absolute exact BTC one-shot actor executable.
@@ -911,6 +919,7 @@ fn configured_btc_chat_authority(
     );
     let any_authority = !arguments.btc_source_maker_config.is_empty()
         || arguments.btc_maker_role_root.is_some()
+        || arguments.btc_role_config.is_some()
         || arguments.btc_maker_signing_key_file.is_some()
         || actor_deployment != (None, None, None);
     if !any_authority {
@@ -960,11 +969,22 @@ fn configured_btc_chat_authority(
         .map(|root| BtcMakerRoleAgreementAuthority::new(root.clone(), &signing_key))
         .transpose()
         .context("validate BTC Maker role-agreement authority")?;
+    let lifecycle = arguments
+        .btc_role_config
+        .as_ref()
+        .map(|path| BtcMakerLifecycle::load(path))
+        .transpose()
+        .context("validate BTC Maker lifecycle configuration")?;
     ensure!(
-        actor_provisioner.is_some() || role_authority.is_some(),
-        "BTC signing key requires actor templates or a role-agreement root"
+        actor_provisioner.is_some() || role_authority.is_some() || lifecycle.is_some(),
+        "BTC signing key requires actor templates, a role-agreement root, or a role configuration"
     );
-    Ok(Some((signing_key, actor_provisioner, role_authority)))
+    Ok(Some((
+        signing_key,
+        actor_provisioner,
+        role_authority,
+        lifecycle,
+    )))
 }
 
 #[cfg(feature = "pair-xmr")]
@@ -1236,8 +1256,13 @@ fn maker_context(
         None => context,
     };
     let context = match pairs.btc_chat {
-        Some((signing_key, provisioner, role_authority)) => {
-            context.with_btc_chat_authorities(signing_key, provisioner, role_authority)
+        Some((signing_key, provisioner, role_authority, lifecycle)) => {
+            let context =
+                context.with_btc_chat_authorities(signing_key, provisioner, role_authority);
+            match lifecycle {
+                Some(lifecycle) => context.with_btc_lifecycle(lifecycle),
+                None => context,
+            }
         }
         None => context,
     };

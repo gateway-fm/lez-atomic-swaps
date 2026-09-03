@@ -2,6 +2,7 @@
 
 mod actor_supervisor;
 mod btc_chat;
+mod btc_lifecycle;
 mod daemon_lifecycle;
 mod logos_price_source;
 mod price_source;
@@ -22,6 +23,7 @@ pub use actor_supervisor::{
 };
 use btc_chat::register_btc_chat_methods;
 pub use btc_chat::{BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority};
+pub use btc_lifecycle::BtcMakerLifecycle;
 pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,
@@ -133,6 +135,8 @@ pub struct MakerRpc {
     btc_chat_signing_key: Option<Arc<SecretKey>>,
     btc_actor_provisioner: Option<Arc<BtcMakerActorProvisioner>>,
     btc_role_agreement_authority: Option<Arc<BtcMakerRoleAgreementAuthority>>,
+    /// Node-owned Bitcoin lifecycle (ADR 0213); supersedes the fixture paths.
+    btc_lifecycle: Option<Arc<BtcMakerLifecycle>>,
     #[cfg(feature = "pair-xmr")]
     xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
     #[cfg(feature = "pair-zec")]
@@ -180,6 +184,10 @@ impl std::fmt::Debug for MakerRpc {
                     .btc_role_agreement_authority
                     .as_ref()
                     .map(|_| "configured"),
+            )
+            .field(
+                "btc_lifecycle",
+                &self.btc_lifecycle.as_ref().map(|_| "configured"),
             );
         #[cfg(feature = "pair-xmr")]
         debug.field(
@@ -221,6 +229,7 @@ impl MakerRpc {
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
+            btc_lifecycle: None,
             #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
             #[cfg(feature = "pair-zec")]
@@ -248,6 +257,7 @@ impl MakerRpc {
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
+            btc_lifecycle: None,
             #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
             #[cfg(feature = "pair-zec")]
@@ -302,6 +312,14 @@ impl MakerRpc {
         self.btc_chat_signing_key = Some(Arc::new(signing_key));
         self.btc_actor_provisioner = actor_provisioner.map(Arc::new);
         self.btc_role_agreement_authority = role_agreement_authority.map(Arc::new);
+        self
+    }
+
+    /// Attaches the Node-owned Bitcoin lifecycle (reservation, planning,
+    /// ceremony, actor synthesis) for this Maker role.
+    #[must_use]
+    pub fn with_btc_lifecycle(mut self, lifecycle: BtcMakerLifecycle) -> Self {
+        self.btc_lifecycle = Some(Arc::new(lifecycle));
         self
     }
 
