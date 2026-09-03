@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# stage-basecamp-package.sh — copy one Nix `*-ui-install` output into the
+# stage-basecamp-package.sh — put one Nix-built Basecamp package into the
 # basecamp-ui image context and pin its variant tag.
 #
 #   scripts/stage-basecamp-package.sh <nix-install-output> <maker|taker> [variant]
+#   scripts/stage-basecamp-package.sh <package.lgx> module [variant]
+#
+# Role packages come from the `*-ui-install` trees and land in the role user
+# directory. Runtime modules the role packages depend on (chat_module,
+# delivery_module) come from `.lgx` archives and land in the bundle's modules
+# directory, next to the modules Basecamp ships with.
 #
 # The module builder tags development builds `linux-arm64-dev`; the bundled
 # Basecamp selects the `linux-arm64` variant, so the variant file and the
@@ -11,22 +17,41 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-source_root="${1:?nix install output directory}"
-role="${2:?maker or taker}"
+source="${1:?nix install output directory or .lgx archive}"
+kind="${2:?maker, taker or module}"
 variant="${3:-linux-arm64}"
-[[ "$role" == maker || "$role" == taker ]] || { echo "role must be maker or taker" >&2; exit 64; }
-plugin="lez_atomic_swap_${role}"
-[[ -d "$source_root/plugins/$plugin" ]] || { echo "$source_root has no plugins/$plugin" >&2; exit 65; }
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 66; }
 
-dest="images/basecamp-ui/assets/${role}-user"
-rm -rf "$dest"
-mkdir -p "$dest"
-cp -RL "$source_root"/. "$dest"/
+case "$kind" in
+  maker|taker)
+    plugin="lez_atomic_swap_${kind}"
+    [[ -d "$source/plugins/$plugin" ]] || { echo "$source has no plugins/$plugin" >&2; exit 65; }
+    dest="images/basecamp-ui/assets/${kind}-user"
+    rm -rf "$dest"
+    mkdir -p "$dest"
+    cp -RL "$source"/. "$dest"/
+    package="$dest/plugins/$plugin"
+    ;;
+  module)
+    unpacked="$(mktemp -d)"
+    trap 'rm -rf "$unpacked"' EXIT
+    tar -xzf "$source" -C "$unpacked"
+    name="$(jq -r .name "$unpacked/manifest.json")"
+    built="$(jq -r '.main | keys[0]' "$unpacked/manifest.json")"
+    package="images/basecamp-ui/assets/bundle/modules/$name"
+    dest="$package"
+    rm -rf "$package"
+    mkdir -p "$package"
+    cp -RL "$unpacked/variants/$built"/. "$package"/
+    cp "$unpacked/manifest.json" "$package/"
+    printf '%s\n' "$built" > "$package/variant"
+    ;;
+  *) echo "kind must be maker, taker or module" >&2; exit 64 ;;
+esac
 chmod -R u+w "$dest"
 
-manifest="$dest/plugins/$plugin/manifest.json"
-variant_file="$dest/plugins/$plugin/variant"
+manifest="$package/manifest.json"
+variant_file="$package/variant"
 current="$(tr -d '[:space:]' < "$variant_file")"
 if [[ "$current" != "$variant" ]]; then
   printf '%s\n' "$variant" > "$variant_file"
@@ -37,4 +62,4 @@ if [[ "$current" != "$variant" ]]; then
   mv "$manifest.tmp" "$manifest"
 fi
 jq -e --arg v "$variant" '.main[$v] != null and .hashes["variants/" + $v] != null' "$manifest" >/dev/null
-echo "staged $plugin ($variant) -> $dest"
+echo "staged $(jq -r .name "$manifest") ($variant) -> $dest"
