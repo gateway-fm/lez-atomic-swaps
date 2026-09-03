@@ -121,12 +121,21 @@ phase_sources() {
     log "cloning this repository for the runner"
     git clone --quiet "$REPO_ROOT" "$RUNNER_REPO"
   fi
-  local head; head="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  # The runner refuses to execute anything but a clean checkout whose HEAD is
+  # its origin/main, so the workspace keeps a bare "origin" whose main names
+  # the commit under test.
+  local head bare="$RUNNER_WORK/origin.git"
+  head="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  [[ -d "$bare" ]] || git init --quiet --bare "$bare"
+  git -C "$REPO_ROOT" push --quiet --force "$bare" "HEAD:refs/heads/main"
+  git -C "$RUNNER_REPO" remote set-url origin "$bare" 2>/dev/null ||
+    git -C "$RUNNER_REPO" remote add origin "$bare"
+  git -C "$RUNNER_REPO" fetch --quiet origin
   if [[ "$(git -C "$RUNNER_REPO" rev-parse HEAD)" != "$head" ]]; then
     log "moving the runner checkout to $head"
-    git -C "$RUNNER_REPO" fetch --quiet "$REPO_ROOT" "$head"
-    git -C "$RUNNER_REPO" checkout --quiet --detach "$head"
+    git -C "$RUNNER_REPO" checkout --quiet --detach origin/main
   fi
+  [[ -z "$(git -C "$RUNNER_REPO" status --porcelain)" ]] || fail "the runner checkout is not clean"
   clone_pinned https://github.com/logos-blockchain/logos-execution-zone.git \
     "$LEZ_SOURCE_TAG" "$LEZ_SOURCE_COMMIT" "$LEZ_SOURCE"
   clone_pinned https://github.com/logos-co/logos-basecamp.git \
