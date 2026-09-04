@@ -193,6 +193,7 @@ scripts/swap-through-ui.sh one complete swap driven through the two Basecamp app
 scripts/market-bootstrap.sh one-time settlement-chain bootstrap, runs inside the runner
 scripts/stage-basecamp-package.sh stage one Nix-built package or module into the UI image
 scripts/export-node-evidence.py publish a completed swap's public evidence from the Nodes
+scripts/reset-swaps.sh     forget every persisted swap on both Nodes (after an actor rebuild)
 scripts/verify-all.sh      containers, chains, explorers, Node market, UI suites
 scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
@@ -251,9 +252,13 @@ Bitcoin Core wallets: `lez-taker`, `lez-maker` (descriptor wallets) and
 `lez-miner`, which imports the deterministic mining key
 (`rawtr(cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA)`) so the
 mined coins fund the Taker; regtest's subsidy is exhausted past height 11k, so
-mining to a fresh address yields nothing. Stage-1 limit: an aborted take
-leaves its swap directory and sidecar behind; the next take is a new
-reservation with its own sidecar, so nothing needs to be reset.
+mining to a fresh address yields nothing. An aborted take leaves its swap
+directory and sidecar behind; the next take is a new reservation with its own
+sidecar. Persisted swaps pin the actor program's hash, so after the actor
+binaries are rebuilt they list as `attention_required`; `scripts/reset-swaps.sh`
+forgets every persisted swap on both Nodes (directories, registry and store
+rows, reserved and consumed offers, exported evidence) and leaves chains,
+wallets, identities and the route preset alone.
 
 ## Demo boundary
 
