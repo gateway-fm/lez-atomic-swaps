@@ -1057,8 +1057,8 @@
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
       ],
       "control": "Locked inputs, exact program identities, consumer pins, clean builds, vulnerability checks, and immutable review commits constrain artifacts.",
-      "proofs": ["docs/upstream-production-blockers.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md", "deploy/full-swap/README.md"],
-      "remaining": "The M3+ stack still contains mutable inputs and a Docker-socket controller; SBOM, signed provenance, independent builds, and S12/S13 review remain open.",
+      "proofs": ["docs/upstream-production-blockers.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md", "deploy/runner/README.md"],
+      "remaining": "The local stack is still built from mutable inputs in the runner host (no stack service holds the Docker socket since ADR 0213 S1.6); SBOM, signed provenance, independent builds, and S12/S13 review remain open.",
       "owner": "release-security",
       "state": "open"
     },
@@ -1083,8 +1083,8 @@
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 4 }, "residual": { "likelihood": 3, "impact": 4 } }
       ],
       "control": "Private roots are separated from reviewed exports; packets bind public effects to a source commit and reject known secret fields.",
-      "proofs": ["docs/architecture/0052-bind-private-demo-videos-to-actual-node-evidence.md", "docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json", "deploy/compose.yaml", "deploy/images/btc-demo-controller/controller.py"],
-      "remaining": "The M3+ evidence file is writable and unsigned, and the explorer can read the private run tree. Export-only mounts, owner-only publication, signatures, and privacy review remain open.",
+      "proofs": ["docs/architecture/0052-bind-private-demo-videos-to-actual-node-evidence.md", "docs/evidence/m3-local-two-direction-survivor-claim-poc-20260716.json", "deploy/compose.yaml", "deploy/scripts/export-node-evidence.py"],
+      "remaining": "The exported evidence files are writable and unsigned; the explorer mounts only the export directory read-only (ADR 0213 S1.6). Owner-only publication, signatures, and privacy review remain open.",
       "owner": "evidence-security",
       "state": "open"
     }
