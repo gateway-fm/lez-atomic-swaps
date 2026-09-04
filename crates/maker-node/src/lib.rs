@@ -7,7 +7,12 @@ mod logos_price_source;
 mod price_source;
 mod route_health;
 mod rpc_contracts;
+#[cfg(feature = "pair-xmr")]
 mod xmr_chat;
+#[cfg(feature = "pair-zec")]
+mod zec_application;
+#[cfg(feature = "pair-zec")]
+mod zec_chat;
 
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
@@ -26,8 +31,20 @@ pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use rpc_contracts::{ListRequest, MakerDependencyStateV1, MakerHealthV1, MakerRouteHealthV1};
+#[cfg(feature = "pair-xmr")]
 pub use xmr_chat::XmrMakerChatAuthority;
+#[cfg(feature = "pair-xmr")]
 use xmr_chat::register_xmr_chat_methods;
+#[cfg(feature = "pair-zec")]
+pub use zec_application::{
+    AppliedZcashFundingEvent, ZcashFundingApplyError, ZcashFundingProjectionOutcome,
+    apply_zcash_funding_event, import_terminal_zec_maker_projection,
+    load_zcash_observation_tracker,
+};
+#[cfg(feature = "pair-zec")]
+pub use zec_chat::ZecMakerActorProvisioner;
+#[cfg(feature = "pair-zec")]
+use zec_chat::register_zec_chat_methods;
 
 use std::{
     fs,
@@ -54,22 +71,31 @@ use lez_swap_core::{
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    AlertObservedEvent, BtcAgreementAcceptance, EventCommit, LocalPriceV1, MakerActorKindV1,
+    AlertObservedEvent, BtcAgreementAcceptance, LocalPriceV1, MakerActorKindV1,
     MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionState,
     MakerActorProcessError, MakerActorProgressObservationV1, MakerActorScheduleState,
     MakerBtcNegotiationV1, MakerConfigurationCommit, MakerLocalRouteCommit, MakerOfferCommit,
     MakerOfferId, MakerOfferPublicationPreflight, MakerOfferRecordV1, MakerOfferStatus,
-    MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1,
-    MakerXmrActivationAcceptance, MakerXmrNegotiationStatus, MakerXmrNegotiationV1,
-    MakerZecNegotiationV1, OperatorAlert, OperatorAlertKind, OperatorAlertRecordV1,
-    OperatorAlertSeverity, OperatorTerminalProjectionCommit, SqliteSwapStore,
-    SqliteZecRecoveryStore, StoreError, VersionedMakerRecord, maker_btc_chat_swap_id,
-    maker_xmr_chat_swap_id, maker_zec_chat_session_id, validate_maker_actor_program,
+    MakerOfferV1, MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, OperatorAlert,
+    OperatorAlertKind, OperatorAlertSeverity, SqliteSwapStore, StoreError, VersionedMakerRecord,
+    maker_btc_chat_swap_id, validate_maker_actor_program,
 };
+#[cfg(feature = "pair-zec")]
+use lez_swap_store::{
+    EventCommit, MakerZecNegotiationV1, OperatorAlertRecordV1, OperatorTerminalProjectionCommit,
+    SqliteZecRecoveryStore, maker_zec_chat_session_id,
+};
+#[cfg(feature = "pair-xmr")]
+use lez_swap_store::{
+    MakerXmrActivationAcceptance, MakerXmrNegotiationStatus, MakerXmrNegotiationV1,
+    maker_xmr_chat_swap_id,
+};
+#[cfg(feature = "pair-xmr")]
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
     XmrActivatedAgreementV1, XmrAgreementV1, XmrRoleV1, XmrSwapDirectionV1,
 };
+#[cfg(feature = "pair-zec")]
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ProtectedClaimKey,
     ValidatedZecAgreementDraftV1, ZcashObservationEvent, ZcashObservationEventRecordV1,
@@ -80,6 +106,7 @@ use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 
 use sha2::{Digest as _, Sha256};
+#[cfg(feature = "pair-zec")]
 use zec_reference_actor::{ActorConfig, ActorRole, provision_zec_maker_actor_from_config};
 const NOT_FOUND: i32 = -32_004;
 const CONFLICT: i32 = -32_009;
@@ -87,7 +114,6 @@ const RESULT_LIMIT_EXCEEDED: i32 = -32_011;
 const OFFER_UNAVAILABLE: i32 = -32_018;
 const INTERNAL_ERROR: i32 = -32_603;
 
-const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
 const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES: usize = 128;
 const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAYLOAD_BYTES: usize = 48 * 1024;
 const _: () = assert!(
@@ -107,16 +133,20 @@ pub struct MakerRpc {
     btc_chat_signing_key: Option<Arc<SecretKey>>,
     btc_actor_provisioner: Option<Arc<BtcMakerActorProvisioner>>,
     btc_role_agreement_authority: Option<Arc<BtcMakerRoleAgreementAuthority>>,
+    #[cfg(feature = "pair-xmr")]
     xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
+    #[cfg(feature = "pair-zec")]
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
+    #[cfg(feature = "pair-zec")]
     maker_claim_preimage: Option<Arc<ClaimPreimage>>,
+    #[cfg(feature = "pair-zec")]
     zec_actor_provisioner: Option<Arc<ZecMakerActorProvisioner>>,
 }
 
 impl std::fmt::Debug for MakerRpc {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("MakerRpc")
+        let mut debug = formatter.debug_struct("MakerRpc");
+        debug
             .field("store", &self.store)
             .field(
                 "route_health_probe",
@@ -150,11 +180,14 @@ impl std::fmt::Debug for MakerRpc {
                     .btc_role_agreement_authority
                     .as_ref()
                     .map(|_| "configured"),
-            )
-            .field(
-                "xmr_chat_authority",
-                &self.xmr_chat_authority.as_ref().map(|_| "configured"),
-            )
+            );
+        #[cfg(feature = "pair-xmr")]
+        debug.field(
+            "xmr_chat_authority",
+            &self.xmr_chat_authority.as_ref().map(|_| "configured"),
+        );
+        #[cfg(feature = "pair-zec")]
+        debug
             .field(
                 "zec_completion_store",
                 &self.zec_completion_store.as_ref().map(|_| "configured"),
@@ -166,8 +199,8 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "zec_actor_provisioner",
                 &self.zec_actor_provisioner.as_ref().map(|_| "configured"),
-            )
-            .finish()
+            );
+        debug.finish()
     }
 }
 
@@ -183,31 +216,18 @@ impl MakerRpc {
             offer_snapshot_clock: None,
             chat_socket: None,
             chat_signing_key: None,
+            #[cfg(feature = "pair-zec")]
             zec_completion_store: None,
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
+            #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
+            #[cfg(feature = "pair-zec")]
             maker_claim_preimage: None,
+            #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
         }
-    }
-
-    /// Creates a shared maker context for Delivery and the isolated Chat RPC module.
-    #[must_use]
-    pub fn with_delivery(
-        store: SqliteSwapStore,
-        delivery: RunLocalDelivery,
-        chat_signing_key: SecretKey,
-        zec_completion_store: SqliteZecRecoveryStore,
-        maker_claim_preimage: ClaimPreimage,
-        zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
-    ) -> Self {
-        Self::with_delivery_transport(store, delivery, chat_signing_key).with_zec_chat_authority(
-            zec_completion_store,
-            maker_claim_preimage,
-            zec_actor_provisioner,
-        )
     }
 
     /// Creates a shared Delivery and isolated-Chat transport without pair authority.
@@ -228,9 +248,13 @@ impl MakerRpc {
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
+            #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
+            #[cfg(feature = "pair-zec")]
             zec_completion_store: None,
+            #[cfg(feature = "pair-zec")]
             maker_claim_preimage: None,
+            #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
         }
     }
@@ -247,21 +271,7 @@ impl MakerRpc {
         self
     }
 
-    /// Attaches ZEC agreement acceptance and Maker actor authority.
-    #[must_use]
-    pub fn with_zec_chat_authority(
-        self,
-        completion_store: SqliteZecRecoveryStore,
-        maker_claim_preimage: ClaimPreimage,
-        actor_provisioner: Option<ZecMakerActorProvisioner>,
-    ) -> Self {
-        self.with_directional_zec_chat_authority(
-            completion_store,
-            Some(maker_claim_preimage),
-            actor_provisioner,
-        )
-    }
-
+    #[cfg(feature = "pair-zec")]
     /// Attaches direction-aware ZEC agreement and Maker actor authority.
     ///
     /// The Maker preimage is absent when the accepted direction assigns that
@@ -280,18 +290,6 @@ impl MakerRpc {
         self
     }
 
-    /// Attaches BTC Schnorr agreement signing and Maker actor authority.
-    #[must_use]
-    pub fn with_btc_chat_authority(
-        mut self,
-        signing_key: SecretKey,
-        actor_provisioner: BtcMakerActorProvisioner,
-    ) -> Self {
-        self.btc_chat_signing_key = Some(Arc::new(signing_key));
-        self.btc_actor_provisioner = Some(Arc::new(actor_provisioner));
-        self
-    }
-
     /// Attaches fixture-independent BTC role-agreement authority, optionally
     /// retaining the legacy pre-finalized actor path for Chat v1.
     #[must_use]
@@ -307,6 +305,7 @@ impl MakerRpc {
         self
     }
 
+    #[cfg(feature = "pair-xmr")]
     /// Attaches daemon-owned Monero validation and actor authority.
     #[must_use]
     pub fn with_xmr_chat_authority(mut self, authority: XmrMakerChatAuthority) -> Self {
@@ -363,348 +362,6 @@ impl MakerRpc {
 pub trait MakerRouteHealthProbe: Send + Sync {
     /// Returns the current availability of the selected route's chain dependency.
     fn state(&self, route: MakerRouteV1) -> MakerDependencyStateV1;
-}
-
-/// Replays one stopped Maker actor offline and atomically imports its terminal operator view.
-///
-/// Unit chain ports make the replay incapable of RPC or chain effects. The application store
-/// validates that the actor's exact signed agreement is the one previously completed through
-/// Maker Chat; the ordinary application aggregate remains untouched.
-///
-/// # Errors
-///
-/// Fails when the source is missing, not a fully replayable terminal Maker actor, aliases the
-/// application database, lacks the matching claim key, or disagrees with application history.
-pub async fn import_terminal_zec_maker_projection(
-    application_database: &Path,
-    actor_state_database: &Path,
-    swap_id: &SwapId,
-    claim_key: ProtectedClaimKey,
-) -> anyhow::Result<OperatorTerminalProjectionCommit> {
-    anyhow::ensure!(
-        application_database != actor_state_database,
-        "terminal actor state must be separate from the application database"
-    );
-    let actor_store = SqliteZecRecoveryStore::open_claim_capable_existing(
-        actor_state_database,
-        Participant::Maker,
-        claim_key,
-    )?;
-    let sdk: ZecPairSdk<(), (), (), (), SqliteZecRecoveryStore> =
-        ZecPairSdk::new(Participant::Maker, (), (), (), (), actor_store);
-    let active = sdk
-        .resume_all_capable(swap_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("terminal Maker actor is not activated"))?;
-    let terminal = active.terminal_coordinator().ok_or_else(|| {
-        anyhow::anyhow!("Maker actor has not reached an absorbing terminal phase")
-    })?;
-    let agreement_wire = active.agreement().encode_wire()?;
-    let source_revision = active.revision();
-    let mut application = SqliteSwapStore::open(application_database)?;
-    application
-        .project_zec_terminal_for_operator(terminal, source_revision, &agreement_wire)
-        .map_err(Into::into)
-}
-
-/// Result of one committed Zcash funding reconciliation.
-#[derive(Debug)]
-pub struct AppliedZcashFundingEvent {
-    swap: SwapCoordinator,
-    commit: EventCommit,
-    outcome: ZcashFundingProjectionOutcome,
-    alert_sequence: Option<u64>,
-}
-
-/// Durable runtime classification of one Zcash funding event.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ZcashFundingProjectionOutcome {
-    /// The event changed or refreshed non-terminal protocol state.
-    Applied,
-    /// Chain truth replaced a transaction ID already committed to the protocol.
-    ReplacementConflict {
-        /// Direction-derived participant whose transaction remains pinned.
-        funded_by: Participant,
-    },
-    /// A removal/replacement affected an absorbing lifecycle outcome.
-    TerminalReorgDetected {
-        /// Completed or refunded lifecycle result retained for audit.
-        terminal_phase: Phase,
-        /// Direction-derived participant whose funding evidence changed.
-        funded_by: Participant,
-    },
-}
-
-impl AppliedZcashFundingEvent {
-    /// Durable aggregate after the event or replay reload.
-    #[must_use]
-    pub const fn swap(&self) -> &SwapCoordinator {
-        &self.swap
-    }
-
-    /// Durable commit metadata.
-    #[must_use]
-    pub const fn commit(&self) -> EventCommit {
-        self.commit
-    }
-
-    /// Durable projection classification used to gate subsequent effects.
-    #[must_use]
-    pub const fn outcome(&self) -> ZcashFundingProjectionOutcome {
-        self.outcome
-    }
-
-    /// Durable operator-alert cursor for attention-requiring outcomes.
-    #[must_use]
-    pub const fn alert_sequence(&self) -> Option<u64> {
-        self.alert_sequence
-    }
-}
-
-/// Failure while projecting and atomically committing a Zcash funding event.
-#[derive(Debug, thiserror::Error)]
-pub enum ZcashFundingApplyError {
-    /// Persistence or optimistic concurrency failed.
-    #[error("Zcash funding persistence failed")]
-    Store(#[from] StoreError),
-    /// Valid chain evidence conflicts with the current protocol aggregate.
-    #[error("Zcash funding evidence conflicts with swap state")]
-    Core(#[from] Error),
-    /// The selected swap is not a Zcash swap.
-    #[error("Zcash funding event was routed to a non-Zcash swap")]
-    WrongPair,
-    /// Legacy or corrupt storage omitted immutable ZEC profile/output terms.
-    #[error("Zcash swap has no immutable profile/output binding")]
-    MissingZcashBinding,
-    /// Chain evidence differs from the swap's immutable profile/output terms.
-    #[error("Zcash funding event does not match immutable swap binding")]
-    Binding(#[from] ZecBindingRecordError),
-    /// Coordinator leg policies disagree with the immutable named profile.
-    #[error("Zcash swap confirmation policies do not match immutable profile")]
-    BindingPolicyMismatch,
-    /// Historical event records are corrupt or out of order.
-    #[error("Zcash observation history cannot be replayed")]
-    HistoricalReplay(#[from] HistoricalReplayError),
-}
-
-/// Restores the historical watcher head for the direction-derived ZEC-funded role.
-///
-/// The returned tracker is not fresh canonical evidence. Reconcile it with a new
-/// stable Zebra snapshot before enabling any external effect.
-///
-/// # Errors
-///
-/// Returns [`ZcashFundingApplyError`] for missing storage, a non-Zcash swap,
-/// corrupt records, or impossible event order.
-pub fn load_zcash_observation_tracker(
-    store: &SqliteSwapStore,
-    id: &SwapId,
-) -> Result<ZcashObservationTracker, ZcashFundingApplyError> {
-    let swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
-    let funded_by = zcash_funder(&swap)?;
-    let binding = store
-        .load_zcash_binding(id)?
-        .ok_or(ZcashFundingApplyError::MissingZcashBinding)?;
-    validate_binding_policies(&swap, &binding)?;
-    let records = store.load_zcash_events(id, funded_by)?;
-    replay_zcash_observation_history(&records).map_err(ZcashFundingApplyError::from)
-}
-
-/// Projects one validated Zcash watcher event and commits it with the aggregate.
-///
-/// The ZEC funder is derived from immutable swap direction rather than caller input.
-/// An exact predecessor-slot replay reloads durable state before any core mutation,
-/// which makes retries safe after an unknown successful commit outcome.
-///
-/// # Errors
-///
-/// Returns [`ZcashFundingApplyError`] for missing/stale storage, a non-Zcash swap,
-/// invalid core transition, record/proof conversion, or transaction failure.
-pub fn apply_zcash_funding_event(
-    store: &mut SqliteSwapStore,
-    predecessor_revision: u64,
-    id: &SwapId,
-    event: &ZcashObservationEvent,
-) -> Result<AppliedZcashFundingEvent, ZcashFundingApplyError> {
-    let record = ZcashObservationEventRecordV1::from_event(event);
-    let mut swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
-    let funded_by = zcash_funder(&swap)?;
-    let binding = store
-        .load_zcash_binding(id)?
-        .ok_or(ZcashFundingApplyError::MissingZcashBinding)?;
-    validate_binding_policies(&swap, &binding)?;
-    binding.validate_event(event)?;
-    if store
-        .committed_zcash_event(predecessor_revision, id, funded_by, &record)?
-        .is_some()
-    {
-        swap = store.load(id)?.ok_or(StoreError::MissingSwap)?;
-        let outcome = terminal_reorg_outcome(&swap, funded_by, event)
-            .or_else(|| replacement_conflict_outcome(&swap, funded_by, event))
-            .unwrap_or(ZcashFundingProjectionOutcome::Applied);
-        let alert = operator_alert(outcome, event)?;
-        let transition = store.commit_zcash_transition(
-            predecessor_revision,
-            &swap,
-            funded_by,
-            &record,
-            alert.as_ref(),
-        )?;
-        return Ok(AppliedZcashFundingEvent {
-            swap,
-            commit: transition.event(),
-            outcome,
-            alert_sequence: transition.alert_sequence(),
-        });
-    }
-
-    let records = store.load_zcash_events(id, funded_by)?;
-    let mut historical_tracker = replay_zcash_observation_history(&records)?;
-    historical_tracker
-        .apply_committed(event)
-        .map_err(HistoricalReplayError::from)?;
-
-    let outcome = if let Some(outcome) = terminal_reorg_outcome(&swap, funded_by, event) {
-        outcome
-    } else {
-        project_zcash_funding_event(&mut swap, funded_by, event)?
-    };
-    let alert = operator_alert(outcome, event)?;
-    let transition = store.commit_zcash_transition(
-        predecessor_revision,
-        &swap,
-        funded_by,
-        &record,
-        alert.as_ref(),
-    )?;
-    Ok(AppliedZcashFundingEvent {
-        swap,
-        commit: transition.event(),
-        outcome,
-        alert_sequence: transition.alert_sequence(),
-    })
-}
-
-fn operator_alert(
-    outcome: ZcashFundingProjectionOutcome,
-    event: &ZcashObservationEvent,
-) -> Result<Option<OperatorAlertRecordV1>, ZcashFundingApplyError> {
-    match outcome {
-        ZcashFundingProjectionOutcome::Applied => Ok(None),
-        ZcashFundingProjectionOutcome::ReplacementConflict { funded_by } => {
-            OperatorAlertRecordV1::replacement_conflict(funded_by, event)
-                .map(Some)
-                .map_err(ZcashFundingApplyError::from)
-        }
-        ZcashFundingProjectionOutcome::TerminalReorgDetected {
-            terminal_phase,
-            funded_by,
-        } => OperatorAlertRecordV1::terminal_reorg(terminal_phase, funded_by, event)
-            .map(Some)
-            .map_err(ZcashFundingApplyError::from),
-    }
-}
-
-fn validate_binding_policies(
-    swap: &SwapCoordinator,
-    binding: &ZecSwapBinding,
-) -> Result<(), ZcashFundingApplyError> {
-    let profile = ZecRefundProfile::for_id(binding.profile_id());
-    for participant in [Participant::Maker, Participant::Taker] {
-        let expected = if swap.funded_chain(participant) == Chain::Zcash {
-            profile.zcash_confirmations()
-        } else {
-            profile.lez_confirmations()
-        };
-        if swap.required_confirmations(participant) != expected {
-            return Err(ZcashFundingApplyError::BindingPolicyMismatch);
-        }
-    }
-    Ok(())
-}
-
-fn replacement_conflict_outcome(
-    swap: &SwapCoordinator,
-    funded_by: Participant,
-    event: &ZcashObservationEvent,
-) -> Option<ZcashFundingProjectionOutcome> {
-    let ZcashObservationEvent::Replaced { canonical, .. } = event else {
-        return None;
-    };
-    let role_is_reorged = matches!(
-        (funded_by, swap.phase()),
-        (Participant::Taker, Phase::TakerLockReorged)
-            | (Participant::Maker, Phase::MakerLockReorged)
-    );
-    let replacement_id = canonical.transaction_id().to_string();
-    (role_is_reorged
-        && swap
-            .funding_transaction_id(funded_by)
-            .is_some_and(|pinned| pinned != replacement_id))
-    .then_some(ZcashFundingProjectionOutcome::ReplacementConflict { funded_by })
-}
-
-fn terminal_reorg_outcome(
-    swap: &SwapCoordinator,
-    funded_by: Participant,
-    event: &ZcashObservationEvent,
-) -> Option<ZcashFundingProjectionOutcome> {
-    (matches!(swap.phase(), Phase::Completed | Phase::Refunded)
-        && matches!(
-            event,
-            ZcashObservationEvent::Removed(_) | ZcashObservationEvent::Replaced { .. }
-        ))
-    .then_some(ZcashFundingProjectionOutcome::TerminalReorgDetected {
-        terminal_phase: swap.phase(),
-        funded_by,
-    })
-}
-
-fn zcash_funder(swap: &SwapCoordinator) -> Result<Participant, ZcashFundingApplyError> {
-    if swap.pair() != Pair::Zcash {
-        return Err(ZcashFundingApplyError::WrongPair);
-    }
-    Ok(if swap.funded_chain(Participant::Taker) == Chain::Zcash {
-        Participant::Taker
-    } else {
-        Participant::Maker
-    })
-}
-
-fn project_zcash_funding_event(
-    swap: &mut SwapCoordinator,
-    funded_by: Participant,
-    event: &ZcashObservationEvent,
-) -> Result<ZcashFundingProjectionOutcome, Error> {
-    match event {
-        ZcashObservationEvent::Canonical(canonical) => {
-            swap.observe_funding(funded_by, canonical.chain_proof()?)?;
-            Ok(ZcashFundingProjectionOutcome::Applied)
-        }
-        ZcashObservationEvent::Removed(removed) => {
-            swap.observe_funding_removed(
-                funded_by,
-                &removed.previous().transaction_id().to_string(),
-            )?;
-            Ok(ZcashFundingProjectionOutcome::Applied)
-        }
-        ZcashObservationEvent::Replaced { removed, canonical } => {
-            swap.observe_funding_removed(
-                funded_by,
-                &removed.previous().transaction_id().to_string(),
-            )?;
-            match swap.observe_funding(funded_by, canonical.chain_proof()?) {
-                Ok(()) => Ok(ZcashFundingProjectionOutcome::Applied),
-                Err(Error::ConflictingTakerLock) if funded_by == Participant::Taker => {
-                    Ok(ZcashFundingProjectionOutcome::ReplacementConflict { funded_by })
-                }
-                Err(Error::ConflictingMakerLock) if funded_by == Participant::Maker => {
-                    Ok(ZcashFundingProjectionOutcome::ReplacementConflict { funded_by })
-                }
-                Err(error) => Err(error),
-            }
-        }
-    }
 }
 
 /// Serializable operator-facing snapshot. Secret evidence is deliberately omitted.
@@ -1881,372 +1538,12 @@ pub fn chat_rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>>
 }
 
 fn register_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    #[cfg(feature = "pair-zec")]
     register_zec_chat_methods(module)?;
     register_btc_chat_methods(module)?;
+    #[cfg(feature = "pair-xmr")]
     register_xmr_chat_methods(module)?;
     Ok(())
-}
-
-fn register_zec_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
-    module.register_blocking_method::<RpcResult<ZecChatProposalV1>, _>(
-        "zec_chat_propose_v1",
-        |params, context, _| {
-            let request: ZecChatProposeRequestV1 = params.one()?;
-            validate_zec_chat_shape(&request)?;
-            let now_unix_seconds = trusted_now_unix_seconds()?;
-            let delivery = context
-                .delivery
-                .as_ref()
-                .ok_or_else(|| invalid_request("maker Chat Delivery is unavailable"))?;
-            let signing_key = context
-                .chat_signing_key
-                .as_ref()
-                .ok_or_else(|| invalid_request("maker Chat signer is unavailable"))?;
-            let authenticated = delivery
-                .authenticate_envelope(&request.signed_offer_envelope)
-                .map_err(|error| invalid_request(error.to_string()))?;
-            let offer = authenticated.offer();
-            if offer.id() != &request.offer_id
-                || offer.route().pair() != Pair::Zcash
-                || offer.created_at_unix_seconds() > now_unix_seconds
-                || now_unix_seconds >= offer.expires_at_unix_seconds()
-            {
-                return Err(invalid_request(
-                    "Delivery offer does not match live ZEC Chat request",
-                ));
-            }
-            let validated = ZecAgreementDraftV1::from_wire_at(
-                &request.unsigned_draft_wire,
-                lez_swap_core::UnixSeconds::new(now_unix_seconds),
-            )
-            .map_err(invalid_request)?;
-            let maker_key = PublicKey::from_secret_key(&Secp256k1::signing_only(), signing_key);
-            let maker_identity = maker_key.serialize();
-            let taker_identity = validated.taker_zcash_key().serialize();
-            let lez_units = offer
-                .quote_foreign_amount(request.foreign_units)
-                .map_err(invalid_request)?;
-            let offer_commitment = authenticated.commitment();
-            if !zec_draft_matches_offer(
-                &validated,
-                &authenticated,
-                offer,
-                &maker_key,
-                &request.reservation_id,
-                request.foreign_units,
-                lez_units,
-            ) {
-                return Err(invalid_request(
-                    "unsigned ZEC draft is not bound to the selected offer",
-                ));
-            }
-            let agreement_commitment = validated.commitment();
-            let signature = Secp256k1::signing_only()
-                .sign_ecdsa(&Message::from_digest(agreement_commitment), signing_key)
-                .serialize_compact();
-            let proposal = validated
-                .with_maker_signature(signature)
-                .map_err(invalid_request)?;
-            let proposal_wire = proposal.encode_wire().map_err(invalid_request)?;
-            let negotiation = MakerZecNegotiationV1::proposed(
-                request.reservation_id.clone(),
-                offer_commitment,
-                maker_identity,
-                taker_identity,
-                request.foreign_units,
-                lez_units,
-                now_unix_seconds,
-                agreement_commitment,
-                proposal_wire.clone(),
-            )
-            .map_err(invalid_request)?;
-            let mut store = context
-                .store
-                .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            let commit = store
-                .stage_zec_maker_negotiation(
-                    &request.request_id,
-                    &request.offer_id,
-                    request.expected_offer_revision,
-                    &negotiation,
-                )
-                .map_err(application_store_error)?;
-            Ok(ZecChatProposalV1 {
-                schema_version: 1,
-                offer_revision: commit.revision(),
-                was_replay: commit.was_replay(),
-                reservation_id: request.reservation_id,
-                lez_units,
-                maker_identity: maker_identity.to_vec(),
-                taker_identity: taker_identity.to_vec(),
-                agreement_commitment,
-                proposal_wire,
-            })
-        },
-    )?;
-    register_chat_complete_method(module)?;
-    Ok(())
-}
-
-fn register_chat_complete_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
-    module.register_blocking_method::<RpcResult<ZecChatCompleteResponseV1>, _>(
-        "zec_chat_complete_v1",
-        |params, context, _| {
-            let request: ZecChatCompleteRequestV1 = params.one()?;
-            complete_zec_chat(&request, &context)
-        },
-    )?;
-    Ok(())
-}
-
-fn complete_zec_chat(
-    request: &ZecChatCompleteRequestV1,
-    context: &MakerRpc,
-) -> RpcResult<ZecChatCompleteResponseV1> {
-    if request.schema_version != 1 {
-        return Err(invalid_request("unsupported ZEC Chat completion"));
-    }
-    let completion_store = context
-        .zec_completion_store
-        .as_ref()
-        .ok_or_else(|| invalid_request("maker ZEC completion store is unavailable"))?;
-    if let Some(replay) = completion_store
-        .preflight_maker_zec_scheduled_completion_replay_for_role(
-            &request.request_id,
-            &request.offer_id,
-            request.expected_offer_revision,
-            &request.reservation_id,
-            &request.final_agreement_wire,
-            context.maker_claim_preimage.as_deref(),
-        )
-        .map_err(application_store_error)?
-    {
-        return Ok(ZecChatCompleteResponseV1 {
-            schema_version: 1,
-            offer_revision: replay.offer_revision(),
-            was_replay: true,
-            swap_id: replay.swap_id().as_str().into(),
-        });
-    }
-    let now_unix_seconds = trusted_now_unix_seconds()?;
-    let provisioner = context
-        .zec_actor_provisioner
-        .as_ref()
-        .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
-    let accepted = AcceptedZecAgreementV1::accept_wire_at(
-        &request.final_agreement_wire,
-        lez_swap_core::UnixSeconds::new(now_unix_seconds),
-        Participant::Maker,
-        0,
-    )
-    .map_err(invalid_request)?;
-    let maker_preimage = if accepted.agreement().lez_claimant() == Participant::Maker {
-        Some(
-            context
-                .maker_claim_preimage
-                .as_deref()
-                .ok_or_else(|| invalid_request("maker claim authority is unavailable"))?,
-        )
-    } else {
-        None
-    };
-    let actor = provisioner
-        .provision(&request.final_agreement_wire, now_unix_seconds)
-        .map_err(|_| rpc_error(INTERNAL_ERROR, "maker actor provisioning failed"))?;
-    let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
-    let commit = completion_store
-        .complete_maker_zec_negotiation_and_register_actor_for_role(
-            &request.request_id,
-            &request.offer_id,
-            request.expected_offer_revision,
-            &request.reservation_id,
-            &accepted,
-            maker_preimage,
-            &actor,
-            now_unix_seconds,
-        )
-        .map_err(application_store_error)?;
-    Ok(ZecChatCompleteResponseV1 {
-        schema_version: 1,
-        offer_revision: commit.offer_revision(),
-        was_replay: commit.was_replay(),
-        swap_id,
-    })
-}
-
-/// Validated immutable deployment inputs for daemon-owned ZEC actor creation.
-#[derive(Clone)]
-pub struct ZecMakerActorProvisioner {
-    source_maker_configs: Box<[ActorConfig]>,
-    actor_root: PathBuf,
-    actor_program: PathBuf,
-    actor_program_sha256: [u8; 32],
-}
-
-impl std::fmt::Debug for ZecMakerActorProvisioner {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ZecMakerActorProvisioner")
-            .field(
-                "source_maker_config_count",
-                &self.source_maker_configs.len(),
-            )
-            .field("actor_root", &"[REDACTED]")
-            .field("actor_program", &"[REDACTED]")
-            .field(
-                "actor_program_sha256",
-                &hex::encode(self.actor_program_sha256),
-            )
-            .finish()
-    }
-}
-
-impl ZecMakerActorProvisioner {
-    /// Validates a bounded per-swap Maker authority registry and exact actor program.
-    ///
-    /// # Errors
-    ///
-    /// Rejects an empty/oversized registry, duplicate swap or state identities,
-    /// non-Maker templates, and unsafe or mismatched actor executables.
-    pub fn new(
-        source_maker_configs: &[PathBuf],
-        actor_root: PathBuf,
-        actor_program: PathBuf,
-        actor_program_sha256: [u8; 32],
-    ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            !source_maker_configs.is_empty()
-                && source_maker_configs.len() <= MAX_ZEC_MAKER_AUTHORITY_TEMPLATES,
-            "ZEC Maker authority registry is empty or oversized"
-        );
-        let mut sources: Vec<ActorConfig> = Vec::with_capacity(source_maker_configs.len());
-        for source_maker_config in source_maker_configs {
-            let source_parent = source_maker_config
-                .parent()
-                .context("source maker config has no parent")?;
-            let source_parent_metadata = fs::symlink_metadata(source_parent)
-                .context("inspect source maker config parent")?;
-            anyhow::ensure!(
-                source_maker_config.is_absolute()
-                    && source_parent_metadata.file_type().is_dir()
-                    && source_parent_metadata.uid() == rustix::process::geteuid().as_raw()
-                    && source_parent_metadata.mode() & 0o7777 == 0o700
-                    && fs::canonicalize(source_parent)
-                        .context("canonicalize source maker config parent")?
-                        == source_parent,
-                "source maker config parent is unsafe"
-            );
-            let source = ActorConfig::load_private(source_maker_config)
-                .map_err(|_| anyhow::anyhow!("source maker config is unavailable"))?;
-            anyhow::ensure!(
-                source.role() == ActorRole::Maker,
-                "source actor config is not Maker"
-            );
-            anyhow::ensure!(
-                sources
-                    .iter()
-                    .all(|existing| existing.swap_id() != source.swap_id()
-                        && existing.role_state_db() != source.role_state_db()),
-                "ZEC Maker authority registry contains duplicate swap or state identity"
-            );
-            source
-                .load_activate_material()
-                .map_err(|_| anyhow::anyhow!("source maker authority is unavailable"))?;
-            sources.push(source);
-        }
-        let root_metadata =
-            fs::symlink_metadata(&actor_root).context("inspect ZEC maker actor root")?;
-        anyhow::ensure!(
-            actor_root.is_absolute()
-                && root_metadata.file_type().is_dir()
-                && root_metadata.uid() == rustix::process::geteuid().as_raw()
-                && root_metadata.mode() & 0o7777 == 0o700
-                && fs::canonicalize(&actor_root).context("canonicalize ZEC maker actor root")?
-                    == actor_root,
-            "ZEC maker actor root is unsafe"
-        );
-        validate_maker_actor_program(&actor_program, actor_program_sha256)
-            .map_err(|_| anyhow::anyhow!("ZEC actor program is unavailable"))?;
-        Ok(Self {
-            source_maker_configs: sources.into_boxed_slice(),
-            actor_root,
-            actor_program,
-            actor_program_sha256,
-        })
-    }
-
-    fn provision(
-        &self,
-        final_agreement_wire: &[u8],
-        accepted_at_unix_seconds: u64,
-    ) -> anyhow::Result<MakerActorManifestV1> {
-        let accepted_at = lez_swap_core::UnixSeconds::new(accepted_at_unix_seconds);
-        let accepted = AcceptedZecAgreementV1::accept_wire_at(
-            final_agreement_wire,
-            accepted_at,
-            Participant::Maker,
-            0,
-        )?;
-        let source = self
-            .source_maker_configs
-            .iter()
-            .find(|source| source.swap_id().as_str() == accepted.agreement().application_swap_id())
-            .context("accepted ZEC swap has no pinned Maker authority template")?;
-        let mut digest = Sha256::new();
-        digest.update(b"lez-atomic-swaps/maker-actor-root/v1\0");
-        digest.update(final_agreement_wire);
-        let output_root = self.actor_root.join(hex::encode(digest.finalize()));
-        let provisioned = provision_zec_maker_actor_from_config(
-            source,
-            final_agreement_wire,
-            accepted_at,
-            &output_root,
-        )?;
-        let agreement_sha256: [u8; 32] = Sha256::digest(final_agreement_wire).into();
-        anyhow::ensure!(
-            provisioned.agreement_sha256() == agreement_sha256,
-            "provisioned agreement identity changed"
-        );
-        MakerActorManifestV1::new(
-            provisioned.swap_id().clone(),
-            MakerActorKindV1::Zcash,
-            provisioned.config_file().to_path_buf(),
-            provisioned.config_sha256(),
-            self.actor_program.clone(),
-            self.actor_program_sha256,
-            provisioned.state_database().to_path_buf(),
-        )
-        .map_err(Into::into)
-    }
-}
-
-fn validate_zec_chat_shape(request: &ZecChatProposeRequestV1) -> RpcResult<()> {
-    if request.schema_version != 1 || request.foreign_units == 0 {
-        return Err(invalid_request("unsupported or empty ZEC Chat proposal"));
-    }
-    Ok(())
-}
-
-fn zec_draft_matches_offer(
-    validated: &ValidatedZecAgreementDraftV1,
-    authenticated: &AuthenticatedOfferRefV1,
-    offer: &MakerOfferV1,
-    maker_key: &PublicKey,
-    reservation_id: &RequestId,
-    foreign_units: u64,
-    lez_units: u128,
-) -> bool {
-    let transcript = validated.body().transcript();
-    validated.maker_zcash_key() == maker_key
-        && authenticated.maker_identity() == &maker_key.serialize()
-        && offer.route().pair() == Pair::Zcash
-        && validated.body().direction() == offer.route().direction()
-        && validated.zcash_amount_zatoshis() == foreign_units
-        && validated.body().lez_terms().amount() == lez_units
-        && transcript.session_id() == &maker_zec_chat_session_id(reservation_id)
-        && transcript.offer_commitment() == &authenticated.commitment()
-        && transcript.expires_at_unix_seconds() == offer.expires_at_unix_seconds()
 }
 
 fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Error> {

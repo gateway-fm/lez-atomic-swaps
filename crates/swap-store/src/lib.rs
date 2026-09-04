@@ -7,11 +7,10 @@ compile_error!(
 
 use std::{path::Path, time::Duration};
 
-#[cfg(unix)]
 use std::{
     fs::{self, File, OpenOptions},
     io,
-    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _},
 };
 
 mod adaptor_session_journal;
@@ -22,6 +21,7 @@ mod maker_actor_process;
 mod maker_application;
 mod maker_offer;
 mod platform_contract;
+pub use platform_contract::{is_owner_private_regular_file, open_no_symlinks};
 mod public_effect_journal;
 mod taker_facade_registry;
 mod xmr_effect_workflow_journal;
@@ -49,8 +49,8 @@ pub use btc_recovery::{
     BtcProjectionCommit, BtcRecoveryError, BtcTerminalOutcome, SqliteBtcRecoveryStore,
 };
 pub use maker_actor_process::{
-    MAKER_ACTOR_CONFIG_FD, MAKER_ACTOR_LOCK_FD, MAKER_ACTOR_LOCK_TRANSFER_FD, MakerActorArtifacts,
-    MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
+    ActorHeldLock, MAKER_ACTOR_CONFIG_FD, MAKER_ACTOR_LOCK_FD, MAKER_ACTOR_LOCK_TRANSFER_FD,
+    MakerActorArtifacts, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
     MakerActorLeaseV1, MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionCommit,
     MakerActorManualActionSnapshot, MakerActorManualActionState, MakerActorMonitorSnapshotV1,
     MakerActorProcessError, MakerActorProcessRecordV1, MakerActorProgressObservationV1,
@@ -90,7 +90,9 @@ pub use zec_recovery::{
     MakerZecAcceptanceCommit, MakerZecAcceptanceReplay, SqliteZecRecoveryStore,
 };
 
-use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
+use lez_swap_core::{
+    Pair, Participant, Phase, SwapCoordinator, SwapDirection, SwapId, UnixSeconds,
+};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimError, ClaimRecordError, FirstLockRecordError, MakerLockError,
     MakerLockRecordError, ObservationRecordError, ObservedMakerLockError,
@@ -613,9 +615,6 @@ pub enum StoreError {
     /// A claim transition has no matching retained intent.
     #[error("SDK claim intent does not exist")]
     MissingZecClaimIntent,
-    /// An owner refund transition has no matching pending exact intent.
-    #[error("SDK refund intent does not exist")]
-    MissingZecRefundIntent,
     /// An exact claim predecessor slot contains different evidence.
     #[error("SDK claim transition conflicts with durable evidence")]
     ConflictingZecClaimTransition,
@@ -1513,7 +1512,6 @@ fn open_configured_connection_with_mode(
     Ok(connection)
 }
 
-#[cfg(unix)]
 struct PreparedDatabaseFile {
     identity: DatabaseFileIdentity,
     // Retaining a newly created descriptor prevents its inode from disappearing
@@ -1522,14 +1520,12 @@ struct PreparedDatabaseFile {
     _creation_guard: Option<File>,
 }
 
-#[cfg(unix)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DatabaseFileIdentity {
     device: u64,
     inode: u64,
 }
 
-#[cfg(unix)]
 fn prepare_database_file(
     path: &Path,
     mode: DatabaseOpenMode,
@@ -1549,7 +1545,6 @@ fn prepare_database_file(
     }
 }
 
-#[cfg(unix)]
 fn create_private_database_file(path: &Path) -> Result<PreparedDatabaseFile, StoreError> {
     match OpenOptions::new()
         .read(true)
@@ -1579,7 +1574,6 @@ fn create_private_database_file(path: &Path) -> Result<PreparedDatabaseFile, Sto
     }
 }
 
-#[cfg(unix)]
 fn verify_database_file(path: &Path, prepared: &PreparedDatabaseFile) -> Result<(), StoreError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -1596,40 +1590,16 @@ fn verify_database_file(path: &Path, prepared: &PreparedDatabaseFile) -> Result<
     }
 }
 
-#[cfg(unix)]
 fn validate_private_database_metadata(
     metadata: &fs::Metadata,
 ) -> Result<DatabaseFileIdentity, StoreError> {
-    if !metadata.file_type().is_file()
-        || metadata.nlink() != 1
-        || metadata.permissions().mode() & 0o7777 != 0o600
-    {
+    if !is_owner_private_regular_file(metadata, 0o600) {
         return Err(StoreError::UnsafeDatabaseFile);
     }
     Ok(DatabaseFileIdentity {
         device: metadata.dev(),
         inode: metadata.ino(),
     })
-}
-
-#[cfg(not(unix))]
-struct PreparedDatabaseFile;
-
-#[cfg(not(unix))]
-fn prepare_database_file(
-    path: &Path,
-    mode: DatabaseOpenMode,
-) -> Result<PreparedDatabaseFile, StoreError> {
-    if mode == DatabaseOpenMode::ExistingOnly && !path.exists() {
-        Err(StoreError::DatabaseFileUnavailable)
-    } else {
-        Ok(PreparedDatabaseFile)
-    }
-}
-
-#[cfg(not(unix))]
-fn verify_database_file(_path: &Path, _prepared: &PreparedDatabaseFile) -> Result<(), StoreError> {
-    Ok(())
 }
 
 struct AlertEventIds {
@@ -1819,6 +1789,30 @@ fn participant_name(participant: Participant) -> &'static str {
         Participant::Maker => "maker",
         Participant::Taker => "taker",
     }
+}
+
+const fn pair_name(pair: Pair) -> &'static str {
+    match pair {
+        Pair::Bitcoin => "bitcoin",
+        Pair::Monero => "monero",
+        Pair::Zcash => "zcash",
+    }
+}
+
+const fn direction_name(direction: SwapDirection) -> &'static str {
+    match direction {
+        SwapDirection::TakerSellsForeign => "taker_sells_foreign",
+        SwapDirection::TakerSellsLez => "taker_sells_lez",
+    }
+}
+
+fn normalized_schema_sql(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches(';')
+        .split_ascii_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn revision_from_sql(value: i64) -> Result<u64, StoreError> {

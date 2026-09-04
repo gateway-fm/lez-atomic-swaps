@@ -23,11 +23,12 @@ use thiserror::Error;
 use super::{
     BtcAgreementAcceptance, LocalPriceV1, MakerActorKindV1, MakerActorManifestV1,
     MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, SWAP_PAYLOAD_VERSION,
-    SqliteSwapStore, StoreError,
+    SqliteSwapStore, StoreError, direction_name,
     maker_actor_process::{
         load_maker_actor_manifest_in_transaction, register_maker_actor_in_transaction,
         require_exact_maker_actor_in_transaction,
     },
+    pair_name,
 };
 
 const OFFER_PAYLOAD_VERSION: i64 = 1;
@@ -122,6 +123,11 @@ pub enum MakerOfferStatus {
 }
 
 /// Immutable offer terms snapshotted from one enabled route and exact price.
+///
+/// This one serde shape is the persisted record, the signed Delivery payload,
+/// and the Taker and Chat views. Any change to its serialized bytes changes
+/// every offer commitment (`signed_envelope_sha256`), so add fields only as
+/// `Option` with `#[serde(default)]` and never reorder or rename existing ones.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MakerOfferV1 {
     id: MakerOfferId,
@@ -4163,21 +4169,6 @@ fn update_external_price_head(
 
 fn u64_to_sql(value: u64) -> Result<i64, StoreError> {
     i64::try_from(value).map_err(|_| MakerOfferError::InvalidTime.into())
-}
-
-const fn pair_name(pair: Pair) -> &'static str {
-    match pair {
-        Pair::Bitcoin => "bitcoin",
-        Pair::Monero => "monero",
-        Pair::Zcash => "zcash",
-    }
-}
-
-const fn direction_name(direction: SwapDirection) -> &'static str {
-    match direction {
-        SwapDirection::TakerSellsForeign => "taker_sells_foreign",
-        SwapDirection::TakerSellsLez => "taker_sells_lez",
-    }
 }
 
 #[allow(clippy::too_many_lines)]

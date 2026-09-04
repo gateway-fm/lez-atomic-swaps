@@ -6,7 +6,7 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::{SqliteSwapStore, StoreError};
+use super::{SqliteSwapStore, StoreError, direction_name, pair_name};
 
 const APPLICATION_PAYLOAD_VERSION: i64 = 1;
 const MAXIMUM_OFFER_TTL_SECONDS: u64 = 86_400;
@@ -877,21 +877,6 @@ const fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
         right = remainder;
     }
     left
-}
-
-const fn pair_name(pair: Pair) -> &'static str {
-    match pair {
-        Pair::Bitcoin => "bitcoin",
-        Pair::Monero => "monero",
-        Pair::Zcash => "zcash",
-    }
-}
-
-const fn direction_name(direction: SwapDirection) -> &'static str {
-    match direction {
-        SwapDirection::TakerSellsForeign => "taker_sells_foreign",
-        SwapDirection::TakerSellsLez => "taker_sells_lez",
-    }
 }
 
 pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {

@@ -1,3 +1,6 @@
+//! Exercises the prepared-ZEC lifecycle; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Black-box contract for post-lock Taker lifecycle commands.
 
 use std::{
@@ -8,7 +11,7 @@ use std::{
     process::{Command, Output},
 };
 
-use lez_swap_store::MakerActorHeldLock;
+use lez_swap_store::ActorHeldLock;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
@@ -149,7 +152,7 @@ fn monitor_rejects_a_maker_role_config_without_exposing_private_material() {
 fn monitor_fails_closed_while_the_same_role_actor_is_running() {
     let fixture = LifecycleFixture::new();
     let config = ActorConfig::load_private(&fixture.taker_config).expect("valid Taker config");
-    let held = MakerActorHeldLock::acquire_for(config.swap_id(), config.role_state_db())
+    let held = ActorHeldLock::acquire_for(config.swap_id(), config.role_state_db())
         .expect("hold exact Taker actor lock");
 
     let contended = taker_command("monitor", &fixture.taker_config);

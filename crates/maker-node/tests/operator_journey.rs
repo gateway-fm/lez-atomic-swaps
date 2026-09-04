@@ -1,3 +1,6 @@
+//! Exercises the ZEC reference actor; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Black-box acceptance tests at the maker operator process boundary.
 
 #[path = "support/cross_role_binary.rs"]

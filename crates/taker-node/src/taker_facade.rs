@@ -1,8 +1,9 @@
-//! Secret-free typed contract for a future role-fixed Taker facade.
+//! Secret-free typed contract for the owner-local Taker Node facade.
 //!
 //! This module deliberately contains no transport, filesystem, receipt, key,
-//! actor, or chain authority. It fixes the messages that a later owner-local
-//! service may expose without granting callers generic execution authority.
+//! actor, or chain authority. It fixes the messages the service may expose
+//! without granting callers generic execution authority. Pair capabilities
+//! describe the current Node, CLI, and demo ownership of each route.
 
 use lez_bridge_protocol::RequestId;
 use lez_node_common::TakerMakerIdentityV1;
@@ -334,6 +335,9 @@ pub enum TakerDependencyStateV1 {
 pub enum TakerInitiationCapabilityV1 {
     /// Private drafts, keys, role templates, and effect material must be preprovisioned.
     PreparedPrivateMaterial,
+    /// Acceptance is composed by `lez-taker-cli` and the local demo controller,
+    /// not by `taker_swap_initiate_v1` on this Node.
+    OwnerCliOrDemo,
 }
 
 /// Current monitoring boundary supported by one pair adapter.
@@ -342,6 +346,11 @@ pub enum TakerInitiationCapabilityV1 {
 pub enum TakerMonitoringCapabilityV1 {
     /// Monitoring selects and revalidates exact private receipt-bound authority.
     ReceiptBound,
+    /// Progress is observed by `lez-taker-cli` or the local demo controller,
+    /// not by `taker_swap_monitor_v1` on this Node.
+    OwnerCliOrDemo,
+    /// This process has not registered the pair's receipt-bound monitor.
+    NotOnThisNode,
 }
 
 /// Honest scope of one pair's receipt-bound claim or refund route.
@@ -352,6 +361,11 @@ pub enum TakerTerminalActionCapabilityV1 {
     FullLifecycle,
     /// Only a role-fixed effect checkpoint exists; it is not terminal swap proof.
     EffectCheckpointOnly,
+    /// Terminal progression is owned by `lez-taker-cli` and the local demo
+    /// controller, not by `taker_swap_claim_v1` / `taker_swap_refund_v1`.
+    OwnerCliOrDemo,
+    /// This process has not registered the pair's receipt-bound claim or refund.
+    NotOnThisNode,
 }
 
 /// Exact JSON-RPC methods registered by the current Taker service.
@@ -378,20 +392,6 @@ impl TakerRegisteredMethodsV1 {
             swap_list: false,
             initiate: false,
             monitor: false,
-            claim: false,
-            refund: false,
-        }
-    }
-
-    /// Returns the honest method set of a receipt-monitoring admission service.
-    #[must_use]
-    pub const fn read_with_initiation() -> Self {
-        Self {
-            health: true,
-            offer_list: true,
-            swap_list: true,
-            initiate: true,
-            monitor: true,
             claim: false,
             refund: false,
         }
@@ -513,27 +513,46 @@ impl TakerPairCapabilityV1 {
 
 /// Returns the exact current route capabilities in stable pair/direction order.
 ///
-/// Bitcoin and Zcash expose complete receipt-bound lifecycle commands. Monero
-/// currently exposes only role-fixed tag-14/tag-16 effect checkpoints; neither
-/// checkpoint alone is represented as terminal cross-chain completion.
+/// This is the discovery-only Node view: Bitcoin and Monero settlement live on
+/// the CLI/demo controller, and Zcash lifecycle methods are absent until
+/// initiation is configured. [`TakerHealthV1::with_zec_lifecycle_registered`]
+/// upgrades the Zcash rows when those methods are actually registered.
+///
+/// Capability enums on schema 1 are additive `snake_case` strings. In-tree
+/// Basecamp and CLI decode health as untyped JSON; typed consumers must tolerate
+/// unknown values rather than assuming a closed set.
 #[must_use]
 pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 4] {
+    pair_capabilities(false)
+}
+
+const fn pair_capabilities(zec_lifecycle_registered: bool) -> [TakerPairCapabilityV1; 4] {
+    let zec_monitoring = if zec_lifecycle_registered {
+        TakerMonitoringCapabilityV1::ReceiptBound
+    } else {
+        TakerMonitoringCapabilityV1::NotOnThisNode
+    };
+    let zec_terminal = if zec_lifecycle_registered {
+        TakerTerminalActionCapabilityV1::FullLifecycle
+    } else {
+        TakerTerminalActionCapabilityV1::NotOnThisNode
+    };
     [
         TakerPairCapabilityV1 {
             pair: Pair::Bitcoin,
             supported_direction: SwapDirection::TakerSellsForeign,
             authenticated_offer_browsing: true,
-            initiation: TakerInitiationCapabilityV1::PreparedPrivateMaterial,
-            monitoring: TakerMonitoringCapabilityV1::ReceiptBound,
-            claim: TakerTerminalActionCapabilityV1::FullLifecycle,
-            refund: TakerTerminalActionCapabilityV1::FullLifecycle,
+            initiation: TakerInitiationCapabilityV1::OwnerCliOrDemo,
+            monitoring: TakerMonitoringCapabilityV1::OwnerCliOrDemo,
+            claim: TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
+            refund: TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
         },
         TakerPairCapabilityV1 {
             pair: Pair::Monero,
             supported_direction: SwapDirection::TakerSellsLez,
             authenticated_offer_browsing: true,
-            initiation: TakerInitiationCapabilityV1::PreparedPrivateMaterial,
-            monitoring: TakerMonitoringCapabilityV1::ReceiptBound,
+            initiation: TakerInitiationCapabilityV1::OwnerCliOrDemo,
+            monitoring: TakerMonitoringCapabilityV1::OwnerCliOrDemo,
             claim: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
             refund: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
         },
@@ -542,18 +561,18 @@ pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 4] {
             supported_direction: SwapDirection::TakerSellsLez,
             authenticated_offer_browsing: true,
             initiation: TakerInitiationCapabilityV1::PreparedPrivateMaterial,
-            monitoring: TakerMonitoringCapabilityV1::ReceiptBound,
-            claim: TakerTerminalActionCapabilityV1::FullLifecycle,
-            refund: TakerTerminalActionCapabilityV1::FullLifecycle,
+            monitoring: zec_monitoring,
+            claim: zec_terminal,
+            refund: zec_terminal,
         },
         TakerPairCapabilityV1 {
             pair: Pair::Zcash,
             supported_direction: SwapDirection::TakerSellsForeign,
             authenticated_offer_browsing: true,
             initiation: TakerInitiationCapabilityV1::PreparedPrivateMaterial,
-            monitoring: TakerMonitoringCapabilityV1::ReceiptBound,
-            claim: TakerTerminalActionCapabilityV1::FullLifecycle,
-            refund: TakerTerminalActionCapabilityV1::FullLifecycle,
+            monitoring: zec_monitoring,
+            claim: zec_terminal,
+            refund: zec_terminal,
         },
     ]
 }
@@ -591,17 +610,11 @@ impl TakerHealthV1 {
         }
     }
 
-    /// Reports that the service registered initiation and receipt-bound reads.
-    #[must_use]
-    pub const fn with_initiation_registered(mut self) -> Self {
-        self.registered_methods = TakerRegisteredMethodsV1::read_with_initiation();
-        self
-    }
-
     /// Reports that the service registered the complete receipt-bound ZEC lifecycle.
     #[must_use]
     pub const fn with_zec_lifecycle_registered(mut self) -> Self {
         self.registered_methods = TakerRegisteredMethodsV1::full_zec_lifecycle();
+        self.pair_capabilities = pair_capabilities(true);
         self
     }
 

@@ -77,6 +77,9 @@ Item {
         }).length
     }
     property string lastPublishedMarketRun: ""
+    // Newest completed market run the desk already asked the evidence file about,
+    // so a run that is not published yet is probed once, not on every poll.
+    property string lastProbedMarketRun: ""
 
     component LuxeButton: Button {
         id: control
@@ -536,16 +539,33 @@ Item {
         })
     }
 
+    function applyBtcEvidence(result) {
+        root.btcEvidence = result
+        root.btcEvidenceReady = true
+        root.lastPublishedMarketRun = String(result.run_id ?? "")
+    }
+
+    // The visible load: the operator asked for the proof, so it owns the status.
     function loadBtcEvidence() {
         if (root.busy) return
         root.run(root.backend.btcEvidence(), "Loading Bitcoin settlement proof", function(result) {
-            root.btcEvidence = result
-            root.btcEvidenceReady = true
-            root.lastPublishedMarketRun = String(result.run_id ?? "")
+            root.applyBtcEvidence(result)
             root.statusMode = "success"
             root.statusTitle = "BTC settlement verified · revision " + String(result.terminal.revision)
             root.statusDetail = "2 Bitcoin + 3 LEZ effects · completed without replay resubmission"
         })
+    }
+
+    // The background load driven by the market poll: refreshes the proof data
+    // without touching the status or the diagnostic output the operator is
+    // reading, so a "Check Node" or "Refresh wallet market" result stays put.
+    function refreshBtcEvidenceSilently() {
+        if (root.busy) return
+        logos.watch(root.backend.btcEvidence(),
+            function(value) {
+                try { root.applyBtcEvidence(root.decode(value)) } catch (error) {}
+            },
+            function(error) {})
     }
 
     function selectedTakerWallet() {
@@ -578,20 +598,31 @@ Item {
         return (amount >= 0 ? "+" : "−") + root.formatLez(Math.abs(amount))
     }
 
+    // The newest completed swap decides whether the published proof is stale.
+    // Older completed runs stay in the market forever; comparing every one of
+    // them against the proof would reload it on every poll.
+    function newestCompletedRun(swaps) {
+        var newest = null
+        for (var index = 0; index < swaps.length; ++index) {
+            var swap = swaps[index]
+            if (swap.state !== "completed" || String(swap.run_id ?? "") === "") continue
+            if (newest === null
+                    || String(swap.completed_at ?? "") > String(newest.completed_at ?? "")
+                    || (String(swap.completed_at ?? "") === String(newest.completed_at ?? "")
+                        && String(swap.run_id) > String(newest.run_id)))
+                newest = swap
+        }
+        return newest === null ? "" : String(newest.run_id)
+    }
+
     function applyBtcMarket(result) {
         root.btcMarket = result
         root.btcMarketReady = true
-        var swaps = result.swaps ?? []
-        for (var index = 0; index < swaps.length; ++index) {
-            var swap = swaps[index]
-            if (swap.state === "completed" && String(swap.run_id ?? "") !== ""
-                    && String(swap.run_id) !== root.lastPublishedMarketRun
-                    && (!root.btcEvidenceReady
-                        || String(root.btcEvidence.run_id) !== String(swap.run_id))) {
-                root.loadBtcEvidence()
-                break
-            }
-        }
+        var newest = root.newestCompletedRun(result.swaps ?? [])
+        if (newest === "" || newest === root.lastProbedMarketRun) return
+        if (root.btcEvidenceReady && String(root.btcEvidence.run_id) === newest) return
+        root.lastProbedMarketRun = newest
+        root.refreshBtcEvidenceSilently()
     }
 
     function refreshBtcMarket(silent) {

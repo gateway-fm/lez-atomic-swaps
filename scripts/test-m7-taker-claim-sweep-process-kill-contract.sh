@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly runner="scripts/run-m4-actual-claim-poc.sh"
-readonly taker="crates/taker-node/src/bin/lez-taker.rs"
+readonly taker="crates/taker-node/src/bin/lez-taker-cli.rs"
 readonly actor="crates/xmr-reference-actor/src/lib.rs"
 readonly worker="crates/xmr-reference-actor/src/bin/xmr-reference-monero-refund.rs"
 readonly observer="crates/xmr-reference-actor/src/bin/xmr-reference-monero-verify.rs"

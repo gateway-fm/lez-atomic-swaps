@@ -1,3 +1,6 @@
+//! Exercises the ZEC reference actor; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 use lez_maker_node::{
     ZcashFundingProjectionOutcome, apply_zcash_funding_event, load_zcash_observation_tracker,
 };

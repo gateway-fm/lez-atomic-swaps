@@ -1,3 +1,6 @@
+//! Exercises the ZEC reference actor; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 //! Black-box daemon/CLI/Delivery journey for the Logos C-API price source.
 
 #[path = "support/cross_role_binary.rs"]

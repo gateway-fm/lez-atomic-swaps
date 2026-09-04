@@ -13,7 +13,7 @@ use lez_swap_core::{
 };
 use lez_swap_store::MAKER_ACTOR_LOCK_FD;
 use lez_swap_store::{
-    MakerActorArtifacts, MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1,
+    ActorHeldLock, MakerActorArtifacts, MakerActorAttemptResolution, MakerActorKindV1,
     MakerActorLeaseOwner, MakerActorManifestV1, MakerActorProcessError, MakerActorScheduleState,
     PINNED_EXECUTABLE_FD, PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, PinnedChildFdPlan, PinnedExecutable,
     SqliteSwapStore,
@@ -445,12 +445,12 @@ fn inherited_lock_is_a_nonforgeable_abandoned_lease_recovery_capability() {
         .unwrap()
         .unwrap();
 
-    let held = MakerActorHeldLock::acquire(&locked_record).unwrap();
+    let held = ActorHeldLock::acquire(&locked_record).unwrap();
     assert!(matches!(
-        MakerActorHeldLock::acquire(&locked_record),
+        ActorHeldLock::acquire(&locked_record),
         Err(MakerActorProcessError::LockUnavailable)
     ));
-    let peer = MakerActorHeldLock::acquire(&peer_record).unwrap();
+    let peer = ActorHeldLock::acquire(&peer_record).unwrap();
     assert!(matches!(
         store.recover_abandoned_maker_actor(
             &lease,
@@ -474,13 +474,13 @@ fn inherited_lock_is_a_nonforgeable_abandoned_lease_recovery_capability() {
     drop(command);
     drop(held);
     assert!(matches!(
-        MakerActorHeldLock::acquire(&locked_record),
+        ActorHeldLock::acquire(&locked_record),
         Err(MakerActorProcessError::LockUnavailable)
     ));
 
     child.kill().unwrap();
     child.wait().unwrap();
-    let recovered = MakerActorHeldLock::acquire(&locked_record).unwrap();
+    let recovered = ActorHeldLock::acquire(&locked_record).unwrap();
     let next = store
         .recover_abandoned_maker_actor(
             &lease,
@@ -531,18 +531,18 @@ fn lock_acquisition_rejects_unsafe_parent_and_hardlinked_inode() {
 
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o750)).unwrap();
     assert!(matches!(
-        MakerActorHeldLock::acquire(&record),
+        ActorHeldLock::acquire(&record),
         Err(MakerActorProcessError::UnsafeLock)
     ));
 
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    drop(MakerActorHeldLock::acquire(&record).unwrap());
+    drop(ActorHeldLock::acquire(&record).unwrap());
     let lock_path = root
         .path()
         .join("zec-lock-safety-actor.sqlite3.maker-actor.lock");
     fs::hard_link(&lock_path, root.path().join("attacker-link")).unwrap();
     assert!(matches!(
-        MakerActorHeldLock::acquire(&record),
+        ActorHeldLock::acquire(&record),
         Err(MakerActorProcessError::UnsafeLock)
     ));
 }
@@ -578,7 +578,7 @@ fn verified_artifact_fds_survive_path_replacement_before_exec() {
         )
         .unwrap();
     let record = store.list_maker_actor_processes().unwrap().remove(0);
-    let held = MakerActorHeldLock::acquire(&record).unwrap();
+    let held = ActorHeldLock::acquire(&record).unwrap();
     let artifacts = MakerActorArtifacts::open_validated(&record, |verified_config| {
         assert_eq!(verified_config, config);
         fs::rename(&config_path, root.path().join("original-config")).unwrap();
@@ -703,7 +703,7 @@ fn unexpected_state_creation_after_binding_fails_closed() {
         )
         .unwrap();
     let record = store.list_maker_actor_processes().unwrap().remove(0);
-    let held = MakerActorHeldLock::acquire(&record).unwrap();
+    let held = ActorHeldLock::acquire(&record).unwrap();
     let artifacts = MakerActorArtifacts::open(&record).unwrap();
     write_mode(&state_path, b"unexpected", 0o600);
 
@@ -723,8 +723,8 @@ fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
     let swap_id = SwapId::new("xmr-dual-lock").unwrap();
     let actor_state = root.path().join("actor-state.sqlite3");
     let workflow_state = root.path().join("workflow.sqlite3");
-    let actor_lock = MakerActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap();
-    let workflow_lock = MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap();
+    let actor_lock = ActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap();
+    let workflow_lock = ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap();
     let actor_lock_path = lock_path(&actor_state);
     let workflow_lock_path = lock_path(&workflow_state);
     let actor_identity = identity(&fs::metadata(&actor_lock_path).unwrap());
@@ -764,18 +764,18 @@ fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
     assert_ne!(executable_identity, child_workflow_identity);
     assert_ne!(child_actor_identity, child_workflow_identity);
     assert!(matches!(
-        MakerActorHeldLock::acquire_for(&swap_id, &actor_state),
+        ActorHeldLock::acquire_for(&swap_id, &actor_state),
         Err(MakerActorProcessError::LockUnavailable)
     ));
     assert!(matches!(
-        MakerActorHeldLock::acquire_for(&swap_id, &workflow_state),
+        ActorHeldLock::acquire_for(&swap_id, &workflow_state),
         Err(MakerActorProcessError::LockUnavailable)
     ));
 
     child.kill().unwrap();
     child.wait().unwrap();
-    drop(MakerActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
-    drop(MakerActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
+    drop(ActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
+    drop(ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
 }
 
 #[test]
@@ -786,8 +786,8 @@ fn pinned_executable_rejects_one_lock_for_both_descriptor_roles() {
     let program = b"#!/bin/sh\nexit 0\n";
     write_mode(&program_path, program, 0o700);
     let swap_id = SwapId::new("xmr-aliased-lock").unwrap();
-    let lock = MakerActorHeldLock::acquire_for(&swap_id, &root.path().join("actor-state.sqlite3"))
-        .unwrap();
+    let lock =
+        ActorHeldLock::acquire_for(&swap_id, &root.path().join("actor-state.sqlite3")).unwrap();
     let executable = PinnedExecutable::open(&program_path, digest(program)).unwrap();
 
     assert!(matches!(
@@ -803,12 +803,12 @@ fn pinned_executable_rejects_cross_swap_lock_composition() {
     let program_path = root.path().join("cross-swap-lock-probe");
     let program = b"#!/bin/sh\nexit 0\n";
     write_mode(&program_path, program, 0o700);
-    let actor_lock = MakerActorHeldLock::acquire_for(
+    let actor_lock = ActorHeldLock::acquire_for(
         &SwapId::new("xmr-swap-a").unwrap(),
         &root.path().join("actor-a.sqlite3"),
     )
     .unwrap();
-    let workflow_lock = MakerActorHeldLock::acquire_for(
+    let workflow_lock = ActorHeldLock::acquire_for(
         &SwapId::new("xmr-swap-b").unwrap(),
         &root.path().join("workflow-b.sqlite3"),
     )

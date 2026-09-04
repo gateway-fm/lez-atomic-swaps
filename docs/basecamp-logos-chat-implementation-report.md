@@ -249,7 +249,7 @@ Completed checks:
 
 A full all-target Clippy run still reports two unrelated pre-existing warnings:
 an unused `provision_maker_claim` in `maker_xmr_tag17_supervisor` and an
-unnecessary wrapper in the existing `lez-taker.rs`. They are outside this
+unnecessary wrapper in the existing `lez-taker-cli.rs`. They are outside this
 change; the changed library and new binary are warning-clean.
 
 ## Review disposition

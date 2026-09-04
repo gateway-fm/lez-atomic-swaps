@@ -6,7 +6,7 @@ use lez_swap_core::{
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    MakerActorAttemptResolution, MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner,
+    ActorHeldLock, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
     MakerActorManifestV1, MakerActorManualAction, MakerActorManualActionState,
     MakerActorProcessError, MakerActorProgressObservationV1, MakerActorScheduleState,
     MakerPairConfigurationV1, MakerPriceSourceKind, MakerRouteV1, SqliteSwapStore,
@@ -293,7 +293,7 @@ fn abandoned_action_transfers_only_with_the_exact_kernel_locked_lease() {
     drop(store);
 
     let mut reopened = SqliteSwapStore::open(&database).unwrap();
-    let held = MakerActorHeldLock::acquire(old_lease.record()).unwrap();
+    let held = ActorHeldLock::acquire(old_lease.record()).unwrap();
     let recovered = reopened
         .recover_abandoned_maker_actor(
             &old_lease,

@@ -1,3 +1,6 @@
+//! Exercises the ZEC reference actor; compiled only with `pair-zec`.
+#![cfg(feature = "pair-zec")]
+
 mod support;
 
 use std::path::{Path, PathBuf};

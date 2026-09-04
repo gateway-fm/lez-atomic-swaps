@@ -2,10 +2,12 @@
 
 mod taker_backend;
 mod taker_facade;
-mod taker_rpc;
 mod taker_service;
 mod taker_service_config;
 
+#[doc(hidden)]
+pub mod acceptance_files;
+#[cfg(feature = "pair-zec")]
 #[doc(hidden)]
 pub mod zec_taker_accept;
 
@@ -24,11 +26,13 @@ pub use taker_facade::{
     TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
     taker_pair_capabilities_v1,
 };
-pub use taker_rpc::taker_read_only_rpc_module;
 pub use taker_service::taker_service_rpc_module;
 pub use taker_service_config::{
-    ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
-    OwnerChatSocketProbe, PreparedZecExecutionV1, PreparedZecTakerInitiationV1,
+    ConfiguredTakerFacadeBackend, ConfiguredTakerServiceContext, OwnerChatSocketProbe,
     SystemTakerTrustedTime, TakerServiceStartupError, load_taker_service_backend,
     load_taker_service_context,
+};
+#[cfg(feature = "pair-zec")]
+pub use taker_service_config::{
+    ConfiguredTakerInitiationContext, PreparedZecExecutionV1, PreparedZecTakerInitiationV1,
 };

@@ -66,7 +66,6 @@ is_release_scope_path() {
     && "$path" != *m4-* \
     && "$path" != *m5-* \
     && "$path" != *m7-* \
-    && "$path" != */prepare-ui-swap.sh \
     && "$path" != */milestone-7/* ]]
 }
 

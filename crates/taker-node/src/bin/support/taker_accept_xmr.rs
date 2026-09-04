@@ -2,14 +2,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use lez_bridge_protocol::{RequestId, RunId};
+use lez_swap_core::{Pair, SwapDirection, SwapId};
+use lez_swap_sdk_core::OfferDiscovery as _;
+use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_xmr_chat_swap_id};
 use lez_taker_node::{
     DeliveryOfferQueryV1, RunLocalDelivery, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
     XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
     secure_file::read_private_file,
 };
-use lez_swap_core::{Pair, SwapDirection, SwapId};
-use lez_swap_sdk_core::OfferDiscovery as _;
-use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_xmr_chat_swap_id};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrAgreementV1, XmrSwapDirectionV1,
 };
@@ -25,9 +25,9 @@ use xmr_reference_actor::{
 };
 use zeroize::Zeroizing;
 
-use super::taker_accept::{
-    MAX_TAKER_RECEIPT_BYTES, decode_sha256, normalized_absolute, publish_exact_new,
-    resolved_new_path,
+use lez_taker_node::acceptance_files::{
+    MAX_TAKER_RECEIPT_BYTES, decode_sha256, derived_request_id, normalized_absolute,
+    publish_exact_new, resolved_new_path,
 };
 
 pub(crate) struct XmrTakeInput<'a> {
@@ -526,7 +526,7 @@ pub(crate) async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAccep
             "xmr_chat_stage_a_v1",
             &XmrChatStageARequestV1 {
                 schema_version: 1,
-                request_id: derived_request_id(&reservation_id, b"stage-a")?,
+                request_id: derived_request_id(&reservation_id, "xmr", b"stage-a")?,
                 offer_id: offer_id.clone(),
                 expected_offer_revision: 1,
                 reservation_id: reservation_id.clone(),
@@ -568,7 +568,7 @@ pub(crate) async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAccep
         "xmr_chat_activate_v1",
         &XmrChatActivateRequestV1 {
             schema_version: 1,
-            request_id: derived_request_id(&reservation_id, b"activate")?,
+            request_id: derived_request_id(&reservation_id, "xmr", b"activate")?,
             offer_id: offer_id.clone(),
             expected_offer_revision: 2,
             reservation_id: reservation_id.clone(),
@@ -750,15 +750,6 @@ fn validate_acceptance_paths(input: &XmrTakeInput<'_>) -> anyhow::Result<()> {
         );
     }
     Ok(())
-}
-
-fn derived_request_id(reservation_id: &RequestId, label: &[u8]) -> anyhow::Result<RequestId> {
-    let mut digest = Sha256::new();
-    digest.update(b"lez-atomic-swaps/xmr-taker-chat-request/v1\0");
-    digest.update(reservation_id.as_str().as_bytes());
-    digest.update([0]);
-    digest.update(label);
-    RequestId::new(hex::encode(digest.finalize())).map_err(Into::into)
 }
 #[cfg(test)]
 mod receipt_v2_tests {

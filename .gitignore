@@ -23,3 +23,11 @@ __pycache__/
 /fuzz/artifacts/
 /fuzz/coverage/
 /fuzz/target/
+
+# Image payloads staged by deploy/scripts/stage-assets.sh
+/deploy/images/*/lez-*
+/deploy/images/lez-services/sequencer_service
+/deploy/images/lez-services/indexer_service
+/deploy/images/lez-services/r0vm
+/deploy/images/bitcoin-core/bin/
+/deploy/images/basecamp-ui/assets/

@@ -130,6 +130,10 @@ jobs:
           --exclude lez-zebra-node-adapter
           --exclude zec-reference-actor
           --exclude lez-zec-swap-sdk
+      - name: Lint and test the pair features the default build leaves out
+        run: |
+          cargo clippy --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
+          cargo test --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets
       - name: Verify M3 official cryptographic vectors
         run: |
           ./scripts/check-m3-cryptographic-vectors.sh

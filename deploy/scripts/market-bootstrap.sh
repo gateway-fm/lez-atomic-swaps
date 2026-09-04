@@ -15,7 +15,8 @@ readonly MARKET_ROOT="${MARKET_ROOT:-$(dirname "$REPO_ROOT")/market}"
 readonly SEQUENCER_URL="${SEQUENCER_URL:-http://127.0.0.1:3040}"
 readonly INDEXER_URL="${INDEXER_URL:-http://127.0.0.1:8779}"
 readonly CHANNEL_ID="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
-readonly ESCROW_PROGRAM_ID="431ab9aec4b21d66e88ecbf8bb83301d5ef4cc0cec0ba0fb76baaa0ac7f9a10b"
+# LEZ program identity of the pinned escrow guest (its Risc0 image ID differs).
+readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433}"
 readonly AUTH_TRANSFER_PROGRAM_ID="dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71"
 readonly DEPLOYER="${DEPLOYER:-/tmp/lez-m3-artifact-arm/debug/lez-zec-escrow-v02-deployer}"
 readonly VAULT_CLAIM_BIN="${VAULT_CLAIM_BIN:-$REPO_ROOT/compat/lez-v0_2-sidecar/target/debug/lez-v02-vault-claim-poc}"
@@ -35,21 +36,28 @@ indexer() {
 
 account_balance() { indexer getAccount "[\"$1\"]" | jq -r '.result.balance // empty'; }
 
-# Wallet roster: name role owner_account vault_account allocation
-WALLETS=(
-  "maker-munich-01 maker BD6TpNTSLjeonDFmA3PXg6YtDy7xXt2LTm46266NpwJY 7v83atCzKMg4b7o6oS5AMxik1YrC6Kyx1g4HD7LenBmt 100000"
-  "maker-basel-02 maker A81AE1KTGdZ5GCDfy4XdUe9XvgNmkFzfgZcRkkQXm8vm BgUm3srEYVNS7vATkByw3ZkDNppGBF1edd4CUEv2Zqx8 100000"
-  "taker-zurich-01 taker 4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM 7bVx7C8fq8mdvnHJgTiRHMFezhoMnkancSGMhkNfNmqR 200000"
-  "taker-limmat-02 taker 5A8bRmav5wjYQex6z7SpuuNNyhesqHwweAqjc3eWfchH 2G22MdePKTHXgQtWYUBfzoDHKxGgZCg8vFwkdX22x8Yr 200000"
-)
+# Wallet roster: name role owner_account vault_account allocation, read from
+# the identities the genesis funded (deploy/scripts/gen-config.sh reads the
+# same files), so a fresh workspace with fresh identities stays consistent.
+WALLETS=()
+for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02; do
+  identity="$MARKET_ROOT/identities/$wallet/identity.json"
+  [[ -f "$identity" ]] || fail "$wallet identity missing: $identity"
+  role="${wallet%%-*}"
+  allocation=100000; [[ "$role" == taker ]] && allocation=200000
+  WALLETS+=("$wallet $role $(jq -er '.account_id' "$identity") $(jq -er '.vault_account_id' "$identity") $allocation")
+done
 
 mkdir -p "$MARKET_ROOT/bootstrap"
 chmod 0700 "$MARKET_ROOT" "$MARKET_ROOT/bootstrap"
 
 # ── 1. escrow program deployment (once per chain) ──────────────────────────
 deployment_evidence="$MARKET_ROOT/bootstrap/deployment.json"
+# Evidence for another program (a chain recreated since, or another pinned
+# guest) does not count: deploy again and record the new transaction.
 if [[ -s "$deployment_evidence" ]] \
-   && jq -e '.transaction_hash | test("^[0-9a-f]{64}$")' "$deployment_evidence" >/dev/null 2>&1; then
+   && jq -e --arg program "$ESCROW_PROGRAM_ID" '.preflight.image_id == $program
+        and (.transaction_hash | test("^[0-9a-f]{64}$"))' "$deployment_evidence" >/dev/null 2>&1; then
   echo "escrow program already deployed: $(jq -r '.transaction_hash' "$deployment_evidence")"
 else
   [[ -x "$DEPLOYER" ]] || fail "deployer missing: $DEPLOYER"

@@ -2,16 +2,18 @@
 //! Reusable owner-private ZEC taker acceptance support.
 
 use std::{
-    fmt,
-    fs::{self, File},
-    io::Write as _,
-    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
-    path::{Component, Path, PathBuf},
+    fmt, fs,
+    path::{Path, PathBuf},
 };
 
 use crate::{
     AuthenticatedOfferRefV1, DeliveryOfferQueryV1, RunLocalDelivery, ZecChatCompleteRequestV1,
-    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1, call_local_chat_rpc,
+    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1,
+    acceptance_files::{
+        MAX_TAKER_RECEIPT_BYTES, ReplayOutput, decode_sha256, derived_request_id,
+        normalized_absolute, publish_exact_new, resolved_new_path,
+    },
+    call_local_chat_rpc,
     secure_file::{load_raw_secret, read_private_file, read_private_file_snapshot},
 };
 use anyhow::{Context as _, ensure};
@@ -26,13 +28,10 @@ use lez_zec_swap_sdk::{
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use tempfile::NamedTempFile;
 use zec_reference_actor::{
     ActorConfig, ActorRole, ZecActorProvisionV1, provision_zec_taker_actor_from_chat,
     provision_zec_taker_actor_from_config,
 };
-
-pub const MAX_TAKER_RECEIPT_BYTES: u64 = 16 * 1024;
 
 pub struct ZecTakeInput<'a> {
     pub delivery: Option<&'a RunLocalDelivery>,
@@ -95,13 +94,6 @@ impl fmt::Debug for ZecAcceptanceOutput {
     }
 }
 
-#[derive(Debug, Serialize)]
-pub struct ReplayOutput {
-    pub proposal: bool,
-    pub completion: bool,
-    pub agreement_file: bool,
-}
-
 #[derive(Serialize)]
 struct ZecAcceptanceActorOutput {
     role: ActorRole,
@@ -126,17 +118,6 @@ struct ZecAcceptanceReceiptV1 {
 /// Runs ZEC acceptance using authenticated Delivery discovery.
 pub async fn take_zec(input: ZecTakeInput<'_>) -> anyhow::Result<ZecAcceptanceOutput> {
     take_zec_inner(input, None, None).await
-}
-
-/// Runs ZEC acceptance using one exact caller-retained authenticated offer.
-///
-/// The retained signed envelope is revalidated against the selected route,
-/// trusted timestamp, maker, amount, draft, and Chat proposal before use.
-pub async fn take_zec_with_authenticated_offer(
-    input: ZecTakeInput<'_>,
-    authenticated_offer: &AuthenticatedOfferRefV1,
-) -> anyhow::Result<ZecAcceptanceOutput> {
-    take_zec_inner(input, Some(authenticated_offer), None).await
 }
 
 /// Runs exact-offer ZEC acceptance using an already authenticated actor config.
@@ -216,7 +197,7 @@ async fn take_zec_inner(
         &taker_public,
     )?;
 
-    let propose_request_id = derived_request_id(&reservation_id, b"propose")?;
+    let propose_request_id = derived_request_id(&reservation_id, "zec", b"propose")?;
     let proposal: ZecChatProposalV1 = call_local_chat_rpc(
         input.chat_socket,
         "zec_chat_propose_v1",
@@ -353,7 +334,7 @@ async fn resume_persisted_zec(
         "zec_chat_complete_v1",
         &ZecChatCompleteRequestV1 {
             schema_version: 1,
-            request_id: derived_request_id(&reservation_id, b"complete")?,
+            request_id: derived_request_id(&reservation_id, "zec", b"complete")?,
             offer_id: offer_id.clone(),
             expected_offer_revision: 2,
             reservation_id: reservation_id.clone(),
@@ -412,7 +393,7 @@ async fn complete_zec(
         "countersigned ZEC agreement",
     )?;
     let provisioned = provision_taker_actor(input, &final_wire, source_actor_config)?;
-    let complete_request_id = derived_request_id(&reservation_id, b"complete")?;
+    let complete_request_id = derived_request_id(&reservation_id, "zec", b"complete")?;
     let completion: ZecChatCompleteResponseV1 = call_local_chat_rpc(
         input.chat_socket,
         "zec_chat_complete_v1",
@@ -521,13 +502,6 @@ fn load_taker_actor_from_receipt_bytes(path: &Path, bytes: &[u8]) -> anyhow::Res
     Ok(config)
 }
 
-pub fn decode_sha256(value: &str, label: &str) -> anyhow::Result<[u8; 32]> {
-    let decoded = hex::decode(value).with_context(|| format!("decode receipt {label} digest"))?;
-    decoded
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("receipt {label} digest has the wrong length"))
-}
-
 fn validate_authenticated_offer(
     input: &ZecTakeInput<'_>,
     offer_id: &MakerOfferId,
@@ -586,39 +560,6 @@ fn validate_acceptance_paths(input: &ZecTakeInput<'_>) -> anyhow::Result<()> {
         "acceptance receipt must be outside actor authority and agreement paths"
     );
     Ok(())
-}
-
-pub fn resolved_new_path(path: &Path, label: &str) -> anyhow::Result<PathBuf> {
-    ensure!(
-        normalized_absolute(path),
-        "{label} path must be normalized and absolute"
-    );
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .with_context(|| format!("{label} path needs a parent directory"))?;
-    let file_name = path
-        .file_name()
-        .with_context(|| format!("{label} path needs a file name"))?;
-    let parent_metadata =
-        fs::symlink_metadata(parent).with_context(|| format!("inspect {label} parent"))?;
-    ensure!(
-        parent_metadata.file_type().is_dir()
-            && parent_metadata.uid() == rustix::process::geteuid().as_raw()
-            && parent_metadata.permissions().mode() & 0o7777 == 0o700,
-        "{label} parent must be an owner-owned mode-0700 real directory"
-    );
-    Ok(fs::canonicalize(parent)
-        .with_context(|| format!("resolve {label} parent"))?
-        .join(file_name))
-}
-
-#[must_use]
-pub fn normalized_absolute(path: &Path) -> bool {
-    path.is_absolute()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
 }
 
 fn provision_taker_actor(
@@ -802,79 +743,4 @@ fn acceptance_actor_output(
         provisioning_replay: provisioned.was_replay(),
         receipt_replay,
     }
-}
-
-fn derived_request_id(reservation_id: &RequestId, label: &[u8]) -> anyhow::Result<RequestId> {
-    let mut digest = Sha256::new();
-    digest.update(b"lez-atomic-swaps/zec-taker-chat-request/v1\0");
-    digest.update(reservation_id.as_str().as_bytes());
-    digest.update([0]);
-    digest.update(label);
-    RequestId::new(hex::encode(digest.finalize())).map_err(Into::into)
-}
-
-pub fn publish_exact_new(
-    path: &Path,
-    bytes: &[u8],
-    max_bytes: u64,
-    label: &'static str,
-) -> anyhow::Result<bool> {
-    ensure!(path.is_absolute(), "{label} path must be absolute");
-    match fs::symlink_metadata(path) {
-        Ok(_) => return validate_existing_output(path, bytes, max_bytes, label).map(|()| true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).with_context(|| format!("inspect {label} path")),
-    }
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .with_context(|| format!("{label} needs a parent directory"))?;
-    let parent_metadata =
-        fs::symlink_metadata(parent).with_context(|| format!("inspect {label} parent"))?;
-    ensure!(
-        parent_metadata.file_type().is_dir()
-            && parent_metadata.uid() == rustix::process::geteuid().as_raw()
-            && parent_metadata.permissions().mode() & 0o7777 == 0o700,
-        "{label} parent must be an owner-owned mode-0700 real directory"
-    );
-    let mut temporary =
-        NamedTempFile::new_in(parent).with_context(|| format!("create temporary {label}"))?;
-    temporary
-        .as_file_mut()
-        .write_all(bytes)
-        .with_context(|| format!("write temporary {label}"))?;
-    temporary
-        .as_file_mut()
-        .sync_all()
-        .with_context(|| format!("sync temporary {label}"))?;
-    match temporary.persist_noclobber(path) {
-        Ok(file) => {
-            file.sync_all()
-                .with_context(|| format!("sync persisted {label}"))?;
-            File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .with_context(|| format!("sync {label} directory"))?;
-            validate_existing_output(path, bytes, max_bytes, label)?;
-            Ok(false)
-        }
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
-            validate_existing_output(path, bytes, max_bytes, label)?;
-            Ok(true)
-        }
-        Err(error) => Err(error.error).with_context(|| format!("publish {label} without clobber")),
-    }
-}
-
-fn validate_existing_output(
-    path: &Path,
-    expected: &[u8],
-    max_bytes: u64,
-    label: &'static str,
-) -> anyhow::Result<()> {
-    let actual = read_private_file(path, max_bytes, label)?;
-    ensure!(
-        actual.as_slice() == expected,
-        "{label} already exists with different bytes"
-    );
-    Ok(())
 }

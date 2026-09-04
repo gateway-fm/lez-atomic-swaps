@@ -5,6 +5,36 @@ both chains + the canonical Maker/Taker Nodes + the real Basecamp UI
 (drivable over VNC and by automated end-to-end tests). All native arm64,
 started with one command.
 
+## From scratch
+
+One command takes an arm64 host (macOS with Docker Desktop, or Linux with
+Docker) from nothing to the running stack with the Basecamp UI verified:
+
+```sh
+./scripts/from-scratch.sh          # prerequisites → pinned sources → payloads → runner → stack → UI suites
+./scripts/from-scratch.sh --swap   # …and one full BTC → LEZ swap through the two Basecamp apps
+```
+
+It installs the host tools (Homebrew on macOS), clones the pinned
+`logos-execution-zone` and `logos-basecamp` next to this repository, builds the
+Basecamp bundle, both role packages and the Chat/Delivery modules in the pinned
+Nix image, builds the Node binaries in the pinned Rust image, provisions the
+`lez-runner-arm` container (LEZ services, r0vm, rapidsnark, the escrow
+artifact, warm cargo caches, the four wallet identities), stages every image
+payload, then runs `up.sh`, the market bootstrap, both UI suites and
+`verify-all.sh`. Every phase is idempotent and resumable (`--only <phase>`).
+The cold path builds several Rust toolchains' worth of code and takes a few
+hours on Apple silicon; a rerun takes minutes.
+
+Two macOS specifics. If Docker Desktop keeps a Docker Hub login in the
+Keychain (`credsStore: "desktop"` in `~/.docker/config.json`), every pull and
+every BuildKit `FROM` lookup asks the Keychain, and macOS raises a prompt in
+the terminal's name; unattended runs then hang or fail with
+`DeadlineExceeded`. Click "Always Allow" once, or `docker logout` so public
+pulls stay anonymous. And the Docker VM disk fills up from build caches over
+time: `docker builder prune` and `docker image prune` are safe, volumes are
+not (the market and the runner's caches live there).
+
 ## Quick start
 
 ```sh
@@ -174,7 +204,11 @@ All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 
 ```
 compose.yaml               the stack
+scripts/from-scratch.sh    everything from an empty host (prerequisites, sources, payloads, runner, stack)
 scripts/up.sh              one-command bring-up (+ UI verification)
+scripts/swap-through-ui.sh one complete swap driven through the two Basecamp apps
+scripts/market-bootstrap.sh one-time settlement-chain bootstrap, runs inside the runner
+scripts/stage-basecamp-package.sh stage one Nix-built package or module into the UI image
 scripts/prepare-btc-m3-demo.sh publish/rerun completed LEZ/BTC M3 evidence
 scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent

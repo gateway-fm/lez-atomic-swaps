@@ -138,3 +138,20 @@ readiness item, not a reason to overstate this M6 contract.
 - Prepared private material is an explicit current initiation limitation.
 - Execution workers, receipt/lifecycle resolution, Basecamp host wiring, and
   actor-real E2E remain M6 work after prototype sign-off.
+
+## Amendment — 2026-09-01
+
+Health was overstating Bitcoin Node lifecycle. `taker_health` now reports
+Bitcoin initiation, claim, refund, and monitoring as `owner_cli_or_demo`, and
+Monero initiation/monitoring the same way. Zcash `full_lifecycle` appears only
+when initiation methods are actually registered; otherwise those rows are
+`not_on_this_node`. `taker_swap_initiate_v1` rejects a non-Zcash route with
+`initiation_unsupported_pair` before touching the registry.
+
+Schema version remains 1. Capability enums are additive snake_case strings;
+in-tree Basecamp and CLI decode health as untyped JSON. Typed closed enums
+must be updated when new values appear.
+
+Bitcoin Basecamp continues to drive settlement through the demo controller
+(`btcSwapAction`). Bitcoin CLI continues to use `lez-taker-cli` Chat/actor
+commands. Those surfaces are unchanged.

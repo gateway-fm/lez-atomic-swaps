@@ -1,3 +1,6 @@
+//! Exercises the ZEC and XMR reference actors; needs `pair-zec` and `pair-xmr`.
+#![cfg(all(feature = "pair-zec", feature = "pair-xmr"))]
+
 #[allow(dead_code)]
 #[path = "support/btc_fixture.rs"]
 mod btc_fixture;

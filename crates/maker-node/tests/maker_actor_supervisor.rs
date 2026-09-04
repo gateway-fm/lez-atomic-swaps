@@ -1,3 +1,6 @@
+//! Exercises the ZEC and XMR reference actors; needs `pair-zec` and `pair-xmr`.
+#![cfg(all(feature = "pair-zec", feature = "pair-xmr"))]
+
 #[allow(dead_code)]
 #[path = "support/btc_fixture.rs"]
 mod btc_fixture;
@@ -29,7 +32,7 @@ use lez_swap_core::{
     SwapDirection, SwapId, TimelockSafety,
 };
 use lez_swap_store::{
-    MakerActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
+    ActorHeldLock, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
     MakerActorManualAction, MakerActorManualActionState, MakerActorProgressObservationV1,
     MakerActorScheduleState, SqliteSwapStore, validate_maker_actor_program,
 };
@@ -939,7 +942,7 @@ fn live_old_lock_is_not_stolen_and_does_not_block_a_due_peer() {
         .into_iter()
         .find(|record| record.swap_id() == &locked_id)
         .unwrap();
-    let old_process_lock = MakerActorHeldLock::acquire(&locked_record).unwrap();
+    let old_process_lock = ActorHeldLock::acquire(&locked_record).unwrap();
     let new_owner = MakerActorLeaseOwner::new([0x64; 16]).unwrap();
     let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
         .expect("bounded peer config");

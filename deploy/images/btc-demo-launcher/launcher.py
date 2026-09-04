@@ -143,20 +143,38 @@ def create_exec(command: list[str], environment: list[str]) -> str:
     if not EXEC_RE.fullmatch(exec_id):
         raise RuntimeError("Docker API returned an invalid execution identity")
     docker_json("POST", f"/exec/{exec_id}/start", {"Detach": True, "Tty": False})
+    EXEC_DEADLINES[exec_id] = time.monotonic() + MAXIMUM_RUN_SECONDS
     return exec_id
 
 
-def wait_exec(exec_id: str) -> int:
+# Bounded deadline of every execution this process started, by exec identity.
+EXEC_DEADLINES: dict[str, float] = {}
+
+
+def poll_exec(exec_id: str, budget_seconds: float = 10.0) -> int | None:
+    """Returns the exit code, or None while the execution is still running.
+
+    One call stays well inside the controller's socket timeout; the controller
+    keeps calling until the code arrives, and may ask again after it has. The
+    run deadline spans the calls.
+    """
     if not EXEC_RE.fullmatch(exec_id):
         raise ValueError("execution identity is invalid")
-    deadline = time.monotonic() + MAXIMUM_RUN_SECONDS
-    while time.monotonic() < deadline:
+    deadline = EXEC_DEADLINES.get(exec_id)
+    if deadline is None:
+        raise ValueError("execution identity is unknown")
+    until = time.monotonic() + budget_seconds
+    while True:
         inspection = dict(docker_json("GET", f"/exec/{exec_id}/json"))
         if inspection.get("Running") is not True:
             value = inspection.get("ExitCode")
             return int(value) if isinstance(value, int) else -1
+        if time.monotonic() >= deadline:
+            EXEC_DEADLINES.pop(exec_id, None)
+            raise RuntimeError("allowlisted runner exceeded its bounded deadline")
+        if time.monotonic() >= until:
+            return None
         time.sleep(2)
-    raise RuntimeError("allowlisted runner exceeded its bounded deadline")
 
 
 def run_swap_job(request: dict) -> dict:
@@ -245,7 +263,7 @@ def collect_result(request: dict) -> dict:
     )
     return {
         "kind": "CollectSwapResultV1", "run_id": run_id,
-        "exec_id": exec_id, "exit_code": wait_exec(exec_id),
+        "exec_id": exec_id, "exit_code": poll_exec(exec_id),
     }
 
 
@@ -260,7 +278,7 @@ def dispatch(request: object) -> dict:
         return run_swap_job(request)
     if operation == "wait_swap":
         require_exact(request, {"schema_version", "operation", "exec_id"})
-        return {"kind": "WaitSwapResultV1", "exit_code": wait_exec(request["exec_id"])}
+        return {"kind": "WaitSwapResultV1", "exit_code": poll_exec(request["exec_id"])}
     if operation == "approve_action":
         return approve_action(request)
     if operation == "collect_result":
@@ -295,6 +313,22 @@ def call_healthcheck() -> None:
         raise RuntimeError("launcher health request failed")
 
 
+def hand_to_controller(path: pathlib.Path, mode: int) -> None:
+    """Keeps root ownership of `path` and opens it to the controller's group.
+
+    The launcher runs as root with every capability but CAP_CHOWN dropped, so
+    it must stay the owner to unlink and bind the socket on restart; the
+    controller reaches the socket through group 4713 (directory 0710, socket
+    0660). Mode and group change only when they differ, so restarts are
+    idempotent.
+    """
+    current = os.stat(path)
+    if current.st_mode & 0o7777 != mode:
+        os.chmod(path, mode)
+    if current.st_gid != CONTROLLER_GID:
+        os.chown(path, 0, CONTROLLER_GID)
+
+
 def main() -> None:
     if len(os.sys.argv) == 2 and os.sys.argv[1] == "--healthcheck":
         call_healthcheck()
@@ -302,15 +336,13 @@ def main() -> None:
     if len(os.sys.argv) != 1:
         raise SystemExit("launcher accepts only --healthcheck")
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    os.chown(SOCKET_PATH.parent, CONTROLLER_UID, CONTROLLER_GID)
-    os.chmod(SOCKET_PATH.parent, 0o700)
+    hand_to_controller(SOCKET_PATH.parent, 0o710)
     try:
         SOCKET_PATH.unlink()
     except FileNotFoundError:
         pass
     server = Server(str(SOCKET_PATH), Handler)
-    os.chown(SOCKET_PATH, CONTROLLER_UID, CONTROLLER_GID)
-    os.chmod(SOCKET_PATH, 0o600)
+    hand_to_controller(SOCKET_PATH, 0o660)
     server.serve_forever()
 
 

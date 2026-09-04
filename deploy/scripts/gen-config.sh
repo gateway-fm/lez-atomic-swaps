@@ -20,10 +20,17 @@ readonly taker_genesis_allocation=200000
 # runner-work/market/identities). Swaps run on this long-standing chain and
 # these accounts accumulate real balances across swaps — the local analog of
 # funded wallets on a real network.
-readonly wallet_munich_account_id="BD6TpNTSLjeonDFmA3PXg6YtDy7xXt2LTm46266NpwJY"
-readonly wallet_basel_account_id="A81AE1KTGdZ5GCDfy4XdUe9XvgNmkFzfgZcRkkQXm8vm"
-readonly wallet_zurich_account_id="4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM"
-readonly wallet_limmat_account_id="5A8bRmav5wjYQex6z7SpuuNNyhesqHwweAqjc3eWfchH"
+# LEZ_WALLET_IDENTITIES (a runner-work/market/identities directory) overrides
+# the recorded ids with the ids of the identities that directory holds.
+wallet_account_id() { # wallet_account_id <wallet> <recorded-id>
+  local identity="${LEZ_WALLET_IDENTITIES:-}/$1.json"
+  if [[ -n "${LEZ_WALLET_IDENTITIES:-}" && -f "$identity" ]]; then jq -er '.account_id' "$identity"; else echo "$2"; fi
+}
+wallet_munich_account_id="$(wallet_account_id maker-munich-01 BD6TpNTSLjeonDFmA3PXg6YtDy7xXt2LTm46266NpwJY)"
+wallet_basel_account_id="$(wallet_account_id maker-basel-02 A81AE1KTGdZ5GCDfy4XdUe9XvgNmkFzfgZcRkkQXm8vm)"
+wallet_zurich_account_id="$(wallet_account_id taker-zurich-01 4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM)"
+wallet_limmat_account_id="$(wallet_account_id taker-limmat-02 5A8bRmav5wjYQex6z7SpuuNNyhesqHwweAqjc3eWfchH)"
+readonly wallet_munich_account_id wallet_basel_account_id wallet_zurich_account_id wallet_limmat_account_id
 readonly wallet_maker_allocation=100000
 readonly wallet_taker_allocation=200000
 readonly upstream_genesis_time_hex="2c04626900000000"
@@ -49,8 +56,18 @@ jq -e '
   and .private_material_disclosed == false
 ' "$RUNTIME/m3-btc-ui-evidence.json" >/dev/null
 
-# --- LEZ: fresh genesis time + rendered deployment settings -----------------
-chain_start_epoch="$(date -u +%s)"
+# --- LEZ: genesis time + rendered deployment settings -----------------------
+# The standing LEZ chain keeps its genesis across restarts: reuse the epoch a
+# previous run recorded, and mint a fresh one only for a new runtime root.
+chain_start_epoch=""
+if [[ -s "$RUNTIME/runtime.env" ]]; then
+  chain_start_epoch="$(sed -n 's/^LEZ_V02_GENESIS_TIME_EPOCH=//p' "$RUNTIME/runtime.env" | head -1)"
+fi
+if [[ "$chain_start_epoch" =~ ^[0-9]+$ ]]; then
+  echo "reusing existing LEZ genesis time ${chain_start_epoch}"
+else
+  chain_start_epoch="$(date -u +%s)"
+fi
 genesis_time_hex="$(printf "%016x" "$chain_start_epoch" | sed -E 's/^(..)(..)(..)(..)(..)(..)(..)(..)$/\8\7\6\5\4\3\2\1/')"
 
 sed -e "s/${upstream_genesis_time_hex}/${genesis_time_hex}/" \

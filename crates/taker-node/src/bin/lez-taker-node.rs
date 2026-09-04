@@ -1,2 +1,123 @@
-// Role-fixed Taker authority process.
-include!("lez-taker-service.rs");
+use std::path::PathBuf;
+
+use anyhow::{Context as _, ensure};
+use clap::Parser;
+use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
+use lez_node_common::shutdown_signal;
+use lez_taker_node::{
+    load_taker_service_context,
+    node_config::load_node_arguments,
+    owner_rpc_server::{bind_owner_socket, publish_ready_file, server_config},
+    taker_service_rpc_module,
+};
+use sd_notify::NotifyState;
+use tokio::task::JoinSet;
+
+const MAXIMUM_RPC_BODY_BYTES: u32 = 64 * 1024;
+
+#[derive(Parser)]
+#[command(about = "Owner-local LEZ atomic-swap Taker Node")]
+struct Arguments {
+    /// Owner-private Taker role configuration.
+    #[arg(long)]
+    role_config: PathBuf,
+    /// Distinct owner-only Unix-domain Taker Node socket.
+    #[arg(long, default_value = "/run/lez/taker/node.sock")]
+    socket: PathBuf,
+    /// Optional no-clobber readiness handoff containing only the socket path.
+    #[arg(long)]
+    ready_file: Option<PathBuf>,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let arguments: Arguments = load_node_arguments("Taker")?;
+    ensure!(
+        arguments.socket.is_absolute(),
+        "Taker Node socket path must be absolute"
+    );
+
+    let context = load_taker_service_context(&arguments.role_config)
+        .context("load Taker Node role configuration")?;
+    let module = taker_service_rpc_module(context).context("build Taker RPC module")?;
+    let (listener, _socket_guard) =
+        bind_owner_socket(&arguments.socket).context("bind Taker Node socket")?;
+    let _ready_guard = arguments
+        .ready_file
+        .as_deref()
+        .map(|path| publish_ready_file(path, &arguments.socket, "Taker"))
+        .transpose()?;
+
+    sd_notify::notify(&[
+        NotifyState::Ready,
+        NotifyState::Status("Taker RPC and durable state are ready"),
+    ])
+    .context("notify Taker Node readiness")?;
+
+    let (stop_handle, server_handle) = stop_channel();
+    let service = ServerBuilder::default()
+        .set_config(server_config(MAXIMUM_RPC_BODY_BYTES))
+        .to_service_builder()
+        .build(module, stop_handle.clone());
+    let mut connections = JoinSet::new();
+    let mut service_error = None;
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+
+    loop {
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, _) = accepted.context("accept Taker RPC connection")?;
+                let connection_service = service.clone();
+                let connection_stop = stop_handle.clone();
+                connections.spawn(async move {
+                    serve_with_graceful_shutdown(
+                        stream,
+                        connection_service,
+                        connection_stop.shutdown(),
+                    )
+                    .await
+                });
+            }
+            completed = connections.join_next(), if !connections.is_empty() => {
+                let completed = completed.expect("active Taker connection task is present");
+                if let Err(error) = finish_connection(completed) {
+                    service_error = Some(error);
+                    break;
+                }
+            }
+            signal = &mut shutdown => {
+                if let Err(error) = signal {
+                    service_error = Some(anyhow::Error::new(error).context("wait for shutdown"));
+                }
+                break;
+            }
+        }
+    }
+
+    sd_notify::notify(&[
+        NotifyState::Stopping,
+        NotifyState::Status("Taker Node is stopping"),
+    ])
+    .context("notify Taker Node shutdown")?;
+    server_handle.stop().context("stop Taker RPC")?;
+    while let Some(completed) = connections.join_next().await {
+        finish_connection(completed)?;
+    }
+    drop(service);
+    drop(stop_handle);
+    server_handle.stopped().await;
+
+    match service_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+fn finish_connection(
+    completed: Result<Result<(), jsonrpsee::core::BoxError>, tokio::task::JoinError>,
+) -> anyhow::Result<()> {
+    completed
+        .context("join Taker RPC connection")?
+        .map_err(|error| anyhow::anyhow!("serve Taker RPC connection: {error}"))
+}

@@ -493,7 +493,29 @@ interactive_ui_gate() {
   fail "interactive ${action} approval timed out"
 }
 
-''' + r'''interactive_publish_wallet_balances_FOREIGN() {
+''' + r'''# Closing balance at the finalized tip. The v0.2 indexer serves historical
+# reads from state breakpoints it takes every 100 blocks, and on a long-lived
+# chain it occasionally skips one; every read past the gap then fails until
+# the next breakpoint lands. The chain only advances by clock invocations
+# between the swap's last effect and the tip, so the current state is the
+# state at the tip: fall back to it rather than fail a completed swap.
+lez_closing_account() {
+  local account="$1" block="$2" output="$3" partial
+  partial="${output}.partial"
+  for _ in {1..40}; do
+    if rpc "$M3_POC_LEZ_INDEXER_RPC_URL" "$(jq -cn --arg account "$account" --argjson block "$block" \
+        '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" >"$partial" 2>/dev/null &&
+      jq -e '.error == null and .result != null' "$partial" >/dev/null 2>&1; then
+      chmod 0600 "$partial"; mv "$partial" "$output"; return 0
+    fi
+    sleep 0.25
+  done
+  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
+    "$(jq -cn --arg account "$account" '{jsonrpc:"2.0",id:1,method:"getAccount",params:[$account]}')" \
+    "$output"
+}
+
+interactive_publish_wallet_balances_FOREIGN() {
   [[ "${LEZ_INTERACTIVE_UI_GATES:-0}" == 1 ]] || return 0
   local tip maker_account taker_account maker_final taker_final output
   local maker_open taker_open funding claim
@@ -507,14 +529,8 @@ interactive_ui_gate() {
   funding="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-prepared.json"
   claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-bitcoin-followup-claim-confirmed.json"
   output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-interactive-wallet-balances.json"
-  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
-    "$(jq -cn --arg account "$maker_account" --argjson block "$tip" \
-      '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" \
-    "$maker_final"
-  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
-    "$(jq -cn --arg account "$taker_account" --argjson block "$tip" \
-      '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" \
-    "$taker_final"
+  lez_closing_account "$maker_account" "$tip" "$maker_final"
+  lez_closing_account "$taker_account" "$tip" "$taker_final"
   jq -n --arg run "$M3_POC_RUN_ID" --arg direction "$M3_POC_DIRECTION" \
     --arg maker_wallet "${LEZ_INTERACTIVE_MAKER_WALLET:?}" \
     --arg taker_wallet "${LEZ_INTERACTIVE_TAKER_WALLET:?}" \
@@ -588,14 +604,8 @@ interactive_ui_gate() {
   funding="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-funding-prepared.json"
   claim="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-bitcoin-revealing-claim-confirmed.json"
   output="${M3_POC_EVIDENCE_DIR}/${M3_POC_DIRECTION}-interactive-wallet-balances.json"
-  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
-    "$(jq -cn --arg account "$maker_account" --argjson block "$tip" \
-      '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" \
-    "$maker_final"
-  rpc_read_file "$M3_POC_LEZ_INDEXER_RPC_URL" \
-    "$(jq -cn --arg account "$taker_account" --argjson block "$tip" \
-      '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$account,$block]}')" \
-    "$taker_final"
+  lez_closing_account "$maker_account" "$tip" "$maker_final"
+  lez_closing_account "$taker_account" "$tip" "$taker_final"
   jq -n --arg run "$M3_POC_RUN_ID" --arg direction "$M3_POC_DIRECTION" \
     --arg maker_wallet "${LEZ_INTERACTIVE_MAKER_WALLET:?}" \
     --arg taker_wallet "${LEZ_INTERACTIVE_TAKER_WALLET:?}" \
@@ -730,8 +740,11 @@ def interactive_runner_scripts(run_id: str, direction: str) -> dict[str, bytes]:
 
 
 def wait_exec(exec_id: str) -> int:
-    result = launcher_call({"operation": "wait_swap", "exec_id": exec_id})
-    return int(result["exit_code"])
+    """Polls in bounded launcher calls: a swap outlives the launcher socket timeout."""
+    while True:
+        result = launcher_call({"operation": "wait_swap", "exec_id": exec_id})
+        if result.get("exit_code") is not None:
+            return int(result["exit_code"])
 
 
 def validate_public_evidence(value: dict, run_id: str, direction: str) -> None:
@@ -1381,8 +1394,12 @@ class Market:
                 "operation": "collect_result", "run_id": run_id,
                 "direction": direction,
             })
-            if export_result.get("kind") != "CollectSwapResultV1" \
-                    or export_result.get("exit_code") != 0:
+            if export_result.get("kind") != "CollectSwapResultV1":
+                raise RuntimeError("public evidence export failed")
+            export_code = export_result.get("exit_code")
+            if export_code is None:
+                export_code = wait_exec(str(export_result.get("exec_id", "")))
+            if export_code != 0:
                 raise RuntimeError("public evidence export failed")
             generated_on_mount = (
                 EVIDENCE_ROOT / ".e2e" / run_id / "m3-actor-poc" /

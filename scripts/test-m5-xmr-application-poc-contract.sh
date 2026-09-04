@@ -8,7 +8,7 @@ readonly wrapper="scripts/run-m5-xmr-application-poc.sh"
 readonly runner="scripts/run-m4-actual-claim-poc.sh"
 readonly sidecar_lock="compat/lez-v0_2-sidecar/Cargo.lock"
 readonly release_lock="compat/lez-v0_2-xmr-release-service/Cargo.lock"
-readonly taker_cli="crates/taker-node/src/bin/lez-taker.rs"
+readonly taker_cli="crates/taker-node/src/bin/lez-taker-cli.rs"
 readonly xmr_receipt_loader="crates/taker-node/src/bin/support/taker_accept_xmr.rs"
 readonly xmr_process_test="crates/maker-node/tests/xmr_chat_process.rs"
 readonly xmr_application_provision="crates/xmr-reference-actor/src/application_provision.rs"
@@ -333,8 +333,8 @@ for required in \
   'XmrEffect(Box<XmrTakerEffectReceiptSelector>)' \
   'load_xmr_taker_receipt_selector(path).ok(),' \
   'load_xmr_taker_effect_receipt_selector(path).ok(),' \
-  'MakerActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())' \
-  'MakerActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())' \
+  'ActorHeldLock::acquire_for(selector.swap_id(), selector.state_database())' \
+  'ActorHeldLock::acquire_for(selector.swap_id(), selector.workflow_journal())' \
   'load_validated_xmr_taker_authority_bytes(selector.manifest_bytes())' \
   'selector.receipt_matches(&authority)' \
   'XMR Taker claim and refund are not yet composed' \

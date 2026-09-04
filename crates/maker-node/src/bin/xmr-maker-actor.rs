@@ -11,7 +11,7 @@ use std::{
 use anyhow::{Context as _, Result, anyhow, ensure};
 use clap::{Parser as _, Subcommand};
 use lez_swap_store::{
-    MAKER_ACTOR_CONFIG_FD, MakerActorHeldLock, SqliteXmrWorkflowJournal, XmrWorkflowBranch,
+    ActorHeldLock, MAKER_ACTOR_CONFIG_FD, SqliteXmrWorkflowJournal, XmrWorkflowBranch,
     XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
 use serde::Serialize;
@@ -204,14 +204,14 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectRu
         .as_fd()
         .try_clone_to_owned()
         .context("clone transferred XMR Maker actor lock")?;
-    let actor_lock = MakerActorHeldLock::accept_transferred_for(
+    let actor_lock = ActorHeldLock::accept_transferred_for(
         identity.swap_id(),
         authority.adaptor_journal(),
         File::from(transferred),
     )
     .context("accept transferred XMR Maker actor lock")?;
     let workflow_lock =
-        MakerActorHeldLock::acquire_for(identity.swap_id(), authority.workflow_journal())
+        ActorHeldLock::acquire_for(identity.swap_id(), authority.workflow_journal())
             .context("acquire XMR Maker workflow lock")?;
 
     let recovery_step = selected_effect_step(&execution, requested)?;
@@ -306,8 +306,8 @@ fn pause_after_submitted_if_armed(
 fn execute_preflight(
     execution: &ValidatedXmrEffectExecutionV3,
     recovery_step: XmrWorkflowStep,
-    actor_lock: &MakerActorHeldLock,
-    workflow_lock: &MakerActorHeldLock,
+    actor_lock: &ActorHeldLock,
+    workflow_lock: &ActorHeldLock,
 ) -> Result<()> {
     let Some(mut command) = execution
         .prepare_effect_preflight(recovery_step, actor_lock, workflow_lock)
@@ -345,8 +345,8 @@ fn observe_and_reconcile(
     execution: &ValidatedXmrEffectExecutionV3,
     recovery_step: XmrWorkflowStep,
     expected_plan: [u8; 32],
-    actor_lock: &MakerActorHeldLock,
-    workflow_lock: &MakerActorHeldLock,
+    actor_lock: &ActorHeldLock,
+    workflow_lock: &ActorHeldLock,
 ) -> Result<bool> {
     let prepared = execution
         .prepare_effect_observation(recovery_step, actor_lock, workflow_lock)

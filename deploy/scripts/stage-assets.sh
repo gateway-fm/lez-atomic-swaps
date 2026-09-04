@@ -70,13 +70,17 @@ Build with the pinned flakes (nix, experimental-features enabled):
   nix build path:apps/basecamp#lez-maker-ui-install -o maker-user
   nix build path:apps/basecamp#lez-taker-ui-install -o taker-user
   nix build path:../basecamp#logos-qt-mcp -o qt-mcp
+  nix build github:logos-co/logos-chat-module/v0.2.2#lgx -o chat-lgx
+  nix build github:logos-co/logos-chat-module/v0.2.2#delivery_module-lgx -o delivery-lgx
 Then copy:
   bundle/     -> images/basecamp-ui/assets/bundle
-  maker-user/ -> images/basecamp-ui/assets/maker-user
-  taker-user/ -> images/basecamp-ui/assets/taker-user
   qt-mcp/     -> images/basecamp-ui/assets/qt-mcp
-and rename the role package variant tags linux-arm64-dev -> linux-arm64
-(variant file + manifest.json main/hashes keys).
+and stage the role packages plus the modules they depend on (this pins the
+variant tag):
+  scripts/stage-basecamp-package.sh maker-user maker
+  scripts/stage-basecamp-package.sh taker-user taker
+  scripts/stage-basecamp-package.sh chat-lgx/*.lgx module
+  scripts/stage-basecamp-package.sh delivery-lgx/*.lgx module
 MISSING
     exit 1
 fi
