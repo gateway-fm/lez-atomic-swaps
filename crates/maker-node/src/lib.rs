@@ -1060,6 +1060,7 @@ fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
                     .list_retryable_maker_offers(now_unix_seconds)
                     .map_err(application_store_error)?
                     .into_iter()
+                    .filter(|record| record.status() != MakerOfferStatus::Consumed)
                     .map(|record| record.offer().clone())
                     .collect::<Vec<_>>();
                 (active, routes)
@@ -1165,7 +1166,7 @@ fn reconcile_unhealthy_route_offers(context: &MakerRpc, now_unix_seconds: u64) -
         }
     }
     if let Some(delivery) = &context.delivery {
-        let retryable = {
+        let projected = {
             let store = context
                 .store
                 .lock()
@@ -1174,12 +1175,15 @@ fn reconcile_unhealthy_route_offers(context: &MakerRpc, now_unix_seconds: u64) -
                 .list_retryable_maker_offers(now_unix_seconds)
                 .map_err(application_store_error)?
                 .into_iter()
+                .filter(|record| record.status() != MakerOfferStatus::Consumed)
                 .map(|record| record.offer().clone())
                 .collect::<Vec<_>>()
         };
         // Durable state remains authoritative. Failed cleanup is retried on the next sample;
-        // Delivery health stays degraded until its exact projection matches this set.
-        let _ = delivery.reconcile(&retryable, now_unix_seconds);
+        // Delivery health stays degraded until its exact projection matches this set. A
+        // consumed lot is not projected: it is bound to one swap, and a Taker retrying its
+        // acceptance replays from the store rather than rediscovering the offer.
+        let _ = delivery.reconcile(&projected, now_unix_seconds);
     }
     Ok(())
 }

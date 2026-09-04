@@ -520,6 +520,12 @@ fn complete_btc_chat_v2(
             &initial,
         )
         .map_err(application_store_error)?;
+    // The lot is bound to one swap: it leaves Delivery discovery now rather
+    // than at the next health sample. A Taker retrying its acceptance replays
+    // from the store and never needs the offer rediscovered.
+    if let Some(delivery) = &context.delivery {
+        let _ = delivery.withdraw(&request.offer_id);
+    }
     Ok(BtcChatCompleteResponseV2 {
         schema_version: 2,
         offer_revision: commit.offer_revision(),
@@ -740,6 +746,12 @@ fn complete_btc_chat(
             now_unix_seconds,
         )
         .map_err(application_store_error)?;
+    // The lot is bound to one swap: it leaves Delivery discovery now rather
+    // than at the next health sample. A Taker retrying its acceptance replays
+    // from the store and never needs the offer rediscovered.
+    if let Some(delivery) = &context.delivery {
+        let _ = delivery.withdraw(&request.offer_id);
+    }
     Ok(BtcChatCompleteResponseV1 {
         schema_version: 1,
         offer_revision: commit.offer_revision(),

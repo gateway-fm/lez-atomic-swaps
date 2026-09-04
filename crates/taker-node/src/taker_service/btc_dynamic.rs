@@ -334,6 +334,16 @@ pub(super) async fn prepare(
     let layout = dynamic.layout(&reservation_id);
     let direction = request.route.direction();
     ensure!(request.route.pair() == Pair::Bitcoin, "not a Bitcoin route");
+    let prepared_file = layout.root().join("taker-prepared.json");
+    // A replay of a take that already configured its swap is answered from the
+    // bound record: the Maker withdraws a reserved lot from Delivery, so the
+    // offer need not be discoverable any more.
+    if layout.exists()
+        && let Ok(bytes) = read_private(&prepared_file, MAX_RECORD_BYTES)
+    {
+        let configured: PreparedConfigurationV1 = serde_json::from_slice(&bytes)?;
+        return Ok(DynamicTake { configured });
+    }
     let offer = dynamic
         .authenticate_offer(
             &request.offer_id,
@@ -352,13 +362,7 @@ pub(super) async fn prepare(
         "the selected offer is not the live offer the request names"
     );
     let (source_id, _) = dynamic.source_for(&request.maker_identity)?;
-    let prepared_file = layout.root().join("taker-prepared.json");
-    if layout.exists() {
-        if let Ok(bytes) = read_private(&prepared_file, MAX_RECORD_BYTES) {
-            let configured: PreparedConfigurationV1 = serde_json::from_slice(&bytes)?;
-            return Ok(DynamicTake { configured });
-        }
-    } else {
+    if !layout.exists() {
         layout.create()?;
     }
     let mut record = TakerSwapRecordV1::load(&layout)?;
