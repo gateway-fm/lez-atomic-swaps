@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-07-18
+Status: Living executable inventory — 2026-09-04 (local product stack); the M2 topology below it is retained as history
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -12,7 +12,113 @@ No port is invented for an unimplemented integration. Exact current artifact,
 deployment, transaction, balance, and run facts are retained in the
 [canonical M2 certification packet](../evidence/m2-canonical-local-certification-20260714.json).
 
-## Current executable local topology
+## Current local product stack (ADR 0213, 2026-09-04)
+
+Everything below runs from `deploy/compose.yaml` on one arm64 host. The two
+Basecamp desks talk only to their own Node's owner-only Unix socket; the two
+Nodes meet only at the Maker's Chat socket and the Delivery directory; each Node
+reaches the chains through loopback forwarders inside its own container.
+
+```mermaid
+flowchart TB
+    subgraph UI["basecamp-ui (uid 4713, VNC :5901)"]
+        MakerDesk["LEZ / BTC Maker desk (lez-maker-ui.lgx)"]
+        TakerDesk["LEZ / BTC Taker desk (lez-taker-ui.lgx)"]
+        Adapter["node_market.cpp: view model + actions"]
+        Inspector["qt-mcp inspector ← ui-tests/verify.mjs"]
+    end
+
+    subgraph MakerNode["maker-node"]
+        MakerBin["lez-maker-node"]
+        MakerStore[("maker.sqlite3: offers, negotiations, swaps, actor registrations")]
+        MakerActor["lez-btc-maker-actor (child process per drive)"]
+        MakerSidecar["lez-v02-bridge-poc (one per swap, 127.0.0.1:190xx)"]
+        MakerSwapDir[("swaps/&lt;reservation&gt;/: role root, actor store, journals")]
+    end
+
+    subgraph TakerNode["taker-node"]
+        TakerBin["lez-taker-node"]
+        TakerRegistry[("registry.sqlite3: swaps, authorities, requests")]
+        TakerActor["lez-btc-taker-actor (library, program hash pinned)"]
+        TakerSidecar["lez-v02-bridge-poc (one per swap, 127.0.0.1:195xx)"]
+        TakerSwapDir[("swaps/&lt;reservation&gt;/: role root, actor store, journals")]
+    end
+
+    Chat["/run/lez/maker/chat.sock (shared volume)"]
+    Delivery["/delivery (shared volume): signed offer files"]
+
+    subgraph Chains["network: chains"]
+        Core["bitcoin-core (regtest, txindex, txospenderindex)"]
+        Miner["btc-miner (one block / 120 s)"]
+        Bedrock["bedrock"]
+        Sequencer["sequencer :3040"]
+        Indexer["indexer :8779"]
+        BtcExplorer["btc-explorer :3002"]
+        LezExplorer["lez-explorer :3003 (+ runtime/evidence index)"]
+    end
+
+    MakerDesk --> Adapter
+    TakerDesk --> Adapter
+    Adapter -->|"maker_offer_publish/withdraw, maker_offer_list, swap_history, maker_actor_monitor_v1"| MakerBin
+    Adapter -->|"taker_offer_list_v1, taker_swap_initiate/lock/claim/refund_v1, taker_swap_list_v1"| TakerBin
+    Inspector -.-> MakerDesk
+    Inspector -.-> TakerDesk
+
+    MakerBin --> MakerStore
+    MakerBin -->|"publish / withdraw"| Delivery
+    Delivery -->|"discover"| TakerBin
+    TakerBin -->|"btc_reserve_v1, btc_ceremony_reserve/nonce/partial_v1, btc_chat_propose/complete_v2"| Chat
+    Chat --> MakerBin
+    MakerBin -->|"supervisor drives"| MakerActor
+    MakerBin --> MakerSidecar
+    MakerActor --> MakerSwapDir
+    TakerBin --> TakerRegistry
+    TakerBin -->|"observer drives"| TakerActor
+    TakerBin --> TakerSidecar
+    TakerActor --> TakerSwapDir
+
+    MakerActor -->|"127.0.0.1:18443 (socat)"| Core
+    TakerActor -->|"127.0.0.1:18443 (socat)"| Core
+    MakerSidecar -->|"127.0.0.1:3040 / 8779 (socat)"| Sequencer
+    TakerSidecar -->|"127.0.0.1:3040 / 8779 (socat)"| Sequencer
+    MakerSidecar --> Indexer
+    TakerSidecar --> Indexer
+    Miner --> Core
+    Bedrock --> Sequencer
+    Sequencer --> Indexer
+    Core --> BtcExplorer
+    Indexer --> LezExplorer
+```
+
+| Binary | Image | Responsibility | Lifecycle |
+|---|---|---|---|
+| `lez-maker-node` | maker-node | offers, routes and prices; Delivery publishing and withdrawal; Chat server for reservation, the three ceremony rounds and propose/complete; actor supervisor; per-swap sidecar keep-alive; owner RPC | service |
+| `lez-taker-node` | taker-node | offer discovery; take (reservation, Bitcoin funding plan from wallet `lez-taker`, LEZ claim preparation, draft, ceremony, actor activation); lock, claim, refund; observer that drives its actor's chain observations; swap list and monitor; owner RPC | service |
+| `lez-btc-maker-actor` / `lez-btc-taker-actor` | node images | the role's durable swap state machine: observes both chains, projects transitions, signs and broadcasts effects, answers `status` | Maker: child process per drive; Taker: linked in-process with the program hash pinned in every persisted swap |
+| `lez-v02-bridge-poc` | node images | LEZ v0.2 sidecar: prepares and submits escrow initialization, funding and claims against sequencer and indexer; one durable reservation per state directory, hence one per swap | spawned per swap, respawned on restart |
+| `lez-maker-cli` / `lez-taker-cli` | node images | operator CLI over the Node socket | on demand |
+| `lez-taker-registry-init` | taker-node | creates the Taker registry schema | once, from the entrypoint |
+| `lez-maker-chat-gateway` / `lez-taker-chat-gateway` | node images | Logos Chat relay gateways for non-local peers | packaged, not on the local path |
+| `lez-runtime-healthcheck` | every lez image | JSON-RPC probe for Compose health checks | every 10 s |
+| `node-entrypoint.sh` | node images | renders the role's identity, Core cookie and `btc-role.json` from the market root, starts the loopback forwarders, execs the Node | container start |
+| `sequencer_service`, `indexer_service`, `r0vm` | lez-services | LEZ devnet and prover | service |
+| `bitcoind`, `bitcoin-cli` | bitcoin-core | regtest chain; wallets `lez-taker`, `lez-maker`, `lez-miner` | service |
+| `server.js` | lez-explorer | indexer proxy, block and transaction UI, evidence view and hash index | service |
+
+Owner RPC methods the desks use: Maker `maker_health`, `maker_pair_list`,
+`maker_local_price_list`, `maker_local_route_save_v1`, `maker_offer_publish`,
+`maker_offer_withdraw`, `maker_offer_list`, `swap_history`,
+`maker_actor_monitor_v1`; Taker `taker_health`, `taker_offer_list_v1`,
+`taker_swap_initiate_v1`, `taker_swap_lock_v1`, `taker_swap_claim_v1`,
+`taker_swap_refund_v1`, `taker_swap_list_v1`, `taker_swap_monitor_v1`. Chat
+methods between the Nodes: `btc_reserve_v1`, `btc_ceremony_reserve_v1`,
+`btc_ceremony_nonce_v1`, `btc_ceremony_partial_v1`, `btc_chat_propose_v2`,
+`btc_chat_complete_v2`. Host-side tooling: `up.sh`, `gen-config.sh`,
+`swap-through-ui.sh`, `export-node-evidence.py`, `verify-all.sh`
+(`verify-explorers.py`, `verify-market.py`, both UI suites), `reset-swaps.sh`;
+`market-bootstrap.sh` runs once inside the `lez-runner-arm` build host.
+
+## M2 executable local topology (2026-07-18, superseded above)
 
 ```mermaid
 flowchart TB

@@ -84,6 +84,70 @@ two Nodes settle the swap:
    explorer's hash index; `swap-through-ui.sh` does so on completion. Until the
    first swap, the proof view shows the certified sample `m5arm-08180005`.
 
+## Manual test walkthrough
+
+Everything the automated swap does can be done by hand and watched from the
+outside. Two helpers for the owner sockets (run from `deploy/`):
+
+```sh
+set -a; source runtime/runtime.env; set +a
+maker() { docker exec lez-maker-node curl -sS --unix-socket /run/lez/maker/node.sock \
+  -H 'content-type: application/json' --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":[${2:-{\}}]}" http://localhost/ | jq; }
+taker() { docker exec lez-taker-node curl -sS --unix-socket /run/lez/taker/node.sock \
+  -H 'content-type: application/json' --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":[${2:-{\"schema_version\":1\}}]}" http://localhost/ | jq; }
+btc() { docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin "$@"; }
+```
+
+1. **Stack.** `docker compose --env-file runtime/runtime.env ps` shows every
+   service healthy. `maker maker_health` and `taker taker_health` answer.
+   `./scripts/reset-swaps.sh` gives you an empty swap history when you want a
+   clean run.
+2. **Publish.** Connect VNC to `127.0.0.1:5901` (password `lezswap`), open
+   **LEZ / BTC Maker** and click **Publish offer**. Check it from outside:
+   `maker maker_offer_list` lists it `active` at revision 1, and
+   `docker exec lez-taker-node ls /delivery` shows its signed file.
+3. **Discover and take.** Open **LEZ / BTC Taker**; the order book shows the
+   offer as **Munich Vault 01 · 1,000 LEZ**. `taker taker_offer_list_v1` shows
+   the same. Click **Take offer**. Within about ten seconds the row offers
+   **Lock 0.01000000 BTC**. Meanwhile: `taker taker_swap_list_v1` lists the
+   swap in `awaiting_first_lock`; `maker maker_offer_list` shows the offer
+   `consumed` with its `swap_id`; the Delivery file is gone; both containers
+   run one new `lez-v02-bridge-poc`
+   (`docker exec lez-taker-node ps -eo pid,args | grep bridge`); each Node has
+   a new `swaps/<reservation id>/` directory.
+4. **Lock BTC.** Click **Lock 0.01000000 BTC**. `taker taker_swap_list_v1`
+   moves to `locking_btc` and then `awaiting_maker_lock`;
+   `btc -rpcwallet=lez-taker listtransactions '*' 1` shows the funding
+   transaction; it appears on http://127.0.0.1:3002 once the miner includes it
+   (a block every two minutes).
+5. **Maker funds LEZ (automatic).** The Maker desk moves from **Waiting for the
+   Taker's lock** to **Funding the LEZ escrow** to **Waiting for the Taker's
+   LEZ claim**; `maker maker_actor_monitor_v1 '{"id":"<swap id>"}'` reports the
+   phase. The escrow initialization and funding appear in the LEZ explorer
+   (http://127.0.0.1:3003, latest blocks).
+6. **Claim LEZ.** The Taker row offers **Claim 1,000 LEZ**; click it. The
+   revealing claim lands on LEZ, then the Maker Node claims the Bitcoin
+   (**Claiming Bitcoin** on the Maker desk; `btc -rpcwallet=lez-maker
+   listtransactions '*' 1`). Both `taker taker_swap_list_v1` and the Maker
+   monitor end at `completed`, revision 4.
+7. **Proof.** `./scripts/export-node-evidence.py` writes the swap's five
+   transactions, confirmed against both chains, to `runtime/evidence/` and the
+   proof view. Open http://127.0.0.1:3003/#/evidence, paste any of the five
+   hashes into the explorer's search, and press **Refresh proof** on the Taker
+   desk.
+8. **Verify without another swap.** `./scripts/verify-all.sh`: containers,
+   both chains, explorer display of every exported swap, the Node market
+   (15 checks) and both UI suites.
+
+Things worth trying deliberately: withdraw an offer on the Maker desk and
+watch it leave the Taker order book; `docker restart lez-taker-node` between
+lock and claim and watch the observer resume; `docker restart
+lez-bitcoin-core` and watch the next action still reach Core through the
+Node's own loopback forwarder. Where to look when something stalls:
+`docker compose logs maker-node taker-node`, the swap directory's
+`sidecar.log`, and
+`docker exec lez-taker-node lez-btc-taker-actor --config /var/lib/lez/taker/btc/swaps/<reservation id>/actor/actor-config.json status`.
+
 ## Settlement chains
 
 Swaps settle on one permanent pair of chains, the way they must against real
