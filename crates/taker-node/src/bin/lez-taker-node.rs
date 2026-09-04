@@ -114,10 +114,15 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// A connection task that panicked is a Node defect and stops the service; a
+/// connection that failed while being served (a desk closing its socket before
+/// the reply was written, a malformed frame) is that client's problem and is
+/// only reported.
 fn finish_connection(
     completed: Result<Result<(), jsonrpsee::core::BoxError>, tokio::task::JoinError>,
 ) -> anyhow::Result<()> {
-    completed
-        .context("join Taker RPC connection")?
-        .map_err(|error| anyhow::anyhow!("serve Taker RPC connection: {error}"))
+    if let Err(error) = completed.context("join Taker RPC connection")? {
+        eprintln!("taker RPC connection ended with an error: {error}");
+    }
+    Ok(())
 }

@@ -959,19 +959,24 @@ async fn list_swaps(
         if facts.len() > MAXIMUM_MONITORED_SWAPS {
             return Err(MonitoringError::ResultLimitExceeded);
         }
-        Ok::<_, MonitoringError>(
-            facts
-                .into_iter()
-                .map(|facts| facts.swap_id().clone())
-                .collect::<Vec<_>>(),
-        )
+        Ok::<_, MonitoringError>(facts)
     })
     .await
     .map_err(|_| MonitoringError::RegistryUnavailable)??;
 
+    // One swap whose actor bundle is gone (an aborted take, a retired swap
+    // directory) must not hide every other swap: it is listed as needing
+    // attention and the desk can still inspect it.
     let mut swaps = Vec::with_capacity(swap_ids.len());
-    for swap_id in swap_ids {
-        swaps.push(project_swap(&initiation, &swap_id).await?);
+    for facts in swap_ids {
+        match project_swap(&initiation, facts.swap_id()).await {
+            Ok(view) => swaps.push(view),
+            Err(MonitoringError::ResultLimitExceeded) => {
+                return Err(MonitoringError::ResultLimitExceeded);
+            }
+            Err(_) => swaps
+                .push(commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap),
+        }
     }
     Ok(TakerSwapListV1 {
         schema_version: 1,

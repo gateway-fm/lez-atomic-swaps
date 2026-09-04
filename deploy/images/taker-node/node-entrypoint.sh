@@ -22,6 +22,22 @@ auth_transfer_program_id="${LEZ_AUTH_TRANSFER_PROGRAM_ID:-dcbbfebcd59399961ed997
 
 umask 077
 chmod 0700 "$state" 2>/dev/null || true
+
+# Literal-loopback routes to the chains: the Bitcoin Core adapter, the funding
+# wallet client and the LEZ sidecars accept only loopback endpoints, so this
+# container forwards 127.0.0.1 ports to the services by name. Each connection
+# is forwarded on its own, so a restarted service is reached again at once.
+bitcoin_host="${LEZ_BITCOIN_CORE_HOST:-bitcoin-core}"
+sequencer_host="${LEZ_SEQUENCER_HOST:-sequencer}"
+indexer_host="${LEZ_INDEXER_HOST:-indexer}"
+socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
+socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
+socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
+for _ in $(seq 1 60); do
+  curl -sf --max-time 3 --user "$(cat "$cookie_src")" -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18443/ >/dev/null 2>&1 && break
+  sleep 1
+done
 mkdir -p "$btc_state" "$btc_state/swaps"
 rm -f "$run/node.sock" "$run/ready" "$run/chat.sock"
 

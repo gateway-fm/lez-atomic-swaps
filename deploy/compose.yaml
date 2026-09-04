@@ -241,32 +241,6 @@ services:
     logging: *default-logging
 
   # ─── swap application ───────────────────────────────────────────────────
-  # Loopback routes inside bitcoin-core's network namespace: the role sidecars
-  # (and only they) accept literal-loopback LEZ node endpoints, so the
-  # sequencer and indexer appear at 127.0.0.1 for every Node sharing the
-  # namespace. Pure plumbing; it holds no keys and sees no secrets.
-  lez-routes:
-    image: alpine/socat:1.8.0.0
-    container_name: lez-routes
-    depends_on:
-      bitcoin-core:
-        condition: service_healthy
-      sequencer:
-        condition: service_healthy
-      indexer:
-        condition: service_healthy
-    network_mode: "service:bitcoin-core"
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
-        exec socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    restart: unless-stopped
-    logging: *default-logging
-
   maker-init:
     image: debian:bookworm-slim
     container_name: lez-maker-init
@@ -290,12 +264,6 @@ services:
         condition: service_healthy
       indexer:
         condition: service_healthy
-      lez-routes:
-        condition: service_started
-    # Shares bitcoin-core's network namespace: the actor and the funding wallet
-    # reach Core at literal loopback, and the role's LEZ sidecar listens on
-    # loopback too. Everything else reaches this Node over its Unix sockets.
-    network_mode: "service:bitcoin-core"
     command: ["/usr/local/bin/node-entrypoint.sh", "maker"]
     environment:
       LEZ_SIDECAR_PORT_BASE: "19000"
@@ -312,6 +280,7 @@ services:
       - ${LEZ_MARKET_ROOT}:/run-market:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
+    networks: [chains]
     user: lez
     read_only: true
     security_opt: ["no-new-privileges:true"]
@@ -345,7 +314,6 @@ services:
         condition: service_completed_successfully
       maker-node:
         condition: service_healthy
-    network_mode: "service:bitcoin-core"
     command: ["/usr/local/bin/node-entrypoint.sh", "taker"]
     environment:
       LEZ_SIDECAR_PORT_BASE: "19500"
@@ -363,6 +331,7 @@ services:
       - ${LEZ_MARKET_ROOT}:/run-market:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
+    networks: [chains]
     user: lez
     read_only: true
     security_opt: ["no-new-privileges:true"]
@@ -462,8 +431,6 @@ services:
       maker-node:
         condition: service_healthy
       taker-node:
-        condition: service_healthy
-      btc-demo-controller:
         condition: service_healthy
     environment:
       BASECAMP_ROLE: ${BASECAMP_ROLE:-both}

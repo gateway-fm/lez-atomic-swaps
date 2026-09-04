@@ -694,9 +694,11 @@ async fn main() -> anyhow::Result<()> {
             .context("stop route health task")?;
     }
     while let Some(connection) = connections.join_next().await {
-        connection
-            .context("join local RPC connection")?
-            .map_err(|error| anyhow::anyhow!("serve local RPC connection: {error}"))?;
+        // A client that hung up before its reply was written is that client's
+        // problem, not a reason to turn an orderly stop into a failed one.
+        if let Err(error) = connection.context("join local RPC connection")? {
+            eprintln!("maker RPC connection ended with an error: {error}");
+        }
     }
     drop(service);
     drop(chat_service);
