@@ -964,18 +964,18 @@ async fn list_swaps(
     .await
     .map_err(|_| MonitoringError::RegistryUnavailable)??;
 
-    // One swap whose actor bundle is gone (an aborted take, a retired swap
+    // One swap whose bundle is gone (an aborted take, a retired swap
     // directory) must not hide every other swap: it is listed as needing
-    // attention and the desk can still inspect it.
+    // attention and the desk can still inspect it. Every other failure (a
+    // dependency or state store that cannot answer) still fails the list, so
+    // a degraded Node is reported as degraded rather than as a row.
     let mut swaps = Vec::with_capacity(swap_ids.len());
     for facts in swap_ids {
         match project_swap(&initiation, facts.swap_id()).await {
             Ok(view) => swaps.push(view),
-            Err(MonitoringError::ResultLimitExceeded) => {
-                return Err(MonitoringError::ResultLimitExceeded);
-            }
-            Err(_) => swaps
+            Err(MonitoringError::NotFound) => swaps
                 .push(commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap),
+            Err(error) => return Err(error),
         }
     }
     Ok(TakerSwapListV1 {
