@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Deep verification that both block explorers display real swap transactions.
 
-Checks rendered page content, not just HTTP status: every certified swap's
+Checks rendered page content, not just HTTP status: every exported swap's
 Bitcoin transactions must appear on the Bitcoin explorer with their containing
 block, and its LEZ transactions must appear on the LEZ explorer with their
 program and accounts, cross-checked against the chains themselves.
 
-Usage: verify-explorers.py [--btc URL] [--lez URL] [--runs DIR]
+Usage: verify-explorers.py [--btc URL] [--lez URL] --evidence-dir DIR
 """
 from __future__ import annotations
 
@@ -59,33 +59,31 @@ def visible_text(markup: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", markup))).strip()
 
 
-def load_runs(runs_dir: pathlib.Path) -> list[dict]:
-    runs = []
-    for path in sorted(runs_dir.glob("*/m3-actor-poc/evidence/m3-btc-ui-evidence.json")):
+def load_evidence(directory: pathlib.Path) -> list[dict]:
+    """Every completed swap the Nodes exported (export-node-evidence.py)."""
+    swaps = []
+    for path in sorted(directory.glob("*.json")):
         try:
             evidence = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        # Match the explorer's public-evidence admission rule. Ad-hoc attach
-        # fixtures use noncanonical names and are intentionally not published.
-        canonical_run = re.fullmatch(r"m5arm-[0-9]{10}", str(evidence.get("run_id", "")))
-        if (canonical_run and evidence.get("kind") == "m3_btc_ui_evidence"
-                and evidence.get("result") == "passed" and evidence.get("effects")):
-            runs.append(evidence)
-    return runs
+        if (evidence.get("kind") == "m3_btc_ui_evidence" and evidence.get("result") == "passed"
+                and evidence.get("effects")):
+            swaps.append(evidence)
+    return swaps
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--btc", default="http://127.0.0.1:3002")
     parser.add_argument("--lez", default="http://127.0.0.1:3003")
-    parser.add_argument("--runs", required=True)
+    parser.add_argument("--evidence-dir", required=True)
     args = parser.parse_args()
 
-    runs = load_runs(pathlib.Path(args.runs))
-    print(f"\ncertified runs discovered: {len(runs)}")
+    runs = load_evidence(pathlib.Path(args.evidence_dir))
+    print(f"\ncompleted swaps discovered: {len(runs)}")
     if not runs:
-        print("no certified runs found — nothing to verify", file=sys.stderr)
+        print("no exported swap evidence found — nothing to verify", file=sys.stderr)
         return 2
 
     print("\nBitcoin explorer — service pages")

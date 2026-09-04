@@ -32,21 +32,21 @@ function send(res, code, body, type) {
   res.end(buf);
 }
 
-const RUNS_ROOT = process.env.LEZ_M3_EVIDENCE_ROOT || "";
+const EVIDENCE_DIR = process.env.LEZ_EVIDENCE_DIR || "";
 let runsCache = { at: 0, byTx: new Map() };
 
-// Swap transactions live on each run's isolated chains, so the certified
-// evidence files are the only queryable record. Index every run's five
-// transaction ids so any copied hash resolves, not just the latest run's.
+// Every completed swap the Nodes settled is exported as one evidence file
+// (deploy/scripts/export-node-evidence.py). Index all of their transaction
+// ids so any copied hash resolves, not just the latest swap's.
 function evidenceByTx() {
   const now = Date.now();
   if (now - runsCache.at < 15000) return runsCache.byTx;
   const byTx = new Map();
-  if (RUNS_ROOT) {
-    let runs = [];
-    try { runs = fs.readdirSync(path.join(RUNS_ROOT, ".e2e")); } catch {}
-    for (const run of runs.filter((name) => /^m5arm-[0-9]{10}$/.test(name)).slice(-50)) {
-      const file = path.join(RUNS_ROOT, ".e2e", run, "m3-actor-poc", "evidence", "m3-btc-ui-evidence.json");
+  if (EVIDENCE_DIR) {
+    let files = [];
+    try { files = fs.readdirSync(EVIDENCE_DIR).filter((name) => name.endsWith(".json")).sort().slice(-50); } catch {}
+    for (const name of files) {
+      const file = path.join(EVIDENCE_DIR, name);
       try {
         const info = fs.lstatSync(file);
         if (!info.isFile() || info.size <= 0 || info.size > 262144) continue;

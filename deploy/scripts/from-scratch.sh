@@ -246,7 +246,7 @@ phase_runner() {
   if ! docker image inspect lez-runner-arm:latest >/dev/null 2>&1; then
     log "building the runner image"
     docker build -q -t lez-runner-arm:latest --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" \
-      -f "$DEPLOY_ROOT/full-swap/runner-arm.Dockerfile" "$DEPLOY_ROOT" >/dev/null
+      -f "$DEPLOY_ROOT/runner/runner-arm.Dockerfile" "$DEPLOY_ROOT" >/dev/null
   fi
   if ! docker container inspect lez-runner-arm >/dev/null 2>&1; then
     log "starting the runner container"
@@ -361,7 +361,7 @@ phase_stack() {
   log "gen-config, image builds, and stack start"
   local attempt
   for attempt in 1 2 3; do
-    LEZ_M3_RUNNER_REPO="$RUNNER_REPO" LEZ_WALLET_IDENTITIES="$MARKET_ROOT/identities" \
+    LEZ_MARKET_ROOT="$MARKET_ROOT" LEZ_WALLET_IDENTITIES="$MARKET_ROOT/identities" \
       SKIP_UI_VERIFY=1 bash scripts/up.sh && break
     [[ "$attempt" -lt 3 ]] || fail "up.sh did not succeed in three attempts"
     log "up.sh failed (registry deadline?); retrying in 30 s"

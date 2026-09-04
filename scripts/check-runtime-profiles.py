@@ -161,15 +161,16 @@ def validate_repository_contract(
             f"missing={sorted(compose_service_ids - local_component_ids)} "
             f"stale={sorted(local_component_ids - compose_service_ids)}"
         )
-    controller = compose.split("  btc-demo-controller:\n", 1)[1].split("  basecamp-ui:\n", 1)[0]
-    launcher = compose.split("  btc-demo-launcher:\n", 1)[1].split("  btc-demo-controller:\n", 1)[0]
     taker_init = compose.split("  taker-init:\n", 1)[1].split("  taker-node:\n", 1)[0]
-    if "/var/run/docker.sock" in controller or "/var/run/docker.sock" not in launcher:
-        fail("Docker socket authority must belong only to btc-demo-launcher")
-    if "maker_state:/maker-state" in taker_init or "maker-delivery-identity.pub" not in taker_init:
-        fail("taker-init must consume only the Maker public identity")
-    if "daemon-args.sh" in compose or "lez-maker-node --config" not in compose:
-        fail("Compose must use strict Rust-loaded Maker configuration")
+    if "/var/run/docker.sock" in compose:
+        fail("no Compose service may hold the host Docker socket")
+    taker_entrypoint = (ROOT / "deploy/images/taker-node/node-entrypoint.sh").read_text()
+    if "maker_state" in taker_init or "delivery_dir" in taker_init \
+            or "maker-delivery-identity.pub" not in taker_entrypoint:
+        fail("the Taker setup must learn the Maker only from its public Delivery identity")
+    maker_entrypoint = (ROOT / "deploy/images/maker-node/node-entrypoint.sh").read_text()
+    if "daemon-args.sh" in compose or "exec /usr/local/bin/lez-maker-node" not in maker_entrypoint:
+        fail("the Maker image must exec the Rust Node with its rendered arguments")
     for name in [
         "lez-maker-node", "lez-taker-node", "lez-maker-cli", "lez-taker-cli",
         "lez-maker-chat-gateway", "lez-taker-chat-gateway",
@@ -264,7 +265,8 @@ def validate_role_symmetry(compose: str) -> None:
                 fail(f"role symmetry {role}: {executable} is not owned by its role package")
         dockerfile = (ROOT / f"deploy/images/{role}-node/Dockerfile").read_text()
         for executable in (details["node"], details["cli"], details["chat_gateway"]):
-            copy = f"COPY --chmod=0555 {executable} /usr/local/bin/{executable}"
+            # Payloads are staged into the image stripped, through a build stage.
+            copy = f"COPY --from=strip --chmod=0555 /payload/{executable} /usr/local/bin/{executable}"
             if copy not in dockerfile:
                 fail(f"role symmetry {role}: image omits {executable}")
         if f"lez-{opposite}-" in dockerfile:
@@ -322,7 +324,7 @@ def validate_role_symmetry(compose: str) -> None:
                 fail(f"role symmetry {role}: public component {public_name} is absent")
     if len(contract["intentional_asymmetries"]) < 4:
         fail("role symmetry contract must explain intentional key and protocol asymmetries")
-    taker_sections = compose.split("  taker-init:\n", 1)[1].split("  btc-demo-init:\n", 1)[0]
+    taker_sections = compose.split("  taker-init:\n", 1)[1].split("  basecamp-ui:\n", 1)[0]
     if "delivery-signing.key" in taker_sections or "maker_state:" in taker_sections:
         fail("Taker setup must not receive Maker private key or state authority")
 

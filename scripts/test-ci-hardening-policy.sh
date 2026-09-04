@@ -98,8 +98,6 @@ done
 
 require_fixed 'tags: ["m*-complete*"]' "$ci_workflow"
 require_fixed './scripts/run-ci-quality-gates.sh' "$ci_workflow"
-require_fixed 'deploy/images/btc-demo-controller/test_controller.py' "$ci_workflow"
-require_fixed 'deploy/images/btc-demo-launcher/test_launcher.py' "$ci_workflow"
 require_fixed './scripts/test-spin-lock-remediation.sh' "$ci_workflow"
 require_fixed './scripts/check-spin-lock-remediation.sh' "$ci_workflow"
 require_fixed './scripts/check-github-action-pins.sh' "$ci_workflow"
@@ -174,8 +172,7 @@ require_fixed 'node ./scripts/check-m6-basecamp-package-contract.mjs' "$quality_
 require_fixed 'git ls-files --cached --others --exclude-standard -z' "$quality_runner"
 require_fixed 'config --quiet' "$quality_runner"
 require_fixed 'BTC_RPC_PASSWORD="ci-quality-${RANDOM}-${RANDOM}"' "$quality_runner"
-require_fixed 'LEZ_M3_RUNNER_REPO=/tmp/lez-ci-quality-runner-repo' "$quality_runner"
-require_fixed 'LEZ_M3_RUNNER_REPO_IN_CONTAINER=/tmp/lez-ci-quality-runner-repo' "$quality_runner"
+require_fixed 'LEZ_MARKET_ROOT=/tmp/lez-ci-quality-market' "$quality_runner"
 
 if rg -F 'COPY --chmod=0555 zec-' deploy/images/maker-node/Dockerfile >/dev/null; then
   fail "the public BTC Basecamp image must not package future ZEC executables"

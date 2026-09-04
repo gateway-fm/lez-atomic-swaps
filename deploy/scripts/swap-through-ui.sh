@@ -17,8 +17,8 @@ ui() { # ui <role> [ENV=VALUE...]
     grep -E '✓|✗|interactive|Expected|passed|failed|has not|Error' | grep -viE 'locale'
 }
 taker_swaps() { # the Taker Node's own view of its swaps: "<swap_id> <state> <generation> <action>"
-  local attempt reply
-  for attempt in 1 2 3 4 5; do
+  local reply
+  for _ in 1 2 3 4 5; do
     reply="$(docker exec lez-taker-node curl -sS --max-time 20 --unix-socket /run/lez/taker/node.sock \
       -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"taker_swap_list_v1","params":[{"schema_version":1}]}' http://localhost/ 2>/dev/null)"
@@ -53,3 +53,4 @@ for _ in $(seq 1 60); do
 done
 [[ "$state" == completed ]] || { echo "swap did not complete in time" >&2; exit 1; }
 log "swap completed on both Nodes"
+python3 scripts/export-node-evidence.py --swap "$swap_id" || exit 1

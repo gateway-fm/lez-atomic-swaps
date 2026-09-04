@@ -228,12 +228,12 @@ services:
     environment:
       LEZ_INDEXER_URL: http://indexer:8779
       M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
-      LEZ_M3_EVIDENCE_ROOT: /runner-repo
+      LEZ_EVIDENCE_DIR: /run/lez-evidence/swaps
     ports:
       - "127.0.0.1:3003:3003"
     volumes:
       - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
-      - ${LEZ_M3_RUNNER_REPO}:/runner-repo:ro
+      - ./runtime/evidence:/run/lez-evidence/swaps:ro
     networks: [chains]
     read_only: true
     security_opt: ["no-new-privileges:true"]
@@ -344,85 +344,6 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  btc-demo-init:
-    image: python:3.12-alpine
-    container_name: lez-btc-demo-init
-    volumes:
-      - btc_demo_socket:/run/lez-btc-demo
-    command: ["sh", "-c", "chown 4713:4713 /run/lez-btc-demo && chmod 0700 /run/lez-btc-demo"]
-    networks: [chains]
-    restart: "no"
-    logging: *default-logging
-
-  # Local-demo-only host authority. The launcher accepts only the versioned
-  # M3 job, approval, wait, and evidence operations implemented in launcher.py.
-  btc-demo-launcher:
-    build: ./images/btc-demo-launcher
-    image: lez-btc-demo-launcher:local
-    container_name: lez-btc-demo-launcher
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
-      LEZ_BTC_LAUNCHER_SOCKET: /run/lez-btc-launcher/launcher.sock
-      LEZ_M3_RUNNER_CONTAINER: ${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}
-      LEZ_M3_RUNNER_REPO_IN_CONTAINER: ${LEZ_M3_RUNNER_REPO_IN_CONTAINER:?run scripts/gen-config.sh first}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - btc_launcher_socket:/run/lez-btc-launcher
-    tmpfs:
-      - /tmp:rw,nosuid,size=16m,mode=1777
-    networks: [chains]
-    read_only: true
-    cap_drop: [ALL]
-    # The launcher starts as root to reach the host Docker socket and opens its
-    # own socket to the controller's group; changing that group needs CAP_CHOWN.
-    cap_add: [CHOWN]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      test: ["CMD", "python3", "/app/launcher.py", "--healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-    restart: unless-stopped
-    logging: *default-logging
-
-  btc-demo-controller:
-    build: ./images/btc-demo-controller
-    image: lez-btc-demo-controller:local
-    container_name: lez-btc-demo-controller
-    depends_on:
-      btc-demo-init:
-        condition: service_completed_successfully
-      btc-demo-launcher:
-        condition: service_healthy
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
-      LEZ_BTC_DEMO_SOCKET: /run/lez-btc-demo/controller.sock
-      LEZ_BTC_LAUNCHER_SOCKET: /run/lez-btc-launcher/launcher.sock
-      LEZ_M3_EVIDENCE_ROOT: /runner-repo
-      LEZ_M3_BTC_EVIDENCE_FILE: /run/evidence/m3-btc-ui-evidence.json
-    volumes:
-      - ./full-swap:/controller-assets:ro
-      - ${LEZ_M3_RUNNER_REPO}:/runner-repo:ro
-      - ./runtime/m3-btc-ui-evidence.json:/run/evidence/m3-btc-ui-evidence.json
-      - btc_demo_socket:/run/lez-btc-demo
-      - btc_launcher_socket:/run/lez-btc-launcher:ro
-    tmpfs:
-      - /tmp:rw,nosuid,size=16m,mode=1777
-    networks: [chains]
-    user: "4713:4713"
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      test: ["CMD", "python3", "/app/healthcheck.py"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 15s
-    restart: unless-stopped
-    logging: *default-logging
-
   basecamp-ui:
     build: ./images/basecamp-ui
     image: lez-basecamp-ui:local
@@ -437,13 +358,11 @@ services:
       VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
       LEZ_MAKER_RPC_SOCKET: /run/lez/maker/node.sock
       LEZ_TAKER_RPC_SOCKET: /run/lez/taker/node.sock
-      LEZ_BTC_DEMO_RPC_SOCKET: /run/lez-btc-demo/controller.sock
       LEZ_M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
       M3_UI_DIRECTION: ${M3_UI_DIRECTION:-TakerSellsForeign}
     volumes:
       - maker_socket:/run/lez/maker:ro
       - taker_socket:/run/lez/taker:ro
-      - btc_demo_socket:/run/lez-btc-demo:ro
       - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
       - ./ui-tests:/ui-tests:ro
     ports:
@@ -473,7 +392,3 @@ volumes:
     name: lez-taker-socket
   delivery_dir:
     name: lez-delivery-dir
-  btc_demo_socket:
-    name: lez-btc-demo-socket
-  btc_launcher_socket:
-    name: lez-btc-launcher-socket

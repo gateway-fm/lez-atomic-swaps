@@ -165,9 +165,17 @@ S1.5 Desks: offer publish/withdraw/inventory, take, gates and progress read
   leaves it when the store binds it to a swap, so a desk cannot take a
   sold lot twice (reserved lots stay projected for the Taker's retry
   between proposal and completion).
-S1.6 Compose: gateways plus local relay, per-role LEZ sidecars, loopback
-  route to bitcoind for the actors, actor programs in the images, controller
-  and launcher removed; `swap-through-ui.sh` and `verify-all.sh` follow.
+S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
+  services inside each Node container, actor programs in the (stripped)
+  images; `btc-demo-controller`, `btc-demo-launcher` and every runner mount
+  removed from the stack, so no service holds the host Docker socket.
+  Evidence comes from the Nodes: `export-node-evidence.py` reads the Taker
+  actor's durable aggregate (four public transaction ids) and the Maker's
+  escrow preparation (the initialization), confirms each on its chain, and
+  writes the same `m3_btc_ui_evidence` document the explorer and the Taker
+  desk already validate; `verify-explorers.py` and the explorer's hash index
+  read that directory, `verify-market.py` exercises the Node market.
+  `swap-through-ui.sh` exports the swap it completed. Done 2026-09-04.
 
 ## Stage 2 — chain adapters
 
