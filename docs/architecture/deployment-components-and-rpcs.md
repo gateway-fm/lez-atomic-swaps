@@ -118,6 +118,76 @@ methods between the Nodes: `btc_reserve_v1`, `btc_ceremony_reserve_v1`,
 (`verify-explorers.py`, `verify-market.py`, both UI suites), `reset-swaps.sh`;
 `market-bootstrap.sh` runs once inside the `lez-runner-arm` build host.
 
+## Keys and signing in the local product stack
+
+Every key lives on the Node that uses it; the desks hold none. Long-lived
+keys are per Node; everything a swap signs with is created for that swap under
+its own directory and never leaves the container.
+
+```
+ HOST (deploy/runtime, runner-work)                 MAKER NODE state volume            TAKER NODE state volume
+ ─────────────────────────────────                  ───────────────────────            ───────────────────────
+ runner-work/market/identities/<wallet>/            delivery-signing.key  secp256k1    btc/lez-signer.key   LEZ account key
+   lez-signer.key   LEZ account keys of the           signs offer envelopes; public      of taker-zurich-01: the Taker's
+   identity.json    four funded wallets               half published as                  sidecar signs its LEZ claim tx
+ runtime/lez/<role>/lez-signer.key                    /delivery/maker-delivery-          with it
+   bind-mounted copy for each Node                    identity.pub                      btc/btc-rpc-cookie   Core RPC auth
+ runtime/secrets/mining.key   regtest scalar 1      btc-chat-signing.key  secp256k1    (Core wallet lez-taker holds the
+   (wallet lez-miner)                                 the Maker's agreement identity:    funding UTXO keys inside Core)
+ runtime/secrets/btc-rpc-cookie                        seeds every Maker role root and
+                                                       signs its proposals
+                                                     btc/lez-signer.key   LEZ account key
+                                                       of maker-munich-01: the Maker's
+                                                       sidecar signs escrow init/fund
+                                                     btc/btc-rpc-cookie   Core RPC auth
+
+ PER SWAP, on each Node:  swaps/<reservation id>/
+   role/private/agreement.key            MuSig2 participant key; Maker's is derived from btc-chat-signing.key,
+                                          the Taker's is fresh. Their aggregate is the P2TR internal key of
+                                          the Bitcoin lock output.
+   role/private/bitcoin-refund.key       x-only key of the CSV refund leaf (meaningful for the Bitcoin funder)
+   role/private/bitcoin-claim-destination.key   x-only key behind the P2TR address the claim pays to
+   role/private/bitcoin-funding.key      x-only funding key bound in the contribution
+   role/private/adaptor-scalar.key       Taker only: t, whose point T = tG is in the Taker's contribution
+   actor/bitcoin-refund.key, actor/adaptor-secret.key   copies the actor needs (refund path; adapting the claim)
+   journals/bitcoin.sqlite, journals/lez.sqlite   MuSig2 sessions with their secret nonces, one per signing domain
+   actor/state.sqlite3                   durable phases and the observed public transaction ids (no secrets)
+   registry.sqlite3 (Taker) taker_facade_authorities   paths and hashes binding the swap's signed envelope,
+                                          draft, agreement key and actor config
+```
+
+How the signatures happen, in order:
+
+```
+ 1 offer        Maker Node: ECDSA(delivery-signing.key) over the offer ──► /delivery/<offer>.offer.json
+                Taker Node verifies against maker-delivery-identity.pub before it lists the offer
+ 2 contribute   each Node bootstraps its role root and signs its contribution (public keys, T for the Taker)
+                with role/private/agreement.key; the Maker Node proves its contribution uses btc-chat-signing.key
+ 3 agree        Taker composes the unsigned draft ─► Maker signs the proposal (Schnorr, agreement key)
+                ─► Taker countersigns with its agreement key ─► both persist and bind the agreement
+ 4 ceremony     CeremonySeat over Chat (reserve → nonce → partial): two-party MuSig2 in two domains
+                  Bitcoin domain: adaptor pre-signature for the Maker's follow-up claim spend, tied to T
+                  LEZ domain:     adaptor pre-signature for the claim message (accounts + authority nonce)
+                secret nonces stay in journals/*.sqlite; partial signatures cross Chat; both hold verified
+                pre-signatures s′ before any value moves
+ 5 lock BTC     Taker Node: Core wallet lez-taker signs the funding PSBT ─► P2TR(aggregate key, CSV refund leaf)
+ 6 fund LEZ     Maker actor observes the lock ─► Maker sidecar signs escrow initialize + fund with lez-signer.key
+ 7 reveal       Taker actor adapts the LEZ pre-signature with t (adaptor-secret.key) ─► final signature s
+                ─► Taker sidecar signs and submits the revealing claim transaction with lez-signer.key
+ 8 follow-up    Maker actor sees s on LEZ, extracts t = s − s′ (parity-aware, requires tG = T), adapts its
+                Bitcoin pre-signature ─► key-path spend of the lock to its claim destination ─► Core RPC
+ refunds        Taker actor: CSV refund of the Bitcoin lock with bitcoin-refund.key if the Maker never funds;
+                Maker: LEZ escrow refund through its sidecar once refund_at passes
+```
+
+Two properties fall out of the layout. The Maker's identity is stable across
+swaps (Delivery and Chat keys) while everything that can spend is per swap,
+so a completed swap's directory holds no key that reaches another swap. And
+the actor program's hash is pinned in every persisted swap, so replacing the
+binary (a rebuild, the image strip) makes existing swaps unloadable rather
+than letting a different program act with their keys; `reset-swaps.sh`
+forgets them.
+
 ## M2 executable local topology (2026-07-18, superseded above)
 
 ```mermaid

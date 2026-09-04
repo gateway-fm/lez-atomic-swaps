@@ -313,9 +313,9 @@ the runner. `maker_actor_monitor_v1` and `taker_swap_monitor_v1` show
 progress.
 
 Bitcoin Core wallets: `lez-taker`, `lez-maker` (descriptor wallets) and
-`lez-miner`, which imports the deterministic mining key
-(`rawtr(cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA)`) so the
-mined coins fund the Taker; regtest's subsidy is exhausted past height 11k, so
+`lez-miner`, which imports the well-known regtest mining key (the scalar 1,
+rendered by `gen-config.sh` into `runtime/secrets/mining.key`) so the mined
+coins fund the Taker; regtest's subsidy is exhausted past height 11k, so
 mining to a fresh address yields nothing. An aborted take leaves its swap
 directory and sidecar behind; the next take is a new reservation with its own
 sidecar. Persisted swaps pin the actor program's hash, so after the actor
