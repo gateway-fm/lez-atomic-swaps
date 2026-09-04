@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # from-scratch.sh — bring the whole local LEZ ↔ BTC swap environment up from
 # nothing, reproducibly, on an arm64 host (macOS with Docker Desktop, or Linux
-# with Docker): prerequisites, pinned sources, every image payload, the
-# external swap runner, the settlement market, the stack, and the Basecamp UI.
+# with Docker): prerequisites, pinned sources, every image payload built in
+# throwaway containers, the settlement market, the stack, and the Basecamp UI.
 #
 #   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--only PHASE]
 #
@@ -12,16 +12,20 @@
 #   host      docker, jq, git, curl, openssl, xxd (Homebrew on macOS)
 #   sources   pinned checkouts next to this repo (the "workspace")
 #   nix       Basecamp bundle, qt-mcp, both role packages, Chat + Delivery
-#   rust      Maker/Taker Node binaries in the pinned rust image
-#   runner    lez-runner-arm image + container, provisioned with LEZ services,
-#             r0vm, rapidsnark, the escrow artifact, and warm cargo caches
-#   stage     Bitcoin Core, LEZ services, r0vm into the image contexts
+#   rust      Node binaries and Bitcoin actors in the pinned rust image
+#   build     LEZ services, r0vm, rapidsnark, the escrow artifact, the LEZ
+#             sidecar and the wallet identities, each in one `docker run --rm`
+#             of the ephemeral builder image (deploy/builder)
+#   stage     Bitcoin Core, LEZ services, r0vm, sidecar into the image contexts
 #   stack     gen-config → compose build → up → market bootstrap → UI suites
 #   swap      (--swap) one full BTC → LEZ swap through the two Basecamp apps
 #
 # Long cold steps on Apple silicon: Nix closures (~15 min from the Logos cache),
 # LEZ services (~40 min), r0vm (~30 min), cargo-risczero (~1.5 h), the guest
-# ELF (~10 min). Everything is cached for the next run.
+# ELF (~10 min). Registries and build targets live in named Docker volumes
+# (lez-build-*), outputs in the provision directory, so a rerun takes minutes.
+# No long-lived container is left behind and nothing holds the host Docker
+# socket except the reproducible guest build, for the duration of that run.
 set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -57,17 +61,15 @@ ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-$(pinned expected_lez_program_id)}"
 GUEST_ELF_SHA256="$(pinned expected_lez_guest_sha256)"
 [[ "$ESCROW_PROGRAM_ID" =~ ^[0-9a-f]{64}$ && "$GUEST_ELF_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot read the escrow pins" >&2; exit 1; }
 readonly ESCROW_PROGRAM_ID GUEST_ELF_SHA256
-# The runner scripts address these container paths; volumes keep them.
-readonly RUNNER_SERVICES_DIR=/tmp/lez-v02-services-a58fbce2-20260713
-readonly RUNNER_ARTIFACT_DIR=/tmp/lez-m3-artifact-arm
-readonly RUNNER_TOOL_DIR=/tmp/lez-v02-provisional-tools
-readonly RUNNER_TARGET_DIR=/tmp/lez-v02-provisional-target
+readonly BUILDER_IMAGE=lez-builder:local
 readonly WALLETS=(maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02)
 
-RUNNER_WORK="$WORKSPACE/runner-work"
-RUNNER_REPO="$RUNNER_WORK/repo"
-LEZ_SOURCE="$RUNNER_WORK/lez-source"
-MARKET_ROOT="$RUNNER_WORK/market"
+# Workspace layout. Hosts provisioned before the ephemeral builder keep their
+# market root under runner-work/; a fresh workspace uses market/ directly.
+LEZ_SOURCE="$WORKSPACE/lez-source"
+[[ -d "$LEZ_SOURCE/.git" ]] || [[ ! -d "$WORKSPACE/runner-work/lez-source/.git" ]] || LEZ_SOURCE="$WORKSPACE/runner-work/lez-source"
+MARKET_ROOT="$WORKSPACE/market"
+[[ -d "$MARKET_ROOT/identities" ]] || [[ ! -d "$WORKSPACE/runner-work/market/identities" ]] || MARKET_ROOT="$WORKSPACE/runner-work/market"
 PROVISION="$WORKSPACE/provision/data"
 BASECAMP_SRC="$WORKSPACE/basecamp"
 ASSETS="$DEPLOY_ROOT/images/basecamp-ui/assets"
@@ -119,29 +121,8 @@ clone_pinned() { # clone_pinned <url> <ref> <commit> <dir>
 
 phase_sources() {
   PHASE=sources
-  mkdir -p "$RUNNER_WORK" "$PROVISION" "$MARKET_ROOT"
+  mkdir -p "$PROVISION" "$MARKET_ROOT"
   chmod 0700 "$MARKET_ROOT"
-  # The runner executes this repository's scripts and actors at the same commit
-  # the images are built from.
-  if [[ ! -d "$RUNNER_REPO/.git" ]]; then
-    log "cloning this repository for the runner"
-    git clone --quiet "$REPO_ROOT" "$RUNNER_REPO"
-  fi
-  # The runner refuses to execute anything but a clean checkout whose HEAD is
-  # its origin/main, so the workspace keeps a bare "origin" whose main names
-  # the commit under test.
-  local head bare="$RUNNER_WORK/origin.git"
-  head="$(git -C "$REPO_ROOT" rev-parse HEAD)"
-  [[ -d "$bare" ]] || git init --quiet --bare "$bare"
-  git -C "$REPO_ROOT" push --quiet --force "$bare" "HEAD:refs/heads/main"
-  git -C "$RUNNER_REPO" remote set-url origin "$bare" 2>/dev/null ||
-    git -C "$RUNNER_REPO" remote add origin "$bare"
-  git -C "$RUNNER_REPO" fetch --quiet origin
-  if [[ "$(git -C "$RUNNER_REPO" rev-parse HEAD)" != "$head" ]]; then
-    log "moving the runner checkout to $head"
-    git -C "$RUNNER_REPO" checkout --quiet --detach origin/main
-  fi
-  [[ -z "$(git -C "$RUNNER_REPO" status --porcelain)" ]] || fail "the runner checkout is not clean"
   clone_pinned https://github.com/logos-blockchain/logos-execution-zone.git \
     "$LEZ_SOURCE_TAG" "$LEZ_SOURCE_COMMIT" "$LEZ_SOURCE"
   clone_pinned https://github.com/logos-co/logos-basecamp.git \
@@ -221,119 +202,117 @@ phase_nix() {
 phase_rust() {
   PHASE=rust
   local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway
-    maker-node/lez-runtime-healthcheck taker-node/lez-taker-node taker-node/lez-taker-cli
+    maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor
+    taker-node/lez-taker-node taker-node/lez-taker-cli
     taker-node/lez-taker-chat-gateway taker-node/lez-taker-registry-init
-    taker-node/lez-runtime-healthcheck lez-services/lez-runtime-healthcheck)
+    taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor
+    lez-services/lez-runtime-healthcheck)
   local missing=0 b
   for b in "${bins[@]}"; do [[ -x "$DEPLOY_ROOT/images/$b" ]] || missing=1; done
   if [[ "$missing" == 1 ]]; then
-    log "building the role Node binaries in $RUST_IMAGE"
+    log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
     docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
       -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
         set -e
-        cargo build --locked -p lez-maker-node --bins -p lez-taker-node --bins -p lez-runtime-healthcheck 2>&1 | tail -3
+        cargo build --locked -p lez-maker-node --bins -p lez-taker-node --bins -p lez-runtime-healthcheck -p btc-reference-actor 2>&1 | tail -3
         for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
         chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   fi
   log "Node binaries staged"
 }
 
-# ---- runner --------------------------------------------------------------------
-runner_exec() { docker exec -u lez "${RUNNER_ENV[@]}" lez-runner-arm bash -lc "$*"; }
+# ---- build ---------------------------------------------------------------------
+# Every step is one throwaway container of the builder image. Registries and
+# build targets persist in named volumes; outputs land in $PROVISION.
+builder_run() { # builder_run [docker run flags...] -- <bash script>
+  local flags=()
+  while [[ "$1" != "--" ]]; do flags+=("$1"); shift; done; shift
+  docker run --rm -v "$REPO_ROOT:/workspace" -v "$LEZ_SOURCE:/lez-source" -v "$PROVISION:/provision" \
+    -v lez-build-cargo:/cache/cargo -v lez-build-target:/cache/target \
+    -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target/workspace \
+    -e RAPIDSNARK_LIB_DIR=/provision/rapidsnark-arm \
+    -e BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/aarch64-linux-gnu/13/include \
+    -w /workspace "${flags[@]}" "$BUILDER_IMAGE" bash -c "set -e; $*"
+}
+# Outputs are written as root inside the container (on Linux; Docker Desktop
+# maps them to the host user already); hand the builder's own directories to
+# the host user and leave anything else in the provision root alone.
+own_provision() {
+  docker run --rm -v "$PROVISION:/provision" "$BUILDER_IMAGE" bash -c \
+    'for d in rapidsnark-arm lez-services tools-arm escrow-artifact sidecar risc0; do [[ -e /provision/$d ]] && chown -R "$1" "/provision/$d" 2>/dev/null; done; true' _ "$(id -u):$(id -g)"
+}
 
-phase_runner() {
-  PHASE=runner
-  if ! docker image inspect lez-runner-arm:latest >/dev/null 2>&1; then
-    log "building the runner image"
-    docker build -q -t lez-runner-arm:latest --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" \
-      -f "$DEPLOY_ROOT/runner/runner-arm.Dockerfile" "$DEPLOY_ROOT" >/dev/null
+phase_build() {
+  PHASE=build
+  if ! docker image inspect "$BUILDER_IMAGE" >/dev/null 2>&1; then
+    log "building the ephemeral builder image"
+    docker build -q -t "$BUILDER_IMAGE" "$DEPLOY_ROOT/builder" >/dev/null
   fi
-  if ! docker container inspect lez-runner-arm >/dev/null 2>&1; then
-    log "starting the runner container"
-    docker run -d --name lez-runner-arm --network host --group-add 0 \
-      -v /var/run/docker.sock:/var/run/docker.sock \
-      -v "$RUNNER_WORK:$RUNNER_WORK" -v "$PROVISION:/provision" \
-      -v lez-runner-cargo-registry:/home/lez/.cargo/registry \
-      -v lez-runner-cargo-git:/home/lez/.cargo/git \
-      -v lez-runner-docker:/home/lez/.docker \
-      -v "lez-runner-services:$RUNNER_SERVICES_DIR" \
-      -v "lez-runner-artifact:$RUNNER_ARTIFACT_DIR" \
-      -v "lez-runner-tools:$RUNNER_TOOL_DIR" \
-      -v "lez-runner-target:$RUNNER_TARGET_DIR" \
-      lez-runner-arm:latest sleep infinity >/dev/null
-    docker exec lez-runner-arm bash -c "chown -R lez /home/lez/.cargo /home/lez/.docker \
-      $RUNNER_SERVICES_DIR $RUNNER_ARTIFACT_DIR $RUNNER_TOOL_DIR $RUNNER_TARGET_DIR /provision"
-  fi
-  docker start lez-runner-arm >/dev/null
-  RUNNER_ENV=(-e LEZ_V02_SOURCE_DIR="$LEZ_SOURCE" -e RAPIDSNARK_LIB_DIR=/provision/rapidsnark-arm
-    -e BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/aarch64-linux-gnu/13/include
-    -e LEZ_V02_NATIVE_R0VM=/provision/tools-arm/bin/r0vm)
+  docker container inspect lez-runner-arm >/dev/null 2>&1 &&
+    log "note: the retired lez-runner-arm container is still present; docker rm -f lez-runner-arm once its outputs are in $PROVISION"
 
   # rapidsnark prover libraries (the Logos fork's aarch64 release)
   if [[ ! -f "$PROVISION/rapidsnark-arm/librapidsnark.a" ]]; then
     log "fetching rapidsnark aarch64 libraries"
-    runner_exec "set -e; tmp=\$(mktemp -d); curl -fsSL '$RAPIDSNARK_URL' -o \$tmp/r.zip; unzip -qo \$tmp/r.zip -d \$tmp/r;
-      mkdir -p /provision/rapidsnark-arm; cp \$(find \$tmp/r -name '*.a') /provision/rapidsnark-arm/; rm -rf \$tmp"
+    builder_run -- "tmp=\$(mktemp -d); curl -fsSL '$RAPIDSNARK_URL' -o \$tmp/r.zip; unzip -qo \$tmp/r.zip -d \$tmp/r;
+      mkdir -p /provision/rapidsnark-arm; cp \$(find \$tmp/r -name '*.a') /provision/rapidsnark-arm/"
   fi
-  runner_exec "printf '%s  %s\n' $RAPIDSNARK_LIB_SHA256 /provision/rapidsnark-arm/librapidsnark.a | sha256sum --check --strict --quiet"
+  printf '%s  %s\n' "$RAPIDSNARK_LIB_SHA256" "$PROVISION/rapidsnark-arm/librapidsnark.a" | shasum -a 256 --check --strict --quiet ||
+    fail "rapidsnark library digest mismatch"
 
   # LEZ v0.2 services, native release build with rust 1.94.0
   if [[ ! -x "$PROVISION/lez-services/sequencer_service" || ! -x "$PROVISION/lez-services/indexer_service" ]]; then
     log "building LEZ v0.2 services (rust 1.94.0, release, locked; ~40 min cold)"
-    runner_exec "set -e; cd '$LEZ_SOURCE'; CARGO_TARGET_DIR=/provision/build-arm cargo +1.94.0 build --locked --release \
+    builder_run -- "cd /lez-source; CARGO_TARGET_DIR=/cache/target/lez cargo +1.94.0 build --locked --release \
       --package sequencer_service --package indexer_service 2>&1 | tail -2;
-      mkdir -p /provision/lez-services; install -m 0755 /provision/build-arm/release/{sequencer_service,indexer_service} /provision/lez-services/"
+      mkdir -p /provision/lez-services; install -m 0755 /cache/target/lez/release/sequencer_service /cache/target/lez/release/indexer_service /provision/lez-services/"
   fi
-  runner_exec "mkdir -p $RUNNER_SERVICES_DIR/release && install -m 0755 /provision/lez-services/{sequencer_service,indexer_service} $RUNNER_SERVICES_DIR/release/"
 
-  # r0vm from the risc0 v3.0.5 tag (no arm64 release asset exists)
+  # r0vm from the risc0 tag (no arm64 release asset exists)
   if [[ ! -x "$PROVISION/tools-arm/bin/r0vm" ]]; then
     log "building r0vm from risc0 $RISC0_TAG (~30 min cold)"
-    runner_exec "set -e; [[ -d /provision/risc0/.git ]] || git clone --quiet --depth 1 --branch $RISC0_TAG https://github.com/risc0/risc0.git /provision/risc0;
-      cd /provision/risc0 && CARGO_TARGET_DIR=$RUNNER_TARGET_DIR/r0vm cargo +1.96.0 install --path risc0/r0vm --locked --root /provision/tools-arm 2>&1 | tail -2"
+    builder_run -- "[[ -d /provision/risc0/.git ]] || git clone --quiet --depth 1 --branch $RISC0_TAG https://github.com/risc0/risc0.git /provision/risc0;
+      cd /provision/risc0 && CARGO_TARGET_DIR=/cache/target/r0vm cargo +1.96.0 install --path risc0/r0vm --locked --root /provision/tools-arm 2>&1 | tail -2"
   fi
-  [[ "$(runner_exec '/provision/tools-arm/bin/r0vm --version')" == "risc0-r0vm 3.0.5" ]] || fail "r0vm is not 3.0.5"
+  [[ "$(builder_run -- '/provision/tools-arm/bin/r0vm --version')" == "risc0-r0vm ${RISC0_TAG#v}" ]] || fail "r0vm is not ${RISC0_TAG#v}"
 
-  # buildx: risc0's Docker guest build exports with `docker build --output`
-  if ! runner_exec 'docker buildx version >/dev/null 2>&1'; then
-    log "installing the docker buildx plugin in the runner"
-    runner_exec 'set -e; tag=$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest | sed -n "s/.*\"tag_name\": *\"\([^\"]*\)\".*/\1/p" | head -1);
-      mkdir -p ~/.docker/cli-plugins; curl -fsSL "https://github.com/docker/buildx/releases/download/$tag/buildx-$tag.linux-arm64" -o ~/.docker/cli-plugins/docker-buildx; chmod +x ~/.docker/cli-plugins/docker-buildx'
-  fi
-  # risc0-build asks rzup for a default Rust toolchain even for Docker guest builds
-  runner_exec 'mkdir -p /tmp/lez-risc0-home/toolchains/v1.94.1-rust-aarch64-unknown-linux-gnu && printf "[default_versions]\nrust = \"1.94.1\"\n" > /tmp/lez-risc0-home/settings.toml'
-
-  # the escrow artifact: deployer + guest ELF at the commit's pinned digest
-  local guest_elf="$RUNNER_ARTIFACT_DIR/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"
-  if ! runner_exec "test -x $RUNNER_ARTIFACT_DIR/debug/lez-zec-escrow-v02-deployer && [[ \"\$(sha256sum $guest_elf 2>/dev/null | cut -c1-64)\" == $GUEST_ELF_SHA256 ]]"; then
+  # the escrow artifact: deployer + guest ELF at the commit's pinned digest.
+  # The reproducible guest build runs inside risc0's pinned builder image, so
+  # this one step gets the host Docker socket for the duration of the run.
+  local guest_elf="$PROVISION/escrow-artifact/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"
+  if [[ ! -x "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" || "$(shasum -a 256 "$guest_elf" 2>/dev/null | cut -c1-64)" != "$GUEST_ELF_SHA256" ]]; then
     log "building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
-    runner_exec "set -e; cd '$RUNNER_REPO'; rm -rf $RUNNER_ARTIFACT_DIR/docker-guest-source $RUNNER_ARTIFACT_DIR/riscv-guest $RUNNER_ARTIFACT_DIR/debug/lez-zec-escrow-v02-deployer;
-      RUN_ID=arm-rebuild LEZ_NATIVE_TOOLS=1 LEZ_V02_ARTIFACT_TARGET_DIR=$RUNNER_ARTIFACT_DIR LEZ_V02_TOOL_DIR=$RUNNER_TOOL_DIR \
-      CARGO_TARGET_DIR=$RUNNER_TARGET_DIR CARGO_BUILD_JOBS=6 scripts/verify-lez-v02-provisional.sh 2>&1 | tail -3"
+    builder_run -v /var/run/docker.sock:/var/run/docker.sock -- "rm -rf /provision/escrow-artifact/docker-guest-source /provision/escrow-artifact/riscv-guest /provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer;
+      mkdir -p /tmp/lez-risc0-home/toolchains/v1.94.1-rust-aarch64-unknown-linux-gnu && printf '[default_versions]\nrust = \"1.94.1\"\n' > /tmp/lez-risc0-home/settings.toml;
+      RUN_ID=arm-rebuild LEZ_NATIVE_TOOLS=1 LEZ_V02_NATIVE_R0VM=/provision/tools-arm/bin/r0vm LEZ_V02_ARTIFACT_TARGET_DIR=/provision/escrow-artifact \
+      LEZ_V02_TOOL_DIR=/provision/tools-arm LEZ_V02_SOURCE_DIR=/lez-source CARGO_TARGET_DIR=/cache/target/provisional CARGO_BUILD_JOBS=6 \
+      scripts/verify-lez-v02-provisional.sh 2>&1 | tail -3"
   fi
+  [[ "$(shasum -a 256 "$guest_elf" | cut -c1-64)" == "$GUEST_ELF_SHA256" ]] || fail "escrow guest ELF digest mismatch"
 
-  # cargo caches: the swap runs build offline
-  log "warming the runner's cargo caches"
-  runner_exec "set -e; cd '$RUNNER_REPO'; cargo fetch --locked -q; cargo fetch --locked -q --manifest-path compat/lez-v0_2-sidecar/Cargo.toml;
-    cargo +1.96.0 build -q --locked --offline -p btc-local-poc-provision -p btc-reference-actor -p lez-adaptor-role-runner --bins;
-    cargo +1.96.0 build -q --locked --offline -p lez-maker-node -p lez-taker-node --bins;
-    cargo +1.96.0 build -q --locked --offline -p lez-btc-swap-sdk --example btc-core-p2tr-fixture;
-    cargo +1.96.0 build -q --locked --offline -p lez-bridge-client --example m3_witnessed_lez_operator;
-    cargo +1.96.0 build -q --locked --offline --manifest-path compat/lez-v0_2-sidecar/Cargo.toml --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc \
-      --bin lez-v02-native-escrow-poc --example lez-v02-local-actor-identity --example lez-v02-account-id"
-  runner_exec "cd '$LEZ_SOURCE' && cargo fetch --locked -q"
+  # the LEZ v0.2 sidecar, the vault-claim tool and the identity tool (link libpython3.12)
+  if [[ ! -x "$PROVISION/sidecar/lez-v02-bridge-poc" || ! -x "$PROVISION/sidecar/lez-v02-vault-claim-poc" || ! -x "$PROVISION/sidecar/lez-v02-local-actor-identity" ]]; then
+    log "building the LEZ sidecar and its tools"
+    builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+        --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
+        /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
+  fi
+  own_provision
 
   # persistent wallet identities the market and the LEZ genesis share
   local wallet
   for wallet in "${WALLETS[@]}"; do
     if [[ ! -f "$MARKET_ROOT/identities/$wallet/identity.json" ]]; then
       log "provisioning the $wallet identity"
-      runner_exec "mkdir -m 0700 -p '$MARKET_ROOT/identities' && rm -rf '$MARKET_ROOT/identities/$wallet' &&
-        '$RUNNER_REPO/compat/lez-v0_2-sidecar/target/debug/examples/lez-v02-local-actor-identity' --output-directory '$MARKET_ROOT/identities/$wallet' >/dev/null &&
-        cp '$MARKET_ROOT/identities/$wallet/identity.json' '$MARKET_ROOT/identities/$wallet.json'"
+      mkdir -p "$MARKET_ROOT/identities" && chmod 0700 "$MARKET_ROOT/identities"
+      rm -rf "$MARKET_ROOT/identities/$wallet"
+      docker run --rm -v "$PROVISION/sidecar:/tools:ro" -v "$MARKET_ROOT/identities:/identities" --user "$(id -u):$(id -g)" \
+        "$BUILDER_IMAGE" /tools/lez-v02-local-actor-identity --output-directory "/identities/$wallet" >/dev/null
+      cp "$MARKET_ROOT/identities/$wallet/identity.json" "$MARKET_ROOT/identities/$wallet.json"
     fi
   done
-  log "runner provisioned"
+  log "artifacts built into $PROVISION"
 }
 
 # ---- stage ---------------------------------------------------------------------
@@ -341,10 +320,26 @@ phase_stage() {
   PHASE=stage
   install -m 0755 "$PROVISION/lez-services/sequencer_service" "$PROVISION/lez-services/indexer_service" \
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
+  install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
+  install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
   (cd "$DEPLOY_ROOT" && bash scripts/stage-assets.sh)
 }
 
 # ---- stack ---------------------------------------------------------------------
+# One throwaway container on the stack's network runs the bootstrap: the
+# deployer and the vault-claim tool accept only literal-loopback URLs, so the
+# container forwards 127.0.0.1:3040/8779 to sequencer/indexer for the run.
+market_bootstrap() {
+  docker run --rm --network lez-swap-chains --user "$(id -u):$(id -g)" \
+    -v "$PROVISION:/provision:ro" -v "$MARKET_ROOT:/market" -v "$DEPLOY_ROOT/scripts:/scripts:ro" \
+    -e MARKET_ROOT=/market -e ESCROW_PROGRAM_ID="$ESCROW_PROGRAM_ID" \
+    -e DEPLOYER=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer \
+    -e VAULT_CLAIM_BIN=/provision/sidecar/lez-v02-vault-claim-poc \
+    "$BUILDER_IMAGE" bash -c 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
+      socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
+      sleep 1; bash /scripts/market-bootstrap.sh'
+}
+
 phase_stack() {
   PHASE=stack
   cd "$DEPLOY_ROOT"
@@ -369,12 +364,8 @@ phase_stack() {
   done
   set -a; source runtime/runtime.env; set +a
   bash scripts/repair-indexer.sh
-  log "market bootstrap (escrow program, vault claims, attach manifests)"
-  docker cp scripts/market-bootstrap.sh lez-runner-arm:/tmp/lez-market-bootstrap.sh
-  docker exec -e REPO_ROOT="$RUNNER_REPO" -e MARKET_ROOT="$MARKET_ROOT" \
-    -e BTC_RPC_PASSWORD="$BTC_RPC_PASSWORD" -e ESCROW_PROGRAM_ID="$ESCROW_PROGRAM_ID" \
-    -e DEPLOYER="$RUNNER_ARTIFACT_DIR/debug/lez-zec-escrow-v02-deployer" \
-    lez-runner-arm bash /tmp/lez-market-bootstrap.sh | tail -4
+  log "market bootstrap (escrow program, vault claims, bootstrap manifest)"
+  market_bootstrap | tail -4
   log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"
   local role
   for role in maker taker; do
@@ -389,7 +380,7 @@ phase_swap() {
   bash "$DEPLOY_ROOT/scripts/swap-through-ui.sh"
 }
 
-for p in host sources nix rust runner stage stack; do
+for p in host sources nix rust build stage stack; do
   phase_wanted "$p" && "phase_$p"
 done
 if [[ "$RUN_SWAP" == 1 ]] || [[ "$ONLY" == swap ]]; then phase_swap; fi

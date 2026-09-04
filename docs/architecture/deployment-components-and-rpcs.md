@@ -116,7 +116,7 @@ methods between the Nodes: `btc_reserve_v1`, `btc_ceremony_reserve_v1`,
 `btc_chat_complete_v2`. Host-side tooling: `up.sh`, `gen-config.sh`,
 `swap-through-ui.sh`, `export-node-evidence.py`, `verify-all.sh`
 (`verify-explorers.py`, `verify-market.py`, both UI suites), `reset-swaps.sh`;
-`market-bootstrap.sh` runs once inside the `lez-runner-arm` build host.
+`market-bootstrap.sh` runs once in a throwaway container of the builder image (`deploy/builder`), which also builds the arm64 artifacts the stack cannot pull; no long-lived build container exists.
 
 ## Keys and signing in the local product stack
 

@@ -175,7 +175,11 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
   writes the same `m3_btc_ui_evidence` document the explorer and the Taker
   desk already validate; `verify-explorers.py` and the explorer's hash index
   read that directory, `verify-market.py` exercises the Node market.
-  `swap-through-ui.sh` exports the swap it completed. Done 2026-09-04.
+  `swap-through-ui.sh` exports the swap it completed. The long-lived
+  `lez-runner-arm` build host is retired too: `from-scratch.sh` builds the
+  LEZ services, r0vm, the escrow artifact, the sidecar and the identities in
+  throwaway containers of `deploy/builder`, and the market bootstrap runs as
+  one throwaway container on the stack network. Done 2026-09-04.
 
 ## Component view after stage 1
 

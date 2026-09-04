@@ -1,29 +1,24 @@
 #!/usr/bin/env bash
 # One-time bootstrap of the long-standing settlement chains ("market").
 #
-# Runs INSIDE the lez-runner-arm container (host network). Deploys the M5
-# escrow program to the standing LEZ chain, claims the four persistent wallet
-# vaults into their owner accounts, and writes the attach manifests that
-# attach-mode M3 swap runs consume. Idempotent: skips steps whose on-chain
-# effect already exists.
+# Runs in one throwaway builder container on the stack's network (see
+# from-scratch.sh, market_bootstrap). Deploys the escrow program to the standing
+# LEZ chain, claims the four persistent wallet vaults into their owner accounts,
+# and writes market-bootstrap.env, the manifest the Nodes' entrypoints render
+# into btc-role.json. Idempotent: skips steps whose on-chain effect exists.
 set -euo pipefail
 export LC_ALL=C
 umask 077
 
-readonly REPO_ROOT="${REPO_ROOT:?REPO_ROOT must select the runner checkout}"
-readonly MARKET_ROOT="${MARKET_ROOT:-$(dirname "$REPO_ROOT")/market}"
+readonly MARKET_ROOT="${MARKET_ROOT:?MARKET_ROOT must select the market root (identities, bootstrap)}"
 readonly SEQUENCER_URL="${SEQUENCER_URL:-http://127.0.0.1:3040}"
 readonly INDEXER_URL="${INDEXER_URL:-http://127.0.0.1:8779}"
 readonly CHANNEL_ID="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
 # LEZ program identity of the pinned escrow guest (its Risc0 image ID differs).
 readonly ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-b7f8727893174a29bd776eacbfdd9773e0510ebdac43102cb7e93ba4fa0b0433}"
 readonly AUTH_TRANSFER_PROGRAM_ID="dcbbfebcd59399961ed9973b8307dc475fd4c5ca5779aacfe7588f7dbc3f4a71"
-readonly DEPLOYER="${DEPLOYER:-/tmp/lez-m3-artifact-arm/debug/lez-zec-escrow-v02-deployer}"
-readonly VAULT_CLAIM_BIN="${VAULT_CLAIM_BIN:-$REPO_ROOT/compat/lez-v0_2-sidecar/target/debug/lez-v02-vault-claim-poc}"
-readonly BTC_RPC_URL="${BTC_RPC_URL:-http://127.0.0.1:18443}"
-readonly BTC_RPC_USER="${BTC_RPC_USER:-lezrpc}"
-readonly BTC_RPC_PASSWORD="${BTC_RPC_PASSWORD:?BTC_RPC_PASSWORD is required}"
-readonly BTC_ATTACH_RUN="market-btc-0001"
+readonly DEPLOYER="${DEPLOYER:-/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer}"
+readonly VAULT_CLAIM_BIN="${VAULT_CLAIM_BIN:-/provision/sidecar/lez-v02-vault-claim-poc}"
 readonly LEZ_ATTACH_RUN="market-lez-0001"
 
 fail() { echo "market bootstrap failed: $*" >&2; exit 2; }
@@ -108,29 +103,9 @@ for entry in "${WALLETS[@]}"; do
   echo "$wallet: claimed $allocation into $owner ($(jq -r '.transaction_id' "$MARKET_ROOT/bootstrap/$wallet-claim.json"))"
 done
 
-# ── 3. attach manifests ────────────────────────────────────────────────────
+# ── 3. bootstrap manifest (what the Nodes read) ────────────────────────────
 genesis_block_hash="$(jq -r '.preflight.genesis_block_hash' "$deployment_evidence")"
 [[ "$genesis_block_hash" =~ ^[0-9a-f]{64}$ ]] || fail "genesis block hash unavailable"
-
-lez_dir="$REPO_ROOT/.e2e/$LEZ_ATTACH_RUN/lez-v02"
-mkdir -p "$lez_dir"
-cat >"$lez_dir/run.env" <<EOF
-RUN_ID=$LEZ_ATTACH_RUN
-LEZ_V02_SLOT_DURATION_SECONDS=1.0
-LEZ_V02_CHANNEL_PUBLIC_KEY=$CHANNEL_ID
-LEZ_SEQUENCER_RPC_URL=$SEQUENCER_URL
-LEZ_INDEXER_RPC_URL=$INDEXER_URL
-LEZ_V02_MAKER_ACCOUNT_ID=BD6TpNTSLjeonDFmA3PXg6YtDy7xXt2LTm46266NpwJY
-LEZ_V02_MAKER_VAULT_ACCOUNT_ID=7v83atCzKMg4b7o6oS5AMxik1YrC6Kyx1g4HD7LenBmt
-LEZ_V02_MAKER_GENESIS_ALLOCATION=100000
-LEZ_V02_TAKER_ACCOUNT_ID=4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM
-LEZ_V02_TAKER_VAULT_ACCOUNT_ID=7bVx7C8fq8mdvnHJgTiRHMFezhoMnkancSGMhkNfNmqR
-LEZ_V02_TAKER_GENESIS_ALLOCATION=200000
-EOF
-chmod 0600 "$lez_dir/run.env"
-mkdir -p "$lez_dir/bedrock/logs"
-touch "$lez_dir/bedrock/logs/logos-blockchain.log"
-
 market_bootstrap_manifest="$MARKET_ROOT/market-bootstrap.env"
 cat >"$market_bootstrap_manifest" <<EOF
 M3_POC_LEZ_ESCROW_PROGRAM_ID=$ESCROW_PROGRAM_ID
@@ -140,46 +115,5 @@ M3_POC_LEZ_DEPLOYMENT_TRANSACTION_ID=$deployment_tx
 EOF
 chmod 0600 "$market_bootstrap_manifest"
 
-btc_dir="$REPO_ROOT/.e2e/$BTC_ATTACH_RUN/bitcoin-core"
-cred_dir="$btc_dir/credentials"
-mkdir -p "$cred_dir"
-chmod 0700 "$btc_dir" "$cred_dir"
-for actor in maker taker; do
-  cat >"$cred_dir/$actor.curlrc" <<EOF
-user = "$BTC_RPC_USER:$BTC_RPC_PASSWORD"
-url = "$BTC_RPC_URL"
-connect-timeout = 2
-max-time = 10
-silent
-show-error
-EOF
-  printf '%s:%s\n' "$BTC_RPC_USER" "$BTC_RPC_PASSWORD" >"$cred_dir/$actor.basic"
-  chmod 0600 "$cred_dir/$actor.curlrc" "$cred_dir/$actor.basic"
-done
-cat >"$cred_dir/funding.env" <<EOF
-BITCOIN_CORE_NETWORK=regtest
-BITCOIN_CORE_FUNDING_SECRET_KEY_HEX=0000000000000000000000000000000000000000000000000000000000000001
-BITCOIN_CORE_FUNDING_DESCRIPTOR=rawtr(79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)#xsjqcczm
-BITCOIN_CORE_FUNDING_ADDRESS=bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6
-BITCOIN_CORE_FUNDING_TXID=0000000000000000000000000000000000000000000000000000000000000000
-BITCOIN_CORE_FUNDING_VOUT=0
-BITCOIN_CORE_FUNDING_VALUE_SAT=5000000000
-EOF
-chmod 0600 "$cred_dir/funding.env"
-cat >"$btc_dir/run.env" <<EOF
-RUN_ID=$BTC_ATTACH_RUN
-BITCOIN_CORE_E2E_MODE=service
-COMPOSE_PROJECT_NAME=lez-swap-stack
-BITCOIN_CORE_RPC_URL=$BTC_RPC_URL
-BITCOIN_CORE_MAKER_CURL_CONFIG=$cred_dir/maker.curlrc
-BITCOIN_CORE_TAKER_CURL_CONFIG=$cred_dir/taker.curlrc
-BITCOIN_CORE_MAKER_BASIC_CREDENTIALS=$cred_dir/maker.basic
-BITCOIN_CORE_TAKER_BASIC_CREDENTIALS=$cred_dir/taker.basic
-BITCOIN_CORE_FUNDING_CREDENTIALS=$cred_dir/funding.env
-EOF
-chmod 0600 "$btc_dir/run.env"
-
 echo "market bootstrap complete"
-echo "  LEZ manifest:  $lez_dir/run.env"
-echo "  BTC manifest:  $btc_dir/run.env"
-echo "  bootstrap:     $market_bootstrap_manifest"
+echo "  bootstrap manifest: $market_bootstrap_manifest"

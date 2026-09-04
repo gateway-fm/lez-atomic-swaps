@@ -11,18 +11,21 @@ One command takes an arm64 host (macOS with Docker Desktop, or Linux with
 Docker) from nothing to the running stack with the Basecamp UI verified:
 
 ```sh
-./scripts/from-scratch.sh          # prerequisites → pinned sources → payloads → runner → stack → UI suites
+./scripts/from-scratch.sh          # prerequisites → pinned sources → payloads (ephemeral builders) → stack → UI suites
 ./scripts/from-scratch.sh --swap   # …and one full BTC → LEZ swap through the two Basecamp apps
 ```
 
 It installs the host tools (Homebrew on macOS), clones the pinned
 `logos-execution-zone` and `logos-basecamp` next to this repository, builds the
 Basecamp bundle, both role packages and the Chat/Delivery modules in the pinned
-Nix image, builds the Node binaries in the pinned Rust image, provisions the
-`lez-runner-arm` build-and-bootstrap container (LEZ services, r0vm, rapidsnark,
-the escrow artifact, warm cargo caches, the four wallet identities), stages
-every image payload, then runs `up.sh`, the market bootstrap, both UI suites
-and `verify-all.sh`. Every phase is idempotent and resumable (`--only <phase>`).
+Nix image, builds the Node binaries and Bitcoin actors in the pinned Rust
+image, builds the LEZ services, r0vm, rapidsnark, the escrow artifact, the LEZ
+sidecar and the four wallet identities in throwaway containers of the builder
+image (`builder/`, caches in `lez-build-*` volumes, outputs in
+`provision/data`), stages every image payload, then runs `up.sh`, the market
+bootstrap (one throwaway container on the stack network), both UI suites and
+`verify-all.sh`. No long-lived build container remains, and only the
+reproducible Risc0 guest build sees the host Docker socket, for that one run. Every phase is idempotent and resumable (`--only <phase>`).
 The cold path builds several Rust toolchains' worth of code and takes a few
 hours on Apple silicon; a rerun takes minutes.
 
@@ -32,8 +35,8 @@ every BuildKit `FROM` lookup asks the Keychain, and macOS raises a prompt in
 the terminal's name; unattended runs then hang or fail with
 `DeadlineExceeded`. Click "Always Allow" once, or `docker logout` so public
 pulls stay anonymous. And the Docker VM disk fills up from build caches over
-time: `docker builder prune` and `docker image prune` are safe, volumes are
-not (the market and the runner's caches live there).
+time: `docker builder prune` and `docker image prune` are safe; the
+`lez-build-*` volumes are caches you may drop at the cost of a rebuild.
 
 ## Quick start
 
@@ -166,20 +169,18 @@ Both carry `org.logos-co.atomic-swaps.{run,scope,component}` labels
 program deployment and the four wallet vault claims — is idempotent:
 
 ```sh
-set -a
-source runtime/runtime.env
-set +a
-docker cp scripts/market-bootstrap.sh lez-runner-arm:/tmp/lez-market-bootstrap.sh
-docker exec \
-  -e REPO_ROOT="$(dirname "$LEZ_MARKET_ROOT")/repo" \
-  -e MARKET_ROOT="$LEZ_MARKET_ROOT" \
-  -e BTC_RPC_PASSWORD="$BTC_RPC_PASSWORD" \
-  lez-runner-arm bash /tmp/lez-market-bootstrap.sh
+./scripts/from-scratch.sh --only stack    # runs it inside one throwaway builder container
 ```
 
+The bootstrap runs `scripts/market-bootstrap.sh` in `lez-builder:local` on the
+stack's network with the escrow deployer and the vault-claim tool from
+`provision/data`; both accept only literal-loopback URLs, so the container
+forwards `127.0.0.1:3040/8779` to `sequencer`/`indexer` for the run.
+
 Chains are never torn down between swaps. Wallet identities and the bootstrap
-manifest live in `runner-work/market/` (`LEZ_MARKET_ROOT`); deleting them would
-strand the funded accounts.
+manifest live in the market root (`LEZ_MARKET_ROOT`: `market/` next to this
+repository, or `runner-work/market/` on hosts provisioned earlier); deleting
+them would strand the funded accounts.
 
 ## Verification
 
@@ -254,7 +255,7 @@ compose.yaml               the stack
 scripts/from-scratch.sh    everything from an empty host (prerequisites, sources, payloads, runner, stack)
 scripts/up.sh              one-command bring-up (+ UI verification)
 scripts/swap-through-ui.sh one complete swap driven through the two Basecamp apps
-scripts/market-bootstrap.sh one-time settlement-chain bootstrap, runs inside the runner
+scripts/market-bootstrap.sh one-time settlement-chain bootstrap (one throwaway builder container)
 scripts/stage-basecamp-package.sh stage one Nix-built package or module into the UI image
 scripts/export-node-evidence.py publish a completed swap's public evidence from the Nodes
 scripts/reset-swaps.sh     forget every persisted swap on both Nodes (after an actor rebuild)
@@ -266,16 +267,15 @@ images/                    one dir per image (Dockerfile + payloads)
   basecamp-ui/assets/      portable Basecamp bundle, role trees, qt-mcp framework
 assets/lez-source/         pinned v0.2.0 config templates (bedrock, sequencer, indexer)
 assets/certified-evidence-m5arm-08180005-ui.json  proof-view seed until the first Node swap
-runner/runner-arm.Dockerfile  the build-and-bootstrap container (not on the stack)
+builder/Dockerfile         the ephemeral builder image (docker run --rm only; not on the stack)
 ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspector
   runtime/                   generated state (gitignored; wiped by --wipe)
     evidence/                one exported document per completed swap
 ```
 
-`runner-work/` (the LEZ source checkout, the market root, the runner's own
-checkout) is mounted into `lez-runner-arm` for building and bootstrapping only;
-`runtime/runtime.env` records `LEZ_MARKET_ROOT`, the one path the Nodes read
-from it.
+The workspace next to this repository holds the pinned `lez-source` checkout,
+`provision/data` (built artifacts) and the market root; `runtime/runtime.env`
+records `LEZ_MARKET_ROOT`, the one path the Nodes read from it.
 
 ## Node-owned Bitcoin swaps (ADR 0213)
 
@@ -336,7 +336,7 @@ The checked component inventory and exact support claims live in
 | `lez-taker-state` | Taker Node | Critical after admission |
 | `lez-bitcoin-core-data` | Bitcoin Core | Critical for retained local chain evidence |
 | `runtime/{bedrock,indexer,sequencer}` | LEZ devnet | Recreatable before funding; preserve with retained chain evidence |
-| `runner-work/market` | Market bootstrap | Critical: wallet identities and the escrow deployment manifest |
+| market root (`LEZ_MARKET_ROOT`) | Market bootstrap | Critical: wallet identities and the escrow deployment manifest |
 | `runtime/evidence` | `export-node-evidence.py` | Recreatable from the Nodes' swap directories |
 
 The two Basecamp desks drive the Nodes' fixed, genuine LEZ/BTC lifecycle and

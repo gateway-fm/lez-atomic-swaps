@@ -65,8 +65,9 @@ Also copy target/debug/lez-runtime-healthcheck -> images/lez-services/.
 The Node-owned Bitcoin lifecycle (ADR 0213) also needs the actor programs
 (cargo build --locked -p btc-reference-actor --bins ->
 images/maker-node/lez-btc-maker-actor, images/taker-node/lez-btc-taker-actor)
-and the LEZ v0.2 role sidecar built in the runner checkout
-(compat/lez-v0_2-sidecar/target/debug/lez-v02-bridge-poc -> both node images).
+and the LEZ v0.2 role sidecar, which links libpython3.12 and is built in the
+ephemeral builder image (scripts/from-scratch.sh --only build ->
+provision/data/sidecar/lez-v02-bridge-poc -> both node images).
 MISSING
     exit 1
 fi

@@ -17,10 +17,10 @@ readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
 readonly maker_genesis_allocation=100000
 readonly taker_genesis_allocation=200000
 # Persistent settlement wallets (owner account ids of the identities held in
-# runner-work/market/identities). Swaps run on this long-standing chain and
+# the market root, LEZ_MARKET_ROOT). Swaps run on this long-standing chain and
 # these accounts accumulate real balances across swaps — the local analog of
 # funded wallets on a real network.
-# LEZ_WALLET_IDENTITIES (a runner-work/market/identities directory) overrides
+# LEZ_WALLET_IDENTITIES (the market root's identities directory) overrides
 # the recorded ids with the ids of the identities that directory holds.
 wallet_account_id() { # wallet_account_id <wallet> <recorded-id>
   local identity="${LEZ_WALLET_IDENTITIES:-}/$1.json"
@@ -166,7 +166,7 @@ chmod 0644 "$RUNTIME/secrets/btc-rpc-cookie"
 # escrow deployment the Nodes read); market-bootstrap.sh writes it once.
 market_root="${LEZ_MARKET_ROOT:-}"
 if [[ -z "$market_root" ]]; then
-  for candidate in "$DEPLOY_ROOT/../runner-work/market" "$DEPLOY_ROOT/../../runner-work/market"; do
+  for candidate in "$DEPLOY_ROOT/../../market" "$DEPLOY_ROOT/../market" "$DEPLOY_ROOT/../../runner-work/market" "$DEPLOY_ROOT/../runner-work/market"; do
     [[ -d "$candidate" ]] && { market_root="$(cd "$candidate" && pwd -P)"; break; }
   done
 fi

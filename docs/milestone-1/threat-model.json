@@ -1057,7 +1057,7 @@
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
       ],
       "control": "Locked inputs, exact program identities, consumer pins, clean builds, vulnerability checks, and immutable review commits constrain artifacts.",
-      "proofs": ["docs/upstream-production-blockers.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md", "deploy/runner/README.md"],
+      "proofs": ["docs/upstream-production-blockers.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/milestone-7/review-scope.md", "deploy/builder/README.md"],
       "remaining": "The local stack is still built from mutable inputs in the runner host (no stack service holds the Docker socket since ADR 0213 S1.6); SBOM, signed provenance, independent builds, and S12/S13 review remain open.",
       "owner": "release-security",
       "state": "open"
