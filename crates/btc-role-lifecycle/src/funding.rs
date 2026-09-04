@@ -3,7 +3,10 @@
 //! The wallet is a plain Bitcoin Core wallet on the configured node; the
 //! network comes from configuration and only decides address encoding.
 
-use std::{fs, os::unix::fs::MetadataExt as _, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
+
+/// Upper bound for the Core cookie file (`user:password`).
+const MAX_COOKIE_BYTES: usize = 4096;
 
 use anyhow::{Context as _, Result, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -94,12 +97,8 @@ impl BitcoinWallet {
         network: Network,
         timeout: Duration,
     ) -> Result<Self> {
-        let metadata = fs::symlink_metadata(cookie_file).context("inspect cookie file")?;
-        ensure!(
-            metadata.is_file() && metadata.mode().trailing_zeros() >= 6,
-            "cookie file must be owner-private"
-        );
-        let cookie = fs::read(cookie_file).context("read cookie file")?;
+        let cookie = crate::layout::read_private(cookie_file, MAX_COOKIE_BYTES)
+            .context("read cookie file")?;
         let cookie = std::str::from_utf8(&cookie)
             .context("cookie file is not UTF-8")?
             .trim();

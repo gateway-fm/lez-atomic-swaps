@@ -14,6 +14,10 @@ use std::{
 use anyhow::{Context as _, Result, ensure};
 use btc_role_preflight::RoleRootLayout;
 use lez_bridge_protocol::RequestId;
+use rustix::fs::{Mode, OFlags};
+use std::fs::{File, Metadata};
+use std::io::Read as _;
+use std::path::Component;
 
 /// The files of one swap for one role.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,7 +156,10 @@ pub fn write_private_exact(path: &Path, bytes: &[u8]) -> Result<bool> {
                 "{} is not a regular file",
                 path.display()
             );
-            let existing = fs::read(path)?;
+            // Read back through the same no-follow, bounded path: a file that
+            // is larger than what we would write already differs.
+            let existing = read_vetted(path, bytes.len())
+                .with_context(|| format!("{} already holds different content", path.display()))?;
             ensure!(
                 existing == bytes,
                 "{} already holds different content",
@@ -175,23 +182,92 @@ pub fn write_private_exact(path: &Path, bytes: &[u8]) -> Result<bool> {
     }
 }
 
+/// Rejects a configured path that is not absolute or that walks the tree.
+///
+/// Every file the role configuration names (Core cookie, signer key, sidecar
+/// program, actor program, swaps root) is opened by exactly that name, so a
+/// relative path or a `.`/`..` component has no honest use.
+///
+/// # Errors
+///
+/// Fails when `path` is relative or contains a `.` or `..` component.
+pub fn vet_configured_path(path: &Path, label: &str) -> Result<()> {
+    ensure!(
+        path.is_absolute(),
+        "{label} must be an absolute path: {}",
+        path.display()
+    );
+    ensure!(
+        path.components()
+            .all(|component| matches!(component, Component::RootDir | Component::Normal(_))),
+        "{label} must not contain `.` or `..` components: {}",
+        path.display()
+    );
+    Ok(())
+}
+
+/// Opens `path` without following a final symlink, requires a regular file no
+/// larger than `maximum`, and reads it through that same descriptor.
+fn read_bounded_no_follow(path: &Path, maximum: usize) -> Result<(Vec<u8>, Metadata)> {
+    vet_configured_path(path, "file path")?;
+    let fd = rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .with_context(|| format!("open {}", path.display()))?;
+    let mut file = File::from(fd);
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect {}", path.display()))?;
+    ensure!(
+        metadata.is_file(),
+        "{} must be a regular file",
+        path.display()
+    );
+    let length = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+    ensure!(length <= maximum, "{} exceeds its bound", path.display());
+    let mut bytes = Vec::with_capacity(length);
+    (&mut file)
+        .take(u64::try_from(maximum).unwrap_or(u64::MAX).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", path.display()))?;
+    ensure!(
+        bytes.len() <= maximum,
+        "{} exceeds its bound",
+        path.display()
+    );
+    Ok((bytes, metadata))
+}
+
 /// Reads a private file that must exist.
+///
+/// The path must be absolute and normalized, the final component is not
+/// followed as a symlink, and the file must be a regular file owned by this
+/// process with no group or world permission bits.
 ///
 /// # Errors
 ///
 /// Fails when the file is missing, not owner-private, or larger than `maximum`.
 pub fn read_private(path: &Path, maximum: usize) -> Result<Vec<u8>> {
-    let metadata =
-        fs::symlink_metadata(path).with_context(|| format!("inspect {}", path.display()))?;
+    let (bytes, metadata) = read_bounded_no_follow(path, maximum)?;
     ensure!(
-        metadata.is_file() && metadata.mode().trailing_zeros() >= 6,
+        metadata.mode().trailing_zeros() >= 6
+            && metadata.uid() == rustix::process::geteuid().as_raw(),
         "{} must be an owner-private file",
         path.display()
     );
-    ensure!(
-        usize::try_from(metadata.len()).unwrap_or(usize::MAX) <= maximum,
-        "{} exceeds its bound",
-        path.display()
-    );
-    fs::read(path).with_context(|| format!("read {}", path.display()))
+    Ok(bytes)
+}
+
+/// Reads a file that is not owner-private (an installed program, a shared
+/// public identity) with the same path vetting, no-follow open and size bound
+/// as [`read_private`].
+///
+/// # Errors
+///
+/// Fails when the path is not absolute and normalized, the file is missing or
+/// not regular, or it is larger than `maximum`.
+pub fn read_vetted(path: &Path, maximum: usize) -> Result<Vec<u8>> {
+    read_bounded_no_follow(path, maximum).map(|(bytes, _)| bytes)
 }

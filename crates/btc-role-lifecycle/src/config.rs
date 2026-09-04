@@ -123,6 +123,9 @@ pub struct BtcRoleConfigV1 {
     pub actor: ActorProgramV1,
 }
 
+/// Upper bound for the role configuration file.
+const MAX_CONFIG_BYTES: usize = 64 * 1024;
+
 /// A loaded, validated role configuration with derived identities.
 #[derive(Debug)]
 pub struct BtcRoleRuntime {
@@ -142,17 +145,25 @@ impl BtcRoleRuntime {
     /// Fails on an unreadable or invalid file, a non-private swaps root, or an
     /// invalid signer key.
     pub fn load(role: Participant, path: &Path) -> Result<Self> {
-        let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        crate::layout::vet_configured_path(path, "BTC role configuration")?;
+        let bytes = crate::layout::read_private(path, MAX_CONFIG_BYTES)?;
         let config: BtcRoleConfigV1 =
             serde_json::from_slice(&bytes).context("parse BTC role configuration")?;
         ensure!(
             config.schema_version == 1,
             "unsupported BTC role configuration schema"
         );
-        ensure!(
-            config.swaps_root.is_absolute(),
-            "swaps_root must be absolute"
-        );
+        // Every file the configuration names is opened by that exact name;
+        // reject anything relative or tree-walking before it is ever used.
+        for (label, configured) in [
+            ("swaps_root", &config.swaps_root),
+            ("bitcoin.cookie_file", &config.bitcoin.cookie_file),
+            ("lez.sidecar_program", &config.lez.sidecar_program),
+            ("lez.signer_key_file", &config.lez.signer_key_file),
+            ("actor.program", &config.actor.program),
+        ] {
+            crate::layout::vet_configured_path(configured, label)?;
+        }
         let root = fs::symlink_metadata(&config.swaps_root).context("inspect swaps_root")?;
         ensure!(
             root.is_dir()

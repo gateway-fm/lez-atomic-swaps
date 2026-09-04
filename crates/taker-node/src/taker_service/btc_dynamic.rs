@@ -604,7 +604,7 @@ pub(super) async fn prepare(
         },
         source_config: ImmutablePrivateFileV1 {
             path: dynamic.config_file.clone(),
-            sha256: Sha256::digest(fs::read(&dynamic.config_file)?).into(),
+            sha256: Sha256::digest(read_private(&dynamic.config_file, MAX_RECORD_BYTES)?).into(),
         },
         agreement_output: role_root.agreement_file(),
         actor_root: layout.actor_root(),
@@ -856,7 +856,7 @@ pub(super) async fn execute(
             "role": "taker",
             "agreement_sha256": hex::encode(Sha256::digest(&agreement_wire)),
             "actor_config_file": layout.actor_config_file(),
-            "actor_config_sha256": hex::encode(Sha256::digest(fs::read(layout.actor_config_file())?)),
+            "actor_config_sha256": hex::encode(Sha256::digest(read_private(&layout.actor_config_file(), MAX_RECORD_BYTES)?)),
             "actor_state_database": layout.actor_state_db(),
         });
         write_private_exact(&layout.receipt_file(), &serde_json::to_vec(&receipt)?)?;

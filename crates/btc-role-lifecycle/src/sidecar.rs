@@ -28,6 +28,8 @@ use crate::{
     lez::LezSidecar,
 };
 
+/// Upper bound for the sidecar log scanned for its ready line.
+const MAX_LOG_SCAN_BYTES: usize = 16 * 1024 * 1024;
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RECORD_BYTES: usize = 16 * 1024;
 
@@ -178,7 +180,8 @@ impl SwapSidecar {
         drop(child);
         let deadline = Instant::now() + READY_TIMEOUT;
         while Instant::now() < deadline {
-            if let Ok(bytes) = fs::read(&self.record.log_file) {
+            if let Ok(bytes) = crate::layout::read_vetted(&self.record.log_file, MAX_LOG_SCAN_BYTES)
+            {
                 let fresh = &bytes[usize::try_from(started).unwrap_or(0).min(bytes.len())..];
                 if fresh
                     .windows(15)

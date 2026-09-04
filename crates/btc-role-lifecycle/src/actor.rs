@@ -192,16 +192,18 @@ pub async fn activate(config: &ActorConfig) -> Result<()> {
         .map_err(|error| anyhow::anyhow!("actor activation failed: {error:?}"))
 }
 
+/// Upper bound for a file the actor bundle references (the actor program is
+/// the largest, a few hundred MB unstripped).
+const MAX_HASHED_FILE_BYTES: usize = 1024 * 1024 * 1024;
+
 /// SHA-256 of a file the actor bundle references (for receipts).
 ///
 /// # Errors
 ///
-/// Fails when the file cannot be read.
+/// Fails when the path is not absolute and normalized, or the file cannot be
+/// read as a regular file within its bound.
 pub fn file_sha256(path: &Path) -> Result<[u8; 32]> {
-    Ok(
-        Sha256::digest(std::fs::read(path).with_context(|| format!("read {}", path.display()))?)
-            .into(),
-    )
+    Ok(Sha256::digest(crate::layout::read_vetted(path, MAX_HASHED_FILE_BYTES)?).into())
 }
 
 fn canonical_json<T: serde::Serialize>(value: &T) -> Result<Vec<u8>> {

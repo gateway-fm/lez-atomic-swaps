@@ -1,7 +1,10 @@
 //! LEZ side: account derivations, witnessed-escrow terms, and the role
 //! sidecar the Node prepares escrows and claims through.
 
-use std::{fs, os::unix::fs::MetadataExt as _, path::Path};
+use std::path::Path;
+
+/// Upper bound for a sidecar capability file.
+const MAX_CAPABILITY_BYTES: usize = 4096;
 
 use anyhow::{Context as _, Result, ensure};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
@@ -36,14 +39,7 @@ pub enum LezRole {
 ///
 /// Fails when the file is missing, not owner-private, or not a valid scalar.
 pub fn read_hex_secret(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
-    let metadata =
-        fs::symlink_metadata(path).with_context(|| format!("inspect {}", path.display()))?;
-    ensure!(
-        metadata.is_file() && metadata.mode().trailing_zeros() >= 6 && metadata.len() <= 65,
-        "{} must be a small owner-private file",
-        path.display()
-    );
-    let bytes = Zeroizing::new(fs::read(path)?);
+    let bytes = Zeroizing::new(crate::layout::read_private(path, 65)?);
     let encoded = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
     ensure!(
         encoded.len() == 64
@@ -230,8 +226,7 @@ impl LezSidecar {
         capability_file: &Path,
         run_id: RunId,
     ) -> Result<Self> {
-        let capability_bytes = fs::read(capability_file)
-            .with_context(|| format!("read {}", capability_file.display()))?;
+        let capability_bytes = crate::layout::read_private(capability_file, MAX_CAPABILITY_BYTES)?;
         let capability =
             SidecarCapability::new(String::from_utf8(capability_bytes)?.trim().to_owned())
                 .context("sidecar capability")?;
