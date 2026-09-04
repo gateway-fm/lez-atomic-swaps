@@ -144,9 +144,27 @@ S1.4 Maker Node: discriminated manual actions (`fund_lez`, `claim_btc`,
   `lock_btc`, `claim_lez`) instead of one `claim → drive`; a swap view with
   turn, progress and effects; v2 role binding continues into a scheduled
   actor manifest; the actor program ships in the image.
-S1.5 Desks: offer publish/withdraw/inventory, take, gates, progress and
-  evidence read from the Nodes; wallets become a Node-side registry; the
-  controller allowlist goes away in both C++ backends.
+S1.5 Desks: offer publish/withdraw/inventory, take, gates and progress read
+  from the Nodes. Done 2026-09-04: both C++ backends build the desk's market
+  view (`apps/basecamp/common/node_market.cpp`) from `maker_*`/`taker_*`
+  calls and perform the desk's actions through them; the controller
+  allowlist and socket are gone from the backends. Each Node settles as one
+  identity (the Maker as market wallet `maker-munich-01`, the Taker as
+  `taker-zurich-01`), so the wallet selector shows that one entry; a
+  Node-side multi-identity registry is stage-3 work. The Maker's "fund" and
+  "claim" gates became automatic Node effects; the desk watches the state.
+  The actor, the funding wallet client and the sidecars accept only
+  literal-loopback endpoints, so each Node container forwards
+  127.0.0.1:18443/3040/8779 to `bitcoin-core`, `sequencer` and `indexer` by
+  name from its entrypoint (one connection at a time, so a recreated
+  service is reached again at once); sharing `bitcoin-core`'s network
+  namespace was tried first and silently kept the dead namespace after Core
+  was recreated. `taker_swap_list_v1` lists a swap whose actor bundle is
+  gone as `attention_required` instead of failing the whole list. The
+  Maker's Delivery projection no longer carries consumed offers; a lot
+  leaves it when the store binds it to a swap, so a desk cannot take a
+  sold lot twice (reserved lots stay projected for the Taker's retry
+  between proposal and completion).
 S1.6 Compose: gateways plus local relay, per-role LEZ sidecars, loopback
   route to bitcoind for the actors, actor programs in the images, controller
   and launcher removed; `swap-through-ui.sh` and `verify-all.sh` follow.

@@ -174,15 +174,14 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 | `sequencer` / `indexer` | `images/lez-services` | built from pinned `logos-execution-zone` v0.2.0 (a58fbce), native rebuild + arm64 r0vm |
 | `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves any certified run's transaction hashes |
 | `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
-| `lez-routes` | `alpine/socat` | loopback routes inside `bitcoin-core`'s network namespace (127.0.0.1:3040 → sequencer, :8779 → indexer): the role sidecars accept only literal-loopback LEZ endpoints |
-| `maker-node` | `images/maker-node` | Maker-only image: canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; shares `bitcoin-core`'s network namespace so the actor, the funding wallet and the sidecars reach Core and the LEZ routes at loopback |
-| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, the role sidecar and `node-entrypoint.sh`; same shared namespace |
+| `maker-node` | `images/maker-node` | Maker-only image: canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; the entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints |
+| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
 | `btc-demo-launcher` | `images/btc-demo-launcher` | local-demo-only allowlisted `RunSwapJobV1` boundary; sole component with the Docker socket |
 | `btc-demo-controller` | `images/btc-demo-controller` | unprivileged owner-local SQLite wallet market; calls the launcher over a mode-0600 UDS and publishes validated evidence |
-| `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass |
+| `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass. Both desks read their market from the Nodes (`apps/basecamp/common/node_market.cpp`): offers, takes, the Taker's lock and claim, and the Maker's automatic progress; the demo controller is no longer on their path |
 
-The UI reaches the role Nodes and demo controller through shared named
-socket volumes mounted read-only in Basecamp. The C++ backends enforce
+The UI reaches the role Nodes through shared named socket volumes mounted
+read-only in Basecamp. The C++ backends enforce
 `uid == socket owner && mode 0600`, hence the shared uid.
 
 All services: `restart: unless-stopped`, log rotation, most are `read_only` +

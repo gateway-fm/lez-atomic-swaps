@@ -1,5 +1,6 @@
 #include "lez_atomic_swap_maker_backend.h"
 #include "logos_sdk.h"
+#include "node_market.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -33,10 +34,14 @@ QString invalidMarket(const QString& message)
                     {"message", message}});
 }
 
+// The Maker Node settles as one identity (the wallet `maker-munich-01` of the
+// local market); the desk shows it as its only wallet.
+const node_market::MakerWallet kMakerWallet{QStringLiteral("maker-munich-01"),
+                                            QStringLiteral("Munich Vault 01")};
+
 bool makerWallet(const QString& value)
 {
-    return value == QStringLiteral("maker-munich-01")
-        || value == QStringLiteral("maker-basel-02");
+    return value == kMakerWallet.id;
 }
 
 bool marketRequest(const QString& value)
@@ -85,11 +90,9 @@ RevisionLookup revisionForRoute(const QString& response, const QString& pair,
 
 LezAtomicSwapMakerBackend::LezAtomicSwapMakerBackend()
     : rpc_(QStringLiteral("LEZ_MAKER_RPC_SOCKET"))
-    , demoRpc_(QStringLiteral("LEZ_BTC_DEMO_RPC_SOCKET"))
     , chat_(std::make_unique<LogosChatBridge>(QStringLiteral("maker"), this))
 {
     (void)qEnvironmentVariable("LEZ_MAKER_RPC_SOCKET");
-    (void)qEnvironmentVariable("LEZ_BTC_DEMO_RPC_SOCKET");
 }
 
 LezAtomicSwapMakerBackend::~LezAtomicSwapMakerBackend() = default;
@@ -116,9 +119,8 @@ QString LezAtomicSwapMakerBackend::resetChat()
 
 QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
 {
-    if (!makerWallet(walletId)) return invalidMarket(QStringLiteral("Select a known Maker wallet"));
-    return demoRpc_.call("btc_market_snapshot_v1", compact({
-        {"schema_version", 2}, {"role", "maker"}, {"wallet_id", walletId}}));
+    if (!makerWallet(walletId)) return invalidMarket(QStringLiteral("This desk settles as the Node's own identity"));
+    return node_market::makerSnapshot(rpc_, kMakerWallet);
 }
 
 QString LezAtomicSwapMakerBackend::btcCreateOffers(
@@ -134,12 +136,7 @@ QString LezAtomicSwapMakerBackend::btcCreateOffers(
             && direction != QStringLiteral("taker_sells_lez"))) {
         return invalidMarket(QStringLiteral("Review the fixed offer preset, direction and wallet"));
     }
-    return demoRpc_.call("btc_offer_create_v1", compact({
-        {"schema_version", 2}, {"request_id", requestId}, {"wallet_id", walletId},
-        {"count", static_cast<qint64>(parsedCount)},
-        {"bitcoin_sats", static_cast<qint64>(bitcoin)},
-        {"lez_units", static_cast<qint64>(lez)},
-        {"direction", direction}}));
+    return node_market::makerPublish(rpc_, kMakerWallet, requestId, direction);
 }
 
 QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
@@ -150,17 +147,15 @@ QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
         || !offerPattern.match(offerId).hasMatch()) {
         return invalidMarket(QStringLiteral("The pending offer selection is invalid"));
     }
-    return demoRpc_.call("btc_offer_withdraw_v1", compact({
-        {"schema_version", 2}, {"request_id", requestId}, {"wallet_id", walletId},
-        {"offer_id", offerId}}));
+    return node_market::makerWithdraw(rpc_, kMakerWallet, requestId, offerId);
 }
 
 QString LezAtomicSwapMakerBackend::btcSwapAction(
     QString requestId, QString walletId, QString swapId, QString action)
 {
-    static const QRegularExpression swapPattern(QStringLiteral("^swap-[0-9a-f]{16}$"));
-    // Each swap route names its Maker steps differently; the controller
-    // remains authoritative for which action belongs to which direction.
+    // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the
+    // desk only refreshes. Manual claim and refund stay on the swap panel.
+    static const QRegularExpression swapPattern(QStringLiteral("^[0-9a-f]{64}$"));
     if (!marketRequest(requestId) || !makerWallet(walletId)
         || !swapPattern.match(swapId).hasMatch()
         || (action != QStringLiteral("fund_lez") && action != QStringLiteral("claim_btc")
@@ -168,9 +163,7 @@ QString LezAtomicSwapMakerBackend::btcSwapAction(
             && action != QStringLiteral("claim_lez"))) {
         return invalidMarket(QStringLiteral("That Maker action is not available"));
     }
-    return demoRpc_.call("btc_swap_action_v1", compact({
-        {"schema_version", 2}, {"request_id", requestId}, {"role", "maker"},
-        {"wallet_id", walletId}, {"ui_swap_id", swapId}, {"action", action}}));
+    return node_market::makerSnapshot(rpc_, kMakerWallet);
 }
 
 QString LezAtomicSwapMakerBackend::saveRoute(

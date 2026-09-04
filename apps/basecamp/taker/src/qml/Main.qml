@@ -28,7 +28,7 @@ Item {
         order_book: [], swaps: [], wallets: [],
         summary: ({pending_offers: 0, accepted_swaps: 0, completed_swaps: 0}),
         runner_ready: false, runner_busy: false,
-        runner_detail: "Checking the local M3 runner"
+        runner_detail: "Checking the Taker Node"
     })
     property bool btcMarketReady: false
     property bool btcMarketBusy: false
@@ -568,8 +568,9 @@ Item {
             function(error) {})
     }
 
+    // The Taker Node settles as one identity; the desk shows it as its wallet.
     function selectedTakerWallet() {
-        return takerWallet.currentIndex === 1 ? "taker-limmat-02" : "taker-zurich-01"
+        return "taker-zurich-01"
     }
 
     function walletBalance(role) {
@@ -828,7 +829,7 @@ Item {
                                 LuxeCombo {
                                     id: takerWallet
                                     objectName: "takerBtcWallet"
-                                    model: ["Zurich Wallet 01 · Taker", "Limmat Wallet 02 · Taker"]
+                                    model: ["Zurich Wallet 01 · Taker Node"]
                                     implicitWidth: 240
                                     onActivated: root.refreshBtcMarket(false)
                                 }
@@ -1203,8 +1204,8 @@ Item {
                                 Label {
                                     id: takerRunnerLabel
                                     anchors.centerIn: parent
-                                    text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
-                                        : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                    text: root.btcMarket.runner_busy === true ? "NODES ACTIVE"
+                                        : root.btcMarket.runner_ready === true ? "NODES READY" : "NODES OFFLINE"
                                     color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
                                     font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
                                 }

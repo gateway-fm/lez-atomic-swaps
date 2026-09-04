@@ -1,5 +1,6 @@
 #include "lez_atomic_swap_taker_backend.h"
 #include "logos_sdk.h"
+#include "node_market.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -38,15 +39,19 @@ QString evidenceFailure(const QString& code, const QString& message)
 {
     return compact({{"ok", false}, {"code", code}, {"message", message}});
 }
+
+// The Taker Node settles as one identity (the wallet `taker-zurich-01` of
+// the local market); the desk shows it as its only wallet.
+const node_market::TakerWallet kTakerWallet{QStringLiteral("taker-zurich-01"),
+                                            QStringLiteral("Zurich Wallet 01")};
 }
 
 LezAtomicSwapTakerBackend::LezAtomicSwapTakerBackend()
     : rpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"))
-    , demoRpc_(QStringLiteral("LEZ_BTC_DEMO_RPC_SOCKET"))
+    , slowRpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"), 256 * 1024, 3000, 240000)
     , chat_(std::make_unique<LogosChatBridge>(QStringLiteral("taker"), this))
 {
     (void)qEnvironmentVariable("LEZ_TAKER_RPC_SOCKET");
-    (void)qEnvironmentVariable("LEZ_BTC_DEMO_RPC_SOCKET");
 }
 
 LezAtomicSwapTakerBackend::~LezAtomicSwapTakerBackend() = default;
@@ -145,13 +150,11 @@ QString LezAtomicSwapTakerBackend::btcEvidence()
 
 QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
 {
-    if (walletId != QStringLiteral("taker-zurich-01")
-        && walletId != QStringLiteral("taker-limmat-02")) {
+    if (walletId != kTakerWallet.id) {
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
-            QStringLiteral("Select a known Taker wallet"));
+            QStringLiteral("This desk settles as the Node's own identity"));
     }
-    return demoRpc_.call("btc_market_snapshot_v1", compact({
-        {"schema_version", 2}, {"role", "taker"}, {"wallet_id", walletId}}));
+    return node_market::takerSnapshot(rpc_, kTakerWallet, lockedSwaps_);
 }
 
 QString LezAtomicSwapTakerBackend::btcTakeOffer(
@@ -160,16 +163,12 @@ QString LezAtomicSwapTakerBackend::btcTakeOffer(
     static const QRegularExpression requestPattern(
         QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9]{13}$"));
     static const QRegularExpression offerPattern(QStringLiteral("^[A-Za-z0-9._-]{8,64}$"));
-    if (!requestPattern.match(requestId).hasMatch()
-        || (walletId != QStringLiteral("taker-zurich-01")
-            && walletId != QStringLiteral("taker-limmat-02"))
+    if (!requestPattern.match(requestId).hasMatch() || walletId != kTakerWallet.id
         || !offerPattern.match(offerId).hasMatch()) {
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("The selected wallet or offer is invalid"));
     }
-    return demoRpc_.call("btc_offer_take_v1", compact({
-        {"schema_version", 2}, {"request_id", requestId}, {"wallet_id", walletId},
-        {"offer_id", offerId}}));
+    return node_market::takerTake(rpc_, slowRpc_, kTakerWallet, requestId, offerId, lockedSwaps_);
 }
 
 QString LezAtomicSwapTakerBackend::btcSwapAction(
@@ -177,22 +176,14 @@ QString LezAtomicSwapTakerBackend::btcSwapAction(
 {
     static const QRegularExpression requestPattern(
         QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9]{13}$"));
-    static const QRegularExpression swapPattern(QStringLiteral("^swap-[0-9a-f]{16}$"));
-    // Each swap route names its Taker steps differently; the controller
-    // remains authoritative for which action belongs to which direction.
-    if (!requestPattern.match(requestId).hasMatch()
-        || (walletId != QStringLiteral("taker-zurich-01")
-            && walletId != QStringLiteral("taker-limmat-02"))
-        || !swapPattern.match(swapId).hasMatch()
-        || (action != QStringLiteral("lock_btc") && action != QStringLiteral("claim_lez")
-            && action != QStringLiteral("lock_lez")
-            && action != QStringLiteral("claim_btc"))) {
+    static const QRegularExpression swapPattern(QStringLiteral("^[0-9a-f]{64}$"));
+    if (!requestPattern.match(requestId).hasMatch() || walletId != kTakerWallet.id
+        || !swapPattern.match(swapId).hasMatch()) {
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("That Taker action is not available"));
     }
-    return demoRpc_.call("btc_swap_action_v1", compact({
-        {"schema_version", 2}, {"request_id", requestId}, {"role", "taker"},
-        {"wallet_id", walletId}, {"ui_swap_id", swapId}, {"action", action}}));
+    return node_market::takerAction(rpc_, slowRpc_, kTakerWallet, requestId, swapId, action,
+                                    lockedSwaps_);
 }
 
 QString LezAtomicSwapTakerBackend::listOffers(QString pair, QString direction)

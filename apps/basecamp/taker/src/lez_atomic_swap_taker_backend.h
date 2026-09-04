@@ -3,6 +3,7 @@
 #include "rep_lez_atomic_swap_taker_source.h"
 #include "logos_ui_plugin_context.h"
 #include "local_json_rpc_client.h"
+#include <QSet>
 #include "logos_chat_bridge.h"
 
 #include <memory>
@@ -35,6 +36,8 @@ public:
 
 private:
     LocalJsonRpcClient rpc_;
-    LocalJsonRpcClient demoRpc_;
+    // Same socket as rpc_, with the budget a take or a lock needs.
+    LocalJsonRpcClient slowRpc_;
+    QSet<QString> lockedSwaps_;
     std::unique_ptr<LogosChatBridge> chat_;
 };
