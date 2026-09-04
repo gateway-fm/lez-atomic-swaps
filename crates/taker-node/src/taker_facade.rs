@@ -129,6 +129,32 @@ pub struct TakerClaimRequestV1 {
     pub expected_generation: u64,
 }
 
+/// Parameters for the Taker's own first lock (Bitcoin funding broadcast).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerLockRequestV1 {
+    /// Request schema version; must be one.
+    pub schema_version: u16,
+    /// Stable application swap identity.
+    pub swap_id: SwapId,
+}
+
+/// The exact lock effect the Taker Node performed or found already done.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerLockCommitV1 {
+    /// Response schema version; currently one.
+    pub schema_version: u16,
+    /// Stable application swap identity.
+    pub swap_id: SwapId,
+    /// The chain the lock was broadcast on.
+    pub chain: Box<str>,
+    /// Display transaction id of the lock.
+    pub transaction_id: Box<str>,
+    /// Whether the lock had already been broadcast by an earlier call.
+    pub was_replay: bool,
+}
+
 /// Parameters for an explicit generation-fenced Taker refund.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -380,6 +406,9 @@ pub struct TakerRegisteredMethodsV1 {
     monitor: bool,
     claim: bool,
     refund: bool,
+    /// `taker_swap_lock_v1`: the Taker's own first lock for Node-owned swaps.
+    #[serde(default)]
+    lock: bool,
 }
 
 impl TakerRegisteredMethodsV1 {
@@ -394,12 +423,15 @@ impl TakerRegisteredMethodsV1 {
             monitor: false,
             claim: false,
             refund: false,
+            lock: false,
         }
     }
 
-    /// Returns the honest method set of a complete receipt-bound ZEC service.
+    /// Returns the honest method set of a service with at least one receipt-bound
+    /// lifecycle route; the five lifecycle method names are shared by every route
+    /// and dispatch on the swap's pair.
     #[must_use]
-    pub const fn full_zec_lifecycle() -> Self {
+    pub const fn full_lifecycle() -> Self {
         Self {
             health: true,
             offer_list: true,
@@ -408,7 +440,14 @@ impl TakerRegisteredMethodsV1 {
             monitor: true,
             claim: true,
             refund: true,
+            lock: true,
         }
+    }
+
+    /// Reports whether the Taker's own lock method is registered.
+    #[must_use]
+    pub const fn lock(self) -> bool {
+        self.lock
     }
 
     /// Reports whether health is registered.
@@ -468,6 +507,10 @@ pub struct TakerPairCapabilityV1 {
 }
 
 impl TakerPairCapabilityV1 {
+    const fn receipt_bound(&self) -> bool {
+        matches!(self.monitoring, TakerMonitoringCapabilityV1::ReceiptBound)
+    }
+
     /// Returns the foreign-chain pair.
     #[must_use]
     pub const fn pair(&self) -> Pair {
@@ -523,10 +566,28 @@ impl TakerPairCapabilityV1 {
 /// unknown values rather than assuming a closed set.
 #[must_use]
 pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 4] {
-    pair_capabilities(false)
+    pair_capabilities(false, false)
 }
 
-const fn pair_capabilities(zec_lifecycle_registered: bool) -> [TakerPairCapabilityV1; 4] {
+const fn pair_capabilities(
+    zec_lifecycle_registered: bool,
+    btc_lifecycle_registered: bool,
+) -> [TakerPairCapabilityV1; 4] {
+    // Bitcoin: the Node runs the lifecycle only once its BTC route is
+    // configured; until then the owner CLI or the demo runner does.
+    let (btc_initiation, btc_monitoring, btc_terminal) = if btc_lifecycle_registered {
+        (
+            TakerInitiationCapabilityV1::PreparedPrivateMaterial,
+            TakerMonitoringCapabilityV1::ReceiptBound,
+            TakerTerminalActionCapabilityV1::FullLifecycle,
+        )
+    } else {
+        (
+            TakerInitiationCapabilityV1::OwnerCliOrDemo,
+            TakerMonitoringCapabilityV1::OwnerCliOrDemo,
+            TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
+        )
+    };
     let zec_monitoring = if zec_lifecycle_registered {
         TakerMonitoringCapabilityV1::ReceiptBound
     } else {
@@ -542,10 +603,10 @@ const fn pair_capabilities(zec_lifecycle_registered: bool) -> [TakerPairCapabili
             pair: Pair::Bitcoin,
             supported_direction: SwapDirection::TakerSellsForeign,
             authenticated_offer_browsing: true,
-            initiation: TakerInitiationCapabilityV1::OwnerCliOrDemo,
-            monitoring: TakerMonitoringCapabilityV1::OwnerCliOrDemo,
-            claim: TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
-            refund: TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
+            initiation: btc_initiation,
+            monitoring: btc_monitoring,
+            claim: btc_terminal,
+            refund: btc_terminal,
         },
         TakerPairCapabilityV1 {
             pair: Pair::Monero,
@@ -613,8 +674,16 @@ impl TakerHealthV1 {
     /// Reports that the service registered the complete receipt-bound ZEC lifecycle.
     #[must_use]
     pub const fn with_zec_lifecycle_registered(mut self) -> Self {
-        self.registered_methods = TakerRegisteredMethodsV1::full_zec_lifecycle();
-        self.pair_capabilities = pair_capabilities(true);
+        self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
+        self.pair_capabilities = pair_capabilities(true, self.pair_capabilities[0].receipt_bound());
+        self
+    }
+
+    /// Reports that the service registered the complete receipt-bound BTC lifecycle.
+    #[must_use]
+    pub const fn with_btc_lifecycle_registered(mut self) -> Self {
+        self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
+        self.pair_capabilities = pair_capabilities(self.pair_capabilities[2].receipt_bound(), true);
         self
     }
 

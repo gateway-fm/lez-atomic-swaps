@@ -2,6 +2,7 @@
 
 mod actor_supervisor;
 mod btc_chat;
+mod btc_lifecycle;
 mod daemon_lifecycle;
 mod logos_price_source;
 mod price_source;
@@ -22,6 +23,7 @@ pub use actor_supervisor::{
 };
 use btc_chat::register_btc_chat_methods;
 pub use btc_chat::{BtcMakerActorProvisioner, BtcMakerRoleAgreementAuthority};
+pub use btc_lifecycle::BtcMakerLifecycle;
 pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,
@@ -133,6 +135,8 @@ pub struct MakerRpc {
     btc_chat_signing_key: Option<Arc<SecretKey>>,
     btc_actor_provisioner: Option<Arc<BtcMakerActorProvisioner>>,
     btc_role_agreement_authority: Option<Arc<BtcMakerRoleAgreementAuthority>>,
+    /// Node-owned Bitcoin lifecycle (ADR 0213); supersedes the fixture paths.
+    btc_lifecycle: Option<Arc<BtcMakerLifecycle>>,
     #[cfg(feature = "pair-xmr")]
     xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
     #[cfg(feature = "pair-zec")]
@@ -180,6 +184,10 @@ impl std::fmt::Debug for MakerRpc {
                     .btc_role_agreement_authority
                     .as_ref()
                     .map(|_| "configured"),
+            )
+            .field(
+                "btc_lifecycle",
+                &self.btc_lifecycle.as_ref().map(|_| "configured"),
             );
         #[cfg(feature = "pair-xmr")]
         debug.field(
@@ -221,6 +229,7 @@ impl MakerRpc {
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
+            btc_lifecycle: None,
             #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
             #[cfg(feature = "pair-zec")]
@@ -248,6 +257,7 @@ impl MakerRpc {
             btc_chat_signing_key: None,
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
+            btc_lifecycle: None,
             #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
             #[cfg(feature = "pair-zec")]
@@ -302,6 +312,16 @@ impl MakerRpc {
         self.btc_chat_signing_key = Some(Arc::new(signing_key));
         self.btc_actor_provisioner = actor_provisioner.map(Arc::new);
         self.btc_role_agreement_authority = role_agreement_authority.map(Arc::new);
+        self
+    }
+
+    /// Attaches the Node-owned Bitcoin lifecycle (reservation, planning,
+    /// ceremony, actor synthesis) for this Maker role.
+    #[must_use]
+    pub fn with_btc_lifecycle(mut self, lifecycle: BtcMakerLifecycle) -> Self {
+        let lifecycle = Arc::new(lifecycle);
+        lifecycle.spawn_sidecar_keepalive();
+        self.btc_lifecycle = Some(lifecycle);
         self
     }
 
@@ -1040,6 +1060,7 @@ fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
                     .list_retryable_maker_offers(now_unix_seconds)
                     .map_err(application_store_error)?
                     .into_iter()
+                    .filter(|record| record.status() != MakerOfferStatus::Consumed)
                     .map(|record| record.offer().clone())
                     .collect::<Vec<_>>();
                 (active, routes)
@@ -1145,7 +1166,7 @@ fn reconcile_unhealthy_route_offers(context: &MakerRpc, now_unix_seconds: u64) -
         }
     }
     if let Some(delivery) = &context.delivery {
-        let retryable = {
+        let projected = {
             let store = context
                 .store
                 .lock()
@@ -1154,12 +1175,15 @@ fn reconcile_unhealthy_route_offers(context: &MakerRpc, now_unix_seconds: u64) -
                 .list_retryable_maker_offers(now_unix_seconds)
                 .map_err(application_store_error)?
                 .into_iter()
+                .filter(|record| record.status() != MakerOfferStatus::Consumed)
                 .map(|record| record.offer().clone())
                 .collect::<Vec<_>>()
         };
         // Durable state remains authoritative. Failed cleanup is retried on the next sample;
-        // Delivery health stays degraded until its exact projection matches this set.
-        let _ = delivery.reconcile(&retryable, now_unix_seconds);
+        // Delivery health stays degraded until its exact projection matches this set. A
+        // consumed lot is not projected: it is bound to one swap, and a Taker retrying its
+        // acceptance replays from the store rather than rediscovering the offer.
+        let _ = delivery.reconcile(&projected, now_unix_seconds);
     }
     Ok(())
 }

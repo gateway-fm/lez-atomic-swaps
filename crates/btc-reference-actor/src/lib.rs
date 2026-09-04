@@ -818,6 +818,80 @@ pub struct ActorStatusV1 {
     state: ActorStateV1,
 }
 
+/// Typed, secret-free view of durable actor lifecycle state.
+///
+/// In-process callers (the role Nodes) gate on this projection instead of the
+/// JSON encoding, exactly as the ZEC actor's projection is consumed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActorStatusProjectionV1 {
+    /// No durable activation exists for this actor yet.
+    NotActivated,
+    /// The actor has durable lifecycle state.
+    Active {
+        /// Current protocol phase.
+        phase: Phase,
+        /// Monotonic durable-state revision.
+        revision: u64,
+        /// Next safe high-level step for this role.
+        next_action: ActorNextActionV1,
+    },
+}
+
+impl ActorStatusV1 {
+    /// Returns the role permanently bound to this status.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
+    }
+
+    /// Projects the wire-oriented status into typed lifecycle values.
+    #[must_use]
+    pub const fn projection(&self) -> ActorStatusProjectionV1 {
+        match self.state {
+            ActorStateV1::NotActivated => ActorStatusProjectionV1::NotActivated,
+            ActorStateV1::Active {
+                phase,
+                revision,
+                next_action,
+            } => ActorStatusProjectionV1::Active {
+                phase: phase.as_phase(),
+                revision,
+                next_action,
+            },
+        }
+    }
+}
+
+impl ActorEffectOutputV1 {
+    /// Returns the role permanently bound to this effect output.
+    #[must_use]
+    pub const fn role(&self) -> ActorRole {
+        self.role
+    }
+
+    /// Projects the durable state the effect left behind.
+    #[must_use]
+    pub const fn projection(&self) -> ActorStatusProjectionV1 {
+        ActorStatusProjectionV1::Active {
+            phase: self.phase.as_phase(),
+            revision: self.revision,
+            next_action: self.next_action,
+        }
+    }
+
+    /// Reports whether the effect changed durable state on this invocation.
+    #[must_use]
+    pub const fn changed_durable_state(&self) -> bool {
+        match self.outcome {
+            ActorEffectOutcomeV1::Activated { was_replay }
+            | ActorEffectOutcomeV1::ObservedThenProjected { was_replay, .. } => !was_replay,
+            ActorEffectOutcomeV1::AwaitingObservation { .. }
+            | ActorEffectOutcomeV1::ConvergedOnExistingProjection { .. }
+            | ActorEffectOutcomeV1::NotYetComposed { .. } => false,
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum ActorStateV1 {
@@ -829,9 +903,10 @@ enum ActorStateV1 {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+/// Next safe high-level step for the actor's role, derived from durable state.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum ActorNextActionV1 {
+pub enum ActorNextActionV1 {
     ObserveTakerFirstLock,
     ObserveMakerSecondLockOrRecoverTakerLeg,
     ObserveRevealingClaim,
@@ -876,6 +951,26 @@ enum ActorPhaseV1 {
     MakerRecoveryAvailable,
 }
 
+impl ActorPhaseV1 {
+    const fn as_phase(self) -> Phase {
+        match self {
+            Self::Offered => Phase::Offered,
+            Self::AwaitingTakerConfirmations => Phase::AwaitingTakerConfirmations,
+            Self::TakerLockConfirmed => Phase::TakerLockConfirmed,
+            Self::AwaitingMakerConfirmations => Phase::AwaitingMakerConfirmations,
+            Self::BothLegsLocked => Phase::BothLegsLocked,
+            Self::TakerLockReorged => Phase::TakerLockReorged,
+            Self::MakerLockReorged => Phase::MakerLockReorged,
+            Self::ClaimEvidenceAvailable => Phase::ClaimEvidenceAvailable,
+            Self::Completed => Phase::Completed,
+            Self::MakerLegRefunded => Phase::MakerLegRefunded,
+            Self::TakerLegRefunded => Phase::TakerLegRefunded,
+            Self::Refunded => Phase::Refunded,
+            Self::MakerRecoveryAvailable => Phase::MakerRecoveryAvailable,
+        }
+    }
+}
+
 impl From<Phase> for ActorPhaseV1 {
     fn from(value: Phase) -> Self {
         match value {
@@ -897,6 +992,21 @@ impl From<Phase> for ActorPhaseV1 {
 }
 
 /// Stable payload-free command failure categories.
+/// Collapses one observation failure into [`ActorCommandError::ObservationUnavailable`].
+///
+/// With `LEZ_BTC_ACTOR_TRACE=1` in the environment the failing step's error is
+/// named on stderr (never any secret: these are transport and chain-shape
+/// errors) so an operator can see which observation the actor refused.
+fn trace_observation_unavailable<E: std::fmt::Debug>(error: E) -> ActorCommandError {
+    if std::env::var_os("LEZ_BTC_ACTOR_TRACE").is_some_and(|value| value == "1") {
+        eprintln!(
+            "{{\"event\":\"observation_unavailable\",\"error\":{:?}}}",
+            format!("{error:?}")
+        );
+    }
+    ActorCommandError::ObservationUnavailable
+}
+
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum ActorCommandError {
     /// Local configuration could not be mapped into a bounded adapter.
@@ -1091,7 +1201,7 @@ fn encode_maker_lock_cutoff_evidence(
         canonical_inclusion_time,
         chain_evidence_hex: hex::encode(chain_evidence),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)
+    .map_err(trace_observation_unavailable)
 }
 
 #[cfg(test)]
@@ -1268,7 +1378,7 @@ where
     let observation = adapter
         .observe_exact_funding(agreement)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     Ok(match observation {
         ExactFundingObservation::Absent { .. } => MakerLockStepChainObservationV1::Absent,
         ExactFundingObservation::Pending { transaction, .. } => {
@@ -1314,7 +1424,7 @@ async fn observe_current_lez_maker_step(
     let result = client
         .observe_witnessed_escrow(request)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     if result.tip_before != result.tip_after {
         return Err(ActorCommandError::ObservationUnavailable);
     }
@@ -1383,7 +1493,7 @@ async fn observe_live_lez_maker_step(
             match client
                 .classify_finalized_witnessed_initialization(request)
                 .await
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .map_err(trace_observation_unavailable)?
             {
                 FinalizedWitnessedInitializationPresence::Found { initialization, .. } => {
                     if lez_step_is_exact(step, &initialization.transaction) {
@@ -1408,7 +1518,7 @@ async fn observe_live_lez_maker_step(
             match client
                 .classify_finalized_witnessed_funding(request)
                 .await
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .map_err(trace_observation_unavailable)?
             {
                 FinalizedWitnessedFundingPresence::Found { funding, .. } => {
                     if lez_step_is_exact(step, &funding.transaction) {
@@ -1534,7 +1644,7 @@ async fn observe_live_lez_asset_maker_step(
                     &binding, request_id, target, window,
                 )
                 .await
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                .map_err(trace_observation_unavailable)?;
             Ok(asset_scan_step_observation(step, outcome, |facts| {
                 &facts.transaction
             }))
@@ -1551,7 +1661,7 @@ async fn observe_live_lez_asset_maker_step(
                     &binding, request_id, target, window,
                 )
                 .await
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                .map_err(trace_observation_unavailable)?;
             Ok(asset_scan_step_observation(step, outcome, |facts| {
                 &facts.transaction
             }))
@@ -1566,7 +1676,7 @@ async fn observe_live_lez_asset_maker_step(
             let outcome = adapter
                 .classify_finalized_btc_asset_funding_v2(&binding, request_id, target, window)
                 .await
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                .map_err(trace_observation_unavailable)?;
             Ok(asset_scan_step_observation(step, outcome, |facts| {
                 &facts.transaction
             }))
@@ -1664,7 +1774,7 @@ async fn observe_finalized_lez_asset_funding(
             window,
         )
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let FinalizedWitnessedAssetScanOutcomeV2::Found {
         finalized_clock,
         facts,
@@ -1690,7 +1800,7 @@ async fn observe_finalized_lez_asset_funding(
     let proof = adapter
         .prove_btc_asset_first_lock_v2(&binding, proof_request_id.clone(), &preparation, window)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     if proof.prepared() != &prepared {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }
@@ -1709,7 +1819,7 @@ async fn observe_finalized_lez_asset_funding(
             window,
         )
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let FinalizedWitnessedAssetScanOutcomeV2::Found {
         finalized_clock: finalized_clock_after,
         facts: rechecked_facts,
@@ -1768,7 +1878,7 @@ where
                 expected_transaction_id,
             )
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)?
+            .map_err(trace_observation_unavailable)?
         {
             AuthorizedFundingSubmission::Accepted { transaction_id, .. }
                 if transaction_id == expected_transaction_id =>
@@ -1792,7 +1902,7 @@ async fn submit_live_lez_maker_step(
     let result = client
         .submit_transaction(request)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     if hex::encode(result.transaction_id.as_bytes()) != step.expected_public_id().as_str() {
         return Err(ActorCommandError::ObservationUnavailable);
     }
@@ -1813,7 +1923,7 @@ where
     let ExactFundingObservation::Unspent(funding) = adapter
         .observe_exact_funding(agreement)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?
+        .map_err(trace_observation_unavailable)?
     else {
         return Err(ActorCommandError::ObservationUnavailable);
     };
@@ -1822,14 +1932,14 @@ where
         funding.transaction().compute_txid().to_string(),
         exact.clone(),
     )
-    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    .map_err(trace_observation_unavailable)?;
     let evidence = BtcFirstLockEvidenceV1::Bitcoin(
         BitcoinFirstLockEvidenceV1::new(
             *agreement.bitcoin_genesis_hash(),
             exact,
             funding.confirmations(),
         )
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?,
+        .map_err(trace_observation_unavailable)?,
     );
     Ok((prepared, evidence))
 }
@@ -1939,7 +2049,7 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                         read_ordinal,
                     )?)
                     .await
-                    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                    .map_err(trace_observation_unavailable)?;
                 let evidence = if self.config.schema_version == ASSET_CONFIG_SCHEMA_VERSION {
                     let BtcFirstLockEvidenceV1::Bitcoin(evidence) = evidence else {
                         return Err(ActorCommandError::AgreementBindingInvalid);
@@ -1987,7 +2097,7 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                             self.config.discovery_window()?,
                         )
                         .await
-                        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                        .map_err(trace_observation_unavailable)?;
                     let (prepared, evidence) = proof.into_sdk_parts();
                     // Bitcoin is the Maker chain. The stable-tip MTP read remains
                     // the final node operation before SDK cutoff admission.
@@ -1995,7 +2105,7 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                         .bitcoin
                         .ensure_ready(agreement)
                         .await
-                        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                        .map_err(trace_observation_unavailable)?;
                     return Ok(FreshMakerLockEligibilityV1 {
                         prepared_first_lock: PreparedFirstLockMaterialV1::LezAsset(prepared),
                         evidence: MakerFirstLockEvidenceV1::Asset(
@@ -2025,7 +2135,7 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                         self.config.discovery_window()?,
                     )
                     .await
-                    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                    .map_err(trace_observation_unavailable)?;
                 let (prepared, evidence) = proof.into_sdk_parts();
                 // Bitcoin is the Maker chain in this direction. Its stable-tip
                 // MTP read is intentionally last, immediately before SDK cutoff
@@ -2034,7 +2144,7 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                     .bitcoin
                     .ensure_ready(agreement)
                     .await
-                    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                    .map_err(trace_observation_unavailable)?;
                 Ok(FreshMakerLockEligibilityV1 {
                     prepared_first_lock: PreparedFirstLockMaterialV1::Lez(prepared),
                     evidence: MakerFirstLockEvidenceV1::Legacy(BtcFirstLockEvidenceV1::Lez(
@@ -2096,7 +2206,7 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                         maker_lez_current_funded_request_id(self.config, agreement)?,
                     )
                     .await
-                    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                    .map_err(trace_observation_unavailable)?;
                 Ok(finalized)
             }
             Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
@@ -2479,7 +2589,7 @@ impl LezRefundChainPort for BridgeClient {
     ) -> Result<PrepareNativeRefundResult, ActorCommandError> {
         BridgeClient::prepare_native_refund(self, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn observe_native_refund(
@@ -2488,7 +2598,7 @@ impl LezRefundChainPort for BridgeClient {
     ) -> Result<ObserveNativeRefundResult, ActorCommandError> {
         BridgeClient::observe_native_refund(self, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn submit_transaction(
@@ -2497,7 +2607,7 @@ impl LezRefundChainPort for BridgeClient {
     ) -> Result<SubmitTransactionResult, ActorCommandError> {
         BridgeClient::submit_transaction(self, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 }
 
@@ -2539,7 +2649,7 @@ impl LezClaimChainPort for BridgeClient {
     ) -> Result<CompleteWitnessedClaimResult, ActorCommandError> {
         BridgeClient::complete_witnessed_claim(self, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn classify_finalized_witnessed_claim(
@@ -2548,7 +2658,7 @@ impl LezClaimChainPort for BridgeClient {
     ) -> Result<FinalizedWitnessedClaimPresence, ActorCommandError> {
         BridgeClient::classify_finalized_witnessed_claim(self, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn submit_transaction(
@@ -2557,7 +2667,7 @@ impl LezClaimChainPort for BridgeClient {
     ) -> Result<SubmitTransactionResult, ActorCommandError> {
         BridgeClient::submit_transaction(self, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 }
 
@@ -2633,7 +2743,7 @@ impl LezAssetClaimChainPort for LiveLezAssetClaimPort {
         self.adapter
             .complete_btc_asset_claim_v2(binding, request_id, claim, aggregate_signature)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn classify_finalized_asset_claim(
@@ -2650,7 +2760,7 @@ impl LezAssetClaimChainPort for LiveLezAssetClaimPort {
         self.adapter
             .classify_finalized_btc_asset_claim_v2(binding, request_id, claim, target, window)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn submit_transaction(
@@ -2659,7 +2769,7 @@ impl LezAssetClaimChainPort for LiveLezAssetClaimPort {
     ) -> Result<SubmitTransactionResult, ActorCommandError> {
         BridgeClient::submit_transaction(&self.submit, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 }
 
@@ -2678,7 +2788,7 @@ impl LezAssetRefundChainPort for LiveLezAssetRefundPort {
         self.adapter
             .prepare_btc_asset_refund_v2(binding, request_id)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn observe_asset_refund(
@@ -2690,7 +2800,7 @@ impl LezAssetRefundChainPort for LiveLezAssetRefundPort {
         self.adapter
             .observe_btc_asset_refund_v2(binding, request_id, target)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 
     async fn submit_transaction(
@@ -2699,7 +2809,7 @@ impl LezAssetRefundChainPort for LiveLezAssetRefundPort {
     ) -> Result<SubmitTransactionResult, ActorCommandError> {
         BridgeClient::submit_transaction(&self.submit, request)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 }
 
@@ -3583,10 +3693,10 @@ fn validate_fresh_maker_lock_plan(
                 .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
             let confirmed = active
                 .validate_first_lock(&evidence)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                .map_err(trace_observation_unavailable)?;
             active
                 .second_lock_plan(&confirmed)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .map_err(trace_observation_unavailable)?
                 .clone()
         }
         ASSET_CONFIG_SCHEMA_VERSION => {
@@ -3619,10 +3729,10 @@ fn validate_fresh_maker_lock_plan(
                 .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
             let confirmed = active
                 .validate_first_lock(&evidence)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                .map_err(trace_observation_unavailable)?;
             active
                 .second_lock_plan(&confirmed)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .map_err(trace_observation_unavailable)?
                 .clone()
         }
         _ => return Err(ActorCommandError::AgreementBindingInvalid),
@@ -3853,7 +3963,7 @@ async fn drive_maker_lock_with_port(
     )?;
     let evidence =
         BtcLifecycleEvidenceV1::maker_lock(chain, transaction_id, confirmations, cutoff_evidence)
-            .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+            .map_err(trace_observation_unavailable)?;
     // A completed journal does not make revision one eligible forever. Re-read
     // and SDK-validate the exact taker first lock after the final canonical
     // maker-lock observation and immediately before the atomic projection.
@@ -4012,7 +4122,7 @@ async fn drive_with_observer(
     }
     let evidence = transition
         .evidence(chain, transaction_id, confirmations, chain_evidence)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let projection = if maker_owned_observation {
         store.project_maker_lock_and_close(before.revision(), &evidence)
     } else {
@@ -4234,20 +4344,16 @@ fn encode_first_lock_recovery_chain_evidence(
         },
         refund_chain_evidence_hex: hex::encode(refund_chain_evidence),
     };
-    let encoded =
-        serde_json::to_vec(&evidence).map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    let encoded = serde_json::to_vec(&evidence).map_err(trace_observation_unavailable)?;
     if encoded.len() > MAX_FIRST_LOCK_ENVELOPE_BYTES {
         return Err(ActorCommandError::ObservationUnavailable);
     }
     let mut deserializer = serde_json::Deserializer::from_slice(&encoded);
     let decoded = FirstLockRecoveryChainEvidenceV1::deserialize(&mut deserializer)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    deserializer
-        .end()
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
+    deserializer.end().map_err(trace_observation_unavailable)?;
     if decoded != evidence
-        || serde_json::to_vec(&decoded).map_err(|_| ActorCommandError::ObservationUnavailable)?
-            != encoded
+        || serde_json::to_vec(&decoded).map_err(trace_observation_unavailable)? != encoded
     {
         return Err(ActorCommandError::ObservationUnavailable);
     }
@@ -4335,7 +4441,7 @@ async fn drive_first_lock_refund_with_observer(
         (second_observed_unix_seconds, second_absence_evidence),
     ] = admitted_reads
         .try_into()
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     if first_absence_evidence == second_absence_evidence {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }
@@ -4479,7 +4585,7 @@ async fn drive_refund_after_first_lock_safety(
             )?,
             position,
         )
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     project_refund_transition(
         config,
         &mut store,
@@ -4589,7 +4695,7 @@ fn claim_lifecycle_evidence(
             )
         }
     }
-    .map_err(|_| ActorCommandError::ObservationUnavailable)
+    .map_err(trace_observation_unavailable)
 }
 
 fn project_claim_transition(
@@ -4689,7 +4795,7 @@ fn claim_evidence_from_signature(
                 .map_err(|()| ActorCommandError::ActivationMaterialUnavailable)?;
             let claim_evidence = ClaimEvidence::new(*secret);
             let expected = adapt_presignature(&context, *presignature.bytes(), secret)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                .map_err(trace_observation_unavailable)?;
             if expected != public_signature {
                 return Err(ActorCommandError::ObservationUnavailable);
             }
@@ -4697,7 +4803,7 @@ fn claim_evidence_from_signature(
         }
         ActorRole::Maker => {
             let secret = extract_adaptor_secret(&context, *presignature.bytes(), public_signature)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                .map_err(trace_observation_unavailable)?;
             Ok(ClaimEvidence::new(*secret))
         }
     }
@@ -4809,17 +4915,17 @@ fn prepare_bitcoin_claim_effect(
             let (context, presignature) =
                 verified_chain_presignature(config, agreement, revealing_chain)?;
             extract_adaptor_secret(&context, presignature, public_signature)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .map_err(trace_observation_unavailable)?
         }
     };
     let (context, presignature) = verified_chain_presignature(config, agreement, Chain::Bitcoin)?;
     let public_signature = adapt_presignature(&context, presignature, secret)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let transaction = agreement
         .cooperative_claim()
         .clone()
         .finalize(public_signature)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let expected_transaction_id = transaction.compute_txid();
     let exact_transaction_bytes = serialize(&transaction);
     let swap_id = SwapId::new(hex::encode(agreement.body().swap_id()))
@@ -4942,14 +5048,13 @@ fn lez_claim_aggregate_signature(
             // Extraction verifies the final Bitcoin signature and point-checks
             // the recovered scalar against the signed agreement adaptor point.
             extract_adaptor_secret(&context, presignature, public_signature)
-                .map_err(|_| ActorCommandError::ObservationUnavailable)?
+                .map_err(trace_observation_unavailable)?
         }
     };
     let (context, presignature) = verified_chain_presignature(config, agreement, Chain::Lez)?;
     let aggregate_signature = adapt_presignature(&context, presignature, adaptor_secret)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    verify_final_signature(&context, aggregate_signature)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
+    verify_final_signature(&context, aggregate_signature).map_err(trace_observation_unavailable)?;
     Ok(aggregate_signature)
 }
 
@@ -5162,7 +5267,7 @@ where
     let observed = adapter
         .observe_funding(agreement)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let FundingObservation::Ready(observed) = observed else {
         return Ok(ActorFundingObservation::Pending {
             chain: Chain::Bitcoin,
@@ -5181,7 +5286,7 @@ where
     let observed = adapter
         .observe_exact_funding(agreement)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let ExactFundingObservation::Unspent(observed) = observed else {
         return Ok(ActorFundingObservation::Pending {
             chain: Chain::Bitcoin,
@@ -5196,7 +5301,7 @@ fn bitcoin_funding_ready_observation(
 ) -> Result<ActorFundingObservation, ActorCommandError> {
     let evidence = BitcoinCoreEvidenceV1::funding_ready(agreement, observed)
         .and_then(|value| value.encode())
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     Ok(ActorFundingObservation::Ready {
         chain: Chain::Bitcoin,
         transaction_id: observed
@@ -5277,7 +5382,7 @@ where
             expected_transaction_id,
         )
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)
+        .map_err(trace_observation_unavailable)
     }
 }
 
@@ -5338,7 +5443,7 @@ where
             expected_transaction_id,
         )
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)
+        .map_err(trace_observation_unavailable)
     }
 }
 
@@ -6093,7 +6198,7 @@ fn finalized_lez_asset_refund_observation(
         target,
         response: response.clone(),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    .map_err(trace_observation_unavailable)?;
     Ok(ActorRefundObservation::Ready {
         chain: Chain::Lez,
         transaction_id: hex::encode(found.transaction.transaction_id.as_bytes()).into_boxed_str(),
@@ -6596,7 +6701,7 @@ fn encode_finalized_lez_refund_evidence(
         request: request.clone(),
         response: response.clone(),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    .map_err(trace_observation_unavailable)?;
     decode_finalized_lez_refund_evidence(config, agreement, transition, effect, &encoded)?;
     Ok(encoded)
 }
@@ -6610,12 +6715,9 @@ fn decode_finalized_lez_refund_evidence(
 ) -> Result<FinalizedLezRefundEvidenceV1, ActorCommandError> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let evidence = FinalizedLezRefundEvidenceV1::deserialize(&mut deserializer)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    deserializer
-        .end()
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    let canonical =
-        serde_json::to_vec(&evidence).map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
+    deserializer.end().map_err(trace_observation_unavailable)?;
+    let canonical = serde_json::to_vec(&evidence).map_err(trace_observation_unavailable)?;
     if canonical != bytes
         || evidence.schema_version != 1
         || evidence.agreement_commitment != hex::encode(agreement.agreement_commitment())
@@ -7355,7 +7457,7 @@ fn encode_finalized_lez_asset_claim_evidence(
         scanned_window,
         facts: facts.clone(),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)
+    .map_err(trace_observation_unavailable)
 }
 
 fn validate_prepared_lez_effect(
@@ -7543,7 +7645,7 @@ fn encode_finalized_lez_claim_evidence(
         scanned_window,
         claim: claim.clone(),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    .map_err(trace_observation_unavailable)?;
     decode_finalized_lez_claim_evidence(config, agreement, transition, effect, &encoded)?;
     Ok(encoded)
 }
@@ -7557,12 +7659,9 @@ fn decode_finalized_lez_claim_evidence(
 ) -> Result<FinalizedLezClaimEvidenceV1, ActorCommandError> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let evidence = FinalizedLezClaimEvidenceV1::deserialize(&mut deserializer)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    deserializer
-        .end()
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    let canonical =
-        serde_json::to_vec(&evidence).map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
+    deserializer.end().map_err(trace_observation_unavailable)?;
+    let canonical = serde_json::to_vec(&evidence).map_err(trace_observation_unavailable)?;
     if canonical != bytes
         || evidence.schema_version != 1
         || evidence.agreement_commitment != hex::encode(agreement.agreement_commitment())
@@ -7744,7 +7843,7 @@ fn encode_lez_maker_lock_found_evidence(
         scanned_window,
         funding: funding.clone(),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)
+    .map_err(trace_observation_unavailable)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -7802,7 +7901,7 @@ fn encode_lez_maker_lock_absence_evidence(
         finalized_clock,
         scanned_window,
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)
+    .map_err(trace_observation_unavailable)
 }
 
 #[async_trait]
@@ -7928,7 +8027,7 @@ fn encode_bitcoin_maker_lock_found_evidence(
         maker_chain,
         core_evidence_hex: hex::encode(core_evidence),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)
+    .map_err(trace_observation_unavailable)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -7974,7 +8073,7 @@ fn encode_bitcoin_maker_lock_absence_evidence(
         stable_tip_height,
         stable_tip_median_time_unix_seconds,
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)
+    .map_err(trace_observation_unavailable)
 }
 
 #[async_trait]
@@ -8014,7 +8113,7 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
                 }
                 let chain_evidence = BitcoinCoreEvidenceV1::funding_ready(agreement, &observed)
                     .and_then(|evidence| evidence.encode())
-                    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+                    .map_err(trace_observation_unavailable)?;
                 let chain_evidence = encode_bitcoin_maker_lock_found_evidence(
                     agreement,
                     read_ordinal,
@@ -8108,7 +8207,7 @@ impl LezAssetFundingClassifierPort for LezBridgeAdapter<BridgeClient> {
     > {
         self.classify_finalized_btc_asset_funding_v2(binding, request_id, target, window)
             .await
-            .map_err(|_| ActorCommandError::ObservationUnavailable)
+            .map_err(trace_observation_unavailable)
     }
 }
 
@@ -8225,7 +8324,7 @@ async fn observe_peerless_finalized_lez_asset_funding(
         finalized_clock,
         funding,
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    .map_err(trace_observation_unavailable)?;
     Ok(ActorFundingObservation::Ready {
         chain: Chain::Lez,
         transaction_id: transaction_id.into_boxed_str(),
@@ -8256,7 +8355,7 @@ async fn observe_finalized_lez_funding(
     let presence = client
         .classify_finalized_witnessed_funding(request)
         .await
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
     let FinalizedWitnessedFundingPresence::Found {
         finalized_clock,
         scanned_window,
@@ -8318,7 +8417,7 @@ fn encode_finalized_lez_funding_evidence(
         scanned_window,
         funding: funding.clone(),
     })
-    .map_err(|_| ActorCommandError::ObservationUnavailable)?;
+    .map_err(trace_observation_unavailable)?;
     decode_finalized_lez_funding_evidence(config, agreement, &encoded)?;
     Ok(encoded)
 }
@@ -8330,12 +8429,9 @@ fn decode_finalized_lez_funding_evidence(
 ) -> Result<FinalizedLezFundingEvidenceV2, ActorCommandError> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
     let evidence = FinalizedLezFundingEvidenceV2::deserialize(&mut deserializer)
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    deserializer
-        .end()
-        .map_err(|_| ActorCommandError::ObservationUnavailable)?;
-    let canonical =
-        serde_json::to_vec(&evidence).map_err(|_| ActorCommandError::ObservationUnavailable)?;
+        .map_err(trace_observation_unavailable)?;
+    deserializer.end().map_err(trace_observation_unavailable)?;
+    let canonical = serde_json::to_vec(&evidence).map_err(trace_observation_unavailable)?;
     if canonical != bytes
         || evidence.schema_version != 2
         || evidence.agreement_commitment != hex::encode(agreement.agreement_commitment())

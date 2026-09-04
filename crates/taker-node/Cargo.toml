@@ -41,6 +41,8 @@ async-trait = "0.1.89"
 bytes = "1.12.1"
 btc-reference-actor = { version = "0.1.0", path = "../btc-reference-actor" }
 btc-role-preflight = { version = "0.1.0", path = "../btc-role-preflight" }
+lez-btc-role-lifecycle = { version = "0.1.0", path = "../btc-role-lifecycle" }
+lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
 lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
 clap = { version = "4.6.0", features = ["derive", "env"] }
 http-body-util = "0.1.3"

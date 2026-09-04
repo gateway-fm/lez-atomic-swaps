@@ -252,7 +252,70 @@ pub(super) fn register_btc_chat_methods(module: &mut RpcModule<MakerRpc>) -> any
             complete_btc_chat_v2(&request, &context)
         },
     )?;
+    super::btc_lifecycle::register_btc_lifecycle_methods(module)?;
     Ok(())
+}
+
+/// Which authority vouches for the Maker contribution of a reservation: the
+/// Node-owned per-reservation role root, or the legacy single static root.
+enum MakerContributionAuthority<'a> {
+    Reservation(&'a BtcMakerLifecycle),
+    Legacy(&'a BtcMakerRoleAgreementAuthority),
+}
+
+impl MakerContributionAuthority<'_> {
+    fn resolve(context: &MakerRpc) -> RpcResult<MakerContributionAuthority<'_>> {
+        if let Some(lifecycle) = context.btc_lifecycle.as_deref() {
+            return Ok(MakerContributionAuthority::Reservation(lifecycle));
+        }
+        context
+            .btc_role_agreement_authority
+            .as_deref()
+            .map(MakerContributionAuthority::Legacy)
+            .ok_or_else(|| invalid_request("maker BTC role agreement authority is unavailable"))
+    }
+
+    fn matches_maker_contribution(&self, reservation_id: &RequestId, wire: &[u8]) -> bool {
+        match self {
+            Self::Reservation(lifecycle) => lifecycle
+                .contribution_wire(reservation_id)
+                .is_some_and(|known| known == wire),
+            Self::Legacy(authority) => authority.matches_maker_contribution(wire),
+        }
+    }
+
+    fn validate_draft(
+        &self,
+        reservation_id: &RequestId,
+        draft: &BtcAgreementDraftV1,
+    ) -> anyhow::Result<()> {
+        match self {
+            Self::Reservation(lifecycle) => lifecycle.validate_draft(reservation_id, draft),
+            Self::Legacy(_) => Ok(()),
+        }
+    }
+
+    fn bind(
+        &self,
+        reservation_id: &RequestId,
+        taker_contribution_wire: &[u8],
+        final_agreement_wire: &[u8],
+        accepted_at_unix_seconds: u64,
+    ) -> anyhow::Result<u64> {
+        match self {
+            Self::Reservation(lifecycle) => lifecycle.bind(
+                reservation_id,
+                taker_contribution_wire,
+                final_agreement_wire,
+                accepted_at_unix_seconds,
+            ),
+            Self::Legacy(authority) => authority.bind(
+                taker_contribution_wire,
+                final_agreement_wire,
+                accepted_at_unix_seconds,
+            ),
+        }
+    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -270,10 +333,7 @@ fn propose_btc_chat_v2(
         .btc_chat_signing_key
         .as_ref()
         .ok_or_else(|| invalid_request("maker BTC Chat signer is unavailable"))?;
-    let role_authority = context
-        .btc_role_agreement_authority
-        .as_ref()
-        .ok_or_else(|| invalid_request("maker BTC role agreement authority is unavailable"))?;
+    let role_authority = MakerContributionAuthority::resolve(context)?;
     let authenticated = delivery
         .authenticate_envelope(&request.signed_offer_envelope)
         .map_err(|error| invalid_request(error.to_string()))?;
@@ -293,7 +353,9 @@ fn propose_btc_chat_v2(
         .map_err(invalid_request)?;
     let contributions = BtcRoleContributionPairV1::new(maker_contribution, taker_contribution)
         .map_err(invalid_request)?;
-    if !role_authority.matches_maker_contribution(&request.maker_contribution_wire) {
+    if !role_authority
+        .matches_maker_contribution(&request.reservation_id, &request.maker_contribution_wire)
+    {
         return Err(invalid_request(
             "supplied Maker contribution differs from local role authority",
         ));
@@ -320,6 +382,9 @@ fn propose_btc_chat_v2(
             "unsigned BTC draft is not bound to the offer and signed role contributions",
         ));
     }
+    role_authority
+        .validate_draft(&request.reservation_id, &draft)
+        .map_err(|error| invalid_request(format!("draft differs from the reservation: {error}")))?;
     let agreement_commitment = draft.commitment();
     let keypair = Keypair::from_secret_key(&Secp256k1::signing_only(), signing_key);
     let signature = Secp256k1::signing_only()
@@ -393,10 +458,7 @@ fn complete_btc_chat_v2(
         ));
     }
     let now_unix_seconds = trusted_now_unix_seconds()?;
-    let role_authority = context
-        .btc_role_agreement_authority
-        .as_ref()
-        .ok_or_else(|| invalid_request("maker BTC role agreement authority is unavailable"))?;
+    let role_authority = MakerContributionAuthority::resolve(context)?;
     let agreement =
         BtcAgreementV1::from_wire(&request.final_agreement_wire).map_err(invalid_request)?;
     let initial = agreement.coordinator().clone();
@@ -413,7 +475,7 @@ fn complete_btc_chat_v2(
             invalid_request("BTC Chat v2 completion requires signed role contributions")
         })?;
         if negotiation.reservation_id() != &request.reservation_id
-            || !role_authority.matches_maker_contribution(maker_wire)
+            || !role_authority.matches_maker_contribution(&request.reservation_id, maker_wire)
         {
             return Err(invalid_request(
                 "BTC Chat completion changed the local contribution or reservation",
@@ -423,6 +485,7 @@ fn complete_btc_chat_v2(
     };
     let binding_accepted_at_unix_seconds = role_authority
         .bind(
+            &request.reservation_id,
             &taker_contribution_wire,
             &request.final_agreement_wire,
             now_unix_seconds,
@@ -457,6 +520,12 @@ fn complete_btc_chat_v2(
             &initial,
         )
         .map_err(application_store_error)?;
+    // The lot is bound to one swap: it leaves Delivery discovery now rather
+    // than at the next health sample. A Taker retrying its acceptance replays
+    // from the store and never needs the offer rediscovered.
+    if let Some(delivery) = &context.delivery {
+        let _ = delivery.withdraw(&request.offer_id);
+    }
     Ok(BtcChatCompleteResponseV2 {
         schema_version: 2,
         offer_revision: commit.offer_revision(),
@@ -677,6 +746,12 @@ fn complete_btc_chat(
             now_unix_seconds,
         )
         .map_err(application_store_error)?;
+    // The lot is bound to one swap: it leaves Delivery discovery now rather
+    // than at the next health sample. A Taker retrying its acceptance replays
+    // from the store and never needs the offer rediscovered.
+    if let Some(delivery) = &context.delivery {
+        let _ = delivery.withdraw(&request.offer_id);
+    }
     Ok(BtcChatCompleteResponseV1 {
         schema_version: 1,
         offer_revision: commit.offer_revision(),

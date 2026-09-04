@@ -48,12 +48,10 @@ use zec_reference_actor::{
 #[cfg(feature = "pair-zec")]
 #[path = "support/taker_accept.rs"]
 mod taker_accept;
-#[path = "support/taker_accept_btc.rs"]
-mod taker_accept_btc;
 #[cfg(feature = "pair-xmr")]
 #[path = "support/taker_accept_xmr.rs"]
 mod taker_accept_xmr;
-use taker_accept_btc::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
+use lez_taker_node::btc_taker_accept::{BtcTakeInput, load_btc_taker_actor_from_receipt, take_btc};
 #[cfg(feature = "pair-xmr")]
 use taker_accept_xmr::{
     XmrEffectTakeInput, XmrTakeInput, XmrTakerEffectReceiptSelector, XmrTakerReceiptSelector,

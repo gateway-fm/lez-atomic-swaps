@@ -35,6 +35,5 @@ public:
 
 private:
     LocalJsonRpcClient rpc_;
-    LocalJsonRpcClient demoRpc_;
     std::unique_ptr<LogosChatBridge> chat_;
 };

@@ -6,24 +6,16 @@ compile_error!("lez-adaptor-role-runner requires Unix file-permission semantics"
 use std::{fmt, io, path::PathBuf};
 
 use clap::{Parser, Subcommand};
-use lez_adaptor_signature::{
-    FreshAdaptorNonce, PersistedAdaptorSigningMaterial, adapt_presignature,
-    aggregate_adaptor_presignature, extract_adaptor_secret, sign_persisted_adaptor_partial,
-    verify_adaptor_partial_signature, verify_final_signature, verify_nonce_commitment,
-};
-use lez_swap_store::{
-    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionSnapshot, SecretNonceBytes,
-    SqliteAdaptorSessionJournal,
-};
+use lez_adaptor_signature::{adapt_presignature, extract_adaptor_secret, verify_final_signature};
 use subtle::ConstantTimeEq as _;
 use thiserror::Error;
 
+mod ceremony;
 mod files;
 mod protocol;
 
-use protocol::PacketKind;
-pub use protocol::{Role, ValidatedSession};
+pub use ceremony::CeremonySeat;
+pub use protocol::{PacketKind, Role, ValidatedSession};
 
 /// One phase performed by one fresh role process.
 #[derive(Clone, Debug, Subcommand)]
@@ -140,92 +132,69 @@ impl fmt::Debug for Cli {
 /// packets, invalid cryptographic material, or a journal transition failure.
 pub fn execute(cli: &Cli) -> Result<(), RunnerError> {
     let session = ValidatedSession::load(&cli.session)?;
-    let identity = session.identity(cli.role);
-    let mut journal = SqliteAdaptorSessionJournal::open(&cli.journal)?;
+    let mut seat = CeremonySeat::open(&cli.journal, session, cli.role)?;
     match &cli.action {
         Action::Reserve {
             secret_key_file,
             output,
-        } => reserve(
-            &mut journal,
-            &identity,
-            &session,
-            cli.role,
-            secret_key_file,
+        } => files::write_public_new(
             output,
+            &seat.reserve_with(|| files::read_secret_scalar(secret_key_file))?,
         ),
-        Action::AcceptCommitment { input } => {
-            ensure_identity(&journal, &identity)?;
-            let peer_commitment =
-                protocol::read_peer_packet(input, PacketKind::NonceCommitment, cli.role, &session)?;
-            let _ = journal
-                .record_peer_commitment(&identity, AdaptorNonceCommitment::new(peer_commitment))?;
-            Ok(())
-        }
-        Action::RevealNonce { output } => {
-            ensure_identity(&journal, &identity)?;
-            let public_nonce = journal.reveal_own_public_nonce(&identity)?;
-            protocol::write_packet(
-                output,
-                PacketKind::PublicNonce,
-                cli.role,
-                &session,
-                *public_nonce.bytes(),
-            )
-        }
+        Action::AcceptCommitment { input } => seat.accept_commitment(&files::read_public(input)?),
+        Action::RevealNonce { output } => files::write_public_new(output, &seat.reveal_nonce()?),
         Action::AcceptNonceSign {
             input,
             secret_key_file,
             output,
-        } => accept_nonce_and_sign(
-            &mut journal,
-            &identity,
-            &session,
-            cli.role,
-            input,
-            secret_key_file,
-            output,
-        ),
+        } => {
+            let packet = files::read_public(input)?;
+            let secret_key = files::read_secret_scalar(secret_key_file)?;
+            files::write_public_new(output, &seat.accept_nonce_sign(&packet, &secret_key)?)
+        }
         Action::ReplayPartial { output } => {
-            let snapshot = required_snapshot(&journal, &identity)?;
-            let partial = snapshot
-                .own_partial()
-                .ok_or(RunnerError::PartialUnavailable)?;
-            protocol::write_packet(
-                output,
-                PacketKind::PartialSignature,
-                cli.role,
-                &session,
-                *partial.bytes(),
-            )
+            files::write_public_new(output, &seat.replay_partial()?)
         }
-        Action::AcceptPeerPartial { input, output } => {
-            accept_peer_partial(&mut journal, &identity, &session, cli.role, input, output)
-        }
+        Action::AcceptPeerPartial { input, output } => files::write_public_new(
+            output,
+            &seat.accept_peer_partial(&files::read_public(input)?)?,
+        ),
         Action::AdaptPresignature {
             input,
             adaptor_secret_file,
             output,
-        } => adapt_durable_presignature(
-            &journal,
-            &identity,
-            &session,
-            input,
-            adaptor_secret_file,
-            output,
-        ),
+        } => {
+            let presignature = read_durable_presignature(&seat, &files::read_public(input)?)?;
+            let adaptor_secret = files::read_secret_scalar(adaptor_secret_file)?;
+            let final_signature =
+                adapt_presignature(seat.session().context(), presignature, adaptor_secret)
+                    .map_err(|_| RunnerError::CryptographicValidation)?;
+            files::write_public_new(
+                output,
+                &protocol::aggregate_packet_bytes(
+                    PacketKind::FinalSignature,
+                    seat.session(),
+                    final_signature,
+                )?,
+            )
+        }
         Action::ExtractAdaptorSecret {
             presignature,
             final_signature,
             output,
-        } => extract_durable_adaptor_secret(
-            &journal,
-            &identity,
-            &session,
-            presignature,
-            final_signature,
-            output,
-        ),
+        } => {
+            let presignature =
+                read_durable_presignature(&seat, &files::read_public(presignature)?)?;
+            let final_signature = protocol::read_aggregate_packet_bytes(
+                &files::read_public(final_signature)?,
+                PacketKind::FinalSignature,
+                seat.session(),
+            )?;
+            let extracted =
+                extract_adaptor_secret(seat.session().context(), presignature, final_signature)
+                    .map_err(|_| RunnerError::CryptographicValidation)?;
+            files::write_secret_scalar_new(output, &extracted)
+        }
     }
 }
 
@@ -251,16 +220,16 @@ pub fn accept_published_peer_partial_and_adapt(
     adaptor_secret: zeroize::Zeroizing<[u8; 32]>,
     output: &std::path::Path,
 ) -> Result<(), RunnerError> {
-    let identity = session.identity(role);
-    let mut journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
-    let presignature =
-        verify_and_record_peer_partial(&mut journal, &identity, session, role, peer_partial)?;
+    let mut seat = CeremonySeat::open_existing(journal_path, session.clone(), role)?;
+    let presignature = seat.verify_and_record_peer_partial(peer_partial)?;
     let final_signature = adapt_presignature(session.context(), presignature, adaptor_secret)
         .map_err(|_| RunnerError::CryptographicValidation)?;
-    protocol::write_aggregate_packet(output, PacketKind::FinalSignature, session, final_signature)
+    files::write_public_new(
+        output,
+        &protocol::aggregate_packet_bytes(PacketKind::FinalSignature, session, final_signature)?,
+    )
 }
 
-/// Opaque adaptor scalar whose supplied bytes were verified against a durable transcript.
 #[must_use = "consume the verified scalar explicitly when reconstructing the shared spend key"]
 pub struct VerifiedAdaptorSecret {
     bytes: zeroize::Zeroizing<[u8; 32]>,
@@ -299,24 +268,16 @@ pub fn extract_verified_adaptor_secret(
     role: Role,
     final_signature: [u8; 64],
 ) -> Result<VerifiedAdaptorSecret, RunnerError> {
-    let identity = session.identity(role);
-    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
-    let presignature = required_snapshot(&journal, &identity)?
-        .presignature()
-        .ok_or(RunnerError::PresignatureUnavailable)?;
+    let presignature =
+        CeremonySeat::open_existing(journal_path, session.clone(), role)?.presignature()?;
     verify_final_signature(session.context(), final_signature)
         .map_err(|_| RunnerError::CryptographicValidation)?;
-    let extracted =
-        extract_adaptor_secret(session.context(), *presignature.bytes(), final_signature)
-            .map_err(|_| RunnerError::CryptographicValidation)?;
+    let extracted = extract_adaptor_secret(session.context(), presignature, final_signature)
+        .map_err(|_| RunnerError::CryptographicValidation)?;
     Ok(VerifiedAdaptorSecret { bytes: extracted })
 }
 
-/// Verifies one owner-private extracted scalar against the exact durable transcript.
-///
-/// The role-fixed existing journal supplies the aggregate presignature. The final
-/// signature is cryptographically verified under the supplied session, extraction
-/// is recomputed, and the owner-private file is compared in constant time with the
+/// Verifies an externally supplied adaptor scalar file against the
 /// recomputed canonical secp256k1 big-endian scalar. Only the recomputed value is
 /// returned, wrapped in an opaque zeroizing type.
 ///
@@ -349,12 +310,10 @@ pub fn read_final_signature_packet(
     path: &std::path::Path,
     session: &ValidatedSession,
 ) -> Result<[u8; 64], RunnerError> {
-    protocol::read_aggregate_packet(path, PacketKind::FinalSignature, session)
+    read_final_signature_packet_bytes(&files::read_public(path)?, session)
 }
 
-/// Reads canonical aggregate final-signature bytes already pinned by a caller.
-///
-/// This is the descriptor-native counterpart to
+/// Descriptor-native variant of
 /// [`read_final_signature_packet`]. It preserves the same canonical packet,
 /// kind, session, role-neutral sender, and context-binding checks without
 /// reopening a path.
@@ -370,10 +329,7 @@ pub fn read_final_signature_packet_bytes(
     protocol::read_aggregate_packet_bytes(bytes, PacketKind::FinalSignature, session)
 }
 
-/// Converts an authenticated on-chain aggregate signature into the exact
-/// canonical packet consumed by the existing extraction action.
-///
-/// The role journal must already contain the related durable presignature. The
+/// Records a final signature observed on chain next to the role's journal. The
 /// function verifies the final signature, extracts and point-checks the adaptor
 /// scalar in memory, immediately drops it, and writes only the public signature
 /// packet. It never creates a plaintext scalar handoff.
@@ -389,256 +345,26 @@ pub fn write_observed_final_signature_packet(
     final_signature: [u8; 64],
     output: &std::path::Path,
 ) -> Result<(), RunnerError> {
-    let identity = session.identity(role);
-    let journal = SqliteAdaptorSessionJournal::open_existing(journal_path)?;
-    let presignature = required_snapshot(&journal, &identity)?
-        .presignature()
-        .ok_or(RunnerError::PresignatureUnavailable)?;
+    let presignature =
+        CeremonySeat::open_existing(journal_path, session.clone(), role)?.presignature()?;
     verify_final_signature(session.context(), final_signature)
         .map_err(|_| RunnerError::CryptographicValidation)?;
-    let extracted =
-        extract_adaptor_secret(session.context(), *presignature.bytes(), final_signature)
-            .map_err(|_| RunnerError::CryptographicValidation)?;
-    drop(extracted);
-    protocol::write_aggregate_packet(output, PacketKind::FinalSignature, session, final_signature)
-}
-
-fn reserve(
-    journal: &mut SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-    session: &ValidatedSession,
-    role: Role,
-    secret_key_file: &std::path::Path,
-    output: &std::path::Path,
-) -> Result<(), RunnerError> {
-    if let Some(snapshot) = journal.load(identity.session_id())? {
-        validate_snapshot_identity(&snapshot, identity)?;
-        return protocol::write_packet(
-            output,
-            PacketKind::NonceCommitment,
-            role,
-            session,
-            *snapshot.own_commitment().bytes(),
-        );
-    }
-    let secret_key = files::read_secret_scalar(secret_key_file)?;
-    let fresh = FreshAdaptorNonce::generate(session.context(), role.sdk(), *secret_key)
-        .map_err(|_| RunnerError::CryptographicValidation)?;
-    if fresh.context_binding() != session.context_binding() {
-        return Err(RunnerError::CryptographicValidation);
-    }
-    let commit = journal.reserve(AdaptorSessionReservation::new(
-        identity.clone(),
-        SecretNonceBytes::new(*fresh.secret_nonce()),
-        AdaptorPublicNonce::new(fresh.public_nonce()),
-        AdaptorNonceCommitment::new(fresh.commitment()),
-    ))?;
-    protocol::write_packet(
-        output,
-        PacketKind::NonceCommitment,
-        role,
-        session,
-        *commit.own_commitment().bytes(),
-    )
-}
-
-fn accept_nonce_and_sign(
-    journal: &mut SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-    session: &ValidatedSession,
-    role: Role,
-    input: &std::path::Path,
-    secret_key_file: &std::path::Path,
-    output: &std::path::Path,
-) -> Result<(), RunnerError> {
-    let peer_public_nonce =
-        protocol::read_peer_packet(input, PacketKind::PublicNonce, role, session)?;
-    let before = required_snapshot(journal, identity)?;
-    let peer_commitment = before
-        .peer_commitment()
-        .ok_or(RunnerError::PeerCommitmentUnavailable)?;
-    verify_nonce_commitment(
-        session.context(),
-        role.opposite().sdk(),
-        *peer_commitment.bytes(),
-        peer_public_nonce,
-    )
-    .map_err(|_| RunnerError::CryptographicValidation)?;
-    let _ = journal
-        .record_verified_peer_public_nonce(identity, AdaptorPublicNonce::new(peer_public_nonce))?;
-
-    let ready = required_snapshot(journal, identity)?;
-    let own_commitment = ready.own_commitment();
-    let peer_commitment = ready
-        .peer_commitment()
-        .ok_or(RunnerError::PeerCommitmentUnavailable)?;
-    let secret_key = files::read_secret_scalar(secret_key_file)?;
-    let signed = journal.sign_and_persist_partial(identity, |material| {
-        let persisted = PersistedAdaptorSigningMaterial::new(
-            *material.identity().signing_domain(),
-            material.secret_nonce(),
-            *material.own_public_nonce().bytes(),
-            *own_commitment.bytes(),
-            *peer_commitment.bytes(),
-            *material.peer_public_nonce().bytes(),
-        );
-        sign_persisted_adaptor_partial(session.context(), role.sdk(), *secret_key, persisted)
-            .map(AdaptorPartialSignature::new)
-            .map_err(|_| ())
-    })?;
-    protocol::write_packet(
-        output,
-        PacketKind::PartialSignature,
-        role,
-        session,
-        *signed.partial().bytes(),
-    )
-}
-
-fn accept_peer_partial(
-    journal: &mut SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-    session: &ValidatedSession,
-    role: Role,
-    input: &std::path::Path,
-    output: &std::path::Path,
-) -> Result<(), RunnerError> {
-    let peer_partial =
-        protocol::read_peer_packet(input, PacketKind::PartialSignature, role, session)?;
-    let presignature =
-        verify_and_record_peer_partial(journal, identity, session, role, peer_partial)?;
-    protocol::write_aggregate_packet(output, PacketKind::Presignature, session, presignature)
-}
-
-fn verify_and_record_peer_partial(
-    journal: &mut SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-    session: &ValidatedSession,
-    role: Role,
-    peer_partial: [u8; 32],
-) -> Result<[u8; 65], RunnerError> {
-    let snapshot = required_snapshot(journal, identity)?;
-    let own_public_nonce = snapshot
-        .own_public_nonce()
-        .ok_or(RunnerError::PublicNonceUnavailable)?;
-    let peer_public_nonce = snapshot
-        .peer_public_nonce()
-        .ok_or(RunnerError::PublicNonceUnavailable)?;
-    let own_partial = snapshot
-        .own_partial()
-        .ok_or(RunnerError::PartialUnavailable)?;
-    let (maker_public_nonce, taker_public_nonce, maker_partial, taker_partial) = match role {
-        Role::Maker => (
-            *own_public_nonce.bytes(),
-            *peer_public_nonce.bytes(),
-            *own_partial.bytes(),
-            peer_partial,
-        ),
-        Role::Taker => (
-            *peer_public_nonce.bytes(),
-            *own_public_nonce.bytes(),
-            peer_partial,
-            *own_partial.bytes(),
-        ),
-    };
-    verify_adaptor_partial_signature(
-        session.context(),
-        role.opposite().sdk(),
-        maker_public_nonce,
-        taker_public_nonce,
-        peer_partial,
-    )
-    .map_err(|_| RunnerError::CryptographicValidation)?;
-    let presignature = aggregate_adaptor_presignature(
-        session.context(),
-        maker_public_nonce,
-        taker_public_nonce,
-        maker_partial,
-        taker_partial,
-    )
-    .map_err(|_| RunnerError::CryptographicValidation)?;
-    let _ = journal
-        .record_verified_peer_partial(identity, AdaptorPartialSignature::new(peer_partial))?;
-    let _ =
-        journal.record_verified_presignature(identity, AdaptorPresignature::new(presignature))?;
-    Ok(presignature)
-}
-
-fn adapt_durable_presignature(
-    journal: &SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-    session: &ValidatedSession,
-    input: &std::path::Path,
-    adaptor_secret_file: &std::path::Path,
-    output: &std::path::Path,
-) -> Result<(), RunnerError> {
-    let presignature = read_durable_presignature(journal, identity, session, input)?;
-    let adaptor_secret = files::read_secret_scalar(adaptor_secret_file)?;
-    let final_signature = adapt_presignature(session.context(), presignature, adaptor_secret)
-        .map_err(|_| RunnerError::CryptographicValidation)?;
-    protocol::write_aggregate_packet(output, PacketKind::FinalSignature, session, final_signature)
-}
-
-fn extract_durable_adaptor_secret(
-    journal: &SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-    session: &ValidatedSession,
-    presignature_path: &std::path::Path,
-    final_signature_path: &std::path::Path,
-    output: &std::path::Path,
-) -> Result<(), RunnerError> {
-    let presignature = read_durable_presignature(journal, identity, session, presignature_path)?;
-    let final_signature =
-        protocol::read_aggregate_packet(final_signature_path, PacketKind::FinalSignature, session)?;
     let extracted = extract_adaptor_secret(session.context(), presignature, final_signature)
         .map_err(|_| RunnerError::CryptographicValidation)?;
-    files::write_secret_scalar_new(output, &extracted)
+    drop(extracted);
+    files::write_public_new(
+        output,
+        &protocol::aggregate_packet_bytes(PacketKind::FinalSignature, session, final_signature)?,
+    )
 }
 
-fn read_durable_presignature(
-    journal: &SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-    session: &ValidatedSession,
-    input: &std::path::Path,
-) -> Result<[u8; 65], RunnerError> {
-    let supplied = protocol::read_aggregate_packet(input, PacketKind::Presignature, session)?;
-    let durable = required_snapshot(journal, identity)?
-        .presignature()
-        .ok_or(RunnerError::PresignatureUnavailable)?;
-    if supplied != *durable.bytes() {
+fn read_durable_presignature(seat: &CeremonySeat, packet: &[u8]) -> Result<[u8; 65], RunnerError> {
+    let supplied =
+        protocol::read_aggregate_packet_bytes(packet, PacketKind::Presignature, seat.session())?;
+    if supplied != seat.presignature()? {
         return Err(RunnerError::PublicPacketCrosswire);
     }
     Ok(supplied)
-}
-
-fn ensure_identity(
-    journal: &SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-) -> Result<(), RunnerError> {
-    let _ = required_snapshot(journal, identity)?;
-    Ok(())
-}
-
-fn required_snapshot(
-    journal: &SqliteAdaptorSessionJournal,
-    identity: &AdaptorSessionIdentity,
-) -> Result<AdaptorSessionSnapshot, RunnerError> {
-    let snapshot = journal
-        .load(identity.session_id())?
-        .ok_or(RunnerError::SessionUnavailable)?;
-    validate_snapshot_identity(&snapshot, identity)?;
-    Ok(snapshot)
-}
-
-fn validate_snapshot_identity(
-    snapshot: &AdaptorSessionSnapshot,
-    identity: &AdaptorSessionIdentity,
-) -> Result<(), RunnerError> {
-    if snapshot.identity() == identity {
-        Ok(())
-    } else {
-        Err(RunnerError::JournalRoleOrSessionCrosswire)
-    }
 }
 
 /// Fail-closed runner error with no secret byte payloads.

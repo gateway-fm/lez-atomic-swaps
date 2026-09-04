@@ -28,9 +28,9 @@ fn existing_registry_and_named_source_build_one_static_prepared_zec_entry() {
     let fixture = Fixture::new();
     let context = load_taker_service_context(&fixture.config).unwrap();
     let initiation = context.initiation().expect("configured initiation");
-    assert_eq!(initiation.prepared_zec_count(), 1);
+    assert_eq!(initiation.prepared_count(), 1);
     let offer = MakerOfferId::new("m6-zec-offer-001").unwrap();
-    let prepared = initiation.prepared_zec_for_offer(&offer).unwrap();
+    let prepared = initiation.prepared_for_offer(&offer).unwrap();
     assert_eq!(prepared.swap_id().as_str(), "m6-zec-swap-001");
     assert_eq!(prepared.offer_id(), &offer);
     assert_eq!(prepared.reservation_id().as_str(), "m6-zec-reservation-001");
@@ -44,7 +44,7 @@ fn existing_registry_and_named_source_build_one_static_prepared_zec_entry() {
     assert_eq!(prepared.facts().lez_units(), 84);
     assert_eq!(
         format!("{:?}", prepared.execution()),
-        "PreparedZecExecutionV1 { configured: true, .. }"
+        "PreparedExecutionV1 { configured: true, .. }"
     );
 
     let debug = format!("{context:?}");
@@ -69,7 +69,7 @@ fn prepared_zec_entry_derives_either_direction_from_the_authenticated_offer() {
         let prepared = context
             .initiation()
             .unwrap()
-            .prepared_zec_for_offer(&MakerOfferId::new("m6-zec-offer-001").unwrap())
+            .prepared_for_offer(&MakerOfferId::new("m6-zec-offer-001").unwrap())
             .unwrap();
 
         assert_eq!(prepared.facts().route().pair(), Pair::Zcash);
