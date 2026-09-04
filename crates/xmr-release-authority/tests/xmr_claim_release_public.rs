@@ -1380,7 +1380,7 @@ fn assert_process_output_redacted(output: &std::process::Output, private_root: &
 }
 
 #[tokio::test]
-#[ignore = "run through scripts/test-m4-xmr-release-worker-process.sh"]
+#[ignore = "needs a live Monero release worker process; run by hand"]
 #[allow(
     clippy::too_many_lines,
     reason = "one ignored process test keeps typed issuance and two fresh processes visibly joined"

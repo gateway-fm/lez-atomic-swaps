@@ -343,7 +343,7 @@ for both exact direction sequences and the conditional atomicity argument.
 | Public LEZ endpoint/faucet | Not used | Future public LEZ remains separately configured, validated, and production-reviewed |
 
 The fully reproducible milestone path remains the private local Regtest/LEZ
-flow in [the M3 operator guide](m3-local-poc-operator-guide.md). Changing to
+flow in [ADR 0213](architecture/0213-nodes-own-the-btc-lifecycle.md). Changing to
 Testnet4 changes configuration, funding, confirmations, and external
 availability; it does not change protocol state, agreement commitments,
 atomicity rules, or chain effect construction.
