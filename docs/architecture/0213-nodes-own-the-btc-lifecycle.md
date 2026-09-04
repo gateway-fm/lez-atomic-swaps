@@ -177,6 +177,43 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
   read that directory, `verify-market.py` exercises the Node market.
   `swap-through-ui.sh` exports the swap it completed. Done 2026-09-04.
 
+## Component view after stage 1
+
+```mermaid
+flowchart LR
+    subgraph UI["Basecamp (basecamp-ui)"]
+        MakerDesk["LEZ / BTC Maker desk"]
+        TakerDesk["LEZ / BTC Taker desk"]
+    end
+    subgraph MakerNode["maker-node"]
+        Maker["lez-maker-node\noffers · Chat server · supervisor"]
+        MakerActor["lez-btc-maker-actor"]
+        MakerSidecar["LEZ sidecar (per swap)"]
+    end
+    subgraph TakerNode["taker-node"]
+        Taker["lez-taker-node\ndiscovery · take · lock · claim · observer"]
+        TakerActor["lez-btc-taker-actor (in-process)"]
+        TakerSidecar["LEZ sidecar (per swap)"]
+    end
+    Delivery["Delivery directory\nsigned offers"]
+    Chat["Maker Chat socket\nreserve · ceremony · propose/complete"]
+    Core["bitcoin-core"]
+    Lez["sequencer + indexer"]
+
+    MakerDesk -->|"owner socket"| Maker
+    TakerDesk -->|"owner socket"| Taker
+    Maker --> Delivery --> Taker
+    Taker --> Chat --> Maker
+    Maker --> MakerActor
+    Maker --> MakerSidecar
+    Taker --> TakerActor
+    Taker --> TakerSidecar
+    MakerActor -->|"loopback"| Core
+    TakerActor -->|"loopback"| Core
+    MakerSidecar -->|"loopback"| Lez
+    TakerSidecar -->|"loopback"| Lez
+```
+
 ## Stage 2 — chain adapters
 
 S2.1 `ChainProfile` types and files; `gen-config.sh` renders from them.
