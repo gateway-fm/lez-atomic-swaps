@@ -618,8 +618,9 @@ async fn load_bound_action_actor(
             .map_err(|_| ActionError::DependencyUnavailable)
         };
         let before = load()?;
-        let held_lock = ActorHeldLock::acquire_for(before.swap_id(), before.state_db())
-            .map_err(|_| ActionError::DependencyUnavailable)?;
+        let held_lock =
+            ActorHeldLock::acquire_for_within(before.swap_id(), before.state_db(), LOCK_WAIT)
+                .map_err(|_| ActionError::DependencyUnavailable)?;
         let config = load()?;
         if before.custody_identity() != config.custody_identity() {
             return Err(ActionError::DependencyUnavailable);
@@ -1064,8 +1065,9 @@ async fn project_receipt_bound_swap(
             .map_err(|_| MonitoringError::DependencyUnavailable)
         };
         let before = load()?;
-        let held_lock = ActorHeldLock::acquire_for(before.swap_id(), before.state_db())
-            .map_err(|_| MonitoringError::DependencyUnavailable)?;
+        let held_lock =
+            ActorHeldLock::acquire_for_within(before.swap_id(), before.state_db(), LOCK_WAIT)
+                .map_err(|_| MonitoringError::DependencyUnavailable)?;
         let config = load()?;
         if before.custody_identity() != config.custody_identity() {
             return Err(MonitoringError::DependencyUnavailable);
@@ -1479,6 +1481,10 @@ async fn lock_swap(
 /// Phases in which the Taker's next drive only observes chains: before both
 /// legs are locked, and after its own revealing claim while the Maker's
 /// follow-up claim is awaited.
+/// How long an owner's request waits for the observer to release a swap's
+/// actor lock before it reports the dependency unavailable.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 const fn taker_observation_phase(phase: Phase) -> bool {
     matches!(
         phase,
@@ -1519,6 +1525,10 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
         let receipt = prepared.execution().receipt_output().to_path_buf();
         let actor_root = prepared.execution().actor_root().to_path_buf();
         let swap_id = prepared.swap_id().clone();
+        let admitted_refund = matches!(
+            lookup_admitted_action_for_swap(&initiation, &swap_id).await,
+            Ok(Some(admission)) if admission.action() == TakerFacadeActionV1::Refund
+        );
         let loaded = tokio::task::spawn_blocking(move || {
             let config = RouteActor::load_for_monitor(
                 Pair::Bitcoin,
@@ -1541,6 +1551,15 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
         let Ok(LifecycleStatus::Active { phase, .. }) = config.status().await else {
             continue;
         };
+        // An admitted refund is driven here until it lands. Its recover command
+        // only observes while the cross-chain cutoff or the Bitcoin maturity is
+        // still ahead, submits exactly once when both are met, then follows the
+        // confirmations; the owner's request admitted it, the Node finishes it.
+        if admitted_refund && !matches!(phase, Phase::Refunded | Phase::Completed) {
+            let _ = config.effect(TakerTerminalActionV1::Refund).await;
+            drop(held_lock);
+            continue;
+        }
         let claim_submitted =
             claim_submitted_marker(config.state_db()).is_some_and(|marker| marker.is_file());
         if taker_observation_phase(phase) || (phase == Phase::BothLegsLocked && claim_submitted) {
@@ -1844,7 +1863,7 @@ async fn execute_prepared_btc(
     let (route_actor, held_lock) = tokio::task::spawn_blocking(move || {
         let config = crate::btc_taker_accept::load_btc_taker_actor_from_receipt(&receipt)
             .map_err(|_| InitiationError::ExecutionUnavailable)?;
-        let held_lock = ActorHeldLock::acquire_for(&swap_id, config.state_db())
+        let held_lock = ActorHeldLock::acquire_for_within(&swap_id, config.state_db(), LOCK_WAIT)
             .map_err(|_| InitiationError::ExecutionUnavailable)?;
         Ok::<_, InitiationError>((RouteActor::Btc { config, swap_id }, held_lock))
     })

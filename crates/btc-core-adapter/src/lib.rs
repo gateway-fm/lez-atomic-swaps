@@ -657,8 +657,8 @@ pub enum CoreAdapterError<RpcError: StdError + 'static, StoreError: StdError + '
     /// Spending transaction differs from the exact signed agreement claim.
     #[error("observed spender is not the exact agreement claim")]
     ClaimTransactionMismatch,
-    /// Confirmed funding height differs from the countersigned recovery anchor.
-    #[error("observed funding height differs from the signed recovery anchor")]
+    /// Confirmed funding height lies below the countersigned recovery anchor.
+    #[error("observed funding height lies below the signed recovery anchor")]
     FundingAnchorMismatch,
     /// Spending transaction differs from the exact signed agreement refund.
     #[error("observed spender is not the exact agreement refund")]
@@ -1061,13 +1061,27 @@ where
             .and_then(|height| height.checked_sub(confirmations))
             .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
         let recovery = agreement.body().recovery_plan();
-        if funding_block_height != recovery.bitcoin_funding_anchor_height() {
+        // The signed anchor is the tip when the funding was planned; the lock is
+        // broadcast later and mined whenever the next block comes, so the
+        // funding can only confirm above the anchor. BIP-68 counts from the
+        // block that actually holds the funding, so a later confirmation only
+        // delays the refund and never brings it forward. Below the anchor is
+        // impossible for the planned transaction and stays a mismatch.
+        let anchor_height = recovery.bitcoin_funding_anchor_height();
+        if funding_block_height < anchor_height {
             return Err(CoreAdapterError::FundingAnchorMismatch);
         }
+        let csv_delay = recovery
+            .bitcoin_refund_height()
+            .checked_sub(anchor_height)
+            .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
+        let first_valid_block_height = funding_block_height
+            .checked_add(csv_delay)
+            .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
         Ok(RefundEligibility {
             stable_tip,
             funding_block_height,
-            first_valid_block_height: recovery.bitcoin_refund_height(),
+            first_valid_block_height,
         })
     }
 

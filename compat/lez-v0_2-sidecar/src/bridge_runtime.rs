@@ -1157,9 +1157,11 @@ impl BridgeRuntime {
                 else {
                     return Err(BridgeRuntimeError::Unavailable);
                 };
-                if custody_clock != finalized_clock {
-                    return Err(BridgeRuntimeError::MovingTip);
-                }
+                self.confirm_extends(
+                    ChainTip::new(finalized_clock.block_hash, finalized_clock.height),
+                    ChainTip::new(custody_clock.block_hash, custody_clock.height),
+                )
+                .await?;
                 effects.push(
                     lez_bridge_protocol::WitnessedAssetObservedPrepareEffectV2::new(
                         lez_bridge_protocol::WitnessedAssetPrepareStepV2::CreateCustodyAta,
@@ -1191,9 +1193,11 @@ impl BridgeRuntime {
         else {
             return Err(BridgeRuntimeError::Unavailable);
         };
-        if funding_clock != finalized_clock {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
+        self.confirm_extends(
+            ChainTip::new(finalized_clock.block_hash, finalized_clock.height),
+            ChainTip::new(funding_clock.block_hash, funding_clock.height),
+        )
+        .await?;
         effects.push(
             lez_bridge_protocol::WitnessedAssetObservedPrepareEffectV2::new(
                 lez_bridge_protocol::WitnessedAssetPrepareStepV2::Fund,
@@ -1445,13 +1449,9 @@ impl BridgeRuntime {
         } else {
             None
         };
-        let tip_after = self.read_tip().await?;
-        if tip_after != scan.tip
-            || snapshot
-                .as_ref()
-                .is_some_and(|(_, _, tip)| *tip != scan.tip)
-        {
-            return Err(BridgeRuntimeError::MovingTip);
+        let tip_after = self.confirm_tip_extends(scan.tip).await?;
+        if let Some((_, _, snapshot_tip)) = snapshot.as_ref() {
+            self.confirm_extends(scan.tip, *snapshot_tip).await?;
         }
         let missing_is_absent = !exact && scan.fully_covered;
         let initialization = match scan.initialization {
@@ -1574,13 +1574,9 @@ impl BridgeRuntime {
         } else {
             None
         };
-        let tip_after = self.read_tip().await?;
-        if tip_after != scan.tip
-            || snapshot
-                .as_ref()
-                .is_some_and(|(_, _, tip)| *tip != scan.tip)
-        {
-            return Err(BridgeRuntimeError::MovingTip);
+        let tip_after = self.confirm_tip_extends(scan.tip).await?;
+        if let Some((_, _, snapshot_tip)) = snapshot.as_ref() {
+            self.confirm_extends(scan.tip, *snapshot_tip).await?;
         }
         let missing_is_absent = !exact && scan.fully_covered;
         let initialization = match scan.initialization {
@@ -1679,7 +1675,8 @@ impl BridgeRuntime {
         let claim = match scan.claim {
             Some((found, preimage)) => {
                 let (metadata, custody, snapshot_tip) = self.read_snapshot(&request.terms).await?;
-                if snapshot_tip != scan.tip || metadata.status != EscrowState::Claimed {
+                self.confirm_extends(scan.tip, snapshot_tip).await?;
+                if metadata.status != EscrowState::Claimed {
                     return Err(BridgeRuntimeError::MovingTip);
                 }
                 RevealingClaimObservation::found(RevealingClaimFoundFacts::new(
@@ -1697,10 +1694,7 @@ impl BridgeRuntime {
             None if exact || scan.fully_covered => RevealingClaimObservation::Absent,
             None => RevealingClaimObservation::UnknownOrPending,
         };
-        let tip_after = self.read_tip().await?;
-        if tip_after != scan.tip {
-            return Err(BridgeRuntimeError::MovingTip);
-        }
+        let tip_after = self.confirm_tip_extends(scan.tip).await?;
         Ok(ObserveRevealingClaimResult::new(
             request.context.clone(),
             scan.tip,
@@ -2079,11 +2073,39 @@ impl BridgeRuntime {
             .into_iter()
             .skip(usize::from(anchor < start))
             .collect();
-        let tip_after = self.read_tip().await?;
-        if tip_after != tip {
+        let _later = self.confirm_tip_extends(tip).await?;
+        Ok((tip, blocks, tip.height >= declared_end))
+    }
+
+    /// Accepts a later view that merely extends the pinned one: the pinned block
+    /// is still the block at its height and the chain has not shortened. A
+    /// different block there is a moving tip. Slots are seconds apart on the
+    /// devnet, so a scan that outlives one slot must not fail for that alone.
+    async fn confirm_extends(
+        &self,
+        pinned: ChainTip,
+        later: ChainTip,
+    ) -> Result<(), BridgeRuntimeError> {
+        if later == pinned {
+            return Ok(());
+        }
+        if later.height <= pinned.height {
             return Err(BridgeRuntimeError::MovingTip);
         }
-        Ok((tip, blocks, tip.height >= declared_end))
+        let block = self.node.block_at(pinned.height).await?;
+        if block.header.block_id != pinned.height
+            || block.header.hash.0 != *pinned.block_hash.as_bytes()
+        {
+            return Err(BridgeRuntimeError::MovingTip);
+        }
+        Ok(())
+    }
+
+    /// Re-reads the tip and accepts it when it extends `pinned`; returns it.
+    async fn confirm_tip_extends(&self, pinned: ChainTip) -> Result<ChainTip, BridgeRuntimeError> {
+        let later = self.read_tip().await?;
+        self.confirm_extends(pinned, later).await?;
+        Ok(later)
     }
 
     async fn read_tip(&self) -> Result<ChainTip, BridgeRuntimeError> {

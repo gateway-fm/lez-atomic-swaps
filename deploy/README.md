@@ -177,16 +177,24 @@ self-hosted `lez-stack` runner).
 The refund scenarios need the `fast` timing profile:
 
 ```sh
-LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # 6 CSV blocks; 600/900/1200 s deadlines, 60 s margin
+LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # 6 CSV blocks; 600/900/1200 s deadlines, 60 s margin; 120-block LEZ window
 docker compose --env-file runtime/runtime.env up -d --no-deps --force-recreate maker-node taker-node
 ./scripts/node-e2e.py taker-refund
 ```
 
 `local` (the default) keeps network-like deadlines: 144 CSV blocks, a 30-minute
-Maker cutoff, 60- and 120-minute refund bounds. The profile is configuration
-only (`LEZ_BTC_*` in `runtime.env`, rendered into each Node's `btc-role.json`);
-the protocol accepts any values with a positive margin and `later >= earlier +
-margin`, and Bitcoin refund maturity is a block count, so regtest mines past it.
+Maker cutoff, 60- and 120-minute refund bounds, a 360-block LEZ discovery
+window. The profile is configuration only (`LEZ_BTC_*` and
+`LEZ_LEZ_DISCOVERY_MAX_BLOCKS` in `runtime.env`, rendered into each Node's
+`btc-role.json`); the protocol accepts any values with a positive margin and
+`later >= earlier + margin`, and Bitcoin refund maturity is a block count, so
+regtest mines past it.
+
+The LEZ discovery window sets how soon a refund can start when the Maker never
+locks: the Taker asserts the Maker lock's absence only once every block of the
+window is finalized, so a window of 120 blocks at the devnet's 10-second slots
+means the refund becomes eligible about 20 minutes after the take. The window
+must cover the Maker cutoff (60 blocks on the fast profile) with room to spare.
 
 ## Settlement chains
 

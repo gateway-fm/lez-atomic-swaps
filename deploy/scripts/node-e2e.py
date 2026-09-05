@@ -196,11 +196,11 @@ def take(offer_id: str, stamp: str, suffix: str = "") -> tuple[str, dict]:
 def taker_view(swap_id: str) -> dict:
     # The monitor answers `taker_monitor_unavailable` while the observer holds
     # the actor's state store; a few retries separate that from a real outage.
-    for attempt in range(6):
+    for attempt in range(12):
         reply = rpc("taker", "taker_swap_monitor_v1", {"schema_version": 1, "swap_id": swap_id})
         if "result" in reply:
             return reply["result"].get("swap", reply["result"])
-        if (reply["error"].get("data") or {}).get("category") != "taker_monitor_unavailable" or attempt == 5:
+        if (reply["error"].get("data") or {}).get("category") != "taker_monitor_unavailable" or attempt == 11:
             raise Failure(f"taker taker_swap_monitor_v1 failed: {json.dumps(reply['error'])[:300]}")
         time.sleep(5)
     raise Failure("unreachable")
@@ -220,7 +220,17 @@ def maker_phase(swap_id: str) -> str:
 
 
 def lock(swap_id: str) -> str:
-    result = call("taker", "taker_swap_lock_v1", {"schema_version": 1, "swap_id": swap_id}, timeout=120)
+    # Locking plans and broadcasts through Bitcoin Core and the swap's sidecar; a
+    # transient dependency outage (-32010) is retried, the request is idempotent.
+    for attempt in range(1, 5):
+        reply = rpc("taker", "taker_swap_lock_v1", {"schema_version": 1, "swap_id": swap_id}, timeout=120)
+        if "result" in reply or reply.get("error", {}).get("code") != -32010 or attempt == 4:
+            break
+        log(f"  lock unavailable (attempt {attempt}): {json.dumps(reply['error'])[:120]}; retrying in 15s")
+        time.sleep(15)
+    if "error" in reply:
+        raise Failure(f"taker taker_swap_lock_v1 failed: {json.dumps(reply['error'])}")
+    result = reply["result"]
     log(f"  Taker locked Bitcoin: {result['transaction_id'][:12]} (replay={result.get('was_replay')})")
     return result["transaction_id"]
 
@@ -432,8 +442,10 @@ def require_fast_profile() -> dict:
 def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_every: int = 60) -> dict:
     """The refund is a repeatable operator action: the Node answers
     `taker_action_execution_unavailable` while the actor's recovery checks are
-    not yet satisfied and accepts the request once they are. Keep asking,
-    mining a block between attempts, until the swap is refunded."""
+    not yet satisfied and admits the request once they are. One request id is
+    replayed throughout: a replay re-drives the admitted recovery, and the Node's
+    own observer keeps driving it between requests. A block is mined between
+    attempts so Bitcoin maturity and finality advance on regtest."""
     deadline = time.time() + timeout
     attempt = 0
     while time.time() < deadline:
@@ -443,11 +455,13 @@ def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_e
         if view["state"] == "attention_required" or view["state"] == "completed":
             raise Failure(f"swap {swap_id[:12]} ended in {view['state']} instead of refunded")
         attempt += 1
-        reply = rpc("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}-{attempt}",
+        reply = rpc("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
                                                      "swap_id": swap_id, "expected_generation": view["progress_generation"]},
                     timeout=300)
         if "result" in reply:
-            log(f"  refund request accepted (attempt {attempt}, state {view['state']})")
+            if not reply["result"].get("was_replay") or attempt % 5 == 1:
+                log(f"  refund request {'replayed' if reply['result'].get('was_replay') else 'admitted'} "
+                    f"(attempt {attempt}, state {view['state']})")
         else:
             category = (reply["error"].get("data") or {}).get("category")
             if category not in {"taker_action_execution_unavailable", "taker_action_conflict", "taker_action_unavailable"}:
@@ -478,12 +492,15 @@ def scenario_taker_refund(stamp: str) -> dict:
     finally:
         docker("start", NODES["maker"][0])
         wait_healthy("maker")
-    deadline = time.time() + 600
+    # The Maker follows the Taker's refund to Bitcoin finality; keep regtest
+    # blocks coming so finality does not wait on the two-minute miner alone.
+    deadline = time.time() + 900
     while time.time() < deadline:
         view = maker_view(swap_id)
         if view.get("schedule_state") == "terminal":
             log(f"  Maker reconciled to {maker_phase(swap_id)}")
             break
+        mine(1)
         time.sleep(20)
     else:
         raise Failure("Maker did not reconcile the refunded swap to a terminal state")
@@ -548,6 +565,30 @@ def preflight() -> None:
         raise Failure(f"repair-indexer.sh failed: {result.stdout[-300:]} {result.stderr[-300:]}")
     for line in result.stdout.strip().splitlines()[-2:]:
         log(f"  {line}")
+    # LEZ finality must be moving: bedrock has frozen after a restart (its
+    # wallet never came back), leaving the sequencer producing blocks nobody
+    # finalizes. Every sidecar observation then sees the same clock forever.
+    log("preflight: LEZ finality advancing")
+    first = lez_finalized_height()
+    time.sleep(25)
+    second = lez_finalized_height()
+    if second <= first:
+        raise Failure(f"LEZ finalized height stuck at {first}: bedrock or the indexer is not advancing; "
+                      "recreate the LEZ chain (see project notes) before running swaps")
+    log(f"  indexer finalized {first} → {second} in 25 s")
+
+
+def lez_finalized_height() -> int:
+    """The indexer's last finalized L2 block, read through the Taker's loopback forwarder."""
+    container, _ = NODES["taker"]
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getLastFinalizedBlockId", "params": []})
+    result = subprocess.run(["docker", "exec", container, "curl", "-sf", "-m", "10",
+                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:8779/"],
+                            capture_output=True, text=True, check=False)
+    try:
+        return int(json.loads(result.stdout)["result"])
+    except (ValueError, KeyError, TypeError) as error:
+        raise Failure(f"indexer height unreadable: {result.stdout[:120]} {result.stderr[:120]}") from error
 
 
 def run(name: str) -> bool:

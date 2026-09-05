@@ -1178,7 +1178,8 @@ fn mutate_asset_observation(
     match mutation {
         AssetProofMutation::None => {}
         AssetProofMutation::TipDrift => {
-            result.tip_after = ChainTip::new(Hex32::from_bytes([121; 32]), 74);
+            // A different block at the pinned height: a fork, not an extension.
+            result.tip_after = ChainTip::new(Hex32::from_bytes([121; 32]), 73);
         }
         AssetProofMutation::IncompleteWindow => {
             let incomplete_tip = ChainTip::new(Hex32::from_bytes([119; 32]), 72);

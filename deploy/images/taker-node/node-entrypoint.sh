@@ -81,7 +81,8 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --argjson cutoff "${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS:-1800}" \
     --argjson earlier "${LEZ_BTC_EARLIER_REFUND_SECONDS:-3600}" \
     --argjson later "${LEZ_BTC_LATER_REFUND_SECONDS:-7200}" \
-    --argjson margin "${LEZ_BTC_REFUND_MARGIN_SECONDS:-300}" '
+    --argjson margin "${LEZ_BTC_REFUND_MARGIN_SECONDS:-300}" \
+    --argjson discovery "${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}" '
     {schema_version:1, swaps_root:$swaps,
      bitcoin:{network:"regtest", endpoint:"http://127.0.0.1:18443/", cookie_file:$cookie, wallet:$wallet,
               genesis_block_hash:$btc_genesis, required_confirmations:1, refund_csv_blocks:$csv, claim_fee_sat:1000},
@@ -89,7 +90,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
           authenticated_transfer_program_id:$transfer, sidecar_program:$sidecar_program,
           sequencer_url:$sequencer, indexer_url:$indexer, sidecar_port_base:$port_base, sidecar_port_count:400,
           signer_key_file:$signer,
-          request_timeout_millis:120000, discovery_max_blocks:2048},
+          request_timeout_millis:120000, discovery_max_blocks:$discovery},
      recovery:{maker_second_lock_cutoff_seconds:$cutoff, earlier_refund_latest_seconds:$earlier,
                later_refund_earliest_seconds:$later, required_margin_seconds:$margin},
      actor:{program:$actor, program_sha256:$actor_sha}}' >"$btc_state/btc-role.json"

@@ -195,10 +195,14 @@ rm -f "$RUNTIME/runtime.env"
 # demand on regtest; the LEZ deadlines are wall-clock). The protocol accepts any
 # values with margin > 0 and later >= earlier + margin; the Maker's second-lock
 # cutoff must still outlast a Bitcoin confirmation (one block every two minutes).
+# The last value is the LEZ discovery window in blocks: a Maker lock can only
+# appear before the cutoff, and a refund asserts its absence only once that
+# whole window is finalized, so the window must cover the cutoff (10 s slots on
+# the local devnet: 600 s = 60 blocks) and nothing more than needed.
 timing_profile="${LEZ_TIMING_PROFILE:-local}"
 case "$timing_profile" in
-  local) timing=(144 1800 3600 7200 300) ;;
-  fast)  timing=(6 600 900 1200 60) ;;
+  local) timing=(144 1800 3600 7200 300 360) ;;
+  fast)  timing=(6 600 900 1200 60 120) ;;
   *) echo "LEZ_TIMING_PROFILE must be local or fast" >&2; exit 1 ;;
 esac
 printf '%s\n' \
@@ -208,6 +212,7 @@ printf '%s\n' \
   "LEZ_BTC_EARLIER_REFUND_SECONDS=${timing[2]}" \
   "LEZ_BTC_LATER_REFUND_SECONDS=${timing[3]}" \
   "LEZ_BTC_REFUND_MARGIN_SECONDS=${timing[4]}" \
+  "LEZ_LEZ_DISCOVERY_MAX_BLOCKS=${timing[5]}" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_GENESIS_TIME_EPOCH=$chain_start_epoch" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \
