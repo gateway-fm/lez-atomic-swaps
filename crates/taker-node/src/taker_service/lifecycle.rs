@@ -1564,6 +1564,12 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
             claim_submitted_marker(config.state_db()).is_some_and(|marker| marker.is_file());
         if taker_observation_phase(phase) || (phase == Phase::BothLegsLocked && claim_submitted) {
             let _ = config.observe().await;
+        } else if phase == Phase::BothLegsLocked {
+            // Both legs locked and no claim asked for: a drive here would be the
+            // revealing claim, so watch the Maker's leg through the recovery
+            // command instead. For the Taker it only observes, and once the
+            // Maker has refunded its LEZ the swap moves to `refund_available`.
+            let _ = config.effect(TakerTerminalActionV1::Refund).await;
         }
         drop(held_lock);
     }

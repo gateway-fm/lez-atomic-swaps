@@ -209,7 +209,11 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
   second of two concurrent swaps then never got its Maker lock). A preparer
   task in the Maker Node prepares one escrow at a time, for the oldest swap
   whose Taker has locked, only while no other prepared escrow is in flight;
-  the actor bundle names the files and the actor waits until they exist. The long-lived
+  the actor bundle names the files and the actor waits until they exist. At
+  `both_legs_locked` with no claim requested the Taker observer runs the
+  recovery command (for the Taker it only watches the Maker's leg; a drive
+  there would be the revealing claim), so a Maker that refunds its LEZ is
+  noticed and the owner is offered the Taker refund. The long-lived
   `lez-runner-arm` build host is retired too: `from-scratch.sh` builds the
   LEZ services, r0vm, the escrow artifact, the sidecar and the identities in
   throwaway containers of `deploy/builder`, and the market bootstrap runs as
