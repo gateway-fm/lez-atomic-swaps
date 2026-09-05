@@ -76,17 +76,22 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --arg transfer "$auth_transfer_program_id" --arg sidecar_program /usr/local/bin/lez-v02-bridge-poc \
     --arg sequencer "$sequencer_url" --arg indexer "$indexer_url" --argjson port_base "$sidecar_port_base" \
     --arg signer "$btc_state/lez-signer.key" \
-    --arg actor "$actor_program" --arg actor_sha "$actor_sha" '
+    --arg actor "$actor_program" --arg actor_sha "$actor_sha" \
+    --argjson csv "${LEZ_BTC_REFUND_CSV_BLOCKS:-144}" \
+    --argjson cutoff "${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS:-1800}" \
+    --argjson earlier "${LEZ_BTC_EARLIER_REFUND_SECONDS:-3600}" \
+    --argjson later "${LEZ_BTC_LATER_REFUND_SECONDS:-7200}" \
+    --argjson margin "${LEZ_BTC_REFUND_MARGIN_SECONDS:-300}" '
     {schema_version:1, swaps_root:$swaps,
      bitcoin:{network:"regtest", endpoint:"http://127.0.0.1:18443/", cookie_file:$cookie, wallet:$wallet,
-              genesis_block_hash:$btc_genesis, required_confirmations:1, refund_csv_blocks:144, claim_fee_sat:1000},
+              genesis_block_hash:$btc_genesis, required_confirmations:1, refund_csv_blocks:$csv, claim_fee_sat:1000},
      lez:{channel_id:$channel, genesis_block_hash:$genesis, escrow_program_id:$program,
           authenticated_transfer_program_id:$transfer, sidecar_program:$sidecar_program,
           sequencer_url:$sequencer, indexer_url:$indexer, sidecar_port_base:$port_base, sidecar_port_count:400,
           signer_key_file:$signer,
-          request_timeout_millis:20000, discovery_max_blocks:2048},
-     recovery:{maker_second_lock_cutoff_seconds:1800, earlier_refund_latest_seconds:3600,
-               later_refund_earliest_seconds:7200, required_margin_seconds:300},
+          request_timeout_millis:120000, discovery_max_blocks:2048},
+     recovery:{maker_second_lock_cutoff_seconds:$cutoff, earlier_refund_latest_seconds:$earlier,
+               later_refund_earliest_seconds:$later, required_margin_seconds:$margin},
      actor:{program:$actor, program_sha256:$actor_sha}}' >"$btc_state/btc-role.json"
   chmod 0600 "$btc_state/btc-role.json"
   echo "$role Bitcoin lifecycle configured (escrow $escrow_program_id)"

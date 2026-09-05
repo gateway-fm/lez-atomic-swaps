@@ -2008,7 +2008,7 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
         InitiationError::ExecutionUnavailable => rpc_error(
             DEPENDENCY_UNAVAILABLE_CODE,
             "Taker dependency unavailable",
-            "zec_acceptance_unavailable",
+            "initiation_execution_unavailable",
         ),
         InitiationError::Internal => rpc_error(
             INTERNAL_ERROR_CODE,
