@@ -2925,10 +2925,27 @@ fn validate_activation_material(
             }
         }
     }
-    if config.supports_owned_maker_lock() && config.role == ActorRole::Maker {
+    if config.supports_owned_maker_lock()
+        && config.role == ActorRole::Maker
+        && !maker_lock_material_deferred(config)
+    {
         let _ = load_prepared_maker_lock_material(config, agreement)?;
     }
     Ok(())
+}
+
+/// Whether the Maker's LEZ lock material is still to be prepared by the Node:
+/// the bundle names the preparation files, the escrow preparer writes them
+/// once no other Maker escrow is in flight. Until then the actor activates
+/// and observes but has nothing to submit.
+fn maker_lock_material_deferred(config: &ActorConfig) -> bool {
+    matches!(
+        config.maker_lock.as_ref(),
+        Some(MakerLockMaterialConfig::Lez {
+            preparation_result_file,
+            ..
+        }) if !preparation_result_file.is_file()
+    )
 }
 
 /// Agreement-bound Maker second-lock material reconstructed from a supported protocol config.
@@ -3871,6 +3888,11 @@ async fn drive_maker_lock_with_port(
         ));
     }
     let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    // The Node prepares the LEZ escrow once no other Maker escrow is in
+    // flight; until the material exists there is nothing to observe or submit.
+    if maker_lock_material_deferred(config) {
+        return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+    }
     let configured = load_prepared_maker_lock_material(config, &agreement)?;
     let expected_intent = configured_maker_lock_intent(config, &agreement, &configured)?;
     let mut journal = SqliteBtcMakerLockJournal::open(&config.state_db)

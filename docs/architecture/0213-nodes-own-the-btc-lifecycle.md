@@ -202,7 +202,14 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
   past the second-lock cutoff, so the Maker supervisor stops driving a lock it
   may no longer place and follows the Taker's Bitcoin refund to `refunded`
   (routing only: the recovery still fails closed until the chain clocks
-  agree). The long-lived
+  agree). The Maker no longer prepares its LEZ escrow in the reservation
+  round: the sidecar reserves the depositor's next nonce pair at preparation,
+  so two escrows prepared for two Takers while neither is on chain carry the
+  same nonces and the later initialization is dropped after acceptance (the
+  second of two concurrent swaps then never got its Maker lock). A preparer
+  task in the Maker Node prepares one escrow at a time, for the oldest swap
+  whose Taker has locked, only while no other prepared escrow is in flight;
+  the actor bundle names the files and the actor waits until they exist. The long-lived
   `lez-runner-arm` build host is retired too: `from-scratch.sh` builds the
   LEZ services, r0vm, the escrow artifact, the sidecar and the identities in
   throwaway containers of `deploy/builder`, and the market bootstrap runs as

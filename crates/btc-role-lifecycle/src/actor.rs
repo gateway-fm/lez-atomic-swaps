@@ -25,6 +25,11 @@ pub enum MakerLockMaterial<'a> {
     Bitcoin { funding_transaction_hex: &'a str },
     /// Maker deposits LEZ: its prepared escrow.
     Lez(&'a PreparedEscrow),
+    /// Maker deposits LEZ; the escrow is prepared later by the Node's escrow
+    /// preparer, once no other Maker escrow is in flight (the sidecar reserves
+    /// the depositor's next nonce pair at preparation). The bundle names the
+    /// files, the actor waits until they exist.
+    LezDeferred,
 }
 
 /// Everything one role needs to write and validate its actor configuration.
@@ -122,6 +127,15 @@ pub fn synthesize(input: &ActorSynthesis<'_>) -> Result<ActorConfig> {
                 "preparation_result_file": layout.escrow_result_file(),
             }))
         }
+        (
+            Participant::Maker,
+            SwapDirection::TakerSellsForeign,
+            Some(MakerLockMaterial::LezDeferred),
+        ) => Some(serde_json::json!({
+            "chain": "lez",
+            "preparation_request_file": layout.escrow_request_file(),
+            "preparation_result_file": layout.escrow_result_file(),
+        })),
         _ => anyhow::bail!("maker lock material does not fit the role and direction"),
     };
 

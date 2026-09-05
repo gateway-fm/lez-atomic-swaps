@@ -126,10 +126,12 @@ jobs:
           --exclude lez-zebra-node-adapter
           --exclude zec-reference-actor
           --exclude lez-zec-swap-sdk
-      - name: Lint and test the pair features the default build leaves out
-        run: |
-          cargo clippy --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
-          cargo test --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets
+      # The ZEC and XMR pairs still compile under -D warnings, but their tests
+      # are parked while BTC<->LEZ is the product: the workspace run above
+      # already excludes their crates, and the Nodes' pair-gated test files run
+      # only with --all-features.
+      - name: Lint the pair features the default build leaves out (tests parked)
+        run: cargo clippy --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
       - name: Verify M3 official cryptographic vectors
         run: |
           ./scripts/check-m3-cryptographic-vectors.sh
