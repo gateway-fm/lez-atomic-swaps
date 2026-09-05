@@ -176,6 +176,6 @@ Miner ordering decides that boundary race; the protocol's normal safety window
 does not promise fairness once it has expired.
 
 See [ADR 0050](architecture/0050-map-btc-adaptor-construction-to-security-properties.md)
-for the construction-to-property mapping and the
-[M3 operator guide](m3-local-poc-operator-guide.md) for exact recovery tables,
-confirmation rules, and evidence boundaries.
+for the construction-to-property mapping and
+[ADR 0213](architecture/0213-nodes-own-the-btc-lifecycle.md) for how the two
+Nodes run the lifecycle today; `deploy/README.md` walks through a swap by hand.

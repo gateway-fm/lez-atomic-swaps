@@ -378,6 +378,32 @@ impl ActorHeldLock {
         Self::acquire_for(record.swap_id(), record.manifest.state_database_path())
     }
 
+    /// Like [`Self::acquire_for`], but waits up to `budget` for the current
+    /// holder to finish: an observation drive owns the lock for the seconds its
+    /// chain reads take, and an owner's monitor or action request arriving in
+    /// that window must queue behind it rather than report an outage.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::acquire_for`]; `LockUnavailable` once the budget is spent.
+    pub fn acquire_for_within(
+        swap_id: &SwapId,
+        state_database_path: &Path,
+        budget: std::time::Duration,
+    ) -> Result<Self, MakerActorProcessError> {
+        let deadline = std::time::Instant::now() + budget;
+        loop {
+            match Self::acquire_for(swap_id, state_database_path) {
+                Err(MakerActorProcessError::LockUnavailable)
+                    if std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                other => return other,
+            }
+        }
+    }
+
     /// Securely creates or opens and non-blockingly locks one role-state path.
     ///
     /// This is the same per-swap kernel authority used by the Maker scheduler,

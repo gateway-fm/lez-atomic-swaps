@@ -175,7 +175,45 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
   writes the same `m3_btc_ui_evidence` document the explorer and the Taker
   desk already validate; `verify-explorers.py` and the explorer's hash index
   read that directory, `verify-market.py` exercises the Node market.
-  `swap-through-ui.sh` exports the swap it completed. The long-lived
+  `swap-through-ui.sh` exports the swap it completed. `node-e2e.py` runs
+  the BTC→LEZ cases through the owner APIs alone (happy, replay, wrong
+  inputs, restarts, survivor, concurrency, both refunds), each as its own
+  job; the recovery timing profile (`LEZ_TIMING_PROFILE`) is configuration,
+  including the LEZ discovery window: a refund asserts the Maker lock's
+  absence only once the whole window is finalized, so the window is sized to
+  the cutoff (120 blocks on `fast`, 360 on `local`) rather than the 2048
+  blocks that made refunds wait almost six hours at ten-second slots. The
+  sidecar's sequencer-side snapshot checks now accept a tip that merely
+  extended while a scan ran (the pinned block is still the block at its
+  height), matching its indexer-side rule; only a different block at that
+  height, or a shorter chain, is a moving tip. Without that, two concurrent
+  swaps could never observe the second lock within one slot. The Bitcoin
+  adapter likewise accepts a funding confirmed at or above the signed anchor
+  and counts the CSV delay from the block that actually holds it: the anchor is
+  the tip when the take planned the lock, the lock is broadcast later, and a
+  later confirmation only delays the Taker's refund, so exact equality could
+  never hold once the Nodes plan before they lock. An admitted Taker refund
+  is now the Node's to finish: the observer re-runs its recovery every pass
+  until the swap is terminal (before, it ran once at admission, before the
+  cutoff could have passed, and only a replay of the same request drove it
+  again), and owner requests wait up to 20 s for a swap's actor lock instead
+  of reporting the dependency unavailable while a drive holds it. The Maker
+  actor's status names `recover_taker_leg` at revision 1 once the wall clock is
+  past the second-lock cutoff, so the Maker supervisor stops driving a lock it
+  may no longer place and follows the Taker's Bitcoin refund to `refunded`
+  (routing only: the recovery still fails closed until the chain clocks
+  agree). The Maker no longer prepares its LEZ escrow in the reservation
+  round: the sidecar reserves the depositor's next nonce pair at preparation,
+  so two escrows prepared for two Takers while neither is on chain carry the
+  same nonces and the later initialization is dropped after acceptance (the
+  second of two concurrent swaps then never got its Maker lock). A preparer
+  task in the Maker Node prepares one escrow at a time, for the oldest swap
+  whose Taker has locked, only while no other prepared escrow is in flight;
+  the actor bundle names the files and the actor waits until they exist. At
+  `both_legs_locked` with no claim requested the Taker observer runs the
+  recovery command (for the Taker it only watches the Maker's leg; a drive
+  there would be the revealing claim), so a Maker that refunds its LEZ is
+  noticed and the owner is offered the Taker refund. The long-lived
   `lez-runner-arm` build host is retired too: `from-scratch.sh` builds the
   LEZ services, r0vm, the escrow artifact, the sidecar and the identities in
   throwaway containers of `deploy/builder`, and the market bootstrap runs as

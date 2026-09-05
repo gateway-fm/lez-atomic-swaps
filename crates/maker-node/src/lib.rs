@@ -321,6 +321,7 @@ impl MakerRpc {
     pub fn with_btc_lifecycle(mut self, lifecycle: BtcMakerLifecycle) -> Self {
         let lifecycle = Arc::new(lifecycle);
         lifecycle.spawn_sidecar_keepalive();
+        lifecycle.spawn_escrow_preparer(Arc::clone(&self.store));
         self.btc_lifecycle = Some(lifecycle);
         self
     }

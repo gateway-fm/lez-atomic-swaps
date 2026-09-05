@@ -1,11 +1,9 @@
 {
   "schema_version": 1,
   "executables": [
-    {"manifest":"Cargo.toml","package":"btc-local-poc-provision","target":"btc-local-poc-provision","class":"demo","stability":"local","canonical_name":"btc-local-poc-provision","legacy_aliases":[],"role":"both","pair":"bitcoin","profiles":[]},
-    {"manifest":"Cargo.toml","package":"btc-reference-actor","target":"lez-btc-maker-actor","class":"product","stability":"experimental","canonical_name":"lez-btc-maker-actor","legacy_aliases":[],"role":"maker","pair":"bitcoin","profiles":["reference-m3-btc-v1"]},
-    {"manifest":"Cargo.toml","package":"btc-reference-actor","target":"lez-btc-taker-actor","class":"product","stability":"experimental","canonical_name":"lez-btc-taker-actor","legacy_aliases":[],"role":"taker","pair":"bitcoin","profiles":["reference-m3-btc-v1"]},
-    {"manifest":"Cargo.toml","package":"btc-role-preflight","target":"btc-role-preflight","class":"reference","stability":"retained","canonical_name":"btc-role-preflight","legacy_aliases":[],"role":"both","pair":"bitcoin","profiles":[]},
-    {"manifest":"Cargo.toml","package":"lez-adaptor-role-runner","target":"lez-adaptor-role-runner","class":"reference","stability":"retained","canonical_name":"lez-adaptor-role-runner","legacy_aliases":[],"role":"both","pair":"bitcoin","profiles":["reference-m3-btc-v1"]},
+    {"manifest":"Cargo.toml","package":"btc-reference-actor","target":"lez-btc-maker-actor","class":"product","stability":"experimental","canonical_name":"lez-btc-maker-actor","legacy_aliases":[],"role":"maker","pair":"bitcoin","profiles":["local-btc-demo-v1"]},
+    {"manifest":"Cargo.toml","package":"btc-reference-actor","target":"lez-btc-taker-actor","class":"product","stability":"experimental","canonical_name":"lez-btc-taker-actor","legacy_aliases":[],"role":"taker","pair":"bitcoin","profiles":["local-btc-demo-v1"]},
+    {"manifest":"Cargo.toml","package":"lez-adaptor-role-runner","target":"lez-adaptor-role-runner","class":"reference","stability":"retained","canonical_name":"lez-adaptor-role-runner","legacy_aliases":[],"role":"both","pair":"bitcoin","profiles":[]},
     {"manifest":"Cargo.toml","package":"lez-logos-price-c-api","target":"lez-logos-price-worker","class":"product","stability":"optional","canonical_name":"lez-logos-price-worker","legacy_aliases":[],"role":"maker","pair":"all","profiles":[]},
     {"manifest":"Cargo.toml","package":"lez-node-common","target":"lez-chat-relay","class":"demo","stability":"local","canonical_name":"lez-chat-relay","legacy_aliases":[],"role":"shared","pair":"all","profiles":[]},
     {"manifest":"Cargo.toml","package":"lez-maker-node","target":"lez-maker-chat-gateway","class":"product","stability":"experimental","canonical_name":"lez-maker-chat-gateway","legacy_aliases":[],"role":"maker","pair":"all","profiles":[]},

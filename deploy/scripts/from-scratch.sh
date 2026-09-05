@@ -53,12 +53,12 @@ readonly RUST_IMAGE="rust:1.96.0-bookworm"
 readonly RISC0_TAG=v3.0.5
 readonly RAPIDSNARK_URL="https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-aarch64-pic-v0.0.8.zip"
 readonly RAPIDSNARK_LIB_SHA256="43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657"
-# The escrow guest's pinned digests come from the commit under test (its
-# runner script carries them), so the artifact, the market bootstrap and the
-# swaps agree on one program.
-pinned() { sed -n "s/^ *${1}=\"\([0-9a-f]\{64\}\)\".*/\1/p" "$REPO_ROOT/scripts/run-m3-actor-local-poc.sh" | head -1; }
-ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-$(pinned expected_lez_program_id)}"
-GUEST_ELF_SHA256="$(pinned expected_lez_guest_sha256)"
+# The escrow guest's pinned digests come from the artifact verifier of the
+# commit under test, so the artifact, the market bootstrap and the swaps agree
+# on one program.
+pinned() { sed -n "s/^ *${1}=\"\([0-9a-f]\{64\}\)\".*/\1/p" "$REPO_ROOT/scripts/verify-lez-v02-provisional.sh" | head -1; }
+ESCROW_PROGRAM_ID="${ESCROW_PROGRAM_ID:-$(pinned expected_image_id)}"
+GUEST_ELF_SHA256="$(pinned expected_elf_sha256)"
 [[ "$ESCROW_PROGRAM_ID" =~ ^[0-9a-f]{64}$ && "$GUEST_ELF_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot read the escrow pins" >&2; exit 1; }
 readonly ESCROW_PROGRAM_ID GUEST_ELF_SHA256
 readonly BUILDER_IMAGE=lez-builder:local
