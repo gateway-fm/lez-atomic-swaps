@@ -429,6 +429,36 @@ def require_fast_profile() -> dict:
     return profile
 
 
+def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_every: int = 60) -> dict:
+    """The refund is a repeatable operator action: the Node answers
+    `taker_action_execution_unavailable` while the actor's recovery checks are
+    not yet satisfied and accepts the request once they are. Keep asking,
+    mining a block between attempts, until the swap is refunded."""
+    deadline = time.time() + timeout
+    attempt = 0
+    while time.time() < deadline:
+        view = taker_view(swap_id)
+        if view["state"] == "refunded":
+            return view
+        if view["state"] == "attention_required" or view["state"] == "completed":
+            raise Failure(f"swap {swap_id[:12]} ended in {view['state']} instead of refunded")
+        attempt += 1
+        reply = rpc("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}-{attempt}",
+                                                     "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                    timeout=300)
+        if "result" in reply:
+            log(f"  refund request accepted (attempt {attempt}, state {view['state']})")
+        else:
+            category = (reply["error"].get("data") or {}).get("category")
+            if category not in {"taker_action_execution_unavailable", "taker_action_conflict", "taker_action_unavailable"}:
+                raise Failure(f"taker_swap_refund_v1 failed: {json.dumps(reply['error'])[:300]}")
+            if attempt % 5 == 1:
+                log(f"  refund not yet accepted (attempt {attempt}: {category}); taker {view['state']} | maker: {maker_phase(swap_id)}")
+        mine(1)
+        time.sleep(mine_every)
+    raise Failure(f"swap {swap_id[:12]} was not refunded within {timeout}s")
+
+
 def scenario_taker_refund(stamp: str) -> dict:
     profile = require_fast_profile()
     csv_blocks = int(profile["LEZ_BTC_REFUND_CSV_BLOCKS"])
@@ -441,15 +471,10 @@ def scenario_taker_refund(stamp: str) -> dict:
     try:
         txid = lock(swap_id)
         mine(csv_blocks + 1)
-        log(f"  mined {csv_blocks + 1} blocks past the lock; waiting out the Maker cutoff ({cutoff}s) for refund eligibility")
-        view = wait_taker(swap_id, {"refund_available"}, timeout=cutoff + 900, mine_every=60)
-        result = call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
-                                                        "swap_id": swap_id, "expected_generation": view["progress_generation"]},
-                      timeout=300)
-        log(f"  Taker refund submitted (replay={result.get('was_replay')})")
-        wait_taker(swap_id, {"refunded"}, timeout=900, mine_every=60)
+        log(f"  mined {csv_blocks + 1} blocks past the lock; the Maker cutoff is {cutoff}s after the take")
+        request_refund_until_terminal(swap_id, stamp, timeout=cutoff + 1500)
         after = float(bitcoin("-rpcwallet=lez-taker", "getbalance"))
-        log(f"  lez-taker balance {before:.8f} → {after:.8f}")
+        log(f"  Taker refunded; lez-taker balance {before:.8f} → {after:.8f}")
     finally:
         docker("start", NODES["maker"][0])
         wait_healthy("maker")
@@ -494,11 +519,7 @@ def scenario_maker_refund(stamp: str) -> dict:
     mine(csv_blocks + 1)
     while time.time() < started + later + 30:
         time.sleep(20)
-    view = wait_taker(swap_id, {"refund_available", "refunded"}, timeout=900, mine_every=60)
-    if view["state"] != "refunded":
-        call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}", "swap_id": swap_id,
-                                               "expected_generation": view["progress_generation"]}, timeout=300)
-        wait_taker(swap_id, {"refunded"}, timeout=900, mine_every=60)
+    request_refund_until_terminal(swap_id, stamp, timeout=1500)
     log("  both legs refunded")
     return {"swap_id": swap_id}
 
