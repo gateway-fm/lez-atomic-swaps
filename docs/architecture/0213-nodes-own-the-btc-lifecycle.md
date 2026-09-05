@@ -175,7 +175,11 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
   writes the same `m3_btc_ui_evidence` document the explorer and the Taker
   desk already validate; `verify-explorers.py` and the explorer's hash index
   read that directory, `verify-market.py` exercises the Node market.
-  `swap-through-ui.sh` exports the swap it completed. The long-lived
+  `swap-through-ui.sh` exports the swap it completed. `node-e2e.py` runs
+  the BTC→LEZ cases through the owner APIs alone (happy, replay, wrong
+  inputs, restarts, survivor, concurrency, both refunds), each as its own
+  job; the recovery timing profile (`LEZ_TIMING_PROFILE`) is configuration.
+  The long-lived
   `lez-runner-arm` build host is retired too: `from-scratch.sh` builds the
   LEZ services, r0vm, the escrow artifact, the sidecar and the identities in
   throwaway containers of `deploy/builder`, and the market bootstrap runs as

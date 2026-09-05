@@ -151,6 +151,43 @@ Node's own loopback forwarder. Where to look when something stalls:
 `sidecar.log`, and
 `docker exec lez-taker-node lez-btc-taker-actor --config /var/lib/lez/taker/btc/swaps/<reservation id>/actor/actor-config.json status`.
 
+## Swap scenarios through the Node APIs
+
+`scripts/node-e2e.py <scenario>` drives both Nodes over their owner sockets
+without the desks: it publishes, takes, locks, claims, mines regtest blocks on
+demand, and stops or restarts a Node where the case calls for it. Each
+scenario first runs `repair-indexer.sh` (the standing indexer must serve
+historical reads or the Maker's sidecar cannot classify its escrow), then is
+one subcommand with its own exit code and a summary in
+`runtime/e2e/<scenario>.json`, so they run as independent CI jobs
+(`.github/workflows/node-e2e.yml`, one matrix job per scenario on a
+self-hosted `lez-stack` runner).
+
+| Scenario | What it proves |
+|---|---|
+| `happy` | BTC→LEZ: take, lock, Maker funds, claim, Maker claims; both Nodes `completed` |
+| `replay` | publish, take, lock and claim repeated with their request ids: same result, no second effect |
+| `wrong-inputs` | stale revisions, mismatched envelope hash, off-preset amount, wrong quote, unknown swap, early claim, taking a consumed lot: all rejected fail-closed |
+| `restart-taker`, `restart-maker` | a Node restarted between lock and claim resumes and completes |
+| `survivor` | the Taker Node is stopped right after its revealing claim; the Maker completes alone; the Taker catches up on restart |
+| `concurrent` | two swaps interleaved end to end (one sidecar per swap) |
+| `taker-refund` | the Maker never funds; after the cutoff and CSV maturity the Taker refunds its Bitcoin; the Maker reconciles |
+| `maker-refund` | the Taker never claims; the Maker refunds LEZ after `refund_at`, then the Taker refunds Bitcoin |
+
+The refund scenarios need the `fast` timing profile:
+
+```sh
+LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # 6 CSV blocks; 600/900/1200 s deadlines, 60 s margin
+docker compose --env-file runtime/runtime.env up -d --no-deps --force-recreate maker-node taker-node
+./scripts/node-e2e.py taker-refund
+```
+
+`local` (the default) keeps network-like deadlines: 144 CSV blocks, a 30-minute
+Maker cutoff, 60- and 120-minute refund bounds. The profile is configuration
+only (`LEZ_BTC_*` in `runtime.env`, rendered into each Node's `btc-role.json`);
+the protocol accepts any values with a positive margin and `later >= earlier +
+margin`, and Bitcoin refund maturity is a block count, so regtest mines past it.
+
 ## Settlement chains
 
 Swaps settle on one permanent pair of chains, the way they must against real
