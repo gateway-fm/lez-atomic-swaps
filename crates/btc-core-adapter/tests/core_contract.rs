@@ -869,14 +869,29 @@ async fn refund_observation_classifies_exact_finality_conflict_and_anchor_drift(
         RefundObservation::ConflictingSpend
     );
 
-    let wrong_anchor_rpc = MockRpc::ready_at(1_143);
-    wrong_anchor_rpc.push_raw(raw_verbose(&fixture.funding, Some(143), Some(TIP_A)));
+    // Below the signed anchor is impossible for the planned funding: rejected.
+    let below_anchor_rpc = MockRpc::ready_at(1_143);
+    below_anchor_rpc.push_raw(raw_verbose(&fixture.funding, Some(145), Some(TIP_A)));
     assert!(matches!(
-        isolated_adapter(wrong_anchor_rpc)
+        isolated_adapter(below_anchor_rpc)
             .observe_refund(&fixture.agreement)
             .await,
         Err(CoreAdapterError::FundingAnchorMismatch)
     ));
+    // Confirmed one block after the anchor: BIP-68 counts from the actual
+    // funding block, so the refund matures one block later than planned.
+    let later_funding_rpc = MockRpc::ready_at(1_143);
+    later_funding_rpc.push_raw(raw_verbose(&fixture.funding, Some(143), Some(TIP_A)));
+    later_funding_rpc.push_spender(unspent(outpoint));
+    let RefundObservation::Immature(shifted) = isolated_adapter(later_funding_rpc)
+        .observe_refund(&fixture.agreement)
+        .await
+        .expect("later funding is observable")
+    else {
+        panic!("expected an immature refund one block before the shifted boundary");
+    };
+    assert_eq!(shifted.funding_block_height(), 1_001);
+    assert_eq!(shifted.first_valid_block_height(), 1_145);
 
     let early_rpc = MockRpc::ready_at(1_143);
     early_rpc.push_raw(raw_verbose(&fixture.funding, Some(144), Some(TIP_A)));

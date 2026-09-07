@@ -7,9 +7,9 @@ use std::path::Path;
 const MAX_CAPABILITY_BYTES: usize = 4096;
 
 use anyhow::{Context as _, Result, ensure};
-use lez_bridge_client::{BridgeClient, BridgeClientConfig, SidecarCapability};
+use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
 use lez_bridge_protocol::{
-    Hex32, MessageContext, ObserveFinalizedClockRequest, PrepareWitnessedClaimRequest,
+    ErrorCode, Hex32, MessageContext, ObserveFinalizedClockRequest, PrepareWitnessedClaimRequest,
     PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
     RequestId, RunId, RuntimeDescriptor, SchemaVersion, TransactionId, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput,
@@ -263,19 +263,35 @@ impl LezSidecar {
 
     /// The finalized LEZ tip height, used as the actor's discovery start.
     ///
+    /// The indexer answers `moving_tip` when finality advances between its
+    /// two reads; that is a race, not a fault, so the read is repeated a
+    /// bounded number of times before it fails the take.
+    ///
     /// # Errors
     ///
-    /// Fails when the sidecar is unreachable or answers for another runtime.
+    /// Fails when the sidecar is unreachable, keeps reporting a moving tip, or
+    /// answers for another runtime.
     pub async fn finalized_height(&self) -> Result<u64> {
-        let result = self
-            .client
-            .observe_finalized_clock(ObserveFinalizedClockRequest {
-                context: self.context()?,
-                runtime: self.runtime.clone(),
-            })
-            .await
-            .context("observe finalized LEZ clock")?;
-        Ok(result.clock.height)
+        const MOVING_TIP_ATTEMPTS: usize = 5;
+        for attempt in 1..=MOVING_TIP_ATTEMPTS {
+            let observed = self
+                .client
+                .observe_finalized_clock(ObserveFinalizedClockRequest {
+                    context: self.context()?,
+                    runtime: self.runtime.clone(),
+                })
+                .await;
+            match observed {
+                Ok(result) => return Ok(result.clock.height),
+                Err(BridgeClientError::Remote(remote))
+                    if remote.code() == ErrorCode::MovingTip && attempt < MOVING_TIP_ATTEMPTS =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                Err(error) => return Err(error).context("observe finalized LEZ clock"),
+            }
+        }
+        unreachable!("the loop returns on success or on its last attempt")
     }
 
     /// Prepares (does not submit) the depositor's escrow initialization and

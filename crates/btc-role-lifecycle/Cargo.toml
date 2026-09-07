@@ -11,6 +11,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+tokio = { version = "1.52.0", features = ["time"] }
 anyhow = "=1.0.103"
 base64 = "=0.22.1"
 bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }

@@ -400,6 +400,18 @@ pub enum PrepareNativeFirstLockError<E: std::error::Error + 'static> {
     Transport(#[source] E),
 }
 
+/// A later tip extends the pinned one when it is the same tip or a strictly
+/// higher one; a different block at the same height, or a shorter chain, is a
+/// moving tip. The sidecar has already vouched that a higher tip descends from
+/// the scanned one.
+#[must_use]
+pub fn tip_extends(
+    pinned: &lez_bridge_protocol::ChainTip,
+    later: &lez_bridge_protocol::ChainTip,
+) -> bool {
+    later == pinned || later.height > pinned.height
+}
+
 /// Failure building or independently validating one native escrow observation.
 #[derive(Debug, Error)]
 pub enum ObserveNativeEscrowError<E: std::error::Error + 'static> {
@@ -736,7 +748,7 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
         if response.context != context {
             return Err(ObserveNativeEscrowError::ResponseContextMismatch);
         }
-        if response.tip_before != response.tip_after {
+        if !tip_extends(&response.tip_before, &response.tip_after) {
             return Err(ObserveNativeEscrowError::UnstableTip);
         }
 
@@ -1044,7 +1056,7 @@ impl<T: LezBridgeObservationTransport> LezBridgeAdapter<T> {
         if response.context != context {
             return Err(ObserveNativeEscrowError::ResponseContextMismatch);
         }
-        if response.tip_before != response.tip_after {
+        if !tip_extends(&response.tip_before, &response.tip_after) {
             return Err(ObserveNativeEscrowError::UnstableTip);
         }
         match (&response.initialization, &response.funding) {
@@ -1554,7 +1566,7 @@ impl<T: LezBridgeClaimTransport> LezBridgeAdapter<T> {
         if response.context != context {
             return Err(NativeRevealingClaimAdapterError::ResponseContextMismatch);
         }
-        if response.tip_before != response.tip_after {
+        if !tip_extends(&response.tip_before, &response.tip_after) {
             return Ok(RevealingClaimObservationV1::Unstable);
         }
         match &response.claim {

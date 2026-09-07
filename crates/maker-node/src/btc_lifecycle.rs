@@ -118,6 +118,95 @@ impl BtcMakerLifecycle {
         });
     }
 
+    /// Prepares Maker LEZ escrows one at a time. The sidecar reserves the
+    /// depositor's next nonce pair when it prepares an escrow, so two escrows
+    /// prepared while neither is on chain carry the same nonces and the later
+    /// initialization is dropped after acceptance. An escrow is prepared only
+    /// once its swap's Taker has locked (revision 1) and no other prepared
+    /// escrow is still in flight: unfinalized and before its Maker cutoff.
+    pub fn spawn_escrow_preparer(self: &Arc<Self>, store: Arc<Mutex<SqliteSwapStore>>) {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            eprintln!("maker BTC lifecycle: no async runtime; LEZ escrows are not prepared");
+            return;
+        };
+        let lifecycle = Arc::clone(self);
+        handle.spawn(async move {
+            loop {
+                if let Err(error) = lifecycle.prepare_next_escrow(&store).await {
+                    eprintln!("maker BTC lifecycle: escrow preparation pass failed: {error:#}");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+    }
+
+    async fn prepare_next_escrow(&self, store: &Mutex<SqliteSwapStore>) -> anyhow::Result<()> {
+        let _rounds = self.rounds.lock().await;
+        let now = trusted_now_unix_seconds().map_err(|error| anyhow::anyhow!("{error}"))?;
+        let mut due: Option<(RequestId, SwapLayout, BtcAgreementV1)> = None;
+        for swap in
+            lez_btc_role_lifecycle::sidecar::recorded_swaps(&self.runtime.config().swaps_root)
+                .unwrap_or_default()
+        {
+            let Some(name) = swap.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let Ok(reservation_id) = RequestId::new(name.to_owned()) else {
+                continue;
+            };
+            let layout = self.layout(&reservation_id);
+            let Ok((agreement, _)) = load_bound_agreement(&layout) else {
+                continue;
+            };
+            if agreement.lez_depositor() != Participant::Maker {
+                continue;
+            }
+            let cutoff = agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds();
+            let progress = store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("swap store lock poisoned"))?
+                .maker_actor_progress(agreement.coordinator().id())?
+                .map(|snapshot| snapshot.observation().clone());
+            let (phase, revision) = match progress {
+                Some(MakerActorProgressObservationV1::Active {
+                    phase, revision, ..
+                }) => (phase.to_string(), Some(revision)),
+                _ => (String::new(), None),
+            };
+            if layout.escrow_result_file().is_file() {
+                // Prepared and possibly submitted: in flight until the Maker
+                // lock is confirmed (revision 2), the swap ends, or the cutoff
+                // makes any lock impossible.
+                let settled = revision.is_some_and(|revision| revision >= 2)
+                    || matches!(phase.as_str(), "completed" | "refunded");
+                if !settled && now < cutoff {
+                    return Ok(());
+                }
+                continue;
+            }
+            if due.is_none() && phase == "taker_lock_confirmed" && now < cutoff {
+                due = Some((reservation_id, layout, agreement));
+            }
+        }
+        let Some((reservation_id, layout, agreement)) = due else {
+            return Ok(());
+        };
+        let terms = agreement_terms(&agreement)?;
+        let (_, sidecar) = self
+            .sidecar(&layout, &reservation_id)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        let escrow = sidecar.prepare_escrow(terms).await?;
+        store_escrow(&layout, &escrow).map_err(|error| anyhow::anyhow!("{error}"))?;
+        eprintln!(
+            "maker BTC lifecycle: prepared the LEZ escrow for swap {}",
+            agreement.coordinator().id().as_str()
+        );
+        Ok(())
+    }
+
     pub(super) fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
     }
@@ -692,8 +781,10 @@ pub(super) async fn ceremony_reserve(
             "the ceremony already runs under other session ids",
         ));
     }
-    let final_terms = agreement_terms(&agreement).map_err(|error| internal(&error))?;
-    let (_, sidecar) = lifecycle.sidecar(&layout, &request.reservation_id)?;
+    // The terms must be expressible now even though the escrow is prepared
+    // later; the sidecar is started so the actor's observations have a peer.
+    let _terms = agreement_terms(&agreement).map_err(|error| internal(&error))?;
+    lifecycle.sidecar(&layout, &request.reservation_id)?;
     let mut maker_prepared_claim = None;
     match agreement.lez_claimant() {
         Participant::Taker => {
@@ -734,14 +825,12 @@ pub(super) async fn ceremony_reserve(
             maker_prepared_claim = Some(bytes);
         }
     }
-    if agreement.lez_depositor() == Participant::Maker && !layout.escrow_result_file().exists() {
-        // The Maker's lock material: the final escrow under the agreement.
-        let escrow = sidecar
-            .prepare_escrow(final_terms)
-            .await
-            .map_err(|error| internal(&error))?;
-        store_escrow(&layout, &escrow)?;
-    }
+    // The Maker's LEZ escrow (its lock material) is not prepared here: the
+    // sidecar reserves the depositor's next nonce pair at preparation, so
+    // escrows prepared for two reservations while neither is on chain collide
+    // and the later one is dropped after acceptance. The escrow preparer
+    // (`spawn_escrow_preparer`) prepares it once this swap's Taker has locked
+    // and no other Maker escrow is in flight.
     let maker_key = BtcMakerLifecycle::agreement_key(&context)?;
     let mut ceremony =
         MakerCeremony::open(&layout, &agreement, &sessions).map_err(|error| internal(&error))?;
@@ -769,17 +858,6 @@ fn store_escrow(layout: &SwapLayout, escrow: &PreparedEscrow) -> RpcResult<()> {
         .map_err(|error| internal(&error))?;
     write_private_exact(&layout.escrow_result_file(), &result).map_err(|error| internal(&error))?;
     Ok(())
-}
-
-fn load_escrow(layout: &SwapLayout) -> RpcResult<PreparedEscrow> {
-    let request = read_private(&layout.escrow_request_file(), MAX_ROUND_RECORD_BYTES)
-        .map_err(|error| internal(&error))?;
-    let result = read_private(&layout.escrow_result_file(), MAX_ROUND_RECORD_BYTES)
-        .map_err(|error| internal(&error))?;
-    Ok(PreparedEscrow {
-        request: serde_json::from_slice(&request).map_err(|error| internal(&error))?,
-        result: serde_json::from_slice(&result).map_err(|error| internal(&error))?,
-    })
 }
 
 pub(super) async fn ceremony_nonce(
@@ -873,7 +951,6 @@ pub(super) async fn ceremony_partial(
     let prepared_claim = read_private(&layout.prepared_claim_file(), MAX_PREPARED_CLAIM_BYTES)
         .map_err(|error| internal(&error))?;
     let funding_hex;
-    let escrow;
     let maker_lock = match agreement.direction() {
         SwapDirection::TakerSellsLez => {
             let plan = record
@@ -885,10 +962,7 @@ pub(super) async fn ceremony_partial(
                 funding_transaction_hex: &funding_hex,
             }
         }
-        SwapDirection::TakerSellsForeign => {
-            escrow = load_escrow(&layout)?;
-            MakerLockMaterial::Lez(&escrow)
-        }
+        SwapDirection::TakerSellsForeign => MakerLockMaterial::LezDeferred,
     };
     let accepted_at = trusted_now_unix_seconds()?;
     let config = synthesize(&ActorSynthesis {
