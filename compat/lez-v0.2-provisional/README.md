@@ -148,7 +148,7 @@ package and `lez-v0_2-sidecar` generate from the exact same
 `PROGRAM_IDL_JSON`. The deployment manifest records SHA-256 for the IDL and
 generated Rust client; tests recompute both, compile generated types, and assert
 instruction order plus signer roles. Run the fast, network-free wiring check
-with `./scripts/test-m7-spel-idl-contract.sh`. Any intentional SPEL, generator,
+with the deployer crate's tests (`cargo test --manifest-path compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml`). Any intentional SPEL, generator,
 or custody ABI change must update the reviewed pins and rebuild the checked
 artifact rather than refreshing a digest in isolation.
 

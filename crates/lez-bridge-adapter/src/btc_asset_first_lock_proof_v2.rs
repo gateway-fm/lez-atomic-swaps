@@ -224,7 +224,7 @@ fn validate_finalized_placement<E: std::error::Error + 'static>(
     observation: &ObserveWitnessedAssetEscrowV2Result,
     window: DiscoveryWindow,
 ) -> Result<(), BtcLezAssetFirstLockProofV2Error<E>> {
-    if observation.tip_before != observation.tip_after {
+    if !crate::tip_extends(&observation.tip_before, &observation.tip_after) {
         return Err(BtcLezAssetFirstLockProofV2Error::UnstableFinalizedTip);
     }
     let end = window

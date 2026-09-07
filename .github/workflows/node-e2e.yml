@@ -1,0 +1,85 @@
+name: node-e2e
+
+# End-to-end BTC↔LEZ swap scenarios through the two Nodes' owner APIs, one job
+# per scenario. They need a provisioned local stack (arm64 host with the LEZ
+# devnet, Bitcoin regtest and both Nodes: deploy/scripts/from-scratch.sh), so
+# the jobs target a self-hosted runner labelled `lez-stack` and run on demand.
+# Every scenario is independent: pick one, or leave the default to run them all.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: scenario to run (or `all-as-matrix` for one job per scenario)
+        type: choice
+        default: all-as-matrix
+        options:
+          - all-as-matrix
+          - happy
+          - replay
+          - wrong-inputs
+          - restart-taker
+          - restart-maker
+          - survivor
+          - concurrent
+          - taker-refund
+          - maker-refund
+      timing_profile:
+        description: recovery timing profile rendered into the Nodes before the run
+        type: choice
+        default: fast
+        options: [fast, local]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: choose scenarios
+    runs-on: ubuntu-24.04
+    outputs:
+      scenarios: ${{ steps.plan.outputs.scenarios }}
+    steps:
+      - id: plan
+        env:
+          CHOICE: ${{ inputs.scenario }}
+        run: |
+          if [[ "$CHOICE" == all-as-matrix ]]; then
+            echo 'scenarios=["happy","replay","wrong-inputs","restart-taker","restart-maker","survivor","concurrent","taker-refund","maker-refund"]' >> "$GITHUB_OUTPUT"
+          else
+            printf 'scenarios=["%s"]\n' "$CHOICE" >> "$GITHUB_OUTPUT"
+          fi
+
+  scenario:
+    name: ${{ matrix.scenario }}
+    needs: plan
+    runs-on: [self-hosted, lez-stack]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        scenario: ${{ fromJSON(needs.plan.outputs.scenarios) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Render the timing profile and bring the Nodes up on it
+        working-directory: deploy
+        env:
+          LEZ_TIMING_PROFILE: ${{ inputs.timing_profile }}
+        run: |
+          bash scripts/gen-config.sh runtime
+          set -a; source runtime/runtime.env; set +a
+          export BTC_RPC_PASSWORD
+          docker compose up -d --no-deps --force-recreate maker-node taker-node
+          bash scripts/reset-swaps.sh
+      - name: Run the scenario through the Node APIs
+        working-directory: deploy
+        run: python3 scripts/node-e2e.py "${{ matrix.scenario }}"
+      - name: Scenario summary
+        if: always()
+        working-directory: deploy
+        run: cat "runtime/e2e/${{ matrix.scenario }}.json" 2>/dev/null || true

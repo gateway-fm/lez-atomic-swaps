@@ -114,9 +114,7 @@ Claimed`: maker alone initialized/funded, taker alone supplied the revealing
 preimage and claimed, and each process used a different key file and owner-only
 state directory. The exact transactions, blocks, balances, PDAs, runtime, and
 limitations are in
-[`docs/evidence/m2-local-onboarding-20260714.json`](../../docs/evidence/m2-local-onboarding-20260714.json),
-with manual commands in
-[`docs/manual-user-flows.md`](../../docs/manual-user-flows.md#flow-0d-run-the-role-separated-native-lez-v02-slice).
+[`docs/evidence/m2-local-onboarding-20260714.json`](../../docs/evidence/m2-local-onboarding-20260714.json).
 
 The native executable observes canonical sequencer inclusion and stable
 same-tip account facts. Separate sequential indexer reads established that the

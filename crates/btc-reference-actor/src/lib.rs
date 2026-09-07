@@ -997,6 +997,15 @@ impl From<Phase> for ActorPhaseV1 {
 /// With `LEZ_BTC_ACTOR_TRACE=1` in the environment the failing step's error is
 /// named on stderr (never any secret: these are transport and chain-shape
 /// errors) so an operator can see which observation the actor refused.
+/// With `LEZ_BTC_ACTOR_TRACE=1`, prints one JSON line describing a decision
+/// that is not an error (a safety read judged uncertain, a refund still
+/// pending) so an operator can see why the actor is waiting.
+fn trace_note(event: &str, detail: &str) {
+    if std::env::var_os("LEZ_BTC_ACTOR_TRACE").is_some_and(|value| value == "1") {
+        eprintln!("{{\"event\":{event:?},\"detail\":{detail:?}}}");
+    }
+}
+
 fn trace_observation_unavailable<E: std::fmt::Debug>(error: E) -> ActorCommandError {
     if std::env::var_os("LEZ_BTC_ACTOR_TRACE").is_some_and(|value| value == "1") {
         eprintln!(
@@ -1425,7 +1434,9 @@ async fn observe_current_lez_maker_step(
         .observe_witnessed_escrow(request)
         .await
         .map_err(trace_observation_unavailable)?;
-    if result.tip_before != result.tip_after {
+    // The sidecar vouches that the later tip extends the scanned one; only a
+    // chain that shortened between the two reads is an unusable observation.
+    if !lez_bridge_adapter::tip_extends(&result.tip_before, &result.tip_after) {
         return Err(ActorCommandError::ObservationUnavailable);
     }
     let observation = match step.step().as_str() {
@@ -2914,10 +2925,27 @@ fn validate_activation_material(
             }
         }
     }
-    if config.supports_owned_maker_lock() && config.role == ActorRole::Maker {
+    if config.supports_owned_maker_lock()
+        && config.role == ActorRole::Maker
+        && !maker_lock_material_deferred(config)
+    {
         let _ = load_prepared_maker_lock_material(config, agreement)?;
     }
     Ok(())
+}
+
+/// Whether the Maker's LEZ lock material is still to be prepared by the Node:
+/// the bundle names the preparation files, the escrow preparer writes them
+/// once no other Maker escrow is in flight. Until then the actor activates
+/// and observes but has nothing to submit.
+fn maker_lock_material_deferred(config: &ActorConfig) -> bool {
+    matches!(
+        config.maker_lock.as_ref(),
+        Some(MakerLockMaterialConfig::Lez {
+            preparation_result_file,
+            ..
+        }) if !preparation_result_file.is_file()
+    )
 }
 
 /// Agreement-bound Maker second-lock material reconstructed from a supported protocol config.
@@ -3347,7 +3375,23 @@ fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError> {
     let status = store
         .status()
         .map_err(|_| ActorCommandError::StateUnavailable)?;
-    Ok(status_output(config, &status))
+    Ok(status_output(
+        config,
+        &status,
+        maker_cutoff_passed(&agreement),
+    ))
+}
+
+/// Whether the wall clock is past the Maker's second-lock cutoff. Routing only:
+/// every recovery still fails closed until the chain clocks agree.
+fn maker_cutoff_passed(agreement: &BtcAgreementV1) -> bool {
+    let cutoff = agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .is_ok_and(|now| now.as_secs() >= cutoff)
 }
 
 async fn drive_live_lez_funding(
@@ -3844,6 +3888,11 @@ async fn drive_maker_lock_with_port(
         ));
     }
     let maker_chain = agreement.coordinator().funded_chain(Participant::Maker);
+    // The Node prepares the LEZ escrow once no other Maker escrow is in
+    // flight; until the material exists there is nothing to observe or submit.
+    if maker_lock_material_deferred(config) {
+        return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+    }
     let configured = load_prepared_maker_lock_material(config, &agreement)?;
     let expected_intent = configured_maker_lock_intent(config, &agreement, &configured)?;
     let mut journal = SqliteBtcMakerLockJournal::open(&config.state_db)
@@ -5392,8 +5441,15 @@ where
     R: BitcoinCoreRpc + Send + Sync,
 {
     async fn observe_refund(&self, agreement: &BtcAgreementV1) -> BitcoinRefundScan {
-        let Ok(observation) = BitcoinCoreAdapter::observe_refund(self, agreement).await else {
-            return BitcoinRefundScan::Uncertain;
+        let observation = match BitcoinCoreAdapter::observe_refund(self, agreement).await {
+            Ok(observation) => observation,
+            Err(error) => {
+                trace_note(
+                    "bitcoin_refund_observe_error",
+                    &format!("bitcoin refund observation failed: {error:?}"),
+                );
+                return BitcoinRefundScan::Uncertain;
+            }
         };
         let (observed, finalized) = match &observation {
             BitcoinRefundObservation::Immature(_) => return BitcoinRefundScan::Immature,
@@ -5477,6 +5533,13 @@ where
                 .await?;
         }
         let BitcoinRefundScan::Exact(exact) = scan else {
+            trace_note(
+                "refund_pending",
+                &format!(
+                    "bitcoin refund scan {scan:?}; prepared effect present: {}",
+                    self.effect.is_some()
+                ),
+            );
             return Ok(ActorRefundObservation::Pending {
                 chain: Chain::Bitcoin,
             });
@@ -7906,6 +7969,10 @@ fn encode_lez_maker_lock_absence_evidence(
 
 #[async_trait]
 impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one read, every uncertain outcome traced in place"
+    )]
     async fn observe(
         &self,
         agreement: &BtcAgreementV1,
@@ -7924,11 +7991,25 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
             self.config.lez_bridge.runtime.clone(),
             Duration::from_millis(self.config.lez_bridge.request_timeout_millis),
         );
-        let Ok(client) = factory.fresh_transport() else {
-            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        let client = match factory.fresh_transport() {
+            Ok(client) => client,
+            Err(error) => {
+                trace_note(
+                    "first_lock_safety_uncertain",
+                    &format!("lez transport: {error:?}"),
+                );
+                return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+            }
         };
-        let Ok(presence) = client.classify_finalized_witnessed_funding(request).await else {
-            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        let presence = match client.classify_finalized_witnessed_funding(request).await {
+            Ok(presence) => presence,
+            Err(error) => {
+                trace_note(
+                    "first_lock_safety_uncertain",
+                    &format!("lez classify_finalized_witnessed_funding: {error:?}"),
+                );
+                return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+            }
         };
         match presence {
             FinalizedWitnessedFundingPresence::Found {
@@ -7945,6 +8026,12 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     timestamp_ms: funding.containing_block.timestamp_ms,
                 };
                 if !canonical_maker_lock_is_timely(maker_chain, &inclusion, cutoff_unix_seconds) {
+                    trace_note(
+                        "first_lock_safety_uncertain",
+                        &format!(
+                            "lez maker lock found but late: {inclusion:?} cutoff {cutoff_unix_seconds}"
+                        ),
+                    );
                     return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
                 }
                 let chain_evidence = encode_lez_maker_lock_found_evidence(
@@ -7976,6 +8063,12 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     .maker_second_lock_cutoff_unix_seconds();
                 let observed_unix_seconds = finalized_clock.timestamp_ms / 1_000;
                 if observed_unix_seconds < cutoff_unix_seconds {
+                    trace_note(
+                        "first_lock_safety_uncertain",
+                        &format!(
+                            "lez maker lock absent but finalized clock {observed_unix_seconds} is before cutoff {cutoff_unix_seconds} (scanned {scanned_window:?})"
+                        ),
+                    );
                     return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
                 }
                 let absence_evidence = encode_lez_maker_lock_absence_evidence(
@@ -7994,7 +8087,11 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     absence_evidence,
                 })
             }
-            FinalizedWitnessedFundingPresence::Uncertain { .. } => {
+            uncertain @ FinalizedWitnessedFundingPresence::Uncertain { .. } => {
+                trace_note(
+                    "first_lock_safety_uncertain",
+                    &format!("lez finalized funding classification uncertain: {uncertain:?}"),
+                );
                 Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
             }
         }
@@ -9093,8 +9190,21 @@ fn effect_output(
     }
 }
 
-fn status_output(config: &ActorConfig, status: &BtcOfflineStatus) -> ActorStatusV1 {
-    let next_action = actor_next_action(status);
+fn status_output(
+    config: &ActorConfig,
+    status: &BtcOfflineStatus,
+    maker_cutoff_passed: bool,
+) -> ActorStatusV1 {
+    let mut next_action = actor_next_action(status);
+    // Past its second-lock cutoff the Maker may no longer lock; the only thing
+    // left for it at revision 1 is to follow the Taker's recovery, so its
+    // supervisor is told to recover rather than to keep driving a lock.
+    if config.role == ActorRole::Maker
+        && maker_cutoff_passed
+        && next_action == ActorNextActionV1::ObserveMakerSecondLockOrRecoverTakerLeg
+    {
+        next_action = ActorNextActionV1::RecoverTakerLeg;
+    }
     ActorStatusV1 {
         schema_version: OUTPUT_SCHEMA_VERSION,
         role: config.role,

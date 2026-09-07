@@ -25,8 +25,4 @@ f5a9caa66b04b0bec1a86cb732f5a64f63852e6e:scripts/run-bitcoin-core-e2e.sh:generic
 f5a9caa66b04b0bec1a86cb732f5a64f63852e6e:scripts/run-bitcoin-core-e2e.sh:generic-api-key:476
 b04df3599a9219be47cbd72c725f34f81b05ec4e:scripts/run-lez-v02-stack.sh:generic-api-key:12
 b04df3599a9219be47cbd72c725f34f81b05ec4e:scripts/run-lez-v02-stack.sh:generic-api-key:13
-80f0bcc2ea7da1ab17b05770276398f7d342d50f:scripts/run-m3-actor-local-poc.sh:generic-api-key:134
-d777d352855dec9a1b58984512fe43d7aa92208a:scripts/run-m3-lez-bootstrap.sh:generic-api-key:11
-80f0bcc2ea7da1ab17b05770276398f7d342d50f:scripts/test-m3-actor-local-poc-contract.sh:generic-api-key:1382
-71371d6dc30888cd327f74ef8b5442ac564eb4d8:scripts/test-m3-f7-token-fixture-contract.sh:generic-api-key:217
 49e3897b9916f3b2509ead41c0877c3df1e09136:tests/e2e/monero/provenance.env:generic-api-key:14

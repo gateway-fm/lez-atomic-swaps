@@ -815,7 +815,8 @@ impl LezBridgeBtcFirstLockProofTransport for BtcFirstLockProofTransport {
         ));
         let tip_before = ChainTip::new(Hex32::from_bytes([0x71; 32]), 21);
         let tip_after = if matches!(self.mutation, ProofMutation::CurrentTipDrift) {
-            ChainTip::new(Hex32::from_bytes([0x72; 32]), 22)
+            // A different block at the same height: a fork, not an extension.
+            ChainTip::new(Hex32::from_bytes([0x72; 32]), 21)
         } else {
             tip_before
         };
