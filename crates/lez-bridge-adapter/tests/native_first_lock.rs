@@ -1187,7 +1187,8 @@ async fn revealing_claim_absence_is_stable_only_for_exact_or_fully_covered_disco
             "exact-drift",
             RevealingClaimObservation::Absent,
             stable_tip,
-            ChainTip::new(Hex32::from_bytes([0x91; 32]), 13),
+            // A different block at the pinned height: a fork, not an extension.
+            ChainTip::new(Hex32::from_bytes([0x91; 32]), 12),
             "unstable",
         ),
     ] {

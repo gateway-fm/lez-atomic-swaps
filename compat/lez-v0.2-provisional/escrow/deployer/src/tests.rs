@@ -765,7 +765,10 @@ fn evidence_authentication_key_must_be_exact_owner_only_regular_file() {
 async fn returned_hash_mismatch_fails_after_exactly_one_submission() {
     let (mock, client, preflight, handle) = checked_preflight(SubmitMode::WrongHash).await;
 
-    let error = deploy_once_and_observe_with_timeout(client, preflight, Duration::from_millis(100))
+    // The mock answers the single submission with the wrong hash, so the
+    // deployer fails on that reply; the deadline only bounds the wait for it.
+    // A tight deadline turns a slow CI runner into a spurious timeout.
+    let error = deploy_once_and_observe_with_timeout(client, preflight, Duration::from_secs(10))
         .await
         .expect_err("noncanonical returned hash must fail closed");
 

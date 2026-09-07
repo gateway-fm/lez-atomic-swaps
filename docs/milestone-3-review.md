@@ -41,8 +41,9 @@ The system and role boundaries are diagrammed in
 [system architecture](architecture/system-architecture.md) and the exact
 local nodes, RPCs, credentials, and public route shapes are diagrammed in
 [deployment components and RPCs](architecture/deployment-components-and-rpcs.md).
-The [manual user-flow guide](manual-user-flows.md) gives build, happy, refund,
-concurrent, SDK/vector, recording, and Testnet4 procedures.
+The M3 runner lane and its manual guide were retired once the Nodes took over
+the lifecycle ([ADR 0213](architecture/0213-nodes-own-the-btc-lifecycle.md));
+`deploy/README.md` holds today's manual walkthrough.
 
 Both trade directions enforce the same safety order:
 

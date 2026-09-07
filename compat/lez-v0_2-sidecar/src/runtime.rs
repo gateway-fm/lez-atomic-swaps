@@ -636,6 +636,20 @@ impl OfficialNodeRpc {
             .map_err(|_| RuntimeBoundaryError::NodeUnavailable)
     }
 
+    /// Reads one block by height from the official sequencer.
+    pub(crate) async fn block_at(&self, height: u64) -> Result<Block, RuntimeBoundaryError> {
+        let block = self
+            .client
+            .get_block(height)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?
+            .ok_or(RuntimeBoundaryError::NodeUnavailable)?;
+        if block.header.block_id != height {
+            return Err(RuntimeBoundaryError::NodeUnavailable);
+        }
+        Ok(block)
+    }
+
     /// Reads the official sequencer's current tip block without exposing its
     /// raw JSON-RPC client outside this runtime module.
     pub(crate) async fn tip_block(&self) -> Result<Block, RuntimeBoundaryError> {

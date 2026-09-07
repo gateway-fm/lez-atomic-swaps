@@ -59,6 +59,12 @@ for table, count in counts.items():
         print(f"  {table}: {count} rows removed")
 PY
 
+log "Bitcoin wallets: release coins reserved by plans that never broadcast"
+for wallet in lez-taker lez-maker; do
+  docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin \
+    -rpcwallet="$wallet" lockunspent true >/dev/null 2>&1 || true
+done
+
 log "exported evidence: back to the certified sample"
 find runtime/evidence -name '*.json' ! -name 'certified-*.json' -delete
 cp assets/certified-evidence-m5arm-08180005-ui.json runtime/m3-btc-ui-evidence.json.tmp

@@ -253,7 +253,7 @@ where
         if current.context != current_context {
             return Err(BtcLezFirstLockProofError::ResponseEnvelopeMismatch);
         }
-        if current.tip_before != current.tip_after {
+        if !crate::tip_extends(&current.tip_before, &current.tip_after) {
             return Err(BtcLezFirstLockProofError::UnstableCurrentTip);
         }
         let (

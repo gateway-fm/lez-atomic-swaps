@@ -139,8 +139,8 @@ control and does not change durable offer or agreement state.
 
 ## Run the Maker package as a real user
 
-Build and start the real Maker Node using the normal Maker configuration from
-[the manual user flows](../../docs/manual-user-flows.md). Its owner RPC defaults
+Build and start the real Maker Node the way `deploy/images/maker-node/node-entrypoint.sh`
+does (see the manual test walkthrough in [`deploy/README.md`](../../deploy/README.md)). Its owner RPC defaults
 to `/run/lez/maker/node.sock`; a run-private absolute socket is safer for
 parallel local work. Verify its directory is mode 0700, its socket is mode 0600,
 and both are owned by your effective UID. Then launch:
@@ -177,8 +177,7 @@ controller at `LEZ_BTC_DEMO_RPC_SOCKET`; a standalone package without that
 mode-0600 socket remains a safe evidence viewer and shows the market offline.
 For the optional
 prepared-corridor controls, also create the strict owner-private Taker Node role
-configuration described in
-[Flow 1Y](../../docs/manual-user-flows.md#flow-1y-run-the-actual-taker-owner-service-and-prepared-acceptance),
+configuration the way `deploy/images/taker-node/node-entrypoint.sh` renders it,
 start `lez-taker-node` as the current user, and select its mode-0600 socket:
 
 ```sh
