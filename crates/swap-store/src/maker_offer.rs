@@ -1224,6 +1224,14 @@ struct PublishRequest<'a> {
     route: MakerRouteV1,
 }
 
+#[derive(Serialize)]
+struct GuardedPublishRequest<'a> {
+    offer_id: &'a MakerOfferId,
+    route: MakerRouteV1,
+    expected_pair_revision: u64,
+    expected_price_revision: u64,
+}
+
 #[derive(Deserialize, Eq, PartialEq)]
 struct ReplayPublishRequest {
     offer_id: MakerOfferId,
@@ -1391,12 +1399,67 @@ impl SqliteSwapStore {
         route: MakerRouteV1,
         now_unix_seconds: u64,
     ) -> Result<MakerOfferCommit, StoreError> {
-        let request_json = serde_json::to_string(&PublishRequest { offer_id, route })?;
+        self.publish_local_offer_inner(request_id, offer_id, route, None, now_unix_seconds)
+    }
+
+    /// Publishes exactly the local policy and price revisions reviewed by a client.
+    ///
+    /// `expected_revisions` is `(pair_revision, price_revision)`. Both checks and
+    /// publication share one transaction. Replay binds the revisions as well as
+    /// the offer ID and route, and precedes checks against current configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::publish_local_offer`], or
+    /// [`StoreError::StaleMakerConfiguration`] if either revision changed.
+    pub fn publish_local_offer_at_revisions(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        route: MakerRouteV1,
+        expected_revisions: (u64, u64),
+        now_unix_seconds: u64,
+    ) -> Result<MakerOfferCommit, StoreError> {
+        self.publish_local_offer_inner(
+            request_id,
+            offer_id,
+            route,
+            Some(expected_revisions),
+            now_unix_seconds,
+        )
+    }
+
+    fn publish_local_offer_inner(
+        &mut self,
+        request_id: &RequestId,
+        offer_id: &MakerOfferId,
+        route: MakerRouteV1,
+        expected_revisions: Option<(u64, u64)>,
+        now_unix_seconds: u64,
+    ) -> Result<MakerOfferCommit, StoreError> {
+        // A distinct operation prevents legacy publish replay compatibility from
+        // treating a changed (or omitted) revision guard as an exact retry.
+        let (operation, request_json) = if let Some((pair, price)) = expected_revisions {
+            (
+                "offer_publish_at_revisions_v1",
+                serde_json::to_string(&GuardedPublishRequest {
+                    offer_id,
+                    route,
+                    expected_pair_revision: pair,
+                    expected_price_revision: price,
+                })?,
+            )
+        } else {
+            (
+                "offer_publish",
+                serde_json::to_string(&PublishRequest { offer_id, route })?,
+            )
+        };
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(commit) =
-            replay_offer_mutation(&transaction, request_id, "offer_publish", &request_json)?
+            replay_offer_mutation(&transaction, request_id, operation, &request_json)?
         {
             transaction.commit()?;
             return Ok(commit);
@@ -1422,6 +1485,19 @@ impl SqliteSwapStore {
         }
         let (price, price_revision) =
             load_price(&transaction, route)?.ok_or(StoreError::MissingMakerLocalPrice)?;
+        if let Some((expected_pair, expected_price)) = expected_revisions {
+            for (expected, actual) in [
+                (expected_pair, policy_revision),
+                (expected_price, price_revision),
+            ] {
+                if expected != actual {
+                    return Err(StoreError::StaleMakerConfiguration {
+                        expected: Some(expected),
+                        actual: Some(actual),
+                    });
+                }
+            }
+        }
         let expires_at_unix_seconds = now_unix_seconds
             .checked_add(policy.offer_ttl_seconds())
             .filter(|value| i64::try_from(*value).is_ok())
@@ -1453,7 +1529,7 @@ impl SqliteSwapStore {
                 request_id.as_str(),
             ],
         )?;
-        persist_offer_mutation(&transaction, request_id, "offer_publish", &request_json, 1)?;
+        persist_offer_mutation(&transaction, request_id, operation, &request_json, 1)?;
         transaction.commit()?;
         Ok(MakerOfferCommit {
             revision: 1,

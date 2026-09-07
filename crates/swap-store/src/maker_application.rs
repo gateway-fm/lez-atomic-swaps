@@ -911,29 +911,29 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
              sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
              request_id              TEXT NOT NULL UNIQUE,
              operation               TEXT NOT NULL CHECK (
-                 operation IN ('pair_configure', 'local_price_set', 'local_route_save', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
+                 operation IN ('pair_configure', 'local_price_set', 'local_route_save', 'offer_publish', 'offer_publish_at_revisions_v1', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
              ),
              request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
              request_json            TEXT NOT NULL,
              result_json             TEXT NOT NULL
          ) STRICT;",
     )?;
-    let supports_local_route_save: bool = transaction.query_row(
-        "SELECT instr(sql, 'local_route_save') > 0
+    let supports_extension_publication: bool = transaction.query_row(
+        "SELECT instr(sql, 'local_route_save') > 0 AND instr(sql, 'offer_publish_at_revisions_v1') > 0
            FROM sqlite_master
           WHERE type = 'table' AND name = 'maker_application_mutations'",
         [],
         |row| row.get(0),
     )?;
-    if !supports_local_route_save {
+    if !supports_extension_publication {
         transaction.execute_batch(
             "ALTER TABLE maker_application_mutations
-                 RENAME TO maker_application_mutations_before_local_route_save;
+                 RENAME TO maker_application_mutations_before_extension_api;
              CREATE TABLE maker_application_mutations (
                  sequence                INTEGER PRIMARY KEY AUTOINCREMENT,
                  request_id              TEXT NOT NULL UNIQUE,
                  operation               TEXT NOT NULL CHECK (
-                     operation IN ('pair_configure', 'local_price_set', 'local_route_save', 'offer_publish', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
+                     operation IN ('pair_configure', 'local_price_set', 'local_route_save', 'offer_publish', 'offer_publish_at_revisions_v1', 'offer_reserve', 'offer_consume', 'offer_withdraw', 'btc_negotiation_stage', 'btc_negotiation_complete', 'zec_negotiation_stage', 'zec_negotiation_complete', 'xmr_negotiation_stage', 'xmr_negotiation_complete', 'actor_action_request')
                  ),
                  request_payload_version INTEGER NOT NULL CHECK (request_payload_version = 1),
                  request_json            TEXT NOT NULL,
@@ -943,9 +943,9 @@ pub(super) fn migrate(transaction: &rusqlite::Transaction<'_>) -> Result<(), Sto
                  sequence, request_id, operation, request_payload_version, request_json, result_json
              )
              SELECT sequence, request_id, operation, request_payload_version, request_json, result_json
-               FROM maker_application_mutations_before_local_route_save
+               FROM maker_application_mutations_before_extension_api
               ORDER BY sequence;
-             DROP TABLE maker_application_mutations_before_local_route_save;",
+             DROP TABLE maker_application_mutations_before_extension_api;",
         )?;
     }
     let legacy_exists: bool = transaction.query_row(
