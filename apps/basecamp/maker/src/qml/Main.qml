@@ -31,7 +31,7 @@ Item {
         inventory: [], swaps: [], wallets: [],
         summary: ({pending_offers: 0, accepted_swaps: 0, completed_swaps: 0}),
         runner_ready: false, runner_busy: false,
-        runner_detail: "Checking the local M3 runner",
+        runner_detail: "Checking the Maker Node",
         latest_balance_evidence: null
     })
     property bool btcMarketReady: false
@@ -515,8 +515,9 @@ Item {
             })
     }
 
+    // The Maker Node settles as one identity; the desk shows it as its wallet.
     function selectedMakerWallet() {
-        return makerWallet.currentIndex === 1 ? "maker-basel-02" : "maker-munich-01"
+        return "maker-munich-01"
     }
 
     function formatBtcSats(value) {
@@ -768,7 +769,7 @@ Item {
                                 LuxeCombo {
                                     id: makerWallet
                                     objectName: "makerBtcWallet"
-                                    model: ["Munich Vault 01 · Maker", "Basel Vault 02 · Maker"]
+                                    model: ["Munich Vault 01 · Maker Node"]
                                     implicitWidth: 240
                                     onActivated: root.refreshBtcMarket(false)
                                 }
@@ -888,8 +889,8 @@ Item {
                             border.width: 1; border.color: root.btcMarket.runner_ready === true ? "#416F4F" : "#724051"
                             Label {
                                 id: makerRunnerLabel; anchors.centerIn: parent
-                                text: root.btcMarket.runner_busy === true ? "RUNNER ACTIVE"
-                                    : root.btcMarket.runner_ready === true ? "RUNNER READY" : "RUNNER OFFLINE"
+                                text: root.btcMarket.runner_busy === true ? "NODES ACTIVE"
+                                    : root.btcMarket.runner_ready === true ? "NODES READY" : "NODES OFFLINE"
                                 color: root.btcMarket.runner_ready === true ? "#7EE100" : "#FF9FAF"
                                 font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.9
                             }

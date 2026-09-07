@@ -47,8 +47,8 @@ dependencies and images.
 ```sh
 git clone https://github.com/gateway-fm/lez-atomic-swaps.git
 cd lez-atomic-swaps/deploy
-./scripts/up.sh
-./scripts/prepare-btc-m3-demo.sh
+./scripts/from-scratch.sh        # first time: sources, payloads, chains, market bootstrap, UI suites
+./scripts/up.sh                  # afterwards: config → images → stack → UI verification
 ```
 
 Open the Basecamp desktop on macOS:
@@ -71,15 +71,22 @@ The local product also exposes:
 
 ### Complete a swap
 
-1. In **LEZ / BTC Maker**, select a wallet and publish an offer.
-2. In **LEZ / BTC Taker**, select a wallet and take that authenticated offer.
-3. Follow the four role-owned actions: **Lock BTC → Fund LEZ → Claim LEZ →
-   Claim Bitcoin**.
-4. Open the local proof and inspect the five chain effects, balances, and fees.
+1. In **LEZ / BTC Maker**, publish an offer (the Maker Node signs and
+   publishes it through Delivery).
+2. In **LEZ / BTC Taker**, take that authenticated offer. The Taker Node
+   reserves the lot, plans its Bitcoin funding, prepares its LEZ claim, runs
+   the signing ceremony with the Maker Node and activates its actor.
+3. Follow the lifecycle: **Taker: Lock BTC → Maker Node funds LEZ → Taker:
+   Claim LEZ → Maker Node claims Bitcoin**. The Maker's two steps are its
+   Node's automatic effects; the Maker desk shows their progress.
+4. Publish the completed swap's proof with
+   `./scripts/export-node-evidence.py` and inspect the five chain effects in
+   the LEZ explorer's evidence view and in the Taker desk.
 
 Each dashboard exposes only the action owned by that role. The standing local
 chains persist between swaps, so balances and history accumulate like they do
-on long-lived networks.
+on long-lived networks. `deploy/README.md` has a step-by-step manual test
+walkthrough with the commands that show what each Node did.
 
 Verify the running product without starting another swap:
 
@@ -87,7 +94,7 @@ Verify the running product without starting another swap:
 ./scripts/verify-all.sh
 docker compose --env-file runtime/runtime.env ps
 docker compose --env-file runtime/runtime.env logs --tail=200 \
-  maker-node taker-node btc-demo-controller
+  maker-node taker-node
 ```
 
 Stop it with `./scripts/down.sh`. Add `--wipe` only when you intentionally want

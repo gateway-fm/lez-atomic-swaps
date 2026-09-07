@@ -3,11 +3,11 @@
 #   1. container health
 #   2. settlement-chain state (both chains + the four persistent wallets)
 #   3. block explorers actually display every certified swap transaction
-#   4. wallet-market controller behaviour (validation, replay, role gating)
+#   4. Node market behaviour (publication, discovery, replay, withdrawal)
 #   5. Basecamp UI regression suites (maker and taker)
 #
-# It starts no swaps and submits no chain effects. The market check creates and
-# withdraws one uniquely named offer; the controller retains that audit row.
+# It starts no swaps and submits no chain effects. The market check publishes
+# and withdraws one uniquely named offer; the Maker Node keeps it in its history.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit
 
@@ -45,12 +45,12 @@ lez_head="$(curl -sf http://127.0.0.1:3003/api/overview |
 report "$([[ -n "${lez_head:-}" ]] && echo 0 || echo 1)" "LEZ chain at block ${lez_head:-unknown}"
 
 section "block explorers"
-python3 scripts/verify-explorers.py --runs "$LEZ_M3_RUNNER_REPO/.e2e"
+python3 scripts/verify-explorers.py --evidence-dir runtime/evidence
 report "$?" "explorer transaction display"
 
-section "wallet market controller"
-docker exec -i lez-btc-demo-controller python3 - < scripts/verify-market.py
-report "$?" "market controller behaviour"
+section "Node market"
+python3 scripts/verify-market.py
+report "$?" "Node market behaviour"
 
 section "Basecamp UI regressions"
 for role in maker taker; do

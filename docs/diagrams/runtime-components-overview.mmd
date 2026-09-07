@@ -1,0 +1,83 @@
+flowchart LR
+    classDef surface fill:#eef4ff,stroke:#2459a9,color:#102a43,stroke-width:1.5px
+    classDef rust fill:#eaf8f0,stroke:#237a45,color:#123524,stroke-width:1.5px
+    classDef demo fill:#fff3df,stroke:#b86600,color:#4a2a00,stroke-width:1.5px
+    classDef state fill:#f5efff,stroke:#7048a8,color:#2d174f,stroke-width:1.5px
+    classDef chain fill:#eef7fa,stroke:#28778a,color:#123d46,stroke-width:1.5px
+    classDef risk fill:#fff0f0,stroke:#b42318,color:#5b1510,stroke-width:2px
+    classDef external fill:#f5f5f5,stroke:#666,color:#222,stroke-dasharray:5 4
+
+    subgraph Surface["Owner-local control surfaces"]
+        UI["Basecamp UI\nVNC + role modules"]
+        CLI["lez-maker / lez-taker\noperator CLIs"]
+    end
+
+    subgraph Compose["Docker Compose application processes"]
+        Maker["lez-maker-daemon\nowner RPC + optional Chat"]
+        Taker["lez-taker-service\ndiscovery + admission + actions"]
+        Controller["btc-demo-controller.py\nwallet market + action gates"]
+    end
+
+    subgraph State["Local durable and exchange state"]
+        MakerDb[("maker.sqlite3")]
+        Delivery[("signed Delivery directory")]
+        TakerDb[("taker registry/config")]
+        MarketDb[("demo market SQLite")]
+        Evidence[("public evidence JSON")]
+    end
+
+    subgraph ExternalRunner["External local evidence runner"]
+        DockerApi["host Docker API\n/var/run/docker.sock"]
+        Runner["lez-runner-arm\nprovisioned checkout"]
+        Actors["fresh one-shot Maker/Taker actors\nrole stores + sidecars"]
+    end
+
+    subgraph BTC["Standing Bitcoin regtest services"]
+        Core["Bitcoin Core 31.1"]
+        Miner["btc-miner.sh"]
+        BtcExplorer["btc-rpc-explorer"]
+    end
+
+    subgraph LEZ["Standing LEZ v0.2 devnet services"]
+        Bedrock["Bedrock node"]
+        Sequencer["sequencer_service"]
+        Indexer["indexer_service"]
+        LezExplorer["LEZ explorer / evidence proxy"]
+    end
+
+    UI -->|"mode-0600 UDS"| Maker
+    UI -->|"mode-0600 UDS"| Taker
+    UI -->|"mode-0600 UDS"| Controller
+    CLI -->|"owner RPC UDS"| Maker
+    CLI -->|"owner RPC UDS"| Taker
+
+    Maker --> MakerDb
+    Maker --> Delivery
+    Taker --> TakerDb
+    Taker -->|"read-only offers"| Delivery
+    Taker -. "optional maker Chat UDS" .-> Maker
+    Controller --> MarketDb
+
+    Controller -->|"create/exec/wait"| DockerApi
+    DockerApi --> Runner
+    Runner --> Actors
+    Actors -->|"restricted JSON-RPC"| Core
+    Actors -->|"transaction submission"| Sequencer
+    Actors -->|"finalized observation"| Indexer
+    Actors --> Evidence
+    Evidence --> LezExplorer
+    Evidence --> UI
+
+    Miner -->|"generate blocks"| Core
+    Core --> BtcExplorer
+    Sequencer --> Bedrock
+    Indexer --> Bedrock
+    Indexer --> LezExplorer
+
+    class UI,CLI surface
+    class Maker,Taker rust
+    class Controller,Runner,Actors demo
+    class MakerDb,Delivery,TakerDb,MarketDb,Evidence state
+    class Core,Miner,BtcExplorer,Bedrock,Sequencer,Indexer,LezExplorer chain
+    class DockerApi risk
+

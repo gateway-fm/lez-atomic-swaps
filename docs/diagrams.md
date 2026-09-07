@@ -7,44 +7,46 @@ transaction.
 
 ## Running product stack
 
-The current BTC mini-apps use an owner-local demo controller for the fixed
-wallet market and role-gated actions. The controller invokes the run-owned M3
-workflow and has Docker-socket authority, so it is trusted local-demo
-orchestration outside the production trust/custody design. The current PoC's
-Taker first lock is submitted by a run-owned fixture; subsequent transitions
-use separate Maker- and Taker-local actors, stores, signer journals, and effect
-journals.
+The two Basecamp desks drive the two Nodes, and the Nodes settle the swap
+themselves (ADR 0213): the Taker Node reserves the lot with the Maker Node over
+its owner-local Chat socket, plans its Bitcoin funding from its own Core
+wallet, prepares its LEZ claim through a per-swap sidecar, runs the adaptor
+signing ceremony and activates its actor; each Node then drives its own actor
+against the standing chains. Nothing outside the two Nodes holds swap
+authority; no service holds the host Docker socket.
 
 ```mermaid
 flowchart LR
-    subgraph UI["Logos Basecamp"]
-        MAKER_UI["Maker mini-app"]
-        TAKER_UI["Taker mini-app"]
+    subgraph UI["Logos Basecamp (basecamp-ui, VNC :5901)"]
+        MAKER_UI["LEZ / BTC Maker desk\nMunich Vault 01"]
+        TAKER_UI["LEZ / BTC Taker desk\nZurich Wallet 01"]
     end
 
-    MAKER_UI -->|"owner-only local RPC"| MAKER["Maker daemon"]
-    TAKER_UI -->|"role-fixed local RPC"| TAKER["Taker service"]
-    MAKER_UI -->|"fixed market + Maker gates"| CONTROL["BTC demo controller\nDocker-socket authority"]
-    TAKER_UI -->|"fixed market + Taker gates"| CONTROL
+    MAKER_UI -->|"owner-only Unix socket"| MAKER["lez-maker-node\noffers · Chat server · actor supervisor"]
+    TAKER_UI -->|"owner-only Unix socket"| TAKER["lez-taker-node\ndiscovery · take · lock · claim · observer"]
 
-    CONTROL -->|"run-owned workflow"| RUNNER["M3 actor runner"]
-    RUNNER --> MAKER_STATE["Maker-local actor + store\nsigner/effect journals"]
-    RUNNER --> TAKER_STATE["Taker-local actor + store\nsigner/effect journals"]
+    MAKER -->|"signed offer files"| DELIVERY["Delivery directory"]
+    DELIVERY --> TAKER
+    TAKER -->|"reserve · ceremony · propose/complete"| MAKER
 
-    MAKER_STATE --> BTC["Bitcoin Core 31.1 regtest\nP2TR / MuSig2 adaptor path"]
-    MAKER_STATE --> LEZ["LEZ v0.2 private devnet\nRisc0 escrow path"]
-    TAKER_STATE --> BTC
-    TAKER_STATE --> LEZ
+    MAKER --> MAKER_ACTOR["lez-btc-maker-actor\n+ per-swap LEZ sidecar"]
+    TAKER --> TAKER_ACTOR["lez-btc-taker-actor (in-process)\n+ per-swap LEZ sidecar"]
 
-    BTC --> BTC_EXPLORER["Bitcoin explorer"]
-    LEZ --> LEZ_EXPLORER["LEZ explorer + evidence"]
-    CONTROL --> LEZ_EXPLORER
+    MAKER_ACTOR --> BTC["Bitcoin Core 31.1 regtest\nP2TR / MuSig2 adaptor path"]
+    MAKER_ACTOR --> LEZ["LEZ v0.2 devnet\nRisc0 escrow program"]
+    TAKER_ACTOR --> BTC
+    TAKER_ACTOR --> LEZ
+
+    BTC --> BTC_EXPLORER["Bitcoin explorer :3002"]
+    LEZ --> LEZ_EXPLORER["LEZ explorer :3003\n+ exported swap evidence"]
+    TAKER -.->|"export-node-evidence.py"| LEZ_EXPLORER
 ```
 
-Logos Delivery and Chat are architectural discovery/negotiation transports,
-but this BTC demo uses the local market controller and does not demonstrate a
-live Delivery/Chat BTC route. Once the agreement and recovery material are
-persisted, protocol settlement no longer depends on the discovery transport.
+Delivery (offer publication) and Chat (reservation, negotiation, ceremony) run
+here as a shared directory and a shared Unix socket between the two Node
+containers; the Logos relay gateways are packaged but not on this local path.
+Once the agreement and recovery material are persisted, settlement no longer
+depends on either transport.
 
 ## Generic two-leg construction
 

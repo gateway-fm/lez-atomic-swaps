@@ -17,10 +17,10 @@ readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
 readonly maker_genesis_allocation=100000
 readonly taker_genesis_allocation=200000
 # Persistent settlement wallets (owner account ids of the identities held in
-# runner-work/market/identities). Swaps run on this long-standing chain and
+# the market root, LEZ_MARKET_ROOT). Swaps run on this long-standing chain and
 # these accounts accumulate real balances across swaps — the local analog of
 # funded wallets on a real network.
-# LEZ_WALLET_IDENTITIES (a runner-work/market/identities directory) overrides
+# LEZ_WALLET_IDENTITIES (the market root's identities directory) overrides
 # the recorded ids with the ids of the identities that directory holds.
 wallet_account_id() { # wallet_account_id <wallet> <recorded-id>
   local identity="${LEZ_WALLET_IDENTITIES:-}/$1.json"
@@ -40,13 +40,17 @@ umask 077
 echo "runtime root: $RUNTIME"
 mkdir -p "$RUNTIME"/{config,bedrock,indexer,sequencer,sockets,btc,secrets}
 
-# Seed the UI with a public, secret-free snapshot from the completed local BTC
-# application run. A newer rerun exported by prepare-btc-m3-demo.sh is retained.
+# The proof view and the explorer's evidence index start from the certified
+# sample until export-node-evidence.py publishes a swap the Nodes settled.
+mkdir -p "$RUNTIME/evidence"
 if [[ ! -s "$RUNTIME/m3-btc-ui-evidence.json" ]]; then
-  cp "$DEPLOY_ROOT/full-swap/evidence-m5arm-08180005-ui.json" \
+  cp "$DEPLOY_ROOT/assets/certified-evidence-m5arm-08180005-ui.json" \
     "$RUNTIME/m3-btc-ui-evidence.json"
   chmod 0666 "$RUNTIME/m3-btc-ui-evidence.json"
 fi
+[[ -s "$RUNTIME/evidence/certified-m5arm-08180005.json" ]] \
+  || cp "$DEPLOY_ROOT/assets/certified-evidence-m5arm-08180005-ui.json" "$RUNTIME/evidence/certified-m5arm-08180005.json"
+chmod 0644 "$RUNTIME/evidence/"*.json  # the explorer reads them as another uid
 chmod 0666 "$RUNTIME/m3-btc-ui-evidence.json"
 jq -e '
   .kind == "m3_btc_ui_evidence"
@@ -149,28 +153,42 @@ cat >"$RUNTIME/secrets/mining.key" <<'EOF'
 0000000000000000000000000000000000000000000000000000000000000001
 EOF
 chmod 0600 "$RUNTIME/secrets/mining.key" || exit 1
+# Bitcoin Core credentials in cookie form for the Nodes and their actors
+# (rewritten in place: bind mounts pin the inode).
+printf 'lezrpc:%s\n' "$btc_rpc_password" >"$RUNTIME/secrets/btc-rpc-cookie"
+chmod 0644 "$RUNTIME/secrets/btc-rpc-cookie"
 
 # --- maker/taker runtime ----------------------------------------------------
-mkdir -p "$RUNTIME/sockets"
-rm -f "$RUNTIME/runtime.env"
-runner_repo="${LEZ_M3_RUNNER_REPO:-}"
-if [[ -z "$runner_repo" ]]; then
-  for candidate in "$DEPLOY_ROOT/../runner-work/repo" "$DEPLOY_ROOT/../../runner-work/repo"; do
-    if [[ -d "$candidate/.e2e" && -d "$candidate/scripts" ]]; then
-      runner_repo="$(cd "$candidate" && pwd -P)"
-      break
-    fi
+# Per-role LEZ identities for the Node-owned Bitcoin lifecycle (ADR 0213): the
+# Maker settles as maker-munich-01 and the Taker as taker-zurich-01, the two
+# funded market wallets, so their balances move on the standing chain.
+# The market root holds the wallet identities and market-bootstrap.env (the
+# escrow deployment the Nodes read); market-bootstrap.sh writes it once.
+market_root="${LEZ_MARKET_ROOT:-}"
+if [[ -z "$market_root" ]]; then
+  for candidate in "$DEPLOY_ROOT/../../market" "$DEPLOY_ROOT/../market" "$DEPLOY_ROOT/../../runner-work/market" "$DEPLOY_ROOT/../runner-work/market"; do
+    [[ -d "$candidate" ]] && { market_root="$(cd "$candidate" && pwd -P)"; break; }
   done
 fi
-[[ -n "$runner_repo" && -d "$runner_repo" ]] || {
-  echo "LEZ_M3_RUNNER_REPO must select the provisioned M3 runner checkout" >&2
+[[ -n "$market_root" && -d "$market_root" ]] || {
+  echo "LEZ_MARKET_ROOT must select the market root (wallet identities, market-bootstrap.env)" >&2
   exit 1
 }
-runner_repo_in_container="${LEZ_M3_RUNNER_REPO_IN_CONTAINER:-$runner_repo}"
-[[ "$runner_repo_in_container" == /* ]] || {
-  echo "LEZ_M3_RUNNER_REPO_IN_CONTAINER must be an absolute path" >&2
-  exit 1
-}
+identities_root="${LEZ_WALLET_IDENTITIES:-$market_root/identities}"
+for pair in maker:maker-munich-01 taker:taker-zurich-01; do
+  role="${pair%%:*}"; wallet="${pair##*:}"
+  mkdir -p "$RUNTIME/lez/$role"
+  if [[ -n "$identities_root" && -f "$identities_root/$wallet/lez-signer.key" ]]; then
+    cp "$identities_root/$wallet/lez-signer.key" "$RUNTIME/lez/$role/lez-signer.key"
+    cp "$identities_root/$wallet/identity.json" "$RUNTIME/lez/$role/identity.json"
+  else
+    echo "warning: $wallet identity unavailable; $role Node runs without the Bitcoin lifecycle" >&2
+  fi
+  # Bind mounts keep host ownership; the entrypoint copies these owner-private.
+  chmod 0644 "$RUNTIME/lez/$role"/* 2>/dev/null || true
+done
+mkdir -p "$RUNTIME/sockets"
+rm -f "$RUNTIME/runtime.env"
 printf '%s\n' \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_GENESIS_TIME_EPOCH=$chain_start_epoch" \
@@ -178,9 +196,7 @@ printf '%s\n' \
   "LEZ_V02_TAKER_ACCOUNT_ID=$taker_account_id" \
   "BTC_RPC_USER=lezrpc" \
   "BTC_RPC_PASSWORD=$btc_rpc_password" \
-  "LEZ_M3_RUNNER_REPO=$runner_repo" \
-  "LEZ_M3_RUNNER_REPO_IN_CONTAINER=$runner_repo_in_container" \
-  "LEZ_M3_RUNNER_CONTAINER=${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}" \
+  "LEZ_MARKET_ROOT=$market_root" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
 

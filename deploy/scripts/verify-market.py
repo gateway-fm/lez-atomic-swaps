@@ -1,209 +1,157 @@
 #!/usr/bin/env python3
-"""Behavioural tests for the owner-local wallet market controller.
+"""Behavioural checks for the Node market: the Maker publishes, the Taker discovers.
 
-Runs INSIDE the btc-demo-controller container (the RPC socket is owner-only).
-Exercises validation, idempotent replay, wallet ownership, offer lifecycle,
-role gating and queueing without starting any swap runs. Its uniquely named
-test offer is withdrawn, while the controller retains the normal audit row.
+Runs on the host against the two Nodes' owner-only sockets (through
+`docker exec`). Publishes one uniquely named offer on the Maker Node, sees it
+reach the Taker Node through Delivery, replays the publication idempotently,
+rejects malformed and stale requests, withdraws the offer and sees it leave the
+Taker's order book. It starts no swap and submits no chain effect.
 
-Usage: docker exec -i lez-btc-demo-controller python3 - < verify-market.py
+Usage (from deploy/): python3 scripts/verify-market.py
 """
 from __future__ import annotations
 
-import http.client
 import json
-import socket
+import subprocess
 import sys
 import time
 
-SOCKET_PATH = "/run/lez-btc-demo/controller.sock"
 FAILURES: list[str] = []
 CHECKS = 0
+SOCKETS = {"maker": ("lez-maker-node", "/run/lez/maker/node.sock"),
+           "taker": ("lez-taker-node", "/run/lez/taker/node.sock")}
+ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}
 
 
-class UnixConn(http.client.HTTPConnection):
-    def __init__(self, path: str):
-        super().__init__("localhost")
-        self.sock_path = path
-
-    def connect(self) -> None:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.connect(self.sock_path)
-        self.sock = sock
-
-
-def rpc(method: str, params: dict) -> dict:
-    conn = UnixConn(SOCKET_PATH)
+def rpc(role: str, method: str, params: object) -> dict:
+    container, socket = SOCKETS[role]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": [params]})
-    conn.request("POST", "/", body=body, headers={"Content-Type": "application/json"})
-    return json.loads(conn.getresponse().read())
+    result = subprocess.run(
+        ["docker", "exec", "-i", container, "curl", "-sS", "--max-time", "30", "--unix-socket", socket,
+         "-H", "content-type: application/json", "--data", body, "http://localhost/"],
+        capture_output=True, text=True, check=False)
+    if result.returncode != 0 or not result.stdout:
+        return {"error": {"code": -1, "message": f"transport: {result.stderr.strip()[:200]}"}}
+    return json.loads(result.stdout)
 
 
 def check(label: str, ok: bool, detail: str = "") -> bool:
     global CHECKS
     CHECKS += 1
-    print(f"  [{'PASS' if ok else 'FAIL'}] {label}{(' — ' + detail) if detail else ''}")
+    print(f"  [{'PASS' if ok else 'FAIL'}] {label}{(' — ' + detail) if detail and not ok else ''}")
     if not ok:
         FAILURES.append(label)
     return ok
 
 
-def expect_error(label: str, method: str, params: dict, fragment: str) -> None:
-    response = rpc(method, params)
-    message = response.get("error", {}).get("message", "")
-    check(label, fragment in message, message or "unexpectedly succeeded")
+def expect_error(label: str, role: str, method: str, params: object, fragment: str) -> None:
+    reply = rpc(role, method, params)
+    error = reply.get("error") or {}
+    text = json.dumps(error)
+    check(label, "error" in reply and fragment in text, text[:160] if error else "unexpectedly succeeded")
 
 
-def request_id(role: str, tag: str) -> str:
-    return f"ui-{role}-{tag}-{int(time.time() * 1000)}"
+def maker_offers() -> list[dict]:
+    return rpc("maker", "maker_offer_list", {})["result"]
 
 
-MAKER = {"schema_version": 2, "role": "maker", "wallet_id": "maker-munich-01"}
-BASEL = {"schema_version": 2, "role": "maker", "wallet_id": "maker-basel-02"}
-TAKER = {"schema_version": 2, "role": "taker", "wallet_id": "taker-zurich-01"}
-LIMMAT = {"schema_version": 2, "role": "taker", "wallet_id": "taker-limmat-02"}
-PRESET = {"count": 1, "bitcoin_sats": 1000000, "lez_units": 1000}
+def maker_offer(offer_id: str) -> dict | None:
+    return next((record for record in maker_offers() if record["offer"]["id"] == offer_id), None)
 
-print("\nsnapshot and wallet scoping")
-maker_snap = rpc("btc_market_snapshot_v1", MAKER)["result"]
-taker_snap = rpc("btc_market_snapshot_v1", TAKER)["result"]
-check("maker snapshot returns its own inventory",
-      all(o["maker_wallet_id"] == "maker-munich-01" for o in maker_snap["inventory"]),
-      f"{len(maker_snap['inventory'])} offers")
-check("taker snapshot exposes no inventory field content",
-      taker_snap["inventory"] == [], "taker holds no maker inventory")
-check("order book spans both maker wallets",
-      len({o["maker_wallet_id"] for o in taker_snap["order_book"]}) >= 1,
-      f"{len(taker_snap['order_book'])} open offers")
-check("maker sees only maker-owned swaps",
-      all(s["maker_wallet_id"] == "maker-munich-01" for s in maker_snap["swaps"]),
-      f"{len(maker_snap['swaps'])} swaps")
-check("runner state is reported", "runner_ready" in maker_snap and "runner_busy" in maker_snap,
-      maker_snap["runner_detail"])
 
-print("\ninput validation")
-expect_error("unknown role rejected", "btc_market_snapshot_v1",
-             {"schema_version": 2, "role": "auditor", "wallet_id": "maker-munich-01"},
-             "role must be maker or taker")
-expect_error("unknown wallet rejected", "btc_market_snapshot_v1",
-             {"schema_version": 2, "role": "maker", "wallet_id": "maker-geneva-99"},
-             "select a known local maker wallet")
-expect_error("wallet/role mismatch rejected", "btc_market_snapshot_v1",
-             {"schema_version": 2, "role": "maker", "wallet_id": "taker-zurich-01"},
-             "select a known local maker wallet")
-expect_error("wrong schema version rejected", "btc_market_snapshot_v1",
-             {"schema_version": 1, "role": "maker", "wallet_id": "maker-munich-01"},
-             "unsupported wallet-market schema version")
-expect_error("unknown method rejected", "btc_market_drain_v1", MAKER, "unknown method")
-expect_error("batch publishing rejected", "btc_offer_create_v1",
-             {**MAKER, "request_id": request_id("maker", "batch"), "count": 3,
-              "bitcoin_sats": 1000000, "lez_units": 1000},
-             "publish exactly one offer per request")
-expect_error("off-preset amount rejected", "btc_offer_create_v1",
-             {**MAKER, "request_id": request_id("maker", "amount"), "count": 1,
-              "bitcoin_sats": 999, "lez_units": 1000},
-             "the local market uses its exact BTC/LEZ preset")
-expect_error("malformed request id rejected", "btc_offer_create_v1",
-             {**MAKER, "request_id": "not-a-request-id", **PRESET},
-             "request identity is invalid")
+def taker_offer_ids() -> set[str]:
+    return {entry["offer"]["id"] for entry in rpc("taker", "taker_offer_list_v1", {"schema_version": 1})["result"]["offers"]}
 
-print("\noffer lifecycle")
-create_id = request_id("maker", "create-offers")
-before = len([o for o in rpc("btc_market_snapshot_v1", MAKER)["result"]["inventory"]
-              if o["state"] == "pending"])
-created = rpc("btc_offer_create_v1", {**MAKER, "request_id": create_id, **PRESET})["result"]
-pending = [o for o in created["inventory"] if o["state"] == "pending"]
-check("publishing one offer adds exactly one", len(pending) == before + 1,
-      f"{before} → {len(pending)}")
-new_offer = max((o for o in pending), key=lambda o: o["created_at"])
 
-replayed = rpc("btc_offer_create_v1", {**MAKER, "request_id": create_id, **PRESET})["result"]
-replay_pending = [o for o in replayed["inventory"] if o["state"] == "pending"]
-check("replaying the same request is idempotent", len(replay_pending) == len(pending),
-      f"still {len(replay_pending)} pending")
+def wait_until(predicate, timeout: float = 20.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(1)
+    return predicate()
 
-expect_error("reusing a request id for different facts is rejected", "btc_offer_create_v1",
-             {**BASEL, "request_id": create_id, **PRESET},
-             "request identity was already used for different facts")
 
-expect_error("withdrawing another wallet's offer is rejected", "btc_offer_withdraw_v1",
-             {**BASEL, "request_id": request_id("maker", "withdraw-foreign"),
-              "offer_id": new_offer["offer_id"]},
-             "pending offer")
+def main() -> int:
+    stamp = int(time.time())
+    offer_id = f"offer-verify-market-{stamp}"
 
-withdrawn = rpc("btc_offer_withdraw_v1",
-                {**MAKER, "request_id": request_id("maker", "withdraw-offer"),
-                 "offer_id": new_offer["offer_id"]})["result"]
-states = {o["offer_id"]: o["state"] for o in withdrawn["inventory"]}
-check("withdrawing the offer removes it from the book",
-      states.get(new_offer["offer_id"]) == "withdrawn", new_offer["offer_id"])
-book = rpc("btc_market_snapshot_v1", TAKER)["result"]["order_book"]
-check("withdrawn offer disappears from the taker order book",
-      new_offer["offer_id"] not in {o["offer_id"] for o in book},
-      f"{len(book)} offers remain takeable")
+    print("\nhealth")
+    maker_health = rpc("maker", "maker_health", {})
+    check("Maker Node answers health", "result" in maker_health, json.dumps(maker_health.get("error", ""))[:120])
+    taker_health = rpc("taker", "taker_health", {"schema_version": 1})
+    check("Taker Node answers health", "result" in taker_health, json.dumps(taker_health.get("error", ""))[:120])
 
-print("\nrole gating")
-snapshot = rpc("btc_market_snapshot_v1", TAKER)["result"]
-completed = [s for s in snapshot["swaps"] if s["state"] == "completed"]
-if completed:
-    finished = completed[0]
-    expect_error("acting on a completed swap is rejected", "btc_swap_action_v1",
-                 {**TAKER, "request_id": request_id("taker", "swap-action"),
-                  "ui_swap_id": finished["ui_swap_id"], "action": "lock_btc"},
-                 "not ready at this swap revision")
-    check("completed swaps expose no action", finished["action_required"] is None
-          and finished["can_act"] is False, finished["run_id"])
-    check("completed swaps carry their five chain effects",
-          len(finished.get("effects", [])) == 5,
-          f"{len(finished.get('effects', []))} effects")
-expect_error("unowned swap action fails without exposing role details", "btc_swap_action_v1",
-             {**MAKER, "request_id": request_id("maker", "swap-action"),
-              "ui_swap_id": "swap-0000000000000000", "action": "lock_btc"},
-             "does not own this swap action")
-expect_error("unknown action on an unowned swap fails closed", "btc_swap_action_v1",
-             {**TAKER, "request_id": request_id("taker", "swap-action"),
-              "ui_swap_id": "swap-0000000000000000", "action": "drain_wallet"},
-             "does not own this swap action")
-expect_error("malformed swap id rejected", "btc_swap_action_v1",
-             {**TAKER, "request_id": request_id("taker", "swap-action"),
-              "ui_swap_id": "swap-nope", "action": "lock_btc"},
-             "swap identity is invalid")
-expect_error("taking an unknown offer is rejected", "btc_offer_take_v1",
-             {**LIMMAT, "request_id": request_id("taker", "take-offer"),
-              "offer_id": "m3btc-nonexistent-000000000000-1"},
-             "offer")
+    print("\nroute")
 
-print("\nbalance evidence")
-# The ledger is published for whichever wallets settled the most recent swap.
-evidence = None
-for role, wallet in (("maker", MAKER), ("maker", BASEL), ("taker", TAKER), ("taker", LIMMAT)):
-    candidate = rpc("btc_market_snapshot_v1", wallet)["result"].get("latest_balance_evidence")
-    if candidate and candidate["wallet"]["role"] == "maker":
-        evidence = candidate
-        break
-check("a wallet ledger is published", evidence is not None,
-      evidence["wallet"]["wallet_id"] if evidence else "no completed swap yet")
-if evidence:
-    balances = evidence["wallet"]["balances"]
-    reconciliation = evidence["reconciliation"]
-    check("wallet ledger reports opening and closing LEZ",
-          isinstance(balances["lez"]["opening"], int)
-          and balances["lez"]["closing"] == balances["lez"]["opening"] - 1000,
-          f"{balances['lez']['opening']} → {balances['lez']['closing']}")
-    check("ledger opening balance is cumulative, not a genesis constant",
-          balances["lez"]["opening"] not in (0, 100000),
-          f"opening {balances['lez']['opening']}")
-    check("LEZ conservation holds", reconciliation["lez_conserved"] is True,
-          json.dumps(reconciliation))
-    check("Bitcoin principal and fees are reported",
-          reconciliation["bitcoin_principal"] == 1000000
-          and reconciliation["total_bitcoin_fees"] > 0,
-          f"principal {reconciliation['bitcoin_principal']}, "
-          f"fees {reconciliation['total_bitcoin_fees']}")
+    def revision_for(method: str) -> int | None:
+        listed = rpc("maker", method, {}).get("result") or []
+        for entry in listed:
+            route = (entry.get("value") or {}).get("route") or {}
+            if route.get("pair") == "Bitcoin" and route.get("direction") == "TakerSellsForeign":
+                return int(entry["revision"])
+        return None
 
-print(f"\n{CHECKS - len(FAILURES)}/{CHECKS} checks passed")
-if FAILURES:
-    print("failed:")
+    route_request = {
+        "request_id": f"verify-market-route-{stamp}",
+        "configuration": {"route": ROUTE, "enabled": True, "price_source": "local",
+                          "minimum_foreign_units": 1000000, "maximum_foreign_units": 1000000,
+                          "offer_ttl_seconds": 3600},
+        "price": {"route": ROUTE, "lez_units_per_lot": 1, "foreign_units_per_lot": 1000},
+    }
+    pair_revision = revision_for("maker_pair_list")
+    price_revision = revision_for("maker_local_price_list")
+    if pair_revision is not None:
+        route_request["expected_pair_revision"] = pair_revision
+    if price_revision is not None:
+        route_request["expected_price_revision"] = price_revision
+    saved = rpc("maker", "maker_local_route_save_v1", route_request)
+    check("Bitcoin route saved at the fixed local preset", "result" in saved, json.dumps(saved.get("error", ""))[:160])
+
+    print("\npublication")
+    before = {record["offer"]["id"] for record in maker_offers()}
+    request_id = f"verify-market-publish-{stamp}"
+    published = rpc("maker", "maker_offer_publish", {"request_id": request_id, "offer_id": offer_id, "route": ROUTE})
+    check("publishing one offer succeeds", "result" in published, json.dumps(published.get("error", ""))[:160])
+    after = {record["offer"]["id"] for record in maker_offers()}
+    check("publishing adds exactly one offer", after - before == {offer_id}, f"added {sorted(after - before)}")
+    record = maker_offer(offer_id)
+    check("the new offer is active at revision 1",
+          record is not None and record["status"] == "active" and record["revision"] == 1,
+          json.dumps({k: v for k, v in (record or {}).items() if k != "offer"}))
+    replay = rpc("maker", "maker_offer_publish", {"request_id": request_id, "offer_id": offer_id, "route": ROUTE})
+    check("replaying the same request is idempotent",
+          "result" in replay and replay["result"].get("was_replay") is True
+          and len({r["offer"]["id"] for r in maker_offers()}) == len(after),
+          json.dumps(replay.get("result", replay.get("error")))[:160])
+    expect_error("reusing a request id for a different offer is rejected", "maker", "maker_offer_publish",
+                 {"request_id": request_id, "offer_id": offer_id + "-other", "route": ROUTE}, "")
+    expect_error("wrong schema version is rejected", "taker", "taker_offer_list_v1", {"schema_version": 7}, "")
+    expect_error("unknown method is rejected", "maker", "maker_offer_drain_v1", {}, "Method not found")
+
+    print("\ndiscovery")
+    check("the Taker Node discovers the offer through Delivery",
+          wait_until(lambda: offer_id in taker_offer_ids()), "not discovered within 20 s")
+
+    print("\nwithdrawal")
+    stale = rpc("maker", "maker_offer_withdraw",
+                {"request_id": f"verify-market-stale-{stamp}", "offer_id": offer_id, "expected_revision": 9})
+    check("withdrawing with a stale revision is rejected", "error" in stale, json.dumps(stale.get("error", ""))[:160])
+    withdrawn = rpc("maker", "maker_offer_withdraw",
+                    {"request_id": f"verify-market-withdraw-{stamp}", "offer_id": offer_id,
+                     "expected_revision": record["revision"] if record else 1})
+    check("withdrawing the offer succeeds", "result" in withdrawn, json.dumps(withdrawn.get("error", ""))[:160])
+    record = maker_offer(offer_id)
+    check("the Maker keeps the withdrawn offer in its history",
+          record is not None and record["status"] == "withdrawn", json.dumps(record and record["status"]))
+    check("the withdrawn offer leaves the Taker order book",
+          wait_until(lambda: offer_id not in taker_offer_ids()), "still discoverable after 20 s")
+
+    print(f"\n{CHECKS - len(FAILURES)}/{CHECKS} market checks passed")
     for failure in FAILURES:
-        print(f"  - {failure}")
-sys.exit(1 if FAILURES else 0)
+        print(f"  failed: {failure}")
+    return 1 if FAILURES else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

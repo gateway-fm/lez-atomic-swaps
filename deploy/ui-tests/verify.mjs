@@ -214,7 +214,7 @@ if (role === "maker") {
     console.log("  health: Maker systems ready");
   });
 
-  test("maker: wallet-indexed BTC offer inventory", async (app) => {
+  test("maker: Node-indexed BTC offer inventory", async (app) => {
     if (reverseDirection) {
       const sellLeg = await app.findByProperty("objectName", "makerSellLegLez");
       if (sellLeg.error || sellLeg.matches?.length !== 1) {
@@ -232,55 +232,50 @@ if (role === "maker") {
       (envelope) => envelope.ok === true
         && envelope.result?.selected_wallet_id === "maker-munich-01", true,
     ), "Munich inventory");
-    let munichPending = (munich.inventory ?? []).filter((offer) => offer.state === "pending").length;
-    while (munichPending < 3) {
-      const target = munichPending + 1;
+    let pending = (munich.inventory ?? []).filter((offer) => offer.state === "pending").length;
+    // The Node publishes one offer per click; two open offers prove the
+    // inventory is indexed to this Node's identity and survives a refresh.
+    while (pending < 2) {
+      const target = pending + 1;
       munich = unwrap(await publishOfferOnce(
         app,
         (envelope) => envelope.ok === true
           && (envelope.result?.inventory ?? []).filter((offer) => offer.state === "pending").length >= target,
       ), "Munich offers");
-      munichPending = (munich.inventory ?? []).filter((offer) => offer.state === "pending").length;
+      pending = (munich.inventory ?? []).filter((offer) => offer.state === "pending").length;
     }
-    if (munichPending < 3) {
-      throw new Error(`Munich wallet did not retain three pending offers: ${JSON.stringify(munich).slice(0, 500)}`);
+    if (munich.selected_wallet_id !== "maker-munich-01" || munich.runner_ready !== true
+        || Number(munich.summary?.pending_offers ?? 0) < 2) {
+      throw new Error(`Node-indexed offer totals are wrong: ${JSON.stringify(munich).slice(0, 500)}`);
     }
-    await evaluateIn(app, wallet.matches[0].id, "currentIndex = 1");
-    let basel = unwrap(await outputAfterClick(
-      app, "Refresh wallet inventory", "makerOutput",
-      (envelope) => envelope.ok === true
-        && envelope.result?.selected_wallet_id === "maker-basel-02",
-      true,
-    ), "Basel inventory");
-    let baselPending = (basel.inventory ?? []).filter((offer) => offer.state === "pending").length;
-    while (baselPending < 2) {
-      const target = baselPending + 1;
-      basel = unwrap(await publishOfferOnce(
-        app,
-        (envelope) => envelope.ok === true
-          && (envelope.result?.inventory ?? []).filter((offer) => offer.state === "pending").length >= target,
-      ), "Basel offers");
-      baselPending = (basel.inventory ?? []).filter((offer) => offer.state === "pending").length;
-    }
-    if (baselPending < 2
-        || Number(basel.summary?.pending_offers ?? 0) < 5) {
-      throw new Error(`wallet-indexed offer totals are wrong: ${JSON.stringify(basel).slice(0, 500)}`);
-    }
-    console.log(`  wallet inventory: Munich >=3 · Basel >=2 · market=${basel.summary.pending_offers}`);
+    console.log(`  inventory: Munich Vault 01 (Maker Node) open offers=${pending} · market=${munich.summary.pending_offers}`);
   });
 
-  const makerActions = reverseDirection
-    ? { lock_btc: ["Lock 0.01000000 BTC", "locking_btc"], claim_lez: ["Claim 1,000 LEZ", "claiming_lez"] }
-    : { fund_lez: ["Fund 1,000 LEZ", "funding_lez"], claim_btc: ["Claim Bitcoin", "claiming_btc"] };
-  if (Object.hasOwn(makerActions, process.env.INTERACTIVE_ACTION)) {
+  // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the desk
+  // step is to watch the swap reach that state.
+  const makerWaits = reverseDirection
+    ? { lock_btc: ["awaiting_taker_claim", "Bitcoin locked"], claim_lez: ["completed", "LEZ claimed"] }
+    : { fund_lez: ["awaiting_taker_claim", "LEZ escrow funded"], claim_btc: ["completed", "Bitcoin claimed"] };
+  if (Object.hasOwn(makerWaits, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
-    const [label, working] = makerActions[action];
-    test(`maker: perform ${action}`, async (app) => {
+    const [state, label] = makerWaits[action];
+    test(`maker: ${action} performed by the Node`, async (app) => {
       const wallet = await app.findByProperty("objectName", "makerBtcWallet");
       if (wallet.error || wallet.matches?.length !== 1) throw new Error("Maker wallet selector is unavailable");
-      await selectMakerWalletWithAction(app, wallet.matches[0].id);
-      await triggerVisibleAction(app, "makerSwapAction", label, "makerOutput", working);
-      console.log(`  interactive M3: Maker ${action} submitted`);
+      // Earlier swaps may already sit in the target state: when the caller
+      // names the swap this run created, only that swap counts.
+      const wanted = process.env.INTERACTIVE_SWAP_ID || "";
+      await app.waitFor(async () => {
+        await evaluateIn(app, wallet.matches[0].id, "root.refreshBtcMarket(false)");
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const envelope = JSON.parse(await property(app, "makerOutput", "text"));
+        const swaps = (envelope.result?.swaps ?? []).filter((swap) =>
+          !wanted || swap.swap_id === wanted || swap.ui_swap_id === wanted);
+        if (envelope.ok !== true || !swaps.some((swap) => swap.state === state)) {
+          throw new Error(`no Maker swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${state}`);
+        }
+      }, { timeout: 1800000, interval: 15000, description: `${label} by the Maker Node` });
+      console.log(`  Node-owned swap: Maker ${action} done (${label})`);
     });
   }
 } else {
@@ -300,17 +295,17 @@ if (role === "maker") {
   });
 
   test("taker: wallet-indexed BTC order book is ready", async (app) => {
-    await app.expectTexts(["ACCOUNT", "My orders", "Available orders", "Zurich Wallet 01 · Taker"]);
+    await app.expectTexts(["ACCOUNT", "My orders", "Available orders", "Zurich Wallet 01 · Taker Node"]);
     // The order book arrives with the first market snapshot after the view
     // opens; wait for the rendered rows instead of racing that request.
     await app.waitFor(async () => app.expectTexts(["0.01000000 BTC", "1,000 LEZ"]), {
       timeout: 15000, interval: 500, description: "first market snapshot rendered",
     });
     await app.click("Refresh wallet market");
-    await app.waitFor(async () => app.expectTexts(["Munich Vault 01", "Basel Vault 02"]), {
-      timeout: 15000, interval: 500, description: "multi-Maker order book",
+    await app.waitFor(async () => app.expectTexts(["Munich Vault 01"]), {
+      timeout: 15000, interval: 500, description: "Maker Node order book",
     });
-    console.log("  order book: both Maker wallets visible to the selected Taker wallet");
+    console.log("  order book: the Maker Node's offers are visible to the Taker Node's identity");
   });
 
   test("taker: real Node health", async (app) => {
@@ -364,13 +359,31 @@ if (role === "maker") {
         throw new Error(`no takeable order-book row: ${JSON.stringify(buttons)}`);
       }
       await evaluateIn(app, buttons.matches[0].id, "clicked()");
-      const firstAction = reverseDirection ? "Lock 1,000 LEZ" : "Lock 0.01000000 BTC";
-      await app.waitFor(async () => app.expectTexts([firstAction]), {
-        timeout: 600000,
-        interval: 2000,
-        description: "real M3 runner preparation and Taker lock gate",
-      });
-      console.log("  interactive M3: offer accepted · Taker BTC lock action ready");
+      const firstAction = reverseDirection ? "lock_lez" : "lock_btc";
+      // Older swaps may already show the same lock button: only the swap this
+      // take created counts, and the Node names it in its reply. A rejected
+      // take fails at once instead of waiting out the deadline.
+      const deadline = Date.now() + 600000;
+      let taken;
+      for (;;) {
+        let envelope = null;
+        try { envelope = JSON.parse(await property(app, "takerOutput", "text")); } catch { /* not yet a reply */ }
+        if (envelope?.ok === false) {
+          throw new Error(`take rejected by the Taker Node: ${JSON.stringify(envelope.error ?? envelope)}`);
+        }
+        const swapId = envelope?.result?.taken?.swap?.swap_id;
+        if (swapId) {
+          const row = (envelope.result.swaps ?? []).find((swap) => swap.ui_swap_id === swapId);
+          if (row?.action_required === firstAction) { taken = swapId; break; }
+          if (Date.now() > deadline) {
+            throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction}`);
+          }
+        } else if (Date.now() > deadline) {
+          throw new Error("the Taker Node did not answer the take in time");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · Taker lock action ready`);
     });
   }
 
@@ -382,7 +395,7 @@ if (role === "maker") {
     const [label, working] = takerActions[action];
     test(`taker: perform ${action}`, async (app) => {
       await triggerVisibleAction(app, "takerSwapAction", label, "takerOutput", working);
-      console.log(`  interactive M3: Taker ${action} submitted`);
+      console.log(`  Node-owned swap: Taker ${action} submitted`);
     });
   }
 

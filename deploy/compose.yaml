@@ -228,12 +228,12 @@ services:
     environment:
       LEZ_INDEXER_URL: http://indexer:8779
       M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
-      LEZ_M3_EVIDENCE_ROOT: /runner-repo
+      LEZ_EVIDENCE_DIR: /run/lez-evidence/swaps
     ports:
       - "127.0.0.1:3003:3003"
     volumes:
       - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
-      - ${LEZ_M3_RUNNER_REPO}:/runner-repo:ro
+      - ./runtime/evidence:/run/lez-evidence/swaps:ro
     networks: [chains]
     read_only: true
     security_opt: ["no-new-privileges:true"]
@@ -264,28 +264,20 @@ services:
         condition: service_healthy
       indexer:
         condition: service_healthy
-    command:
-      - /bin/bash
-      - -c
-      - |
-        rm -f /run/lez/maker/node.sock /run/lez/maker/ready /run/lez/maker/chat.sock
-        if [ ! -s /var/lib/lez/maker/delivery-signing.key ]; then
-          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > /var/lib/lez/maker/delivery-signing.key
-          chmod 0600 /var/lib/lez/maker/delivery-signing.key
-        fi
-        identity="$$(/usr/local/bin/lez-maker-cli delivery-identity \
-          --signing-key-file /var/lib/lez/maker/delivery-signing.key \
-          | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
-        [ -n "$${identity}" ] || { echo "could not publish maker identity" >&2; exit 1; }
-        printf '%s\n' "$${identity}" > /delivery/.maker-delivery-identity.pub.tmp
-        chmod 0444 /delivery/.maker-delivery-identity.pub.tmp
-        mv -f /delivery/.maker-delivery-identity.pub.tmp /delivery/maker-delivery-identity.pub
-        exec /usr/local/bin/lez-maker-node --config /run-config/maker-node.json
+    command: ["/usr/local/bin/node-entrypoint.sh", "maker"]
+    environment:
+      LEZ_SIDECAR_PORT_BASE: "19000"
+      LEZ_SEQUENCER_URL: http://127.0.0.1:3040
+      LEZ_INDEXER_URL: http://127.0.0.1:8779
+      LEZ_V02_CHANNEL_ID: ${LEZ_V02_CHANNEL_ID}
+      LEZ_BTC_WALLET: lez-maker
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
       - delivery_dir:/delivery
-      - ./assets/maker-node.json:/run-config/maker-node.json:ro
+      - ./runtime/lez/maker:/run-lez-identity:ro
+      - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
+      - ${LEZ_MARKET_ROOT}:/run-market:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -306,47 +298,10 @@ services:
     image: lez-taker-node:local
     container_name: lez-taker-init
     user: "0:0"
-    depends_on:
-      maker-node:
-        condition: service_healthy
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
-      - delivery_dir:/delivery:ro
-    command:
-      - /bin/bash
-      - -c
-      - |
-        chown 4713:4713 /var/lib/lez/taker /run/lez/taker
-        chmod 0700 /run/lez/taker
-        if [ -s /var/lib/lez/taker/role.json ]; then
-          echo "taker config already present (prepared lane); keeping it"
-          exit 0
-        fi
-        for _ in $(seq 1 60); do
-          [ -s /delivery/maker-delivery-identity.pub ] && break
-          sleep 1
-        done
-        identity="$$(tr -d ' \n' < /delivery/maker-delivery-identity.pub)"
-        if ! printf '%s\n' "$$identity" | grep -Eq '^(02|03)[0-9a-f]{64}$$'; then
-          echo "maker public identity is unavailable or invalid" >&2; exit 1
-        fi
-        echo "maker delivery identity: $$identity"
-        cat > /var/lib/lez/taker/role.json <<JSON
-        {
-          "schema_version": 1,
-          "delivery_sources": [
-            {
-              "directory": "/delivery",
-              "maker_public_key": "$$identity",
-              "source_id": "local-maker"
-            }
-          ],
-          "maximum_offers": 16
-        }
-        JSON
-        chown 4713:4713 /var/lib/lez/taker/role.json
-        chmod 0600 /var/lib/lez/taker/role.json
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/taker /run/lez/taker && chmod 0700 /var/lib/lez/taker /run/lez/taker"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -357,16 +312,23 @@ services:
     depends_on:
       taker-init:
         condition: service_completed_successfully
-    command:
-      - /bin/bash
-      - -c
-      - rm -f /run/lez/taker/node.sock /run/lez/taker/ready; exec /usr/local/bin/lez-taker-node --config /run-config/taker-node.json
+      maker-node:
+        condition: service_healthy
+    command: ["/usr/local/bin/node-entrypoint.sh", "taker"]
+    environment:
+      LEZ_SIDECAR_PORT_BASE: "19500"
+      LEZ_SEQUENCER_URL: http://127.0.0.1:3040
+      LEZ_INDEXER_URL: http://127.0.0.1:8779
+      LEZ_V02_CHANNEL_ID: ${LEZ_V02_CHANNEL_ID}
+      LEZ_BTC_WALLET: lez-taker
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
       - delivery_dir:/delivery:ro
       - maker_socket:/run/lez/maker
-      - ./assets/taker-node.json:/run-config/taker-node.json:ro
+      - ./runtime/lez/taker:/run-lez-identity:ro
+      - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
+      - ${LEZ_MARKET_ROOT}:/run-market:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -375,85 +337,6 @@ services:
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "uds", "/run/lez/taker/node.sock", "taker_health", "[{\"schema_version\":1}]"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 15s
-    restart: unless-stopped
-    logging: *default-logging
-
-  btc-demo-init:
-    image: python:3.12-alpine
-    container_name: lez-btc-demo-init
-    volumes:
-      - btc_demo_socket:/run/lez-btc-demo
-    command: ["sh", "-c", "chown 4713:4713 /run/lez-btc-demo && chmod 0700 /run/lez-btc-demo"]
-    networks: [chains]
-    restart: "no"
-    logging: *default-logging
-
-  # Local-demo-only host authority. The launcher accepts only the versioned
-  # M3 job, approval, wait, and evidence operations implemented in launcher.py.
-  btc-demo-launcher:
-    build: ./images/btc-demo-launcher
-    image: lez-btc-demo-launcher:local
-    container_name: lez-btc-demo-launcher
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
-      LEZ_BTC_LAUNCHER_SOCKET: /run/lez-btc-launcher/launcher.sock
-      LEZ_M3_RUNNER_CONTAINER: ${LEZ_M3_RUNNER_CONTAINER:-lez-runner-arm}
-      LEZ_M3_RUNNER_REPO_IN_CONTAINER: ${LEZ_M3_RUNNER_REPO_IN_CONTAINER:?run scripts/gen-config.sh first}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - btc_launcher_socket:/run/lez-btc-launcher
-    tmpfs:
-      - /tmp:rw,nosuid,size=16m,mode=1777
-    networks: [chains]
-    read_only: true
-    cap_drop: [ALL]
-    # The launcher starts as root to reach the host Docker socket and opens its
-    # own socket to the controller's group; changing that group needs CAP_CHOWN.
-    cap_add: [CHOWN]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      test: ["CMD", "python3", "/app/launcher.py", "--healthcheck"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-    restart: unless-stopped
-    logging: *default-logging
-
-  btc-demo-controller:
-    build: ./images/btc-demo-controller
-    image: lez-btc-demo-controller:local
-    container_name: lez-btc-demo-controller
-    depends_on:
-      btc-demo-init:
-        condition: service_completed_successfully
-      btc-demo-launcher:
-        condition: service_healthy
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
-      LEZ_BTC_DEMO_SOCKET: /run/lez-btc-demo/controller.sock
-      LEZ_BTC_LAUNCHER_SOCKET: /run/lez-btc-launcher/launcher.sock
-      LEZ_M3_EVIDENCE_ROOT: /runner-repo
-      LEZ_M3_BTC_EVIDENCE_FILE: /run/evidence/m3-btc-ui-evidence.json
-    volumes:
-      - ./full-swap:/controller-assets:ro
-      - ${LEZ_M3_RUNNER_REPO}:/runner-repo:ro
-      - ./runtime/m3-btc-ui-evidence.json:/run/evidence/m3-btc-ui-evidence.json
-      - btc_demo_socket:/run/lez-btc-demo
-      - btc_launcher_socket:/run/lez-btc-launcher:ro
-    tmpfs:
-      - /tmp:rw,nosuid,size=16m,mode=1777
-    networks: [chains]
-    user: "4713:4713"
-    read_only: true
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    healthcheck:
-      test: ["CMD", "python3", "/app/healthcheck.py"]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -470,20 +353,16 @@ services:
         condition: service_healthy
       taker-node:
         condition: service_healthy
-      btc-demo-controller:
-        condition: service_healthy
     environment:
       BASECAMP_ROLE: ${BASECAMP_ROLE:-both}
       VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
       LEZ_MAKER_RPC_SOCKET: /run/lez/maker/node.sock
       LEZ_TAKER_RPC_SOCKET: /run/lez/taker/node.sock
-      LEZ_BTC_DEMO_RPC_SOCKET: /run/lez-btc-demo/controller.sock
       LEZ_M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
       M3_UI_DIRECTION: ${M3_UI_DIRECTION:-TakerSellsForeign}
     volumes:
       - maker_socket:/run/lez/maker:ro
       - taker_socket:/run/lez/taker:ro
-      - btc_demo_socket:/run/lez-btc-demo:ro
       - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
       - ./ui-tests:/ui-tests:ro
     ports:
@@ -513,7 +392,3 @@ volumes:
     name: lez-taker-socket
   delivery_dir:
     name: lez-delivery-dir
-  btc_demo_socket:
-    name: lez-btc-demo-socket
-  btc_launcher_socket:
-    name: lez-btc-launcher-socket

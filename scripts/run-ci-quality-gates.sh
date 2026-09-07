@@ -93,9 +93,6 @@ M3_ACTOR_CONTRACT_REQUIRE_BINARIES=0 ./scripts/test-m3-actor-local-poc-contract.
 ./scripts/check-m3-cryptographic-vectors.sh
 ./scripts/test-bitcoin-testnet4-route-contract.sh
 ./scripts/check-runtime-profiles.py
-python3 -m unittest \
-  deploy/images/btc-demo-controller/test_controller.py \
-  deploy/images/btc-demo-launcher/test_launcher.py
 node ./scripts/check-m6-prototype-contract.mjs
 node ./scripts/check-m6-basecamp-package-contract.mjs
 
@@ -145,8 +142,7 @@ for compose_file in "${compose_files[@]}"; do
   BITCOIN_CORE_CONFIG=/tmp/lez-bitcoin-core-ci-quality.conf \
   BITCOIN_CORE_NETWORK=lez-atomic-swaps-bitcoin-core-ci-quality-network \
   BTC_RPC_PASSWORD="ci-quality-${RANDOM}-${RANDOM}" \
-  LEZ_M3_RUNNER_REPO=/tmp/lez-ci-quality-runner-repo \
-  LEZ_M3_RUNNER_REPO_IN_CONTAINER=/tmp/lez-ci-quality-runner-repo \
+  LEZ_MARKET_ROOT=/tmp/lez-ci-quality-market \
     "$compose" --project-name "lez-ci-quality-${RANDOM}" \
       --file "$compose_file" config --quiet
 done

@@ -798,11 +798,12 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     assert!(replay.was_replay);
     assert_eq!(replay.swap, first.swap);
 
-    assert_eq!(registered.len(), 7, "registered methods: {registered:?}");
+    assert_eq!(registered.len(), 8, "registered methods: {registered:?}");
     for method in [
         "taker_health",
         "taker_offer_list_v1",
         "taker_swap_list_v1",
+        "taker_swap_lock_v1",
         "taker_swap_initiate_v1",
         "taker_swap_monitor_v1",
         "taker_swap_claim_v1",

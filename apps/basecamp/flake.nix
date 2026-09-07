@@ -15,6 +15,8 @@
         cp ${commonSource}/local_json_rpc_client.cpp src/local_json_rpc_client.cpp
         cp ${commonSource}/logos_chat_bridge.h src/logos_chat_bridge.h
         cp ${commonSource}/logos_chat_bridge.cpp src/logos_chat_bridge.cpp
+        cp ${commonSource}/node_market.h src/node_market.h
+        cp ${commonSource}/node_market.cpp src/node_market.cpp
       '';
       makerPackage = logos-module-builder.lib.mkLogosQmlModule {
         src = ./maker;

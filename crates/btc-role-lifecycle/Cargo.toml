@@ -1,0 +1,40 @@
+[package]
+name = "lez-btc-role-lifecycle"
+version = "0.1.0"
+description = "Node-owned BTC/LEZ swap lifecycle: reservation, funding plan, signing ceremony, actor synthesis"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "=1.0.103"
+base64 = "=0.22.1"
+bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
+btc-reference-actor = { version = "0.1.0", path = "../btc-reference-actor" }
+btc-role-preflight = { version = "0.1.0", path = "../btc-role-preflight" }
+getrandom = "=0.3.4"
+hex = "=0.4.3"
+jsonrpsee = { version = "0.26.0", features = ["client-core"] }
+jsonrpsee-http-client = { version = "0.26.0", default-features = false }
+lez-adaptor-role-runner = { version = "0.1.0", path = "../adaptor-role-runner" }
+lez-adaptor-signature = { version = "0.1.0", path = "../adaptor-signature" }
+lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }
+lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
+lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
+lez-swap-core = { version = "0.1.0", path = "../swap-core" }
+lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk" }
+rustix = { version = "1.1.4", features = ["fs", "process"] }
+secp256k1 = { version = "=0.29.1", default-features = false, features = ["alloc"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
+thiserror = "=2.0.18"
+zeroize = "=1.9.0"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+tokio = { version = "1.52.0", features = ["macros", "rt"] }

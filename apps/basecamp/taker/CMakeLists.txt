@@ -20,6 +20,8 @@ logos_module(
         src/local_json_rpc_client.cpp
         src/logos_chat_bridge.h
         src/logos_chat_bridge.cpp
+        src/node_market.h
+        src/node_market.cpp
     INCLUDE_DIRS src
 )
 

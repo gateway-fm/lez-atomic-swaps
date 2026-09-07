@@ -141,7 +141,14 @@ QString LocalJsonRpcClient::call(const QString& method, const QString& parameter
         return failure("invalid_response", "Local Node returned an invalid JSON-RPC envelope");
     }
     if (object.contains("error")) {
-        return failure("rpc_failure", "Owner-local Node rejected the operation");
+        // Surface the Node's own category and message: they are fixed,
+        // secret-free vocabulary the desk can show ("offer_unavailable", ...).
+        const QJsonObject error = object.value("error").toObject();
+        const QString category = error.value("data").toObject().value("category").toString();
+        const QString message = error.value("message").toString();
+        return failure(category.isEmpty() ? QStringLiteral("rpc_failure") : category,
+            message.isEmpty() ? QStringLiteral("Owner-local Node rejected the operation")
+                              : message + (category.isEmpty() ? QString() : " (" + category + ")"));
     }
     QJsonObject success{{"ok", true}, {"result", object.value("result")}};
     return QString::fromUtf8(QJsonDocument(success).toJson(QJsonDocument::Compact));

@@ -47,6 +47,7 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
             "taker_swap_claim_v1",
             "taker_swap_initiate_v1",
             "taker_swap_list_v1",
+            "taker_swap_lock_v1",
             "taker_swap_monitor_v1",
             "taker_swap_refund_v1",
         ])
@@ -173,19 +174,24 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
 
 #[tokio::test]
 async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry() {
+    // Bitcoin has a Node lifecycle, so it passes the pair gate and fails only
+    // against the prepared catalog (which holds a Zcash entry for this offer);
+    // Monero has no Node lifecycle and is refused before any lookup.
     let fixture = Fixture::new();
     let module =
         taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
-    for (label, pair, direction) in [
+    for (label, pair, direction, category) in [
         (
             "m6-btc-initiate-rejected-001",
             Pair::Bitcoin,
             SwapDirection::TakerSellsForeign,
+            "initiation_selection_mismatch",
         ),
         (
             "m6-xmr-initiate-rejected-001",
             Pair::Monero,
             SwapDirection::TakerSellsLez,
+            "initiation_unsupported_pair",
         ),
     ] {
         let mut request = fixture.request(label);
@@ -196,12 +202,7 @@ async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry(
             serde_json::to_value([request.clone()]).unwrap(),
         )
         .await;
-        assert_rpc_error(
-            &response,
-            INVALID_PARAMS,
-            "Invalid params",
-            "initiation_unsupported_pair",
-        );
+        assert_rpc_error(&response, INVALID_PARAMS, "Invalid params", category);
         assert_redacted(&response, &fixture);
         assert_eq!(
             SqliteTakerFacadeStore::open_existing(&fixture.registry)
@@ -209,7 +210,7 @@ async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry(
                 .lookup_initiation(&request.request_id)
                 .unwrap(),
             None,
-            "unsupported {pair:?} initiate mutated the registry"
+            "rejected {pair:?} initiate mutated the registry"
         );
     }
 }

@@ -71,48 +71,76 @@ pub struct ValidatedSession {
 }
 
 impl ValidatedSession {
-    /// Creates a runner session from an already validated untweaked context.
-    ///
-    /// This constructor rejects a Taproot-tweaked context even though both
-    /// context kinds share the same public Rust type. Session bytes remain an
-    /// implementation detail of this crate.
+    /// Validates any context (untweaked or Taproot) by rebuilding it from its
+    /// public parts and requiring the same durable binding.
     ///
     /// # Errors
-    ///
-    /// Returns [`RunnerError::InvalidSessionConfig`] when `context` is not the
-    /// exact untweaked context reconstructed from its public transcript.
-    pub fn from_untweaked_context(context: AdaptorSessionContext) -> Result<Self, RunnerError> {
-        let reconstructed = AdaptorSessionContext::untweaked(
-            context.ordered_public_keys(),
-            context.message(),
-            context.adaptor_point(),
-            context.session_id(),
-        )
+    /// Fails when the context cannot be rebuilt from its public parts.
+    pub fn from_context(context: AdaptorSessionContext) -> Result<Self, RunnerError> {
+        let keys = context.ordered_public_keys();
+        let reconstructed = match context.taproot_merkle_root() {
+            None => AdaptorSessionContext::untweaked(
+                keys,
+                context.message(),
+                context.adaptor_point(),
+                context.session_id(),
+            ),
+            Some(merkle_root) => AdaptorSessionContext::taproot(
+                keys,
+                merkle_root,
+                context.message(),
+                context.adaptor_point(),
+                context.session_id(),
+            ),
+        }
         .map_err(|_| RunnerError::InvalidSessionConfig)?;
         if reconstructed.durable_context_binding() != context.durable_context_binding() {
             return Err(RunnerError::InvalidSessionConfig);
         }
-        Ok(Self::from_context(context))
+        Ok(Self::from_context_unchecked(context))
     }
 
-    /// Writes the runner's canonical owner-public session file exactly once.
+    /// Validates an untweaked (LEZ) context; a Taproot context fails closed.
     ///
     /// # Errors
+    /// Fails for a Taproot context or one that cannot be rebuilt.
+    pub fn from_untweaked_context(context: AdaptorSessionContext) -> Result<Self, RunnerError> {
+        if context.taproot_merkle_root().is_some() {
+            return Err(RunnerError::InvalidSessionConfig);
+        }
+        Self::from_context(context)
+    }
+
+    /// The canonical session JSON (one line plus `\n`) both roles can reload.
     ///
-    /// Returns a fail-closed output or serialization error. An existing path
-    /// is never truncated or replaced.
-    pub fn write_new(&self, path: &Path) -> Result<(), RunnerError> {
-        let config = self.config(ContextConfigV1::LezUntweaked);
-        let mut bytes =
-            serde_json::to_vec(&config).map_err(|_| RunnerError::PublicPacketSerialization)?;
+    /// # Errors
+    /// Fails only when JSON serialization fails.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, RunnerError> {
+        let mut bytes = serde_json::to_vec(&self.config())
+            .map_err(|_| RunnerError::PublicPacketSerialization)?;
         bytes.push(b'\n');
-        files::write_public_new(path, &bytes)
+        Ok(bytes)
+    }
+
+    /// Writes the canonical session to a new owner-private file.
+    ///
+    /// # Errors
+    /// Fails when `path` exists or cannot be created.
+    pub fn write_new(&self, path: &Path) -> Result<(), RunnerError> {
+        files::write_public_new(path, &self.canonical_bytes()?)
     }
 
     pub(crate) fn load(path: &Path) -> Result<Self, RunnerError> {
-        let bytes = files::read_public(path)?;
+        Self::from_canonical_bytes(&files::read_public(path)?)
+    }
+
+    /// Reloads a session from its canonical bytes, rejecting any other encoding.
+    ///
+    /// # Errors
+    /// Fails on noncanonical JSON, an unknown schema, or an invalid context.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, RunnerError> {
         let raw: SessionConfigV1 =
-            serde_json::from_slice(&bytes).map_err(|_| RunnerError::InvalidSessionConfig)?;
+            serde_json::from_slice(bytes).map_err(|_| RunnerError::InvalidSessionConfig)?;
         let mut canonical =
             serde_json::to_vec(&raw).map_err(|_| RunnerError::InvalidSessionConfig)?;
         canonical.push(b'\n');
@@ -145,10 +173,10 @@ impl ValidatedSession {
             ),
         }
         .map_err(|_| RunnerError::InvalidSessionConfig)?;
-        Ok(Self::from_context(context))
+        Ok(Self::from_context_unchecked(context))
     }
 
-    fn from_context(context: AdaptorSessionContext) -> Self {
+    fn from_context_unchecked(context: AdaptorSessionContext) -> Self {
         Self {
             id: context.session_id(),
             exact_message: context.message(),
@@ -159,7 +187,13 @@ impl ValidatedSession {
         }
     }
 
-    fn config(&self, context: ContextConfigV1) -> SessionConfigV1 {
+    fn config(&self) -> SessionConfigV1 {
+        let context = match self.context.taproot_merkle_root() {
+            None => ContextConfigV1::LezUntweaked,
+            Some(merkle_root) => ContextConfigV1::BtcTaproot {
+                merkle_root: hex::encode(merkle_root),
+            },
+        };
         SessionConfigV1 {
             schema_version: SCHEMA_VERSION,
             context,
@@ -171,11 +205,21 @@ impl ValidatedSession {
         }
     }
 
-    pub(crate) const fn context(&self) -> &AdaptorSessionContext {
+    /// The signing context both roles derived from the agreement.
+    #[must_use]
+    pub const fn context(&self) -> &AdaptorSessionContext {
         &self.context
     }
 
-    pub(crate) const fn context_binding(&self) -> [u8; 32] {
+    /// The 32-byte session id every packet of this ceremony carries.
+    #[must_use]
+    pub const fn session_id(&self) -> [u8; 32] {
+        self.id
+    }
+
+    /// The durable context binding every packet of this ceremony carries.
+    #[must_use]
+    pub const fn context_binding(&self) -> [u8; 32] {
         self.context_binding
     }
 
@@ -196,7 +240,7 @@ impl ValidatedSession {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum PacketKind {
+pub enum PacketKind {
     NonceCommitment,
     PublicNonce,
     PartialSignature,
@@ -256,12 +300,6 @@ impl PublicPacketV1 {
         Ok(bytes)
     }
 
-    fn load(path: &Path) -> Result<(Self, Vec<u8>), RunnerError> {
-        let bytes = files::read_public(path)?;
-        let packet = Self::from_canonical_bytes(&bytes)?;
-        Ok((packet, bytes))
-    }
-
     fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, RunnerError> {
         let packet: Self =
             serde_json::from_slice(bytes).map_err(|_| RunnerError::InvalidPublicPacket)?;
@@ -291,52 +329,42 @@ impl PublicPacketV1 {
     }
 }
 
-pub(crate) fn write_aggregate_packet<const N: usize>(
-    path: &Path,
+/// Canonical bytes of one role's packet.
+pub(crate) fn packet_bytes<const N: usize>(
+    kind: PacketKind,
+    role: Role,
+    session: &ValidatedSession,
+    payload: [u8; N],
+) -> Result<Vec<u8>, RunnerError> {
+    PublicPacketV1::new(kind, role, session, payload).canonical_bytes()
+}
+
+/// Canonical bytes of an aggregate (role-neutral) packet.
+pub(crate) fn aggregate_packet_bytes<const N: usize>(
     kind: PacketKind,
     session: &ValidatedSession,
     payload: [u8; N],
-) -> Result<(), RunnerError> {
-    let packet = PublicPacketV1 {
+) -> Result<Vec<u8>, RunnerError> {
+    PublicPacketV1 {
         schema_version: SCHEMA_VERSION,
         kind,
         session_id: hex::encode(session.id),
         sender_role: PacketSender::Aggregate,
         context_binding: hex::encode(session.context_binding),
         payload: hex::encode(payload),
-    };
-    files::write_public_new(path, &packet.canonical_bytes()?)
+    }
+    .canonical_bytes()
 }
 
-pub(crate) fn write_packet<const N: usize>(
-    path: &Path,
-    kind: PacketKind,
-    role: Role,
-    session: &ValidatedSession,
-    payload: [u8; N],
-) -> Result<(), RunnerError> {
-    let packet = PublicPacketV1::new(kind, role, session, payload);
-    files::write_public_new(path, &packet.canonical_bytes()?)
-}
-
-pub(crate) fn read_peer_packet<const N: usize>(
-    path: &Path,
+/// Decodes the peer's packet of `kind` for this session, or fails closed.
+pub(crate) fn read_peer_packet_bytes<const N: usize>(
+    bytes: &[u8],
     kind: PacketKind,
     local_role: Role,
     session: &ValidatedSession,
 ) -> Result<[u8; N], RunnerError> {
-    let (packet, _) = PublicPacketV1::load(path)?;
+    let packet = PublicPacketV1::from_canonical_bytes(bytes)?;
     packet.validate_header(kind, local_role.opposite().into(), session)?;
-    decode_exact(&packet.payload)
-}
-
-pub(crate) fn read_aggregate_packet<const N: usize>(
-    path: &Path,
-    kind: PacketKind,
-    session: &ValidatedSession,
-) -> Result<[u8; N], RunnerError> {
-    let (packet, _) = PublicPacketV1::load(path)?;
-    packet.validate_header(kind, PacketSender::Aggregate, session)?;
     decode_exact(&packet.payload)
 }
 

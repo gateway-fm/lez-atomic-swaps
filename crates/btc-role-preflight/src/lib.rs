@@ -298,9 +298,12 @@ struct RoleSecrets {
 }
 
 impl RoleSecrets {
-    fn fresh(role: Participant) -> Result<Self> {
+    fn fresh(role: Participant, agreement: Option<Zeroizing<[u8; 32]>>) -> Result<Self> {
         Ok(Self {
-            agreement: random_secret()?,
+            agreement: match agreement {
+                Some(existing) => existing,
+                None => random_secret()?,
+            },
             refund: random_secret()?,
             claim: random_secret()?,
             funding: random_secret()?,
@@ -326,39 +329,99 @@ pub fn bootstrap_role(spec_file: &Path, output_root: &Path) -> Result<RoleBootst
         spec.schema_version == SPEC_SCHEMA_VERSION,
         "unsupported role bootstrap schema"
     );
-    let offer_commitment = parse_hex32(&spec.offer_commitment, "offer commitment")?;
-    let reservation_binding = parse_hex_variable(
-        &spec.reservation_binding,
-        "reservation binding",
-        lez_btc_swap_sdk::MAX_BTC_PRE_SESSION_RESERVATION_BYTES,
-    )?;
-    let direction = spec.direction.protocol();
-    let role = spec.role.protocol();
+    let input = RoleBootstrapInput {
+        role: spec.role.protocol(),
+        direction: spec.direction.protocol(),
+        offer_commitment: parse_hex32(&spec.offer_commitment, "offer commitment")?,
+        reservation_binding: parse_hex_variable(
+            &spec.reservation_binding,
+            "reservation binding",
+            lez_btc_swap_sdk::MAX_BTC_PRE_SESSION_RESERVATION_BYTES,
+        )?,
+        bitcoin: BtcChainPolicyV1::new(
+            parse_hex32(
+                &spec.bitcoin.genesis_block_hash,
+                "Bitcoin genesis block hash",
+            )?,
+            spec.bitcoin.required_confirmations,
+        ),
+        lez: BtcLezChainIdentityV1::new(
+            parse_hex32(&spec.lez.genesis_block_hash, "LEZ genesis block hash")?,
+            parse_hex32(&spec.lez.channel_id, "LEZ channel ID")?,
+            parse_hex32(&spec.lez.escrow_program_id, "LEZ escrow program ID")?,
+            parse_hex32(
+                &spec.lez.authenticated_transfer_program_id,
+                "LEZ authenticated-transfer program ID",
+            )?,
+        ),
+        lez_owner_account: parse_hex32(&spec.lez_owner_account, "LEZ owner account")?,
+        expires_at_unix_seconds: spec.expires_at_unix_seconds,
+    };
+    Ok(bootstrap_role_in_process(&input, None, output_root)?.summary)
+}
+
+/// The public facts one role commits to when it bootstraps for a reservation.
+#[derive(Clone, Debug)]
+pub struct RoleBootstrapInput {
+    pub role: Participant,
+    pub direction: SwapDirection,
+    pub offer_commitment: [u8; 32],
+    /// The reservation bytes the pre-session id derives from (≤ 256 bytes).
+    pub reservation_binding: Vec<u8>,
+    pub bitcoin: BtcChainPolicyV1,
+    pub lez: BtcLezChainIdentityV1,
+    pub lez_owner_account: [u8; 32],
+    pub expires_at_unix_seconds: u64,
+}
+
+/// A bootstrapped role root plus the signed contribution it published.
+#[derive(Debug)]
+pub struct BootstrappedRole {
+    pub summary: RoleBootstrapSummary,
+    pub contribution_wire: Vec<u8>,
+}
+
+/// Bootstraps one role root in-process.
+///
+/// `agreement_key` reuses an existing `MuSig2` agreement key (a Maker's
+/// offer-bound signer); `None` mints a fresh one. Refund, claim-destination
+/// and funding keys — and the Taker's adaptor scalar — are always fresh.
+///
+/// # Errors
+///
+/// Fails when the output root exists, the identity fields are invalid, or
+/// any private file cannot be created owner-private.
+#[allow(clippy::too_many_lines)]
+pub fn bootstrap_role_in_process(
+    input: &RoleBootstrapInput,
+    agreement_key: Option<Zeroizing<[u8; 32]>>,
+    output_root: &Path,
+) -> Result<BootstrappedRole> {
+    validate_new_output_root(output_root)?;
+    let offer_commitment = input.offer_commitment;
+    let reservation_binding = input.reservation_binding.clone();
+    ensure!(
+        !reservation_binding.is_empty()
+            && reservation_binding.len() <= lez_btc_swap_sdk::MAX_BTC_PRE_SESSION_RESERVATION_BYTES,
+        "reservation binding is empty or oversized"
+    );
+    let direction = input.direction;
+    let role = input.role;
     let pre_session_id =
         derive_btc_pre_session_id_v1(&offer_commitment, &reservation_binding, direction)?;
-    let bitcoin_chain_policy = BtcChainPolicyV1::new(
-        parse_hex32(
-            &spec.bitcoin.genesis_block_hash,
-            "Bitcoin genesis block hash",
-        )?,
-        spec.bitcoin.required_confirmations,
-    );
-    let lez_chain_identity = BtcLezChainIdentityV1::new(
-        parse_hex32(&spec.lez.genesis_block_hash, "LEZ genesis block hash")?,
-        parse_hex32(&spec.lez.channel_id, "LEZ channel ID")?,
-        parse_hex32(&spec.lez.escrow_program_id, "LEZ escrow program ID")?,
-        parse_hex32(
-            &spec.lez.authenticated_transfer_program_id,
-            "LEZ authenticated-transfer program ID",
-        )?,
-    );
-    let lez_owner_account = parse_hex32(&spec.lez_owner_account, "LEZ owner account")?;
+    let bitcoin_chain_policy = input.bitcoin;
+    let lez_chain_identity = input.lez;
+    let lez_owner_account = input.lez_owner_account;
     ensure!(
-        spec.expires_at_unix_seconds != 0,
+        input.expires_at_unix_seconds != 0,
         "contribution expiry must be nonzero"
     );
-
-    let secrets = RoleSecrets::fresh(role)?;
+    let spec = RoleSummaryNames {
+        role: RoleName::from_protocol(role),
+        direction: DirectionName::from_protocol(direction),
+        expires_at_unix_seconds: input.expires_at_unix_seconds,
+    };
+    let secrets = RoleSecrets::fresh(role, agreement_key)?;
     let secp = Secp256k1::new();
     let agreement_public_key =
         compressed_public_key(&secp, &secrets.agreement, "agreement key")?.serialize();
@@ -462,7 +525,17 @@ pub fn bootstrap_role(spec_file: &Path, output_root: &Path) -> Result<RoleBootst
     write_private_new(&summary_file, &summary_bytes)?;
     fs::File::open(&private_root)?.sync_all()?;
     fs::File::open(output_root)?.sync_all()?;
-    Ok(summary)
+    Ok(BootstrappedRole {
+        summary,
+        contribution_wire,
+    })
+}
+
+/// The role-name view of the summary, kept next to the typed input.
+struct RoleSummaryNames {
+    role: RoleName,
+    direction: DirectionName,
+    expires_at_unix_seconds: u64,
 }
 
 /// Composes the canonical unsigned Chat-v2 agreement from independently
@@ -494,9 +567,113 @@ pub fn compose_agreement_draft(
         taker_contribution_file,
         MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES,
     )?;
+    let funding_txid = Txid::from_str(&spec.bitcoin.funding_transaction_id)
+        .context("invalid Bitcoin funding transaction ID")?;
+    let facts = AgreementDraftFacts {
+        funding_transaction_id: funding_txid.to_byte_array(),
+        funding_output_index: spec.bitcoin.funding_output_index,
+        funding_value_sat: spec.bitcoin.funding_value_sat,
+        claim_value_sat: spec.bitcoin.claim_value_sat,
+        refund_csv_blocks: spec.bitcoin.refund_csv_blocks,
+        lez_aggregate_authority_account: parse_hex32(
+            &spec.lez.aggregate_authority_account,
+            "LEZ aggregate authority account",
+        )?,
+        lez_metadata_account: parse_hex32(&spec.lez.metadata_account, "LEZ metadata account")?,
+        lez_custody_account: parse_hex32(&spec.lez.custody_account, "LEZ custody account")?,
+        lez_amount: spec.lez.amount,
+        lez_refund_at_ms: spec.lez.refund_at_ms,
+        lez_prepared_claim_message_hash: parse_hex32(
+            &spec.lez.prepared_claim_message_hash,
+            "LEZ prepared claim message hash",
+        )?,
+        planned_bitcoin_funding_anchor_height: spec.recovery.planned_bitcoin_funding_anchor_height,
+        bitcoin_refund_height: spec.recovery.bitcoin_refund_height,
+        maker_second_lock_cutoff_unix_seconds: spec.recovery.maker_second_lock_cutoff_unix_seconds,
+        earlier_refund_latest_unix_seconds: spec.recovery.earlier_refund_latest_unix_seconds,
+        later_refund_earliest_unix_seconds: spec.recovery.later_refund_earliest_unix_seconds,
+        required_margin_seconds: spec.recovery.required_margin_seconds,
+    };
+    let composed = compose_agreement_draft_wire(&facts, &maker_wire, &taker_wire)?;
+    let direction = DirectionName::from_protocol(composed.direction);
+    let draft_wire = composed.wire;
+
+    create_private_directory(output_root)?;
+    let draft_file = output_root.join(UNSIGNED_DRAFT_FILE);
+    let summary_file = output_root.join(DRAFT_SUMMARY_FILE);
+    write_private_new(&draft_file, &draft_wire)?;
+    let summary = AgreementDraftSummary {
+        schema_version: SPEC_SCHEMA_VERSION,
+        direction,
+        swap_id: hex::encode(composed.swap_id),
+        draft_file,
+        draft_sha256: hex::encode(Sha256::digest(&draft_wire)),
+        agreement_commitment: hex::encode(composed.agreement_commitment),
+        bitcoin_funding_transaction_id: funding_txid.to_string(),
+        bitcoin_contract_script_pubkey: hex::encode(&composed.bitcoin_contract_script_pubkey),
+        bitcoin_claim_bip341_sighash: hex::encode(composed.bitcoin_claim_bip341_sighash),
+        lez_channel_id: hex::encode(composed.lez_channel_id),
+        private_material_disclosed: false,
+        role_contributions_revalidated: true,
+    };
+    let mut summary_bytes = serde_json::to_vec_pretty(&summary).context("encode draft summary")?;
+    summary_bytes.push(b'\n');
+    write_private_new(&summary_file, &summary_bytes)?;
+    fs::File::open(output_root)?.sync_all()?;
+    Ok(summary)
+}
+
+/// The chain facts a draft binds on top of the two signed contributions.
+#[derive(Clone, Debug)]
+pub struct AgreementDraftFacts {
+    pub funding_transaction_id: [u8; 32],
+    pub funding_output_index: u32,
+    pub funding_value_sat: u64,
+    pub claim_value_sat: u64,
+    pub refund_csv_blocks: u32,
+    pub lez_aggregate_authority_account: [u8; 32],
+    pub lez_metadata_account: [u8; 32],
+    pub lez_custody_account: [u8; 32],
+    pub lez_amount: u128,
+    pub lez_refund_at_ms: u64,
+    pub lez_prepared_claim_message_hash: [u8; 32],
+    pub planned_bitcoin_funding_anchor_height: u32,
+    pub bitcoin_refund_height: u32,
+    pub maker_second_lock_cutoff_unix_seconds: u64,
+    pub earlier_refund_latest_unix_seconds: u64,
+    pub later_refund_earliest_unix_seconds: u64,
+    pub required_margin_seconds: u64,
+}
+
+/// A canonical unsigned draft and the public facts derived while composing it.
+#[derive(Clone, Debug)]
+pub struct ComposedAgreementDraft {
+    pub wire: Vec<u8>,
+    pub direction: SwapDirection,
+    pub swap_id: [u8; 32],
+    pub agreement_commitment: [u8; 32],
+    pub bitcoin_contract_script_pubkey: Vec<u8>,
+    pub bitcoin_claim_bip341_sighash: [u8; 32],
+    pub lez_channel_id: [u8; 32],
+}
+
+/// Composes the unsigned agreement draft in-process from both signed
+/// contributions and the chain facts, revalidating the contributions.
+///
+/// # Errors
+///
+/// Fails when a contribution is invalid, the contract or claim cannot be
+/// constructed, the recovery heights are inconsistent, or the draft is not
+/// canonical.
+#[allow(clippy::too_many_lines)]
+pub fn compose_agreement_draft_wire(
+    facts: &AgreementDraftFacts,
+    maker_wire: &[u8],
+    taker_wire: &[u8],
+) -> Result<ComposedAgreementDraft> {
     let pair = BtcRoleContributionPairV1::new(
-        BtcRoleContributionV1::from_wire(&maker_wire)?,
-        BtcRoleContributionV1::from_wire(&taker_wire)?,
+        BtcRoleContributionV1::from_wire(maker_wire)?,
+        BtcRoleContributionV1::from_wire(taker_wire)?,
     )?;
     let direction = DirectionName::from_protocol(pair.maker().body().direction());
     let participants = pair.participants();
@@ -508,30 +685,29 @@ pub fn compose_agreement_draft(
         .for_participant(bitcoin_funder)
         .bitcoin_refund_key();
     let refund_delay =
-        CsvBlockDelay::new(spec.bitcoin.refund_csv_blocks).context("invalid Bitcoin refund CSV")?;
+        CsvBlockDelay::new(facts.refund_csv_blocks).context("invalid Bitcoin refund CSV")?;
     let contract = P2trSwapOutput::new(
         TwoPartyAggregateKey::from_bytes(aggregate).context("invalid aggregate key")?,
         RefundXOnlyKey::from_bytes(refund_key).context("invalid refund key")?,
         refund_delay,
     )
     .context("construct contribution-bound P2TR contract")?;
-    let funding_txid = Txid::from_str(&spec.bitcoin.funding_transaction_id)
-        .context("invalid Bitcoin funding transaction ID")?;
+    let funding_txid = Txid::from_byte_array(facts.funding_transaction_id);
     let funding = BtcFundingTermsV1::new(
         funding_txid.to_byte_array(),
-        spec.bitcoin.funding_output_index,
-        spec.bitcoin.funding_value_sat,
+        facts.funding_output_index,
+        facts.funding_value_sat,
     );
     let bitcoin_claimant = bitcoin_funder.other();
     let claim = CooperativeKeyPathSpend::new(
         &contract,
         OutPoint {
             txid: funding_txid,
-            vout: spec.bitcoin.funding_output_index,
+            vout: facts.funding_output_index,
         },
-        Amount::from_sat(spec.bitcoin.funding_value_sat),
+        Amount::from_sat(facts.funding_value_sat),
         vec![TxOut {
-            value: Amount::from_sat(spec.bitcoin.claim_value_sat),
+            value: Amount::from_sat(facts.claim_value_sat),
             script_pubkey: ScriptBuf::from_bytes(
                 participants
                     .for_participant(bitcoin_claimant)
@@ -542,11 +718,10 @@ pub fn compose_agreement_draft(
     )
     .context("construct contribution-bound cooperative claim")?;
     ensure!(
-        spec.recovery.bitcoin_refund_height
-            == spec
-                .recovery
+        facts.bitcoin_refund_height
+            == facts
                 .planned_bitcoin_funding_anchor_height
-                .checked_add(spec.bitcoin.refund_csv_blocks)
+                .checked_add(facts.refund_csv_blocks)
                 .context("Bitcoin refund height overflow")?,
         "Bitcoin refund height differs from anchor plus CSV"
     );
@@ -558,32 +733,26 @@ pub fn compose_agreement_draft(
         *chain.genesis_block_hash(),
         *chain.escrow_program_id(),
         *chain.authenticated_transfer_program_id(),
-        parse_hex32(
-            &spec.lez.aggregate_authority_account,
-            "LEZ aggregate authority account",
-        )?,
-        parse_hex32(&spec.lez.metadata_account, "LEZ metadata account")?,
-        parse_hex32(&spec.lez.custody_account, "LEZ custody account")?,
+        facts.lez_aggregate_authority_account,
+        facts.lez_metadata_account,
+        facts.lez_custody_account,
         *participants
             .for_participant(lez_depositor)
             .lez_owner_account(),
         *participants
             .for_participant(lez_claimant)
             .lez_owner_account(),
-        spec.lez.amount,
-        spec.lez.refund_at_ms,
-        parse_hex32(
-            &spec.lez.prepared_claim_message_hash,
-            "LEZ prepared claim message hash",
-        )?,
+        facts.lez_amount,
+        facts.lez_refund_at_ms,
+        facts.lez_prepared_claim_message_hash,
     );
     let recovery = BtcRecoveryPlanV1::new(
-        spec.recovery.planned_bitcoin_funding_anchor_height,
-        spec.recovery.bitcoin_refund_height,
-        spec.recovery.maker_second_lock_cutoff_unix_seconds,
-        spec.recovery.earlier_refund_latest_unix_seconds,
-        spec.recovery.later_refund_earliest_unix_seconds,
-        spec.recovery.required_margin_seconds,
+        facts.planned_bitcoin_funding_anchor_height,
+        facts.bitcoin_refund_height,
+        facts.maker_second_lock_cutoff_unix_seconds,
+        facts.earlier_refund_latest_unix_seconds,
+        facts.later_refund_earliest_unix_seconds,
+        facts.required_margin_seconds,
     );
     let body = BtcAgreementBodyV1::new(
         *pair.swap_id(),
@@ -609,30 +778,88 @@ pub fn compose_agreement_draft(
         replay.encode_wire()? == draft_wire,
         "unsigned agreement draft is not canonical"
     );
+    Ok(ComposedAgreementDraft {
+        wire: draft_wire,
+        direction: direction.protocol(),
+        swap_id: *pair.swap_id(),
+        agreement_commitment: draft.commitment(),
+        bitcoin_contract_script_pubkey: contract.script_pubkey_bytes().to_vec(),
+        bitcoin_claim_bip341_sighash: claim.sighash_bytes(),
+        lez_channel_id: *chain.channel_id(),
+    })
+}
 
-    create_private_directory(output_root)?;
-    let draft_file = output_root.join(UNSIGNED_DRAFT_FILE);
-    let summary_file = output_root.join(DRAFT_SUMMARY_FILE);
-    write_private_new(&draft_file, &draft_wire)?;
-    let summary = AgreementDraftSummary {
-        schema_version: SPEC_SCHEMA_VERSION,
-        direction,
-        swap_id: hex::encode(pair.swap_id()),
-        draft_file,
-        draft_sha256: hex::encode(Sha256::digest(&draft_wire)),
-        agreement_commitment: hex::encode(draft.commitment()),
-        bitcoin_funding_transaction_id: funding_txid.to_string(),
-        bitcoin_contract_script_pubkey: hex::encode(contract.script_pubkey_bytes()),
-        bitcoin_claim_bip341_sighash: hex::encode(claim.sighash_bytes()),
-        lez_channel_id: hex::encode(chain.channel_id()),
-        private_material_disclosed: false,
-        role_contributions_revalidated: true,
-    };
-    let mut summary_bytes = serde_json::to_vec_pretty(&summary).context("encode draft summary")?;
-    summary_bytes.push(b'\n');
-    write_private_new(&summary_file, &summary_bytes)?;
-    fs::File::open(output_root)?.sync_all()?;
-    Ok(summary)
+/// The private scalars a bootstrapped role root holds (raw 32-byte files).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoleSecret {
+    /// The `MuSig2` agreement key that signs contributions and agreements.
+    Agreement,
+    /// The Bitcoin refund key (only meaningful for the Bitcoin funder).
+    BitcoinRefund,
+    /// The Taker's adaptor scalar; absent on a Maker root.
+    Adaptor,
+}
+
+/// The fixed file layout of one role root, so callers never spell file names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleRootLayout {
+    root: PathBuf,
+}
+
+impl RoleRootLayout {
+    #[must_use]
+    pub fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    #[must_use]
+    pub fn contribution_file(&self) -> PathBuf {
+        self.root.join(CONTRIBUTION_FILE)
+    }
+
+    #[must_use]
+    pub fn peer_contribution_file(&self) -> PathBuf {
+        self.root.join(PEER_CONTRIBUTION_FILE)
+    }
+
+    /// The accepted countersigned agreement, present once bound.
+    #[must_use]
+    pub fn agreement_file(&self) -> PathBuf {
+        self.root.join(ACCEPTED_AGREEMENT_FILE)
+    }
+
+    #[must_use]
+    pub fn binding_file(&self) -> PathBuf {
+        self.root.join(AGREEMENT_BINDING_FILE)
+    }
+
+    #[must_use]
+    pub fn secret_file(&self, secret: RoleSecret) -> PathBuf {
+        self.root.join(PRIVATE_DIRECTORY).join(match secret {
+            RoleSecret::Agreement => AGREEMENT_KEY_FILE,
+            RoleSecret::BitcoinRefund => REFUND_KEY_FILE,
+            RoleSecret::Adaptor => ADAPTOR_FILE,
+        })
+    }
+
+    /// Reads one private scalar of this root, validating it as a secp256k1 key.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file is missing, not owner-private, or not a valid scalar.
+    pub fn read_secret(&self, secret: RoleSecret) -> Result<Zeroizing<[u8; 32]>> {
+        let name = match secret {
+            RoleSecret::Agreement => "agreement key",
+            RoleSecret::BitcoinRefund => "refund key",
+            RoleSecret::Adaptor => "adaptor scalar",
+        };
+        read_secret_bytes(&self.secret_file(secret), name)
+    }
 }
 
 /// Imports and binds a final countersigned agreement against both signed public

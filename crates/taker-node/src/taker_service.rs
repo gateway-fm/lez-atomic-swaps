@@ -1,24 +1,23 @@
 //! JSON-RPC composition for the owner-local Taker Node.
 //!
 //! Health and authenticated offer discovery are always registered. The
-//! prepared-ZEC lifecycle lives in [`zec_lifecycle`] and exists only with the
-//! `pair-zec` feature.
+//! prepared-route lifecycle lives in [`lifecycle`]: Bitcoin swaps always,
+//! Zcash swaps with the `pair-zec` feature.
 
-#[cfg(feature = "pair-zec")]
-mod zec_lifecycle;
+mod btc_dynamic;
+mod lifecycle;
 
-use std::sync::Arc;
-#[cfg(feature = "pair-zec")]
-use std::sync::Mutex;
+pub(crate) use btc_dynamic::DynamicBtcRole;
+
+use std::sync::{Arc, Mutex};
 
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
+use lez_swap_core::Pair;
 use serde_json::json;
 
-#[cfg(feature = "pair-zec")]
-use crate::ConfiguredTakerInitiationContext;
 use crate::{
-    ConfiguredTakerFacadeBackend, ConfiguredTakerServiceContext, TakerBackendError,
-    TakerHealthRequestV1, TakerOfferListRequestV1,
+    ConfiguredTakerFacadeBackend, ConfiguredTakerInitiationContext, ConfiguredTakerServiceContext,
+    TakerBackendError, TakerHealthRequestV1, TakerOfferListRequestV1,
 };
 
 const INVALID_PARAMS_CODE: i32 = -32_602;
@@ -29,8 +28,10 @@ const AUTHENTICATED_OFFER_CONFLICT_CODE: i32 = -32_012;
 
 struct TakerServiceState {
     backend: ConfiguredTakerFacadeBackend,
-    #[cfg(feature = "pair-zec")]
     initiation: Option<Arc<Mutex<ConfiguredTakerInitiationContext>>>,
+    /// Which pairs the prepared catalog holds, fixed at startup.
+    btc_registered: bool,
+    zec_registered: bool,
 }
 
 /// Builds the exact JSON-RPC module enabled by one validated service context.
@@ -45,14 +46,18 @@ struct TakerServiceState {
 pub fn taker_service_rpc_module(
     context: ConfiguredTakerServiceContext,
 ) -> Result<RpcModule<()>, RegisterMethodError> {
-    #[cfg(feature = "pair-zec")]
     let (backend, initiation) = context.into_parts();
-    #[cfg(not(feature = "pair-zec"))]
-    let backend = context.into_backend();
+    let btc_registered = initiation
+        .as_ref()
+        .is_some_and(|context| context.has_pair(Pair::Bitcoin));
+    let zec_registered = initiation
+        .as_ref()
+        .is_some_and(|context| context.has_pair(Pair::Zcash));
     let state = Arc::new(TakerServiceState {
         backend,
-        #[cfg(feature = "pair-zec")]
         initiation: initiation.map(|value| Arc::new(Mutex::new(value))),
+        btc_registered,
+        zec_registered,
     });
     let mut module = RpcModule::new(());
 
@@ -68,11 +73,14 @@ pub fn taker_service_rpc_module(
                 .health(&request)
                 .await
                 .map_err(map_backend_error)?;
-            Ok::<_, ErrorObjectOwned>(if lifecycle_registered(&state) {
-                health.with_zec_lifecycle_registered()
-            } else {
-                health
-            })
+            let mut health = health;
+            if state.zec_registered {
+                health = health.with_zec_lifecycle_registered();
+            }
+            if state.btc_registered {
+                health = health.with_btc_lifecycle_registered();
+            }
+            Ok::<_, ErrorObjectOwned>(health)
         }
     })?;
 
@@ -91,21 +99,9 @@ pub fn taker_service_rpc_module(
         }
     })?;
 
-    #[cfg(feature = "pair-zec")]
-    zec_lifecycle::register(&mut module, &state)?;
+    lifecycle::register(&mut module, &state)?;
 
     Ok(module)
-}
-
-#[cfg(feature = "pair-zec")]
-fn lifecycle_registered(state: &TakerServiceState) -> bool {
-    state.initiation.is_some()
-}
-
-/// No lifecycle route is compiled into this build.
-#[cfg(not(feature = "pair-zec"))]
-const fn lifecycle_registered(_state: &TakerServiceState) -> bool {
-    false
 }
 
 fn map_backend_error(error: TakerBackendError) -> ErrorObjectOwned {
