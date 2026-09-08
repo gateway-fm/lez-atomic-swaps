@@ -43,7 +43,7 @@ are reused on subsequent runs. For a build without those payloads, use a new
 workspace. An entirely empty Docker build cache is considerably slower.
 
 The recorder refuses tracked source edits, the wrong timing profile, stale
-source receipts, running binaries that differ from the staged build, and an
+source receipts, running binaries that differ from the built images, and an
 existing output directory. Run the scenarios sequentially and avoid other swaps
 while recording: refund tests stop/restart the Maker, and historical LEZ balance
 checks assume there are no competing transactions for the Maker account.

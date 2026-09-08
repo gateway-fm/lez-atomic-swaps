@@ -233,7 +233,9 @@ phase_rust() {
         for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
         chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   }
-  git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/maker-node/build-source.txt"
+  for role in maker taker; do
+    git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/$role-node/build-source.txt"
+  done
   log "Node binaries staged"
 }
 
@@ -340,7 +342,9 @@ phase_stage() {
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
-  cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/maker-node/sidecar-source.txt"
+  for role in maker taker; do
+    cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
+  done
   (cd "$DEPLOY_ROOT" && bash scripts/stage-assets.sh)
 }
 

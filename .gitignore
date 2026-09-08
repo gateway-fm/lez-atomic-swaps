@@ -33,5 +33,5 @@ __pycache__/
 /deploy/images/basecamp-ui/assets/
 
 # Source receipts for locally built reviewer payloads
-/deploy/images/maker-node/build-source.txt
-/deploy/images/maker-node/sidecar-source.txt
+/deploy/images/*/build-source.txt
+/deploy/images/*/sidecar-source.txt

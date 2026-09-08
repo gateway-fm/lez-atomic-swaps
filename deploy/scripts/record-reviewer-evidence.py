@@ -3,6 +3,7 @@
 import argparse
 import contextlib
 import datetime
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -183,15 +184,18 @@ def provenance(commit):
     for role in ('maker', 'taker'):
         paths = [f'lez-{role}-node', f'lez-btc-{role}-actor', 'lez-v02-bridge-poc']
         for binary in paths:
-            staged = DEPLOY/'images'/f'{role}-node'/binary
-            expected = hashlib.sha256(staged.read_bytes()).hexdigest()
             actual = command('docker', 'exec', f'lez-{role}-node', 'sha256sum', '/usr/local/bin/'+binary).split()[0]
-            if expected != actual:
-                raise RuntimeError(f'{role}/{binary}: running binary differs from staged build; recreate the Nodes')
+            # Images strip debug symbols, so compare the running executable
+            # with the built image, not the unstripped staging directory.
+            expected = command('docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'sha256sum',
+                               f'lez-{role}-node:local', '/usr/local/bin/'+binary).split()[0]
+            if actual != expected:
+                raise RuntimeError(f'{role}/{binary}: running executable differs from the built image')
             binaries[f'{role}/{binary}'] = actual
-    for receipt in (DEPLOY/'images/maker-node/build-source.txt', DEPLOY/'images/maker-node/sidecar-source.txt'):
-        if receipt.read_text().strip() != commit:
-            raise RuntimeError(f'{receipt.name}: rebuild this checkout with from-scratch.sh')
+        for receipt in ('build-source.txt', 'sidecar-source.txt'):
+            built = command('docker', 'exec', f'lez-{role}-node', 'cat', '/usr/local/share/lez/'+receipt)
+            if built != commit:
+                raise RuntimeError(f'{role}/{receipt}: rebuild this checkout and recreate the Nodes')
     containers = {}
     for name in ('lez-bitcoin-core', 'lez-bedrock', 'lez-sequencer', 'lez-indexer', 'lez-maker-node', 'lez-taker-node'):
         containers[name] = command('docker', 'inspect', name, '--format', '{{.Image}}')
@@ -230,6 +234,12 @@ def main():
         parser.error('use from-scratch.sh --reviewer to prepare the fast timing profile')
     if E.bitcoin('getblockchaininfo')['chain'] != 'regtest':
         parser.error('Bitcoin must be regtest')
+    # A second recorder would stop the same Maker and invalidate balance checks.
+    lock = (E.RUNTIME/'reviewer-record.lock').open('w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        parser.error('another reviewer recording is already running')
     metadata = provenance(commit)
     root = (args.output or DEPLOY/'runtime/recordings'/datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')).resolve()
     root.mkdir(parents=True, exist_ok=False)
