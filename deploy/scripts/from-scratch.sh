@@ -222,7 +222,7 @@ phase_rust() {
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
   # a different checkout. Its dependency/target cache still makes reruns cheap.
-  local b
+  local b role
   for b in "${bins[@]}"; do mkdir -p "$DEPLOY_ROOT/images/${b%/*}"; done
   {
     log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
@@ -317,8 +317,8 @@ phase_build() {
       mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
         /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   }
-  git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
   own_provision
+  git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
 
   # persistent wallet identities the market and the LEZ genesis share
   local wallet
