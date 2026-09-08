@@ -11,7 +11,7 @@ body{font:16px system-ui;margin:24px;background:#111820;color:#e6eef6}button,sel
 <label>Scenario <select id="scenario"></select></label>
 <button id="play">Play</button><button id="reset">Reset</button>
 <label>Speed <select id="speed"><option>1</option><option>10</option><option>60</option></select>×</label>
-<label>Position <input id="position" type="range" min="0" value="0" step="0.1"></label><span id="elapsed"></span>
+<label>Position <input id="position" type="range" min="0" value="0" step="any"></label><span id="elapsed"></span>
 <pre id="terminal" aria-label="Recorded terminal output"></pre>
 <script>
 const recordings = /* RECORDINGS */ {};
