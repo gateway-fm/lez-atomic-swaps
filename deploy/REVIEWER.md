@@ -8,7 +8,8 @@ credentials, staged executables, Basecamp, or screen-recording software.
 ## Prepare a dedicated ARM64 machine
 
 Use Apple Silicon with Docker Desktop and Homebrew, or ARM64 Linux with Docker
-Engine, Compose v2, Git, Python 3, jq, curl, OpenSSL and xxd. Allow several hours
+Engine, Compose v2, Git, Python 3, jq, curl, OpenSSL, xxd and shasum
+(`libdigest-sha-perl` on Debian/Ubuntu). Allow several hours
 for the first source build and about one hour for the three scenarios.
 Internet access is needed for pinned sources, container images and dependencies;
 the running chains are local. x86 hosts are not supported by these payloads.

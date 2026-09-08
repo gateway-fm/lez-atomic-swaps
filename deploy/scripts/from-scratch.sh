@@ -118,6 +118,7 @@ phase_host() {
       command -v "$tool" >/dev/null || fail "install $tool (apt: docker.io jq git curl openssl xxd)"
     done
   fi
+  command -v shasum >/dev/null || fail "shasum is required (Debian/Ubuntu: libdigest-sha-perl)"
   command -v xxd >/dev/null || fail "xxd is required (part of vim on macOS)"
   for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 5; done
   docker info >/dev/null 2>&1 || fail "the Docker daemon did not come up"
