@@ -84,8 +84,8 @@ class PublicDockerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source = pathlib.Path(tmp)/'original'
             source.mkdir()
-            (source/'contexts').mkdir()
-            (source/'cli-plugins').mkdir()
+            ((source/'contexts').resolve()).mkdir()
+            ((source/'cli-plugins').resolve()).mkdir()
             original = {'currentContext': 'desktop-linux', 'cliPluginsExtraDirs': ['/plugins'],
                         'auths': {'registry': {'auth': 'do-not-copy'}},
                         'credsStore': 'desktop', 'credHelpers': {'registry': 'secret-helper'}}
@@ -94,8 +94,8 @@ class PublicDockerTests(unittest.TestCase):
             public_docker.prepare(source, destination)
             self.assertEqual(json.loads((destination/'config.json').read_text()), {
                 'currentContext': 'desktop-linux', 'cliPluginsExtraDirs': ['/plugins'], 'auths': {}})
-            self.assertEqual((destination/'contexts').resolve(), source/'contexts')
-            self.assertEqual((destination/'cli-plugins').resolve(), source/'cli-plugins')
+            self.assertEqual((destination/'contexts').resolve(), (source/'contexts').resolve())
+            self.assertEqual((destination/'cli-plugins').resolve(), (source/'cli-plugins').resolve())
             self.assertEqual(json.loads((source/'config.json').read_text()), original)
             with self.assertRaises(RuntimeError): public_docker.prepare(source, destination)
 
