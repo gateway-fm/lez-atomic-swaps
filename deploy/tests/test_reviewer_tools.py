@@ -45,6 +45,11 @@ class WalletRPC:
 
 
 class SeedingTests(unittest.TestCase):
+    def test_cli_string_results_are_not_json(self):
+        completed = subprocess.CompletedProcess([], 0, stdout='bcrt1address\n', stderr='')
+        with patch.object(seed.subprocess, 'run', return_value=completed):
+            self.assertEqual(seed.rpc('getnewaddress'), 'bcrt1address')
+
     def test_non_regtest_is_read_only(self):
         for chain in ('main', 'test', 'signet'):
             rpc = WalletRPC(chain=chain)

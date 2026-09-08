@@ -9,7 +9,10 @@ CLI = ["docker", "exec", "lez-bitcoin-core", "bitcoin-cli",
 
 def rpc(*args):
     result = subprocess.run(CLI + list(args), check=True, capture_output=True, text=True)
-    return json.loads(result.stdout)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return result.stdout.strip()
 
 
 def seed(call=rpc):
