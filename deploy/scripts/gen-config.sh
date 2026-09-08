@@ -194,6 +194,7 @@ identities_root="${LEZ_WALLET_IDENTITIES:-$market_root/identities}"
 for pair in maker:maker-munich-01 taker:taker-zurich-01; do
   role="${pair%%:*}"; wallet="${pair##*:}"
   mkdir -p "$RUNTIME/lez/$role"
+  chmod 0755 "$RUNTIME/lez/$role"
   if [[ -n "$identities_root" && -f "$identities_root/$wallet/lez-signer.key" ]]; then
     cp "$identities_root/$wallet/lez-signer.key" "$RUNTIME/lez/$role/lez-signer.key"
     cp "$identities_root/$wallet/identity.json" "$RUNTIME/lez/$role/identity.json"
@@ -239,5 +240,8 @@ printf '%s\n' \
   "LEZ_MARKET_ROOT=$market_root" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
+
+# Configs contain public chain settings and are mounted as individual files.
+chmod 0644 "$RUNTIME/config/"*.json "$RUNTIME/config/"*.yaml
 
 echo "runtime generated at $RUNTIME"

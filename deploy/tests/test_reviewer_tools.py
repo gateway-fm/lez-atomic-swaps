@@ -100,6 +100,10 @@ class ConfigTests(unittest.TestCase):
             subprocess.run(command, env=env, check=True, capture_output=True)
             self.assertEqual(public.read_text(), manifest)
             self.assertEqual(public.stat().st_mode & 0o777, 0o644)
+            for role in ('maker', 'taker'):
+                self.assertEqual((root/'runtime/lez'/role).stat().st_mode & 0o777, 0o755)
+            for config in (root/'runtime/config').iterdir():
+                self.assertEqual(config.stat().st_mode & 0o777, 0o644)
 
 
 class RecorderTests(unittest.TestCase):

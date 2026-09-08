@@ -97,9 +97,24 @@ services:
     logging: *default-logging
 
   # ─── LEZ v0.2 devnet ────────────────────────────────────────────────────
+  lez-init:
+    image: debian:bookworm-slim
+    container_name: lez-state-init
+    volumes:
+      - ./runtime/bedrock:/state/bedrock
+      - ./runtime/sequencer:/state/sequencer
+      - ./runtime/indexer:/state/indexer
+    command: ["chown", "-R", "65532:65532", "/state/bedrock", "/state/sequencer", "/state/indexer"]
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
   bedrock:
     image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f"
     container_name: lez-bedrock
+    depends_on:
+      lez-init:
+        condition: service_completed_successfully
     entrypoint: ["/usr/bin/logos-blockchain-node"]
     command:
       - "/opt/lez-v0.2-source/bedrock/node-config.yaml"
