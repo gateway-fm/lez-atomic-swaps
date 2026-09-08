@@ -327,7 +327,9 @@ ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspec
 
 The workspace next to this repository holds the pinned `lez-source` checkout,
 `provision/data` (built artifacts) and the market root; `runtime/runtime.env`
-records `LEZ_MARKET_ROOT`, the one path the Nodes read from it.
+records `LEZ_MARKET_ROOT` for provisioning. The Nodes mount the public
+`runtime/market-bootstrap.env` copy and their individual staged identities;
+they do not mount the private market root.
 
 ## Node-owned Bitcoin swaps (ADR 0213)
 
