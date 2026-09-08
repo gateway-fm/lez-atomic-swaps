@@ -66,6 +66,11 @@ checks assume there are no competing transactions for the Maker account.
 
 ## Inspect and share the results
 
+A [checked-in example capture](../docs/evidence/reviewer-20260908-c7c5f2d/README.md)
+contains the public recordings and transaction records from this machine. Its
+README identifies the exact capture commit and distinguishes it from earlier
+release evidence. Download its `index.html` to play the recordings locally.
+
 The command prints its output directory under `deploy/runtime/recordings/`.
 Open `index.html` directly in a browser; it contains all terminal recordings,
 with playback, seeking and speed controls, and requires no network access.

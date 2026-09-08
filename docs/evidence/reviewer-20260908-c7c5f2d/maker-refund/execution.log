@@ -1,0 +1,81 @@
+LEZ atomic swaps — Node owner-API execution
+Scenario: maker-refund
+Source: c7c5f2d820c6221066721595fcc838dbf1354156
+Bitcoin regtest + LEZ devnet; fast timing. This is an API recording.
+
+[23:41:00] === maker-refund (stamp 1788903660)
+[23:41:00] preflight: indexer historical reads
+[23:41:01]   indexer serves historical reads at the tip (229)
+[23:41:01] preflight: LEZ finality advancing
+[23:41:26]   indexer finalized 229 → 230 in 25 s
+[23:41:26]   Maker published offer-e2e-1788903660
+[23:41:27]   Taker took offer-e2e-1788903660: swap 2238252e4681 (not_activated)
+[23:41:27]   Taker locked Bitcoin: 1aba5f7d198f (replay=False)
+[23:41:27]   taker 2238252e4681: awaiting_first_lock (gen 0) | maker: leased
+[2026-09-08T21:41:30+00:00] Running; elapsed 30 seconds
+[2026-09-08T21:42:00+00:00] Running; elapsed 60 seconds
+[2026-09-08T21:42:30+00:00] Running; elapsed 90 seconds
+[23:42:48]   taker 2238252e4681: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[2026-09-08T21:43:00+00:00] Running; elapsed 120 seconds
+[2026-09-08T21:43:30+00:00] Running; elapsed 150 seconds
+[2026-09-08T21:44:00+00:00] Running; elapsed 180 seconds
+[23:44:00]   taker 2238252e4681: claim_available (gen 2) | maker: both_legs_locked
+[23:44:00]   Maker funded; the Taker never claims. Waiting for the LEZ refund deadline (900s after the take)
+[2026-09-08T21:44:30+00:00] Running; elapsed 210 seconds
+[2026-09-08T21:45:00+00:00] Running; elapsed 240 seconds
+[2026-09-08T21:45:30+00:00] Running; elapsed 270 seconds
+[2026-09-08T21:46:00+00:00] Running; elapsed 300 seconds
+[2026-09-08T21:46:30+00:00] Running; elapsed 330 seconds
+[2026-09-08T21:47:00+00:00] Running; elapsed 360 seconds
+[2026-09-08T21:47:30+00:00] Running; elapsed 390 seconds
+[2026-09-08T21:48:00+00:00] Running; elapsed 420 seconds
+[2026-09-08T21:48:30+00:00] Running; elapsed 450 seconds
+[2026-09-08T21:49:00+00:00] Running; elapsed 480 seconds
+[2026-09-08T21:49:30+00:00] Running; elapsed 510 seconds
+[2026-09-08T21:50:00+00:00] Running; elapsed 540 seconds
+[2026-09-08T21:50:30+00:00] Running; elapsed 570 seconds
+[2026-09-08T21:51:00+00:00] Running; elapsed 600 seconds
+[2026-09-08T21:51:30+00:00] Running; elapsed 630 seconds
+[2026-09-08T21:52:00+00:00] Running; elapsed 660 seconds
+[2026-09-08T21:52:30+00:00] Running; elapsed 690 seconds
+[2026-09-08T21:53:00+00:00] Running; elapsed 720 seconds
+[2026-09-08T21:53:30+00:00] Running; elapsed 750 seconds
+[2026-09-08T21:54:00+00:00] Running; elapsed 780 seconds
+[2026-09-08T21:54:30+00:00] Running; elapsed 810 seconds
+[2026-09-08T21:55:00+00:00] Running; elapsed 840 seconds
+[2026-09-08T21:55:30+00:00] Running; elapsed 870 seconds
+[2026-09-08T21:56:00+00:00] Running; elapsed 900 seconds
+[2026-09-08T21:56:30+00:00] Running; elapsed 930 seconds
+[2026-09-08T21:57:00+00:00] Running; elapsed 960 seconds
+[23:57:00]   Maker refund queued: {"schema_version": 1, "swap_id": "2238252e46814198fccd71bc5bc26e04068931b53fb78d3b53c6ec9b8017e26f", "action": "refund", "requested_after_generation": 184, "was
+[23:57:00]   maker 2238252e4681: both_legs_locked
+[23:57:21]   maker 2238252e4681: both_legs_locked
+[2026-09-08T21:57:30+00:00] Running; elapsed 990 seconds
+[23:57:41]   maker 2238252e4681: both_legs_locked
+[2026-09-08T21:58:00+00:00] Running; elapsed 1020 seconds
+[23:58:01]   maker 2238252e4681: both_legs_locked
+[23:58:21]   maker 2238252e4681: both_legs_locked
+[2026-09-08T21:58:30+00:00] Running; elapsed 1050 seconds
+[23:58:41]   maker 2238252e4681: both_legs_locked
+[2026-09-08T21:59:00+00:00] Running; elapsed 1080 seconds
+[23:59:01]   maker 2238252e4681: both_legs_locked
+[23:59:21]   maker 2238252e4681: both_legs_locked
+[2026-09-08T21:59:30+00:00] Running; elapsed 1110 seconds
+[23:59:41]   maker 2238252e4681: both_legs_locked
+[2026-09-08T22:00:00+00:00] Running; elapsed 1140 seconds
+[00:00:01]   maker 2238252e4681: both_legs_locked
+[00:00:21]   maker 2238252e4681: both_legs_locked
+[2026-09-08T22:00:30+00:00] Running; elapsed 1170 seconds
+[00:00:41]   maker 2238252e4681: both_legs_locked
+[2026-09-08T22:01:00+00:00] Running; elapsed 1200 seconds
+[00:01:02]   maker 2238252e4681: both_legs_locked
+[00:01:22]   maker 2238252e4681: maker_leg_refunded
+[2026-09-08T22:01:30+00:00] Running; elapsed 1230 seconds
+[2026-09-08T22:02:00+00:00] Running; elapsed 1260 seconds
+[00:02:02]   refund request admitted (attempt 1, state refund_available)
+[2026-09-08T22:02:30+00:00] Running; elapsed 1290 seconds
+[2026-09-08T22:03:00+00:00] Running; elapsed 1320 seconds
+[00:03:02]   both legs refunded
+[00:03:02] === maker-refund: passed in 1323s
+  Verified public chain evidence for 2238252e46814198fccd71bc5bc26e04068931b53fb78d3b53c6ec9b8017e26f
+PASS — scenario and public chain evidence verified.

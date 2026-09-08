@@ -1,0 +1,215 @@
+{
+  "public_evidence_journal": [
+    {
+      "kind": "taker_lock",
+      "chain": "Bitcoin",
+      "proof": {
+        "transaction_id": "1aba5f7d198f1a5c9a72354a4c68478093918d345c01f5129601f658a14b5391",
+        "confirmations": 1
+      },
+      "refund_position": null
+    },
+    {
+      "kind": "maker_lock",
+      "chain": "Lez",
+      "proof": {
+        "transaction_id": "2c9064edf1154f4e62ee90c9b8ee950835f7b9edf3829807cba042086dbddce4",
+        "confirmations": 1
+      },
+      "refund_position": null
+    },
+    {
+      "kind": "maker_refund",
+      "chain": "Lez",
+      "proof": {
+        "transaction_id": "2ccd8bbbf6ee33bf174d083f199e000ee575c89638479886e5e0de64f7442630",
+        "confirmations": 1
+      },
+      "refund_position": {
+        "chain": "Lez",
+        "basis": "Timestamp",
+        "value": 1788904848
+      }
+    },
+    {
+      "kind": "taker_refund",
+      "chain": "Bitcoin",
+      "proof": {
+        "transaction_id": "02c7500b39ef39d1e0d6f38a5bdc72fcde4d9601835e160068e0a024a03922d7",
+        "confirmations": 1
+      },
+      "refund_position": {
+        "chain": "Bitcoin",
+        "basis": "BlockHeight",
+        "value": 172
+      }
+    }
+  ],
+  "repository_commit": "c7c5f2d820c6221066721595fcc838dbf1354156",
+  "scenario": "maker-refund",
+  "swap_id": "2238252e46814198fccd71bc5bc26e04068931b53fb78d3b53c6ec9b8017e26f",
+  "taker": {
+    "schema_version": 1,
+    "swap_id": "2238252e46814198fccd71bc5bc26e04068931b53fb78d3b53c6ec9b8017e26f",
+    "offer_id": "offer-e2e-1788903660",
+    "route": {
+      "pair": "Bitcoin",
+      "direction": "TakerSellsForeign"
+    },
+    "foreign_units": 1000000,
+    "lez_units": 1000,
+    "progress_generation": 4,
+    "state": "refunded",
+    "available_action": null,
+    "privacy_guidance": null
+  },
+  "maker": {
+    "schema_version": 1,
+    "swap_id": "2238252e46814198fccd71bc5bc26e04068931b53fb78d3b53c6ec9b8017e26f",
+    "actor_kind": "bitcoin",
+    "schedule_state": "terminal",
+    "lease_generation": 207,
+    "attempt_count": 207,
+    "progress": {
+      "source_generation": 207,
+      "observation": {
+        "state": "active",
+        "phase": "refunded",
+        "revision": 4,
+        "next_action": "complete"
+      },
+      "observed_at": 1788904922
+    },
+    "manual_action": {
+      "request_id": "e2e-maker-refund-1788903660",
+      "action": "refund",
+      "state": "completed",
+      "requested_after_generation": 184,
+      "lease_generation": null
+    }
+  },
+  "aggregate_revision": 4,
+  "public_aggregate": {
+    "direction": "TakerSellsForeign",
+    "phase": "Refunded",
+    "taker_lock_transaction_id": "1aba5f7d198f1a5c9a72354a4c68478093918d345c01f5129601f658a14b5391",
+    "maker_lock_transaction_id": "2c9064edf1154f4e62ee90c9b8ee950835f7b9edf3829807cba042086dbddce4",
+    "revealing_claim_transaction_id": null,
+    "followup_claim_transaction_id": null,
+    "taker_refund_event_transaction_id": "02c7500b39ef39d1e0d6f38a5bdc72fcde4d9601835e160068e0a024a03922d7",
+    "maker_recovery_transaction_id": "2ccd8bbbf6ee33bf174d083f199e000ee575c89638479886e5e0de64f7442630"
+  },
+  "bitcoin_transactions": {
+    "taker_lock_transaction_id": {
+      "txid": "1aba5f7d198f1a5c9a72354a4c68478093918d345c01f5129601f658a14b5391",
+      "height": 155,
+      "block": "4937c29698bf51ddc803bf0a4855607ef25d2014bd5be2f191dc9ba7d3eda8cc",
+      "confirmations": 19,
+      "vin": [
+        {
+          "txid": "b89fd057dc699a9dd2a9d2e0853d99d31436e46627e4fe749f014faf588f01eb",
+          "vout": 1,
+          "sequence": 4294967293
+        }
+      ],
+      "vout": [
+        {
+          "value": 49.969907,
+          "n": 0,
+          "scriptPubKey": {
+            "asm": "1 5ccc64d2547c271374e9dfe8cb3f5d8660cf1c973bde192785970932fe7937d7",
+            "desc": "rawtr(5ccc64d2547c271374e9dfe8cb3f5d8660cf1c973bde192785970932fe7937d7)#d5f64qka",
+            "hex": "51205ccc64d2547c271374e9dfe8cb3f5d8660cf1c973bde192785970932fe7937d7",
+            "address": "bcrt1ptnxxf5j50sn3xa8fml5vk06asesv78yh800pjfu9juyn9lnexltsa5qwgn",
+            "type": "witness_v1_taproot"
+          }
+        },
+        {
+          "value": 0.01,
+          "n": 1,
+          "scriptPubKey": {
+            "asm": "1 2b07b1577b81df555e4b40e8247e80472d56d2e2257d4dc7d0832a0e34e04400",
+            "desc": "rawtr(2b07b1577b81df555e4b40e8247e80472d56d2e2257d4dc7d0832a0e34e04400)#q77r6rte",
+            "hex": "51202b07b1577b81df555e4b40e8247e80472d56d2e2257d4dc7d0832a0e34e04400",
+            "address": "bcrt1p9vrmz4mms8042hjtgr5zgl5qguk4d5hzy475m37ssv4qud8qgsqq3q8j4y",
+            "type": "witness_v1_taproot"
+          }
+        }
+      ]
+    },
+    "taker_refund_event_transaction_id": {
+      "txid": "02c7500b39ef39d1e0d6f38a5bdc72fcde4d9601835e160068e0a024a03922d7",
+      "height": 172,
+      "block": "28c08f4da701b2acb9491b37c67f5fa43d9d01abaa759756ba493fb3ec5e154e",
+      "confirmations": 2,
+      "vin": [
+        {
+          "txid": "1aba5f7d198f1a5c9a72354a4c68478093918d345c01f5129601f658a14b5391",
+          "vout": 1,
+          "sequence": 6
+        }
+      ],
+      "vout": [
+        {
+          "value": 0.00999,
+          "n": 0,
+          "scriptPubKey": {
+            "asm": "1 868f93ec8d4a07efd8606234b9b56accd40e5abb2f9ec1e197c61c6c1ac0c859",
+            "desc": "rawtr(868f93ec8d4a07efd8606234b9b56accd40e5abb2f9ec1e197c61c6c1ac0c859)#vs766zs2",
+            "hex": "5120868f93ec8d4a07efd8606234b9b56accd40e5abb2f9ec1e197c61c6c1ac0c859",
+            "address": "bcrt1ps68e8mydfgr7lkrqvg6tndt2en2quk4m970vrcvhccwxcxkqepvsckhjea",
+            "type": "witness_v1_taproot"
+          }
+        }
+      ]
+    }
+  },
+  "lez_transactions": {
+    "maker_lock_transaction_id": {
+      "txid": "2c9064edf1154f4e62ee90c9b8ee950835f7b9edf3829807cba042086dbddce4",
+      "height": 244,
+      "block": "c1c9a20c844fff9b601428fd537f88597d6b7e2c826dee9e3231503d32a7492f",
+      "status": "Finalized"
+    },
+    "maker_recovery_transaction_id": {
+      "txid": "2ccd8bbbf6ee33bf174d083f199e000ee575c89638479886e5e0de64f7442630",
+      "height": 328,
+      "block": "229252aa14dbc2a6d69f530969461cd557dd45299210213e5f5ea5b71ad9fda4",
+      "status": "Finalized"
+    }
+  },
+  "bitcoin_refund_reconciliation": {
+    "spent_lock_outputs": [
+      1
+    ],
+    "principal_sats": 1000000,
+    "refund_outputs_sats": 999000,
+    "fee_sats": 1000,
+    "note": "On-chain output reconciliation; Core wallet balance alone is not a refund proof.",
+    "destination_script_matches_taker_contribution": true,
+    "expected_script_pubkey": "5120868f93ec8d4a07efd8606234b9b56accd40e5abb2f9ec1e197c61c6c1ac0c859"
+  },
+  "lez_refund_reconciliation": {
+    "account_id": "5XHZtJkhSFqs46RPTNTSMtkLrK1m8Ybvi3uHWjh3ebSv",
+    "historical_balances": {
+      "before_funding": {
+        "height": 243,
+        "balance": 98000
+      },
+      "after_funding": {
+        "height": 244,
+        "balance": 97000
+      },
+      "before_refund": {
+        "height": 327,
+        "balance": 97000
+      },
+      "after_refund": {
+        "height": 328,
+        "balance": 98000
+      }
+    },
+    "funded_units": 1000,
+    "returned_units": 1000
+  }
+}

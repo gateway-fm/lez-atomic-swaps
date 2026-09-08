@@ -1,0 +1,167 @@
+{
+  "public_evidence_journal": [
+    {
+      "kind": "taker_lock",
+      "chain": "Bitcoin",
+      "proof": {
+        "transaction_id": "34ae09e4a4080ed50111e5803acf952dd77ec35d1865ca17f57a768c42c4d764",
+        "confirmations": 1
+      },
+      "refund_position": null
+    },
+    {
+      "kind": "maker_lock",
+      "chain": "Lez",
+      "proof": {
+        "transaction_id": "4664ecc8a85e5d7f2131bb855865d7d1b0ac80e9999754245445f44b8f594532",
+        "confirmations": 1
+      },
+      "refund_position": null
+    },
+    {
+      "kind": "revealing_claim",
+      "chain": "Lez",
+      "proof": {
+        "transaction_id": "ca4fc4bc2e1b58562405c0e91f4c91a125588e57878755127f99b60408b0bebb",
+        "confirmations": 1
+      },
+      "refund_position": null
+    },
+    {
+      "kind": "followup_claim",
+      "chain": "Bitcoin",
+      "proof": {
+        "transaction_id": "b2d94209a92c338f016c4f3fddc03b039fa202628a53c02c04a6e8af0190b11e",
+        "confirmations": 1
+      },
+      "refund_position": null
+    }
+  ],
+  "repository_commit": "c7c5f2d820c6221066721595fcc838dbf1354156",
+  "scenario": "concurrent",
+  "swap_id": "f52d4128517977d6a6408cda5362ace738598434a6678d495738d2b3dd0bbc84",
+  "taker": {
+    "schema_version": 1,
+    "swap_id": "f52d4128517977d6a6408cda5362ace738598434a6678d495738d2b3dd0bbc84",
+    "offer_id": "offer-e2e-1788901845-b",
+    "route": {
+      "pair": "Bitcoin",
+      "direction": "TakerSellsForeign"
+    },
+    "foreign_units": 1000000,
+    "lez_units": 1000,
+    "progress_generation": 4,
+    "state": "completed",
+    "available_action": null,
+    "privacy_guidance": null
+  },
+  "maker": {
+    "schema_version": 1,
+    "swap_id": "f52d4128517977d6a6408cda5362ace738598434a6678d495738d2b3dd0bbc84",
+    "actor_kind": "bitcoin",
+    "schedule_state": "terminal",
+    "lease_generation": 43,
+    "attempt_count": 43,
+    "progress": {
+      "source_generation": 43,
+      "observation": {
+        "state": "active",
+        "phase": "completed",
+        "revision": 4,
+        "next_action": "complete"
+      },
+      "observed_at": 1788902306
+    },
+    "manual_action": null
+  },
+  "aggregate_revision": 4,
+  "public_aggregate": {
+    "direction": "TakerSellsForeign",
+    "phase": "Completed",
+    "taker_lock_transaction_id": "34ae09e4a4080ed50111e5803acf952dd77ec35d1865ca17f57a768c42c4d764",
+    "maker_lock_transaction_id": "4664ecc8a85e5d7f2131bb855865d7d1b0ac80e9999754245445f44b8f594532",
+    "revealing_claim_transaction_id": "ca4fc4bc2e1b58562405c0e91f4c91a125588e57878755127f99b60408b0bebb",
+    "followup_claim_transaction_id": "b2d94209a92c338f016c4f3fddc03b039fa202628a53c02c04a6e8af0190b11e",
+    "taker_refund_event_transaction_id": null,
+    "maker_recovery_transaction_id": null
+  },
+  "bitcoin_transactions": {
+    "taker_lock_transaction_id": {
+      "txid": "34ae09e4a4080ed50111e5803acf952dd77ec35d1865ca17f57a768c42c4d764",
+      "height": 111,
+      "block": "7e82d8547b19e25ac3572eaa4f4ec51ac6454585d8753f029f24df79c5d70156",
+      "confirmations": 4,
+      "vin": [
+        {
+          "txid": "23dfc36da865d40ab0b85fb374e70beaa4b677b2fcf6fa26afe69e84096f7d3f",
+          "vout": 0,
+          "sequence": 4294967293
+        }
+      ],
+      "vout": [
+        {
+          "value": 49.989969,
+          "n": 0,
+          "scriptPubKey": {
+            "asm": "1 d3ad01228c0c0e57450e8d8b1b458ddd9d542b90a6e84708e4a6439f4f8b0d88",
+            "desc": "rawtr(d3ad01228c0c0e57450e8d8b1b458ddd9d542b90a6e84708e4a6439f4f8b0d88)#k495c5du",
+            "hex": "5120d3ad01228c0c0e57450e8d8b1b458ddd9d542b90a6e84708e4a6439f4f8b0d88",
+            "address": "bcrt1p6wkszg5vps89w3gw3k93k3vdmkw4g2us5m5ywz8y5epe7nutpkyqrccv0c",
+            "type": "witness_v1_taproot"
+          }
+        },
+        {
+          "value": 0.01,
+          "n": 1,
+          "scriptPubKey": {
+            "asm": "1 2ca3480064424b279130afdc671fd0bf6cdee4dbcc76e4078e5d40281d3db5ca",
+            "desc": "rawtr(2ca3480064424b279130afdc671fd0bf6cdee4dbcc76e4078e5d40281d3db5ca)#3x55c8wt",
+            "hex": "51202ca3480064424b279130afdc671fd0bf6cdee4dbcc76e4078e5d40281d3db5ca",
+            "address": "bcrt1p9j35sqrygf9j0yfs4lwxw87shakdaexme3mwgpuwt4qzs8fakh9qhhchff",
+            "type": "witness_v1_taproot"
+          }
+        }
+      ]
+    },
+    "followup_claim_transaction_id": {
+      "txid": "b2d94209a92c338f016c4f3fddc03b039fa202628a53c02c04a6e8af0190b11e",
+      "height": 114,
+      "block": "32c57b96da1ab20fa5fa8e19b430a7cea624e73dc7cdae2fd45bf5dfdec61c69",
+      "confirmations": 1,
+      "vin": [
+        {
+          "txid": "34ae09e4a4080ed50111e5803acf952dd77ec35d1865ca17f57a768c42c4d764",
+          "vout": 1,
+          "sequence": 4294967293
+        }
+      ],
+      "vout": [
+        {
+          "value": 0.00999,
+          "n": 0,
+          "scriptPubKey": {
+            "asm": "1 6be95391f4ab214a766f4dbc2496e098c279aa64b975261c2fbc794e9bcbe1c3",
+            "desc": "rawtr(6be95391f4ab214a766f4dbc2496e098c279aa64b975261c2fbc794e9bcbe1c3)#8hlv3v0s",
+            "hex": "51206be95391f4ab214a766f4dbc2496e098c279aa64b975261c2fbc794e9bcbe1c3",
+            "address": "bcrt1pd0548y054vs55an0fk7zf9hqnrp8n2nyh96jv8p0h3u5ax7tu8pslw6jse",
+            "type": "witness_v1_taproot"
+          }
+        }
+      ]
+    }
+  },
+  "lez_transactions": {
+    "maker_lock_transaction_id": {
+      "txid": "4664ecc8a85e5d7f2131bb855865d7d1b0ac80e9999754245445f44b8f594532",
+      "height": 67,
+      "block": "8a3c5d72f7823d2cc4c86de220b62c519aa92b18f0e07c446016814fb3f6e767",
+      "status": "Finalized"
+    },
+    "revealing_claim_transaction_id": {
+      "txid": "ca4fc4bc2e1b58562405c0e91f4c91a125588e57878755127f99b60408b0bebb",
+      "height": 85,
+      "block": "658f2458bf8a6fdf6190f4b56126212de46eca3272f8531d6509b4d059ffc636",
+      "status": "Finalized"
+    }
+  }
+}
