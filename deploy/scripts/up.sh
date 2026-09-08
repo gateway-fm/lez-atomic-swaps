@@ -25,10 +25,18 @@ set -a; source runtime/runtime.env; set +a
 export BTC_RPC_PASSWORD
 
 echo "[2/4] building images…"
-docker compose build
+if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
+  docker compose build bitcoin-core btc-miner sequencer maker-node taker-init
+else
+  docker compose build
+fi
 
 echo "[3/4] starting stack…"
-docker compose up -d
+if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
+  docker compose up -d btc-miner maker-node taker-node
+else
+  docker compose up -d
+fi
 
 echo "[4/4] waiting for chains…"
 timeout=240
@@ -37,6 +45,7 @@ until docker exec lez-bitcoin-core /usr/local/bin/bitcoin-cli -conf=/run-config/
   sleep 3; elapsed=$((elapsed + 3))
   [[ $elapsed -lt $timeout ]] || { echo "bitcoin-core RPC never became ready"; docker compose logs --tail 30 bitcoin-core; exit 1; }
 done
+python3 scripts/seed-btc-wallets.py
 until docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health >/dev/null 2>&1; do
   sleep 3; elapsed=$((elapsed + 3))
   [[ $elapsed -lt $timeout ]] || { echo "Maker Node never became ready"; docker compose logs --tail 30 maker-node; exit 1; }
@@ -49,7 +58,7 @@ until docker exec lez-taker-node curl -sf --max-time 3 --unix-socket /run/lez/ta
   [[ $elapsed -lt $timeout ]] || { echo "Taker Node never became ready"; docker compose logs --tail 30 taker-node; exit 1; }
 done
 
-if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
+if [[ "${SKIP_UI_VERIFY:-0}" != "1" && "${LEZ_API_ONLY:-0}" != 1 ]]; then
   echo "[5/5] verifying Basecamp UI against both real Nodes…"
   set -a; source runtime/runtime.env; set +a
   docker compose run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs maker \
@@ -58,6 +67,10 @@ if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
     | grep -viE "locale|Qt depends|reconfigure|manual"
 fi
 
+if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
+  echo "API stack ready; run python3 scripts/record-reviewer-evidence.py after market bootstrap."
+  exit 0
+fi
 role_now="${BASECAMP_ROLE:-both}"
 vnc_password="${VNC_PASSWORD:-lezswap}"
 cat <<BANNER

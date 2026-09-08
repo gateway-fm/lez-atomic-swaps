@@ -55,7 +55,7 @@ if [[ ! -x images/maker-node/lez-maker-node \
    || ! -x images/lez-services/lez-runtime-healthcheck ]]; then
     cat >&2 <<'MISSING'
 Build the workspace binaries natively (repo root):
-  cargo build --locked -p lez-maker-node --bins -p lez-taker-node --bins \
+  cargo build --locked --bins -p lez-maker-node -p lez-taker-node \
     -p lez-runtime-healthcheck
 Then copy target/debug/{lez-maker-cli,lez-maker-node,lez-maker-chat-gateway,
 lez-runtime-healthcheck} -> images/maker-node/ and
@@ -73,7 +73,7 @@ MISSING
 fi
 
 # ---- basecamp-ui/assets: nix outputs (flake, aarch64-linux) ----------------
-if [[ ! -d images/basecamp-ui/assets/bundle ]]; then
+if [[ "${LEZ_API_ONLY:-0}" != 1 && ! -d images/basecamp-ui/assets/bundle ]]; then
     cat >&2 <<'MISSING'
 Build with the pinned flakes (nix, experimental-features enabled):
   nix build path:../basecamp#bin-bundle-dir-inspector -o bundle
