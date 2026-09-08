@@ -18,6 +18,7 @@ def module(name, filename):
     return obj
 
 
+public_docker = module('public_docker', 'public-docker-config.py')
 seed = module('seed', 'seed-btc-wallets.py')
 rec = module('rec', 'record-reviewer-evidence.py')
 
@@ -76,6 +77,27 @@ class SeedingTests(unittest.TestCase):
     def test_transport_failure_does_not_trigger_creation(self):
         with self.assertRaises(subprocess.CalledProcessError):
             seed.seed(lambda *args: (_ for _ in ()).throw(subprocess.CalledProcessError(1, args)))
+
+
+class PublicDockerTests(unittest.TestCase):
+    def test_context_is_preserved_without_registry_auth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = pathlib.Path(tmp)/'original'
+            source.mkdir()
+            (source/'contexts').mkdir()
+            (source/'cli-plugins').mkdir()
+            original = {'currentContext': 'desktop-linux', 'cliPluginsExtraDirs': ['/plugins'],
+                        'auths': {'registry': {'auth': 'do-not-copy'}},
+                        'credsStore': 'desktop', 'credHelpers': {'registry': 'secret-helper'}}
+            (source/'config.json').write_text(json.dumps(original))
+            destination = pathlib.Path(tmp)/'temporary'
+            public_docker.prepare(source, destination)
+            self.assertEqual(json.loads((destination/'config.json').read_text()), {
+                'currentContext': 'desktop-linux', 'cliPluginsExtraDirs': ['/plugins'], 'auths': {}})
+            self.assertEqual((destination/'contexts').resolve(), source/'contexts')
+            self.assertEqual((destination/'cli-plugins').resolve(), source/'cli-plugins')
+            self.assertEqual(json.loads((source/'config.json').read_text()), original)
+            with self.assertRaises(RuntimeError): public_docker.prepare(source, destination)
 
 
 class ConfigTests(unittest.TestCase):

@@ -46,6 +46,12 @@ The volume namespace is persisted in `runtime/runtime.env` for subsequent
 Compose commands. Reusing the same checkout and workspace resumes its state;
 a new checkout and workspace create independent state.
 
+Reviewer mode uses a temporary Docker CLI config for anonymous public-image
+pulls, preserving the selected daemon context and plugins. It removes that
+config on exit and leaves your original Docker config unchanged. This avoids
+Docker Desktop Keychain prompts during unattended builds. If authenticated
+pulls are needed for registry rate limits, add `--use-registry-credentials`.
+
 The checked-out Node and sidecar sources are submitted to Cargo on every build;
 existing staged binaries do not bypass compilation. Cargo dependency/target
 caches are reusable. Upstream chain/tool payloads in the provision directory

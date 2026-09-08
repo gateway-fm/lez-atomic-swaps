@@ -34,11 +34,14 @@ REPO_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
 WORKSPACE="$(cd "$REPO_ROOT/.." && pwd)"
 RUN_SWAP=0
 REVIEWER=0
+USE_REGISTRY_CREDENTIALS=0
+reviewer_docker_config=""
 ONLY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --workspace) WORKSPACE="$(mkdir -p "$2" && cd "$2" && pwd)"; shift 2 ;;
     --swap) RUN_SWAP=1; shift ;;
+    --use-registry-credentials) USE_REGISTRY_CREDENTIALS=1; shift ;;
     --reviewer) REVIEWER=1; export LEZ_API_ONLY=1 LEZ_TIMING_PROFILE=fast; shift ;;
     --only) ONLY="$2"; shift 2 ;;
     -h|--help) sed -n 2,26p "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -421,7 +424,15 @@ phase_swap() {
 
 for p in host sources nix rust build stage stack; do
   [[ "$REVIEWER" != 1 || "$p" != nix ]] || continue
-  phase_wanted "$p" && "phase_$p"
+  if phase_wanted "$p"; then
+    if [[ "$REVIEWER" == 1 && "$USE_REGISTRY_CREDENTIALS" == 0 && "$p" != host && -z "$reviewer_docker_config" ]]; then
+      reviewer_docker_config="$(mktemp -d "${TMPDIR:-/tmp}/lez-reviewer-docker.XXXXXX")"
+      trap 'rm -rf "$reviewer_docker_config"' EXIT
+      python3 "$DEPLOY_ROOT/scripts/public-docker-config.py" "$reviewer_docker_config"
+      export DOCKER_CONFIG="$reviewer_docker_config"
+    fi
+    "phase_$p"
+  fi
 done
 if [[ "$RUN_SWAP" == 1 ]] || [[ "$ONLY" == swap ]]; then phase_swap; fi
 log "done"
