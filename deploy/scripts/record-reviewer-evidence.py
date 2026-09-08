@@ -182,6 +182,10 @@ def record(name, root, commit):
 def provenance(commit):
     binaries = {}
     for role in ('maker', 'taker'):
+        working_dir = command('docker', 'inspect', f'lez-{role}-node', '--format',
+                              '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}')
+        if pathlib.Path(working_dir).resolve() != DEPLOY.resolve():
+            raise RuntimeError(f'{role}: running stack belongs to another checkout ({working_dir})')
         paths = [f'lez-{role}-node', f'lez-btc-{role}-actor', 'lez-v02-bridge-poc']
         for binary in paths:
             actual = command('docker', 'exec', f'lez-{role}-node', 'sha256sum', '/usr/local/bin/'+binary).split()[0]

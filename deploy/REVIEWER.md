@@ -52,7 +52,7 @@ caches are reusable. Upstream chain/tool payloads in the provision directory
 are reused on subsequent runs. For a build without those payloads, use a new
 workspace. An entirely empty Docker build cache is considerably slower.
 
-The recorder refuses tracked source edits, the wrong timing profile, stale
+The recorder refuses a stack belonging to another checkout, tracked source edits, the wrong timing profile, stale
 source receipts, running binaries that differ from the built images, and an
 existing output directory. Run the scenarios sequentially and avoid other swaps
 while recording: refund tests stop/restart the Maker, and historical LEZ balance

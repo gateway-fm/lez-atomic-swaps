@@ -107,6 +107,13 @@ class ConfigTests(unittest.TestCase):
 
 
 class RecorderTests(unittest.TestCase):
+    def test_another_checkouts_stack_is_rejected_before_capture(self):
+        with patch.object(rec, 'command', return_value='/different/checkout/deploy') as command:
+            with self.assertRaisesRegex(RuntimeError, 'another checkout'):
+                rec.provenance('test-commit')
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(command.call_args.args[:2], ('docker', 'inspect'))
+
     def test_failed_evidence_never_becomes_a_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
