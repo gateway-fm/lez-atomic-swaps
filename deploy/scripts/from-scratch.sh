@@ -399,6 +399,11 @@ phase_stack() {
   bash scripts/repair-indexer.sh
   log "market bootstrap (escrow program, vault claims, bootstrap manifest)"
   market_bootstrap | tail -4
+  # The first start precedes deployment. Entrypoints read this manifest once,
+  # so restart both roles after publishing its public fields into the runtime.
+  cat "$MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
+  chmod 0644 runtime/market-bootstrap.env
+  docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
   [[ "$REVIEWER" != 1 ]] || return 0
   log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"
   local role

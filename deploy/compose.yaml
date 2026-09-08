@@ -284,7 +284,7 @@ services:
       - delivery_dir:/delivery
       - ./runtime/lez/maker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
-      - ${LEZ_MARKET_ROOT}:/run-market:ro
+      - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -342,7 +342,7 @@ services:
       - maker_socket:/run/lez/maker
       - ./runtime/lez/taker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
-      - ${LEZ_MARKET_ROOT}:/run-market:ro
+      - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]

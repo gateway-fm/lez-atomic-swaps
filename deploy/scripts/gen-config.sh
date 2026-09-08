@@ -182,6 +182,14 @@ fi
   echo "LEZ_MARKET_ROOT must select the market root (wallet identities, market-bootstrap.env)" >&2
   exit 1
 }
+# Only public deployment IDs are mounted from the market. Its private root
+# is mode 0700 and cannot be traversed by the Nodes' uid on Linux.
+if [[ -s "$market_root/market-bootstrap.env" ]]; then
+  cat "$market_root/market-bootstrap.env" > "$RUNTIME/market-bootstrap.env"
+else
+  : > "$RUNTIME/market-bootstrap.env"
+fi
+chmod 0644 "$RUNTIME/market-bootstrap.env"
 identities_root="${LEZ_WALLET_IDENTITIES:-$market_root/identities}"
 for pair in maker:maker-munich-01 taker:taker-zurich-01; do
   role="${pair%%:*}"; wallet="${pair##*:}"

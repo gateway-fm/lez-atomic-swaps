@@ -92,6 +92,14 @@ class ConfigTests(unittest.TestCase):
             second = (root/'runtime/runtime.env').read_text()
             self.assertIn('LEZ_VOLUME_PREFIX=lez-reviewer-test\n', second)
             self.assertEqual(first, second)
+            public = root/'runtime/market-bootstrap.env'
+            self.assertEqual(public.read_text(), '')
+            manifest = 'M3_POC_LEZ_ESCROW_PROGRAM_ID='+'a'*64+'\n'
+            (root/'market/market-bootstrap.env').write_text(manifest)
+            (root/'market/market-bootstrap.env').chmod(0o600)
+            subprocess.run(command, env=env, check=True, capture_output=True)
+            self.assertEqual(public.read_text(), manifest)
+            self.assertEqual(public.stat().st_mode & 0o777, 0o644)
 
 
 class RecorderTests(unittest.TestCase):

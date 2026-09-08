@@ -38,6 +38,10 @@ The bootstrap creates or loads the two Core wallets and mines mature test coins
 to the Taker if its spendable balance is below 1 BTC. It refuses wallet seeding
 on any chain other than regtest. Ordinary restarts retain identities and funds.
 
+After deployment, bootstrap publishes the public market manifest into the
+runtime and recreates both Nodes so their Bitcoin lifecycle is enabled. The
+private market directory is not mounted into the Nodes.
+
 The volume namespace is persisted in `runtime/runtime.env` for subsequent
 Compose commands. Reusing the same checkout and workspace resumes its state;
 a new checkout and workspace create independent state.
