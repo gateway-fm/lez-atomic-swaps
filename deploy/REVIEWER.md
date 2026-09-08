@@ -14,10 +14,11 @@ Internet access is needed for pinned sources, container images and dependencies;
 the running chains are local. x86 hosts are not supported by these payloads.
 
 Use a fresh checkout and an empty workspace. The Compose stack uses fixed
-container, network and volume names and localhost ports 18443, 3040 and 8779.
+container and network names and localhost ports 18443, 3040 and 8779.
 Only one instance can run on a Docker daemon. For an existing installation,
-stop it using its own Compose directory; use a separate Docker daemon for
-independent state. Do not delete existing volumes to follow this guide.
+stop it using its own Compose directory. Reviewer mode derives separate volume
+names from the checkout and workspace paths, so it preserves the previous
+stack's wallets and Node stores. Do not delete existing volumes to follow this guide.
 
 ```sh
 git clone https://github.com/gateway-fm/lez-atomic-swaps.git
@@ -35,6 +36,10 @@ the settlement market. Four new LEZ identities receive genesis allocations.
 The bootstrap creates or loads the two Core wallets and mines mature test coins
 to the Taker if its spendable balance is below 1 BTC. It refuses wallet seeding
 on any chain other than regtest. Ordinary restarts retain identities and funds.
+
+The volume namespace is persisted in `runtime/runtime.env` for subsequent
+Compose commands. Reusing the same checkout and workspace resumes its state;
+a new checkout and workspace create independent state.
 
 The checked-out Node and sidecar sources are submitted to Cargo on every build;
 existing staged binaries do not bypass compilation. Cargo dependency/target

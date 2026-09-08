@@ -1,6 +1,7 @@
 """Failure and replay contracts for the reviewer entry points; no Docker needed."""
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -75,6 +76,22 @@ class SeedingTests(unittest.TestCase):
     def test_transport_failure_does_not_trigger_creation(self):
         with self.assertRaises(subprocess.CalledProcessError):
             seed.seed(lambda *args: (_ for _ in ()).throw(subprocess.CalledProcessError(1, args)))
+
+
+class ConfigTests(unittest.TestCase):
+    def test_reviewer_volume_namespace_survives_config_regeneration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root/'market').mkdir()
+            env = dict(os.environ, LEZ_MARKET_ROOT=str(root/'market'), LEZ_VOLUME_PREFIX='lez-reviewer-test')
+            command = ['bash', str(SCRIPTS/'gen-config.sh'), str(root/'runtime')]
+            subprocess.run(command, env=env, check=True, capture_output=True)
+            first = (root/'runtime/runtime.env').read_text()
+            env.pop('LEZ_VOLUME_PREFIX')
+            subprocess.run(command, env=env, check=True, capture_output=True)
+            second = (root/'runtime/runtime.env').read_text()
+            self.assertIn('LEZ_VOLUME_PREFIX=lez-reviewer-test\n', second)
+            self.assertEqual(first, second)
 
 
 class RecorderTests(unittest.TestCase):

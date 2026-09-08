@@ -395,14 +395,14 @@ networks:
 
 volumes:
   bitcoin_core_data:
-    name: lez-bitcoin-core-data
+    name: ${LEZ_VOLUME_PREFIX:-lez}-bitcoin-core-data
   maker_state:
-    name: lez-maker-state
+    name: ${LEZ_VOLUME_PREFIX:-lez}-maker-state
   maker_socket:
-    name: lez-maker-socket
+    name: ${LEZ_VOLUME_PREFIX:-lez}-maker-socket
   taker_state:
-    name: lez-taker-state
+    name: ${LEZ_VOLUME_PREFIX:-lez}-taker-state
   taker_socket:
-    name: lez-taker-socket
+    name: ${LEZ_VOLUME_PREFIX:-lez}-taker-socket
   delivery_dir:
-    name: lez-delivery-dir
+    name: ${LEZ_VOLUME_PREFIX:-lez}-delivery-dir

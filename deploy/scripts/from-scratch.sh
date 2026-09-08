@@ -82,6 +82,11 @@ LEZ_SOURCE="$WORKSPACE/lez-source"
 MARKET_ROOT="$WORKSPACE/market"
 [[ -d "$MARKET_ROOT/identities" ]] || [[ ! -d "$WORKSPACE/runner-work/market/identities" ]] || MARKET_ROOT="$WORKSPACE/runner-work/market"
 PROVISION="$WORKSPACE/provision/data"
+if [[ "$REVIEWER" == 1 ]]; then
+  # Fresh workspaces must not inherit another checkout's wallets/Node stores.
+  reviewer_id="$(printf '%s' "$REPO_ROOT:$WORKSPACE" | shasum -a 256 | cut -c1-12)"
+  export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez-reviewer-$reviewer_id}"
+fi
 BASECAMP_SRC="$WORKSPACE/basecamp"
 ASSETS="$DEPLOY_ROOT/images/basecamp-ui/assets"
 
