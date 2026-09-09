@@ -27,10 +27,12 @@ stack and `--wipe` removes chains and Node state (keep `market/`, it holds the
 funded wallets). The same script works from a checkout of the tagged commit
 when `LEZ_IMAGE_PREFIX` and `LEZ_IMAGE_TAG` are exported.
 
-The images are built by `.github/workflows/release-images.yml` from the very
-phases `from-scratch.sh` runs below, on GitHub's arm64 runners, and the
-bundle is attached only after a fresh runner has started the stack from it
-(ADR 0215). `scripts/package-dist.sh <prefix> <tag>` produces the bundle
+The images are built by `.github/workflows/release-images.yml` when a GitHub
+release is published (never on pushes or pull requests), from the very phases
+`from-scratch.sh` runs below, on GitHub's arm64 runners; the bundle is
+attached to that release only after a fresh runner has started the stack from
+it (ADR 0215). Publish the release with its notes first; the assets follow
+about 2.5 hours later. `scripts/package-dist.sh <prefix> <tag>` produces the bundle
 locally from a committed tree.
 
 ## From scratch

@@ -20,8 +20,9 @@ Logos module catalog so Basecamp can test them against the release tag.
 ## Decisions
 
 1. **The release workflow builds what from-scratch.sh builds, in the same
-   pinned containers.** `.github/workflows/release-images.yml` runs the
-   script's own phases (`--only rust`, `build:<step>`, `nix`, `stage`) on
+   pinned containers.** `.github/workflows/release-images.yml` runs only when a GitHub release
+   is published (plus a manual dispatch for rehearsals on a fork; never on
+   pushes or pull requests) and executes the script's own phases (`--only rust`, `build:<step>`, `nix`, `stage`) on
    GitHub-hosted arm64 runners, one phase group per runner, so the published
    images are the artifacts a developer host would produce, not a second
    build recipe. `phase_build` is split into selectable steps for that
@@ -59,7 +60,7 @@ Logos module catalog so Basecamp can test them against the release tag.
 
 ```mermaid
 flowchart LR
-    Tag["git tag v0.2.1"] --> WF["release-images.yml<br/>(arm64 runners)"]
+    Tag["GitHub release v0.2.1 published"] --> WF["release-images.yml<br/>(arm64 runners)"]
     WF --> Rust["rust · sidecar"]
     WF --> LEZ["lez-services"]
     WF --> Escrow["r0vm · escrow"]
