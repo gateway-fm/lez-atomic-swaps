@@ -51,41 +51,6 @@ bool marketRequest(const QString& value)
     return pattern.match(value).hasMatch();
 }
 
-struct RevisionLookup
-{
-    bool valid = false;
-    bool found = false;
-    QJsonValue revision = QJsonValue(QJsonValue::Null);
-    QJsonObject value;
-};
-
-RevisionLookup revisionForRoute(const QString& response, const QString& pair,
-                                const QString& direction)
-{
-    QJsonParseError error;
-    const QJsonDocument document = QJsonDocument::fromJson(response.toUtf8(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject()) return {};
-    const QJsonObject envelope = document.object();
-    if (!envelope.value(QStringLiteral("ok")).toBool(false)
-        || !envelope.value(QStringLiteral("result")).isArray()) {
-        return {};
-    }
-    for (const QJsonValue& entryValue : envelope.value(QStringLiteral("result")).toArray()) {
-        const QJsonObject entry = entryValue.toObject();
-        const QJsonObject route = entry.value(QStringLiteral("value"))
-                                      .toObject()
-                                      .value(QStringLiteral("route"))
-                                      .toObject();
-        if (route.value(QStringLiteral("pair")).toString() != pair
-            || route.value(QStringLiteral("direction")).toString() != direction) {
-            continue;
-        }
-        const QJsonValue revision = entry.value(QStringLiteral("revision"));
-        if (!revision.isDouble() || revision.toDouble() < 0) return {};
-        return {true, true, revision, entry.value(QStringLiteral("value")).toObject()};
-    }
-    return {true, false, QJsonValue(QJsonValue::Null), {}};
-}
 }
 
 LezAtomicSwapMakerBackend::LezAtomicSwapMakerBackend()
@@ -123,20 +88,27 @@ QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
     return node_market::makerSnapshot(rpc_, kMakerWallet);
 }
 
-QString LezAtomicSwapMakerBackend::btcCreateOffers(
-    QString requestId, QString walletId, QString count, QString bitcoinSats,
-    QString lezUnits, QString direction)
+QString LezAtomicSwapMakerBackend::btcPublishOffer(
+    QString requestId, QString walletId, QString direction, QString minimumForeignUnits,
+    QString maximumForeignUnits, QString offerTtlSeconds, QString lezUnitsPerLot,
+    QString foreignUnitsPerLot)
 {
-    qulonglong parsedCount = 0, bitcoin = 0, lez = 0;
+    // The desk forwards the Maker's own terms; the Node validates them.
+    qulonglong minimum = 0, maximum = 0, ttl = 0, lezLot = 0, foreignLot = 0;
     if (!marketRequest(requestId) || !makerWallet(walletId)
-        || !exactUnsigned(count, parsedCount) || parsedCount != 1
-        || !exactUnsigned(bitcoinSats, bitcoin) || bitcoin != 1000000
-        || !exactUnsigned(lezUnits, lez) || lez != 1000
         || (direction != QStringLiteral("taker_sells_foreign")
             && direction != QStringLiteral("taker_sells_lez"))) {
-        return invalidMarket(QStringLiteral("Review the fixed offer preset, direction and wallet"));
+        return invalidMarket(QStringLiteral("Review the direction and wallet"));
     }
-    return node_market::makerPublish(rpc_, kMakerWallet, requestId, direction);
+    if (!exactUnsigned(minimumForeignUnits, minimum) || !exactUnsigned(maximumForeignUnits, maximum)
+        || !exactUnsigned(offerTtlSeconds, ttl) || !exactUnsigned(lezUnitsPerLot, lezLot)
+        || !exactUnsigned(foreignUnitsPerLot, foreignLot)) {
+        return invalid();
+    }
+    const node_market::RouteTerms terms{
+        static_cast<qint64>(minimum), static_cast<qint64>(maximum), static_cast<qint64>(ttl),
+        static_cast<qint64>(lezLot), static_cast<qint64>(foreignLot)};
+    return node_market::makerPublish(rpc_, kMakerWallet, requestId, direction, terms);
 }
 
 QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
@@ -164,46 +136,6 @@ QString LezAtomicSwapMakerBackend::btcSwapAction(
         return invalidMarket(QStringLiteral("That Maker action is not available"));
     }
     return node_market::makerSnapshot(rpc_, kMakerWallet);
-}
-
-QString LezAtomicSwapMakerBackend::saveRoute(
-    QString requestId, QString pair, QString direction, QString minimumForeignUnits,
-    QString maximumForeignUnits, QString offerTtlSeconds, QString lezUnitsPerLot,
-    QString foreignUnitsPerLot)
-{
-    qulonglong minimum = 0, maximum = 0, ttl = 0, lezLot = 0, foreignLot = 0;
-    if (!exactUnsigned(minimumForeignUnits, minimum) || !exactUnsigned(maximumForeignUnits, maximum)
-        || !exactUnsigned(offerTtlSeconds, ttl) || !exactUnsigned(lezUnitsPerLot, lezLot)
-        || !exactUnsigned(foreignUnitsPerLot, foreignLot)) {
-        return invalid();
-    }
-    const QJsonObject route{{"pair", pair}, {"direction", direction}};
-    const QJsonObject configuration{{"route", route}, {"enabled", true},
-                                    {"price_source", "local"},
-                                    {"minimum_foreign_units", static_cast<qint64>(minimum)},
-                                    {"maximum_foreign_units", static_cast<qint64>(maximum)},
-                                    {"offer_ttl_seconds", static_cast<qint64>(ttl)}};
-    const QJsonObject price{{"route", route}, {"lez_units_per_lot", static_cast<qint64>(lezLot)},
-                            {"foreign_units_per_lot", static_cast<qint64>(foreignLot)}};
-
-    const QString pairList = rpc_.call("maker_pair_list", "{}");
-    const RevisionLookup pairRevision = revisionForRoute(pairList, pair, direction);
-    if (!pairRevision.valid) return pairList;
-    const QString priceList = rpc_.call("maker_local_price_list", "{}");
-    const RevisionLookup priceRevision = revisionForRoute(priceList, pair, direction);
-    if (!priceRevision.valid) return priceList;
-
-    if (pairRevision.found && priceRevision.found && pairRevision.value == configuration
-        && priceRevision.value == price) {
-        return compact({{"ok", true},
-            {"result", QJsonObject{{"pair_revision", pairRevision.revision},
-                           {"price_revision", priceRevision.revision}, {"unchanged", true}}}});
-    }
-
-    return rpc_.call("maker_local_route_save_v1", compact({{"request_id", requestId},
-        {"expected_pair_revision", pairRevision.revision},
-        {"expected_price_revision", priceRevision.revision},
-        {"configuration", configuration}, {"price", price}}));
 }
 
 QString LezAtomicSwapMakerBackend::history()

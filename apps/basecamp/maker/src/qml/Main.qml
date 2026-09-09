@@ -19,7 +19,6 @@ Item {
     property int swapCount: 0
     property string currentState: ""
     property string latestSwap: ""
-    property string lastSavedRoute: "No route changes in this session"
     property string chatAddress: ""
     property string chatState: "not initialised"
     // The composer side the Maker is selling: LEZ (forward route, the Taker
@@ -43,6 +42,49 @@ Item {
     property bool showDone: false
     property bool newOfferOpen: false
     property var expandedSwaps: ({})
+
+    // ---- The Maker's terms. The offer form edits the two legs like a swap
+    // form; the Node's model (satoshi bounds, exact integer-lot price, lifetime)
+    // is derived from them and goes to the Node verbatim.
+    function whole(text) {
+        return /^[1-9][0-9]{0,15}$/.test(String(text)) ? Number(text) : NaN
+    }
+    // "0.01" → 1000000 satoshis, exactly.
+    function sats(text) {
+        var m = /^([0-9]{1,8})(?:\.([0-9]{1,8}))?$/.exec(String(text))
+        if (!m) return NaN
+        var value = Number(m[1]) * 100000000 + Number((m[2] ?? "").padEnd(8, "0"))
+        return value > 0 ? value : NaN
+    }
+    function gcd(a, b) { while (b) { var t = a % b; a = b; b = t } return a }
+    readonly property real offerSats: root.sats(root.sellSide === "lez" ? receiveAmount.amount : sellAmount.amount)
+    readonly property real offerLez: root.whole(root.sellSide === "lez" ? sellAmount.amount : receiveAmount.amount)
+    readonly property real lezPerLot: root.offerLez / root.gcd(root.offerLez, root.offerSats)
+    readonly property real satsPerLot: root.offerSats / root.gcd(root.offerLez, root.offerSats)
+    readonly property real minimumSats: minimumAmount.text === "" ? root.offerSats : root.whole(minimumAmount.text)
+    readonly property bool termsValid: root.offerSats > 0 && root.offerLez > 0
+        && root.minimumSats > 0 && root.minimumSats <= root.offerSats
+        && (root.minimumSats * root.lezPerLot) % root.satsPerLot === 0 && root.whole(termTtl.text) > 0
+    readonly property string rate: {
+        if (!(root.offerSats > 0) || !(root.offerLez > 0)) return "Set both amounts"
+        var perBitcoin = 100000000 * root.offerLez / root.offerSats
+        return "1 BTC = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
+    }
+    // Loads the Node's stored terms for the chosen direction into the form.
+    function loadStoredTerms() {
+        var routes = root.btcMarket.routes ?? []
+        for (var i = 0; i < routes.length; ++i) {
+            var r = routes[i]
+            if (r.direction !== root.offerDirection || !(r.maximum_foreign_units > 0) || !(r.lez_units_per_lot > 0)) continue
+            var lez = r.maximum_foreign_units * r.lez_units_per_lot / r.foreign_units_per_lot
+            var btc = root.btcAmount(r.maximum_foreign_units)
+            sellAmount.amount = root.sellSide === "lez" ? String(lez) : btc
+            receiveAmount.amount = root.sellSide === "lez" ? btc : String(lez)
+            minimumAmount.text = r.minimum_foreign_units < r.maximum_foreign_units ? String(r.minimum_foreign_units) : ""
+            termTtl.text = String(r.offer_ttl_seconds)
+        }
+    }
+    onSellSideChanged: root.loadStoredTerms()
 
     function toggleSwapHashes(uiSwapId) {
         var next = {}
@@ -370,22 +412,19 @@ Item {
         }
     }
 
-    // One leg of the compose card: asset chip, fixed amount, balance hint.
-    // Width is set by the owner (anchored column), never by Layout attached
-    // properties — the layout engine ignored fillWidth here and drew this
-    // leg wider than its card.
+    // One leg of the offer form: asset chip, an editable amount, a hint.
     component SwapLeg: Rectangle {
         id: swapLeg
         property string label: "YOU SELL"
         property string asset: "LEZ"
-        property string amount: "1,000"
+        property alias amount: amountInput.text
         property color accent: "#7EE100"
         property string note: ""
-        height: 66
+        implicitHeight: 66
         radius: 12
         color: "#0E1520"
         border.width: 1
-        border.color: "#26334A"
+        border.color: amountInput.activeFocus ? "#8950FA" : "#26334A"
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 14
@@ -418,10 +457,17 @@ Item {
                     elide: Text.ElideMiddle; Layout.fillWidth: true
                 }
             }
-            Label {
-                text: swapLeg.amount
+            TextField {
+                id: amountInput
+                Layout.preferredWidth: 190
+                horizontalAlignment: Text.AlignRight
+                placeholderText: swapLeg.asset === "BTC" ? "0.00000000" : "0"
+                placeholderTextColor: "#4B586B"
                 color: "#F2F5F9"
+                selectionColor: "#8950FA"; selectedTextColor: "#0C1017"
                 font.pixelSize: 21; font.weight: Font.DemiBold
+                selectByMouse: true
+                background: Item {}
             }
             Label {
                 text: swapLeg.asset
@@ -520,8 +566,14 @@ Item {
         return "maker-munich-01"
     }
 
+    function btcAmount(sats) {
+        return (Number(sats ?? 0) / 100000000).toFixed(8)
+    }
+    function lezAmount(units) {
+        return Number(units ?? 0).toLocaleString(Qt.locale("en_US"), "f", 0)
+    }
     function formatBtcSats(value) {
-        return (Number(value ?? 0) / 100000000).toFixed(8) + " BTC"
+        return root.btcAmount(value) + " BTC"
     }
 
     function formatSignedBtc(value) {
@@ -530,7 +582,7 @@ Item {
     }
 
     function formatLez(value) {
-        return Number(value ?? 0).toLocaleString(Qt.locale(), "f", 0) + " LEZ"
+        return root.lezAmount(value) + " LEZ"
     }
 
     function formatSignedLez(value) {
@@ -539,8 +591,10 @@ Item {
     }
 
     function applyBtcMarket(result) {
+        var first = !root.btcMarketReady
         root.btcMarket = result
         root.btcMarketReady = true
+        if (first) root.loadStoredTerms()
     }
 
     function refreshBtcMarket(silent) {
@@ -569,12 +623,13 @@ Item {
     }
 
     function createBtcOffers() {
-        if (root.btcMarketBusy) return
+        if (root.btcMarketBusy || !root.termsValid) return
         root.btcMarketBusy = true
         var segment = root.sellSide === "lez" ? "sell-lez" : "sell-btc"
         var requestId = "ui-maker-" + segment + "-" + String(Date.now())
-        root.run(root.backend.btcCreateOffers(requestId, root.selectedMakerWallet(),
-            "1", "1000000", "1000", root.offerDirection),
+        root.run(root.backend.btcPublishOffer(requestId, root.selectedMakerWallet(),
+            root.offerDirection, String(root.minimumSats), String(root.offerSats), termTtl.text,
+            String(root.lezPerLot), String(root.satsPerLot)),
             "Publishing BTC / LEZ inventory", function(result) {
                 root.applyBtcMarket(result)
                 root.showOpen = true
@@ -641,19 +696,6 @@ Item {
             root.statusTitle = "Private Chat session reset"
             root.statusDetail = "Share this address again; no previous peer binding remains"
         })
-    }
-
-    function saveRoute() {
-        var requestId = "maker-ui-route-" + Date.now()
-        root.run(root.backend.saveRoute(
-            requestId, pair.currentText, direction.currentText,
-            minimum.text, maximum.text, ttl.text, lezLot.text, foreignLot.text),
-            "Saving route atomically", function(result) {
-                root.lastSavedRoute = pair.currentText + " · " + direction.currentText
-                root.statusMode = "success"
-                root.statusTitle = "Route and price committed"
-                root.statusDetail = "Policy and pricing changed together in one transaction"
-            })
     }
 
     function history() {
@@ -908,11 +950,10 @@ Item {
                     property bool deskWide: scroll.availableWidth >= 1180
                     Layout.fillWidth: true
                     implicitHeight: deskWide
-                        ? Math.max(composeCard.implicitHeight, makerMarketPanel.implicitHeight)
-                        : composeCard.implicitHeight + 16 + makerMarketPanel.implicitHeight
+                        ? Math.max(composeCard.height, makerMarketPanel.implicitHeight)
+                        : composeCard.height + 16 + makerMarketPanel.implicitHeight
 
-                // ----- The compose card: a Cowswap-shaped two-leg quote with
-                // a fixed preset, a sell-side toggle, and a live rate line.
+                // ----- The compose card opens the offer form.
                 Rectangle {
                     id: composeCard
                     objectName: "makerComposeCard"
@@ -922,123 +963,29 @@ Item {
                     color: "#101722"
                     border.width: 1
                     border.color: "#38465A"
-
-                    // Plain anchored column: children take the card's width
-                    // directly (width: parent.width), nothing depends on
-                    // Layout attached properties.
                     Column {
                         id: composeColumn
                         anchors.left: parent.left; anchors.right: parent.right
                         anchors.top: parent.top
                         anchors.margins: 22
                         spacing: 14
-
-                        Row {
-                            width: parent.width; spacing: 12
-                            Column {
-                                width: parent.width - composeSide.width - 12; spacing: 2
-                                Label { text: "Compose an offer"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                Label {
-                                    text: "One offer per publish"
-                                    color: "#7F8A9B"; font.pixelSize: 11
-                                    width: parent.width
-                                    elide: Text.ElideMiddle
-                                }
-                            }
-                            SideToggle {
-                                id: composeSide
-                                value: root.sellSide
-                                onPicked: function(side) { root.sellSide = side }
-                            }
-                        }
-
-                        SwapLeg {
-                            objectName: root.sellSide === "lez" ? "makerSellLegLez" : "makerSellLegBtc"
+                        Label { text: "Compose an offer"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                        Label {
                             width: parent.width
-                            label: "YOU SELL"
-                            asset: root.sellSide === "lez" ? "LEZ" : "BTC"
-                            amount: root.sellSide === "lez" ? "1,000" : "0.01000000"
-                            accent: root.sellSide === "lez" ? "#7EE100" : "#B997FF"
-                            note: root.sellSide === "lez"
-                                ? "Locked in the LEZ escrow until settlement"
-                                : "Locked in the Bitcoin P2TR contract until settlement"
+                            text: "Set what you sell and what you receive; the Node signs exactly those terms. One offer per publish."
+                            color: "#7F8A9B"; font.pixelSize: 11; wrapMode: Text.WordWrap
                         }
-
-                        Row {
-                            width: parent.width; spacing: 10
-                            Rectangle { height: 1; width: (parent.width - 30 - 20) / 2; anchors.verticalCenter: parent.verticalCenter; color: "#1C2739" }
-                            Rectangle {
-                                width: 30; height: 30; radius: 15
-                                color: "#1A2334"; border.width: 1; border.color: "#3A4B6B"
-                                Label {
-                                    anchors.centerIn: parent
-                                    text: "⇅"
-                                    color: "#9FB0D0"; font.pixelSize: 14; font.weight: Font.Bold
-                                }
-                            }
-                            Rectangle { height: 1; width: (parent.width - 30 - 20) / 2; anchors.verticalCenter: parent.verticalCenter; color: "#1C2739" }
-                        }
-
-                        SwapLeg {
+                        LuxeButton {
+                            objectName: "makerNewOffer"
+                            text: "New offer"
+                            primary: true
                             width: parent.width
-                            label: "YOU RECEIVE"
-                            asset: root.sellSide === "lez" ? "BTC" : "LEZ"
-                            amount: root.sellSide === "lez" ? "0.01000000" : "1,000"
-                            accent: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
-                            note: root.sellSide === "lez"
-                                ? "Claimed from the P2TR contract once the secret is revealed"
-                                : "Claimed from the LEZ escrow once the secret is revealed"
-                        }
-
-                        Rectangle {
-                            width: parent.width
-                            height: rateRow.implicitHeight + 20
-                            radius: 10
-                            color: "#0C1320"
-                            border.width: 1; border.color: "#233250"
-                            RowLayout {
-                                id: rateRow
-                                anchors.left: parent.left; anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.margins: 10; spacing: 12
-                                Label {
-                                    text: "MARKET RATE"
-                                    color: "#6F7A8B"; font.pixelSize: 9
-                                    font.weight: Font.Bold; font.letterSpacing: 1.0
-                                }
-                                Label {
-                                    text: "1 BTC = 100,000 LEZ"
-                                    color: "#D9E2F2"; font.pixelSize: 12; font.weight: Font.DemiBold
-                                }
-                                Item { Layout.fillWidth: true }
-                                Label {
-                                    text: root.sellSide === "lez" ? "ROUTE BTC → LEZ" : "ROUTE LEZ → BTC"
-                                    color: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
-                                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
-                                }
-                                Label {
-                                    text: "· network fee ≈ 1,000 sat per leg"
-                                    color: "#5F6B7D"; font.pixelSize: 9
-                                }
-                            }
-                        }
-
-                        Row {
-                            width: parent.width; spacing: 10
-                            Item { width: parent.width - 250; height: 1 }
-                            LuxeButton {
-                                objectName: "makerNewOffer"
-                                text: root.sellSide === "lez"
-                                    ? "Sell 1,000 LEZ for BTC"
-                                    : "Sell 0.01 BTC for LEZ"
-                                primary: true
-                                implicitWidth: 240
-                                enabled: root.ready && root.btcMarketReady
-                                onClicked: root.newOfferOpen = true
-                            }
+                            enabled: root.ready && root.btcMarketReady
+                            onClicked: root.newOfferOpen = true
                         }
                     }
                 }
+
 
                 // ----- The order book: this wallet's offers and swaps.
                 Rectangle {
@@ -1189,12 +1136,12 @@ Item {
                                         Label { text: String(makerOfferRow.modelData.state).toUpperCase(); color: "#718095"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                                     }
                                     Label {
-                                        text: makerOfferRow.sellsLez ? "1,000 LEZ" : "0.01000000 BTC"
+                                        text: String(makerOfferRow.sellsLez ? makerOfferRow.modelData.lez_display : makerOfferRow.modelData.bitcoin_display)
                                         color: "#AAB4C3"; font.pixelSize: 11; font.weight: Font.DemiBold
                                     }
                                     Label { text: "→"; color: "#687486"; font.pixelSize: 13 }
                                     Label {
-                                        text: makerOfferRow.sellsLez ? "0.01 BTC" : "1,000 LEZ"
+                                        text: String(makerOfferRow.sellsLez ? makerOfferRow.modelData.bitcoin_display : makerOfferRow.modelData.lez_display)
                                         color: makerOfferRow.sellsLez ? "#B997FF" : "#7EE100"
                                         font.pixelSize: 11; font.weight: Font.DemiBold
                                     }
@@ -1448,68 +1395,6 @@ Item {
                     rowSpacing: 16
 
                     Rectangle {
-                        Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
-                        implicitHeight: routeColumn.implicitHeight + 44
-                        radius: 16; color: "#101722"; border.width: 1; border.color: "#263144"
-                        ColumnLayout {
-                            id: routeColumn
-                            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                            anchors.margins: 22
-                            spacing: 15
-                            RowLayout {
-                                Layout.fillWidth: true; spacing: 12
-                                StepBadge { number: "01"; accent: "#8950FA" }
-                                ColumnLayout {
-                                    Layout.fillWidth: true; spacing: 2
-                                    Label { text: "Configure a market"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
-                                    Label { text: "Route policy and price settle in one transaction"; color: "#7F8A9B"; font.pixelSize: 11 }
-                                }
-                            }
-                            GridLayout {
-                                Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 7
-                                FieldLabel { text: "FOREIGN ASSET" }
-                                FieldLabel { text: "TAKER DIRECTION" }
-                                LuxeCombo { id: pair; objectName: "makerPair"; model: ["Bitcoin"]; Layout.fillWidth: true }
-                                LuxeCombo { id: direction; objectName: "makerDirection"; model: ["TakerSellsLez", "TakerSellsForeign"]; Layout.fillWidth: true }
-                                FieldLabel { text: "MINIMUM FOREIGN UNITS" }
-                                FieldLabel { text: "MAXIMUM FOREIGN UNITS" }
-                                LuxeField { id: minimum; objectName: "makerForeignUnits"; text: "10000"; Layout.fillWidth: true }
-                                LuxeField { id: maximum; text: "10000"; Layout.fillWidth: true }
-                                FieldLabel { text: "OFFER LIFETIME · SECONDS" }
-                                FieldLabel { text: "PRICE · LEZ / FOREIGN LOT" }
-                                LuxeField { id: ttl; text: "7200"; Layout.fillWidth: true }
-                                RowLayout {
-                                    Layout.fillWidth: true; spacing: 8
-                                    LuxeField { id: lezLot; objectName: "makerLezUnits"; text: "5"; Layout.fillWidth: true }
-                                    Label { text: "/"; color: "#697587"; font.pixelSize: 16 }
-                                    LuxeField { id: foreignLot; text: "2"; Layout.fillWidth: true }
-                                }
-                            }
-                            LuxeButton {
-                                objectName: "makerSave"
-                                text: "Save route atomically"
-                                primary: true
-                                enabled: root.ready && !root.busy
-                                Layout.fillWidth: true
-                                onClicked: root.saveRoute()
-                            }
-                            Rectangle {
-                                Layout.fillWidth: true; implicitHeight: 58; radius: 10
-                                color: "#0D141E"; border.width: 1; border.color: "#222D3D"
-                                RowLayout {
-                                    anchors.fill: parent; anchors.margins: 13
-                                    ColumnLayout {
-                                        Layout.fillWidth: true; spacing: 2
-                                        Label { text: "LAST ATOMIC COMMIT"; color: "#687486"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
-                                        Label { text: root.lastSavedRoute; color: "#B9C2CF"; font.pixelSize: 11 }
-                                    }
-                                    Label { text: "POLICY + PRICE"; color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold }
-                                }
-                            }
-                        }
-                    }
-
-                    Rectangle {
                         id: activePanel
                         objectName: "makerActive"
                         Layout.fillWidth: true; Layout.alignment: Qt.AlignTop
@@ -1711,7 +1596,7 @@ Item {
 
     Rectangle {
         // In-scene dialog: Popup/Overlay never renders inside Basecamp's
-        // embedded plugin view, so the dialog lives in the same scene.
+        // embedded plugin view, so the form lives in the same scene.
         id: newOfferOverlay
         anchors.fill: parent
         visible: root.newOfferOpen
@@ -1720,7 +1605,7 @@ Item {
         MouseArea { anchors.fill: parent; onClicked: root.newOfferOpen = false }
         Rectangle {
             anchors.centerIn: parent
-            width: 470
+            width: 560
             implicitHeight: newOfferColumn.implicitHeight + 48
             color: "#101722"; radius: 16
             border.width: 1; border.color: "#8950FA"
@@ -1730,43 +1615,84 @@ Item {
                 anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
                 anchors.margins: 24
                 spacing: 14
-                Label {
-                    text: root.sellSide === "lez"
-                        ? "Sell 1,000 LEZ for 0.01 BTC"
-                        : "Sell 0.01 BTC for 1,000 LEZ"
-                    color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 12
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: 2
+                        Label { text: "Compose an offer"; color: "#F5F6F8"; font.pixelSize: 17; font.weight: Font.DemiBold }
+                        Label {
+                            text: "Indexed to " + makerWallet.currentText + " until taken or withdrawn"
+                            color: "#7F8A9B"; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideMiddle
+                        }
+                    }
+                    SideToggle {
+                        value: root.sellSide
+                        onPicked: function(side) { root.sellSide = side }
+                    }
                 }
-                Label {
-                    text: "Indexed to " + makerWallet.currentText + " until taken or withdrawn."
-                    color: "#8793A5"; font.pixelSize: 11
-                    wrapMode: Text.WordWrap; Layout.fillWidth: true
+                SwapLeg {
+                    id: sellAmount
+                    objectName: "makerSellAmount"
+                    Layout.fillWidth: true
+                    label: "YOU SELL"
+                    asset: root.sellSide === "lez" ? "LEZ" : "BTC"
+                    accent: root.sellSide === "lez" ? "#7EE100" : "#B997FF"
+                    note: root.sellSide === "lez"
+                        ? "Locked in the LEZ escrow until settlement"
+                        : "Locked in the Bitcoin P2TR contract until settlement"
+                }
+                Label { text: "⇅"; color: "#9FB0D0"; font.pixelSize: 14; font.weight: Font.Bold; Layout.alignment: Qt.AlignHCenter }
+                SwapLeg {
+                    id: receiveAmount
+                    objectName: "makerReceiveAmount"
+                    Layout.fillWidth: true
+                    label: "YOU RECEIVE"
+                    asset: root.sellSide === "lez" ? "BTC" : "LEZ"
+                    accent: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
+                    note: root.sellSide === "lez"
+                        ? "Claimed from the P2TR contract once the secret is revealed"
+                        : "Claimed from the LEZ escrow once the secret is revealed"
+                }
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: rateRow.implicitHeight + 20
+                    radius: 10
+                    color: "#0C1320"
+                    border.width: 1; border.color: "#233250"
+                    RowLayout {
+                        id: rateRow
+                        anchors.left: parent.left; anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 10; spacing: 12
+                        Label { text: "RATE"; color: "#6F7A8B"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.0 }
+                        Label {
+                            objectName: "makerRate"
+                            text: root.rate
+                            color: "#D9E2F2"; font.pixelSize: 12; font.weight: Font.DemiBold
+                        }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            text: root.sellSide === "lez" ? "ROUTE BTC → LEZ" : "ROUTE LEZ → BTC"
+                            color: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
+                            font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
+                        }
+                    }
                 }
                 GridLayout {
                     Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
-                    FieldLabel { text: "YOU SELL" }
-                    FieldLabel { text: "YOU RECEIVE" }
+                    FieldLabel { text: "MINIMUM TAKER AMOUNT · SATS" }
+                    FieldLabel { text: "OFFER LIFETIME · SECONDS" }
                     LuxeField {
-                        text: root.sellSide === "lez" ? "1,000 LEZ" : "0.01000000 BTC"
-                        readOnly: true; Layout.fillWidth: true
+                        id: minimumAmount; objectName: "makerMinimumSats"
+                        placeholderText: "whole offer"; Layout.fillWidth: true
                     }
-                    LuxeField {
-                        text: root.sellSide === "lez" ? "0.01000000 BTC" : "1,000 LEZ"
-                        readOnly: true; Layout.fillWidth: true
-                    }
-                    FieldLabel { text: "TAKER ROUTE" }
-                    FieldLabel { text: "MAKER STEPS" }
-                    LuxeField {
-                        text: root.sellSide === "lez" ? "BTC → LEZ" : "LEZ → BTC"
-                        readOnly: true; Layout.fillWidth: true
-                    }
-                    LuxeField {
-                        text: root.sellSide === "lez" ? "Fund LEZ · Claim BTC" : "Lock BTC · Claim LEZ"
-                        readOnly: true; Layout.fillWidth: true
-                    }
+                    LuxeField { id: termTtl; objectName: "makerOfferTtl"; placeholderText: "e.g. 3600"; Layout.fillWidth: true }
                 }
                 Label {
-                    text: "One offer per publish"
-                    color: "#68768A"; font.pixelSize: 10
+                    text: root.termsValid
+                        ? "The Taker may take any amount from " + root.formatBtcSats(root.minimumSats) + " to " + root.formatBtcSats(root.offerSats) + " at this exact rate"
+                        : "Amounts must be whole units and the minimum must quote to whole LEZ at this rate"
+                    color: root.termsValid ? "#68768A" : "#FF9FAF"; font.pixelSize: 10
                     wrapMode: Text.WordWrap; Layout.fillWidth: true
                 }
                 RowLayout {
@@ -1780,7 +1706,7 @@ Item {
                         objectName: "makerCreateOffers"
                         text: root.btcMarketBusy ? "Publishing…" : "Publish offer"
                         primary: true
-                        enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy
+                        enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy && root.termsValid
                         onClicked: root.createBtcOffers()
                     }
                 }

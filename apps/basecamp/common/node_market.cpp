@@ -3,15 +3,13 @@
 #include "local_json_rpc_client.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
 
 namespace node_market {
 namespace {
-
-constexpr qint64 kFixedBitcoinSats = 1000000;
-constexpr qint64 kFixedLezUnits = 1000;
 
 QString compact(const QJsonObject& value)
 {
@@ -50,33 +48,61 @@ QJsonObject routeObject(const QString& direction)
                                          : QStringLiteral("TakerSellsForeign")}};
 }
 
-// Quote of `bitcoinSats` at the offer's local price; both fixed amounts today.
-qint64 quoteLez(const QJsonObject& price, qint64 bitcoinSats)
+qint64 integerField(const QJsonObject& object, const char* key)
 {
-    const qint64 lezPerLot = static_cast<qint64>(price.value("lez_units_per_lot").toDouble(1));
-    const qint64 satsPerLot = static_cast<qint64>(price.value("foreign_units_per_lot").toDouble(1000));
-    return satsPerLot > 0 ? bitcoinSats * lezPerLot / satsPerLot : 0;
+    const double value = object.value(QLatin1String(key)).toDouble(-1);
+    return value >= 0 && value <= 9007199254740991.0 ? static_cast<qint64>(value) : -1;
+}
+
+// The Node's exact quote, `sats * lez_units_per_lot / foreign_units_per_lot`
+// with no rounding; false when it would need fractional LEZ units.
+bool quoteLez(const QJsonObject& price, qint64 bitcoinSats, qint64& lez)
+{
+    const qint64 lezPerLot = integerField(price, "lez_units_per_lot");
+    const qint64 satsPerLot = integerField(price, "foreign_units_per_lot");
+    if (lezPerLot <= 0 || satsPerLot <= 0 || bitcoinSats < 0) return false;
+    qint64 numerator = 0;
+    if (__builtin_mul_overflow(bitcoinSats, lezPerLot, &numerator)) return false;
+    if (numerator % satsPerLot != 0) return false;
+    lez = numerator / satsPerLot;
+    return lez <= 9007199254740991;
+}
+
+// "0.00100000–0.01000000 BTC" for a range, or the single amount.
+QString rangeDisplay(qint64 minimum, qint64 maximum, QString (*format)(qint64))
+{
+    return minimum == maximum ? format(maximum)
+                              : format(minimum).section(' ', 0, 0) + QStringLiteral("–") + format(maximum);
 }
 
 QJsonObject offerRow(const QJsonObject& offer, const QString& state, const QString& makerLabel)
 {
     const QJsonObject configuration = offer.value("pair_configuration").toObject();
+    const QJsonObject price = offer.value("price").toObject();
     const QString direction = directionName(configuration.value("route").toObject().value("direction").toString());
-    const qint64 sats = static_cast<qint64>(configuration.value("maximum_foreign_units").toDouble(kFixedBitcoinSats));
-    const qint64 lez = quoteLez(offer.value("price").toObject(), sats);
+    const qint64 minimumSats = integerField(configuration, "minimum_foreign_units");
+    const qint64 maximumSats = integerField(configuration, "maximum_foreign_units");
+    qint64 minimumLez = 0, maximumLez = 0;
+    const bool quotable = quoteLez(price, minimumSats, minimumLez) && quoteLez(price, maximumSats, maximumLez);
     const bool takerPaysBitcoin = direction == QStringLiteral("taker_sells_foreign");
+    const QString bitcoin = rangeDisplay(minimumSats, maximumSats, formatBtc);
+    const QString lez = quotable ? rangeDisplay(minimumLez, maximumLez, formatLez) : QStringLiteral("unquotable");
     return QJsonObject{
         {"offer_id", offer.value("id").toString()},
         {"maker_wallet_label", makerLabel},
         {"state", state},
-        {"bitcoin_sats", sats},
-        {"bitcoin_display", formatBtc(sats)},
-        {"lez_units", lez},
-        {"lez_display", formatLez(lez)},
+        {"minimum_foreign_units", minimumSats},
+        {"maximum_foreign_units", maximumSats},
+        {"lez_units_per_lot", integerField(price, "lez_units_per_lot")},
+        {"foreign_units_per_lot", integerField(price, "foreign_units_per_lot")},
+        {"bitcoin_sats", maximumSats},
+        {"bitcoin_display", bitcoin},
+        {"lez_units", maximumLez},
+        {"lez_display", lez},
         {"direction", direction},
         {"direction_display", directionDisplay(direction)},
-        {"taker_pays_display", takerPaysBitcoin ? formatBtc(sats) : formatLez(lez)},
-        {"taker_receives_display", takerPaysBitcoin ? formatLez(lez) : formatBtc(sats)},
+        {"taker_pays_display", takerPaysBitcoin ? bitcoin : lez},
+        {"taker_receives_display", takerPaysBitcoin ? lez : bitcoin},
         {"expires_at_unix_seconds", offer.value("expires_at_unix_seconds")},
         {"created_at_unix_seconds", offer.value("created_at_unix_seconds")},
     };
@@ -91,8 +117,10 @@ struct SwapRow {
     QString actionLabel;
 };
 
-// The Taker's desk states from the Taker Node's swap view.
-SwapRow takerRow(const QString& nodeState, bool locked, const QString& direction)
+// The Taker's desk states from the Taker Node's swap view; `bitcoin` and
+// `lez` are that swap's exact amounts as the desk displays them.
+SwapRow takerRow(const QString& nodeState, bool locked, const QString& direction,
+                 const QString& bitcoin, const QString& lez)
 {
     const bool fundsBitcoin = direction == QStringLiteral("taker_sells_foreign");
     if (nodeState == "not_activated" || nodeState == "initiating")
@@ -101,8 +129,8 @@ SwapRow takerRow(const QString& nodeState, bool locked, const QString& direction
     if (nodeState == "awaiting_first_lock") {
         if (fundsBitcoin && !locked)
             return {"lock_ready", "Your Bitcoin lock is ready", 20,
-                    "Your move — Lock 0.01 BTC broadcasts the exact funding transaction your wallet signed",
-                    "lock_btc", "Lock 0.01000000 BTC"};
+                    "Your move — Lock " + bitcoin + " broadcasts the exact funding transaction your wallet signed",
+                    "lock_btc", "Lock " + bitcoin};
         return {"locking_btc", "Bitcoin lock confirming", 35,
                 "Your Node observes the lock; the Maker funds LEZ once it is confirmed", "", ""};
     }
@@ -111,8 +139,8 @@ SwapRow takerRow(const QString& nodeState, bool locked, const QString& direction
                 "The Maker's Node funds the escrow automatically after your lock confirms", "", ""};
     if (nodeState == "claim_available")
         return {"claim_ready", "Your LEZ claim is ready", 70,
-                "Your move — Claim 1,000 LEZ reveals the adaptor secret the Maker needs for its Bitcoin claim",
-                "claim_lez", "Claim 1,000 LEZ"};
+                "Your move — Claim " + lez + " reveals the adaptor secret the Maker needs for its Bitcoin claim",
+                "claim_lez", "Claim " + lez};
     if (nodeState == "claim_in_progress")
         return {"claiming_lez", "LEZ claim submitted", 85,
                 "Your Node observes the claim; the Maker's follow-up Bitcoin claim completes the swap", "", ""};
@@ -190,31 +218,6 @@ QJsonObject walletEntry(const QString& id, const QString& label, const QString& 
         {"network", role == "maker" ? "LEZ private local" : "Bitcoin Core regtest"},
         {"accent", role == "maker" ? "violet" : "green"},
         {"pending_offers", pending}, {"active_swaps", active}, {"needs_action", needsAction},
-    };
-}
-
-QJsonObject presetObject()
-{
-    return QJsonObject{{"bitcoin_sats", kFixedBitcoinSats}, {"bitcoin_display", formatBtc(kFixedBitcoinSats)},
-                       {"lez_units", kFixedLezUnits}, {"lez_display", formatLez(kFixedLezUnits)},
-                       {"direction", "BTC → LEZ"}};
-}
-
-QJsonArray directionCatalog()
-{
-    return QJsonArray{
-        QJsonObject{{"direction", "taker_sells_foreign"}, {"display", "BTC → LEZ"},
-                    {"ui_direction", "TakerSellsForeign"}, {"bitcoin_sats", kFixedBitcoinSats},
-                    {"bitcoin_display", formatBtc(kFixedBitcoinSats)}, {"lez_units", kFixedLezUnits},
-                    {"lez_display", formatLez(kFixedLezUnits)},
-                    {"maker_label", "Sell 1,000 LEZ for 0.01000000 BTC"},
-                    {"maker_actions", QJsonArray{"Fund 1,000 LEZ (automatic)", "Claim Bitcoin (automatic)"}}, {"taker_actions", QJsonArray{"Lock 0.01000000 BTC", "Claim 1,000 LEZ"}}},
-        QJsonObject{{"direction", "taker_sells_lez"}, {"display", "LEZ → BTC"},
-                    {"ui_direction", "TakerSellsLez"}, {"bitcoin_sats", kFixedBitcoinSats},
-                    {"bitcoin_display", formatBtc(kFixedBitcoinSats)}, {"lez_units", kFixedLezUnits},
-                    {"lez_display", formatLez(kFixedLezUnits)},
-                    {"maker_label", "Sell 0.01000000 BTC for 1,000 LEZ"},
-                    {"maker_actions", QJsonArray{}}, {"taker_actions", QJsonArray{"Claim 0.01 BTC"}}},
     };
 }
 
@@ -299,7 +302,9 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             if (swap.value("route").toObject().value("pair").toString() != QStringLiteral("Bitcoin")) continue;
             const QString swapId = swap.value("swap_id").toString();
             const QString direction = directionName(swap.value("route").toObject().value("direction").toString());
-            const SwapRow row = takerRow(swap.value("state").toString(), lockedSwaps.contains(swapId), direction);
+            const SwapRow row = takerRow(swap.value("state").toString(), lockedSwaps.contains(swapId), direction,
+                                         formatBtc(integerField(swap, "foreign_units")),
+                                         formatLez(integerField(swap, "lez_units")));
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble())));
@@ -320,8 +325,6 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
         {"latest_balance_evidence", QJsonValue()},
         {"summary", QJsonObject{{"pending_offers", orderBook.size()}, {"accepted_swaps", swaps.size()},
                                 {"completed_swaps", completed}}},
-        {"preset", presetObject()},
-        {"directions", directionCatalog()},
         {"runner_ready", true},
         {"runner_busy", false},
         {"runner_detail", "Both Nodes settle swaps themselves; no runner is involved"},
@@ -341,7 +344,7 @@ QString takerSnapshot(const LocalJsonRpcClient& rpc, const TakerWallet& wallet,
 
 QString takerTake(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowRpc,
                   const TakerWallet& wallet, const QString& requestId, const QString& offerId,
-                  const QSet<QString>& lockedSwaps)
+                  qint64 foreignUnits, const QSet<QString>& lockedSwaps)
 {
     Reply error;
     QJsonObject selected;
@@ -353,13 +356,18 @@ QString takerTake(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowR
     if (selected.isEmpty()) return failure(QStringLiteral("offer_unavailable"), QStringLiteral("That offer is no longer live"));
     const QJsonObject offer = selected.value("offer").toObject();
     const QJsonObject configuration = offer.value("pair_configuration").toObject();
-    const qint64 sats = static_cast<qint64>(configuration.value("maximum_foreign_units").toDouble(kFixedBitcoinSats));
-    const qint64 lez = quoteLez(offer.value("price").toObject(), sats);
+    // The Node enforces the bounds at reservation; the exact quote is what it
+    // expects to be told.
+    qint64 lez = 0;
+    if (!quoteLez(offer.value("price").toObject(), foreignUnits, lez)) {
+        return failure(QStringLiteral("nonintegral_quote"),
+                       QStringLiteral("That amount does not quote to whole LEZ units at the offer's price"));
+    }
     const Reply initiated = decode(slowRpc.call("taker_swap_initiate_v1", compact({
         {"schema_version", 1}, {"request_id", requestId}, {"offer_id", offerId},
         {"route", configuration.value("route")}, {"maker_identity", selected.value("maker_identity")},
         {"signed_envelope_sha256", selected.value("signed_envelope_sha256")},
-        {"foreign_units", sats}, {"expected_lez_units", lez}})));
+        {"foreign_units", foreignUnits}, {"expected_lez_units", lez}})));
     if (!initiated.ok) return nodeFailure(initiated, QStringLiteral("The Taker Node could not take the offer"));
     Reply refreshError;
     QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &refreshError);
@@ -403,6 +411,45 @@ QString makerOfferState(const QString& status)
     if (status == "withdrawn") return QStringLiteral("withdrawn");
     if (status == "consumed" || status == "reserved") return QStringLiteral("taken");
     return status;
+}
+
+// One `{value, revision}` list entry per Bitcoin direction, keyed by the
+// desk's direction name.
+QHash<QString, QJsonObject> bitcoinRows(const Reply& listed)
+{
+    QHash<QString, QJsonObject> rows;
+    if (!listed.ok) return rows;
+    for (const QJsonValue& candidate : listed.result.toArray()) {
+        const QJsonObject entry = candidate.toObject();
+        const QJsonObject route = entry.value("value").toObject().value("route").toObject();
+        if (route.value("pair").toString() == QStringLiteral("Bitcoin"))
+            rows.insert(directionName(route.value("direction").toString()), entry);
+    }
+    return rows;
+}
+
+// The Node's stored terms per direction: what the compose card starts from.
+// A direction without a stored price reports -1 lots, which the card treats
+// as unset.
+QJsonArray makerRoutes(const LocalJsonRpcClient& rpc)
+{
+    const QHash<QString, QJsonObject> pairs = bitcoinRows(decode(rpc.call("maker_pair_list", "{}")));
+    const QHash<QString, QJsonObject> prices = bitcoinRows(decode(rpc.call("maker_local_price_list", "{}")));
+    QJsonArray routes;
+    for (auto it = pairs.cbegin(); it != pairs.cend(); ++it) {
+        const QString& direction = it.key();
+        const QJsonObject configuration = it.value().value("value").toObject();
+        const QJsonObject price = prices.value(direction).value("value").toObject();
+        routes.append(QJsonObject{
+            {"direction", direction},
+            {"minimum_foreign_units", integerField(configuration, "minimum_foreign_units")},
+            {"maximum_foreign_units", integerField(configuration, "maximum_foreign_units")},
+            {"offer_ttl_seconds", integerField(configuration, "offer_ttl_seconds")},
+            {"lez_units_per_lot", integerField(price, "lez_units_per_lot")},
+            {"foreign_units_per_lot", integerField(price, "foreign_units_per_lot")},
+        });
+    }
+    return routes;
 }
 
 QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet& wallet, Reply* error)
@@ -461,8 +508,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
         {"latest_balance_evidence", QJsonValue()},
         {"summary", QJsonObject{{"pending_offers", pending}, {"accepted_swaps", swaps.size()},
                                 {"completed_swaps", completed}}},
-        {"preset", presetObject()},
-        {"directions", directionCatalog()},
+        {"routes", makerRoutes(rpc)},
         {"runner_ready", true},
         {"runner_busy", false},
         {"runner_detail", "Your Node's supervisor funds LEZ and claims Bitcoin itself"},
@@ -492,7 +538,7 @@ QString makerSnapshot(const LocalJsonRpcClient& rpc, const MakerWallet& wallet)
 }
 
 QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
-                     const QString& requestId, const QString& direction)
+                     const QString& requestId, const QString& direction, const RouteTerms& terms)
 {
     const QJsonObject route = routeObject(direction);
     const Reply pairs = decode(rpc.call("maker_pair_list", "{}"));
@@ -503,10 +549,11 @@ QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
     QJsonObject routeRequest{
         {"request_id", requestId + "-route"},
         {"configuration", QJsonObject{{"route", route}, {"enabled", true}, {"price_source", "local"},
-                                      {"minimum_foreign_units", kFixedBitcoinSats},
-                                      {"maximum_foreign_units", kFixedBitcoinSats},
-                                      {"offer_ttl_seconds", 3600}}},
-        {"price", QJsonObject{{"route", route}, {"lez_units_per_lot", 1}, {"foreign_units_per_lot", 1000}}},
+                                      {"minimum_foreign_units", terms.minimumForeignUnits},
+                                      {"maximum_foreign_units", terms.maximumForeignUnits},
+                                      {"offer_ttl_seconds", terms.offerTtlSeconds}}},
+        {"price", QJsonObject{{"route", route}, {"lez_units_per_lot", terms.lezUnitsPerLot},
+                              {"foreign_units_per_lot", terms.foreignUnitsPerLot}}},
     };
     if (pairRevision >= 0) routeRequest.insert("expected_pair_revision", pairRevision);
     if (priceRevision >= 0) routeRequest.insert("expected_price_revision", priceRevision);
@@ -515,8 +562,13 @@ QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
     const QString offerId = QStringLiteral("offer-%1-%2")
                                 .arg(direction == QStringLiteral("taker_sells_lez") ? "sell-btc" : "sell-lez")
                                 .arg(QDateTime::currentSecsSinceEpoch());
-    const Reply published = decode(rpc.call("maker_offer_publish", compact({
-        {"request_id", requestId}, {"offer_id", offerId}, {"route", route}})));
+    // Guarded publication: exactly the revisions the save returned, or a
+    // conflict if anything changed them in between.
+    const QJsonObject revisions = saved.result.toObject();
+    const Reply published = decode(rpc.call("maker_offer_publish_v1", compact({
+        {"schema_version", 1}, {"request_id", requestId}, {"offer_id", offerId}, {"route", route},
+        {"expected_pair_revision", revisions.value("pair_revision")},
+        {"expected_price_revision", revisions.value("price_revision")}})));
     if (!published.ok) return nodeFailure(published, QStringLiteral("The offer could not be published"));
     Reply refreshError;
     QJsonObject snapshot = makerSnapshotObject(rpc, wallet, &refreshError);

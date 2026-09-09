@@ -1,10 +1,11 @@
 # Basecamp role packages
 
 This directory builds two independent Logos Basecamp 0.2 `ui_qml` packages.
-The Maker desk publishes wallet-owned local BTC/LEZ inventory and performs only
-Maker actions. The Taker desk browses that order book, takes offers into its
-selected wallet, and performs only Taker actions. Together they gate the fixed
-local M3 LEZ/Bitcoin runner at the four real actor boundaries and present its
+The Maker desk sets its own terms for a Bitcoin route (the satoshi bounds a
+Taker may take, the offer lifetime, and an exact integer-lot LEZ price), saves
+them to its Node atomically, and publishes signed offers on them. The Taker
+desk browses that order book, picks an amount inside an offer's bounds, takes
+it into its wallet, and performs only Taker actions. Both desks present the
 completed transaction and balance evidence. Each QML view is unprivileged. Its
 process-isolated C++ backend calls a fixed role allowlist over
 an owner-only Unix socket. The negotiation path uses pinned Logos Chat `v0.2.2`
@@ -170,19 +171,13 @@ without manufacturing another mutation.
 
 ## Run the Taker package as a real user
 
-Set `LEZ_M3_BTC_EVIDENCE_FILE` to the absolute path of a secret-free evidence
-file produced by `deploy/full-swap/export-ui-evidence.sh`. The wallet market and
-four actor-owned actions are supplied by the Docker deployment's bounded
-controller at `LEZ_BTC_DEMO_RPC_SOCKET`; a standalone package without that
-mode-0600 socket remains a safe evidence viewer and shows the market offline.
-For the optional
-prepared-corridor controls, also create the strict owner-private Taker Node role
-configuration the way `deploy/images/taker-node/node-entrypoint.sh` renders it,
-start `lez-taker-node` as the current user, and select its mode-0600 socket:
+Create the strict owner-private Taker Node role configuration the way
+`deploy/images/taker-node/node-entrypoint.sh` renders it, start
+`lez-taker-node` as the current user, and select its mode-0600 socket; the
+wallet market, offers and actor-owned actions all come from that Node:
 
 ```sh
 export LEZ_TAKER_RPC_SOCKET="$M6_ROOT/runtime-taker/node.sock"
-export LEZ_M3_BTC_EVIDENCE_FILE="$PWD/../../deploy/full-swap/evidence-m5arm-08180005-ui.json"
 export M6_BASECAMP_USER_DIR="$M6_TAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```

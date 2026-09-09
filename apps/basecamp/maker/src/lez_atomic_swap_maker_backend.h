@@ -17,16 +17,13 @@ public:
     QString chatStatus() override;
     QString resetChat() override;
     QString btcMarket(QString walletId) override;
-    QString btcCreateOffers(QString requestId, QString walletId, QString count,
-                            QString bitcoinSats, QString lezUnits,
-                            QString direction) override;
+    QString btcPublishOffer(QString requestId, QString walletId, QString direction,
+                            QString minimumForeignUnits, QString maximumForeignUnits,
+                            QString offerTtlSeconds, QString lezUnitsPerLot,
+                            QString foreignUnitsPerLot) override;
     QString btcWithdrawOffer(QString requestId, QString walletId, QString offerId) override;
     QString btcSwapAction(QString requestId, QString walletId, QString swapId,
                           QString action) override;
-    QString saveRoute(QString requestId, QString pair, QString direction,
-                      QString minimumForeignUnits, QString maximumForeignUnits,
-                      QString offerTtlSeconds, QString lezUnitsPerLot,
-                      QString foreignUnitsPerLot) override;
     QString history() override;
     QString monitor(QString swapId) override;
     QString claim(QString requestId, QString swapId, QString expectedGeneration) override;

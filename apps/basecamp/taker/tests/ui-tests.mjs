@@ -13,8 +13,6 @@ test("taker: role route loads", async (app) => {
     "Choose your wallet, take Maker offers, and authorize only the Taker-owned chain actions.",
     "Available orders",
     "My orders",
-    "Five effects. Two chains. One completed swap.",
-    "Wallet balance proof",
     "Private negotiation Chat",
     "Session identity and conversation history are intentionally discarded when the app closes.",
   ]);

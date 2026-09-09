@@ -22,8 +22,6 @@ Item {
     property string currentState: ""
     property string currentSwap: ""
     property bool replayed: false
-    property var btcEvidence: ({})
-    property bool btcEvidenceReady: false
     property var btcMarket: ({
         order_book: [], swaps: [], wallets: [],
         summary: ({pending_offers: 0, accepted_swaps: 0, completed_swaps: 0}),
@@ -76,10 +74,6 @@ Item {
             return root.swapBucket(swap) === tab
         }).length
     }
-    property string lastPublishedMarketRun: ""
-    // Newest completed market run the desk already asked the evidence file about,
-    // so a run that is not published yet is probed once, not on every poll.
-    property string lastProbedMarketRun: ""
 
     component LuxeButton: Button {
         id: control
@@ -263,87 +257,6 @@ Item {
         }
     }
 
-    component EvidenceCard: Rectangle {
-        id: evidenceCard
-        required property var effect
-        property color accent: effect.chain === "Bitcoin" ? "#8950FA" : "#7EE100"
-        Layout.fillWidth: true
-        implicitHeight: 218
-        radius: 12
-        color: "#0D141E"
-        border.width: 1
-        border.color: effect.chain === "Bitcoin" ? "#6846A2" : "#3D671E"
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 14
-            spacing: 8
-            RowLayout {
-                Layout.fillWidth: true
-                Rectangle {
-                    implicitWidth: 30; implicitHeight: 24; radius: 2
-                    color: "#151820"; border.width: 1; border.color: evidenceCard.accent
-                    Label {
-                        anchors.centerIn: parent
-                        text: String(evidenceCard.effect.sequence).padStart(2, "0")
-                        color: evidenceCard.accent; font.pixelSize: 9; font.weight: Font.Bold
-                    }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true; spacing: 1
-                    Label {
-                        text: evidenceCard.effect.label
-                        color: "#F4F6F8"; font.pixelSize: 12; font.weight: Font.DemiBold
-                        elide: Text.ElideRight; Layout.fillWidth: true
-                    }
-                    Label {
-                        text: evidenceCard.effect.chain.toUpperCase() + " · " + evidenceCard.effect.actor.toUpperCase()
-                        color: evidenceCard.accent; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8
-                    }
-                }
-            }
-            Label {
-                text: evidenceCard.effect.amount
-                color: "#C8D0DB"; font.pixelSize: 11; font.weight: Font.DemiBold
-            }
-            FieldLabel { text: "TRANSACTION ID" }
-            TextArea {
-                text: evidenceCard.effect.transaction_id
-                readOnly: true; selectByMouse: true; wrapMode: Text.WrapAnywhere
-                Layout.fillWidth: true; Layout.preferredHeight: 56
-                color: "#D8DEE8"; selectionColor: evidenceCard.accent; selectedTextColor: "#080A0E"
-                font.family: "DejaVu Sans Mono"; font.pixelSize: 9
-                leftPadding: 9; rightPadding: 9; topPadding: 7; bottomPadding: 7
-                background: Rectangle { color: "#080C12"; radius: 7; border.width: 1; border.color: "#243043" }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Label {
-                    text: evidenceCard.effect.finality.toUpperCase()
-                    color: evidenceCard.accent; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.7
-                }
-                Item { Layout.fillWidth: true }
-                Label {
-                    text: evidenceCard.effect.block_height === null
-                        ? "BLOCK PROOF ATTACHED" : "BLOCK " + evidenceCard.effect.block_height
-                    color: "#7D899A"; font.pixelSize: 8; font.weight: Font.DemiBold
-                }
-            }
-            LuxeButton {
-                text: "Open local proof"
-                quiet: true; implicitHeight: 30; Layout.fillWidth: true
-                onClicked: Qt.openUrlExternally(String(evidenceCard.effect.explorer_url))
-            }
-        }
-    }
-
-    Timer {
-        id: btcEvidenceTimer
-        interval: 250
-        repeat: false
-        onTriggered: root.loadBtcEvidence()
-    }
-
     Timer {
         id: btcMarketBootstrapTimer
         interval: 450
@@ -367,8 +280,7 @@ Item {
             if (root.ready) {
                 root.statusMode = "success"
                 root.statusTitle = "Taker Node connected"
-                root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
-                btcEvidenceTimer.restart()
+                root.statusDetail = "Loading the wallet market"
                 btcMarketBootstrapTimer.restart()
             }
         }
@@ -379,8 +291,7 @@ Item {
         if (root.ready) {
             root.statusMode = "success"
             root.statusTitle = "Taker Node connected"
-            root.statusDetail = "Loading certified LEZ / Bitcoin settlement evidence"
-            btcEvidenceTimer.restart()
+            root.statusDetail = "Loading the wallet market"
             btcMarketBootstrapTimer.restart()
         }
     }
@@ -539,46 +450,9 @@ Item {
         })
     }
 
-    function applyBtcEvidence(result) {
-        root.btcEvidence = result
-        root.btcEvidenceReady = true
-        root.lastPublishedMarketRun = String(result.run_id ?? "")
-    }
-
-    // The visible load: the operator asked for the proof, so it owns the status.
-    function loadBtcEvidence() {
-        if (root.busy) return
-        root.run(root.backend.btcEvidence(), "Loading Bitcoin settlement proof", function(result) {
-            root.applyBtcEvidence(result)
-            root.statusMode = "success"
-            root.statusTitle = "BTC settlement verified · revision " + String(result.terminal.revision)
-            root.statusDetail = "2 Bitcoin + 3 LEZ effects · completed without replay resubmission"
-        })
-    }
-
-    // The background load driven by the market poll: refreshes the proof data
-    // without touching the status or the diagnostic output the operator is
-    // reading, so a "Check Node" or "Refresh wallet market" result stays put.
-    function refreshBtcEvidenceSilently() {
-        if (root.busy) return
-        logos.watch(root.backend.btcEvidence(),
-            function(value) {
-                try { root.applyBtcEvidence(root.decode(value)) } catch (error) {}
-            },
-            function(error) {})
-    }
-
     // The Taker Node settles as one identity; the desk shows it as its wallet.
     function selectedTakerWallet() {
         return "taker-zurich-01"
-    }
-
-    function walletBalance(role) {
-        var ledger = root.btcEvidence.wallet_balance_changes ?? {}
-        var wallets = ledger.wallets ?? []
-        for (var index = 0; index < wallets.length; ++index)
-            if (wallets[index].role === role) return wallets[index]
-        return null
     }
 
     function formatBtcSats(value) {
@@ -591,7 +465,7 @@ Item {
     }
 
     function formatLez(value) {
-        return Number(value ?? 0).toLocaleString(Qt.locale(), "f", 0) + " LEZ"
+        return Number(value ?? 0).toLocaleString(Qt.locale("en_US"), "f", 0) + " LEZ"
     }
 
     function formatSignedLez(value) {
@@ -599,31 +473,9 @@ Item {
         return (amount >= 0 ? "+" : "−") + root.formatLez(Math.abs(amount))
     }
 
-    // The newest completed swap decides whether the published proof is stale.
-    // Older completed runs stay in the market forever; comparing every one of
-    // them against the proof would reload it on every poll.
-    function newestCompletedRun(swaps) {
-        var newest = null
-        for (var index = 0; index < swaps.length; ++index) {
-            var swap = swaps[index]
-            if (swap.state !== "completed" || String(swap.run_id ?? "") === "") continue
-            if (newest === null
-                    || String(swap.completed_at ?? "") > String(newest.completed_at ?? "")
-                    || (String(swap.completed_at ?? "") === String(newest.completed_at ?? "")
-                        && String(swap.run_id) > String(newest.run_id)))
-                newest = swap
-        }
-        return newest === null ? "" : String(newest.run_id)
-    }
-
     function applyBtcMarket(result) {
         root.btcMarket = result
         root.btcMarketReady = true
-        var newest = root.newestCompletedRun(result.swaps ?? [])
-        if (newest === "" || newest === root.lastProbedMarketRun) return
-        if (root.btcEvidenceReady && String(root.btcEvidence.run_id) === newest) return
-        root.lastProbedMarketRun = newest
-        root.refreshBtcEvidenceSilently()
     }
 
     function refreshBtcMarket(silent) {
@@ -651,12 +503,24 @@ Item {
             })
     }
 
-    function takeBtcOffer(offer) {
-        if (root.btcMarketBusy) return
+    // The Node's exact quote for `sats` at an offer's lot price, or NaN when
+    // the amount is outside the bounds or would need fractional LEZ units.
+    function quoteOffer(offer, sats) {
+        var amount = Number(sats)
+        var lezLot = Number(offer.lez_units_per_lot), satsLot = Number(offer.foreign_units_per_lot)
+        if (!/^[0-9]{1,16}$/.test(String(sats)) || !Number.isSafeInteger(amount)
+            || amount < Number(offer.minimum_foreign_units) || amount > Number(offer.maximum_foreign_units)
+            || !(lezLot > 0) || !(satsLot > 0)) return NaN
+        var numerator = amount * lezLot
+        return Number.isSafeInteger(numerator) && numerator % satsLot === 0 ? numerator / satsLot : NaN
+    }
+
+    function takeBtcOffer(offer, sats) {
+        if (root.btcMarketBusy || !Number.isSafeInteger(root.quoteOffer(offer, sats))) return
         root.btcMarketBusy = true
         var requestId = "ui-taker-take-offer-" + String(Date.now())
         root.run(root.backend.btcTakeOffer(
-            requestId, root.selectedTakerWallet(), String(offer.offer_id)),
+            requestId, root.selectedTakerWallet(), String(offer.offer_id), String(sats)),
             "Accepting Maker offer", function(result) {
                 root.btcMarketBusy = false
                 root.applyBtcMarket(result)
@@ -1223,10 +1087,33 @@ Item {
                             delegate: Rectangle {
                                 id: takerOfferRow
                                 required property var modelData
-                                Layout.fillWidth: true; implicitHeight: 70; radius: 10
+                                // The amount this Taker takes, in satoshis: any value
+                                // inside the offer's bounds that quotes to whole LEZ.
+                                readonly property bool ranged: Number(modelData.minimum_foreign_units) !== Number(modelData.maximum_foreign_units)
+                                readonly property real quotedLez: root.quoteOffer(modelData, takeSats.text)
+                                Layout.fillWidth: true; implicitHeight: ranged ? 118 : 70; radius: 10
                                 color: "#0D141E"; border.width: 1; border.color: "#28364A"
+                                LuxeField {
+                                    id: takeSats
+                                    objectName: "takerTakeSats"
+                                    visible: takerOfferRow.ranged
+                                    anchors.left: parent.left; anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    anchors.margins: 13
+                                    placeholderText: "Satoshis to take, " + String(takerOfferRow.modelData.minimum_foreign_units) + "–" + String(takerOfferRow.modelData.maximum_foreign_units)
+                                    text: String(takerOfferRow.modelData.maximum_foreign_units ?? "")
+                                    Label {
+                                        anchors.right: parent.right; anchors.rightMargin: 14
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: Number.isSafeInteger(takerOfferRow.quotedLez)
+                                            ? "→ " + root.formatLez(takerOfferRow.quotedLez) : "outside the offer's terms"
+                                        color: Number.isSafeInteger(takerOfferRow.quotedLez) ? "#7EE100" : "#FF9FAF"
+                                        font.pixelSize: 10
+                                    }
+                                }
                                 RowLayout {
-                                    anchors.fill: parent; anchors.margins: 13; spacing: 14
+                                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                                    anchors.margins: 13; spacing: 14; height: 44
                                     Rectangle {
                                         implicitWidth: 38; implicitHeight: 38; radius: 2
                                         color: "#201830"; border.width: 1; border.color: "#8950FA"
@@ -1247,206 +1134,10 @@ Item {
                                     LuxeButton {
                                         objectName: "takerTakeOffer"
                                         text: "Take offer"; primary: true
-                                        enabled: root.ready && !root.btcMarketBusy
-                                        onClicked: root.takeBtcOffer(takerOfferRow.modelData)
+                                        enabled: root.ready && !root.btcMarketBusy && Number.isSafeInteger(takerOfferRow.quotedLez)
+                                        onClicked: root.takeBtcOffer(takerOfferRow.modelData, takeSats.text)
                                     }
                                 }
-                            }
-                        }
-                    }
-                }
-
-
-                Rectangle {
-                    id: btcEvidencePanel
-                    objectName: "takerBtcEvidence"
-                    Layout.fillWidth: true
-                    implicitHeight: btcEvidenceColumn.implicitHeight + 44
-                    radius: 16
-                    color: "#101722"
-                    border.width: 1
-                    border.color: root.btcEvidenceReady ? "#4A6940" : "#34304A"
-
-                    ColumnLayout {
-                        id: btcEvidenceColumn
-                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                        anchors.margins: 22
-                        spacing: 16
-
-                        RowLayout {
-                            Layout.fillWidth: true; spacing: 12
-                            StepBadge { number: "03"; accent: "#8950FA" }
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 2
-                                Label {
-                                    text: "Five effects. Two chains. One completed swap."
-                                    color: "#F5F6F8"; font.pixelSize: 19; font.weight: Font.DemiBold
-                                }
-                                Label {
-                                    text: root.btcEvidenceReady
-                                        ? "Run " + root.btcEvidence.run_id + " · " + root.btcEvidence.completed_at
-                                        : "Loading the public, secret-free certification snapshot"
-                                    color: "#7F8A9B"; font.pixelSize: 11
-                                }
-                            }
-                            Rectangle {
-                                implicitWidth: completedLabel.implicitWidth + 24; implicitHeight: 32; radius: 16
-                                color: "#142A20"; border.width: 1; border.color: "#416F4F"
-                                Label {
-                                    id: completedLabel; anchors.centerIn: parent
-                                    text: root.btcEvidenceReady ? "REV 4 · COMPLETED" : "VERIFYING"
-                                    color: "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
-                                }
-                            }
-                            LuxeButton {
-                                objectName: "takerRefreshProof"
-                                text: "Refresh proof"
-                                quiet: true
-                                enabled: root.ready && !root.busy
-                                onClicked: root.loadBtcEvidence()
-                            }
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: 4
-                            columnSpacing: 10
-                            Repeater {
-                                model: [
-                                    ["PAIR", "LEZ ↔ BTC", "#8950FA"],
-                                    ["BITCOIN EFFECTS", root.btcEvidenceReady ? String(root.btcEvidence.effect_counts.bitcoin) : "—", "#8950FA"],
-                                    ["LEZ EFFECTS", root.btcEvidenceReady ? String(root.btcEvidence.effect_counts.lez) : "—", "#7EE100"],
-                                    ["REPLAY SUBMISSIONS", root.btcEvidenceReady ? String(root.btcEvidence.replay_resubmission_count) : "—", "#FA50C1"]
-                                ]
-                                delegate: Rectangle {
-                                    id: metricCard
-                                    required property var modelData
-                                    Layout.fillWidth: true; implicitHeight: 64; radius: 9
-                                    color: "#0D141E"; border.width: 1; border.color: "#253143"
-                                    ColumnLayout {
-                                        anchors.fill: parent; anchors.margins: 11; spacing: 2
-                                        Label { text: metricCard.modelData[0]; color: "#758195"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.7 }
-                                        Label { text: metricCard.modelData[1]; color: metricCard.modelData[2]; font.pixelSize: 16; font.weight: Font.Bold }
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            id: balanceLedger
-                            objectName: "takerBalanceLedger"
-                            Layout.fillWidth: true
-                            implicitHeight: balanceLedgerColumn.implicitHeight + 30
-                            radius: 11
-                            color: "#0B111A"
-                            border.width: 1
-                            border.color: root.btcEvidence.wallet_balance_changes ? "#3D671E" : "#283244"
-
-                            ColumnLayout {
-                                id: balanceLedgerColumn
-                                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                                anchors.margins: 15
-                                spacing: 12
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    ColumnLayout {
-                                        Layout.fillWidth: true; spacing: 2
-                                        Label { text: "Wallet balance proof"; color: "#F2F4F7"; font.pixelSize: 14; font.weight: Font.DemiBold }
-                                        Label {
-                                            text: root.btcEvidence.wallet_balance_changes
-                                                ? "Opening → closing balances reconciled from finalized Bitcoin and LEZ state"
-                                                : "Balance ledger appears after a completed interactive Maker / Taker run"
-                                            color: "#778396"; font.pixelSize: 10
-                                        }
-                                    }
-                                    Label {
-                                        visible: root.btcEvidence.wallet_balance_changes !== undefined
-                                        text: "PRINCIPAL + FEES RECONCILED"
-                                        color: "#7EE100"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 0.8
-                                    }
-                                }
-                                GridLayout {
-                                    Layout.fillWidth: true
-                                    columns: width > 780 ? 2 : 1
-                                    columnSpacing: 10; rowSpacing: 10
-                                    Repeater {
-                                        model: root.btcEvidence.wallet_balance_changes
-                                            ? root.btcEvidence.wallet_balance_changes.wallets : []
-                                        delegate: Rectangle {
-                                            id: walletProof
-                                            required property var modelData
-                                            Layout.fillWidth: true; implicitHeight: 128; radius: 9
-                                            color: "#101722"; border.width: 1
-                                            border.color: walletProof.modelData.role === "taker" ? "#5A3D8B" : "#3E4A5D"
-                                            ColumnLayout {
-                                                anchors.fill: parent; anchors.margins: 12; spacing: 7
-                                                RowLayout {
-                                                    Layout.fillWidth: true
-                                                    Label {
-                                                        text: walletProof.modelData.role.toUpperCase() + " · " + walletProof.modelData.wallet_id
-                                                        color: walletProof.modelData.role === "taker" ? "#B997FF" : "#D4DBE5"
-                                                        font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.6
-                                                    }
-                                                    Item { Layout.fillWidth: true }
-                                                    Label { text: walletProof.modelData.role === "taker" ? "YOU" : "COUNTERPARTY"; color: "#687486"; font.pixelSize: 8; font.weight: Font.Bold }
-                                                }
-                                                RowLayout {
-                                                    Layout.fillWidth: true
-                                                    Label { text: "BTC"; color: "#8950FA"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
-                                                    Label { text: root.formatBtcSats(walletProof.modelData.balances.bitcoin.opening); color: "#9CA7B7"; font.pixelSize: 10 }
-                                                    Label { text: "→"; color: "#5F6B7D"; font.pixelSize: 11 }
-                                                    Label { text: root.formatBtcSats(walletProof.modelData.balances.bitcoin.closing); color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
-                                                    Item { Layout.fillWidth: true }
-                                                    Label { text: root.formatSignedBtc(walletProof.modelData.balances.bitcoin.net_change); color: Number(walletProof.modelData.balances.bitcoin.net_change) >= 0 ? "#7EE100" : "#FA50C1"; font.pixelSize: 10; font.weight: Font.Bold }
-                                                }
-                                                RowLayout {
-                                                    Layout.fillWidth: true
-                                                    Label { text: "LEZ"; color: "#7EE100"; font.pixelSize: 10; font.weight: Font.Bold; Layout.preferredWidth: 38 }
-                                                    Label { text: root.formatLez(walletProof.modelData.balances.lez.opening); color: "#9CA7B7"; font.pixelSize: 10 }
-                                                    Label { text: "→"; color: "#5F6B7D"; font.pixelSize: 11 }
-                                                    Label { text: root.formatLez(walletProof.modelData.balances.lez.closing); color: "#F0F3F7"; font.pixelSize: 10; font.weight: Font.DemiBold }
-                                                    Item { Layout.fillWidth: true }
-                                                    Label { text: root.formatSignedLez(walletProof.modelData.balances.lez.net_change); color: Number(walletProof.modelData.balances.lez.net_change) >= 0 ? "#7EE100" : "#FA50C1"; font.pixelSize: 10; font.weight: Font.Bold }
-                                                }
-                                                Label {
-                                                    text: "BTC fee " + root.formatBtcSats(walletProof.modelData.balances.bitcoin.fee)
-                                                    color: "#667386"; font.pixelSize: 8
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        GridLayout {
-                            id: evidenceGrid
-                            Layout.fillWidth: true
-                            columns: width > 1240 ? 5 : width > 760 ? 3 : 1
-                            columnSpacing: 10
-                            rowSpacing: 10
-                            Repeater {
-                                model: root.btcEvidenceReady ? root.btcEvidence.effects : []
-                                delegate: EvidenceCard {
-                                    id: effectCard
-                                    required property var modelData
-                                    effect: effectCard.modelData
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            Layout.fillWidth: true; implicitHeight: 54; radius: 9
-                            color: "#151721"; border.width: 1; border.color: "#353446"
-                            RowLayout {
-                                anchors.fill: parent; anchors.margins: 13; spacing: 12
-                                Label { text: "EVIDENCE"; color: "#FA50C1"; font.pixelSize: 8; font.weight: Font.Bold; font.letterSpacing: 1 }
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: "These are public identities from a completed isolated local run—not hashes invented by the UI. Open any proof at localhost:3003."
-                                    color: "#A4ADBA"; font.pixelSize: 10; wrapMode: Text.WordWrap
-                                }
-                                LuxeButton { text: "Open evidence explorer"; quiet: true; onClicked: Qt.openUrlExternally("http://127.0.0.1:3003/#/evidence") }
                             }
                         }
                     }
@@ -1491,11 +1182,11 @@ Item {
                             }
                             LuxeButton {
                                 objectName: "takerOffers"
-                                text: pair.currentText === "Bitcoin" ? "Refresh completed BTC evidence" : "Browse authenticated offers"
+                                text: "Browse authenticated offers"
                                 primary: true
                                 enabled: root.ready && !root.busy
                                 Layout.fillWidth: true
-                                onClicked: pair.currentText === "Bitcoin" ? root.loadBtcEvidence() : root.browse()
+                                onClicked: root.browse()
                             }
                             LuxeButton {
                                 text: "Check prepared Node"
@@ -1508,34 +1199,31 @@ Item {
                                 Layout.fillWidth: true
                                 implicitHeight: 82
                                 radius: 11
-                                color: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "#151C22" : "#0D131C"
+                                color: root.selectedOffer !== "" ? "#151C22" : "#0D131C"
                                 border.width: 1
-                                border.color: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "#3C493D" : "#202A39"
+                                border.color: root.selectedOffer !== "" ? "#3C493D" : "#202A39"
                                 RowLayout {
                                     anchors.fill: parent; anchors.margins: 14; spacing: 12
                                     Rectangle {
                                         implicitWidth: 38; implicitHeight: 38; radius: 10
-                                        color: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "#223528" : "#192231"
-                                            Label { anchors.centerIn: parent; text: pair.currentText === "Bitcoin" || root.selectedOffer !== "" ? "✓" : "—"; color: "#7EE100"; font.pixelSize: 16; font.weight: Font.Bold }
+                                        color: root.selectedOffer !== "" ? "#223528" : "#192231"
+                                            Label { anchors.centerIn: parent; text: root.selectedOffer !== "" ? "✓" : "—"; color: "#7EE100"; font.pixelSize: 16; font.weight: Font.Bold }
                                     }
                                     ColumnLayout {
                                         Layout.fillWidth: true; spacing: 3
                                         Label {
-                                            text: pair.currentText === "Bitcoin" ? "Completed M3 evidence ready"
-                                                : root.selectedOffer === "" ? "No offer selected" : "Authenticated offer ready"
+                                            text: root.selectedOffer === "" ? "No offer selected" : "Authenticated offer ready"
                                             color: "#EDEFF3"; font.pixelSize: 12; font.weight: Font.DemiBold
                                         }
                                         Label {
-                                            text: pair.currentText === "Bitcoin"
-                                                ? (root.btcEvidenceReady ? root.btcEvidence.run_id : "Loading certified run")
-                                                : root.selectedOffer === "" ? "Browse to select the newest valid quote" : root.selectedOffer
+                                            text: root.selectedOffer === "" ? "Browse to select the newest valid quote" : root.selectedOffer
                                             color: "#8C97A8"; font.pixelSize: 10; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true
                                         }
                                     }
                                     ColumnLayout {
-                                        visible: pair.currentText === "Bitcoin" || root.selectedOffer !== ""; spacing: 2
-                                        Label { text: pair.currentText === "Bitcoin" ? "STATE" : "VALID UNTIL"; color: "#687486"; font.pixelSize: 9; font.weight: Font.Bold }
-                                        Label { text: pair.currentText === "Bitcoin" ? "COMPLETED" : root.selectedExpiry; color: "#FA50C1"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                        visible: root.selectedOffer !== ""; spacing: 2
+                                        Label { text: "VALID UNTIL"; color: "#687486"; font.pixelSize: 9; font.weight: Font.Bold }
+                                        Label { text: root.selectedExpiry; color: "#FA50C1"; font.pixelSize: 12; font.weight: Font.DemiBold }
                                     }
                                 }
                             }

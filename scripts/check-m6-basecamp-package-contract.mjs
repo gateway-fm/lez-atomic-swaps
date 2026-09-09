@@ -24,22 +24,25 @@ const packages = [
     methods: [
       "maker_health",
       "maker_local_route_save_v1",
+      "maker_offer_publish_v1",
       "swap_history",
       "maker_actor_monitor_v1",
       "maker_actor_claim_v1",
       "maker_actor_refund_v1",
     ],
-    slots: ["health", "chatStatus", "resetChat", "saveRoute", "history", "monitor", "claim", "refund"],
+    slots: ["health", "chatStatus", "resetChat", "btcPublishOffer", "btcWithdrawOffer", "history", "monitor", "claim", "refund"],
     objects: [
       "makerConnection",
       "makerChat",
       "makerChatStatus",
       "makerChatReset",
-      "makerPair",
-      "makerDirection",
-      "makerForeignUnits",
-      "makerLezUnits",
-      "makerSave",
+      "makerSellAmount",
+      "makerReceiveAmount",
+      "makerMinimumSats",
+      "makerOfferTtl",
+      "makerRate",
+      "makerNewOffer",
+      "makerCreateOffers",
       "makerActive",
       "makerHistory",
       "makerOutput",
@@ -60,9 +63,11 @@ const packages = [
       "taker_swap_claim_v1",
       "taker_swap_refund_v1",
     ],
-    slots: ["health", "chatStatus", "connectChat", "connectOffer", "resetChat", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
+    slots: ["health", "chatStatus", "connectChat", "connectOffer", "resetChat", "btcTakeOffer", "listOffers", "initiate", "listSwaps", "monitor", "claim", "refund"],
     objects: [
       "takerConnection",
+      "takerTakeSats",
+      "takerTakeOffer",
       "takerChat",
       "takerChatAddress",
       "takerChatConnect",
@@ -231,6 +236,8 @@ const chatSource = resolve(basecampRoot, "common/logos_chat_bridge.cpp");
 const chatHeaderText = read(chatHeader, "shared Logos Chat bridge header");
 const chatText = read(chatSource, "shared Logos Chat bridge implementation");
 const chatContractText = `${chatHeaderText ?? ""}\n${chatText ?? ""}`;
+const marketSourceFile = resolve(basecampRoot, "common/node_market.cpp");
+const marketText = read(marketSourceFile, "shared Node-market adapter");
 for (const [pattern, message] of [
   [/QLocalSocket/, "must use Qt's Unix-domain local socket client"],
   [/lstat\s*\(/, "must inspect the socket without following symlinks"],
@@ -377,10 +384,14 @@ for (const pkg of packages) {
     new RegExp(`qEnvironmentVariable\\s*\\(\\s*"${pkg.environment}"\\s*\\)`),
     `must read only the fixed ${pkg.environment} endpoint`,
   );
+  // The desk's market actions delegate through the shared Node-market
+  // adapter compiled into the same process-isolated backend, so fixed RPC
+  // method names may live there rather than in the role source itself.
+  const delegatingSource = `${source ?? ""}\n${marketText ?? ""}`;
   for (const method of pkg.methods) {
     requirePattern(
       backendSource,
-      source,
+      delegatingSource,
       new RegExp(`["']${method}["']`),
       `must delegate through fixed RPC method ${method}`,
     );
@@ -409,12 +420,6 @@ for (const pkg of packages) {
       source,
       /taker_offer_list_v1/,
       "must not use the filesystem offer index for Basecamp discovery",
-    );
-    requirePattern(
-      backendSource,
-      source,
-      /direction\s*!=\s*QStringLiteral\("TakerSellsForeign"\)[\s\S]*direction\s*!=\s*QStringLiteral\("TakerSellsLez"\)/,
-      "must accept completed BTC → LEZ and LEZ → BTC evidence",
     );
   }
   for (const [pattern, message] of [
