@@ -129,7 +129,7 @@ require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
-readonly expected_cargo_deny_steps=6
+readonly expected_cargo_deny_steps=8
 cargo_deny_steps="$(rg -Fc -- "$cargo_deny_action" "$ci_workflow")"
 cargo_deny_policy_steps="$(rg -Fc -- "$cargo_deny_policy" "$ci_workflow")"
 [[ "$cargo_deny_steps" == "$expected_cargo_deny_steps" ]] \

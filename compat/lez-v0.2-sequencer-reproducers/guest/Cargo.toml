@@ -1,0 +1,25 @@
+[workspace]
+
+[package]
+name = "lez-v0-2-sequencer-reproducer-guest"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "windowed_transfer"
+path = "src/bin/windowed_transfer.rs"
+
+[dependencies]
+authenticated_transfer_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+lee_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+risc0-zkvm = { version = "=3.0.5", default-features = false, features = ["std"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

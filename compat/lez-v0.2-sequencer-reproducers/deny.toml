@@ -1,0 +1,41 @@
+[advisories]
+unmaintained = "workspace"
+yanked = "deny"
+unused-ignored-advisory = "deny"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "Exact LEZ v0.2.0 forces rsa 0.9.10 through risc0/rzup host build tooling. The reproducers perform no RSA operation; the crate exists only to compile the test guest. Re-audit on every Risc0 or LEZ pin change." },
+    { id = "RUSTSEC-2025-0055", reason = "Exact LEZ v0.2.0 forces tracing-subscriber 0.2.25 through risc0/arkworks. The reproducers log nothing through it and take no external input. Re-audit on every Risc0 or LEZ pin change." },
+    { id = "RUSTSEC-2026-0118", reason = "Exact LEZ v0.2.0 forces hickory-proto 0.25.0-alpha.5 through the Logos Blockchain Zone SDK that sequencer_core links for its Bedrock publisher. The reproducers run sequencer_core with its mock publisher: the Zone SDK client is never constructed, no socket is opened, and no DNS message is parsed. Re-audit before reusing this graph in any networked lane." },
+    { id = "RUSTSEC-2026-0119", reason = "Same hickory-proto pin as RUSTSEC-2026-0118; the mock publisher never encodes or decodes a DNS message. Re-audit before reusing this graph in any networked lane." },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-git = "deny"
+unknown-registry = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = [
+    "https://github.com/EspressoSystems/jellyfish",
+    "https://github.com/logos-blockchain/logos-blockchain-circuits.git",
+    "https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark.git",
+    "https://github.com/logos-blockchain/logos-blockchain.git",
+    "https://github.com/logos-blockchain/logos-execution-zone.git",
+    "https://github.com/logos-co/Overwatch",
+    "https://github.com/arkworks-rs/spongefish.git",
+]

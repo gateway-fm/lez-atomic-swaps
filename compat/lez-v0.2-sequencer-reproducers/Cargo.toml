@@ -1,0 +1,44 @@
+[workspace]
+
+[package]
+name = "lez-v0-2-sequencer-reproducers"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Executable reproducers of LEZ v0.2.0 mempool-admission and block-builder validity semantics"
+
+[package.metadata.reproduced-upstream]
+lez_tag = "v0.2.0"
+lez_commit = "a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a"
+
+[package.metadata.risc0]
+methods = ["guest"]
+
+[build-dependencies]
+risc0-build = "=3.0.5"
+
+[dependencies]
+lee = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+
+[dev-dependencies]
+bytesize = "=2.3.1"
+chrono = "=0.4.44"
+common = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+lee_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["host"] }
+logos-blockchain-core = { version = "=0.1.2", git = "https://github.com/logos-blockchain/logos-blockchain.git", rev = "d8711bbc3d43d3ef9755ef9b73af32fd0f703160" }
+mempool = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+programs = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["artifacts"] }
+sequencer_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["mock"] }
+tempfile = "=3.27.0"
+testnet_initial_state = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
+tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "time"] }
+
+[lints.rust]
+missing_debug_implementations = "warn"
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

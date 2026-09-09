@@ -195,6 +195,22 @@ jobs:
           command: check
           arguments: --all-features --config compat/lez-v0_2-sidecar/deny.toml
           command-arguments: advisories bans licenses sources
+      - name: Audit LEZ v0.2 sequencer reproducers graph
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-sequencer-reproducers/Cargo.toml
+          command: check
+          arguments: --all-features --config compat/lez-v0.2-sequencer-reproducers/deny.toml
+          command-arguments: advisories bans licenses sources
+      - name: Audit LEZ v0.2 sequencer reproducer guest graph
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          rust-version: "1.96.0"
+          manifest-path: compat/lez-v0.2-sequencer-reproducers/guest/Cargo.toml
+          command: check
+          arguments: --all-features --config compat/lez-v0.2-sequencer-reproducers/guest/deny.toml
+          command-arguments: advisories bans licenses sources
       - name: Audit provisional LEZ v0.2 compatibility graph
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:

@@ -17,7 +17,7 @@ jobs:
       matrix:
         include:
           - lane: pinned
-            lez_ref: cac4921581b37e85ae25e940f3a62412cd22308e
+            lez_ref: a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a
             sequencer: "1"
           - lane: current-dev
             lez_ref: dev
@@ -43,4 +43,5 @@ jobs:
             --rev 8eb06ab020a92dc5b63ba6dd0836d432aba6d890 \
             rzup --no-default-features --features cli,install
           rzup install r0vm 3.0.5
+          rzup install rust
       - run: ./scripts/verify-lez-primitives.sh
