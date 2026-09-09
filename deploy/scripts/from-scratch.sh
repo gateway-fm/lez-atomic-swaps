@@ -180,7 +180,9 @@ nix_build() { # nix_build <output-link-name> <flake-ref> [extra nix args...]
           --option build-users-group "" --option sandbox false \
           build -L --accept-flake-config --no-update-lock-file "$@" && exit 0
       done
-      exit 1' _ "$ref" -o "/out/$name" "$@" 2>&1 | tee "$ASSETS/.nix-out/$name.log" | grep -v '^warning:' | tail -5
+      exit 1' _ "$ref" -o "/out/$name" "$@" 2>&1 | tee "$ASSETS/.nix-out/$name.log" | { grep -v '^warning:' || true; } | tail -5
+  # (`grep -v` exits 1 when it selects nothing; a build that is already in the
+  # store prints nothing, which must not read as a failure under pipefail.)
   if [[ ! -L "$ASSETS/.nix-out/$name" ]]; then
     # The full build log is kept next to the output link; show its tail so a
     # failure on a CI runner is diagnosable from the job log alone.
