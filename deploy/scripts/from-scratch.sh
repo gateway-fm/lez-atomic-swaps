@@ -180,8 +180,14 @@ nix_build() { # nix_build <output-link-name> <flake-ref> [extra nix args...]
           --option build-users-group "" --option sandbox false \
           build -L --accept-flake-config --no-update-lock-file "$@" && exit 0
       done
-      exit 1' _ "$ref" -o "/out/$name" "$@" 2>&1 | grep -v '^warning:' | tail -5
-  [[ -L "$ASSETS/.nix-out/$name" ]] || fail "nix build of $ref produced no output link"
+      exit 1' _ "$ref" -o "/out/$name" "$@" 2>&1 | tee "$ASSETS/.nix-out/$name.log" | grep -v '^warning:' | tail -5
+  if [[ ! -L "$ASSETS/.nix-out/$name" ]]; then
+    # The full build log is kept next to the output link; show its tail so a
+    # failure on a CI runner is diagnosable from the job log alone.
+    echo "--- last 60 lines of $ASSETS/.nix-out/$name.log ---" >&2
+    tail -60 "$ASSETS/.nix-out/$name.log" >&2 || true
+    fail "nix build of $ref produced no output link"
+  fi
 }
 
 nix_export() { # nix_export <output-link-name> <destination-dir>
