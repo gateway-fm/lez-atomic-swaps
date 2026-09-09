@@ -139,6 +139,10 @@ jobs:
           audit_graph Cargo.toml deny.toml all
           audit_graph compat/lez-v0_2-sidecar/Cargo.toml \
             compat/lez-v0_2-sidecar/deny.toml all
+          audit_graph compat/lez-v0.2-sequencer-reproducers/Cargo.toml \
+            compat/lez-v0.2-sequencer-reproducers/deny.toml default
+          audit_graph compat/lez-v0.2-sequencer-reproducers/guest/Cargo.toml \
+            compat/lez-v0.2-sequencer-reproducers/guest/deny.toml default
           audit_graph compat/lez-v0.2-provisional/Cargo.toml \
             compat/lez-v0.2-provisional/deny.toml default
           audit_graph compat/lez-v0.2-provisional/escrow/methods/Cargo.toml \
