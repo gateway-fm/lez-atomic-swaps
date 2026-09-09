@@ -1,131 +1,91 @@
-# Repeat the concurrent-swap and refund evidence
+# Record and share swap evidence
 
-These commands run actual BTC → LEZ swaps through the Maker/Taker owner APIs
-on Bitcoin regtest and the LEZ v0.2 devnet. They produce new recordings and
-verify the public chain effects. They do not require our wallet identities,
-credentials, staged executables, Basecamp, or screen-recording software.
+Run concurrent BTC → LEZ swaps and both refund scenarios through the existing
+Maker/Taker APIs on Bitcoin regtest and the local LEZ v0.2 devnet. The output
+includes offline playback, public transaction evidence and source provenance.
 
-## Prepare a dedicated ARM64 machine
+## Build and run
 
 Use Apple Silicon with Docker Desktop and Homebrew, or ARM64 Linux with Docker
 Engine, Compose v2, Git, Python 3, jq, curl, OpenSSL, xxd and shasum
-(`libdigest-sha-perl` on Debian/Ubuntu). Allow several hours
-for the first source build and about one hour for the three scenarios.
-Internet access is needed for pinned sources, container images and dependencies;
-the running chains are local. x86 hosts are not supported by these payloads.
+(`libdigest-sha-perl` on Debian/Ubuntu). x86 is not supported by these payloads.
+Allow several hours for the first source build and about one hour for all three
+scenarios. Building needs internet access; the running chains are local.
 
-Use a fresh checkout and an empty workspace. The Compose stack uses fixed
-container and network names and localhost ports 18443, 3040 and 8779.
-Only one instance can run on a Docker daemon. For an existing installation,
-stop it using its own Compose directory. Evidence mode derives separate volume
-names from the checkout and workspace paths, so it preserves the previous
-stack's wallets and Node stores. Do not delete existing volumes to follow this guide.
+Use a fresh checkout and an empty workspace. Only one stack can run on a Docker
+daemon because container/network names and ports 18443, 3040 and 8779 are fixed.
+Stop an existing stack from its own Compose directory, without deleting volumes.
+Evidence setup gives each checkout/workspace separate persisted state.
 
 ```sh
 git clone https://github.com/gateway-fm/lez-atomic-swaps.git
 cd lez-atomic-swaps
-# Select the reviewed commit containing this guide, before building:
-git checkout <reviewed-commit>
-
+git checkout <commit-to-test>
 bash deploy/scripts/from-scratch.sh --evidence --workspace "$PWD/../evidence-workspace"
 python3 deploy/scripts/record-evidence.py
 ```
 
-`--evidence` skips Nix, Basecamp and the explorers, selects `fast` refund timing,
-builds the Nodes, Bitcoin actors and LEZ sidecar from this checkout, and prepares
-the settlement market. Four new LEZ identities receive genesis allocations.
-The bootstrap creates or loads the two Core wallets and mines mature test coins
-to the Taker if its spendable balance is below 1 BTC. It refuses wallet seeding
-on any chain other than regtest. Ordinary restarts retain identities and funds.
+`--evidence` skips Basecamp, Nix and explorers, selects fast local refund timing,
+builds the Nodes/actors/sidecar, creates LEZ identities and prepares the market.
+It creates or loads the Core wallets and funds the Taker with mature regtest
+coins when needed. Reusing the same checkout/workspace resumes its state;
+Cargo caches make subsequent builds faster.
 
-After deployment, bootstrap publishes the public market manifest into the
-runtime and recreates both Nodes so their Bitcoin lifecycle is enabled. The
-private market directory is not mounted into the Nodes.
+Keep the selected commit unchanged during build and capture. The recorder
+rejects tracked edits, another checkout's stack, stale source receipts, binary
+mismatches, the wrong network/timing and existing output directories. Run one
+recording at a time without other swaps: refund scenarios stop/restart the Maker,
+and historical LEZ balance checks assume no competing account transactions.
 
-The volume namespace is persisted in `runtime/runtime.env` for subsequent
-Compose commands. Reusing the same checkout and workspace resumes its state;
-a new checkout and workspace create independent state.
+## Inspect and share
 
-The checked-out Node and sidecar sources are submitted to Cargo on every build;
-existing staged binaries do not bypass compilation. Cargo dependency/target
-caches are reusable. Upstream chain/tool payloads in the provision directory
-are reused on subsequent runs. For a build without those payloads, use a new
-workspace. An entirely empty Docker build cache is considerably slower.
+The command prints a directory under `deploy/runtime/recordings/`. Open its
+`index.html` locally for offline playback, seeking and speed controls. Each
+scenario also has an asciinema v2 `execution.cast` and plain `execution.log`.
+These are API execution recordings; Basecamp UI interaction is not exercised.
+A [public example capture](../docs/evidence/swap-20260908-c7c5f2d/README.md)
+includes all three recordings and their exact source identity.
 
-The recorder refuses a stack belonging to another checkout, tracked source edits, the wrong timing profile, stale
-source receipts, running binaries that differ from the built images, and an
-existing output directory. Run the scenarios sequentially and avoid other swaps
-while recording: refund tests stop/restart the Maker, and historical LEZ balance
-checks assume there are no competing transactions for the Maker account.
+| Scenario | Required outcome |
+| --- | --- |
+| `concurrent` | Both swaps lock BTC before either claim; both complete with five confirmed/finalized public effects each. |
+| `taker-refund` | Maker never funds LEZ; Taker recovers BTC after the recovery conditions mature. |
+| `maker-refund` | Maker recovers its unclaimed LEZ, then Taker recovers BTC. |
 
-## Inspect and share the results
+BTC refunds must spend the recorded lock and pay the Taker's contribution
+script: 1,000,000 sats becomes 999,000 sats plus a 1,000-sat fee. Historical LEZ
+balances must show 1,000 units funded and returned. Core wallet balance alone
+is not refund proof because mining also produces coinbase rewards.
 
-A [checked-in example capture](../docs/evidence/swap-20260908-c7c5f2d/README.md)
-contains the public recordings and transaction records from this machine. Its
-README identifies the exact capture commit and distinguishes it from earlier
-release evidence. Download its `index.html` to play the recordings locally.
-
-The command prints its output directory under `deploy/runtime/recordings/`.
-Open `index.html` directly in a browser; it contains all terminal recordings,
-with playback, seeking and speed controls, and requires no network access.
-These are API execution recordings, not videos of manually clicking the UI.
-Each scenario also has an asciinema v2 `execution.cast` and plain `execution.log`.
-
-* `concurrent`: both swaps lock BTC before either is claimed; both finish. Each
-  has five confirmed/finalized public effects.
-* `taker-refund`: the Maker is stopped before the BTC broadcast, so it cannot
-  fund LEZ; the Taker refunds BTC after the recovery conditions mature.
-* `maker-refund`: the Maker funds LEZ and the Taker leaves it unclaimed; the
-  Maker refunds LEZ, then the Taker refunds BTC.
-
-Success requires the scenario assertions and the public evidence checks. Both
-BTC refunds must spend their recorded lock, pay the Taker's contribution
-script, and reconcile 1,000,000 sats to 999,000 sats plus a 1,000-sat fee. Maker
-LEZ funding/refund are checked against historical account balances at their
-actual blocks: 1,000 units leave and return. Funding-wallet balance alone is
-not treated as proof of a BTC refund.
-
-`result.json` records the overall result. A failed attempt returns a nonzero
-exit code and retains its logs; it is never silently presented as passing.
-`provenance.json` records the checkout, running executable hashes, image IDs and
-timing. `source.tar.gz` contains that commit's tracked source. The output does
-not copy wallet databases, signer keys, RPC credentials or runtime env files.
+`result.json` records success or failure; failed/interrupted attempts retain
+logs and return a nonzero exit code. `provenance.json` identifies the Git commit,
+running binary hashes, images and timing. Wallet databases, keys, credentials
+and runtime env files are excluded.
 
 ```sh
 cd deploy/runtime/recordings/<printed-directory>
 shasum -a 256 -c SHA256SUMS
-# Share this output directory, not the surrounding runtime or workspace.
+# Share this directory, not the surrounding runtime or workspace.
 ```
 
-Checksums check the supplied files' integrity; independently executing the
-scenarios checks the behavior. New identities, genesis, transaction IDs, swap
-IDs and elapsed times will differ. Compare outcomes, destinations, amounts,
-ordering and finality, not identical hashes or playback timing. A Node can
-observe a finalized refund later than its chain inclusion; the log preserves
-that wait.
+Checksums verify file integrity; rerunning verifies behavior. New identities,
+genesis, transaction IDs and timings will differ. Compare outcomes, amounts,
+destinations, ordering and finality. These BTC → LEZ tests do not revalidate
+XMR, reverse-direction swaps or unresolved protocol threat-model questions.
 
-To repeat just one scenario on the prepared stack:
+## Repeat or stop
 
 ```sh
-python3 deploy/scripts/record-evidence.py --scenario maker-refund
-# Or specify a new output directory:
-python3 deploy/scripts/record-evidence.py --output /tmp/my-swap-evidence
-```
+# From the repository root, run just one scenario or choose a new output path:
+python3 deploy/scripts/record-evidence.py --scenario maker-refund --output /tmp/my-swap-evidence
 
-## Stop or recover
-
-```sh
+# Stop while retaining chain and wallet state:
 cd deploy
 docker compose --env-file runtime/runtime.env down
 ```
 
-This preserves the state. A failed/interrupted scenario can leave a role
-stopped; `docker compose --env-file runtime/runtime.env up -d maker-node taker-node`
-restarts it. Inspect retained swaps before running another attempt. Do not reset
-the chain to recover a swap or change its timing profile mid-flight.
-
-The build is resumable with the same workspace and `--evidence` arguments;
-`--only sources|rust|build|stage|stack` selects one phase. Keep the selected
-commit unchanged through build and capture. These tests cover the BTC → LEZ
-API paths, not XMR, reverse-direction swaps or unresolved protocol threat-model
-questions. Older release recordings remain historical evidence.
+If an interrupted scenario leaves a role stopped, restart it with
+`docker compose --env-file runtime/runtime.env up -d maker-node taker-node`.
+Inspect retained swaps before repeating. Do not reset the chain or change timing
+mid-swap. Resume a failed build with the same workspace and `--evidence` arguments;
+`--only sources|rust|build|stage|stack` selects one build phase.

@@ -45,7 +45,7 @@ until docker exec lez-bitcoin-core /usr/local/bin/bitcoin-cli -conf=/run-config/
   sleep 3; elapsed=$((elapsed + 3))
   [[ $elapsed -lt $timeout ]] || { echo "bitcoin-core RPC never became ready"; docker compose logs --tail 30 bitcoin-core; exit 1; }
 done
-python3 scripts/seed-btc-wallets.py
+[[ "${LEZ_API_ONLY:-0}" != 1 ]] || python3 scripts/seed-btc-wallets.py
 until docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health >/dev/null 2>&1; do
   sleep 3; elapsed=$((elapsed + 3))
   [[ $elapsed -lt $timeout ]] || { echo "Maker Node never became ready"; docker compose logs --tail 30 maker-node; exit 1; }

@@ -236,15 +236,13 @@ phase_rust() {
   # a different checkout. Its dependency/target cache still makes reruns cheap.
   local b role
   for b in "${bins[@]}"; do mkdir -p "$DEPLOY_ROOT/images/${b%/*}"; done
-  {
-    log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
-    docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
-      -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
-        set -euo pipefail
-        cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor 2>&1 | tail -3
-        for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
-        chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
-  }
+  log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
+  docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
+    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
+      set -euo pipefail
+      cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor 2>&1 | tail -3
+      for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
+      chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do
     git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/$role-node/build-source.txt"
   done
@@ -322,13 +320,11 @@ phase_build() {
 
   # the LEZ v0.2 sidecar, the vault-claim tool and the identity tool (link libpython3.12)
   # This crate is part of the checkout too; never trust payload existence.
-  {
-    log "building the LEZ sidecar and its tools"
-    builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-        --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
-      mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
-        /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
-  }
+  log "building the LEZ sidecar and its tools"
+  builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+      --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+    mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
+      /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
 
@@ -427,9 +423,7 @@ phase_swap() {
 
 for p in host sources nix rust build stage stack; do
   [[ "$EVIDENCE_MODE" != 1 || "$p" != nix ]] || continue
-  if phase_wanted "$p"; then
-    "phase_$p"
-  fi
+  phase_wanted "$p" && "phase_$p"
 done
 if [[ "$RUN_SWAP" == 1 ]] || [[ "$ONLY" == swap ]]; then phase_swap; fi
 log "done"

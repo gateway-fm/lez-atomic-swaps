@@ -36,6 +36,13 @@ def collect(name, summary, out, commit):
     ids = summary.get('swap_ids', [summary.get('swap_id')])
     for sid in filter(None, ids):
         view = E.taker_view(sid)
+        if name == 'concurrent':
+            full = X.build_evidence(view, commit)
+            if any(e['chain'] == 'Bitcoin' and e['confirmations'] < 1 for e in full['effects']):
+                raise RuntimeError('unconfirmed Bitcoin effect')
+            (out/f'{sid}-five-effects.json').write_text(json.dumps(full, indent=2)+'\n')
+            print(f'  Verified public chain evidence for {sid}', flush=True)
+            continue
         aggregate = X.taker_aggregate(sid)
         snapshot = aggregate['snapshot']
         reader = '''import json,sqlite3,sys
@@ -71,33 +78,31 @@ print(json.dumps(rows))'''
                     height, block, status = index.facts(txid)
                     evidence['lez_transactions'][key] = {'txid':txid,'height':height,'block':block,'status':status}
                     if status != 'Finalized': raise RuntimeError('LEZ effect not finalized')
-        expected_btc = {'taker_lock_transaction_id', 'followup_claim_transaction_id'} if name == 'concurrent' else {'taker_lock_transaction_id', 'taker_refund_event_transaction_id'}
-        expected_lez = {'maker_lock_transaction_id', 'revealing_claim_transaction_id'} if name == 'concurrent' else ({'maker_lock_transaction_id', 'maker_recovery_transaction_id'} if name == 'maker-refund' else set())
+        expected_btc = {'taker_lock_transaction_id', 'taker_refund_event_transaction_id'}
+        expected_lez = {'maker_lock_transaction_id', 'maker_recovery_transaction_id'} if name == 'maker-refund' else set()
         if set(btc) != expected_btc or set(evidence['lez_transactions']) != expected_lez:
             raise RuntimeError('missing or unexpected public chain effects')
-        refund = btc.get('taker_refund_event_transaction_id')
-        lock = btc.get('taker_lock_transaction_id')
-        if refund and lock:
-            spent = [i['vout'] for i in refund['vin'] if i.get('txid') == lock['txid']]
-            if not spent: raise RuntimeError('refund does not spend recorded lock')
-            principal_sats = sum(round(lock['vout'][i]['value']*1e8) for i in spent)
-            returned_sats = sum(round(v['value']*1e8) for v in refund['vout'])
-            evidence['bitcoin_refund_reconciliation'] = {'spent_lock_outputs':spent,'principal_sats':principal_sats,
-                'refund_outputs_sats':returned_sats,'fee_sats':principal_sats-returned_sats,
-                'note':'On-chain output reconciliation; Core wallet balance alone is not a refund proof.'}
-        if refund and lock:
-            contribution = json.loads(X.docker('lez-taker-node', 'cat',
-                X.TAKER_SWAPS+'/'+aggregate['directory']+'/role/contribution-summary.json'))
-            expected = contribution['bitcoin_claim_destination_script_pubkey']
-            if isinstance(expected, list):
-                expected = bytes(expected).hex()
-            if len(refund['vout']) != 1 or refund['vout'][0]['scriptPubKey']['hex'] != expected:
-                raise RuntimeError('refund destination differs from Taker contribution')
-            check = evidence['bitcoin_refund_reconciliation']
-            if (check['principal_sats'], check['refund_outputs_sats'], check['fee_sats']) != (E.FOREIGN_UNITS, E.FOREIGN_UNITS-1000, 1000):
-                raise RuntimeError('unexpected refund principal or fee')
-            check['destination_script_matches_taker_contribution'] = True
-            check['expected_script_pubkey'] = expected
+        refund = btc['taker_refund_event_transaction_id']
+        lock = btc['taker_lock_transaction_id']
+        spent = [i['vout'] for i in refund['vin'] if i.get('txid') == lock['txid']]
+        if not spent or len(spent) != len(refund['vin']): raise RuntimeError('refund inputs do not match recorded lock')
+        principal_sats = sum(round(lock['vout'][i]['value']*1e8) for i in spent)
+        returned_sats = sum(round(v['value']*1e8) for v in refund['vout'])
+        evidence['bitcoin_refund_reconciliation'] = {'spent_lock_outputs':spent,'principal_sats':principal_sats,
+            'refund_outputs_sats':returned_sats,'fee_sats':principal_sats-returned_sats,
+            'note':'On-chain output reconciliation; Core wallet balance alone is not a refund proof.'}
+        contribution = json.loads(X.docker('lez-taker-node', 'cat',
+            X.TAKER_SWAPS+'/'+aggregate['directory']+'/role/contribution-summary.json'))
+        expected = contribution['bitcoin_claim_destination_script_pubkey']
+        if isinstance(expected, list):
+            expected = bytes(expected).hex()
+        if len(refund['vout']) != 1 or refund['vout'][0]['scriptPubKey']['hex'] != expected:
+            raise RuntimeError('refund destination differs from Taker contribution')
+        check = evidence['bitcoin_refund_reconciliation']
+        if (check['principal_sats'], check['refund_outputs_sats'], check['fee_sats']) != (E.FOREIGN_UNITS, E.FOREIGN_UNITS-1000, 1000):
+            raise RuntimeError('unexpected refund principal or fee')
+        check['destination_script_matches_taker_contribution'] = True
+        check['expected_script_pubkey'] = expected
         if name == 'maker-refund':
             identity = json.loads((E.RUNTIME/'lez/maker/identity.json').read_text())
             account = identity['account_id']
@@ -114,9 +119,6 @@ print(json.dumps(rows))'''
             evidence['lez_refund_reconciliation'] = {'account_id': account, 'historical_balances': balances,
                                                      'funded_units': funded, 'returned_units': returned}
         (out/f'{sid}.json').write_text(json.dumps(evidence,indent=2)+'\n')
-        if view['state']=='completed':
-            full = X.build_evidence(view, commit)
-            (out/f'{sid}-five-effects.json').write_text(json.dumps(full,indent=2)+'\n')
         print(f'  Verified public chain evidence for {sid}',flush=True)
 
 
@@ -233,7 +235,7 @@ def main():
     repo = DEPLOY.parent
     commit = command('git', '-C', str(repo), 'rev-parse', 'HEAD')
     if command('git', '-C', str(repo), 'status', '--porcelain', '--untracked-files=no'):
-        parser.error('commit tracked changes before recording so the source archive identifies this run exactly')
+        parser.error('commit tracked changes before recording so the commit identifies this run exactly')
     if E.timing_profile().get('LEZ_TIMING_PROFILE') != 'fast':
         parser.error('use from-scratch.sh --evidence to prepare the fast timing profile')
     if E.bitcoin('getblockchaininfo')['chain'] != 'regtest':
@@ -248,7 +250,6 @@ def main():
     root = (args.output or DEPLOY/'runtime/recordings'/datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')).resolve()
     root.mkdir(parents=True, exist_ok=False)
     (root/'provenance.json').write_text(json.dumps(metadata, indent=2)+'\n')
-    subprocess.run(['git', '-C', str(repo), 'archive', '--format=tar.gz', '-o', str(root/'source.tar.gz'), commit], check=True)
     names = ['concurrent', 'taker-refund', 'maker-refund'] if args.scenario == 'all' else [args.scenario]
     ok = True
     try:

@@ -56,8 +56,11 @@ Earlier release recordings remain historical evidence.
 The public logs, casts, JSON, provenance and playback page are copied byte for
 byte from the capture. Wallet databases, signer material and runtime credentials
 are not included. The original 60 MB `source.tar.gz` is omitted from Git because
-its exact source commit is linked above. `FULL_CAPTURE_SHA256SUMS` preserves the
-original capture manifest, including that archive's digest.
+its exact source commit is linked above. The redundant concurrent diagnostic
+JSON is also omitted; the canonical five-effect exports are included.
+`FULL_CAPTURE_SHA256SUMS` preserves the full capture manifest, including the
+omitted files' digests. New recordings identify source by commit without
+archiving the repository.
 
 `SHA256SUMS` covers the files in this checked-in subset, including this README
 and the original manifest. Verify it from this directory:
