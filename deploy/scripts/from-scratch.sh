@@ -228,8 +228,10 @@ phase_nix() {
     output="${module#*:}"; module="${module%%:*}"
     if [[ ! -f "$ASSETS/bundle/modules/$module/manifest.json" ]]; then
       log "building $module from logos-chat-module@$chat_rev"
-      nix_build "$module" "github:logos-co/logos-chat-module/$chat_rev#$output"
-      nix_export "$module" "$ASSETS/.nix-out/$module"
+      # The out-link and the export directory must not share a name: the
+      # export replaces its destination, which would delete the link first.
+      nix_build "$module-lgx" "github:logos-co/logos-chat-module/$chat_rev#$output"
+      nix_export "$module-lgx" "$ASSETS/.nix-out/$module"
       bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" \
         "$(find "$ASSETS/.nix-out/$module" -name '*.lgx' | head -1)" module
     fi
