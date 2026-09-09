@@ -3,7 +3,7 @@ name: release-images
 # Publishes the prebuilt local LEZ ↔ BTC swap stack: every image of
 # deploy/compose.yaml built for linux/arm64 and pushed to GHCR, plus the
 # bundle (compose file, scripts/start.sh and friends, pinned config
-# templates, release.env) attached to the GitHub release of the tag.
+# templates, release.env) attached to the GitHub release that was published.
 #
 # The builds are the same phases scripts/from-scratch.sh runs on a developer
 # host, in the same pinned containers, spread over parallel arm64 runners:
@@ -13,14 +13,17 @@ name: release-images
 #   basecamp-ui   the Nix-built Basecamp bundle and both role packages
 #   images        stages the payloads, builds and pushes the remaining images
 #   smoke         pulls the published images and runs the bundle's start.sh
-#   publish       attaches the bundle to the release (tags only)
+#   publish       attaches the bundle to the release (release event only)
 # A cold run takes about 2.5 hours; the escrow guest build is the long pole.
 # Packages are created private on first push: make them public once in the
 # repository's package settings so `docker compose pull` works anonymously.
 
+# Runs only when a GitHub release is published (never on pushes or pull
+# requests); the manual dispatch exists for rehearsing the pipeline on a fork
+# and never creates or alters a release.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       image_tag:
@@ -119,12 +122,16 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
       - name: sequencer_service and indexer_service (rust 1.94.0, release)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:lez-services
+      - name: Collect payloads
+        run: |
+          set -euo pipefail
+          mkdir -p _out
+          cp "$LEZ_WORKSPACE"/provision/data/lez-services/{sequencer_service,indexer_service} _out/
+          du -sh _out
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lez-services-payloads
-          path: |
-            ${{ env.LEZ_WORKSPACE }}/provision/data/lez-services/sequencer_service
-            ${{ env.LEZ_WORKSPACE }}/provision/data/lez-services/indexer_service
+          path: _out
           retention-days: 7
           if-no-files-found: error
 
@@ -291,7 +298,7 @@ jobs:
   publish:
     name: Attach the bundle to the release
     needs: [plan, smoke]
-    if: ${{ needs.plan.outputs.is_release == 'true' }}
+    if: ${{ github.event_name == 'release' && needs.plan.outputs.is_release == 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -300,17 +307,12 @@ jobs:
         with:
           name: lez-swap-stack-bundle
           path: dist
-      - name: Upload to the release of this tag (created as a draft if absent)
+      - name: Upload to the published release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-          IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --draft --title "$TAG" \
-              --notes "Prebuilt linux/arm64 images: \`${LEZ_IMAGE_PREFIX}-<service>:${IMAGE_TAG}\`. Download the bundle, extract it and run \`./scripts/start.sh\`."
-          fi
           gh release upload "$TAG" dist/* --clobber
           gh release view "$TAG" --json assets -q '.assets[].name'
