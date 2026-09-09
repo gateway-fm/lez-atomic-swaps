@@ -1,7 +1,7 @@
 {
   "name": "lez_atomic_swap_taker",
   "display_name": "LEZ / BTC Taker",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "type": "ui_qml",
   "category": "finance",
   "description": "Take wallet-indexed BTC/LEZ offers and perform Taker settlement actions.",
