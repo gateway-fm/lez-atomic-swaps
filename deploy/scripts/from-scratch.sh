@@ -4,7 +4,7 @@
 # with Docker): prerequisites, pinned sources, every image payload built in
 # throwaway containers, the settlement market, the stack, and the Basecamp UI.
 #
-#   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--only PHASE]
+#   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--evidence] [--only PHASE]
 #
 # Every phase is idempotent: it checks what already exists and does only the
 # missing work, so a rerun after a failure continues where it stopped.
@@ -18,6 +18,7 @@
 #             of the ephemeral builder image (deploy/builder)
 #   stage     Bitcoin Core, LEZ services, r0vm, sidecar into the image contexts
 #   stack     gen-config → compose build → up → market bootstrap → UI suites
+#   --evidence skips UI/Nix, uses fast timing, and prepares the API scenarios.
 #   swap      (--swap) one full BTC → LEZ swap through the two Basecamp apps
 #
 # Long cold steps on Apple silicon: Nix closures (~15 min from the Logos cache),
@@ -32,16 +33,26 @@ DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
 WORKSPACE="$(cd "$REPO_ROOT/.." && pwd)"
 RUN_SWAP=0
+EVIDENCE_MODE=0
 ONLY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --workspace) WORKSPACE="$(mkdir -p "$2" && cd "$2" && pwd)"; shift 2 ;;
     --swap) RUN_SWAP=1; shift ;;
+    --evidence) EVIDENCE_MODE=1; export LEZ_API_ONLY=1 LEZ_TIMING_PROFILE=fast; shift ;;
     --only) ONLY="$2"; shift 2 ;;
     -h|--help) sed -n 2,26p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
+if [[ "$EVIDENCE_MODE" == 1 ]] && ! git -C "$REPO_ROOT" diff --quiet HEAD --; then
+  echo "commit tracked changes before building swap evidence" >&2
+  exit 1
+fi
+if [[ "$EVIDENCE_MODE" == 1 && ( "$RUN_SWAP" == 1 || "$ONLY" == swap ) ]]; then
+  echo "--evidence runs API scenarios; --swap requires the full UI stack" >&2
+  exit 64
+fi
 
 # ---- pins -------------------------------------------------------------------
 readonly LEZ_SOURCE_TAG=v0.2.0
@@ -71,6 +82,17 @@ LEZ_SOURCE="$WORKSPACE/lez-source"
 MARKET_ROOT="$WORKSPACE/market"
 [[ -d "$MARKET_ROOT/identities" ]] || [[ ! -d "$WORKSPACE/runner-work/market/identities" ]] || MARKET_ROOT="$WORKSPACE/runner-work/market"
 PROVISION="$WORKSPACE/provision/data"
+if [[ "$EVIDENCE_MODE" == 1 ]]; then
+  # Fresh workspaces must not inherit another checkout's wallets/Node stores.
+  evidence_id="$(printf '%s' "$REPO_ROOT:$WORKSPACE" | shasum -a 256 | cut -c1-12)"
+  evidence_prefix="lez-evidence-$evidence_id"
+  # Resume this checkout/workspace's existing state regardless of its label.
+  if [[ -f "$DEPLOY_ROOT/runtime/runtime.env" ]]; then
+    saved_prefix="$(sed -n 's/^LEZ_VOLUME_PREFIX=//p' "$DEPLOY_ROOT/runtime/runtime.env" | head -1)"
+    [[ "$saved_prefix" != *"-$evidence_id" ]] || evidence_prefix="$saved_prefix"
+  fi
+  export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-$evidence_prefix}"
+fi
 BASECAMP_SRC="$WORKSPACE/basecamp"
 ASSETS="$DEPLOY_ROOT/images/basecamp-ui/assets"
 
@@ -86,8 +108,8 @@ phase_host() {
   fi
   if [[ "$(uname -s)" == "Darwin" ]]; then
     command -v brew >/dev/null || fail "install Homebrew first: https://brew.sh"
-    for formula in jq git curl openssl; do
-      command -v "$formula" >/dev/null || { log "installing $formula"; brew install "$formula"; }
+    for formula in jq git curl openssl python3; do
+      command -v "$formula" >/dev/null || { log "installing $formula"; brew install "${formula/python3/python}"; }
     done
     if ! command -v docker >/dev/null; then
       log "installing Docker Desktop"
@@ -98,10 +120,11 @@ phase_host() {
       open -a Docker
     fi
   else
-    for tool in docker jq git curl openssl xxd; do
+    for tool in docker jq git curl openssl xxd python3; do
       command -v "$tool" >/dev/null || fail "install $tool (apt: docker.io jq git curl openssl xxd)"
     done
   fi
+  command -v shasum >/dev/null || fail "shasum is required (Debian/Ubuntu: libdigest-sha-perl)"
   command -v xxd >/dev/null || fail "xxd is required (part of vim on macOS)"
   for _ in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 5; done
   docker info >/dev/null 2>&1 || fail "the Docker daemon did not come up"
@@ -125,8 +148,10 @@ phase_sources() {
   chmod 0700 "$MARKET_ROOT"
   clone_pinned https://github.com/logos-blockchain/logos-execution-zone.git \
     "$LEZ_SOURCE_TAG" "$LEZ_SOURCE_COMMIT" "$LEZ_SOURCE"
-  clone_pinned https://github.com/logos-co/logos-basecamp.git \
-    "$BASECAMP_TAG" "$BASECAMP_COMMIT" "$BASECAMP_SRC"
+  if [[ "$EVIDENCE_MODE" != 1 ]]; then
+    clone_pinned https://github.com/logos-co/logos-basecamp.git \
+      "$BASECAMP_TAG" "$BASECAMP_COMMIT" "$BASECAMP_SRC"
+  fi
   log "sources pinned"
 }
 
@@ -207,17 +232,20 @@ phase_rust() {
     taker-node/lez-taker-chat-gateway taker-node/lez-taker-registry-init
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor
     lez-services/lez-runtime-healthcheck)
-  local missing=0 b
-  for b in "${bins[@]}"; do [[ -x "$DEPLOY_ROOT/images/$b" ]] || missing=1; done
-  if [[ "$missing" == 1 ]]; then
-    log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
-    docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
-      -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
-        set -e
-        cargo build --locked -p lez-maker-node --bins -p lez-taker-node --bins -p lez-runtime-healthcheck -p btc-reference-actor 2>&1 | tail -3
-        for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
-        chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
-  fi
+  # Always ask Cargo to validate the source; staged executables may belong to
+  # a different checkout. Its dependency/target cache still makes reruns cheap.
+  local b role
+  for b in "${bins[@]}"; do mkdir -p "$DEPLOY_ROOT/images/${b%/*}"; done
+  log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
+  docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
+    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
+      set -euo pipefail
+      cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor 2>&1 | tail -3
+      for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
+      chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
+  for role in maker taker; do
+    git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/$role-node/build-source.txt"
+  done
   log "Node binaries staged"
 }
 
@@ -232,7 +260,7 @@ builder_run() { # builder_run [docker run flags...] -- <bash script>
     -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target/workspace \
     -e RAPIDSNARK_LIB_DIR=/provision/rapidsnark-arm \
     -e BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/aarch64-linux-gnu/13/include \
-    -w /workspace "${flags[@]}" "$BUILDER_IMAGE" bash -c "set -e; $*"
+    -w /workspace "${flags[@]}" "$BUILDER_IMAGE" bash -c "set -euo pipefail; $*"
 }
 # Outputs are written as root inside the container (on Linux; Docker Desktop
 # maps them to the host user already); hand the builder's own directories to
@@ -291,14 +319,14 @@ phase_build() {
   [[ "$(shasum -a 256 "$guest_elf" | cut -c1-64)" == "$GUEST_ELF_SHA256" ]] || fail "escrow guest ELF digest mismatch"
 
   # the LEZ v0.2 sidecar, the vault-claim tool and the identity tool (link libpython3.12)
-  if [[ ! -x "$PROVISION/sidecar/lez-v02-bridge-poc" || ! -x "$PROVISION/sidecar/lez-v02-vault-claim-poc" || ! -x "$PROVISION/sidecar/lez-v02-local-actor-identity" ]]; then
-    log "building the LEZ sidecar and its tools"
-    builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-        --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
-      mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
-        /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
-  fi
+  # This crate is part of the checkout too; never trust payload existence.
+  log "building the LEZ sidecar and its tools"
+  builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
+      --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+    mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
+      /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
+  git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
 
   # persistent wallet identities the market and the LEZ genesis share
   local wallet
@@ -322,6 +350,9 @@ phase_stage() {
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
+  for role in maker taker; do
+    cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
+  done
   (cd "$DEPLOY_ROOT" && bash scripts/stage-assets.sh)
 }
 
@@ -347,7 +378,11 @@ phase_stack() {
   # pull the base images first, with retries, so a slow registry cannot fail
   # the build of payloads that are already staged.
   local image
-  for image in $(grep -h '^FROM' images/*/Dockerfile | awk '{print $2}' | sort -u); do
+  local contexts=(images/*/Dockerfile)
+  if [[ "$EVIDENCE_MODE" == 1 ]]; then
+    contexts=(images/{bitcoin-core,btc-miner,lez-services,maker-node,taker-node}/Dockerfile)
+  fi
+  for image in $(grep -h '^FROM' "${contexts[@]}" | awk '{print $2}' | sort -u); do
     docker image inspect "$image" >/dev/null 2>&1 && continue
     log "pulling $image"
     for _ in 1 2 3; do docker pull -q "$image" >/dev/null && break; sleep 10; done
@@ -366,6 +401,12 @@ phase_stack() {
   bash scripts/repair-indexer.sh
   log "market bootstrap (escrow program, vault claims, bootstrap manifest)"
   market_bootstrap | tail -4
+  # The first start precedes deployment. Entrypoints read this manifest once,
+  # so restart both roles after publishing its public fields into the runtime.
+  cat "$MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
+  chmod 0644 runtime/market-bootstrap.env
+  docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
+  [[ "$EVIDENCE_MODE" != 1 ]] || return 0
   log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"
   local role
   for role in maker taker; do
@@ -381,6 +422,7 @@ phase_swap() {
 }
 
 for p in host sources nix rust build stage stack; do
+  [[ "$EVIDENCE_MODE" != 1 || "$p" != nix ]] || continue
   phase_wanted "$p" && "phase_$p"
 done
 if [[ "$RUN_SWAP" == 1 ]] || [[ "$ONLY" == swap ]]; then phase_swap; fi

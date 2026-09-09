@@ -28,7 +28,7 @@ if [[ ! "$run_id" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
   exit 1
 fi
 
-export CARGO_BUILD_JOBS=2
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/lez-v02-provisional-target-${run_id}}"
 export LEZ_V02_TOOL_DIR="${LEZ_V02_TOOL_DIR:-${TMPDIR:-/tmp}/lez-v02-provisional-tools-${run_id}}"
 guest_target="${LEZ_V02_GUEST_TARGET_DIR:-${TMPDIR:-/tmp}/lez-v02-provisional-guest-${run_id}}"
@@ -80,9 +80,9 @@ if [[ "${LEZ_NATIVE_TOOLS:-0}" == "1" ]]; then
     echo "LEZ_NATIVE_TOOLS requires ${LEZ_V02_NATIVE_R0VM} (built from the risc0 v${risc0_version} tag)" >&2
     exit 1
   }
-  if [[ ! -x "${isolated_cargo_home}/bin/cargo-risczero" ]]; then
+  if [[ ! -x "${LEZ_V02_TOOL_DIR}/bin/cargo-risczero" ]]; then
     CARGO_HOME="$isolated_cargo_home" \
-      cargo install cargo-risczero --version "${risc0_version}" --locked --root "${LEZ_V02_TOOL_DIR}"
+      cargo install cargo-risczero --version "${risc0_version}" --locked --bin cargo-risczero --root "${LEZ_V02_TOOL_DIR}"
   fi
   export PATH="${LEZ_V02_TOOL_DIR}/bin:${PATH}"
   export RISC0_SERVER_PATH="$LEZ_V02_NATIVE_R0VM"

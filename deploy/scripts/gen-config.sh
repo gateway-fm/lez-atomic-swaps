@@ -35,6 +35,14 @@ readonly wallet_maker_allocation=100000
 readonly wallet_taker_allocation=200000
 readonly upstream_genesis_time_hex="2c04626900000000"
 
+# Preserve the selected volume namespace on ordinary restarts too.
+volume_prefix="${LEZ_VOLUME_PREFIX:-}"
+if [[ -z "$volume_prefix" && -f "$RUNTIME/runtime.env" ]]; then
+  volume_prefix="$(sed -n 's/^LEZ_VOLUME_PREFIX=//p' "$RUNTIME/runtime.env" | head -1)"
+fi
+volume_prefix="${volume_prefix:-lez}"
+[[ "$volume_prefix" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo "invalid LEZ_VOLUME_PREFIX" >&2; exit 1; }
+
 umask 077
 
 echo "runtime root: $RUNTIME"
@@ -174,10 +182,19 @@ fi
   echo "LEZ_MARKET_ROOT must select the market root (wallet identities, market-bootstrap.env)" >&2
   exit 1
 }
+# Only public deployment IDs are mounted from the market. Its private root
+# is mode 0700 and cannot be traversed by the Nodes' uid on Linux.
+if [[ -s "$market_root/market-bootstrap.env" ]]; then
+  cat "$market_root/market-bootstrap.env" > "$RUNTIME/market-bootstrap.env"
+else
+  : > "$RUNTIME/market-bootstrap.env"
+fi
+chmod 0644 "$RUNTIME/market-bootstrap.env"
 identities_root="${LEZ_WALLET_IDENTITIES:-$market_root/identities}"
 for pair in maker:maker-munich-01 taker:taker-zurich-01; do
   role="${pair%%:*}"; wallet="${pair##*:}"
   mkdir -p "$RUNTIME/lez/$role"
+  chmod 0755 "$RUNTIME/lez/$role"
   if [[ -n "$identities_root" && -f "$identities_root/$wallet/lez-signer.key" ]]; then
     cp "$identities_root/$wallet/lez-signer.key" "$RUNTIME/lez/$role/lez-signer.key"
     cp "$identities_root/$wallet/identity.json" "$RUNTIME/lez/$role/identity.json"
@@ -206,6 +223,7 @@ case "$timing_profile" in
   *) echo "LEZ_TIMING_PROFILE must be local or fast" >&2; exit 1 ;;
 esac
 printf '%s\n' \
+  "LEZ_VOLUME_PREFIX=$volume_prefix" \
   "LEZ_TIMING_PROFILE=$timing_profile" \
   "LEZ_BTC_REFUND_CSV_BLOCKS=${timing[0]}" \
   "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS=${timing[1]}" \
@@ -222,5 +240,8 @@ printf '%s\n' \
   "LEZ_MARKET_ROOT=$market_root" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
+
+# Configs contain public chain settings and are mounted as individual files.
+chmod 0644 "$RUNTIME/config/"*.json "$RUNTIME/config/"*.yaml
 
 echo "runtime generated at $RUNTIME"

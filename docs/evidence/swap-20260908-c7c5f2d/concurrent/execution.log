@@ -1,0 +1,47 @@
+LEZ atomic swaps — Node owner-API execution
+Scenario: concurrent
+Source: c7c5f2d820c6221066721595fcc838dbf1354156
+Bitcoin regtest + LEZ devnet; fast timing. This is an API recording.
+
+[23:10:45] === concurrent (stamp 1788901845)
+[23:10:45] preflight: indexer historical reads
+[23:10:47]   indexer serves historical reads at the tip (47)
+[23:10:47] preflight: LEZ finality advancing
+[23:11:13]   indexer finalized 48 → 49 in 25 s
+[23:11:13]   Maker published offer-e2e-1788901845-a
+[23:11:14]   Taker took offer-e2e-1788901845-a: swap a8c5c4020918 (not_activated)
+[23:11:14]   Maker published offer-e2e-1788901845-b
+[2026-09-08T21:11:15+00:00] Running; elapsed 30 seconds
+[23:11:15]   Taker took offer-e2e-1788901845-b: swap f52d41285179 (not_activated)
+[23:11:15]   Taker locked Bitcoin: cfca9dbe0060 (replay=False)
+[23:11:15]   Taker locked Bitcoin: 34ae09e4a408 (replay=False)
+[23:11:15]   taker a8c5c4020918: awaiting_first_lock (gen 0) | maker: leased
+[2026-09-08T21:11:45+00:00] Running; elapsed 60 seconds
+[2026-09-08T21:12:15+00:00] Running; elapsed 90 seconds
+[23:12:36]   taker a8c5c4020918: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[2026-09-08T21:12:45+00:00] Running; elapsed 120 seconds
+[2026-09-08T21:13:15+00:00] Running; elapsed 150 seconds
+[2026-09-08T21:13:45+00:00] Running; elapsed 180 seconds
+[2026-09-08T21:14:15+00:00] Running; elapsed 210 seconds
+[2026-09-08T21:14:45+00:00] Running; elapsed 240 seconds
+[2026-09-08T21:15:15+00:00] Running; elapsed 270 seconds
+[2026-09-08T21:15:45+00:00] Running; elapsed 300 seconds
+[2026-09-08T21:16:15+00:00] Running; elapsed 330 seconds
+[23:16:28]   taker a8c5c4020918: claim_available (gen 2) | maker: taker_lock_confirmed
+[23:16:32]   Taker claimed LEZ (replay=False)
+[23:16:32]   taker f52d41285179: claim_available (gen 2) | maker: both_legs_locked
+[23:16:33]   Taker claimed LEZ (replay=False)
+[23:16:33]   taker a8c5c4020918: claim_in_progress (gen 2) | maker: both_legs_locked
+[2026-09-08T21:16:45+00:00] Running; elapsed 360 seconds
+[2026-09-08T21:17:15+00:00] Running; elapsed 390 seconds
+[2026-09-08T21:17:45+00:00] Running; elapsed 420 seconds
+[2026-09-08T21:18:15+00:00] Running; elapsed 450 seconds
+[2026-09-08T21:18:45+00:00] Running; elapsed 480 seconds
+[23:18:48]   taker a8c5c4020918: completed (gen 4) | maker: completed
+[23:18:48]   both Nodes report a8c5c4020918 completed
+[23:18:48]   taker f52d41285179: completed (gen 4) | maker: completed
+[23:18:48]   both Nodes report f52d41285179 completed
+[23:18:48] === concurrent: passed in 483s
+  Verified public chain evidence for a8c5c4020918e0608db57edb35d579e40f42c59e090a0749e6c783d6cc8ce28c
+  Verified public chain evidence for f52d4128517977d6a6408cda5362ace738598434a6678d495738d2b3dd0bbc84
+PASS — scenario and public chain evidence verified.

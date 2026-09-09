@@ -31,6 +31,7 @@ jobs:
       - run: ./scripts/check-bitcoin-core-isolation.sh
       - run: ./scripts/check-lez-v02-docker-isolation.sh
       - run: ./scripts/check-runtime-profiles.py
+      - run: python3 -m unittest discover -s deploy/tests
 
   container-security:
     name: Runtime findings fail-hard; classified upstream findings remain visible

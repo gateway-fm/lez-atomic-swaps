@@ -1,0 +1,15 @@
+{
+  "scenario": "maker-refund",
+  "stamp": "1788903660",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "6",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "600",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "900",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "1200",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60"
+  },
+  "swap_id": "2238252e46814198fccd71bc5bc26e04068931b53fb78d3b53c6ec9b8017e26f",
+  "result": "passed",
+  "seconds": 1323
+}

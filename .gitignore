@@ -31,3 +31,7 @@ __pycache__/
 /deploy/images/lez-services/r0vm
 /deploy/images/bitcoin-core/bin/
 /deploy/images/basecamp-ui/assets/
+
+# Source receipts for locally built evidence payloads
+/deploy/images/*/build-source.txt
+/deploy/images/*/sidecar-source.txt

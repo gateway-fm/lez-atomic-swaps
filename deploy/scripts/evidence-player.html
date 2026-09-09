@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LEZ swap API recordings</title>
+<style>
+body{font:16px system-ui;margin:24px;background:#111820;color:#e6eef6}button,select,input{font:inherit;margin:6px;padding:6px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#080d12;padding:18px;height:70vh;overflow:auto;font:14px monospace}label{display:inline-block}
+</style>
+<h1>LEZ swap API recordings</h1>
+<p>Timestamped execution logs from the Node scenario harness. Public transaction checks follow each successful scenario. This page works offline.</p>
+<label>Scenario <select id="scenario"></select></label>
+<button id="play">Play</button><button id="reset">Reset</button>
+<label>Speed <select id="speed"><option>1</option><option>10</option><option>60</option></select>×</label>
+<label>Position <input id="position" type="range" min="0" value="0" step="any"></label><span id="elapsed"></span>
+<pre id="terminal" aria-label="Recorded terminal output"></pre>
+<script>
+const recordings = /* RECORDINGS */ {};
+const scenario = document.getElementById('scenario'), terminal = document.getElementById('terminal'), position = document.getElementById('position'), play = document.getElementById('play');
+let events = [], playing = false, last = performance.now();
+for(const name of Object.keys(recordings)) { const option = document.createElement('option'); option.textContent = name; scenario.append(option); }
+function render() { const t = Number(position.value); terminal.textContent = events.filter(e => e[0] <= t && e[1] === 'o').map(e => e[2]).join(''); terminal.scrollTop = terminal.scrollHeight; document.getElementById('elapsed').textContent = `${Math.floor(t)} / ${Math.ceil(Number(position.max))} seconds`; }
+function select() { events = (recordings[scenario.value] || []).slice(1); position.max = events.length ? events[events.length-1][0] : 0; position.value = 0; playing = false; play.textContent = 'Play'; render(); }
+scenario.onchange = select;
+position.oninput = render;
+play.onclick = () => { playing = !playing; play.textContent = playing ? 'Pause' : 'Play'; };
+document.getElementById('reset').onclick = select;
+function tick(now) { if(playing) { position.value = Math.min(Number(position.max), Number(position.value)+(now-last)/1000*Number(document.getElementById('speed').value)); render(); if(Number(position.value)>=Number(position.max)) {playing=false;play.textContent='Play';} } last=now; requestAnimationFrame(tick); }
+select(); requestAnimationFrame(tick);
+</script>
+</html>

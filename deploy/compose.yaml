@@ -97,9 +97,24 @@ services:
     logging: *default-logging
 
   # ─── LEZ v0.2 devnet ────────────────────────────────────────────────────
+  lez-init:
+    image: debian:bookworm-slim
+    container_name: lez-state-init
+    volumes:
+      - ./runtime/bedrock:/state/bedrock
+      - ./runtime/sequencer:/state/sequencer
+      - ./runtime/indexer:/state/indexer
+    command: ["chown", "-R", "65532:65532", "/state/bedrock", "/state/sequencer", "/state/indexer"]
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
   bedrock:
     image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f"
     container_name: lez-bedrock
+    depends_on:
+      lez-init:
+        condition: service_completed_successfully
     entrypoint: ["/usr/bin/logos-blockchain-node"]
     command:
       - "/opt/lez-v0.2-source/bedrock/node-config.yaml"
@@ -284,7 +299,7 @@ services:
       - delivery_dir:/delivery
       - ./runtime/lez/maker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
-      - ${LEZ_MARKET_ROOT}:/run-market:ro
+      - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -342,7 +357,7 @@ services:
       - maker_socket:/run/lez/maker
       - ./runtime/lez/taker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
-      - ${LEZ_MARKET_ROOT}:/run-market:ro
+      - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777
     networks: [chains]
@@ -395,14 +410,14 @@ networks:
 
 volumes:
   bitcoin_core_data:
-    name: lez-bitcoin-core-data
+    name: ${LEZ_VOLUME_PREFIX:-lez}-bitcoin-core-data
   maker_state:
-    name: lez-maker-state
+    name: ${LEZ_VOLUME_PREFIX:-lez}-maker-state
   maker_socket:
-    name: lez-maker-socket
+    name: ${LEZ_VOLUME_PREFIX:-lez}-maker-socket
   taker_state:
-    name: lez-taker-state
+    name: ${LEZ_VOLUME_PREFIX:-lez}-taker-state
   taker_socket:
-    name: lez-taker-socket
+    name: ${LEZ_VOLUME_PREFIX:-lez}-taker-socket
   delivery_dir:
-    name: lez-delivery-dir
+    name: ${LEZ_VOLUME_PREFIX:-lez}-delivery-dir

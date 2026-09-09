@@ -38,6 +38,13 @@ pulls stay anonymous. And the Docker VM disk fills up from build caches over
 time: `docker builder prune` and `docker image prune` are safe; the
 `lez-build-*` volumes are caches you may drop at the cost of a rebuild.
 
+## Record and share evidence
+
+To repeat the concurrent-swap and both refund scenarios with fresh wallets,
+see [the evidence guide](EVIDENCE.md). `scripts/from-scratch.sh --evidence`
+prepares an API-only stack with fast timing and automatic regtest funding.
+The portable recorder produces an offline replay page and public chain checks.
+
 ## Quick start
 
 ```sh
@@ -320,7 +327,9 @@ ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspec
 
 The workspace next to this repository holds the pinned `lez-source` checkout,
 `provision/data` (built artifacts) and the market root; `runtime/runtime.env`
-records `LEZ_MARKET_ROOT`, the one path the Nodes read from it.
+records `LEZ_MARKET_ROOT` for provisioning. The Nodes mount the public
+`runtime/market-bootstrap.env` copy and their individual staged identities;
+they do not mount the private market root.
 
 ## Node-owned Bitcoin swaps (ADR 0213)
 

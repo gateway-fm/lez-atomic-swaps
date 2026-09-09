@@ -1,0 +1,70 @@
+LEZ atomic swaps — Node owner-API execution
+Scenario: taker-refund
+Source: c7c5f2d820c6221066721595fcc838dbf1354156
+Bitcoin regtest + LEZ devnet; fast timing. This is an API recording.
+
+[23:18:51] === taker-refund (stamp 1788902331)
+[23:18:51] preflight: indexer historical reads
+[23:18:56]   indexer serves historical reads at the tip (96)
+[23:18:56] preflight: LEZ finality advancing
+[2026-09-08T21:19:21+00:00] Running; elapsed 30 seconds
+[23:19:21]   indexer finalized 96 → 99 in 25 s
+[23:19:21]   Maker published offer-e2e-1788902331
+[23:19:22]   Taker took offer-e2e-1788902331: swap 1abd1b643137 (not_activated)
+[23:19:22]   stopping the Maker Node so it never funds
+[23:19:24]   Taker locked Bitcoin: b89fd057dc69 (replay=False)
+[23:19:24]   mined 7 blocks past the lock; the Maker cutoff is 600s after the take
+[23:19:25]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[2026-09-08T21:19:51+00:00] Running; elapsed 60 seconds
+[2026-09-08T21:20:21+00:00] Running; elapsed 90 seconds
+[23:20:25]   refund request admitted (attempt 2, state awaiting_second_lock)
+[2026-09-08T21:20:51+00:00] Running; elapsed 120 seconds
+[2026-09-08T21:21:21+00:00] Running; elapsed 150 seconds
+[2026-09-08T21:21:51+00:00] Running; elapsed 180 seconds
+[2026-09-08T21:22:21+00:00] Running; elapsed 210 seconds
+[2026-09-08T21:22:51+00:00] Running; elapsed 240 seconds
+[2026-09-08T21:23:21+00:00] Running; elapsed 270 seconds
+[2026-09-08T21:23:51+00:00] Running; elapsed 300 seconds
+[2026-09-08T21:24:21+00:00] Running; elapsed 330 seconds
+[23:24:26]   refund request replayed (attempt 6, state refund_in_progress)
+[2026-09-08T21:24:51+00:00] Running; elapsed 360 seconds
+[2026-09-08T21:25:21+00:00] Running; elapsed 390 seconds
+[2026-09-08T21:25:51+00:00] Running; elapsed 420 seconds
+[2026-09-08T21:26:21+00:00] Running; elapsed 450 seconds
+[2026-09-08T21:26:51+00:00] Running; elapsed 480 seconds
+[2026-09-08T21:27:21+00:00] Running; elapsed 510 seconds
+[2026-09-08T21:27:51+00:00] Running; elapsed 540 seconds
+[2026-09-08T21:28:21+00:00] Running; elapsed 570 seconds
+[2026-09-08T21:28:51+00:00] Running; elapsed 600 seconds
+[2026-09-08T21:29:21+00:00] Running; elapsed 630 seconds
+[23:29:28]   refund request replayed (attempt 11, state refund_in_progress)
+[2026-09-08T21:29:51+00:00] Running; elapsed 660 seconds
+[2026-09-08T21:30:21+00:00] Running; elapsed 690 seconds
+[2026-09-08T21:30:51+00:00] Running; elapsed 720 seconds
+[2026-09-08T21:31:21+00:00] Running; elapsed 750 seconds
+[2026-09-08T21:31:51+00:00] Running; elapsed 780 seconds
+[2026-09-08T21:32:21+00:00] Running; elapsed 810 seconds
+[2026-09-08T21:32:51+00:00] Running; elapsed 840 seconds
+[2026-09-08T21:33:21+00:00] Running; elapsed 870 seconds
+[2026-09-08T21:33:51+00:00] Running; elapsed 900 seconds
+[2026-09-08T21:34:21+00:00] Running; elapsed 930 seconds
+[23:34:30]   refund request replayed (attempt 16, state refund_in_progress)
+[2026-09-08T21:34:51+00:00] Running; elapsed 960 seconds
+[2026-09-08T21:35:21+00:00] Running; elapsed 990 seconds
+[2026-09-08T21:35:51+00:00] Running; elapsed 1020 seconds
+[2026-09-08T21:36:21+00:00] Running; elapsed 1050 seconds
+[2026-09-08T21:36:51+00:00] Running; elapsed 1080 seconds
+[2026-09-08T21:37:21+00:00] Running; elapsed 1110 seconds
+[2026-09-08T21:37:51+00:00] Running; elapsed 1140 seconds
+[2026-09-08T21:38:21+00:00] Running; elapsed 1170 seconds
+[2026-09-08T21:38:51+00:00] Running; elapsed 1200 seconds
+[2026-09-08T21:39:21+00:00] Running; elapsed 1230 seconds
+[23:39:32]   refund request replayed (attempt 21, state refund_in_progress)
+[2026-09-08T21:39:51+00:00] Running; elapsed 1260 seconds
+[2026-09-08T21:40:21+00:00] Running; elapsed 1290 seconds
+[23:40:32]   Taker refunded; lez-taker balance 649.97993800 → 2599.96990700
+[2026-09-08T21:40:51+00:00] Running; elapsed 1320 seconds
+[23:40:59]   Maker reconciled to refunded
+[23:40:59] === taker-refund: passed in 1328s
+  Verified public chain evidence for 1abd1b64313704928464dc298b2b5037a04e6ea214d17327813721ac3b9eca9d
+PASS — scenario and public chain evidence verified.

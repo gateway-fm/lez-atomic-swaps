@@ -33,6 +33,9 @@ RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr
     && chown -R lez:lez /var/lib/lez /run/lez \
     && chmod 0700 /var/lib/lez/maker /run/lez/maker
 
+COPY --chmod=0444 build-source.txt sidecar-source.txt /usr/local/share/lez/
+RUN chmod 0755 /usr/local/share/lez
+
 USER lez
 WORKDIR /var/lib/lez
 ENTRYPOINT ["/usr/bin/tini", "--"]

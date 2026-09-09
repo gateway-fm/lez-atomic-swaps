@@ -35,7 +35,9 @@ echo "re-indexing from bedrock…"
 docker stop lez-indexer >/dev/null
 backup="runtime/indexer-broken-$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$backup"
-mv runtime/indexer/rocksdb-* "$backup"/
+# On Linux these directories belong to the service uid, not the host user.
+# Move the derived databases through a short-lived root helper on that mount.
+docker run --rm -v "$PWD/runtime:/runtime" debian:bookworm-slim   bash -c 'shopt -s nullglob; paths=(/runtime/indexer/rocksdb-*); (( ${#paths[@]} )) || exit 1; mv -- "${paths[@]}" "$1"'   _ "/runtime/${backup#runtime/}"
 docker start lez-indexer >/dev/null
 previous=0
 for _ in $(seq 1 360); do
