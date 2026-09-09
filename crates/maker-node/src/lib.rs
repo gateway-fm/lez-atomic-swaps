@@ -4,6 +4,7 @@ mod actor_supervisor;
 mod btc_chat;
 mod btc_lifecycle;
 mod daemon_lifecycle;
+mod extension_api;
 mod logos_price_source;
 mod price_source;
 mod route_health;
@@ -28,6 +29,7 @@ pub use daemon_lifecycle::{
     MakerDaemonHealth, MakerDaemonLaunchConfig, MakerDaemonLifecycle, MakerDaemonLifecycleError,
     ProcessMakerDaemon,
 };
+pub use extension_api::OfferPublishRequestV1;
 pub use lez_node_common::*;
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
@@ -899,6 +901,7 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
     register_health_method(module)?;
     register_pair_and_price_methods(module)?;
     register_offer_methods(module)?;
+    extension_api::register(module)?;
     register_maker_actor_methods(module)?;
     module.register_blocking_method::<RpcResult<Vec<SwapView>>, _>(
         "swap_history",
@@ -1369,32 +1372,7 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
             let offer_id = request.offer_id.clone();
             let now_unix_seconds = trusted_now_unix_seconds()?;
             let commit = publish_offer(&context, &request, now_unix_seconds)?;
-            if let Some(delivery) = &context.delivery {
-                let delivery_now_unix_seconds = trusted_now_unix_seconds()?;
-                let active_offer = {
-                    let store = context
-                        .store
-                        .lock()
-                        .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-                    store
-                        .list_maker_offer_history(delivery_now_unix_seconds)
-                        .map_err(application_store_error)?
-                        .into_iter()
-                        .find(|record| {
-                            record.offer().id() == &offer_id
-                                && record.status() == MakerOfferStatus::Active
-                        })
-                        .map(|record| record.offer().clone())
-                };
-                if let Some(offer) = active_offer {
-                    delivery
-                        .publish_or_verify(&DeliveryPublicationV1::new(
-                            offer,
-                            delivery_now_unix_seconds,
-                        ))
-                        .map_err(|error| delivery_error(&error))?;
-                }
-            }
+            publish_offer_to_delivery(&context, &offer_id)?;
             Ok(commit)
         },
     )?;
@@ -1442,6 +1420,35 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
             Ok(commit)
         },
     )?;
+    Ok(())
+}
+
+fn publish_offer_to_delivery(context: &MakerRpc, offer_id: &MakerOfferId) -> RpcResult<()> {
+    if let Some(delivery) = &context.delivery {
+        let delivery_now_unix_seconds = trusted_now_unix_seconds()?;
+        let active_offer = {
+            let store = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            store
+                .list_maker_offer_history(delivery_now_unix_seconds)
+                .map_err(application_store_error)?
+                .into_iter()
+                .find(|record| {
+                    record.offer().id() == offer_id && record.status() == MakerOfferStatus::Active
+                })
+                .map(|record| record.offer().clone())
+        };
+        if let Some(offer) = active_offer {
+            delivery
+                .publish_or_verify(&DeliveryPublicationV1::new(
+                    offer,
+                    delivery_now_unix_seconds,
+                ))
+                .map_err(|error| delivery_error(&error))?;
+        }
+    }
     Ok(())
 }
 
