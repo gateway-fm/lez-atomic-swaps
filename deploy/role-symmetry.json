@@ -8,7 +8,7 @@
   "roles": {
     "maker": {
       "node": "lez-maker-node",
-      "image": "lez-maker-node:local",
+      "image": "${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}",
       "cli": "lez-maker-cli",
       "ui": "lez-maker-ui",
       "chat_gateway": "lez-maker-chat-gateway",
@@ -23,7 +23,7 @@
     },
     "taker": {
       "node": "lez-taker-node",
-      "image": "lez-taker-node:local",
+      "image": "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}",
       "cli": "lez-taker-cli",
       "ui": "lez-taker-ui",
       "chat_gateway": "lez-taker-chat-gateway",
