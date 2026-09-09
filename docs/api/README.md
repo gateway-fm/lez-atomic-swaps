@@ -237,7 +237,11 @@ this). The same object appears on `maker_actor_monitor_v1`.
 States include `initiating`, `not_activated`, `awaiting_first_lock`,
 `awaiting_second_lock`, `both_legs_locked`, `claim_available`,
 `refund_available`, `claim_in_progress`, `refund_in_progress`, `completed`,
-`refunded`, `attention_required`. A successful action response is not proof
+`refunded`, `attention_required`. `both_legs_locked` with no
+`available_action` means the claim window has closed (the earlier refund's
+deadline passed): a claim can no longer be included, the Node follows the
+Maker's refund and then offers `refund`; an earlier admitted `claim` no longer
+hides that. A successful action response is not proof
 of `completed` or `refunded`. Unknown state or `attention_required` requires
 reconciliation; do not guess a terminal action.
 

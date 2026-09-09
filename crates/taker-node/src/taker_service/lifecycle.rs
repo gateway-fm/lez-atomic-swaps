@@ -325,6 +325,11 @@ fn btc_actor_progress(
             TakerSwapStateV1::AwaitingSecondLock,
             Some(TakerTerminalActionV1::Refund),
         ),
+        // The claim window has closed: a claim can no longer land, so the Node
+        // follows the Maker's refund and offers the Taker's own afterwards.
+        Phase::BothLegsLocked if next_action == ActorNextActionV1::RecoverMakerLeg => {
+            (TakerSwapStateV1::BothLegsLocked, None)
+        }
         Phase::BothLegsLocked => (
             TakerSwapStateV1::ClaimAvailable,
             Some(TakerTerminalActionV1::Claim),
@@ -517,12 +522,21 @@ async fn terminal_action(
         }
         return Ok(action_commit(&admission));
     }
-    if lookup_admitted_action_for_swap(&initiation, &swap_id)
-        .await?
-        .is_some()
-    {
-        return Err(ActionError::Conflict);
-    }
+    // One admitted action per swap. An earlier admission for a different
+    // action at an earlier generation is stale once the actor offers this one
+    // at a later generation: a claim whose window closed before it landed,
+    // followed by the refund. It is retired below, only after the actor's
+    // status confirms the new action is what it offers now.
+    let superseded = match lookup_admitted_action_for_swap(&initiation, &swap_id).await? {
+        None => None,
+        Some(existing)
+            if existing.action() != facade_action(action)
+                && existing.requested_after_generation() < expected_generation =>
+        {
+            Some(existing)
+        }
+        Some(_) => return Err(ActionError::Conflict),
+    };
 
     let status = config
         .status()
@@ -544,6 +558,9 @@ async fn terminal_action(
     }
     if available_action != Some(action) {
         return Err(ActionError::Unavailable);
+    }
+    if let Some(superseded) = superseded {
+        retire_superseded_action(&initiation, &superseded).await?;
     }
 
     let admitted_at = SystemTime::now()
@@ -773,6 +790,26 @@ async fn lookup_admitted_action_for_swap(
         context
             .registry_mut()
             .lookup_action_for_swap(&swap_id)
+            .map_err(map_action_store_error)
+    })
+    .await
+    .map_err(|_| ActionError::RegistryUnavailable)?
+}
+
+async fn retire_superseded_action(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    stale: &TakerActionAdmissionV1,
+) -> Result<(), ActionError> {
+    let context = Arc::clone(initiation);
+    let stale = stale.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut context = context
+            .lock()
+            .map_err(|_| ActionError::RegistryUnavailable)?;
+        context
+            .registry_mut()
+            .retire_superseded_action(&stale)
+            .map(|_| ())
             .map_err(map_action_store_error)
     })
     .await
@@ -1132,10 +1169,19 @@ fn overlay_admitted_action(
     if admission.requested_after_generation() > view.progress_generation {
         return Err(MonitoringError::DependencyUnavailable);
     }
-    if matches!(
-        view.state,
-        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
-    ) {
+    // An admitted action shows as "in progress" only while the actor still
+    // offers it at the generation it was requested after. Once the actor has
+    // moved on, or stopped offering it (a claim whose window closed), the
+    // admission is history and the actor's own view rules, so the refund the
+    // actor offers next is not hidden behind a claim that can never land.
+    let still_offered = admission.requested_after_generation() == view.progress_generation
+        && view.available_action.map(facade_action) == Some(admission.action());
+    if !still_offered
+        || matches!(
+            view.state,
+            TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
+        )
+    {
         return Ok(view);
     }
     view.state = match admission.action() {
@@ -1558,7 +1604,7 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
         let Ok(Ok((config, held_lock))) = loaded else {
             continue;
         };
-        let Ok(LifecycleStatus::Active { phase, .. }) = config.status().await else {
+        let Ok(LifecycleStatus::Active { phase, state, .. }) = config.status().await else {
             continue;
         };
         // An admitted refund is driven here until it lands. Its recover command
@@ -1570,9 +1616,15 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
             drop(held_lock);
             continue;
         }
+        // A submitted claim is observed only while the actor still offers the
+        // claim; once the window has closed it cannot land, and the Maker's
+        // refund is what to watch for.
         let claim_submitted =
             claim_submitted_marker(config.state_db()).is_some_and(|marker| marker.is_file());
-        if taker_observation_phase(phase) || (phase == Phase::BothLegsLocked && claim_submitted) {
+        let claim_pending = phase == Phase::BothLegsLocked
+            && claim_submitted
+            && state == TakerSwapStateV1::ClaimAvailable;
+        if taker_observation_phase(phase) || claim_pending {
             let _ = config.observe().await;
         } else if phase == Phase::BothLegsLocked {
             // Both legs locked and no claim asked for: a drive here would be the
@@ -2095,6 +2147,10 @@ mod tests {
                 TakerSwapStateV1::ClaimAvailable,
                 Some(TakerTerminalActionV1::Claim),
             )
+        );
+        assert_eq!(
+            btc_actor_progress(Phase::BothLegsLocked, Next::RecoverMakerLeg),
+            (TakerSwapStateV1::BothLegsLocked, None)
         );
         assert_eq!(
             btc_actor_progress(Phase::ClaimEvidenceAvailable, Next::ObserveFollowupClaim),

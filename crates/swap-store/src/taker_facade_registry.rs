@@ -962,6 +962,47 @@ impl SqliteTakerFacadeStore {
         })
     }
 
+    /// Retires an admitted action the actor has moved past without performing
+    /// it, so the action it offers next can be admitted: a claim admitted at
+    /// one generation whose window closed before it landed, followed by the
+    /// refund at a later generation. The caller decides that from the actor's
+    /// current status; the store only removes exactly the named admission.
+    /// Returns whether an admission was removed.
+    ///
+    /// # Errors
+    ///
+    /// Fails on corrupt durable state or unavailable storage.
+    pub fn retire_superseded_action(
+        &mut self,
+        admission: &TakerActionAdmissionV1,
+    ) -> Result<bool, TakerFacadeStoreError> {
+        self.revalidate_storage()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        let Some(existing) = load_valid_action_rows(&transaction, &admission.swap_id)?
+            .into_iter()
+            .find(|row| {
+                row.action == admission.action
+                    && row.expected_generation == admission.requested_after_generation
+            })
+        else {
+            return Ok(false);
+        };
+        transaction
+            .execute(
+                "DELETE FROM taker_facade_requests WHERE request_id = ?1",
+                params![existing.request_id.as_str()],
+            )
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        transaction
+            .commit()
+            .map_err(|_| TakerFacadeStoreError::StorageUnavailable)?;
+        self.revalidate_storage()?;
+        Ok(true)
+    }
+
     fn open_connection(path: &Path, identity: FileIdentity) -> Result<Self, TakerFacadeStoreError> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX

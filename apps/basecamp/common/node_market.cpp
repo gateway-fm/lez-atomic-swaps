@@ -144,6 +144,9 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     if (nodeState == "awaiting_second_lock")
         return {"awaiting_maker_lock", "Waiting for the Maker's LEZ escrow", 50,
                 "The Maker's Node funds the escrow automatically after your lock confirms", "", ""};
+    if (nodeState == "both_legs_locked")
+        return {"claim_window_closed", "Claim window closed", 55,
+                "A claim can no longer land; your Node waits for the Maker's refund, then offers yours", "", ""};
     if (nodeState == "claim_available")
         return {"claim_ready", "Your LEZ claim is ready", 70,
                 "Your move — Claim " + lez + " reveals the adaptor secret the Maker needs for its Bitcoin claim",
@@ -171,6 +174,9 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     if (nextAction == QStringLiteral("recover_taker_leg"))
         return {"recovering", "Lock window missed", 55,
                 "Your Node could not lock in time; it recovers once the Taker's refund is final", "", ""};
+    if (nextAction == QStringLiteral("recover_maker_leg"))
+        return {"recovering", "Claim window closed", 55,
+                "The Taker's claim can no longer land; your Node refunds its LEZ escrow", "", ""};
     if (phase == "offered" || phase == "awaiting_taker_confirmations")
         return {"awaiting_taker_lock", "Waiting for the Taker's Bitcoin lock", 20,
                 "Your Node observes Bitcoin; nothing to click", "", ""};
