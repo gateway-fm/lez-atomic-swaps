@@ -6,6 +6,11 @@
 #
 #   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--evidence] [--only PHASE]
 #
+# PHASE is one of the phases below, or one build step on its own
+# (`--only build:rapidsnark`, `build:lez-services`, `build:r0vm`,
+# `build:escrow`, `build:sidecar`, `build:identities`); that is how the
+# release workflow spreads the cold build over several runners.
+#
 # Every phase is idempotent: it checks what already exists and does only the
 # missing work, so a rerun after a failure continues where it stopped.
 #
@@ -98,7 +103,8 @@ ASSETS="$DEPLOY_ROOT/images/basecamp-ui/assets"
 
 log() { printf '\n[%s %s] %s\n' "$(date -u +%H:%M:%S)" "${PHASE:-}" "$*"; }
 fail() { echo "from-scratch failed: $*" >&2; exit 1; }
-phase_wanted() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }
+phase_wanted() { [[ -z "$ONLY" || "$ONLY" == "$1" || ( "$1" == build && "$ONLY" == build:* ) ]]; }
+build_step_wanted() { [[ -z "$ONLY" || "$ONLY" == build || "$ONLY" == "build:$1" ]]; }
 
 # ---- host ---------------------------------------------------------------------
 phase_host() {
@@ -270,16 +276,15 @@ own_provision() {
     'for d in rapidsnark-arm lez-services tools-arm escrow-artifact sidecar risc0; do [[ -e /provision/$d ]] && chown -R "$1" "/provision/$d" 2>/dev/null; done; true' _ "$(id -u):$(id -g)"
 }
 
-phase_build() {
-  PHASE=build
+ensure_builder_image() {
   if ! docker image inspect "$BUILDER_IMAGE" >/dev/null 2>&1; then
     log "building the ephemeral builder image"
     docker build -q -t "$BUILDER_IMAGE" "$DEPLOY_ROOT/builder" >/dev/null
   fi
-  docker container inspect lez-runner-arm >/dev/null 2>&1 &&
-    log "note: the retired lez-runner-arm container is still present; docker rm -f lez-runner-arm once its outputs are in $PROVISION"
+}
 
-  # rapidsnark prover libraries (the Logos fork's aarch64 release)
+# rapidsnark prover libraries (the Logos fork's aarch64 release)
+build_rapidsnark() {
   if [[ ! -f "$PROVISION/rapidsnark-arm/librapidsnark.a" ]]; then
     log "fetching rapidsnark aarch64 libraries"
     builder_run -- "tmp=\$(mktemp -d); curl -fsSL '$RAPIDSNARK_URL' -o \$tmp/r.zip; unzip -qo \$tmp/r.zip -d \$tmp/r;
@@ -287,26 +292,32 @@ phase_build() {
   fi
   printf '%s  %s\n' "$RAPIDSNARK_LIB_SHA256" "$PROVISION/rapidsnark-arm/librapidsnark.a" | shasum -a 256 --check --strict --quiet ||
     fail "rapidsnark library digest mismatch"
+}
 
-  # LEZ v0.2 services, native release build with rust 1.94.0
+# LEZ v0.2 services, native release build with rust 1.94.0
+build_lez_services() {
   if [[ ! -x "$PROVISION/lez-services/sequencer_service" || ! -x "$PROVISION/lez-services/indexer_service" ]]; then
     log "building LEZ v0.2 services (rust 1.94.0, release, locked; ~40 min cold)"
     builder_run -- "cd /lez-source; CARGO_TARGET_DIR=/cache/target/lez cargo +1.94.0 build --locked --release \
       --package sequencer_service --package indexer_service 2>&1 | tail -2;
       mkdir -p /provision/lez-services; install -m 0755 /cache/target/lez/release/sequencer_service /cache/target/lez/release/indexer_service /provision/lez-services/"
   fi
+}
 
-  # r0vm from the risc0 tag (no arm64 release asset exists)
+# r0vm from the risc0 tag (no arm64 release asset exists)
+build_r0vm() {
   if [[ ! -x "$PROVISION/tools-arm/bin/r0vm" ]]; then
     log "building r0vm from risc0 $RISC0_TAG (~30 min cold)"
     builder_run -- "[[ -d /provision/risc0/.git ]] || git clone --quiet --depth 1 --branch $RISC0_TAG https://github.com/risc0/risc0.git /provision/risc0;
       cd /provision/risc0 && CARGO_TARGET_DIR=/cache/target/r0vm cargo +1.96.0 install --path risc0/r0vm --locked --root /provision/tools-arm 2>&1 | tail -2"
   fi
   [[ "$(builder_run -- '/provision/tools-arm/bin/r0vm --version')" == "risc0-r0vm ${RISC0_TAG#v}" ]] || fail "r0vm is not ${RISC0_TAG#v}"
+}
 
-  # the escrow artifact: deployer + guest ELF at the commit's pinned digest.
-  # The reproducible guest build runs inside risc0's pinned builder image, so
-  # this one step gets the host Docker socket for the duration of the run.
+# the escrow artifact: deployer + guest ELF at the commit's pinned digest.
+# The reproducible guest build runs inside risc0's pinned builder image, so
+# this one step gets the host Docker socket for the duration of the run.
+build_escrow() {
   local guest_elf="$PROVISION/escrow-artifact/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"
   if [[ ! -x "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" || "$(shasum -a 256 "$guest_elf" 2>/dev/null | cut -c1-64)" != "$GUEST_ELF_SHA256" ]]; then
     log "building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
@@ -317,9 +328,11 @@ phase_build() {
       scripts/verify-lez-v02-provisional.sh 2>&1 | tail -3"
   fi
   [[ "$(shasum -a 256 "$guest_elf" | cut -c1-64)" == "$GUEST_ELF_SHA256" ]] || fail "escrow guest ELF digest mismatch"
+}
 
-  # the LEZ v0.2 sidecar, the vault-claim tool and the identity tool (link libpython3.12)
-  # This crate is part of the checkout too; never trust payload existence.
+# the LEZ v0.2 sidecar, the vault-claim tool and the identity tool (link libpython3.12)
+# This crate is part of the checkout too; never trust payload existence.
+build_sidecar() {
   log "building the LEZ sidecar and its tools"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
       --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
@@ -327,8 +340,10 @@ phase_build() {
       /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
+}
 
-  # persistent wallet identities the market and the LEZ genesis share
+# persistent wallet identities the market and the LEZ genesis share
+build_identities() {
   local wallet
   for wallet in "${WALLETS[@]}"; do
     if [[ ! -f "$MARKET_ROOT/identities/$wallet/identity.json" ]]; then
@@ -340,6 +355,24 @@ phase_build() {
       cp "$MARKET_ROOT/identities/$wallet/identity.json" "$MARKET_ROOT/identities/$wallet.json"
     fi
   done
+}
+
+phase_build() {
+  PHASE=build
+  ensure_builder_image
+  docker container inspect lez-runner-arm >/dev/null 2>&1 &&
+    log "note: the retired lez-runner-arm container is still present; docker rm -f lez-runner-arm once its outputs are in $PROVISION"
+
+  # rapidsnark feeds the LEZ services and the sidecar; r0vm feeds the escrow
+  # guest build. Every step is idempotent, so one step can be selected with
+  # --only build:<step> and the others are skipped.
+  build_step_wanted rapidsnark && build_rapidsnark
+  build_step_wanted lez-services && build_lez_services
+  build_step_wanted r0vm && build_r0vm
+  build_step_wanted escrow && build_escrow
+  build_step_wanted sidecar && build_sidecar
+  own_provision
+  build_step_wanted identities && build_identities
   log "artifacts built into $PROVISION"
 }
 
@@ -353,6 +386,10 @@ phase_stage() {
   for role in maker taker; do
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
   done
+  # the market bootstrap tools (deploy/images/lez-tools, profile "tools")
+  install -m 0755 "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" \
+    "$PROVISION/sidecar/lez-v02-vault-claim-poc" "$PROVISION/sidecar/lez-v02-local-actor-identity" \
+    "$DEPLOY_ROOT/images/lez-tools/"
   (cd "$DEPLOY_ROOT" && bash scripts/stage-assets.sh)
 }
 
@@ -421,6 +458,11 @@ phase_swap() {
   bash "$DEPLOY_ROOT/scripts/swap-through-ui.sh"
 }
 
+case "$ONLY" in
+  ""|host|sources|nix|rust|build|stage|stack|swap) ;;
+  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities) ;;
+  *) echo "unknown phase: $ONLY" >&2; exit 64 ;;
+esac
 for p in host sources nix rust build stage stack; do
   [[ "$EVIDENCE_MODE" != 1 || "$p" != nix ]] || continue
   phase_wanted "$p" && "phase_$p"

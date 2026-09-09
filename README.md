@@ -41,8 +41,19 @@ contains the public transaction and block identities shown in the walkthrough.
 ## Run the product locally
 
 The packaged stack currently targets arm64, including Apple Silicon and arm64
-Linux. It requires Docker with Compose; the first build downloads pinned
-dependencies and images.
+Linux, and requires Docker with Compose.
+
+**Prebuilt (minutes):** every release ships the images and a bundle. Download
+`lez-swap-stack-<tag>-arm64.tar.gz` from the
+[latest release](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest):
+
+```sh
+tar -xzf lez-swap-stack-v0.2.1-arm64.tar.gz && cd lez-swap-stack-v0.2.1-arm64
+./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → UI suites
+```
+
+**From source (hours):** the first build compiles every pinned dependency
+natively.
 
 ```sh
 git clone https://github.com/gateway-fm/lez-atomic-swaps.git
@@ -50,6 +61,11 @@ cd lez-atomic-swaps/deploy
 ./scripts/from-scratch.sh        # first time: sources, payloads, chains, market bootstrap, UI suites
 ./scripts/up.sh                  # afterwards: config → images → stack → UI verification
 ```
+
+The two Basecamp apps are also published as Logos modules; add the catalog
+`https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
+in Basecamp's package manager to install **LEZ / BTC Maker** and
+**LEZ / BTC Taker** at the release version.
 
 Open the Basecamp desktop on macOS:
 

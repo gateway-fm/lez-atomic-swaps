@@ -5,6 +5,34 @@ both chains + the canonical Maker/Taker Nodes + the real Basecamp UI
 (drivable over VNC and by automated end-to-end tests). All native arm64,
 started with one command.
 
+## Prebuilt images (no build)
+
+Every release attaches `lez-swap-stack-<tag>-arm64.tar.gz`: the compose
+file, these scripts and `release.env` naming the linux/arm64 images the
+release workflow pushed to `ghcr.io/gateway-fm/lez-atomic-swaps/lez-*`.
+On an arm64 host with Docker (Apple silicon, or arm64 Linux):
+
+```sh
+tar -xzf lez-swap-stack-v0.2.1-arm64.tar.gz && cd lez-swap-stack-v0.2.1-arm64
+./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → UI suites
+./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two Basecamp apps
+```
+
+`start.sh` mints the four wallet identities into `market/` with the
+`lez-tools` image, brings the stack up through `up.sh` in pull mode
+(`LEZ_IMAGES=pull`), runs the idempotent market bootstrap in one throwaway
+tools container, restarts both Nodes on the recorded escrow deployment and
+runs the Basecamp suites. Rerunning it resumes; `./scripts/down.sh` stops the
+stack and `--wipe` removes chains and Node state (keep `market/`, it holds the
+funded wallets). The same script works from a checkout of the tagged commit
+when `LEZ_IMAGE_PREFIX` and `LEZ_IMAGE_TAG` are exported.
+
+The images are built by `.github/workflows/release-images.yml` from the very
+phases `from-scratch.sh` runs below, on GitHub's arm64 runners, and the
+bundle is attached only after a fresh runner has started the stack from it
+(ADR 0215). `scripts/package-dist.sh <prefix> <tag>` produces the bundle
+locally from a committed tree.
+
 ## From scratch
 
 One command takes an arm64 host (macOS with Docker Desktop, or Linux with
@@ -224,10 +252,12 @@ program deployment and the four wallet vault claims — is idempotent:
 ./scripts/from-scratch.sh --only stack    # runs it inside one throwaway builder container
 ```
 
-The bootstrap runs `scripts/market-bootstrap.sh` in `lez-builder:local` on the
-stack's network with the escrow deployer and the vault-claim tool from
-`provision/data`; both accept only literal-loopback URLs, so the container
-forwards `127.0.0.1:3040/8779` to `sequencer`/`indexer` for the run.
+The bootstrap runs `scripts/market-bootstrap.sh` in one throwaway container on
+the stack's network with the escrow deployer and the vault-claim tool: the
+`lez-builder:local` image with the tools from `provision/data` on a developer
+host (`from-scratch.sh`), or the published `lez-tools` image (compose profile
+`tools`, `start.sh`). Both tools accept only literal-loopback URLs, so the
+container forwards `127.0.0.1:3040/8779` to `sequencer`/`indexer` for the run.
 
 Chains are never torn down between swaps. Wallet identities and the bootstrap
 manifest live in the market root (`LEZ_MARKET_ROOT`: `market/` next to this
@@ -277,6 +307,7 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 | `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
 | `maker-node` | `images/maker-node` | Maker-only image (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; the entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints |
 | `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
+| `tools` (profile `tools`) | `images/lez-tools` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault-claim tool and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
 | `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass. Both desks read their market from the Nodes (`apps/basecamp/common/node_market.cpp`): offers, takes, the Taker's lock and claim, and the Maker's automatic progress |
 
 The UI reaches the role Nodes through shared named socket volumes mounted
@@ -303,9 +334,11 @@ service holds the host Docker socket.
 ## Layout
 
 ```
-compose.yaml               the stack
+compose.yaml               the stack (image names: ${LEZ_IMAGE_PREFIX}-<service>:${LEZ_IMAGE_TAG})
+scripts/start.sh           prebuilt path: pull the release images, identities, stack, bootstrap, UI suites
+scripts/package-dist.sh    assemble the release bundle (deploy/ from git archive + release.env)
 scripts/from-scratch.sh    everything from an empty host (prerequisites, sources, payloads, runner, stack)
-scripts/up.sh              one-command bring-up (+ UI verification)
+scripts/up.sh              one-command bring-up (+ UI verification); LEZ_IMAGES=pull skips the build
 scripts/swap-through-ui.sh one complete swap driven through the two Basecamp apps
 scripts/market-bootstrap.sh one-time settlement-chain bootstrap (one throwaway builder container)
 scripts/stage-basecamp-package.sh stage one Nix-built package or module into the UI image
@@ -317,6 +350,7 @@ scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets)
 scripts/btc-miner.sh       regtest mining loop
 images/                    one dir per image (Dockerfile + payloads)
   basecamp-ui/assets/      portable Basecamp bundle, role trees, qt-mcp framework
+  lez-tools/               escrow deployer, vault-claim and identity tools (profile "tools")
 assets/lez-source/         pinned v0.2.0 config templates (bedrock, sequencer, indexer)
 assets/certified-evidence-m5arm-08180005-ui.json  proof-view seed until the first Node swap
 builder/Dockerfile         the ephemeral builder image (docker run --rm only; not on the stack)

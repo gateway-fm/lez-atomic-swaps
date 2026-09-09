@@ -1,0 +1,316 @@
+name: release-images
+
+# Publishes the prebuilt local LEZ ↔ BTC swap stack: every image of
+# deploy/compose.yaml built for linux/arm64 and pushed to GHCR, plus the
+# bundle (compose file, scripts/start.sh and friends, pinned config
+# templates, release.env) attached to the GitHub release of the tag.
+#
+# The builds are the same phases scripts/from-scratch.sh runs on a developer
+# host, in the same pinned containers, spread over parallel arm64 runners:
+#   rust          Node binaries, Bitcoin actors, the LEZ sidecar family
+#   lez-services  sequencer + indexer from the pinned logos-execution-zone
+#   escrow        r0vm and the digest-pinned escrow artifact (deployer)
+#   basecamp-ui   the Nix-built Basecamp bundle and both role packages
+#   images        stages the payloads, builds and pushes the remaining images
+#   smoke         pulls the published images and runs the bundle's start.sh
+#   publish       attaches the bundle to the release (tags only)
+# A cold run takes about 2.5 hours; the escrow guest build is the long pole.
+# Packages are created private on first push: make them public once in the
+# repository's package settings so `docker compose pull` works anonymously.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: image tag to publish (blank = the git tag, or sha-<short> for a branch)
+        type: string
+        default: ""
+      run_smoke:
+        description: pull the published images and run the bundle's start.sh on a fresh runner
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  LEZ_IMAGE_PREFIX: ghcr.io/${{ github.repository }}/lez
+  LEZ_WORKSPACE: ${{ github.workspace }}/../lez-ws
+
+jobs:
+  plan:
+    name: image tag
+    runs-on: ubuntu-24.04
+    outputs:
+      image_tag: ${{ steps.plan.outputs.image_tag }}
+      is_release: ${{ steps.plan.outputs.is_release }}
+    steps:
+      - id: plan
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.image_tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$INPUT_TAG" ]]; then tag="$INPUT_TAG"
+          elif [[ "$REF_TYPE" == tag ]]; then tag="$REF_NAME"
+          else tag="sha-${SHA:0:12}"; fi
+          [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "invalid image tag: $tag" >&2; exit 1; }
+          echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$REF_TYPE" == tag ]]; then echo "is_release=true" >> "$GITHUB_OUTPUT"; else echo "is_release=false" >> "$GITHUB_OUTPUT"; fi
+          echo "publishing ${tag}"
+
+  rust:
+    name: Node binaries, actors and sidecar
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Pinned sources
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
+      - name: Node binaries and Bitcoin actors (pinned rust image)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only rust
+      - name: rapidsnark prover libraries
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
+      - name: LEZ sidecar, vault-claim and identity tools
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:sidecar
+      - name: Collect payloads
+        run: |
+          set -euo pipefail
+          mkdir -p _out/images _out/sidecar
+          for role in maker-node taker-node lez-services; do
+            mkdir -p "_out/images/$role"
+            cp deploy/images/$role/lez-* "_out/images/$role/"
+            [[ ! -f deploy/images/$role/build-source.txt ]] || cp deploy/images/$role/build-source.txt "_out/images/$role/"
+          done
+          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-vault-claim-poc,lez-v02-local-actor-identity,source-commit.txt} _out/sidecar/
+          du -sh _out
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-payloads
+          path: _out
+          retention-days: 7
+          if-no-files-found: error
+
+  lez-services:
+    name: LEZ v0.2 sequencer and indexer
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Pinned sources
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
+      - name: rapidsnark prover libraries
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
+      - name: sequencer_service and indexer_service (rust 1.94.0, release)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:lez-services
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lez-services-payloads
+          path: |
+            ${{ env.LEZ_WORKSPACE }}/provision/data/lez-services/sequencer_service
+            ${{ env.LEZ_WORKSPACE }}/provision/data/lez-services/indexer_service
+          retention-days: 7
+          if-no-files-found: error
+
+  escrow:
+    name: r0vm and the pinned escrow artifact
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Pinned sources
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
+      - name: r0vm (risc0 tag)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:r0vm
+      - name: Escrow deployer and guest at the pinned digest
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:escrow
+      - name: Collect payloads
+        run: |
+          set -euo pipefail
+          mkdir -p _out
+          cp "$LEZ_WORKSPACE/provision/data/tools-arm/bin/r0vm" "$LEZ_WORKSPACE/provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer" _out/
+          du -sh _out
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: escrow-payloads
+          path: _out
+          retention-days: 7
+          if-no-files-found: error
+
+  basecamp-ui:
+    name: Basecamp bundle and role packages (Nix)
+    needs: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Pinned sources
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
+      - name: Basecamp bundle, qt-mcp, both role packages, Chat and Delivery
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only nix
+      - name: Build and push the basecamp-ui image
+        working-directory: deploy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+          BTC_RPC_PASSWORD: build-only
+          LEZ_MARKET_ROOT: ${{ github.workspace }}/../lez-ws/market
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          docker compose build basecamp-ui
+          docker push "${LEZ_IMAGE_PREFIX}-basecamp-ui:${LEZ_IMAGE_TAG}"
+
+  images:
+    name: Stage payloads, build and push the stack images
+    needs: [plan, rust, lez-services, escrow]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: node-payloads
+          path: _in/node
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lez-services-payloads
+          path: _in/lez-services
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: escrow-payloads
+          path: _in/escrow
+      - name: Lay the payloads out the way from-scratch.sh leaves them
+        run: |
+          set -euo pipefail
+          p="$LEZ_WORKSPACE/provision/data"
+          mkdir -p "$p/lez-services" "$p/tools-arm/bin" "$p/sidecar" "$p/escrow-artifact/debug"
+          install -m 0755 _in/lez-services/sequencer_service _in/lez-services/indexer_service "$p/lez-services/"
+          install -m 0755 _in/escrow/r0vm "$p/tools-arm/bin/"
+          install -m 0755 _in/escrow/lez-zec-escrow-v02-deployer "$p/escrow-artifact/debug/"
+          install -m 0755 _in/node/sidecar/lez-v02-* "$p/sidecar/"
+          cp _in/node/sidecar/source-commit.txt "$p/sidecar/"
+          for role in maker-node taker-node lez-services; do
+            install -m 0755 _in/node/images/$role/lez-* "deploy/images/$role/"
+            [[ ! -f _in/node/images/$role/build-source.txt ]] || cp _in/node/images/$role/build-source.txt "deploy/images/$role/"
+          done
+      - name: Stage image contexts (Bitcoin Core, LEZ services, sidecars, tools)
+        env:
+          LEZ_STAGE_SKIP_BASECAMP_UI: "1"
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only stage
+      - name: Build and push
+        working-directory: deploy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+          BTC_RPC_PASSWORD: build-only
+          LEZ_MARKET_ROOT: ${{ github.workspace }}/../lez-ws/market
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          docker compose --profile tools build bitcoin-core btc-miner btc-explorer sequencer lez-explorer maker-node taker-init tools
+          for image in bitcoin-core btc-miner btc-explorer services explorer maker-node taker-node tools; do
+            docker push "${LEZ_IMAGE_PREFIX}-${image}:${LEZ_IMAGE_TAG}"
+          done
+
+  smoke:
+    name: Pull the published images and run the bundle
+    needs: [plan, images, basecamp-ui]
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_smoke }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Package the bundle
+        env:
+          LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+        run: deploy/scripts/package-dist.sh "$LEZ_IMAGE_PREFIX" "$LEZ_IMAGE_TAG" "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lez-swap-stack-bundle
+          path: ${{ runner.temp }}/dist
+          retention-days: 30
+          if-no-files-found: error
+      - name: Start the stack from the bundle alone
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          mkdir -p "$RUNNER_TEMP/stack"
+          tar -xzf "$RUNNER_TEMP/dist/lez-swap-stack-${LEZ_IMAGE_TAG}-arm64.tar.gz" -C "$RUNNER_TEMP/stack"
+          cd "$RUNNER_TEMP/stack/lez-swap-stack-${LEZ_IMAGE_TAG}-arm64"
+          ./scripts/start.sh
+      - name: Stack logs
+        if: failure()
+        env:
+          LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+        run: |
+          cd "$RUNNER_TEMP/stack/lez-swap-stack-${LEZ_IMAGE_TAG}-arm64" || exit 0
+          docker compose --env-file runtime/runtime.env ps || true
+          docker compose --env-file runtime/runtime.env logs --tail 200 || true
+
+  publish:
+    name: Attach the bundle to the release
+    needs: [plan, smoke]
+    if: ${{ needs.plan.outputs.is_release == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: lez-swap-stack-bundle
+          path: dist
+      - name: Upload to the release of this tag (created as a draft if absent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --draft --title "$TAG" \
+              --notes "Prebuilt linux/arm64 images: \`${LEZ_IMAGE_PREFIX}-<service>:${IMAGE_TAG}\`. Download the bundle, extract it and run \`./scripts/start.sh\`."
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          gh release view "$TAG" --json assets -q '.assets[].name'
