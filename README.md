@@ -140,6 +140,13 @@ and settlement state survive restarts.
 
 ## Build and test
 
+Building an independent maker policy, taker bot, or operator tool? Start with
+the [maker/taker API reference](docs/api/README.md),
+[extension scope proposal](docs/api/proposal.md), and
+[dependency-free client example](examples/owner-api/owner_rpc.py). The nodes
+provide swap mechanics; your application supplies trading policy through the
+documented owner API.
+
 Inspect the complete Rust workspace directly from a fresh checkout:
 
 ```sh
