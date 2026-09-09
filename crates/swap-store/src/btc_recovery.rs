@@ -223,7 +223,9 @@ pub enum BtcLifecycleEvidenceKind {
 }
 
 impl BtcLifecycleEvidenceKind {
-    const fn name(self) -> &'static str {
+    /// The kind's durable snake-case name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
         match self {
             Self::TakerLock => "taker_lock",
             Self::MakerLock => "maker_lock",
@@ -1088,6 +1090,50 @@ impl SqliteBtcRecoveryStore {
             },
             revealing_public_witness: reconstructed.revealing_public_witness,
         })
+    }
+
+    /// Every durable lifecycle evidence row with its revision, in order: a
+    /// secret-free record of what landed on which chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BtcRecoveryError`] on an unreadable or unsupported row.
+    pub fn evidence(&self) -> Result<Vec<(u64, BtcLifecycleEvidenceV1)>, BtcRecoveryError> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT aggregate_revision, payload_version, payload_json
+            FROM btc_actor_evidence
+            WHERE swap_id = ?1 AND local_role = ?2
+            ORDER BY aggregate_revision ASC
+            ",
+        )?;
+        let rows = statement.query_map(
+            params![
+                self.acceptance.swap_id.as_str(),
+                participant_name(self.acceptance.local_role)
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )?;
+        let mut evidence = Vec::new();
+        for row in rows {
+            let (revision, payload_version, payload_json) = row?;
+            if payload_version != EVIDENCE_PAYLOAD_VERSION {
+                return Err(BtcRecoveryError::UnsupportedEvidenceVersion(
+                    payload_version,
+                ));
+            }
+            evidence.push((
+                revision_from_sql(revision)?,
+                serde_json::from_str(&payload_json)?,
+            ));
+        }
+        Ok(evidence)
     }
 }
 

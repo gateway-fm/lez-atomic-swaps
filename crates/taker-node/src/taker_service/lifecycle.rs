@@ -138,6 +138,17 @@ impl RouteActor {
         }
     }
 
+    /// The swap's on-chain effects so far; empty when they cannot be read.
+    fn effects(&self) -> Vec<btc_reference_actor::ActorEffectV1> {
+        match self {
+            Self::Btc { config, .. } => {
+                btc_reference_actor::actor_effects(config).unwrap_or_default()
+            }
+            #[cfg(feature = "pair-zec")]
+            Self::Zec(_) => Vec::new(),
+        }
+    }
+
     fn state_db(&self) -> &Path {
         match self {
             Self::Btc { config, .. } => config.state_db(),
@@ -1097,7 +1108,7 @@ async fn project_receipt_bound_swap(
     let swap_id = prepared.swap_id().clone();
     let receipt_sha256 = receipt_binding.sha256();
     let receipt_identity = receipt_binding.identity();
-    let (config, held_lock, terms) = tokio::task::spawn_blocking(move || {
+    let (config, held_lock, terms, effects) = tokio::task::spawn_blocking(move || {
         let load = || {
             RouteActor::load_for_monitor(
                 pair,
@@ -1122,7 +1133,8 @@ async fn project_receipt_bound_swap(
             .validate_for_state(config.swap_id(), config.state_db())
             .map_err(|_| MonitoringError::DependencyUnavailable)?;
         let terms = config.agreement_terms();
-        Ok::<_, MonitoringError>((config, held_lock, terms))
+        let effects = config.effects();
+        Ok::<_, MonitoringError>((config, held_lock, terms, effects))
     })
     .await
     .map_err(|_| MonitoringError::DependencyUnavailable)??;
@@ -1137,6 +1149,7 @@ async fn project_receipt_bound_swap(
         .map_err(|_| MonitoringError::DependencyUnavailable)?;
     let mut view = view_from_actor_status(facts, status);
     view.terms = terms;
+    view.effects = effects;
     overlay_admitted_action(view, admitted_action.as_ref())
 }
 
@@ -1219,6 +1232,7 @@ fn view_from_actor_status(
         available_action,
         privacy_guidance,
         terms: None,
+        effects: Vec::new(),
     }
 }
 
@@ -2047,6 +2061,7 @@ fn commit_from_facts(
             available_action: None,
             privacy_guidance: None,
             terms: None,
+            effects: Vec::new(),
         },
         was_replay,
     }

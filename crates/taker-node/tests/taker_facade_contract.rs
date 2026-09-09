@@ -235,6 +235,7 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
         available_action: None,
         privacy_guidance: Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
         terms: None,
+        effects: Vec::new(),
     };
     let action = TakerActionCommitV1 {
         schema_version: 1,

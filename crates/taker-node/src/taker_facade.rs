@@ -5,6 +5,7 @@
 //! without granting callers generic execution authority. Pair capabilities
 //! describe the current Node, CLI, and demo ownership of each route.
 
+use btc_reference_actor::ActorEffectV1;
 use lez_bridge_protocol::RequestId;
 use lez_btc_swap_sdk::BtcAgreementTermsV1;
 use lez_node_common::TakerMakerIdentityV1;
@@ -307,6 +308,9 @@ pub struct TakerSwapViewV1 {
     /// The countersigned schedule and amounts, once the BTC agreement is bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terms: Option<BtcAgreementTermsV1>,
+    /// What landed on which chain so far, from the actor's durable evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ActorEffectV1>,
 }
 
 /// Versioned collection of swaps recoverable after UI or facade restart.
