@@ -38,10 +38,10 @@ pulls stay anonymous. And the Docker VM disk fills up from build caches over
 time: `docker builder prune` and `docker image prune` are safe; the
 `lez-build-*` volumes are caches you may drop at the cost of a rebuild.
 
-## Reviewer reproduction
+## Record and share evidence
 
 To repeat the concurrent-swap and both refund scenarios with fresh wallets,
-see [the reviewer guide](REVIEWER.md). `scripts/from-scratch.sh --reviewer`
+see [the evidence guide](EVIDENCE.md). `scripts/from-scratch.sh --evidence`
 prepares an API-only stack with fast timing and automatic regtest funding.
 The portable recorder produces an offline replay page and public chain checks.
 

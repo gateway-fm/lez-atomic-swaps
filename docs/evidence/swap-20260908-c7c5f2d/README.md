@@ -1,9 +1,9 @@
-# Reviewer evidence recorded on 2026-09-08
+# Swap evidence recorded on 2026-09-08
 
 This is a fresh execution on Bitcoin Core 31.1 regtest and the LEZ v0.2.0 local
 devnet, captured at source commit
 [`c7c5f2d820c6221066721595fcc838dbf1354156`](https://github.com/gateway-fm/lez-atomic-swaps/tree/c7c5f2d820c6221066721595fcc838dbf1354156).
-It uses the v0.2.0 swap implementation with the reviewer bootstrap/recorder fixes
+It uses the v0.2.0 swap implementation with the evidence bootstrap/recorder fixes
 in PR #17. Subsequent changes in that PR register the initialization service in
 the runtime inventory and publish these records; they do not change the swap
 implementation or recorder used here. The playback page was regenerated with
@@ -38,7 +38,7 @@ a finalized chain event. Harness timestamps use the host's Europe/Zurich time;
 heartbeat timestamps explicitly use UTC.
 
 To repeat with new identities and transactions, follow
-[the reviewer guide](../../../deploy/REVIEWER.md). This machine used Apple
+[the evidence guide](../../../deploy/EVIDENCE.md). This machine used Apple
 Silicon and Docker Desktop, a new checkout and empty provision directory, fresh
 wallet identities and isolated chain state. Node/actor, LEZ services, r0vm,
 cargo-risczero, escrow and sidecar builds completed from source. Docker base
@@ -66,5 +66,5 @@ and the original manifest. Verify it from this directory:
 shasum -a 256 -c SHA256SUMS
 ```
 
-Checksums verify file integrity. Independent execution of the reviewer commands
+Checksums verify file integrity. Independent execution of the evidence commands
 verifies the behavior; new transaction IDs and timings will differ.

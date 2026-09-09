@@ -8,15 +8,15 @@ seeds.
 
 ## v0.2 Node-API refund and concurrency recordings — 2026-09-08
 
-The [fresh public capture](../docs/evidence/reviewer-20260908-c7c5f2d/README.md)
+The [fresh public capture](../docs/evidence/swap-20260908-c7c5f2d/README.md)
 contains an offline playback page, full terminal logs, public transaction records,
 binary/source provenance and checksums for two concurrent BTC → LEZ swaps,
 Taker-only BTC recovery, and Maker LEZ recovery followed by Taker BTC recovery.
-The [reviewer guide](../deploy/REVIEWER.md) builds and funds a fresh local stack
+The [evidence guide](../deploy/EVIDENCE.md) builds and funds a fresh local stack
 and records the same scenarios without our wallet identities or staged binaries.
 
 The capture uses `c7c5f2d820c6221066721595fcc838dbf1354156`, based on the
-v0.2.0 release with reviewer bootstrap and recording fixes. Its scope is the
+v0.2.0 release with evidence bootstrap and recording fixes. Its scope is the
 Node owner APIs on Bitcoin regtest and a local LEZ v0.2.0 devnet. It verifies
 refund destinations/amounts and historical LEZ balances in addition to terminal
 states. It covers two same-direction BTC → LEZ swaps; it does not revalidate

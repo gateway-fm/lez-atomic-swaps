@@ -68,7 +68,7 @@ if [[ "${SKIP_UI_VERIFY:-0}" != "1" && "${LEZ_API_ONLY:-0}" != 1 ]]; then
 fi
 
 if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
-  echo "API stack ready; run python3 scripts/record-reviewer-evidence.py after market bootstrap."
+  echo "API stack ready; run python3 scripts/record-evidence.py after market bootstrap."
   exit 0
 fi
 role_now="${BASECAMP_ROLE:-both}"

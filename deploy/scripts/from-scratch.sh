@@ -4,7 +4,7 @@
 # with Docker): prerequisites, pinned sources, every image payload built in
 # throwaway containers, the settlement market, the stack, and the Basecamp UI.
 #
-#   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--reviewer] [--only PHASE]
+#   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--evidence] [--only PHASE]
 #
 # Every phase is idempotent: it checks what already exists and does only the
 # missing work, so a rerun after a failure continues where it stopped.
@@ -18,7 +18,7 @@
 #             of the ephemeral builder image (deploy/builder)
 #   stage     Bitcoin Core, LEZ services, r0vm, sidecar into the image contexts
 #   stack     gen-config → compose build → up → market bootstrap → UI suites
-#   --reviewer skips UI/Nix, uses fast timing, and prepares the API scenarios.
+#   --evidence skips UI/Nix, uses fast timing, and prepares the API scenarios.
 #   swap      (--swap) one full BTC → LEZ swap through the two Basecamp apps
 #
 # Long cold steps on Apple silicon: Nix closures (~15 min from the Logos cache),
@@ -33,27 +33,24 @@ DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
 WORKSPACE="$(cd "$REPO_ROOT/.." && pwd)"
 RUN_SWAP=0
-REVIEWER=0
-USE_REGISTRY_CREDENTIALS=0
-reviewer_docker_config=""
+EVIDENCE_MODE=0
 ONLY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --workspace) WORKSPACE="$(mkdir -p "$2" && cd "$2" && pwd)"; shift 2 ;;
     --swap) RUN_SWAP=1; shift ;;
-    --use-registry-credentials) USE_REGISTRY_CREDENTIALS=1; shift ;;
-    --reviewer) REVIEWER=1; export LEZ_API_ONLY=1 LEZ_TIMING_PROFILE=fast; shift ;;
+    --evidence) EVIDENCE_MODE=1; export LEZ_API_ONLY=1 LEZ_TIMING_PROFILE=fast; shift ;;
     --only) ONLY="$2"; shift 2 ;;
     -h|--help) sed -n 2,26p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
-if [[ "$REVIEWER" == 1 ]] && ! git -C "$REPO_ROOT" diff --quiet HEAD --; then
-  echo "commit tracked changes before building reviewer evidence" >&2
+if [[ "$EVIDENCE_MODE" == 1 ]] && ! git -C "$REPO_ROOT" diff --quiet HEAD --; then
+  echo "commit tracked changes before building swap evidence" >&2
   exit 1
 fi
-if [[ "$REVIEWER" == 1 && ( "$RUN_SWAP" == 1 || "$ONLY" == swap ) ]]; then
-  echo "--reviewer runs API scenarios; --swap requires the full UI stack" >&2
+if [[ "$EVIDENCE_MODE" == 1 && ( "$RUN_SWAP" == 1 || "$ONLY" == swap ) ]]; then
+  echo "--evidence runs API scenarios; --swap requires the full UI stack" >&2
   exit 64
 fi
 
@@ -85,10 +82,16 @@ LEZ_SOURCE="$WORKSPACE/lez-source"
 MARKET_ROOT="$WORKSPACE/market"
 [[ -d "$MARKET_ROOT/identities" ]] || [[ ! -d "$WORKSPACE/runner-work/market/identities" ]] || MARKET_ROOT="$WORKSPACE/runner-work/market"
 PROVISION="$WORKSPACE/provision/data"
-if [[ "$REVIEWER" == 1 ]]; then
+if [[ "$EVIDENCE_MODE" == 1 ]]; then
   # Fresh workspaces must not inherit another checkout's wallets/Node stores.
-  reviewer_id="$(printf '%s' "$REPO_ROOT:$WORKSPACE" | shasum -a 256 | cut -c1-12)"
-  export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez-reviewer-$reviewer_id}"
+  evidence_id="$(printf '%s' "$REPO_ROOT:$WORKSPACE" | shasum -a 256 | cut -c1-12)"
+  evidence_prefix="lez-evidence-$evidence_id"
+  # Resume this checkout/workspace's existing state regardless of its label.
+  if [[ -f "$DEPLOY_ROOT/runtime/runtime.env" ]]; then
+    saved_prefix="$(sed -n 's/^LEZ_VOLUME_PREFIX=//p' "$DEPLOY_ROOT/runtime/runtime.env" | head -1)"
+    [[ "$saved_prefix" != *"-$evidence_id" ]] || evidence_prefix="$saved_prefix"
+  fi
+  export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-$evidence_prefix}"
 fi
 BASECAMP_SRC="$WORKSPACE/basecamp"
 ASSETS="$DEPLOY_ROOT/images/basecamp-ui/assets"
@@ -145,7 +148,7 @@ phase_sources() {
   chmod 0700 "$MARKET_ROOT"
   clone_pinned https://github.com/logos-blockchain/logos-execution-zone.git \
     "$LEZ_SOURCE_TAG" "$LEZ_SOURCE_COMMIT" "$LEZ_SOURCE"
-  if [[ "$REVIEWER" != 1 ]]; then
+  if [[ "$EVIDENCE_MODE" != 1 ]]; then
     clone_pinned https://github.com/logos-co/logos-basecamp.git \
       "$BASECAMP_TAG" "$BASECAMP_COMMIT" "$BASECAMP_SRC"
   fi
@@ -380,7 +383,7 @@ phase_stack() {
   # the build of payloads that are already staged.
   local image
   local contexts=(images/*/Dockerfile)
-  if [[ "$REVIEWER" == 1 ]]; then
+  if [[ "$EVIDENCE_MODE" == 1 ]]; then
     contexts=(images/{bitcoin-core,btc-miner,lez-services,maker-node,taker-node}/Dockerfile)
   fi
   for image in $(grep -h '^FROM' "${contexts[@]}" | awk '{print $2}' | sort -u); do
@@ -407,7 +410,7 @@ phase_stack() {
   cat "$MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
   chmod 0644 runtime/market-bootstrap.env
   docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
-  [[ "$REVIEWER" != 1 ]] || return 0
+  [[ "$EVIDENCE_MODE" != 1 ]] || return 0
   log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"
   local role
   for role in maker taker; do
@@ -423,14 +426,8 @@ phase_swap() {
 }
 
 for p in host sources nix rust build stage stack; do
-  [[ "$REVIEWER" != 1 || "$p" != nix ]] || continue
+  [[ "$EVIDENCE_MODE" != 1 || "$p" != nix ]] || continue
   if phase_wanted "$p"; then
-    if [[ "$REVIEWER" == 1 && "$USE_REGISTRY_CREDENTIALS" == 0 && "$p" != host && -z "$reviewer_docker_config" ]]; then
-      reviewer_docker_config="$(mktemp -d "${TMPDIR:-/tmp}/lez-reviewer-docker.XXXXXX")"
-      trap 'rm -rf "$reviewer_docker_config"' EXIT
-      python3 "$DEPLOY_ROOT/scripts/public-docker-config.py" "$reviewer_docker_config"
-      export DOCKER_CONFIG="$reviewer_docker_config"
-    fi
     "phase_$p"
   fi
 done

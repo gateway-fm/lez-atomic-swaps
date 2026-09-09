@@ -1,4 +1,4 @@
-"""Failure and replay contracts for the reviewer entry points; no Docker needed."""
+"""Failure and replay contracts for the evidence entry points; no Docker needed."""
 import importlib.util
 import json
 import os
@@ -18,9 +18,8 @@ def module(name, filename):
     return obj
 
 
-public_docker = module('public_docker', 'public-docker-config.py')
 seed = module('seed', 'seed-btc-wallets.py')
-rec = module('rec', 'record-reviewer-evidence.py')
+rec = module('rec', 'record-evidence.py')
 
 
 class WalletRPC:
@@ -79,40 +78,19 @@ class SeedingTests(unittest.TestCase):
             seed.seed(lambda *args: (_ for _ in ()).throw(subprocess.CalledProcessError(1, args)))
 
 
-class PublicDockerTests(unittest.TestCase):
-    def test_context_is_preserved_without_registry_auth(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = pathlib.Path(tmp)/'original'
-            source.mkdir()
-            ((source/'contexts').resolve()).mkdir()
-            ((source/'cli-plugins').resolve()).mkdir()
-            original = {'currentContext': 'desktop-linux', 'cliPluginsExtraDirs': ['/plugins'],
-                        'auths': {'registry': {'auth': 'do-not-copy'}},
-                        'credsStore': 'desktop', 'credHelpers': {'registry': 'secret-helper'}}
-            (source/'config.json').write_text(json.dumps(original))
-            destination = pathlib.Path(tmp)/'temporary'
-            public_docker.prepare(source, destination)
-            self.assertEqual(json.loads((destination/'config.json').read_text()), {
-                'currentContext': 'desktop-linux', 'cliPluginsExtraDirs': ['/plugins'], 'auths': {}})
-            self.assertEqual((destination/'contexts').resolve(), (source/'contexts').resolve())
-            self.assertEqual((destination/'cli-plugins').resolve(), (source/'cli-plugins').resolve())
-            self.assertEqual(json.loads((source/'config.json').read_text()), original)
-            with self.assertRaises(RuntimeError): public_docker.prepare(source, destination)
-
-
 class ConfigTests(unittest.TestCase):
-    def test_reviewer_volume_namespace_survives_config_regeneration(self):
+    def test_evidence_volume_namespace_survives_config_regeneration(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             (root/'market').mkdir()
-            env = dict(os.environ, LEZ_MARKET_ROOT=str(root/'market'), LEZ_VOLUME_PREFIX='lez-reviewer-test')
+            env = dict(os.environ, LEZ_MARKET_ROOT=str(root/'market'), LEZ_VOLUME_PREFIX='lez-evidence-test')
             command = ['bash', str(SCRIPTS/'gen-config.sh'), str(root/'runtime')]
             subprocess.run(command, env=env, check=True, capture_output=True)
             first = (root/'runtime/runtime.env').read_text()
             env.pop('LEZ_VOLUME_PREFIX')
             subprocess.run(command, env=env, check=True, capture_output=True)
             second = (root/'runtime/runtime.env').read_text()
-            self.assertIn('LEZ_VOLUME_PREFIX=lez-reviewer-test\n', second)
+            self.assertIn('LEZ_VOLUME_PREFIX=lez-evidence-test\n', second)
             self.assertEqual(first, second)
             public = root/'runtime/market-bootstrap.env'
             self.assertEqual(public.read_text(), '')

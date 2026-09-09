@@ -17,7 +17,7 @@ the running chains are local. x86 hosts are not supported by these payloads.
 Use a fresh checkout and an empty workspace. The Compose stack uses fixed
 container and network names and localhost ports 18443, 3040 and 8779.
 Only one instance can run on a Docker daemon. For an existing installation,
-stop it using its own Compose directory. Reviewer mode derives separate volume
+stop it using its own Compose directory. Evidence mode derives separate volume
 names from the checkout and workspace paths, so it preserves the previous
 stack's wallets and Node stores. Do not delete existing volumes to follow this guide.
 
@@ -27,11 +27,11 @@ cd lez-atomic-swaps
 # Select the reviewed commit containing this guide, before building:
 git checkout <reviewed-commit>
 
-bash deploy/scripts/from-scratch.sh --reviewer --workspace "$PWD/../reviewer-workspace"
-python3 deploy/scripts/record-reviewer-evidence.py
+bash deploy/scripts/from-scratch.sh --evidence --workspace "$PWD/../evidence-workspace"
+python3 deploy/scripts/record-evidence.py
 ```
 
-`--reviewer` skips Nix, Basecamp and the explorers, selects `fast` refund timing,
+`--evidence` skips Nix, Basecamp and the explorers, selects `fast` refund timing,
 builds the Nodes, Bitcoin actors and LEZ sidecar from this checkout, and prepares
 the settlement market. Four new LEZ identities receive genesis allocations.
 The bootstrap creates or loads the two Core wallets and mines mature test coins
@@ -45,12 +45,6 @@ private market directory is not mounted into the Nodes.
 The volume namespace is persisted in `runtime/runtime.env` for subsequent
 Compose commands. Reusing the same checkout and workspace resumes its state;
 a new checkout and workspace create independent state.
-
-Reviewer mode uses a temporary Docker CLI config for anonymous public-image
-pulls, preserving the selected daemon context and plugins. It removes that
-config on exit and leaves your original Docker config unchanged. This avoids
-Docker Desktop Keychain prompts during unattended builds. If authenticated
-pulls are needed for registry rate limits, add `--use-registry-credentials`.
 
 The checked-out Node and sidecar sources are submitted to Cargo on every build;
 existing staged binaries do not bypass compilation. Cargo dependency/target
@@ -66,7 +60,7 @@ checks assume there are no competing transactions for the Maker account.
 
 ## Inspect and share the results
 
-A [checked-in example capture](../docs/evidence/reviewer-20260908-c7c5f2d/README.md)
+A [checked-in example capture](../docs/evidence/swap-20260908-c7c5f2d/README.md)
 contains the public recordings and transaction records from this machine. Its
 README identifies the exact capture commit and distinguishes it from earlier
 release evidence. Download its `index.html` to play the recordings locally.
@@ -113,9 +107,9 @@ that wait.
 To repeat just one scenario on the prepared stack:
 
 ```sh
-python3 deploy/scripts/record-reviewer-evidence.py --scenario maker-refund
+python3 deploy/scripts/record-evidence.py --scenario maker-refund
 # Or specify a new output directory:
-python3 deploy/scripts/record-reviewer-evidence.py --output /tmp/my-swap-evidence
+python3 deploy/scripts/record-evidence.py --output /tmp/my-swap-evidence
 ```
 
 ## Stop or recover
@@ -130,7 +124,7 @@ stopped; `docker compose --env-file runtime/runtime.env up -d maker-node taker-n
 restarts it. Inspect retained swaps before running another attempt. Do not reset
 the chain to recover a swap or change its timing profile mid-flight.
 
-The build is resumable with the same workspace and `--reviewer` arguments;
+The build is resumable with the same workspace and `--evidence` arguments;
 `--only sources|rust|build|stage|stack` selects one phase. Keep the selected
 commit unchanged through build and capture. These tests cover the BTC → LEZ
 API paths, not XMR, reverse-direction swaps or unresolved protocol threat-model

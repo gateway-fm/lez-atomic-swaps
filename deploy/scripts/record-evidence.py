@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record reviewer scenarios and verify their public chain effects; Python stdlib only."""
+"""Record swap scenarios and verify their public chain effects; Python stdlib only."""
 import argparse
 import contextlib
 import datetime
@@ -212,7 +212,7 @@ def provenance(commit):
 def finalize(root):
     # No runtime directories, wallet databases, env files or private identities
     # are copied. Only the explicitly written public artifacts are packaged.
-    template = (DEPLOY/'scripts/reviewer-player.html').read_text()
+    template = (DEPLOY/'scripts/evidence-player.html').read_text()
     sessions = {}
     for cast in sorted(root.glob('*/execution.cast')):
         sessions[cast.parent.name] = [json.loads(line) for line in cast.read_text().splitlines()]
@@ -235,15 +235,15 @@ def main():
     if command('git', '-C', str(repo), 'status', '--porcelain', '--untracked-files=no'):
         parser.error('commit tracked changes before recording so the source archive identifies this run exactly')
     if E.timing_profile().get('LEZ_TIMING_PROFILE') != 'fast':
-        parser.error('use from-scratch.sh --reviewer to prepare the fast timing profile')
+        parser.error('use from-scratch.sh --evidence to prepare the fast timing profile')
     if E.bitcoin('getblockchaininfo')['chain'] != 'regtest':
         parser.error('Bitcoin must be regtest')
     # A second recorder would stop the same Maker and invalidate balance checks.
-    lock = (E.RUNTIME/'reviewer-record.lock').open('w')
+    lock = (E.RUNTIME/'evidence-record.lock').open('w')
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        parser.error('another reviewer recording is already running')
+        parser.error('another evidence recording is already running')
     metadata = provenance(commit)
     root = (args.output or DEPLOY/'runtime/recordings'/datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')).resolve()
     root.mkdir(parents=True, exist_ok=False)

@@ -32,6 +32,6 @@ __pycache__/
 /deploy/images/bitcoin-core/bin/
 /deploy/images/basecamp-ui/assets/
 
-# Source receipts for locally built reviewer payloads
+# Source receipts for locally built evidence payloads
 /deploy/images/*/build-source.txt
 /deploy/images/*/sidecar-source.txt
