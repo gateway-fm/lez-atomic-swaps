@@ -408,14 +408,7 @@ phase_stage() {
 # deployer and the vault-claim tool accept only literal-loopback URLs, so the
 # container forwards 127.0.0.1:3040/8779 to sequencer/indexer for the run.
 market_bootstrap() {
-  docker run --rm --network lez-swap-chains --user "$(id -u):$(id -g)" \
-    -v "$PROVISION:/provision:ro" -v "$MARKET_ROOT:/market" -v "$DEPLOY_ROOT/scripts:/scripts:ro" \
-    -e MARKET_ROOT=/market -e ESCROW_PROGRAM_ID="$ESCROW_PROGRAM_ID" \
-    -e DEPLOYER=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer \
-    -e VAULT_CLAIM_BIN=/provision/sidecar/lez-v02-vault-claim-poc \
-    "$BUILDER_IMAGE" bash -c 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
-      socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
-      sleep 1; bash /scripts/market-bootstrap.sh'
+  LEZ_WORKSPACE="$WORKSPACE" LEZ_PROVISION="$PROVISION" bash "$DEPLOY_ROOT/scripts/bootstrap-market.sh"
 }
 
 phase_stack() {
@@ -449,9 +442,7 @@ phase_stack() {
   log "market bootstrap (escrow program, vault claims, bootstrap manifest)"
   market_bootstrap | tail -4
   # The first start precedes deployment. Entrypoints read this manifest once,
-  # so restart both roles after publishing its public fields into the runtime.
-  cat "$MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
-  chmod 0644 runtime/market-bootstrap.env
+  # so restart both roles after bootstrap-market.sh published it into the runtime.
   docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
   [[ "$EVIDENCE_MODE" != 1 ]] || return 0
   log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"

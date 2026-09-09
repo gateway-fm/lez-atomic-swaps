@@ -78,10 +78,12 @@ The portable recorder produces an offline replay page and public chain checks.
 ## Quick start
 
 ```sh
-./scripts/up.sh                    # config → build → start → wait → UI verification
+./scripts/up.sh                    # start or resume everything: chains, market, both Nodes, UI
+./scripts/up.sh --fresh-lez        # recreate the LEZ chain only (Bedrock cannot restart after long uptime)
+./scripts/up.sh --build            # also rebuild the images from the staged payloads
 ./scripts/swap-through-ui.sh       # one BTC → LEZ swap through the two Basecamp apps
 ./scripts/export-node-evidence.py  # publish a completed swap's public evidence (explorer + proof view)
-./scripts/down.sh                  # stop   (--wipe removes all state)
+./scripts/down.sh                  # stop everything (--wipe also removes state and volumes)
 ```
 
 `up.sh` ends with the repo-style UI verification (real Basecamp driven through
