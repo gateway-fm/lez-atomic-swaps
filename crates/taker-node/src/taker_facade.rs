@@ -6,6 +6,7 @@
 //! describe the current Node, CLI, and demo ownership of each route.
 
 use lez_bridge_protocol::RequestId;
+use lez_btc_swap_sdk::BtcAgreementTermsV1;
 use lez_node_common::TakerMakerIdentityV1;
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_store::{MakerOfferId, MakerOfferV1, MakerRouteV1};
@@ -303,6 +304,9 @@ pub struct TakerSwapViewV1 {
     pub available_action: Option<TakerTerminalActionV1>,
     /// Non-effect guidance shown only after receiving transparent ZEC by claim.
     pub privacy_guidance: Option<TakerPrivacyGuidanceV1>,
+    /// The countersigned schedule and amounts, once the BTC agreement is bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms: Option<BtcAgreementTermsV1>,
 }
 
 /// Versioned collection of swaps recoverable after UI or facade restart.

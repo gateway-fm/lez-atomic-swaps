@@ -28,6 +28,8 @@ Item {
     property bool showAttention: true
     property bool showRunning: true
     property bool showDone: true
+    // Unix seconds, ticked once a second for every countdown on the desk.
+    property real now: Date.now() / 1000
     // ---- The activity log: what the desk asked and what the Node answered,
     // plus every change the background poll notices. Newest last.
     property var activity: []
@@ -242,6 +244,36 @@ Item {
         var perBitcoin = 100000000 * root.offerLez / root.offerSats
         return "1 BTC = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
     }
+    // The Node's stored price for this direction, and how far the form's
+    // rate sits from it: positive means you receive more per unit sold.
+    readonly property var storedRoute: {
+        var routes = root.btcMarket.routes ?? []
+        for (var i = 0; i < routes.length; ++i)
+            if (routes[i].direction === root.offerDirection && routes[i].lez_units_per_lot > 0 && routes[i].foreign_units_per_lot > 0) return routes[i]
+        return null
+    }
+    readonly property real spread: {
+        var r = root.storedRoute
+        if (!r || !(root.offerSats > 0) || !(root.offerLez > 0)) return NaN
+        var stored = r.lez_units_per_lot / r.foreign_units_per_lot
+        var mine = root.offerLez / root.offerSats
+        return (root.sellSide === "lez" ? stored / mine - 1 : mine / stored - 1) * 100
+    }
+    readonly property string spreadDisplay: !root.storedRoute ? "no stored price yet"
+        : !Number.isFinite(root.spread) ? "vs stored price"
+        : (root.spread >= 0 ? "+" : "") + root.spread.toFixed(2) + "% vs stored price"
+    // Recomputes the receive leg from the stored price plus `percent`.
+    function applySpread(percent) {
+        var r = root.storedRoute, factor = 1 + Number(percent) / 100
+        if (!r || !Number.isFinite(factor) || factor <= 0) return
+        if (root.sellSide === "lez") {
+            var lez = root.whole(sellAmount.amount)
+            if (lez > 0) receiveAmount.amount = root.btcAmount(Math.round(lez * r.foreign_units_per_lot / r.lez_units_per_lot * factor))
+        } else {
+            var sats = root.sats(sellAmount.amount)
+            if (sats > 0) receiveAmount.amount = String(Math.round(sats * r.lez_units_per_lot / r.foreign_units_per_lot * factor))
+        }
+    }
     // Loads the Node's stored terms for the chosen direction into the form.
     function loadStoredTerms() {
         var routes = root.btcMarket.routes ?? []
@@ -314,6 +346,12 @@ Item {
         repeat: true
         running: root.ready
         onTriggered: root.refreshBtcMarket(true)
+    }
+    Timer {
+        interval: 1000
+        repeat: true
+        running: true
+        onTriggered: root.now = Date.now() / 1000
     }
 
     function connected() {
@@ -512,6 +550,7 @@ Item {
                                     role: "maker"; counterpartyLabel: "TAKER"; actionObjectName: "makerSwapAction"
                                     actionEnabled: root.ready && !root.btcMarketBusy
                                     divider: root.firstDone(modelData) ? "DONE" : ""
+                                    now: root.now
                                     onAct: root.runMakerAction(modelData)
                                 }
                             }
@@ -634,7 +673,13 @@ Item {
             RowLayout {
                 Layout.fillWidth: true; spacing: 10
                 Label { text: "RATE"; color: "#6F7A8B"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.0 }
-                Label { objectName: "makerRate"; text: root.rate; color: "#D9E2F2"; font.pixelSize: 12; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                Label { objectName: "makerRate"; text: root.rate; color: "#D9E2F2"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                Label {
+                    objectName: "makerSpread"
+                    text: root.spreadDisplay
+                    color: !Number.isFinite(root.spread) ? "#68768A" : root.spread >= 0 ? "#7EE100" : "#FF9FAF"
+                    font.pixelSize: 10; Layout.fillWidth: true
+                }
                 Label {
                     text: root.sellSide === "lez" ? "ROUTE BTC → LEZ" : "ROUTE LEZ → BTC"
                     color: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
@@ -642,11 +687,19 @@ Item {
                 }
             }
             GridLayout {
-                Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
+                Layout.fillWidth: true; columns: 3; columnSpacing: 10; rowSpacing: 6
                 FieldLabel { text: "MINIMUM TAKER AMOUNT · SATS" }
                 FieldLabel { text: "OFFER LIFETIME · SECONDS" }
+                FieldLabel { text: "SPREAD · %" }
                 LuxeField { id: minimumAmount; objectName: "makerMinimumSats"; placeholderText: "whole offer"; Layout.fillWidth: true }
                 LuxeField { id: termTtl; objectName: "makerOfferTtl"; placeholderText: "e.g. 3600"; Layout.fillWidth: true }
+                LuxeField {
+                    objectName: "makerSpreadInput"
+                    placeholderText: root.storedRoute ? "e.g. 1.5" : "no stored price"
+                    enabled: root.storedRoute !== null
+                    Layout.preferredWidth: 110
+                    onEditingFinished: root.applySpread(text)
+                }
             }
             Label {
                 text: root.termsValid

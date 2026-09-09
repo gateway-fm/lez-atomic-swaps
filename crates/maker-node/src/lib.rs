@@ -66,9 +66,9 @@ use btc_reference_actor::{
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
 use lez_btc_swap_sdk::{
-    BtcAgreementDraftV1, BtcAgreementV1, BtcMakerAgreementProposalV1, BtcRoleContributionPairV1,
-    BtcRoleContributionV1, MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES,
-    derive_btc_pre_session_id_v1,
+    BtcAgreementDraftV1, BtcAgreementTermsV1, BtcAgreementV1, BtcMakerAgreementProposalV1,
+    BtcRoleContributionPairV1, BtcRoleContributionV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
+    MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES, derive_btc_pre_session_id_v1,
 };
 use lez_swap_core::{
     Chain, ChainPosition, ClockBasis, ConfirmationPolicy, Error, Pair, Participant, Phase,
@@ -747,6 +747,9 @@ pub struct MakerActorMonitorV1 {
     pub progress: Option<MakerActorProgressViewV1>,
     /// Latest explicit owner action, when available.
     pub manual_action: Option<MakerActorManualActionViewV1>,
+    /// The countersigned schedule and amounts, when the Node holds the BTC agreement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms: Option<BtcAgreementTermsV1>,
 }
 
 /// Durable admission result for one explicit Maker actor action.
@@ -968,6 +971,10 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 attempt_count: record.attempt_count(),
                 progress,
                 manual_action,
+                terms: context
+                    .btc_lifecycle
+                    .as_ref()
+                    .and_then(|lifecycle| lifecycle.terms_for_swap(&id)),
             })
         },
     )?;

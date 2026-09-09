@@ -13,6 +13,9 @@ Rectangle {
     property string actionObjectName: ""
     // A section label drawn above this row, e.g. "DONE" on the first done row.
     property string divider: ""
+    // Unix seconds, for the schedule's countdowns.
+    property real now: 0
+    readonly property bool done: ["completed", "refunded", "failed"].indexOf(String(swapRow.modelData.state)) >= 0
     signal act()
     implicitHeight: swapColumn.implicitHeight + 26 + (swapRow.divider !== "" ? 22 : 0)
     radius: 9
@@ -61,6 +64,19 @@ Rectangle {
                 text: String(swapRow.modelData.progress_detail ?? "")
                 color: "#8E7BC6"; font.pixelSize: 10
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            Label {
+                visible: !!swapRow.modelData.amounts_display
+                text: String(swapRow.modelData.amounts_display ?? "")
+                    + (swapRow.modelData.fill_display ? "  ·  " + String(swapRow.modelData.fill_display) : "")
+                color: "#9AA6B8"; font.pixelSize: 10; font.family: "DejaVu Sans Mono"
+                elide: Text.ElideRight; Layout.fillWidth: true
+            }
+            Timeline {
+                visible: !swapRow.done && (swapRow.modelData.timeline ?? []).length > 0
+                moments: swapRow.modelData.timeline ?? []
+                now: swapRow.now
+                Layout.fillWidth: true; Layout.topMargin: 4
             }
         }
         Label {
