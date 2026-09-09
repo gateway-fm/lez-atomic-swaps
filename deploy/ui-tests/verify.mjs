@@ -229,10 +229,10 @@ if (role === "maker") {
     const check = await app.findByProperty("objectName", "makerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
     await evaluateIn(app, check.matches[0].id, "clicked()");
-    await app.waitFor(async () => app.expectTexts(["Maker systems ready"]), {
+    await app.waitFor(async () => app.expectTexts(["Node ready"]), {
       timeout: 15000, interval: 300, description: "Maker health status",
     });
-    console.log("  health: Maker systems ready");
+    console.log("  health: Node ready");
   });
 
   test("maker: Node-indexed BTC offer inventory", async (app) => {
@@ -249,7 +249,7 @@ if (role === "maker") {
     }
     await evaluateIn(app, wallet.matches[0].id, "currentIndex = 0");
     let munich = unwrap(await outputAfterClick(
-      app, "Refresh wallet inventory", "makerOutput",
+      app, "Refresh market", "makerOutput",
       (envelope) => envelope.ok === true
         && envelope.result?.selected_wallet_id === "maker-munich-01", true,
     ), "Munich inventory");
@@ -317,7 +317,7 @@ if (role === "maker") {
     await app.waitFor(async () => app.expectTexts(["0.01000000 BTC", "1,000 LEZ"]), {
       timeout: 15000, interval: 500, description: "first market snapshot rendered",
     });
-    await app.click("Refresh wallet market");
+    await app.click("Refresh market");
     await app.waitFor(async () => app.expectTexts(["Munich Vault 01"]), {
       timeout: 15000, interval: 500, description: "Maker Node order book",
     });
@@ -330,10 +330,10 @@ if (role === "maker") {
     const check = await app.findByProperty("objectName", "takerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
     await evaluateIn(app, check.matches[0].id, "clicked()");
-    await app.waitFor(async () => app.expectTexts(["All systems ready"]), {
+    await app.waitFor(async () => app.expectTexts(["Node ready"]), {
       timeout: 15000, interval: 300, description: "Taker health status",
     });
-    console.log("  health: All systems ready");
+    console.log("  health: Node ready");
   });
 
   if (process.env.PREPARE_INTERACTIVE_BTC === "1") {

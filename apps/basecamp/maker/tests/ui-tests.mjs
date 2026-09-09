@@ -10,13 +10,11 @@ test("maker: role console loads", async (app) => {
     description: "Maker UI to load",
   });
   await app.expectTexts([
-    "Quote both directions, publish wallet-owned inventory, settle atomically.",
     "Compose an offer",
+    "Open offers",
     "My orders",
-    "Publish offer",
+    "Activity",
     "Private negotiation Chat",
-    "End-to-end encrypted by Logos Chat; valid only while this Maker app is open",
-    "ADVANCED NODE CONTROLS · PREPARED NON-BITCOIN ROUTES",
   ]);
 });
 

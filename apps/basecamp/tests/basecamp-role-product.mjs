@@ -185,10 +185,10 @@ if (expectService) {
           (result) => result.was_replay === false);
         await invokeSuccessfully(app, "Confirm and initiate", "exact initiation replay",
           (result) => result.was_replay === true);
-        await invokeSuccessfully(app, "List my swaps", "swap list");
+        await invokeSuccessfully(app, "Refresh registry", "swap list");
         await evaluateIn(app, "takerProgress",
           `swapId.text = ${JSON.stringify(String(takerFixture.swap_id))}; true`);
-        await invokeSuccessfully(app, "Monitor", "swap monitor",
+        await invokeSuccessfully(app, "Refresh state", "swap monitor",
           (result) => result.swap_id === takerFixture.swap_id);
       }
     }

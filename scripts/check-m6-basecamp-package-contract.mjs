@@ -45,6 +45,7 @@ const packages = [
       "makerCreateOffers",
       "makerActive",
       "makerHistory",
+      "makerActivity",
       "makerOutput",
     ],
   },
@@ -88,6 +89,7 @@ const packages = [
       "takerRefund",
       "takerListSwaps",
       "takerShielding",
+      "takerActivity",
       "takerOutput",
     ],
   },
@@ -149,12 +151,18 @@ requirePattern(
   /logos-delivery-module\.follows\s*=\s*"chat_module\/logos-delivery-module"/,
   "must follow Chat's exact Delivery release",
 );
+requirePattern(
+  rootFlake,
+  flakeSource,
+  /packageFor\s*=\s*system:\s*role:\s*logos-module-builder\.lib\.mkLogosQmlModule/,
+  "must build every role package through mkLogosQmlModule",
+);
 for (const value of ["maker", "taker"]) {
   requirePattern(
     rootFlake,
     flakeSource,
-    new RegExp(`${value}Package\\s*=.*mkLogosQmlModule`, "s"),
-    `must build the ${value} package through mkLogosQmlModule`,
+    new RegExp(`${value}For\\s*=\\s*system:\\s*packageFor\\s+system\\s+"${value}"`),
+    `must build the ${value} package through the shared package builder`,
   );
   requirePattern(
     rootFlake,
@@ -238,6 +246,11 @@ const chatText = read(chatSource, "shared Logos Chat bridge implementation");
 const chatContractText = `${chatHeaderText ?? ""}\n${chatText ?? ""}`;
 const marketSourceFile = resolve(basecampRoot, "common/node_market.cpp");
 const marketText = read(marketSourceFile, "shared Node-market adapter");
+const kitDir = resolve(basecampRoot, "common/qml");
+const kitFiles = ["ActivityLog", "AmountLeg", "FieldLabel", "FilterTab", "LuxeButton", "LuxeCombo", "LuxeField", "Panel", "SectionTitle", "SideToggle", "StatusStrip", "SwapRow"];
+const kitText = kitFiles.map((name) => read(resolve(kitDir, `${name}.qml`), `shared UI kit ${name}`) ?? "").join("\n");
+const flakeText = read(resolve(basecampRoot, "flake.nix"), "consumer flake") ?? "";
+requirePattern(resolve(basecampRoot, "flake.nix"), flakeText, /commonSource\}\/qml\/\*\.qml \$out\/src\/qml\//, "must merge the shared UI kit into each package's QML view directory");
 for (const [pattern, message] of [
   [/QLocalSocket/, "must use Qt's Unix-domain local socket client"],
   [/lstat\s*\(/, "must inspect the socket without following symlinks"],
@@ -430,8 +443,9 @@ for (const pkg of packages) {
     rejectPattern(backendSource, source, pattern, message);
   }
 
+  // The view is Main.qml plus the shared UI kit the flake copies next to it.
   const qmlFile = resolve(root, "src/qml/Main.qml");
-  const qml = read(qmlFile, "QML view");
+  const qml = `${read(qmlFile, "QML view") ?? ""}\n${kitText}`;
   requirePattern(
     qmlFile,
     qml,

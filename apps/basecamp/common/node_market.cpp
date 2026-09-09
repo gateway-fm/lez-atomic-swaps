@@ -118,11 +118,18 @@ struct SwapRow {
 };
 
 // The Taker's desk states from the Taker Node's swap view; `bitcoin` and
-// `lez` are that swap's exact amounts as the desk displays them.
-SwapRow takerRow(const QString& nodeState, bool locked, const QString& direction,
-                 const QString& bitcoin, const QString& lez)
+// `lez` are that swap's exact amounts as the desk displays them. The Node's
+// `available_action` wins over the lifecycle state: a refund it offers while
+// the Maker's lock is still nominally awaited means the Maker missed its
+// window.
+SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool locked,
+                 const QString& direction, const QString& bitcoin, const QString& lez)
 {
     const bool fundsBitcoin = direction == QStringLiteral("taker_sells_foreign");
+    if (availableAction == QStringLiteral("refund") && nodeState != "refund_available")
+        return {"refund_ready", "The Maker missed its lock window", 60,
+                "Your Node offers the recovery path; nothing else can happen on this swap",
+                "refund_btc", "Refund " + bitcoin};
     if (nodeState == "not_activated" || nodeState == "initiating")
         return {"preparing", "Preparing the swap", 10,
                 "Reservation, funding plan, signing ceremony and actor activation run inside your Node", "", ""};
@@ -148,7 +155,7 @@ SwapRow takerRow(const QString& nodeState, bool locked, const QString& direction
         return {"completed", "Completed", 100, "Both legs settled on chain", "", ""};
     if (nodeState == "refund_available")
         return {"refund_ready", "Refund available", 60,
-                "The Maker did not lock in time; you may recover your Bitcoin", "refund_btc", "Refund Bitcoin"};
+                "The Maker did not lock in time; you may recover your Bitcoin", "refund_btc", "Refund " + bitcoin};
     if (nodeState == "refund_in_progress")
         return {"refunding", "Refund submitted", 80, "Your Node observes the refund", "", ""};
     if (nodeState == "refunded")
@@ -157,9 +164,13 @@ SwapRow takerRow(const QString& nodeState, bool locked, const QString& direction
             "The actor reports a state the desk cannot advance; inspect it from the CLI", "", ""};
 }
 
-// The Maker's desk states from its supervised actor's observation.
-SwapRow makerRow(const QString& phase, const QString& scheduleState)
+// The Maker's desk states from its supervised actor's observation. The
+// actor's `next_action` names recovery once the Maker's lock window is gone.
+SwapRow makerRow(const QString& phase, const QString& nextAction, const QString& scheduleState)
 {
+    if (nextAction == QStringLiteral("recover_taker_leg"))
+        return {"recovering", "Lock window missed", 55,
+                "Your Node could not lock in time; it recovers once the Taker's refund is final", "", ""};
     if (phase == "offered" || phase == "awaiting_taker_confirmations")
         return {"awaiting_taker_lock", "Waiting for the Taker's Bitcoin lock", 20,
                 "Your Node observes Bitcoin; nothing to click", "", ""};
@@ -302,7 +313,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             if (swap.value("route").toObject().value("pair").toString() != QStringLiteral("Bitcoin")) continue;
             const QString swapId = swap.value("swap_id").toString();
             const QString direction = directionName(swap.value("route").toObject().value("direction").toString());
-            const SwapRow row = takerRow(swap.value("state").toString(), lockedSwaps.contains(swapId), direction,
+            const SwapRow row = takerRow(swap.value("state").toString(), swap.value("available_action").toString(),
+                                         lockedSwaps.contains(swapId), direction,
                                          formatBtc(integerField(swap, "foreign_units")),
                                          formatLez(integerField(swap, "lez_units")));
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction,
@@ -482,14 +494,16 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             if (swap.value("pair").toString() != QStringLiteral("Bitcoin")) continue;
             const QString swapId = swap.value("id").toString();
             const QString direction = directionName(swap.value("direction").toString());
-            QString phase, schedule;
+            QString phase, nextAction, schedule;
             const Reply monitored = decode(rpc.call("maker_actor_monitor_v1", compact({{"id", swapId}})));
             if (monitored.ok) {
                 const QJsonObject result = monitored.result.toObject();
                 schedule = result.value("schedule_state").toString();
-                phase = result.value("progress").toObject().value("observation").toObject().value("phase").toString();
+                const QJsonObject observation = result.value("progress").toObject().value("observation").toObject();
+                phase = observation.value("phase").toString();
+                nextAction = observation.value("next_action").toString();
             }
-            const SwapRow row = makerRow(phase, schedule);
+            const SwapRow row = makerRow(phase, nextAction, schedule);
             swaps.append(swapRowObject(row, swapId, QString(), direction, wallet.label,
                                        QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0));
             if (row.state == "completed") ++completed;
