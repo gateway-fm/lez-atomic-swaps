@@ -9213,6 +9213,17 @@ fn effect_output(
     outcome: ActorEffectOutcomeV1,
     status: &BtcOfflineStatus,
 ) -> ActorEffectOutputV1 {
+    // The same routing as the status command, so a supervisor reading both
+    // outputs sees one next action rather than one that flips between them.
+    let next_action = match load_agreement(config) {
+        Ok((agreement, _)) => routed_next_action(
+            config,
+            status,
+            maker_cutoff_passed(&agreement),
+            claim_window_closed(&agreement),
+        ),
+        Err(_) => actor_next_action(status),
+    };
     ActorEffectOutputV1 {
         schema_version: OUTPUT_SCHEMA_VERSION,
         role: config.role,
@@ -9220,7 +9231,7 @@ fn effect_output(
         outcome,
         phase: status.phase().into(),
         revision: status.revision(),
-        next_action: actor_next_action(status),
+        next_action,
     }
 }
 
@@ -9230,6 +9241,29 @@ fn status_output(
     maker_cutoff_passed: bool,
     claim_window_closed: bool,
 ) -> ActorStatusV1 {
+    ActorStatusV1 {
+        schema_version: OUTPUT_SCHEMA_VERSION,
+        role: config.role,
+        state: ActorStateV1::Active {
+            phase: status.phase().into(),
+            revision: status.revision(),
+            next_action: routed_next_action(
+                config,
+                status,
+                maker_cutoff_passed,
+                claim_window_closed,
+            ),
+        },
+    }
+}
+
+/// The durable next action with the wall-clock routing applied.
+fn routed_next_action(
+    config: &ActorConfig,
+    status: &BtcOfflineStatus,
+    maker_cutoff_passed: bool,
+    claim_window_closed: bool,
+) -> ActorNextActionV1 {
     let mut next_action = actor_next_action(status);
     // Past its second-lock cutoff the Maker may no longer lock; the only thing
     // left for it at revision 1 is to follow the Taker's recovery, so its
@@ -9250,15 +9284,7 @@ fn status_output(
     {
         next_action = ActorNextActionV1::RecoverMakerLeg;
     }
-    ActorStatusV1 {
-        schema_version: OUTPUT_SCHEMA_VERSION,
-        role: config.role,
-        state: ActorStateV1::Active {
-            phase: status.phase().into(),
-            revision: status.revision(),
-            next_action,
-        },
-    }
+    next_action
 }
 
 fn actor_next_action(status: &BtcOfflineStatus) -> ActorNextActionV1 {
