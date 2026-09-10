@@ -29,16 +29,30 @@ def seed(call=rpc):
     # Whoever sells Bitcoin locks it from its own Core wallet: the Taker when
     # the Taker sells Bitcoin, the Maker when the Maker does. Both get a
     # spendable regtest balance (each mine matures after 100 more blocks).
-    for name in ("lez-taker", "lez-maker"):
-        wallet = f"-rpcwallet={name}"
-        balance = call(wallet, "getbalances")["mine"]["trusted"]
-        if balance < 1:
-            address = call(wallet, "getnewaddress", "", "bech32m")
+    names = ("lez-taker", "lez-maker")
+    trusted = lambda name: call(f"-rpcwallet={name}", "getbalances")["mine"]["trusted"]
+    for name in names:
+        if trusted(name) < 1:
+            address = call(f"-rpcwallet={name}", "getnewaddress", "", "bech32m")
             call("generatetoaddress", "105", address)
-        balance = call(wallet, "getbalances")["mine"]["trusted"]
-        if balance < 1:
-            raise RuntimeError(f"{name} has less than 1 spendable regtest BTC after seeding")
-    print("Regtest wallets ready; Maker and Taker each have at least 1 spendable BTC.")
+    # Enough for many local swaps of a few hundred thousand satoshis. A fresh
+    # chain mines far more; a chain past its subsidy (halving every 150
+    # blocks) mines nothing, and then the other wallet, if it holds coins,
+    # hands half of them over.
+    floor = 0.05
+    for name in names:
+        if trusted(name) >= floor:
+            continue
+        other = next(o for o in names if o != name)
+        share = round(trusted(other) / 2, 8)
+        if share < floor:
+            raise RuntimeError(f"{name} has less than {floor} spendable regtest BTC after seeding and {other} cannot fund it")
+        address = call(f"-rpcwallet={name}", "getnewaddress", "", "bech32m")
+        call(f"-rpcwallet={other}", "-named", "sendtoaddress", f"address={address}", f"amount={share}", "fee_rate=1")
+        call("generatetoaddress", "1", call(f"-rpcwallet={other}", "getnewaddress", "", "bech32m"))
+        if trusted(name) < floor:
+            raise RuntimeError(f"{name} has less than {floor} spendable regtest BTC after seeding")
+    print(f"Regtest wallets ready; Maker {trusted('lez-maker')} BTC, Taker {trusted('lez-taker')} BTC spendable.")
 
 
 if __name__ == "__main__":
