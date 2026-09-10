@@ -257,9 +257,10 @@ program deployment and the four wallet vault claims — is idempotent:
 
 The bootstrap runs `scripts/market-bootstrap.sh` in one throwaway container on
 the stack's network with the escrow deployer and the vault-claim tool: the
-`lez-builder:local` image with the tools from `provision/data` on a developer
-host (`from-scratch.sh`), or the published `lez-tools` image (compose profile
-`tools`, `start.sh`). Both tools accept only literal-loopback URLs, so the
+`lez-builder:local` image (pulled by the digest in `builder/image.lock`, or
+built locally; see `builder/README.md`) with the tools from `provision/data`
+on a developer host (`from-scratch.sh`), or the published `lez-tools` image
+(compose profile `tools`, `start.sh`). Both tools accept only literal-loopback URLs, so the
 container forwards `127.0.0.1:3040/8779` to `sequencer`/`indexer` for the run.
 
 Chains are never torn down between swaps. Wallet identities and the bootstrap

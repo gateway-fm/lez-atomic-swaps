@@ -78,6 +78,7 @@ GUEST_ELF_SHA256="$(pinned expected_elf_sha256)"
 [[ "$ESCROW_PROGRAM_ID" =~ ^[0-9a-f]{64}$ && "$GUEST_ELF_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot read the escrow pins" >&2; exit 1; }
 readonly ESCROW_PROGRAM_ID GUEST_ELF_SHA256
 readonly BUILDER_IMAGE=lez-builder:local
+readonly BUILDER_LOCK="$DEPLOY_ROOT/builder/image.lock"
 readonly WALLETS=(maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02)
 
 # Workspace layout. Hosts provisioned before the ephemeral builder keep their
@@ -286,11 +287,38 @@ own_provision() {
     'for d in rapidsnark-arm lez-services tools-arm escrow-artifact sidecar risc0; do [[ -e /provision/$d ]] && chown -R "$1" "/provision/$d" 2>/dev/null; done; true' _ "$(id -u):$(id -g)"
 }
 
+# The builder image is published by digest (deploy/builder/image.lock, written
+# by .github/workflows/builder-image.yml) with the prover toolchain baked in;
+# it is pulled once and tagged with the local name every step uses. Without a
+# lock, without registry access, or with LEZ_BUILDER_IMAGE=local it is built
+# here instead (the toolchain layer alone takes about two hours).
 ensure_builder_image() {
-  if ! docker image inspect "$BUILDER_IMAGE" >/dev/null 2>&1; then
-    log "building the ephemeral builder image"
-    docker build -q -t "$BUILDER_IMAGE" "$DEPLOY_ROOT/builder" >/dev/null
+  docker image inspect "$BUILDER_IMAGE" >/dev/null 2>&1 && return 0
+  local pinned=""
+  [[ ! -f "$BUILDER_LOCK" ]] || pinned="$(tr -d '[:space:]' < "$BUILDER_LOCK")"
+  if [[ "${LEZ_BUILDER_IMAGE:-pinned}" != local && -n "$pinned" ]]; then
+    log "pulling the pinned builder image ${pinned##*@}"
+    if docker pull -q "$pinned" >/dev/null 2>&1; then
+      docker tag "$pinned" "$BUILDER_IMAGE"
+      return 0
+    fi
+    log "the pinned builder image could not be pulled; building it locally"
   fi
+  log "building the ephemeral builder image"
+  docker build -q -t "$BUILDER_IMAGE" "$DEPLOY_ROOT/builder" >/dev/null
+}
+
+# The image's toolchain becomes the provision directory's: r0vm, rzup and
+# cargo-risczero into tools-arm, the rapidsnark libraries into rapidsnark-arm.
+# The build steps then find them in place and skip their own builds; their
+# version and digest checks still run.
+seed_tools_from_image() {
+  [[ ! -x "$PROVISION/tools-arm/bin/cargo-risczero" || ! -f "$PROVISION/rapidsnark-arm/librapidsnark.a" ]] || return 0
+  docker run --rm "$BUILDER_IMAGE" test -x /opt/lez-tools/bin/cargo-risczero 2>/dev/null || return 0
+  log "seeding the prover toolchain from the builder image"
+  builder_run -- "mkdir -p /provision/tools-arm/bin /provision/rapidsnark-arm;
+    cp -a /opt/lez-tools/bin/. /provision/tools-arm/bin/; cp -a /opt/lez-tools/rapidsnark/. /provision/rapidsnark-arm/"
+  own_provision
 }
 
 # rapidsnark prover libraries (the Logos fork's aarch64 release)
@@ -375,6 +403,7 @@ build_identities() {
 phase_build() {
   PHASE=build
   ensure_builder_image
+  seed_tools_from_image
   docker container inspect lez-runner-arm >/dev/null 2>&1 &&
     log "note: the retired lez-runner-arm container is still present; docker rm -f lez-runner-arm once its outputs are in $PROVISION"
 

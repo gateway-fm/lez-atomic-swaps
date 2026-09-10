@@ -90,3 +90,30 @@ flowchart LR
 - Debug-profile Node binaries are what the stack has always run and been
   verified with; the images strip them but do not change the profile. A
   release-profile build is a separate decision.
+
+## Addendum (2026-09-10): the builder image is published too
+
+The first release run showed the cost of building the prover toolchain on
+every run: `cargo-risczero` from source alone is about 1.5 hours, `r0vm`
+another 30 minutes, on every job that needs them, on every release. Nothing
+in that toolchain depends on this repository; it is pinned by the risc0 tag,
+the rzup version and the rapidsnark release digest.
+
+The builder image therefore carries the toolchain (`/opt/lez-tools`) and is
+itself published: `.github/workflows/builder-image.yml` builds
+`deploy/builder` for linux/arm64 and pushes
+`ghcr.io/gateway-fm/lez-atomic-swaps/lez-builder`; `deploy/builder/image.lock`
+pins the digest every consumer pulls, and updating it is a reviewed commit.
+`from-scratch.sh` pulls the pinned image (or builds it locally from the same
+Dockerfile when the registry is unreachable or `LEZ_BUILDER_IMAGE=local`),
+seeds `provision/data/tools-arm` and `rapidsnark-arm` from it, and the
+existing steps skip their builds while their version and digest checks still
+run. The release workflow additionally restores the digest-pinned outputs
+(the escrow deployer and guest ELF, the LEZ services) from the Actions cache
+keyed on their pins, so an unchanged pin costs nothing; a restored escrow
+artifact still has to match the pinned guest digest.
+
+The reproducibility contract is unchanged: the guest ELF digest is checked
+after every build, the toolchain versions are checked where they are used,
+the image is built from a Dockerfile in the repository by a workflow anyone
+can rerun, and it is referenced by digest, never by tag.
