@@ -358,13 +358,26 @@ build_r0vm() {
 build_escrow() {
   local guest_elf="$PROVISION/escrow-artifact/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"
   if [[ ! -x "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" || "$(shasum -a 256 "$guest_elf" 2>/dev/null | cut -c1-64)" != "$GUEST_ELF_SHA256" ]]; then
-    # The pinned guest builder image is amd64-only. Docker Desktop emulates it
-    # on a Mac; a Linux arm64 host must have QEMU user emulation registered.
-    if [[ "$(uname -s)" == Linux && ! -e /proc/sys/fs/binfmt_misc/qemu-x86_64 ]]; then
-      fail "the risc0 guest builder is an amd64 image: register emulation first, e.g. docker run --privileged --rm tonistiigi/binfmt --install amd64"
+    # The pinned guest builder image is amd64-only. With LEZ_V02_PREBUILT_GUEST_ELF
+    # (a guest that image built where it runs natively, its digest checked
+    # here and its ImageID in the methods crate) the deployer is built around
+    # it and no Docker socket enters the container. Otherwise the guest is
+    # built here: Docker Desktop emulates the image on a Mac, a Linux arm64
+    # host must have QEMU user emulation registered.
+    local socket=(-v /var/run/docker.sock:/var/run/docker.sock) prebuilt=()
+    if [[ -n "${LEZ_V02_PREBUILT_GUEST_ELF:-}" ]]; then
+      [[ "$(shasum -a 256 "$LEZ_V02_PREBUILT_GUEST_ELF" | cut -c1-64)" == "$GUEST_ELF_SHA256" ]] || fail "prebuilt guest ELF digest mismatch"
+      mkdir -p "$PROVISION/escrow-guest"
+      install -m 0644 "$LEZ_V02_PREBUILT_GUEST_ELF" "$PROVISION/escrow-guest/zec_escrow_v02.bin"
+      socket=(); prebuilt=(-e LEZ_V02_PREBUILT_GUEST_ELF=/provision/escrow-guest/zec_escrow_v02.bin)
+      log "building the escrow deployer around the prebuilt guest ELF"
+    else
+      if [[ "$(uname -s)" == Linux && ! -e /proc/sys/fs/binfmt_misc/qemu-x86_64 ]]; then
+        fail "the risc0 guest builder is an amd64 image: register emulation first, e.g. docker run --privileged --rm tonistiigi/binfmt --install amd64"
+      fi
+      log "building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
     fi
-    log "building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
-    builder_run -v /var/run/docker.sock:/var/run/docker.sock -- "rm -rf /provision/escrow-artifact/docker-guest-source /provision/escrow-artifact/riscv-guest /provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer;
+    builder_run ${socket[@]+"${socket[@]}"} ${prebuilt[@]+"${prebuilt[@]}"} -- "rm -rf /provision/escrow-artifact/docker-guest-source /provision/escrow-artifact/riscv-guest /provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer;
       mkdir -p /tmp/lez-risc0-home/toolchains/v1.94.1-rust-aarch64-unknown-linux-gnu && printf '[default_versions]\nrust = \"1.94.1\"\n' > /tmp/lez-risc0-home/settings.toml;
       RUN_ID=arm-rebuild LEZ_NATIVE_TOOLS=1 LEZ_V02_NATIVE_R0VM=/provision/tools-arm/bin/r0vm LEZ_V02_ARTIFACT_TARGET_DIR=/provision/escrow-artifact \
       LEZ_V02_TOOL_DIR=/provision/tools-arm LEZ_V02_SOURCE_DIR=/lez-source CARGO_TARGET_DIR=/cache/target/provisional CARGO_BUILD_JOBS=6 \
