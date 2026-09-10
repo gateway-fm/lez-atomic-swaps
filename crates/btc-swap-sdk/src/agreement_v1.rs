@@ -16,6 +16,7 @@ use lez_swap_core::{
 };
 use musig2::KeyAggContext;
 use musig2::secp::Point;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use thiserror::Error;
@@ -1699,6 +1700,27 @@ pub struct BtcAgreementV1 {
     coordinator: SwapCoordinator,
 }
 
+/// Secret-free schedule and amounts of one countersigned agreement, as an
+/// owner desk shows them: what is at stake and when each refund path opens.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BtcAgreementTermsV1 {
+    /// Exact Bitcoin leg value in satoshis.
+    pub bitcoin_value_sat: u64,
+    /// Exact LEZ leg amount in atomic units.
+    pub lez_amount: u128,
+    /// Confirmations the Bitcoin lock needs before the other leg may follow.
+    pub required_bitcoin_confirmations: u32,
+    /// Bitcoin height at which the Bitcoin refund script path opens.
+    pub bitcoin_refund_height: u32,
+    /// Unix time after which the Maker may no longer place its second lock.
+    pub maker_second_lock_cutoff_unix_seconds: u64,
+    /// Unix time by which the earlier-refunding leg must have been refunded.
+    pub earlier_refund_latest_unix_seconds: u64,
+    /// Unix time at which the later-refunding leg may be refunded.
+    pub later_refund_earliest_unix_seconds: u64,
+}
+
 impl BtcAgreementV1 {
     /// Validates one untrusted in-memory record.
     ///
@@ -1828,6 +1850,22 @@ impl BtcAgreementV1 {
     #[must_use]
     pub const fn direction(&self) -> SwapDirection {
         self.record.body.direction()
+    }
+
+    /// The secret-free schedule and amounts an owner desk shows as a timeline.
+    #[must_use]
+    pub const fn terms(&self) -> BtcAgreementTermsV1 {
+        let body = &self.record.body;
+        let plan = body.recovery_plan();
+        BtcAgreementTermsV1 {
+            bitcoin_value_sat: body.funding_terms().value_sat(),
+            lez_amount: body.lez_terms().amount(),
+            required_bitcoin_confirmations: body.bitcoin_chain_policy().required_confirmations(),
+            bitcoin_refund_height: plan.bitcoin_refund_height(),
+            maker_second_lock_cutoff_unix_seconds: plan.maker_second_lock_cutoff_unix_seconds(),
+            earlier_refund_latest_unix_seconds: plan.earlier_refund_latest_unix_seconds(),
+            later_refund_earliest_unix_seconds: plan.later_refund_earliest_unix_seconds(),
+        }
     }
 
     /// Agreement commitment signed by both roles.

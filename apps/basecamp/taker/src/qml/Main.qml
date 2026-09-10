@@ -28,6 +28,8 @@ Item {
     property bool showAttention: true
     property bool showRunning: true
     property bool showDone: true
+    // Unix seconds, ticked once a second for every countdown on the desk.
+    property real now: Date.now() / 1000
     // ---- The activity log: what the desk asked and what the Node answered,
     // plus every change the background poll notices. Newest last.
     property var activity: []
@@ -235,6 +237,36 @@ Item {
         var numerator = amount * lezLot
         return Number.isSafeInteger(numerator) && numerator % satsLot === 0 ? numerator / satsLot : NaN
     }
+    // "1 BTC = 100,000 LEZ" for an offer's exact lot price.
+    function offerRate(offer) {
+        return 100000000 * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
+    }
+    function rateDisplay(perBitcoin) {
+        return "1 BTC = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
+    }
+    // The best rate on the book for `direction`: most LEZ per BTC when you
+    // pay BTC, fewest when you sell LEZ.
+    function bestRate(direction) {
+        var best = NaN
+        var book = root.btcMarket.order_book ?? []
+        for (var i = 0; i < book.length; ++i) {
+            if (book[i].direction !== direction) continue
+            var rate = root.offerRate(book[i])
+            if (!Number.isFinite(best) || (direction === "taker_sells_foreign" ? rate > best : rate < best)) best = rate
+        }
+        return best
+    }
+    // How much worse than the best rate an offer is, in percent; 0 is best.
+    function behindBest(offer) {
+        var best = root.bestRate(offer.direction), rate = root.offerRate(offer)
+        return offer.direction === "taker_sells_foreign" ? (best / rate - 1) * 100 : (rate / best - 1) * 100
+    }
+    // The gap between the two sides of the book, when both are quoted.
+    readonly property string bookSpread: {
+        var buy = root.bestRate("taker_sells_foreign"), sell = root.bestRate("taker_sells_lez")
+        if (!Number.isFinite(buy) || !Number.isFinite(sell)) return ""
+        return "spread " + ((sell / buy - 1) * 100).toFixed(2) + "%"
+    }
     function takeBtcOffer(offer, sats) {
         if (root.btcMarketBusy || !Number.isSafeInteger(root.quoteOffer(offer, sats))) return
         root.btcMarketBusy = true
@@ -378,6 +410,12 @@ Item {
         running: root.ready
         onTriggered: root.refreshBtcMarket(true)
     }
+    Timer {
+        interval: 1000
+        repeat: true
+        running: true
+        onTriggered: root.now = Date.now() / 1000
+    }
 
     function connected() {
         root.statusMode = "success"
@@ -509,6 +547,7 @@ Item {
                                     role: "taker"; counterpartyLabel: "MAKER"; actionObjectName: "takerSwapAction"
                                     actionEnabled: root.ready && !root.btcMarketBusy
                                     divider: root.firstDone(modelData) ? "DONE" : ""
+                                    now: root.now
                                     onAct: root.runTakerAction(modelData)
                                 }
                             }
@@ -520,6 +559,7 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 SectionTitle { text: "Available orders"; Layout.fillWidth: true }
+                                Label { visible: root.bookSpread !== ""; text: root.bookSpread; color: "#9AA6B8"; font.pixelSize: 10; font.family: "DejaVu Sans Mono" }
                                 Label { text: String((root.btcMarket.order_book ?? []).length); color: "#B997FF"; font.pixelSize: 12; font.weight: Font.Bold; font.family: "DejaVu Sans Mono" }
                             }
                             Label {
@@ -536,40 +576,79 @@ Item {
                                     // inside the offer's bounds that quotes to whole LEZ.
                                     readonly property bool ranged: Number(modelData.minimum_foreign_units) !== Number(modelData.maximum_foreign_units)
                                     readonly property real quotedLez: root.quoteOffer(modelData, takeSats.text)
-                                    Layout.fillWidth: true; implicitHeight: ranged ? 108 : 58; radius: 9
+                                    readonly property real behind: root.behindBest(modelData)
+                                    Layout.fillWidth: true; implicitHeight: offerColumn.implicitHeight + 24; radius: 9
                                     color: "#0D141E"; border.width: 1; border.color: "#28364A"
-                                    LuxeField {
-                                        id: takeSats
-                                        objectName: "takerTakeSats"
-                                        visible: takerOfferRow.ranged
-                                        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-                                        anchors.margins: 12
-                                        placeholderText: "Satoshis to take, " + String(takerOfferRow.modelData.minimum_foreign_units) + "–" + String(takerOfferRow.modelData.maximum_foreign_units)
-                                        text: String(takerOfferRow.modelData.maximum_foreign_units ?? "")
-                                        Label {
-                                            anchors.right: parent.right; anchors.rightMargin: 12
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            text: Number.isSafeInteger(takerOfferRow.quotedLez) ? "→ " + root.formatLez(takerOfferRow.quotedLez) : "outside the offer's terms"
-                                            color: Number.isSafeInteger(takerOfferRow.quotedLez) ? "#7EE100" : "#FF9FAF"
-                                            font.pixelSize: 10
-                                        }
-                                    }
-                                    RowLayout {
+                                    ColumnLayout {
+                                        id: offerColumn
                                         anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                                        anchors.margins: 12; spacing: 12; height: 34
-                                        ColumnLayout {
-                                            Layout.fillWidth: true; spacing: 2
-                                            Label { text: String(takerOfferRow.modelData.maker_wallet_label); color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                            Label { text: String(takerOfferRow.modelData.offer_id); color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                        anchors.margins: 12; spacing: 8
+                                        RowLayout {
+                                            Layout.fillWidth: true; spacing: 12
+                                            ColumnLayout {
+                                                Layout.fillWidth: true; spacing: 2
+                                                Label { text: String(takerOfferRow.modelData.maker_wallet_label); color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                                Label { text: String(takerOfferRow.modelData.offer_id); color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                            }
+                                            Label { text: String(takerOfferRow.modelData.taker_pays_display); color: "#B997FF"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                            Label { text: "→"; color: "#687486"; font.pixelSize: 13 }
+                                            Label { text: String(takerOfferRow.modelData.taker_receives_display); color: "#7EE100"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                            LuxeButton {
+                                                objectName: "takerTakeOffer"
+                                                text: "Take offer"; primary: true
+                                                enabled: root.ready && !root.btcMarketBusy && Number.isSafeInteger(takerOfferRow.quotedLez)
+                                                onClicked: root.takeBtcOffer(takerOfferRow.modelData, takeSats.text)
+                                            }
                                         }
-                                        Label { text: String(takerOfferRow.modelData.taker_pays_display); color: "#B997FF"; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                        Label { text: "→"; color: "#687486"; font.pixelSize: 13 }
-                                        Label { text: String(takerOfferRow.modelData.taker_receives_display); color: "#7EE100"; font.pixelSize: 12; font.weight: Font.DemiBold }
-                                        LuxeButton {
-                                            objectName: "takerTakeOffer"
-                                            text: "Take offer"; primary: true
-                                            enabled: root.ready && !root.btcMarketBusy && Number.isSafeInteger(takerOfferRow.quotedLez)
-                                            onClicked: root.takeBtcOffer(takerOfferRow.modelData, takeSats.text)
+                                        // The exact lot rate, its distance from the best on the
+                                        // book, and when the Maker's signature stops being valid.
+                                        RowLayout {
+                                            Layout.fillWidth: true; spacing: 14
+                                            Label { text: root.rateDisplay(root.offerRate(takerOfferRow.modelData)); color: "#D9E2F2"; font.pixelSize: 10; font.family: "DejaVu Sans Mono" }
+                                            Label {
+                                                text: takerOfferRow.behind > 0.005 ? takerOfferRow.behind.toFixed(2) + "% behind the best" : "best rate"
+                                                color: takerOfferRow.behind > 0.005 ? "#FFB8EC" : "#7EE100"; font.pixelSize: 10
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Timeline {
+                                                moments: [{label: "Expires", at_unix_seconds: takerOfferRow.modelData.expires_at_unix_seconds}]
+                                                now: root.now
+                                            }
+                                        }
+                                        // How much of the offer to take: the slider walks the
+                                        // lots, the field takes an exact number of satoshis.
+                                        RowLayout {
+                                            visible: takerOfferRow.ranged
+                                            Layout.fillWidth: true; spacing: 10
+                                            LuxeSlider {
+                                                id: takeShare
+                                                objectName: "takerTakeShare"
+                                                Layout.fillWidth: true
+                                                from: Number(takerOfferRow.modelData.minimum_foreign_units)
+                                                to: Number(takerOfferRow.modelData.maximum_foreign_units)
+                                                stepSize: Number(takerOfferRow.modelData.foreign_units_per_lot)
+                                                value: Number(takerOfferRow.modelData.maximum_foreign_units)
+                                                onMoved: takeSats.text = String(Math.round(value))
+                                            }
+                                            Label {
+                                                text: Number.isSafeInteger(takerOfferRow.quotedLez)
+                                                    ? Math.round(100 * Number(takeSats.text) / Number(takerOfferRow.modelData.maximum_foreign_units)) + "% of the offer"
+                                                    : "outside the terms"
+                                                color: Number.isSafeInteger(takerOfferRow.quotedLez) ? "#9AA6B8" : "#FF9FAF"
+                                                font.pixelSize: 10; Layout.preferredWidth: 110
+                                            }
+                                            LuxeField {
+                                                id: takeSats
+                                                objectName: "takerTakeSats"
+                                                Layout.preferredWidth: 150
+                                                placeholderText: String(takerOfferRow.modelData.minimum_foreign_units) + "–" + String(takerOfferRow.modelData.maximum_foreign_units)
+                                                text: String(takerOfferRow.modelData.maximum_foreign_units ?? "")
+                                                onTextChanged: if (!takeShare.pressed && Number.isFinite(Number(text))) takeShare.value = Number(text)
+                                            }
+                                            Label {
+                                                text: Number.isSafeInteger(takerOfferRow.quotedLez) ? "→ " + root.formatLez(takerOfferRow.quotedLez) : ""
+                                                color: "#7EE100"; font.pixelSize: 10; Layout.preferredWidth: 120
+                                            }
                                         }
                                     }
                                 }

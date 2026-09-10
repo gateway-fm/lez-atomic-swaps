@@ -112,7 +112,7 @@ required unless marked optional. `null` revisions on insertion are intentional.
 | `maker_offer_list` | `{}` | Array of `{revision, status, offer, reservation_id, swap_id}`; statuses are `active`, `expired`, `reserved`, `consumed`, `withdrawn`. History is durable; lists are not a transactional balance snapshot. |
 | `maker_offer_withdraw` | `{request_id, offer_id, expected_revision}` | `{revision, was_replay}`. Withdraws an unreserved offer. A reservation that wins the race prevents withdrawal. |
 | `swap_history` | `{}` | Array of `{id, pair, direction, phase, requires_attention, pending_alerts, highest_alert_severity}`. Use each opaque `id` to monitor its actor. |
-| `maker_actor_monitor_v1` | `{id}` | Actor snapshot with `schema_version`, `swap_id`, `actor_kind`, `lease_generation`, `schedule_state`, `attempt_count`, `progress` and `manual_action`. See the linked DTO for complete fields. This method can reconcile a terminal actor into the operator projection. |
+| `maker_actor_monitor_v1` | `{id}` | Actor snapshot with `schema_version`, `swap_id`, `actor_kind`, `lease_generation`, `schedule_state`, `attempt_count`, `progress`, `manual_action` and, once the Node holds the countersigned BTC agreement, `terms` (see below). See the linked DTO for complete fields. This method can reconcile a terminal actor into the operator projection. |
 | `maker_actor_claim_v1`, `maker_actor_refund_v1` | `{request_id, id, expected_generation}` | `{schema_version, swap_id, action, requested_after_generation, was_replay}`. Use the monitor’s `lease_generation` as `expected_generation`. Admission is generation-fenced; it requests node-owned actor work, not arbitrary transaction construction. |
 
 `configuration` has `route`, `enabled` (boolean), `price_source` (`"local"`
@@ -222,7 +222,18 @@ feed and a strategy transform inside the node.
 
 `swap` contains `schema_version`, `swap_id`, `offer_id`, `route`,
 `foreign_units`, `lez_units`, `progress_generation`, `state`,
-`available_action` (`claim`, `refund`, or `null`), and `privacy_guidance`.
+`available_action` (`claim`, `refund`, or `null`), `privacy_guidance` and,
+once the swap's BTC agreement is bound, `terms`: the countersigned schedule
+and amounts, so an application can show deadlines without parsing the
+agreement itself. `terms` is absent (not `null`) before the agreement exists
+and on other pairs. Its fields are `bitcoin_value_sat` (u64), `lez_amount`
+(u128), `required_bitcoin_confirmations`, `bitcoin_refund_height` (the height
+at which the Bitcoin refund script path opens), and three unix-second
+instants: `maker_second_lock_cutoff_unix_seconds` (the Maker may not place its
+second lock after this), `earlier_refund_latest_unix_seconds` (the Maker's
+leg, locked second, must be refunded by this) and
+`later_refund_earliest_unix_seconds` (the Taker's leg may be refunded from
+this). The same object appears on `maker_actor_monitor_v1`.
 States include `initiating`, `not_activated`, `awaiting_first_lock`,
 `awaiting_second_lock`, `both_legs_locked`, `claim_available`,
 `refund_available`, `claim_in_progress`, `refund_in_progress`, `completed`,

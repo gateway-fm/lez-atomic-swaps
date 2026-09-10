@@ -70,13 +70,13 @@ use lez_btc_core_adapter::{
     RefundObservation as BitcoinRefundObservation,
 };
 use lez_btc_swap_sdk::{
-    AdaptorSessionContext, BitcoinFirstLockEvidenceV1, BtcAdaptorSessionDomain, BtcAgreementV1,
-    BtcFirstLockEvidenceV1, BtcLezAssetExtensionV1, BtcLezAssetFirstLockEvidenceV1,
-    BtcLezAssetPreparedLockEffectsV1, BtcPairSdk, BtcPreparedLockEffectsV1,
-    MAX_BTC_AGREEMENT_RECORD_BYTES, MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES,
-    PreparedBitcoinFundingV1, PreparedLezAssetFundingV1, PreparedLezFundingV1, adapt_presignature,
-    extract_adaptor_secret, verify_adaptor_presignature, verify_adaptor_secret,
-    verify_final_signature,
+    AdaptorSessionContext, BitcoinFirstLockEvidenceV1, BtcAdaptorSessionDomain,
+    BtcAgreementTermsV1, BtcAgreementV1, BtcFirstLockEvidenceV1, BtcLezAssetExtensionV1,
+    BtcLezAssetFirstLockEvidenceV1, BtcLezAssetPreparedLockEffectsV1, BtcPairSdk,
+    BtcPreparedLockEffectsV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
+    MAX_BTC_LEZ_ASSET_EXTENSION_RECORD_BYTES, PreparedBitcoinFundingV1, PreparedLezAssetFundingV1,
+    PreparedLezFundingV1, adapt_presignature, extract_adaptor_secret, verify_adaptor_presignature,
+    verify_adaptor_secret, verify_final_signature,
 };
 use lez_swap_core::{
     Chain, ChainPosition as SwapChainPosition, ClaimEvidence, LezUnixMilliseconds, Participant,
@@ -508,6 +508,14 @@ impl ActorConfig {
     #[must_use]
     pub fn state_db(&self) -> &Path {
         &self.state_db
+    }
+
+    /// The bound agreement's public schedule and amounts, when it can be read.
+    #[must_use]
+    pub fn agreement_terms(&self) -> Option<BtcAgreementTermsV1> {
+        load_agreement(self)
+            .ok()
+            .map(|(agreement, _)| agreement.terms())
     }
 
     /// Returns the schema-6 agreement commitment, when present.

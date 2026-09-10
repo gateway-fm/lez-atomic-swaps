@@ -192,9 +192,38 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     return {"preparing", "Preparing", 10, "The actor has not observed a chain yet", "", ""};
 }
 
+// The countersigned schedule as the desk shows it beside a running swap,
+// named from this role's side. The Maker's leg is locked second and refunds
+// first; the Taker's leg refunds later, and the Bitcoin refund script path
+// also waits for a height.
+QJsonArray timelineFor(const QJsonObject& terms, const QString& role)
+{
+    if (terms.isEmpty()) return {};
+    const bool maker = role == QStringLiteral("maker");
+    const auto moment = [&terms](const char* label, const char* key) {
+        return QJsonObject{{"label", QString::fromLatin1(label)},
+                           {"at_unix_seconds", terms.value(QLatin1String(key))}};
+    };
+    return QJsonArray{
+        moment(maker ? "Your lock by" : "Maker locks by", "maker_second_lock_cutoff_unix_seconds"),
+        moment(maker ? "Your refund by" : "Maker refunds by", "earlier_refund_latest_unix_seconds"),
+        moment(maker ? "Taker refund from" : "Your refund from", "later_refund_earliest_unix_seconds"),
+        QJsonObject{{"label", "BTC refund height"}, {"height", terms.value("bitcoin_refund_height")}},
+    };
+}
+
+// "0.02300000 BTC ↔ 2,300 LEZ" from the agreement's amounts.
+QString amountsDisplay(const QJsonObject& terms)
+{
+    if (terms.isEmpty()) return {};
+    return formatBtc(integerField(terms, "bitcoin_value_sat")) + QStringLiteral(" ↔ ")
+        + formatLez(integerField(terms, "lez_amount"));
+}
+
 QJsonObject swapRowObject(const SwapRow& row, const QString& swapId, const QString& offerId,
                           const QString& direction, const QString& makerLabel,
-                          const QString& takerLabel, const QString& role, qint64 generation)
+                          const QString& takerLabel, const QString& role, qint64 generation,
+                          const QJsonObject& terms, const QString& fill)
 {
     const bool canAct = !row.action.isEmpty();
     return QJsonObject{
@@ -215,6 +244,10 @@ QJsonObject swapRowObject(const SwapRow& row, const QString& swapId, const QStri
         {"action_label", canAct ? QJsonValue(row.actionLabel) : QJsonValue()},
         {"can_act", canAct},
         {"progress_generation", generation},
+        {"amounts_display", amountsDisplay(terms)},
+        {"fill_display", fill},
+        {"required_bitcoin_confirmations", terms.value("required_bitcoin_confirmations")},
+        {"timeline", timelineFor(terms, role)},
         {"run_id", QJsonValue()},
         {"completed_at", QJsonValue()},
         {"effects", QJsonArray{}},
@@ -319,7 +352,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                          formatLez(integerField(swap, "lez_units")));
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
-                                       static_cast<qint64>(swap.value("progress_generation").toDouble())));
+                                       static_cast<qint64>(swap.value("progress_generation").toDouble()),
+                                       swap.value("terms").toObject(), QString()));
             if (row.state == "completed") ++completed;
             else if (row.state != "refunded") ++active;
             if (!row.action.isEmpty()) ++needsAction;
@@ -468,6 +502,9 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
 {
     QJsonArray inventory;
     int pending = 0;
+    // The maximum each consumed offer allowed, by the swap that took it: how
+    // much of the offer the Taker actually filled.
+    QHash<QString, qint64> offeredBySwap;
     const Reply offers = decode(rpc.call("maker_offer_list", "{}"));
     if (!offers.ok) {
         if (error) *error = offers;
@@ -484,6 +521,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
         row.insert("ui_swap_id", record.value("swap_id"));
         inventory.append(row);
         if (state == "pending") ++pending;
+        if (state != "pending") offeredBySwap.insert(record.value("swap_id").toString(), integerField(offer.value("pair_configuration").toObject(), "maximum_foreign_units"));
     }
     QJsonArray swaps;
     int active = 0, completed = 0;
@@ -495,17 +533,23 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             const QString swapId = swap.value("id").toString();
             const QString direction = directionName(swap.value("direction").toString());
             QString phase, nextAction, schedule;
+            QJsonObject terms;
             const Reply monitored = decode(rpc.call("maker_actor_monitor_v1", compact({{"id", swapId}})));
             if (monitored.ok) {
                 const QJsonObject result = monitored.result.toObject();
                 schedule = result.value("schedule_state").toString();
+                terms = result.value("terms").toObject();
                 const QJsonObject observation = result.value("progress").toObject().value("observation").toObject();
                 phase = observation.value("phase").toString();
                 nextAction = observation.value("next_action").toString();
             }
+            const qint64 taken = integerField(terms, "bitcoin_value_sat");
+            const qint64 offered = offeredBySwap.value(swapId, -1);
+            const QString fill = taken > 0 && offered > 0
+                ? QString::number(100 * taken / offered) + "% of the " + formatBtc(offered) + " offered" : QString();
             const SwapRow row = makerRow(phase, nextAction, schedule);
             swaps.append(swapRowObject(row, swapId, QString(), direction, wallet.label,
-                                       QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0));
+                                       QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill));
             if (row.state == "completed") ++completed;
             else if (row.state != "refunded" && row.state != "failed") ++active;
         }

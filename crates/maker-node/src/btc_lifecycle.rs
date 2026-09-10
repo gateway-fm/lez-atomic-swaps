@@ -30,8 +30,8 @@ use lez_btc_role_lifecycle::{
     },
 };
 use lez_btc_swap_sdk::{
-    CsvBlockDelay, MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES, P2trSwapOutput, RefundXOnlyKey,
-    TwoPartyAggregateKey,
+    BtcAgreementTermsV1, CsvBlockDelay, MAX_BTC_ROLE_CONTRIBUTION_RECORD_BYTES, P2trSwapOutput,
+    RefundXOnlyKey, TwoPartyAggregateKey,
 };
 use zeroize::Zeroizing;
 
@@ -209,6 +209,23 @@ impl BtcMakerLifecycle {
 
     pub(super) fn layout(&self, reservation_id: &RequestId) -> SwapLayout {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
+    }
+
+    /// The bound agreement's public schedule and amounts for `swap_id`, found
+    /// by its reservation record; `None` for an unknown or unbound swap.
+    pub(super) fn terms_for_swap(&self, swap_id: &SwapId) -> Option<BtcAgreementTermsV1> {
+        let swaps_root = &self.runtime.config().swaps_root;
+        fs::read_dir(swaps_root)
+            .ok()?
+            .flatten()
+            .filter_map(|entry| RequestId::new(entry.file_name().to_str()?).ok())
+            .map(|reservation_id| SwapLayout::new(swaps_root, &reservation_id))
+            .filter(|layout| {
+                ReservationRecordV1::load(layout)
+                    .is_ok_and(|record| hex::encode(record.swap_id) == swap_id.as_str())
+            })
+            .find_map(|layout| load_bound_agreement(&layout).ok())
+            .map(|(agreement, _)| agreement.terms())
     }
 
     /// The reservation's Maker contribution, if the reservation exists.

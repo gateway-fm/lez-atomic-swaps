@@ -129,6 +129,15 @@ impl RouteActor {
         }
     }
 
+    /// The bound agreement's public schedule and amounts; ZEC has none yet.
+    fn agreement_terms(&self) -> Option<lez_btc_swap_sdk::BtcAgreementTermsV1> {
+        match self {
+            Self::Btc { config, .. } => config.agreement_terms(),
+            #[cfg(feature = "pair-zec")]
+            Self::Zec(_) => None,
+        }
+    }
+
     fn state_db(&self) -> &Path {
         match self {
             Self::Btc { config, .. } => config.state_db(),
@@ -1051,7 +1060,7 @@ async fn project_receipt_bound_swap(
     let swap_id = prepared.swap_id().clone();
     let receipt_sha256 = receipt_binding.sha256();
     let receipt_identity = receipt_binding.identity();
-    let (config, held_lock) = tokio::task::spawn_blocking(move || {
+    let (config, held_lock, terms) = tokio::task::spawn_blocking(move || {
         let load = || {
             RouteActor::load_for_monitor(
                 pair,
@@ -1075,7 +1084,8 @@ async fn project_receipt_bound_swap(
         held_lock
             .validate_for_state(config.swap_id(), config.state_db())
             .map_err(|_| MonitoringError::DependencyUnavailable)?;
-        Ok::<_, MonitoringError>((config, held_lock))
+        let terms = config.agreement_terms();
+        Ok::<_, MonitoringError>((config, held_lock, terms))
     })
     .await
     .map_err(|_| MonitoringError::DependencyUnavailable)??;
@@ -1088,10 +1098,9 @@ async fn project_receipt_bound_swap(
     held_lock
         .validate_for_state(config.swap_id(), config.state_db())
         .map_err(|_| MonitoringError::DependencyUnavailable)?;
-    overlay_admitted_action(
-        view_from_actor_status(facts, status),
-        admitted_action.as_ref(),
-    )
+    let mut view = view_from_actor_status(facts, status);
+    view.terms = terms;
+    overlay_admitted_action(view, admitted_action.as_ref())
 }
 
 async fn lookup_monitored_action(
@@ -1163,6 +1172,7 @@ fn view_from_actor_status(
         state,
         available_action,
         privacy_guidance,
+        terms: None,
     }
 }
 
@@ -1984,6 +1994,7 @@ fn commit_from_facts(
             state,
             available_action: None,
             privacy_guidance: None,
+            terms: None,
         },
         was_replay,
     }

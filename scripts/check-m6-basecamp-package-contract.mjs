@@ -41,6 +41,8 @@ const packages = [
       "makerMinimumSats",
       "makerOfferTtl",
       "makerRate",
+      "makerSpread",
+      "makerSpreadInput",
       "makerNewOffer",
       "makerCreateOffers",
       "makerActive",
@@ -68,6 +70,7 @@ const packages = [
     objects: [
       "takerConnection",
       "takerTakeSats",
+      "takerTakeShare",
       "takerTakeOffer",
       "takerChat",
       "takerChatAddress",
