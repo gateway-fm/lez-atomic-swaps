@@ -8,7 +8,8 @@
 #                                 restart after long uptime); Bitcoin, wallets
 #                                 and identities are kept, persisted swaps are
 #                                 reset because they reference the old chain
-#   ./scripts/up.sh --fresh       wipe runtime state and volumes first
+#   ./scripts/up.sh --fresh       wipe runtime state and volumes first, then start
+#                                 under a new volume prefix (LEZ_VOLUME_PREFIX to pick one)
 #
 #   LEZ_IMAGES=pull          pull the images named by LEZ_IMAGE_PREFIX and
 #                            LEZ_IMAGE_TAG instead of building them (the
@@ -30,8 +31,22 @@ while [[ $# -gt 0 ]]; do
     --build) BUILD=1; shift ;;
     --fresh-lez) FRESH_LEZ=1; shift ;;
     --fresh)
+      # A wipe recreates both chains, so the previous chain's escrow deployment
+      # in the market root is retired too, as --fresh-lez does; the market
+      # bootstrap then deploys again on the new chain.
+      if [[ -f runtime/runtime.env ]]; then
+        market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
+        if [[ -n "$market_root" && -f "$market_root/bootstrap/deployment.json" ]]; then
+          mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$(date +%s).bak"
+        fi
+      fi
       echo "wiping runtime state and volumes…"
       bash scripts/down.sh --wipe >/dev/null 2>&1 || true
+      # A fresh stack gets its own volume namespace, so it can never adopt
+      # volumes another run or another checkout left behind under the default
+      # prefix (a wipe under the old prefix does not touch those). gen-config
+      # records it in runtime.env; the next down.sh --wipe removes exactly it.
+      export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez-$(date +%Y%m%d%H%M%S)}"
       shift ;;
     -h|--help) sed -n 2,15p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
@@ -95,7 +110,9 @@ echo "[3/6] starting chains…"
 docker compose up -d bitcoin-core btc-miner btc-explorer bedrock sequencer indexer lez-explorer
 wait_healthy 240 lez-bitcoin-core lez-sequencer lez-indexer
 bash scripts/repair-indexer.sh >/dev/null 2>&1 || true
-[[ "${LEZ_API_ONLY:-0}" != 1 ]] || python3 scripts/seed-btc-wallets.py
+# The Nodes' Core wallets (lez-maker, lez-taker) and the Taker's regtest
+# balance; idempotent, and after a wipe nothing else creates them.
+python3 scripts/seed-btc-wallets.py
 
 before="$(sha256sum runtime/market-bootstrap.env 2>/dev/null | cut -c1-64 || true)"
 if [[ "${LEZ_IMAGES:-build}" == pull ]]; then
