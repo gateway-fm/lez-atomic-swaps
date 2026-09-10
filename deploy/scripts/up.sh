@@ -2,6 +2,10 @@
 # up.sh — one-shot bring-up of the full local LEZ swap stack.
 #   ./scripts/up.sh          build images + generate config + start everything
 #   ./scripts/up.sh --fresh  wipe runtime/ and named volumes first
+#
+#   LEZ_IMAGES=pull          pull the images named by LEZ_IMAGE_PREFIX and
+#                            LEZ_IMAGE_TAG instead of building them (the
+#                            prebuilt-release path; scripts/start.sh sets it)
 set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,12 +28,21 @@ bash scripts/gen-config.sh runtime
 set -a; source runtime/runtime.env; set +a
 export BTC_RPC_PASSWORD
 
-echo "[2/4] building images…"
-if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
-  docker compose build bitcoin-core btc-miner sequencer maker-node taker-init
-else
-  docker compose build
-fi
+case "${LEZ_IMAGES:-build}" in
+  build)
+    echo "[2/4] building images…"
+    if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
+      docker compose build bitcoin-core btc-miner sequencer maker-node taker-init
+    else
+      docker compose build
+    fi
+    ;;
+  pull)
+    echo "[2/4] pulling ${LEZ_IMAGE_PREFIX:-lez}-*:${LEZ_IMAGE_TAG:-local}…"
+    docker compose --profile tools pull --quiet
+    ;;
+  *) echo "LEZ_IMAGES must be build or pull" >&2; exit 64 ;;
+esac
 
 echo "[3/4] starting stack…"
 if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
@@ -71,6 +84,8 @@ if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
   echo "API stack ready; run python3 scripts/record-evidence.py after market bootstrap."
   exit 0
 fi
+# start.sh prints its own banner once the market is bootstrapped.
+[[ "${LEZ_NO_BANNER:-0}" != 1 ]] || exit 0
 role_now="${BASECAMP_ROLE:-both}"
 vnc_password="${VNC_PASSWORD:-lezswap}"
 cat <<BANNER

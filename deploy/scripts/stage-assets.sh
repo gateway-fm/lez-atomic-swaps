@@ -72,8 +72,27 @@ MISSING
     exit 1
 fi
 
+# ---- lez-tools: escrow deployer + sidecar-family tools ----------------------
+# Staged by from-scratch.sh's stage phase from provision/data; the release
+# workflow's images job stages them from its build artifacts the same way.
+if [[ ! -x images/lez-tools/lez-zec-escrow-v02-deployer \
+   || ! -x images/lez-tools/lez-v02-vault-claim-poc \
+   || ! -x images/lez-tools/lez-v02-local-actor-identity ]]; then
+    cat >&2 <<'MISSING'
+Stage the market bootstrap tools (scripts/from-scratch.sh --only stage):
+  provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer -> images/lez-tools/
+  provision/data/sidecar/lez-v02-vault-claim-poc                  -> images/lez-tools/
+  provision/data/sidecar/lez-v02-local-actor-identity             -> images/lez-tools/
+MISSING
+    exit 1
+fi
+
 # ---- basecamp-ui/assets: nix outputs (flake, aarch64-linux) ----------------
-if [[ "${LEZ_API_ONLY:-0}" != 1 && ! -d images/basecamp-ui/assets/bundle ]]; then
+# LEZ_STAGE_SKIP_BASECAMP_UI=1 lets a host without the Nix outputs stage
+# everything else (the release workflow builds basecamp-ui on its own runner).
+if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" == 1 ]]; then
+    log "skipping basecamp-ui assets (LEZ_STAGE_SKIP_BASECAMP_UI=1)"
+elif [[ "${LEZ_API_ONLY:-0}" != 1 && ! -d images/basecamp-ui/assets/bundle ]]; then
     cat >&2 <<'MISSING'
 Build with the pinned flakes (nix, experimental-features enabled):
   nix build path:../basecamp#bin-bundle-dir-inspector -o bundle

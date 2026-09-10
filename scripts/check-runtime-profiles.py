@@ -234,7 +234,9 @@ def validate_role_symmetry(compose: str) -> None:
             fail(f"role symmetry {role}: fields do not match schema v1")
         expected = {
             "node": f"lez-{role}-node",
-            "image": f"lez-{role}-node:local",
+            # deploy/compose.yaml names images ${LEZ_IMAGE_PREFIX}-<service>:${LEZ_IMAGE_TAG};
+            # the defaults are the local build names (ADR 0215).
+            "image": f"${{LEZ_IMAGE_PREFIX:-lez}}-{role}-node:${{LEZ_IMAGE_TAG:-local}}",
             "cli": f"lez-{role}-cli",
             "ui": f"lez-{role}-ui",
             "chat_gateway": f"lez-{role}-chat-gateway",

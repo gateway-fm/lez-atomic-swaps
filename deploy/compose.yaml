@@ -1,5 +1,11 @@
 name: lez-swap-stack
 
+# Images are named ${LEZ_IMAGE_PREFIX}-<service>:${LEZ_IMAGE_TAG}. The default
+# (lez-<service>:local) is what `docker compose build` produces on this host;
+# a release sets the prefix to the registry path and the tag to the release
+# (ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.2.1) so the same
+# file runs prebuilt images (scripts/start.sh) or locally built ones (up.sh).
+
 x-logging: &default-logging
   driver: json-file
   options:
@@ -20,7 +26,7 @@ services:
 
   bitcoin-core:
     build: ./images/bitcoin-core
-    image: lez-bitcoin-core:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-bitcoin-core:${LEZ_IMAGE_TAG:-local}
     container_name: lez-bitcoin-core
     depends_on:
       bitcoin-init:
@@ -60,7 +66,7 @@ services:
 
   btc-miner:
     build: ./images/btc-miner
-    image: lez-btc-miner:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-btc-miner:${LEZ_IMAGE_TAG:-local}
     container_name: lez-btc-miner
     depends_on:
       bitcoin-core:
@@ -80,7 +86,7 @@ services:
 
   btc-explorer:
     build: ./images/btc-explorer
-    image: lez-btc-explorer:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-btc-explorer:${LEZ_IMAGE_TAG:-local}
     container_name: lez-btc-explorer
     depends_on:
       bitcoin-core:
@@ -149,7 +155,7 @@ services:
 
   sequencer:
     build: ./images/lez-services
-    image: lez-services:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-services:${LEZ_IMAGE_TAG:-local}
     container_name: lez-sequencer
     entrypoint: ["/usr/local/bin/sequencer_service"]
     command: ["/run-config/sequencer_config.json", "--port", "3040"]
@@ -188,7 +194,7 @@ services:
     logging: *default-logging
 
   indexer:
-    image: lez-services:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-services:${LEZ_IMAGE_TAG:-local}
     container_name: lez-indexer
     entrypoint: ["/usr/local/bin/indexer_service"]
     command:
@@ -235,7 +241,7 @@ services:
 
   lez-explorer:
     build: ./images/lez-explorer
-    image: lez-explorer:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-explorer:${LEZ_IMAGE_TAG:-local}
     container_name: lez-lez-explorer
     depends_on:
       indexer:
@@ -270,7 +276,7 @@ services:
 
   maker-node:
     build: ./images/maker-node
-    image: lez-maker-node:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}
     container_name: lez-maker-node
     depends_on:
       maker-init:
@@ -317,7 +323,7 @@ services:
 
   taker-init:
     build: ./images/taker-node
-    image: lez-taker-node:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
     container_name: lez-taker-init
     user: "0:0"
     volumes:
@@ -329,7 +335,7 @@ services:
     logging: *default-logging
 
   taker-node:
-    image: lez-taker-node:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
     container_name: lez-taker-node
     depends_on:
       taker-init:
@@ -375,7 +381,7 @@ services:
 
   basecamp-ui:
     build: ./images/basecamp-ui
-    image: lez-basecamp-ui:local
+    image: ${LEZ_IMAGE_PREFIX:-lez}-basecamp-ui:${LEZ_IMAGE_TAG:-local}
     container_name: lez-basecamp-ui
     depends_on:
       maker-node:
@@ -401,6 +407,37 @@ services:
     init: true
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
+    logging: *default-logging
+
+  # ─── one-shot tools (profile "tools", never a running service) ──────────
+  # `docker compose --profile tools run --rm tools '<command>'`: the escrow
+  # deployer and vault-claim tool for the one-time market bootstrap, and the
+  # identity tool that mints the wallet identities. Runs as the host user so
+  # the market root stays the user's; loopback forwarders inside the
+  # container reach sequencer/indexer, whose tools accept only 127.0.0.1.
+  tools:
+    build: ./images/lez-tools
+    image: ${LEZ_IMAGE_PREFIX:-lez}-tools:${LEZ_IMAGE_TAG:-local}
+    profiles: [tools]
+    user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
+    environment:
+      MARKET_ROOT: /market
+      SEQUENCER_URL: http://127.0.0.1:3040
+      INDEXER_URL: http://127.0.0.1:8779
+      ESCROW_PROGRAM_ID: ${LEZ_ESCROW_PROGRAM_ID:-}
+      DEPLOYER: /usr/local/bin/lez-zec-escrow-v02-deployer
+      VAULT_CLAIM_BIN: /usr/local/bin/lez-v02-vault-claim-poc
+    volumes:
+      - ${LEZ_MARKET_ROOT}:/market
+      - ./scripts:/scripts:ro
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,mode=1777
+    networks: [chains]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 256
+    restart: "no"
     logging: *default-logging
 
 networks:
