@@ -104,6 +104,7 @@ required unless marked optional. `null` revisions on insertion are intentional.
 | Method | Request | Result / behavior |
 |---|---|---|
 | `maker_health` | `{}` | `{schema_version, ready, degraded, delivery, chat, routes}`; dependency states are `disabled`, `available`, `unavailable`. `ready` alone does not prove a route or wallet is usable. |
+| `maker_wallet_balances_v1` | `{}` | What this Maker's own wallets hold, read-only: `bitcoin` (`state`, `wallet`, `network`, `trusted_sat`, `untrusted_pending_sat`, `immature_sat` from its Core wallet's `getbalances`) and `lez` (`state`, `owner_account_hex`, `owner_account_base58`, `balance_atomic_units`, `nonce` from the indexer). `state` is `available`, `unavailable` or `disabled`; amounts are exact integers and zero when not available. Coins locked by a planned, not yet broadcast funding are not trusted. |
 | `maker_pair_list` | `{}` | Array of `{revision, value}`; `value` is the route configuration below. |
 | `maker_local_price_list` | `{}` | Array of `{revision, value}`; `value` is the local ratio below. |
 | `maker_price_quote` | `{route}` | `{price, source_revision, observed_at_unix_seconds}` from the selected source; this is a price observation, not a strategy decision or funds reservation. |
@@ -213,6 +214,7 @@ feed and a strategy transform inside the node.
 | Method | Request object | Result / behavior |
 |---|---|---|
 | `taker_health` | `{schema_version:1}` | Health, registered methods and per-route capability rows. Check them before depending on initiation/monitoring/actions. |
+| `taker_wallet_balances_v1` | `{schema_version:1}` | What this Taker's own wallets hold, the same shape as `maker_wallet_balances_v1`: its Core wallet (`bitcoin`) and its LEZ owner account (`lez`). Registered with the BTC lifecycle. |
 | `taker_offer_list_v1` | `{schema_version:1, route:null}` or an exact route | `{schema_version:1, offers:[{offer, maker_identity, signed_envelope_sha256}]}` from the node's authenticated discovery source. |
 | `taker_swap_initiate_v1` | `{schema_version:1, request_id, offer_id, route, maker_identity, signed_envelope_sha256, foreign_units, expected_lez_units}`; optional `logos_offer_announcement_base64` | `{schema_version:1, swap, was_replay}`. Revalidates selected offer and exact amounts; BTC dynamic configuration drives reservation, preparation, ceremony and actor activation. It can reserve capital/prepare signing state; it is not a dry-run quote. |
 | `taker_swap_list_v1` | `{schema_version:1}` | `{schema_version:1, swaps:[...]}`; includes recoverable persisted swaps. |

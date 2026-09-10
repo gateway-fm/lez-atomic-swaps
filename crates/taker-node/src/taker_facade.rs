@@ -42,8 +42,9 @@ impl TakerFacadeSchemaVersionError {
 ///
 /// A server must register these methods individually. This list grants no
 /// generic command, executable, path, key, receipt, or raw-payload method.
-pub const TAKER_FACADE_METHODS_V1: [&str; 7] = [
+pub const TAKER_FACADE_METHODS_V1: [&str; 8] = [
     "taker_health",
+    "taker_wallet_balances_v1",
     "taker_offer_list_v1",
     "taker_swap_list_v1",
     "taker_swap_initiate_v1",

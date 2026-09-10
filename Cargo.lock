@@ -1963,6 +1963,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "bitcoin",
+ "bs58",
  "btc-reference-actor",
  "btc-role-preflight",
  "getrandom 0.3.4",

@@ -23,8 +23,9 @@ use btc_role_preflight::{
 use lez_bridge_protocol::RequestId;
 use lez_btc_role_lifecycle::{
     BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, SwapLayout, SwapSidecar,
-    TakerCeremony,
+    TakerCeremony, WalletBalancesV1,
     actor::{ActorSynthesis, activate, synthesize},
+    balances::role_wallet_balances,
     layout::{read_private, write_private_exact},
     lez::{
         PlanningTermsInput, aggregate_authority_account, agreement_terms, escrow_accounts,
@@ -200,6 +201,11 @@ impl DynamicBtcRole {
             .into_iter()
             .find(|candidate| candidate.offer().id() == offer_id)
             .context("selected BTC offer is unavailable, expired, or not authentic")
+    }
+
+    /// What this Taker's own wallets hold (owner desk readout).
+    pub(super) async fn wallet_balances(&self) -> WalletBalancesV1 {
+        role_wallet_balances(&self.runtime).await
     }
 
     fn wallet(&self) -> Result<BitcoinWallet> {
