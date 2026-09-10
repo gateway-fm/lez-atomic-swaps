@@ -154,6 +154,11 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
       - name: r0vm (risc0 tag)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:r0vm
+      # The digest-pinned risc0 guest builder image is amd64-only; Docker
+      # Desktop runs it under Rosetta on a Mac, the arm64 runner needs QEMU
+      # user emulation registered first or the guest build dies with 255.
+      - name: amd64 emulation for the pinned risc0 guest builder
+        run: docker run --privileged --rm tonistiigi/binfmt:qemu-v9.2.2@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6 --install amd64
       - name: Escrow deployer and guest at the pinned digest
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:escrow
       - name: Collect payloads

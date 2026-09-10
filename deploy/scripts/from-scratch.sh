@@ -330,6 +330,11 @@ build_r0vm() {
 build_escrow() {
   local guest_elf="$PROVISION/escrow-artifact/riscv-guest/lez-zec-escrow-v02-methods/lez-zec-escrow-v02-guest/riscv32im-risc0-zkvm-elf/docker/zec_escrow_v02.bin"
   if [[ ! -x "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" || "$(shasum -a 256 "$guest_elf" 2>/dev/null | cut -c1-64)" != "$GUEST_ELF_SHA256" ]]; then
+    # The pinned guest builder image is amd64-only. Docker Desktop emulates it
+    # on a Mac; a Linux arm64 host must have QEMU user emulation registered.
+    if [[ "$(uname -s)" == Linux && ! -e /proc/sys/fs/binfmt_misc/qemu-x86_64 ]]; then
+      fail "the risc0 guest builder is an amd64 image: register emulation first, e.g. docker run --privileged --rm tonistiigi/binfmt --install amd64"
+    fi
     log "building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)"
     builder_run -v /var/run/docker.sock:/var/run/docker.sock -- "rm -rf /provision/escrow-artifact/docker-guest-source /provision/escrow-artifact/riscv-guest /provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer;
       mkdir -p /tmp/lez-risc0-home/toolchains/v1.94.1-rust-aarch64-unknown-linux-gnu && printf '[default_versions]\nrust = \"1.94.1\"\n' > /tmp/lez-risc0-home/settings.toml;
