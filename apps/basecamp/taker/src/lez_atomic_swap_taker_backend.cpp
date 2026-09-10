@@ -2,8 +2,6 @@
 #include "logos_sdk.h"
 #include "node_market.h"
 
-#include <QFile>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -86,68 +84,6 @@ QString LezAtomicSwapTakerBackend::resetChat()
     return chat_->resetSession();
 }
 
-QString LezAtomicSwapTakerBackend::btcEvidence()
-{
-    const QString configured = qEnvironmentVariable("LEZ_M3_BTC_EVIDENCE_FILE");
-    const QString path = configured.isEmpty()
-        ? QStringLiteral("/run/lez-evidence/m3-btc-ui-evidence.json")
-        : configured;
-    const QFileInfo info(path);
-    if (!info.isAbsolute() || !info.exists() || !info.isFile() || info.isSymLink()
-        || info.size() <= 0 || info.size() > 262144) {
-        return evidenceFailure(QStringLiteral("btc_evidence_unavailable"),
-            QStringLiteral("Certified Bitcoin evidence is unavailable or unsafe"));
-    }
-
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        return evidenceFailure(QStringLiteral("btc_evidence_unavailable"),
-            QStringLiteral("Certified Bitcoin evidence cannot be opened"));
-    }
-    QJsonParseError error;
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !document.isObject()) {
-        return evidenceFailure(QStringLiteral("btc_evidence_invalid"),
-            QStringLiteral("Certified Bitcoin evidence is not valid JSON"));
-    }
-    const QJsonObject evidence = document.object();
-    const QJsonObject terminal = evidence.value(QStringLiteral("terminal")).toObject();
-    const QJsonArray effects = evidence.value(QStringLiteral("effects")).toArray();
-    const QRegularExpression transactionId(QStringLiteral("^[0-9a-f]{64}$"));
-    QSet<QString> transactionIds;
-    int bitcoinEffects = 0;
-    int lezEffects = 0;
-    bool effectsValid = effects.size() == 5;
-    for (const QJsonValue& value : effects) {
-        const QJsonObject effect = value.toObject();
-        const QString id = effect.value(QStringLiteral("transaction_id")).toString();
-        const QString chain = effect.value(QStringLiteral("chain")).toString();
-        const QString finality = effect.value(QStringLiteral("finality")).toString();
-        effectsValid = effectsValid && transactionId.match(id).hasMatch()
-            && (finality == QStringLiteral("Confirmed")
-                || finality == QStringLiteral("Finalized"));
-        transactionIds.insert(id);
-        bitcoinEffects += chain == QStringLiteral("Bitcoin") ? 1 : 0;
-        lezEffects += chain == QStringLiteral("LEZ") ? 1 : 0;
-    }
-    const QString direction = evidence.value(QStringLiteral("direction")).toString();
-    if (evidence.value(QStringLiteral("schema_version")).toInt() != 1
-        || evidence.value(QStringLiteral("kind")).toString()
-            != QStringLiteral("m3_btc_ui_evidence")
-        || evidence.value(QStringLiteral("pair")).toString() != QStringLiteral("Bitcoin")
-        || (direction != QStringLiteral("TakerSellsForeign")
-            && direction != QStringLiteral("TakerSellsLez"))
-        || evidence.value(QStringLiteral("result")).toString() != QStringLiteral("passed")
-        || terminal.value(QStringLiteral("phase")).toString() != QStringLiteral("completed")
-        || terminal.value(QStringLiteral("revision")).toInt() != 4 || !effectsValid
-        || transactionIds.size() != 5 || bitcoinEffects != 2 || lezEffects != 3
-        || evidence.value(QStringLiteral("private_material_disclosed")).toBool(true)) {
-        return evidenceFailure(QStringLiteral("btc_evidence_invalid"),
-            QStringLiteral("Certified Bitcoin evidence failed its public schema checks"));
-    }
-    return compact({{"ok", true}, {"result", evidence}});
-}
-
 QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
 {
     if (walletId != kTakerWallet.id) {
@@ -158,17 +94,20 @@ QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
 }
 
 QString LezAtomicSwapTakerBackend::btcTakeOffer(
-    QString requestId, QString walletId, QString offerId)
+    QString requestId, QString walletId, QString offerId, QString foreignUnits)
 {
     static const QRegularExpression requestPattern(
         QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9]{13}$"));
     static const QRegularExpression offerPattern(QStringLiteral("^[A-Za-z0-9._-]{8,64}$"));
+    qulonglong amount = 0;
     if (!requestPattern.match(requestId).hasMatch() || walletId != kTakerWallet.id
         || !offerPattern.match(offerId).hasMatch()) {
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("The selected wallet or offer is invalid"));
     }
-    return node_market::takerTake(rpc_, slowRpc_, kTakerWallet, requestId, offerId, lockedSwaps_);
+    if (!exactUnsigned(foreignUnits, amount)) return invalid();
+    return node_market::takerTake(rpc_, slowRpc_, kTakerWallet, requestId, offerId,
+                                  static_cast<qint64>(amount), lockedSwaps_);
 }
 
 QString LezAtomicSwapTakerBackend::btcSwapAction(

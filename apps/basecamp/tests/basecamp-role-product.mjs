@@ -144,25 +144,10 @@ test(`${role}: pinned Basecamp discovers and loads the role package`, async (app
 
 if (expectService) {
   test(`${role}: Basecamp calls the real owner-local role service`, async (app) => {
-    if (role === "taker") {
-      // The Taker deliberately preloads its completed BTC evidence. Wait until
-      // that one-shot request has settled before asserting another action via
-      // the shared diagnostic output field.
-      await app.waitFor(async () => app.expectTexts(["REV 4 · COMPLETED"]), {
-        timeout: 15000,
-        interval: 300,
-        description: "taker BTC evidence preload",
-      });
-    }
     await invokeSuccessfully(app, expected.health, "health");
     if (role === "maker") {
-      await invokeSuccessfully(app, "Save route atomically", "atomic route save");
       await invokeSuccessfully(app, "Refresh swap history", "history");
     } else {
-      await invokeSuccessfully(app, "Refresh proof", "M3 BTC evidence",
-        (result) => result.kind === "m3_btc_ui_evidence"
-          && result.terminal?.phase === "completed"
-          && result.effects?.length === 5);
       if (takerFixture) {
         const announcement = String(takerFixture.logos_offer_announcement_base64 ?? "");
         if (!announcement) {
@@ -200,10 +185,10 @@ if (expectService) {
           (result) => result.was_replay === false);
         await invokeSuccessfully(app, "Confirm and initiate", "exact initiation replay",
           (result) => result.was_replay === true);
-        await invokeSuccessfully(app, "List my swaps", "swap list");
+        await invokeSuccessfully(app, "Refresh registry", "swap list");
         await evaluateIn(app, "takerProgress",
           `swapId.text = ${JSON.stringify(String(takerFixture.swap_id))}; true`);
-        await invokeSuccessfully(app, "Monitor", "swap monitor",
+        await invokeSuccessfully(app, "Refresh state", "swap monitor",
           (result) => result.swap_id === takerFixture.swap_id);
       }
     }

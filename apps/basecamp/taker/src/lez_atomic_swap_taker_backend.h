@@ -19,9 +19,9 @@ public:
     QString connectChat(QString peerAddress) override;
     QString connectOffer(QString makerIdentity, QString offerId) override;
     QString resetChat() override;
-    QString btcEvidence() override;
     QString btcMarket(QString walletId) override;
-    QString btcTakeOffer(QString requestId, QString walletId, QString offerId) override;
+    QString btcTakeOffer(QString requestId, QString walletId, QString offerId,
+                         QString foreignUnits) override;
     QString btcSwapAction(QString requestId, QString walletId, QString swapId,
                           QString action) override;
     QString listOffers(QString pair, QString direction) override;

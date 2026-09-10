@@ -1,15 +1,28 @@
-pragma ComponentBehavior: Bound
+#!/usr/bin/env python3
+"""Generates apps/basecamp/{maker,taker}/src/qml/Main.qml from one skeleton.
+
+The desks share the UI kit in apps/basecamp/common/qml (copied into each
+package's src/qml at build time by the flake) and this skeleton: the same
+header, status strip, swap list, chat panel and activity log, driven by the
+same helper functions. Only the role panels and role functions differ.
+"""
+import sys
+from pathlib import Path
+
+ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parents[3]
+
+SKELETON = r'''pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// The Taker desk. Components come from the shared kit in
+// The ROLE_TITLE desk. Components come from the shared kit in
 // apps/basecamp/common/qml; the skeleton is generated for both desks.
 Item {
     id: root
 
-    readonly property var backend: logos.module("lez_atomic_swap_taker")
+    readonly property var backend: logos.module("lez_atomic_swap_ROLE")
     property bool ready: false
     property bool busy: false
     property string output: "No request sent yet"
@@ -145,7 +158,7 @@ Item {
         else root.noteMarketChanges(root.btcMarket, result)
         root.btcMarket = result
         root.btcMarketReady = true
-        
+        ON_FIRST_MARKET
     }
     function refreshBtcMarket(silent) {
         if (!root.ready || root.busy || root.btcMarketBusy) return
@@ -186,7 +199,7 @@ Item {
             var ok = result.ready === true && result.degraded !== true
             root.statusMode = ok ? "success" : "error"
             root.statusTitle = ok ? "Node ready" : "Node needs attention"
-            root.statusDetail = "Offer delivery: " + String(result.delivery ?? "unknown")
+            root.statusDetail = HEALTH_DETAIL
         })
     }
     function chatStatus() {
@@ -195,23 +208,493 @@ Item {
             root.chatAddress = String(result.address ?? "")
             root.statusMode = result.online === true ? "success" : "working"
             root.statusTitle = result.session_bound === true ? "Chat connected" : result.online === true ? "Chat online" : "Chat starting"
-            root.statusDetail = result.session_bound === true ? "Direct conversation bound for this app session" : "Paste the Maker's current session address to connect"
+            root.statusDetail = result.session_bound === true ? "Direct conversation bound for this app session" : CHAT_UNBOUND_HINT
         })
     }
     function resetChat() {
         root.run(root.backend.resetChat(), "Reset Chat", function(result) {
             root.chatState = String(result.state ?? "online")
             root.chatAddress = String(result.address ?? "")
-            takerChatAddress.text = ""
+            CHAT_RESET_EXTRA
             root.statusMode = "working"
             root.statusTitle = "Chat session reset"
             root.statusDetail = "No previous peer binding remains"
         })
     }
     function walletId() {
-        return "taker-zurich-01"
+        return "WALLET_ID"
+    }
+ROLE_FUNCTIONS
+
+    TextEdit { id: clipboardHelper; visible: false }
+
+    Timer {
+        id: btcMarketBootstrapTimer
+        interval: 450
+        repeat: false
+        onTriggered: root.refreshBtcMarket(false)
+    }
+    Timer {
+        interval: 2000
+        repeat: true
+        running: root.ready
+        onTriggered: root.refreshBtcMarket(true)
     }
 
+    function connected() {
+        root.statusMode = "success"
+        root.statusTitle = "Node connected"
+        root.statusDetail = "Loading the wallet market"
+        root.note("node", "Backend connected")
+        btcMarketBootstrapTimer.restart()
+    }
+    Connections {
+        target: logos
+        function onViewModuleReadyChanged(moduleName, isReady) {
+            if (moduleName !== "lez_atomic_swap_ROLE") return
+            root.ready = isReady && root.backend !== null
+            if (root.ready) root.connected()
+        }
+    }
+    Component.onCompleted: {
+        root.ready = root.backend !== null && logos.isViewModuleReady("lez_atomic_swap_ROLE")
+        if (root.ready) root.connected()
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#0A0C11"
+
+        ScrollView {
+            id: scroll
+            anchors.fill: parent
+            anchors.margins: 20
+            contentWidth: availableWidth
+            clip: true
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+            ColumnLayout {
+                id: body
+                width: scroll.availableWidth
+                spacing: 14
+
+                // ----- Header: who this desk is, and whether its Node answers.
+                RowLayout {
+                    Layout.fillWidth: true; spacing: 16
+                    Label {
+                        text: "LEZ / BTC — ROLE_TITLE Desk"
+                        color: "#F7F8FA"; font.pixelSize: 24; font.weight: Font.Bold; font.letterSpacing: -0.5
+                        Layout.fillWidth: true
+                    }
+                    Label { text: "ACCOUNT"; color: "#6F7A8B"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.3 }
+                    LuxeCombo {
+                        id: ROLEWallet
+                        objectName: "ROLEBtcWallet"
+                        model: ["WALLET_LABEL · ROLE_TITLE Node"]
+                        implicitWidth: 240
+                        onActivated: root.refreshBtcMarket(false)
+                    }
+                    Rectangle {
+                        implicitWidth: connectionRow.implicitWidth + 20; implicitHeight: 30; radius: 15
+                        color: root.ready ? "#11271F" : "#292318"
+                        border.width: 1; border.color: root.ready ? "#497621" : "#62438B"
+                        RowLayout {
+                            id: connectionRow; anchors.centerIn: parent; spacing: 8
+                            Rectangle { implicitWidth: 7; implicitHeight: 7; radius: 4; color: root.ready ? "#7EE100" : "#8950FA" }
+                            Label {
+                                objectName: "ROLEConnection"
+                                text: root.ready ? "Backend connected" : "Connecting"
+                                color: root.ready ? "#B8F57C" : "#C6AAFF"
+                                font.pixelSize: 11; font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+                }
+
+                StatusStrip {
+                    Layout.fillWidth: true
+                    mode: root.statusMode
+                    title: root.statusTitle
+                    detail: root.statusDetail
+                    LuxeButton {
+                        objectName: "ROLEHealth"
+                        text: "Check Node"; quiet: true
+                        enabled: root.ready && !root.busy
+                        onClicked: root.health()
+                    }
+                    LuxeButton {
+                        objectName: "ROLEMarketRefresh"
+                        text: "Refresh market"; quiet: true
+                        enabled: root.ready && !root.busy && !root.btcMarketBusy
+                        onClicked: root.refreshBtcMarket(false)
+                    }
+                }
+
+                // ----- The desk (left) beside the activity log (right) on wide
+                // views; stacked on narrow ones.
+                Item {
+                    id: deskArea
+                    property bool deskWide: scroll.availableWidth >= 1180
+                    Layout.fillWidth: true
+                    implicitHeight: deskWide
+                        ? Math.max(deskColumn.implicitHeight, activityLog.implicitHeight)
+                        : deskColumn.implicitHeight + 14 + activityLog.implicitHeight
+
+                    ColumnLayout {
+                        id: deskColumn
+                        anchors.left: parent.left
+                        anchors.right: deskArea.deskWide ? activityLog.left : parent.right
+                        anchors.rightMargin: deskArea.deskWide ? 14 : 0
+                        anchors.top: parent.top
+                        spacing: 14
+ROLE_PANELS
+
+                        // ----- Chat: the private negotiation channel.
+                        Panel {
+                            objectName: "ROLEChat"
+                            Layout.fillWidth: true
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 10
+                                SectionTitle { text: "Private negotiation Chat"; Layout.fillWidth: true }
+                                Label { text: root.chatState.toUpperCase(); color: "#B997FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                                LuxeButton {
+                                    objectName: "ROLEChatStatus"
+                                    text: "Status"; quiet: true
+                                    enabled: root.ready && !root.busy
+                                    onClicked: root.chatStatus()
+                                }
+                                LuxeButton {
+                                    objectName: "ROLEChatReset"
+                                    text: "Reset"; quiet: true
+                                    enabled: root.ready && !root.busy
+                                    onClicked: root.resetChat()
+                                }
+                            }
+CHAT_ADDRESS_ROW
+                        }
+                    }
+
+                    ActivityLog {
+                        id: activityLog
+                        objectName: "ROLEActivity"
+                        anchors.top: deskArea.deskWide ? parent.top : deskColumn.bottom
+                        anchors.topMargin: deskArea.deskWide ? 0 : 14
+                        anchors.right: parent.right
+                        width: deskArea.deskWide ? 380 : parent.width
+                        entries: root.activity
+                        onCopyRequested: function(text) { root.copyText(text) }
+                        onClearRequested: root.activity = []
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "Raw last reply"; color: "#8B96A8"; font.pixelSize: 11; Layout.fillWidth: true }
+                            LuxeButton { text: root.rawVisible ? "Hide" : "Show"; quiet: true; onClicked: root.rawVisible = !root.rawVisible }
+                        }
+                        TextArea {
+                            objectName: "ROLEOutput"
+                            text: root.output
+                            visible: root.rawVisible
+                            readOnly: true
+                            wrapMode: Text.WrapAnywhere
+                            selectByMouse: true
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: root.rawVisible ? 160 : 0
+                            color: "#BAC4D3"
+                            selectionColor: "#8950FA"
+                            selectedTextColor: "#FFFFFF"
+                            font.family: "DejaVu Sans Mono"
+                            font.pixelSize: 10
+                            leftPadding: 10; rightPadding: 10; topPadding: 8; bottomPadding: 8
+                            background: Rectangle { color: "#080C12"; radius: 8; border.width: 1; border.color: "#253043" }
+                        }
+                    }
+                }
+
+                Item { Layout.fillWidth: true; implicitHeight: 4 }
+            }
+        }
+    }
+ROLE_OVERLAYS
+}
+'''
+
+MAKER_FUNCTIONS = r'''
+    // ---- The Maker's terms. The offer form edits the two legs like a swap
+    // form; the Node's model (satoshi bounds, exact integer-lot price, lifetime)
+    // is derived from them and goes to the Node verbatim.
+    property string sellSide: "lez"
+    readonly property string offerDirection: root.sellSide === "lez" ? "taker_sells_foreign" : "taker_sells_lez"
+    property bool newOfferOpen: false
+    function whole(text) {
+        return /^[1-9][0-9]{0,15}$/.test(String(text)) ? Number(text) : NaN
+    }
+    // "0.01" → 1000000 satoshis, exactly.
+    function sats(text) {
+        var m = /^([0-9]{1,8})(?:\.([0-9]{1,8}))?$/.exec(String(text))
+        if (!m) return NaN
+        var value = Number(m[1]) * 100000000 + Number((m[2] ?? "").padEnd(8, "0"))
+        return value > 0 ? value : NaN
+    }
+    function gcd(a, b) { while (b) { var t = a % b; a = b; b = t } return a }
+    readonly property real offerSats: root.sats(root.sellSide === "lez" ? receiveAmount.amount : sellAmount.amount)
+    readonly property real offerLez: root.whole(root.sellSide === "lez" ? sellAmount.amount : receiveAmount.amount)
+    readonly property real lezPerLot: root.offerLez / root.gcd(root.offerLez, root.offerSats)
+    readonly property real satsPerLot: root.offerSats / root.gcd(root.offerLez, root.offerSats)
+    readonly property real minimumSats: minimumAmount.text === "" ? root.offerSats : root.whole(minimumAmount.text)
+    readonly property bool termsValid: root.offerSats > 0 && root.offerLez > 0
+        && root.minimumSats > 0 && root.minimumSats <= root.offerSats
+        && (root.minimumSats * root.lezPerLot) % root.satsPerLot === 0 && root.whole(termTtl.text) > 0
+    readonly property string rate: {
+        if (!(root.offerSats > 0) || !(root.offerLez > 0)) return "Set both amounts"
+        var perBitcoin = 100000000 * root.offerLez / root.offerSats
+        return "1 BTC = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
+    }
+    // Loads the Node's stored terms for the chosen direction into the form.
+    function loadStoredTerms() {
+        var routes = root.btcMarket.routes ?? []
+        for (var i = 0; i < routes.length; ++i) {
+            var r = routes[i]
+            if (r.direction !== root.offerDirection || !(r.maximum_foreign_units > 0) || !(r.lez_units_per_lot > 0)) continue
+            var lez = r.maximum_foreign_units * r.lez_units_per_lot / r.foreign_units_per_lot
+            var btc = root.btcAmount(r.maximum_foreign_units)
+            sellAmount.amount = root.sellSide === "lez" ? String(lez) : btc
+            receiveAmount.amount = root.sellSide === "lez" ? btc : String(lez)
+            minimumAmount.text = r.minimum_foreign_units < r.maximum_foreign_units ? String(r.minimum_foreign_units) : ""
+            termTtl.text = String(r.offer_ttl_seconds)
+        }
+    }
+    onSellSideChanged: root.loadStoredTerms()
+    function openOffers() {
+        return (root.btcMarket.inventory ?? []).filter(function(offer) { return offer.state === "pending" })
+    }
+    function createBtcOffers() {
+        if (root.btcMarketBusy || !root.termsValid) return
+        root.btcMarketBusy = true
+        var requestId = "ui-maker-" + (root.sellSide === "lez" ? "sell-lez" : "sell-btc") + "-" + String(Date.now())
+        root.run(root.backend.btcPublishOffer(requestId, root.walletId(),
+            root.offerDirection, String(root.minimumSats), String(root.offerSats), termTtl.text,
+            String(root.lezPerLot), String(root.satsPerLot)),
+            "Publish offer", function(result) {
+                root.applyBtcMarket(result)
+                root.newOfferOpen = false
+                root.statusMode = "success"
+                root.statusTitle = "Offer published"
+                root.statusDetail = String(result.published_offer_id ?? "") + " · " + root.rate
+            })
+    }
+    function withdrawBtcOffer(offer) {
+        if (root.btcMarketBusy) return
+        root.btcMarketBusy = true
+        var requestId = "ui-maker-withdraw-offer-" + String(Date.now())
+        root.run(root.backend.btcWithdrawOffer(requestId, root.walletId(), String(offer.offer_id)),
+            "Withdraw " + String(offer.offer_id), function(result) {
+                root.applyBtcMarket(result)
+                root.statusMode = "success"
+                root.statusTitle = "Offer withdrawn"
+                root.statusDetail = String(offer.offer_id)
+            })
+    }
+    function runMakerAction(swap) {
+        if (root.btcMarketBusy || swap.can_act !== true) return
+        root.btcMarketBusy = true
+        var requestId = "ui-maker-swap-action-" + String(Date.now())
+        root.run(root.backend.btcSwapAction(requestId, root.walletId(), String(swap.ui_swap_id), String(swap.action_required)),
+            String(swap.action_label), function(result) {
+                root.applyBtcMarket(result)
+                root.statusMode = "working"
+                root.statusTitle = "Action submitted"
+                root.statusDetail = "Waiting for finalized chain evidence before the next actor turn"
+            })
+    }
+'''
+
+MAKER_PANELS = r'''
+                        // ----- Compose: one button; the form is the popup.
+                        Panel {
+                            objectName: "makerComposeCard"
+                            Layout.fillWidth: true
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: 12
+                                ColumnLayout {
+                                    Layout.fillWidth: true; spacing: 2
+                                    SectionTitle { text: "Compose an offer" }
+                                    Label {
+                                        text: "Set what you sell and what you receive; the Node signs exactly those terms."
+                                        color: "#7F8A9B"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
+                                    }
+                                }
+                                LuxeButton {
+                                    objectName: "makerNewOffer"
+                                    text: "New offer"
+                                    primary: true
+                                    enabled: root.ready && root.btcMarketReady
+                                    onClicked: root.newOfferOpen = true
+                                }
+                            }
+                        }
+
+                        // ----- Open offers: this Node's published inventory.
+                        Panel {
+                            Layout.fillWidth: true
+                            RowLayout {
+                                Layout.fillWidth: true
+                                SectionTitle { text: "Open offers"; Layout.fillWidth: true }
+                                Label { text: String(root.openOffers().length); color: "#B997FF"; font.pixelSize: 12; font.weight: Font.Bold; font.family: "DejaVu Sans Mono" }
+                            }
+                            Label {
+                                visible: root.openOffers().length === 0
+                                text: root.btcMarketReady ? "No open offers." : "Loading the wallet market…"
+                                color: "#7F8A9B"; font.pixelSize: 12
+                            }
+                            Repeater {
+                                model: root.openOffers()
+                                delegate: Rectangle {
+                                    id: makerOfferRow
+                                    required property var modelData
+                                    readonly property bool sellsLez: (makerOfferRow.modelData.direction ?? "taker_sells_foreign") === "taker_sells_foreign"
+                                    Layout.fillWidth: true; implicitHeight: 58; radius: 9
+                                    color: "#0D141E"; border.width: 1; border.color: "#28364A"
+                                    RowLayout {
+                                        anchors.fill: parent; anchors.margins: 12; spacing: 12
+                                        ColumnLayout {
+                                            Layout.fillWidth: true; spacing: 2
+                                            Label { text: makerOfferRow.sellsLez ? "You sell LEZ" : "You sell BTC"; color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                            Label { text: String(makerOfferRow.modelData.offer_id); color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                        }
+                                        Label { text: String(makerOfferRow.sellsLez ? makerOfferRow.modelData.lez_display : makerOfferRow.modelData.bitcoin_display); color: makerOfferRow.sellsLez ? "#7EE100" : "#B997FF"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                        Label { text: "→"; color: "#687486"; font.pixelSize: 13 }
+                                        Label { text: String(makerOfferRow.sellsLez ? makerOfferRow.modelData.bitcoin_display : makerOfferRow.modelData.lez_display); color: makerOfferRow.sellsLez ? "#B997FF" : "#7EE100"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                        LuxeButton {
+                                            objectName: "makerWithdrawOffer"
+                                            text: "Withdraw"; destructive: true
+                                            enabled: root.ready && !root.btcMarketBusy
+                                            onClicked: root.withdrawBtcOffer(makerOfferRow.modelData)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ----- Swaps this Node is party to.
+                        Panel {
+                            objectName: "makerActive"
+                            Layout.fillWidth: true
+                            SectionTitle { text: "My orders" }
+                            RowLayout {
+                                spacing: 6
+                                FilterTab { label: "NEEDS YOU"; count: root.swapCountFor("attention"); alert: root.swapCountFor("attention") > 0; active: root.showAttention; onPicked: root.showAttention = !root.showAttention }
+                                FilterTab { label: "RUNNING"; count: root.swapCountFor("running"); active: root.showRunning; onPicked: root.showRunning = !root.showRunning }
+                                FilterTab { objectName: "makerHistory"; label: "DONE"; count: root.swapCountFor("done"); active: root.showDone; onPicked: root.showDone = !root.showDone }
+                            }
+                            Label {
+                                visible: root.filteredSwaps().length === 0
+                                text: (root.btcMarket.swaps ?? []).length === 0 ? "No swap has taken one of your offers yet." : "Every filter that matches is off."
+                                color: "#7F8A9B"; font.pixelSize: 12
+                            }
+                            Repeater {
+                                model: root.filteredSwaps()
+                                delegate: SwapRow {
+                                    Layout.fillWidth: true
+                                    role: "maker"; counterpartyLabel: "TAKER"; actionObjectName: "makerSwapAction"
+                                    actionEnabled: root.ready && !root.btcMarketBusy
+                                    divider: root.firstDone(modelData) ? "DONE" : ""
+                                    onAct: root.runMakerAction(modelData)
+                                }
+                            }
+                        }
+'''
+
+MAKER_CHAT_ADDRESS = r'''                            LuxeField {
+                                objectName: "makerChatAddress"
+                                text: root.chatAddress
+                                placeholderText: "Press Status once Logos Chat is online; share this address with the Taker"
+                                readOnly: true
+                                Layout.fillWidth: true
+                                font.family: "DejaVu Sans Mono"
+                            }'''
+
+MAKER_OVERLAYS = r'''
+    Rectangle {
+        // In-scene dialog: Popup/Overlay never renders inside Basecamp's
+        // embedded plugin view, so the form lives in the same scene.
+        id: newOfferOverlay
+        anchors.fill: parent
+        visible: root.newOfferOpen
+        z: 1000
+        color: "#D0060A12"
+        MouseArea { anchors.fill: parent; onClicked: root.newOfferOpen = false }
+        Panel {
+            anchors.centerIn: parent
+            width: 560
+            border.color: "#8950FA"
+            MouseArea { anchors.fill: parent; z: -1 }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 12
+                SectionTitle { text: "Compose an offer"; Layout.fillWidth: true }
+                SideToggle {
+                    value: root.sellSide
+                    options: [["lez", "SELL LEZ", "#7EE100"], ["btc", "SELL BTC", "#B997FF"]]
+                    onPicked: function(side) { root.sellSide = side }
+                }
+            }
+            AmountLeg {
+                id: sellAmount
+                objectName: "makerSellAmount"
+                Layout.fillWidth: true
+                label: "YOU SELL"
+                asset: root.sellSide === "lez" ? "LEZ" : "BTC"
+                accent: root.sellSide === "lez" ? "#7EE100" : "#B997FF"
+                note: root.sellSide === "lez" ? "Locked in the LEZ escrow until settlement" : "Locked in the Bitcoin P2TR contract until settlement"
+            }
+            AmountLeg {
+                id: receiveAmount
+                objectName: "makerReceiveAmount"
+                Layout.fillWidth: true
+                label: "YOU RECEIVE"
+                asset: root.sellSide === "lez" ? "BTC" : "LEZ"
+                accent: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
+                note: root.sellSide === "lez" ? "Claimed from the P2TR contract once the secret is revealed" : "Claimed from the LEZ escrow once the secret is revealed"
+            }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 10
+                Label { text: "RATE"; color: "#6F7A8B"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.0 }
+                Label { objectName: "makerRate"; text: root.rate; color: "#D9E2F2"; font.pixelSize: 12; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                Label {
+                    text: root.sellSide === "lez" ? "ROUTE BTC → LEZ" : "ROUTE LEZ → BTC"
+                    color: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
+                    font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
+                }
+            }
+            GridLayout {
+                Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
+                FieldLabel { text: "MINIMUM TAKER AMOUNT · SATS" }
+                FieldLabel { text: "OFFER LIFETIME · SECONDS" }
+                LuxeField { id: minimumAmount; objectName: "makerMinimumSats"; placeholderText: "whole offer"; Layout.fillWidth: true }
+                LuxeField { id: termTtl; objectName: "makerOfferTtl"; placeholderText: "e.g. 3600"; Layout.fillWidth: true }
+            }
+            Label {
+                text: root.termsValid
+                    ? "The Taker may take any amount from " + root.formatBtcSats(root.minimumSats) + " to " + root.formatBtcSats(root.offerSats) + " at this exact rate. Indexed to " + makerWallet.currentText + " until taken or withdrawn."
+                    : "Amounts must be whole units and the minimum must quote to whole LEZ at this rate."
+                color: root.termsValid ? "#68768A" : "#FF9FAF"; font.pixelSize: 10
+                wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 10
+                Item { Layout.fillWidth: true }
+                LuxeButton { text: "Cancel"; quiet: true; onClicked: root.newOfferOpen = false }
+                LuxeButton {
+                    objectName: "makerCreateOffers"
+                    text: root.btcMarketBusy ? "Publishing…" : "Publish offer"
+                    primary: true
+                    enabled: root.ready && root.btcMarketReady && !root.btcMarketBusy && root.termsValid
+                    onClicked: root.createBtcOffers()
+                }
+            }
+        }
+    }
+'''
+
+TAKER_FUNCTIONS = r'''
     property string selectedOffer: ""
     property string selectedAnnouncementBase64: ""
     property string selectedExpiry: ""
@@ -362,130 +845,9 @@ Item {
             root.statusDetail = "The generation fence was verified by the actor"
         })
     }
+'''
 
-
-    TextEdit { id: clipboardHelper; visible: false }
-
-    Timer {
-        id: btcMarketBootstrapTimer
-        interval: 450
-        repeat: false
-        onTriggered: root.refreshBtcMarket(false)
-    }
-    Timer {
-        interval: 2000
-        repeat: true
-        running: root.ready
-        onTriggered: root.refreshBtcMarket(true)
-    }
-
-    function connected() {
-        root.statusMode = "success"
-        root.statusTitle = "Node connected"
-        root.statusDetail = "Loading the wallet market"
-        root.note("node", "Backend connected")
-        btcMarketBootstrapTimer.restart()
-    }
-    Connections {
-        target: logos
-        function onViewModuleReadyChanged(moduleName, isReady) {
-            if (moduleName !== "lez_atomic_swap_taker") return
-            root.ready = isReady && root.backend !== null
-            if (root.ready) root.connected()
-        }
-    }
-    Component.onCompleted: {
-        root.ready = root.backend !== null && logos.isViewModuleReady("lez_atomic_swap_taker")
-        if (root.ready) root.connected()
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        color: "#0A0C11"
-
-        ScrollView {
-            id: scroll
-            anchors.fill: parent
-            anchors.margins: 20
-            contentWidth: availableWidth
-            clip: true
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-            ColumnLayout {
-                id: body
-                width: scroll.availableWidth
-                spacing: 14
-
-                // ----- Header: who this desk is, and whether its Node answers.
-                RowLayout {
-                    Layout.fillWidth: true; spacing: 16
-                    Label {
-                        text: "LEZ / BTC — Taker Desk"
-                        color: "#F7F8FA"; font.pixelSize: 24; font.weight: Font.Bold; font.letterSpacing: -0.5
-                        Layout.fillWidth: true
-                    }
-                    Label { text: "ACCOUNT"; color: "#6F7A8B"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1.3 }
-                    LuxeCombo {
-                        id: takerWallet
-                        objectName: "takerBtcWallet"
-                        model: ["Zurich Wallet 01 · Taker Node"]
-                        implicitWidth: 240
-                        onActivated: root.refreshBtcMarket(false)
-                    }
-                    Rectangle {
-                        implicitWidth: connectionRow.implicitWidth + 20; implicitHeight: 30; radius: 15
-                        color: root.ready ? "#11271F" : "#292318"
-                        border.width: 1; border.color: root.ready ? "#497621" : "#62438B"
-                        RowLayout {
-                            id: connectionRow; anchors.centerIn: parent; spacing: 8
-                            Rectangle { implicitWidth: 7; implicitHeight: 7; radius: 4; color: root.ready ? "#7EE100" : "#8950FA" }
-                            Label {
-                                objectName: "takerConnection"
-                                text: root.ready ? "Backend connected" : "Connecting"
-                                color: root.ready ? "#B8F57C" : "#C6AAFF"
-                                font.pixelSize: 11; font.weight: Font.DemiBold
-                            }
-                        }
-                    }
-                }
-
-                StatusStrip {
-                    Layout.fillWidth: true
-                    mode: root.statusMode
-                    title: root.statusTitle
-                    detail: root.statusDetail
-                    LuxeButton {
-                        objectName: "takerHealth"
-                        text: "Check Node"; quiet: true
-                        enabled: root.ready && !root.busy
-                        onClicked: root.health()
-                    }
-                    LuxeButton {
-                        objectName: "takerMarketRefresh"
-                        text: "Refresh market"; quiet: true
-                        enabled: root.ready && !root.busy && !root.btcMarketBusy
-                        onClicked: root.refreshBtcMarket(false)
-                    }
-                }
-
-                // ----- The desk (left) beside the activity log (right) on wide
-                // views; stacked on narrow ones.
-                Item {
-                    id: deskArea
-                    property bool deskWide: scroll.availableWidth >= 1180
-                    Layout.fillWidth: true
-                    implicitHeight: deskWide
-                        ? Math.max(deskColumn.implicitHeight, activityLog.implicitHeight)
-                        : deskColumn.implicitHeight + 14 + activityLog.implicitHeight
-
-                    ColumnLayout {
-                        id: deskColumn
-                        anchors.left: parent.left
-                        anchors.right: deskArea.deskWide ? activityLog.left : parent.right
-                        anchors.rightMargin: deskArea.deskWide ? 14 : 0
-                        anchors.top: parent.top
-                        spacing: 14
-
+TAKER_PANELS = r'''
                         // ----- Swaps this Node is party to.
                         Panel {
                             objectName: "takerBtcMarket"
@@ -658,30 +1020,9 @@ Item {
                                 color: "#A8AFBB"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             }
                         }
+'''
 
-
-                        // ----- Chat: the private negotiation channel.
-                        Panel {
-                            objectName: "takerChat"
-                            Layout.fillWidth: true
-                            RowLayout {
-                                Layout.fillWidth: true; spacing: 10
-                                SectionTitle { text: "Private negotiation Chat"; Layout.fillWidth: true }
-                                Label { text: root.chatState.toUpperCase(); color: "#B997FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
-                                LuxeButton {
-                                    objectName: "takerChatStatus"
-                                    text: "Status"; quiet: true
-                                    enabled: root.ready && !root.busy
-                                    onClicked: root.chatStatus()
-                                }
-                                LuxeButton {
-                                    objectName: "takerChatReset"
-                                    text: "Reset"; quiet: true
-                                    enabled: root.ready && !root.busy
-                                    onClicked: root.resetChat()
-                                }
-                            }
-                            RowLayout {
+TAKER_CHAT_ADDRESS = r'''                            RowLayout {
                                 Layout.fillWidth: true; spacing: 10
                                 LuxeField {
                                     id: takerChatAddress
@@ -697,48 +1038,30 @@ Item {
                                     enabled: root.ready && !root.busy && takerChatAddress.text.trim().length > 0
                                     onClicked: root.connectChat()
                                 }
-                            }
-                        }
-                    }
+                            }'''
 
-                    ActivityLog {
-                        id: activityLog
-                        objectName: "takerActivity"
-                        anchors.top: deskArea.deskWide ? parent.top : deskColumn.bottom
-                        anchors.topMargin: deskArea.deskWide ? 0 : 14
-                        anchors.right: parent.right
-                        width: deskArea.deskWide ? 380 : parent.width
-                        entries: root.activity
-                        onCopyRequested: function(text) { root.copyText(text) }
-                        onClearRequested: root.activity = []
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Label { text: "Raw last reply"; color: "#8B96A8"; font.pixelSize: 11; Layout.fillWidth: true }
-                            LuxeButton { text: root.rawVisible ? "Hide" : "Show"; quiet: true; onClicked: root.rawVisible = !root.rawVisible }
-                        }
-                        TextArea {
-                            objectName: "takerOutput"
-                            text: root.output
-                            visible: root.rawVisible
-                            readOnly: true
-                            wrapMode: Text.WrapAnywhere
-                            selectByMouse: true
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: root.rawVisible ? 160 : 0
-                            color: "#BAC4D3"
-                            selectionColor: "#8950FA"
-                            selectedTextColor: "#FFFFFF"
-                            font.family: "DejaVu Sans Mono"
-                            font.pixelSize: 10
-                            leftPadding: 10; rightPadding: 10; topPadding: 8; bottomPadding: 8
-                            background: Rectangle { color: "#080C12"; radius: 8; border.width: 1; border.color: "#253043" }
-                        }
-                    }
-                }
 
-                Item { Layout.fillWidth: true; implicitHeight: 4 }
-            }
-        }
-    }
+def render(role):
+    maker = role == "maker"
+    text = SKELETON
+    text = text.replace("ROLE_FUNCTIONS", MAKER_FUNCTIONS if maker else TAKER_FUNCTIONS)
+    text = text.replace("ROLE_PANELS", MAKER_PANELS if maker else TAKER_PANELS)
+    text = text.replace("CHAT_ADDRESS_ROW", MAKER_CHAT_ADDRESS if maker else TAKER_CHAT_ADDRESS)
+    text = text.replace("ROLE_OVERLAYS", MAKER_OVERLAYS if maker else "")
+    text = text.replace("ON_FIRST_MARKET", "if (first) root.loadStoredTerms()" if maker else "")
+    text = text.replace("HEALTH_DETAIL",
+                        '(result.routes ?? []).length + " active route(s) · chat " + String(result.chat ?? "unknown") + " · delivery " + String(result.delivery ?? "unknown")'
+                        if maker else '"Offer delivery: " + String(result.delivery ?? "unknown")')
+    text = text.replace("CHAT_RESET_EXTRA", "" if maker else 'takerChatAddress.text = ""')
+    text = text.replace("CHAT_UNBOUND_HINT", '"Share this session address with the Taker"' if maker else '"Paste the Maker\'s current session address to connect"')
+    text = text.replace("WALLET_ID", "maker-munich-01" if maker else "taker-zurich-01")
+    text = text.replace("WALLET_LABEL", "Munich Vault 01" if maker else "Zurich Wallet 01")
+    text = text.replace("ROLE_TITLE", "Maker" if maker else "Taker")
+    text = text.replace("ROLE", role)
+    return text
 
-}
+
+for role in ("maker", "taker"):
+    target = ROOT / "apps" / "basecamp" / role / "src" / "qml" / "Main.qml"
+    target.write_text(render(role))
+    print(target, len(render(role).splitlines()), "lines")

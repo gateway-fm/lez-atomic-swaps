@@ -75,7 +75,7 @@ sequenceDiagram
     participant Daemon as Maker daemon
     participant DB as Maker SQLite
     Maker->>QML: Enter pair, direction, limits, TTL, and exact price
-    QML->>Host: saveRoute with fixed UI request ID
+    QML->>Host: btcPublishOffer with the terms and a fixed UI request ID
     Host->>Daemon: maker_local_route_save_v1 over owner socket
     Daemon->>DB: BEGIN IMMEDIATE
     Daemon->>DB: Validate revisions and write policy plus price plus replay

@@ -121,10 +121,10 @@ two Nodes settle the swap:
    The Maker's two steps are its Node's automatic effects; the Maker desk shows
    their progress. The Taker's revealing claim stays a user action.
 4. `scripts/export-node-evidence.py` publishes the completed swap's five
-   transaction identities (confirmed against both chains) to the proof view
-   (**Open local proof**, `http://127.0.0.1:3003/#/evidence`) and to the
-   explorer's hash index; `swap-through-ui.sh` does so on completion. Until the
-   first swap, the proof view shows the certified sample `m5arm-08180005`.
+   transaction identities (confirmed against both chains) to the explorer's
+   evidence view (`http://127.0.0.1:3003/#/evidence`) and hash index;
+   `swap-through-ui.sh` does so on completion. Until the first swap, that view
+   shows the certified sample `m5arm-08180005`.
 
 ## Manual test walkthrough
 
@@ -174,9 +174,8 @@ btc() { docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf 
    monitor end at `completed`, revision 4.
 7. **Proof.** `./scripts/export-node-evidence.py` writes the swap's five
    transactions, confirmed against both chains, to `runtime/evidence/` and the
-   proof view. Open http://127.0.0.1:3003/#/evidence, paste any of the five
-   hashes into the explorer's search, and press **Refresh proof** on the Taker
-   desk.
+   explorer's evidence view. Open http://127.0.0.1:3003/#/evidence and paste
+   any of the five hashes into the explorer's search.
 8. **Verify without another swap.** `./scripts/verify-all.sh`: containers,
    both chains, explorer display of every exported swap, the Node market
    (15 checks) and both UI suites.
@@ -279,7 +278,7 @@ them would strand the funded accounts.
 | containers | every service is up |
 | settlement chains | both chains are advancing and the Bitcoin spender index is present |
 | `verify-explorers.py` | each exported swap's transactions are *displayed* — Bitcoin ones in a real block on the Bitcoin explorer (rendered content, hidden markup excluded), LEZ ones as live transactions with program and accounts. The certified sample predates the settlement chains and is checked against the proof endpoint, since its chains no longer exist |
-| `verify-market.py` | the Node market: route preset, publication, idempotent replay, request-identity reuse, discovery through Delivery, stale-revision rejection, withdrawal |
+| `verify-market.py` | the Node market: route terms, publication, idempotent replay, request-identity reuse, discovery through Delivery, stale-revision rejection, withdrawal |
 | UI regressions | the two Basecamp suites against the live Maker and Taker Nodes |
 
 The BTC view can be driven automatically:
@@ -356,7 +355,7 @@ images/                    one dir per image (Dockerfile + payloads)
   basecamp-ui/assets/      portable Basecamp bundle, role trees, qt-mcp framework
   lez-tools/               escrow deployer, vault-claim and identity tools (profile "tools")
 assets/lez-source/         pinned v0.2.0 config templates (bedrock, sequencer, indexer)
-assets/certified-evidence-m5arm-08180005-ui.json  proof-view seed until the first Node swap
+assets/certified-evidence-m5arm-08180005-ui.json  explorer evidence seed until the first Node swap
 builder/Dockerfile         the ephemeral builder image (docker run --rm only; not on the stack)
 ui-tests/verify.mjs        end-to-end UI test (maker + taker) via the QML inspector
   runtime/                   generated state (gitignored; wiped by --wipe)
@@ -414,7 +413,7 @@ sidecar. Persisted swaps pin the actor program's hash, so after the actor
 binaries are rebuilt they list as `attention_required`; `scripts/reset-swaps.sh`
 forgets every persisted swap on both Nodes (directories, registry and store
 rows, reserved and consumed offers, exported evidence) and leaves chains,
-wallets, identities and the route preset alone.
+wallets, identities and the stored route terms alone.
 
 ## Demo boundary
 
