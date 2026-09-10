@@ -147,6 +147,11 @@ jobs:
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
       - name: Pinned sources
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
+      # cargo-risczero's build links the rapidsnark prover library, which
+      # the builder reaches through RAPIDSNARK_LIB_DIR; fetch it first like
+      # the other build jobs do.
+      - name: rapidsnark libraries
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
       - name: r0vm (risc0 tag)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:r0vm
       - name: Escrow deployer and guest at the pinned digest
