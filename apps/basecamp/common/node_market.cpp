@@ -226,10 +226,32 @@ QString amountsDisplay(const QJsonObject& terms)
         + formatLez(integerField(terms, "lez_amount"));
 }
 
+// The swap's on-chain effects as the Node's actor recorded them, each with
+// the local explorer address for its chain.
+QJsonArray effectsFor(const QJsonArray& effects)
+{
+    QJsonArray rows;
+    for (const QJsonValue& candidate : effects) {
+        const QJsonObject effect = candidate.toObject();
+        const QString chain = effect.value("chain").toString();
+        const QString id = effect.value("transaction_id").toString();
+        rows.append(QJsonObject{
+            {"kind", effect.value("kind")},
+            {"kind_display", effect.value("kind").toString().replace('_', ' ')},
+            {"chain", chain},
+            {"transaction_id", id},
+            {"confirmations", effect.value("confirmations")},
+            {"explorer_url", chain == QStringLiteral("Bitcoin") ? "http://127.0.0.1:3002/tx/" + id
+                                                                : "http://127.0.0.1:3003/#/tx/" + id},
+        });
+    }
+    return rows;
+}
+
 QJsonObject swapRowObject(const SwapRow& row, const QString& swapId, const QString& offerId,
                           const QString& direction, const QString& makerLabel,
                           const QString& takerLabel, const QString& role, qint64 generation,
-                          const QJsonObject& terms, const QString& fill)
+                          const QJsonObject& terms, const QString& fill, const QJsonArray& effects)
 {
     const bool canAct = !row.action.isEmpty();
     return QJsonObject{
@@ -256,7 +278,7 @@ QJsonObject swapRowObject(const SwapRow& row, const QString& swapId, const QStri
         {"timeline", timelineFor(terms, role)},
         {"run_id", QJsonValue()},
         {"completed_at", QJsonValue()},
-        {"effects", QJsonArray{}},
+        {"effects", effectsFor(effects)},
     };
 }
 
@@ -359,7 +381,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),
-                                       swap.value("terms").toObject(), QString()));
+                                       swap.value("terms").toObject(), QString(),
+                                       swap.value("effects").toArray()));
             if (row.state == "completed") ++completed;
             else if (row.state != "refunded") ++active;
             if (!row.action.isEmpty()) ++needsAction;
@@ -540,11 +563,13 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             const QString direction = directionName(swap.value("direction").toString());
             QString phase, nextAction, schedule;
             QJsonObject terms;
+            QJsonArray effects;
             const Reply monitored = decode(rpc.call("maker_actor_monitor_v1", compact({{"id", swapId}})));
             if (monitored.ok) {
                 const QJsonObject result = monitored.result.toObject();
                 schedule = result.value("schedule_state").toString();
                 terms = result.value("terms").toObject();
+                effects = result.value("effects").toArray();
                 const QJsonObject observation = result.value("progress").toObject().value("observation").toObject();
                 phase = observation.value("phase").toString();
                 nextAction = observation.value("next_action").toString();
@@ -555,7 +580,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
                 ? QString::number(100 * taken / offered) + "% of the " + formatBtc(offered) + " offered" : QString();
             const SwapRow row = makerRow(phase, nextAction, schedule);
             swaps.append(swapRowObject(row, swapId, QString(), direction, wallet.label,
-                                       QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill));
+                                       QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill, effects));
             if (row.state == "completed") ++completed;
             else if (row.state != "refunded" && row.state != "failed") ++active;
         }

@@ -234,6 +234,16 @@ second lock after this), `earlier_refund_latest_unix_seconds` (the Maker's
 leg, locked second, must be refunded by this) and
 `later_refund_earliest_unix_seconds` (the Taker's leg may be refunded from
 this). The same object appears on `maker_actor_monitor_v1`.
+
+Both views also carry `effects` once something landed: the actor's durable
+evidence in order, each `{revision, kind, chain, transaction_id,
+confirmations}` with `kind` one of `taker_lock`, `maker_lock`,
+`revealing_claim`, `followup_claim`, `maker_refund`, `taker_refund`, and on
+the Maker additionally its LEZ lock steps `lez_initialize` and `lez_fund`
+(`revision` 0). `chain` is `Bitcoin` or `Lez`; `confirmations` is what the
+actor observed when it recorded the evidence and stays 0 for LEZ. The array
+is omitted while empty. Nothing in it is secret; it is what a block
+explorer shows.
 States include `initiating`, `not_activated`, `awaiting_first_lock`,
 `awaiting_second_lock`, `both_legs_locked`, `claim_available`,
 `refund_available`, `claim_in_progress`, `refund_in_progress`, `completed`,

@@ -43,6 +43,8 @@ Item {
     property bool showDone: true
     // Unix seconds, ticked once a second for every countdown on the desk.
     property real now: Date.now() / 1000
+    // The swap whose on-chain details are open, or null.
+    property var detailSwap: null
     // ---- The activity log: what the desk asked and what the Node answered,
     // plus every change the background poll notices. Newest last.
     property var activity: []
@@ -421,6 +423,62 @@ CHAT_ADDRESS_ROW
             }
         }
     }
+    Rectangle {
+        // The swap's on-chain transactions, as the Node's actor recorded them.
+        id: swapDetailsOverlay
+        anchors.fill: parent
+        visible: root.detailSwap !== null
+        z: 1001
+        color: "#D0060A12"
+        MouseArea { anchors.fill: parent; onClicked: root.detailSwap = null }
+        Panel {
+            objectName: "ROLESwapDetails"
+            anchors.centerIn: parent
+            width: 640
+            border.color: "#8950FA"
+            MouseArea { anchors.fill: parent; z: -1 }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 10
+                SectionTitle { text: "On-chain details"; Layout.fillWidth: true }
+                LuxeButton { text: "Close"; quiet: true; onClicked: root.detailSwap = null }
+            }
+            Label {
+                text: root.detailSwap ? String(root.detailSwap.state_label) + " · " + String(root.detailSwap.direction_display) + "  ·  " + String(root.detailSwap.amounts_display ?? "") : ""
+                color: "#D9E2F2"; font.pixelSize: 12; font.weight: Font.DemiBold
+                elide: Text.ElideRight; Layout.fillWidth: true
+            }
+            Label {
+                text: root.detailSwap ? String(root.detailSwap.ui_swap_id) : ""
+                color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
+                elide: Text.ElideMiddle; Layout.fillWidth: true
+            }
+            Repeater {
+                model: root.detailSwap ? (root.detailSwap.effects ?? []) : []
+                delegate: Rectangle {
+                    id: effectRow
+                    required property var modelData
+                    Layout.fillWidth: true; implicitHeight: effectColumn.implicitHeight + 20; radius: 8
+                    color: "#0D141E"; border.width: 1; border.color: "#28364A"
+                    ColumnLayout {
+                        id: effectColumn
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                        anchors.margins: 10; spacing: 3
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 10
+                            Label { text: String(effectRow.modelData.kind_display).toUpperCase(); color: "#D8C6FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                            Label { text: String(effectRow.modelData.chain).toUpperCase(); color: effectRow.modelData.chain === "Bitcoin" ? "#B997FF" : "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+                            Label { visible: Number(effectRow.modelData.confirmations) > 0; text: String(effectRow.modelData.confirmations) + " conf"; color: "#9AA6B8"; font.pixelSize: 9; font.family: "DejaVu Sans Mono" }
+                            Item { Layout.fillWidth: true }
+                            LuxeButton { text: "Copy id"; quiet: true; onClicked: root.copyText(effectRow.modelData.transaction_id) }
+                            LuxeButton { text: "Copy link"; quiet: true; onClicked: root.copyText(effectRow.modelData.explorer_url) }
+                        }
+                        Label { text: String(effectRow.modelData.transaction_id); color: "#F1F3F6"; font.pixelSize: 10; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                        Label { text: String(effectRow.modelData.explorer_url); color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                    }
+                }
+            }
+        }
+    }
 ROLE_OVERLAYS
 }
 '''
@@ -636,6 +694,8 @@ MAKER_PANELS = r'''
                                     actionEnabled: root.ready && !root.btcMarketBusy
                                     divider: root.firstDone(modelData) ? "DONE" : ""
                                     now: root.now
+                                    detailsObjectName: "ROLEShowDetails"
+                                    onDetails: root.detailSwap = modelData
                                     onAct: root.runMakerAction(modelData)
                                 }
                             }
@@ -955,6 +1015,8 @@ TAKER_PANELS = r'''
                                     actionEnabled: root.ready && !root.btcMarketBusy
                                     divider: root.firstDone(modelData) ? "DONE" : ""
                                     now: root.now
+                                    detailsObjectName: "ROLEShowDetails"
+                                    onDetails: root.detailSwap = modelData
                                     onAct: root.runTakerAction(modelData)
                                 }
                             }

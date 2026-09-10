@@ -11,12 +11,15 @@ Rectangle {
     property string role: ""
     property bool actionEnabled: true
     property string actionObjectName: ""
+    property string detailsObjectName: ""
     // A section label drawn above this row, e.g. "DONE" on the first done row.
     property string divider: ""
     // Unix seconds, for the schedule's countdowns.
     property real now: 0
     readonly property bool done: ["completed", "refunded", "failed"].indexOf(String(swapRow.modelData.state)) >= 0
     signal act()
+    // The owner wants the swap's on-chain transactions.
+    signal details()
     implicitHeight: swapColumn.implicitHeight + 26 + (swapRow.divider !== "" ? 22 : 0)
     radius: 9
     color: swapRow.modelData.can_act === true ? "#17152A" : "#0D141E"
@@ -84,6 +87,12 @@ Rectangle {
             text: swapRow.modelData.action_role && swapRow.modelData.action_role !== swapRow.role
                 ? "WAITING FOR " + swapRow.counterpartyLabel : String(swapRow.modelData.state).toUpperCase()
             color: "#7B8798"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.7
+        }
+        LuxeButton {
+            objectName: swapRow.detailsObjectName
+            visible: (swapRow.modelData.effects ?? []).length > 0
+            text: "Details"; quiet: true
+            onClicked: swapRow.details()
         }
         LuxeButton {
             objectName: swapRow.actionObjectName

@@ -750,6 +750,9 @@ pub struct MakerActorMonitorV1 {
     /// The countersigned schedule and amounts, when the Node holds the BTC agreement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terms: Option<BtcAgreementTermsV1>,
+    /// What landed on which chain so far, from the actor's durable evidence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<btc_reference_actor::ActorEffectV1>,
 }
 
 /// Durable admission result for one explicit Maker actor action.
@@ -962,6 +965,19 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                         lease_generation: snapshot.lease_generation(),
                     });
             let record = snapshot.process();
+            // The actor's own durable evidence, read in place through the
+            // manifest's pinned configuration; a Zcash actor has none here.
+            let effects = (record.manifest().kind() == MakerActorKindV1::Bitcoin)
+                .then(|| {
+                    btc_reference_actor::ActorConfig::load_private_pinned_sha256(
+                        record.manifest().config_path(),
+                        record.manifest().config_sha256(),
+                    )
+                    .ok()
+                })
+                .flatten()
+                .and_then(|config| btc_reference_actor::actor_effects(&config).ok())
+                .unwrap_or_default();
             Ok(MakerActorMonitorV1 {
                 schema_version: 1,
                 swap_id: record.swap_id().as_str().into(),
@@ -975,6 +991,7 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                     .btc_lifecycle
                     .as_ref()
                     .and_then(|lifecycle| lifecycle.terms_for_swap(&id)),
+                effects,
             })
         },
     )?;

@@ -3372,6 +3372,87 @@ fn validate_signer_journal(
     Ok(())
 }
 
+/// One on-chain effect of a swap as the actor's durable evidence records it:
+/// secret-free, and exact enough to look the transaction up on its chain.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActorEffectV1 {
+    /// Aggregate revision the effect advanced the swap to (0 for a Maker
+    /// lock step that precedes its evidence).
+    pub revision: u64,
+    /// `taker_lock`, `maker_lock`, `revealing_claim`, `followup_claim`,
+    /// `maker_refund`, `taker_refund`, or a Maker LEZ lock step
+    /// (`lez_initialize`, `lez_fund`).
+    pub kind: Box<str>,
+    /// The chain the transaction lives on.
+    pub chain: Chain,
+    /// Chain-native transaction id.
+    pub transaction_id: Box<str>,
+    /// Confirmations observed when the evidence was recorded; 0 for LEZ.
+    pub confirmations: u32,
+}
+
+/// The swap's durable on-chain effects in order: the actor's lifecycle
+/// evidence, plus the Maker's own LEZ lock steps (escrow initialization and
+/// funding) once accepted. Empty before activation.
+///
+/// # Errors
+///
+/// Fails when the agreement or the durable state cannot be read.
+pub fn actor_effects(config: &ActorConfig) -> Result<Vec<ActorEffectV1>, ActorCommandError> {
+    if !state_file_exists(&config.state_db)? {
+        return Ok(Vec::new());
+    }
+    let (agreement, wire) = load_agreement(config)?;
+    let store = match open_existing_store(config, &agreement, wire) {
+        Ok(store) => store,
+        Err(BtcRecoveryError::MissingAgreementAcceptance) => return Ok(Vec::new()),
+        Err(_) => return Err(ActorCommandError::StateUnavailable),
+    };
+    let mut effects: Vec<ActorEffectV1> = store
+        .evidence()
+        .map_err(|_| ActorCommandError::StateUnavailable)?
+        .into_iter()
+        .map(|(revision, evidence)| ActorEffectV1 {
+            revision,
+            kind: evidence.kind().name().into(),
+            chain: evidence.chain(),
+            transaction_id: evidence.proof().transaction_id().into(),
+            confirmations: evidence.proof().confirmations(),
+        })
+        .collect();
+    drop(store);
+    if config.role == ActorRole::Maker {
+        let swap_id = agreement.coordinator().id().clone();
+        let steps = SqliteBtcMakerLockJournal::open(&config.state_db)
+            .ok()
+            .and_then(|journal| journal.load_intent(&swap_id).ok().flatten())
+            .map(|intent| intent.steps().to_vec())
+            .unwrap_or_default();
+        for step in steps
+            .iter()
+            .filter(|step| step.state() == BtcMakerLockStepState::Accepted)
+        {
+            let transaction_id = step.step().expected_public_id().as_str();
+            if effects
+                .iter()
+                .any(|effect| &*effect.transaction_id == transaction_id)
+            {
+                continue;
+            }
+            effects.push(ActorEffectV1 {
+                revision: 0,
+                kind: step.step().step().as_str().replace('.', "_").into(),
+                chain: Chain::Lez,
+                transaction_id: transaction_id.into(),
+                confirmations: 0,
+            });
+        }
+        effects.sort_by_key(|effect| (effect.revision == 0, effect.revision));
+    }
+    Ok(effects)
+}
+
 fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError> {
     if !state_file_exists(&config.state_db)? {
         return Ok(not_activated_status(config));
