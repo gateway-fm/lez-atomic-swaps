@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Idempotently prepare the local regtest funding wallets (never other chains)."""
+"""Idempotently prepare the local regtest wallets of both roles (never other chains)."""
 import json
 import subprocess
 
@@ -26,17 +26,19 @@ def seed(call=rpc):
                 call("-named", "loadwallet", f"filename={name}", "load_on_startup=true")
             else:
                 call("-named", "createwallet", f"wallet_name={name}", "load_on_startup=true")
-    # The supported scenario direction locks Bitcoin from the Taker. The
-    # Maker receives per-swap claims and needs no Core funding balance.
-    wallet = "-rpcwallet=lez-taker"
-    balance = call(wallet, "getbalances")["mine"]["trusted"]
-    if balance < 1:
-        address = call(wallet, "getnewaddress", "", "bech32m")
-        call("generatetoaddress", "105", address)
-    balance = call(wallet, "getbalances")["mine"]["trusted"]
-    if balance < 1:
-        raise RuntimeError("Taker has less than 1 spendable regtest BTC after seeding")
-    print("Regtest wallets ready; Taker has at least 1 spendable BTC.")
+    # Whoever sells Bitcoin locks it from its own Core wallet: the Taker when
+    # the Taker sells Bitcoin, the Maker when the Maker does. Both get a
+    # spendable regtest balance (each mine matures after 100 more blocks).
+    for name in ("lez-taker", "lez-maker"):
+        wallet = f"-rpcwallet={name}"
+        balance = call(wallet, "getbalances")["mine"]["trusted"]
+        if balance < 1:
+            address = call(wallet, "getnewaddress", "", "bech32m")
+            call("generatetoaddress", "105", address)
+        balance = call(wallet, "getbalances")["mine"]["trusted"]
+        if balance < 1:
+            raise RuntimeError(f"{name} has less than 1 spendable regtest BTC after seeding")
+    print("Regtest wallets ready; Maker and Taker each have at least 1 spendable BTC.")
 
 
 if __name__ == "__main__":
