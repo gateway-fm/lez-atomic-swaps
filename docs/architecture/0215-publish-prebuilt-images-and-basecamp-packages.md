@@ -117,3 +117,15 @@ The reproducibility contract is unchanged: the guest ELF digest is checked
 after every build, the toolchain versions are checked where they are used,
 the image is built from a Dockerfile in the repository by a workflow anyone
 can rerun, and it is referenced by digest, never by tag.
+
+The risc0 guest builder image the artifact is pinned to
+(`risczero/risc0-guest-builder`) exists only for amd64. The release workflow
+therefore builds the guest ELF in an x86-64 job with that image running
+natively (`LEZ_V02_GUEST_ONLY=1`), checks its digest and ImageID there, and
+hands the file to the arm64 job that builds the deployer
+(`LEZ_V02_PREBUILT_GUEST_ELF`): `from-scratch.sh` checks the digest again,
+the methods crate's `build.rs` derives the ImageID with r0vm and refuses any
+file that is not the pinned program, then embeds it exactly as risc0-build
+would. No Docker socket enters the builder container on that path. A
+developer Mac still builds the guest itself: Docker Desktop runs the amd64
+image under Rosetta.

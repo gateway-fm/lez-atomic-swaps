@@ -144,8 +144,42 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # The digest-pinned risc0 guest builder image exists only for amd64, so the
+  # guest is built where that image runs natively and handed to the arm64 job
+  # that builds the deployer around it; both check the pinned digest.
+  escrow-guest:
+    name: escrow guest ELF (pinned amd64 builder, x86-64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "2"
+      RUN_ID: release-guest-${{ github.run_id }}-${{ github.run_attempt }}
+      CARGO_TARGET_DIR: /tmp/lez-v02-guest-target
+      LEZ_V02_GUEST_TARGET_DIR: /tmp/lez-v02-guest-guest-target
+      LEZ_V02_ARTIFACT_TARGET_DIR: /tmp/lez-v02-guest-artifact
+      LEZ_V02_TOOL_DIR: /tmp/lez-v02-guest-tools
+      LEZ_V02_GUEST_ONLY: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.96.0
+      - name: Guest ELF at the pinned digest
+        run: ./scripts/verify-lez-v02-provisional.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: escrow-guest
+          path: /tmp/lez-v02-guest-artifact/guest/zec_escrow_v02.bin
+          retention-days: 7
+          if-no-files-found: error
+
   escrow:
     name: r0vm and the pinned escrow artifact
+    needs: escrow-guest
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 300
     steps:
@@ -170,12 +204,13 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
       - name: r0vm (risc0 tag)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:r0vm
-      # The digest-pinned risc0 guest builder image is amd64-only; Docker
-      # Desktop runs it under Rosetta on a Mac, the arm64 runner needs QEMU
-      # user emulation registered first or the guest build dies with 255.
-      - name: amd64 emulation for the pinned risc0 guest builder
-        run: docker run --privileged --rm tonistiigi/binfmt:qemu-v9.2.2@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6 --install amd64
-      - name: Escrow deployer and guest at the pinned digest
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: escrow-guest
+          path: _guest
+      - name: Escrow deployer around the prebuilt guest ELF
+        env:
+          LEZ_V02_PREBUILT_GUEST_ELF: ${{ github.workspace }}/_guest/zec_escrow_v02.bin
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:escrow
       - name: Collect payloads
         run: |

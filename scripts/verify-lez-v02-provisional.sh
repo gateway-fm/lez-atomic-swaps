@@ -134,6 +134,11 @@ export LOGOS_BLOCKCHAIN_CIRCUITS="$circuits_dir"
 gcc_include="$(gcc -print-file-name=include)"
 export BINDGEN_EXTRA_CLANG_ARGS="-I${gcc_include}${BINDGEN_EXTRA_CLANG_ARGS:+ ${BINDGEN_EXTRA_CLANG_ARGS}}"
 
+# LEZ_V02_GUEST_ONLY=1: only the digest-pinned Docker guest build and its
+# checks, for a job that builds the guest where the pinned amd64 builder image
+# runs natively and hands the ELF to the arm64 deployer build
+# (LEZ_V02_PREBUILT_GUEST_ELF below).
+if [[ "${LEZ_V02_GUEST_ONLY:-0}" != "1" ]]; then
 # local arm64 lane: skip host test gates (they are host-arch coverage, not artifact identity)
 if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
 cargo fmt --manifest-path "$root_manifest" -- --check
@@ -148,7 +153,19 @@ CARGO_TARGET_DIR="$guest_target" \
   cargo clippy --locked --manifest-path "$guest_manifest" --bins -- -D warnings
 CARGO_TARGET_DIR="$guest_target" RUSTDOCFLAGS="-D warnings" \
   cargo doc --locked --manifest-path "$guest_manifest" --no-deps --bins
+fi
 
+if [[ -n "${LEZ_V02_PREBUILT_GUEST_ELF:-}" ]]; then
+# A guest ELF built elsewhere by the same digest-pinned builder image (the
+# image exists only for amd64). It faces the same digest and ImageID checks
+# as a guest built here, and the methods crate embeds it (build.rs) instead of
+# running the builder image.
+docker_guest_elf="$LEZ_V02_PREBUILT_GUEST_ELF"
+if [[ ! -f "$docker_guest_elf" ]]; then
+  echo "LEZ_V02_PREBUILT_GUEST_ELF is not a file: ${docker_guest_elf}" >&2
+  exit 1
+fi
+else
 # Build the deployment artifact with the official digest-pinned Risc0 builder
 # in a run-local copy so concurrent work cannot share or overwrite guest target
 # state. Host-side methods/deployer tests below independently embed a real guest.
@@ -178,6 +195,7 @@ if [[ "${#docker_guest_elfs[@]}" -ne 1 ]]; then
   exit 1
 fi
 docker_guest_elf="${docker_guest_elfs[0]}"
+fi
 docker_elf_sha256="$(sha256sum "$docker_guest_elf" | cut -d ' ' -f 1)"
 docker_image_id="$($r0vm_bin --elf "$docker_guest_elf" --id)"
 if [[ "$docker_elf_sha256" != "$expected_elf_sha256" ]]; then
@@ -189,6 +207,13 @@ if [[ "$docker_image_id" != "$expected_image_id" ]]; then
   exit 1
 fi
 rg -Fqx "risc0_guest_builder = \"${risc0_guest_builder}\"" "$artifact_manifest"
+
+if [[ "${LEZ_V02_GUEST_ONLY:-0}" == "1" ]]; then
+  mkdir -p "${artifact_target}/guest"
+  cp "$docker_guest_elf" "${artifact_target}/guest/zec_escrow_v02.bin"
+  echo "guest ELF ${docker_elf_sha256} (ImageID ${docker_image_id}) at ${artifact_target}/guest/zec_escrow_v02.bin"
+  exit 0
+fi
 
 if [[ "${LEZ_SKIP_TESTS:-0}" != "1" ]]; then
 cargo fmt --manifest-path "$methods_manifest" -- --check
