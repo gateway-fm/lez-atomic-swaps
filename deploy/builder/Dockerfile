@@ -73,6 +73,6 @@ RUN cargo +1.96.0 install rzup --version "$RZUP_VERSION" --locked --root "$LEZ_T
     && chmod -R a+rX "$LEZ_TOOLS" \
     && [[ "$("$LEZ_TOOLS/bin/rzup" --version)" == "rzup $RZUP_VERSION" ]] \
     && [[ "$("$LEZ_TOOLS/bin/r0vm" --version)" == "risc0-r0vm ${RISC0_TAG#v}" ]] \
-    && [[ "$("$LEZ_TOOLS/bin/cargo-risczero" --version)" == "cargo-risczero ${RISC0_TAG#v}" ]]
+    && [[ "$("$LEZ_TOOLS/bin/cargo-risczero" risczero --version)" == "cargo-risczero ${RISC0_TAG#v}" ]]
 
 WORKDIR /workspace

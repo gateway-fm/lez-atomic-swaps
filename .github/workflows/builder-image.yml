@@ -58,7 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm "$IMAGE:sha-${SHORT_SHA:0:7}" bash -c \
-            '/opt/lez-tools/bin/rzup --version; /opt/lez-tools/bin/r0vm --version; /opt/lez-tools/bin/cargo-risczero --version; sha256sum /opt/lez-tools/rapidsnark/librapidsnark.a; cargo +1.96.0 --version; cargo +1.94.0 --version'
+            '/opt/lez-tools/bin/rzup --version; /opt/lez-tools/bin/r0vm --version; /opt/lez-tools/bin/cargo-risczero risczero --version; sha256sum /opt/lez-tools/rapidsnark/librapidsnark.a; cargo +1.96.0 --version; cargo +1.94.0 --version'
       - name: Push and record the digest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
