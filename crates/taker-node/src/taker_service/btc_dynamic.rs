@@ -602,9 +602,19 @@ pub(super) async fn prepare(
         signing_key: SecretPrivateFileV1 {
             path: role_root.secret_file(RoleSecret::Agreement),
         },
-        source_config: ImmutablePrivateFileV1 {
-            path: dynamic.config_file.clone(),
-            sha256: Sha256::digest(read_private(&dynamic.config_file, MAX_RECORD_BYTES)?).into(),
+        // The role configuration this swap was taken under, copied into the
+        // swap directory. The live file is rendered again on every Node start
+        // (it carries the actor program's digest and chain facts), and a
+        // digest pinned to it would invalidate every persisted swap on the
+        // next restart; the per-swap copy is immutable like the other files.
+        source_config: {
+            let bytes = read_private(&dynamic.config_file, MAX_RECORD_BYTES)?;
+            let path = layout.root().join("taker-role-config.json");
+            write_private_exact(&path, &bytes)?;
+            ImmutablePrivateFileV1 {
+                path,
+                sha256: Sha256::digest(&bytes).into(),
+            }
         },
         agreement_output: role_root.agreement_file(),
         actor_root: layout.actor_root(),
