@@ -1566,28 +1566,27 @@ async fn lock_swap(
             "initiation_registry_unavailable",
         )
     })??;
-    if !btc_dynamic::funds_bitcoin(&dynamic, &reservation_id) {
+    if btc_dynamic::first_lock_chain(&dynamic, &reservation_id).is_none() {
         return Err(rpc_error(
             INVALID_PARAMS_CODE,
             "Invalid params",
             "lock_not_this_role",
         ));
     }
-    let (transaction_id, was_replay) =
-        btc_dynamic::lock(&dynamic, &reservation_id)
-            .await
-            .map_err(|error| {
-                eprintln!("taker BTC lock failed: {error:#}");
-                rpc_error(
-                    DEPENDENCY_UNAVAILABLE_CODE,
-                    "Taker dependency unavailable",
-                    "lock_unavailable",
-                )
-            })?;
+    let (chain, transaction_id, was_replay) = btc_dynamic::lock(&dynamic, &reservation_id)
+        .await
+        .map_err(|error| {
+            eprintln!("taker first lock failed: {error:#}");
+            rpc_error(
+                DEPENDENCY_UNAVAILABLE_CODE,
+                "Taker dependency unavailable",
+                "lock_unavailable",
+            )
+        })?;
     Ok(TakerLockCommitV1 {
         schema_version: 1,
         swap_id: request.swap_id,
-        chain: "bitcoin".into(),
+        chain: chain.into(),
         transaction_id: transaction_id.into(),
         was_replay,
     })

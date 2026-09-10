@@ -129,17 +129,9 @@ async fn schema_and_route_validation_fail_before_dependency_access() {
             .await,
         Err(TakerBackendError::UnsupportedSchemaVersion)
     );
-    assert_eq!(
-        backend
-            .offer_list(&TakerOfferListRequestV1 {
-                schema_version: 1,
-                route: Some(
-                    MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsLez).unwrap(),
-                ),
-            })
-            .await,
-        Err(TakerBackendError::UnsupportedRoute)
-    );
+    // Every route the offer model can express is browsable since the Bitcoin
+    // pair gained its second direction; `supported_route` still fences a
+    // capability row without offer browsing, none of which exists today.
     assert_eq!(
         backend
             .offer_list(&TakerOfferListRequestV1 {
@@ -182,13 +174,6 @@ async fn offer_list_samples_trusted_time_exactly_once() {
             route: None,
         }),
         Err(TakerBackendError::UnsupportedSchemaVersion)
-    );
-    assert_eq!(
-        backend.trusted_now_for_offer_list(&TakerOfferListRequestV1 {
-            schema_version: 1,
-            route: Some(MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsLez,).unwrap()),
-        }),
-        Err(TakerBackendError::UnsupportedRoute)
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
 
