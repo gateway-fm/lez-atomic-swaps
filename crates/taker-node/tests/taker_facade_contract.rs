@@ -102,7 +102,7 @@ fn every_untrusted_request_is_versioned_strict_and_contains_no_authority_field()
 #[test]
 fn pair_capabilities_report_only_current_role_fixed_semantics() {
     let capabilities = taker_pair_capabilities_v1();
-    assert_eq!(capabilities.len(), 4);
+    assert_eq!(capabilities.len(), 5);
     assert_capability(
         &capabilities[0],
         Pair::Bitcoin,
@@ -134,6 +134,14 @@ fn pair_capabilities_report_only_current_role_fixed_semantics() {
         TakerInitiationCapabilityV1::PreparedPrivateMaterial,
         TakerMonitoringCapabilityV1::NotOnThisNode,
         TakerTerminalActionCapabilityV1::NotOnThisNode,
+    );
+    assert_capability(
+        &capabilities[4],
+        Pair::Bitcoin,
+        SwapDirection::TakerSellsLez,
+        TakerInitiationCapabilityV1::OwnerCliOrDemo,
+        TakerMonitoringCapabilityV1::OwnerCliOrDemo,
+        TakerTerminalActionCapabilityV1::OwnerCliOrDemo,
     );
 
     let encoded = serde_json::to_value(&capabilities).unwrap();

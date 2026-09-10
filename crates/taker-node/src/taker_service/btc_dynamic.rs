@@ -21,6 +21,7 @@ use btc_role_preflight::{
     compose_agreement_draft_wire, persist_and_bind_countersigned_agreement,
 };
 use lez_bridge_protocol::RequestId;
+use lez_bridge_protocol::{PrepareWitnessedEscrowResult, SubmissionOutcome};
 use lez_btc_role_lifecycle::{
     BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, SwapLayout, SwapSidecar,
     TakerCeremony, WalletBalancesV1,
@@ -259,6 +260,9 @@ struct TakerSwapRecordV1 {
     sessions: Option<LegSessions>,
     actor_activated: bool,
     funding_broadcast_transaction_id: Option<String>,
+    /// The LEZ escrow funding transaction id once this Taker's first lock
+    /// (initialization then funding) was submitted, in `TakerSellsLez`.
+    lez_lock_transaction_id: Option<String>,
 }
 
 impl TakerSwapRecordV1 {
@@ -746,7 +750,6 @@ pub(super) async fn execute(
 
     // Final LEZ material under the agreement.
     let (swap_sidecar, sidecar) = dynamic.sidecar(&layout, reservation_id)?;
-    let final_terms = agreement_terms(&agreement)?;
     let prepared_claim_json = if agreement.lez_claimant() == Participant::Taker {
         Some(read_private(
             &layout.prepared_claim_file(),
@@ -755,15 +758,10 @@ pub(super) async fn execute(
     } else {
         None
     };
-    if agreement.lez_depositor() == Participant::Taker && !layout.escrow_result_file().exists() {
-        let escrow = sidecar.prepare_escrow(final_terms).await?;
-        let mut request = serde_json::to_vec(&escrow.request)?;
-        request.push(b'\n');
-        let mut result = serde_json::to_vec(&escrow.result)?;
-        result.push(b'\n');
-        write_private_exact(&layout.escrow_request_file(), &request)?;
-        write_private_exact(&layout.escrow_result_file(), &result)?;
-    }
+    // When the Taker deposits LEZ, its escrow is prepared at lock time, right
+    // before it is submitted (`lock`): the sidecar reserves the depositor's
+    // next nonce at preparation, so preparing here would let two takes on
+    // this Node collide before either escrow is on chain.
 
     // Ceremony: three rounds, both legs.
     let sessions = if let Some(sessions) = record.sessions {
@@ -881,29 +879,72 @@ pub(super) async fn execute(
 }
 
 /// The Taker's Bitcoin lock: broadcasts the exact funding transaction once.
+/// Performs this Taker's first lock and returns the chain it landed on, its
+/// transaction id and whether it had been performed before. Selling Bitcoin,
+/// the lock is the funding transaction planned at reservation; selling LEZ,
+/// it is the escrow the swap's sidecar prepares now and submits at once
+/// (initialization, then funding), so no other take can consume the nonce
+/// in between. A second call replays the recorded id.
 pub(super) async fn lock(
     dynamic: &DynamicBtcRole,
     reservation_id: &RequestId,
-) -> Result<(String, bool)> {
+) -> Result<(&'static str, String, bool)> {
     let layout = dynamic.layout(reservation_id);
     ensure!(layout.exists(), "unknown swap");
     let mut record = TakerSwapRecordV1::load(&layout)?;
     ensure!(record.actor_activated, "the swap is not active yet");
     if let Some(txid) = record.funding_broadcast_transaction_id.clone() {
-        return Ok((txid, true));
+        return Ok(("bitcoin", txid, true));
     }
-    let plan = record
-        .funding_plan
-        .clone()
-        .context("this role does not fund Bitcoin for this swap")?;
-    let txid = dynamic.wallet()?.broadcast(&plan.transaction_hex).await?;
+    if let Some(txid) = record.lez_lock_transaction_id.clone() {
+        return Ok(("lez", txid, true));
+    }
+    if let Some(plan) = record.funding_plan.clone() {
+        let txid = dynamic.wallet()?.broadcast(&plan.transaction_hex).await?;
+        ensure!(
+            txid == plan.transaction_id_display(),
+            "the node reported another funding transaction id"
+        );
+        record.funding_broadcast_transaction_id = Some(txid.clone());
+        record.store(&layout)?;
+        return Ok(("bitcoin", txid, false));
+    }
     ensure!(
-        txid == plan.transaction_id_display(),
-        "the node reported another funding transaction id"
+        record.direction == Some(SwapDirection::TakerSellsLez),
+        "this role does not perform the first lock of this swap"
     );
-    record.funding_broadcast_transaction_id = Some(txid.clone());
+    let agreement_wire = read_private(
+        &layout.role_root().agreement_file(),
+        MAX_BTC_AGREEMENT_RECORD_BYTES,
+    )?;
+    let agreement = BtcAgreementV1::from_wire(&agreement_wire)?;
+    ensure!(
+        agreement.lez_depositor() == Participant::Taker,
+        "the agreement does not make this Taker the LEZ depositor"
+    );
+    let (_, sidecar) = dynamic.sidecar(&layout, reservation_id)?;
+    let escrow = if layout.escrow_result_file().exists() {
+        // A crash between preparation and submission: reuse the exact bytes.
+        let result = read_private(&layout.escrow_result_file(), MAX_RECORD_BYTES)?;
+        serde_json::from_slice::<PrepareWitnessedEscrowResult>(&result)?
+    } else {
+        let escrow = sidecar.prepare_escrow(agreement_terms(&agreement)?).await?;
+        let mut request = serde_json::to_vec(&escrow.request)?;
+        request.push(b'\n');
+        let mut result = serde_json::to_vec(&escrow.result)?;
+        result.push(b'\n');
+        write_private_exact(&layout.escrow_request_file(), &request)?;
+        write_private_exact(&layout.escrow_result_file(), &result)?;
+        escrow.result
+    };
+    let funding_id = hex::encode(escrow.funding.transaction_id.as_bytes());
+    // An `AlreadyKnown` outcome is a replay after a crash mid-way; both are
+    // exactly the transactions the sidecar prepared, so both are fine.
+    let _initialization: SubmissionOutcome = sidecar.submit(escrow.initialization).await?;
+    let _funding: SubmissionOutcome = sidecar.submit(escrow.funding).await?;
+    record.lez_lock_transaction_id = Some(funding_id.clone());
     record.store(&layout)?;
-    Ok((txid, false))
+    Ok(("lez", funding_id, false))
 }
 
 /// Keeps the swap's sidecar running (respawns it after a Node restart) so the
@@ -914,8 +955,20 @@ pub(super) fn ensure_sidecar(dynamic: &DynamicBtcRole, reservation_id: &RequestI
     SwapSidecar::ensure(&dynamic.runtime, &layout, reservation_id).map(|_| ())
 }
 
-/// Whether this swap's Taker funds Bitcoin (has a lock to perform).
-pub(super) fn funds_bitcoin(dynamic: &DynamicBtcRole, reservation_id: &RequestId) -> bool {
+/// The chain of the first lock this Taker performs for the swap: `bitcoin`
+/// when it sells Bitcoin (a funding plan exists), `lez` when it sells LEZ,
+/// `None` for an unknown swap.
+pub(super) fn first_lock_chain(
+    dynamic: &DynamicBtcRole,
+    reservation_id: &RequestId,
+) -> Option<&'static str> {
     let layout = dynamic.layout(reservation_id);
-    TakerSwapRecordV1::load(&layout).is_ok_and(|record| record.funding_plan.is_some())
+    let record = TakerSwapRecordV1::load(&layout).ok()?;
+    if record.funding_plan.is_some() {
+        Some("bitcoin")
+    } else if record.direction == Some(SwapDirection::TakerSellsLez) {
+        Some("lez")
+    } else {
+        None
+    }
 }

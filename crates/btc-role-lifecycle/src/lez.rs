@@ -11,7 +11,8 @@ use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, Sid
 use lez_bridge_protocol::{
     ErrorCode, Hex32, MessageContext, ObserveFinalizedClockRequest, PrepareWitnessedClaimRequest,
     PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    RequestId, RunId, RuntimeDescriptor, SchemaVersion, TransactionId, WitnessedNativeEscrowTerms,
+    PreparedTransaction, RequestId, RunId, RuntimeDescriptor, SchemaVersion, SubmissionOutcome,
+    SubmitTransactionRequest, TransactionId, WitnessedNativeEscrowTerms,
     WitnessedNativeEscrowTermsInput,
 };
 use lez_btc_swap_sdk::BtcAgreementV1;
@@ -319,6 +320,33 @@ impl LezSidecar {
             "sidecar answered another request"
         );
         Ok(PreparedEscrow { request, result })
+    }
+
+    /// Submits one exact prepared transaction through the sidecar, which
+    /// decodes it officially and hands it to the sequencer unchanged. A node
+    /// that already knows the transaction id is a success (a replay).
+    ///
+    /// # Errors
+    ///
+    /// Fails when the sidecar refuses the bytes, is unreachable, or reports
+    /// another transaction id than the prepared one.
+    pub async fn submit(&self, transaction: PreparedTransaction) -> Result<SubmissionOutcome> {
+        let expected = transaction.transaction_id;
+        let request = SubmitTransactionRequest {
+            context: self.context()?,
+            runtime: self.runtime.clone(),
+            transaction,
+        };
+        let result = self
+            .client
+            .submit_transaction(request.clone())
+            .await
+            .context("submit LEZ transaction")?;
+        ensure!(
+            result.context == request.context && result.transaction_id == expected,
+            "sidecar answered another submission"
+        );
+        Ok(result.outcome)
     }
 
     /// Prepares the claimant's witnessed claim message for `terms`.

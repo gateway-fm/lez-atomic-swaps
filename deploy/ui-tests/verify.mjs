@@ -372,7 +372,7 @@ if (role === "maker") {
   }
 
   const takerActions = reverseDirection
-    ? { lock_lez: ["Lock 1,000 LEZ", "locking_lez"], claim_btc: ["Claim Bitcoin", "claiming_btc"] }
+    ? { lock_lez: ["Lock 1,000 LEZ", "locking_lez"], claim_btc: ["Claim 0.01000000 BTC", "claiming_btc"] }
     : { lock_btc: ["Lock 0.01000000 BTC", "locking_btc"], claim_lez: ["Claim 1,000 LEZ", "claiming_lez"] };
   if (Object.hasOwn(takerActions, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
