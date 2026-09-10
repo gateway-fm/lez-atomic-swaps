@@ -30,6 +30,15 @@ while [[ $# -gt 0 ]]; do
     --build) BUILD=1; shift ;;
     --fresh-lez) FRESH_LEZ=1; shift ;;
     --fresh)
+      # A wipe recreates both chains, so the previous chain's escrow deployment
+      # in the market root is retired too, as --fresh-lez does; the market
+      # bootstrap then deploys again on the new chain.
+      if [[ -f runtime/runtime.env ]]; then
+        market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
+        if [[ -n "$market_root" && -f "$market_root/bootstrap/deployment.json" ]]; then
+          mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$(date +%s).bak"
+        fi
+      fi
       echo "wiping runtime state and volumes…"
       bash scripts/down.sh --wipe >/dev/null 2>&1 || true
       shift ;;
