@@ -905,6 +905,7 @@ pub fn rpc_module(context: MakerRpc) -> anyhow::Result<RpcModule<MakerRpc>> {
 
 fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     register_health_method(module)?;
+    register_wallet_balances_method(module)?;
     register_pair_and_price_methods(module)?;
     register_offer_methods(module)?;
     extension_api::register(module)?;
@@ -1061,6 +1062,26 @@ fn maker_actor_process_error(error: MakerActorProcessError) -> ErrorObjectOwned 
         other => internal_store_error(other),
     }
 }
+/// `maker_wallet_balances_v1`: what this Maker's own Bitcoin Core wallet and
+/// LEZ owner account hold. Read-only; a Node without the BTC lifecycle
+/// reports both as disabled instead of failing.
+fn register_wallet_balances_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_async_method("maker_wallet_balances_v1", |params, context, _| async move {
+        let _: ListRequest = params.one()?;
+        let Some(lifecycle) = context.btc_lifecycle.as_ref() else {
+            return Ok::<_, ErrorObjectOwned>(serde_json::json!({
+                "schema_version": 1,
+                "bitcoin": {"state": "disabled", "wallet": null, "network": "", "trusted_sat": 0, "untrusted_pending_sat": 0, "immature_sat": 0},
+                "lez": {"state": "disabled", "owner_account_hex": "", "owner_account_base58": "", "balance_atomic_units": 0, "nonce": 0},
+            }));
+        };
+        let balances = lifecycle.wallet_balances().await;
+        serde_json::to_value(balances)
+            .map_err(|_| rpc_error(INTERNAL_ERROR, "wallet balances could not be encoded"))
+    })?;
+    Ok(())
+}
+
 fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<MakerHealthV1>, _>(
         "maker_health",

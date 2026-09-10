@@ -43,6 +43,17 @@ impl FundingPlan {
 }
 
 /// A Bitcoin Core JSON-RPC client bound to one wallet.
+/// A wallet's balances in satoshis, as Core reports them.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WalletBalances {
+    /// Confirmed coins plus the wallet's own unconfirmed change.
+    pub trusted_sat: u64,
+    /// Unconfirmed coins received from others.
+    pub untrusted_pending_sat: u64,
+    /// Coinbase outputs that cannot be spent yet.
+    pub immature_sat: u64,
+}
+
 pub struct BitcoinWallet {
     node: HttpClient,
     wallet: Option<HttpClient>,
@@ -150,6 +161,44 @@ impl BitcoinWallet {
             .context("getblockhash")?;
         let parsed: bitcoin::BlockHash = hash.parse().context("genesis block hash")?;
         Ok(parsed.to_byte_array())
+    }
+
+    /// The wallet's balances in satoshis as Core reports them (`getbalances`):
+    /// trusted (confirmed and own unconfirmed change), untrusted pending, and
+    /// immature coinbase. Coins locked by a funding plan that was not yet
+    /// broadcast are not counted as trusted.
+    ///
+    /// # Errors
+    ///
+    /// Fails without a wallet or when the node is unreachable.
+    pub async fn balances(&self) -> Result<WalletBalances> {
+        let wallet = self
+            .wallet
+            .as_ref()
+            .context("no Bitcoin wallet is configured for this role")?;
+        let value: serde_json::Value = wallet
+            .request("getbalances", rpc_params![])
+            .await
+            .context("getbalances")?;
+        let mine = value
+            .get("mine")
+            .context("getbalances: no `mine` balances")?;
+        let sat = |key: &str| -> Result<u64> {
+            let number = mine
+                .get(key)
+                .and_then(serde_json::Value::as_number)
+                .with_context(|| format!("getbalances: no `mine.{key}`"))?;
+            // Core prints BTC as a decimal; parse the decimal text, never a float.
+            let amount =
+                Amount::from_str_in(&number.to_string(), bitcoin::Denomination::Bitcoin)
+                    .with_context(|| format!("getbalances: `mine.{key}` is not a BTC amount"))?;
+            Ok(amount.to_sat())
+        };
+        Ok(WalletBalances {
+            trusted_sat: sat("trusted")?,
+            untrusted_pending_sat: sat("untrusted_pending")?,
+            immature_sat: sat("immature")?,
+        })
     }
 
     /// The current chain height.

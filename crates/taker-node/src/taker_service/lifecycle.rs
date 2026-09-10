@@ -37,10 +37,10 @@ use crate::zec_taker_accept::{
 };
 use crate::{
     ConfiguredTakerInitiationContext, PreparedTakerInitiationV1, TakerActionCommitV1,
-    TakerBackendError, TakerClaimRequestV1, TakerInitiationCommitV1, TakerLockCommitV1,
-    TakerLockRequestV1, TakerOfferListRequestV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
-    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
-    TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
+    TakerBackendError, TakerClaimRequestV1, TakerHealthRequestV1, TakerInitiationCommitV1,
+    TakerLockCommitV1, TakerLockRequestV1, TakerOfferListRequestV1, TakerPrivacyGuidanceV1,
+    TakerRefundRequestV1, TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1,
+    TakerSwapMonitorRequestV1, TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
     btc_taker_accept::{
         BtcTakeInput, load_btc_taker_actor_from_receipt_for_monitor,
         take_btc_with_authenticated_offer_and_actor_config,
@@ -378,6 +378,51 @@ pub(super) fn register(
         return Ok(());
     }
     spawn_dynamic_observer(Arc::clone(state));
+    let balances_state = Arc::clone(state);
+    module.register_async_method("taker_wallet_balances_v1", move |params, _, _| {
+        let state = Arc::clone(&balances_state);
+        async move {
+            let request: TakerHealthRequestV1 = params
+                .one()
+                .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
+            request.validate_schema_version().map_err(|_| {
+                rpc_error(
+                    INVALID_PARAMS_CODE,
+                    "Invalid params",
+                    "unsupported_schema_version",
+                )
+            })?;
+            let initiation = state.initiation.clone().ok_or_else(|| {
+                rpc_error(
+                    DEPENDENCY_UNAVAILABLE_CODE,
+                    "Taker dependency unavailable",
+                    "initiation_registry_unavailable",
+                )
+            })?;
+            let dynamic = tokio::task::spawn_blocking(move || {
+                initiation
+                    .lock()
+                    .ok()
+                    .and_then(|context| context.dynamic_btc())
+            })
+            .await
+            .map_err(|_| {
+                rpc_error(
+                    INTERNAL_ERROR_CODE,
+                    "Internal error",
+                    "initiation_registry_unavailable",
+                )
+            })?
+            .ok_or_else(|| {
+                rpc_error(
+                    DEPENDENCY_UNAVAILABLE_CODE,
+                    "Taker dependency unavailable",
+                    "balances_unavailable",
+                )
+            })?;
+            Ok::<_, ErrorObjectOwned>(dynamic.wallet_balances().await)
+        }
+    })?;
     let list_state = Arc::clone(state);
     module.register_async_method("taker_swap_list_v1", move |params, _, _| {
         let state = Arc::clone(&list_state);

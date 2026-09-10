@@ -22,6 +22,7 @@ fn method_allowlist_is_exact_and_has_no_generic_execution_escape_hatch() {
         TAKER_FACADE_METHODS_V1,
         [
             "taker_health",
+            "taker_wallet_balances_v1",
             "taker_offer_list_v1",
             "taker_swap_list_v1",
             "taker_swap_initiate_v1",
