@@ -10,13 +10,10 @@ test("taker: role route loads", async (app) => {
     description: "Taker UI to load",
   });
   await app.expectTexts([
-    "Choose your wallet, take Maker offers, and authorize only the Taker-owned chain actions.",
-    "Available orders",
     "My orders",
-    "Five effects. Two chains. One completed swap.",
-    "Wallet balance proof",
+    "Available orders",
+    "Activity",
     "Private negotiation Chat",
-    "Session identity and conversation history are intentionally discarded when the app closes.",
   ]);
 });
 

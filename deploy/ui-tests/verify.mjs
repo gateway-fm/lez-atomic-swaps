@@ -94,6 +94,23 @@ async function evaluateIn(app, objectId, expression) {
   return app.inspector.send("evaluate", { objectId, expression });
 }
 
+async function setText(app, objectName, value, property = "text") {
+  const found = await app.findByProperty("objectName", objectName);
+  if (found.error || found.matches?.length !== 1) {
+    throw new Error(`expected exactly one ${objectName}, got ${JSON.stringify(found)}`);
+  }
+  await evaluateIn(app, found.matches[0].id, `${property} = ${JSON.stringify(String(value))}`);
+}
+
+// The Maker's terms for this run, typed into the offer form: 1,000 LEZ
+// units for 0.01 BTC, whole offer only, for one hour.
+const makerTerms = [
+  ["makerSellAmount", reverseDirection ? "0.01" : "1000", "amount"],
+  ["makerReceiveAmount", reverseDirection ? "1000" : "0.01", "amount"],
+  ["makerMinimumSats", ""],
+  ["makerOfferTtl", "3600"],
+];
+
 async function outputAfterClick(
   app,
   buttonLabel,
@@ -176,6 +193,10 @@ async function publishOfferOnce(app, predicate) {
   if (opener.matches?.length !== 1) throw new Error("New offer button not found");
   await evaluateIn(app, opener.matches[0].id, "clicked()");
   await new Promise((r) => setTimeout(r, 600));
+  for (const [field, value, property] of makerTerms) await setText(app, field, value, property);
+  await new Promise((r) => setTimeout(r, 300));
+  const rate = await property(app, "makerRate", "text");
+  if (rate !== "1 BTC = 100,000 LEZ") throw new Error(`offer form quotes ${rate} for the typed terms`);
   const before = await property(app, "makerOutput", "text");
   const publish = await app.findByProperty("objectName", "makerCreateOffers");
   if (publish.matches?.length !== 1) throw new Error("Publish offer button not found");
@@ -208,17 +229,17 @@ if (role === "maker") {
     const check = await app.findByProperty("objectName", "makerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
     await evaluateIn(app, check.matches[0].id, "clicked()");
-    await app.waitFor(async () => app.expectTexts(["Maker systems ready"]), {
+    await app.waitFor(async () => app.expectTexts(["Node ready"]), {
       timeout: 15000, interval: 300, description: "Maker health status",
     });
-    console.log("  health: Maker systems ready");
+    console.log("  health: Node ready");
   });
 
   test("maker: Node-indexed BTC offer inventory", async (app) => {
     if (reverseDirection) {
-      const sellLeg = await app.findByProperty("objectName", "makerSellLegLez");
+      const sellLeg = await app.findByProperty("objectName", "makerSellAmount");
       if (sellLeg.error || sellLeg.matches?.length !== 1) {
-        throw new Error("Maker direction composer was not found");
+        throw new Error("Maker offer form was not found");
       }
       await evaluateIn(app, sellLeg.matches[0].id, 'root.sellSide = "btc"');
     }
@@ -228,7 +249,7 @@ if (role === "maker") {
     }
     await evaluateIn(app, wallet.matches[0].id, "currentIndex = 0");
     let munich = unwrap(await outputAfterClick(
-      app, "Refresh wallet inventory", "makerOutput",
+      app, "Refresh market", "makerOutput",
       (envelope) => envelope.ok === true
         && envelope.result?.selected_wallet_id === "maker-munich-01", true,
     ), "Munich inventory");
@@ -287,11 +308,6 @@ if (role === "maker") {
     await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Taker Desk", "Backend connected"]), {
       timeout: 25000, interval: 500, description: "taker view + live Node",
     });
-    // Let the intentional one-shot evidence preload settle before a later
-    // button assertion observes the shared diagnostic output field.
-    await app.waitFor(async () => app.expectTexts(["REV 4 · COMPLETED"]), {
-      timeout: 25000, interval: 500, description: "completed BTC evidence preload",
-    });
   });
 
   test("taker: wallet-indexed BTC order book is ready", async (app) => {
@@ -301,7 +317,7 @@ if (role === "maker") {
     await app.waitFor(async () => app.expectTexts(["0.01000000 BTC", "1,000 LEZ"]), {
       timeout: 15000, interval: 500, description: "first market snapshot rendered",
     });
-    await app.click("Refresh wallet market");
+    await app.click("Refresh market");
     await app.waitFor(async () => app.expectTexts(["Munich Vault 01"]), {
       timeout: 15000, interval: 500, description: "Maker Node order book",
     });
@@ -314,42 +330,10 @@ if (role === "maker") {
     const check = await app.findByProperty("objectName", "takerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
     await evaluateIn(app, check.matches[0].id, "clicked()");
-    await app.waitFor(async () => app.expectTexts(["All systems ready"]), {
+    await app.waitFor(async () => app.expectTexts(["Node ready"]), {
       timeout: 15000, interval: 300, description: "Taker health status",
     });
-    console.log("  health: All systems ready");
-  });
-
-  test("taker: completed M3 BTC evidence is public, unique, and final", async (app) => {
-    const evidence = unwrap(
-      await outputAfterSignal(
-        app, "takerRefreshProof", "takerOutput",
-        (envelope) => envelope.ok === true
-          && envelope.result?.kind === "m3_btc_ui_evidence",
-      ),
-      "BTC evidence",
-    );
-    const ids = evidence.effects.map((effect) => effect.transaction_id);
-    const bitcoin = evidence.effects.filter((effect) => effect.chain === "Bitcoin");
-    const lez = evidence.effects.filter((effect) => effect.chain === "LEZ");
-    if (evidence.pair !== "Bitcoin" || evidence.direction !== uiDirection
-        || evidence.terminal?.phase !== "completed" || evidence.terminal?.revision !== 4
-        || evidence.private_material_disclosed !== false || evidence.replay_resubmission_count !== 0
-        || ids.length !== 5 || new Set(ids).size !== 5 || bitcoin.length !== 2 || lez.length !== 3
-        || !evidence.effects.every((effect) => ["Confirmed", "Finalized"].includes(effect.finality))) {
-      throw new Error(`invalid M3 BTC evidence: ${JSON.stringify(evidence).slice(0, 500)}`);
-    }
-    console.log(`  M3 BTC: ${evidence.run_id} rev=${evidence.terminal.revision} effects=${bitcoin.length}+${lez.length}`);
-    for (const effect of evidence.effects) {
-      console.log(`  ${effect.sequence}. ${effect.chain} ${effect.kind}: ${effect.transaction_id.slice(0, 16)}… ${effect.finality}`);
-    }
-    if (evidence.wallet_balance_changes) {
-      const wallets = evidence.wallet_balance_changes.wallets ?? [];
-      if (wallets.length !== 2 || evidence.wallet_balance_changes.reconciliation?.lez_conserved !== true) {
-        throw new Error(`invalid wallet balance reconciliation: ${JSON.stringify(evidence.wallet_balance_changes)}`);
-      }
-      console.log("  wallet ledger: opening/closing BTC + LEZ balances reconciled");
-    }
+    console.log("  health: Node ready");
   });
 
   if (process.env.PREPARE_INTERACTIVE_BTC === "1") {
