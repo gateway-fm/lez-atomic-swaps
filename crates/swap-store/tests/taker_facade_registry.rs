@@ -552,6 +552,78 @@ fn action_request_ids_share_the_global_namespace_and_monitor_ignores_action_rows
 }
 
 #[test]
+fn a_retired_stale_admission_makes_way_for_the_next_action() {
+    let root = private_root();
+    let database = root.path().join("action-supersede.sqlite3");
+    let facts = make_facts("m6-supersede-swap", "m6-supersede-offer", 83);
+    let mut registry = SqliteTakerFacadeStore::create_new(&database).unwrap();
+    registry
+        .admit_initiation(
+            &request("m6-supersede-initiation"),
+            &facts,
+            &make_authority(root.path(), "supersede", 83),
+            1_000,
+        )
+        .unwrap();
+    let claim = request("m6-supersede-claim");
+    let stale = registry
+        .admit_action(
+            &claim,
+            facts.swap_id(),
+            TakerFacadeActionV1::Claim,
+            2,
+            1_001,
+        )
+        .unwrap();
+
+    // While the claim stands, no other authorization is admitted at any
+    // generation; the store never decides on its own that it is stale.
+    for generation in [2, 3] {
+        assert_eq!(
+            registry.admit_action(
+                &request("m6-supersede-refund-early"),
+                facts.swap_id(),
+                TakerFacadeActionV1::Refund,
+                generation,
+                1_002,
+            ),
+            Err(TakerFacadeStoreError::ActionGenerationConflict)
+        );
+    }
+
+    // The Node saw the actor move past the claim without performing it and
+    // retires exactly that admission; the swap keeps one admitted action.
+    assert!(registry.retire_superseded_action(&stale).unwrap());
+    assert!(!registry.retire_superseded_action(&stale).unwrap());
+    let refund = request("m6-supersede-refund");
+    let admitted = registry
+        .admit_action(
+            &refund,
+            facts.swap_id(),
+            TakerFacadeActionV1::Refund,
+            3,
+            1_003,
+        )
+        .unwrap();
+    assert_eq!(admitted.action(), TakerFacadeActionV1::Refund);
+    assert_eq!(admitted.requested_after_generation(), 3);
+    let current = registry
+        .lookup_action_for_swap(facts.swap_id())
+        .unwrap()
+        .expect("the refund is the swap's one admitted action");
+    assert_eq!(current.action(), TakerFacadeActionV1::Refund);
+    assert_eq!(current.requested_after_generation(), 3);
+    assert_eq!(
+        registry
+            .lookup_exact_action(&claim, facts.swap_id(), TakerFacadeActionV1::Claim, 2)
+            .unwrap(),
+        None
+    );
+    drop(registry);
+    SqliteTakerFacadeStore::open_existing(&database).expect("one admitted action reopens");
+}
+
+#[test]
 fn multiple_terminal_authorizations_at_distinct_generations_fail_closed() {
     let root = private_root();
     let database = root.path().join("action-corrupt.sqlite3");

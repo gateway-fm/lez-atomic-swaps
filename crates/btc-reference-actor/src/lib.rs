@@ -920,6 +920,10 @@ pub enum ActorNextActionV1 {
     ObserveRevealingClaim,
     ObserveFollowupClaim,
     RecoverTakerLeg,
+    /// Both legs are locked but the revealing claim can no longer land: the
+    /// earlier refund's deadline has passed, so recovery starts with the
+    /// Maker's leg (the Maker refunds it; the Taker watches for that refund).
+    RecoverMakerLeg,
     LaterRevisionNotYetComposed,
     Complete,
 }
@@ -3387,7 +3391,19 @@ fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError> {
         config,
         &status,
         maker_cutoff_passed(&agreement),
+        claim_window_closed(&agreement),
     ))
+}
+
+/// The wall clock in unix seconds; tests may freeze it.
+fn wall_clock_unix_seconds() -> u64 {
+    #[cfg(test)]
+    if let Some(frozen) = tests::frozen_wall_clock() {
+        return frozen;
+    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |now| now.as_secs())
 }
 
 /// Whether the wall clock is past the Maker's second-lock cutoff. Routing only:
@@ -3397,9 +3413,19 @@ fn maker_cutoff_passed(agreement: &BtcAgreementV1) -> bool {
         .body()
         .recovery_plan()
         .maker_second_lock_cutoff_unix_seconds();
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .is_ok_and(|now| now.as_secs() >= cutoff)
+    wall_clock_unix_seconds() >= cutoff
+}
+
+/// Whether the wall clock is past the instant the earlier-refunding leg must
+/// be refunded by. The escrow's claim window closes where its refund opens, so
+/// after this a revealing claim can no longer be included. Routing only, like
+/// the cutoff: the recovery itself still waits for the chain clocks.
+fn claim_window_closed(agreement: &BtcAgreementV1) -> bool {
+    let deadline = agreement
+        .body()
+        .recovery_plan()
+        .earlier_refund_latest_unix_seconds();
+    wall_clock_unix_seconds() >= deadline
 }
 
 async fn drive_live_lez_funding(
@@ -9187,6 +9213,17 @@ fn effect_output(
     outcome: ActorEffectOutcomeV1,
     status: &BtcOfflineStatus,
 ) -> ActorEffectOutputV1 {
+    // The same routing as the status command, so a supervisor reading both
+    // outputs sees one next action rather than one that flips between them.
+    let next_action = match load_agreement(config) {
+        Ok((agreement, _)) => routed_next_action(
+            config,
+            status,
+            maker_cutoff_passed(&agreement),
+            claim_window_closed(&agreement),
+        ),
+        Err(_) => actor_next_action(status),
+    };
     ActorEffectOutputV1 {
         schema_version: OUTPUT_SCHEMA_VERSION,
         role: config.role,
@@ -9194,7 +9231,7 @@ fn effect_output(
         outcome,
         phase: status.phase().into(),
         revision: status.revision(),
-        next_action: actor_next_action(status),
+        next_action,
     }
 }
 
@@ -9202,7 +9239,31 @@ fn status_output(
     config: &ActorConfig,
     status: &BtcOfflineStatus,
     maker_cutoff_passed: bool,
+    claim_window_closed: bool,
 ) -> ActorStatusV1 {
+    ActorStatusV1 {
+        schema_version: OUTPUT_SCHEMA_VERSION,
+        role: config.role,
+        state: ActorStateV1::Active {
+            phase: status.phase().into(),
+            revision: status.revision(),
+            next_action: routed_next_action(
+                config,
+                status,
+                maker_cutoff_passed,
+                claim_window_closed,
+            ),
+        },
+    }
+}
+
+/// The durable next action with the wall-clock routing applied.
+fn routed_next_action(
+    config: &ActorConfig,
+    status: &BtcOfflineStatus,
+    maker_cutoff_passed: bool,
+    claim_window_closed: bool,
+) -> ActorNextActionV1 {
     let mut next_action = actor_next_action(status);
     // Past its second-lock cutoff the Maker may no longer lock; the only thing
     // left for it at revision 1 is to follow the Taker's recovery, so its
@@ -9213,15 +9274,17 @@ fn status_output(
     {
         next_action = ActorNextActionV1::RecoverTakerLeg;
     }
-    ActorStatusV1 {
-        schema_version: OUTPUT_SCHEMA_VERSION,
-        role: config.role,
-        state: ActorStateV1::Active {
-            phase: status.phase().into(),
-            revision: status.revision(),
-            next_action,
-        },
+    // Past the earlier refund's deadline a revealing claim can no longer be
+    // included (a claim sent late is admitted to the mempool and dropped at
+    // block build), so neither role keeps observing one: recovery starts with
+    // the Maker's leg for both.
+    if claim_window_closed
+        && status.phase() == Phase::BothLegsLocked
+        && next_action == ActorNextActionV1::ObserveRevealingClaim
+    {
+        next_action = ActorNextActionV1::RecoverMakerLeg;
     }
+    next_action
 }
 
 fn actor_next_action(status: &BtcOfflineStatus) -> ActorNextActionV1 {

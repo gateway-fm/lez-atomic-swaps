@@ -581,6 +581,13 @@ fn run_claimed_attempt_with_lock(
                 StatusDecision::Blocked => return Ok(ClaimedAttempt::Blocked),
                 StatusDecision::Terminal => return Ok(ClaimedAttempt::Terminal),
                 StatusDecision::Run(command) => command,
+                StatusDecision::ObserveThenRecover => {
+                    if lease.record().attempt_count().is_multiple_of(2) {
+                        ActorEffectCommand::Drive
+                    } else {
+                        ActorEffectCommand::Recover
+                    }
+                }
             },
         };
         if config.effect_cutoff_reached() {
@@ -857,6 +864,11 @@ struct ParsedStatus {
 #[derive(Clone, Copy)]
 enum StatusDecision {
     Run(ActorEffectCommand),
+    /// The claim window has closed with both legs locked: observe the claim
+    /// once more, then recover the Maker's leg, alternating attempt by attempt
+    /// so a claim that landed at the last moment is still found and a claim
+    /// that never landed no longer holds the escrow.
+    ObserveThenRecover,
     Blocked,
     Terminal,
 }
@@ -921,6 +933,8 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
                     | (MakerActorKindV1::Bitcoin, "recover_taker_leg")
             ) {
                 StatusDecision::Run(ActorEffectCommand::Recover)
+            } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "recover_maker_leg") {
+                StatusDecision::ObserveThenRecover
             } else {
                 StatusDecision::Run(ActorEffectCommand::Drive)
             };
@@ -1147,6 +1161,7 @@ fn known_next_action(kind: MakerActorKindV1, next_action: &str) -> bool {
                 | "observe_revealing_claim"
                 | "observe_followup_claim"
                 | "recover_taker_leg"
+                | "recover_maker_leg"
                 | "later_revision_not_yet_composed"
                 | "complete"
         ),
@@ -1414,6 +1429,20 @@ mod tests {
             };
             assert_eq!(actual.name(), expected.name());
         }
+    }
+
+    #[test]
+    fn closed_claim_window_alternates_observation_and_recovery() {
+        let parsed = parse_status(
+            &status("both_legs_locked", 2, "recover_maker_leg"),
+            MakerActorKindV1::Bitcoin,
+        )
+        .unwrap();
+        assert!(matches!(
+            parsed.decision,
+            StatusDecision::ObserveThenRecover
+        ));
+        assert_eq!(parsed.revision, Some(2));
     }
 
     #[test]

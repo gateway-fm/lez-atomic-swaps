@@ -8,6 +8,20 @@ use std::{
 };
 
 use super::*;
+
+thread_local! {
+    static FROZEN_WALL_CLOCK: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// The wall clock the crate reads when a test froze it on this thread.
+pub(crate) fn frozen_wall_clock() -> Option<u64> {
+    FROZEN_WALL_CLOCK.with(std::cell::Cell::get)
+}
+
+/// Freezes the wall clock for the rest of the test's thread.
+fn freeze_wall_clock(unix_seconds: u64) {
+    FROZEN_WALL_CLOCK.with(|clock| clock.set(Some(unix_seconds)));
+}
 use bitcoin::{
     Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, absolute,
     secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey},
@@ -4036,6 +4050,16 @@ async fn maker_lock_projects_in_both_directions_for_both_roles() {
             assert_eq!(later["durable_revision"], 2);
             assert_eq!(observer.calls(), 1, "revision two must not observe");
 
+            // The fixture's schedule lies in 2023; only a clock still inside
+            // the claim window keeps revision two on the revealing claim.
+            freeze_wall_clock(
+                fixture
+                    .agreement
+                    .body()
+                    .recovery_plan()
+                    .earlier_refund_latest_unix_seconds()
+                    - 1,
+            );
             let status = output_json(
                 execute_actor_command(&fixture.config, ActorCommand::Status)
                     .await
@@ -4044,6 +4068,38 @@ async fn maker_lock_projects_in_both_directions_for_both_roles() {
             assert_eq!(status["revision"], 2);
             assert_eq!(status["phase"], "both_legs_locked");
             assert_eq!(status["next_action"], "observe_revealing_claim");
+        }
+    }
+}
+
+/// A revealing claim sent after the earlier refund's deadline is admitted to
+/// the mempool and dropped at block build (`OutOfValidityWindow`), so from that
+/// instant both roles are routed to recovery through the Maker's leg instead
+/// of observing a claim that cannot land.
+#[tokio::test(flavor = "current_thread")]
+async fn closed_claim_window_routes_revision_two_to_recovery_through_the_maker_leg() {
+    for role in [ActorRole::Taker, ActorRole::Maker] {
+        let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, role);
+        activate_and_project_both_locks(&fixture).await;
+        let deadline = fixture
+            .agreement
+            .body()
+            .recovery_plan()
+            .earlier_refund_latest_unix_seconds();
+        for (now, expected) in [
+            (deadline - 1, "observe_revealing_claim"),
+            (deadline, "recover_maker_leg"),
+            (deadline + 3_600, "recover_maker_leg"),
+        ] {
+            freeze_wall_clock(now);
+            let status = output_json(
+                execute_actor_command(&fixture.config, ActorCommand::Status)
+                    .await
+                    .expect("offline revision-two status"),
+            );
+            assert_eq!(status["revision"], 2, "{role:?} at {now}");
+            assert_eq!(status["phase"], "both_legs_locked", "{role:?} at {now}");
+            assert_eq!(status["next_action"], expected, "{role:?} at {now}");
         }
     }
 }
