@@ -1,0 +1,81 @@
+name: builder-image
+
+# Publishes deploy/builder as ghcr.io/<repo>/lez-builder for linux/arm64: the
+# ephemeral build image with the pinned prover toolchain baked in. Nothing in
+# it depends on this repository, so it is rebuilt only when the Dockerfile or
+# this workflow changes (or by hand), and every consumer pulls it by the digest
+# recorded in deploy/builder/image.lock. Updating that file is a reviewed
+# commit: this job prints the digest; it never edits the repository.
+#
+# The package is created private on first push: make it public once in the
+# repository's package settings so from-scratch.sh can pull it anonymously.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/builder/Dockerfile
+      - .github/workflows/builder-image.yml
+  # A pull request that changes the image publishes it too (tagged by commit),
+  # so the digest can be reviewed and committed to image.lock before merge.
+  pull_request:
+    paths:
+      - deploy/builder/Dockerfile
+      - .github/workflows/builder-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: builder-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/lez-builder
+
+jobs:
+  build:
+    name: build and push lez-builder (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Build
+        env:
+          SHORT_SHA: ${{ github.sha }}
+        run: docker build -t "$IMAGE:sha-${SHORT_SHA:0:7}" deploy/builder
+      - name: Versions the image carries
+        env:
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker run --rm "$IMAGE:sha-${SHORT_SHA:0:7}" bash -c \
+            '/opt/lez-tools/bin/rzup --version; /opt/lez-tools/bin/r0vm --version; /opt/lez-tools/bin/cargo-risczero risczero --version; sha256sum /opt/lez-tools/rapidsnark/librapidsnark.a; cargo +1.96.0 --version; cargo +1.94.0 --version'
+      - name: Push and record the digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          docker push "$IMAGE:sha-${SHORT_SHA:0:7}"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:sha-${SHORT_SHA:0:7}")"
+          echo "pinned reference for deploy/builder/image.lock:"
+          echo "$digest"
+          {
+            echo "## lez-builder published"
+            echo
+            echo "Put this line in \`deploy/builder/image.lock\` (a reviewed commit):"
+            echo
+            echo '```'
+            echo "$digest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -10,6 +10,10 @@ name: release-images
 #   rust          Node binaries, Bitcoin actors, the LEZ sidecar family
 #   lez-services  sequencer + indexer from the pinned logos-execution-zone
 #   escrow        r0vm and the digest-pinned escrow artifact (deployer)
+# Every job pulls the builder image pinned in deploy/builder/image.lock (the
+# prover toolchain is baked in), and the escrow and LEZ-services jobs restore
+# their outputs from the Actions cache when nothing they depend on changed;
+# the digest checks in from-scratch.sh still run on a restored artifact.
 #   basecamp-ui   the Nix-built Basecamp bundle and both role packages
 #   images        stages the payloads, builds and pushes the remaining images
 #   smoke         pulls the published images and runs the bundle's start.sh
@@ -116,6 +120,11 @@ jobs:
           persist-credentials: false
       - name: Free runner disk
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: LEZ services from the cache when the pins are unchanged
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}/../lez-ws/provision/data/lez-services
+          key: lez-services-${{ hashFiles('deploy/scripts/from-scratch.sh', 'deploy/builder/image.lock', 'deploy/builder/Dockerfile') }}
       - name: Pinned sources
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
       - name: rapidsnark prover libraries
@@ -145,6 +154,13 @@ jobs:
           persist-credentials: false
       - name: Free runner disk
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Escrow artifact from the cache when its inputs are unchanged
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ github.workspace }}/../lez-ws/provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer
+            ${{ github.workspace }}/../lez-ws/provision/data/escrow-artifact/riscv-guest
+          key: escrow-${{ hashFiles('scripts/verify-lez-v02-provisional.sh', 'compat/lez-v0.2-provisional/**', 'deploy/scripts/from-scratch.sh', 'deploy/builder/image.lock', 'deploy/builder/Dockerfile') }}
       - name: Pinned sources
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
       # cargo-risczero's build links the rapidsnark prover library, which
