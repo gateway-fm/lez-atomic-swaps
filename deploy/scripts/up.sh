@@ -104,7 +104,9 @@ echo "[3/6] starting chains…"
 docker compose up -d bitcoin-core btc-miner btc-explorer bedrock sequencer indexer lez-explorer
 wait_healthy 240 lez-bitcoin-core lez-sequencer lez-indexer
 bash scripts/repair-indexer.sh >/dev/null 2>&1 || true
-[[ "${LEZ_API_ONLY:-0}" != 1 ]] || python3 scripts/seed-btc-wallets.py
+# The Nodes' Core wallets (lez-maker, lez-taker) and the Taker's regtest
+# balance; idempotent, and after a wipe nothing else creates them.
+python3 scripts/seed-btc-wallets.py
 
 before="$(sha256sum runtime/market-bootstrap.env 2>/dev/null | cut -c1-64 || true)"
 if [[ "${LEZ_IMAGES:-build}" == pull ]]; then
