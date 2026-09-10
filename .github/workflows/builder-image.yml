@@ -16,6 +16,12 @@ on:
     paths:
       - deploy/builder/Dockerfile
       - .github/workflows/builder-image.yml
+  # A pull request that changes the image publishes it too (tagged by commit),
+  # so the digest can be reviewed and committed to image.lock before merge.
+  pull_request:
+    paths:
+      - deploy/builder/Dockerfile
+      - .github/workflows/builder-image.yml
   workflow_dispatch:
 
 permissions:
