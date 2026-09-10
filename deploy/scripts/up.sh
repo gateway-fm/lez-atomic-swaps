@@ -8,7 +8,8 @@
 #                                 restart after long uptime); Bitcoin, wallets
 #                                 and identities are kept, persisted swaps are
 #                                 reset because they reference the old chain
-#   ./scripts/up.sh --fresh       wipe runtime state and volumes first
+#   ./scripts/up.sh --fresh       wipe runtime state and volumes first, then start
+#                                 under a new volume prefix (LEZ_VOLUME_PREFIX to pick one)
 #
 #   LEZ_IMAGES=pull          pull the images named by LEZ_IMAGE_PREFIX and
 #                            LEZ_IMAGE_TAG instead of building them (the
@@ -41,6 +42,11 @@ while [[ $# -gt 0 ]]; do
       fi
       echo "wiping runtime state and volumes…"
       bash scripts/down.sh --wipe >/dev/null 2>&1 || true
+      # A fresh stack gets its own volume namespace, so it can never adopt
+      # volumes another run or another checkout left behind under the default
+      # prefix (a wipe under the old prefix does not touch those). gen-config
+      # records it in runtime.env; the next down.sh --wipe removes exactly it.
+      export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez-$(date +%Y%m%d%H%M%S)}"
       shift ;;
     -h|--help) sed -n 2,15p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
