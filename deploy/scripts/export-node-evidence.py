@@ -114,6 +114,13 @@ def maker_initialization(directory: str) -> str:
     return prepared["initialization"]["transaction_id"]
 
 
+def taker_initialization(directory: str) -> str:
+    """The Taker's own escrow initialization when it is the LEZ depositor."""
+    raw = docker("lez-taker-node", "cat", f"{TAKER_SWAPS}/{directory}/lez/prepared-escrow.json")
+    prepared = json.loads(raw)
+    return prepared["initialization"]["transaction_id"]
+
+
 def bitcoin_facts(txid: str) -> tuple[dict, int, str]:
     transaction = bitcoin("getrawtransaction", txid, "1")
     block_hash = transaction.get("blockhash")
@@ -132,6 +139,7 @@ class LezIndex:
 
     def __init__(self, from_unix: int, to_unix: int):
         self.blocks: dict[str, tuple[int, str, str]] = {}
+        self.timestamps_ms: dict[str, int] = {}
         head = indexer("getBlocks", [None, 1])[0]["header"]["block_id"]
         # Block ids are dense and timestamps monotonic: binary-search the first
         # block at or after the window start, then read forward to its end.
@@ -158,6 +166,7 @@ class LezIndex:
                 for transaction in block["body"]["transactions"]:
                     inner = next(iter(transaction.values()))
                     self.blocks[inner["hash"]] = (header["block_id"], header["hash"], block["bedrock_status"])
+                    self.timestamps_ms[inner["hash"]] = int(header["timestamp"])
             cursor = max(b["header"]["block_id"] for b in page) + 1
             if min(b["header"]["timestamp"] for b in page) > end_ms:
                 break
@@ -172,25 +181,41 @@ def build_evidence(view: dict, repository_commit: str) -> dict:
     swap_id = view["swap_id"]
     if view["state"] != "completed":
         fail(f"swap {swap_id[:12]} is {view['state']}, not completed")
-    if view["route"]["direction"] != "TakerSellsForeign":
-        fail("only TakerSellsForeign swaps are exported")
+    direction = view["route"]["direction"]
+    if direction not in ("TakerSellsForeign", "TakerSellsLez"):
+        fail(f"direction {direction} is not exported")
+    reverse = direction == "TakerSellsLez"
     aggregate = taker_aggregate(swap_id)
     snapshot = aggregate["snapshot"]
     if snapshot.get("phase") != "Completed" or aggregate["revision"] != 4:
         fail(f"Taker actor aggregate is {snapshot.get('phase')} at revision {aggregate['revision']}")
+    # Selling Bitcoin the Taker locks Bitcoin and the Maker funds the LEZ escrow
+    # it initialized; selling LEZ the Taker initializes and funds the escrow and
+    # the Maker locks Bitcoin. The revealing claim takes the leg the Maker
+    # locked, the follow-up claim the leg the Taker locked.
     ids = {
         "first_lock": snapshot["taker_lock_transaction_id"],
         "funding": snapshot["maker_lock_transaction_id"],
         "revealing_claim": snapshot["revealing_claim_transaction_id"],
         "followup_claim": snapshot["followup_claim_transaction_id"],
-        "initialization": maker_initialization(aggregate["directory"]),
+        "initialization": taker_initialization(aggregate["directory"]) if reverse
+        else maker_initialization(aggregate["directory"]),
     }
     if len(set(ids.values())) != 5 or not all(isinstance(v, str) and len(v) == 64 for v in ids.values()):
         fail("the five public transaction ids are not distinct 32-byte hashes")
 
-    lock_tx, lock_height, lock_block = bitcoin_facts(ids["first_lock"])
-    claim_tx, claim_height, claim_block = bitcoin_facts(ids["followup_claim"])
-    lez = LezIndex(lock_tx["blocktime"], claim_tx["blocktime"])
+    if reverse:
+        # Bitcoin carries the Maker's lock and the Taker's revealing claim; the
+        # LEZ window runs from before the Taker's lock (at most the Maker's
+        # cutoff before the Maker's lock) to the follow-up claim, which comes
+        # after the revealing claim.
+        lock_tx, lock_height, lock_block = bitcoin_facts(ids["funding"])
+        claim_tx, claim_height, claim_block = bitcoin_facts(ids["revealing_claim"])
+        lez = LezIndex(lock_tx["blocktime"] - 3600, int(dt.datetime.now(dt.timezone.utc).timestamp()))
+    else:
+        lock_tx, lock_height, lock_block = bitcoin_facts(ids["first_lock"])
+        claim_tx, claim_height, claim_block = bitcoin_facts(ids["followup_claim"])
+        lez = LezIndex(lock_tx["blocktime"], claim_tx["blocktime"])
     foreign_btc = view["foreign_units"] / 1e8
     lez_units = int(view["lez_units"])
     claimed_btc = sum(output["value"] for output in claim_tx["vout"])
@@ -210,19 +235,34 @@ def build_evidence(view: dict, repository_commit: str) -> dict:
                 "explorer_url": f"{LEZ_EXPLORER}/#/evidence/tx/{txid}"}
 
     lez_display = f"{lez_units:,} LEZ units"
-    effects = [
-        bitcoin_effect(1, "Taker", "first_lock", "Taker first lock", ids["first_lock"], lock_tx,
-                       lock_height, lock_block, btc_display(foreign_btc)),
-        lez_effect(2, "Maker", "initialization", "Escrow initialization", ids["initialization"],
-                   "Escrow authority"),
-        lez_effect(3, "Maker", "funding", "Maker second lock", ids["funding"], lez_display),
-        lez_effect(4, "Taker", "revealing_claim", "Taker revealing claim", ids["revealing_claim"], lez_display),
-        bitcoin_effect(5, "Maker", "followup_claim", "Maker follow-up claim", ids["followup_claim"],
-                       claim_tx, claim_height, claim_block, btc_display(claimed_btc)),
-    ]
+    if reverse:
+        effects = [
+            lez_effect(1, "Taker", "initialization", "Escrow initialization", ids["initialization"],
+                       "Escrow authority"),
+            lez_effect(2, "Taker", "first_lock", "Taker first lock", ids["first_lock"], lez_display),
+            bitcoin_effect(3, "Maker", "funding", "Maker second lock", ids["funding"], lock_tx,
+                           lock_height, lock_block, btc_display(foreign_btc)),
+            bitcoin_effect(4, "Taker", "revealing_claim", "Taker revealing claim", ids["revealing_claim"],
+                           claim_tx, claim_height, claim_block, btc_display(claimed_btc)),
+            lez_effect(5, "Maker", "followup_claim", "Maker follow-up claim", ids["followup_claim"], lez_display),
+        ]
+        completed_at = dt.datetime.fromtimestamp(lez.timestamps_ms[ids["followup_claim"]] / 1000, dt.timezone.utc)
+        effect_counts = {"bitcoin": 2, "lez": 3, "total": 5}
+    else:
+        effects = [
+            bitcoin_effect(1, "Taker", "first_lock", "Taker first lock", ids["first_lock"], lock_tx,
+                           lock_height, lock_block, btc_display(foreign_btc)),
+            lez_effect(2, "Maker", "initialization", "Escrow initialization", ids["initialization"],
+                       "Escrow authority"),
+            lez_effect(3, "Maker", "funding", "Maker second lock", ids["funding"], lez_display),
+            lez_effect(4, "Taker", "revealing_claim", "Taker revealing claim", ids["revealing_claim"], lez_display),
+            bitcoin_effect(5, "Maker", "followup_claim", "Maker follow-up claim", ids["followup_claim"],
+                           claim_tx, claim_height, claim_block, btc_display(claimed_btc)),
+        ]
+        completed_at = dt.datetime.fromtimestamp(claim_tx["blocktime"], dt.timezone.utc)
+        effect_counts = {"bitcoin": 2, "lez": 3, "total": 5}
     if not all(effect["finality"] in ("Confirmed", "Finalized") for effect in effects):
         fail("a LEZ effect is not finalized yet: " + ", ".join(f"{e['kind']}={e['finality']}" for e in effects))
-    completed_at = dt.datetime.fromtimestamp(claim_tx["blocktime"], dt.timezone.utc)
     return {
         "schema_version": 1,
         "kind": "m3_btc_ui_evidence",
@@ -235,13 +275,13 @@ def build_evidence(view: dict, repository_commit: str) -> dict:
         "completed_at": completed_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "repository_commit": repository_commit,
         "pair": "Bitcoin",
-        "direction": "TakerSellsForeign",
+        "direction": direction,
         "journey": "claim",
         "terminal": {"phase": "completed", "revision": 4},
         "amounts": {"bitcoin_sats": int(view["foreign_units"]), "bitcoin_display": btc_display(foreign_btc),
                     "lez_units": lez_units, "lez_display": lez_display},
         "networks": {"bitcoin": "Bitcoin Core 31.1 · regtest", "lez": "LEZ v0.2.0 · private local"},
-        "effect_counts": {"bitcoin": 2, "lez": 3, "total": 5},
+        "effect_counts": effect_counts,
         "replay_resubmission_count": 0,
         "private_material_disclosed": False,
         "effects": effects,
