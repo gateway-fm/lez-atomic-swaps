@@ -186,6 +186,14 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     const bool sellsLez = direction == QStringLiteral("taker_sells_foreign");
     const QString myChain = sellsLez ? "LEZ" : "Bitcoin";      // what this Maker locks
     const QString theirChain = sellsLez ? "Bitcoin" : "LEZ";   // what the Taker locks and the Maker claims
+    // A refunded leg is reported before any recovery routing: once this
+    // Maker's lock came back its actor still names the Taker's recovery as
+    // what is left to observe, which is not a missed lock window.
+    if (phase == "maker_leg_refunded")
+        return {"refunded", "Refunded", 100,
+                "Your " + myChain + " lock came back; the Taker's refund follows on its own", "", ""};
+    if (phase == "taker_leg_refunded" || phase == "refunded")
+        return {"refunded", "Refunded", 100, "The swap was unwound", "", ""};
     if (nextAction == QStringLiteral("recover_taker_leg"))
         return {"recovering", "Lock window missed", 55,
                 "Your Node could not lock in time; it recovers once the Taker's refund is final", "", ""};
@@ -206,8 +214,6 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
                 "Your Node claims " + theirChain + " with the revealed secret", "", ""};
     if (phase == "completed")
         return {"completed", "Completed", 100, "Both legs settled on chain", "", ""};
-    if (phase == "maker_leg_refunded" || phase == "taker_leg_refunded" || phase == "refunded")
-        return {"refunded", "Refunded", 100, "The swap was unwound", "", ""};
     if (scheduleState == "failed")
         return {"failed", "Actor failed", 0, "The supervisor gave up on this actor; inspect it from the CLI", "", ""};
     return {"preparing", "Preparing", 10, "The actor has not observed a chain yet", "", ""};
