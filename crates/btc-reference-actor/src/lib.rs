@@ -1068,6 +1068,9 @@ fn trace_observation_unavailable<E: std::fmt::Debug>(error: E) -> ActorCommandEr
             "{{\"event\":\"observation_unavailable\",\"error\":{:?}}}",
             format!("{error:?}")
         );
+        if std::env::var_os("LEZ_BTC_ACTOR_TRACE_BACKTRACE").is_some_and(|value| value == "1") {
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
     }
     ActorCommandError::ObservationUnavailable
 }
@@ -1529,7 +1532,10 @@ async fn observe_current_lez_maker_step(
             }
         },
         "lez.fund" => match result.funding {
-            WitnessedFundingObservation::Absent => MakerLockStepChainObservationV1::Absent,
+            WitnessedFundingObservation::Absent => {
+                trace_note("lez_maker_funding_step_current", "absent");
+                MakerLockStepChainObservationV1::Absent
+            }
             WitnessedFundingObservation::UnknownOrPending => {
                 MakerLockStepChainObservationV1::ExactIdempotentSubmissionSafe {
                     expected_public_id: step.expected_public_id().as_str().into(),
@@ -1595,11 +1601,19 @@ async fn observe_live_lez_maker_step(
         }
         "lez.fund" => {
             let request = maker_lez_funding_classification_request(config, agreement, step)?;
-            match client
+            let presence = client
                 .classify_finalized_witnessed_funding(request)
                 .await
-                .map_err(trace_observation_unavailable)?
-            {
+                .map_err(trace_observation_unavailable)?;
+            trace_note(
+                "lez_maker_funding_step_presence",
+                match &presence {
+                    FinalizedWitnessedFundingPresence::Found { .. } => "found",
+                    FinalizedWitnessedFundingPresence::Absent { .. } => "absent",
+                    FinalizedWitnessedFundingPresence::Uncertain { .. } => "uncertain",
+                },
+            );
+            match presence {
                 FinalizedWitnessedFundingPresence::Found { funding, .. } => {
                     if lez_step_is_exact(step, &funding.transaction) {
                         Ok(MakerLockStepChainObservationV1::PresentExactCanonical {
@@ -2280,8 +2294,11 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                     Participant::Maker,
                 )
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                // The escrow may already be claimed or refunded when this Maker
+                // observes its own lock late (its supervisor served other swaps
+                // first); the funding completed all the same.
                 let _current_evidence = current
-                    .observe_current_lez_funded_escrow(
+                    .observe_current_lez_escrow_after_funding(
                         agreement,
                         maker_lez_current_funded_request_id(self.config, agreement)?,
                     )

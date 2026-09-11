@@ -512,6 +512,11 @@ impl FinalizedWitnessedRefundObserver {
         };
         let (status, expected_balance) = match metadata.status {
             EscrowStatus::Funded => (EscrowState::Funded, terms.amount().as_u128()),
+            // A claimed escrow is a valid current state of a funded escrow: the
+            // depositor's lock landed and the claimant took it. It is reported
+            // as such rather than refused, so a depositor that observes its own
+            // lock late still sees a completed funding.
+            EscrowStatus::Claimed => (EscrowState::Claimed, 0),
             EscrowStatus::Refunded => (EscrowState::Refunded, 0),
             _ => return Err(BridgeRuntimeError::InvalidObservation),
         };
