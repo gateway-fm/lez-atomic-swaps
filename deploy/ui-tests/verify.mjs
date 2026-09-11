@@ -359,7 +359,10 @@ if (role === "maker") {
     });
   });
 
-  test("taker: wallet-indexed BTC order book is ready", async (app) => {
+  // Open offers are a precondition of a take only; an action or a wait on an
+  // existing swap needs none (two takes in a row can empty the book).
+  const takeStep = process.env.PREPARE_INTERACTIVE_BTC === "1";
+  if (takeStep) test("taker: wallet-indexed BTC order book is ready", async (app) => {
     await app.expectTexts(["ACCOUNT", "My orders", "Available orders", "Zurich Wallet 01 · Taker Node"]);
     // The order book arrives with the first market snapshot after the view
     // opens; wait for the rendered rows instead of racing that request.
