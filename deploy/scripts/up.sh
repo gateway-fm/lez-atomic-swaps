@@ -94,7 +94,21 @@ case "${LEZ_IMAGES:-build}" in
       docker image inspect "$image" >/dev/null 2>&1 || missing=1
     done
     if [[ "$BUILD" == 1 || "$missing" == 1 ]]; then
-      docker compose build
+      # BuildKit resolves every FROM against its registry with a short
+      # deadline; pull the base images first, with retries, so a slow registry
+      # cannot fail the build of payloads that are already staged.
+      for image in $(grep -h '^FROM' images/*/Dockerfile | awk '{print $2}' | sort -u); do
+        docker image inspect "$image" >/dev/null 2>&1 && continue
+        echo "  pulling $image"
+        for _ in 1 2 3; do docker pull -q "$image" >/dev/null && break; sleep 10; done
+        docker image inspect "$image" >/dev/null 2>&1 || { echo "cannot pull $image" >&2; exit 1; }
+      done
+      for attempt in 1 2 3; do
+        docker compose build && break
+        [[ "$attempt" -lt 3 ]] || { echo "docker compose build failed three times" >&2; exit 1; }
+        echo "  image build failed (registry deadline?); retrying in 30 s"
+        sleep 30
+      done
     else
       echo "  all images present (use --build to rebuild)"
     fi
