@@ -304,6 +304,21 @@ ROLE_FUNCTIONS
                         implicitWidth: 240
                         onActivated: root.refreshBtcMarket(false)
                     }
+                    // What this Node's own wallets hold, from its balance method.
+                    ColumnLayout {
+                        spacing: 1
+                        readonly property var wallet: (root.btcMarket.wallets ?? [])[0] ?? ({})
+                        Label {
+                            objectName: "ROLEBtcBalance"
+                            text: String(parent.wallet.btc_display ?? "… BTC")
+                            color: "#B997FF"; font.pixelSize: 11; font.weight: Font.DemiBold; font.family: "DejaVu Sans Mono"
+                        }
+                        Label {
+                            objectName: "ROLELezBalance"
+                            text: String(parent.wallet.lez_display ?? "… LEZ")
+                            color: "#7EE100"; font.pixelSize: 11; font.weight: Font.DemiBold; font.family: "DejaVu Sans Mono"
+                        }
+                    }
                     Rectangle {
                         implicitWidth: connectionRow.implicitWidth + 20; implicitHeight: 30; radius: 15
                         color: root.ready ? "#11271F" : "#292318"

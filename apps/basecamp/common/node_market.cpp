@@ -282,15 +282,43 @@ QJsonObject swapRowObject(const SwapRow& row, const QString& swapId, const QStri
     };
 }
 
+// The role's own wallets as the Node reports them (`*_wallet_balances_v1`):
+// its Bitcoin Core wallet and its LEZ owner account. A balance the Node could
+// not read shows as a dash rather than a number.
 QJsonObject walletEntry(const QString& id, const QString& label, const QString& role,
-                        int pending, int active, int needsAction)
+                        int pending, int active, int needsAction, const QJsonObject& balances)
 {
+    const QJsonObject bitcoin = balances.value("bitcoin").toObject();
+    const QJsonObject lez = balances.value("lez").toObject();
+    const bool bitcoinKnown = bitcoin.value("state").toString() == QStringLiteral("available");
+    const bool lezKnown = lez.value("state").toString() == QStringLiteral("available");
+    const qint64 trusted = integerField(bitcoin, "trusted_sat");
+    const qint64 pendingSats = integerField(bitcoin, "untrusted_pending_sat");
+    const qint64 lezUnits = integerField(lez, "balance_atomic_units");
+    QString bitcoinDisplay = bitcoinKnown ? formatBtc(trusted) : QStringLiteral("— BTC");
+    if (bitcoinKnown && pendingSats > 0) bitcoinDisplay += " (+" + formatBtc(pendingSats) + " pending)";
     return QJsonObject{
         {"id", id}, {"label", label}, {"role", role},
         {"network", role == "maker" ? "LEZ private local" : "Bitcoin Core regtest"},
         {"accent", role == "maker" ? "violet" : "green"},
         {"pending_offers", pending}, {"active_swaps", active}, {"needs_action", needsAction},
+        {"btc_state", bitcoin.value("state")},
+        {"btc_wallet", bitcoin.value("wallet")},
+        {"btc_trusted_sat", trusted},
+        {"btc_pending_sat", pendingSats},
+        {"btc_display", bitcoinDisplay},
+        {"lez_state", lez.value("state")},
+        {"lez_account", lez.value("owner_account_base58")},
+        {"lez_units", lezUnits},
+        {"lez_display", lezKnown ? formatLez(lezUnits) : QStringLiteral("— LEZ")},
     };
+}
+
+// The Node's balance reply, or an empty object when it cannot answer.
+QJsonObject walletBalances(const LocalJsonRpcClient& rpc, const char* method, const char* request)
+{
+    const Reply reply = decode(rpc.call(QString::fromLatin1(method), QString::fromLatin1(request)));
+    return reply.ok ? reply.result.toObject() : QJsonObject{};
 }
 
 bool exactUnsigned(const QString& value, qulonglong& result)
@@ -393,7 +421,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
         {"kind", "node_btc_market"},
         {"role", "taker"},
         {"selected_wallet_id", wallet.id},
-        {"wallets", QJsonArray{walletEntry(wallet.id, wallet.label, "taker", 0, active, needsAction)}},
+        {"wallets", QJsonArray{walletEntry(wallet.id, wallet.label, "taker", 0, active, needsAction,
+                                           walletBalances(rpc, "taker_wallet_balances_v1", "{\"schema_version\":1}"))}},
         {"inventory", QJsonArray{}},
         {"order_book", orderBook},
         {"swaps", swaps},
@@ -590,7 +619,8 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
         {"kind", "node_btc_market"},
         {"role", "maker"},
         {"selected_wallet_id", wallet.id},
-        {"wallets", QJsonArray{walletEntry(wallet.id, wallet.label, "maker", pending, active, 0)}},
+        {"wallets", QJsonArray{walletEntry(wallet.id, wallet.label, "maker", pending, active, 0,
+                                           walletBalances(rpc, "maker_wallet_balances_v1", "{}"))}},
         {"inventory", inventory},
         {"order_book", QJsonArray{}},
         {"swaps", swaps},

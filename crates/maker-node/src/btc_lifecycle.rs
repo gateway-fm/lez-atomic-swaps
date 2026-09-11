@@ -16,8 +16,9 @@ use lez_bridge_client::validate_prepared_witnessed_claim;
 use lez_bridge_protocol::PrepareWitnessedClaimResult;
 use lez_btc_role_lifecycle::{
     BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, MakerCeremony,
-    PreparedEscrow, SwapLayout, SwapSidecar,
+    PreparedEscrow, SwapLayout, SwapSidecar, WalletBalancesV1,
     actor::{ActorSynthesis, MakerLockMaterial, activate, synthesize},
+    balances::role_wallet_balances,
     layout::{read_private, write_private_exact},
     lez::{
         PlanningTermsInput, agreement_terms, planning_escrow_funding_placeholder, planning_terms,
@@ -366,6 +367,11 @@ impl BtcMakerLifecycle {
             .client(&self.runtime)
             .map_err(|error| internal(&error))?;
         Ok((sidecar, client))
+    }
+
+    /// What this Maker's own wallets hold (owner desk readout).
+    pub(super) async fn wallet_balances(&self) -> WalletBalancesV1 {
+        role_wallet_balances(&self.runtime).await
     }
 
     fn wallet(&self) -> RpcResult<BitcoinWallet> {
