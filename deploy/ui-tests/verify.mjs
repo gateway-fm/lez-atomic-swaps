@@ -155,11 +155,13 @@ async function outputAfterSignal(app, objectName, objectNameOutput, predicate) {
   }
 }
 
-// A silent market refresh from the desk's own root, so a button the Node
-// offers later (a refund past the Maker's cutoff) appears without a click.
+// A market refresh from the desk's own root (the "Refresh market" action),
+// so a button the Node offers later (a refund past the Maker's cutoff)
+// appears without a click. Not the silent variant: only a full refresh
+// rewrites the output text these checks read.
 async function refreshMarket(app, walletObjectName) {
   const wallet = await app.findByProperty("objectName", walletObjectName);
-  if (wallet.matches?.length === 1) await evaluateIn(app, wallet.matches[0].id, "root.refreshBtcMarket(true)");
+  if (wallet.matches?.length === 1) await evaluateIn(app, wallet.matches[0].id, "root.refreshBtcMarket(false)");
 }
 
 // The swaps the desk renders, narrowed to the one the caller named (the Node
