@@ -30,10 +30,28 @@ const appBin = `/usr/local/bin/lez-${role}-ui`;
 
 // spawn the app ourselves (the framework's --ci mode waits only 15s; cold
 // module loading needs longer), then attach in normal mode
-const appProcess = spawn(appBin, ["-platform", "offscreen"], {
+// Offscreen by default; UI_PLATFORM=xcb renders on DISPLAY (a recording run
+// grabs that display) at UI_GEOMETRY.
+const platform = process.env.UI_PLATFORM === "xcb" ? "xcb" : "offscreen";
+const appArgs = ["-platform", platform];
+if (platform === "xcb" && process.env.UI_GEOMETRY) appArgs.push("-geometry", process.env.UI_GEOMETRY);
+const appProcess = spawn(appBin, appArgs, {
   stdio: ["ignore", "ignore", "inherit"],
-  env: { ...process.env, QT_QPA_PLATFORM: "offscreen", QT_FORCE_STDERR_LOGGING: "1" },
+  env: { ...process.env, QT_QPA_PLATFORM: platform, QT_FORCE_STDERR_LOGGING: "1" },
 });
+
+// Narration for a recording: one line per moment worth a subtitle, written
+// with the time since the recording started (NARRATION_T0, ms since epoch).
+// Without NARRATION_FILE it only logs.
+import { appendFileSync } from "node:fs";
+const narrationT0 = Number(process.env.NARRATION_T0 || Date.now());
+function narrate(text) {
+  console.log(`  » ${text}`);
+  if (process.env.NARRATION_FILE) {
+    appendFileSync(process.env.NARRATION_FILE, JSON.stringify({ t: Date.now() - narrationT0, text }) + "\n");
+  }
+}
+if (process.env.STEP_TITLE) narrate(process.env.STEP_TITLE);
 
 const inspectorPort = Number(process.env.QML_INSPECTOR_PORT || 3768);
 async function waitInspector(ms) {
@@ -265,6 +283,22 @@ async function publishOfferOnce(app, predicate) {
   }
 }
 
+// What the Maker desk is waiting for, in the words of the direction.
+function makerNarration(state) {
+  const mine = reverseDirection ? "Bitcoin" : "LEZ";
+  const theirs = reverseDirection ? "LEZ" : "Bitcoin";
+  switch (state) {
+    case "awaiting_taker_claim":
+      return `Nothing to click here: the Maker Node locks ${mine} on its own once the Taker's ${theirs} lock is final; the desk waits for "awaiting the Taker's claim"`;
+    case "completed":
+      return `The Maker Node claims ${theirs} with the secret the Taker revealed; the desk waits for "completed"`;
+    case "refunded":
+      return `The Maker Node refunds its ${mine} lock once its deadline passes; the desk waits for "refunded"`;
+    default:
+      return `The Maker desk waits for the swap to reach "${state.replace(/_/g, " ")}"`;
+  }
+}
+
 if (role === "maker") {
   test("maker: launcher discoverable and app opens", async (app) => {
     await app.waitFor(async () => app.expectTexts(["LEZ / BTC Maker"]), {
@@ -274,6 +308,7 @@ if (role === "maker") {
     await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Maker Desk", "Backend connected"]), {
       timeout: 25000, interval: 500, description: "maker view + live backend",
     });
+    narrate("Maker desk opened from the Basecamp launcher; it talks to the real Maker Node over its owner-only socket");
   });
 
   test("maker: real Node health", async (app) => {
@@ -286,6 +321,7 @@ if (role === "maker") {
       timeout: 15000, interval: 300, description: "Maker health status",
     });
     console.log("  health: Node ready");
+    narrate("Check Node: the Maker Node reports ready");
   });
 
   test("maker: Node-indexed BTC offer inventory", async (app) => {
@@ -314,6 +350,9 @@ if (role === "maker") {
     // inventory is indexed to this Node's identity and survives a refresh.
     while (pending < 2) {
       const target = pending + 1;
+      narrate(reverseDirection
+        ? "New offer: the Maker sells 0.01 BTC for 1,000 LEZ; Publish sends it to the Maker Node, which signs and announces it over Delivery"
+        : "New offer: the Maker sells 1,000 LEZ for 0.01 BTC; Publish sends it to the Maker Node, which signs and announces it over Delivery");
       munich = unwrap(await publishOfferOnce(
         app,
         (envelope) => envelope.ok === true && pendingHere(envelope.result?.inventory) >= target,
@@ -325,6 +364,7 @@ if (role === "maker") {
       throw new Error(`Node-indexed offer totals are wrong: ${JSON.stringify(munich).slice(0, 500)}`);
     }
     console.log(`  inventory: Munich Vault 01 (Maker Node) open offers=${pending} · market=${munich.summary.pending_offers}`);
+    narrate(`Inventory: ${pending} open ${reverseDirection ? "sell-BTC" : "sell-LEZ"} offers indexed by the Maker Node`);
   });
 
   // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the desk
@@ -344,8 +384,10 @@ if (role === "maker") {
       // Earlier swaps may already sit in the target state: when the caller
       // names the swap this run created, only that swap counts.
       const wanted = process.env.INTERACTIVE_SWAP_ID || "";
+      narrate(makerNarration(state));
       await waitDeskState(app, "makerOutput", wanted, state.split("|"), `${label} by the Maker Node`);
       console.log(`  Node-owned swap: Maker reached ${state} (${label})`);
+      narrate(`Maker desk now shows the swap as: ${state.replace(/_/g, " ")}`);
     });
   }
 } else {
@@ -357,6 +399,7 @@ if (role === "maker") {
     await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Taker Desk", "Backend connected"]), {
       timeout: 25000, interval: 500, description: "taker view + live Node",
     });
+    narrate("Taker desk opened from the Basecamp launcher; it talks to the real Taker Node over its owner-only socket");
   });
 
   // Open offers are a precondition of a take only; an action or a wait on an
@@ -374,6 +417,7 @@ if (role === "maker") {
       timeout: 15000, interval: 500, description: "Maker Node order book",
     });
     console.log("  order book: the Maker Node's offers are visible to the Taker Node's identity");
+    narrate("Available orders: the Maker's offers arrived over Delivery and are listed for this Taker");
   });
 
   // "Node ready" is a precondition of a take only: a scenario may act on an
@@ -408,6 +452,9 @@ if (role === "maker") {
         }
         throw new Error(`no takeable ${wantedDirection} order-book row yet (rows: ${seen.join(", ") || "none"})`);
       }, { timeout: 180000, interval: 5000, description: `${wantedDirection} order-book row` });
+      narrate(reverseDirection
+        ? "Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap"
+        : "Take offer on a sell-LEZ row: the Taker Node reserves the lot, plans its Bitcoin funding, runs the signing ceremony with the Maker and activates the swap");
       await evaluateIn(app, target, "clicked()");
       const firstAction = reverseDirection ? "lock_lez" : "lock_btc";
       // Older swaps may already show the same lock button: only the swap this
@@ -437,7 +484,27 @@ if (role === "maker") {
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
       console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · Taker lock action ready`);
+      narrate(`Swap ${taken.slice(0, 12)} is in "My orders" and needs the Taker: its ${reverseDirection ? "LEZ" : "Bitcoin"} lock`);
     });
+  }
+
+  // What each Taker button does, in the words of the direction.
+  function takerNarration(action, moment) {
+    const texts = {
+      lock_btc: ["Lock 0.01 BTC: the Taker Node broadcasts the exact Bitcoin funding transaction it signed at take time",
+                 "Bitcoin lock broadcast; the Maker Node funds the LEZ escrow on its own once this lock is confirmed"],
+      lock_lez: ["Lock 1,000 LEZ: the Taker Node submits the escrow initialization and funding its sidecar prepared",
+                 "LEZ lock submitted; the Maker Node locks Bitcoin on its own once this lock is final"],
+      claim_lez: ["Claim 1,000 LEZ: the revealing claim spends the LEZ escrow and discloses the adaptor secret",
+                  "LEZ claim submitted; the Maker Node uses the revealed secret to claim the Bitcoin"],
+      claim_btc: ["Claim 0.01 BTC: the revealing claim spends the Maker's Bitcoin lock and discloses the adaptor secret",
+                  "Bitcoin claim broadcast; the Maker Node uses the revealed secret to claim the LEZ escrow"],
+      refund_btc: ["The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures",
+                   "Refund admitted; the Taker Node broadcasts it when the timelock allows and follows it to confirmation"],
+      refund_lez: ["The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached",
+                   "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
+    };
+    return (texts[action] ?? [action, action])[moment === "before" ? 0 : 1];
   }
 
   // A refund is admitted at once and driven by the Node until the chain
@@ -453,16 +520,20 @@ if (role === "maker") {
     const action = process.env.INTERACTIVE_ACTION;
     const [label, working, settleMs] = takerActions[action];
     test(`taker: perform ${action}`, async (app) => {
+      narrate(takerNarration(action, "before"));
       await triggerVisibleAction(app, "takerSwapAction", label, "takerOutput", working,
                                  process.env.INTERACTIVE_SWAP_ID || "", settleMs);
       console.log(`  Node-owned swap: Taker ${action} submitted`);
+      narrate(takerNarration(action, "after"));
     });
   }
   if (process.env.INTERACTIVE_ACTION === "wait" && process.env.INTERACTIVE_STATE) {
     const states = process.env.INTERACTIVE_STATE.split("|");
     test(`taker: swap reaches ${states.join("|")}`, async (app) => {
+      narrate(`The Taker desk waits for the swap to show "${states.join(" or ").replace(/_/g, " ")}"`);
       await waitDeskState(app, "takerOutput", process.env.INTERACTIVE_SWAP_ID || "", states, `${states.join("|")} on the Taker desk`);
       console.log(`  Node-owned swap: Taker desk shows ${states.join("|")}`);
+      narrate(`Taker desk now shows the swap as: ${states.join(" / ").replace(/_/g, " ")}`);
     });
   }
 

@@ -6,7 +6,12 @@
 # presses its buttons through the QML inspector (ui-tests/verify.mjs). The
 # Nodes' APIs are read here only to learn the new swap's id and to log.
 #
-#   scripts/ui-e2e.sh <scenario> [--direction TakerSellsForeign|TakerSellsLez]
+#   scripts/ui-e2e.sh <scenario> [--direction TakerSellsForeign|TakerSellsLez] [--record]
+#
+#   --record  every desk step renders on a private virtual display in its own
+#             UI container and is screen-grabbed (ui-tests/record-step.sh);
+#             the desk's narration is burned in as subtitles and the segments
+#             are joined into runtime/evidence/videos/<direction>-<scenario>.mp4
 #
 #   happy          take → lock → (Maker locks) → claim → (Maker claims) → completed
 #   restart-taker  Taker Node restarted between its lock and its claim
@@ -25,14 +30,16 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 set -a; source runtime/runtime.env; set +a
 export BTC_RPC_PASSWORD
 
-scenario="${1:-}"; direction="TakerSellsForeign"
+scenario="${1:-}"; direction="TakerSellsForeign"; record=0
 shift || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --direction) direction="$2"; shift 2 ;;
+    --record) record=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
+videos="$PWD/runtime/evidence/videos"; segments=(); segment_index=0; step_note=""
 case "$direction" in TakerSellsForeign|TakerSellsLez) ;; *) echo "--direction must be TakerSellsForeign or TakerSellsLez" >&2; exit 64 ;; esac
 if [[ "$direction" == TakerSellsLez ]]; then
   lock_action=lock_lez; claim_action=claim_btc; refund_action=refund_lez; lock_wallet=lez-maker
@@ -51,9 +58,33 @@ start_node() { docker start "$1" >/dev/null; stopped_node=""; wait_healthy "$1";
 ui() { # ui <role> [ENV=VALUE...]
   local role="$1"; shift; local envs=(-e "M3_UI_DIRECTION=$direction" -e "DESK_DEBUG=${DESK_DEBUG:-0}")
   for kv in "$@"; do envs+=(-e "$kv"); done
+  if [[ "$record" == 1 ]]; then
+    segment_index=$((segment_index + 1))
+    local segment; segment="$(printf '%s-%s-%02d-%s' "$direction" "$scenario" "$segment_index" "$role")"
+    segments+=("$segment")
+    mkdir -p "$videos"
+    docker compose --env-file runtime/runtime.env run --rm --no-deps "${envs[@]}" \
+      -e "STEP_TITLE=${step_title:-}" -v "$videos:/recordings" \
+      --entrypoint bash basecamp-ui /ui-tests/record-step.sh "$role" "$segment" 2>&1 |
+      grep -E '✓|✗|^    [a-zA-Z]|»|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready' | grep -viE 'locale'
+    return "${PIPESTATUS[0]}"
+  fi
   docker compose --env-file runtime/runtime.env run --rm --no-deps "${envs[@]}" \
     --entrypoint node basecamp-ui /ui-tests/verify.mjs "$role" 2>&1 |
     grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready' | grep -viE 'locale'
+}
+# The scenario video: its segments joined in order (same size, rate and codec).
+join_video() {
+  [[ "$record" == 1 && "${#segments[@]}" -gt 0 ]] || return 0
+  local list="$videos/$direction-$scenario.txt" out="$videos/$direction-$scenario.mp4" seg
+  : > "$list"
+  for seg in "${segments[@]}"; do [[ -s "$videos/$seg.mp4" ]] && printf "file '%s'\n" "$seg.mp4" >> "$list"; done
+  docker compose --env-file runtime/runtime.env run --rm --no-deps -v "$videos:/recordings" -w /recordings \
+    --entrypoint ffmpeg basecamp-ui -hide_banner -loglevel error -y -f concat -safe 0 -i "$direction-$scenario.txt" -c copy "$direction-$scenario.mp4" >/dev/null 2>&1 \
+    && log "video: runtime/evidence/videos/$direction-$scenario.mp4" \
+    || log "video join failed for $direction-$scenario"
+  for seg in "${segments[@]}"; do rm -f "$videos/$seg.mp4" "$videos/$seg.events" "$videos/$seg.srt" "$videos/$seg.raw.mp4"; done
+  rm -f "$list"
 }
 taker_swaps() { # the Taker Node's own view: "<swap_id> <state> <generation> <action>"
   local reply
@@ -72,7 +103,8 @@ for s in (json.loads(raw) if raw else {}).get("result", {}).get("swaps", []):
 }
 new_swaps() { taker_swaps | grep -v -F -f <(printf "%s\n" "${baseline_swaps[@]:-__none__}"); }
 show() { new_swaps | sed 's/^/   /'; }
-step() { log "$1"; shift; if ! ui "$@"; then show; fail "step failed"; fi; show; }
+step() { log "$1"; step_title="${step_note:+$step_note · }$1"; step_note=""; shift; if ! ui "$@"; then show; fail "step failed"; fi; show; }
+note() { log "$1"; step_note="$1"; }  # a scripted action, narrated at the start of the next recorded step
 wait_healthy() { # wait_healthy <container>
   for _ in $(seq 1 60); do
     [[ "$(docker inspect -f '{{.State.Health.Status}}' "$1" 2>/dev/null)" == healthy ]] && return 0
@@ -124,7 +156,7 @@ scenario_happy() {
 scenario_restart() { # scenario_restart <maker|taker>
   local swap; publish; take swap
   taker_act "$lock_action" "$swap"
-  log "restarting lez-$1-node"; docker restart "lez-$1-node" >/dev/null; wait_healthy "lez-$1-node"
+  note "The $1 Node is restarted now, between the Taker's lock and its claim; swaps survive a Node restart"; docker restart "lez-$1-node" >/dev/null; wait_healthy "lez-$1-node"
   maker_wait awaiting_taker_claim "$swap"
   taker_act "$claim_action" "$swap"
   finish "$swap"
@@ -134,9 +166,9 @@ scenario_survivor() {
   taker_act "$lock_action" "$swap"
   maker_wait awaiting_taker_claim "$swap"
   taker_act "$claim_action" "$swap"
-  log "stopping the Taker Node right after its revealing claim"; stop_node lez-taker-node
+  note "The Taker Node is stopped right after its revealing claim; the Maker Node completes the swap on its own"; stop_node lez-taker-node
   maker_wait completed "$swap"
-  start_node lez-taker-node
+  note "The Taker Node is started again; its desk catches up with the completed swap"; start_node lez-taker-node
   taker_wait completed "$swap"
   python3 scripts/export-node-evidence.py --swap "$swap" || fail "evidence export"
 }
@@ -150,11 +182,11 @@ scenario_concurrent() {
 }
 scenario_taker_refund() {
   require_fast; local swap; publish; take swap
-  log "stopping the Maker Node so it never locks"; stop_node lez-maker-node
+  note "The Maker Node is stopped before it can lock; the Taker locks anyway and must recover its funds later"; stop_node lez-maker-node
   taker_act "$lock_action" "$swap"
-  log "the Refund button appears once the Maker's cutoff (${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS}s) passes; the Node then drives the refund"
+  note "The Maker's lock cutoff (${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS} s after the take) passes with no Maker lock; the desk then offers Refund"
   taker_act "$refund_action" "$swap"
-  start_node lez-maker-node
+  note "The Maker Node is started again and reconciles the refunded swap"; start_node lez-maker-node
   taker_wait refunded "$swap"
   maker_wait refunded "$swap"
 }
@@ -162,7 +194,7 @@ scenario_maker_refund() {
   require_fast; local swap; publish; take swap
   taker_act "$lock_action" "$swap"
   maker_wait awaiting_taker_claim "$swap"
-  log "the Taker never claims; the Maker Node refunds its leg after ${LEZ_BTC_EARLIER_REFUND_SECONDS}s"
+  note "The Taker never claims; after its refund deadline (${LEZ_BTC_EARLIER_REFUND_SECONDS} s after the take) the Maker Node refunds its own lock"
   maker_wait refunded "$swap"
   taker_act "$refund_action" "$swap"
   taker_wait refunded "$swap"
@@ -182,6 +214,7 @@ run_one() {
     maker-refund) scenario_maker_refund ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
+  join_video
   log "=== $name ($direction): passed in $(( $(date -u +%s) - started ))s"
 }
 all=(happy restart-taker restart-maker survivor concurrent taker-refund maker-refund)

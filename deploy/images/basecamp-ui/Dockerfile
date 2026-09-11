@@ -3,7 +3,7 @@ FROM debian:trixie-slim
 ARG DEBIAN_FRONTEND=noninteractive
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core \
+        xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg \
         ca-certificates nodejs \
         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1 \
         libgles2 libgl1-mesa-dri \
