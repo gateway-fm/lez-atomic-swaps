@@ -18,6 +18,11 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py maker-refund     Taker never claims; Maker refunds LEZ, then Taker refunds Bitcoin
     node-e2e.py all              every scenario in sequence (stops at the first failure)
 
+Every scenario runs in either Bitcoin direction: `--direction TakerSellsForeign`
+(the default; the Taker locks Bitcoin, the Maker LEZ) or `--direction
+TakerSellsLez` (the Taker locks LEZ first, the Maker Bitcoin, the Taker claims
+Bitcoin). The summary of a reverse run is `runtime/e2e/<scenario>-lez.json`.
+
 The refund scenarios need the `fast` timing profile
 (`LEZ_TIMING_PROFILE=fast scripts/gen-config.sh runtime`, then recreate the
 Nodes); the harness refuses to start them under the `local` profile.
@@ -33,7 +38,8 @@ import time
 
 DEPLOY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNTIME = DEPLOY_ROOT / "runtime"
-ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}
+ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}  # --direction replaces it
+REVERSE = False  # True when the Taker sells LEZ (locks LEZ first, claims Bitcoin)
 FOREIGN_UNITS = 1_000_000
 LEZ_UNITS = 1_000
 NODES = {"maker": ("lez-maker-node", "/run/lez/maker/node.sock"),
@@ -231,7 +237,7 @@ def lock(swap_id: str) -> str:
     if "error" in reply:
         raise Failure(f"taker taker_swap_lock_v1 failed: {json.dumps(reply['error'])}")
     result = reply["result"]
-    log(f"  Taker locked Bitcoin: {result['transaction_id'][:12]} (replay={result.get('was_replay')})")
+    log(f"  Taker locked {result.get('chain', '?')}: {result['transaction_id'][:12]} (replay={result.get('was_replay')})")
     return result["transaction_id"]
 
 
@@ -262,7 +268,7 @@ def claim(swap_id: str, stamp: str, suffix: str = "") -> dict:
     result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}{suffix}",
                                                    "swap_id": swap_id, "expected_generation": view["progress_generation"]},
                   timeout=300)
-    log(f"  Taker claimed LEZ (replay={result.get('was_replay')})")
+    log(f"  Taker claimed {'Bitcoin' if REVERSE else 'LEZ'} (replay={result.get('was_replay')})")
     return result
 
 
@@ -402,22 +408,33 @@ def scenario_survivor(stamp: str) -> dict:
     return {"swap_id": swap_id}
 
 
-def ensure_taker_coins(count: int) -> None:
-    """Two concurrent swaps need two spendable coins: each funding plan locks
-    its inputs, so a wallet with one coin can fund one swap at a time."""
-    spendable = [u for u in bitcoin("-rpcwallet=lez-taker", "listunspent") if float(u["amount"]) >= 0.02]
+def ensure_coins(wallet: str, count: int) -> None:
+    """Two concurrent swaps need two spendable coins in the wallet that locks
+    Bitcoin: each funding plan locks its inputs, so a wallet with one coin can
+    fund one swap at a time."""
+    spendable = [u for u in bitcoin(f"-rpcwallet={wallet}", "listunspent") if float(u["amount"]) >= 0.02]
     if len(spendable) >= count:
         return
-    log(f"  splitting the Taker wallet into {count} coins")
+    log(f"  splitting the {wallet} wallet into {count} coins")
     for _ in range(count - len(spendable) + 1):
-        address = bitcoin("-rpcwallet=lez-taker", "getnewaddress", "", "bech32m")
-        bitcoin("-rpcwallet=lez-taker", "sendtoaddress", str(address), "0.05")
+        address = bitcoin(f"-rpcwallet={wallet}", "getnewaddress", "", "bech32m")
+        bitcoin(f"-rpcwallet={wallet}", "sendtoaddress", str(address), "0.05")
     mine(1)
     time.sleep(3)
 
 
+def node_balances(role: str) -> dict:
+    """What the desk shows under the account: the Node's own wallet balances."""
+    if role == "maker":
+        view = call("maker", "maker_wallet_balances_v1", {})
+    else:
+        view = call("taker", "taker_wallet_balances_v1", {"schema_version": 1})
+    return {"btc_trusted_sat": (view.get("bitcoin") or {}).get("trusted_sat"),
+            "lez_units": (view.get("lez") or {}).get("balance_atomic_units")}
+
+
 def scenario_concurrent(stamp: str) -> dict:
-    ensure_taker_coins(2)
+    ensure_coins("lez-maker" if REVERSE else "lez-taker", 2)
     ids = []
     for suffix in ("-a", "-b"):
         offer_id = publish_offer(stamp, suffix)
@@ -477,18 +494,22 @@ def scenario_taker_refund(stamp: str) -> dict:
     profile = require_fast_profile()
     csv_blocks = int(profile["LEZ_BTC_REFUND_CSV_BLOCKS"])
     cutoff = int(profile["LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS"])
+    # The Taker's leg is locked first and refunds later: Bitcoin once the CSV
+    # matures (forward), LEZ once the later refund opens (reverse).
+    opens = int(profile["LEZ_BTC_LATER_REFUND_SECONDS"]) if REVERSE else cutoff
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
-    log("  stopping the Maker Node so it never funds")
+    log(f"  stopping the Maker Node so it never {'locks Bitcoin' if REVERSE else 'funds'}")
     docker("stop", NODES["maker"][0])
-    before = float(bitcoin("-rpcwallet=lez-taker", "getbalance"))
+    before = node_balances("taker")
     try:
         txid = lock(swap_id)
         mine(csv_blocks + 1)
-        log(f"  mined {csv_blocks + 1} blocks past the lock; the Maker cutoff is {cutoff}s after the take")
-        request_refund_until_terminal(swap_id, stamp, timeout=cutoff + 1500)
-        after = float(bitcoin("-rpcwallet=lez-taker", "getbalance"))
-        log(f"  Taker refunded; lez-taker balance {before:.8f} → {after:.8f}")
+        log(f"  mined {csv_blocks + 1} blocks past the lock; the Maker cutoff is {cutoff}s after the take, "
+            f"the Taker's refund opens {opens}s after it")
+        request_refund_until_terminal(swap_id, stamp, timeout=opens + 1500)
+        after = node_balances("taker")
+        log(f"  Taker refunded; Taker Node balances {before} → {after}")
     finally:
         docker("start", NODES["maker"][0])
         wait_healthy("maker")
@@ -517,7 +538,10 @@ def scenario_maker_refund(stamp: str) -> dict:
     swap_id, _ = take(offer_id, stamp)
     lock(swap_id)
     wait_taker(swap_id, {"claim_available"}, timeout=1500, describe="(Maker funding)")
-    log(f"  Maker funded; the Taker never claims. Waiting for the LEZ refund deadline ({earlier}s after the take)")
+    # Both legs are locked; the Bitcoin leg's CSV must mature before its
+    # refund, whichever role locked it.
+    mine(csv_blocks + 1)
+    log(f"  Maker locked; the Taker never claims. Waiting for the Maker's refund deadline ({earlier}s after the take)")
     while time.time() < started + earlier + 30:
         time.sleep(20)
     view = maker_view(swap_id)
@@ -532,8 +556,7 @@ def scenario_maker_refund(stamp: str) -> dict:
             break
         time.sleep(20)
     else:
-        raise Failure("Maker did not refund its LEZ leg")
-    mine(csv_blocks + 1)
+        raise Failure("Maker did not refund its leg")
     while time.time() < started + later + 30:
         time.sleep(20)
     request_refund_until_terminal(swap_id, stamp, timeout=1500)
@@ -595,7 +618,7 @@ def run(name: str) -> bool:
     stamp = str(int(time.time()))
     log(f"=== {name} (stamp {stamp})")
     started = time.time()
-    summary = {"scenario": name, "stamp": stamp, "timing": timing_profile()}
+    summary = {"scenario": name, "direction": ROUTE["direction"], "stamp": stamp, "timing": timing_profile()}
     try:
         for role in ("maker", "taker"):
             wait_healthy(role, timeout=60)
@@ -609,7 +632,7 @@ def run(name: str) -> bool:
     summary["seconds"] = round(time.time() - started)
     out = RUNTIME / "e2e"
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{name}.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (out / f"{name}{'-lez' if REVERSE else ''}.json").write_text(json.dumps(summary, indent=2) + "\n")
     log(f"=== {name}: {summary['result']} in {summary['seconds']}s")
     return summary["result"] == "passed"
 
@@ -617,7 +640,12 @@ def run(name: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("scenario", choices=[*SCENARIOS, "all"])
+    parser.add_argument("--direction", choices=["TakerSellsForeign", "TakerSellsLez"], default="TakerSellsForeign",
+                        help="which side the Taker sells; TakerSellsLez locks LEZ first and claims Bitcoin")
     args = parser.parse_args()
+    global REVERSE
+    ROUTE["direction"] = args.direction
+    REVERSE = args.direction == "TakerSellsLez"
     names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
     for name in names:
         if not run(name):

@@ -154,9 +154,27 @@ async function outputAfterSignal(app, objectName, objectNameOutput, predicate) {
   }
 }
 
-async function triggerVisibleAction(app, objectName, expectedText, outputName, workingState) {
+// A silent market refresh from the desk's own root, so a button the Node
+// offers later (a refund past the Maker's cutoff) appears without a click.
+async function refreshMarket(app, walletObjectName) {
+  const wallet = await app.findByProperty("objectName", walletObjectName);
+  if (wallet.matches?.length === 1) await evaluateIn(app, wallet.matches[0].id, "root.refreshBtcMarket(true)");
+}
+
+// The swaps the desk renders, narrowed to the one the caller named (the Node
+// names each swap in its take reply, the desk carries it as `ui_swap_id`).
+function renderedSwaps(envelope, wanted) {
+  return (envelope.result?.swaps ?? []).filter((swap) =>
+    !wanted || swap.ui_swap_id === wanted || swap.swap_id === wanted);
+}
+
+const waitTimeoutMs = Number(process.env.INTERACTIVE_TIMEOUT_MS || 1800000);
+
+async function triggerVisibleAction(app, objectName, expectedText, outputName, workingStates, wanted, settleMs) {
   let target = null;
   await app.waitFor(async () => {
+    await refreshMarket(app, `${role}BtcWallet`);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
     const found = await app.findByProperty("objectName", objectName);
     for (const match of found.matches ?? []) {
       const response = await app.getProperties(match.id);
@@ -167,16 +185,29 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
       }
     }
     throw new Error(`${expectedText} is not ready`);
-  }, { timeout: 600000, interval: 2000, description: `${expectedText} readiness` });
+  }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
   await evaluateIn(app, target, "clicked()");
   await app.waitFor(async () => {
-    const raw = await property(app, outputName, "text");
-    const envelope = JSON.parse(raw);
-    if (envelope.ok !== true
-        || !(envelope.result?.swaps ?? []).some((swap) => swap.state === workingState)) {
-      throw new Error(`${expectedText} has not entered ${workingState}`);
+    await refreshMarket(app, `${role}BtcWallet`);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const envelope = JSON.parse(await property(app, outputName, "text"));
+    if (envelope.ok === false) throw new Error(`${expectedText} refused: ${JSON.stringify(envelope.error ?? envelope)}`);
+    if (!renderedSwaps(envelope, wanted).some((swap) => workingStates.includes(swap.state))) {
+      throw new Error(`${expectedText} has not entered ${workingStates.join("|")}`);
     }
-  }, { timeout: 45000, interval: 700, description: `${expectedText} submission` });
+  }, { timeout: settleMs, interval: 5000, description: `${expectedText} submission` });
+}
+
+// Watching one swap reach a desk state; the Node acts, the desk shows it.
+async function waitDeskState(app, outputName, wanted, states, label) {
+  await app.waitFor(async () => {
+    await refreshMarket(app, `${role}BtcWallet`);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const envelope = JSON.parse(await property(app, outputName, "text"));
+    if (envelope.ok !== true || !renderedSwaps(envelope, wanted).some((swap) => states.includes(swap.state))) {
+      throw new Error(`no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}`);
+    }
+  }, { timeout: waitTimeoutMs, interval: 15000, description: label });
 }
 
 function unwrap(raw, what) {
@@ -274,29 +305,23 @@ if (role === "maker") {
 
   // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the desk
   // step is to watch the swap reach that state.
+  // `INTERACTIVE_ACTION=wait INTERACTIVE_STATE=<desk state>` names the state
+  // to wait for; the older action names map to the state each ends in.
   const makerWaits = reverseDirection
     ? { lock_btc: ["awaiting_taker_claim", "Bitcoin locked"], claim_lez: ["completed", "LEZ claimed"] }
     : { fund_lez: ["awaiting_taker_claim", "LEZ escrow funded"], claim_btc: ["completed", "Bitcoin claimed"] };
+  if (process.env.INTERACTIVE_ACTION === "wait" && process.env.INTERACTIVE_STATE) {
+    makerWaits.wait = [process.env.INTERACTIVE_STATE, process.env.INTERACTIVE_STATE];
+  }
   if (Object.hasOwn(makerWaits, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
     const [state, label] = makerWaits[action];
-    test(`maker: ${action} performed by the Node`, async (app) => {
-      const wallet = await app.findByProperty("objectName", "makerBtcWallet");
-      if (wallet.error || wallet.matches?.length !== 1) throw new Error("Maker wallet selector is unavailable");
+    test(`maker: ${action} ${state} reached by the Node`, async (app) => {
       // Earlier swaps may already sit in the target state: when the caller
       // names the swap this run created, only that swap counts.
       const wanted = process.env.INTERACTIVE_SWAP_ID || "";
-      await app.waitFor(async () => {
-        await evaluateIn(app, wallet.matches[0].id, "root.refreshBtcMarket(false)");
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        const envelope = JSON.parse(await property(app, "makerOutput", "text"));
-        const swaps = (envelope.result?.swaps ?? []).filter((swap) =>
-          !wanted || swap.swap_id === wanted || swap.ui_swap_id === wanted);
-        if (envelope.ok !== true || !swaps.some((swap) => swap.state === state)) {
-          throw new Error(`no Maker swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${state}`);
-        }
-      }, { timeout: 1800000, interval: 15000, description: `${label} by the Maker Node` });
-      console.log(`  Node-owned swap: Maker ${action} done (${label})`);
+      await waitDeskState(app, "makerOutput", wanted, state.split("|"), `${label} by the Maker Node`);
+      console.log(`  Node-owned swap: Maker reached ${state} (${label})`);
     });
   }
 } else {
@@ -338,11 +363,18 @@ if (role === "maker") {
 
   if (process.env.PREPARE_INTERACTIVE_BTC === "1") {
     test("taker: taking one offer prepares the real Taker BTC action", async (app) => {
+      // Rows of both directions may be open; take one of this run's. Each
+      // Take button is renamed after its row's direction so it can be found.
+      const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
       const buttons = await app.findByProperty("objectName", "takerTakeOffer");
-      if (buttons.error || !buttons.matches?.length) {
-        throw new Error(`no takeable order-book row: ${JSON.stringify(buttons)}`);
+      for (const match of buttons.matches ?? []) {
+        await evaluateIn(app, match.id, 'objectName = "takerTakeOffer:" + String(takerOfferRow.modelData.direction)');
       }
-      await evaluateIn(app, buttons.matches[0].id, "clicked()");
+      const takeable = await app.findByProperty("objectName", `takerTakeOffer:${wantedDirection}`);
+      if (takeable.error || !takeable.matches?.length) {
+        throw new Error(`no takeable ${wantedDirection} order-book row: ${JSON.stringify(buttons).slice(0, 300)}`);
+      }
+      await evaluateIn(app, takeable.matches[0].id, "clicked()");
       const firstAction = reverseDirection ? "lock_lez" : "lock_btc";
       // Older swaps may already show the same lock button: only the swap this
       // take created counts, and the Node names it in its reply. A rejected
@@ -371,15 +403,29 @@ if (role === "maker") {
     });
   }
 
+  // A refund is admitted at once and driven by the Node until the chain
+  // clocks allow it, so its row settles into refunding/refunded much later.
   const takerActions = reverseDirection
-    ? { lock_lez: ["Lock 1,000 LEZ", "locking_lez"], claim_btc: ["Claim 0.01000000 BTC", "claiming_btc"] }
-    : { lock_btc: ["Lock 0.01000000 BTC", "locking_btc"], claim_lez: ["Claim 1,000 LEZ", "claiming_lez"] };
+    ? { lock_lez: ["Lock 1,000 LEZ", ["locking_lez"], 45000],
+        claim_btc: ["Claim 0.01000000 BTC", ["claiming_btc"], 45000],
+        refund_lez: ["Refund 1,000 LEZ", ["refunding", "refunded"], waitTimeoutMs] }
+    : { lock_btc: ["Lock 0.01000000 BTC", ["locking_btc"], 45000],
+        claim_lez: ["Claim 1,000 LEZ", ["claiming_lez"], 45000],
+        refund_btc: ["Refund 0.01000000 BTC", ["refunding", "refunded"], waitTimeoutMs] };
   if (Object.hasOwn(takerActions, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
-    const [label, working] = takerActions[action];
+    const [label, working, settleMs] = takerActions[action];
     test(`taker: perform ${action}`, async (app) => {
-      await triggerVisibleAction(app, "takerSwapAction", label, "takerOutput", working);
+      await triggerVisibleAction(app, "takerSwapAction", label, "takerOutput", working,
+                                 process.env.INTERACTIVE_SWAP_ID || "", settleMs);
       console.log(`  Node-owned swap: Taker ${action} submitted`);
+    });
+  }
+  if (process.env.INTERACTIVE_ACTION === "wait" && process.env.INTERACTIVE_STATE) {
+    const states = process.env.INTERACTIVE_STATE.split("|");
+    test(`taker: swap reaches ${states.join("|")}`, async (app) => {
+      await waitDeskState(app, "takerOutput", process.env.INTERACTIVE_SWAP_ID || "", states, `${states.join("|")} on the Taker desk`);
+      console.log(`  Node-owned swap: Taker desk shows ${states.join("|")}`);
     });
   }
 

@@ -83,7 +83,9 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
 fi
 
 echo "[1/6] generating runtime config…"
+env_before="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 bash scripts/gen-config.sh runtime
+env_after="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 load_env
 
 echo "[2/6] images…"
@@ -138,7 +140,9 @@ fi
 after="$(sha256sum runtime/market-bootstrap.env 2>/dev/null | cut -c1-64 || true)"
 
 echo "[5/6] Nodes…"
-if [[ "$before" != "$after" || "$FRESH_LEZ" == 1 ]]; then
+# A changed runtime.env (a timing profile switch, say) reaches the Nodes only
+# through a recreate; entrypoints read it once.
+if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 1 ]]; then
   docker compose up -d --force-recreate maker-node taker-node
 else
   docker compose up -d maker-node taker-node
