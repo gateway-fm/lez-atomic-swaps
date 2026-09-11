@@ -214,6 +214,20 @@ impl std::fmt::Debug for LezSidecar {
     }
 }
 
+/// How often a sidecar request whose transport failed is made again, and how
+/// long between attempts.
+const TRANSPORT_ATTEMPTS: u32 = 4;
+const TRANSPORT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Whether the sidecar could not be reached or did not answer in time; the
+/// request itself was not refused.
+fn transport_failed(error: &BridgeClientError) -> bool {
+    matches!(
+        error,
+        BridgeClientError::Transport { .. } | BridgeClientError::Timeout { .. }
+    )
+}
+
 impl LezSidecar {
     /// Connects to one swap's sidecar at `endpoint` with its capability.
     ///
@@ -305,21 +319,32 @@ impl LezSidecar {
         &self,
         terms: WitnessedNativeEscrowTerms,
     ) -> Result<PreparedEscrow> {
-        let request = PrepareWitnessedEscrowRequest {
-            context: self.context()?,
-            runtime: self.runtime.clone(),
-            terms,
-        };
-        let result = self
-            .client
-            .prepare_witnessed_escrow(request.clone())
-            .await
-            .context("prepare witnessed LEZ escrow")?;
-        ensure!(
-            result.context == request.context,
-            "sidecar answered another request"
-        );
-        Ok(PreparedEscrow { request, result })
+        // A preparation submits nothing, so one whose transport failed is
+        // simply made again; the sidecar can be briefly unreachable right
+        // after it came up or while its observer holds it.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let request = PrepareWitnessedEscrowRequest {
+                context: self.context()?,
+                runtime: self.runtime.clone(),
+                terms: terms.clone(),
+            };
+            match self.client.prepare_witnessed_escrow(request.clone()).await {
+                Ok(result) => {
+                    ensure!(
+                        result.context == request.context,
+                        "sidecar answered another request"
+                    );
+                    return Ok(PreparedEscrow { request, result });
+                }
+                Err(error) if transport_failed(&error) && attempt < TRANSPORT_ATTEMPTS => {
+                    eprintln!("LEZ sidecar prepare attempt {attempt} failed in transport: {error}");
+                    tokio::time::sleep(TRANSPORT_RETRY_DELAY).await;
+                }
+                Err(error) => return Err(error).context("prepare witnessed LEZ escrow"),
+            }
+        }
     }
 
     /// Submits one exact prepared transaction through the sidecar, which
@@ -332,21 +357,31 @@ impl LezSidecar {
     /// another transaction id than the prepared one.
     pub async fn submit(&self, transaction: PreparedTransaction) -> Result<SubmissionOutcome> {
         let expected = transaction.transaction_id;
-        let request = SubmitTransactionRequest {
-            context: self.context()?,
-            runtime: self.runtime.clone(),
-            transaction,
-        };
-        let result = self
-            .client
-            .submit_transaction(request.clone())
-            .await
-            .context("submit LEZ transaction")?;
-        ensure!(
-            result.context == request.context && result.transaction_id == expected,
-            "sidecar answered another submission"
-        );
-        Ok(result.outcome)
+        // The bytes are exact, so a submission whose outcome is unknown is
+        // repeated: a node that took it the first time answers `AlreadyKnown`.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let request = SubmitTransactionRequest {
+                context: self.context()?,
+                runtime: self.runtime.clone(),
+                transaction: transaction.clone(),
+            };
+            match self.client.submit_transaction(request.clone()).await {
+                Ok(result) => {
+                    ensure!(
+                        result.context == request.context && result.transaction_id == expected,
+                        "sidecar answered another submission"
+                    );
+                    return Ok(result.outcome);
+                }
+                Err(error) if transport_failed(&error) && attempt < TRANSPORT_ATTEMPTS => {
+                    eprintln!("LEZ sidecar submit attempt {attempt} failed in transport: {error}");
+                    tokio::time::sleep(TRANSPORT_RETRY_DELAY).await;
+                }
+                Err(error) => return Err(error).context("submit LEZ transaction"),
+            }
+        }
     }
 
     /// Prepares the claimant's witnessed claim message for `terms`.

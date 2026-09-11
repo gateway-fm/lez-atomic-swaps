@@ -193,14 +193,28 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     throw new Error(`${expectedText} is not ready${wanted ? ` on ${wanted.slice(0, 12)}` : ""}`);
   }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
   await evaluateIn(app, target, "clicked()");
+  // A refusal the Node reports as a dependency being unavailable is what the
+  // owner retries by pressing again (the API run retries the same way); any
+  // other refusal fails the step.
+  let retries = 0;
   await app.waitFor(async () => {
     let envelope = null;
     try { envelope = JSON.parse(await property(app, outputName, "text")); } catch { /* not a reply */ }
-    if (envelope?.ok === false) throw new Error(`${expectedText} refused: ${JSON.stringify(envelope.error ?? envelope)}`);
+    if (envelope?.ok === false) {
+      const code = String(envelope.error?.code ?? envelope.code ?? "");
+      if (/unavailable/.test(code) && retries < 4) {
+        retries += 1;
+        console.log(`  ${expectedText} refused (${code}); pressing again (${retries}/4)`);
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+        await evaluateIn(app, target, "clicked()");
+        throw new Error(`${expectedText} pressed again after ${code}`);
+      }
+      throw new Error(`${expectedText} refused: ${JSON.stringify(envelope.error ?? envelope)}`);
+    }
     if (!rowsFor(await deskSwaps(app), wanted).some((swap) => workingStates.includes(swap.state))) {
       throw new Error(`${expectedText} has not entered ${workingStates.join("|")}`);
     }
-  }, { timeout: settleMs, interval: 5000, description: `${expectedText} submission` });
+  }, { timeout: settleMs + 90000, interval: 5000, description: `${expectedText} submission` });
 }
 
 // Watching one swap reach a desk state; the Node acts, the desk shows it.
