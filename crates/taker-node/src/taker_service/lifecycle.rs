@@ -332,10 +332,20 @@ fn btc_actor_progress(
         Phase::Offered | Phase::AwaitingTakerConfirmations => {
             (TakerSwapStateV1::AwaitingFirstLock, None)
         }
-        Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations => (
-            TakerSwapStateV1::AwaitingSecondLock,
-            Some(TakerTerminalActionV1::Refund),
-        ),
+        // The refund is offered once the actor routes to recovery, which it
+        // does past the Maker's second-lock cutoff; before that the Maker's
+        // lock is still awaited and nothing is offered.
+        Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations
+            if next_action == ActorNextActionV1::RecoverTakerLeg =>
+        {
+            (
+                TakerSwapStateV1::AwaitingSecondLock,
+                Some(TakerTerminalActionV1::Refund),
+            )
+        }
+        Phase::TakerLockConfirmed | Phase::AwaitingMakerConfirmations => {
+            (TakerSwapStateV1::AwaitingSecondLock, None)
+        }
         // The claim window has closed: a claim can no longer land, so the Node
         // follows the Maker's refund and offers the Taker's own afterwards.
         Phase::BothLegsLocked if next_action == ActorNextActionV1::RecoverMakerLeg => {
@@ -2195,6 +2205,10 @@ mod tests {
                 Phase::AwaitingMakerConfirmations,
                 Next::ObserveMakerSecondLockOrRecoverTakerLeg,
             ),
+            (TakerSwapStateV1::AwaitingSecondLock, None)
+        );
+        assert_eq!(
+            btc_actor_progress(Phase::TakerLockConfirmed, Next::RecoverTakerLeg),
             (
                 TakerSwapStateV1::AwaitingSecondLock,
                 Some(TakerTerminalActionV1::Refund),
