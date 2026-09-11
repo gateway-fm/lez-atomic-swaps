@@ -376,7 +376,10 @@ if (role === "maker") {
     console.log("  order book: the Maker Node's offers are visible to the Taker Node's identity");
   });
 
-  test("taker: real Node health", async (app) => {
+  // "Node ready" is a precondition of a take only: a scenario may act on an
+  // existing swap while the Maker Node is stopped, and the Taker then
+  // reports its peer as unavailable.
+  if (takeStep) test("taker: real Node health", async (app) => {
     // Signal-invoke by objectName: text-targeted clicks do not reliably reach
     // controls under the offscreen platform once the order book has grown.
     const check = await app.findByProperty("objectName", "takerHealth");
