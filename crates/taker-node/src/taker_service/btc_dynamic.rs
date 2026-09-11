@@ -26,7 +26,7 @@ use lez_btc_role_lifecycle::{
     BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, SwapLayout, SwapSidecar,
     TakerCeremony, WalletBalancesV1,
     actor::{ActorSynthesis, activate, synthesize},
-    balances::role_wallet_balances,
+    balances::{lez_owner_balance, role_wallet_balances},
     layout::{read_private, write_private_exact},
     lez::{
         PlanningTermsInput, aggregate_authority_account, agreement_terms, escrow_accounts,
@@ -878,6 +878,15 @@ pub(super) async fn execute(
     Ok(())
 }
 
+/// One LEZ escrow submission in flight per Node. The escrow is prepared at
+/// the owner account's next nonce, so a second escrow prepared before the
+/// first pair (initialization, funding) is included carries the same nonce
+/// and the sequencer skips it ("Nonce mismatch"); the swap then never sees
+/// its lock. The gate holds the nonce the account must reach before the next
+/// preparation; a lock waits for it, bounded, and past the bound it reports
+/// the dependency unavailable so the owner retries.
+static LEZ_LOCK_GATE: tokio::sync::Mutex<u64> = tokio::sync::Mutex::const_new(0);
+
 /// The Taker's Bitcoin lock: broadcasts the exact funding transaction once.
 /// Performs this Taker's first lock and returns the chain it landed on, its
 /// transaction id and whether it had been performed before. Selling Bitcoin,
@@ -922,6 +931,8 @@ pub(super) async fn lock(
         agreement.lez_depositor() == Participant::Taker,
         "the agreement does not make this Taker the LEZ depositor"
     );
+    let mut gate = LEZ_LOCK_GATE.lock().await;
+    let nonce = wait_for_lez_nonce(&dynamic.runtime, *gate).await?;
     let (_, sidecar) = dynamic.sidecar(&layout, reservation_id)?;
     let escrow = if layout.escrow_result_file().exists() {
         // A crash between preparation and submission: reuse the exact bytes.
@@ -944,7 +955,31 @@ pub(super) async fn lock(
     let _funding: SubmissionOutcome = sidecar.submit(escrow.funding).await?;
     record.lez_lock_transaction_id = Some(funding_id.clone());
     record.store(&layout)?;
+    *gate = nonce + 2;
     Ok(("lez", funding_id, false))
+}
+
+/// How long a LEZ lock waits for the previous lock's transactions to be
+/// included before it reports the dependency unavailable.
+const LEZ_NONCE_WAIT: std::time::Duration = std::time::Duration::from_secs(100);
+
+/// The owner account's nonce once it has reached `target`, read from the
+/// configured indexer; bounded by [`LEZ_NONCE_WAIT`].
+async fn wait_for_lez_nonce(runtime: &BtcRoleRuntime, target: u64) -> Result<u64> {
+    let deadline = tokio::time::Instant::now() + LEZ_NONCE_WAIT;
+    let mut last = None;
+    loop {
+        match lez_owner_balance(runtime).await {
+            Ok((_, nonce)) if nonce >= target => return Ok(nonce),
+            Ok((_, nonce)) => last = Some(nonce),
+            Err(error) => eprintln!("taker LEZ nonce read failed: {error:#}"),
+        }
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "the previous LEZ lock is not included yet (account nonce {last:?}, waiting for {target})"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
 }
 
 /// Keeps the swap's sidecar running (respawns it after a Node restart) so the
