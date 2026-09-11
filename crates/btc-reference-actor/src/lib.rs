@@ -6451,16 +6451,9 @@ where
         validate_lez_refund_transition(&self.config, agreement, transition)?;
         let owner = self.config.role.sdk() == transition.funded_participant();
         if !owner {
-            let request = lez_refund_observation_request(
-                &self.config,
-                agreement,
-                transition,
-                NativeRefundObservationTarget::DiscoverByTerms {
-                    window: self.config.discovery_window()?,
-                },
-            )?;
-            let response = self.chain.observe_native_refund(request.clone()).await?;
-            validate_lez_refund_response(&self.config, agreement, transition, &request, &response)?;
+            let (request, response) = self
+                .discover_counterparty_refund(agreement, transition)
+                .await?;
             return finalized_lez_refund_observation(
                 &self.config,
                 agreement,
@@ -6530,6 +6523,44 @@ impl<P> LezRefundObserver<P>
 where
     P: LezRefundChainPort,
 {
+    /// Discovers the counterparty's refund by the signed terms: in the swap's
+    /// discovery window, and, when the escrow reads as refunded there while
+    /// the window does not hold the refund (the leg that refunds later does
+    /// so past the window that bounds the Maker's lock), once more over the
+    /// whole span since the swap's start.
+    async fn discover_counterparty_refund(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+    ) -> Result<(ObserveNativeRefundRequest, ObserveNativeRefundResult), ActorCommandError> {
+        let mut window = self.config.discovery_window()?;
+        loop {
+            let request = lez_refund_observation_request(
+                &self.config,
+                agreement,
+                transition,
+                NativeRefundObservationTarget::DiscoverByTerms { window },
+            )?;
+            let response = self.chain.observe_native_refund(request.clone()).await?;
+            let account_state = validate_lez_refund_response(
+                &self.config,
+                agreement,
+                transition,
+                &request,
+                &response,
+            )?;
+            let full_span = self.config.full_span_window(response.clock_after.height)?;
+            if account_state == Some(EscrowState::Refunded)
+                && response.refund == NativeRefundObservation::Absent
+                && window != full_span
+            {
+                window = full_span;
+                continue;
+            }
+            return Ok((request, response));
+        }
+    }
+
     /// Looks up this actor's own refund exactly: in the window trailing the
     /// finalized tip the escrow state was read at, and, when the escrow
     /// reads as refunded but that window does not hold it, once more over
