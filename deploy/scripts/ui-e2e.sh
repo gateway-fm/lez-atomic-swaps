@@ -53,7 +53,7 @@ ui() { # ui <role> [ENV=VALUE...]
   for kv in "$@"; do envs+=(-e "$kv"); done
   docker compose --env-file runtime/runtime.env run --rm --no-deps "${envs[@]}" \
     --entrypoint node basecamp-ui /ui-tests/verify.mjs "$role" 2>&1 |
-    grep -E '✓|✗|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready' | grep -viE 'locale'
+    grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready' | grep -viE 'locale'
 }
 taker_swaps() { # the Taker Node's own view: "<swap_id> <state> <generation> <action>"
   local reply

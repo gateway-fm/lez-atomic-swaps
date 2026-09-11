@@ -372,18 +372,20 @@ if (role === "maker") {
   if (process.env.PREPARE_INTERACTIVE_BTC === "1") {
     test("taker: taking one offer prepares the real Taker BTC action", async (app) => {
       // Rows of both directions may be open; take one of this run's, read
-      // from the row's own model behind each Take button.
-      const buttons = await app.findByProperty("objectName", "takerTakeOffer");
+      // from the row's own model behind each Take button. An offer the Maker
+      // desk just published reaches this order book over Delivery, so the
+      // row is awaited rather than demanded at once.
       let target = null;
-      const seen = [];
-      for (const match of buttons.matches ?? []) {
-        const direction = await evaluateIn(app, match.id, "String(modelData.direction)");
-        seen.push(direction.result);
-        if (direction.ok === true && direction.result === wantedDirection) { target = match.id; break; }
-      }
-      if (target === null) {
-        throw new Error(`no takeable ${wantedDirection} order-book row (rows: ${seen.join(", ") || "none"})`);
-      }
+      await app.waitFor(async () => {
+        const buttons = await app.findByProperty("objectName", "takerTakeOffer");
+        const seen = [];
+        for (const match of buttons.matches ?? []) {
+          const direction = await evaluateIn(app, match.id, "String(modelData.direction)");
+          seen.push(direction.result);
+          if (direction.ok === true && direction.result === wantedDirection) { target = match.id; return; }
+        }
+        throw new Error(`no takeable ${wantedDirection} order-book row yet (rows: ${seen.join(", ") || "none"})`);
+      }, { timeout: 180000, interval: 5000, description: `${wantedDirection} order-book row` });
       await evaluateIn(app, target, "clicked()");
       const firstAction = reverseDirection ? "lock_lez" : "lock_btc";
       // Older swaps may already show the same lock button: only the swap this
