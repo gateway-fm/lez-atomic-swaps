@@ -1444,6 +1444,15 @@ where
         .observe_exact_funding(agreement)
         .await
         .map_err(trace_observation_unavailable)?;
+    trace_note(
+        "bitcoin_maker_step_observation",
+        match &observation {
+            ExactFundingObservation::Absent { .. } => "absent",
+            ExactFundingObservation::Pending { .. } => "pending",
+            ExactFundingObservation::Unspent(_) => "unspent",
+            ExactFundingObservation::Spent { .. } => "spent",
+        },
+    );
     Ok(match observation {
         ExactFundingObservation::Absent { .. } => MakerLockStepChainObservationV1::Absent,
         ExactFundingObservation::Pending { transaction, .. } => {
@@ -1456,7 +1465,12 @@ where
                 MakerLockStepChainObservationV1::ConflictingPresence
             }
         }
-        ExactFundingObservation::Unspent(funding) => {
+        // Confirmed, unspent or already spent: an output the Taker's revealing
+        // claim spent before this Maker observed its own lock (two swaps served
+        // in turn, say) is a canonical lock all the same; the spender is the
+        // next revision's evidence.
+        ExactFundingObservation::Unspent(funding)
+        | ExactFundingObservation::Spent { funding, .. } => {
             if bitcoin_step_is_exact(step, funding.transaction()) {
                 MakerLockStepChainObservationV1::PresentExactCanonical {
                     expected_public_id: step.expected_public_id().as_str().into(),
@@ -1466,7 +1480,6 @@ where
                 MakerLockStepChainObservationV1::ConflictingPresence
             }
         }
-        ExactFundingObservation::Spent { .. } => MakerLockStepChainObservationV1::Uncertain,
     })
 }
 
@@ -5495,7 +5508,15 @@ where
         .observe_exact_funding(agreement)
         .await
         .map_err(trace_observation_unavailable)?;
-    let ExactFundingObservation::Unspent(observed) = observed else {
+    // Confirmed and unspent, or confirmed and already spent: the Taker's
+    // revealing claim can land before this Maker projects its own lock (two
+    // swaps served in turn, say), and a spent lock is a canonical lock all the
+    // same; the spender is the next revision's evidence.
+    let (ExactFundingObservation::Unspent(observed)
+    | ExactFundingObservation::Spent {
+        funding: observed, ..
+    }) = observed
+    else {
         return Ok(ActorFundingObservation::Pending {
             chain: Chain::Bitcoin,
         });
