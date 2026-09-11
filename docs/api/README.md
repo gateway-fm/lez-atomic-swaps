@@ -249,7 +249,10 @@ explorer shows.
 States include `initiating`, `not_activated`, `awaiting_first_lock`,
 `awaiting_second_lock`, `both_legs_locked`, `claim_available`,
 `refund_available`, `claim_in_progress`, `refund_in_progress`, `completed`,
-`refunded`, `attention_required`. `both_legs_locked` with no
+`refunded`, `attention_required`. `awaiting_second_lock` carries
+`available_action: "refund"` only once the Maker's second-lock cutoff
+(`terms.maker_second_lock_cutoff_unix_seconds`) has passed; before it the
+Maker's lock is still awaited and no action is offered. `both_legs_locked` with no
 `available_action` means the claim window has closed (the earlier refund's
 deadline passed): a claim can no longer be included, the Node follows the
 Maker's refund and then offers `refund`; an earlier admitted `claim` no longer

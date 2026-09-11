@@ -9298,7 +9298,6 @@ fn effect_output(
     // outputs sees one next action rather than one that flips between them.
     let next_action = match load_agreement(config) {
         Ok((agreement, _)) => routed_next_action(
-            config,
             status,
             maker_cutoff_passed(&agreement),
             claim_window_closed(&agreement),
@@ -9328,29 +9327,24 @@ fn status_output(
         state: ActorStateV1::Active {
             phase: status.phase().into(),
             revision: status.revision(),
-            next_action: routed_next_action(
-                config,
-                status,
-                maker_cutoff_passed,
-                claim_window_closed,
-            ),
+            next_action: routed_next_action(status, maker_cutoff_passed, claim_window_closed),
         },
     }
 }
 
 /// The durable next action with the wall-clock routing applied.
 fn routed_next_action(
-    config: &ActorConfig,
     status: &BtcOfflineStatus,
     maker_cutoff_passed: bool,
     claim_window_closed: bool,
 ) -> ActorNextActionV1 {
     let mut next_action = actor_next_action(status);
     // Past its second-lock cutoff the Maker may no longer lock; the only thing
-    // left for it at revision 1 is to follow the Taker's recovery, so its
-    // supervisor is told to recover rather than to keep driving a lock.
-    if config.role == ActorRole::Maker
-        && maker_cutoff_passed
+    // left at revision 1 is the Taker's recovery. Both roles are routed there:
+    // the Maker's supervisor recovers rather than keeps driving a lock, and
+    // the Taker's Node offers the refund from this instant and not before, so
+    // the schedule it shows and the action it offers have one source.
+    if maker_cutoff_passed
         && next_action == ActorNextActionV1::ObserveMakerSecondLockOrRecoverTakerLeg
     {
         next_action = ActorNextActionV1::RecoverTakerLeg;

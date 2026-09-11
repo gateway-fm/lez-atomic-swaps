@@ -3974,6 +3974,16 @@ async fn ready_first_lock_is_observed_then_projected_once() {
     assert_eq!(projected["revision"], 1);
     assert_eq!(projected["phase"], "taker_lock_confirmed");
     assert_eq!(observer.calls(), 1);
+    // The fixture's schedule lies in 2023; only a clock still inside the
+    // Maker's lock window keeps revision one on observing its lock.
+    freeze_wall_clock(
+        fixture
+            .agreement
+            .body()
+            .recovery_plan()
+            .maker_second_lock_cutoff_unix_seconds()
+            - 1,
+    );
     let status = output_json(
         execute_actor_command(&fixture.config, ActorCommand::Status)
             .await
@@ -4100,6 +4110,45 @@ async fn closed_claim_window_routes_revision_two_to_recovery_through_the_maker_l
             assert_eq!(status["revision"], 2, "{role:?} at {now}");
             assert_eq!(status["phase"], "both_legs_locked", "{role:?} at {now}");
             assert_eq!(status["next_action"], expected, "{role:?} at {now}");
+        }
+    }
+}
+
+/// Past the Maker's second-lock cutoff nothing but the Taker's recovery is
+/// left at revision 1, for both roles: the Maker's supervisor stops driving a
+/// lock, and the Taker's Node offers the refund from that instant and not
+/// before, so the schedule it shows and the action it offers agree.
+#[tokio::test(flavor = "current_thread")]
+async fn passed_maker_cutoff_routes_revision_one_to_taker_recovery_for_both_roles() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for role in [ActorRole::Taker, ActorRole::Maker] {
+            let fixture = ActorFixture::for_direction(direction, role);
+            activate_and_project_taker_lock(&fixture).await;
+            let cutoff = fixture
+                .agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds();
+            for (now, expected) in [
+                (cutoff - 1, "observe_maker_second_lock_or_recover_taker_leg"),
+                (cutoff, "recover_taker_leg"),
+                (cutoff + 3_600, "recover_taker_leg"),
+            ] {
+                freeze_wall_clock(now);
+                let status = output_json(
+                    execute_actor_command(&fixture.config, ActorCommand::Status)
+                        .await
+                        .expect("offline revision-one status"),
+                );
+                assert_eq!(status["revision"], 1, "{direction:?} {role:?} at {now}");
+                assert_eq!(
+                    status["next_action"], expected,
+                    "{direction:?} {role:?} at {now}"
+                );
+            }
         }
     }
 }
