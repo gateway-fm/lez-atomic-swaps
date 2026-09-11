@@ -7,7 +7,7 @@ class LocalJsonRpcClient
 {
 public:
     explicit LocalJsonRpcClient(QString environmentVariable,
-                                qsizetype maximumMessageBytes = 64 * 1024,
+                                qsizetype maximumMessageBytes = 4 * 1024 * 1024,
                                 int connectTimeoutMs = 3000,
                                 int ioTimeoutMs = 10000);
 

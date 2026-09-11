@@ -13,7 +13,8 @@ use tokio::net::UnixStream;
 
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_ID: u64 = 1;
-const MAXIMUM_CONTROL_RPC_BODY_BYTES: usize = 64 * 1024;
+// A swap list grows with the Node's history; replies are read up to 4 MiB.
+const MAXIMUM_CONTROL_RPC_BODY_BYTES: usize = 4 * 1024 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: usize = 1024 * 1024;
 const MAXIMUM_CHAT_GATEWAY_RPC_BODY_BYTES: usize = 4 * 1024 * 1024;
 const DEFAULT_LOCAL_RPC_TIMEOUT: Duration = Duration::from_secs(30);

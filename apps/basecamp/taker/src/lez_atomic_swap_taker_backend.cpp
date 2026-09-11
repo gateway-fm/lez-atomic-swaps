@@ -46,7 +46,7 @@ const node_market::TakerWallet kTakerWallet{QStringLiteral("taker-zurich-01"),
 
 LezAtomicSwapTakerBackend::LezAtomicSwapTakerBackend()
     : rpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"))
-    , slowRpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"), 256 * 1024, 3000, 240000)
+    , slowRpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"), 4 * 1024 * 1024, 3000, 240000)
     , chat_(std::make_unique<LogosChatBridge>(QStringLiteral("taker"), this))
 {
     (void)qEnvironmentVariable("LEZ_TAKER_RPC_SOCKET");

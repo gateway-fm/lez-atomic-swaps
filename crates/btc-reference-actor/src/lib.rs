@@ -3704,6 +3704,25 @@ async fn recover_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, Actor
             &durable,
         ));
     };
+    // A Maker past its cutoff may still hold a lock it sent in time and has
+    // not yet observed (its supervisor served other swaps first, say); the
+    // Taker sees that lock as canonical and may already have claimed. It is
+    // projected before any recovery of the Taker's leg; only a lock that is
+    // absent, or was refused as late, leaves recovery to run.
+    if transition == RefundTransition::FirstLockRecovery
+        && config.role == ActorRole::Maker
+        && config.supports_owned_maker_lock()
+    {
+        let port = LiveMakerLockExecutionPort::new(config)?;
+        match drive_maker_lock_with_port(config, agreement.clone(), wire.clone(), &port).await {
+            Ok(output) if output.revision > durable.revision() => return Ok(output),
+            Ok(_) => {}
+            Err(error) => trace_note(
+                "first_lock_recovery_lock_observation",
+                &format!("own lock not projected before recovery: {error:?}"),
+            ),
+        }
+    }
     let chain = agreement
         .coordinator()
         .funded_chain(transition.funded_participant());
