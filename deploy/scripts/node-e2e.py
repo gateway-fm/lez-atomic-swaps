@@ -591,19 +591,20 @@ def preflight() -> None:
     # LEZ finality must be moving: bedrock has frozen after a restart (its
     # wallet never came back), leaving the sequencer producing blocks nobody
     # finalizes. Every sidecar observation then sees the same clock forever.
-    # Finality arrives from bedrock in bursts (10 s slots, batches of blocks),
-    # so one short sample can show no progress on a healthy chain; a frozen
-    # chain shows none for minutes.
+    # Finality arrives from bedrock in bursts: a day-old bedrock pauses its
+    # finality for minutes and then catches up in one step, so a short sample
+    # can show no progress on a chain the swaps still complete on; a frozen
+    # chain shows none at all.
     log("preflight: LEZ finality advancing")
     first = lez_finalized_height()
     started = time.time()
-    while time.time() < started + 120:
+    while time.time() < started + 300:
         time.sleep(10)
         second = lez_finalized_height()
         if second > first:
             log(f"  indexer finalized {first} → {second} in {round(time.time() - started)} s")
             return
-    raise Failure(f"LEZ finalized height stuck at {first} for 120 s: bedrock or the indexer is not advancing; "
+    raise Failure(f"LEZ finalized height stuck at {first} for 300 s: bedrock or the indexer is not advancing; "
                   "recreate the LEZ chain (see project notes) before running swaps")
 
 
