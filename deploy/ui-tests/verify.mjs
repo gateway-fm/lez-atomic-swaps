@@ -180,12 +180,16 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     for (const match of found.matches ?? []) {
       const response = await app.getProperties(match.id);
       const values = Object.fromEntries((response.properties ?? []).map((entry) => [entry.name, entry.value]));
-      if (values.visible === true && values.enabled === true && values.text === expectedText) {
-        target = match.id;
-        return;
+      if (values.visible !== true || values.enabled !== true || values.text !== expectedText) continue;
+      // Other swaps may show the same button; only the named swap's row counts.
+      if (wanted) {
+        const row = await evaluateIn(app, match.id, "String(modelData.ui_swap_id)");
+        if (row.ok !== true || row.result !== wanted) continue;
       }
+      target = match.id;
+      return;
     }
-    throw new Error(`${expectedText} is not ready`);
+    throw new Error(`${expectedText} is not ready${wanted ? ` on ${wanted.slice(0, 12)}` : ""}`);
   }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
   await evaluateIn(app, target, "clicked()");
   await app.waitFor(async () => {
