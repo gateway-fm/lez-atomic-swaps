@@ -413,6 +413,9 @@ if (role === "maker") {
       // Older swaps may already show the same lock button: only the swap this
       // take created counts, and the Node names it in its reply. A rejected
       // take fails at once instead of waiting out the deadline.
+      // The take reply names the swap; its readiness to lock is read from the
+      // desk's live model (the reply's own snapshot may predate the swap's
+      // activation).
       const deadline = Date.now() + 600000;
       let taken;
       for (;;) {
@@ -423,7 +426,7 @@ if (role === "maker") {
         }
         const swapId = envelope?.result?.taken?.swap?.swap_id;
         if (swapId) {
-          const row = (envelope.result.swaps ?? []).find((swap) => swap.ui_swap_id === swapId);
+          const row = rowsFor(await deskSwaps(app), swapId)[0];
           if (row?.action_required === firstAction) { taken = swapId; break; }
           if (Date.now() > deadline) {
             throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction}`);
