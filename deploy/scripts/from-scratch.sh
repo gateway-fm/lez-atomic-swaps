@@ -149,12 +149,32 @@ clone_pinned() { # clone_pinned <url> <ref> <commit> <dir>
   [[ "$(git -C "$dir" rev-parse HEAD)" == "$commit" ]] || fail "$dir is not at $commit"
 }
 
+# Fixes this repository carries on top of a pinned checkout
+# (deploy/builder/patches/<pin>/*.patch), applied to the working tree in
+# order; HEAD stays the pinned commit. Idempotent: an applied patch is skipped.
+apply_source_patches() { # apply_source_patches <dir> <patch-dir>
+  local dir="$1" patch_dir="$2" patch
+  for patch in "$patch_dir"/*.patch; do
+    [[ -e "$patch" ]] || continue
+    if git -C "$dir" apply --check --reverse "$patch" >/dev/null 2>&1; then continue; fi
+    git -C "$dir" apply "$patch" || fail "$(basename "$patch") does not apply to $dir"
+    log "applied $(basename "$patch") to $dir"
+  done
+}
+
+# One digest over the patch set for a pinned source, so a build knows the
+# sources it was made from changed even though the pinned commit did not.
+source_patch_stamp() { # source_patch_stamp <patch-dir>
+  (cd "$1" 2>/dev/null && cat -- *.patch 2>/dev/null) | sha256sum | cut -c1-16
+}
+
 phase_sources() {
   PHASE=sources
   mkdir -p "$PROVISION" "$MARKET_ROOT"
   chmod 0700 "$MARKET_ROOT"
   clone_pinned https://github.com/logos-blockchain/logos-execution-zone.git \
     "$LEZ_SOURCE_TAG" "$LEZ_SOURCE_COMMIT" "$LEZ_SOURCE"
+  apply_source_patches "$LEZ_SOURCE" "$DEPLOY_ROOT/builder/patches/lez-$LEZ_SOURCE_TAG"
   if [[ "$EVIDENCE_MODE" != 1 ]]; then
     clone_pinned https://github.com/logos-co/logos-basecamp.git \
       "$BASECAMP_TAG" "$BASECAMP_COMMIT" "$BASECAMP_SRC"
@@ -334,11 +354,14 @@ build_rapidsnark() {
 
 # LEZ v0.2 services, native release build with rust 1.94.0
 build_lez_services() {
-  if [[ ! -x "$PROVISION/lez-services/sequencer_service" || ! -x "$PROVISION/lez-services/indexer_service" ]]; then
+  local stamp; stamp="$(source_patch_stamp "$DEPLOY_ROOT/builder/patches/lez-$LEZ_SOURCE_TAG")"
+  if [[ ! -x "$PROVISION/lez-services/sequencer_service" || ! -x "$PROVISION/lez-services/indexer_service" \
+     || "$(cat "$PROVISION/lez-services/source-patches.stamp" 2>/dev/null)" != "$stamp" ]]; then
     log "building LEZ v0.2 services (rust 1.94.0, release, locked; ~40 min cold)"
     builder_run -- "cd /lez-source; CARGO_TARGET_DIR=/cache/target/lez cargo +1.94.0 build --locked --release \
       --package sequencer_service --package indexer_service 2>&1 | tail -2;
       mkdir -p /provision/lez-services; install -m 0755 /cache/target/lez/release/sequencer_service /cache/target/lez/release/indexer_service /provision/lez-services/"
+    echo "$stamp" > "$PROVISION/lez-services/source-patches.stamp"
   fi
 }
 
