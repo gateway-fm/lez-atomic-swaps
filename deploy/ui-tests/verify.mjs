@@ -20,6 +20,7 @@ if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
   throw new Error("M3_UI_DIRECTION must be TakerSellsForeign or TakerSellsLez");
 }
 const reverseDirection = uiDirection === "TakerSellsLez";
+const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
 
 const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
 // both plugins in one app: the product shape (maker + taker in the sidebar)
@@ -284,17 +285,19 @@ if (role === "maker") {
       (envelope) => envelope.ok === true
         && envelope.result?.selected_wallet_id === "maker-munich-01", true,
     ), "Munich inventory");
-    let pending = (munich.inventory ?? []).filter((offer) => offer.state === "pending").length;
+    // Offers of the other direction may be open too; only this run's count.
+    const pendingHere = (inventory) => (inventory ?? [])
+      .filter((offer) => offer.state === "pending" && offer.direction === wantedDirection).length;
+    let pending = pendingHere(munich.inventory);
     // The Node publishes one offer per click; two open offers prove the
     // inventory is indexed to this Node's identity and survives a refresh.
     while (pending < 2) {
       const target = pending + 1;
       munich = unwrap(await publishOfferOnce(
         app,
-        (envelope) => envelope.ok === true
-          && (envelope.result?.inventory ?? []).filter((offer) => offer.state === "pending").length >= target,
+        (envelope) => envelope.ok === true && pendingHere(envelope.result?.inventory) >= target,
       ), "Munich offers");
-      pending = (munich.inventory ?? []).filter((offer) => offer.state === "pending").length;
+      pending = pendingHere(munich.inventory);
     }
     if (munich.selected_wallet_id !== "maker-munich-01" || munich.runner_ready !== true
         || Number(munich.summary?.pending_offers ?? 0) < 2) {
@@ -363,18 +366,20 @@ if (role === "maker") {
 
   if (process.env.PREPARE_INTERACTIVE_BTC === "1") {
     test("taker: taking one offer prepares the real Taker BTC action", async (app) => {
-      // Rows of both directions may be open; take one of this run's. Each
-      // Take button is renamed after its row's direction so it can be found.
-      const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
+      // Rows of both directions may be open; take one of this run's, read
+      // from the row's own model behind each Take button.
       const buttons = await app.findByProperty("objectName", "takerTakeOffer");
+      let target = null;
+      const seen = [];
       for (const match of buttons.matches ?? []) {
-        await evaluateIn(app, match.id, 'objectName = "takerTakeOffer:" + String(takerOfferRow.modelData.direction)');
+        const direction = await evaluateIn(app, match.id, "String(modelData.direction)");
+        seen.push(direction.result);
+        if (direction.ok === true && direction.result === wantedDirection) { target = match.id; break; }
       }
-      const takeable = await app.findByProperty("objectName", `takerTakeOffer:${wantedDirection}`);
-      if (takeable.error || !takeable.matches?.length) {
-        throw new Error(`no takeable ${wantedDirection} order-book row: ${JSON.stringify(buttons).slice(0, 300)}`);
+      if (target === null) {
+        throw new Error(`no takeable ${wantedDirection} order-book row (rows: ${seen.join(", ") || "none"})`);
       }
-      await evaluateIn(app, takeable.matches[0].id, "clicked()");
+      await evaluateIn(app, target, "clicked()");
       const firstAction = reverseDirection ? "lock_lez" : "lock_btc";
       // Older swaps may already show the same lock button: only the swap this
       // take created counts, and the Node names it in its reply. A rejected
