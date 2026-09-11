@@ -4153,6 +4153,32 @@ async fn passed_maker_cutoff_routes_revision_one_to_taker_recovery_for_both_role
     }
 }
 
+/// An exact lookup of an own LEZ transaction uses the swap's discovery window
+/// until the chain has grown past it, then trails the finalized tip; when the
+/// escrow reads as refunded outside that window, once the whole span.
+#[test]
+fn exact_lookups_trail_the_finalized_tip_and_fall_back_to_the_whole_span() {
+    let fixture = ActorFixture::new();
+    let start = fixture.config.lez_bridge.discovery_start_height;
+    let max = u64::from(fixture.config.lez_bridge.discovery_max_blocks);
+    let window = |w: DiscoveryWindow| (w.start_height(), u64::from(w.max_blocks()));
+    let early = fixture
+        .config
+        .exact_lookup_window(start + 3)
+        .expect("early window");
+    assert_eq!(window(early), (start, max));
+    let late = fixture
+        .config
+        .exact_lookup_window(start + 3 * max)
+        .expect("trailing window");
+    assert_eq!(window(late), (start + 2 * max + 1, max));
+    let span = fixture
+        .config
+        .full_span_window(start + 3 * max)
+        .expect("full span");
+    assert_eq!(window(span), (start, 3 * max + 1));
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn maker_lock_cutoff_accepts_before_and_at_but_rejects_after_on_both_chains() {
     for direction in [

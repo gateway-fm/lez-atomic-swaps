@@ -724,6 +724,43 @@ impl ActorConfig {
         )
         .map_err(|_| ActorCommandError::ConfigurationUnavailable)
     }
+
+    /// The window an exact lookup of this actor's own LEZ transaction scans:
+    /// the swap's discovery window until the chain has grown past it, then
+    /// the same number of blocks ending at the finalized tip the lookup is
+    /// made at. The discovery window bounds the Maker's lock, which can only
+    /// appear before the cutoff; a refund is submitted only past `refund_at`,
+    /// which lies beyond that window for the leg that refunds later, so a
+    /// lookup anchored at the swap's start would report it absent forever.
+    fn exact_lookup_window(
+        &self,
+        finalized_height: u64,
+    ) -> Result<DiscoveryWindow, ActorCommandError> {
+        let max_blocks = self.lez_bridge.discovery_max_blocks;
+        let trailing_start = finalized_height.saturating_sub(u64::from(max_blocks) - 1);
+        DiscoveryWindow::new(
+            trailing_start.max(self.lez_bridge.discovery_start_height),
+            max_blocks,
+        )
+        .map_err(|_| ActorCommandError::ConfigurationUnavailable)
+    }
+
+    /// Every finalized block since the swap's start, for an exact lookup of
+    /// an own transaction that the trailing window no longer covers (the
+    /// escrow reads as refunded while this actor was away for longer than
+    /// the window); capped at the protocol's largest window.
+    fn full_span_window(
+        &self,
+        finalized_height: u64,
+    ) -> Result<DiscoveryWindow, ActorCommandError> {
+        let start = self.lez_bridge.discovery_start_height;
+        let span = finalized_height
+            .saturating_sub(start)
+            .saturating_add(1)
+            .min(u64::from(lez_bridge_protocol::MAX_DISCOVERY_BLOCKS));
+        DiscoveryWindow::new(start, u32::try_from(span).unwrap_or(1).max(1))
+            .map_err(|_| ActorCommandError::ConfigurationUnavailable)
+    }
 }
 
 /// Compares exact verified config bytes with a Bitcoin Maker scheduler manifest.
@@ -1016,6 +1053,13 @@ fn trace_note(event: &str, detail: &str) {
     if std::env::var_os("LEZ_BTC_ACTOR_TRACE").is_some_and(|value| value == "1") {
         eprintln!("{{\"event\":{event:?},\"detail\":{detail:?}}}");
     }
+}
+
+/// An agreement-binding failure on a traced path: with `LEZ_BTC_ACTOR_TRACE=1`
+/// the check that failed is named, so a refusal can be diagnosed in place.
+fn binding_invalid(check: &str) -> ActorCommandError {
+    trace_note("agreement_binding_invalid", check);
+    ActorCommandError::AgreementBindingInvalid
 }
 
 fn trace_observation_unavailable<E: std::fmt::Debug>(error: E) -> ActorCommandError {
@@ -5864,7 +5908,7 @@ fn lez_refund_observation_request(
         ) | (false, NativeRefundObservationTarget::DiscoverByTerms { .. })
     );
     if !target_is_valid {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_request#1"));
     }
     let terms = witnessed_lez_terms(agreement)?;
     let identity = LezRefundRequestIdentityV1 {
@@ -6445,7 +6489,7 @@ where
             &state_response,
         )?;
         if state_response.refund != NativeRefundObservation::NotRequested {
-            return Err(ActorCommandError::AgreementBindingInvalid);
+            return Err(binding_invalid("refund_observe#1"));
         }
         if state != Some(EscrowState::Funded) && state != Some(EscrowState::Refunded) {
             return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
@@ -6466,19 +6510,9 @@ where
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         drop(journal);
 
-        let request = lez_refund_observation_request(
-            &self.config,
-            agreement,
-            transition,
-            NativeRefundObservationTarget::Exact {
-                refund_transaction_id: effect.transaction.transaction_id,
-                window: self.config.discovery_window()?,
-            },
-        )?;
-        let response = self.chain.observe_native_refund(request.clone()).await?;
-        validate_monotonic_lez_clocks(state_response.clock_after, response.clock_after)?;
-        let account_state =
-            validate_lez_refund_response(&self.config, agreement, transition, &request, &response)?;
+        let (request, response, account_state) = self
+            .exact_refund_lookup(agreement, transition, &effect, state_response.clock_after)
+            .await?;
         self.reconcile_and_maybe_submit(agreement, transition, &effect, account_state, &response)
             .await?;
         finalized_lez_refund_observation(
@@ -6496,6 +6530,57 @@ impl<P> LezRefundObserver<P>
 where
     P: LezRefundChainPort,
 {
+    /// Looks up this actor's own refund exactly: in the window trailing the
+    /// finalized tip the escrow state was read at, and, when the escrow
+    /// reads as refunded but that window does not hold it, once more over
+    /// the whole span since the swap's start.
+    async fn exact_refund_lookup(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+        effect: &PreparedLezRefundEffect,
+        state_clock: ChainClock,
+    ) -> Result<
+        (
+            ObserveNativeRefundRequest,
+            ObserveNativeRefundResult,
+            Option<EscrowState>,
+        ),
+        ActorCommandError,
+    > {
+        let finalized_height = state_clock.height;
+        let mut window = self.config.exact_lookup_window(finalized_height)?;
+        loop {
+            let request = lez_refund_observation_request(
+                &self.config,
+                agreement,
+                transition,
+                NativeRefundObservationTarget::Exact {
+                    refund_transaction_id: effect.transaction.transaction_id,
+                    window,
+                },
+            )?;
+            let response = self.chain.observe_native_refund(request.clone()).await?;
+            validate_monotonic_lez_clocks(state_clock, response.clock_after)?;
+            let account_state = validate_lez_refund_response(
+                &self.config,
+                agreement,
+                transition,
+                &request,
+                &response,
+            )?;
+            let full_span = self.config.full_span_window(finalized_height)?;
+            if account_state == Some(EscrowState::Refunded)
+                && response.refund == NativeRefundObservation::Absent
+                && window != full_span
+            {
+                window = full_span;
+                continue;
+            }
+            return Ok((request, response, account_state));
+        }
+    }
+
     async fn reconcile_and_maybe_submit(
         &self,
         agreement: &BtcAgreementV1,
@@ -6587,16 +6672,16 @@ where
 {
     validate_lez_refund_transition(config, agreement, transition)?;
     if config.role.sdk() != transition.funded_participant() {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("prepare_refund_effect#1"));
     }
     let request = prepare_lez_refund_request(config, agreement, transition)?;
     let expected_context = request.context.clone();
     let response = chain.prepare_native_refund(request).await?;
     if response.context != expected_context {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("prepare_refund_effect#2"));
     }
     let swap_id = SwapId::new(hex::encode(agreement.body().swap_id()))
-        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+        .map_err(|_| binding_invalid("prepare_refund_effect#3"))?;
     let key = PublicEffectKey::new(
         swap_id,
         config.role.sdk(),
@@ -6610,7 +6695,7 @@ where
         hex::encode(response.refund.transaction_id.as_bytes()),
         response.refund.exact_bytes.as_slice().to_vec(),
     )
-    .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    .map_err(|_| binding_invalid("prepare_refund_effect#4"))?;
     let prepared = PreparedLezRefundEffect {
         effect,
         transaction: response.refund,
@@ -6631,7 +6716,7 @@ fn validate_prepared_lez_refund_effect(
             != hex::encode(effect.transaction.transaction_id.as_bytes())
         || effect.effect.exact_public_bytes() != effect.transaction.exact_bytes.as_slice()
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_effect#1"));
     }
     Ok(())
 }
@@ -6647,7 +6732,7 @@ fn validate_lez_refund_transition(
         .funded_chain(transition.funded_participant())
         != Chain::Lez
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_transition#1"));
     }
     Ok(())
 }
@@ -6674,36 +6759,36 @@ fn validate_lez_refund_response(
 ) -> Result<Option<EscrowState>, ActorCommandError> {
     validate_lez_refund_transition(config, agreement, transition)?;
     if response.context != request.context || response.clock_before != response.clock_after {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_response#1"));
     }
     let expected_request =
         lez_refund_observation_request(config, agreement, transition, request.target)?;
     if request != &expected_request {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_response#2"));
     }
     let terms = request
         .terms
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_response#6"))?;
     let state = validate_lez_refund_accounts(config, agreement, terms, &response.accounts)?
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_response#7"))?;
     match &response.refund {
         NativeRefundObservation::NotRequested => {
             if request.target != NativeRefundObservationTarget::StateOnly {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+                return Err(binding_invalid("refund_response#3"));
             }
         }
+        // A finalized window that does not hold the refund: sound for a
+        // discovery by terms and for an exact lookup alike (an exact lookup
+        // trails the tip, so its window is always finalized).
         NativeRefundObservation::Absent => {
-            if !matches!(
-                request.target,
-                NativeRefundObservationTarget::DiscoverByTerms { .. }
-            ) {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+            if request.target == NativeRefundObservationTarget::StateOnly {
+                return Err(binding_invalid("refund_response#4"));
             }
         }
         NativeRefundObservation::UnknownOrPending => {
             if request.target == NativeRefundObservationTarget::StateOnly {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+                return Err(binding_invalid("refund_response#5"));
             }
         }
         NativeRefundObservation::Found(found) => {
@@ -6725,7 +6810,7 @@ fn validate_lez_refund_accounts(
     let metadata = facts
         .metadata
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_accounts#2"))?;
     let state = metadata.status;
     let signed = agreement.lez_terms();
     let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
@@ -6746,7 +6831,7 @@ fn validate_lez_refund_accounts(
         || facts.custody.owner_program_id != terms.authenticated_transfer_program_id()
         || facts.custody.balance.as_u128() != expected_balance
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_accounts#1"));
     }
     Ok(Some(state))
 }
@@ -6763,13 +6848,13 @@ fn validate_lez_refund_found(
             window,
         } => {
             if found.transaction.transaction_id != refund_transaction_id {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+                return Err(binding_invalid("refund_found#1"));
             }
             window
         }
         NativeRefundObservationTarget::DiscoverByTerms { window } => window,
         NativeRefundObservationTarget::StateOnly => {
-            return Err(ActorCommandError::AgreementBindingInvalid);
+            return Err(binding_invalid("refund_found#2"));
         }
     };
     let end = window
@@ -6779,15 +6864,15 @@ fn validate_lez_refund_found(
     let terms = request
         .terms
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_found#5"))?;
     let transaction = &found.transaction;
     let NativeEscrowAccountObservation::Found(accounts) = &response.accounts else {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_found#3"));
     };
     let metadata = accounts
         .metadata
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_found#6"))?;
     let expected_accounts = [
         metadata.account_id,
         accounts.custody.account_id,
@@ -6808,7 +6893,7 @@ fn validate_lez_refund_found(
         || found.instruction.ordered_account_ids.as_slice() != expected_accounts
         || response.clock_after.timestamp_ms < terms.refund_at_ms()
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_found#4"));
     }
     Ok(())
 }
@@ -9235,7 +9320,7 @@ fn validate_actor_binding(
         || runtime.escrow_program_id.as_bytes() != signed.escrow_program_id()
         || runtime.signer_account_id.as_bytes() != expected_signer
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("actor_binding#1"));
     }
     Ok(())
 }
