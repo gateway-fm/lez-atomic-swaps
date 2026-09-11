@@ -155,20 +155,21 @@ async function outputAfterSignal(app, objectName, objectNameOutput, predicate) {
   }
 }
 
-// A market refresh from the desk's own root (the "Refresh market" action),
-// so a button the Node offers later (a refund past the Maker's cutoff)
-// appears without a click. Not the silent variant: only a full refresh
-// rewrites the output text these checks read.
-async function refreshMarket(app, walletObjectName) {
-  const wallet = await app.findByProperty("objectName", walletObjectName);
-  if (wallet.matches?.length === 1) await evaluateIn(app, wallet.matches[0].id, "root.refreshBtcMarket(false)");
+// The swap rows the desk renders, read from its own market model, which its
+// two-second silent refresh keeps current (the output text is rewritten only
+// by an explicit action, so a state reached later never shows there).
+async function deskSwaps(app) {
+  const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
+  if (wallet.matches?.length !== 1) throw new Error(`${role} wallet selector is unavailable`);
+  const reply = await evaluateIn(app, wallet.matches[0].id, "JSON.stringify(root.btcMarket.swaps || [])");
+  if (reply.ok !== true) throw new Error(`desk market model unavailable: ${JSON.stringify(reply).slice(0, 200)}`);
+  return JSON.parse(reply.result);
 }
 
-// The swaps the desk renders, narrowed to the one the caller named (the Node
-// names each swap in its take reply, the desk carries it as `ui_swap_id`).
-function renderedSwaps(envelope, wanted) {
-  return (envelope.result?.swaps ?? []).filter((swap) =>
-    !wanted || swap.ui_swap_id === wanted || swap.swap_id === wanted);
+// The desk's swap rows narrowed to the one the caller named (the Node names
+// each swap in its take reply; the desk carries it as `ui_swap_id`).
+function rowsFor(swaps, wanted) {
+  return swaps.filter((swap) => !wanted || swap.ui_swap_id === wanted || swap.swap_id === wanted);
 }
 
 const waitTimeoutMs = Number(process.env.INTERACTIVE_TIMEOUT_MS || 1800000);
@@ -176,8 +177,6 @@ const waitTimeoutMs = Number(process.env.INTERACTIVE_TIMEOUT_MS || 1800000);
 async function triggerVisibleAction(app, objectName, expectedText, outputName, workingStates, wanted, settleMs) {
   let target = null;
   await app.waitFor(async () => {
-    await refreshMarket(app, `${role}BtcWallet`);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
     const found = await app.findByProperty("objectName", objectName);
     for (const match of found.matches ?? []) {
       const response = await app.getProperties(match.id);
@@ -195,11 +194,10 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
   }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
   await evaluateIn(app, target, "clicked()");
   await app.waitFor(async () => {
-    await refreshMarket(app, `${role}BtcWallet`);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-    const envelope = JSON.parse(await property(app, outputName, "text"));
-    if (envelope.ok === false) throw new Error(`${expectedText} refused: ${JSON.stringify(envelope.error ?? envelope)}`);
-    if (!renderedSwaps(envelope, wanted).some((swap) => workingStates.includes(swap.state))) {
+    let envelope = null;
+    try { envelope = JSON.parse(await property(app, outputName, "text")); } catch { /* not a reply */ }
+    if (envelope?.ok === false) throw new Error(`${expectedText} refused: ${JSON.stringify(envelope.error ?? envelope)}`);
+    if (!rowsFor(await deskSwaps(app), wanted).some((swap) => workingStates.includes(swap.state))) {
       throw new Error(`${expectedText} has not entered ${workingStates.join("|")}`);
     }
   }, { timeout: settleMs, interval: 5000, description: `${expectedText} submission` });
@@ -208,13 +206,14 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
 // Watching one swap reach a desk state; the Node acts, the desk shows it.
 async function waitDeskState(app, outputName, wanted, states, label) {
   await app.waitFor(async () => {
-    await refreshMarket(app, `${role}BtcWallet`);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    const envelope = JSON.parse(await property(app, outputName, "text"));
-    if (envelope.ok !== true || !renderedSwaps(envelope, wanted).some((swap) => states.includes(swap.state))) {
+    const rows = rowsFor(await deskSwaps(app), wanted);
+    if (process.env.DESK_DEBUG === "1") {
+      console.log("  DESK wanted", wanted.slice(0, 12), JSON.stringify(rows.map((swap) => [swap.state, swap.direction])));
+    }
+    if (!rows.some((swap) => states.includes(swap.state))) {
       throw new Error(`no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}`);
     }
-  }, { timeout: waitTimeoutMs, interval: 15000, description: label });
+  }, { timeout: waitTimeoutMs, interval: 10000, description: label });
 }
 
 function unwrap(raw, what) {

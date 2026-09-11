@@ -49,11 +49,11 @@ trap '[[ -z "$stopped_node" ]] || docker start "$stopped_node" >/dev/null 2>&1' 
 stop_node() { stopped_node="$1"; docker stop "$1" >/dev/null; }
 start_node() { docker start "$1" >/dev/null; stopped_node=""; wait_healthy "$1"; }
 ui() { # ui <role> [ENV=VALUE...]
-  local role="$1"; shift; local envs=(-e "M3_UI_DIRECTION=$direction")
+  local role="$1"; shift; local envs=(-e "M3_UI_DIRECTION=$direction" -e "DESK_DEBUG=${DESK_DEBUG:-0}")
   for kv in "$@"; do envs+=(-e "$kv"); done
   docker compose --env-file runtime/runtime.env run --rm --no-deps "${envs[@]}" \
     --entrypoint node basecamp-ui /ui-tests/verify.mjs "$role" 2>&1 |
-    grep -E '✓|✗|interactive|Expected|passed|failed|has not|Error' | grep -viE 'locale'
+    grep -E '✓|✗|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready' | grep -viE 'locale'
 }
 taker_swaps() { # the Taker Node's own view: "<swap_id> <state> <generation> <action>"
   local reply
