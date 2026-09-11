@@ -235,13 +235,18 @@ phase_nix() {
     nix_build qt-mcp "path:/src/basecamp#logos-qt-mcp"
     nix_export qt-mcp "$ASSETS/qt-mcp"
   fi
-  local role
+  # The role packages are rebuilt when apps/basecamp changed since they were
+  # staged (the tree hash of the checkout, plus a digest of uncommitted edits).
+  local role sources
+  sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)"
   for role in maker taker; do
-    if [[ ! -f "$ASSETS/$role-user/plugins/lez_atomic_swap_$role/manifest.json" ]]; then
+    if [[ ! -f "$ASSETS/$role-user/plugins/lez_atomic_swap_$role/manifest.json" \
+       || "$(cat "$ASSETS/$role-user/.sources" 2>/dev/null)" != "$sources" ]]; then
       log "building the $role package"
       nix_build "$role-install" "path:/workspace/apps/basecamp#lez-$role-ui-install"
       nix_export "$role-install" "$ASSETS/.nix-out/$role-user"
       bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$ASSETS/.nix-out/$role-user" "$role"
+      echo "$sources" > "$ASSETS/$role-user/.sources"
     fi
   done
   local module output

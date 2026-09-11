@@ -208,7 +208,9 @@ async function waitDeskState(app, outputName, wanted, states, label) {
   await app.waitFor(async () => {
     const rows = rowsFor(await deskSwaps(app), wanted);
     if (process.env.DESK_DEBUG === "1") {
-      console.log("  DESK wanted", wanted.slice(0, 12), JSON.stringify(rows.map((swap) => [swap.state, swap.direction])));
+      const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
+      const flags = await evaluateIn(app, wallet.matches[0].id, "JSON.stringify({ready: root.ready, busy: root.busy, marketBusy: root.btcMarketBusy, marketReady: root.btcMarketReady, status: root.statusTitle, activity: root.activity.slice(-3).map(function(a){return a.time+' '+a.kind+' '+a.text})})");
+      console.log("  DESK wanted", wanted.slice(0, 12), JSON.stringify(rows.map((swap) => [swap.state, swap.direction])), "flags", flags.result);
     }
     if (!rows.some((swap) => states.includes(swap.state))) {
       throw new Error(`no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}`);
