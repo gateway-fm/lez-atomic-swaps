@@ -22,6 +22,15 @@ pub(crate) fn frozen_wall_clock() -> Option<u64> {
 fn freeze_wall_clock(unix_seconds: u64) {
     FROZEN_WALL_CLOCK.with(|clock| clock.set(Some(unix_seconds)));
 }
+
+/// The Maker's second-lock cutoff every fixture agreement carries.
+const FIXTURE_MAKER_CUTOFF_UNIX_SECONDS: u64 = 1_699_999_800;
+
+/// Freezes the wall clock just before the fixture's Maker cutoff: a Maker lock
+/// is only ever sent while the wall clock is before the cutoff.
+fn freeze_wall_clock_before_maker_cutoff() {
+    freeze_wall_clock(FIXTURE_MAKER_CUTOFF_UNIX_SECONDS - 1);
+}
 use bitcoin::{
     Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, Txid, Witness, absolute,
     secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey},
@@ -776,7 +785,7 @@ fn directional_agreement(direction: SwapDirection) -> BtcAgreementV1 {
         BtcRecoveryPlanV1::new(
             1_000,
             1_144,
-            1_699_999_800,
+            FIXTURE_MAKER_CUTOFF_UNIX_SECONDS,
             1_700_000_100,
             1_700_000_500,
             300,
@@ -1917,6 +1926,7 @@ fn schema4_maker_material_is_role_shaped_and_agreement_direction_bound() {
 
 #[tokio::test]
 async fn supervised_native_maker_owns_the_second_lock_send_path() {
+    freeze_wall_clock_before_maker_cutoff();
     let mut fixture =
         ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
     upgrade_fixture_for_supervised_provision(&mut fixture);
@@ -2685,6 +2695,7 @@ fn schema5_asset_scan_never_turns_uncertainty_unavailability_or_conflict_into_se
 
 #[tokio::test]
 async fn schema5_three_step_asset_lock_is_ordered_and_uncertainty_never_submits() {
+    freeze_wall_clock_before_maker_cutoff();
     for observation in [
         MakerLockStepChainObservationV1::Uncertain,
         MakerLockStepChainObservationV1::ConflictingPresence,
@@ -2780,6 +2791,7 @@ async fn schema5_three_step_asset_lock_is_ordered_and_uncertainty_never_submits(
 
 #[tokio::test]
 async fn schema4_changed_lez_preparation_result_conflicts_with_durable_intent() {
+    freeze_wall_clock_before_maker_cutoff();
     let mut fixture =
         ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
     configure_schema4_maker_material(&mut fixture);
@@ -2849,6 +2861,7 @@ async fn schema4_changed_lez_preparation_result_conflicts_with_durable_intent() 
 
 #[tokio::test]
 async fn schema4_maker_send_requires_fresh_exact_first_lock_and_strict_pre_cutoff_time() {
+    freeze_wall_clock_before_maker_cutoff();
     for direction in [
         SwapDirection::TakerSellsForeign,
         SwapDirection::TakerSellsLez,
@@ -2941,6 +2954,7 @@ async fn schema4_maker_send_requires_fresh_exact_first_lock_and_strict_pre_cutof
 
 #[tokio::test]
 async fn schema4_exact_idempotent_lez_admission_sends_once_without_claiming_absence() {
+    freeze_wall_clock_before_maker_cutoff();
     let mut fixture =
         ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
     configure_schema4_maker_material(&mut fixture);
@@ -3162,8 +3176,59 @@ async fn schema4_timely_canonical_maker_lock_reconciles_after_current_cutoff() {
 }
 
 #[tokio::test]
+async fn unsent_maker_lock_stays_unsent_once_the_wall_clock_passes_the_cutoff() {
+    // The freshness read consults the chain clock, which trails the wall
+    // clock; a Maker restarted just after its cutoff must still not lock.
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let mut fixture = ActorFixture::for_direction(direction, ActorRole::Maker);
+        configure_schema4_maker_material(&mut fixture);
+        activate_and_project_taker_lock(&fixture).await;
+        let plan = load_prepared_maker_lock_material(&fixture.config, &fixture.agreement)
+            .expect("maker material")
+            .plan()
+            .clone();
+        let cutoff = fixture
+            .agreement
+            .body()
+            .recovery_plan()
+            .maker_second_lock_cutoff_unix_seconds();
+        freeze_wall_clock(cutoff);
+
+        let absent = FixedMakerLockPort::new(
+            MakerLockStepChainObservationV1::Absent,
+            fresh_maker_eligibility(&fixture),
+            exact_maker_lock_complete_observation(&fixture.agreement, &plan, 88),
+        )
+        .with_submission_result(BtcMakerLockSubmissionResult::Accepted(
+            plan.steps()[0].expected_public_id().as_str().into(),
+        ));
+        let output = drive_maker_lock_with_port(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &absent,
+        )
+        .await
+        .expect("a drive past the cutoff only observes");
+        assert_eq!(output.revision, 1);
+        assert_eq!(absent.submissions(), 0);
+        assert_eq!(absent.eligibility_checks(), 0);
+        assert_eq!(absent.events(), vec!["observe_step"]);
+        let intent = SqliteBtcMakerLockJournal::open(&fixture.config.state_db)
+            .expect("journal")
+            .load_intent(fixture.agreement.coordinator().id())
+            .expect("load intent");
+        assert!(intent.is_none(), "no send authority is consumed past the cutoff");
+    }
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)] // One scenario proves the complete ordered crash-safety contract.
 async fn schema4_maker_lock_is_ordered_no_rearm_and_atomically_closed_in_both_directions() {
+    freeze_wall_clock_before_maker_cutoff();
     for direction in [
         SwapDirection::TakerSellsForeign,
         SwapDirection::TakerSellsLez,

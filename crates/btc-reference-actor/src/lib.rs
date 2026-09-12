@@ -4145,6 +4145,20 @@ async fn drive_maker_lock_with_port(
     if let Some((step, state)) = next_step {
         let observation = port.observe_step(&agreement, &step).await?;
         if state == BtcMakerLockStepState::Prepared && observation.can_authorize_submission() {
+            // A lock that has not been sent is never sent past the cutoff. The
+            // chain clock the freshness read consults trails the wall clock
+            // (Bitcoin's median time by about an hour on mainnet, ten minutes
+            // on the local regtest), so a Maker restarted just after its
+            // cutoff would otherwise still lock: the Taker's recovery then sees
+            // a late lock it can neither claim nor refund against, and both
+            // legs stay locked until the Maker's own refund matures.
+            if maker_cutoff_passed(&agreement) {
+                trace_note(
+                    "maker_lock_not_sent",
+                    "wall clock past the Maker's cutoff; an unsent lock stays unsent",
+                );
+                return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+            }
             let fresh = port.fresh_eligibility(&agreement).await?;
             let sdk_plan =
                 validate_fresh_maker_lock_plan(config, &agreement, &agreement_wire, fresh, true)?;
@@ -8562,8 +8576,15 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
             return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
         };
         let adapter = BitcoinCoreAdapter::new(rpc, self.config.bitcoin_core.connectivity.into());
-        let Ok(observation) = adapter.observe_funding(agreement).await else {
-            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        let observation = match adapter.observe_funding(agreement).await {
+            Ok(observation) => observation,
+            Err(error) => {
+                trace_note(
+                    "first_lock_safety_uncertain",
+                    &format!("bitcoin maker lock read failed: {error:?}"),
+                );
+                return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+            }
         };
         match observation {
             FundingObservation::Ready(observed) => {
@@ -8597,6 +8618,7 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
                 })
             }
             FundingObservation::Pending { .. } => {
+                trace_note("first_lock_safety_uncertain", "bitcoin maker lock pending");
                 Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
             }
             FundingObservation::Absent { stable_tip } => {
@@ -8606,6 +8628,13 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
                     .recovery_plan()
                     .maker_second_lock_cutoff_unix_seconds();
                 if observed_unix_seconds < cutoff_unix_seconds {
+                    trace_note(
+                        "first_lock_safety_uncertain",
+                        &format!(
+                            "bitcoin maker lock absent; stable tip {} median time {observed_unix_seconds} before cutoff {cutoff_unix_seconds}",
+                            stable_tip.height()
+                        ),
+                    );
                     return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
                 }
                 let absence_evidence = encode_bitcoin_maker_lock_absence_evidence(
