@@ -59,6 +59,22 @@ done
 mkdir -p runtime
 load_env() { set -a; source runtime/runtime.env; set +a; export BTC_RPC_PASSWORD; }
 
+# The container health check answers before the Node serves its owner socket
+# on a busy start (a Node with history reloads every swap first); the desk
+# suites press "Check Node" within seconds of the deploy, so wait for the
+# owner health call itself.
+wait_owner_health() { # wait_owner_health <seconds>
+  local deadline=$(( $(date +%s) + $1 ))
+  owner_ok() { # owner_ok <role> <method> <params>
+    docker exec "lez-$1-node" curl -sS --max-time 5 --unix-socket "/run/lez/$1/node.sock" \
+      -H 'content-type: application/json' \
+      --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null | grep -q '"result"'
+  }
+  until owner_ok maker maker_health '{}' && owner_ok taker taker_health '{"schema_version":1}'; do
+    (( $(date +%s) < deadline )) || { echo "the Nodes did not answer their owner health calls within $1 s" >&2; return 1; }
+    sleep 3
+  done
+}
 wait_healthy() { # wait_healthy <seconds> <container>...
   local timeout="$1"; shift
   local elapsed=0 c
@@ -148,6 +164,7 @@ else
   docker compose up -d maker-node taker-node
 fi
 wait_healthy 240 lez-maker-node lez-taker-node
+wait_owner_health 120
 if [[ "$FRESH_LEZ" == 1 ]]; then
   echo "  forgetting swaps that referenced the old chain"
   bash scripts/reset-swaps.sh 2>&1 | tail -1
