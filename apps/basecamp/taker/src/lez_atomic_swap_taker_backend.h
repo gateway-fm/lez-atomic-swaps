@@ -36,6 +36,8 @@ public:
 
 private:
     LocalJsonRpcClient rpc_;
+    // Same socket, with the budget a market snapshot needs on a Node with history.
+    LocalJsonRpcClient snapshotRpc_;
     // Same socket as rpc_, with the budget a take or a lock needs.
     LocalJsonRpcClient slowRpc_;
     QSet<QString> lockedSwaps_;

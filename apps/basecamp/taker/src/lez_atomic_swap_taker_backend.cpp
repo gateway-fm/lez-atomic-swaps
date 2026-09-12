@@ -46,7 +46,8 @@ const node_market::TakerWallet kTakerWallet{QStringLiteral("taker-zurich-01"),
 
 LezAtomicSwapTakerBackend::LezAtomicSwapTakerBackend()
     : rpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"))
-    , slowRpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"), 4 * 1024 * 1024, 3000, 240000)
+    , snapshotRpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"), LocalJsonRpcClient::kMarketSnapshotBytes)
+    , slowRpc_(QStringLiteral("LEZ_TAKER_RPC_SOCKET"), LocalJsonRpcClient::kMarketSnapshotBytes, 3000, 240000)
     , chat_(std::make_unique<LogosChatBridge>(QStringLiteral("taker"), this))
 {
     (void)qEnvironmentVariable("LEZ_TAKER_RPC_SOCKET");
@@ -90,7 +91,7 @@ QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("This desk settles as the Node's own identity"));
     }
-    return node_market::takerSnapshot(rpc_, kTakerWallet, lockedSwaps_);
+    return node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_);
 }
 
 QString LezAtomicSwapTakerBackend::btcTakeOffer(

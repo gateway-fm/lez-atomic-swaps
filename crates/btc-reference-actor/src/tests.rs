@@ -3221,7 +3221,10 @@ async fn unsent_maker_lock_stays_unsent_once_the_wall_clock_passes_the_cutoff() 
             .expect("journal")
             .load_intent(fixture.agreement.coordinator().id())
             .expect("load intent");
-        assert!(intent.is_none(), "no send authority is consumed past the cutoff");
+        assert!(
+            intent.is_none(),
+            "no send authority is consumed past the cutoff"
+        );
     }
 }
 

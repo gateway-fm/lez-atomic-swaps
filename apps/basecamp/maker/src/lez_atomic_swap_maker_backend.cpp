@@ -55,6 +55,7 @@ bool marketRequest(const QString& value)
 
 LezAtomicSwapMakerBackend::LezAtomicSwapMakerBackend()
     : rpc_(QStringLiteral("LEZ_MAKER_RPC_SOCKET"))
+    , snapshotRpc_(QStringLiteral("LEZ_MAKER_RPC_SOCKET"), LocalJsonRpcClient::kMarketSnapshotBytes)
     , chat_(std::make_unique<LogosChatBridge>(QStringLiteral("maker"), this))
 {
     (void)qEnvironmentVariable("LEZ_MAKER_RPC_SOCKET");
@@ -85,7 +86,7 @@ QString LezAtomicSwapMakerBackend::resetChat()
 QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
 {
     if (!makerWallet(walletId)) return invalidMarket(QStringLiteral("This desk settles as the Node's own identity"));
-    return node_market::makerSnapshot(rpc_, kMakerWallet);
+    return node_market::makerSnapshot(snapshotRpc_, kMakerWallet);
 }
 
 QString LezAtomicSwapMakerBackend::btcPublishOffer(
@@ -135,12 +136,12 @@ QString LezAtomicSwapMakerBackend::btcSwapAction(
             && action != QStringLiteral("claim_lez"))) {
         return invalidMarket(QStringLiteral("That Maker action is not available"));
     }
-    return node_market::makerSnapshot(rpc_, kMakerWallet);
+    return node_market::makerSnapshot(snapshotRpc_, kMakerWallet);
 }
 
 QString LezAtomicSwapMakerBackend::history()
 {
-    return rpc_.call("swap_history", "{}");
+    return snapshotRpc_.call("swap_history", "{}");
 }
 
 QString LezAtomicSwapMakerBackend::monitor(QString swapId)

@@ -1066,9 +1066,7 @@ fn binding_invalid(check: &str) -> ActorCommandError {
 fn public_effect_observation_kind(observation: &PublicEffectObservation) -> &'static str {
     match observation {
         PublicEffectObservation::PresentExact(_) => "present_exact",
-        PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe { .. } => {
-            "exact_claim_safe"
-        }
+        PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe { .. } => "exact_claim_safe",
         PublicEffectObservation::EligibleToAttempt => "eligible_to_attempt",
         PublicEffectObservation::Absent => "absent",
         PublicEffectObservation::Uncertain => "uncertain",
