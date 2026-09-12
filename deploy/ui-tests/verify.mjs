@@ -245,7 +245,8 @@ async function waitDeskState(app, outputName, wanted, states, label) {
       console.log("  DESK wanted", wanted.slice(0, 12), JSON.stringify(rows.map((swap) => [swap.state, swap.direction])), "flags", flags.result);
     }
     if (!rows.some((swap) => states.includes(swap.state))) {
-      throw new Error(`no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}`);
+      const seen = rows.map((swap) => `${swap.state}${swap.state_label ? " (" + swap.state_label + ")" : ""}`).join(", ") || "no row";
+      throw new Error(`no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}; desk shows ${seen}`);
     }
   }, { timeout: waitTimeoutMs, interval: 10000, description: label });
 }

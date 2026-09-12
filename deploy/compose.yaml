@@ -299,6 +299,8 @@ services:
       LEZ_BTC_LATER_REFUND_SECONDS: ${LEZ_BTC_LATER_REFUND_SECONDS:-7200}
       LEZ_BTC_REFUND_MARGIN_SECONDS: ${LEZ_BTC_REFUND_MARGIN_SECONDS:-300}
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
+      # Actor decision trace on stderr (`docker logs`); empty = off.
+      LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
@@ -356,6 +358,8 @@ services:
       LEZ_BTC_LATER_REFUND_SECONDS: ${LEZ_BTC_LATER_REFUND_SECONDS:-7200}
       LEZ_BTC_REFUND_MARGIN_SECONDS: ${LEZ_BTC_REFUND_MARGIN_SECONDS:-300}
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
+      # Actor decision trace on stderr (`docker logs`); empty = off.
+      LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
