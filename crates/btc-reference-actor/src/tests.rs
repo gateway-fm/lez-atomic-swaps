@@ -4179,6 +4179,99 @@ fn exact_lookups_trail_the_finalized_tip_and_fall_back_to_the_whole_span() {
     assert_eq!(window(span), (start, 3 * max + 1));
 }
 
+/// A revealing claim included before the claim window closed may be observed
+/// only afterwards. Past the deadline the actor routes revision 2 to recovery,
+/// but an observed canonical claim is still projected, without any send, and
+/// the follow-up completes the swap for both roles (review follow-up on #32).
+#[tokio::test(flavor = "current_thread")]
+async fn late_observed_revealing_claim_still_completes_both_roles_without_another_send() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        for role in [ActorRole::Maker, ActorRole::Taker] {
+            let fixture = ActorFixture::for_direction(direction, role);
+            activate_and_project_both_locks(&fixture).await;
+            let deadline = fixture
+                .agreement
+                .body()
+                .recovery_plan()
+                .earlier_refund_latest_unix_seconds();
+            freeze_wall_clock(deadline + 60);
+            let routed = output_json(
+                execute_actor_command(&fixture.config, ActorCommand::Status)
+                    .await
+                    .expect("status past the claim window"),
+            );
+            assert_eq!(
+                routed["next_action"], "recover_maker_leg",
+                "{direction:?} {role:?}"
+            );
+
+            let maker_chain = fixture
+                .agreement
+                .coordinator()
+                .funded_chain(Participant::Maker);
+            let revealing = FixedClaimObserver::new(ActorClaimObservation::Ready {
+                chain: maker_chain,
+                transaction_id: "canonical-revealing-claim".into(),
+                confirmations: if maker_chain == Chain::Bitcoin {
+                    support::REQUIRED_CONFIRMATIONS
+                } else {
+                    FINALIZED_LEZ_CONFIRMATION_UNITS
+                },
+                chain_evidence: b"canonical-revealing-claim-evidence".to_vec(),
+                revealing_public_signature: Some(revealing_signature(&fixture)),
+            });
+            let projected = output_json(
+                drive_claim_with_observer(
+                    &fixture.config,
+                    fixture.agreement.clone(),
+                    fixture.agreement_wire.clone(),
+                    &revealing,
+                )
+                .await
+                .expect("a late-observed canonical claim is still projected"),
+            );
+            assert_eq!(
+                projected["outcome"], "observed_then_projected",
+                "{direction:?} {role:?}"
+            );
+            assert_eq!(projected["revision"], 3);
+            assert_eq!(projected["phase"], "claim_evidence_available");
+            assert_eq!(revealing.calls(), 1, "one observation, no send");
+
+            let taker_chain = fixture
+                .agreement
+                .coordinator()
+                .funded_chain(Participant::Taker);
+            let followup = FixedClaimObserver::new(ActorClaimObservation::Ready {
+                chain: taker_chain,
+                transaction_id: "canonical-followup-claim".into(),
+                confirmations: if taker_chain == Chain::Bitcoin {
+                    support::REQUIRED_CONFIRMATIONS
+                } else {
+                    FINALIZED_LEZ_CONFIRMATION_UNITS
+                },
+                chain_evidence: b"canonical-followup-claim-evidence".to_vec(),
+                revealing_public_signature: None,
+            });
+            let completed = output_json(
+                drive_claim_with_observer(
+                    &fixture.config,
+                    fixture.agreement.clone(),
+                    fixture.agreement_wire.clone(),
+                    &followup,
+                )
+                .await
+                .expect("follow-up claim completes the swap"),
+            );
+            assert_eq!(completed["revision"], 4, "{direction:?} {role:?}");
+            assert_eq!(completed["phase"], "completed");
+        }
+    }
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn maker_lock_cutoff_accepts_before_and_at_but_rejects_after_on_both_chains() {
     for direction in [

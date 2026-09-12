@@ -16,6 +16,8 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py taker-refund     Maker stopped before funding; Taker refunds its Bitcoin
     node-e2e.py maker-refund     Taker never claims; Maker refunds LEZ, then Taker refunds Bitcoin
+    node-e2e.py regenerated-config  live btc-role.json rendered again, Taker Node restarted: the swap reloads and completes
+    node-e2e.py tampered-config     the swap's copied taker-role-config.json altered: the swap is refused after a restart
     node-e2e.py all              every scenario in sequence (stops at the first failure)
 
 Every scenario runs in either Bitcoin direction: `--direction TakerSellsForeign`
@@ -564,6 +566,77 @@ def scenario_maker_refund(stamp: str) -> dict:
     return {"swap_id": swap_id}
 
 
+def taker_swap_directory(swap_id: str) -> str:
+    """The Taker Node's per-swap directory (the record stores the swap id as bytes)."""
+    reader = (
+        "import glob, json, sys\n"
+        "for f in glob.glob('/var/lib/lez/taker/btc/swaps/*/taker-swap.json'):\n"
+        "    s = json.load(open(f))\n"
+        "    if bytes(s.get('swap_id') or []).hex() == sys.argv[1]: print(f.rsplit('/', 1)[0]); break\n"
+    )
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", reader, swap_id],
+                            capture_output=True, text=True, check=False)
+    directory = result.stdout.strip()
+    if not directory:
+        raise Failure(f"the Taker Node has no directory for swap {swap_id[:12]}")
+    return directory
+
+
+def regenerate_runtime_config() -> None:
+    """Renders the runtime configuration again (same chain, same identities), as a
+    maintenance run of gen-config.sh does; the live btc-role.json is rendered from
+    it on the Node's next start."""
+    result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "gen-config.sh"), "runtime"],
+                            capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT)
+    if result.returncode != 0:
+        raise Failure(f"gen-config.sh failed: {result.stderr[-300:]}")
+    log("  runtime configuration rendered again (chain and identities unchanged)")
+
+
+def scenario_regenerated_config(stamp: str) -> dict:
+    """Review follow-up on #28: a swap taken under one rendering of the live
+    role configuration survives a re-render and a Taker Node restart, reloads
+    against its own saved copy, and stays actionable to completion."""
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    lock(swap_id)
+    regenerate_runtime_config()
+    log("  restarting the Taker Node onto the re-rendered configuration")
+    docker("restart", NODES["taker"][0])
+    wait_healthy("taker")
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    if len(listed) != 1 or listed[0]["state"] in TERMINAL:
+        raise Failure(f"the swap did not reload after the restart: {listed}")
+    log(f"  swap {swap_id[:12]} reloaded as {listed[0]['state']}")
+    claim(swap_id, stamp)
+    wait_completed(swap_id)
+    return {"swap_id": swap_id, "reloaded_state": listed[0]["state"]}
+
+
+def scenario_tampered_config(stamp: str) -> dict:
+    """Review follow-up on #28: the copy of the role configuration a swap was
+    taken under is integrity-checked; an altered copy is refused after a restart
+    and the swap cannot be acted on."""
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    directory = taker_swap_directory(swap_id)
+    docker("exec", NODES["taker"][0], "sh", "-c",
+           f"printf '\n' >> {directory}/taker-role-config.json")
+    log("  appended one byte to the swap's copied taker-role-config.json")
+    docker("restart", NODES["taker"][0])
+    wait_healthy("taker")
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    state = listed[0]["state"] if listed else "absent"
+    lock_reply = rpc("taker", "taker_swap_lock_v1", {"schema_version": 1, "swap_id": swap_id}, timeout=120)
+    if "result" in lock_reply:
+        raise Failure(f"the lock was accepted on a swap whose saved configuration was altered ({state})")
+    if listed and state not in {"attention_required"}:
+        raise Failure(f"the altered swap still lists as {state} instead of attention_required")
+    log(f"  swap {swap_id[:12]} after the tamper: {state}; lock refused ({(lock_reply['error'].get('data') or {}).get('category')})")
+    return {"swap_id": swap_id, "state_after_tamper": state,
+            "lock_refusal": (lock_reply["error"].get("data") or {}).get("category")}
+
+
 SCENARIOS = {
     "happy": scenario_happy,
     "replay": scenario_replay,
@@ -574,6 +647,8 @@ SCENARIOS = {
     "concurrent": scenario_concurrent,
     "taker-refund": scenario_taker_refund,
     "maker-refund": scenario_maker_refund,
+    "regenerated-config": scenario_regenerated_config,
+    "tampered-config": scenario_tampered_config,
 }
 
 

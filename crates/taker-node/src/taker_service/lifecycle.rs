@@ -1684,21 +1684,24 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
             drop(held_lock);
             continue;
         }
-        // A submitted claim is observed only while the actor still offers the
-        // claim; once the window has closed it cannot land, and the Maker's
-        // refund is what to watch for.
+        // A submitted claim stays observed until it lands or the swap ends,
+        // across the claim window's close: a claim included before the
+        // deadline may be seen only afterwards, and observing never sends.
+        // Once the window has closed the Maker's refund is watched as well,
+        // through the recovery command, which for the Taker only observes.
         let claim_submitted =
             claim_submitted_marker(config.state_db()).is_some_and(|marker| marker.is_file());
-        let claim_pending = phase == Phase::BothLegsLocked
-            && claim_submitted
-            && state == TakerSwapStateV1::ClaimAvailable;
+        let claim_pending = phase == Phase::BothLegsLocked && claim_submitted;
         if taker_observation_phase(phase) || claim_pending {
             let _ = config.observe().await;
-        } else if phase == Phase::BothLegsLocked {
-            // Both legs locked and no claim asked for: a drive here would be the
-            // revealing claim, so watch the Maker's leg through the recovery
-            // command instead. For the Taker it only observes, and once the
-            // Maker has refunded its LEZ the swap moves to `refund_available`.
+        }
+        if phase == Phase::BothLegsLocked
+            && (!claim_submitted || state != TakerSwapStateV1::ClaimAvailable)
+        {
+            // Both legs locked and no claim in flight, or the claim window has
+            // closed: a drive here would be a revealing claim, so the Maker's
+            // leg is watched through the recovery command instead. Once the
+            // Maker has refunded, the swap moves to `refund_available`.
             let _ = config.effect(TakerTerminalActionV1::Refund).await;
         }
         drop(held_lock);
