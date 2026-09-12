@@ -1,0 +1,18 @@
+{
+  "scenario": "regenerated-config",
+  "direction": "TakerSellsForeign",
+  "stamp": "1789207918",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "6",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "600",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "900",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "1200",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_BTC_ACTOR_TRACE": "1"
+  },
+  "swap_id": "4e3aea6d809e83c67b2bb0d45ca9722f9a7ddfa5d7e9dad011a29fd0060a128d",
+  "reloaded_state": "awaiting_first_lock",
+  "result": "passed",
+  "seconds": 229
+}
