@@ -107,7 +107,8 @@ QString LezAtomicSwapTakerBackend::btcTakeOffer(
             QStringLiteral("The selected wallet or offer is invalid"));
     }
     if (!exactUnsigned(foreignUnits, amount)) return invalid();
-    return node_market::takerTake(rpc_, slowRpc_, kTakerWallet, requestId, offerId,
+    // The reply embeds a market snapshot: the snapshot budget applies.
+    return node_market::takerTake(snapshotRpc_, slowRpc_, kTakerWallet, requestId, offerId,
                                   static_cast<qint64>(amount), lockedSwaps_);
 }
 
@@ -122,7 +123,7 @@ QString LezAtomicSwapTakerBackend::btcSwapAction(
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("That Taker action is not available"));
     }
-    return node_market::takerAction(rpc_, slowRpc_, kTakerWallet, requestId, swapId, action,
+    return node_market::takerAction(snapshotRpc_, slowRpc_, kTakerWallet, requestId, swapId, action,
                                     lockedSwaps_);
 }
 

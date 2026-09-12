@@ -109,7 +109,8 @@ QString LezAtomicSwapMakerBackend::btcPublishOffer(
     const node_market::RouteTerms terms{
         static_cast<qint64>(minimum), static_cast<qint64>(maximum), static_cast<qint64>(ttl),
         static_cast<qint64>(lezLot), static_cast<qint64>(foreignLot)};
-    return node_market::makerPublish(rpc_, kMakerWallet, requestId, direction, terms);
+    // The reply embeds a market snapshot: the snapshot budget applies.
+    return node_market::makerPublish(snapshotRpc_, kMakerWallet, requestId, direction, terms);
 }
 
 QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
@@ -120,7 +121,7 @@ QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
         || !offerPattern.match(offerId).hasMatch()) {
         return invalidMarket(QStringLiteral("The pending offer selection is invalid"));
     }
-    return node_market::makerWithdraw(rpc_, kMakerWallet, requestId, offerId);
+    return node_market::makerWithdraw(snapshotRpc_, kMakerWallet, requestId, offerId);
 }
 
 QString LezAtomicSwapMakerBackend::btcSwapAction(

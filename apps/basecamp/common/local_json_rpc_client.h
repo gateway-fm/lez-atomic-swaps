@@ -6,9 +6,11 @@
 class LocalJsonRpcClient
 {
 public:
-    // Ordinary owner calls answer in well under 64 KiB. A market snapshot on a
-    // Node with history (every swap it ever served, one entry each) does not;
-    // only the snapshot readers use the larger budget.
+    // Ordinary owner calls (health, a single monitor) answer in well under
+    // 64 KiB. A market snapshot on a Node with history (every offer and swap it
+    // ever served, one entry each) does not; the snapshot readers and the
+    // actions whose reply embeds a snapshot (publish, withdraw, take, lock,
+    // claim, refund) use the larger budget.
     static constexpr qsizetype kMarketSnapshotBytes = 4 * 1024 * 1024;
 
     explicit LocalJsonRpcClient(QString environmentVariable,
