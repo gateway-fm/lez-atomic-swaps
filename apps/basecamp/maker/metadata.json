@@ -1,7 +1,7 @@
 {
   "name": "lez_atomic_swap_maker",
   "display_name": "LEZ / BTC Maker",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "ui_qml",
   "category": "finance",
   "description": "Publish wallet-owned BTC/LEZ offers and perform Maker settlement actions.",
