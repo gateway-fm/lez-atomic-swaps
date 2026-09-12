@@ -1,7 +1,7 @@
 {
   "scenario": "happy",
   "direction": "TakerSellsLez",
-  "stamp": "1789218947",
+  "stamp": "1789233849",
   "timing": {
     "LEZ_TIMING_PROFILE": "fast",
     "LEZ_BTC_REFUND_CSV_BLOCKS": "6",
@@ -11,7 +11,7 @@
     "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
     "LEZ_BTC_ACTOR_TRACE": "1"
   },
-  "swap_id": "16249823145f3c21d9b9f74a1f60b86bf51be5fa0be32e20c9d70076fff923f8",
+  "swap_id": "b8c5fa973367ca3cb8a3ee9469cb922e024a8906deb116852ab29109fdb5fc3b",
   "result": "passed",
-  "seconds": 323
+  "seconds": 248
 }

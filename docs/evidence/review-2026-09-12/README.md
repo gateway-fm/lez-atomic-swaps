@@ -12,7 +12,7 @@ Where an item needs a statement rather than test output, it says so.
 |---|---|
 | Repository | `gateway-fm/lez-atomic-swaps` |
 | Branch / PR | `integration/all-open`, PR #42 "Pre-release fixes for v0.2.2" |
-| Commit under test | `963cf12` for the first full pass of the matrix (2026-09-11); the clean recordings then exposed two Node defects (below), fixed on `4adac34` and `d3bb481`; every scenario a fix touches was run again on the fixed code, and the summaries in `e2e/` are those of the latest run of each scenario. Final commit: `d3bb481` |
+| Commit under test | `963cf12` for the first full pass of the matrix (2026-09-11); the clean recordings then exposed two Node defects (below), fixed on `4adac34` and `d3bb481`; a final sweep of the whole matrix (both directions, API and desks, plus the two configuration follow-ups) ran on `36c9a16`/`7e31336` on 2026-09-12 with the summaries in `e2e/` being those runs. Final commit: `7e31336` |
 | Intended release | v0.2.2, tagged from `main` once #42 is merged |
 | Images | `ghcr.io/gateway-fm/lez-atomic-swaps/lez-{maker-node,taker-node,lez-services,bitcoin-core,btc-miner,btc-explorer,lez-explorer,basecamp-ui}:<tag>` (linux/arm64) |
 | Startup bundle | `lez-swap-stack-<tag>-arm64.tar.gz`, attached to the GitHub release; `./scripts/start.sh` pulls the images, mints the wallet identities, renders the configuration, starts the stack, bootstraps the market and runs both desk suites; `./scripts/start.sh --swap` adds one complete swap through the two desks |
@@ -224,6 +224,7 @@ All on PR #42, each reproduced on the stack before the fix and re-run after it.
 | Nodes | the actor printed nothing about a decision not to act, so a stalled refund left no evidence | with `LEZ_BTC_ACTOR_TRACE=1` (passed through by the compose file, off by default) the actor names every effect decision, submission outcome, refused Maker lock and uncertain safety or refund read |
 | Node ↔ sidecar | one transport failure refused the Taker's lock | prepare and submit repeated on transport failure |
 | Desks | the Maker desk queued a market read every two seconds regardless of the previous one and fell minutes behind the Node; an explicit refresh could be dropped; a refunded Maker leg was labelled "Lock window missed" | one silent read in flight, explicit reads always sent; refunded leg reported first |
+| Desks | on a Node holding a day of offers (98 here, 2 open) the market snapshot and the replies of publish, withdraw, take, lock, claim and refund (each embeds a snapshot) outgrow the 64 KiB ordinary RPC bound the package contract requires | those readers use a 4 MiB snapshot budget; ordinary calls keep 64 KiB. Follow-up: a state filter on `maker_offer_list` so the snapshot stops growing with history |
 | Scripts | the timing profile silently reverted on a rerun; base images pruned with the build cache failed the image build; a desk change did not reach the stack | `gen-config.sh`, `up.sh`, `from-scratch.sh` fixed |
 
 ## Known limitations of the local environment

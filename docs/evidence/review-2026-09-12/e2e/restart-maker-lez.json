@@ -1,17 +1,18 @@
 {
   "scenario": "restart-maker",
   "direction": "TakerSellsLez",
-  "stamp": "1789160608",
+  "stamp": "1789234937",
   "timing": {
     "LEZ_TIMING_PROFILE": "fast",
     "LEZ_BTC_REFUND_CSV_BLOCKS": "6",
     "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "600",
     "LEZ_BTC_EARLIER_REFUND_SECONDS": "900",
     "LEZ_BTC_LATER_REFUND_SECONDS": "1200",
-    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60"
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_BTC_ACTOR_TRACE": "1"
   },
-  "swap_id": "af49b52a966be9d9d5804ef9c64cde25c7f6821d7df24a542b1e1172fa3659cf",
+  "swap_id": "931c6e7fe6fe2e702cf51741bb6d46990176c60e6e4b29c4a082ab6df0196b78",
   "restarted": "lez-maker-node",
   "result": "passed",
-  "seconds": 328
+  "seconds": 238
 }

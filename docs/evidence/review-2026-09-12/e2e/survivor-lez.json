@@ -1,16 +1,17 @@
 {
   "scenario": "survivor",
   "direction": "TakerSellsLez",
-  "stamp": "1789160936",
+  "stamp": "1789235174",
   "timing": {
     "LEZ_TIMING_PROFILE": "fast",
     "LEZ_BTC_REFUND_CSV_BLOCKS": "6",
     "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "600",
     "LEZ_BTC_EARLIER_REFUND_SECONDS": "900",
     "LEZ_BTC_LATER_REFUND_SECONDS": "1200",
-    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60"
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_BTC_ACTOR_TRACE": "1"
   },
-  "swap_id": "31caa20a8eb4ea118dbf2ec1a5c266586ea378687f79f002421e302c32352472",
+  "swap_id": "49705fa375f23b70b2b37aad0ec3eb270d2c03a6d01635b7f9969ae22097de17",
   "result": "passed",
-  "seconds": 332
+  "seconds": 275
 }

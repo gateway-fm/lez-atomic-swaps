@@ -1,7 +1,7 @@
 {
   "scenario": "tampered-config",
   "direction": "TakerSellsForeign",
-  "stamp": "1789208148",
+  "stamp": "1789233829",
   "timing": {
     "LEZ_TIMING_PROFILE": "fast",
     "LEZ_BTC_REFUND_CSV_BLOCKS": "6",
@@ -11,9 +11,9 @@
     "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
     "LEZ_BTC_ACTOR_TRACE": "1"
   },
-  "swap_id": "c0d200f63aebaa0f799bfbfa8b9a53e417c291221cabef5e836c3df7b10fd339",
+  "swap_id": "9d72360e1ef80109b38dad192b11a366eae371e4a9612a519720a264dd22f755",
   "state_after_tamper": "attention_required",
   "lock_refusal": "lock_swap_unknown",
   "result": "passed",
-  "seconds": 21
+  "seconds": 20
 }
