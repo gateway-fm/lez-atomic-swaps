@@ -181,7 +181,7 @@ wait_healthy 120 lez-basecamp-ui
 ui_failed=0
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
   for role in maker taker; do
-    if ! docker exec lez-basecamp-ui node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|failed'; then
+    if ! docker exec lez-basecamp-ui node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|failed|^    [A-Za-z]'; then
       ui_failed=1
     fi
   done
