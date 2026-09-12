@@ -55,13 +55,17 @@ fn typed_unavailability_is_not_substituted_with_a_local_or_zero_quote() {
 fn worker_abort_timeout_and_oversized_output_fail_closed() {
     let run = secure_run();
     let module = secure_file(run.path(), "price.so", b"module-v1", 0o600);
+    // The abort and oversize cases prove a refusal that does not depend on
+    // the deadline; they get a budget a loaded CI runner cannot exhaust while
+    // spawning the worker (500 ms was hit once). Only the hang case races the
+    // deadline on purpose.
     for (name, body, timeout, expected_timeout) in [
-        ("abort-worker", "kill -ABRT $$", 500, false),
+        ("abort-worker", "kill -ABRT $$", 5_000, false),
         ("hang-worker", "while :; do :; done", 100, true),
         (
             "oversize-worker",
             "head -c 5000 /dev/zero | tr '\\0' x",
-            500,
+            5_000,
             false,
         ),
     ] {
