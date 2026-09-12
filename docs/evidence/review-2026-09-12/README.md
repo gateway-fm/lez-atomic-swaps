@@ -237,6 +237,10 @@ All on PR #42, each reproduced on the stack before the fix and re-run after it.
 
 ## How to reproduce
 
+[`REPRODUCE.md`](REPRODUCE.md) has one guide per scenario: the scripted API
+and desk runs, the hands-on desk steps with the labels the harness asserts,
+the Node-side checks, pass criteria and durations. In short:
+
 On an arm64 host with Docker, from a checkout of the commit above:
 
 ```
