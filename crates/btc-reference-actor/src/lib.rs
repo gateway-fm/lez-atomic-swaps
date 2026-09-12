@@ -1062,6 +1062,20 @@ fn binding_invalid(check: &str) -> ActorCommandError {
     ActorCommandError::AgreementBindingInvalid
 }
 
+/// The shape of a public-effect observation, for the trace only.
+fn public_effect_observation_kind(observation: &PublicEffectObservation) -> &'static str {
+    match observation {
+        PublicEffectObservation::PresentExact(_) => "present_exact",
+        PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe { .. } => {
+            "exact_claim_safe"
+        }
+        PublicEffectObservation::EligibleToAttempt => "eligible_to_attempt",
+        PublicEffectObservation::Absent => "absent",
+        PublicEffectObservation::Uncertain => "uncertain",
+        PublicEffectObservation::ConflictingPresence => "conflicting_presence",
+    }
+}
+
 fn trace_observation_unavailable<E: std::fmt::Debug>(error: E) -> ActorCommandError {
     if std::env::var_os("LEZ_BTC_ACTOR_TRACE").is_some_and(|value| value == "1") {
         eprintln!(
@@ -5805,15 +5819,18 @@ where
                 PublicEffectObservation::Uncertain
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let submission = self
             .chain
@@ -5849,6 +5866,13 @@ where
             }
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -6245,21 +6269,33 @@ where
             }
             WitnessedAssetRefundObservationV2::Absent
             | WitnessedAssetRefundObservationV2::UnknownOrPending => {
+                trace_note(
+                    "lez_asset_refund_uncertain",
+                    &format!(
+                        "status={:?} clock_after_ms={} refund_at_ms={}",
+                        response.metadata.status,
+                        response.clock_after.timestamp_ms,
+                        agreement.lez_terms().refund_at_ms()
+                    ),
+                );
                 PublicEffectObservation::Uncertain
             }
             WitnessedAssetRefundObservationV2::NotRequested => {
                 return Err(ActorCommandError::AgreementBindingInvalid);
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request_id = lez_asset_refund_request_id(
             self.config,
@@ -6304,6 +6340,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -6696,21 +6739,32 @@ where
                 PublicEffectObservation::EligibleToAttempt
             }
             NativeRefundObservation::Absent | NativeRefundObservation::UnknownOrPending => {
+                trace_note(
+                    "lez_native_refund_uncertain",
+                    &format!(
+                        "clock_after_ms={} refund_at_ms={}",
+                        response.clock_after.timestamp_ms,
+                        agreement.lez_terms().refund_at_ms()
+                    ),
+                );
                 PublicEffectObservation::Uncertain
             }
             NativeRefundObservation::NotRequested => {
                 return Err(ActorCommandError::AgreementBindingInvalid);
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request = submit_lez_refund_request(&self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();
@@ -6737,6 +6791,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -7382,15 +7443,18 @@ where
             FinalizedWitnessedClaimPresence::Unavailable(_)
             | FinalizedWitnessedClaimPresence::Uncertain(_) => PublicEffectObservation::Uncertain,
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request = submit_lez_claim_request(self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();
@@ -7417,6 +7481,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -7573,15 +7644,18 @@ where
                 PublicEffectObservation::Uncertain
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request = submit_lez_claim_request(self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();
@@ -7608,6 +7682,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
