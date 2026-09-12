@@ -724,6 +724,43 @@ impl ActorConfig {
         )
         .map_err(|_| ActorCommandError::ConfigurationUnavailable)
     }
+
+    /// The window an exact lookup of this actor's own LEZ transaction scans:
+    /// the swap's discovery window until the chain has grown past it, then
+    /// the same number of blocks ending at the finalized tip the lookup is
+    /// made at. The discovery window bounds the Maker's lock, which can only
+    /// appear before the cutoff; a refund is submitted only past `refund_at`,
+    /// which lies beyond that window for the leg that refunds later, so a
+    /// lookup anchored at the swap's start would report it absent forever.
+    fn exact_lookup_window(
+        &self,
+        finalized_height: u64,
+    ) -> Result<DiscoveryWindow, ActorCommandError> {
+        let max_blocks = self.lez_bridge.discovery_max_blocks;
+        let trailing_start = finalized_height.saturating_sub(u64::from(max_blocks) - 1);
+        DiscoveryWindow::new(
+            trailing_start.max(self.lez_bridge.discovery_start_height),
+            max_blocks,
+        )
+        .map_err(|_| ActorCommandError::ConfigurationUnavailable)
+    }
+
+    /// Every finalized block since the swap's start, for an exact lookup of
+    /// an own transaction that the trailing window no longer covers (the
+    /// escrow reads as refunded while this actor was away for longer than
+    /// the window); capped at the protocol's largest window.
+    fn full_span_window(
+        &self,
+        finalized_height: u64,
+    ) -> Result<DiscoveryWindow, ActorCommandError> {
+        let start = self.lez_bridge.discovery_start_height;
+        let span = finalized_height
+            .saturating_sub(start)
+            .saturating_add(1)
+            .min(u64::from(lez_bridge_protocol::MAX_DISCOVERY_BLOCKS));
+        DiscoveryWindow::new(start, u32::try_from(span).unwrap_or(1).max(1))
+            .map_err(|_| ActorCommandError::ConfigurationUnavailable)
+    }
 }
 
 /// Compares exact verified config bytes with a Bitcoin Maker scheduler manifest.
@@ -1018,12 +1055,34 @@ fn trace_note(event: &str, detail: &str) {
     }
 }
 
+/// An agreement-binding failure on a traced path: with `LEZ_BTC_ACTOR_TRACE=1`
+/// the check that failed is named, so a refusal can be diagnosed in place.
+fn binding_invalid(check: &str) -> ActorCommandError {
+    trace_note("agreement_binding_invalid", check);
+    ActorCommandError::AgreementBindingInvalid
+}
+
+/// The shape of a public-effect observation, for the trace only.
+fn public_effect_observation_kind(observation: &PublicEffectObservation) -> &'static str {
+    match observation {
+        PublicEffectObservation::PresentExact(_) => "present_exact",
+        PublicEffectObservation::ExactIdempotentLezClaimSubmissionSafe { .. } => "exact_claim_safe",
+        PublicEffectObservation::EligibleToAttempt => "eligible_to_attempt",
+        PublicEffectObservation::Absent => "absent",
+        PublicEffectObservation::Uncertain => "uncertain",
+        PublicEffectObservation::ConflictingPresence => "conflicting_presence",
+    }
+}
+
 fn trace_observation_unavailable<E: std::fmt::Debug>(error: E) -> ActorCommandError {
     if std::env::var_os("LEZ_BTC_ACTOR_TRACE").is_some_and(|value| value == "1") {
         eprintln!(
             "{{\"event\":\"observation_unavailable\",\"error\":{:?}}}",
             format!("{error:?}")
         );
+        if std::env::var_os("LEZ_BTC_ACTOR_TRACE_BACKTRACE").is_some_and(|value| value == "1") {
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
     }
     ActorCommandError::ObservationUnavailable
 }
@@ -1400,6 +1459,15 @@ where
         .observe_exact_funding(agreement)
         .await
         .map_err(trace_observation_unavailable)?;
+    trace_note(
+        "bitcoin_maker_step_observation",
+        match &observation {
+            ExactFundingObservation::Absent { .. } => "absent",
+            ExactFundingObservation::Pending { .. } => "pending",
+            ExactFundingObservation::Unspent(_) => "unspent",
+            ExactFundingObservation::Spent { .. } => "spent",
+        },
+    );
     Ok(match observation {
         ExactFundingObservation::Absent { .. } => MakerLockStepChainObservationV1::Absent,
         ExactFundingObservation::Pending { transaction, .. } => {
@@ -1412,7 +1480,12 @@ where
                 MakerLockStepChainObservationV1::ConflictingPresence
             }
         }
-        ExactFundingObservation::Unspent(funding) => {
+        // Confirmed, unspent or already spent: an output the Taker's revealing
+        // claim spent before this Maker observed its own lock (two swaps served
+        // in turn, say) is a canonical lock all the same; the spender is the
+        // next revision's evidence.
+        ExactFundingObservation::Unspent(funding)
+        | ExactFundingObservation::Spent { funding, .. } => {
             if bitcoin_step_is_exact(step, funding.transaction()) {
                 MakerLockStepChainObservationV1::PresentExactCanonical {
                     expected_public_id: step.expected_public_id().as_str().into(),
@@ -1422,7 +1495,6 @@ where
                 MakerLockStepChainObservationV1::ConflictingPresence
             }
         }
-        ExactFundingObservation::Spent { .. } => MakerLockStepChainObservationV1::Uncertain,
     })
 }
 
@@ -1472,7 +1544,10 @@ async fn observe_current_lez_maker_step(
             }
         },
         "lez.fund" => match result.funding {
-            WitnessedFundingObservation::Absent => MakerLockStepChainObservationV1::Absent,
+            WitnessedFundingObservation::Absent => {
+                trace_note("lez_maker_funding_step_current", "absent");
+                MakerLockStepChainObservationV1::Absent
+            }
             WitnessedFundingObservation::UnknownOrPending => {
                 MakerLockStepChainObservationV1::ExactIdempotentSubmissionSafe {
                     expected_public_id: step.expected_public_id().as_str().into(),
@@ -1538,11 +1613,19 @@ async fn observe_live_lez_maker_step(
         }
         "lez.fund" => {
             let request = maker_lez_funding_classification_request(config, agreement, step)?;
-            match client
+            let presence = client
                 .classify_finalized_witnessed_funding(request)
                 .await
-                .map_err(trace_observation_unavailable)?
-            {
+                .map_err(trace_observation_unavailable)?;
+            trace_note(
+                "lez_maker_funding_step_presence",
+                match &presence {
+                    FinalizedWitnessedFundingPresence::Found { .. } => "found",
+                    FinalizedWitnessedFundingPresence::Absent { .. } => "absent",
+                    FinalizedWitnessedFundingPresence::Uncertain { .. } => "uncertain",
+                },
+            );
+            match presence {
                 FinalizedWitnessedFundingPresence::Found { funding, .. } => {
                     if lez_step_is_exact(step, &funding.transaction) {
                         Ok(MakerLockStepChainObservationV1::PresentExactCanonical {
@@ -2223,8 +2306,11 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
                     Participant::Maker,
                 )
                 .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+                // The escrow may already be claimed or refunded when this Maker
+                // observes its own lock late (its supervisor served other swaps
+                // first); the funding completed all the same.
                 let _current_evidence = current
-                    .observe_current_lez_funded_escrow(
+                    .observe_current_lez_escrow_after_funding(
                         agreement,
                         maker_lez_current_funded_request_id(self.config, agreement)?,
                     )
@@ -3647,6 +3733,25 @@ async fn recover_live(config: &ActorConfig) -> Result<ActorEffectOutputV1, Actor
             &durable,
         ));
     };
+    // A Maker past its cutoff may still hold a lock it sent in time and has
+    // not yet observed (its supervisor served other swaps first, say); the
+    // Taker sees that lock as canonical and may already have claimed. It is
+    // projected before any recovery of the Taker's leg; only a lock that is
+    // absent, or was refused as late, leaves recovery to run.
+    if transition == RefundTransition::FirstLockRecovery
+        && config.role == ActorRole::Maker
+        && config.supports_owned_maker_lock()
+    {
+        let port = LiveMakerLockExecutionPort::new(config)?;
+        match drive_maker_lock_with_port(config, agreement.clone(), wire.clone(), &port).await {
+            Ok(output) if output.revision > durable.revision() => return Ok(output),
+            Ok(_) => {}
+            Err(error) => trace_note(
+                "first_lock_recovery_lock_observation",
+                &format!("own lock not projected before recovery: {error:?}"),
+            ),
+        }
+    }
     let chain = agreement
         .coordinator()
         .funded_chain(transition.funded_participant());
@@ -4038,6 +4143,20 @@ async fn drive_maker_lock_with_port(
     if let Some((step, state)) = next_step {
         let observation = port.observe_step(&agreement, &step).await?;
         if state == BtcMakerLockStepState::Prepared && observation.can_authorize_submission() {
+            // A lock that has not been sent is never sent past the cutoff. The
+            // chain clock the freshness read consults trails the wall clock
+            // (Bitcoin's median time by about an hour on mainnet, ten minutes
+            // on the local regtest), so a Maker restarted just after its
+            // cutoff would otherwise still lock: the Taker's recovery then sees
+            // a late lock it can neither claim nor refund against, and both
+            // legs stay locked until the Maker's own refund matures.
+            if maker_cutoff_passed(&agreement) {
+                trace_note(
+                    "maker_lock_not_sent",
+                    "wall clock past the Maker's cutoff; an unsent lock stays unsent",
+                );
+                return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+            }
             let fresh = port.fresh_eligibility(&agreement).await?;
             let sdk_plan =
                 validate_fresh_maker_lock_plan(config, &agreement, &agreement_wire, fresh, true)?;
@@ -5451,7 +5570,15 @@ where
         .observe_exact_funding(agreement)
         .await
         .map_err(trace_observation_unavailable)?;
-    let ExactFundingObservation::Unspent(observed) = observed else {
+    // Confirmed and unspent, or confirmed and already spent: the Taker's
+    // revealing claim can land before this Maker projects its own lock (two
+    // swaps served in turn, say), and a spent lock is a canonical lock all the
+    // same; the spender is the next revision's evidence.
+    let (ExactFundingObservation::Unspent(observed)
+    | ExactFundingObservation::Spent {
+        funding: observed, ..
+    }) = observed
+    else {
         return Ok(ActorFundingObservation::Pending {
             chain: Chain::Bitcoin,
         });
@@ -5704,15 +5831,18 @@ where
                 PublicEffectObservation::Uncertain
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let submission = self
             .chain
@@ -5748,6 +5878,13 @@ where
             }
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -5864,7 +6001,7 @@ fn lez_refund_observation_request(
         ) | (false, NativeRefundObservationTarget::DiscoverByTerms { .. })
     );
     if !target_is_valid {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_request#1"));
     }
     let terms = witnessed_lez_terms(agreement)?;
     let identity = LezRefundRequestIdentityV1 {
@@ -6144,21 +6281,33 @@ where
             }
             WitnessedAssetRefundObservationV2::Absent
             | WitnessedAssetRefundObservationV2::UnknownOrPending => {
+                trace_note(
+                    "lez_asset_refund_uncertain",
+                    &format!(
+                        "status={:?} clock_after_ms={} refund_at_ms={}",
+                        response.metadata.status,
+                        response.clock_after.timestamp_ms,
+                        agreement.lez_terms().refund_at_ms()
+                    ),
+                );
                 PublicEffectObservation::Uncertain
             }
             WitnessedAssetRefundObservationV2::NotRequested => {
                 return Err(ActorCommandError::AgreementBindingInvalid);
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request_id = lez_asset_refund_request_id(
             self.config,
@@ -6203,6 +6352,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -6407,16 +6563,9 @@ where
         validate_lez_refund_transition(&self.config, agreement, transition)?;
         let owner = self.config.role.sdk() == transition.funded_participant();
         if !owner {
-            let request = lez_refund_observation_request(
-                &self.config,
-                agreement,
-                transition,
-                NativeRefundObservationTarget::DiscoverByTerms {
-                    window: self.config.discovery_window()?,
-                },
-            )?;
-            let response = self.chain.observe_native_refund(request.clone()).await?;
-            validate_lez_refund_response(&self.config, agreement, transition, &request, &response)?;
+            let (request, response) = self
+                .discover_counterparty_refund(agreement, transition)
+                .await?;
             return finalized_lez_refund_observation(
                 &self.config,
                 agreement,
@@ -6445,7 +6594,7 @@ where
             &state_response,
         )?;
         if state_response.refund != NativeRefundObservation::NotRequested {
-            return Err(ActorCommandError::AgreementBindingInvalid);
+            return Err(binding_invalid("refund_observe#1"));
         }
         if state != Some(EscrowState::Funded) && state != Some(EscrowState::Refunded) {
             return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
@@ -6466,19 +6615,9 @@ where
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         drop(journal);
 
-        let request = lez_refund_observation_request(
-            &self.config,
-            agreement,
-            transition,
-            NativeRefundObservationTarget::Exact {
-                refund_transaction_id: effect.transaction.transaction_id,
-                window: self.config.discovery_window()?,
-            },
-        )?;
-        let response = self.chain.observe_native_refund(request.clone()).await?;
-        validate_monotonic_lez_clocks(state_response.clock_after, response.clock_after)?;
-        let account_state =
-            validate_lez_refund_response(&self.config, agreement, transition, &request, &response)?;
+        let (request, response, account_state) = self
+            .exact_refund_lookup(agreement, transition, &effect, state_response.clock_after)
+            .await?;
         self.reconcile_and_maybe_submit(agreement, transition, &effect, account_state, &response)
             .await?;
         finalized_lez_refund_observation(
@@ -6496,6 +6635,95 @@ impl<P> LezRefundObserver<P>
 where
     P: LezRefundChainPort,
 {
+    /// Discovers the counterparty's refund by the signed terms: in the swap's
+    /// discovery window, and, when the escrow reads as refunded there while
+    /// the window does not hold the refund (the leg that refunds later does
+    /// so past the window that bounds the Maker's lock), once more over the
+    /// whole span since the swap's start.
+    async fn discover_counterparty_refund(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+    ) -> Result<(ObserveNativeRefundRequest, ObserveNativeRefundResult), ActorCommandError> {
+        let mut window = self.config.discovery_window()?;
+        loop {
+            let request = lez_refund_observation_request(
+                &self.config,
+                agreement,
+                transition,
+                NativeRefundObservationTarget::DiscoverByTerms { window },
+            )?;
+            let response = self.chain.observe_native_refund(request.clone()).await?;
+            let account_state = validate_lez_refund_response(
+                &self.config,
+                agreement,
+                transition,
+                &request,
+                &response,
+            )?;
+            let full_span = self.config.full_span_window(response.clock_after.height)?;
+            if account_state == Some(EscrowState::Refunded)
+                && response.refund == NativeRefundObservation::Absent
+                && window != full_span
+            {
+                window = full_span;
+                continue;
+            }
+            return Ok((request, response));
+        }
+    }
+
+    /// Looks up this actor's own refund exactly: in the window trailing the
+    /// finalized tip the escrow state was read at, and, when the escrow
+    /// reads as refunded but that window does not hold it, once more over
+    /// the whole span since the swap's start.
+    async fn exact_refund_lookup(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: RefundTransition,
+        effect: &PreparedLezRefundEffect,
+        state_clock: ChainClock,
+    ) -> Result<
+        (
+            ObserveNativeRefundRequest,
+            ObserveNativeRefundResult,
+            Option<EscrowState>,
+        ),
+        ActorCommandError,
+    > {
+        let finalized_height = state_clock.height;
+        let mut window = self.config.exact_lookup_window(finalized_height)?;
+        loop {
+            let request = lez_refund_observation_request(
+                &self.config,
+                agreement,
+                transition,
+                NativeRefundObservationTarget::Exact {
+                    refund_transaction_id: effect.transaction.transaction_id,
+                    window,
+                },
+            )?;
+            let response = self.chain.observe_native_refund(request.clone()).await?;
+            validate_monotonic_lez_clocks(state_clock, response.clock_after)?;
+            let account_state = validate_lez_refund_response(
+                &self.config,
+                agreement,
+                transition,
+                &request,
+                &response,
+            )?;
+            let full_span = self.config.full_span_window(finalized_height)?;
+            if account_state == Some(EscrowState::Refunded)
+                && response.refund == NativeRefundObservation::Absent
+                && window != full_span
+            {
+                window = full_span;
+                continue;
+            }
+            return Ok((request, response, account_state));
+        }
+    }
+
     async fn reconcile_and_maybe_submit(
         &self,
         agreement: &BtcAgreementV1,
@@ -6523,21 +6751,32 @@ where
                 PublicEffectObservation::EligibleToAttempt
             }
             NativeRefundObservation::Absent | NativeRefundObservation::UnknownOrPending => {
+                trace_note(
+                    "lez_native_refund_uncertain",
+                    &format!(
+                        "clock_after_ms={} refund_at_ms={}",
+                        response.clock_after.timestamp_ms,
+                        agreement.lez_terms().refund_at_ms()
+                    ),
+                );
                 PublicEffectObservation::Uncertain
             }
             NativeRefundObservation::NotRequested => {
                 return Err(ActorCommandError::AgreementBindingInvalid);
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request = submit_lez_refund_request(&self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();
@@ -6564,6 +6803,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -6587,16 +6833,16 @@ where
 {
     validate_lez_refund_transition(config, agreement, transition)?;
     if config.role.sdk() != transition.funded_participant() {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("prepare_refund_effect#1"));
     }
     let request = prepare_lez_refund_request(config, agreement, transition)?;
     let expected_context = request.context.clone();
     let response = chain.prepare_native_refund(request).await?;
     if response.context != expected_context {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("prepare_refund_effect#2"));
     }
     let swap_id = SwapId::new(hex::encode(agreement.body().swap_id()))
-        .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+        .map_err(|_| binding_invalid("prepare_refund_effect#3"))?;
     let key = PublicEffectKey::new(
         swap_id,
         config.role.sdk(),
@@ -6610,7 +6856,7 @@ where
         hex::encode(response.refund.transaction_id.as_bytes()),
         response.refund.exact_bytes.as_slice().to_vec(),
     )
-    .map_err(|_| ActorCommandError::AgreementBindingInvalid)?;
+    .map_err(|_| binding_invalid("prepare_refund_effect#4"))?;
     let prepared = PreparedLezRefundEffect {
         effect,
         transaction: response.refund,
@@ -6631,7 +6877,7 @@ fn validate_prepared_lez_refund_effect(
             != hex::encode(effect.transaction.transaction_id.as_bytes())
         || effect.effect.exact_public_bytes() != effect.transaction.exact_bytes.as_slice()
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_effect#1"));
     }
     Ok(())
 }
@@ -6647,7 +6893,7 @@ fn validate_lez_refund_transition(
         .funded_chain(transition.funded_participant())
         != Chain::Lez
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_transition#1"));
     }
     Ok(())
 }
@@ -6674,36 +6920,36 @@ fn validate_lez_refund_response(
 ) -> Result<Option<EscrowState>, ActorCommandError> {
     validate_lez_refund_transition(config, agreement, transition)?;
     if response.context != request.context || response.clock_before != response.clock_after {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_response#1"));
     }
     let expected_request =
         lez_refund_observation_request(config, agreement, transition, request.target)?;
     if request != &expected_request {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_response#2"));
     }
     let terms = request
         .terms
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_response#6"))?;
     let state = validate_lez_refund_accounts(config, agreement, terms, &response.accounts)?
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_response#7"))?;
     match &response.refund {
         NativeRefundObservation::NotRequested => {
             if request.target != NativeRefundObservationTarget::StateOnly {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+                return Err(binding_invalid("refund_response#3"));
             }
         }
+        // A finalized window that does not hold the refund: sound for a
+        // discovery by terms and for an exact lookup alike (an exact lookup
+        // trails the tip, so its window is always finalized).
         NativeRefundObservation::Absent => {
-            if !matches!(
-                request.target,
-                NativeRefundObservationTarget::DiscoverByTerms { .. }
-            ) {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+            if request.target == NativeRefundObservationTarget::StateOnly {
+                return Err(binding_invalid("refund_response#4"));
             }
         }
         NativeRefundObservation::UnknownOrPending => {
             if request.target == NativeRefundObservationTarget::StateOnly {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+                return Err(binding_invalid("refund_response#5"));
             }
         }
         NativeRefundObservation::Found(found) => {
@@ -6725,7 +6971,7 @@ fn validate_lez_refund_accounts(
     let metadata = facts
         .metadata
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_accounts#2"))?;
     let state = metadata.status;
     let signed = agreement.lez_terms();
     let expected_metadata = WitnessedEscrowMetadataFacts::from_witnessed_native_terms(
@@ -6746,7 +6992,7 @@ fn validate_lez_refund_accounts(
         || facts.custody.owner_program_id != terms.authenticated_transfer_program_id()
         || facts.custody.balance.as_u128() != expected_balance
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_accounts#1"));
     }
     Ok(Some(state))
 }
@@ -6763,13 +7009,13 @@ fn validate_lez_refund_found(
             window,
         } => {
             if found.transaction.transaction_id != refund_transaction_id {
-                return Err(ActorCommandError::AgreementBindingInvalid);
+                return Err(binding_invalid("refund_found#1"));
             }
             window
         }
         NativeRefundObservationTarget::DiscoverByTerms { window } => window,
         NativeRefundObservationTarget::StateOnly => {
-            return Err(ActorCommandError::AgreementBindingInvalid);
+            return Err(binding_invalid("refund_found#2"));
         }
     };
     let end = window
@@ -6779,15 +7025,15 @@ fn validate_lez_refund_found(
     let terms = request
         .terms
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_found#5"))?;
     let transaction = &found.transaction;
     let NativeEscrowAccountObservation::Found(accounts) = &response.accounts else {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_found#3"));
     };
     let metadata = accounts
         .metadata
         .witnessed()
-        .ok_or(ActorCommandError::AgreementBindingInvalid)?;
+        .ok_or_else(|| binding_invalid("refund_found#6"))?;
     let expected_accounts = [
         metadata.account_id,
         accounts.custody.account_id,
@@ -6808,7 +7054,7 @@ fn validate_lez_refund_found(
         || found.instruction.ordered_account_ids.as_slice() != expected_accounts
         || response.clock_after.timestamp_ms < terms.refund_at_ms()
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("refund_found#4"));
     }
     Ok(())
 }
@@ -7209,15 +7455,18 @@ where
             FinalizedWitnessedClaimPresence::Unavailable(_)
             | FinalizedWitnessedClaimPresence::Uncertain(_) => PublicEffectObservation::Uncertain,
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request = submit_lez_claim_request(self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();
@@ -7244,6 +7493,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -7400,15 +7656,18 @@ where
                 PublicEffectObservation::Uncertain
             }
         };
+        let observation_kind = public_effect_observation_kind(&observation);
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let decision = journal
             .reconcile(effect.effect.key(), observation)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let PublicEffectDecision::SubmitOnce(_) = decision else {
+            trace_note("effect_reconcile", &format!("{observation_kind}: no send"));
             return Ok(());
         };
         drop(journal);
+        trace_note("effect_reconcile", &format!("{observation_kind}: sending"));
 
         let request = submit_lez_claim_request(self.config, agreement, transition, effect)?;
         let expected_context = request.context.clone();
@@ -7435,6 +7694,13 @@ where
             ),
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
+        trace_note(
+            "effect_submission",
+            &format!(
+                "accepted={} error={deferred_error:?}",
+                matches!(result, PublicEffectSubmissionResult::Accepted(_))
+            ),
+        );
         let mut journal = SqlitePublicEffectJournal::open(&self.state_db)
             .map_err(|_| ActorCommandError::StateUnavailable)?;
         let _ = journal
@@ -8308,8 +8574,15 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
             return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
         };
         let adapter = BitcoinCoreAdapter::new(rpc, self.config.bitcoin_core.connectivity.into());
-        let Ok(observation) = adapter.observe_funding(agreement).await else {
-            return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+        let observation = match adapter.observe_funding(agreement).await {
+            Ok(observation) => observation,
+            Err(error) => {
+                trace_note(
+                    "first_lock_safety_uncertain",
+                    &format!("bitcoin maker lock read failed: {error:?}"),
+                );
+                return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
+            }
         };
         match observation {
             FundingObservation::Ready(observed) => {
@@ -8343,6 +8616,7 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
                 })
             }
             FundingObservation::Pending { .. } => {
+                trace_note("first_lock_safety_uncertain", "bitcoin maker lock pending");
                 Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
             }
             FundingObservation::Absent { stable_tip } => {
@@ -8352,6 +8626,13 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
                     .recovery_plan()
                     .maker_second_lock_cutoff_unix_seconds();
                 if observed_unix_seconds < cutoff_unix_seconds {
+                    trace_note(
+                        "first_lock_safety_uncertain",
+                        &format!(
+                            "bitcoin maker lock absent; stable tip {} median time {observed_unix_seconds} before cutoff {cutoff_unix_seconds}",
+                            stable_tip.height()
+                        ),
+                    );
                     return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
                 }
                 let absence_evidence = encode_bitcoin_maker_lock_absence_evidence(
@@ -9235,7 +9516,7 @@ fn validate_actor_binding(
         || runtime.escrow_program_id.as_bytes() != signed.escrow_program_id()
         || runtime.signer_account_id.as_bytes() != expected_signer
     {
-        return Err(ActorCommandError::AgreementBindingInvalid);
+        return Err(binding_invalid("actor_binding#1"));
     }
     Ok(())
 }

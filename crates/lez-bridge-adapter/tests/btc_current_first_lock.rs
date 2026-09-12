@@ -515,6 +515,54 @@ async fn generic_funded_escrow_rejects_runtime_and_role_account_drift_before_tra
     }
 }
 
+/// A depositor that observes its own lock after the claimant took it still
+/// sees a completed funding: the after-funding read accepts a claimed escrow
+/// (and reports its state), while the funded-now read keeps refusing it.
+#[tokio::test]
+async fn after_funding_read_accepts_a_claimed_escrow_the_funded_read_refuses() {
+    for direction in [
+        SwapDirection::TakerSellsForeign,
+        SwapDirection::TakerSellsLez,
+    ] {
+        let agreement = agreement(direction);
+        let transport = ReadOnlyTransport::new(Mutation::Claimed);
+        let evidence = adapter(transport.clone(), Participant::Maker)
+            .observe_current_lez_escrow_after_funding(
+                &agreement,
+                RequestId::new(format!("after-funding-{direction:?}").to_lowercase())
+                    .expect("request ID"),
+            )
+            .await
+            .expect("a claimed escrow is a completed funding");
+        assert_eq!(evidence.metadata().status, EscrowState::Claimed);
+        let error = adapter(transport.clone(), Participant::Maker)
+            .observe_current_lez_funded_escrow(
+                &agreement,
+                RequestId::new(format!("funded-now-{direction:?}").to_lowercase())
+                    .expect("request ID"),
+            )
+            .await
+            .expect_err("the funded-now read still refuses a claimed escrow");
+        assert!(
+            error.to_string().contains("funded"),
+            "{direction:?}: {error}"
+        );
+        for mutation in [Mutation::AccountsAbsent, Mutation::MetadataAccount] {
+            let error = adapter(ReadOnlyTransport::new(mutation), Participant::Maker)
+                .observe_current_lez_escrow_after_funding(
+                    &agreement,
+                    RequestId::new(
+                        format!("after-funding-{direction:?}-{mutation:?}").to_lowercase(),
+                    )
+                    .expect("request ID"),
+                )
+                .await
+                .expect_err("substituted or absent accounts still fail closed");
+            assert!(!error.to_string().is_empty());
+        }
+    }
+}
+
 #[tokio::test]
 async fn drift_spent_wrong_accounts_and_value_fail_closed() {
     for direction in [

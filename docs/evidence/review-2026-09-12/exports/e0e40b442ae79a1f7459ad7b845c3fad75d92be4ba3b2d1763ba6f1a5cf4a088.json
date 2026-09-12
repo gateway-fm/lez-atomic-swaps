@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "kind": "m3_btc_ui_evidence",
+  "source_kind": "node_owned_swap",
+  "source": "taker_node_actor_state",
+  "result": "passed",
+  "run_id": "node-e0e40b442ae7",
+  "swap_id": "e0e40b442ae79a1f7459ad7b845c3fad75d92be4ba3b2d1763ba6f1a5cf4a088",
+  "offer_id": "offer-sell-btc-1789202048",
+  "completed_at": "2026-09-12T08:37:39Z",
+  "repository_commit": "c23eeb0e4b64fde52c5a6794b4e82f6cfc2e74ef",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "journey": "claim",
+  "terminal": {
+    "phase": "completed",
+    "revision": 4
+  },
+  "amounts": {
+    "bitcoin_sats": 1000000,
+    "bitcoin_display": "0.01000000 BTC",
+    "lez_units": 1000,
+    "lez_display": "1,000 LEZ units"
+  },
+  "networks": {
+    "bitcoin": "Bitcoin Core 31.1 \u00b7 regtest",
+    "lez": "LEZ v0.2.0 \u00b7 private local"
+  },
+  "effect_counts": {
+    "bitcoin": 2,
+    "lez": 3,
+    "total": 5
+  },
+  "replay_resubmission_count": 0,
+  "private_material_disclosed": false,
+  "effects": [
+    {
+      "sequence": 1,
+      "chain": "LEZ",
+      "actor": "Taker",
+      "kind": "initialization",
+      "label": "Escrow initialization",
+      "transaction_id": "971f82c374b356e9cb78d6eb054e3795299e160257bbd058734540446f473bc7",
+      "amount": "Escrow authority",
+      "block_height": 12954,
+      "block_hash": "60a046e85e928abad349b26bee58629da314b6281a05ef25f2243f906c511531",
+      "confirmations": null,
+      "finality": "Finalized",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/971f82c374b356e9cb78d6eb054e3795299e160257bbd058734540446f473bc7"
+    },
+    {
+      "sequence": 2,
+      "chain": "LEZ",
+      "actor": "Taker",
+      "kind": "first_lock",
+      "label": "Taker first lock",
+      "transaction_id": "b61147009b5abff848c193a7dac7227fe5537259f14dd541b448796178313a0d",
+      "amount": "1,000 LEZ units",
+      "block_height": 12954,
+      "block_hash": "60a046e85e928abad349b26bee58629da314b6281a05ef25f2243f906c511531",
+      "confirmations": null,
+      "finality": "Finalized",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/b61147009b5abff848c193a7dac7227fe5537259f14dd541b448796178313a0d"
+    },
+    {
+      "sequence": 3,
+      "chain": "Bitcoin",
+      "actor": "Maker",
+      "kind": "funding",
+      "label": "Maker second lock",
+      "transaction_id": "c4436f308efa66a27b15713f43a18dd210ea3a54f2dc4e42cb1183c42402397f",
+      "amount": "0.01000000 BTC",
+      "block_height": 1574,
+      "block_hash": "576571d02c91451afb60b0d6f3d592c368e7d65914f4aef75576ee3761fd46be",
+      "confirmations": 2,
+      "finality": "Confirmed",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/c4436f308efa66a27b15713f43a18dd210ea3a54f2dc4e42cb1183c42402397f"
+    },
+    {
+      "sequence": 4,
+      "chain": "Bitcoin",
+      "actor": "Taker",
+      "kind": "revealing_claim",
+      "label": "Taker revealing claim",
+      "transaction_id": "4af3062240214222640080540b9f8d919bce4a1da7f769e67e0e65ac0bb3017b",
+      "amount": "0.00999000 BTC",
+      "block_height": 1575,
+      "block_hash": "68de16cfaf991da152ab591a8bdcd1b954c24756b339da90f642bb802da1f838",
+      "confirmations": 1,
+      "finality": "Confirmed",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/4af3062240214222640080540b9f8d919bce4a1da7f769e67e0e65ac0bb3017b"
+    },
+    {
+      "sequence": 5,
+      "chain": "LEZ",
+      "actor": "Maker",
+      "kind": "followup_claim",
+      "label": "Maker follow-up claim",
+      "transaction_id": "f4c2378b353c8cb801e2c005a7192360a8a2b16d496b785b744b010d962d9796",
+      "amount": "1,000 LEZ units",
+      "block_height": 12972,
+      "block_hash": "762eb6e0a7ccff8be645d34bae111716d24547deec98c678f747f071d4511dd7",
+      "confirmations": null,
+      "finality": "Finalized",
+      "explorer_url": "http://127.0.0.1:3003/#/evidence/tx/f4c2378b353c8cb801e2c005a7192360a8a2b16d496b785b744b010d962d9796"
+    }
+  ]
+}

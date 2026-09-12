@@ -13,7 +13,7 @@ release workflow pushed to `ghcr.io/gateway-fm/lez-atomic-swaps/lez-*`.
 On an arm64 host with Docker (Apple silicon, or arm64 Linux):
 
 ```sh
-tar -xzf lez-swap-stack-v0.2.1-arm64.tar.gz && cd lez-swap-stack-v0.2.1-arm64
+tar -xzf lez-swap-stack-v0.2.2-arm64.tar.gz && cd lez-swap-stack-v0.2.2-arm64
 ./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → UI suites
 ./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two Basecamp apps
 ```

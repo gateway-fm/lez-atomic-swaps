@@ -32,5 +32,7 @@ public:
 
 private:
     LocalJsonRpcClient rpc_;
+    // Same socket, with the budget a market snapshot needs on a Node with history.
+    LocalJsonRpcClient snapshotRpc_;
     std::unique_ptr<LogosChatBridge> chat_;
 };

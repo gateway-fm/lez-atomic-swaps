@@ -12,13 +12,17 @@ use jsonrpsee::server::{BatchRequestConfig, ServerConfig};
 use tokio::net::UnixListener;
 
 const MAXIMUM_CONNECTIONS: u32 = 16;
+/// The largest reply an owner-local service sends: a swap list grows with
+/// the Node's history (`taker_swap_list_v1` carries every swap's effects),
+/// so replies are bounded far above the request bound.
+const MAXIMUM_RESPONSE_BODY_BYTES: u32 = 4 * 1024 * 1024;
 
 /// Builds the bounded HTTP-only configuration used by owner-local RPC services.
 #[must_use]
 pub fn server_config(maximum_body_bytes: u32) -> ServerConfig {
     ServerConfig::builder()
         .max_request_body_size(maximum_body_bytes)
-        .max_response_body_size(maximum_body_bytes)
+        .max_response_body_size(maximum_body_bytes.max(MAXIMUM_RESPONSE_BODY_BYTES))
         .max_connections(MAXIMUM_CONNECTIONS)
         .set_batch_request_config(BatchRequestConfig::Disabled)
         .http_only()

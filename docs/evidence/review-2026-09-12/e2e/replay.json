@@ -1,0 +1,18 @@
+{
+  "scenario": "replay",
+  "direction": "TakerSellsForeign",
+  "stamp": "1789228904",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "6",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "600",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "900",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "1200",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_BTC_ACTOR_TRACE": "1"
+  },
+  "swap_id": "2e69b3308fce161f81eda89bba0d65ac126d45f84ceee1772c1a0510aa06d545",
+  "lock_txid": "92c63eb8047d1f1aeeb24c114d6ea62841a8ff8a1e322c4bc1180525df98f22c",
+  "result": "passed",
+  "seconds": 352
+}

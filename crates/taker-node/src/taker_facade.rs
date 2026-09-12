@@ -574,14 +574,14 @@ impl TakerPairCapabilityV1 {
 /// Basecamp and CLI decode health as untyped JSON; typed consumers must tolerate
 /// unknown values rather than assuming a closed set.
 #[must_use]
-pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 4] {
+pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 5] {
     pair_capabilities(false, false)
 }
 
 const fn pair_capabilities(
     zec_lifecycle_registered: bool,
     btc_lifecycle_registered: bool,
-) -> [TakerPairCapabilityV1; 4] {
+) -> [TakerPairCapabilityV1; 5] {
     // Bitcoin: the Node runs the lifecycle only once its BTC route is
     // configured; until then the owner CLI or the demo runner does.
     let (btc_initiation, btc_monitoring, btc_terminal) = if btc_lifecycle_registered {
@@ -644,6 +644,18 @@ const fn pair_capabilities(
             claim: zec_terminal,
             refund: zec_terminal,
         },
+        // The Taker sells LEZ and receives Bitcoin: the Taker locks the LEZ
+        // escrow first (`taker_swap_lock_v1`), the Maker locks Bitcoin second,
+        // the Taker's adaptor claim takes the Bitcoin.
+        TakerPairCapabilityV1 {
+            pair: Pair::Bitcoin,
+            supported_direction: SwapDirection::TakerSellsLez,
+            authenticated_offer_browsing: true,
+            initiation: btc_initiation,
+            monitoring: btc_monitoring,
+            claim: btc_terminal,
+            refund: btc_terminal,
+        },
     ]
 }
 
@@ -656,7 +668,7 @@ pub struct TakerHealthV1 {
     degraded: bool,
     delivery: TakerDependencyStateV1,
     chat: TakerDependencyStateV1,
-    pair_capabilities: [TakerPairCapabilityV1; 4],
+    pair_capabilities: [TakerPairCapabilityV1; 5],
     registered_methods: TakerRegisteredMethodsV1,
 }
 
@@ -734,7 +746,7 @@ impl TakerHealthV1 {
 
     /// Returns all current pair capabilities in stable order.
     #[must_use]
-    pub const fn pair_capabilities(&self) -> &[TakerPairCapabilityV1; 4] {
+    pub const fn pair_capabilities(&self) -> &[TakerPairCapabilityV1; 5] {
         &self.pair_capabilities
     }
 }

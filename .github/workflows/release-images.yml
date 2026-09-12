@@ -136,7 +136,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}/../lez-ws/provision/data/lez-services
-          key: lez-services-${{ hashFiles('deploy/scripts/from-scratch.sh', 'deploy/builder/image.lock', 'deploy/builder/Dockerfile') }}
+          key: lez-services-${{ hashFiles('deploy/scripts/from-scratch.sh', 'deploy/builder/image.lock', 'deploy/builder/Dockerfile', 'deploy/builder/patches/**') }}
       # The pinned builder image is a GHCR package of this repository; the job
       # token reads it whether or not the package has been made public.
       - name: Registry login for the pinned builder image

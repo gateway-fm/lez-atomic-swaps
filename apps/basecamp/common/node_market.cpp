@@ -118,81 +118,102 @@ struct SwapRow {
 };
 
 // The Taker's desk states from the Taker Node's swap view; `bitcoin` and
-// `lez` are that swap's exact amounts as the desk displays them. The Node's
-// `available_action` wins over the lifecycle state: a refund it offers while
-// the Maker's lock is still nominally awaited means the Maker missed its
-// window.
+// `lez` are that swap's exact amounts as the desk displays them. Selling
+// Bitcoin the Taker locks Bitcoin and claims LEZ; selling LEZ it locks the
+// LEZ escrow and claims Bitcoin. The Node's `available_action` wins over the
+// lifecycle state: a refund it offers while the Maker's lock is still
+// nominally awaited means the Maker missed its window.
 SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool locked,
                  const QString& direction, const QString& bitcoin, const QString& lez)
 {
-    const bool fundsBitcoin = direction == QStringLiteral("taker_sells_foreign");
+    const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");
+    const QString mine = sellsBitcoin ? bitcoin : lez;          // what this Taker locks
+    const QString theirs = sellsBitcoin ? lez : bitcoin;        // what it claims
+    const QString myChain = sellsBitcoin ? "Bitcoin" : "LEZ";
+    const QString theirChain = sellsBitcoin ? "LEZ" : "Bitcoin";
+    const QString refundAction = sellsBitcoin ? "refund_btc" : "refund_lez";
+    const QString claimAction = sellsBitcoin ? "claim_lez" : "claim_btc";
     if (availableAction == QStringLiteral("refund") && nodeState != "refund_available")
         return {"refund_ready", "The Maker missed its lock window", 60,
                 "Your Node offers the recovery path; nothing else can happen on this swap",
-                "refund_btc", "Refund " + bitcoin};
+                refundAction, "Refund " + mine};
     if (nodeState == "not_activated" || nodeState == "initiating")
         return {"preparing", "Preparing the swap", 10,
                 "Reservation, funding plan, signing ceremony and actor activation run inside your Node", "", ""};
     if (nodeState == "awaiting_first_lock") {
-        if (fundsBitcoin && !locked)
-            return {"lock_ready", "Your Bitcoin lock is ready", 20,
-                    "Your move — Lock " + bitcoin + " broadcasts the exact funding transaction your wallet signed",
-                    "lock_btc", "Lock " + bitcoin};
-        return {"locking_btc", "Bitcoin lock confirming", 35,
-                "Your Node observes the lock; the Maker funds LEZ once it is confirmed", "", ""};
+        if (!locked)
+            return {"lock_ready", "Your " + myChain + " lock is ready", 20,
+                    sellsBitcoin
+                        ? "Your move — Lock " + mine + " broadcasts the exact funding transaction your wallet signed"
+                        : "Your move — Lock " + mine + " submits the escrow initialization and funding your sidecar prepared",
+                    sellsBitcoin ? "lock_btc" : "lock_lez", "Lock " + mine};
+        return {sellsBitcoin ? "locking_btc" : "locking_lez", myChain + " lock confirming", 35,
+                "Your Node observes the lock; the Maker locks " + theirChain + " once it is confirmed", "", ""};
     }
     if (nodeState == "awaiting_second_lock")
-        return {"awaiting_maker_lock", "Waiting for the Maker's LEZ escrow", 50,
-                "The Maker's Node funds the escrow automatically after your lock confirms", "", ""};
+        return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
+                "The Maker's Node locks " + theirChain + " automatically after your lock confirms", "", ""};
     if (nodeState == "both_legs_locked")
         return {"claim_window_closed", "Claim window closed", 55,
                 "A claim can no longer land; your Node waits for the Maker's refund, then offers yours", "", ""};
     if (nodeState == "claim_available")
-        return {"claim_ready", "Your LEZ claim is ready", 70,
-                "Your move — Claim " + lez + " reveals the adaptor secret the Maker needs for its Bitcoin claim",
-                "claim_lez", "Claim " + lez};
+        return {"claim_ready", "Your " + theirChain + " claim is ready", 70,
+                "Your move — Claim " + theirs + " reveals the adaptor secret the Maker needs for its " + myChain + " claim",
+                claimAction, "Claim " + theirs};
     if (nodeState == "claim_in_progress")
-        return {"claiming_lez", "LEZ claim submitted", 85,
-                "Your Node observes the claim; the Maker's follow-up Bitcoin claim completes the swap", "", ""};
+        return {sellsBitcoin ? "claiming_lez" : "claiming_btc", theirChain + " claim submitted", 85,
+                "Your Node observes the claim; the Maker's follow-up " + myChain + " claim completes the swap", "", ""};
     if (nodeState == "completed")
         return {"completed", "Completed", 100, "Both legs settled on chain", "", ""};
     if (nodeState == "refund_available")
         return {"refund_ready", "Refund available", 60,
-                "The Maker did not lock in time; you may recover your Bitcoin", "refund_btc", "Refund " + bitcoin};
+                "The Maker did not lock in time; you may recover your " + myChain, refundAction, "Refund " + mine};
     if (nodeState == "refund_in_progress")
         return {"refunding", "Refund submitted", 80, "Your Node observes the refund", "", ""};
     if (nodeState == "refunded")
-        return {"refunded", "Refunded", 100, "Your Bitcoin came back", "", ""};
+        return {"refunded", "Refunded", 100, "Your " + myChain + " came back", "", ""};
     return {"attention_required", "Needs attention", 0,
             "The actor reports a state the desk cannot advance; inspect it from the CLI", "", ""};
 }
 
-// The Maker's desk states from its supervised actor's observation. The
-// actor's `next_action` names recovery once the Maker's lock window is gone.
-SwapRow makerRow(const QString& phase, const QString& nextAction, const QString& scheduleState)
+// The Maker's desk states from its supervised actor's observation. Selling
+// LEZ the Maker funds the LEZ escrow and claims Bitcoin; selling Bitcoin it
+// locks Bitcoin and claims LEZ. The actor's `next_action` names recovery
+// once the Maker's lock window is gone.
+SwapRow makerRow(const QString& phase, const QString& nextAction, const QString& scheduleState,
+                 const QString& direction)
 {
+    const bool sellsLez = direction == QStringLiteral("taker_sells_foreign");
+    const QString myChain = sellsLez ? "LEZ" : "Bitcoin";      // what this Maker locks
+    const QString theirChain = sellsLez ? "Bitcoin" : "LEZ";   // what the Taker locks and the Maker claims
+    // A refunded leg is reported before any recovery routing: once this
+    // Maker's lock came back its actor still names the Taker's recovery as
+    // what is left to observe, which is not a missed lock window.
+    if (phase == "maker_leg_refunded")
+        return {"refunded", "Refunded", 100,
+                "Your " + myChain + " lock came back; the Taker's refund follows on its own", "", ""};
+    if (phase == "taker_leg_refunded" || phase == "refunded")
+        return {"refunded", "Refunded", 100, "The swap was unwound", "", ""};
     if (nextAction == QStringLiteral("recover_taker_leg"))
         return {"recovering", "Lock window missed", 55,
                 "Your Node could not lock in time; it recovers once the Taker's refund is final", "", ""};
     if (nextAction == QStringLiteral("recover_maker_leg"))
         return {"recovering", "Claim window closed", 55,
-                "The Taker's claim can no longer land; your Node refunds its LEZ escrow", "", ""};
+                "The Taker's claim can no longer land; your Node refunds its " + myChain + " lock", "", ""};
     if (phase == "offered" || phase == "awaiting_taker_confirmations")
-        return {"awaiting_taker_lock", "Waiting for the Taker's Bitcoin lock", 20,
-                "Your Node observes Bitcoin; nothing to click", "", ""};
+        return {"awaiting_taker_lock", "Waiting for the Taker's " + theirChain + " lock", 20,
+                "Your Node observes " + theirChain + "; nothing to click", "", ""};
     if (phase == "taker_lock_confirmed" || phase == "awaiting_maker_confirmations")
-        return {"funding_lez", "Funding the LEZ escrow", 45,
-                "Your Node funds the escrow automatically now that the Bitcoin lock is confirmed", "", ""};
+        return {sellsLez ? "funding_lez" : "locking_btc", sellsLez ? "Funding the LEZ escrow" : "Locking Bitcoin", 45,
+                "Your Node locks " + myChain + " automatically now that the Taker's " + theirChain + " lock is confirmed", "", ""};
     if (phase == "both_legs_locked")
-        return {"awaiting_taker_claim", "Waiting for the Taker's LEZ claim", 65,
+        return {"awaiting_taker_claim", "Waiting for the Taker's " + theirChain + " claim", 65,
                 "The Taker's revealing claim is the next step", "", ""};
     if (phase == "claim_evidence_available")
-        return {"claiming_btc", "Claiming Bitcoin", 85,
-                "Your Node claims the Bitcoin with the revealed secret", "", ""};
+        return {sellsLez ? "claiming_btc" : "claiming_lez", "Claiming " + theirChain, 85,
+                "Your Node claims " + theirChain + " with the revealed secret", "", ""};
     if (phase == "completed")
         return {"completed", "Completed", 100, "Both legs settled on chain", "", ""};
-    if (phase == "maker_leg_refunded" || phase == "taker_leg_refunded" || phase == "refunded")
-        return {"refunded", "Refunded", 100, "The swap was unwound", "", ""};
     if (scheduleState == "failed")
         return {"failed", "Actor failed", 0, "The supervisor gave up on this actor; inspect it from the CLI", "", ""};
     return {"preparing", "Preparing", 10, "The actor has not observed a chain yet", "", ""};
@@ -484,14 +505,16 @@ QString takerAction(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slo
                     const QString& action, QSet<QString>& lockedSwaps)
 {
     Reply outcome;
-    if (action == QStringLiteral("lock_btc")) {
+    // `lock_btc` / `lock_lez` is the role's first lock on whichever chain it
+    // sells; `claim_*` and `refund_*` are the generation-fenced terminal actions.
+    if (action == QStringLiteral("lock_btc") || action == QStringLiteral("lock_lez")) {
         outcome = decode(slowRpc.call("taker_swap_lock_v1", compact({{"schema_version", 1}, {"swap_id", swapId}})));
         if (outcome.ok) lockedSwaps.insert(swapId);
-    } else if (action == QStringLiteral("claim_lez") || action == QStringLiteral("refund_btc")) {
+    } else if (action.startsWith(QStringLiteral("claim_")) || action.startsWith(QStringLiteral("refund_"))) {
         const Reply monitored = decode(rpc.call("taker_swap_monitor_v1", compact({{"schema_version", 1}, {"swap_id", swapId}})));
         if (!monitored.ok) return nodeFailure(monitored, QStringLiteral("The swap could not be read"));
         const qint64 generation = static_cast<qint64>(monitored.result.toObject().value("progress_generation").toDouble());
-        const char* method = action == QStringLiteral("claim_lez") ? "taker_swap_claim_v1" : "taker_swap_refund_v1";
+        const char* method = action.startsWith(QStringLiteral("claim_")) ? "taker_swap_claim_v1" : "taker_swap_refund_v1";
         outcome = decode(slowRpc.call(QString::fromLatin1(method), compact({
             {"schema_version", 1}, {"request_id", requestId}, {"swap_id", swapId},
             {"expected_generation", generation}})));
@@ -607,7 +630,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             const qint64 offered = offeredBySwap.value(swapId, -1);
             const QString fill = taken > 0 && offered > 0
                 ? QString::number(100 * taken / offered) + "% of the " + formatBtc(offered) + " offered" : QString();
-            const SwapRow row = makerRow(phase, nextAction, schedule);
+            const SwapRow row = makerRow(phase, nextAction, schedule, direction);
             swaps.append(swapRowObject(row, swapId, QString(), direction, wallet.label,
                                        QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill, effects));
             if (row.state == "completed") ++completed;

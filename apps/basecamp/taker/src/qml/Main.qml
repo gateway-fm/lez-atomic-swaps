@@ -23,6 +23,11 @@ Item {
         summary: ({pending_offers: 0, accepted_swaps: 0, completed_swaps: 0}) })
     property bool btcMarketReady: false
     property bool btcMarketBusy: false
+    // Market reads in flight. A read costs one Node call per swap, so the
+    // periodic silent refresh yields while one is running (reads started every
+    // tick regardless queued behind each other and the desk fell ever further
+    // behind the Node); an explicit "Refresh market" always goes out.
+    property int btcMarketReads: 0
     // Swap filters are on/off toggles; the list is one list, rows that need
     // this desk first, then running, then done under a divider.
     property bool showAttention: true
@@ -153,9 +158,12 @@ Item {
     }
     function refreshBtcMarket(silent) {
         if (!root.ready || root.busy || root.btcMarketBusy) return
+        if (silent && root.btcMarketReads > 0) return
+        root.btcMarketReads += 1
         if (!silent) root.note("request", "Refresh market")
         logos.watch(root.backend.btcMarket(root.walletId()),
             function(value) {
+                root.btcMarketReads = Math.max(0, root.btcMarketReads - 1)
                 try {
                     if (!silent) root.output = String(value)
                     root.applyBtcMarket(root.decode(value))
@@ -176,6 +184,7 @@ Item {
                 }
             },
             function(error) {
+                root.btcMarketReads = Math.max(0, root.btcMarketReads - 1)
                 if (!silent) {
                     root.output = "Backend failure: " + String(error)
                     root.statusMode = "error"

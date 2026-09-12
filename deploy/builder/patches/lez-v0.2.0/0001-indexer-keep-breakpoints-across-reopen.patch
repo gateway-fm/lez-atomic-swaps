@@ -1,0 +1,22 @@
+diff --git a/lez/storage/src/indexer/mod.rs b/lez/storage/src/indexer/mod.rs
+index a753a71a..63e4ed99 100644
+--- a/lez/storage/src/indexer/mod.rs
++++ b/lez/storage/src/indexer/mod.rs
+@@ -84,9 +84,14 @@ impl RocksDBIO {
+ 
+         let dbio = Self { db };
+ 
+-        // First breakpoint setup
+-        dbio.put_breakpoint(0, initial_state)?;
+-        dbio.put_meta_last_breakpoint_id(0)?;
++        // First breakpoint setup, on a new database only. Reopening an indexed
++        // database must keep its breakpoints and its last breakpoint id:
++        // resetting the id to 0 makes the next boundary write breakpoint 1
++        // instead of N + 1, and every historical read past it then fails.
++        if dbio.get_meta_last_breakpoint_id()?.is_none() {
++            dbio.put_breakpoint(0, initial_state)?;
++            dbio.put_meta_last_breakpoint_id(0)?;
++        }
+ 
+         Ok(dbio)
+     }

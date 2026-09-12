@@ -219,6 +219,36 @@ where
         agreement: &BtcAgreementV1,
         request_id: RequestId,
     ) -> Result<CurrentLezFundedEscrowEvidenceV1, CurrentLezFundedEscrowError<T::Error>> {
+        self.observe_current_lez_escrow(agreement, request_id, false)
+            .await
+    }
+
+    /// Reads the exact witnessed escrow's current accounts and proves its
+    /// funding completed: it is funded now, or it was funded and has since been
+    /// claimed or refunded. A depositor that observes its own lock after the
+    /// claimant took it still sees a completed funding; the claim is the next
+    /// revision's evidence.
+    ///
+    /// # Errors
+    ///
+    /// Fails on runtime drift, transport failure, an unstable clock, unexpected
+    /// refund facts, absent accounts, an escrow that was never funded, and
+    /// substituted account facts.
+    pub async fn observe_current_lez_escrow_after_funding(
+        &self,
+        agreement: &BtcAgreementV1,
+        request_id: RequestId,
+    ) -> Result<CurrentLezFundedEscrowEvidenceV1, CurrentLezFundedEscrowError<T::Error>> {
+        self.observe_current_lez_escrow(agreement, request_id, true)
+            .await
+    }
+
+    async fn observe_current_lez_escrow(
+        &self,
+        agreement: &BtcAgreementV1,
+        request_id: RequestId,
+        settled_accepted: bool,
+    ) -> Result<CurrentLezFundedEscrowEvidenceV1, CurrentLezFundedEscrowError<T::Error>> {
         validate_runtime(self, agreement)?;
         let terms = witnessed_terms(agreement).map_err(CurrentLezFundedEscrowError::Protocol)?;
         let context = MessageContext::new(
@@ -251,7 +281,11 @@ where
         let Some(metadata) = accounts.metadata.witnessed() else {
             return Err(CurrentLezFundedEscrowError::AccountMismatch);
         };
-        if metadata.status != EscrowState::Funded {
+        let settled = matches!(
+            metadata.status,
+            EscrowState::Claimed | EscrowState::Refunded
+        );
+        if metadata.status != EscrowState::Funded && !(settled_accepted && settled) {
             return Err(CurrentLezFundedEscrowError::EscrowNotFunded);
         }
         let signed = agreement.lez_terms();
@@ -260,7 +294,7 @@ where
             self.runtime.escrow_program_id,
             Hex32::from_bytes(*signed.custody_account()),
             &terms,
-            EscrowState::Funded,
+            metadata.status,
         );
         if metadata != &expected_metadata
             || accounts.custody.account_id.as_bytes() != signed.custody_account()
@@ -269,7 +303,9 @@ where
         {
             return Err(CurrentLezFundedEscrowError::AccountMismatch);
         }
-        if accounts.custody.balance.as_u128() != signed.amount() {
+        // Custody holds the signed amount while funded; a claim or a refund
+        // moved it out, so only the funded state binds the value.
+        if !settled && accounts.custody.balance.as_u128() != signed.amount() {
             return Err(CurrentLezFundedEscrowError::CustodyValueMismatch);
         }
         Ok(CurrentLezFundedEscrowEvidenceV1 {

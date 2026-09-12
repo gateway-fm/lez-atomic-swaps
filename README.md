@@ -48,7 +48,7 @@ Linux, and requires Docker with Compose.
 [latest release](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest):
 
 ```sh
-tar -xzf lez-swap-stack-v0.2.1-arm64.tar.gz && cd lez-swap-stack-v0.2.1-arm64
+tar -xzf lez-swap-stack-v0.2.2-arm64.tar.gz && cd lez-swap-stack-v0.2.2-arm64
 ./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → UI suites
 ```
 

@@ -219,7 +219,7 @@ feed and a strategy transform inside the node.
 | `taker_swap_initiate_v1` | `{schema_version:1, request_id, offer_id, route, maker_identity, signed_envelope_sha256, foreign_units, expected_lez_units}`; optional `logos_offer_announcement_base64` | `{schema_version:1, swap, was_replay}`. Revalidates selected offer and exact amounts; BTC dynamic configuration drives reservation, preparation, ceremony and actor activation. It can reserve capital/prepare signing state; it is not a dry-run quote. |
 | `taker_swap_list_v1` | `{schema_version:1}` | `{schema_version:1, swaps:[...]}`; includes recoverable persisted swaps. |
 | `taker_swap_monitor_v1` | `{schema_version:1, swap_id}` | One `swap` projection as defined below. |
-| `taker_swap_lock_v1` | `{schema_version:1, swap_id}` | `{schema_version:1, swap_id, chain, transaction_id, was_replay}`. Executes the role's first lock. This method uses the per-swap durable lock state; it takes **no request ID or generation**. |
+| `taker_swap_lock_v1` | `{schema_version:1, swap_id}` | `{schema_version:1, swap_id, chain, transaction_id, was_replay}`. Executes the role's first lock: selling Bitcoin (`TakerSellsForeign`) it broadcasts the funding transaction planned at reservation (`chain: "bitcoin"`); selling LEZ (`TakerSellsLez`) it has the swap's sidecar prepare the escrow and submits its initialization and funding at once (`chain: "lez"`, the funding transaction id). Both Bitcoin directions are capability rows of `taker_health`. This method uses the per-swap durable lock state; it takes **no request ID or generation**. |
 | `taker_swap_claim_v1`, `taker_swap_refund_v1` | `{schema_version:1, request_id, swap_id, expected_generation}` | `{schema_version:1, swap_id, action, requested_after_generation, was_replay}`. Requests only the currently admissible action. Poll for terminal settlement after admission. |
 
 `swap` contains `schema_version`, `swap_id`, `offer_id`, `route`,
@@ -242,7 +242,7 @@ evidence in order, each `{revision, kind, chain, transaction_id,
 confirmations}` with `kind` one of `taker_lock`, `maker_lock`,
 `revealing_claim`, `followup_claim`, `maker_refund`, `taker_refund`, and on
 the Maker additionally its LEZ lock steps `lez_initialize` and `lez_fund`
-(`revision` 0). `chain` is `Bitcoin` or `Lez`; `confirmations` is what the
+(`revision` 0) when it funds the escrow. `chain` is `Bitcoin` or `Lez`; `confirmations` is what the
 actor observed when it recorded the evidence and stays 0 for LEZ. The array
 is omitted while empty. Nothing in it is secret; it is what a block
 explorer shows.

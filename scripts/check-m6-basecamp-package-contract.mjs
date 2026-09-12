@@ -330,7 +330,7 @@ for (const pkg of packages) {
     const expected = {
       name: pkg.name,
       display_name: pkg.displayName,
-      version: "0.2.1",
+      version: "0.2.2",
       type: "ui_qml",
       category: "finance",
       interface: "universal",

@@ -72,7 +72,14 @@ jq -e '
 # The standing LEZ chain keeps its genesis across restarts: reuse the epoch a
 # previous run recorded, and mint a fresh one only for a new runtime root.
 chain_start_epoch=""
+# The timing profile is kept across reruns like the genesis time (read here,
+# before the old file is replaced): a rerun without LEZ_TIMING_PROFILE must
+# not silently move the Nodes back to `local`.
+previous_timing_profile=""
+previous_actor_trace=""
 if [[ -s "$RUNTIME/runtime.env" ]]; then
+  previous_timing_profile="$(sed -n 's/^LEZ_TIMING_PROFILE=//p' "$RUNTIME/runtime.env" | head -1)"
+  previous_actor_trace="$(sed -n 's/^LEZ_BTC_ACTOR_TRACE=//p' "$RUNTIME/runtime.env" | head -1)"
   chain_start_epoch="$(sed -n 's/^LEZ_V02_GENESIS_TIME_EPOCH=//p' "$RUNTIME/runtime.env" | head -1)"
 fi
 if [[ "$chain_start_epoch" =~ ^[0-9]+$ ]]; then
@@ -216,7 +223,9 @@ rm -f "$RUNTIME/runtime.env"
 # appear before the cutoff, and a refund asserts its absence only once that
 # whole window is finalized, so the window must cover the cutoff (10 s slots on
 # the local devnet: 600 s = 60 blocks) and nothing more than needed.
-timing_profile="${LEZ_TIMING_PROFILE:-local}"
+timing_profile="${LEZ_TIMING_PROFILE:-$previous_timing_profile}"
+[[ -n "${LEZ_TIMING_PROFILE:-}" || -z "$timing_profile" ]] || echo "reusing existing timing profile ${timing_profile}"
+timing_profile="${timing_profile:-local}"
 case "$timing_profile" in
   local) timing=(144 1800 3600 7200 300 360) ;;
   fast)  timing=(6 600 900 1200 60 120) ;;
@@ -231,6 +240,7 @@ printf '%s\n' \
   "LEZ_BTC_LATER_REFUND_SECONDS=${timing[3]}" \
   "LEZ_BTC_REFUND_MARGIN_SECONDS=${timing[4]}" \
   "LEZ_LEZ_DISCOVERY_MAX_BLOCKS=${timing[5]}" \
+  "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_GENESIS_TIME_EPOCH=$chain_start_epoch" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \
