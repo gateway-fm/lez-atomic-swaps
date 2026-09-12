@@ -67,21 +67,43 @@ struct IndexerAccount {
     nonce: u64,
 }
 
-/// The LEZ owner account's balance and nonce from the configured indexer.
+/// The LEZ owner account's balance and nonce from the configured indexer:
+/// finalized state, what the desk shows.
 ///
 /// # Errors
 ///
 /// Fails when the indexer is unreachable or answers something else.
 pub async fn lez_owner_balance(runtime: &BtcRoleRuntime) -> Result<(u128, u64)> {
+    lez_owner_account_at(runtime, &runtime.config().lez.indexer_url, "indexer").await
+}
+
+/// The LEZ owner account's balance and nonce from the configured sequencer:
+/// the latest sequenced state, the one a transaction's nonce is checked
+/// against. Finality (the indexer) can trail it by minutes.
+///
+/// # Errors
+///
+/// Fails when the sequencer is unreachable or answers something else.
+pub async fn lez_owner_sequenced_balance(runtime: &BtcRoleRuntime) -> Result<(u128, u64)> {
+    lez_owner_account_at(runtime, &runtime.config().lez.sequencer_url, "sequencer").await
+}
+
+async fn lez_owner_account_at(
+    runtime: &BtcRoleRuntime,
+    url: &str,
+    source: &'static str,
+) -> Result<(u128, u64)> {
     let client = HttpClientBuilder::default()
         .request_timeout(runtime.request_timeout())
-        .build(&runtime.config().lez.indexer_url)
-        .context("indexer client")?;
+        .build(url)
+        .with_context(|| format!("{source} client"))?;
     let account = bs58::encode(runtime.lez_owner_account()).into_string();
+    // Both services answer `getAccount` with the balance and nonce; the
+    // owner field differs in shape between them and is not read.
     let account: IndexerAccount = client
         .request("getAccount", rpc_params![account])
         .await
-        .context("getAccount")?;
+        .with_context(|| format!("{source} getAccount"))?;
     Ok((account.balance, account.nonce))
 }
 

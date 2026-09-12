@@ -26,7 +26,7 @@ use lez_btc_role_lifecycle::{
     BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, SwapLayout, SwapSidecar,
     TakerCeremony, WalletBalancesV1,
     actor::{ActorSynthesis, activate, synthesize},
-    balances::{lez_owner_balance, role_wallet_balances},
+    balances::{lez_owner_sequenced_balance, role_wallet_balances},
     layout::{read_private, write_private_exact},
     lez::{
         PlanningTermsInput, aggregate_authority_account, agreement_terms, escrow_accounts,
@@ -964,12 +964,14 @@ pub(super) async fn lock(
 const LEZ_NONCE_WAIT: std::time::Duration = std::time::Duration::from_secs(100);
 
 /// The owner account's nonce once it has reached `target`, read from the
-/// configured indexer; bounded by [`LEZ_NONCE_WAIT`].
+/// configured sequencer (the state a submission's nonce is checked against;
+/// the sidecar prepares the next escrow from the same state, and the
+/// finalized view can trail it by minutes); bounded by [`LEZ_NONCE_WAIT`].
 async fn wait_for_lez_nonce(runtime: &BtcRoleRuntime, target: u64) -> Result<u64> {
     let deadline = tokio::time::Instant::now() + LEZ_NONCE_WAIT;
     let mut last = None;
     loop {
-        match lez_owner_balance(runtime).await {
+        match lez_owner_sequenced_balance(runtime).await {
             Ok((_, nonce)) if nonce >= target => return Ok(nonce),
             Ok((_, nonce)) => last = Some(nonce),
             Err(error) => eprintln!("taker LEZ nonce read failed: {error:#}"),
