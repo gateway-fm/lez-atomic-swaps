@@ -338,10 +338,12 @@ if (role === "maker") {
       throw new Error("Maker wallet selector was not found");
     }
     await evaluateIn(app, wallet.matches[0].id, "currentIndex = 0");
-    let munich = unwrap(await outputAfterClick(
-      app, "Refresh market", "makerOutput",
+    // Signal-invoke by objectName (see the health test): a text-targeted click
+    // does not reliably reach the button once the inventory has rendered.
+    let munich = unwrap(await outputAfterSignal(
+      app, "makerMarketRefresh", "makerOutput",
       (envelope) => envelope.ok === true
-        && envelope.result?.selected_wallet_id === "maker-munich-01", true,
+        && envelope.result?.selected_wallet_id === "maker-munich-01",
     ), "Munich inventory");
     // Offers of the other direction may be open too; only this run's count.
     const pendingHere = (inventory) => (inventory ?? [])
@@ -413,7 +415,11 @@ if (role === "maker") {
     await app.waitFor(async () => app.expectTexts(["0.01000000 BTC", "1,000 LEZ"]), {
       timeout: 15000, interval: 500, description: "first market snapshot rendered",
     });
-    await app.click("Refresh market");
+    {
+      const refresh = await app.findByProperty("objectName", "takerMarketRefresh");
+      if (refresh.error || refresh.matches?.length !== 1) throw new Error("Refresh market button is unavailable");
+      await evaluateIn(app, refresh.matches[0].id, "clicked()");
+    }
     await app.waitFor(async () => app.expectTexts(["Munich Vault 01"]), {
       timeout: 15000, interval: 500, description: "Maker Node order book",
     });
