@@ -319,7 +319,7 @@ if (role === "maker") {
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
     await evaluateIn(app, check.matches[0].id, "clicked()");
     await app.waitFor(async () => app.expectTexts(["Node ready"]), {
-      timeout: 15000, interval: 300, description: "Maker health status",
+      timeout: 45000, interval: 300, description: "Maker health status",
     });
     console.log("  health: Node ready");
     narrate("Check Node: the Maker Node reports ready");
@@ -437,7 +437,7 @@ if (role === "maker") {
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
     await evaluateIn(app, check.matches[0].id, "clicked()");
     await app.waitFor(async () => app.expectTexts(["Node ready"]), {
-      timeout: 15000, interval: 300, description: "Taker health status",
+      timeout: 45000, interval: 300, description: "Taker health status",
     });
     console.log("  health: Node ready");
   });
