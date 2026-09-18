@@ -177,6 +177,20 @@ class LezIndex:
         return self.blocks[hash_hex]
 
 
+def source_commit() -> str:
+    """The commit the running stack was built from. A release bundle is not a
+    checkout (`git rev-parse` there answered the literal `HEAD`), so its
+    `release.env`, written by package-dist.sh, names the commit instead."""
+    release = DEPLOY_ROOT / "release.env"
+    if release.is_file():
+        for line in release.read_text().splitlines():
+            if line.startswith("LEZ_RELEASE_COMMIT="):
+                return line.partition("=")[2].strip() or "unknown"
+    result = subprocess.run(["git", "-C", str(DEPLOY_ROOT), "rev-parse", "--verify", "HEAD"],
+                            capture_output=True, text=True, check=False)
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
+
+
 def build_evidence(view: dict, repository_commit: str) -> dict:
     swap_id = view["swap_id"]
     if view["state"] != "completed":
@@ -280,7 +294,7 @@ def build_evidence(view: dict, repository_commit: str) -> dict:
         "terminal": {"phase": "completed", "revision": 4},
         "amounts": {"bitcoin_sats": int(view["foreign_units"]), "bitcoin_display": btc_display(foreign_btc),
                     "lez_units": lez_units, "lez_display": lez_display},
-        "networks": {"bitcoin": "Bitcoin Core 31.1 · regtest", "lez": "LEZ v0.2.0 · private local"},
+        "networks": {"bitcoin": "Bitcoin Core 31.1 · regtest", "lez": "LEZ v0.2.4 · private local"},
         "effect_counts": effect_counts,
         "replay_resubmission_count": 0,
         "private_material_disclosed": False,
@@ -306,8 +320,7 @@ def main() -> int:
         chosen = completed[-1:]
     if not chosen:
         fail("the Taker Node lists no completed swap")
-    commit = subprocess.run(["git", "-C", str(DEPLOY_ROOT), "rev-parse", "HEAD"],
-                            capture_output=True, text=True, check=False).stdout.strip() or "unknown"
+    commit = source_commit()
 
     evidence_dir = DEPLOY_ROOT / "runtime" / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
