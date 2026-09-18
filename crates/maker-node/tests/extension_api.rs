@@ -151,6 +151,31 @@ async fn stale_terms_never_publish_and_replay_survives_restart_and_config_change
         .await
         .unwrap();
     assert_eq!(replay["was_replay"], true);
+    // A desk renders open offers, not the history a Node keeps forever (#52):
+    // the withdrawn offer is still listed by default and left out on request.
+    let open: Value = module
+        .call(
+            "maker_offer_list",
+            [json!({"states": ["active", "reserved", "consumed"]})],
+        )
+        .await
+        .unwrap();
+    let open_ids: Vec<&str> = open
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["offer"]["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(open_ids, ["legacy-offer"]);
+    let withdrawn: Value = module
+        .call("maker_offer_list", [json!({"states": ["withdrawn"]})])
+        .await
+        .unwrap();
+    assert_eq!(withdrawn.as_array().unwrap().len(), 1);
+    assert_eq!(
+        error(&module, "maker_offer_list", json!({"states": ["open"]})).await,
+        -32602
+    );
     let offers: Value = module.call("maker_offer_list", [json!({})]).await.unwrap();
     let offer = offers
         .as_array()
