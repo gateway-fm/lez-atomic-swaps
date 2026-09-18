@@ -356,7 +356,8 @@ services:
       LEZ_SEQUENCER_URL: http://127.0.0.1:3040
       LEZ_INDEXER_URL: http://127.0.0.1:8779
       LEZ_V02_CHANNEL_ID: ${LEZ_V02_CHANNEL_ID}
-      LEZ_BTC_WALLET: lez-taker
+      # Empty = no node wallet: the owner signs the lock elsewhere (docs/api).
+      LEZ_BTC_WALLET: ${LEZ_TAKER_BTC_WALLET-lez-taker}
       # Claims pay this role's own wallet, so the desk's balance shows them.
       LEZ_BTC_CLAIM_DESTINATION: ${LEZ_BTC_CLAIM_DESTINATION:-wallet}
       # Recovery timing profile (gen-config.sh renders it from LEZ_TIMING_PROFILE).

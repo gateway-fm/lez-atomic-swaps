@@ -308,6 +308,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         foreign_units: 10_000,
         expected_lez_units: 25_000,
         logos_offer_announcement_base64: None,
+        funding_transaction_hex: None,
     };
 
     let module =

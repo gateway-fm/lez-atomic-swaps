@@ -30,7 +30,7 @@ pub use config::{
     BitcoinNetworkName, BtcRoleConfigV1, BtcRoleRuntime, LezNetworkName, LockFeePolicyV1,
     RecoveryPolicyV1,
 };
-pub use funding::{BitcoinWallet, FundingPlan, WalletBalances};
+pub use funding::{BitcoinWallet, FundingPlan, FundingRequired, WalletBalances};
 pub use layout::SwapLayout;
 pub use lez::{LezRole, LezSidecar, PreparedEscrow};
 pub use sidecar::{SwapSidecar, swap_run_id};

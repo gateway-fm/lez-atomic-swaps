@@ -106,6 +106,10 @@ pub struct TakerSwapInitiateRequestV1 {
     /// depend on that compatibility path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logos_offer_announcement_base64: Option<Box<str>>,
+    /// The owner's signed, unsent Bitcoin lock, when this Node has no Bitcoin
+    /// wallet: the first take answers where to pay, its replay carries this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub funding_transaction_hex: Option<Box<str>>,
 }
 
 /// Parameters for reading one receipt-bound lifecycle projection.

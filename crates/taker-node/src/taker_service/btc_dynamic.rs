@@ -243,6 +243,8 @@ pub(super) struct TakeRequest {
     pub foreign_units: u64,
     pub expected_lez_units: u128,
     pub announcement: Option<AuthenticatedOfferRefV1>,
+    /// The owner's signed Bitcoin lock, for a role without a node wallet.
+    pub funding_transaction_hex: Option<String>,
 }
 
 /// Durable progress of one take; every step checks it before acting.
@@ -486,14 +488,27 @@ pub(super) async fn prepare(
                     CsvBlockDelay::new(plan.refund_csv_blocks)?,
                 )?;
                 let wallet = dynamic.wallet()?;
-                let funding = wallet
-                    .plan_funding(
-                        contract.script_pubkey_bytes(),
-                        request.foreign_units,
-                        &dynamic.runtime.config().bitcoin.lock_fee,
-                    )
-                    .await?;
-                wallet.test_mempool_accept(&funding.transaction_hex).await?;
+                let bitcoin = &dynamic.runtime.config().bitcoin;
+                let funding = if bitcoin.wallet.is_some() {
+                    let funding = wallet
+                        .plan_funding(
+                            contract.script_pubkey_bytes(),
+                            request.foreign_units,
+                            &bitcoin.lock_fee,
+                        )
+                        .await?;
+                    wallet.test_mempool_accept(&funding.transaction_hex).await?;
+                    funding
+                } else {
+                    wallet
+                        .adopt_funding(
+                            contract.script_pubkey_bytes(),
+                            request.foreign_units,
+                            request.funding_transaction_hex.as_deref(),
+                            &bitcoin.lock_fee,
+                        )
+                        .await?
+                };
                 write_private_exact(
                     &layout.funding_plan_file(),
                     &serde_json::to_vec_pretty(&funding)?,

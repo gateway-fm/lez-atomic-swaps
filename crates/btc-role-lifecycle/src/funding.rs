@@ -116,6 +116,29 @@ struct MempoolAcceptEntry {
     allowed: bool,
     #[serde(default, rename = "reject-reason")]
     reject_reason: Option<String>,
+    #[serde(default)]
+    fees: Option<MempoolAcceptFees>,
+}
+
+#[derive(Deserialize)]
+struct MempoolAcceptFees {
+    /// BTC, as Core reports it.
+    base: f64,
+}
+
+/// A take stopped at funding: this role has no Bitcoin wallet, so the owner
+/// signs a transaction paying `value_sat` to `address` and replays the take
+/// with it.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("sign a transaction paying {value_sat} sat to {address} and replay the take with it")]
+pub struct FundingRequired {
+    pub address: String,
+    pub value_sat: u64,
+}
+
+fn decode(transaction_hex: &str) -> Result<Transaction> {
+    consensus::deserialize(&hex::decode(transaction_hex).context("funding hex")?)
+        .context("funding transaction")
 }
 
 impl BitcoinWallet {
@@ -331,14 +354,25 @@ impl BitcoinWallet {
             .hex
             .filter(|_| finalized.complete)
             .context("funding transaction not finalized")?;
-        let transaction: Transaction =
-            consensus::deserialize(&hex::decode(&transaction_hex).context("funding hex")?)
-                .context("funding transaction")?;
+        let transaction = decode(&transaction_hex)?;
+        self.plan_of(&transaction_hex, &transaction, &script, value_sat, fee_sat)
+            .await
+    }
+
+    /// The plan for a signed transaction that pays the contract exactly once.
+    async fn plan_of(
+        &self,
+        transaction_hex: &str,
+        transaction: &Transaction,
+        script: &ScriptBuf,
+        value_sat: u64,
+        fee_sat: u64,
+    ) -> Result<FundingPlan> {
         let matching: Vec<(usize, &bitcoin::TxOut)> = transaction
             .output
             .iter()
             .enumerate()
-            .filter(|(_, output)| output.script_pubkey == script)
+            .filter(|(_, output)| &output.script_pubkey == script)
             .collect();
         ensure!(
             matching.len() == 1,
@@ -346,7 +380,7 @@ impl BitcoinWallet {
         );
         let (index, output) = matching[0];
         ensure!(
-            output.value == amount,
+            output.value == Amount::from_sat(value_sat),
             "funding output value differs from the plan"
         );
         let anchor_height = self.block_count().await?;
@@ -361,12 +395,58 @@ impl BitcoinWallet {
         })
     }
 
-    /// Asks the node's mempool policy about `transaction_hex` without sending.
+    /// The plan for a funding transaction the owner signed in a wallet of
+    /// their own, for a role whose node has none (a public RPC provider).
+    /// Without `transaction_hex` it answers [`FundingRequired`].
+    ///
+    /// # Errors
+    ///
+    /// Fails when the transaction does not pay the contract exactly once, could
+    /// be given another id, is refused by the mempool, or overpays in fees.
+    pub async fn adopt_funding(
+        &self,
+        contract_script: &[u8],
+        value_sat: u64,
+        transaction_hex: Option<&str>,
+        fee_policy: &LockFeePolicyV1,
+    ) -> Result<FundingPlan> {
+        let script = ScriptBuf::from_bytes(contract_script.to_vec());
+        let Some(transaction_hex) = transaction_hex else {
+            let address =
+                Address::from_script(&script, self.network).context("contract address")?;
+            anyhow::bail!(FundingRequired {
+                address: address.to_string(),
+                value_sat,
+            });
+        };
+        let transaction = decode(transaction_hex)?;
+        // The refund and the claim are signed against this transaction's id
+        // before it is sent. A non-witness input lets anyone change that id in
+        // flight, which would leave the lock spendable by neither.
+        ensure!(
+            transaction
+                .input
+                .iter()
+                .all(|input| input.script_sig.is_empty() && !input.witness.is_empty()),
+            "every funding input must be a native SegWit spend"
+        );
+        let fee_sat = self.test_mempool_accept(transaction_hex).await?;
+        ensure!(
+            fee_policy.admits(fee_sat, value_sat),
+            "locking {value_sat} sat would cost {fee_sat} sat in fees, above the {}% this Node allows",
+            fee_policy.max_percent_of_value
+        );
+        self.plan_of(transaction_hex, &transaction, &script, value_sat, fee_sat)
+            .await
+    }
+
+    /// Asks the node's mempool policy about `transaction_hex` without sending;
+    /// answers the fee it pays, in satoshis.
     ///
     /// # Errors
     ///
     /// Fails when the node rejects the transaction or is unreachable.
-    pub async fn test_mempool_accept(&self, transaction_hex: &str) -> Result<()> {
+    pub async fn test_mempool_accept(&self, transaction_hex: &str) -> Result<u64> {
         let entries: Vec<MempoolAcceptEntry> = self
             .node
             .request(
@@ -381,7 +461,8 @@ impl BitcoinWallet {
             "mempool rejects the funding transaction: {}",
             entry.reject_reason.as_deref().unwrap_or("unknown")
         );
-        Ok(())
+        let fees = entry.fees.as_ref().context("testmempoolaccept: no fees")?;
+        Ok(Amount::from_btc(fees.base).context("funding fee")?.to_sat())
     }
 
     /// Broadcasts `transaction_hex`; returns the display transaction id.
@@ -396,5 +477,79 @@ impl BitcoinWallet {
             .await
             .context("sendrawtransaction")?;
         Ok(txid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::{
+        OutPoint, Sequence, TxIn, TxOut, Witness, absolute::LockTime, transaction::Version,
+    };
+
+    /// A wallet-less role; nothing listens on the endpoint.
+    fn wallet(directory: &Path) -> BitcoinWallet {
+        let cookie = directory.join("cookie");
+        crate::layout::write_private_exact(&cookie, b"user:password").unwrap();
+        BitcoinWallet::connect(
+            "http://127.0.0.1:1",
+            &cookie,
+            None,
+            Network::Regtest,
+            Duration::from_secs(1),
+        )
+        .unwrap()
+    }
+
+    fn contract() -> ScriptBuf {
+        ScriptBuf::new_p2tr_tweaked(bitcoin::key::TweakedPublicKey::dangerous_assume_tweaked(
+            bitcoin::XOnlyPublicKey::from_slice(&[2; 32]).unwrap(),
+        ))
+    }
+
+    #[tokio::test]
+    async fn a_role_without_a_wallet_answers_where_to_pay() {
+        let directory = tempfile::tempdir().unwrap();
+        let error = wallet(directory.path())
+            .adopt_funding(
+                contract().as_bytes(),
+                10_000,
+                None,
+                &LockFeePolicyV1::default(),
+            )
+            .await
+            .unwrap_err();
+        let required: FundingRequired = error.downcast().unwrap();
+        assert_eq!(required.value_sat, 10_000);
+        assert!(required.address.starts_with("bcrt1p"));
+    }
+
+    #[tokio::test]
+    async fn a_funding_transaction_whose_id_can_be_changed_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: OutPoint::null(),
+                script_sig: ScriptBuf::from_bytes(vec![0x51]),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(10_000),
+                script_pubkey: contract(),
+            }],
+        };
+        let error = wallet(directory.path())
+            .adopt_funding(
+                contract().as_bytes(),
+                10_000,
+                Some(&consensus::encode::serialize_hex(&legacy)),
+                &LockFeePolicyV1::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("native SegWit"), "{error:#}");
     }
 }
