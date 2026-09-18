@@ -1,0 +1,14 @@
+[19:36:10]   Maker published offer-e2e-1789752970
+FUNDING_REQUIRED {"address": "tb1pkfryac0ynnpdpvn3khegnuge4fexxk5c2pvtj0saywjxmpwqfpgqzvwlej", "amount_sat": 10000, "category": "bitcoin_funding_required"}
+SIGNED_OUTSIDE_THE_NODE spends 9a0dab85f6fefdf8c0ca508c2464d24d304d3711ba9eff70a5f2b5d4351410d7:1 fee 1000
+[19:36:11]   take answered dependency-unavailable (initiation_execution_unavailable); retrying
+[19:36:21]   take answered dependency-unavailable (initiation_execution_unavailable); retrying
+Traceback (most recent call last):
+  File "/Users/mandrigin/tmp/lez-prerelease/docs/evidence/testnet3-provider-20260918/tools/provider-swap.py", line 59, in <module>
+    swap_id, _ = e.take(offer, stamp)
+                 ~~~~~~^^^^^^^^^^^^^^
+  File "/Users/mandrigin/Desktop/las-logos/lez-atomic-swaps-testnet/deploy/scripts/node-e2e.py", line 214, in take
+    result = initiate(request)
+  File "/Users/mandrigin/Desktop/las-logos/lez-atomic-swaps-testnet/deploy/scripts/node-e2e.py", line 205, in initiate
+    raise Failure(f"taker taker_swap_initiate_v1 failed: {json.dumps(reply['error'])[:300]}")
+e2e.Failure: taker taker_swap_initiate_v1 failed: {"code": -32010, "message": "Taker dependency unavailable", "data": {"category": "initiation_execution_unavailable"}}

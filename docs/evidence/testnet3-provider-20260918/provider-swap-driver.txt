@@ -1,14 +1,31 @@
-[19:36:10]   Maker published offer-e2e-1789752970
-FUNDING_REQUIRED {"address": "tb1pkfryac0ynnpdpvn3khegnuge4fexxk5c2pvtj0saywjxmpwqfpgqzvwlej", "amount_sat": 10000, "category": "bitcoin_funding_required"}
+[19:37:17]   Maker published offer-e2e-1789753037
+FUNDING_REQUIRED {"address": "tb1pwskqswkwd4wl8tz4e9w03amg8esgxz9tnncp3gfedrtj2fl0rzpqdlmupp", "amount_sat": 10000, "category": "bitcoin_funding_required"}
 SIGNED_OUTSIDE_THE_NODE spends 9a0dab85f6fefdf8c0ca508c2464d24d304d3711ba9eff70a5f2b5d4351410d7:1 fee 1000
-[19:36:11]   take answered dependency-unavailable (initiation_execution_unavailable); retrying
-[19:36:21]   take answered dependency-unavailable (initiation_execution_unavailable); retrying
+[19:37:19]   Taker took offer-e2e-1789753037: swap b44abcdb475c (not_activated)
+SWAP b44abcdb475c480ac027fab1c081acfe74217ceaa1a0eb06ac744ee2b4691dd3
+[19:37:20]   Taker locked bitcoin: a7d50933dc00 (replay=False)
+LOCK a7d50933dc006d06a171627853920e421ac9f133dc8533f9833647f0ae659eb1
+[19:37:20]   taker b44abcdb475c: awaiting_first_lock (gen 0) | maker: leased
+RESUMED b44abcdb475c480ac027fab1c081acfe74217ceaa1a0eb06ac744ee2b4691dd3 2026-09-18T17:47:12Z
+[19:47:12]   taker b44abcdb475c: awaiting_first_lock (gen 0) | maker: offered
 Traceback (most recent call last):
-  File "/Users/mandrigin/tmp/lez-prerelease/docs/evidence/testnet3-provider-20260918/tools/provider-swap.py", line 59, in <module>
-    swap_id, _ = e.take(offer, stamp)
-                 ~~~~~~^^^^^^^^^^^^^^
-  File "/Users/mandrigin/Desktop/las-logos/lez-atomic-swaps-testnet/deploy/scripts/node-e2e.py", line 214, in take
-    result = initiate(request)
-  File "/Users/mandrigin/Desktop/las-logos/lez-atomic-swaps-testnet/deploy/scripts/node-e2e.py", line 205, in initiate
-    raise Failure(f"taker taker_swap_initiate_v1 failed: {json.dumps(reply['error'])[:300]}")
-e2e.Failure: taker taker_swap_initiate_v1 failed: {"code": -32010, "message": "Taker dependency unavailable", "data": {"category": "initiation_execution_unavailable"}}
+  File "/Users/mandrigin/tmp/lez-prerelease/docs/evidence/testnet3-provider-20260918/tools/provider-swap-resume.py", line 13, in <module>
+    view = e.wait_taker(SWAP, {"claim_available"}, timeout=8 * 3600)
+  File "/Users/mandrigin/Desktop/las-logos/lez-atomic-swaps-testnet/deploy/scripts/node-e2e.py", line 268, in wait_taker
+    view = taker_view(swap_id)
+  File "/Users/mandrigin/Desktop/las-logos/lez-atomic-swaps-testnet/deploy/scripts/node-e2e.py", line 228, in taker_view
+    raise Failure(f"taker taker_swap_monitor_v1 failed: {json.dumps(reply['error'])[:300]}")
+e2e.Failure: taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: Error response from daemon: container e48f0c904643d95ba532f7d2d5d6d2d6bd0a49f5fdc84639c2cfc146ef6d704b is not running"}
+RESUMED b44abcdb475c480ac027fab1c081acfe74217ceaa1a0eb06ac744ee2b4691dd3 2026-09-18T18:48:56Z
+[20:48:57]   taker b44abcdb475c: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[22:39:56]   taker b44abcdb475c: claim_available (gen 2) | maker: taker_lock_confirmed
+CLAIM_AVAILABLE gen 2
+[22:39:56]   taker b44abcdb475c: claim_available (gen 2) | maker: taker_lock_confirmed
+[22:39:57]   Taker claimed LEZ (replay=False)
+TAKER_CLAIM_REQUESTED
+[22:39:57]   taker b44abcdb475c: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[23:55:09]   taker b44abcdb475c: completed (gen 4) | maker: completed
+TAKER_COMPLETED
+[23:55:10]   taker b44abcdb475c: completed (gen 4) | maker: completed
+[23:55:10]   both Nodes report b44abcdb475c completed
+BOTH_COMPLETED

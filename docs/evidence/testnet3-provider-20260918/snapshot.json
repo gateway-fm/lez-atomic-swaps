@@ -1,0 +1,49 @@
+{
+  "captured_at_utc": "2026-09-18T21:55:44+00:00",
+  "bitcoin": {
+    "chain": "test",
+    "blocks": 5149109,
+    "bestblockhash": "0000000032343be0d33d7c9d2cc50cdaf01e41ae014a4e90362ca4b7ed9aebb4"
+  },
+  "wallets": {
+    "maker": {
+      "bitcoin": {
+        "immature_sat": 0,
+        "network": "testnet",
+        "state": "disabled",
+        "trusted_sat": 0,
+        "untrusted_pending_sat": 0,
+        "wallet": null
+      },
+      "lez": {
+        "balance_atomic_units": 280,
+        "nonce": 9,
+        "owner_account_base58": "7Ap4rLrzeMAYRHhUAxmz1KxVEZxHp43xRCHRHKCA3xKA",
+        "owner_account_hex": "5ba9912585e2e28969e458d8621cd6c029c272a22a329c959fe5a0c2bd63fb19",
+        "state": "available"
+      },
+      "schema_version": 1
+    },
+    "taker": {
+      "schema_version": 1,
+      "bitcoin": {
+        "state": "disabled",
+        "wallet": null,
+        "network": "testnet",
+        "trusted_sat": 0,
+        "untrusted_pending_sat": 0,
+        "immature_sat": 0
+      },
+      "lez": {
+        "state": "available",
+        "owner_account_hex": "fb3b585bf084e78cf3453883b976a9bd95e2c528a67b07b8fd63ac68d6be4698",
+        "owner_account_base58": "HuhpQNW76fVVCshq1DxiuQeg1ikibj9R35UkWaDyR9E7",
+        "balance_atomic_units": 320,
+        "nonce": 5
+      }
+    }
+  },
+  "swaps": [
+    "b44abcdb475c480ac027fab1c081acfe74217ceaa1a0eb06ac744ee2b4691dd3"
+  ]
+}

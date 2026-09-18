@@ -1,0 +1,9 @@
+2026-09-18T18:47:54Z x1 maker Bitcoin lifecycle configured (escrow <H>)
+2026-09-18T18:48:54Z x1 maker BTC lifecycle: prepared the LEZ escrow for swap <H>
+2026-09-18T18:53:04Z x18 {"event":"observation_unavailable","error":"Remote(RemoteProtocolError { context: MessageContext { schema_version: SchemaVersion, run_id: RunId(\"swap-42c2d7815e873889dca9acc9d546cecca4c5af93cf259ad8beed2b1fb1\"), request_id: RequestId(\"<id>\"), sidecar_role: Maker }, code: MovingTip, message: \"[REDACTED]\" })"}
+2026-09-18T18:53:04Z x20 actor chain observation is unavailable
+2026-09-18T19:12:14Z x2 {"event":"observation_unavailable","error":"Remote(RemoteProtocolError { context: MessageContext { schema_version: SchemaVersion, run_id: RunId(\"swap-42c2d7815e873889dca9acc9d546cecca4c5af93cf259ad8beed2b1fb1\"), request_id: RequestId(\"<id>\"), sidecar_role: Maker }, code: Unavailable, message: \"[REDACTED]\" })"}
+2026-09-18T19:38:35Z x441 {"event":"lez_maker_funding_step_presence","detail":"uncertain"}
+2026-09-18T20:37:23Z x18 {"event":"first_lock_safety_uncertain","detail":"lez finalized funding classification uncertain: Uncertain { context: MessageContext { schema_version: SchemaVersion, run_id: RunId(\"swap-42c2d7815e873889dca9acc9d546cecca4c5af93cf259ad8beed2b1fb1\"), request_id: RequestId(\"<id>\"), sidecar_role: Maker }, finalized_clock: ChainClock { <clock>
+2026-09-18T20:39:48Z x1 actor agreement binding is invalid
+2026-09-18T20:40:14Z x1 {"event":"lez_maker_funding_step_presence","detail":"found"}

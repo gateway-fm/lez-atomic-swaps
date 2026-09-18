@@ -1,0 +1,5 @@
+2026-09-18T18:47:57Z x1 taker Bitcoin lifecycle configured (escrow <H>)
+2026-09-18T20:39:57Z x1 {"event":"effect_reconcile","detail":"exact_claim_safe: sending"}
+2026-09-18T20:39:57Z x1 {"event":"effect_submission","detail":"accepted=true error=None"}
+2026-09-18T20:40:06Z x236 {"event":"effect_reconcile","detail":"exact_claim_safe: no send"}
+2026-09-18T21:42:04Z x1 {"event":"effect_reconcile","detail":"present_exact: no send"}

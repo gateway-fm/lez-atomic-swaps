@@ -271,3 +271,49 @@ scenario would create a *new* swap and strand the funded lock, so drive the rema
 steps against the existing one instead, passing `INTERACTIVE_ACTION`,
 `INTERACTIVE_STATE`, `INTERACTIVE_SWAP_ID` (and `INTERACTIVE_EXPECT_LABEL` for a Maker
 wait) into the same `/ui-tests/record-step.sh` the runner uses.
+
+## 9. Bitcoin through a public RPC provider instead of your own Core
+
+Sections 2 and 8 assume a Bitcoin Core of your own. A Node can also reach Bitcoin
+through a keyless public RPC provider, with no Bitcoin node and no node wallet at all.
+What a provider has to serve is small: any Core from 24.0 with `txindex`, and
+`testmempoolaccept` / `sendrawtransaction`. It needs no `txospenderindex` and no wallet
+RPCs, and it may answer in the JSON-RPC 1.x envelope. Keyless providers serve testnet3,
+so this route sets `LEZ_BTC_NETWORK=testnet3`; the LEZ side is unchanged.
+
+```sh
+mkdir -p ~/lez-testnet/proxy-btc-provider
+# nginx.conf as in section 4, with: listen 18443; and the provider's host, e.g.
+# https://bitcoin-testnet-rpc.publicnode.com, in proxy_pass, Host and proxy_ssl_name.
+docker run -d --name lez-t3-provider --restart unless-stopped --network lez-testnet \
+  --read-only --tmpfs /tmp -v ~/lez-testnet/proxy-btc-provider:/etc/nginx/lez:ro \
+  nginx:1.29.1-alpine nginx -c /etc/nginx/lez/nginx.conf -g 'daemon off;'
+
+export LEZ_MAKER_BTC_CLAIM_DESTINATION=<an address of the Maker owner's wallet>
+export LEZ_TAKER_BTC_CLAIM_DESTINATION=<an address of the Taker owner's wallet>
+docker compose -p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml \
+  -f compose.testnet3-provider.yaml up -d --no-deps maker-node taker-node
+```
+
+The two claim addresses must differ: an agreement refuses a Maker and a Taker paid at
+the same destination. Both Nodes then report their Bitcoin wallet as `disabled`.
+
+**Who signs the lock.** With no node wallet the Taker cannot fund its Bitcoin lock, so
+`taker_swap_initiate_v1` answers `-32018` with the contract address and the amount; sign
+a transaction paying exactly that in a wallet of your own, **without sending it**, and
+replay the same take with `funding_transaction_hex`
+([API reference](api/README.md#funding-the-lock-from-your-own-wallet)). The Node checks
+it, keeps it, and `taker_swap_lock_v1` sends it through the provider. Spend native SegWit
+inputs only. The direction in which the *Maker* pays Bitcoin still needs a node wallet,
+so a provider-only Maker serves `TakerSellsForeign`.
+
+**What you give up.** The Node believes what its Bitcoin RPC says: it does not check
+headers or proof of work itself. A provider therefore sees every outpoint your Node
+watches, can withhold or delay answers, and could report a confirmation that does not
+exist. Treat this route as a convenience for testnets and small amounts, and run your
+own Core where the amounts matter. Without
+`txospenderindex` a spender already buried in a block is found by scanning back from the
+tip, which costs one `getblock` per block on a rate-limited endpoint.
+
+A recorded swap on this route, with the lock signed in an offline wallet, is in
+[`docs/evidence/testnet3-provider-20260918/`](evidence/testnet3-provider-20260918/README.md).
