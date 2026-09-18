@@ -1940,9 +1940,12 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "bitcoin",
+ "bytes",
  "corepc-types",
  "hex",
+ "http-body",
  "jsonrpsee",
+ "jsonrpsee-core",
  "jsonrpsee-http-client",
  "jsonrpsee-server",
  "lez-btc-swap-sdk",
@@ -1952,6 +1955,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tower",
  "url",
  "zeroize",
 ]
@@ -1974,6 +1978,7 @@ dependencies = [
  "lez-adaptor-signature",
  "lez-bridge-client",
  "lez-bridge-protocol",
+ "lez-btc-core-adapter",
  "lez-btc-swap-sdk",
  "lez-swap-core",
  "lez-zec-swap-sdk",
@@ -1985,6 +1990,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tower",
  "zeroize",
 ]
 

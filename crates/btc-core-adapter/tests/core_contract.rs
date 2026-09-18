@@ -60,6 +60,10 @@ struct MockResponses {
     raw: VecDeque<Option<GetRawTransactionVerbose>>,
     headers: VecDeque<GetBlockHeaderVerbose>,
     spender: VecDeque<GetTxSpendingPrevout>,
+    /// What a node without `txospenderindex` is asked instead.
+    mempool_spender: Option<Txid>,
+    unspent: bool,
+    blocks: std::collections::HashMap<u32, (BlockHash, Vec<Vec<u8>>)>,
     mempool: VecDeque<Result<TestMempoolAccept, MockError>>,
     send: VecDeque<Result<SendRawTransaction, MockError>>,
 }
@@ -88,6 +92,9 @@ impl MockRpc {
                     1_699_998_900,
                 )]),
                 spender: VecDeque::new(),
+                mempool_spender: None,
+                unspent: true,
+                blocks: std::collections::HashMap::new(),
                 mempool: VecDeque::new(),
                 send: VecDeque::new(),
             })),
@@ -184,6 +191,31 @@ impl BitcoinCoreRpc for MockRpc {
         let mut inner = self.inner.lock().expect("mock lock");
         inner.calls.push("gettxspendingprevout");
         inner.spender.pop_front().ok_or(MockError::Transport)
+    }
+
+    async fn get_mempool_spender(&self, _outpoint: OutPoint) -> Result<Option<Txid>, Self::Error> {
+        let mut inner = self.inner.lock().expect("mock lock");
+        inner.calls.push("gettxspendingprevout:mempool");
+        Ok(inner.mempool_spender)
+    }
+
+    async fn is_unspent(&self, _outpoint: OutPoint) -> Result<bool, Self::Error> {
+        let mut inner = self.inner.lock().expect("mock lock");
+        inner.calls.push("gettxout");
+        Ok(inner.unspent)
+    }
+
+    async fn get_block_transactions(
+        &self,
+        height: u32,
+    ) -> Result<(BlockHash, Vec<Vec<u8>>), Self::Error> {
+        let mut inner = self.inner.lock().expect("mock lock");
+        inner.calls.push("getblock");
+        inner
+            .blocks
+            .get(&height)
+            .cloned()
+            .ok_or(MockError::Transport)
     }
 
     async fn test_mempool_accept(
@@ -386,15 +418,26 @@ async fn readiness_requires_exact_core_network_genesis_and_synced_indexes() {
     assert_eq!(tip.height(), 200);
     assert_eq!(tip.block_hash().to_string(), TIP_A);
 
-    let wrong_version = MockRpc::ready();
-    wrong_version.inner.lock().expect("mock lock").network =
-        network_info(310_000, "/Satoshi:31.0.0/", false);
-    assert!(matches!(
-        isolated_adapter(wrong_version)
-            .ensure_ready(&fixture.agreement)
-            .await,
-        Err(CoreAdapterError::WrongCoreVersion)
-    ));
+    // A floor, not a pin: any Bitcoin Core from 24.0 is admitted (a public
+    // provider is not byte-for-byte 31.1.0); older, or not Core, is not.
+    let older_core = MockRpc::ready();
+    older_core.inner.lock().expect("mock lock").network =
+        network_info(290_300, "/Satoshi:29.3.0/", false);
+    isolated_adapter(older_core)
+        .ensure_ready(&fixture.agreement)
+        .await
+        .expect("Core 29.3 is above the floor");
+    for (version, subversion) in [(230_100, "/Satoshi:23.1.0/"), (310_100, "/btcd:0.24.0/")] {
+        let wrong_version = MockRpc::ready();
+        wrong_version.inner.lock().expect("mock lock").network =
+            network_info(version, subversion, false);
+        assert!(matches!(
+            isolated_adapter(wrong_version)
+                .ensure_ready(&fixture.agreement)
+                .await,
+            Err(CoreAdapterError::WrongCoreVersion)
+        ));
+    }
 
     let wrong_genesis = MockRpc::ready();
     wrong_genesis.inner.lock().expect("mock lock").genesis = GetBlockHash(TIP_B.to_owned());
@@ -405,8 +448,9 @@ async fn readiness_requires_exact_core_network_genesis_and_synced_indexes() {
         Err(CoreAdapterError::BitcoinGenesisMismatch)
     ));
 
+    // `txindex` is still required; only the spender index became optional.
     let unsynced = MockRpc::ready();
-    unsynced.inner.lock().expect("mock lock").indexes = index_info(true, false);
+    unsynced.inner.lock().expect("mock lock").indexes = index_info(false, true);
     assert!(matches!(
         isolated_adapter(unsynced)
             .ensure_ready(&fixture.agreement)
@@ -519,14 +563,14 @@ async fn testnet4_profile_requires_exact_chain_network_and_pinned_genesis() {
         Err(CoreAdapterError::BitcoinGenesisMismatch)
     ));
 
+    // `txospenderindex` is Core 31's: without it the node is still ready, and
+    // spenders are found without an index.
     let unsynced_indexes = testnet4_rpc();
     unsynced_indexes.inner.lock().expect("mock lock").indexes = index_info(true, false);
-    assert!(matches!(
-        BitcoinCoreAdapter::new(unsynced_indexes, CoreConnectivityPolicy::Testnet4Networked,)
-            .ensure_ready(&fixture.agreement)
-            .await,
-        Err(CoreAdapterError::RequiredIndexNotReady("txospenderindex"))
-    ));
+    BitcoinCoreAdapter::new(unsynced_indexes, CoreConnectivityPolicy::Testnet4Networked)
+        .ensure_ready(&fixture.agreement)
+        .await
+        .expect("ready without the spender index");
 
     let missing_index = testnet4_rpc();
     missing_index
@@ -693,6 +737,7 @@ async fn exact_funding_observation_proves_current_unspent_state_at_one_stable_ti
             "getindexinfo",
             "getrawtransaction",
             "getblockheader",
+            "getindexinfo",
             "gettxspendingprevout",
             "getblockchaininfo"
         ]
@@ -844,6 +889,102 @@ fn spender(outpoint: OutPoint, transaction: &Transaction) -> GetTxSpendingPrevou
         spending_tx: Some(hex::encode(serialize(transaction))),
         block_hash: Some(TIP_A.to_owned()),
     }])
+}
+
+#[tokio::test]
+async fn a_node_without_the_spender_index_still_finds_the_spender() {
+    // What a public RPC provider is: no `txospenderindex`, so the spender comes
+    // from the mempool, the UTXO set and a scan back from the tip (#49).
+    let fixture = swap_fixture();
+    let anchor = fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .bitcoin_funding_anchor_height();
+    let tip = anchor + 3;
+    let provider = |unspent: bool, mempool_spender: Option<Txid>, spender_at: Option<u32>| {
+        let rpc = MockRpc::ready_at(tip);
+        rpc.push_raw(raw_verbose(
+            &fixture.funding,
+            Some(u64::from(REQUIRED_CONFIRMATIONS)),
+            Some(TIP_A),
+        ));
+        let mut inner = rpc.inner.lock().expect("mock lock");
+        inner.indexes.0.remove("txospenderindex");
+        inner.unspent = unspent;
+        inner.mempool_spender = mempool_spender;
+        for height in anchor..=tip {
+            let transaction = if spender_at == Some(height) {
+                &fixture.claim
+            } else {
+                &fixture.funding
+            };
+            let hash = if height == tip { TIP_A } else { TIP_B };
+            inner.blocks.insert(
+                height,
+                (
+                    hash.parse().expect("block hash"),
+                    vec![serialize(transaction)],
+                ),
+            );
+        }
+        drop(inner);
+        rpc
+    };
+
+    let unspent = provider(true, None, None);
+    assert!(matches!(
+        isolated_adapter(unspent.clone())
+            .observe_exact_funding(&fixture.agreement)
+            .await
+            .expect("unspent without an index"),
+        ExactFundingObservation::Unspent(_)
+    ));
+    // The UTXO set answered; no block was read.
+    assert!(unspent.calls().contains(&"gettxout"));
+    assert!(!unspent.calls().contains(&"getblock"));
+
+    // Confirmed two blocks back: found by the scan, newest block first.
+    let confirmed = provider(false, None, Some(tip - 2));
+    let ExactFundingObservation::Spent {
+        spender_transaction_id,
+        ..
+    } = isolated_adapter(confirmed.clone())
+        .observe_exact_funding(&fixture.agreement)
+        .await
+        .expect("confirmed spender found by the scan")
+    else {
+        panic!("expected spent funding");
+    };
+    assert_eq!(spender_transaction_id, fixture.claim.compute_txid());
+    assert_eq!(
+        confirmed
+            .calls()
+            .iter()
+            .filter(|call| **call == "getblock")
+            .count(),
+        3
+    );
+
+    // Still in the mempool: how a revealing claim is read before it confirms.
+    let in_mempool = provider(false, Some(fixture.claim.compute_txid()), None);
+    in_mempool.push_raw(raw_verbose(&fixture.claim, None, None));
+    assert!(matches!(
+        isolated_adapter(in_mempool.clone())
+            .observe_exact_funding(&fixture.agreement)
+            .await
+            .expect("mempool spender"),
+        ExactFundingObservation::Spent { .. }
+    ));
+    assert!(!in_mempool.calls().contains(&"getblock"));
+
+    // Spent, and nothing in the swap's window spends it: never "unspent".
+    assert!(matches!(
+        isolated_adapter(provider(false, None, None))
+            .observe_exact_funding(&fixture.agreement)
+            .await,
+        Err(CoreAdapterError::SpenderResponseMismatch)
+    ));
 }
 
 #[tokio::test]

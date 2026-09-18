@@ -7,7 +7,10 @@ pub use evidence::{
     BitcoinCoreEvidenceError, BitcoinCoreEvidenceKind, BitcoinCoreEvidenceV1,
     MAX_BITCOIN_CORE_EVIDENCE_BYTES,
 };
-pub use http::{HttpBitcoinCoreConfig, HttpBitcoinCoreError, HttpBitcoinCoreRpc};
+pub use http::{
+    AcceptJsonRpc1, HttpBitcoinCoreConfig, HttpBitcoinCoreError, HttpBitcoinCoreRpc,
+    Json1TolerantHttpClient,
+};
 
 use std::convert::Infallible;
 use std::error::Error as StdError;
@@ -25,10 +28,13 @@ use corepc_types::v31::{
 use lez_btc_swap_sdk::BtcAgreementV1;
 use thiserror::Error;
 
-/// Exact numeric identity returned by Bitcoin Core 31.1.
-pub const BITCOIN_CORE_31_1_VERSION: usize = 310_100;
-/// Exact subversion identity returned by an unmodified Bitcoin Core 31.1 node.
-pub const BITCOIN_CORE_31_1_SUBVERSION: &str = "/Satoshi:31.1.0/";
+/// Oldest Bitcoin Core this adapter runs against: 24.0 introduced
+/// `gettxspendingprevout`, which the index-free spender lookup starts from. It
+/// was pinned to exactly 31.1.0, which shut out every node an operator does not
+/// build themselves, public RPC providers included (#49).
+pub const MINIMUM_BITCOIN_CORE_VERSION: usize = 240_000;
+/// Subversion prefix of an unmodified Bitcoin Core node.
+pub const BITCOIN_CORE_SUBVERSION_PREFIX: &str = "/Satoshi:";
 /// Largest raw transaction accepted from the local RPC boundary.
 pub const MAX_RAW_TRANSACTION_BYTES: usize = 1_000_000;
 
@@ -61,6 +67,17 @@ pub trait BitcoinCoreRpc: Send + Sync {
         &self,
         outpoint: OutPoint,
     ) -> Result<GetTxSpendingPrevout, Self::Error>;
+    /// Calls plain `gettxspendingprevout`: the mempool transaction spending
+    /// `outpoint`, if any. Every Core since 24.0 answers this without an index.
+    async fn get_mempool_spender(&self, outpoint: OutPoint) -> Result<Option<Txid>, Self::Error>;
+    /// Calls `gettxout` without the mempool: whether the confirmed `outpoint` is unspent.
+    async fn is_unspent(&self, outpoint: OutPoint) -> Result<bool, Self::Error>;
+    /// Calls `getblockhash` and `getblock <hash> 2`: the active block at
+    /// `height` and the raw bytes of its transactions.
+    async fn get_block_transactions(
+        &self,
+        height: u32,
+    ) -> Result<(BlockHash, Vec<Vec<u8>>), Self::Error>;
     /// Calls `testmempoolaccept` once for one exact transaction.
     async fn test_mempool_accept(
         &self,
@@ -622,7 +639,7 @@ pub enum CoreAdapterError<RpcError: StdError + 'static, StoreError: StdError + '
     /// Durable submission state failed before or after the single attempt.
     #[error("claim submission state persistence failed")]
     Store(#[source] StoreError),
-    /// Node version or subversion is not exact Core 31.1.
+    /// Node is older than the supported floor or is not Bitcoin Core.
     #[error("node is not exact Bitcoin Core 31.1")]
     WrongCoreVersion,
     /// Node P2P connectivity contradicts the explicitly selected deployment route.
@@ -730,8 +747,10 @@ where
             .get_network_info()
             .await
             .map_err(CoreAdapterError::Rpc)?;
-        if network.version != BITCOIN_CORE_31_1_VERSION
-            || network.subversion != BITCOIN_CORE_31_1_SUBVERSION
+        if network.version < MINIMUM_BITCOIN_CORE_VERSION
+            || !network
+                .subversion
+                .starts_with(BITCOIN_CORE_SUBVERSION_PREFIX)
         {
             return Err(CoreAdapterError::WrongCoreVersion);
         }
@@ -772,8 +791,9 @@ where
             .get_index_info()
             .await
             .map_err(CoreAdapterError::Rpc)?;
+        // `txospenderindex` is Core 31's and no public provider has it; its
+        // absence selects the index-free lookup in `spender_of`.
         require_index(&indexes, "txindex", tip.height)?;
-        require_index(&indexes, "txospenderindex", tip.height)?;
         Ok(tip)
     }
 
@@ -898,12 +918,7 @@ where
                 txid: expected_txid,
                 vout: funding.output_index(),
             };
-            let response = self
-                .rpc
-                .get_tx_spending_prevout(outpoint)
-                .await
-                .map_err(CoreAdapterError::Rpc)?;
-            let spender = parse_spender_response(&response, outpoint)?;
+            let spender = self.spender_of(agreement, outpoint, before).await?;
             if let Some(spender) = &spender {
                 validate_funding_spender(spender, outpoint)?;
             }
@@ -941,36 +956,15 @@ where
     ) -> Result<ClaimObservation, CoreAdapterError<R::Error>> {
         let before = self.ensure_ready(agreement).await?;
         let outpoint = agreement.cooperative_claim().funding_outpoint();
-        let response = self
-            .rpc
-            .get_tx_spending_prevout(outpoint)
-            .await
-            .map_err(CoreAdapterError::Rpc)?;
-        let [item] = response.0.as_slice() else {
-            return Err(CoreAdapterError::SpenderResponseMismatch);
-        };
-        let response_txid =
-            Txid::from_str(&item.txid).map_err(|_| CoreAdapterError::SpenderResponseMismatch)?;
-        if response_txid != outpoint.txid || item.vout != outpoint.vout {
-            return Err(CoreAdapterError::SpenderResponseMismatch);
-        }
-        let Some(spending_txid_text) = &item.spending_txid else {
-            if item.spending_tx.is_some() || item.block_hash.is_some() {
-                return Err(CoreAdapterError::SpenderResponseMismatch);
-            }
+        let Some(spender) = self.spender_of(agreement, outpoint, before).await? else {
             let after = self.current_ready_tip().await?;
             if before != after {
                 return Err(CoreAdapterError::UnstableTip);
             }
             return Ok(ClaimObservation::Unspent);
         };
-        let spending_txid = Txid::from_str(spending_txid_text)
-            .map_err(|_| CoreAdapterError::SpenderResponseMismatch)?;
-        let spender_bytes = decode_raw_hex(
-            item.spending_tx
-                .as_deref()
-                .ok_or(CoreAdapterError::SpenderResponseMismatch)?,
-        )?;
+        let spending_txid = spender.transaction_id;
+        let spender_bytes = spender.transaction_bytes;
         let response = self
             .rpc
             .get_raw_transaction(spending_txid)
@@ -982,12 +976,7 @@ where
             return Err(CoreAdapterError::SpenderResponseMismatch);
         }
         let (confirmations, block_hash) = confirmation_context(&response)?;
-        let spender_block_hash = item
-            .block_hash
-            .as_deref()
-            .map(|value| parse_block_hash(value, "spender block hash"))
-            .transpose()?;
-        if spender_block_hash != block_hash {
+        if spender.block_hash != block_hash {
             return Err(CoreAdapterError::SpenderResponseMismatch);
         }
         validate_exact_claim(agreement, &transaction)?;
@@ -1099,12 +1088,7 @@ where
         eligibility: RefundEligibility,
     ) -> Result<RefundObservation, CoreAdapterError<R::Error>> {
         let outpoint = agreement.bitcoin_refund().funding_outpoint();
-        let response = self
-            .rpc
-            .get_tx_spending_prevout(outpoint)
-            .await
-            .map_err(CoreAdapterError::Rpc)?;
-        let Some(spender) = parse_spender_response(&response, outpoint)? else {
+        let Some(spender) = self.spender_of(agreement, outpoint, before).await? else {
             let after = self.current_ready_tip().await?;
             if before != after {
                 return Err(CoreAdapterError::UnstableTip);
@@ -1505,6 +1489,91 @@ where
                 transaction.compute_txid() == transaction_id
                     && serialize(&transaction) == transaction_bytes
             })
+    }
+
+    /// The transaction spending `outpoint`, in the mempool or confirmed.
+    ///
+    /// With Core 31's `txospenderindex` one call proves it. Without it -- any
+    /// older node, every public provider -- the mempool is asked first, then
+    /// the UTXO set says whether a confirmed spend exists at all, and only then
+    /// are blocks read, newest first: the spend being looked for has only just
+    /// happened, so it is in the first block or two. The scan ends at the
+    /// funding anchor, because nothing spends an output before it exists. A
+    /// spent output with no spender in that window is an error, never "unspent":
+    /// that answer can authorize a send.
+    async fn spender_of(
+        &self,
+        agreement: &BtcAgreementV1,
+        outpoint: OutPoint,
+        tip: StableTip,
+    ) -> Result<Option<ParsedSpender>, CoreAdapterError<R::Error>> {
+        let indexes = self
+            .rpc
+            .get_index_info()
+            .await
+            .map_err(CoreAdapterError::Rpc)?;
+        if require_index::<R::Error>(&indexes, "txospenderindex", tip.height).is_ok() {
+            let response = self
+                .rpc
+                .get_tx_spending_prevout(outpoint)
+                .await
+                .map_err(CoreAdapterError::Rpc)?;
+            return parse_spender_response(&response, outpoint);
+        }
+        let in_mempool = self
+            .rpc
+            .get_mempool_spender(outpoint)
+            .await
+            .map_err(CoreAdapterError::Rpc)?;
+        if let Some(transaction_id) = in_mempool {
+            let response = self
+                .rpc
+                .get_raw_transaction(transaction_id)
+                .await
+                .map_err(CoreAdapterError::Rpc)?
+                .ok_or(CoreAdapterError::SpenderResponseMismatch)?;
+            let transaction = parse_verbose_transaction(&response, transaction_id)?;
+            let (_, block_hash) = confirmation_context(&response)?;
+            return Ok(Some(ParsedSpender {
+                transaction_id,
+                transaction_bytes: serialize(&transaction),
+                block_hash,
+            }));
+        }
+        if self
+            .rpc
+            .is_unspent(outpoint)
+            .await
+            .map_err(CoreAdapterError::Rpc)?
+        {
+            return Ok(None);
+        }
+        let anchor = agreement
+            .body()
+            .recovery_plan()
+            .bitcoin_funding_anchor_height();
+        for height in (anchor..=tip.height).rev() {
+            let (block_hash, transactions) = self
+                .rpc
+                .get_block_transactions(height)
+                .await
+                .map_err(CoreAdapterError::Rpc)?;
+            for transaction_bytes in transactions {
+                let transaction = decode_raw_transaction(&transaction_bytes)?;
+                if transaction
+                    .input
+                    .iter()
+                    .any(|input| input.previous_output == outpoint)
+                {
+                    return Ok(Some(ParsedSpender {
+                        transaction_id: transaction.compute_txid(),
+                        transaction_bytes,
+                        block_hash: Some(block_hash),
+                    }));
+                }
+            }
+        }
+        Err(CoreAdapterError::SpenderResponseMismatch)
     }
 
     async fn current_ready_tip(&self) -> Result<StableTip, CoreAdapterError<R::Error>> {

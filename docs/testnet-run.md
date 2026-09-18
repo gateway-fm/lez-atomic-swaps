@@ -8,7 +8,7 @@ them over a Docker network.
 
 | Service | What it is | Why it runs locally |
 |---|---|---|
-| `lez-btc-testnet4` | Bitcoin Core 31.1 on testnet4, unpruned, `txindex` + `txospenderindex` | the Nodes' Bitcoin adapter needs both indexes and a wallet per role |
+| `lez-btc-testnet4` | Bitcoin Core 31.1 on testnet4, unpruned, `txindex` + `txospenderindex` | the Nodes fund their locks from a wallet per role. Observation alone needs only `txindex` on any Core from 24.0: without `txospenderindex` the adapter finds a spender from the mempool, the UTXO set and a scan back from the tip |
 | `lez-testnet-node` | Logos Blockchain node on the public testnet | feeds the indexer |
 | `lez-testnet-indexer` | LEZ v0.2.4 indexer following the public channel | the public endpoint serves no indexer (`getLastFinalizedBlockId`) |
 | `lez-testnet-sequencer` | nginx: plain HTTP on the Docker network to `https://testnet.lez.logos.co` | the Nodes accept only literal-loopback HTTP endpoints |

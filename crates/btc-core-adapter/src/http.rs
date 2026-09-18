@@ -16,9 +16,106 @@ use jsonrpsee::{
     core::{ClientError, client::ClientT as _},
     rpc_params,
 };
-use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
+use jsonrpsee_core::middleware::layer::RpcLogger;
+use jsonrpsee_http_client::transport::{Error as TransportError, HttpBackend};
+use jsonrpsee_http_client::{
+    HeaderMap, HeaderValue, HttpBody, HttpClient, HttpClientBuilder, HttpRequest, HttpResponse,
+    RpcService,
+};
 use url::{Host, Url};
 use zeroize::Zeroizing;
+
+/// Bitcoin Core before 28, and the gateways providers put in front of any
+/// version, answer in the JSON-RPC 1.x envelope: no `jsonrpc` member (or an
+/// empty one), and both `result` and `error` present with one of them null. The client parses only
+/// 2.0 and refused every reply from a public provider, so a 1.x reply is
+/// rewritten into 2.0 first. A 2.0 reply passes through byte for byte.
+#[derive(Clone, Debug)]
+pub struct AcceptJsonRpc1<S>(S);
+
+impl<S> AcceptJsonRpc1<S> {
+    /// Wraps an HTTP service; pass to `tower::ServiceBuilder::layer_fn`.
+    pub const fn new(inner: S) -> Self {
+        Self(inner)
+    }
+}
+
+/// A `jsonrpsee` HTTP client that also accepts JSON-RPC 1.x replies.
+pub type Json1TolerantHttpClient = HttpClient<RpcLogger<RpcService<AcceptJsonRpc1<HttpBackend>>>>;
+
+impl<S, B> tower::Service<HttpRequest> for AcceptJsonRpc1<S>
+where
+    S: tower::Service<HttpRequest, Response = HttpResponse<B>, Error = TransportError>,
+    S::Future: Send + 'static,
+    B: http_body::Body<Data = bytes::Bytes> + Send + 'static,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    type Response = HttpResponse<HttpBody>;
+    type Error = TransportError;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(context)
+    }
+
+    fn call(&mut self, request: HttpRequest) -> Self::Future {
+        let reply = self.0.call(request);
+        Box::pin(async move {
+            let (mut parts, body) = reply.await?.into_parts();
+            let (bytes, _) = jsonrpsee_core::http_helpers::read_body(
+                &parts.headers,
+                body,
+                MAX_RPC_RESPONSE_BYTES,
+            )
+            .await?;
+            // The rewritten body has another length.
+            parts.headers.remove("content-length");
+            Ok(HttpResponse::from_parts(
+                parts,
+                HttpBody::from(json_rpc_2_envelope(bytes)),
+            ))
+        })
+    }
+}
+
+fn json_rpc_2_envelope(reply: Vec<u8>) -> Vec<u8> {
+    let Ok(serde_json::Value::Object(mut envelope)) = serde_json::from_slice(&reply) else {
+        return reply;
+    };
+    // Exactly "2.0" or not 2.0: one public provider's backends were seen to
+    // answer with the member missing, and with it present but empty.
+    if envelope.get("jsonrpc").and_then(serde_json::Value::as_str) == Some("2.0") {
+        return reply;
+    }
+    envelope.insert("jsonrpc".to_owned(), "2.0".into());
+    // 2.0 carries exactly one of the two members.
+    let failed = envelope.get("error").is_some_and(|error| !error.is_null());
+    envelope.remove(if failed { "result" } else { "error" });
+    serde_json::to_vec(&envelope).unwrap_or(reply)
+}
+
+/// One `gettxspendingprevout` entry; `spendingtxid` is absent while unspent.
+#[derive(serde::Deserialize)]
+struct MempoolSpender {
+    #[serde(default)]
+    spendingtxid: Option<Txid>,
+}
+
+/// The part of `getblock <hash> 2` the spender scan reads.
+#[derive(serde::Deserialize)]
+struct BlockWithTransactions {
+    tx: Vec<BlockTransaction>,
+}
+
+#[derive(serde::Deserialize)]
+struct BlockTransaction {
+    hex: String,
+}
 
 use crate::{
     BitcoinCoreAdapter, BitcoinCoreRpc, CoreConnectivityPolicy, CoreRpcRoute,
@@ -206,7 +303,7 @@ impl HttpBitcoinCoreConfig {
 /// JSON-RPC call.
 #[derive(Clone)]
 pub struct HttpBitcoinCoreRpc {
-    client: HttpClient,
+    client: Json1TolerantHttpClient,
     route: HttpBitcoinCoreRoute,
 }
 
@@ -246,6 +343,9 @@ pub enum HttpBitcoinCoreError {
     /// The concrete HTTP route is incompatible with the selected chain profile.
     #[error("Bitcoin Core HTTP route is incompatible with the selected chain profile")]
     RouteProfileMismatch,
+    /// A block's transaction was not the hex the node said it was.
+    #[error("Bitcoin Core returned a block transaction that is not hex")]
+    MalformedResponse,
     /// The client was not configured from a private credential file.
     #[error("Bitcoin Core HTTP requires file-backed Basic credentials")]
     MissingCookieCredentials,
@@ -298,6 +398,7 @@ impl HttpBitcoinCoreRpc {
             .request_timeout(config.request_timeout)
             .max_concurrent_requests(config.max_concurrent_requests)
             .set_headers(headers)
+            .set_http_middleware(tower::ServiceBuilder::new().layer_fn(AcceptJsonRpc1::new))
             .build(&config.endpoint)
             .map_err(HttpBitcoinCoreError::Build)?;
         Ok(Self {
@@ -404,6 +505,56 @@ impl BitcoinCoreRpc for HttpBitcoinCoreRpc {
             )
             .await
             .map_err(HttpBitcoinCoreError::Request)
+    }
+
+    async fn get_mempool_spender(&self, outpoint: OutPoint) -> Result<Option<Txid>, Self::Error> {
+        // No options object: it is Core 31's, and an older node answers a call
+        // that carries one with its help text.
+        let outpoints = vec![serde_json::json!({
+            "txid": outpoint.txid.to_string(),
+            "vout": outpoint.vout
+        })];
+        let answer: Vec<MempoolSpender> = self
+            .client
+            .request("gettxspendingprevout", rpc_params![outpoints])
+            .await
+            .map_err(HttpBitcoinCoreError::Request)?;
+        Ok(answer.into_iter().next().and_then(|item| item.spendingtxid))
+    }
+
+    async fn is_unspent(&self, outpoint: OutPoint) -> Result<bool, Self::Error> {
+        let output: Option<serde_json::Value> = self
+            .client
+            .request(
+                "gettxout",
+                rpc_params![outpoint.txid.to_string(), outpoint.vout, false],
+            )
+            .await
+            .map_err(HttpBitcoinCoreError::Request)?;
+        Ok(output.is_some())
+    }
+
+    async fn get_block_transactions(
+        &self,
+        height: u32,
+    ) -> Result<(BlockHash, Vec<Vec<u8>>), Self::Error> {
+        let hash: BlockHash = self
+            .client
+            .request("getblockhash", rpc_params![height])
+            .await
+            .map_err(HttpBitcoinCoreError::Request)?;
+        let block: BlockWithTransactions = self
+            .client
+            .request("getblock", rpc_params![hash.to_string(), 2])
+            .await
+            .map_err(HttpBitcoinCoreError::Request)?;
+        let transactions = block
+            .tx
+            .into_iter()
+            .map(|transaction| hex::decode(transaction.hex))
+            .collect::<Result<_, _>>()
+            .map_err(|_| HttpBitcoinCoreError::MalformedResponse)?;
+        Ok((hash, transactions))
     }
 
     async fn test_mempool_accept(
@@ -653,5 +804,37 @@ mod tests {
                 .expect("authorization")
                 .is_sensitive()
         );
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::json_rpc_2_envelope;
+
+    fn normalized(reply: &str) -> serde_json::Value {
+        serde_json::from_slice(&json_rpc_2_envelope(reply.as_bytes().to_vec())).expect("JSON")
+    }
+
+    #[test]
+    fn every_envelope_a_public_provider_was_seen_to_send_becomes_json_rpc_2() {
+        let expected = serde_json::json!({"jsonrpc": "2.0", "result": 7, "id": 1});
+        // The 1.x envelope, and the same with an empty member: both seen from
+        // one provider's backends within a single run.
+        assert_eq!(normalized(r#"{"result":7,"error":null,"id":1}"#), expected);
+        assert_eq!(normalized(r#"{"jsonrpc":"","result":7,"id":1}"#), expected);
+        assert_eq!(
+            normalized(r#"{"result":null,"error":{"code":-5,"message":"no"},"id":1}"#),
+            serde_json::json!({"jsonrpc": "2.0", "error": {"code": -5, "message": "no"}, "id": 1})
+        );
+        // A 2.0 reply, and anything that is not an envelope, are not touched.
+        for untouched in [
+            r#"{"jsonrpc":"2.0","result":0.00001000,"id":1}"#,
+            "not json",
+        ] {
+            assert_eq!(
+                json_rpc_2_envelope(untouched.as_bytes().to_vec()),
+                untouched.as_bytes()
+            );
+        }
     }
 }

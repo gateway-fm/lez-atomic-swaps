@@ -9,15 +9,19 @@ repository.workspace = true
 [dependencies]
 async-trait = "=0.1.89"
 base64 = "=0.22.1"
+bytes = "=1.12.1"
 bitcoin = { version = "=0.32.101", default-features = false, features = ["std"] }
 corepc-types = { version = "=0.15.0", default-features = false, features = ["std", "serde-deny-unknown-fields"] }
 hex = "=0.4.3"
+http-body = "=1.0.1"
 jsonrpsee = { version = "=0.26.0", features = ["client-core"] }
 jsonrpsee-http-client = { version = "=0.26.0", default-features = false, features = ["tls"] }
+jsonrpsee-core = { version = "=0.26.0", features = ["http-helpers"] }
 lez-btc-swap-sdk = { version = "0.1.0", path = "../btc-swap-sdk" }
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
 thiserror = "=2.0.18"
+tower = "=0.5.3"
 url = "=2.5.8"
 zeroize = "=1.9.0"
 
