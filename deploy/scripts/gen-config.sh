@@ -87,7 +87,12 @@ jq --arg channel "$channel_id" \
   "$LEZ_SOURCE/indexer-config/indexer_config.json" \
   >"$RUNTIME/config/indexer_config.json"
 
-jq --arg channel "$channel_id" \
+# The sequencer pays for its inscriptions from the genesis notes, which it finds
+# by their public key: the genesis is the one place that names it.
+funding_key="$(sed -n "s/^ *pk: '\{0,1\}\([0-9a-f]\{64\}\)'\{0,1\} *$/\1/p" "$LEZ_SOURCE/bedrock/deployment-settings.yaml" | head -1)"
+[[ "$funding_key" =~ ^[0-9a-f]{64}$ ]] || { echo "no genesis funding key in deployment-settings.yaml" >&2; exit 1; }
+
+jq --arg channel "$channel_id" --arg funding "$funding_key" \
   --arg maker "$maker_account_id" --argjson maker_amount "$maker_genesis_allocation" \
   --arg taker "$taker_account_id" --argjson taker_amount "$taker_genesis_allocation" \
   --arg munich "$wallet_munich_account_id" --arg basel "$wallet_basel_account_id" \
@@ -97,6 +102,7 @@ jq --arg channel "$channel_id" \
   '.home = "/var/lib/sequencer_service"
    | .bedrock_config.node_url = "http://bedrock:18080"
    | .bedrock_config.channel_id = $channel
+   | .bedrock_config.funding_key = $funding
    | del(.bedrock_config.backoff)
    | .genesis = [
        {"supply_account": {"account_id": $maker, "balance": $maker_amount}},
