@@ -60,8 +60,9 @@ if [[ "$EVIDENCE_MODE" == 1 && ( "$RUN_SWAP" == 1 || "$ONLY" == swap ) ]]; then
 fi
 
 # ---- pins -------------------------------------------------------------------
-readonly LEZ_SOURCE_TAG=v0.2.0
-readonly LEZ_SOURCE_COMMIT=a58fbce2ff48c58b7bb5001b1a27e64b9596ee3a
+# The release the sidecar, the escrow guest and the official testnet are on.
+readonly LEZ_SOURCE_TAG=v0.2.4
+readonly LEZ_SOURCE_COMMIT=47eba256479f6f785acbd138834340703cd03401
 readonly BASECAMP_TAG=0.2.0
 readonly BASECAMP_COMMIT=48b26c0d33573b5dd3695ae5868b04328f79e5c6
 readonly NIX_IMAGE="nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21"
@@ -162,10 +163,11 @@ apply_source_patches() { # apply_source_patches <dir> <patch-dir>
   done
 }
 
-# One digest over the patch set for a pinned source, so a build knows the
-# sources it was made from changed even though the pinned commit did not.
+# One digest over the pinned commit and its patch set (there may be none), so
+# a build knows the sources it was made from changed: a moved pin must rebuild
+# on a host that already holds the previous pin's binaries.
 source_patch_stamp() { # source_patch_stamp <patch-dir>
-  (cd "$1" 2>/dev/null && cat -- *.patch 2>/dev/null) | sha256sum | cut -c1-16
+  { echo "$LEZ_SOURCE_COMMIT"; cat -- "$1"/*.patch 2>/dev/null || true; } | sha256sum | cut -c1-16
 }
 
 phase_sources() {

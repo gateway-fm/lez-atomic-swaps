@@ -96,7 +96,6 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   docker compose stop maker-node taker-node lez-explorer indexer sequencer bedrock >/dev/null 2>&1 || true
   mkdir -p "runtime/lez-broken-$stamp"
   for d in bedrock sequencer indexer; do [[ -d "runtime/$d" ]] && mv "runtime/$d" "runtime/lez-broken-$stamp/"; done
-  sed -i.bak '/^LEZ_V02_GENESIS_TIME_EPOCH=/d' runtime/runtime.env && rm -f runtime/runtime.env.bak
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
   [[ -f "$market_root/bootstrap/deployment.json" ]] && mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$stamp.bak"
 fi
