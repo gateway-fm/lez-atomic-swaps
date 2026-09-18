@@ -92,9 +92,9 @@ use lez_swap_store::{
     BtcMakerLockStepDecision, BtcMakerLockStepObservation, BtcMakerLockStepState,
     BtcMakerLockSubmissionResult, BtcOfflineStatus, BtcRecoveryError, MAKER_ACTOR_CONFIG_FD,
     PreparedPublicEffect, PublicEffectChain, PublicEffectDecision, PublicEffectKey,
-    PublicEffectObservation, PublicEffectOperation, PublicEffectSubmissionResult,
-    SqliteAdaptorSessionJournal, SqliteBtcMakerLockJournal, SqliteBtcRecoveryStore,
-    SqlitePublicEffectJournal,
+    PublicEffectObservation, PublicEffectOperation, PublicEffectState,
+    PublicEffectSubmissionResult, SqliteAdaptorSessionJournal, SqliteBtcMakerLockJournal,
+    SqliteBtcRecoveryStore, SqlitePublicEffectJournal,
 };
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -3556,6 +3556,77 @@ pub struct ActorEffectV1 {
     pub transaction_id: Box<str>,
     /// Confirmations observed when the evidence was recorded; 0 for LEZ.
     pub confirmations: u32,
+    /// Sent by this actor and not yet observed final. Without it a Maker that
+    /// has claimed and is waiting out a confirmation looks exactly like one
+    /// that never claimed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pending: bool,
+}
+
+/// This actor's claims and refunds that were sent but are not yet evidence:
+/// the journal knows a transaction from the moment it is submitted, the
+/// aggregate only once it is final.
+fn pending_effects(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    recorded: &[ActorEffectV1],
+) -> Vec<ActorEffectV1> {
+    let Ok(journal) = SqlitePublicEffectJournal::open(&config.state_db) else {
+        return Vec::new();
+    };
+    let Ok(swap_id) = SwapId::new(hex::encode(agreement.body().swap_id())) else {
+        return Vec::new();
+    };
+    let refund_kind = match config.role {
+        ActorRole::Maker => "maker_refund",
+        ActorRole::Taker => "taker_refund",
+    };
+    let mut pending = Vec::new();
+    for (operation, predecessor, kind) in [
+        (PublicEffectOperation::Claim, 2, "revealing_claim"),
+        (PublicEffectOperation::Claim, 3, "followup_claim"),
+        (PublicEffectOperation::Refund, 1, refund_kind),
+        (PublicEffectOperation::Refund, 2, refund_kind),
+        (PublicEffectOperation::Refund, 3, refund_kind),
+    ] {
+        for (journal_chain, chain) in [
+            (PublicEffectChain::Bitcoin, Chain::Bitcoin),
+            (PublicEffectChain::Lez, Chain::Lez),
+        ] {
+            let key = PublicEffectKey::new(
+                swap_id.clone(),
+                config.role.sdk(),
+                journal_chain,
+                operation,
+                predecessor,
+            );
+            let Ok(Some(snapshot)) = journal.current(&key) else {
+                continue;
+            };
+            let sent = matches!(
+                snapshot.state(),
+                PublicEffectState::Started
+                    | PublicEffectState::Accepted
+                    | PublicEffectState::Unknown
+            );
+            let transaction_id = snapshot.effect().expected_effect_id();
+            if sent
+                && !recorded
+                    .iter()
+                    .any(|effect| &*effect.transaction_id == transaction_id)
+            {
+                pending.push(ActorEffectV1 {
+                    revision: 0,
+                    kind: kind.into(),
+                    chain,
+                    transaction_id: transaction_id.into(),
+                    confirmations: 0,
+                    pending: true,
+                });
+            }
+        }
+    }
+    pending
 }
 
 /// The swap's durable on-chain effects in order: the actor's lifecycle
@@ -3585,6 +3656,7 @@ pub fn actor_effects(config: &ActorConfig) -> Result<Vec<ActorEffectV1>, ActorCo
             chain: evidence.chain(),
             transaction_id: evidence.proof().transaction_id().into(),
             confirmations: evidence.proof().confirmations(),
+            pending: false,
         })
         .collect();
     drop(store);
@@ -3612,10 +3684,12 @@ pub fn actor_effects(config: &ActorConfig) -> Result<Vec<ActorEffectV1>, ActorCo
                 chain: Chain::Lez,
                 transaction_id: transaction_id.into(),
                 confirmations: 0,
+                pending: false,
             });
         }
         effects.sort_by_key(|effect| (effect.revision == 0, effect.revision));
     }
+    effects.extend(pending_effects(config, &agreement, &effects));
     Ok(effects)
 }
 

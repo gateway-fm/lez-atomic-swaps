@@ -7627,6 +7627,18 @@ async fn bitcoin_claim_effect_persists_before_one_send_then_projects_only_when_f
     assert_eq!(first["outcome"], "awaiting_observation");
     assert_eq!(first["revision"], 2);
     assert_eq!(first_port.submit_calls(), 1);
+    // Sent but not yet final: the monitor must say so, or a role waiting on a
+    // confirmation is indistinguishable from one that never claimed (#69).
+    let claim_id = effect.expected_transaction_id.to_string();
+    let sent: Vec<_> = actor_effects(&fixture.config)
+        .expect("effects after the send")
+        .into_iter()
+        .filter(|effect| effect.pending)
+        .collect();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(&*sent[0].kind, "revealing_claim");
+    assert_eq!(sent[0].chain, Chain::Bitcoin);
+    assert_eq!(&*sent[0].transaction_id, claim_id);
 
     let finalized_port = FixedBitcoinClaimPort::new(
         exact_finalized_scan(&effect, revealing_signature(&fixture)),
@@ -7650,6 +7662,16 @@ async fn bitcoin_claim_effect_persists_before_one_send_then_projects_only_when_f
     assert_eq!(finalized["outcome"], "observed_then_projected");
     assert_eq!(finalized["revision"], 3);
     assert_eq!(finalized_port.submit_calls(), 0);
+    // Once final it is evidence, listed once and no longer pending.
+    let effects = actor_effects(&fixture.config).expect("effects once final");
+    assert!(effects.iter().all(|effect| !effect.pending));
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|effect| *effect.transaction_id == *claim_id)
+            .count(),
+        1
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

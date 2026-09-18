@@ -743,6 +743,10 @@ pub struct MakerActorMonitorV1 {
     pub lease_generation: u64,
     /// Number of bounded worker attempts.
     pub attempt_count: u64,
+    /// Why the supervisor last backed off or gave up. A `failed` row is never
+    /// polled again, and nothing else tells the owner that or why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure_class: Option<String>,
     /// Latest validated actor lifecycle projection, when available.
     pub progress: Option<MakerActorProgressViewV1>,
     /// Latest explicit owner action, when available.
@@ -986,6 +990,7 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 schedule_state: record.schedule_state().into(),
                 lease_generation: record.lease_generation(),
                 attempt_count: record.attempt_count(),
+                last_failure_class: record.last_failure_class().map(str::to_owned),
                 progress,
                 manual_action,
                 terms: context

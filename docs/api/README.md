@@ -113,7 +113,7 @@ required unless marked optional. `null` revisions on insertion are intentional.
 | `maker_offer_list` | `{}` | Array of `{revision, status, offer, reservation_id, swap_id}`; statuses are `active`, `expired`, `reserved`, `consumed`, `withdrawn`. History is durable; lists are not a transactional balance snapshot. |
 | `maker_offer_withdraw` | `{request_id, offer_id, expected_revision}` | `{revision, was_replay}`. Withdraws an unreserved offer. A reservation that wins the race prevents withdrawal. |
 | `swap_history` | `{}` | Array of `{id, pair, direction, phase, requires_attention, pending_alerts, highest_alert_severity}`. Use each opaque `id` to monitor its actor. |
-| `maker_actor_monitor_v1` | `{id}` | Actor snapshot with `schema_version`, `swap_id`, `actor_kind`, `lease_generation`, `schedule_state`, `attempt_count`, `progress`, `manual_action` and, once the Node holds the countersigned BTC agreement, `terms` (see below). See the linked DTO for complete fields. This method can reconcile a terminal actor into the operator projection. |
+| `maker_actor_monitor_v1` | `{id}` | Actor snapshot with `schema_version`, `swap_id`, `actor_kind`, `lease_generation`, `schedule_state`, `attempt_count`, `last_failure_class` (why the supervisor last backed off or gave up; a `failed` actor is never polled again until an action is queued), `progress`, `manual_action` and, once the Node holds the countersigned BTC agreement, `terms` (see below). See the linked DTO for complete fields. This method can reconcile a terminal actor into the operator projection. |
 | `maker_actor_claim_v1`, `maker_actor_refund_v1` | `{request_id, id, expected_generation}` | `{schema_version, swap_id, action, requested_after_generation, was_replay}`. Use the monitor’s `lease_generation` as `expected_generation`. Admission is generation-fenced; it requests node-owned actor work, not arbitrary transaction construction. |
 
 `configuration` has `route`, `enabled` (boolean), `price_source` (`"local"`
@@ -245,7 +245,11 @@ the Maker additionally its LEZ lock steps `lez_initialize` and `lez_fund`
 (`revision` 0) when it funds the escrow. `chain` is `Bitcoin` or `Lez`; `confirmations` is what the
 actor observed when it recorded the evidence and stays 0 for LEZ. The array
 is omitted while empty. Nothing in it is secret; it is what a block
-explorer shows.
+explorer shows. A claim or refund this role has **sent** but not yet observed
+final is listed too, with `pending: true` and `revision` 0: on a public network
+that wait is an hour of LEZ finality or however long Bitcoin takes to confirm,
+and without the entry a role that is waiting reads the same as one that never
+acted. It turns into an ordinary entry once final.
 States include `initiating`, `not_activated`, `awaiting_first_lock`,
 `awaiting_second_lock`, `both_legs_locked`, `claim_available`,
 `refund_available`, `claim_in_progress`, `refund_in_progress`, `completed`,
