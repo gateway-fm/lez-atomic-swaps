@@ -11,12 +11,15 @@ x-provider-env: &provider-env
   LEZ_BTC_NETWORK: testnet3
   LEZ_BITCOIN_CORE_HOST: ${LEZ_BTC_PROVIDER_PROXY:-lez-t3-provider}
   LEZ_BTC_WALLET: ""
-  LEZ_BTC_CLAIM_DESTINATION: ${LEZ_BTC_CLAIM_DESTINATION:?set LEZ_BTC_CLAIM_DESTINATION to an address of your own wallet}
 
+# One address of the owner's wallet per role: an agreement refuses a Maker and a
+# Taker that would be paid at the same destination.
 services:
   maker-node:
     environment:
       <<: *provider-env
+      LEZ_BTC_CLAIM_DESTINATION: ${LEZ_MAKER_BTC_CLAIM_DESTINATION:?set it to an address of the Maker owner's wallet}
   taker-node:
     environment:
       <<: *provider-env
+      LEZ_BTC_CLAIM_DESTINATION: ${LEZ_TAKER_BTC_CLAIM_DESTINATION:?set it to an address of the Taker owner's wallet}
