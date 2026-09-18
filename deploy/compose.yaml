@@ -149,6 +149,9 @@ services:
     pids_limit: 512
     cpus: 2.0
     mem_limit: 4g
+    # The LEZ processes shut down cleanly on Ctrl-C only and ignore SIGTERM, so
+    # a default stop waits out the grace period and kills them mid-write.
+    stop_signal: SIGINT
     stop_grace_period: 20s
     restart: unless-stopped
     logging: *default-logging
@@ -189,6 +192,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
+    stop_signal: SIGINT
     stop_grace_period: 30s
     restart: unless-stopped
     logging: *default-logging
@@ -235,6 +239,7 @@ services:
       timeout: 5s
       retries: 30
       start_period: 30s
+    stop_signal: SIGINT
     stop_grace_period: 20s
     restart: unless-stopped
     logging: *default-logging

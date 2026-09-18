@@ -86,6 +86,11 @@ The portable recorder produces an offline replay page and public chain checks.
 ./scripts/down.sh                  # stop everything (--wipe also removes state and volumes)
 ```
 
+A stop is safe for the LEZ chain: Bedrock, the sequencer and the indexer shut down
+cleanly on SIGINT only, so compose stops them with it; `up.sh` then resumes the same
+chain. If one of them was killed anyway (a crash, `docker rm -f`) and does not come
+back, `up.sh --fresh-lez` recreates the LEZ chain and keeps Bitcoin and the wallets.
+
 `up.sh` ends with the repo-style UI verification (real Basecamp driven through
 its QML inspector against the live Maker and Taker Nodes). Skip with `SKIP_UI_VERIFY=1`.
 
