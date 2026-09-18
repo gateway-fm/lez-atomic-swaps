@@ -219,9 +219,12 @@ scenario_maker_refund() {
   taker_act "$lock_action" "$swap"
   maker_wait awaiting_taker_claim "$swap"
   note "The Taker never claims; after its refund deadline (${LEZ_BTC_EARLIER_REFUND_SECONDS} s after the take) the Maker Node refunds its own lock"
-  maker_wait refunded "$swap"
+  # One refunded leg is not an unwound swap: the Maker desk reads "refunding"
+  # until the Taker's leg is back too, and only then "refunded".
+  maker_wait refunding "$swap"
   taker_act "$refund_action" "$swap"
   taker_wait refunded "$swap"
+  maker_wait refunded "$swap"
 }
 
 run_one() {
