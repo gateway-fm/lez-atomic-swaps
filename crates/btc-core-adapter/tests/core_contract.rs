@@ -486,6 +486,10 @@ async fn testnet3_and_testnet4_are_never_admitted_under_each_others_name() {
             "test".clone_into(&mut chain.chain);
         }
         inner.genesis = GetBlockHash(genesis_block(Network::Testnet).block_hash().to_string());
+        // What a public Testnet3 node reports for good: anyone can signal there.
+        for chain in &mut inner.chains {
+            chain.warnings = vec!["Unknown new rules activated (versionbit 1)".to_owned()];
+        }
         drop(inner);
         rpc
     };

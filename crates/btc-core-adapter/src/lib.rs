@@ -1824,7 +1824,11 @@ where
         || chain.pruned
         || chain.blocks < 0
         || chain.headers != chain.blocks
-        || !chain.warnings.is_empty()
+        // On mainnet a warning can mean the node follows rules it cannot
+        // validate. On a test network anyone can signal a version bit, so
+        // "Unknown new rules activated" is permanent there: refusing it would
+        // refuse every node that is not ours (seen on testnet3, Core 29.3).
+        || (network == Network::Bitcoin && !chain.warnings.is_empty())
     {
         return Err(CoreAdapterError::ChainNotReady);
     }
