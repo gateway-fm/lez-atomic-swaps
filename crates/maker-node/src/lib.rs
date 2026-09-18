@@ -34,7 +34,9 @@ pub use lez_node_common::*;
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
 pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
-pub use rpc_contracts::{ListRequest, MakerDependencyStateV1, MakerHealthV1, MakerRouteHealthV1};
+pub use rpc_contracts::{
+    ListRequest, MakerDependencyStateV1, MakerHealthV1, MakerOfferListRequest, MakerRouteHealthV1,
+};
 #[cfg(feature = "pair-xmr")]
 pub use xmr_chat::XmrMakerChatAuthority;
 #[cfg(feature = "pair-xmr")]
@@ -1429,15 +1431,21 @@ fn register_offer_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
     module.register_blocking_method::<RpcResult<Vec<MakerOfferRecordV1>>, _>(
         "maker_offer_list",
         |params, context, _| {
-            let _: ListRequest = params.one()?;
+            let request: MakerOfferListRequest = params.one()?;
             let now_unix_seconds = trusted_now_unix_seconds()?;
             let store = context
                 .store
                 .lock()
                 .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
-            store
+            let mut offers = store
                 .list_maker_offer_history(now_unix_seconds)
-                .map_err(application_store_error)
+                .map_err(application_store_error)?;
+            // After the read: expiry is projected at list time, so the stored
+            // state alone cannot say which offers are still active.
+            if let Some(states) = request.states {
+                offers.retain(|record| states.contains(&record.status()));
+            }
+            Ok(offers)
         },
     )?;
     module.register_blocking_method::<RpcResult<LogosOfferAnnouncementSnapshotV1>, _>(

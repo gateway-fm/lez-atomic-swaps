@@ -610,7 +610,10 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
     // The maximum each consumed offer allowed, by the swap that took it: how
     // much of the offer the Taker actually filled.
     QHash<QString, qint64> offeredBySwap;
-    const Reply offers = decode(rpc.call("maker_offer_list", "{}"));
+    // Only what is rendered: the open offers, and the taken ones for each
+    // swap's fill. A Node keeps every offer it ever published, and the expired
+    // and withdrawn ones once pushed this snapshot past the RPC budget (#52).
+    const Reply offers = decode(rpc.call("maker_offer_list", R"({"states":["active","reserved","consumed"]})"));
     if (!offers.ok) {
         if (error) *error = offers;
         return {};
@@ -750,7 +753,7 @@ QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
 QString makerWithdraw(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
                       const QString& requestId, const QString& offerId)
 {
-    const Reply offers = decode(rpc.call("maker_offer_list", "{}"));
+    const Reply offers = decode(rpc.call("maker_offer_list", R"({"states":["active"]})"));
     if (!offers.ok) return nodeFailure(offers, QStringLiteral("The Maker Node's offers could not be read"));
     qint64 revision = -1;
     for (const QJsonValue& candidate : offers.result.toArray()) {

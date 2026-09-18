@@ -7,6 +7,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct ListRequest {}
 
+/// Parameters of `maker_offer_list`. A Node keeps every offer it ever
+/// published, so a caller that renders only some of them names the states it
+/// wants; without `states` the whole history is returned, as before.
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct MakerOfferListRequest {
+    #[serde(default)]
+    pub states: Option<Vec<lez_swap_store::MakerOfferStatus>>,
+}
+
 /// Versioned read-only daemon health response.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MakerHealthV1 {
