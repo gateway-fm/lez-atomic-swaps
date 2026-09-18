@@ -1539,6 +1539,79 @@ impl SqliteSwapStore {
         })
     }
 
+    /// Moves one open swap to another build of its actor, and queues it.
+    ///
+    /// The pin exists so that a changed executable never acts on a swap
+    /// unnoticed; this is the owner noticing. Without it an actor fix could
+    /// never reach a swap that was open when the Node was upgraded.
+    ///
+    /// # Errors
+    ///
+    /// Fails for request-ID reuse, a stale generation, an actor that is leased,
+    /// terminal or unknown, or a durable-store error.
+    pub fn repin_maker_actor_program(
+        &mut self,
+        request_id: &RequestId,
+        swap_id: &SwapId,
+        expected_generation: u64,
+        program_sha256: [u8; 32],
+        now: u64,
+    ) -> Result<MakerActorManualActionCommit, MakerActorProcessError> {
+        let request_json = serde_json::json!({
+            "swap_id": swap_id, "action": "repin",
+            "expected_generation": expected_generation, "program_sha256": program_sha256,
+        })
+        .to_string();
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let prior: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT operation, request_json FROM maker_application_mutations
+                  WHERE request_id = ?1",
+                [request_id.as_str()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((operation, stored_request)) = prior {
+            if operation != "actor_action_request" || stored_request != request_json {
+                return Err(MakerActorProcessError::ManualActionRequestConflict);
+            }
+            return Ok(MakerActorManualActionCommit {
+                requested_after_generation: expected_generation,
+                was_replay: true,
+            });
+        }
+        let record = load_record(&transaction, swap_id)?
+            .ok_or(MakerActorProcessError::ManualActionUnavailable)?;
+        if record.lease_generation != expected_generation {
+            return Err(MakerActorProcessError::ManualActionGenerationConflict);
+        }
+        let now = time_to_sql(now);
+        // Never under a lease: the running child was verified against the old pin.
+        let changed = transaction.execute(
+            "UPDATE maker_actor_processes SET
+                 actor_program_sha256 = ?1, schedule_state = 'queued',
+                 next_attempt_at = ?2, last_failure_class = NULL, updated_at = ?2
+             WHERE swap_id = ?3 AND schedule_state IN ('queued', 'backoff', 'failed')",
+            params![program_sha256.as_slice(), now, swap_id.as_str()],
+        )?;
+        if changed != 1 {
+            return Err(MakerActorProcessError::ManualActionUnavailable);
+        }
+        transaction.execute(
+            "INSERT INTO maker_application_mutations (
+                 request_id, operation, request_payload_version, request_json, result_json
+             ) VALUES (?1, 'actor_action_request', 1, ?2, '{}')",
+            params![request_id.as_str(), request_json],
+        )?;
+        transaction.commit()?;
+        Ok(MakerActorManualActionCommit {
+            requested_after_generation: expected_generation,
+            was_replay: false,
+        })
+    }
+
     /// Returns the latest secret-free manual-action snapshot for one actor.
     ///
     /// # Errors

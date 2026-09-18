@@ -212,6 +212,13 @@ impl BtcMakerLifecycle {
         SwapLayout::new(&self.runtime.config().swaps_root, reservation_id)
     }
 
+    /// The digest of the actor executable this Node is configured to run.
+    pub(super) fn actor_program_sha256(&self) -> anyhow::Result<[u8; 32]> {
+        let mut digest = [0_u8; 32];
+        hex::decode_to_slice(&self.runtime.config().actor.program_sha256, &mut digest)?;
+        Ok(digest)
+    }
+
     /// The bound agreement's public schedule and amounts for `swap_id`, found
     /// by its reservation record; `None` for an unknown or unbound swap.
     pub(super) fn terms_for_swap(&self, swap_id: &SwapId) -> Option<BtcAgreementTermsV1> {

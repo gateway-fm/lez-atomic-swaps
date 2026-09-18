@@ -426,3 +426,53 @@ fn actor_progress_accepts_the_real_post_activation_revision_zero() {
         MakerActorProgressObservationV1::active("offered", 0, "observe_taker_first_lock").is_ok()
     );
 }
+
+#[test]
+fn a_failed_actor_is_repinned_and_queued_but_never_under_a_lease() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let id = SwapId::new("swap-repin-001").unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("maker.sqlite3")).unwrap();
+    register(&mut store, root.path(), id.as_str(), 1);
+    let owner = MakerActorLeaseOwner::new([1; 16]).unwrap();
+    let lease = store.claim_maker_actor(&id, owner, 11).unwrap().unwrap();
+    let request = RequestId::new("repin-001").unwrap();
+
+    assert!(matches!(
+        store.repin_maker_actor_program(&request, &id, 1, [9; 32], 12),
+        Err(MakerActorProcessError::ManualActionUnavailable)
+    ));
+    store
+        .resolve_maker_actor_attempt(
+            &lease,
+            MakerActorAttemptResolution::Failed {
+                failure_class: "actor_deployment_invalid".into(),
+            },
+            13,
+        )
+        .unwrap();
+    assert!(matches!(
+        store.repin_maker_actor_program(&request, &id, 0, [9; 32], 14),
+        Err(MakerActorProcessError::ManualActionGenerationConflict)
+    ));
+
+    let first = store
+        .repin_maker_actor_program(&request, &id, 1, [9; 32], 14)
+        .unwrap();
+    assert!(!first.was_replay());
+    let record = store.maker_actor_process(&id).unwrap().unwrap();
+    assert_eq!(record.manifest().program_sha256(), [9; 32]);
+    assert_eq!(record.schedule_state(), MakerActorScheduleState::Queued);
+    assert_eq!(record.last_failure_class(), None);
+
+    assert!(
+        store
+            .repin_maker_actor_program(&request, &id, 1, [9; 32], 99)
+            .unwrap()
+            .was_replay()
+    );
+    assert!(matches!(
+        store.repin_maker_actor_program(&request, &id, 1, [8; 32], 99),
+        Err(MakerActorProcessError::ManualActionRequestConflict)
+    ));
+}
