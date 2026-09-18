@@ -1013,6 +1013,46 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
         "maker_actor_refund_v1",
         MakerActorManualAction::Refund,
     )?;
+    register_maker_actor_repin_method(module)?;
+    Ok(())
+}
+
+/// `maker_actor_repin_v1`: moves one open swap to the actor this Node runs now
+/// (#73). After an upgrade its pin names the previous build and the supervisor
+/// refuses it, so without this an actor fix never reaches an open swap.
+fn register_maker_actor_repin_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
+    module.register_blocking_method::<RpcResult<serde_json::Value>, _>(
+        "maker_actor_repin_v1",
+        |params, context, _| {
+            let request: MakerActorActionRequestV1 = params.one()?;
+            let id = SwapId::new(request.id).map_err(invalid_request)?;
+            let program_sha256 = context
+                .btc_lifecycle
+                .as_ref()
+                .ok_or_else(|| rpc_error(NOT_FOUND, "no Bitcoin actor is configured"))?
+                .actor_program_sha256()
+                .map_err(internal_store_error)?;
+            let now = trusted_now_unix_seconds()?;
+            let commit = context
+                .store
+                .lock()
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
+                .repin_maker_actor_program(
+                    &request.request_id,
+                    &id,
+                    request.expected_generation,
+                    program_sha256,
+                    now,
+                )
+                .map_err(maker_actor_process_error)?;
+            Ok(serde_json::json!({
+                "schema_version": 1,
+                "swap_id": id.as_str(),
+                "actor_program_sha256": hex::encode(program_sha256),
+                "was_replay": commit.was_replay(),
+            }))
+        },
+    )?;
     Ok(())
 }
 
