@@ -149,6 +149,8 @@ for compose_file in "${compose_files[@]}"; do
   BITCOIN_CORE_NETWORK=lez-atomic-swaps-bitcoin-core-ci-quality-network \
   BTC_RPC_PASSWORD="ci-quality-${RANDOM}-${RANDOM}" \
   LEZ_MARKET_ROOT=/tmp/lez-ci-quality-market \
+  LEZ_MAKER_BTC_CLAIM_DESTINATION=ci-quality-maker-address \
+  LEZ_TAKER_BTC_CLAIM_DESTINATION=ci-quality-taker-address \
     "$compose" --project-name "lez-ci-quality-${RANDOM}" \
       "${compose_args[@]}" config --quiet
 done
