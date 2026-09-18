@@ -185,6 +185,23 @@ impl BitcoinCoreRpc for MockRpc {
             .ok_or(MockError)
     }
 
+    // This double always has `txospenderindex`, so the index-free lookup is
+    // never reached; `core_contract` covers it.
+    async fn get_mempool_spender(&self, _outpoint: OutPoint) -> Result<Option<Txid>, Self::Error> {
+        Err(MockError)
+    }
+
+    async fn is_unspent(&self, _outpoint: OutPoint) -> Result<bool, Self::Error> {
+        Err(MockError)
+    }
+
+    async fn get_block_transactions(
+        &self,
+        _height: u32,
+    ) -> Result<(BlockHash, Vec<Vec<u8>>), Self::Error> {
+        Err(MockError)
+    }
+
     async fn test_mempool_accept(
         &self,
         _transaction: &[u8],
