@@ -15,6 +15,7 @@
 
 x-testnet-node-env: &testnet-node-env
   LEZ_BTC_NETWORK: testnet4
+  LEZ_LEZ_NETWORK: testnet
   LEZ_BITCOIN_CORE_HOST: lez-btc-testnet4
   LEZ_SEQUENCER_HOST: lez-testnet-sequencer
   LEZ_INDEXER_HOST: lez-testnet-indexer

@@ -434,6 +434,47 @@ async fn readiness_requires_exact_core_network_genesis_and_synced_indexes() {
 }
 
 #[tokio::test]
+async fn testnet3_and_testnet4_are_never_admitted_under_each_others_name() {
+    let testnet3_rpc = || {
+        let rpc = testnet4_rpc();
+        let mut inner = rpc.inner.lock().expect("mock lock");
+        for chain in &mut inner.chains {
+            "test".clone_into(&mut chain.chain);
+        }
+        inner.genesis = GetBlockHash(genesis_block(Network::Testnet).block_hash().to_string());
+        drop(inner);
+        rpc
+    };
+    let testnet3 = swap_fixture_for_bitcoin_network(Network::Testnet);
+    BitcoinCoreAdapter::new(testnet3_rpc(), CoreConnectivityPolicy::Testnet3Networked)
+        .ensure_ready(&testnet3.agreement)
+        .await
+        .expect("a Testnet3 node under the Testnet3 policy");
+
+    // A Testnet3 node answering a Testnet4 swap, and the reverse.
+    let testnet4 = swap_fixture_for_bitcoin_network(Network::Testnet4);
+    assert!(
+        BitcoinCoreAdapter::new(testnet3_rpc(), CoreConnectivityPolicy::Testnet4Networked)
+            .ensure_ready(&testnet4.agreement)
+            .await
+            .is_err()
+    );
+    assert!(
+        BitcoinCoreAdapter::new(testnet4_rpc(), CoreConnectivityPolicy::Testnet3Networked)
+            .ensure_ready(&testnet3.agreement)
+            .await
+            .is_err()
+    );
+    // The right node, but an agreement signed for the other network.
+    assert!(matches!(
+        BitcoinCoreAdapter::new(testnet3_rpc(), CoreConnectivityPolicy::Testnet3Networked)
+            .ensure_ready(&testnet4.agreement)
+            .await,
+        Err(CoreAdapterError::BitcoinGenesisMismatch)
+    ));
+}
+
+#[tokio::test]
 async fn testnet4_profile_requires_exact_chain_network_and_pinned_genesis() {
     let fixture = swap_fixture_for_bitcoin_network(Network::Testnet4);
     let rpc = testnet4_rpc();
