@@ -73,6 +73,58 @@ pub struct BitcoinConfigV1 {
     pub refund_csv_blocks: u32,
     /// Fee reserved between the contract value and the cooperative claim.
     pub claim_fee_sat: u64,
+    #[serde(default)]
+    pub lock_fee: LockFeePolicyV1,
+}
+
+/// What a Bitcoin lock may pay in fees. The lock is the transaction the signed
+/// path spends, so it can never be fee-bumped: its fee is decided once, at take
+/// time. Left to Core's wallet estimator alone, two 10,000 sat testnet4 locks
+/// paid 56,064 sat each during a backlog.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct LockFeePolicyV1 {
+    /// Blocks `estimatesmartfee` is asked to confirm within.
+    pub confirmation_target: u16,
+    /// The rate when the node has no estimate. Runs of empty blocks leave
+    /// testnet4's estimator without one, and a lock priced at the relay
+    /// minimum then waits out its own cutoff.
+    pub fallback_sat_per_vb: u64,
+    /// Ceiling on the rate, whatever the estimator says.
+    pub max_sat_per_vb: u64,
+    /// A lock whose fee exceeds this share of its value is refused.
+    pub max_percent_of_value: u64,
+}
+
+impl Default for LockFeePolicyV1 {
+    fn default() -> Self {
+        Self {
+            confirmation_target: 6,
+            fallback_sat_per_vb: 20,
+            max_sat_per_vb: 25,
+            max_percent_of_value: 5,
+        }
+    }
+}
+
+impl LockFeePolicyV1 {
+    /// The rate to fund at: the estimate, or the fallback when the node has
+    /// none, floored at the 1 sat/vB relay minimum and capped.
+    #[must_use]
+    pub fn rate_sat_per_vb(&self, estimate_btc_per_kvb: Option<f64>) -> u64 {
+        // BTC/kvB to sat/vB is a factor of 1e5; a rate is far below 2^53.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let estimate = estimate_btc_per_kvb
+            .filter(|rate| rate.is_finite() && *rate > 0.0)
+            .map_or(self.fallback_sat_per_vb, |rate| (rate * 1e5).ceil() as u64);
+        estimate.clamp(1, self.max_sat_per_vb.max(1))
+    }
+
+    /// Whether `fee_sat` is an acceptable price for locking `value_sat`.
+    #[must_use]
+    pub fn admits(&self, fee_sat: u64, value_sat: u64) -> bool {
+        u128::from(fee_sat) * 100 <= u128::from(value_sat) * u128::from(self.max_percent_of_value)
+    }
 }
 
 /// LEZ chain identity plus the role's sidecar and signer.
@@ -180,6 +232,13 @@ impl BtcRoleRuntime {
         ensure!(
             config.bitcoin.refund_csv_blocks > 0,
             "refund_csv_blocks must be nonzero"
+        );
+        ensure!(
+            config.bitcoin.lock_fee.confirmation_target > 0
+                && config.bitcoin.lock_fee.fallback_sat_per_vb > 0
+                && config.bitcoin.lock_fee.max_sat_per_vb > 0
+                && config.bitcoin.lock_fee.max_percent_of_value > 0,
+            "lock_fee bounds must be nonzero"
         );
         ensure!(
             config.bitcoin.required_confirmations > 0,
@@ -322,4 +381,55 @@ pub(crate) fn parse_hex32(value: &str, name: &str) -> Result<[u8; 32]> {
     let mut out = [0_u8; 32];
     hex::decode_to_slice(value, &mut out).with_context(|| format!("decode {name}"))?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LockFeePolicyV1;
+
+    #[test]
+    fn lock_fee_rate_follows_the_estimate_between_the_relay_floor_and_the_cap() {
+        let policy = LockFeePolicyV1::default();
+        // 0.00002 BTC/kvB is 2 sat/vB; a fractional rate rounds up.
+        assert_eq!(policy.rate_sat_per_vb(Some(0.000_02)), 2);
+        assert_eq!(policy.rate_sat_per_vb(Some(0.000_021)), 3);
+        // The testnet4 backlog that priced a 10,000 sat lock at 56,064 sat.
+        assert_eq!(
+            policy.rate_sat_per_vb(Some(0.003_64)),
+            policy.max_sat_per_vb
+        );
+        // No estimate (regtest, or testnet4 after a run of empty blocks), or
+        // nonsense: the fallback, itself under the cap.
+        for absent in [None, Some(0.0), Some(-1.0), Some(f64::NAN)] {
+            assert_eq!(policy.rate_sat_per_vb(absent), policy.fallback_sat_per_vb);
+        }
+        let low_cap = LockFeePolicyV1 {
+            max_sat_per_vb: 4,
+            ..policy
+        };
+        assert_eq!(low_cap.rate_sat_per_vb(None), 4);
+        // A real but tiny estimate is floored at the relay minimum.
+        assert_eq!(policy.rate_sat_per_vb(Some(0.000_000_1)), 1);
+    }
+
+    #[test]
+    fn lock_fee_is_refused_above_its_share_of_the_value() {
+        let policy = LockFeePolicyV1::default();
+        assert!(policy.admits(157, 10_000));
+        assert!(policy.admits(500, 10_000));
+        assert!(!policy.admits(501, 10_000));
+        assert!(!policy.admits(56_064, 10_000));
+        assert!(policy.admits(u64::MAX / 100, u64::MAX));
+    }
+
+    #[test]
+    fn a_config_without_a_lock_fee_section_gets_the_defaults() {
+        let policy: LockFeePolicyV1 = serde_json::from_str("{}").expect("defaults");
+        assert_eq!(policy, LockFeePolicyV1::default());
+        let partial: LockFeePolicyV1 =
+            serde_json::from_str(r#"{"max_sat_per_vb": 4}"#).expect("partial override");
+        assert_eq!(partial.max_sat_per_vb, 4);
+        assert_eq!(partial.confirmation_target, 6);
+        assert!(serde_json::from_str::<LockFeePolicyV1>(r#"{"max_rate": 4}"#).is_err());
+    }
 }

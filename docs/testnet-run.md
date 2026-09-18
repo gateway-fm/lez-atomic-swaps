@@ -211,6 +211,19 @@ Four things differ from a local run, and each of them will fail a run if missed.
 fund both roles: `TakerSellsForeign` spends `lez-taker`, `TakerSellsLez` spends
 `lez-maker`.
 
+**The lock fee.** A Bitcoin lock can never be fee-bumped (see below), so the Node
+decides its fee once, when the swap is taken: `estimatesmartfee` for a 6-block target,
+20 sat/vB when the node has no estimate (runs of empty blocks leave testnet4's estimator
+without one), never above 25 sat/vB. It then refuses the take outright if the fee would
+exceed 5% of the amount locked, rather than overpay -- left to Core's wallet alone, two
+10,000 sat locks in the first run paid 56,064 sat each. A 10,000 sat trade cannot meet
+5% at any usable rate, so `testnet.env` raises that one bound to 40%; size real trades so
+the default holds. The knobs are `LEZ_BTC_LOCK_FEE_CONFIRMATION_TARGET`,
+`LEZ_BTC_LOCK_FEE_FALLBACK_SAT_PER_VB`, `LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB` and
+`LEZ_BTC_LOCK_FEE_MAX_PERCENT` (`bitcoin.lock_fee` in the role's `btc-role.json`), and
+each plan records what it paid as `fee_sat` in `bitcoin/funding-plan.json`. Claims and
+refunds pay the fixed `claim_fee_sat` (1,000 sat) the agreement signs.
+
 **The wait timeout.** The desks wait `INTERACTIVE_TIMEOUT_MS` (default 1,800,000, so
 30 minutes) for the Node to reach the next state, and the swap cannot advance until the
 Taker's Bitcoin lock has a confirmation. testnet4 blocks average 20 minutes, so the

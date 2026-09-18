@@ -682,7 +682,11 @@ pub(super) async fn reserve(
             .map_err(invalid_request)?;
             let wallet = lifecycle.wallet()?;
             let plan = wallet
-                .plan_funding(contract.script_pubkey_bytes(), request.plan.foreign_units)
+                .plan_funding(
+                    contract.script_pubkey_bytes(),
+                    request.plan.foreign_units,
+                    &lifecycle.runtime.config().bitcoin.lock_fee,
+                )
                 .await
                 .map_err(|error| internal(&error))?;
             wallet

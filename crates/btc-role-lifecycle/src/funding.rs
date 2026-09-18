@@ -16,6 +16,8 @@ use jsonrpsee::rpc_params;
 use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
 use serde::{Deserialize, Serialize};
 
+use crate::config::LockFeePolicyV1;
+
 const MAX_REQUEST_BYTES: u32 = 1024 * 1024;
 const MAX_RESPONSE_BYTES: u32 = 4 * 1024 * 1024;
 
@@ -32,6 +34,9 @@ pub struct FundingPlan {
     pub value_sat: u64,
     /// Chain height when the plan was made; the refund height anchors here.
     pub anchor_height: u32,
+    /// What the lock pays the miners; zero in plans made before it was kept.
+    #[serde(default)]
+    pub fee_sat: u64,
 }
 
 impl FundingPlan {
@@ -73,6 +78,24 @@ impl std::fmt::Debug for BitcoinWallet {
 #[derive(Deserialize)]
 struct FundedPsbt {
     psbt: String,
+    /// BTC, as Core reports it.
+    fee: f64,
+}
+
+#[derive(Deserialize)]
+struct SmartFeeEstimate {
+    #[serde(default)]
+    feerate: Option<f64>,
+}
+
+#[derive(Deserialize)]
+struct DecodedPsbt {
+    tx: DecodedPsbtTransaction,
+}
+
+#[derive(Deserialize)]
+struct DecodedPsbtTransaction {
+    vin: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -226,6 +249,7 @@ impl BitcoinWallet {
         &self,
         contract_script: &[u8],
         value_sat: u64,
+        fee_policy: &LockFeePolicyV1,
     ) -> Result<FundingPlan> {
         let wallet = self
             .wallet
@@ -241,7 +265,20 @@ impl BitcoinWallet {
         // never broadcast. A plan that never broadcasts (an aborted take) keeps
         // its coins locked until `lockunspent true` or a Core restart releases
         // them; deploy/scripts/reset-swaps.sh does that.
-        let options = serde_json::json!({ "replaceable": true, "lockUnspents": true });
+        // An explicit, capped rate: without one Core's estimator alone prices a
+        // transaction that can never be fee-bumped.
+        let estimate: Option<SmartFeeEstimate> = self
+            .node
+            .request(
+                "estimatesmartfee",
+                rpc_params![fee_policy.confirmation_target],
+            )
+            .await
+            .ok();
+        let fee_rate = fee_policy.rate_sat_per_vb(estimate.and_then(|value| value.feerate));
+        let options = serde_json::json!({
+            "replaceable": true, "lockUnspents": true, "fee_rate": fee_rate,
+        });
         let funded: FundedPsbt = wallet
             .request(
                 "walletcreatefundedpsbt",
@@ -249,6 +286,31 @@ impl BitcoinWallet {
             )
             .await
             .context("walletcreatefundedpsbt")?;
+        let fee_sat = Amount::from_btc(funded.fee)
+            .context("funding fee")?
+            .to_sat();
+        if !fee_policy.admits(fee_sat, value_sat) {
+            // The refused plan's coins must not stay reserved.
+            if let Ok(decoded) = wallet
+                .request::<DecodedPsbt, _>("decodepsbt", rpc_params![funded.psbt.clone()])
+                .await
+            {
+                let inputs: Vec<serde_json::Value> = decoded
+                    .tx
+                    .vin
+                    .iter()
+                    .map(|vin| serde_json::json!({ "txid": vin["txid"], "vout": vin["vout"] }))
+                    .collect();
+                let _: Result<bool, _> = wallet
+                    .request("lockunspent", rpc_params![true, inputs])
+                    .await;
+            }
+            anyhow::bail!(
+                "locking {value_sat} sat would cost {fee_sat} sat in fees at {fee_rate} sat/vB, \
+                 above the {}% this Node allows",
+                fee_policy.max_percent_of_value
+            );
+        }
         let processed: ProcessedPsbt = wallet
             .request("walletprocesspsbt", rpc_params![funded.psbt, true])
             .await
@@ -292,6 +354,7 @@ impl BitcoinWallet {
             output_index: u32::try_from(index).context("output index")?,
             value_sat,
             anchor_height,
+            fee_sat,
         })
     }
 

@@ -487,7 +487,11 @@ pub(super) async fn prepare(
                 )?;
                 let wallet = dynamic.wallet()?;
                 let funding = wallet
-                    .plan_funding(contract.script_pubkey_bytes(), request.foreign_units)
+                    .plan_funding(
+                        contract.script_pubkey_bytes(),
+                        request.foreign_units,
+                        &dynamic.runtime.config().bitcoin.lock_fee,
+                    )
                     .await?;
                 wallet.test_mempool_accept(&funding.transaction_hex).await?;
                 write_private_exact(
