@@ -26,7 +26,9 @@ pub use balances::{BalanceStateV1, WalletBalancesV1, role_wallet_balances};
 pub use ceremony::{
     CeremonyLegPackets, LegSessions, MakerCeremony, TakerCeremony, TakerCeremonyOutcome,
 };
-pub use config::{BitcoinNetworkName, BtcRoleConfigV1, BtcRoleRuntime, RecoveryPolicyV1};
+pub use config::{
+    BitcoinNetworkName, BtcRoleConfigV1, BtcRoleRuntime, LockFeePolicyV1, RecoveryPolicyV1,
+};
 pub use funding::{BitcoinWallet, FundingPlan, WalletBalances};
 pub use layout::SwapLayout;
 pub use lez::{LezRole, LezSidecar, PreparedEscrow};
