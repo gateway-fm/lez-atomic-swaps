@@ -30,8 +30,18 @@ use zeroize::Zeroizing;
 /// empty one), and both `result` and `error` present with one of them null. The client parses only
 /// 2.0 and refused every reply from a public provider, so a 1.x reply is
 /// rewritten into 2.0 first. A 2.0 reply passes through byte for byte.
-#[derive(Clone)]
-struct AcceptJsonRpc1<S>(S);
+#[derive(Clone, Debug)]
+pub struct AcceptJsonRpc1<S>(S);
+
+impl<S> AcceptJsonRpc1<S> {
+    /// Wraps an HTTP service; pass to `tower::ServiceBuilder::layer_fn`.
+    pub const fn new(inner: S) -> Self {
+        Self(inner)
+    }
+}
+
+/// A `jsonrpsee` HTTP client that also accepts JSON-RPC 1.x replies.
+pub type Json1TolerantHttpClient = HttpClient<RpcLogger<RpcService<AcceptJsonRpc1<HttpBackend>>>>;
 
 impl<S, B> tower::Service<HttpRequest> for AcceptJsonRpc1<S>
 where
@@ -293,7 +303,7 @@ impl HttpBitcoinCoreConfig {
 /// JSON-RPC call.
 #[derive(Clone)]
 pub struct HttpBitcoinCoreRpc {
-    client: HttpClient<RpcLogger<RpcService<AcceptJsonRpc1<HttpBackend>>>>,
+    client: Json1TolerantHttpClient,
     route: HttpBitcoinCoreRoute,
 }
 
@@ -388,7 +398,7 @@ impl HttpBitcoinCoreRpc {
             .request_timeout(config.request_timeout)
             .max_concurrent_requests(config.max_concurrent_requests)
             .set_headers(headers)
-            .set_http_middleware(tower::ServiceBuilder::new().layer_fn(AcceptJsonRpc1))
+            .set_http_middleware(tower::ServiceBuilder::new().layer_fn(AcceptJsonRpc1::new))
             .build(&config.endpoint)
             .map_err(HttpBitcoinCoreError::Build)?;
         Ok(Self {

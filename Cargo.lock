@@ -1978,6 +1978,7 @@ dependencies = [
  "lez-adaptor-signature",
  "lez-bridge-client",
  "lez-bridge-protocol",
+ "lez-btc-core-adapter",
  "lez-btc-swap-sdk",
  "lez-swap-core",
  "lez-zec-swap-sdk",
@@ -1989,6 +1990,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tower",
  "zeroize",
 ]
 

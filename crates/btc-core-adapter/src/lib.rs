@@ -7,7 +7,10 @@ pub use evidence::{
     BitcoinCoreEvidenceError, BitcoinCoreEvidenceKind, BitcoinCoreEvidenceV1,
     MAX_BITCOIN_CORE_EVIDENCE_BYTES,
 };
-pub use http::{HttpBitcoinCoreConfig, HttpBitcoinCoreError, HttpBitcoinCoreRpc};
+pub use http::{
+    AcceptJsonRpc1, HttpBitcoinCoreConfig, HttpBitcoinCoreError, HttpBitcoinCoreRpc,
+    Json1TolerantHttpClient,
+};
 
 use std::convert::Infallible;
 use std::error::Error as StdError;

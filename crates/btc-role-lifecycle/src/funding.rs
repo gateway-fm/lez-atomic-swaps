@@ -13,7 +13,8 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use bitcoin::{Address, Amount, Network, ScriptBuf, Transaction, consensus, hashes::Hash as _};
 use jsonrpsee::core::client::ClientT as _;
 use jsonrpsee::rpc_params;
-use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClient, HttpClientBuilder};
+use jsonrpsee_http_client::{HeaderMap, HeaderValue, HttpClientBuilder};
+use lez_btc_core_adapter::{AcceptJsonRpc1, Json1TolerantHttpClient as HttpClient};
 use serde::{Deserialize, Serialize};
 
 use crate::config::LockFeePolicyV1;
@@ -149,6 +150,8 @@ impl BitcoinWallet {
                 .max_response_size(MAX_RESPONSE_BYTES)
                 .request_timeout(timeout)
                 .set_headers(headers.clone())
+                // A node that is not ours may answer in the 1.x envelope (#49).
+                .set_http_middleware(tower::ServiceBuilder::new().layer_fn(AcceptJsonRpc1::new))
                 .build(url)
                 .with_context(|| format!("build Bitcoin Core client for {url}"))
         };
