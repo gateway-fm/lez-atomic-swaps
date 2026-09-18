@@ -178,6 +178,18 @@ def take_request(offer_id: str, entry: dict, request_id: str) -> dict:
             "foreign_units": FOREIGN_UNITS, "expected_lez_units": LEZ_UNITS}
 
 
+def sign_funding(required: dict) -> str:
+    """A Taker Node without a Bitcoin wallet answers where to pay. The lock is
+    then signed, not sent, in a wallet the Node has no access to (the Maker's,
+    here only because it is the other funded wallet on the regtest node)."""
+    log(f"  funding required: {required['amount_sat']} sat to {required['address']}; signing outside the Node")
+    wallet = "-rpcwallet=lez-maker"
+    outputs = json.dumps([{required["address"]: f"{required['amount_sat'] / 1e8:.8f}"}])
+    funded = bitcoin(wallet, "walletcreatefundedpsbt", "[]", outputs, "0", json.dumps({"lockUnspents": True}))
+    signed = bitcoin(wallet, "walletprocesspsbt", funded["psbt"])
+    return bitcoin("finalizepsbt", signed["psbt"])["hex"]
+
+
 def initiate(request: dict) -> dict:
     """One take. A dependency-unavailable answer (a LEZ read that raced the
     moving tip, Core briefly busy) is retried with the same request id, which
@@ -186,6 +198,9 @@ def initiate(request: dict) -> dict:
         reply = rpc("taker", "taker_swap_initiate_v1", request, timeout=420)
         if "result" in reply:
             return reply["result"]
+        if reply["error"].get("code") == -32018 and "funding_transaction_hex" not in request:
+            request["funding_transaction_hex"] = sign_funding(reply["error"]["data"])
+            continue
         if reply["error"].get("code") != -32010 or attempt == 3:
             raise Failure(f"taker taker_swap_initiate_v1 failed: {json.dumps(reply['error'])[:300]}")
         log(f"  take answered dependency-unavailable ({(reply['error'].get('data') or {}).get('category')}); retrying")

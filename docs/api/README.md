@@ -216,7 +216,7 @@ feed and a strategy transform inside the node.
 | `taker_health` | `{schema_version:1}` | Health, registered methods and per-route capability rows. Check them before depending on initiation/monitoring/actions. |
 | `taker_wallet_balances_v1` | `{schema_version:1}` | What this Taker's own wallets hold, the same shape as `maker_wallet_balances_v1`: its Core wallet (`bitcoin`) and its LEZ owner account (`lez`). Registered with the BTC lifecycle. |
 | `taker_offer_list_v1` | `{schema_version:1, route:null}` or an exact route | `{schema_version:1, offers:[{offer, maker_identity, signed_envelope_sha256}]}` from the node's authenticated discovery source. |
-| `taker_swap_initiate_v1` | `{schema_version:1, request_id, offer_id, route, maker_identity, signed_envelope_sha256, foreign_units, expected_lez_units}`; optional `logos_offer_announcement_base64` | `{schema_version:1, swap, was_replay}`. Revalidates selected offer and exact amounts; BTC dynamic configuration drives reservation, preparation, ceremony and actor activation. It can reserve capital/prepare signing state; it is not a dry-run quote. |
+| `taker_swap_initiate_v1` | `{schema_version:1, request_id, offer_id, route, maker_identity, signed_envelope_sha256, foreign_units, expected_lez_units}`; optional `logos_offer_announcement_base64`, `funding_transaction_hex` | `{schema_version:1, swap, was_replay}`. Revalidates selected offer and exact amounts; BTC dynamic configuration drives reservation, preparation, ceremony and actor activation. It can reserve capital/prepare signing state; it is not a dry-run quote. |
 | `taker_swap_list_v1` | `{schema_version:1}` | `{schema_version:1, swaps:[...]}`; includes recoverable persisted swaps. |
 | `taker_swap_monitor_v1` | `{schema_version:1, swap_id}` | One `swap` projection as defined below. |
 | `taker_swap_lock_v1` | `{schema_version:1, swap_id}` | `{schema_version:1, swap_id, chain, transaction_id, was_replay}`. Executes the role's first lock: selling Bitcoin (`TakerSellsForeign`) it broadcasts the funding transaction planned at reservation (`chain: "bitcoin"`); selling LEZ (`TakerSellsLez`) it has the swap's sidecar prepare the escrow and submits its initialization and funding at once (`chain: "lez"`, the funding transaction id). Both Bitcoin directions are capability rows of `taker_health`. This method uses the per-swap durable lock state; it takes **no request ID or generation**. |
@@ -355,6 +355,7 @@ Do not loop a fund-moving action merely because an HTTP request succeeded.
 | Maker `-32009` conflict | Reused ID with different payload, duplicate offer ID, or stale revision; reconcile before a new decision. |
 | Maker `-32018` unavailable, `-32004` not found | Offer/quote is no longer usable or absent; rediscover/reconcile. |
 | Dependency/internal/transport failure | Outcome may be ambiguous; retain the original request and inspect state. |
+| Taker `-32018` `bitcoin_funding_required` | Not a failure: this Node has no Bitcoin wallet. `error.data` carries `address` and `amount_sat`; sign (do not send) a transaction paying exactly that from native SegWit inputs, then replay the **same** take with `funding_transaction_hex`. See [Funding the lock from your own wallet](#funding-the-lock-from-your-own-wallet). |
 | Taker structured error | Inspect `error.code` and `error.data.category`; examples include `taker_action_conflict`, `taker_action_unavailable`, `authenticated_delivery_unavailable`. Treat unknown categories conservatively. |
 
 The taker error taxonomy is distinct from the maker's; do not assign a global
@@ -364,6 +365,28 @@ also caps bodies at 64 KiB. The history lists have no durable event cursor or
 general pagination contract. A limit/oversized result is an explicit failure,
 not an empty list. Poll with bounded backoff; do not infer exactly-once event
 delivery, an atomic multi-method snapshot, or unlimited history export.
+
+### Funding the lock from your own wallet
+
+A Taker Node whose `bitcoin.wallet` is unset — a Node pointed at a public RPC
+provider, which serves no wallet — cannot fund the Bitcoin lock itself. The
+contract address exists only once the Maker has reserved, so the take is two
+calls with one `request_id`:
+
+1. `taker_swap_initiate_v1` answers `-32018` with the `address` and `amount_sat`.
+2. Sign a transaction paying exactly that in your wallet **without sending it**,
+   and replay the same take with `funding_transaction_hex`.
+
+The Node checks that the transaction pays the contract once and exactly, that
+the mempool would accept it, that its fee passes the Node's `lock_fee` policy,
+and that every input is a native SegWit spend: the refund and the claim are
+signed against the lock's id before it is sent, so an id a third party can
+change would strand the coins. From there the swap is the usual one —
+`taker_swap_lock_v1` sends your transaction. The reservation is held only until
+the offer expires, and the swap's deadlines run from the first call, so sign
+promptly. Spending the inputs elsewhere before locking just fails the lock.
+
+A Maker that funds Bitcoin (`TakerSellsLez`) still needs a wallet.
 
 There is currently no strategy-facing wallet balance API, fee-estimation API,
 atomic quote replacement, capital reservation across offers, multi-venue

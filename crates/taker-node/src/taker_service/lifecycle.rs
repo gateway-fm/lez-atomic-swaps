@@ -382,6 +382,7 @@ const SWAP_NOT_FOUND_CODE: i32 = -32_014;
 const PROGRESS_GENERATION_CONFLICT_CODE: i32 = -32_015;
 const ACTION_UNAVAILABLE_CODE: i32 = -32_016;
 const ACTION_CONFLICT_CODE: i32 = -32_017;
+const FUNDING_REQUIRED_CODE: i32 = -32_018;
 const MAXIMUM_MONITORED_SWAPS: usize = 256;
 const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const SIGNING_KEY_BYTES: u64 = 32;
@@ -1383,7 +1384,7 @@ fn map_monitoring_error(error: MonitoringError) -> ErrorObjectOwned {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum InitiationError {
     UnsupportedSchemaVersion,
     UnsupportedPair,
@@ -1391,6 +1392,7 @@ enum InitiationError {
     Conflict,
     Backend(TakerBackendError),
     ExecutionUnavailable,
+    FundingRequired(lez_btc_role_lifecycle::FundingRequired),
     Internal,
 }
 
@@ -1525,12 +1527,16 @@ async fn prepare_dynamic_btc(
         foreign_units: request.foreign_units,
         expected_lez_units: request.expected_lez_units,
         announcement,
+        funding_transaction_hex: request.funding_transaction_hex.as_deref().map(Into::into),
     };
     let prepared = btc_dynamic::prepare(dynamic, &take, now)
         .await
-        .map_err(|error| {
-            eprintln!("taker BTC reservation failed: {error:#}");
-            InitiationError::ExecutionUnavailable
+        .map_err(|error| match error.downcast() {
+            Ok(required) => InitiationError::FundingRequired(required),
+            Err(error) => {
+                eprintln!("taker BTC reservation failed: {error:#}");
+                InitiationError::ExecutionUnavailable
+            }
         })?;
     let entry = dynamic
         .load_entry(&prepared.configured)
@@ -2204,6 +2210,15 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
             DEPENDENCY_UNAVAILABLE_CODE,
             "Taker dependency unavailable",
             "initiation_execution_unavailable",
+        ),
+        InitiationError::FundingRequired(required) => ErrorObjectOwned::owned(
+            FUNDING_REQUIRED_CODE,
+            "Bitcoin funding required",
+            Some(json!({
+                "category": "bitcoin_funding_required",
+                "address": required.address,
+                "amount_sat": required.value_sat,
+            })),
         ),
         InitiationError::Internal => rpc_error(
             INTERNAL_ERROR_CODE,

@@ -532,6 +532,7 @@ impl ProcessInitiationFixture {
             foreign_units: 42,
             expected_lez_units: 84,
             logos_offer_announcement_base64: None,
+            funding_transaction_hex: None,
         }
     }
 }
