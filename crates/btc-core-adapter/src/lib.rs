@@ -113,6 +113,12 @@ pub enum CoreConnectivityPolicy {
     /// This never admits legacy Testnet3. Readiness requires Core to report
     /// `chain=testnet4` and the exact Testnet4 genesis pinned by rust-bitcoin.
     Testnet4Networked,
+    /// Public Testnet3, which is what keyless public RPC providers serve.
+    ///
+    /// A policy of its own rather than a widening of Testnet4's: readiness
+    /// requires `chain=test` and the Testnet3 genesis, so neither network is
+    /// ever admitted under the other's name.
+    Testnet3Networked,
 }
 
 impl CoreConnectivityPolicy {
@@ -120,6 +126,7 @@ impl CoreConnectivityPolicy {
         match self {
             Self::IsolatedLocal | Self::Networked => Network::Regtest,
             Self::Testnet4Networked => Network::Testnet4,
+            Self::Testnet3Networked => Network::Testnet,
         }
     }
 
@@ -130,7 +137,7 @@ impl CoreConnectivityPolicy {
                 Self::IsolatedLocal | Self::Networked,
                 CoreRpcRoute::LiteralLoopback
             ) | (
-                Self::Testnet4Networked,
+                Self::Testnet4Networked | Self::Testnet3Networked,
                 CoreRpcRoute::LiteralLoopback | CoreRpcRoute::ExactHttpsBasic
             )
         )
@@ -735,9 +742,9 @@ where
                     && network.connections_in == 0
                     && network.connections_out == 0
             }
-            CoreConnectivityPolicy::Networked | CoreConnectivityPolicy::Testnet4Networked => {
-                network.network_active
-            }
+            CoreConnectivityPolicy::Networked
+            | CoreConnectivityPolicy::Testnet4Networked
+            | CoreConnectivityPolicy::Testnet3Networked => network.network_active,
         };
         if !connectivity_matches {
             return Err(CoreAdapterError::ConnectivityPolicyMismatch);

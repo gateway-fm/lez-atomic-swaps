@@ -246,6 +246,8 @@ pub enum BitcoinConnectivity {
     Networked,
     /// Testnet4 over literal loopback or an exact HTTPS origin.
     Testnet4Networked,
+    /// Testnet3 over literal loopback or an exact HTTPS origin.
+    Testnet3Networked,
 }
 
 impl From<BitcoinConnectivity> for CoreConnectivityPolicy {
@@ -254,6 +256,7 @@ impl From<BitcoinConnectivity> for CoreConnectivityPolicy {
             BitcoinConnectivity::IsolatedLocal => Self::IsolatedLocal,
             BitcoinConnectivity::Networked => Self::Networked,
             BitcoinConnectivity::Testnet4Networked => Self::Testnet4Networked,
+            BitcoinConnectivity::Testnet3Networked => Self::Testnet3Networked,
         }
     }
 }

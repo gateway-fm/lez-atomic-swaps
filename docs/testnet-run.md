@@ -16,6 +16,24 @@ them over a Docker network.
 Host requirements: arm64 with Docker, about 40 GB for testnet4 and room for
 the Logos Blockchain node's state.
 
+## Which networks
+
+The networks are configuration, nothing else: `LEZ_BTC_NETWORK` (`bitcoin.network` in
+the role's `btc-role.json`) is `regtest`, `testnet4`, `testnet3`, `signet` or `mainnet`,
+and `LEZ_LEZ_NETWORK` (`lez.network`) is `devnet`, `testnet` or `mainnet`. This guide
+sets `testnet4` and `testnet`; `testnet3` exists because it is what keyless public RPC
+providers serve.
+
+A Node refuses a configuration that could pair real money with a test chain:
+
+- `mainnet` settles only against `mainnet` — either side being mainnet while the other is
+  not fails at load, in both directions. A configuration written before `lez.network`
+  existed means `devnet`, so it can never be read as mainnet.
+- `bitcoin.genesis_block_hash` must be the genesis of the network that is named, so a
+  name cannot be a label over another network's chain; the observation layer checks the
+  node's own `chain` and genesis again at run time, and keeps `testnet3` and `testnet4`
+  apart the same way.
+
 ## 1. Shared network
 
 ```sh

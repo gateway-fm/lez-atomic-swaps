@@ -96,6 +96,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --arg signer "$btc_state/lez-signer.key" \
     --arg actor "$actor_program" --arg actor_sha "$actor_sha" \
     --arg btc_network "${LEZ_BTC_NETWORK:-regtest}" \
+    --arg lez_network "${LEZ_LEZ_NETWORK:-devnet}" \
     --argjson csv "${LEZ_BTC_REFUND_CSV_BLOCKS:-144}" \
     --argjson cutoff "${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS:-1800}" \
     --argjson earlier "${LEZ_BTC_EARLIER_REFUND_SECONDS:-3600}" \
@@ -112,7 +113,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
               genesis_block_hash:$btc_genesis, required_confirmations:1, refund_csv_blocks:$csv, claim_fee_sat:1000,
               lock_fee:{confirmation_target:$fee_target, fallback_sat_per_vb:$fee_fallback,
                         max_sat_per_vb:$fee_max_rate, max_percent_of_value:$fee_max_percent}},
-     lez:{channel_id:$channel, genesis_block_hash:$genesis, escrow_program_id:$program,
+     lez:{network:$lez_network, channel_id:$channel, genesis_block_hash:$genesis, escrow_program_id:$program,
           authenticated_transfer_program_id:$transfer, sidecar_program:$sidecar_program,
           sequencer_url:$sequencer, indexer_url:$indexer, sidecar_port_base:$port_base, sidecar_port_count:400,
           signer_key_file:$signer,

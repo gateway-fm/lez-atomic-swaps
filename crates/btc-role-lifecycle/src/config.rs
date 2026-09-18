@@ -24,6 +24,8 @@ use crate::lez;
 pub enum BitcoinNetworkName {
     Mainnet,
     Testnet4,
+    /// Legacy testnet, which is what keyless public RPC providers serve.
+    Testnet3,
     Signet,
     Regtest,
 }
@@ -34,6 +36,7 @@ impl BitcoinNetworkName {
         match self {
             Self::Mainnet => bitcoin::Network::Bitcoin,
             Self::Testnet4 => bitcoin::Network::Testnet4,
+            Self::Testnet3 => bitcoin::Network::Testnet,
             Self::Signet => bitcoin::Network::Signet,
             Self::Regtest => bitcoin::Network::Regtest,
         }
@@ -45,6 +48,7 @@ impl BitcoinNetworkName {
         match self {
             Self::Regtest => "isolated_local",
             Self::Testnet4 => "testnet4_networked",
+            Self::Testnet3 => "testnet3_networked",
             Self::Mainnet | Self::Signet => "networked",
         }
     }
@@ -127,10 +131,25 @@ impl LockFeePolicyV1 {
     }
 }
 
+/// Which LEZ network the identity below belongs to. LEZ names a chain by its
+/// channel and genesis, which say nothing about what is at stake on it, so the
+/// class is stated -- and a Node refuses to pair real money with a test chain.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LezNetworkName {
+    Mainnet,
+    Testnet,
+    /// A private local chain; what a configuration written before this field means.
+    #[default]
+    Devnet,
+}
+
 /// LEZ chain identity plus the role's sidecar and signer.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LezConfigV1 {
+    #[serde(default)]
+    pub network: LezNetworkName,
     pub channel_id: String,
     pub genesis_block_hash: String,
     pub escrow_program_id: String,
@@ -255,6 +274,7 @@ impl BtcRoleRuntime {
             .genesis_block_hash
             .parse()
             .context("Bitcoin genesis block hash")?;
+        ensure_networks_agree(&config, bitcoin_genesis)?;
         let bitcoin_policy = BtcChainPolicyV1::new(
             bitcoin::hashes::Hash::to_byte_array(bitcoin_genesis),
             config.bitcoin.required_confirmations,
@@ -381,6 +401,28 @@ pub(crate) fn parse_hex32(value: &str, name: &str) -> Result<[u8; 32]> {
     let mut out = [0_u8; 32];
     hex::decode_to_slice(value, &mut out).with_context(|| format!("decode {name}"))?;
     Ok(out)
+}
+
+/// The network is chosen by configuration alone, so the configuration must not
+/// be able to lie about it: the genesis has to be the named network's, and
+/// mainnet settles only against mainnet. A swap binds both chains, and one
+/// real leg against one worthless leg is a loss.
+fn ensure_networks_agree(
+    config: &BtcRoleConfigV1,
+    bitcoin_genesis: bitcoin::BlockHash,
+) -> Result<()> {
+    let network = config.bitcoin.network;
+    ensure!(
+        bitcoin_genesis
+            == bitcoin::blockdata::constants::genesis_block(network.network()).block_hash(),
+        "bitcoin.genesis_block_hash is not the {network:?} genesis"
+    );
+    ensure!(
+        (network == BitcoinNetworkName::Mainnet) == (config.lez.network == LezNetworkName::Mainnet),
+        "mainnet settles only against mainnet: bitcoin.network is {network:?}, lez.network is {:?}",
+        config.lez.network
+    );
+    Ok(())
 }
 
 #[cfg(test)]

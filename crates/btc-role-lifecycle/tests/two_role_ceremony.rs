@@ -312,3 +312,60 @@ fn both_roles_converge_and_synthesize_actor_configurations() {
         "a Maker without lock material must not synthesize: {maker_error}"
     );
 }
+
+/// Loads a role configuration with the given networks and Bitcoin genesis.
+fn load_with_networks(bitcoin: &str, genesis: &str, lez: Option<&str>) -> Result<(), String> {
+    let directory = tempfile::tempdir().unwrap();
+    let home = fs::canonicalize(directory.path()).unwrap().join("role");
+    private_dir(&home);
+    let path = role_config(&home, None);
+    let mut config: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    config["bitcoin"]["network"] = bitcoin.into();
+    config["bitcoin"]["genesis_block_hash"] = genesis.into();
+    if let Some(lez) = lez {
+        config["lez"]["network"] = lez.into();
+    }
+    fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+    BtcRoleRuntime::load(Participant::Taker, &path)
+        .map(|_| ())
+        .map_err(|error| format!("{error:#}"))
+}
+
+#[test]
+fn the_network_is_configuration_and_mainnet_pairs_only_with_mainnet() {
+    const MAINNET: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
+    const TESTNET3: &str = "000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943";
+    const REGTEST: &str = "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206";
+
+    // Test networks pair freely with a test or local LEZ; a configuration
+    // written before `lez.network` existed means the local devnet.
+    load_with_networks("regtest", REGTEST, None).expect("regtest with the default devnet");
+    load_with_networks("testnet3", TESTNET3, Some("testnet")).expect("testnet3 with LEZ testnet");
+    load_with_networks("mainnet", MAINNET, Some("mainnet")).expect("mainnet with mainnet");
+
+    // One real leg against one worthless leg is a loss, in either direction.
+    for (bitcoin, genesis, lez) in [
+        ("mainnet", MAINNET, None),
+        ("mainnet", MAINNET, Some("testnet")),
+        ("mainnet", MAINNET, Some("devnet")),
+        ("regtest", REGTEST, Some("mainnet")),
+        ("testnet3", TESTNET3, Some("mainnet")),
+    ] {
+        let refusal = load_with_networks(bitcoin, genesis, lez).expect_err("mixed stakes");
+        assert!(
+            refusal.contains("mainnet settles only against mainnet"),
+            "{bitcoin}/{lez:?}: {refusal}"
+        );
+    }
+
+    // The name cannot be a label over another network's chain.
+    for (bitcoin, genesis) in [
+        ("testnet3", MAINNET),
+        ("regtest", MAINNET),
+        ("mainnet", TESTNET3),
+    ] {
+        let lez = (bitcoin == "mainnet").then_some("mainnet");
+        let refusal = load_with_networks(bitcoin, genesis, lez).expect_err("mislabelled genesis");
+        assert!(refusal.contains("genesis"), "{bitcoin}: {refusal}");
+    }
+}
