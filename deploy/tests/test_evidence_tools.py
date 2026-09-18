@@ -20,6 +20,7 @@ def module(name, filename):
 
 seed = module('seed', 'seed-btc-wallets.py')
 rec = module('rec', 'record-evidence.py')
+export = module('export', 'export-node-evidence.py')
 
 
 class WalletRPC:
@@ -152,6 +153,24 @@ class RecorderTests(unittest.TestCase):
             self.assertIn(rec.hashlib.sha256(cast.read_bytes()).hexdigest(), sums)
             self.assertIn('index.html', sums)
 
+
+
+class ExportBuildIdentity(unittest.TestCase):
+    def test_a_release_bundle_names_its_commit_not_the_literal_head(self):
+        # A bundle is not a checkout: `git rev-parse HEAD` there printed "HEAD",
+        # and the exported evidence carried that as its build.
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            with patch.object(export, 'DEPLOY_ROOT', root):
+                self.assertEqual(export.source_commit(), 'unknown')
+                (root / 'release.env').write_text('LEZ_IMAGE_TAG=v9\nLEZ_RELEASE_COMMIT=' + 'ab' * 20 + '\n')
+                self.assertEqual(export.source_commit(), 'ab' * 20)
+                (root / 'release.env').write_text('LEZ_RELEASE_COMMIT=\n')
+                self.assertEqual(export.source_commit(), 'unknown')
+
+    def test_a_checkout_still_reports_its_git_commit(self):
+        commit = export.source_commit()
+        self.assertRegex(commit, r'^[0-9a-f]{40}$')
 
 if __name__ == '__main__':
     unittest.main()

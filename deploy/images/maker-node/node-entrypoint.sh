@@ -101,11 +101,17 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --argjson earlier "${LEZ_BTC_EARLIER_REFUND_SECONDS:-3600}" \
     --argjson later "${LEZ_BTC_LATER_REFUND_SECONDS:-7200}" \
     --argjson margin "${LEZ_BTC_REFUND_MARGIN_SECONDS:-300}" \
+    --argjson fee_target "${LEZ_BTC_LOCK_FEE_CONFIRMATION_TARGET:-6}" \
+    --argjson fee_fallback "${LEZ_BTC_LOCK_FEE_FALLBACK_SAT_PER_VB:-20}" \
+    --argjson fee_max_rate "${LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB:-25}" \
+    --argjson fee_max_percent "${LEZ_BTC_LOCK_FEE_MAX_PERCENT:-5}" \
     --argjson discovery "${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}" '
     {schema_version:1, swaps_root:$swaps,
      bitcoin:{network:$btc_network, endpoint:"http://127.0.0.1:18443/", cookie_file:$cookie, wallet:$wallet,
               claim_destination_address:$claim_destination,
-              genesis_block_hash:$btc_genesis, required_confirmations:1, refund_csv_blocks:$csv, claim_fee_sat:1000},
+              genesis_block_hash:$btc_genesis, required_confirmations:1, refund_csv_blocks:$csv, claim_fee_sat:1000,
+              lock_fee:{confirmation_target:$fee_target, fallback_sat_per_vb:$fee_fallback,
+                        max_sat_per_vb:$fee_max_rate, max_percent_of_value:$fee_max_percent}},
      lez:{channel_id:$channel, genesis_block_hash:$genesis, escrow_program_id:$program,
           authenticated_transfer_program_id:$transfer, sidecar_program:$sidecar_program,
           sequencer_url:$sequencer, indexer_url:$indexer, sidecar_port_base:$port_base, sidecar_port_count:400,

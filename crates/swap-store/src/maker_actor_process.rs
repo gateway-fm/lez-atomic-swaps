@@ -303,6 +303,13 @@ impl MakerActorProcessRecordV1 {
         self.attempt_count
     }
 
+    /// Why the last attempt did not progress, while the row is backed off or
+    /// failed.
+    #[must_use]
+    pub fn last_failure_class(&self) -> Option<&str> {
+        self.last_failure_class.as_deref()
+    }
+
     /// Current generation fence.
     #[must_use]
     pub const fn lease_generation(&self) -> u64 {
