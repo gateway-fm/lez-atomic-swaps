@@ -116,7 +116,7 @@ services:
     logging: *default-logging
 
   bedrock:
-    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f"
+    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:70539769f3a2a014b36e608f76264e5d2297f14ee3f7fabf4715f071c7bbf8e7"
     container_name: lez-bedrock
     depends_on:
       lez-init:
