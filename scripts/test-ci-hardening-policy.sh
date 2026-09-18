@@ -212,7 +212,7 @@ assert_trivy_step \
   'risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' 0
 assert_trivy_step \
   'Report high and critical vulnerabilities in exact Logos Bedrock dependency' \
-  'ghcr.io/logos-blockchain/logos-blockchain@sha256:91d6c5bf07e07fcfba5e7cf07d21ee686a6bc4b9f6210f2d28bffbcad9a3729f' 0
+  'ghcr.io/logos-blockchain/logos-blockchain@sha256:70539769f3a2a014b36e608f76264e5d2297f14ee3f7fabf4715f071c7bbf8e7' 0
 assert_trivy_step \
   'Scan exact Bitcoin Core image for high and critical vulnerabilities' \
   'lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}' 1

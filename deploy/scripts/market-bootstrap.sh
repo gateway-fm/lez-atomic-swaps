@@ -76,7 +76,14 @@ for entry in "${WALLETS[@]}"; do
   # owner balances drift as the wallet trades on the standing chain.
   vault_balance="$(account_balance "$vault")"
   if [[ "$vault_balance" == 0 || -z "$vault_balance" ]]; then
-    echo "$wallet: vault already claimed (owner holds $(account_balance "$owner"))"
+    owner_balance="$(account_balance "$owner")"
+    # An identity records its vault id, which is derived from the LEZ release's
+    # vault program. One minted for another release points at nothing: the
+    # vault reads empty, the claim is skipped, and every swap then fails at the
+    # escrow with an owner mismatch. Neither account holding anything says so.
+    [[ -n "$owner_balance" && "$owner_balance" != 0 ]] ||
+      fail "$wallet holds nothing in its vault or its account: its identity was minted for another LEZ release or is missing from the genesis. Move $MARKET_ROOT/identities aside, mint new ones (from-scratch.sh --only build:identities, or start.sh) and recreate the LEZ chain (up.sh --fresh-lez)"
+    echo "$wallet: vault already claimed (owner holds $owner_balance)"
     continue
   fi
   [[ "$vault_balance" == "$allocation" ]] ||

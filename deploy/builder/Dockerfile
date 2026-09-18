@@ -75,4 +75,10 @@ RUN cargo +1.96.0 install rzup --version "$RZUP_VERSION" --locked --root "$LEZ_T
     && [[ "$("$LEZ_TOOLS/bin/r0vm" --version)" == "risc0-r0vm ${RISC0_TAG#v}" ]] \
     && [[ "$("$LEZ_TOOLS/bin/cargo-risczero" risczero --version)" == "cargo-risczero ${RISC0_TAG#v}" ]]
 
+# LEZ v0.2.4's wallet crate, which the escrow deployer and the sidecar build,
+# links libpcsclite (keycard). Last, so the toolchain layer above stays cached.
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends libpcsclite-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
