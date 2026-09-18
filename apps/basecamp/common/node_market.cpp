@@ -186,7 +186,7 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
 // locks Bitcoin and claims LEZ. The actor's `next_action` names recovery
 // once the Maker's lock window is gone.
 SwapRow makerRow(const QString& phase, const QString& nextAction, const QString& scheduleState,
-                 const QString& direction)
+                 const QString& direction, const QString& failureClass, bool claimSent)
 {
     const bool sellsLez = direction == QStringLiteral("taker_sells_foreign");
     const QString myChain = sellsLez ? "LEZ" : "Bitcoin";      // what this Maker locks
@@ -199,6 +199,13 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     const bool unwound = scheduleState == QStringLiteral("terminal");
     if (phase == "refunded" || (unwound && (phase == "maker_leg_refunded" || phase == "taker_leg_refunded")))
         return {"refunded", "Refunded", 100, "The swap was unwound", "", ""};
+    // A failed row is never polled again, so every "waiting" line below would
+    // be a lie about it: on the public testnet a Maker failed at its own lock
+    // kept reading "Funding the LEZ escrow" while the Taker claimed (#67).
+    if (scheduleState == "failed" && phase != "completed")
+        return {"failed", "Actor stopped", 0,
+                "The supervisor gave up on this swap (" + (failureClass.isEmpty() ? QStringLiteral("no reason recorded") : failureClass)
+                    + "); queue a claim or refund from the CLI to resume it", "", ""};
     if (phase == "maker_leg_refunded")
         return {"refunding", "Refunding", 80,
                 "Your " + myChain + " lock came back; the Taker's " + theirChain + " refund is still owed", "", ""};
@@ -222,13 +229,14 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     if (phase == "both_legs_locked")
         return {"awaiting_taker_claim", "Waiting for the Taker's " + myChain + " claim", 65,
                 "The Taker's revealing claim is the next step", "", ""};
+    // Sent and waiting to confirm is most of this phase's life on a public
+    // network; saying so is what tells a waiting Maker from a hung one.
     if (phase == "claim_evidence_available")
-        return {sellsLez ? "claiming_btc" : "claiming_lez", "Claiming " + theirChain, 85,
-                "Your Node claims " + theirChain + " with the revealed secret", "", ""};
+        return {sellsLez ? "claiming_btc" : "claiming_lez", claimSent ? theirChain + " claim sent" : "Claiming " + theirChain, 85,
+                claimSent ? "Your Node sent its " + theirChain + " claim; the swap completes when it confirms"
+                          : "Your Node claims " + theirChain + " with the revealed secret", "", ""};
     if (phase == "completed")
         return {"completed", "Completed", 100, "Both legs settled on chain", "", ""};
-    if (scheduleState == "failed")
-        return {"failed", "Actor failed", 0, "The supervisor gave up on this actor; inspect it from the CLI", "", ""};
     return {"preparing", "Preparing", 10, "The actor has not observed a chain yet", "", ""};
 }
 
@@ -248,7 +256,9 @@ QJsonArray timelineFor(const QJsonObject& terms, const QString& role)
         moment(maker ? "Your lock by" : "Maker locks by", "maker_second_lock_cutoff_unix_seconds"),
         moment(maker ? "Your refund by" : "Maker refunds by", "earlier_refund_latest_unix_seconds"),
         moment(maker ? "Taker refund from" : "Your refund from", "later_refund_earliest_unix_seconds"),
-        QJsonObject{{"label", "BTC refund height"}, {"height", terms.value("bitcoin_refund_height")}},
+        // The refund is a CSV spend: it matures that many blocks after the lock
+        // confirms, so the planned height is only the earliest it can be.
+        QJsonObject{{"label", "BTC refund no earlier than"}, {"height", terms.value("bitcoin_refund_height")}},
     };
 }
 
@@ -275,6 +285,7 @@ QJsonArray effectsFor(const QJsonArray& effects)
             {"chain", chain},
             {"transaction_id", id},
             {"confirmations", effect.value("confirmations")},
+            {"pending", effect.value("pending").toBool()},
             {"explorer_url", chain == QStringLiteral("Bitcoin") ? "http://127.0.0.1:3002/tx/" + id
                                                                 : "http://127.0.0.1:3003/#/tx/" + id},
         });
@@ -626,13 +637,14 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             if (swap.value("pair").toString() != QStringLiteral("Bitcoin")) continue;
             const QString swapId = swap.value("id").toString();
             const QString direction = directionName(swap.value("direction").toString());
-            QString phase, nextAction, schedule;
+            QString phase, nextAction, schedule, failureClass;
             QJsonObject terms;
             QJsonArray effects;
             const Reply monitored = decode(rpc.call("maker_actor_monitor_v1", compact({{"id", swapId}})));
             if (monitored.ok) {
                 const QJsonObject result = monitored.result.toObject();
                 schedule = result.value("schedule_state").toString();
+                failureClass = result.value("last_failure_class").toString();
                 terms = result.value("terms").toObject();
                 effects = result.value("effects").toArray();
                 const QJsonObject observation = result.value("progress").toObject().value("observation").toObject();
@@ -643,7 +655,11 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             const qint64 offered = offeredBySwap.value(swapId, -1);
             const QString fill = taken > 0 && offered > 0
                 ? QString::number(100 * taken / offered) + "% of the " + formatBtc(offered) + " offered" : QString();
-            const SwapRow row = makerRow(phase, nextAction, schedule, direction);
+            bool claimSent = false;
+            for (const QJsonValue& effect : effects)
+                claimSent = claimSent || (effect.toObject().value("pending").toBool()
+                                          && effect.toObject().value("kind").toString() == QStringLiteral("followup_claim"));
+            const SwapRow row = makerRow(phase, nextAction, schedule, direction, failureClass, claimSent);
             swaps.append(swapRowObject(row, swapId, QString(), direction, wallet.label,
                                        QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill, effects));
             if (row.state == "completed") ++completed;

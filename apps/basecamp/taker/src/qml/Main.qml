@@ -909,6 +909,7 @@ Item {
                             Label { text: String(effectRow.modelData.kind_display).toUpperCase(); color: "#D8C6FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                             Label { text: String(effectRow.modelData.chain).toUpperCase(); color: effectRow.modelData.chain === "Bitcoin" ? "#B997FF" : "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                             Label { visible: Number(effectRow.modelData.confirmations) > 0; text: String(effectRow.modelData.confirmations) + " conf"; color: "#9AA6B8"; font.pixelSize: 9; font.family: "DejaVu Sans Mono" }
+                            Label { visible: effectRow.modelData.pending === true; text: "SENT · AWAITING CONFIRMATION"; color: "#E8B04A"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                             Item { Layout.fillWidth: true }
                             LuxeButton { text: "Copy id"; quiet: true; onClicked: root.copyText(effectRow.modelData.transaction_id) }
                             LuxeButton { text: "Copy link"; quiet: true; onClicked: root.copyText(effectRow.modelData.explorer_url) }
