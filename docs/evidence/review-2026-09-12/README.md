@@ -266,7 +266,8 @@ in `runtime/evidence/<swap-id>.json`, videos in `runtime/evidence/videos/`.
 2. The explicit disposition of the XMR penalty fallback of ADR 0174 for the
    audit (it pays the Maker LEZ without recovering the XMR).
 3. Reconciliation of the planned ZEC flow with the M6 prototype/service
-   evidence and the current app coverage.
+   evidence and the current app coverage. Given in
+   [`docs/m6-zec-reconciliation.md`](../../m6-zec-reconciliation.md).
 4. Confirmation of the scope of the 4 August prototype sign-off (internal
    approval by the repository owner; who reviewed).
 5. Whether a native Mac Basecamp with the catalog modules is a supported test

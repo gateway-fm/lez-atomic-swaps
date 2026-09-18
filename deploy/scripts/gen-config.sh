@@ -33,7 +33,6 @@ wallet_limmat_account_id="$(wallet_account_id taker-limmat-02 5A8bRmav5wjYQex6z7
 readonly wallet_munich_account_id wallet_basel_account_id wallet_zurich_account_id wallet_limmat_account_id
 readonly wallet_maker_allocation=100000
 readonly wallet_taker_allocation=200000
-readonly upstream_genesis_time_hex="2c04626900000000"
 
 # Preserve the selected volume namespace on ordinary restarts too.
 volume_prefix="${LEZ_VOLUME_PREFIX:-}"
@@ -68,30 +67,20 @@ jq -e '
   and .private_material_disclosed == false
 ' "$RUNTIME/m3-btc-ui-evidence.json" >/dev/null
 
-# --- LEZ: genesis time + rendered deployment settings -----------------------
-# The standing LEZ chain keeps its genesis across restarts: reuse the epoch a
-# previous run recorded, and mint a fresh one only for a new runtime root.
-chain_start_epoch=""
-# The timing profile is kept across reruns like the genesis time (read here,
-# before the old file is replaced): a rerun without LEZ_TIMING_PROFILE must
-# not silently move the Nodes back to `local`.
+# --- LEZ: deployment settings ------------------------------------------------
+# The timing profile is kept across reruns (read here, before the old file is
+# replaced): a rerun without LEZ_TIMING_PROFILE must not silently move the
+# Nodes back to `local`.
 previous_timing_profile=""
 previous_actor_trace=""
 if [[ -s "$RUNTIME/runtime.env" ]]; then
   previous_timing_profile="$(sed -n 's/^LEZ_TIMING_PROFILE=//p' "$RUNTIME/runtime.env" | head -1)"
   previous_actor_trace="$(sed -n 's/^LEZ_BTC_ACTOR_TRACE=//p' "$RUNTIME/runtime.env" | head -1)"
-  chain_start_epoch="$(sed -n 's/^LEZ_V02_GENESIS_TIME_EPOCH=//p' "$RUNTIME/runtime.env" | head -1)"
 fi
-if [[ "$chain_start_epoch" =~ ^[0-9]+$ ]]; then
-  echo "reusing existing LEZ genesis time ${chain_start_epoch}"
-else
-  chain_start_epoch="$(date -u +%s)"
-fi
-genesis_time_hex="$(printf "%016x" "$chain_start_epoch" | sed -E 's/^(..)(..)(..)(..)(..)(..)(..)(..)$/\8\7\6\5\4\3\2\1/')"
 
-sed -e "s/${upstream_genesis_time_hex}/${genesis_time_hex}/" \
-    "$LEZ_SOURCE/bedrock/deployment-settings.yaml" \
-    >"$RUNTIME/config/deployment-settings.yaml"
+# Bedrock 0.2.1 starts from upstream's genesis as it is, however old; the
+# genesis block commits to its time, so it is no longer ours to rewrite.
+cp "$LEZ_SOURCE/bedrock/deployment-settings.yaml" "$RUNTIME/config/deployment-settings.yaml"
 
 jq --arg channel "$channel_id" \
   '.bedrock_config.addr = "http://bedrock:18080" | .channel_id = $channel' \
@@ -242,7 +231,6 @@ printf '%s\n' \
   "LEZ_LEZ_DISCOVERY_MAX_BLOCKS=${timing[5]}" \
   "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
-  "LEZ_V02_GENESIS_TIME_EPOCH=$chain_start_epoch" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \
   "LEZ_V02_TAKER_ACCOUNT_ID=$taker_account_id" \
   "BTC_RPC_USER=lezrpc" \
