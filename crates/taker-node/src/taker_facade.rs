@@ -312,6 +312,11 @@ pub struct TakerSwapViewV1 {
     /// What landed on which chain so far, from the actor's durable evidence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<ActorEffectV1>,
+    /// What this role's Bitcoin lock pays the miners, when it funds Bitcoin.
+    /// Known from the take on, so it can be shown before the lock is sent: the
+    /// lock can never be fee-bumped, and this is the only moment to decline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bitcoin_lock_fee_sat: Option<u64>,
 }
 
 /// Versioned collection of swaps recoverable after UI or facade restart.

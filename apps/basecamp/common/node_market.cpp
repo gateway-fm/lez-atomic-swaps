@@ -124,7 +124,7 @@ struct SwapRow {
 // lifecycle state: a refund it offers while the Maker's lock is still
 // nominally awaited means the Maker missed its window.
 SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool locked,
-                 const QString& direction, const QString& bitcoin, const QString& lez)
+                 const QString& direction, const QString& bitcoin, const QString& lez, qint64 lockFeeSat)
 {
     const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");
     const QString mine = sellsBitcoin ? bitcoin : lez;          // what this Taker locks
@@ -143,8 +143,11 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     if (nodeState == "awaiting_first_lock") {
         if (!locked)
             return {"lock_ready", "Your " + myChain + " lock is ready", 20,
+                    // The lock can never be fee-bumped, so this is the one moment
+                    // its fee can be declined; it used to be shown nowhere (#70).
                     sellsBitcoin
                         ? "Your move — Lock " + mine + " broadcasts the exact funding transaction your wallet signed"
+                              + (lockFeeSat > 0 ? " · network fee " + QString::number(lockFeeSat) + " sat" : QString())
                         : "Your move — Lock " + mine + " submits the escrow initialization and funding your sidecar prepared",
                     sellsBitcoin ? "lock_btc" : "lock_lez", "Lock " + mine};
         return {sellsBitcoin ? "locking_btc" : "locking_lez", myChain + " lock confirming", 35,
@@ -450,7 +453,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             const SwapRow row = takerRow(swap.value("state").toString(), swap.value("available_action").toString(),
                                          lockedSwaps.contains(swapId), direction,
                                          formatBtc(integerField(swap, "foreign_units")),
-                                         formatLez(integerField(swap, "lez_units")));
+                                         formatLez(integerField(swap, "lez_units")),
+                                         integerField(swap, "bitcoin_lock_fee_sat"));
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),

@@ -149,6 +149,13 @@ impl RouteActor {
         }
     }
 
+    /// The fee of this role's planned Bitcoin lock, from the funding plan the
+    /// take wrote beside the actor's state; absent when the Maker funds Bitcoin
+    /// or the plan predates the fee being kept.
+    fn bitcoin_lock_fee_sat(&self) -> Option<u64> {
+        planned_lock_fee_sat(self.state_db())
+    }
+
     fn state_db(&self) -> &Path {
         match self {
             Self::Btc { config, .. } => config.state_db(),
@@ -1163,7 +1170,7 @@ async fn project_receipt_bound_swap(
     let swap_id = prepared.swap_id().clone();
     let receipt_sha256 = receipt_binding.sha256();
     let receipt_identity = receipt_binding.identity();
-    let (config, held_lock, terms, effects) = tokio::task::spawn_blocking(move || {
+    let (config, held_lock, terms, effects, lock_fee) = tokio::task::spawn_blocking(move || {
         let load = || {
             RouteActor::load_for_monitor(
                 pair,
@@ -1189,7 +1196,8 @@ async fn project_receipt_bound_swap(
             .map_err(|_| MonitoringError::DependencyUnavailable)?;
         let terms = config.agreement_terms();
         let effects = config.effects();
-        Ok::<_, MonitoringError>((config, held_lock, terms, effects))
+        let lock_fee = config.bitcoin_lock_fee_sat();
+        Ok::<_, MonitoringError>((config, held_lock, terms, effects, lock_fee))
     })
     .await
     .map_err(|_| MonitoringError::DependencyUnavailable)??;
@@ -1205,7 +1213,20 @@ async fn project_receipt_bound_swap(
     let mut view = view_from_actor_status(facts, status);
     view.terms = terms;
     view.effects = effects;
+    view.bitcoin_lock_fee_sat = lock_fee;
     overlay_admitted_action(view, admitted_action.as_ref())
+}
+
+/// Reads `fee_sat` from the funding plan the take wrote beside the actor's
+/// state (`<swap>/actor/state.sqlite3` and `<swap>/bitcoin/funding-plan.json`).
+fn planned_lock_fee_sat(state_db: &Path) -> Option<u64> {
+    let plan = state_db
+        .parent()?
+        .parent()?
+        .join("bitcoin")
+        .join("funding-plan.json");
+    let plan: serde_json::Value = serde_json::from_slice(&std::fs::read(plan).ok()?).ok()?;
+    plan.get("fee_sat")?.as_u64().filter(|fee| *fee > 0)
 }
 
 async fn lookup_monitored_action(
@@ -1288,6 +1309,7 @@ fn view_from_actor_status(
         privacy_guidance,
         terms: None,
         effects: Vec::new(),
+        bitcoin_lock_fee_sat: None,
     }
 }
 
@@ -2131,6 +2153,7 @@ fn commit_from_facts(
             privacy_guidance: None,
             terms: None,
             effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
         },
         was_replay,
     }
@@ -2193,6 +2216,25 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_planned_lock_fee_is_read_from_the_swaps_funding_plan() {
+        let swap = tempfile::tempdir().expect("swap directory");
+        let state_db = swap.path().join("actor").join("state.sqlite3");
+        std::fs::create_dir_all(swap.path().join("bitcoin")).expect("bitcoin directory");
+        let plan = swap.path().join("bitcoin").join("funding-plan.json");
+        // The Maker funds Bitcoin in the other direction: no plan, no fee.
+        assert_eq!(planned_lock_fee_sat(&state_db), None);
+        std::fs::write(
+            &plan,
+            br#"{"schema_version":1,"value_sat":10000,"fee_sat":157}"#,
+        )
+        .unwrap();
+        assert_eq!(planned_lock_fee_sat(&state_db), Some(157));
+        // A plan written before the fee was kept says nothing rather than zero.
+        std::fs::write(&plan, br#"{"schema_version":1,"value_sat":10000}"#).unwrap();
+        assert_eq!(planned_lock_fee_sat(&state_db), None);
+    }
 
     fn active(
         phase: Phase,

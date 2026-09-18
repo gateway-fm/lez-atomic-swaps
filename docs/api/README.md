@@ -237,6 +237,8 @@ leg, locked second, must be refunded by this) and
 `later_refund_earliest_unix_seconds` (the Taker's leg may be refunded from
 this). The same object appears on `maker_actor_monitor_v1`.
 
+The Taker's view carries `bitcoin_lock_fee_sat` when this role funds the Bitcoin lock: what the planned lock pays the miners, known from the take on so it can be shown before the lock is sent (a lock can never be fee-bumped).
+
 Both views also carry `effects` once something landed: the actor's durable
 evidence in order, each `{revision, kind, chain, transaction_id,
 confirmations}` with `kind` one of `taker_lock`, `maker_lock`,
