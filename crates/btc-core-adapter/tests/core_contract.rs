@@ -1055,15 +1055,21 @@ async fn refund_observation_classifies_exact_finality_conflict_and_anchor_drift(
         RefundObservation::ConflictingSpend
     );
 
-    // Below the signed anchor is impossible for the planned funding: rejected.
-    let below_anchor_rpc = MockRpc::ready_at(1_143);
-    below_anchor_rpc.push_raw(raw_verbose(&fixture.funding, Some(145), Some(TIP_A)));
-    assert!(matches!(
-        isolated_adapter(below_anchor_rpc)
-            .observe_refund(&fixture.agreement)
-            .await,
-        Err(CoreAdapterError::FundingAnchorMismatch)
-    ));
+    // A reorganisation mined the funding one block below the signed anchor:
+    // BIP-68 alone would allow the refund a block early, so it still waits for
+    // the refund height both roles signed, and it is not a dead end.
+    let below_anchor_rpc = MockRpc::ready_at(1_142);
+    below_anchor_rpc.push_raw(raw_verbose(&fixture.funding, Some(144), Some(TIP_A)));
+    below_anchor_rpc.push_spender(unspent(outpoint));
+    let RefundObservation::Immature(reorganised) = isolated_adapter(below_anchor_rpc)
+        .observe_refund(&fixture.agreement)
+        .await
+        .expect("a funding below the anchor is observable")
+    else {
+        panic!("BIP-68 maturity alone must not make the refund eligible");
+    };
+    assert_eq!(reorganised.funding_block_height(), 999);
+    assert_eq!(reorganised.first_valid_block_height(), 1_144);
     // Confirmed one block after the anchor: BIP-68 counts from the actual
     // funding block, so the refund matures one block later than planned.
     let later_funding_rpc = MockRpc::ready_at(1_143);
