@@ -1,0 +1,25 @@
+# Bitcoin through a keyless public RPC provider instead of a Core of our own
+# (#49): testnet3, because that is what such providers serve. Add after
+# compose.testnet.yaml. A provider serves no wallet, so the Taker's lock is
+# signed in the owner's own wallet (docs/api: "Funding the lock from your own
+# wallet") and claims are paid to an address of that wallet.
+#
+# LEZ_BITCOIN_CORE_HOST names a plain-HTTP proxy on the Docker network that
+# speaks TLS to the provider, like the sequencer proxy: the Nodes accept only
+# literal-loopback HTTP endpoints (docs/testnet-run.md).
+x-provider-env: &provider-env
+  LEZ_BTC_NETWORK: testnet3
+  LEZ_BITCOIN_CORE_HOST: ${LEZ_BTC_PROVIDER_PROXY:-lez-t3-provider}
+  LEZ_BTC_WALLET: ""
+
+# One address of the owner's wallet per role: an agreement refuses a Maker and a
+# Taker that would be paid at the same destination.
+services:
+  maker-node:
+    environment:
+      <<: *provider-env
+      LEZ_BTC_CLAIM_DESTINATION: ${LEZ_MAKER_BTC_CLAIM_DESTINATION:?set it to an address of the Maker owner's wallet}
+  taker-node:
+    environment:
+      <<: *provider-env
+      LEZ_BTC_CLAIM_DESTINATION: ${LEZ_TAKER_BTC_CLAIM_DESTINATION:?set it to an address of the Taker owner's wallet}

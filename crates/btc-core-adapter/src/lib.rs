@@ -681,9 +681,6 @@ pub enum CoreAdapterError<RpcError: StdError + 'static, StoreError: StdError + '
     /// Spending transaction differs from the exact signed agreement claim.
     #[error("observed spender is not the exact agreement claim")]
     ClaimTransactionMismatch,
-    /// Confirmed funding height lies below the countersigned recovery anchor.
-    #[error("observed funding height lies below the signed recovery anchor")]
-    FundingAnchorMismatch,
     /// Spending transaction differs from the exact signed agreement refund.
     #[error("observed spender is not the exact agreement refund")]
     RefundTransactionMismatch,
@@ -1057,21 +1054,21 @@ where
             .and_then(|height| height.checked_sub(confirmations))
             .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
         let recovery = agreement.body().recovery_plan();
-        // The signed anchor is the tip when the funding was planned; the lock is
-        // broadcast later and mined whenever the next block comes, so the
-        // funding can only confirm above the anchor. BIP-68 counts from the
-        // block that actually holds the funding, so a later confirmation only
-        // delays the refund and never brings it forward. Below the anchor is
-        // impossible for the planned transaction and stays a mismatch.
+        // The signed anchor is the tip when the funding was planned. The lock is
+        // mined later, normally above it, and BIP-68 counts from the block that
+        // holds it, so a later confirmation only delays the refund. A
+        // reorganisation can also mine it below the anchor (testnet4,
+        // 2026-09-19: planned at 153,053, mined at 153,052 after a nine-block
+        // reorg). BIP-68 would then allow the refund before the refund height
+        // both roles signed, so it waits for that height instead: never earlier
+        // than agreed, and never the dead end a mismatch made of it.
         let anchor_height = recovery.bitcoin_funding_anchor_height();
-        if funding_block_height < anchor_height {
-            return Err(CoreAdapterError::FundingAnchorMismatch);
-        }
         let csv_delay = recovery
             .bitcoin_refund_height()
             .checked_sub(anchor_height)
             .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
         let first_valid_block_height = funding_block_height
+            .max(anchor_height)
             .checked_add(csv_delay)
             .ok_or(CoreAdapterError::InvalidConfirmationContext)?;
         Ok(RefundEligibility {
@@ -1791,7 +1788,6 @@ where
         CoreAdapterError::UnstableTip => CoreAdapterError::UnstableTip,
         CoreAdapterError::SpenderResponseMismatch => CoreAdapterError::SpenderResponseMismatch,
         CoreAdapterError::ClaimTransactionMismatch => CoreAdapterError::ClaimTransactionMismatch,
-        CoreAdapterError::FundingAnchorMismatch => CoreAdapterError::FundingAnchorMismatch,
         CoreAdapterError::RefundTransactionMismatch => CoreAdapterError::RefundTransactionMismatch,
         CoreAdapterError::MempoolResponseMismatch => CoreAdapterError::MempoolResponseMismatch,
         CoreAdapterError::BroadcastIdentityMismatch => CoreAdapterError::BroadcastIdentityMismatch,
@@ -1824,7 +1820,11 @@ where
         || chain.pruned
         || chain.blocks < 0
         || chain.headers != chain.blocks
-        || !chain.warnings.is_empty()
+        // On mainnet a warning can mean the node follows rules it cannot
+        // validate. On a test network anyone can signal a version bit, so
+        // "Unknown new rules activated" is permanent there: refusing it would
+        // refuse every node that is not ours (seen on testnet3, Core 29.3).
+        || (network == Network::Bitcoin && !chain.warnings.is_empty())
     {
         return Err(CoreAdapterError::ChainNotReady);
     }

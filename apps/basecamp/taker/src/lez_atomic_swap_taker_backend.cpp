@@ -115,8 +115,9 @@ QString LezAtomicSwapTakerBackend::btcTakeOffer(
 QString LezAtomicSwapTakerBackend::btcSwapAction(
     QString requestId, QString walletId, QString swapId, QString action)
 {
+    // A swap action is named after its swap, not the clock, so a retry replays.
     static const QRegularExpression requestPattern(
-        QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9]{13}$"));
+        QStringLiteral("^ui-taker-[a-z-]{2,24}-[0-9a-f]{16}$"));
     static const QRegularExpression swapPattern(QStringLiteral("^[0-9a-f]{64}$"));
     if (!requestPattern.match(requestId).hasMatch() || walletId != kTakerWallet.id
         || !swapPattern.match(swapId).hasMatch()) {

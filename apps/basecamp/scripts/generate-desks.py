@@ -909,7 +909,10 @@ TAKER_FUNCTIONS = r'''
     function runTakerAction(swap) {
         if (root.btcMarketBusy || swap.can_act !== true) return
         root.btcMarketBusy = true
-        var requestId = "ui-taker-swap-action-" + String(Date.now())
+        // One id per swap and action: the Node keys replay on it, so a retry
+        // re-drives the admitted action instead of colliding with it. A Node
+        // request id holds 64 characters, so the swap is named by its prefix.
+        var requestId = "ui-taker-" + String(swap.action_required).replace(/_/g, "-") + "-" + String(swap.ui_swap_id).slice(0, 16)
         root.run(root.backend.btcSwapAction(requestId, root.walletId(), String(swap.ui_swap_id), String(swap.action_required)),
             String(swap.action_label), function(result) {
                 root.btcMarketBusy = false

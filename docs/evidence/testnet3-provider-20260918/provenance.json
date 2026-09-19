@@ -1,0 +1,59 @@
+{
+  "provider": {
+    "endpoint": "https://bitcoin-testnet-rpc.publicnode.com",
+    "keyless": true,
+    "network": "testnet3",
+    "node": "/Satoshi:29.3.0/ (version 290300)",
+    "indexes": {
+      "txindex": true,
+      "txospenderindex": false
+    },
+    "wallet_rpcs": "refused",
+    "reply_envelopes_seen": [
+      "jsonrpc \"2.0\"",
+      "jsonrpc \"\"",
+      "jsonrpc absent"
+    ],
+    "standing_warning": "Unknown new rules activated (versionbit 1)",
+    "reached_through": "nginx 1.29.1 on the Docker network, plain HTTP :18443 -> TLS to the provider (provider-proxy-nginx.conf); the Nodes accept only literal-loopback HTTP endpoints"
+  },
+  "lez": {
+    "network": "official LEZ testnet v0.2.4",
+    "channel": "0101...01",
+    "escrow_program": "c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b",
+    "side_services": "Logos Blockchain node :testnet, LEZ v0.2.4 indexer_service, nginx proxy to testnet.lez.logos.co (docs/testnet-run.md sections 3-5)"
+  },
+  "owner_wallet": {
+    "what": "Bitcoin Core /Satoshi:31.1.0/ used only as a signer",
+    "isolation": "docker --network none, -connect=0: no peers, no chain (0 blocks)",
+    "funding_address": "tb1qkymn0z9znkxq84geqsk85y92tjdr2lh8v4yttx",
+    "funded_by": "testnet3 faucet, 169,255 sat, tx 9a0dab85f6fefdf8c0ca508c2464d24d304d3711ba9eff70a5f2b5d4351410d7",
+    "maker_claim_address": "tb1qvmj43jaqh022txkjr5y546f0pk84l8kq3f6jm7",
+    "taker_claim_address": "tb1qvqs3af3t4e5yl63hzwjtu5zxapcjqzh7703rzr",
+    "utxo_lookup": "https://mempool.space/testnet/api"
+  },
+  "nodes": [
+    {
+      "period": "17:34Z-18:47Z",
+      "images": "lez-{maker,taker}-node:v024-stack",
+      "source_commit": "17213b1c4a2e73cba9165d10f6117cd31de6ebb8",
+      "note": "take, lock and broadcast happened here; the Taker's actor then answered ChainNotReady (the warnings gate)"
+    },
+    {
+      "period": "18:47Z onward",
+      "images": {
+        "maker": "lez-maker-node:v024-stack2 sha256:113a1c3d590b754387248f11591fb1a45bdf3d55ccc43ee11c347deafacef1a8",
+        "taker": "lez-taker-node:v024-stack2 sha256:64cbb62632a96f5e9c2ad2f6fb79b6a51974b575873bb94c5803b215cf46009d"
+      },
+      "source_commit": "15440ff8318ba2483244f7d232e3c08d2edb4133",
+      "LEZ_BTC_ACTOR_TRACE": "1",
+      "binaries_sha256": {
+        "lez-btc-maker-actor": "19e74a5ba59d7e2e1ce6fc1566af1f541daffed1575687eb5711f3b7daf8a541",
+        "lez-maker-node": "6b85566e88d7bbbbba8d52f37a7f11403f74b12d7962e44ab9e0cbdd747c504c",
+        "lez-btc-taker-actor": "8ced2c93a4ada2b0d2db0f360e53168a70ff5ef081f24c47125c576a203a876a",
+        "lez-taker-node": "349ac805d838687f50481d37969282ae7e30618504211df9bd758abca3945740"
+      }
+    }
+  ],
+  "compose": "-p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml -f compose.testnet3-provider.yaml"
+}
