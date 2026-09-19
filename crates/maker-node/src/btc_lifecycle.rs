@@ -141,6 +141,65 @@ impl BtcMakerLifecycle {
         });
     }
 
+    /// Whether a reserved swap in which this Maker locks LEZ still owes or
+    /// holds the one escrow slot: its lock is not confirmed, it has not ended,
+    /// and its cutoff has not passed.
+    ///
+    /// Escrows are prepared one at a time and each waits out LEZ finality, so
+    /// on a public network a second such swap is never served before its
+    /// cutoff: its Taker locked Bitcoin for a Maker lock that could not come
+    /// and waited out the whole refund timelock (testnet4, 2026-09-19).
+    fn escrow_slot_is_owed(
+        &self,
+        store: &Mutex<SqliteSwapStore>,
+        now: u64,
+    ) -> anyhow::Result<bool> {
+        for swap in
+            lez_btc_role_lifecycle::sidecar::recorded_swaps(&self.runtime.config().swaps_root)
+                .unwrap_or_default()
+        {
+            let Some(reservation_id) = swap
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| RequestId::new(name.to_owned()).ok())
+            else {
+                continue;
+            };
+            let Ok(record) = ReservationRecordV1::load(&self.layout(&reservation_id)) else {
+                continue;
+            };
+            if !reservation_may_hold_escrow_slot(
+                record.direction,
+                record.plan.maker_second_lock_cutoff_unix_seconds,
+                self.runtime
+                    .config()
+                    .recovery
+                    .maker_second_lock_cutoff_seconds,
+                record.actor_activated,
+                now,
+            ) {
+                continue;
+            }
+            let swap_id = SwapId::new(hex::encode(record.swap_id))
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+            let settled = match store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("swap store lock poisoned"))?
+                .maker_actor_progress(&swap_id)?
+                .map(|snapshot| snapshot.observation().clone())
+            {
+                Some(MakerActorProgressObservationV1::Active {
+                    phase, revision, ..
+                }) => revision >= 2 || matches!(&*phase, "completed" | "refunded"),
+                _ => false,
+            };
+            if !settled {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     async fn prepare_next_escrow(&self, store: &Mutex<SqliteSwapStore>) -> anyhow::Result<()> {
         let _rounds = self.rounds.lock().await;
         let now = trusted_now_unix_seconds().map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -550,6 +609,29 @@ const fn lez_refund_seconds(direction: SwapDirection, plan: &BtcSwapPlanV1) -> u
     }
 }
 
+/// How long a reservation that was never bound into an agreement keeps the
+/// Maker's escrow slot; binding takes seconds, an owner signing the lock in a
+/// wallet of their own (#81) takes minutes.
+const UNBOUND_RESERVATION_GRACE_SECONDS: u64 = 900;
+
+/// Whether a reservation can still need the Maker's LEZ escrow slot at `now`,
+/// before its actor's progress is consulted.
+fn reservation_may_hold_escrow_slot(
+    direction: SwapDirection,
+    cutoff: u64,
+    cutoff_seconds: u64,
+    actor_activated: bool,
+    now: u64,
+) -> bool {
+    if direction != SwapDirection::TakerSellsForeign || now >= cutoff {
+        return false;
+    }
+    // A take that was reserved and never bound must not hold the slot until
+    // its cutoff: reserving costs a stranger nothing.
+    let reserved_at = cutoff.saturating_sub(cutoff_seconds);
+    actor_activated || now <= reserved_at + UNBOUND_RESERVATION_GRACE_SECONDS
+}
+
 #[allow(clippy::too_many_lines)]
 pub(super) async fn reserve(
     request: BtcReserveRequestV1,
@@ -613,6 +695,17 @@ pub(super) async fn reserve(
     if request.plan.lez_refund_at_ms != lez_refund_seconds.saturating_mul(1000) {
         return Err(invalid_request(
             "plan LEZ refund time does not follow the direction",
+        ));
+    }
+    // Refused here, before the Taker has locked anything.
+    if request.direction == SwapDirection::TakerSellsForeign
+        && lifecycle
+            .escrow_slot_is_owed(&context.store, now)
+            .map_err(|error| internal(&error))?
+    {
+        return Err(rpc_error(
+            OFFER_UNAVAILABLE,
+            "this Maker is still locking LEZ for another swap; take the offer again once it has",
         ));
     }
     let taker = BtcRoleContributionV1::from_wire(&request.taker_contribution_wire)
@@ -1076,4 +1169,44 @@ pub(super) fn register_btc_lifecycle_methods(
         ceremony_partial(request, context).await
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod escrow_slot_tests {
+    use super::*;
+
+    const TAKEN_AT: u64 = 1_000_000;
+    const CUTOFF_SECONDS: u64 = 10_800;
+    const CUTOFF: u64 = TAKEN_AT + CUTOFF_SECONDS;
+
+    fn holds(direction: SwapDirection, activated: bool, now: u64) -> bool {
+        reservation_may_hold_escrow_slot(direction, CUTOFF, CUTOFF_SECONDS, activated, now)
+    }
+
+    #[test]
+    fn a_bound_swap_holds_the_escrow_slot_until_its_cutoff() {
+        assert!(holds(SwapDirection::TakerSellsForeign, true, TAKEN_AT + 1));
+        assert!(holds(SwapDirection::TakerSellsForeign, true, CUTOFF - 1));
+        assert!(!holds(SwapDirection::TakerSellsForeign, true, CUTOFF));
+    }
+
+    #[test]
+    fn an_abandoned_reservation_frees_the_slot_after_the_grace() {
+        let grace = UNBOUND_RESERVATION_GRACE_SECONDS;
+        assert!(holds(
+            SwapDirection::TakerSellsForeign,
+            false,
+            TAKEN_AT + grace
+        ));
+        assert!(!holds(
+            SwapDirection::TakerSellsForeign,
+            false,
+            TAKEN_AT + grace + 1
+        ));
+    }
+
+    #[test]
+    fn a_swap_in_which_the_maker_locks_bitcoin_never_holds_it() {
+        assert!(!holds(SwapDirection::TakerSellsLez, true, TAKEN_AT + 1));
+    }
 }

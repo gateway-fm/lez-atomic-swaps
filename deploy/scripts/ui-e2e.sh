@@ -198,9 +198,19 @@ scenario_survivor() {
 }
 scenario_concurrent() {
   local a b; ensure_coins "$lock_wallet" 2
-  publish; take a; take b
-  taker_act "$lock_action" "$a"; taker_act "$lock_action" "$b"
-  maker_wait awaiting_taker_claim "$a"; maker_wait awaiting_taker_claim "$b"
+  if [[ "$direction" == TakerSellsLez ]]; then
+    publish; take a; take b
+    taker_act "$lock_action" "$a"; taker_act "$lock_action" "$b"
+    maker_wait awaiting_taker_claim "$a"; maker_wait awaiting_taker_claim "$b"
+  else
+    # The Maker locks LEZ one swap at a time and refuses a second such take
+    # until the first lock is confirmed (node-e2e.py asserts the refusal), so
+    # the second swap is taken then; the two overlap from there on.
+    publish; take a
+    taker_act "$lock_action" "$a"; maker_wait awaiting_taker_claim "$a"
+    take b
+    taker_act "$lock_action" "$b"; maker_wait awaiting_taker_claim "$b"
+  fi
   taker_act "$claim_action" "$a"; taker_act "$claim_action" "$b"
   finish "$a"; finish "$b"
 }

@@ -454,12 +454,30 @@ def node_balances(role: str) -> dict:
 def scenario_concurrent(stamp: str) -> dict:
     ensure_coins("lez-maker" if REVERSE else "lez-taker", 2)
     ids = []
-    for suffix in ("-a", "-b"):
-        offer_id = publish_offer(stamp, suffix)
-        swap_id, _ = take(offer_id, stamp, suffix)
-        ids.append((suffix, swap_id))
-    for _, swap_id in ids:
-        lock(swap_id)
+    if REVERSE:
+        for suffix in ("-a", "-b"):
+            offer_id = publish_offer(stamp, suffix)
+            swap_id, _ = take(offer_id, stamp, suffix)
+            ids.append((suffix, swap_id))
+        for _, swap_id in ids:
+            lock(swap_id)
+    else:
+        # The Maker locks LEZ here, and it prepares one LEZ escrow at a time: a
+        # second swap taken while the first still owes its lock could miss its
+        # cutoff on a slow-finality network and strand the Taker's Bitcoin for
+        # the whole refund timelock. The Maker refuses it at the reservation,
+        # before the Taker has locked anything, and admits it once the first
+        # lock is confirmed. The two swaps still overlap from there on.
+        offer_a, offer_b = publish_offer(stamp, "-a"), publish_offer(stamp, "-b")
+        swap_a, _ = take(offer_a, stamp, "-a")
+        expect_error("second Taker-sells-BTC swap while the Maker's LEZ lock is owed", "taker",
+                     "taker_swap_initiate_v1", take_request(offer_b, discover(offer_b), f"e2e-take-{stamp}-b-early"),
+                     category="initiation_execution_unavailable")
+        lock(swap_a)
+        wait_taker(swap_a, {"claim_available"}, timeout=1500, describe="(Maker funding)")
+        swap_b, _ = take(offer_b, stamp, "-b")
+        lock(swap_b)
+        ids = [("-a", swap_a), ("-b", swap_b)]
     for suffix, swap_id in ids:
         claim(swap_id, stamp, suffix)
     for _, swap_id in ids:
