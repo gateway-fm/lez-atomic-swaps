@@ -96,7 +96,9 @@ moved.
 
 ### M3 — BTC
 
-- Start RED from official DLC adaptor vectors and the exact BIP-340 witness
+- Start RED from the BIP-340/BIP-327 and exact-pinned swap-specific adaptor
+  suite covered by [Logos's narrow GW-M3-001 decision](https://github.com/logos-co/rfp/issues/123#issuecomment-5781178140),
+  plus the exact BIP-340 witness
   relation used by the isolated LEZ claim authority.
 - Exercise P2TR key-path claim plus CSV tapleaf refund at before/at/after heights,
   RBF/CPFP fee stress, reorg, and lost-key recovery against Bitcoin Core.
