@@ -91,6 +91,15 @@ ui() { # ui <role> [ENV=VALUE...]
     --entrypoint node basecamp-ui /ui-tests/verify.mjs "$role" 2>&1 |
     grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:' | grep -viE 'locale'
 }
+# The same desk runner for the offline status check (#91): its own entry point,
+# because verify.mjs assumes a reachable Node from its first step.
+ui_offline() {
+  docker compose "${stack_compose[@]}" run --rm --no-deps \
+    -e "M3_UI_DIRECTION=$direction" \
+    --entrypoint node basecamp-ui /ui-tests/verify-node-offline.mjs "$1" 2>&1 |
+    grep -E '✓|✗|^    [a-zA-Z]|passed|failed|Error'
+  return "${PIPESTATUS[0]}"
+}
 # The scenario video: its segments joined in order (same size, rate and codec).
 join_video() {
   [[ "$record" == 1 && "${#segments[@]}" -gt 0 ]] || return 0
@@ -196,6 +205,23 @@ scenario_survivor() {
   taker_wait completed "$swap"
   python3 scripts/export-node-evidence.py --swap "$swap" || fail "evidence export"
 }
+# #91: the desk's connection state must follow its Node, not its own loading.
+# The Nodes are down before the desk opens and come back while it waits, so the
+# view is watched through "checking", "down" and "up" in one session.
+scenario_node_offline() {
+  local status=0
+  for role in maker taker; do
+    note "Both Nodes are stopped before the $role desk opens; a desk must not report a connection it does not have"
+    stop_node lez-maker-node; stop_node lez-taker-node
+    ( sleep 75; docker start lez-maker-node lez-taker-node >/dev/null 2>&1 ) &
+    local resumer=$!
+    ui_offline "$role" || status=1
+    wait "$resumer" 2>/dev/null || true
+    wait_healthy lez-maker-node; wait_healthy lez-taker-node
+    stopped_node=""
+    [[ $status == 0 ]] || fail "the $role desk misreported its Node connection"
+  done
+}
 scenario_concurrent() {
   local a b; ensure_coins "$lock_wallet" 2
   if [[ "$direction" == TakerSellsLez ]]; then
@@ -249,12 +275,13 @@ run_one() {
     concurrent) scenario_concurrent ;;
     taker-refund) scenario_taker_refund ;;
     maker-refund) scenario_maker_refund ;;
+    node-offline) scenario_node_offline ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
   log "=== $name ($direction): passed in $(( $(date -u +%s) - started ))s"
 }
-all=(happy restart-taker restart-maker survivor concurrent taker-refund maker-refund)
+all=(happy restart-taker restart-maker survivor concurrent taker-refund maker-refund node-offline)
 case "$scenario" in
   all) for name in "${all[@]}"; do run_one "$name"; done ;;
   "") echo "usage: scripts/ui-e2e.sh <scenario|all> [--direction TakerSellsForeign|TakerSellsLez]" >&2; exit 64 ;;

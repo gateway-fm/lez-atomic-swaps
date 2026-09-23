@@ -483,6 +483,27 @@ for (const pkg of packages) {
     "must connect to its own typed process-isolated backend",
   );
   requirePattern(qmlFile, qml, /logos\.watch\s*\(/, "must observe typed QtRO slot completion");
+
+  // #91: the connection state must follow Node traffic, never view readiness.
+  for (const [pattern, message] of [
+    [/property string nodeLink: "checking"/, "must start with the Node channel unresolved"],
+    [/function linkUp\(\)[\s\S]{0,200}?nodeLink = "up"/, "must mark the Node channel up only in linkUp()"],
+    [/function linkDown\(reason\)[\s\S]{0,400}?nodeLink = "down"[\s\S]{0,300}?statusTitle = "Node unavailable"/, "must report an unreachable Node on the status strip"],
+    [/function backendLoaded\(\)[\s\S]{0,400}?nodeLink = "checking"/, "must treat a loaded backend as unresolved, not connected"],
+    [/root\.linkUp\(\)/, "must confirm the Node channel from a reply"],
+    [/root\.linkDown\(error\)/, "must break the Node channel on a transport failure"],
+    // The background poll is the only caller while a healthy desk sits idle,
+    // so its failure path must report without asking whether it was silent.
+    [/btcMarketReads = Math\.max\(0, root\.btcMarketReads - 1\)\s*\n\s*if \(!silent\) root\.output[^\n]*\n(\s*\/\/[^\n]*\n)*\s*root\.linkDown\(error\)/, "must report a failed background market poll"],
+  ]) {
+    requirePattern(qmlFile, qml, pattern, message);
+  }
+  for (const [pattern, message] of [
+    [/function backendLoaded\(\)[^}]*statusMode = "success"/, "must not claim a connection because the view loaded"],
+    [/function backendLoaded\(\)[^}]*statusTitle = "Node connected"/, "must not announce a connected Node before one replies"],
+  ]) {
+    rejectPattern(qmlFile, qml, pattern, message);
+  }
   for (const objectName of pkg.objects) {
     requirePattern(
       qmlFile,
