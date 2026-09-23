@@ -165,7 +165,7 @@ explicit repository-owner action unless separately authorized.
 |---|---|---|
 | M1 | Designs, threat model, LEZ verification, SDK surface, persistence/node decisions | Accepted proposal and current source reconciled |
 | M2 | ZEC transparent BIP-199/LEZ HTLC end to end | M1 HTLC/timelock design and Zebra test harness approved |
-| M3 | BTC Schnorr adaptor/Taproot end to end | DLC vectors and refund construction approved |
+| M3 | BTC Schnorr adaptor/Taproot end to end | Logos disposition of GW-M3-001 and refund construction approved |
 | M4 | XMR Ed25519 adaptor/cross-curve DLEQ end to end | COMIT vectors and key-share recovery design approved |
 | M5 | Persistent coordinator, daemon, CLIs, price plugins, fuzzing | At least one real pair adapter stable; RPC/persistence ADRs accepted |
 | M6 | Maker/taker Basecamp mini-apps | Daemon RPC stable and role E2E reusable |
