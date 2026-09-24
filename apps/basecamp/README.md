@@ -105,6 +105,19 @@ authority: whoever can run `docker exec` can already reach the Nodes.
    deploy/scripts/desk-sockets.py
    ```
 
+   With no arguments it serves both roles and addresses the containers
+   `lez-maker-node` and `lez-taker-node`. A stack brought up under another
+   Compose project name has another container prefix, so pass it — for a stack
+   whose containers are `r22-lez-maker-node` and `r22-lez-taker-node`:
+
+   ```sh
+   deploy/scripts/desk-sockets.py --prefix r22-lez
+   ```
+
+   `docker ps --format '{{.Names}}'` shows the names to match; `LEZ_CONTAINER_PREFIX`
+   sets the same thing. One role can be served alone by naming it, for example
+   `deploy/scripts/desk-sockets.py maker`.
+
 3. In a second terminal, start Basecamp from its executable so the desks'
    backends inherit the variables (`open -a` starts the app from launchd, which
    does not pass them):
