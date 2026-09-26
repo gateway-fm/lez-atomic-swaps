@@ -25,8 +25,20 @@ Monero exists only as `TakerSellsLez`, so there are five routes in total.
    zcash-cli getblockchaininfo >/dev/null 2>&1
    ```
 
-   It must be owned by `root` or by the service user, not group- or other-writable, executable,
-   and a single hard link. Install it mode `0755` outside the state directory.
+   Every one of these must hold, or the route reads unavailable:
+
+   - an absolute path to a regular file, **not a symlink**;
+   - owned by `root` or by the service user, not group- or other-writable, executable;
+   - exactly one hard link;
+   - **its directory** is also checked — owned by `root` or the service user, and not group-
+     or other-writable.
+
+   `install -D -m 0755` into a root-owned directory such as `/usr/local/lib/lez` satisfies
+   all of it. Keep it outside the state directory.
+
+   The directory rule catches people out: a probe that is itself perfect, sitting in a
+   world-writable directory, still reads unavailable, because anyone who can write the
+   directory can replace the file.
 
 2. Copy `route-health.json.example` to `/etc/lez/maker/route-health.json`, mode `0600`, owned by
    the service user. Replace each `program` with your probe's absolute path and each
@@ -39,13 +51,21 @@ Monero exists only as `TakerSellsLez`, so there are five routes in total.
    The digest is re-checked before and after **every** observation, so replacing the probe
    without updating it makes that route unavailable.
 
-3. Add the flag to `/etc/lez/maker/node.json`:
+3. Add the flag to the `arguments` array in `/etc/lez/maker/node.json` — the same array the
+   other flags are in, two entries, flag then value:
 
    ```json
-   "--route-health-config", "/etc/lez/maker/route-health.json"
+   {
+     "schema_version": 1,
+     "arguments": [
+       "--socket", "/run/lez/maker/node.sock",
+       "--route-health-config", "/etc/lez/maker/route-health.json"
+     ]
+   }
    ```
 
-   Optionally `"--route-health-poll-milliseconds", "1000"` to change the cadence.
+   Optionally `"--route-health-poll-milliseconds", "1000"` in the same array to change the
+   cadence from its one-second default.
 
 4. `systemctl daemon-reload && systemctl restart lez-maker-node`.
 
