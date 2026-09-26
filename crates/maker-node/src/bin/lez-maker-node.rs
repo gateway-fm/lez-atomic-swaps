@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, bail, ensure};
@@ -59,6 +59,9 @@ use tokio::{net::UnixListener, task::JoinSet};
 use xmr_reference_actor::{
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, validate_maker_manifest_config_bytes,
 };
+/// How rarely a route-health reconciliation failure may be written. The reconciliation ticks
+/// every second, so an unthrottled line per failure is a way to fill a disk.
+const ROUTE_HEALTH_LOG_INTERVAL: Duration = Duration::from_mins(1);
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
 type BtcChatAuthority = (
@@ -613,6 +616,8 @@ async fn main() -> anyhow::Result<()> {
     }
     let mut daemon_error = None;
     let route_health_enabled = context.route_health_is_configured();
+    let mut route_health_failures: u64 = 0;
+    let mut route_health_last_logged: Option<Instant> = None;
     let mut route_health_interval = tokio::time::interval(Duration::from_millis(
         arguments.route_health_poll_milliseconds.unwrap_or(1_000),
     ));
@@ -680,8 +685,25 @@ async fn main() -> anyhow::Result<()> {
                 // or clock error used to stop the daemon, and with Restart=on-failure and
                 // StartLimitBurst=3 a repeatable one left the unit dead. The next tick
                 // retries, and the withdrawal request ids are deterministic so it is idempotent.
-                if let Err(error) = result.context("join route health task").and_then(|value| value) {
-                    eprintln!("route health: reconciliation failed, retrying on the next tick: {error:#}");
+                match result.context("join route health task").and_then(|value| value) {
+                    Err(error) => {
+                        // Throttled, because this ticks every second: an error that persists
+                        // would otherwise write a line a second for as long as it lasts, and
+                        // filling the journal is its own outage. The count says how many were
+                        // suppressed, so a persistent fault still reads as persistent.
+                        route_health_failures += 1;
+                        if route_health_last_logged
+                            .is_none_or(|at| at.elapsed() >= ROUTE_HEALTH_LOG_INTERVAL)
+                        {
+                            eprintln!(
+                                "route health: reconciliation failed {route_health_failures} \
+                                 time(s), retrying on the next tick: {error:#}"
+                            );
+                            route_health_last_logged = Some(Instant::now());
+                            route_health_failures = 0;
+                        }
+                    }
+                    Ok(()) => route_health_failures = 0,
                 }
             }
             signal = &mut shutdown => {
