@@ -14,6 +14,7 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py restart-maker    Maker Node restarted between lock and its funding
     node-e2e.py survivor         Taker Node stopped after its LEZ claim; Maker completes alone
     node-e2e.py concurrent       two swaps interleaved end to end
+    node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py taker-refund     Maker stopped before funding; Taker refunds its Bitcoin
     node-e2e.py maker-refund     Taker never claims; Maker refunds LEZ, then Taker refunds Bitcoin
     node-e2e.py refund-then-maker-lock  Refund admitted, then a late-but-timely maker lock; the observer must still recover
@@ -316,6 +317,52 @@ def wait_completed(swap_id: str, timeout: int = 1800) -> None:
     raise Failure(f"Maker did not report {swap_id[:12]} completed/terminal")
 
 
+# Shapes RFP F2 asks for, checked on the real transaction rather than trusted from
+# the code that built it: a cooperative claim is an ordinary Taproot key-path spend
+# (one witness item, the 64-byte Schnorr signature, no script and no control block),
+# and a refund is the script path (signature, script, control block).
+BITCOIN_CLAIM_KINDS = ("revealing_claim", "followup_claim")
+BITCOIN_REFUND_KINDS = ("maker_refund", "taker_refund")
+
+
+def bitcoin_effects(swap_id: str, kinds: tuple[str, ...]) -> list[str]:
+    view = taker_view(swap_id)
+    return [effect["transaction_id"] for effect in (view.get("effects") or [])
+            if effect.get("chain") == "Bitcoin" and effect.get("kind") in kinds]
+
+
+def assert_witness_shape(transaction_id: str, items: int, label: str) -> None:
+    decoded = bitcoin("getrawtransaction", transaction_id, "1")
+    inputs = decoded["vin"]
+    if len(inputs) != 1:
+        raise Failure(f"{label} {transaction_id[:12]} spends {len(inputs)} inputs, expected one")
+    witness = inputs[0].get("txinwitness") or []
+    if len(witness) != items:
+        raise Failure(f"{label} {transaction_id[:12]} has {len(witness)} witness items, expected {items}: {witness}")
+    if items == 1 and len(witness[0]) != 128:
+        raise Failure(f"{label} {transaction_id[:12]} witness item is {len(witness[0]) // 2} bytes, expected a 64-byte Schnorr signature")
+
+
+def assert_cooperative_claim_is_key_path(swap_id: str) -> str:
+    """F2: the cooperative claim leaves no script footprint on Bitcoin."""
+    claims = bitcoin_effects(swap_id, BITCOIN_CLAIM_KINDS)
+    if len(claims) != 1:
+        raise Failure(f"expected one Bitcoin claim for {swap_id[:12]}, found {len(claims)}")
+    assert_witness_shape(claims[0], 1, "the cooperative Bitcoin claim")
+    log(f"  the Bitcoin claim {claims[0][:12]} is a Taproot key-path spend: one 64-byte signature, no script")
+    return claims[0]
+
+
+def assert_refund_is_script_path(swap_id: str) -> str | None:
+    """The refund is the other branch: signature, script, control block."""
+    refunds = bitcoin_effects(swap_id, BITCOIN_REFUND_KINDS)
+    if not refunds:
+        return None
+    assert_witness_shape(refunds[0], 3, "the Bitcoin refund")
+    log(f"  the Bitcoin refund {refunds[0][:12]} is a script-path spend: three witness items")
+    return refunds[0]
+
+
 def happy_swap(stamp: str, suffix: str = "") -> str:
     offer_id = publish_offer(stamp, suffix)
     swap_id, _ = take(offer_id, stamp, suffix)
@@ -329,7 +376,7 @@ def happy_swap(stamp: str, suffix: str = "") -> str:
 
 def scenario_happy(stamp: str) -> dict:
     swap_id = happy_swap(stamp)
-    return {"swap_id": swap_id}
+    return {"swap_id": swap_id, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
 def scenario_replay(stamp: str) -> dict:
@@ -465,6 +512,47 @@ def node_balances(role: str) -> dict:
             "lez_units": (view.get("lez") or {}).get("balance_atomic_units")}
 
 
+def scenario_early_lock(stamp: str) -> dict:
+    """R1: the Maker does not lock until the Taker's lock is confirmed.
+
+    Forward direction only. The Taker's lock is the Bitcoin one here, and on regtest the
+    harness decides when a transaction confirms: the miner is held so the lock sits in the
+    mempool, and the Maker must sit with it. Mirrored, the Taker's lock is LEZ on the devnet
+    sequencer, where nothing lets the harness withhold finality.
+    """
+    if REVERSE:
+        raise Failure("this scenario needs --direction TakerSellsForeign")
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    log("  stopping the miner so the Taker's lock stays unconfirmed")
+    docker("stop", "lez-btc-miner")
+    try:
+        txid = lock(swap_id)
+        confirmations = (bitcoin("getrawtransaction", txid, "1") or {}).get("confirmations", 0)
+        if confirmations:
+            raise Failure(f"the lock already has {confirmations} confirmations; the miner was not held")
+        # Long enough for the Maker's observer to have polled several times over.
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            phase = maker_phase(swap_id)
+            if phase not in ("offered", "reserved", "activated", "?", "unreachable"):
+                raise Failure(f"the Maker reached {phase} while the Taker's lock was unconfirmed")
+            if bitcoin_effects(swap_id, ("maker_lock",)):
+                raise Failure("the Maker locked before the Taker's lock confirmed")
+            time.sleep(5)
+        log(f"  the Maker stayed at {maker_phase(swap_id)} for 90s with the lock unconfirmed")
+        mine(1)
+        log("  the Taker's lock is confirmed; the Maker may now lock")
+        wait_maker_past_lock(swap_id, timeout=900)
+    finally:
+        docker("start", "lez-btc-miner")
+        wait_healthy("maker")
+    claim(swap_id, stamp)
+    wait_completed(swap_id)
+    return {"swap_id": swap_id, "lock_txid": txid,
+            "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+
+
 def scenario_concurrent(stamp: str) -> dict:
     ensure_coins("lez-maker" if REVERSE else "lez-taker", 2)
     ids = []
@@ -580,7 +668,8 @@ def scenario_taker_refund(stamp: str) -> dict:
         time.sleep(20)
     else:
         raise Failure("Maker did not reconcile the refunded swap to a terminal state")
-    return {"swap_id": swap_id, "lock_txid": txid, "taker_balance_before": before, "taker_balance_after": after}
+    return {"swap_id": swap_id, "lock_txid": txid, "taker_balance_before": before,
+            "taker_balance_after": after, "bitcoin_refund": assert_refund_is_script_path(swap_id)}
 
 
 STALE_GENERATION = "generation is stale"
@@ -645,7 +734,7 @@ def scenario_maker_refund(stamp: str) -> dict:
         time.sleep(20)
     request_refund_until_terminal(swap_id, stamp, timeout=1500)
     log("  both legs refunded")
-    return {"swap_id": swap_id}
+    return {"swap_id": swap_id, "bitcoin_refund": assert_refund_is_script_path(swap_id)}
 
 
 def wait_until(unix_seconds: float, describe: str) -> None:
@@ -820,6 +909,7 @@ SCENARIOS = {
     "restart-maker": lambda stamp: scenario_restart(stamp, "maker"),
     "survivor": scenario_survivor,
     "concurrent": scenario_concurrent,
+    "early-lock": scenario_early_lock,
     "taker-refund": scenario_taker_refund,
     "maker-refund": scenario_maker_refund,
     "refund-then-maker-lock": scenario_refund_admitted_then_maker_lock,
