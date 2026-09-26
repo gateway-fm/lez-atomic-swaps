@@ -15,6 +15,7 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py survivor         Taker Node stopped after its LEZ claim; Maker completes alone
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
+    node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
     node-e2e.py taker-refund     Maker stopped before funding; Taker refunds its Bitcoin
     node-e2e.py maker-refund     Taker never claims; Maker refunds LEZ, then Taker refunds Bitcoin
     node-e2e.py refund-then-maker-lock  Refund admitted, then a late-but-timely maker lock; the observer must still recover
@@ -572,6 +573,70 @@ def scenario_early_lock(stamp: str) -> dict:
             "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
+# Chat is a unix socket on the volume both Nodes share; Delivery is a directory the Maker
+# writes and the Taker reads. Renaming one and closing the other's mode is how the Rust
+# process tests cut them, and it needs no container restart.
+CHAT_SOCKET = "/run/lez/maker/chat.sock"
+CHAT_SOCKET_OFFLINE = "/run/lez/maker/chat.offline"
+
+
+def maker_health() -> dict:
+    return call("maker", "maker_health", {})
+
+
+def cut_delivery_and_chat() -> None:
+    docker("exec", "lez-maker-node", "mv", CHAT_SOCKET, CHAT_SOCKET_OFFLINE)
+    docker("exec", "lez-maker-node", "chmod", "0755", "/delivery")
+
+
+def restore_delivery_and_chat() -> None:
+    subprocess.run(["docker", "exec", "lez-maker-node", "mv", CHAT_SOCKET_OFFLINE, CHAT_SOCKET],
+                   check=False, capture_output=True)
+    subprocess.run(["docker", "exec", "lez-maker-node", "chmod", "0700", "/delivery"],
+                   check=False, capture_output=True)
+
+
+def scenario_offline_after_lock(stamp: str) -> dict:
+    """R2: once the first lock is on chain the swap proceeds on chain state alone.
+
+    Both off-chain dependencies are cut after the lock and stay down until the swap is
+    complete. Neither Node is restarted: the point is that a swap in flight does not need
+    Logos Chat or Delivery, not that it survives a restart.
+    """
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    lock(swap_id)
+    log("  cutting Logos Chat and Delivery, with the first lock already on chain")
+    cut_delivery_and_chat()
+    try:
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            health = maker_health()
+            if health.get("chat") == "unavailable" and health.get("delivery") == "unavailable":
+                break
+            time.sleep(5)
+        else:
+            raise Failure(f"the Maker did not report both dependencies unavailable: {json.dumps(health)[:200]}")
+        if not health.get("degraded"):
+            raise Failure("the Maker reports both dependencies unavailable but is not degraded")
+        log("  the Maker reports chat and delivery unavailable, and degraded")
+        claim(swap_id, stamp)
+        wait_completed(swap_id)
+        log("  the swap completed with both off-chain dependencies down")
+    finally:
+        restore_delivery_and_chat()
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        health = maker_health()
+        if not health.get("degraded"):
+            log("  both dependencies are back and the Maker is no longer degraded")
+            break
+        time.sleep(5)
+    else:
+        raise Failure(f"the Maker stayed degraded after both dependencies returned: {json.dumps(health)[:200]}")
+    return {"swap_id": swap_id, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+
+
 def scenario_concurrent(stamp: str) -> dict:
     ensure_coins("lez-maker" if REVERSE else "lez-taker", 2)
     ids = []
@@ -931,6 +996,7 @@ SCENARIOS = {
     "survivor": scenario_survivor,
     "concurrent": scenario_concurrent,
     "early-lock": scenario_early_lock,
+    "offline-after-lock": scenario_offline_after_lock,
     "taker-refund": scenario_taker_refund,
     "maker-refund": scenario_maker_refund,
     "refund-then-maker-lock": scenario_refund_admitted_then_maker_lock,
