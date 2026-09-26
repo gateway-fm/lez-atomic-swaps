@@ -332,6 +332,15 @@ def bitcoin_effects(swap_id: str, kinds: tuple[str, ...]) -> list[str]:
             if effect.get("chain") == "Bitcoin" and effect.get("kind") in kinds]
 
 
+def maker_lez_lock_effect(swap_id: str) -> str | None:
+    """The Maker's own record of its LEZ lock. Anything not on Bitcoin is the LEZ leg, so
+    this does not depend on how the chain is spelled in the view."""
+    for effect in (maker_view(swap_id).get("effects") or []):
+        if effect.get("chain") != "Bitcoin" and effect.get("kind") == "maker_lock":
+            return effect.get("transaction_id")
+    return None
+
+
 def assert_witness_shape(transaction_id: str, items: int, label: str) -> None:
     decoded = bitcoin("getrawtransaction", transaction_id, "1")
     inputs = decoded["vin"]
@@ -538,8 +547,11 @@ def scenario_early_lock(stamp: str) -> dict:
             phase = maker_phase(swap_id)
             if phase not in ("offered", "reserved", "activated", "?", "unreachable"):
                 raise Failure(f"the Maker reached {phase} while the Taker's lock was unconfirmed")
-            if bitcoin_effects(swap_id, ("maker_lock",)):
-                raise Failure("the Maker locked before the Taker's lock confirmed")
+            # Forward the Maker's lock is the LEZ one, so it is the Maker's own record that
+            # has to stay empty; a Bitcoin effect filter would never match and would leave
+            # this assertion always true.
+            if maker_lez_lock_effect(swap_id) is not None:
+                raise Failure("the Maker locked LEZ before the Taker's lock confirmed")
             time.sleep(5)
         log(f"  the Maker stayed at {maker_phase(swap_id)} for 90s with the lock unconfirmed")
         mine(1)
