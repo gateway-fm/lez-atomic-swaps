@@ -733,6 +733,15 @@ pub struct SwapCoordinator {
     #[serde(alias = "refund_schedule")]
     recovery_schedule: RecoverySchedule,
     phase: Phase,
+    /// Whether each leg's funding currently satisfies its own confirmation policy.
+    ///
+    /// `phase` alone cannot say this: it is one variable for two independent legs, so a
+    /// regression on one leg is lost whenever the other leg is already the reason for the
+    /// phase. Claim authority asks both of these, never the phase alone.
+    #[serde(default)]
+    taker_funding_confirmed: bool,
+    #[serde(default)]
+    maker_funding_confirmed: bool,
     #[serde(default)]
     taker_lock_transaction_id: Option<Box<str>>,
     #[serde(default)]
@@ -767,6 +776,8 @@ impl SwapCoordinator {
             maker_confirmation_policy: default_maker_confirmation_policy(),
             recovery_schedule,
             phase: Phase::Offered,
+            taker_funding_confirmed: false,
+            maker_funding_confirmed: false,
             taker_lock_transaction_id: None,
             maker_lock_transaction_id: None,
             claim_evidence: None,
@@ -794,6 +805,8 @@ impl SwapCoordinator {
             maker_confirmation_policy: default_maker_confirmation_policy(),
             recovery_schedule,
             phase: Phase::Offered,
+            taker_funding_confirmed: false,
+            maker_funding_confirmed: false,
             taker_lock_transaction_id: None,
             maker_lock_transaction_id: None,
             claim_evidence: None,
@@ -822,6 +835,8 @@ impl SwapCoordinator {
             maker_confirmation_policy,
             recovery_schedule,
             phase: Phase::Offered,
+            taker_funding_confirmed: false,
+            maker_funding_confirmed: false,
             taker_lock_transaction_id: None,
             maker_lock_transaction_id: None,
             claim_evidence: None,
@@ -968,6 +983,11 @@ impl SwapCoordinator {
         if self.taker_lock_transaction_id.as_deref() != Some(transaction_id) {
             return Err(Error::ConflictingTakerLock);
         }
+        // Recorded before the phase dispatch: the leg is gone whatever the phase already
+        // says about the other one. The `_` arm below drops the transition when the maker
+        // leg is the reason for the phase, and that is exactly when claim authority must
+        // still know this leg left the chain.
+        self.taker_funding_confirmed = false;
         match self.phase {
             Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed => {
                 self.taker_lock_transaction_id = None;
@@ -1005,6 +1025,9 @@ impl SwapCoordinator {
         if self.maker_lock_transaction_id.as_deref() != Some(transaction_id) {
             return Err(Error::ConflictingMakerLock);
         }
+        // As above, and for the same reason: a maker removal while the taker leg is already
+        // the reason for the phase used to be dropped entirely.
+        self.maker_funding_confirmed = false;
         match self.phase {
             Phase::AwaitingMakerConfirmations => {
                 self.maker_lock_transaction_id = None;
@@ -1043,6 +1066,9 @@ impl SwapCoordinator {
         }
         self.taker_lock_transaction_id = Some(proof.transaction_id);
         let confirmed = proof.confirmations >= self.confirmation_policy.required();
+        // Every observation, including the phases the table below leaves alone — a depth
+        // regression during AwaitingMakerConfirmations used to be dropped.
+        self.taker_funding_confirmed = confirmed;
         self.phase = match (self.phase, confirmed) {
             (
                 Phase::Offered | Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed,
@@ -1081,6 +1107,7 @@ impl SwapCoordinator {
             if self.maker_lock_transaction_id.as_deref() != Some(proof.transaction_id()) {
                 return Err(Error::ConflictingMakerLock);
             }
+            self.maker_funding_confirmed = confirmed;
             self.phase = match (self.phase, confirmed) {
                 (Phase::AwaitingMakerConfirmations, false) => Phase::AwaitingMakerConfirmations,
                 (Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable, false) => {
@@ -1104,11 +1131,28 @@ impl SwapCoordinator {
             };
         }
         self.maker_lock_transaction_id = Some(proof.transaction_id);
+        self.maker_funding_confirmed = confirmed;
         self.phase = if confirmed {
             Phase::BothLegsLocked
         } else {
             Phase::AwaitingMakerConfirmations
         };
+        Ok(())
+    }
+
+    /// Refuses claim authority unless both legs are funded and confirmed right now.
+    ///
+    /// The phase cannot answer this on its own. It is a single variable describing two
+    /// independent legs, so the transition that records a regression on one leg is dropped
+    /// whenever the other leg is already the reason for the phase; the leg then reads as
+    /// locked while its funding is absent or short of policy. Both claims ask here.
+    fn both_legs_funded(&self) -> Result<(), Error> {
+        if !self.taker_funding_confirmed || self.taker_lock_transaction_id.is_none() {
+            return Err(Error::TakerLockNotConfirmed);
+        }
+        if !self.maker_funding_confirmed || self.maker_lock_transaction_id.is_none() {
+            return Err(Error::MakerLockNotConfirmed);
+        }
         Ok(())
     }
 
@@ -1136,6 +1180,7 @@ impl SwapCoordinator {
         if self.phase == Phase::MakerLockReorged {
             return Err(Error::MakerLockNotConfirmed);
         }
+        self.both_legs_funded()?;
         if self.phase != Phase::BothLegsLocked {
             return match (
                 self.revealing_claim_transaction_id.as_deref(),
@@ -1182,6 +1227,7 @@ impl SwapCoordinator {
         if self.phase == Phase::MakerLockReorged {
             return Err(Error::MakerLockNotConfirmed);
         }
+        self.both_legs_funded()?;
         if self.phase != Phase::ClaimEvidenceAvailable {
             return match self.followup_claim_transaction_id.as_deref() {
                 Some(known) if known == proof.transaction_id() => Ok(()),

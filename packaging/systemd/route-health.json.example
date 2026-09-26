@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "commands": [
+    {
+      "route": { "pair": "Zcash", "direction": "TakerSellsForeign" },
+      "program": "/usr/local/lib/lez/route-health-zcash",
+      "program_sha256": "REPLACE_WITH_64_HEX_CHARACTERS",
+      "args": [],
+      "timeout_milliseconds": 2000
+    },
+    {
+      "route": { "pair": "Zcash", "direction": "TakerSellsLez" },
+      "program": "/usr/local/lib/lez/route-health-zcash",
+      "program_sha256": "REPLACE_WITH_64_HEX_CHARACTERS",
+      "args": [],
+      "timeout_milliseconds": 2000
+    }
+  ]
+}
