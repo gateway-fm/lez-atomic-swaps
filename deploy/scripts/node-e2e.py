@@ -232,20 +232,6 @@ def taker_view(swap_id: str) -> dict:
     raise Failure("unreachable")
 
 
-def taker_swaps() -> list[dict]:
-    # Same race as taker_view: listing opens every swap's state store, so the one
-    # the observer happens to hold makes the whole call fail. A read that loses
-    # that race is not an outage, and a scenario must not fail on it.
-    for attempt in range(12):
-        reply = rpc("taker", "taker_swap_list_v1", {"schema_version": 1})
-        if "result" in reply:
-            return reply["result"]["swaps"]
-        if (reply["error"].get("data") or {}).get("category") != "taker_monitor_unavailable" or attempt == 11:
-            raise Failure(f"taker taker_swap_list_v1 failed: {json.dumps(reply['error'])[:300]}")
-        time.sleep(5)
-    raise Failure("unreachable")
-
-
 def maker_view(swap_id: str) -> dict:
     return call("maker", "maker_actor_monitor_v1", {"id": swap_id})
 
@@ -419,7 +405,7 @@ def scenario_replay(stamp: str) -> dict:
         raise Failure(f"claim replay was not idempotent: {replay}")
     log("  claim replayed")
     wait_completed(swap_id)
-    listed = [s for s in taker_swaps() if s["swap_id"] == swap_id]
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
     if len(listed) != 1 or listed[0]["state"] != "completed":
         raise Failure(f"swap list disagrees after replays: {listed}")
     return {"swap_id": swap_id, "lock_txid": txid}
@@ -947,7 +933,7 @@ def scenario_regenerated_config(stamp: str) -> dict:
     log("  restarting the Taker Node onto the re-rendered configuration")
     docker("restart", NODES["taker"][0])
     wait_healthy("taker")
-    listed = [s for s in taker_swaps() if s["swap_id"] == swap_id]
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
     if len(listed) != 1 or listed[0]["state"] in TERMINAL:
         raise Failure(f"the swap did not reload after the restart: {listed}")
     log(f"  swap {swap_id[:12]} reloaded as {listed[0]['state']}")
@@ -968,7 +954,7 @@ def scenario_tampered_config(stamp: str) -> dict:
     log("  appended one byte to the swap's copied taker-role-config.json")
     docker("restart", NODES["taker"][0])
     wait_healthy("taker")
-    listed = [s for s in taker_swaps() if s["swap_id"] == swap_id]
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
     state = listed[0]["state"] if listed else "absent"
     lock_reply = rpc("taker", "taker_swap_lock_v1", {"schema_version": 1, "swap_id": swap_id}, timeout=120)
     if "result" in lock_reply:
