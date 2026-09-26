@@ -362,10 +362,17 @@ def assert_cooperative_claim_is_key_path(swap_id: str) -> str:
     return claims[0]
 
 
-def assert_refund_is_script_path(swap_id: str) -> str | None:
-    """The refund is the other branch: signature, script, control block."""
+def assert_refund_is_script_path(swap_id: str, required: bool) -> str | None:
+    """The refund is the other branch: signature, script, control block.
+
+    Only one leg of a swap is Bitcoin, so a scenario that refunds the LEZ leg alone has
+    nothing to assert here. The caller knows which it is and says so, because "no Bitcoin
+    refund was recorded" must not be allowed to pass for "the refund had the right shape".
+    """
     refunds = bitcoin_effects(swap_id, BITCOIN_REFUND_KINDS)
     if not refunds:
+        if required:
+            raise Failure(f"no Bitcoin refund was recorded for {swap_id[:12]}")
         return None
     assert_witness_shape(refunds[0], 3, "the Bitcoin refund")
     log(f"  the Bitcoin refund {refunds[0][:12]} is a script-path spend: three witness items")
@@ -681,7 +688,8 @@ def scenario_taker_refund(stamp: str) -> dict:
     else:
         raise Failure("Maker did not reconcile the refunded swap to a terminal state")
     return {"swap_id": swap_id, "lock_txid": txid, "taker_balance_before": before,
-            "taker_balance_after": after, "bitcoin_refund": assert_refund_is_script_path(swap_id)}
+            "taker_balance_after": after,
+            "bitcoin_refund": assert_refund_is_script_path(swap_id, required=not REVERSE)}
 
 
 STALE_GENERATION = "generation is stale"
@@ -746,7 +754,8 @@ def scenario_maker_refund(stamp: str) -> dict:
         time.sleep(20)
     request_refund_until_terminal(swap_id, stamp, timeout=1500)
     log("  both legs refunded")
-    return {"swap_id": swap_id, "bitcoin_refund": assert_refund_is_script_path(swap_id)}
+    return {"swap_id": swap_id,
+            "bitcoin_refund": assert_refund_is_script_path(swap_id, required=True)}
 
 
 def wait_until(unix_seconds: float, describe: str) -> None:
