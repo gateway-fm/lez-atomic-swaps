@@ -557,13 +557,26 @@ async fn main() -> anyhow::Result<()> {
     let context = maker_context(&arguments, pair_authorities, logos_price_source)?;
     let context = attach_chat_health(context, arguments.chat_socket.as_deref());
     let context = match route_health_probe {
-        Some(probe) => context.with_route_health_probe(Arc::new(probe)),
+        Some(probe) => {
+            // A route whose probe executable is missing or changed reads unavailable; it
+            // does not stop the Maker, and it recovers without a restart once the operator
+            // puts the executable in place. Name them so nobody has to guess.
+            for route in probe.unverified_routes() {
+                eprintln!(
+                    "route health: {route:?} has no usable probe executable; this route is \
+                     unavailable until it is installed"
+                );
+            }
+            context.with_route_health_probe(Arc::new(probe))
+        }
         None => context,
     };
     if context.route_health_is_configured() {
-        context
-            .reconcile_route_health()
-            .context("perform initial route-health reconciliation")?;
+        // Best effort: the offers this would withdraw are withdrawn by the periodic
+        // reconciliation too, and a Maker that refuses to start helps nobody.
+        if let Err(error) = context.reconcile_route_health() {
+            eprintln!("route health: initial reconciliation failed, continuing: {error}");
+        }
     }
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
@@ -663,11 +676,12 @@ async fn main() -> anyhow::Result<()> {
             }
             result = route_health_tasks.join_next(), if !route_health_tasks.is_empty() => {
                 let result = result.expect("enabled route health task is present");
+                // Logged degradation, not an exit. This runs every second; a transient store
+                // or clock error used to stop the daemon, and with Restart=on-failure and
+                // StartLimitBurst=3 a repeatable one left the unit dead. The next tick
+                // retries, and the withdrawal request ids are deterministic so it is idempotent.
                 if let Err(error) = result.context("join route health task").and_then(|value| value) {
-                    daemon_error = Some(error.context("reconcile route health"));
-                    notify_stopping();
-                    supervisor_cancellation.cancel();
-                    break;
+                    eprintln!("route health: reconciliation failed, retrying on the next tick: {error:#}");
                 }
             }
             signal = &mut shutdown => {
