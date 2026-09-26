@@ -87,6 +87,7 @@ bash -n "${shell_files[@]}"
 ./scripts/check-runtime-profiles.py
 node ./scripts/check-m6-prototype-contract.mjs
 node ./scripts/check-m6-basecamp-package-contract.mjs
+./scripts/check-desk-views-generated.sh
 
 mapfile -d '' workflow_files < <(
   git ls-files --cached --others --exclude-standard -z -- \

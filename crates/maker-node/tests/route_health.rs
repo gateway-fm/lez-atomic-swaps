@@ -312,3 +312,120 @@ async fn daemon_periodically_withdraws_without_a_health_request() {
     kill_process(Pid::from_child(&daemon.0), Signal::TERM).expect("stop Maker daemon");
     assert!(daemon.0.wait().unwrap().success());
 }
+
+/// A probe executable that is not on this machine must not stop the Maker.
+///
+/// Before this, `from_json_bytes` rejected the whole configuration for one bad program and the
+/// error left `main` before the owner socket was bound, so an operator without the tooling for
+/// one chain could not start the daemon at all — for any chain. The route now reads unavailable,
+/// the other routes are unaffected, and it recovers without a restart once the executable is in
+/// place, which is what the runtime identity check has always done.
+#[tokio::test]
+async fn a_missing_probe_executable_degrades_its_route_and_the_daemon_still_starts() {
+    let run = tempdir().expect("isolated process run");
+    fs::set_permissions(run.path(), fs::Permissions::from_mode(0o700)).unwrap();
+
+    // One healthy probe, and one the operator has not installed.
+    let worker = run.path().join("semantic-health");
+    fs::write(&worker, b"#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&worker, fs::Permissions::from_mode(0o500)).unwrap();
+    let worker_sha256: [u8; 32] = Sha256::digest(fs::read(&worker).unwrap()).into();
+    let absent = run.path().join("chain-tooling-we-do-not-have");
+
+    let health_config = run.path().join("route-health.json");
+    fs::write(
+        &health_config,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "commands": [
+                {
+                    "route": {"pair": "Zcash", "direction": "TakerSellsLez"},
+                    "program": worker,
+                    "program_sha256": hex::encode(worker_sha256),
+                    "args": [],
+                    "timeout_milliseconds": 100
+                },
+                {
+                    "route": {"pair": "Zcash", "direction": "TakerSellsForeign"},
+                    "program": absent,
+                    "program_sha256": hex::encode([7_u8; 32]),
+                    "args": [],
+                    "timeout_milliseconds": 100
+                }
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::set_permissions(&health_config, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let socket = run.path().join("maker.sock");
+    let ready = run.path().join("ready");
+    let database = run.path().join("maker.sqlite3");
+    let child = Command::new(env!("CARGO_BIN_EXE_lez-maker-node"))
+        .arg("--socket")
+        .arg(&socket)
+        .arg("--database")
+        .arg(&database)
+        .arg("--ready-file")
+        .arg(&ready)
+        .arg("--route-health-config")
+        .arg(&health_config)
+        .arg("--route-health-poll-milliseconds")
+        .arg("100")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start Maker daemon with one uninstalled probe");
+    let mut daemon = ChildGuard(child);
+    wait_ready(&mut daemon.0, &ready, &socket);
+
+    // Health reports one row per configured pair, so both routes have to exist to be compared.
+    for (index, direction) in [
+        SwapDirection::TakerSellsLez,
+        SwapDirection::TakerSellsForeign,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let configured = route(Pair::Zcash, direction);
+        let save = lez_maker_node::LocalRouteSaveRequest {
+            request_id: RequestId::new(format!("m7-missing-probe-route-{index}").as_str()).unwrap(),
+            expected_pair_revision: None,
+            expected_price_revision: None,
+            configuration: MakerPairConfigurationV1::new(
+                configured,
+                true,
+                MakerPriceSourceKind::Local,
+                1,
+                1_000,
+                300,
+            )
+            .unwrap(),
+            price: LocalPriceV1::new(configured, 5, 1).unwrap(),
+        };
+        let _: MakerLocalRouteCommit =
+            lez_maker_node::call_local_rpc(&socket, "maker_local_route_save_v1", &save)
+                .await
+                .expect("configure the route so health reports it");
+    }
+
+    let health: lez_maker_node::MakerHealthV1 =
+        lez_maker_node::call_local_rpc(&socket, "maker_health", &ListRequest::default())
+            .await
+            .expect("the daemon serves its owner socket");
+    assert_eq!(
+        health.route_state(route(Pair::Zcash, SwapDirection::TakerSellsForeign)),
+        MakerDependencyStateV1::Unavailable,
+        "the route whose probe is missing must read unavailable"
+    );
+    assert_eq!(
+        health.route_state(route(Pair::Zcash, SwapDirection::TakerSellsLez)),
+        MakerDependencyStateV1::Available,
+        "a route with a usable probe must be unaffected by another route's missing one"
+    );
+
+    kill_process(Pid::from_child(&daemon.0), Signal::TERM).expect("stop Maker daemon");
+    assert!(daemon.0.wait().unwrap().success());
+}
