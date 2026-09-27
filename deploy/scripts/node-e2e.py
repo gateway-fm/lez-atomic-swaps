@@ -244,6 +244,19 @@ def maker_phase(swap_id: str) -> str:
     return ((view.get("progress") or {}).get("observation") or {}).get("phase") or view.get("schedule_state") or "?"
 
 
+# Every `Phase` except `offered`, i.e. every observation the Maker can report that proves it
+# has seen the Taker's lock on chain. Written as what disqualifies rather than what is allowed
+# because maker_phase() falls back to the Maker's *scheduler* state when there is no
+# observation yet — `leased`, `reserved`, `activated` and friends are not phases at all, and an
+# allowlist of them cannot be complete. Getting that wrong fails a scenario that is working.
+MAKER_OBSERVED_TAKER_LOCK = (
+    "awaiting_taker_confirmations", "taker_lock_confirmed", "awaiting_maker_confirmations",
+    "both_legs_locked", "taker_lock_reorged", "maker_lock_reorged", "claim_evidence_available",
+    "completed", "maker_leg_refunded", "taker_leg_refunded", "refunded",
+    "maker_recovery_available",
+)
+
+
 def wait_maker_past_lock(swap_id: str, timeout: int = 600) -> str:
     """Waits until the Maker's own record shows its lock is in, which is what
     frees the one LEZ escrow slot for the next Taker-sells-BTC swap."""
@@ -551,7 +564,7 @@ def scenario_early_lock(stamp: str) -> dict:
         deadline = time.time() + 90
         while time.time() < deadline:
             phase = maker_phase(swap_id)
-            if phase not in ("offered", "reserved", "activated", "?", "unreachable"):
+            if phase in MAKER_OBSERVED_TAKER_LOCK:
                 raise Failure(f"the Maker reached {phase} while the Taker's lock was unconfirmed")
             # Forward the Maker's lock is the LEZ one, so it is the Maker's own record that
             # has to stay empty; a Bitcoin effect filter would never match and would leave
