@@ -1031,6 +1031,8 @@ fn completed_role_journals_activate_without_disclosing_taker_claim_partial() {
             },
             "phase": "Offered",
             "taker_lock_transaction_id": null,
+            "taker_funding_confirmed": false,
+            "maker_funding_confirmed": false,
             "maker_lock_transaction_id": null,
             "claim_evidence": null,
             "revealing_claim_transaction_id": null,

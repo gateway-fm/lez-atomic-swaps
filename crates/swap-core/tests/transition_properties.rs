@@ -9,6 +9,7 @@ enum Action {
     TakerLock { confirmations: u32, alternate: bool },
     RemoveTakerLock { alternate: bool },
     MakerLock { alternate: bool },
+    RemoveMakerLock { alternate: bool },
     MakerClaim { secret_byte: u8 },
     TakerClaim { alternate: bool },
     RefundMaker { now: u64 },
@@ -24,6 +25,7 @@ fn actions() -> impl Strategy<Value = Vec<Action>> {
             }),
             any::<bool>().prop_map(|alternate| Action::RemoveTakerLock { alternate }),
             any::<bool>().prop_map(|alternate| Action::MakerLock { alternate }),
+            any::<bool>().prop_map(|alternate| Action::RemoveMakerLock { alternate }),
             any::<u8>().prop_map(|secret_byte| Action::MakerClaim { secret_byte }),
             any::<bool>().prop_map(|alternate| Action::TakerClaim { alternate }),
             (0_u64..150).prop_map(|now| Action::RefundMaker { now }),
@@ -66,6 +68,11 @@ proptest! {
     ) {
         let mut swap = coordinator();
         let mut terminal = None;
+        // What the chain says about each leg, tracked independently of `phase` — which is
+        // the whole point: one variable cannot describe two legs, and a claim must never be
+        // authorised off it. Kept deliberately crude so it mirrors nothing but the events.
+        let mut taker_funded = false;
+        let mut maker_funded = false;
 
         for action in actions {
             let before = swap.phase();
@@ -90,6 +97,9 @@ proptest! {
                     )
                     .unwrap(),
                 ),
+                Action::RemoveMakerLock { alternate } => swap.observe_maker_lock_removed(
+                    transaction_id("lez-lock", "other-lez-lock", alternate),
+                ),
                 Action::MakerClaim { secret_byte } => {
                     swap.observe_revealing_claim(
                         swap.first_claimant(),
@@ -113,6 +123,32 @@ proptest! {
                 }
             };
             let after = swap.phase();
+
+            if result.is_ok() {
+                // A lock observation in a terminal phase is accepted and deliberately
+                // changes nothing, so the model must not move either.
+                let settled = matches!(before, Phase::Completed | Phase::Refunded);
+                match action {
+                    Action::TakerLock { confirmations, .. } if !settled => {
+                        taker_funded = confirmations >= 2;
+                    }
+                    Action::RemoveTakerLock { .. } => taker_funded = false,
+                    Action::MakerLock { .. } if !settled => maker_funded = true,
+                    Action::RemoveMakerLock { .. } => maker_funded = false,
+                    _ => {}
+                }
+                // The property the reported defect broke: claim authority is never granted
+                // while either leg is off the chain or short of its policy, whatever the
+                // phase happens to say. Both claims are gated, so this holds for replays
+                // too — an accepted claim always means both legs are funded right now.
+                if matches!(action, Action::MakerClaim { .. } | Action::TakerClaim { .. }) {
+                    prop_assert!(
+                        taker_funded && maker_funded,
+                        "claim accepted in phase {before:?} with taker_funded={taker_funded} \
+                         maker_funded={maker_funded}"
+                    );
+                }
+            }
 
             if let Some(expected_terminal) = terminal {
                 prop_assert_eq!(after, expected_terminal);

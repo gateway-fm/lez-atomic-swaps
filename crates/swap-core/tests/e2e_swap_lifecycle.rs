@@ -414,3 +414,144 @@ fn reverse_zec_maker_confirmation_regression_suspends_and_restores_claims() {
     .unwrap();
     assert_eq!(swap.phase(), Phase::BothLegsLocked);
 }
+
+/// Both legs regress, then only one comes back: the claim must still be refused.
+///
+/// `phase` is one variable for two independent legs. The second removal landed on a phase
+/// that already named the first leg's regression and was dropped, so restoring the first leg
+/// set `BothLegsLocked` and the claim was authorised with the other leg absent from the chain.
+#[test]
+fn a_leg_that_is_still_off_chain_refuses_the_claim_after_the_other_leg_returns() {
+    let mut swap = coordinator(Pair::Zcash);
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("taker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("maker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(swap.phase(), Phase::BothLegsLocked);
+
+    swap.observe_funding_removed(Participant::Taker, "taker-lock")
+        .unwrap();
+    swap.observe_funding_removed(Participant::Maker, "maker-lock")
+        .unwrap();
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("taker-lock", 2).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        swap.observe_revealing_claim(
+            swap.first_claimant(),
+            ChainProof::new("revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([4; 32]),
+        ),
+        Err(Error::MakerLockNotConfirmed),
+        "the maker leg never came back, so no phase may authorise a claim"
+    );
+
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("maker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    swap.observe_revealing_claim(
+        swap.first_claimant(),
+        ChainProof::new("revealing-claim", 1).unwrap(),
+        ClaimEvidence::new([4; 32]),
+    )
+    .expect("both legs are canonical again, so the claim is authorised");
+}
+
+/// A taker leg that leaves and returns must not vouch for a maker leg still short of policy.
+#[test]
+fn a_taker_leg_returning_does_not_confirm_a_maker_leg_that_never_met_policy() {
+    let mut swap = SwapCoordinator::new_with_confirmation_policies(
+        SwapId::new("swap-002").unwrap(),
+        Pair::Zcash,
+        SwapDirection::TakerSellsForeign,
+        ConfirmationPolicy::new(2).unwrap(),
+        ConfirmationPolicy::new(3).unwrap(),
+        schedule(Pair::Zcash, SwapDirection::TakerSellsForeign),
+    );
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("taker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("maker-lock", 1).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(swap.phase(), Phase::AwaitingMakerConfirmations);
+
+    swap.observe_funding_removed(Participant::Taker, "taker-lock")
+        .unwrap();
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("taker-lock", 2).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        swap.observe_revealing_claim(
+            swap.first_claimant(),
+            ChainProof::new("revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([5; 32]),
+        ),
+        Err(Error::MakerLockNotConfirmed),
+        "the maker leg has one confirmation against a policy of three"
+    );
+}
+
+/// A taker depth regression while the maker leg is still confirming must not be forgotten.
+#[test]
+fn a_taker_depth_regression_while_the_maker_leg_confirms_is_remembered() {
+    let mut swap = SwapCoordinator::new_with_confirmation_policies(
+        SwapId::new("swap-003").unwrap(),
+        Pair::Zcash,
+        SwapDirection::TakerSellsForeign,
+        ConfirmationPolicy::new(2).unwrap(),
+        ConfirmationPolicy::new(3).unwrap(),
+        schedule(Pair::Zcash, SwapDirection::TakerSellsForeign),
+    );
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("taker-lock", 2).unwrap(),
+    )
+    .unwrap();
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("maker-lock", 1).unwrap(),
+    )
+    .unwrap();
+    // The taker's funding shallows while the maker leg is still confirming. The phase table
+    // leaves AwaitingMakerConfirmations alone, so only the per-leg record carries this.
+    swap.observe_funding(
+        Participant::Taker,
+        ChainProof::new("taker-lock", 1).unwrap(),
+    )
+    .unwrap();
+    swap.observe_funding(
+        Participant::Maker,
+        ChainProof::new("maker-lock", 3).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(swap.phase(), Phase::BothLegsLocked);
+
+    assert_eq!(
+        swap.observe_revealing_claim(
+            swap.first_claimant(),
+            ChainProof::new("revealing-claim", 1).unwrap(),
+            ClaimEvidence::new([6; 32]),
+        ),
+        Err(Error::TakerLockNotConfirmed),
+        "the taker leg sits below its policy, whatever the phase says"
+    );
+}
