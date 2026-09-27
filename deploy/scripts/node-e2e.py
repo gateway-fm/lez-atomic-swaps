@@ -550,16 +550,59 @@ def node_balances(role: str) -> dict:
             "lez_units": (view.get("lez") or {}).get("balance_atomic_units")}
 
 
+def scenario_early_lock_reverse(stamp: str) -> dict:
+    """R1 mirrored: the Taker locks LEZ, so the lock the Maker must not act on early is
+    the LEZ one, and the lock the Maker must not send is Bitcoin.
+
+    Nothing can hold a LEZ transaction out of a block the way the miner holds a Bitcoin
+    one, so the Maker's sight of LEZ is cut instead: its loopback forwarder to the indexer
+    is stopped while the Taker locks. The lock is real and finalizes on time; the Maker
+    simply cannot see it, which is the same thing its observer faces when the chain is
+    behind. It must not lock Bitcoin on a first leg it has not observed.
+    """
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    log("  cutting the Maker's view of LEZ so it cannot see the Taker's lock")
+    cut_lez_view("maker")
+    try:
+        wait_lez_view("maker", restored=False)
+        lock(swap_id)
+        log("  the Taker's LEZ lock is sent, and the Maker is blind to it")
+        # Long enough for the Maker's observer to have polled several times over.
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            phase = maker_phase(swap_id)
+            if phase in MAKER_OBSERVED_TAKER_LOCK:
+                raise Failure(f"the Maker reached {phase} without having seen the Taker's lock")
+            if bitcoin_effects(swap_id, ("maker_lock",)):
+                raise Failure(
+                    "the Maker locked Bitcoin before observing the Taker's lock. Its reads "
+                    "over 127.0.0.1:8779 were already failing when this started, so either it "
+                    "sees LEZ by some route other than the indexer forwarder — in which case "
+                    "the mechanism cannot withhold the first leg and this scenario is wrong — "
+                    "or it locks on a leg it has not observed, which is the R1 defect itself")
+            time.sleep(5)
+        log(f"  the Maker stayed at {maker_phase(swap_id)} for 90s, blind to the first leg")
+    finally:
+        restore_lez_view("maker")
+    wait_lez_view("maker", restored=True)
+    log("  the Maker can see LEZ again; it may now lock")
+    wait_maker_past_lock(swap_id, timeout=900)
+    claim(swap_id, stamp)
+    wait_completed(swap_id)
+    return {"swap_id": swap_id, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+
+
 def scenario_early_lock(stamp: str) -> dict:
     """R1: the Maker does not lock until the Taker's lock is confirmed.
 
-    Forward direction only. The Taker's lock is the Bitcoin one here, and on regtest the
-    harness decides when a transaction confirms: the miner is held so the lock sits in the
-    mempool, and the Maker must sit with it. Mirrored, the Taker's lock is LEZ on the devnet
-    sequencer, where nothing lets the harness withhold finality.
+    Forward the Taker's lock is the Bitcoin one, and on regtest the harness decides when a
+    transaction confirms: the miner is held so the lock sits in the mempool, and the Maker
+    must sit with it. Mirrored the Taker's lock is LEZ, which has no mempool to hold it in,
+    so scenario_early_lock_reverse withholds the Maker's sight of it instead.
     """
     if REVERSE:
-        raise Failure("this scenario needs --direction TakerSellsForeign")
+        return scenario_early_lock_reverse(stamp)
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     log("  stopping the miner so the Taker's lock stays unconfirmed")
@@ -863,6 +906,129 @@ def wait_mempool_transaction(timeout: float) -> str:
     raise Failure(f"no Maker lock reached the mempool within {int(timeout)}s; the scenario cannot make it late")
 
 
+# The Node containers reach the chains over loopback forwarders their entrypoint
+# starts, one socat per service. Stopping the Taker's forwarder to the LEZ indexer
+# blinds the Taker to LEZ and nothing else: the Maker keeps its own, so its lock
+# is submitted, included and finalized on time. That is the LEZ counterpart of
+# holding a Bitcoin lock in the mempool — the lock is real and timely, and the
+# Taker has simply not seen it yet. LEZ has no mempool, so there is no other way
+# to separate "the lock happened" from "the Taker observed it".
+INDEXER_FORWARDER = "TCP-LISTEN:8779"
+
+
+def cut_lez_view(role: str) -> None:
+    subprocess.run(["docker", "exec", "-u", "root", NODES[role][0], "pkill", "-f", INDEXER_FORWARDER],
+                   check=False, capture_output=True)
+
+
+def restore_lez_view(role: str) -> None:
+    # Clear first: a restore that runs while an earlier forwarder is still bound leaves two
+    # of them, and the one that wins the port is not necessarily the one that works. Killing
+    # before starting makes this idempotent, which matters because it runs from a `finally`
+    # and may run when the view was never cut.
+    cut_lez_view(role)
+    subprocess.run(["docker", "exec", "-d", "-u", "root", NODES[role][0], "socat",
+                    f"{INDEXER_FORWARDER},bind=127.0.0.1,fork,reuseaddr", "TCP:indexer:8779"],
+                   check=False, capture_output=True)
+
+
+def lez_readable(role: str) -> bool:
+    """Whether that Node can read the LEZ indexer over its own loopback forwarder."""
+    container, _ = NODES[role]
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getLastFinalizedBlockId", "params": []})
+    result = subprocess.run(["docker", "exec", container, "curl", "-sf", "-m", "10",
+                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:8779/"],
+                            capture_output=True, text=True, check=False)
+    try:
+        return int(json.loads(result.stdout)["result"]) > 0
+    except (ValueError, KeyError, TypeError):
+        return False
+
+
+def wait_lez_view(role: str, restored: bool, timeout: int = 120) -> None:
+    """Waits until that Node's LEZ reads fail (or succeed again), so a scenario never
+    races the forwarder it just stopped or started."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if lez_readable(role) == restored:
+            return
+        time.sleep(3)
+    raise Failure(f"the {role}'s LEZ view is still "
+                  f"{'unreadable' if restored else 'readable'} after {timeout}s")
+
+
+def scenario_refund_admitted_forward(stamp: str) -> dict:
+    """The forward mirror of scenario_refund_admitted_then_maker_lock: here the
+    Taker locks Bitcoin first and the second lock, the one the observer has to
+    project after a refund is already admitted, is the Maker's LEZ lock.
+
+    The Maker locks on time and its lock finalizes on time; only the Taker's view
+    of LEZ is cut, so the Taker reaches its cutoff having observed no maker lock,
+    routes to recovery and admits a refund. Restoring the view then presents the
+    observer with exactly the reported condition — an admitted refund and a
+    canonical, timely, unprojected maker lock — and it must finish the swap on
+    its own."""
+    require_fast_profile()
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    terms = taker_view(swap_id)["terms"]
+    cutoff = int(terms["maker_second_lock_cutoff_unix_seconds"])
+    opens = int(terms["later_refund_earliest_unix_seconds"])
+    before = node_balances("taker")
+    # Lock first, then blind: the Taker's own Bitcoin lock is planned through its
+    # sidecar, which reads LEZ.
+    taker_lock = lock(swap_id)
+    log(f"  Taker's Bitcoin lock {taker_lock[:12]} is in; cutting the Taker's view of LEZ")
+    cut_lez_view("taker")
+    try:
+        wait_lez_view("taker", restored=False)
+        # The Maker is not blind, so its own record is the honest witness that the
+        # LEZ lock went out on time, well before the cutoff.
+        maker_lock = wait_maker_past_lock(swap_id, timeout=max(120, cutoff - int(time.time()) - 60))
+        log(f"  the Maker's LEZ lock {maker_lock[:12]} is in, {cutoff - int(time.time())}s before "
+            "the cutoff, and the Taker cannot see it")
+        wait_until(cutoff + 30, "for the cutoff to pass with the Taker still blind to LEZ")
+        if taker_view(swap_id)["state"] == "completed":
+            raise Failure("the Taker completed the swap; its LEZ view was not cut")
+        reply = rpc("taker", "taker_swap_refund_v1", {
+            "schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+            "swap_id": swap_id, "expected_generation": taker_view(swap_id)["progress_generation"]})
+        if "result" not in reply:
+            # The expected way for this scenario to be impossible rather than failing: the
+            # Taker's cutoff is a LEZ clock comparison, so a Taker that cannot read LEZ may
+            # be unable to conclude the cutoff has passed and will refuse the refund. That is
+            # an answer about the mechanism, not a defect in the Node — record it and drop
+            # this scenario rather than trying to force the admission.
+            raise Failure(
+                f"refund admission failed while the Taker was blind to LEZ: "
+                f"{json.dumps(reply.get('error'))[:200]}")
+        log(f"  refund admitted at rev {taker_view(swap_id)['progress_generation']} (maker lock unobserved)")
+    finally:
+        restore_lez_view("taker")
+    wait_lez_view("taker", restored=True)
+    log("  the Taker's view of LEZ is back; the maker lock is now canonical and unprojected")
+    mine(int(require_fast_profile()["LEZ_BTC_REFUND_CSV_BLOCKS"]) + 1)
+    # Hand off to the Node observer alone. Do NOT drive the actor from here; only
+    # wait (mining to advance regtest finality) for it to reach refunded.
+    wait_until(opens + 5, "for the Taker's Bitcoin refund window to open")
+    deadline = time.time() + 1800
+    while time.time() < deadline:
+        state = taker_view(swap_id)["state"]
+        if state == "refunded":
+            break
+        if state in ("completed", "attention_required"):
+            raise Failure(f"swap {swap_id[:12]} ended in {state}, not refunded")
+        mine(1)
+        time.sleep(30)
+    else:
+        raise Failure(f"the observer did not recover swap {swap_id[:12]} within 1800s "
+                      "(the admitted-refund short-circuit is unfixed)")
+    after = node_balances("taker")
+    log(f"  observer recovered the swap unaided; Taker balances {before} → {after}")
+    return {"swap_id": swap_id, "taker_lock_txid": taker_lock, "cutoff": cutoff,
+            "taker_balance_before": before, "taker_balance_after": after}
+
+
 def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
     """A refund admitted at revision one, then a maker lock that arrives after
     the cutoff but is still timely by median time. The observer's admitted-
@@ -873,12 +1039,15 @@ def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
     drives the projection first in the observation phases; the observer then
     carries the swap through recovery on its own.
 
-    Reverse direction only (the Taker locks LEZ; the maker lock is Bitcoin, so
-    the harness controls when it lands). The recovery is left entirely to the
-    Node observer — the harness never drives the actor by hand — so a pass is
-    proof the patched observer completes it unaided."""
+    Runs both ways, because the second lock — the one the observer has to project
+    — is a different chain in each. Reversed it is Bitcoin and the harness holds
+    it in the mempool; forward it is LEZ, which has no mempool to hold, so the
+    Taker's own view of LEZ is cut instead (see scenario_refund_admitted_forward).
+    The recovery is left entirely to the Node observer — the harness never drives
+    the actor by hand — so a pass is proof the patched observer completes it
+    unaided."""
     if not REVERSE:
-        raise Failure("this scenario needs --direction TakerSellsLez")
+        return scenario_refund_admitted_forward(stamp)
     require_fast_profile()
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
