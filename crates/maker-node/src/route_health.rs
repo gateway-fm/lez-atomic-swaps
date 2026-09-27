@@ -59,6 +59,11 @@ struct RouteHealthCommandV1 {
 #[derive(Clone)]
 pub struct ProcessRouteHealthProbe {
     commands: Vec<RouteHealthCommandV1>,
+    /// Routes whose program did not pass the identity check when the configuration was read.
+    /// They are kept, not dropped: the probe re-checks identity on every observation, so such
+    /// a route reads unavailable and recovers by itself once the operator installs the
+    /// executable the digest names.
+    unverified: Vec<MakerRouteV1>,
 }
 
 impl std::fmt::Debug for ProcessRouteHealthProbe {
@@ -66,6 +71,7 @@ impl std::fmt::Debug for ProcessRouteHealthProbe {
         formatter
             .debug_struct("ProcessRouteHealthProbe")
             .field("command_count", &self.commands.len())
+            .field("unverified_route_count", &self.unverified.len())
             .field("commands", &"[REDACTED]")
             .finish()
     }
@@ -81,7 +87,14 @@ impl ProcessRouteHealthProbe {
     /// # Errors
     ///
     /// Rejects oversized or malformed JSON, unsupported schemas, empty/oversized command sets,
-    /// unsafe or changed executables, invalid SHA-256 values, arguments, and timeouts.
+    /// invalid SHA-256 values, arguments, and timeouts — everything the operator can fix by
+    /// editing this file.
+    ///
+    /// An unsafe, missing or changed *executable* is not one of those: it is a property of the
+    /// machine, it is re-checked on every observation anyway, and failing the whole
+    /// configuration for one of them would stop a Maker that has nothing wrong with its other
+    /// routes. Such a command is kept and its route reads unavailable; the routes are listed
+    /// by [`Self::unverified_routes`] so the daemon can say so at startup.
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self, RouteHealthProbeConfigError> {
         if bytes.is_empty() || bytes.len() > MAX_CONFIG_BYTES {
             return Err(RouteHealthProbeConfigError::Invalid);
@@ -95,6 +108,7 @@ impl ProcessRouteHealthProbe {
             return Err(RouteHealthProbeConfigError::Invalid);
         }
         let mut commands = Vec::with_capacity(config.commands.len());
+        let mut unverified = Vec::new();
         for command in config.commands {
             if command.program_sha256.len() != 64
                 || command.args.len() > MAX_ARGUMENTS
@@ -112,8 +126,11 @@ impl ProcessRouteHealthProbe {
             if timeout.is_zero() || timeout > MAX_TIMEOUT {
                 return Err(RouteHealthProbeConfigError::Invalid);
             }
-            validate_secure_file(&command.program, true, Some(program_sha256))
-                .map_err(|_| RouteHealthProbeConfigError::Invalid)?;
+            if validate_secure_file(&command.program, true, Some(program_sha256)).is_err()
+                && !unverified.contains(&command.route)
+            {
+                unverified.push(command.route);
+            }
             commands.push(RouteHealthCommandV1 {
                 route: command.route,
                 program: command.program,
@@ -122,7 +139,20 @@ impl ProcessRouteHealthProbe {
                 timeout,
             });
         }
-        Ok(Self { commands })
+        Ok(Self {
+            commands,
+            unverified,
+        })
+    }
+
+    /// Routes whose program failed the identity check when the configuration was read.
+    ///
+    /// Each one reads unavailable until the executable the digest names is in place. The
+    /// daemon logs these at startup so an operator is told which chain tooling is missing
+    /// instead of being left with a Maker that will not start.
+    #[must_use]
+    pub fn unverified_routes(&self) -> &[MakerRouteV1] {
+        &self.unverified
     }
 
     fn command_is_healthy(command: &RouteHealthCommandV1) -> bool {

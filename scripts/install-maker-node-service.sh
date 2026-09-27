@@ -7,6 +7,8 @@ readonly source_bin_dir="${SOURCE_BIN_DIR:-target/release}"
 readonly destination_root="${DESTDIR:-}"
 readonly unit_source="packaging/systemd/lez-maker-node.service"
 readonly config_example="packaging/systemd/lez-maker-node.json.example"
+readonly route_health_example="packaging/systemd/route-health.json.example"
+readonly route_health_guide="packaging/systemd/README.md"
 
 if [[ -n "$destination_root" && "$destination_root" != /* ]]; then
   echo "DESTDIR must be empty or an absolute staging root" >&2
@@ -37,6 +39,12 @@ install -D -m 0644 "$unit_source" \
   "$destination_root/usr/lib/systemd/system/lez-maker-node.service"
 install -D -m 0600 "$config_example" \
   "$destination_root/etc/lez/maker/node.json.example"
+# Chain outages are only reported when a route-health configuration names a probe per route;
+# packaging/systemd/README.md says how to fill these in and why leaving a route out fails closed.
+install -D -m 0600 "$route_health_example" \
+  "$destination_root/etc/lez/maker/route-health.json.example"
+install -D -m 0644 "$route_health_guide" \
+  "$destination_root/usr/share/doc/lez-maker-node/README.md"
 install -d -m 0700 "$destination_root/etc/lez/maker/credentials"
 
 echo "installed canonical Maker Node artifacts below ${destination_root:-/}"

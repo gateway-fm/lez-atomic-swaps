@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context as _, bail, ensure};
@@ -59,6 +59,9 @@ use tokio::{net::UnixListener, task::JoinSet};
 use xmr_reference_actor::{
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, validate_maker_manifest_config_bytes,
 };
+/// How rarely a route-health reconciliation failure may be written. The reconciliation ticks
+/// every second, so an unthrottled line per failure is a way to fill a disk.
+const ROUTE_HEALTH_LOG_INTERVAL: Duration = Duration::from_mins(1);
 const MAXIMUM_CONTROL_RPC_BODY_BYTES: u32 = 64 * 1024;
 const MAXIMUM_CHAT_RPC_BODY_BYTES: u32 = 1024 * 1024;
 type BtcChatAuthority = (
@@ -557,13 +560,26 @@ async fn main() -> anyhow::Result<()> {
     let context = maker_context(&arguments, pair_authorities, logos_price_source)?;
     let context = attach_chat_health(context, arguments.chat_socket.as_deref());
     let context = match route_health_probe {
-        Some(probe) => context.with_route_health_probe(Arc::new(probe)),
+        Some(probe) => {
+            // A route whose probe executable is missing or changed reads unavailable; it
+            // does not stop the Maker, and it recovers without a restart once the operator
+            // puts the executable in place. Name them so nobody has to guess.
+            for route in probe.unverified_routes() {
+                eprintln!(
+                    "route health: {route:?} has no usable probe executable; this route is \
+                     unavailable until it is installed"
+                );
+            }
+            context.with_route_health_probe(Arc::new(probe))
+        }
         None => context,
     };
     if context.route_health_is_configured() {
-        context
-            .reconcile_route_health()
-            .context("perform initial route-health reconciliation")?;
+        // Best effort: the offers this would withdraw are withdrawn by the periodic
+        // reconciliation too, and a Maker that refuses to start helps nobody.
+        if let Err(error) = context.reconcile_route_health() {
+            eprintln!("route health: initial reconciliation failed, continuing: {error}");
+        }
     }
     let module = rpc_module(context.clone())?;
     let chat_module = if chat_listener.is_some() {
@@ -600,6 +616,8 @@ async fn main() -> anyhow::Result<()> {
     }
     let mut daemon_error = None;
     let route_health_enabled = context.route_health_is_configured();
+    let mut route_health_failures: u64 = 0;
+    let mut route_health_last_logged: Option<Instant> = None;
     let mut route_health_interval = tokio::time::interval(Duration::from_millis(
         arguments.route_health_poll_milliseconds.unwrap_or(1_000),
     ));
@@ -663,11 +681,29 @@ async fn main() -> anyhow::Result<()> {
             }
             result = route_health_tasks.join_next(), if !route_health_tasks.is_empty() => {
                 let result = result.expect("enabled route health task is present");
-                if let Err(error) = result.context("join route health task").and_then(|value| value) {
-                    daemon_error = Some(error.context("reconcile route health"));
-                    notify_stopping();
-                    supervisor_cancellation.cancel();
-                    break;
+                // Logged degradation, not an exit. This runs every second; a transient store
+                // or clock error used to stop the daemon, and with Restart=on-failure and
+                // StartLimitBurst=3 a repeatable one left the unit dead. The next tick
+                // retries, and the withdrawal request ids are deterministic so it is idempotent.
+                match result.context("join route health task").and_then(|value| value) {
+                    Err(error) => {
+                        // Throttled, because this ticks every second: an error that persists
+                        // would otherwise write a line a second for as long as it lasts, and
+                        // filling the journal is its own outage. The count says how many were
+                        // suppressed, so a persistent fault still reads as persistent.
+                        route_health_failures += 1;
+                        if route_health_last_logged
+                            .is_none_or(|at| at.elapsed() >= ROUTE_HEALTH_LOG_INTERVAL)
+                        {
+                            eprintln!(
+                                "route health: reconciliation failed {route_health_failures} \
+                                 time(s), retrying on the next tick: {error:#}"
+                            );
+                            route_health_last_logged = Some(Instant::now());
+                            route_health_failures = 0;
+                        }
+                    }
+                    Ok(()) => route_health_failures = 0,
                 }
             }
             signal = &mut shutdown => {
