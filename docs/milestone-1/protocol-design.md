@@ -4,9 +4,10 @@ Status: review candidate; cryptographic vectors, calibrated parameters, and LEZ
 sequencer reproducers remain executable entry gates — 2026-07-11
 
 This design follows the live RFP-003 and accepted Gateway proposal #112. It uses
-published constructions rather than inventing cryptography: BIP-340/BIP-341 and
-DLC adaptor-signature vectors for BTC, the h4sh3d/COMIT construction for XMR,
-and BIP-199 plus ZIP-203 for transparent ZEC.
+published constructions rather than inventing cryptography: BIP-340/BIP-341 for
+BTC, with adaptor properties mapped against Aumayr et al. and Fournier in
+[ADR 0050](../architecture/0050-map-btc-adaptor-construction-to-security-properties.md),
+the h4sh3d/COMIT construction for XMR, and BIP-199 plus ZIP-203 for transparent ZEC.
 
 ```mermaid
 flowchart TB
@@ -43,9 +44,9 @@ canonical at the negotiated policy.
 
 The Bitcoin output is P2TR. Its cooperative claim uses a BIP-340 adaptor
 signature and Taproot key path. ADR 0009 commits a CSV refund tapleaf for the
-Bitcoin funder. The completed signature and adaptor pre-signature satisfy the DLC
-witness-extraction relation; accepted signature bytes on LEZ remain protected by
-the sequencer reproducer gate.
+Bitcoin funder. The completed signature and retained adaptor pre-signature are
+the inputs to witness extraction; accepted signature bytes on LEZ remain
+protected by the sequencer reproducer gate.
 
 For `TakerSellsForeign`, the taker funds the longer Bitcoin output, then the maker
 funds shorter LEZ escrow. The taker claims LEZ first with the isolated
@@ -97,6 +98,9 @@ ZEC refunds later. `nExpiryHeight` is transaction-liveness policy, not the HTLC
 refund condition: builders must leave enough inclusion room and recreate an
 expired unmined transaction without changing the committed HTLC terms.
 
+An ECDSA adaptor-signature variant remains a possible follow-on. It is outside
+the transparent-pool HTLC baseline and this milestone's implementation scope.
+
 The transparent privacy posture is explicit: amounts, addresses, script branches,
 and timing are public. Shield-after-swap is a separate user action, never an
 atomicity property.
@@ -131,8 +135,15 @@ hidden guarantees.
 
 ## Primary references and executable gates
 
-- [BIP-340](https://bips.dev/340/), [BIP-341](https://bips.dev/341/), and the
-  DLC adaptor-signature specifications/vectors;
+- [BIP-340](https://bips.dev/340/), [BIP-341](https://bips.dev/341/), and
+  [BIP-327](https://bips.dev/327/);
+- [Aumayr et al., *Generalized Channels from Limited Blockchain Scripts and
+  Adaptor Signatures*](https://www.iacr.org/archive/asiacrypt2021/130900239/130900239.pdf)
+  and [Fournier, *One-Time Verifiably Encrypted Signatures*](https://github.com/LLFourn/one-time-VES/blob/2ddc7ca7bc48c7a91b8a596e12a759a666a14deb/main.pdf);
+  [ADR 0050](../architecture/0050-map-btc-adaptor-construction-to-security-properties.md)
+  states how these properties are used and the limits of that mapping;
+  the test-reference correction GW-M3-001 was [accepted by Logos](https://github.com/logos-co/rfp/issues/123#issuecomment-5781178140)
+  on 22 September 2026; this does not approve M3 or the full security construction;
 - [h4sh3d paper](https://eprint.iacr.org/2020/1126) and pinned
   [COMIT reference](https://github.com/comit-network/xmr-btc-swap/commit/dc6ba84bbb1fe5ecc69581fec7dd8529567c4e32);
 - [BIP-199](https://bips.dev/199/) and

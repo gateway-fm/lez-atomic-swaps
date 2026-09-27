@@ -729,7 +729,7 @@
       "id": "TM-0016",
       "old_ids": [],
       "view": "chain-protocol",
-      "scenario": "A BTC MuSig2, adaptor, Taproot, nonce, extraction, sighash, tweak, parity, or CSV mistake breaks recovery or exposes a key.",
+      "scenario": "A BTC MuSig2, adaptor, Taproot, nonce, extraction, accepted-signature-byte, sighash, tweak, parity, or CSV mistake breaks recovery or exposes a key.",
       "scope": {
         "routes": ["lez-btc"],
         "directions": ["taker-sells-btc", "taker-sells-lez"],
@@ -745,8 +745,8 @@
         { "profile": "public-testnet", "inherent": { "likelihood": 4, "impact": 3 }, "residual": { "likelihood": 3, "impact": 3 } },
         { "profile": "production", "inherent": { "likelihood": 4, "impact": 5 }, "residual": { "likelihood": 3, "impact": 5 } }
       ],
-      "control": "Both roles verify both agreement-derived pre-signatures before funding. The BTC signature binds the exact outpoint, Taproot commitment, sighash, and spend to the fixed beneficiary; changing any of them invalidates it. Extracted t must satisfy tG = T before the opposite claim.",
-      "proofs": ["docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md", "docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:crates/btc-swap-sdk/src/agreement_v1.rs"],
+      "control": "Both roles verify both agreement-derived pre-signatures before funding. The BTC signature binds the exact outpoint, Taproot commitment, sighash, and spend to the fixed beneficiary; changing any of them invalidates it. LEZ must preserve the exact accepted BIP-340 signature bytes because extraction uses t = s - s'; the pinned answer and reproducer are in the [LEZ primitive verification note](lez-primitive-verification.md). Extracted t must satisfy tG = T before the opposite claim.",
+      "proofs": ["docs/architecture/0050-map-btc-adaptor-construction-to-security-properties.md", "docs/milestone-1/lez-primitive-verification.md", "docs/evidence/m3-bitcoin-core-musig2-f5a9caa-20260715.json", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:crates/btc-swap-sdk/src/agreement_v1.rs"],
       "remaining": "The exact two-party aggregate adaptor construction and dependency require independent cryptographic review and malicious-key vectors.",
       "owner": "btc-cryptography",
       "state": "open"
