@@ -243,6 +243,20 @@ def maker_phase(swap_id: str) -> str:
     return ((view.get("progress") or {}).get("observation") or {}).get("phase") or view.get("schedule_state") or "?"
 
 
+def wait_maker_past_lock(swap_id: str, timeout: int = 600) -> str:
+    """Waits until the Maker's own record shows its lock is in, which is what
+    frees the one LEZ escrow slot for the next Taker-sells-BTC swap."""
+    owed = {"offered", "reserved", "activated", "taker_lock_confirmed", "awaiting_maker_confirmations"}
+    deadline = time.time() + timeout
+    phase = maker_phase(swap_id)
+    while time.time() < deadline:
+        if phase not in owed and phase != "?":
+            return phase
+        time.sleep(5)
+        phase = maker_phase(swap_id)
+    raise Failure(f"the Maker still owes its lock for {swap_id[:12]} after {timeout}s (phase {phase})")
+
+
 def lock(swap_id: str) -> str:
     # Locking plans and broadcasts through Bitcoin Core and the swap's sidecar; a
     # transient dependency outage (-32010) is retried, the request is idempotent.
@@ -475,6 +489,11 @@ def scenario_concurrent(stamp: str) -> dict:
                      category="initiation_execution_unavailable")
         lock(swap_a)
         wait_taker(swap_a, {"claim_available"}, timeout=1500, describe="(Maker funding)")
+        # The Taker sees the Maker's LEZ lock as soon as it is final; the Maker
+        # frees its escrow slot only once its own record has advanced past the
+        # lock, which is a little later. The refusal is decided on the Maker's
+        # view, so the second take waits for that, not for the Taker's.
+        wait_maker_past_lock(swap_a, timeout=600)
         swap_b, _ = take(offer_b, stamp, "-b")
         lock(swap_b)
         ids = [("-a", swap_a), ("-b", swap_b)]

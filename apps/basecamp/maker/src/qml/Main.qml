@@ -17,6 +17,12 @@ Item {
     property string statusMode: "neutral"
     property string statusTitle: "Connecting"
     property string statusDetail: "Opening the owner-local Node channel"
+    // The owner-local Node channel, as proven by traffic on it: "checking"
+    // until a reply arrives, "up" once one does, "down" when a call fails at
+    // the transport. Loading this view proves nothing about the Node, and a
+    // Chat or Delivery value carried inside a reply never moves it — only the
+    // arrival or failure of the reply itself does.
+    property string nodeLink: "checking"
     property string chatState: "not initialised"
     property string chatAddress: ""
     property var btcMarket: ({ order_book: [], inventory: [], swaps: [], routes: [],
@@ -92,6 +98,51 @@ Item {
             throw new Error(envelope.message || envelope.code || "The Node rejected this request")
         return envelope.result ?? {}
     }
+    // The backend answers a call it could not deliver with an envelope of its
+    // own (`ok: false` and one of these codes), so a reply arriving proves
+    // nothing about the Node — only what is in it does. `rpc_failure` and the
+    // validation codes mean the Node answered and refused, which proves the
+    // channel; these mean the request never got there.
+    readonly property var unreachableCodes: ["endpoint_unavailable", "transport_failure", "invalid_response"]
+    // Decides the channel from one raw backend reply. Call it before decode(),
+    // which throws on exactly these envelopes and would otherwise hide them.
+    function observeEnvelope(raw) {
+        var envelope = null
+        try {
+            envelope = JSON.parse(String(raw))
+        } catch (error) {
+            root.linkDown("The desk could not read the backend's reply")
+            return
+        }
+        if (envelope.ok === true) {
+            root.linkUp()
+        } else if (root.unreachableCodes.indexOf(String(envelope.code ?? "")) >= 0) {
+            root.linkDown(envelope.message ?? envelope.code)
+        } else {
+            // The Node answered and refused: the channel is fine.
+            root.linkUp()
+        }
+    }
+    // Only a genuine reply proves the Node is there. This does not touch the
+    // status strip: the caller has just been given a result and says what it
+    // means.
+    function linkUp() {
+        if (root.nodeLink === "up") return
+        root.nodeLink = "up"
+        root.note("node", "Node replied over the owner-local channel")
+    }
+    // A call that never reached the Node. This does own the strip, because a
+    // failed channel outranks whatever the last request put there — including
+    // a background poll, which is the only thing running when a Node that was
+    // up goes away.
+    function linkDown(reason) {
+        var lost = root.nodeLink === "up"
+        root.nodeLink = "down"
+        root.statusMode = "error"
+        root.statusTitle = "Node unavailable"
+        root.statusDetail = String(reason)
+        root.note("error", (lost ? "Node channel lost · " : "Node channel unavailable · ") + String(reason))
+    }
     // Every desk request goes through here: it owns the status strip, the raw
     // reply and the activity log.
     function run(operation, pendingTitle, onSuccess) {
@@ -114,13 +165,17 @@ Item {
                 root.busy = false
                 root.btcMarketBusy = false
                 root.output = String(value)
+                root.observeEnvelope(value)
                 try {
                     onSuccess(root.decode(value))
                     root.note("reply", pendingTitle + " · " + root.statusTitle)
                 } catch (error) {
-                    root.statusMode = "error"
-                    root.statusTitle = "Request could not be completed"
-                    root.statusDetail = String(error)
+                    // A dead channel already owns the strip and says more.
+                    if (root.nodeLink !== "down") {
+                        root.statusMode = "error"
+                        root.statusTitle = "Request could not be completed"
+                        root.statusDetail = String(error)
+                    }
                     root.note("error", pendingTitle + " · " + String(error))
                 }
             },
@@ -128,9 +183,7 @@ Item {
                 root.busy = false
                 root.btcMarketBusy = false
                 root.output = "Backend failure: " + String(error)
-                root.statusMode = "error"
-                root.statusTitle = "Node backend error"
-                root.statusDetail = String(error)
+                root.linkDown(error)
                 root.note("error", pendingTitle + " · " + String(error))
             })
     }
@@ -164,11 +217,14 @@ Item {
         logos.watch(root.backend.btcMarket(root.walletId()),
             function(value) {
                 root.btcMarketReads = Math.max(0, root.btcMarketReads - 1)
+                var firstReply = root.nodeLink !== "up"
+                root.observeEnvelope(value)
                 try {
                     if (!silent) root.output = String(value)
                     root.applyBtcMarket(root.decode(value))
-                    if (silent && root.statusTitle === "Node connected") {
-                        root.statusTitle = "Market loaded"
+                    if (silent && firstReply && root.nodeLink === "up") {
+                        root.statusMode = "success"
+                        root.statusTitle = "Node connected"
                         root.statusDetail = (root.btcMarket.swaps ?? []).length + " swaps · " + Number((root.btcMarket.summary ?? {}).pending_offers ?? 0) + " open offers"
                     }
                     if (!silent) {
@@ -178,7 +234,7 @@ Item {
                         root.note("reply", "Refresh market · " + root.statusDetail)
                     }
                 } catch (error) {
-                    if (!silent) {
+                    if (!silent && root.nodeLink !== "down") {
                         root.output = String(value)
                         root.statusMode = "error"
                         root.statusTitle = "Market unavailable"
@@ -189,13 +245,10 @@ Item {
             },
             function(error) {
                 root.btcMarketReads = Math.max(0, root.btcMarketReads - 1)
-                if (!silent) {
-                    root.output = "Backend failure: " + String(error)
-                    root.statusMode = "error"
-                    root.statusTitle = "Market unavailable"
-                    root.statusDetail = String(error)
-                }
-                root.note("error", "Market · " + String(error))
+                if (!silent) root.output = "Backend failure: " + String(error)
+                // Reported whether or not the read was silent: the background
+                // poll is what notices a Node that has gone away.
+                root.linkDown(error)
             })
     }
     function health() {
@@ -373,11 +426,15 @@ Item {
         onTriggered: root.now = Date.now() / 1000
     }
 
-    function connected() {
-        root.statusMode = "success"
-        root.statusTitle = "Node connected"
-        root.statusDetail = "Loading the wallet market"
-        root.note("node", "Backend connected")
+    // The view module is loaded and the backend object exists. That says
+    // nothing about the Node, so the strip stays unresolved until a reply or a
+    // failure answers the question.
+    function backendLoaded() {
+        root.nodeLink = "checking"
+        root.statusMode = "working"
+        root.statusTitle = "Checking the Node"
+        root.statusDetail = "Opening the owner-local Node channel"
+        root.note("node", "Backend loaded; checking the Node")
         btcMarketBootstrapTimer.restart()
     }
     Connections {
@@ -385,12 +442,12 @@ Item {
         function onViewModuleReadyChanged(moduleName, isReady) {
             if (moduleName !== "lez_atomic_swap_maker") return
             root.ready = isReady && root.backend !== null
-            if (root.ready) root.connected()
+            if (root.ready) root.backendLoaded()
         }
     }
     Component.onCompleted: {
         root.ready = root.backend !== null && logos.isViewModuleReady("lez_atomic_swap_maker")
-        if (root.ready) root.connected()
+        if (root.ready) root.backendLoaded()
     }
 
     Rectangle {
@@ -709,7 +766,6 @@ Item {
                             Label { text: String(effectRow.modelData.kind_display).toUpperCase(); color: "#D8C6FF"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                             Label { text: String(effectRow.modelData.chain).toUpperCase(); color: effectRow.modelData.chain === "Bitcoin" ? "#B997FF" : "#7EE100"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                             Label { visible: Number(effectRow.modelData.confirmations) > 0; text: String(effectRow.modelData.confirmations) + " conf"; color: "#9AA6B8"; font.pixelSize: 9; font.family: "DejaVu Sans Mono" }
-                            Label { visible: effectRow.modelData.pending === true; text: "SENT · AWAITING CONFIRMATION"; color: "#E8B04A"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
                             Item { Layout.fillWidth: true }
                             LuxeButton { text: "Copy id"; quiet: true; onClicked: root.copyText(effectRow.modelData.transaction_id) }
                             LuxeButton { text: "Copy link"; quiet: true; onClicked: root.copyText(effectRow.modelData.explorer_url) }

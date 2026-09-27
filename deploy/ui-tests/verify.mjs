@@ -324,7 +324,10 @@ if (role === "maker") {
       timeout: 25000, interval: 500, description: "package discovery",
     });
     await app.click("LEZ / BTC Maker");
-    await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Maker Desk", "Backend connected"]), {
+    // "Node replied over the owner-local channel" is written when a reply
+    // arrives, not when the view loads: the desk must prove the Node, not
+    // its own readiness (#91).
+    await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Maker Desk", "Node replied over the owner-local channel"]), {
       timeout: 25000, interval: 500, description: "maker view + live backend",
     });
     narrate("Maker desk opened from the Basecamp launcher; it talks to the real Maker Node over its owner-only socket");
@@ -423,7 +426,10 @@ if (role === "maker") {
       timeout: 25000, interval: 500, description: "package discovery",
     });
     await app.click("LEZ / BTC Taker");
-    await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Taker Desk", "Backend connected"]), {
+    // "Node replied over the owner-local channel" is written when a reply
+    // arrives, not when the view loads: the desk must prove the Node, not
+    // its own readiness (#91).
+    await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Taker Desk", "Node replied over the owner-local channel"]), {
       timeout: 25000, interval: 500, description: "taker view + live Node",
     });
     narrate("Taker desk opened from the Basecamp launcher; it talks to the real Taker Node over its owner-only socket");
