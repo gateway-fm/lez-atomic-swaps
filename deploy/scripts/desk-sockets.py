@@ -104,9 +104,16 @@ def main():
                              "macOS limits a socket path to 104 bytes)")
     parser.add_argument("--prefix", default=os.environ.get("LEZ_CONTAINER_PREFIX", "lez"),
                         help="container name prefix of the Compose stack (default: lez)")
-    parser.add_argument("roles", nargs="*", choices=ROLES, default=list(ROLES))
+    # No `choices=`: with `nargs="*"` argparse checks the list default against
+    # them as one value, so the documented bare command exited 2 on every Python
+    # before 3.14. The roles are validated below instead, one by one.
+    parser.add_argument("roles", nargs="*", metavar="ROLE",
+                        help=f"roles to serve (default: {' '.join(ROLES)})")
     arguments = parser.parse_args()
     roles = arguments.roles or list(ROLES)
+    unknown = [role for role in roles if role not in ROLES]
+    if unknown:
+        parser.error(f"invalid role(s): {' '.join(unknown)} (choose from {', '.join(ROLES)})")
     directory = os.path.abspath(arguments.dir)
     for role in roles:
         if len(os.path.join(directory, f"{role}.sock").encode()) > 100:
