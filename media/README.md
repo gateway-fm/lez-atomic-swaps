@@ -57,14 +57,33 @@ state is included.
 
 The actual UI demo and vertical proposal cut are happy-path evidence for M3
 Bitcoin settlement surfaced through the branch's current Basecamp BTC mini-app
-flow and grounded in the M1 design. Refund, first-lock recovery,
-restart-survivor, and overlapping-swap cases are recorded separately under
+flow and grounded in the M1 design. First-lock recovery and restart-survivor
+cases are recorded separately under
 [`../docs/evidence/`](../docs/evidence/); they are not visually demonstrated by
-these cuts. Bitcoin is regtest and LEZ is a private v0.2 devnet.
+these two cuts. Bitcoin is regtest and LEZ is a private v0.2 devnet.
 
-These cuts are not a substitute for execution footage of every refund or
-overlap case. The
-actual UI demo matches `m5arm-0825151914`; the screenshots and narrated
+The actual UI demo matches `m5arm-0825151914`; the screenshots and narrated
 vertical cut match
 [`m3-btc-ui-run-m5arm-0820121736.json`](../docs/evidence/m3-btc-ui-run-m5arm-0820121736.json);
 the older `m5arm-08180005` files are a different passed run.
+
+## v0.2.5 desk recordings
+
+The refund and overlapping-swap cases the two cuts above do not show are recorded for
+v0.2.5 by `deploy/scripts/ui-e2e.sh <scenario> --record`. Every step is the real desk,
+spawned offscreen and driven through the QML inspector — the same path the desk suites
+use — with the desk's own narration burned in as subtitles. Each video is a by-product of
+a scenario that passed while being recorded, not a separate performance.
+
+| Recording | Shows |
+|---|---|
+| `TakerSellsForeign-happy.mp4` | take → lock → Maker locks → claim → Maker claims → completed |
+| `TakerSellsForeign-maker-refund.mp4` | the Taker never claims; **both legs refund, in timelock order** |
+| `TakerSellsForeign-concurrent.mp4` | two swaps taken, locked and claimed interleaved |
+
+`maker-refund` is the refund cut rather than `taker-refund` because it shows the
+ordering — the Maker's leg returning first, then the Taker's.
+
+They are written to `deploy/runtime/evidence/videos/`, which is runtime output and is not
+committed; the copies that ship are attached to the v0.2.5 release. Anything already in
+that directory from an earlier run predates this release and is not evidence for it.
