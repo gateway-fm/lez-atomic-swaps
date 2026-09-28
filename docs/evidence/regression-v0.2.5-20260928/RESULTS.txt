@@ -1,0 +1,103 @@
+##### E2E TakerSellsForeign happy attempt 1 07:32:33
+##### E2E-RESULT TakerSellsForeign happy PASSED 07:36:48
+##### E2E TakerSellsForeign replay attempt 1 07:37:33
+##### E2E-RESULT TakerSellsForeign replay PASSED 07:40:46
+##### E2E TakerSellsForeign wrong-inputs attempt 1 07:41:31
+##### E2E-RESULT TakerSellsForeign wrong-inputs PASSED 07:44:46
+##### E2E TakerSellsForeign restart-taker attempt 1 07:45:31
+##### E2E-RESULT TakerSellsForeign restart-taker PASSED 07:48:42
+##### E2E TakerSellsForeign restart-maker attempt 1 07:49:27
+##### E2E-RESULT TakerSellsForeign restart-maker PASSED 07:52:52
+##### E2E TakerSellsForeign survivor attempt 1 07:53:37
+##### E2E-RESULT TakerSellsForeign survivor PASSED 07:57:15
+##### E2E TakerSellsForeign concurrent attempt 1 07:58:00
+##### E2E-RESULT TakerSellsForeign concurrent PASSED 08:04:38
+##### E2E TakerSellsForeign early-lock attempt 1 08:05:23
+##### E2E-RESULT TakerSellsForeign early-lock PASSED 08:10:21
+##### E2E TakerSellsForeign offline-after-lock attempt 1 08:11:06
+##### E2E-RESULT TakerSellsForeign offline-after-lock PASSED 08:14:19
+##### E2E TakerSellsForeign taker-refund attempt 1 08:15:04
+##### E2E-RESULT TakerSellsForeign taker-refund PASSED 08:37:57
+##### E2E TakerSellsForeign maker-refund attempt 1 08:38:42
+##### E2E-RESULT TakerSellsForeign maker-refund PASSED 09:10:30
+##### E2E TakerSellsForeign refund-then-maker-lock attempt 1 09:11:16
+##### E2E-RESULT TakerSellsForeign refund-then-maker-lock PASSED 09:41:34
+##### E2E TakerSellsForeign regenerated-config attempt 1 09:42:19
+##### E2E-RESULT TakerSellsForeign regenerated-config PASSED 09:46:19
+##### E2E TakerSellsForeign tampered-config attempt 1 09:47:04
+##### E2E-RESULT TakerSellsForeign tampered-config PASSED 09:47:26
+##### E2E TakerSellsLez happy attempt 1 09:48:11
+##### E2E-RESULT TakerSellsLez happy PASSED 09:52:48
+##### E2E TakerSellsLez replay attempt 1 09:53:33
+##### E2E-RESULT TakerSellsLez replay PASSED 09:58:47
+##### E2E TakerSellsLez wrong-inputs attempt 1 09:59:32
+##### E2E-RESULT TakerSellsLez wrong-inputs PASSED 10:04:50
+##### E2E TakerSellsLez restart-taker attempt 1 10:05:35
+##### E2E-RESULT TakerSellsLez restart-taker PASSED 10:11:11
+##### E2E TakerSellsLez restart-maker attempt 1 10:11:56
+##### E2E-RESULT TakerSellsLez restart-maker PASSED 10:17:06
+##### E2E TakerSellsLez survivor attempt 1 10:17:51
+##### E2E-RESULT TakerSellsLez survivor PASSED 10:23:34
+##### E2E TakerSellsLez concurrent attempt 1 10:24:19
+##### E2E-RESULT TakerSellsLez concurrent PASSED 10:29:07
+##### E2E TakerSellsLez early-lock attempt 1 10:29:52
+##### E2E-RESULT TakerSellsLez early-lock PASSED 10:34:41
+##### E2E TakerSellsLez offline-after-lock attempt 1 10:35:26
+##### E2E-RETRY TakerSellsLez offline-after-lock: the chain stalled
+##### E2E-CHAIN recreating the LEZ chain 11:10:50
+##### E2E TakerSellsLez offline-after-lock attempt 2 11:19:21
+##### E2E-RESULT TakerSellsLez offline-after-lock PASSED 11:25:19
+##### E2E TakerSellsLez taker-refund attempt 1 11:26:04
+##### E2E-RESULT TakerSellsLez taker-refund PASSED 11:58:11
+##### E2E TakerSellsLez maker-refund attempt 1 11:58:56
+##### E2E-RESULT TakerSellsLez maker-refund PASSED 12:30:56
+##### E2E TakerSellsLez refund-then-maker-lock attempt 1 12:31:41
+##### E2E-RETRY TakerSellsLez refund-then-maker-lock: the chain stalled
+##### E2E-CHAIN recreating the LEZ chain 13:35:11
+##### E2E TakerSellsLez refund-then-maker-lock attempt 2 13:40:49
+##### E2E-RESULT TakerSellsLez refund-then-maker-lock PASSED 14:12:12
+##### E2E TakerSellsLez regenerated-config attempt 1 14:12:57
+##### E2E-RESULT TakerSellsLez regenerated-config PASSED 14:18:53
+##### E2E TakerSellsLez tampered-config attempt 1 14:19:38
+##### E2E-RESULT TakerSellsLez tampered-config PASSED 14:20:50
+##### E2E-DONE rc=0 14:21:35
+##### SUITES 14:21:35
+##### UI-SUITE maker PASSED
+##### UI-SUITE taker PASSED
+##### UI TakerSellsForeign happy attempt 1 14:21:41
+##### UI-RETRY TakerSellsForeign happy: the chain stalled during the scenario
+##### UI-CHAIN recreating the LEZ chain (finality frozen) 14:54:21
+##### UI TakerSellsForeign happy attempt 2 14:56:38
+##### UI-RESULT TakerSellsForeign happy PASSED 15:00:27
+##### UI TakerSellsForeign restart-taker attempt 1 15:01:12
+##### UI-RESULT TakerSellsForeign restart-taker PASSED 15:04:35
+##### UI TakerSellsForeign restart-maker attempt 1 15:05:20
+##### UI-RESULT TakerSellsForeign restart-maker PASSED 15:10:37
+##### UI TakerSellsForeign survivor attempt 1 15:11:22
+##### UI-RESULT TakerSellsForeign survivor PASSED 15:14:57
+##### UI TakerSellsForeign concurrent attempt 1 15:15:42
+##### UI-RESULT TakerSellsForeign concurrent PASSED 15:22:32
+##### UI TakerSellsForeign taker-refund attempt 1 15:23:17
+##### UI-RESULT TakerSellsForeign taker-refund PASSED 15:54:34
+##### UI TakerSellsForeign maker-refund attempt 1 15:55:19
+##### UI-RESULT TakerSellsForeign maker-refund PASSED 16:26:51
+##### UI TakerSellsForeign node-offline attempt 1 16:27:36
+##### UI-RESULT TakerSellsForeign node-offline PASSED 16:30:20
+##### UI TakerSellsLez happy attempt 1 16:31:05
+##### UI-RESULT TakerSellsLez happy PASSED 16:35:02
+##### UI TakerSellsLez restart-taker attempt 1 16:35:47
+##### UI-RESULT TakerSellsLez restart-taker PASSED 16:40:57
+##### UI TakerSellsLez restart-maker attempt 1 16:41:42
+##### UI-RETRY TakerSellsLez restart-maker: the chain stalled during the scenario
+##### UI-CHAIN recreating the LEZ chain (finality frozen) 17:16:53
+##### UI TakerSellsLez restart-maker attempt 2 17:19:26
+##### UI-RESULT TakerSellsLez restart-maker PASSED 17:25:01
+##### UI TakerSellsLez survivor attempt 1 17:25:46
+##### UI-RESULT TakerSellsLez survivor PASSED 17:31:37
+##### UI TakerSellsLez concurrent attempt 1 17:32:22
+##### UI-RESULT TakerSellsLez concurrent PASSED 17:37:29
+##### UI TakerSellsLez taker-refund attempt 1 17:38:14
+##### UI-RESULT TakerSellsLez taker-refund PASSED 18:09:58
+##### UI TakerSellsLez maker-refund attempt 1 18:10:43
+##### UI-RESULT TakerSellsLez maker-refund PASSED 18:42:31
+##### UI-DONE rc=0 18:43:16
