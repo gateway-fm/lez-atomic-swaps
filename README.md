@@ -198,7 +198,7 @@ licence, architecture, DCO, and security-review requirements.
 
 | Path | What lives there |
 |---|---|
-| [`crates/`](crates/) | Protocol types, Bitcoin swap SDK, durable stores, Maker daemon, Taker service, and runners |
+| [`crates/`](crates/) | Protocol types, the [LEZ/BTC swap SDK](docs/sdk-lez-btc.md), durable stores, Maker daemon, Taker service, and runners |
 | [`compat/`](compat/) | Isolated compatibility packages for pinned LEZ interfaces |
 | [`apps/basecamp/`](apps/basecamp/) | Buildable Maker and Taker Logos Basecamp packages |
 | [`apps/m6-prototypes/`](apps/m6-prototypes/) | Fast, no-effects product journey prototypes |

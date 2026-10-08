@@ -1,7 +1,9 @@
 # Requirements traceability
 
 Last reconciled: 2026-07-11 against the live RFP-003 and Gateway's accepted
-replacement proposal #112. Issue #61 is superseded. IDs below follow the RFP's
+replacement proposal #112. Rows U1, U8, S8, and D1 were reconciled again on
+2026-10-08 for the milestone-3 acceptance items; the remaining rows still carry
+their 2026-07-11 status. Issue #61 is superseded. IDs below follow the RFP's
 Functionality, Usability, Reliability, Performance, Supportability, and Demo
 ordering. A row is not acceptance: `Passing` requires the named evidence at the
 real actor and chain boundary described by the requirement.
@@ -28,14 +30,14 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| U1 | Dedicated full-lifecycle SDK for each pair | Shared SDK contract suite instantiated for BTC/XMR/ZEC; public API doctests cover discovery through refund | Planned M2–M4 |
+| U1 | Dedicated full-lifecycle SDK for each pair | BTC: [`lez-btc-swap-sdk` with `lez-swap-sdk-core`](sdk-lez-btc.md); [`examples/full-lifecycle.rs`](../crates/btc-swap-sdk/examples/full-lifecycle.rs) walks offer discovery, negotiation, escrow creation, claim, and refund, and the named `sdk_facade.rs` tests cover each stage in both directions | BTC done at v0.2.6; XMR/ZEC planned M2–M4 |
 | U2 | Long-running autonomous maker daemon plus systemd unit/install guide | Packaged daemon runs under hardened systemd in an isolated VM, restarts, advertises, prices, and executes without GUI | Partial daemon seam; packaging M5 |
 | U3 | Maker CLI configures pairs/prices, controls daemon, queries history, and triggers claim/refund over IPC/RPC | Black-box CLI-to-daemon command matrix under owner/wrong-owner roles | Partial: create/status/auth/restart pass |
 | U4 | Taker CLI covers discovery, initiation, monitoring, claim, and refund | Actual taker CLI drives each pair's happy and abandoned-counterparty journey | Planned M5 |
 | U5 | Basecamp maker mini-app configures and monitors | Playwright actor E2E against the same daemon API; clean local build/load from documented repo | Planned M6 |
 | U6 | Basecamp taker mini-app browses and executes swaps | Playwright actor E2E for each pair including refund and ZEC shield-after-swap guidance | BTC↔LEZ delivered in M6; the other pairs and the ZEC guidance are not ([reconciliation](m6-zec-reconciliation.md)) |
 | U7 | SPEL IDL for LEZ escrow program(s) | IDL generation/validation test against pinned compatible SPEL/LEZ versions | Sketch in M1; executable M2 |
-| U8 | Bitcoin Core testnet setup guide, self-hosted and public | Fresh-machine documentation test reaches funded wallet and SDK connectivity for both routes | Planned M3 |
+| U8 | Bitcoin Core testnet setup guide, self-hosted and public | [Guide](bitcoin-testnet4-setup.md) covers Route A self-hosted Testnet4, Route B exact-HTTPS gateway, and Route C keyless public provider on Testnet3, each with wallet creation, funding, and the swap directions it can serve; recorded runs in [testnet4](evidence/testnet4-20260919/README.md) and [testnet3 provider](evidence/testnet3-provider-20260918/README.md) | Done at v0.2.6 |
 | U9 | Monero stagenet and wallet-RPC setup guide, self-hosted and public | Fresh-machine documentation test reaches funded wallet and SDK connectivity for both routes | Planned M4 |
 | U10 | Zebra/Zcash testnet transparent-wallet guide, self-hosted and public | Fresh-machine documentation test reaches funded transparent wallet and SDK connectivity for both routes | Planned M2 |
 
@@ -69,7 +71,7 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 | S5 | Complete reference integration for every chain | UJ-001/UJ-002/UJ-004 role E2E and runnable reference package for BTC, XMR, and ZEC | Planned M2–M5 |
 | S6 | README covers deployment, addresses, prerequisites, and maker/taker CLI/mini-app use | Fresh-machine documentation tests plus link/command validation | Planned incrementally through M6 |
 | S7 | Write-up covers protocols, escrow, atomicity, timelocks, assumptions, limitations | M1 design packet reviewed, then updated from executable evidence and audit findings | In progress M1; final M7 |
-| S8 | Every pair SDK public API has docs/errors/examples for full lifecycle | `cargo doc -D warnings`, doctests, and public-API coverage check for all three SDKs | Planned M2–M4 |
+| S8 | Every pair SDK public API has docs/errors/examples for full lifecycle | BTC: [SDK map](sdk-lez-btc.md), [crate README](../crates/btc-swap-sdk/README.md), and a runnable full-lifecycle example; `cargo doc` stays warning-free and the example compiles under `--all-targets` with pedantic Clippy denied in CI | BTC done at v0.2.6; XMR/ZEC planned M2–M4 |
 | S9 | Logos doc packet for each pair SDK | Template validation and reviewer acceptance for BTC, XMR, and ZEC packets | Planned M7 |
 | S10 | Separate maker-CLI and taker-CLI doc packets | Template validation plus clean operator/user journey rehearsals | Planned M7 |
 | S11 | Figma designs or equivalent for both mini-apps | Signed-off clickable HTML prototypes cover maker and taker role journeys | Planned M6 |
@@ -80,4 +82,4 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| D1 | Happy, abandonment/refund, and concurrent-swap recording for each pair | Nine recordings generated from passing role E2E runs, with commit/testnet/version metadata | Planned M2–M4; regenerated at M7 |
+| D1 | Happy, abandonment/refund, and concurrent-swap recording for each pair | BTC: three recordings attached to the [v0.2.5 release](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.2.5) — `TakerSellsForeign-happy.mp4`, `TakerSellsForeign-maker-refund.mp4`, `TakerSellsForeign-concurrent.mp4` — each a by-product of a scenario that passed while being recorded, driven through the real desk | BTC done at v0.2.5; XMR/ZEC planned M2–M4; regenerated at M7 |

@@ -8,6 +8,10 @@ remote CI, and the annotated tag remain pending.
 
 Review date: 2026-07-19
 
+Amended 2026-10-08 to name the SDK artefact and to point the Bitcoin testnet row
+at the current guide. No gate result, evidence hash, run identity, or claim
+boundary in this review was changed.
+
 ## Authority and claim boundary
 
 The review uses RFP-003 at master commit
@@ -29,9 +33,9 @@ nonexistent DLC Schnorr vector file.
 | Output | Repository result | Evidence |
 | --- | --- | --- |
 | Witness-gated BTC escrow | Both native and witnessed custom-token paths use the agreement-bound aggregate BIP-340 authority; actual-node happy, refund, survivor, overlap, and four F7 pairs reach exact terminal state with zero replay sends | [M3 operator guide](m3-local-poc-operator-guide.md), [traceability F2/F7](requirements-traceability.md), [ADR 0042](architecture/0042-bind-witnessed-token-claims-to-exact-atas.md) |
-| Full-lifecycle LEZ/BTC SDK | Pushed `0c78f3d` exposes the bounded canonical secret-free codec, exact create/CAS store port, role-fixed stored SDK, typed Bitcoin/LEZ ports, both claim/refund directions, restart/replay checks, and a wiring example | [SDK architecture](architecture/0013-sdk-layering.md), [deployment inventory](architecture/deployment-components-and-rpcs.md) |
+| Full-lifecycle LEZ/BTC SDK | The artefact is `lez-btc-swap-sdk` with `lez-swap-sdk-core`: the bounded canonical secret-free codec, exact create/CAS store port, role-fixed stored SDK, typed Bitcoin/LEZ ports, both claim/refund directions, and restart/replay checks. A runnable example walks offer discovery, negotiation, escrow creation, claim, and refund | [SDK map](sdk-lez-btc.md), [SDK architecture](architecture/0013-sdk-layering.md), [deployment inventory](architecture/deployment-components-and-rpcs.md) |
 | Conformance and swap vectors | Nine focused groups bind official BIP-340/BIP-327 corpora and swap-specific positive/negative adaptor fixtures to immutable checksums and an independent `k256` verifier | [ADR 0050](architecture/0050-map-btc-adaptor-construction-to-security-properties.md), [metrics](milestone-metrics.md) |
-| Bitcoin testnet setup | Pushed `946208a` binds exact Core 31.1 Testnet4 chain/genesis/index readiness to literal-loopback self-hosting or one exact allowlisted HTTPS Basic origin without public I/O | [Testnet4 setup](bitcoin-testnet4-setup.md), [ADR 0051](architecture/0051-bind-bitcoin-testnet4-routes-to-chain-profile.md) |
+| Bitcoin testnet setup | Pushed `946208a` binds exact Core 31.1 Testnet4 chain/genesis/index readiness to literal-loopback self-hosting or one exact allowlisted HTTPS Basic origin without public I/O. The guide now also documents the keyless public-provider route on Testnet3 and the single direction it serves | [testnet setup guide](bitcoin-testnet4-setup.md), [ADR 0051](architecture/0051-bind-bitcoin-testnet4-routes-to-chain-profile.md) |
 | Three BTC demo videos | Happy, both ordered refunds, and opposite-direction concurrency have hash-bound private actual-node source recordings at evidence commit `a6eb1ad`; three decode-verified, sampled private MP4 walkthroughs are sealed at renderer/verifier commit `846ba56` in bundle `7697a27c...f101ba8` | [recording and video procedure](m3-local-poc-operator-guide.md#private-d1-btc-recording-bundle), [traceability D1](requirements-traceability.md) |
 | Aumayr/Fournier explanation | Pushed `a0f19ac` maps the implemented nonce, adaptor, tweak/parity, extraction, ordering, and recovery conditions to the two constructions without claiming their proofs transfer automatically | [ADR 0050](architecture/0050-map-btc-adaptor-construction-to-security-properties.md) |
 
