@@ -381,3 +381,56 @@ jobs:
             --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
           test -z "$(docker volume ls --quiet \
             --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+
+  zebra-regtest:
+    name: isolated Zebra Regtest BIP-199 HTLC fund, claim, and refund
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUN_ID: github-zec-${{ github.run_id }}-${{ github.run_attempt }}
+      ZEBRA_E2E_KEEP_RUNNING: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install checksum-pinned ripgrep
+        run: ./scripts/install-ci-ripgrep.sh
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.96.0
+      - name: Fund, claim, and refund a real HTLC through Zebra consensus
+        run: ./scripts/run-zebra-e2e.sh
+      - name: Scan exact Zebra image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: lez-atomic-swaps-zebra:github-zec-${{ github.run_id }}-${{ github.run_attempt }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: false
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+      - name: Remove only the exact Zebra CI resources
+        if: always()
+        run: |
+          set -euo pipefail
+          project="lez-atomic-swaps-${RUN_ID}"
+          image="lez-atomic-swaps-zebra:${RUN_ID}"
+          docker compose --project-name "${project}" \
+            --file tests/e2e/zebra/compose.yml down --volumes --remove-orphans >/dev/null 2>&1 || true
+          mapfile -t containers < <(docker container ls --all --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")
+          # The regtest stack is exactly two nodes: the primary and its fork.
+          if (( ${#containers[@]} > 2 )); then
+            echo "refusing ambiguous Zebra CI cleanup for ${RUN_ID}" >&2
+            exit 1
+          fi
+          for container in "${containers[@]+"${containers[@]}"}"; do
+            docker container rm --force "${container}" >/dev/null
+          done
+          docker image rm "${image}" >/dev/null 2>&1 || true
+          test -z "$(docker container ls --all --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+          test -z "$(docker network ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
+          test -z "$(docker volume ls --quiet \
+            --filter "label=org.logos-co.atomic-swaps.run=${RUN_ID}")"
