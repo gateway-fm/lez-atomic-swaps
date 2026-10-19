@@ -27,8 +27,8 @@ pub use ceremony::{
     CeremonyLegPackets, LegSessions, MakerCeremony, TakerCeremony, TakerCeremonyOutcome,
 };
 pub use config::{
-    BitcoinNetworkName, BtcRoleConfigV1, BtcRoleRuntime, LezNetworkName, LockFeePolicyV1,
-    RecoveryPolicyV1,
+    BitcoinNetworkName, BtcRoleConfigV1, BtcRoleRuntime, LezNetworkName, LezSequencerRoute,
+    LockFeePolicyV1, RecoveryPolicyV1,
 };
 pub use funding::{BitcoinWallet, FundingPlan, FundingRequired, WalletBalances};
 pub use layout::SwapLayout;
