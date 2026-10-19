@@ -1259,13 +1259,18 @@ fn overlay_admitted_action(
     if admission.requested_after_generation() > view.progress_generation {
         return Err(MonitoringError::DependencyUnavailable);
     }
-    // An admitted action shows as "in progress" only while the actor still
-    // offers it at the generation it was requested after. Once the actor has
-    // moved on, or stopped offering it (a claim whose window closed), the
-    // admission is history and the actor's own view rules, so the refund the
-    // actor offers next is not hidden behind a claim that can never land.
-    let still_offered = admission.requested_after_generation() == view.progress_generation
-        && view.available_action.map(facade_action) == Some(admission.action());
+    // An admitted action shows as "in progress" while it is still the current
+    // generation's action. Once the actor has moved on the generation bumps,
+    // the admission is history and the actor's own view rules, so the refund
+    // the actor offers next is not hidden behind a claim that can never land.
+    //
+    // Do not also require the actor to still offer the action: admission is
+    // what consumes `available_action`, so that test can never hold once an
+    // action is admitted. Requiring it made `taker_swap_monitor_v1` report
+    // `AwaitingFirstLock` with no available action on a swap whose admitted
+    // claim makes `taker_swap_refund_v1` answer `taker_action_conflict` -- an
+    // operator told nothing is in flight while every action is refused.
+    let still_offered = admission.requested_after_generation() == view.progress_generation;
     if !still_offered
         || matches!(
             view.state,
