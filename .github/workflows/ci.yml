@@ -123,10 +123,13 @@ jobs:
           --exclude lez-xmr-release-authority
           --exclude xmr-reference-actor
           --exclude lez-xmr-swap-sdk
-      # The ZEC pair is gated by the workspace run above: M2 is the ZEC leg, so
-      # its crates are no longer excluded. XMR stays parked until M4; the Nodes'
-      # pair-gated test files still run only with --all-features.
-      - name: Lint the pair features the default build leaves out (tests parked)
+      # Nine Node test files are `#![cfg(feature = "pair-zec")]`, so the default
+      # workspace run above compiles them to nothing and reports zero tests.
+      # M2 is the ZEC leg, so they run here. XMR stays parked until M4 and is
+      # still lint-only below.
+      - name: Run the pair-zec gated Node test files
+        run: cargo test --locked -p lez-maker-node -p lez-taker-node --features pair-zec --all-targets
+      - name: Lint the pair features the default build leaves out
         run: cargo clippy --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
       - name: Verify M3 official cryptographic vectors
         run: |

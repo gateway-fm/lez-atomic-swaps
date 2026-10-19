@@ -144,7 +144,9 @@ if (( ready == 0 || fork_ready == 0 )); then
 fi
 
 if (( skip_tests == 0 )); then
-  CARGO_BUILD_JOBS=2 cargo test --locked \
+  # zebra_runtime_restart.rs is `#![cfg(feature = "pair-zec")]`, so without the
+  # feature the file compiles to nothing and the suite silently runs 0 tests.
+  CARGO_BUILD_JOBS=2 cargo test --locked --features pair-zec \
     -p lez-maker-node --test zebra_runtime_restart -- --ignored --nocapture
 
   CARGO_BUILD_JOBS=2 cargo test --locked \
