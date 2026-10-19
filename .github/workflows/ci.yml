@@ -116,9 +116,6 @@ jobs:
           --exclude lez-xmr-release-authority
           --exclude xmr-reference-actor
           --exclude lez-xmr-swap-sdk
-          --exclude lez-zebra-node-adapter
-          --exclude zec-reference-actor
-          --exclude lez-zec-swap-sdk
           -- -D warnings
       - run: >-
           cargo test --locked --workspace --all-targets
@@ -126,13 +123,9 @@ jobs:
           --exclude lez-xmr-release-authority
           --exclude xmr-reference-actor
           --exclude lez-xmr-swap-sdk
-          --exclude lez-zebra-node-adapter
-          --exclude zec-reference-actor
-          --exclude lez-zec-swap-sdk
-      # The ZEC and XMR pairs still compile under -D warnings, but their tests
-      # are parked while BTC<->LEZ is the product: the workspace run above
-      # already excludes their crates, and the Nodes' pair-gated test files run
-      # only with --all-features.
+      # The ZEC pair is gated by the workspace run above: M2 is the ZEC leg, so
+      # its crates are no longer excluded. XMR stays parked until M4; the Nodes'
+      # pair-gated test files still run only with --all-features.
       - name: Lint the pair features the default build leaves out (tests parked)
         run: cargo clippy --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
       - name: Verify M3 official cryptographic vectors
@@ -150,9 +143,6 @@ jobs:
           --exclude lez-xmr-release-authority
           --exclude xmr-reference-actor
           --exclude lez-xmr-swap-sdk
-          --exclude lez-zebra-node-adapter
-          --exclude zec-reference-actor
-          --exclude lez-zec-swap-sdk
       - run: ./scripts/check-requirements-traceability.sh
       - run: ./scripts/check-architecture-diagrams.sh
 
