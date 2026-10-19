@@ -220,9 +220,12 @@ assert_trivy_step \
 assert_trivy_step \
   'Scan exact Bitcoin Core image for high and critical vulnerabilities' \
   'lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}' 1
+assert_trivy_step \
+  'Report exact Zebra image high and critical vulnerabilities' \
+  'lez-atomic-swaps-zebra:github-zec-${{ github.run_id }}-${{ github.run_attempt }}' 0
 report_only_scans="$(rg -Fc -- 'exit-code: "0"' "$ci_workflow")"
-[[ "$report_only_scans" == 2 ]] \
-  || fail "exactly two classified upstream scans may report without failing"
+[[ "$report_only_scans" == 3 ]] \
+  || fail "exactly three classified upstream scans may report without failing"
 
 require_fixed 'isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend' "$ci_workflow"
 require_fixed 'BITCOIN_CORE_E2E_KEEP_RUNNING: "1"' "$ci_workflow"
