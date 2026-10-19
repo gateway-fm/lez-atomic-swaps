@@ -85,9 +85,16 @@ struct Arguments {
     /// Outbound indexer URL accepted by the selected node profile.
     #[arg(long)]
     indexer_url: String,
-    /// Complete outbound node route; the actor-facing listener stays loopback-only.
+    /// Outbound sequencer route; the actor-facing listener stays loopback-only.
     #[arg(long, value_enum, default_value_t = NodeRouteProfile::Local)]
     node_profile: NodeRouteProfile,
+    /// Outbound indexer route, when it differs from the sequencer's.
+    ///
+    /// The official public origin serves no indexer, so an HTTPS sequencer has
+    /// to be paired with a locally reachable indexer. Omitted, the indexer
+    /// follows `--node-profile`, which is the historical single-route shape.
+    #[arg(long, value_enum)]
+    indexer_profile: Option<NodeRouteProfile>,
     /// Composed run identity shared with this actor's bridge client.
     #[arg(long)]
     run_id: String,
@@ -117,6 +124,16 @@ struct Arguments {
     shutdown_on_stdin: bool,
 }
 
+impl Arguments {
+    /// The indexer's route, defaulting to the sequencer's when unset.
+    const fn indexer_route(&self) -> NodeRouteProfile {
+        match self.indexer_profile {
+            Some(profile) => profile,
+            None => self.node_profile,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Readiness<'a> {
@@ -125,6 +142,7 @@ struct Readiness<'a> {
     run_id: &'a str,
     runtime: &'a RuntimeDescriptor,
     node_profile: &'static str,
+    indexer_profile: &'static str,
     sequencer_observation: &'static str,
     indexer_health: &'static str,
     finality: &'static str,
@@ -179,7 +197,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
     );
     let indexer = Arc::new(
         arguments
-            .node_profile
+            .indexer_route()
             .connect_indexer(&arguments.indexer_url)
             .context("connect official indexer")?,
     );
@@ -222,6 +240,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
             run_id: run_id.as_str(),
             runtime: &runtime,
             node_profile: arguments.node_profile.as_str(),
+            indexer_profile: arguments.indexer_route().as_str(),
             sequencer_observation: "bounded_canonical_inclusion_and_same_tip_accounts",
             indexer_health: "stable_finalized_tip_bound_to_runtime_genesis",
             finality: "exact_genesis_bound_finalized_indexer_clock_available",
@@ -322,6 +341,7 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
     );
     validate_node_routes(
         arguments.node_profile,
+        arguments.indexer_route(),
         &arguments.sequencer_url,
         &arguments.indexer_url,
     )?;
@@ -354,14 +374,15 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
 }
 
 fn validate_node_routes(
-    profile: NodeRouteProfile,
+    sequencer_profile: NodeRouteProfile,
+    indexer_profile: NodeRouteProfile,
     sequencer_url: &str,
     indexer_url: &str,
 ) -> Result<()> {
-    profile
+    sequencer_profile
         .validate_endpoint(sequencer_url)
         .context("invalid sequencer URL")?;
-    profile
+    indexer_profile
         .validate_endpoint(indexer_url)
         .context("invalid indexer URL")?;
     Ok(())
@@ -438,10 +459,17 @@ mod tests {
     #[test]
     fn typed_node_profile_accepts_only_complete_local_or_official_public_routes() {
         assert!(
-            validate_node_routes(NodeRouteProfile::Local, LOCAL_SEQUENCER, LOCAL_INDEXER).is_ok()
+            validate_node_routes(
+                NodeRouteProfile::Local,
+                NodeRouteProfile::Local,
+                LOCAL_SEQUENCER,
+                LOCAL_INDEXER,
+            )
+            .is_ok()
         );
         assert!(
             validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
                 NodeRouteProfile::OfficialPublic,
                 OFFICIAL_PUBLIC,
                 OFFICIAL_PUBLIC,
@@ -449,26 +477,73 @@ mod tests {
             .is_ok()
         );
 
-        for (profile, sequencer, indexer) in [
-            (NodeRouteProfile::Local, LOCAL_SEQUENCER, OFFICIAL_PUBLIC),
+        for (sequencer_profile, indexer_profile, sequencer, indexer) in [
             (
+                NodeRouteProfile::Local,
+                NodeRouteProfile::Local,
+                LOCAL_SEQUENCER,
+                OFFICIAL_PUBLIC,
+            ),
+            (
+                NodeRouteProfile::OfficialPublic,
                 NodeRouteProfile::OfficialPublic,
                 OFFICIAL_PUBLIC,
                 LOCAL_INDEXER,
             ),
             (
                 NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::OfficialPublic,
                 "https://example.com/",
                 OFFICIAL_PUBLIC,
             ),
             (
                 NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::OfficialPublic,
                 OFFICIAL_PUBLIC,
                 "https://testnet.lez.logos.co/path",
             ),
         ] {
-            assert!(validate_node_routes(profile, sequencer, indexer).is_err());
+            assert!(
+                validate_node_routes(sequencer_profile, indexer_profile, sequencer, indexer)
+                    .is_err()
+            );
         }
+    }
+
+    /// The official public origin serves no indexer, so the only route that can
+    /// retire the sequencer TLS proxy is an HTTPS sequencer paired with a
+    /// locally reachable indexer. A single profile cannot express it.
+    #[test]
+    fn split_route_pairs_an_official_sequencer_with_a_loopback_indexer() {
+        assert!(
+            validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::Local,
+                OFFICIAL_PUBLIC,
+                LOCAL_INDEXER,
+            )
+            .is_ok()
+        );
+
+        // The split is not a way around either profile's own endpoint rules.
+        assert!(
+            validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::Local,
+                "https://example.com/",
+                LOCAL_INDEXER,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::Local,
+                OFFICIAL_PUBLIC,
+                OFFICIAL_PUBLIC,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -506,6 +581,7 @@ mod tests {
             sequencer_url: LOCAL_SEQUENCER.to_owned(),
             indexer_url: LOCAL_INDEXER.to_owned(),
             node_profile: NodeRouteProfile::Local,
+            indexer_profile: None,
             run_id: "m4-tag13-direct-cli-test".to_owned(),
             runtime_file: directory.path().join("does-not-exist-runtime.json"),
             terms_file: None,
