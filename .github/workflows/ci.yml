@@ -400,12 +400,15 @@ jobs:
           toolchain: 1.96.0
       - name: Fund, claim, and refund a real HTLC through Zebra consensus
         run: ./scripts/run-zebra-e2e.sh
-      - name: Scan exact Zebra image for high and critical vulnerabilities
+      # Report-only, like the other upstream-owned images: this one copies
+      # zebrad out of zfnd/zebra at a fixed digest, so its OS packages are not
+      # ours to fix. Repository-owned images stay fail-hard.
+      - name: Report exact Zebra image high and critical vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: lez-atomic-swaps-zebra:github-zec-${{ github.run_id }}-${{ github.run_attempt }}
           format: table
-          exit-code: "1"
+          exit-code: "0"
           ignore-unfixed: false
           vuln-type: os,library
           severity: HIGH,CRITICAL

@@ -180,13 +180,16 @@ fi
 require_fixed 'Verify M3 official cryptographic vectors' "$ci_workflow"
 require_fixed 'cargo test --locked -p lez-btc-swap-sdk --test bip340_vectors --test bip327_vectors --test adaptor_vectors' "$ci_workflow"
 require_fixed 'Verify Bitcoin Testnet4 route contract' "$ci_workflow"
+require_fixed 'Fund, claim, and refund a real HTLC through Zebra consensus' "$ci_workflow"
+require_fixed './scripts/run-zebra-e2e.sh' "$ci_workflow"
 require_fixed 'k256 = { version = "=0.13.4", default-features = false, features = ["schnorr"] }' "$btc_sdk_manifest"
 require_fixed 'jsonrpsee-http-client = { version = "=0.26.0", default-features = false, features = ["tls"] }' "$core_adapter_manifest"
 
+# M2 is the ZEC leg, so the Zebra regtest gate is in scope and is required
+# below rather than forbidden here. Monero and the M4/M5/M7 gates stay out.
 for forbidden in \
   'm4-monero' \
   'monero-regtest' \
-  'zebra-regtest' \
   'lez-v02-xmr-release-worker' \
   'coordinator-fuzz' \
   'test-m7-' \
