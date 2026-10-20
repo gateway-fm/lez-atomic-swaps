@@ -64,6 +64,56 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  zebra-init:
+    image: debian:bookworm-slim
+    container_name: lez-zebra-init
+    volumes:
+      - zebra_data:/var/lib/zebra
+    command: ["chown", "-R", "65532:65532", "/var/lib/zebra"]
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
+  # Zcash Regtest for the LEZ <-> ZEC pair, alongside bitcoin-core for BTC.
+  # Same digest-pinned upstream build as the isolated lane in tests/e2e/zebra.
+  zebra:
+    build: ./images/zebra
+    image: ${LEZ_IMAGE_PREFIX:-lez}-zebra:${LEZ_IMAGE_TAG:-local}
+    container_name: lez-zebra
+    depends_on:
+      zebra-init:
+        condition: service_completed_successfully
+    command:
+      - "--config"
+      - "/run-config/zebrad.toml"
+      - "start"
+    environment:
+      HOME: /tmp
+      ZEBRA_RPC__COOKIE_DIR: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: market-zec-0001
+      org.logos-co.atomic-swaps.scope: zebra-regtest-e2e
+      org.logos-co.atomic-swaps.component: zebra
+    ports:
+      - "127.0.0.1:18232:18232"
+    volumes:
+      - ./assets/zebra/zebrad.toml:/run-config/zebrad.toml:ro
+      - zebra_data:/var/lib/zebra
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    networks: [chains]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 15s
+
   btc-miner:
     build: ./images/btc-miner
     image: ${LEZ_IMAGE_PREFIX:-lez}-btc-miner:${LEZ_IMAGE_TAG:-local}
@@ -474,6 +524,8 @@ networks:
 volumes:
   bitcoin_core_data:
     name: ${LEZ_VOLUME_PREFIX:-lez}-bitcoin-core-data
+  zebra_data:
+    name: ${LEZ_VOLUME_PREFIX:-lez}-zebra-data
   maker_state:
     name: ${LEZ_VOLUME_PREFIX:-lez}-maker-state
   maker_socket:
