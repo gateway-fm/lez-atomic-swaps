@@ -8,7 +8,7 @@ LABEL org.opencontainers.image.revision="9be056a8a72b624dae9623b2f7bded92c2a21c9
 LABEL org.opencontainers.image.licenses="MIT"
 LABEL org.logos-co.atomic-swaps.purpose="isolated-bitcoin-core-regtest"
 LABEL org.logos-co.atomic-swaps.release-archive-sha256="${BITCOIN_CORE_ARCHIVE_SHA256}"
-LABEL org.logos-co.atomic-swaps.guix-sigs-commit="11fb5156a16f27d71b61d18e23c5ffeb29cc6ee1"
+LABEL org.logos-co.atomic-swaps.guix-sigs-commit="d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa"
 
 # The build context is prepared from the checksum- and attestation-verified
 # official archive. Keep only the daemon and RPC client in the runtime image.
