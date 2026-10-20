@@ -271,10 +271,11 @@ phase_nix() {
 phase_rust() {
   PHASE=rust
   local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway
-    maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor
+    maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
     taker-node/lez-taker-node taker-node/lez-taker-cli
     taker-node/lez-taker-chat-gateway taker-node/lez-taker-registry-init
-    taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor
+    taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
+    zebra/lez-runtime-healthcheck
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
   # a different checkout. Its dependency/target cache still makes reruns cheap.
@@ -284,7 +285,7 @@ phase_rust() {
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor 2>&1 | tail -3
+      cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
       for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do
