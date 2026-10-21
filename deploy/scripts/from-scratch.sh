@@ -240,7 +240,10 @@ phase_nix() {
   # The role packages are rebuilt when apps/basecamp changed since they were
   # staged (the tree hash of the checkout, plus a digest of uncommitted edits).
   local role sources
-  sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)"
+  # The staged package is architecture-specific, so the stamp carries the host
+  # variant too: otherwise a bundle staged on one architecture is kept on
+  # another and Basecamp silently drops the role modules.
+  sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)-$(uname -m)"
   for role in maker taker; do
     if [[ ! -f "$ASSETS/$role-user/plugins/lez_atomic_swap_$role/manifest.json" \
        || "$(cat "$ASSETS/$role-user/.sources" 2>/dev/null)" != "$sources" ]]; then
@@ -251,10 +254,17 @@ phase_nix() {
       echo "$sources" > "$ASSETS/$role-user/.sources"
     fi
   done
-  local module output
+  local module output host_basecamp_variant
+  case "$(uname -m)" in
+    x86_64 | amd64) host_basecamp_variant=linux-amd64 ;;
+    *) host_basecamp_variant=linux-arm64 ;;
+  esac
   for module in chat_module:lgx delivery_module:delivery_module-lgx; do
     output="${module#*:}"; module="${module%%:*}"
-    if [[ ! -f "$ASSETS/bundle/modules/$module/manifest.json" ]]; then
+    # Re-stage when the module is missing *or* was staged for another
+    # architecture: Basecamp refuses a foreign variant and starts without it.
+    if [[ ! -f "$ASSETS/bundle/modules/$module/manifest.json" \
+       || "$(cat "$ASSETS/bundle/modules/$module/variant" 2>/dev/null)" != "$host_basecamp_variant" ]]; then
       log "building $module from logos-chat-module@$chat_rev"
       # The out-link and the export directory must not share a name: the
       # export replaces its destination, which would delete the link first.
