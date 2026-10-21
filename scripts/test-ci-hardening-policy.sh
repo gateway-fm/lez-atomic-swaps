@@ -180,13 +180,16 @@ fi
 require_fixed 'Verify M3 official cryptographic vectors' "$ci_workflow"
 require_fixed 'cargo test --locked -p lez-btc-swap-sdk --test bip340_vectors --test bip327_vectors --test adaptor_vectors' "$ci_workflow"
 require_fixed 'Verify Bitcoin Testnet4 route contract' "$ci_workflow"
+require_fixed 'Fund, claim, and refund a real HTLC through Zebra consensus' "$ci_workflow"
+require_fixed './scripts/run-zebra-e2e.sh' "$ci_workflow"
 require_fixed 'k256 = { version = "=0.13.4", default-features = false, features = ["schnorr"] }' "$btc_sdk_manifest"
 require_fixed 'jsonrpsee-http-client = { version = "=0.26.0", default-features = false, features = ["tls"] }' "$core_adapter_manifest"
 
+# M2 is the ZEC leg, so the Zebra regtest gate is in scope and is required
+# below rather than forbidden here. Monero and the M4/M5/M7 gates stay out.
 for forbidden in \
   'm4-monero' \
   'monero-regtest' \
-  'zebra-regtest' \
   'lez-v02-xmr-release-worker' \
   'coordinator-fuzz' \
   'test-m7-' \
@@ -217,9 +220,12 @@ assert_trivy_step \
 assert_trivy_step \
   'Scan exact Bitcoin Core image for high and critical vulnerabilities' \
   'lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}' 1
+assert_trivy_step \
+  'Report exact Zebra image high and critical vulnerabilities' \
+  'lez-atomic-swaps-zebra:github-zec-${{ github.run_id }}-${{ github.run_attempt }}' 0
 report_only_scans="$(rg -Fc -- 'exit-code: "0"' "$ci_workflow")"
-[[ "$report_only_scans" == 2 ]] \
-  || fail "exactly two classified upstream scans may report without failing"
+[[ "$report_only_scans" == 3 ]] \
+  || fail "exactly three classified upstream scans may report without failing"
 
 require_fixed 'isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend' "$ci_workflow"
 require_fixed 'BITCOIN_CORE_E2E_KEEP_RUNNING: "1"' "$ci_workflow"

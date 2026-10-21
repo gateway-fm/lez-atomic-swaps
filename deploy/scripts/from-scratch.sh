@@ -240,7 +240,10 @@ phase_nix() {
   # The role packages are rebuilt when apps/basecamp changed since they were
   # staged (the tree hash of the checkout, plus a digest of uncommitted edits).
   local role sources
-  sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)"
+  # The staged package is architecture-specific, so the stamp carries the host
+  # variant too: otherwise a bundle staged on one architecture is kept on
+  # another and Basecamp silently drops the role modules.
+  sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)-$(uname -m)"
   for role in maker taker; do
     if [[ ! -f "$ASSETS/$role-user/plugins/lez_atomic_swap_$role/manifest.json" \
        || "$(cat "$ASSETS/$role-user/.sources" 2>/dev/null)" != "$sources" ]]; then
@@ -251,10 +254,17 @@ phase_nix() {
       echo "$sources" > "$ASSETS/$role-user/.sources"
     fi
   done
-  local module output
+  local module output host_basecamp_variant
+  case "$(uname -m)" in
+    x86_64 | amd64) host_basecamp_variant=linux-amd64 ;;
+    *) host_basecamp_variant=linux-arm64 ;;
+  esac
   for module in chat_module:lgx delivery_module:delivery_module-lgx; do
     output="${module#*:}"; module="${module%%:*}"
-    if [[ ! -f "$ASSETS/bundle/modules/$module/manifest.json" ]]; then
+    # Re-stage when the module is missing *or* was staged for another
+    # architecture: Basecamp refuses a foreign variant and starts without it.
+    if [[ ! -f "$ASSETS/bundle/modules/$module/manifest.json" \
+       || "$(cat "$ASSETS/bundle/modules/$module/variant" 2>/dev/null)" != "$host_basecamp_variant" ]]; then
       log "building $module from logos-chat-module@$chat_rev"
       # The out-link and the export directory must not share a name: the
       # export replaces its destination, which would delete the link first.
@@ -271,10 +281,11 @@ phase_nix() {
 phase_rust() {
   PHASE=rust
   local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway
-    maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor
+    maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
     taker-node/lez-taker-node taker-node/lez-taker-cli
     taker-node/lez-taker-chat-gateway taker-node/lez-taker-registry-init
-    taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor
+    taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
+    zebra/lez-runtime-healthcheck
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
   # a different checkout. Its dependency/target cache still makes reruns cheap.
@@ -284,7 +295,7 @@ phase_rust() {
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor 2>&1 | tail -3
+      cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
       for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do

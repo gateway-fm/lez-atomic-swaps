@@ -21,7 +21,10 @@ btc-role-preflight = { version = "0.1.0", path = "../btc-role-preflight" }
 getrandom = "=0.3.4"
 hex = "=0.4.3"
 jsonrpsee = { version = "0.26.0", features = ["client-core"] }
-jsonrpsee-http-client = { version = "0.26.0", default-features = false }
+# `tls` brings rustls with the platform verifier, so the sequencer can be an
+# exact allowlisted HTTPS origin instead of a hand-run TLS proxy. Same shape
+# ADR 0051 already accepts for the Bitcoin route.
+jsonrpsee-http-client = { version = "0.26.0", default-features = false, features = ["tls"] }
 lez-btc-core-adapter = { version = "0.1.0", path = "../btc-core-adapter" }
 tower = "=0.5.3"
 lez-adaptor-role-runner = { version = "0.1.0", path = "../adaptor-role-runner" }

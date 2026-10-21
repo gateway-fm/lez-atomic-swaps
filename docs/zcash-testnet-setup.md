@@ -37,6 +37,11 @@ flowchart LR
   and [GitHub tag](https://github.com/ZcashFoundation/zebra/releases/tag/v6.0.0).
 - Zebra is the consensus oracle and broadcaster. librustzcash construction or
   parser success alone is not consensus evidence.
+- The isolated regtest harness (`tests/e2e/zebra/Dockerfile`) deliberately pins
+  a different, digest-pinned Zebra than the public-testnet guidance above: it
+  copies `zebrad` out of `zfnd/zebra:5.2.0` at a fixed digest. Regtest consensus
+  is what that harness tests, so it moves on its own schedule. Public-testnet
+  work follows the 6.0.0 guidance.
 - Tatum documents a dedicated Zebrad JSON-RPC endpoint at
   `https://zcash-testnet-zebrad.gateway.tatum.io`, API-key authentication, a
   free Testnet key, and a separately monitored Testnet Zebrad status component.
@@ -156,21 +161,37 @@ the actor needs: `getblockcount`, `getblockhash`, `getblock`,
 `getrawtransaction`, `getrawmempool`, `gettxout`, and `sendrawtransaction`.
 Method discovery and unauthenticated availability alone are not sufficient.
 
-The current production adapter intentionally accepts literal loopback HTTP only,
-so it cannot yet consume this route. The public transport must be a separate
-configuration that requires HTTPS, a bounded sensitive API-key header, no URL
-credentials, bounded response bodies/time/concurrency, and no automatic retry
-of `sendrawtransaction` after an unknown outcome. Validate returned chain,
-branch, genesis, block, transaction, and stable-tip facts exactly as on the
-self-hosted route. Where practical, cross-check read evidence against the
+The actor consumes this route today. `ZebraRouteConfig::TatumTestnetXApiKey`
+(`crates/zec-reference-actor/src/config.rs`) carries the exact origin and an
+owner-only `api_key_file`; the actor builds the client with
+`HttpZebraRpcConfig::public_https(..).with_public_api_key(..)`
+(`crates/zec-reference-actor/src/command.rs`), which installs the key as a
+fixed sensitive `x-api-key` header. The two auth shapes cannot be crossed:
+`with_cookie_credentials` on a public endpoint is refused with
+`CookieAuthOnPublicEndpoint`, and `public_https` rejects any endpoint other
+than the exact Tatum Testnet origin — URL credentials, paths, queries,
+fragments, alternate providers and explicit ports included.
+
+The transport still owes nothing to the operator beyond the key, but the
+operational rules stand: bounded response bodies, time and concurrency, no
+automatic retry of `sendrawtransaction` after an unknown outcome, and the same
+chain, branch, genesis, block, transaction and stable-tip validation as the
+self-hosted route. Where practical, cross-check read evidence against a
 self-hosted node; never merge disagreeing observations or silently fail over
 between nodes during a state transition.
 
 ## Disposable transparent wallet and funds
 
-The intended swap address is produced by project-owned testnet key custody,
-which is not implemented yet. Once it exists, record only its `tm...` address
-and never log its secret key.
+The swap address is produced by project-owned key custody, which exists. The
+actor reads an owner-only `zcash_key_file` (`config.rs`) and loads it through
+`SecretKey::from_slice(material.zcash_secret_key())` (`command.rs`); it signs
+its own BIP-199 HTLC claim and refund transactions. Record only the `tm...`
+address and never log the secret key.
+
+This is what `real_actor_keys_fund_claim_and_refund_through_zebra_consensus`
+(`crates/zec-swap-sdk/tests/zebra_regtest.rs`) exercises against a real Zebra:
+real actor keys fund the HTLC, and consensus accepts both the claim and the
+refund. The `zebra-regtest` CI job runs it on every change.
 
 The official Zcash testnet guide currently points users to Zcash Discord support
 or the community `https://faucet.zecpages.com/` faucet. See the
@@ -208,8 +229,10 @@ is not a production custody boundary.
 
 ## Public-testnet corridor rehearsal
 
-This section remains blocked until project-owned transparent signing and the
-actual public-testnet actor adapter exist. The eventual rehearsal must:
+Both things this section once waited on now exist: project-owned transparent
+signing, and the public-testnet route in the actor. What remains is
+operational — a Testnet API key in an owner-only file, a funded `tm...`
+address, and a recorded run. The rehearsal must:
 
 1. build the workspace and exact SDK with `cargo build --locked`;
 2. start independent maker and taker processes with separate keys and state;

@@ -9,6 +9,7 @@ COPY lez-maker-cli /payload/lez-maker-cli
 COPY lez-maker-chat-gateway /payload/lez-maker-chat-gateway
 COPY lez-runtime-healthcheck /payload/lez-runtime-healthcheck
 COPY lez-btc-maker-actor /payload/lez-btc-maker-actor
+COPY lez-zec-maker-actor /payload/lez-zec-maker-actor
 COPY lez-v02-bridge-poc /payload/lez-v02-bridge-poc
 RUN strip /payload/*
 
@@ -26,6 +27,7 @@ COPY --from=strip --chmod=0555 /payload/lez-maker-cli /usr/local/bin/lez-maker-c
 COPY --from=strip --chmod=0555 /payload/lez-maker-chat-gateway /usr/local/bin/lez-maker-chat-gateway
 COPY --from=strip --chmod=0555 /payload/lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
 COPY --from=strip --chmod=0555 /payload/lez-btc-maker-actor /usr/local/bin/lez-btc-maker-actor
+COPY --from=strip --chmod=0555 /payload/lez-zec-maker-actor /usr/local/bin/lez-zec-maker-actor
 COPY --from=strip --chmod=0555 /payload/lez-v02-bridge-poc /usr/local/bin/lez-v02-bridge-poc
 COPY --chmod=0555 node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
 RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez \
