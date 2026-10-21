@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -1213,16 +1214,20 @@ def preflight() -> None:
     # finality for minutes and then catches up in one step, so a short sample
     # can show no progress on a chain the swaps still complete on; a frozen
     # chain shows none at all.
-    log("preflight: LEZ finality advancing")
+    # The burst behaviour above means the sample window is a judgement call, so
+    # it is configurable: a chain whose bedrock pauses for longer than the
+    # default needs a longer look before it is called frozen.
+    window = int(os.environ.get("LEZ_E2E_FINALITY_WINDOW_SECONDS", "300"))
+    log(f"preflight: LEZ finality advancing (window {window} s)")
     first = lez_finalized_height()
     started = time.time()
-    while time.time() < started + 300:
+    while time.time() < started + window:
         time.sleep(10)
         second = lez_finalized_height()
         if second > first:
             log(f"  indexer finalized {first} → {second} in {round(time.time() - started)} s")
             return
-    raise Failure(f"LEZ finalized height stuck at {first} for 300 s: bedrock or the indexer is not advancing; "
+    raise Failure(f"LEZ finalized height stuck at {first} for {window} s: bedrock or the indexer is not advancing; "
                   "recreate the LEZ chain (see project notes) before running swaps")
 
 
