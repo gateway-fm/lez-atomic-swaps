@@ -95,7 +95,17 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   echo "[lez] recreating the LEZ chain; old state → runtime/lez-broken-$stamp"
   docker compose stop maker-node taker-node lez-explorer indexer sequencer bedrock >/dev/null 2>&1 || true
   mkdir -p "runtime/lez-broken-$stamp"
-  for d in bedrock sequencer indexer; do [[ -d "runtime/$d" ]] && mv "runtime/$d" "runtime/lez-broken-$stamp/"; done
+  # Bedrock writes its state as the image's own user (65532, mode 0700), which
+  # the host user cannot move on Linux. Docker Desktop maps every bind mount to
+  # the host user and hides that, so the plain mv only fails on a Linux host;
+  # fall back to a root shell in a container that is already present.
+  for d in bedrock sequencer indexer; do
+    [[ -d "runtime/$d" ]] || continue
+    mv "runtime/$d" "runtime/lez-broken-$stamp/" 2>/dev/null ||
+      docker run --rm --user 0 --volume "$PWD/runtime:/runtime" \
+        --entrypoint /bin/sh "${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}" \
+        -c "mv '/runtime/$d' '/runtime/lez-broken-$stamp/'"
+  done
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
   [[ -f "$market_root/bootstrap/deployment.json" ]] && mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$stamp.bak"
 fi
