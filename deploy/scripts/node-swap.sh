@@ -11,7 +11,7 @@ cd "$DEPLOY_ROOT"
 wait_for_completion=1; [[ "${1:-}" == "--no-wait" ]] && wait_for_completion=0
 
 rpc() { # rpc <container> <socket> <method> <params-json>
-  docker exec "$1" curl -sS --max-time 120 --unix-socket "$2" -H 'content-type: application/json' \
+  docker exec "$1" curl -sS --max-time 1440 --unix-socket "$2" -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$3\",\"params\":[$4]}" http://localhost/
 }
 mk() { rpc lez-maker-node /run/lez/maker/node.sock "$@"; }

@@ -69,7 +69,7 @@ load_env() { set -a; source runtime/runtime.env; set +a; export BTC_RPC_PASSWORD
 wait_owner_health() { # wait_owner_health <seconds>
   local deadline=$(( $(date +%s) + $1 ))
   owner_ok() { # owner_ok <role> <method> <params>
-    docker exec "lez-$1-node" curl -sS --max-time 5 --unix-socket "/run/lez/$1/node.sock" \
+    docker exec "lez-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
       -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null | grep -q '"result"'
   }
@@ -165,7 +165,7 @@ esac
 
 echo "[3/6] starting chains…"
 docker compose up -d bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
-wait_healthy 240 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
+wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
 bash scripts/repair-indexer.sh >/dev/null 2>&1 || true
 # The Nodes' Core wallets (lez-maker, lez-taker) and the Taker's regtest
 # balance; idempotent, and after a wipe nothing else creates them.
@@ -195,7 +195,7 @@ if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 
 else
   docker compose up -d maker-node taker-node
 fi
-wait_healthy 240 lez-maker-node lez-taker-node
+wait_healthy 1200 lez-maker-node lez-taker-node
 wait_owner_health 120
 if [[ "$FRESH_LEZ" == 1 ]]; then
   echo "  forgetting swaps that referenced the old chain"
@@ -209,7 +209,7 @@ if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
 fi
 echo "[6/6] Basecamp UI…"
 docker compose up -d basecamp-ui
-wait_healthy 120 lez-basecamp-ui
+wait_healthy 600 lez-basecamp-ui
 ui_failed=0
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
   for role in maker taker; do

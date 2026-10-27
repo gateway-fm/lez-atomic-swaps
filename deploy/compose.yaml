@@ -52,8 +52,8 @@ services:
       test: ["CMD", "/usr/local/bin/bitcoin-cli", "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin", "-rpcwait", "getblockchaininfo"]
       interval: 15s
       timeout: 10s
-      retries: 20
-      start_period: 30s
+      retries: 120
+      start_period: 180s
     networks: [chains]
     user: "65532:65532"
     read_only: true
@@ -105,8 +105,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]
       interval: 15s
       timeout: 10s
-      retries: 20
-      start_period: 30s
+      retries: 120
+      start_period: 180s
     networks: [chains]
     user: "65532:65532"
     read_only: true
@@ -166,7 +166,7 @@ services:
     logging: *default-logging
 
   bedrock:
-    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:70539769f3a2a014b36e608f76264e5d2297f14ee3f7fabf4715f071c7bbf8e7"
+    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:9b316adee185fda52759422e378921a036dcfc9f4422c07bc0a81293e9c2ef35"
     container_name: lez-bedrock
     depends_on:
       lez-init:
@@ -240,8 +240,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:3040", "getBlock", "[1]"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 30s
+      retries: 180
+      start_period: 180s
     stop_signal: SIGINT
     stop_grace_period: 30s
     restart: unless-stopped
@@ -287,8 +287,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:8779", "getLastFinalizedBlockId", "[]"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 30s
+      retries: 180
+      start_period: 180s
     stop_signal: SIGINT
     stop_grace_period: 20s
     restart: unless-stopped
@@ -382,8 +382,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "uds", "/run/lez/maker/node.sock", "maker_health", "[{}]"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 15s
+      retries: 120
+      start_period: 90s
     restart: unless-stopped
     logging: *default-logging
 
@@ -453,8 +453,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "uds", "/run/lez/taker/node.sock", "taker_health", "[{\"schema_version\":1}]"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 15s
+      retries: 120
+      start_period: 90s
     restart: unless-stopped
     logging: *default-logging
 
