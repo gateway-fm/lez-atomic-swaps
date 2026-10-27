@@ -27,7 +27,9 @@ log "stopping both Nodes (their per-swap sidecars stop with them)"
 "${compose[@]}" stop maker-node taker-node >/dev/null
 
 log "Taker: swap directories and registry rows"
-in_role taker bash -c 'rm -rf /var/lib/lez/taker/btc/swaps/* /var/lib/lez/taker/btc/sidecar-state /var/lib/lez/taker/btc/sidecar.log'
+in_role taker bash -c 'for pair in /var/lib/lez/taker/*/; do
+  rm -rf "$pair"swaps/* "$pair"sidecar-state "$pair"sidecar.log
+done'
 in_role taker python3 - <<'PY'
 import sqlite3
 store = sqlite3.connect("/var/lib/lez/taker/registry.sqlite3")
@@ -39,7 +41,9 @@ print("  registry: swaps, authorities and requests cleared")
 PY
 
 log "Maker: swap directories, actor registrations, negotiations, consumed offers"
-in_role maker bash -c 'rm -rf /var/lib/lez/maker/btc/swaps/* /var/lib/lez/maker/btc/sidecar-state /var/lib/lez/maker/btc/sidecar.log /var/lib/lez/maker/btc/lez-btc-maker-actor-trace'
+in_role maker bash -c 'for pair in /var/lib/lez/maker/*/; do
+  rm -rf "$pair"swaps/* "$pair"sidecar-state "$pair"sidecar.log "$pair"lez-*-maker-actor-trace
+done'
 in_role maker python3 - <<'PY'
 import sqlite3
 store = sqlite3.connect("/var/lib/lez/maker/maker.sqlite3")
