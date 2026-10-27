@@ -154,8 +154,8 @@ case "${LEZ_IMAGES:-build}" in
 esac
 
 echo "[3/6] starting chains…"
-docker compose up -d bitcoin-core btc-miner btc-explorer bedrock sequencer indexer lez-explorer
-wait_healthy 240 lez-bitcoin-core lez-sequencer lez-indexer
+docker compose up -d bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
+wait_healthy 240 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
 bash scripts/repair-indexer.sh >/dev/null 2>&1 || true
 # The Nodes' Core wallets (lez-maker, lez-taker) and the Taker's regtest
 # balance; idempotent, and after a wipe nothing else creates them.
