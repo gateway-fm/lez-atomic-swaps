@@ -1217,6 +1217,13 @@ def preflight() -> None:
     # The burst behaviour above means the sample window is a judgement call, so
     # it is configurable: a chain whose bedrock pauses for longer than the
     # default needs a longer look before it is called frozen.
+    # On a chain whose finality only moves while swaps are running, this check
+    # gates the very traffic that would satisfy it. The comment above already
+    # notes swaps complete on chains that sample as frozen, so the check can be
+    # waived deliberately; the scenario then proves the chain for itself.
+    if os.environ.get("LEZ_E2E_SKIP_FINALITY_PREFLIGHT") == "1":
+        log("preflight: LEZ finality check waived by request")
+        return
     window = int(os.environ.get("LEZ_E2E_FINALITY_WINDOW_SECONDS", "300"))
     log(f"preflight: LEZ finality advancing (window {window} s)")
     first = lez_finalized_height()
