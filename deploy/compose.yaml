@@ -401,6 +401,7 @@ services:
     logging: *default-logging
 
   taker-node:
+    build: ./images/taker-node
     image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
     container_name: lez-taker-node
     depends_on:
