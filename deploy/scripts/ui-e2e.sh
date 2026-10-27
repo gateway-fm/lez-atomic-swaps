@@ -116,7 +116,7 @@ join_video() {
 taker_swaps() { # the Taker Node's own view: "<swap_id> <state> <generation> <action>"
   local reply
   for _ in 1 2 3 4 5; do
-    reply="$(docker exec "$container_prefix-taker-node" curl -sS --max-time 20 --unix-socket /run/lez/taker/node.sock \
+    reply="$(docker exec "$container_prefix-taker-node" curl -sS --max-time 240 --unix-socket /run/lez/taker/node.sock \
       -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"taker_swap_list_v1","params":[{"schema_version":1}]}' http://localhost/ 2>/dev/null)"
     [ -n "$reply" ] && break

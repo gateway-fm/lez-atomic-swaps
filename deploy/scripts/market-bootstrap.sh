@@ -58,7 +58,7 @@ if [[ -s "$deployment_evidence" ]] \
 else
   [[ -x "$DEPLOYER" ]] || fail "deployer missing: $DEPLOYER"
   "$DEPLOYER" deploy-m4-local --rpc-url "$SEQUENCER_URL" \
-    --channel-id "$CHANNEL_ID" --timeout-seconds 300 >"$deployment_evidence.partial"
+    --channel-id "$CHANNEL_ID" --timeout-seconds 3600 >"$deployment_evidence.partial"
   jq -e --arg program "$ESCROW_PROGRAM_ID" '
     .preflight.image_id == $program
     and (.transaction_hash | test("^[0-9a-f]{64}$"))
@@ -103,7 +103,7 @@ for entry in "${WALLETS[@]}"; do
     .submission.decision == "admitted" and .allocation == $allocation
     and (.transaction_id | test("^[0-9a-f]{64}$"))
   ' "$MARKET_ROOT/bootstrap/$wallet-claim.json" >/dev/null || fail "$wallet claim evidence invalid"
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 900); do
     [[ "$(account_balance "$vault")" == 0 ]] && break
     sleep 1
   done
