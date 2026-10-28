@@ -579,11 +579,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                     .await
                     .map_err(unavailable_drive)?;
             }
-            match active
-                .drive_first_lock()
-                .await
-                .map_err(unavailable_drive)?
-            {
+            match active.drive_first_lock().await.map_err(unavailable_drive)? {
                 FirstLockDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
                     operation: first_lock_operation(step),
                 },
@@ -698,10 +694,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             },
         },
         (_, Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable) => {
-            let outcome = active
-                .drive_claim()
-                .await
-                .map_err(unavailable_drive)?;
+            let outcome = active.drive_claim().await.map_err(unavailable_drive)?;
             claim_outcome(outcome)
         }
         (_, Phase::Completed) => ActorEffectOutcomeV1::Completed,
@@ -932,10 +925,7 @@ async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComma
         .ok_or(ActorCommandError::NotActivated)?;
 
     ensure_recovery_phase(active.status())?;
-    let outcome = active
-        .drive_refund()
-        .await
-        .map_err(unavailable_recovery)?;
+    let outcome = active.drive_refund().await.map_err(unavailable_recovery)?;
     Ok(ActorEffectOutputV1::from_active(
         config.role(),
         ActorEffectCommandV1::Recover,
