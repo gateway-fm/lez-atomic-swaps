@@ -224,8 +224,8 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
 ```mermaid
 flowchart LR
     subgraph UI["Basecamp (basecamp-ui)"]
-        MakerDesk["LEZ / BTC Maker desk"]
-        TakerDesk["LEZ / BTC Taker desk"]
+        MakerDesk["LEZ Maker desk"]
+        TakerDesk["LEZ Taker desk"]
     end
     subgraph MakerNode["maker-node"]
         Maker["lez-maker-node\noffers · Chat server · supervisor"]

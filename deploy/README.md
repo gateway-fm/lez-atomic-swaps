@@ -120,11 +120,11 @@ its QML inspector against the live Maker and Taker Nodes). Skip with `SKIP_UI_VE
 Open the VNC URL; the two Basecamp microapps are the control surface and the
 two Nodes settle the swap:
 
-1. Open **LEZ / BTC Maker** (wallet **Munich Vault 01**, the Maker Node's
+1. Open **LEZ Maker** (wallet **Munich Vault 01**, the Maker Node's
    identity) and click **Publish offer**. Each click publishes one 0.01 BTC →
    1,000 LEZ offer through the Maker Node; withdrawn and consumed offers leave
    the Taker's order book.
-2. Open **LEZ / BTC Taker** (wallet **Zurich Wallet 01**, the Taker Node's
+2. Open **LEZ Taker** (wallet **Zurich Wallet 01**, the Taker Node's
    identity) and click **Take offer** on an order-book row. The Taker Node
    reserves the lot with the Maker, plans its Bitcoin funding, prepares its LEZ
    claim, runs the signing ceremony and activates its actor; the row then
@@ -162,10 +162,10 @@ btc() { docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf 
    `./scripts/reset-swaps.sh` gives you an empty swap history when you want a
    clean run.
 2. **Publish.** Connect VNC to `127.0.0.1:5901` (password `lezswap`), open
-   **LEZ / BTC Maker** and click **Publish offer**. Check it from outside:
+   **LEZ Maker** and click **Publish offer**. Check it from outside:
    `maker maker_offer_list` lists it `active` at revision 1, and
    `docker exec lez-taker-node ls /delivery` shows its signed file.
-3. **Discover and take.** Open **LEZ / BTC Taker**; the order book shows the
+3. **Discover and take.** Open **LEZ Taker**; the order book shows the
    offer as **Munich Vault 01 · 1,000 LEZ**. `taker taker_offer_list_v1` shows
    the same. Click **Take offer**. Within about ten seconds the row offers
    **Lock 0.01000000 BTC**. Meanwhile: `taker taker_swap_list_v1` lists the

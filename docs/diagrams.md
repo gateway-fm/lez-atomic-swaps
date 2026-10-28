@@ -18,8 +18,8 @@ authority; no service holds the host Docker socket.
 ```mermaid
 flowchart LR
     subgraph UI["Logos Basecamp (basecamp-ui, VNC :5901)"]
-        MAKER_UI["LEZ / BTC Maker desk\nMunich Vault 01"]
-        TAKER_UI["LEZ / BTC Taker desk\nZurich Wallet 01"]
+        MAKER_UI["LEZ Maker desk\nMunich Vault 01"]
+        TAKER_UI["LEZ Taker desk\nZurich Wallet 01"]
     end
 
     MAKER_UI -->|"owner-only Unix socket"| MAKER["lez-maker-node\noffers · Chat server · actor supervisor"]
