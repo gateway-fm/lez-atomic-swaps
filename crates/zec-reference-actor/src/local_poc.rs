@@ -52,7 +52,8 @@ use crate::{ActorConfig, ActorRole, CandidateOutpoint, validate_actor_pair};
 const SPEC_SCHEMA_VERSION: u16 = 1;
 const MAX_SPEC_BYTES: usize = 32 * 1024;
 const MAX_LEZ_SIGNER_KEY_BYTES: usize = 65;
-const AUTHENTICATED_TRANSFER_PROGRAM: &str = "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg";
+// Retained v0.2.0 fixture transfer program, kept for the record:
+// `FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg`. Newer chains differ.
 const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
 const PREIMAGE_BYTE: u8 = 0x44;
@@ -955,10 +956,11 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
         spec.schema_version == SPEC_SCHEMA_VERSION,
         "unsupported local PoC spec schema"
     );
-    ensure!(
-        spec.lez_runtime.authenticated_transfer_program_id_base58 == AUTHENTICATED_TRANSFER_PROGRAM,
-        "authenticated-transfer program does not match the retained v0.2 runtime"
-    );
+    // The authenticated-transfer program is whatever the chain in front of us
+    // deployed; the spec names it from the same manifest the Nodes read. It
+    // was once pinned to the retained v0.2.0 fixture, which refused every
+    // newer local chain (the v0.2.4 devnet ships `fe96c4...`, not `dcbbfe...`).
+    // The base58 value is still decoded and bound into the agreement below.
     ensure!(
         [
             spec.lez_runtime.chain_id,
