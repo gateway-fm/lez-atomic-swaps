@@ -21,6 +21,16 @@ if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
 }
 const reverseDirection = uiDirection === "TakerSellsLez";
 const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
+// Zcash rows come from a prepared corridor (scripts/zec-provision.sh), one lot
+// per corridor (amounts below), TakerSellsLez only for now. The Taker's first
+// LEZ lock is driven on the Node host through the Taker actor, so a fresh
+// Zcash swap shows no button.
+// Part D: TakerSellsForeign through the Nodes lands at step 20; drop the
+// direction guard below then.
+const uiPair = process.env.M3_UI_PAIR || "Bitcoin";
+if (!["Bitcoin", "Zcash"].includes(uiPair)) throw new Error("M3_UI_PAIR must be Bitcoin or Zcash");
+const zcash = uiPair === "Zcash";
+if (zcash && !reverseDirection) throw new Error("Zcash journeys run TakerSellsLez only");
 
 const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
 // both plugins in one app: the product shape (maker + taker in the sidebar)
@@ -129,6 +139,14 @@ const btcAmount = process.env.LEZ_UI_BTC_AMOUNT || "0.01";
 const lezText = `${Number(lezAmount).toLocaleString("en-US")} LEZ`;
 const btcText = `${Number(btcAmount).toFixed(8)} BTC`;
 const btcShort = `${btcAmount} BTC`;
+// A Zcash row shows the prepared corridor's lot: ui-e2e.sh reads it from the
+// corridor's prepared.json and passes LEZ_UI_ZEC_AMOUNT (ZEC) and
+// LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), so a price change in zec-provision.sh
+// cannot silently break the journey.
+const zecAmount = process.env.LEZ_UI_ZEC_AMOUNT || "1";
+const zecLezAmount = process.env.LEZ_UI_ZEC_LEZ_AMOUNT || "50000";
+const zecText = `${Number(zecAmount).toFixed(8)} ZEC`;
+const zecLezText = `${Number(zecLezAmount).toLocaleString("en-US")} LEZ`;
 const makerTerms = [
   ["makerSellAmount", reverseDirection ? btcAmount : lezAmount, "amount"],
   ["makerReceiveAmount", reverseDirection ? lezAmount : btcAmount, "amount"],
@@ -442,7 +460,7 @@ if (role === "maker") {
     await app.expectTexts(["ACCOUNT", "My orders", "Available orders", "Zurich Wallet 01 · Taker Node"]);
     // The order book arrives with the first market snapshot after the view
     // opens; wait for the rendered rows instead of racing that request.
-    await app.waitFor(async () => app.expectTexts([btcText, lezText]), {
+    await app.waitFor(async () => app.expectTexts(zcash ? [zecText, zecLezText] : [btcText, lezText]), {
       timeout: 15000, interval: 500, description: "first market snapshot rendered",
     });
     {
@@ -489,17 +507,25 @@ if (role === "maker") {
         const buttons = await app.findByProperty("objectName", "takerTakeOffer");
         const seen = [];
         for (const match of buttons.matches ?? []) {
-          const direction = await evaluateIn(app, match.id, "String(modelData.direction)");
-          seen.push(direction.result);
-          if (direction.ok === true && direction.result === wantedDirection) { target = match.id; return; }
+          const row = await evaluateIn(app, match.id, "String(modelData.direction) + ' ' + String(modelData.pair ?? 'Bitcoin')");
+          seen.push(row.result);
+          if (row.ok === true && row.result === `${wantedDirection} ${uiPair}`) { target = match.id; return; }
         }
-        throw new Error(`no takeable ${wantedDirection} order-book row yet (rows: ${seen.join(", ") || "none"})`);
-      }, { timeout: 180000, interval: 5000, description: `${wantedDirection} order-book row` });
-      narrate(reverseDirection
-        ? "Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap"
-        : "Take offer on a sell-LEZ row: the Taker Node reserves the lot, plans its Bitcoin funding, runs the signing ceremony with the Maker and activates the swap");
+        throw new Error(`no takeable ${wantedDirection} ${uiPair} order-book row yet (rows: ${seen.join(", ") || "none"})`);
+      }, { timeout: 180000, interval: 5000, description: `${wantedDirection} ${uiPair} order-book row` });
+      narrate(zcash
+        ? "Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor"
+        : reverseDirection
+          ? "Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap"
+          : "Take offer on a sell-LEZ row: the Taker Node reserves the lot, plans its Bitcoin funding, runs the signing ceremony with the Maker and activates the swap");
       await evaluateIn(app, target, "clicked()");
-      const firstAction = reverseDirection ? "lock_lez" : "lock_btc";
+      // A Zcash swap has no desk lock: the Taker's first LEZ lock is the ZEC
+      // actor's, driven on the Node host. Right after the take the row reads
+      // "Preparing the swap" (the Node answers not_activated until the actor
+      // is activated there) and "LEZ lock pending" once it is; the desk only
+      // follows, so either state is the taken row.
+      const firstAction = zcash ? null : (reverseDirection ? "lock_lez" : "lock_btc");
+      const zcashTakenStates = ["preparing", "lock_pending"];
       // Older swaps may already show the same lock button: only the swap this
       // take created counts, and the Node names it in its reply. A rejected
       // take fails at once instead of waiting out the deadline.
@@ -517,17 +543,19 @@ if (role === "maker") {
         const swapId = envelope?.result?.taken?.swap?.swap_id;
         if (swapId) {
           const row = rowsFor(await deskSwaps(app), swapId)[0];
-          if (row?.action_required === firstAction) { taken = swapId; break; }
+          if (firstAction === null ? zcashTakenStates.includes(row?.state) : row?.action_required === firstAction) { taken = swapId; break; }
           if (Date.now() > deadline) {
-            throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction}`);
+            throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction ?? "show as the prepared Zcash swap"}`);
           }
         } else if (Date.now() > deadline) {
           throw new Error("the Taker Node did not answer the take in time");
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
-      console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · Taker lock action ready`);
-      narrate(`Swap ${taken.slice(0, 12)} is in "My orders" and needs the Taker: its ${reverseDirection ? "LEZ" : "Bitcoin"} lock`);
+      console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · ${zcash ? "LEZ lock pending (actor-driven)" : "Taker lock action ready"}`);
+      narrate(zcash
+        ? `Swap ${taken.slice(0, 12)} is in "My orders"; its first LEZ lock is driven through the Taker actor on the Node, not a desk button`
+        : `Swap ${taken.slice(0, 12)} is in "My orders" and needs the Taker: its ${reverseDirection ? "LEZ" : "Bitcoin"} lock`);
     });
   }
 
@@ -546,13 +574,18 @@ if (role === "maker") {
                    "Refund admitted; the Taker Node broadcasts it when the timelock allows and follows it to confirmation"],
       refund_lez: ["The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached",
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
+      claim_zec: [`Claim ${zecText}: the Maker's LEZ claim revealed the secret; the Taker's claim spends the Zcash HTLC on the transparent pool`,
+                  "Zcash claim broadcast; once it is in a block the swap completes. The claim is transparent: move the funds to a shielded address afterwards"],
     };
     return (texts[action] ?? [action, action])[moment === "before" ? 0 : 1];
   }
 
   // A refund is admitted at once and driven by the Node until the chain
   // clocks allow it, so its row settles into refunding/refunded much later.
-  const takerActions = reverseDirection
+  const takerActions = zcash
+    ? { claim_zec: [`Claim ${zecText}`, ["claiming_zec", "claim_ready", "completed"], 45000],
+        refund_lez: [`Refund ${zecLezText}`, ["refunding", "refunded"], waitTimeoutMs] }
+    : reverseDirection
     ? { lock_lez: [`Lock ${lezText}`, ["locking_lez"], 45000],
         claim_btc: [`Claim ${btcText}`, ["claiming_btc"], 45000],
         refund_lez: [`Refund ${lezText}`, ["refunding", "refunded"], waitTimeoutMs] }

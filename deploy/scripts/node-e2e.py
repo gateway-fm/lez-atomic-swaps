@@ -1485,6 +1485,43 @@ def scenario_zec_happy(stamp: str) -> dict:
             "zcash_refund_height": corridor["zcash_refund_height"]}
 
 
+def zec_export_tool(swap_id: str) -> bool:
+    """`node-e2e.py --pair Zcash zec-export --swap-id …`: the ZEC counterpart of
+    export-node-evidence.py for the desk journeys. A ZEC swap has no Bitcoin
+    swap store to read; its evidence is the corridor (id, profile), the Taker
+    actor's durable status, both Nodes' swap views, and the zebra transactions
+    that spend the provisioned coinbase output (the Maker's funding) and the
+    funding output itself (the Taker's claim or the Maker's refund), with their
+    heights. Written to runtime/evidence/zec/<swap_id>.json."""
+    corridor = zec_provision()
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    spend = zec_spend_of((funding[0], 0), funding[1]) if funding else None
+    maker = rpc("maker", "maker_actor_monitor_v1", {"id": swap_id}, timeout=30)
+    evidence = {
+        "schema_version": 1, "swap_id": swap_id, "pair": "Zcash", "direction": ROUTE["direction"],
+        "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
+        "zcash_refund_height": corridor["zcash_refund_height"],
+        "taker": {"node_view": taker_view(swap_id), "actor_status": zec_status(config)},
+        "maker": {"node_view": maker.get("result"), "error": maker.get("error")},
+        "zebra": {
+            "tip_height": int(zebra("getblockcount")),
+            "provisioned_outpoint": {"transaction_id": outpoint[0], "output_index": outpoint[1]},
+            "maker_funding": {"transaction_id": funding[0], "height": funding[1]} if funding else None,
+            "funding_output_spend": {"transaction_id": spend[0], "height": spend[1]} if spend else None,
+        },
+        "exported_at_unix_seconds": int(time.time()),
+    }
+    out = DEPLOY_ROOT / "runtime" / "evidence" / "zec"; out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{swap_id}.json"
+    path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+    log(f"  ZEC evidence written to {path} (taker {evidence['taker']['node_view'].get('state')}, "
+        f"maker {((maker.get('result') or {}).get('progress') or {}).get('observation', {}).get('phase', '?')}, "
+        f"funding {funding and funding[1]}, spend {spend and spend[1]})")
+    return True
+
+
 def zec_drive_tool(swap_id: str, until: str, timeout: int) -> bool:
     """`node-e2e.py --pair Zcash zec-drive --swap-id … --until <state>`: the host-side
     actor driving the desk journeys need between their steps (ui-e2e.sh), on the
@@ -1493,7 +1530,14 @@ def zec_drive_tool(swap_id: str, until: str, timeout: int) -> bool:
     corridor = zec_provision()
     config = zec_taker_actor_config(corridor["receipt_output"])
     try:
-        zec_activate(config)
+        # The first drive after the desk's take activates the actor; later
+        # drives (after the desk's claim) find it active and past the phase
+        # where activation is admitted, so they only drive.
+        status = zec_status(config)
+        if not status or status.get("state") != "active":
+            zec_activate(config)
+        else:
+            log(f"  Taker actor already active at {status.get('phase')} (revision {status.get('revision')})")
         view = zec_drive_until(swap_id, config, set(until.split("|")), timeout, corridor, describe=f"(zec-drive to {until})")
     except Failure as failure:
         log(f"FAILED: {failure}")
@@ -1892,8 +1936,8 @@ def run(name: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-drive", "all"])
-    parser.add_argument("--swap-id", help="zec-drive: the swap to drive")
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-drive", "zec-export", "all"])
+    parser.add_argument("--swap-id", help="zec-drive / zec-export: the swap to drive or export")
     parser.add_argument("--until", help="zec-drive: Taker state(s) to reach, '|'-separated")
     parser.add_argument("--timeout", type=int, default=2400, help="zec-drive: seconds")
     parser.add_argument("--direction", choices=["TakerSellsForeign", "TakerSellsLez"], default="TakerSellsForeign",
@@ -1910,6 +1954,10 @@ def main() -> int:
             if not (args.swap_id and args.until):
                 parser.error("zec-drive needs --swap-id and --until")
             return 0 if zec_drive_tool(args.swap_id, args.until, args.timeout) else 1
+        if args.scenario == "zec-export":
+            if not args.swap_id:
+                parser.error("zec-export needs --swap-id")
+            return 0 if zec_export_tool(args.swap_id) else 1
         names = list(ZEC_SCENARIOS) if args.scenario == "all" else [args.scenario]
         unknown = [n for n in names if n not in ZEC_SCENARIOS]
         if unknown:

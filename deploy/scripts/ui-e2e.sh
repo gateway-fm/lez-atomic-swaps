@@ -30,11 +30,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 set -a; source runtime/runtime.env; set +a
 export BTC_RPC_PASSWORD
 
-scenario="${1:-}"; direction="TakerSellsForeign"; record=0
+scenario="${1:-}"; direction="TakerSellsForeign"; pair="Bitcoin"; record=0
 shift || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --direction) direction="$2"; shift 2 ;;
+    --pair) pair="$2"; shift 2 ;;
     --record) record=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -52,6 +53,15 @@ if [[ "$direction" == TakerSellsLez ]]; then
 else
   lock_action=lock_btc; claim_action=claim_lez; refund_action=refund_btc; lock_wallet=lez-taker
 fi
+# Zcash: a prepared corridor (scripts/zec-provision.sh), TakerSellsLez only for
+# now (Part D: TakerSellsForeign through the Nodes lands at step 20). The
+# Taker's first LEZ lock has no desk button; it is driven through the Taker
+# actor on the Node (node-e2e.py --pair Zcash zec-drive) between desk steps.
+case "$pair" in
+  Bitcoin) ;;
+  Zcash) direction=TakerSellsLez; lock_action=""; claim_action=claim_zec; refund_action=refund_lez; lock_wallet=lez-maker ;;
+  *) echo "--pair must be Bitcoin or Zcash" >&2; exit 64 ;;
+esac
 
 log() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { log "FAILED: $*"; exit 1; }
@@ -68,7 +78,7 @@ start_node() { docker start "$1" >/dev/null; stopped_node=""; wait_healthy "$1";
 # looks exactly like a hang: the step prints, nothing follows, and the Nodes
 # stay healthy. `ps` shows state T.
 ui() { # ui <role> [ENV=VALUE...]
-  local role="$1"; shift; local envs=(-e "M3_UI_DIRECTION=$direction" -e "DESK_DEBUG=${DESK_DEBUG:-0}")
+  local role="$1"; shift; local envs=(-e "M3_UI_DIRECTION=$direction" -e "M3_UI_PAIR=$pair" -e "DESK_DEBUG=${DESK_DEBUG:-0}")
   # verify.mjs reads the trade size from these, so they have to cross into the
   # container: the desks run inside it. Unset means the local stack's defaults
   # (1000 LEZ, 0.01 BTC); the public testnets pass smaller amounts, which is the
@@ -76,6 +86,8 @@ ui() { # ui <role> [ENV=VALUE...]
   # cannot.
   [[ -z "${LEZ_UI_LEZ_AMOUNT:-}" ]] || envs+=(-e "LEZ_UI_LEZ_AMOUNT=$LEZ_UI_LEZ_AMOUNT")
   [[ -z "${LEZ_UI_BTC_AMOUNT:-}" ]] || envs+=(-e "LEZ_UI_BTC_AMOUNT=$LEZ_UI_BTC_AMOUNT")
+  [[ -z "${LEZ_UI_ZEC_AMOUNT:-}" ]] || envs+=(-e "LEZ_UI_ZEC_AMOUNT=$LEZ_UI_ZEC_AMOUNT")
+  [[ -z "${LEZ_UI_ZEC_LEZ_AMOUNT:-}" ]] || envs+=(-e "LEZ_UI_ZEC_LEZ_AMOUNT=$LEZ_UI_ZEC_LEZ_AMOUNT")
   # How long a desk waits for the Node to reach the next state. verify.mjs defaults to
   # 30 minutes, which is barely 1.5 testnet4 block intervals and does time out on the
   # public networks, so docs/testnet-run.md tells the operator to raise it. That only
@@ -86,7 +98,9 @@ ui() { # ui <role> [ENV=VALUE...]
     segment_index=$((segment_index + 1))
     local segment; segment="$(printf '%s-%s-%02d-%s' "$direction" "$scenario" "$segment_index" "$role")"
     segments+=("$segment")
-    mkdir -p "$videos"
+    # The desk container records as uid 4713 into this bind mount: it must be
+    # writable by that user on a host where the directory did not exist yet.
+    mkdir -p "$videos" && chmod 0777 "$videos"
     docker compose "${stack_compose[@]}" run --rm -T --no-deps "${envs[@]}" \
       -e "STEP_TITLE=${step_title:-}" -v "$videos:/recordings" \
       --entrypoint bash basecamp-ui /ui-tests/record-step.sh "$role" "$segment" </dev/null 2>&1 |
@@ -174,14 +188,42 @@ taker_wait() { step "Taker desk shows ${2:0:12} at $1" taker INTERACTIVE_ACTION=
 maker_wait() { # the awaiting-claim label names the asset the Taker claims: what the Maker locked
   local label=""
   if [[ "$1" == awaiting_taker_claim ]]; then
-    [[ "$direction" == TakerSellsLez ]] && label="Waiting for the Taker's Bitcoin claim" || label="Waiting for the Taker's LEZ claim"
+    if [[ "$pair" == Zcash ]]; then label="Waiting for the Taker's Zcash claim"
+    elif [[ "$direction" == TakerSellsLez ]]; then label="Waiting for the Taker's Bitcoin claim"
+    else label="Waiting for the Taker's LEZ claim"; fi
   fi
   step "Maker desk shows ${2:0:12} at $1" maker INTERACTIVE_ACTION=wait "INTERACTIVE_STATE=$1" "INTERACTIVE_SWAP_ID=$2" "INTERACTIVE_EXPECT_LABEL=$label"
 }
 finish() { # finish <swap_id>: both desks show the swap completed, then export the chain evidence
   maker_wait completed "$1"
   taker_wait completed "$1"
-  if [[ "${LEZ_EXPORT_EVIDENCE:-1}" == 1 ]]; then python3 scripts/export-node-evidence.py --swap "$1" || fail "evidence export"; fi
+  [[ "${LEZ_EXPORT_EVIDENCE:-1}" == 1 ]] || return 0
+  if [[ "$pair" == Bitcoin ]]; then
+    python3 scripts/export-node-evidence.py --swap "$1" || fail "evidence export"
+  else
+    # export-node-evidence.py reads the Bitcoin swap stores; a ZEC swap's record
+    # is the corridor, both Nodes' views, the Taker actor's status and the zebra
+    # transactions, written by node-e2e.py to runtime/evidence/zec/<swap>.json.
+    LEZ_ZEC_REUSE_CORRIDOR=1 python3 scripts/node-e2e.py --pair Zcash zec-export --swap-id "$1" || fail "ZEC evidence export"
+  fi
+}
+# ---- ZEC host-side steps (the Node offers only claim/refund for ZEC) ----------------
+zec_provision() { # one fresh corridor; recreates both Nodes (zec-provision.sh step 8)
+  log "provisioning a ZEC corridor (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
+  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} 2>&1 | tail -4 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh"
+  wait_healthy lez-maker-node; wait_healthy lez-taker-node
+  # The desk shows the corridor's lot; verify.mjs asserts the amounts it is given.
+  local prepared; prepared="runtime/zec/$(cat runtime/zec/current)/prepared.json"
+  LEZ_UI_ZEC_AMOUNT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["foreign_units"] / 1e8)' "$prepared")"
+  LEZ_UI_ZEC_LEZ_AMOUNT="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["lez_units"])' "$prepared")"
+  export LEZ_UI_ZEC_AMOUNT LEZ_UI_ZEC_LEZ_AMOUNT
+  log "corridor lot: $LEZ_UI_ZEC_AMOUNT ZEC for $LEZ_UI_ZEC_LEZ_AMOUNT LEZ units"
+}
+zec_drive() { # zec_drive <swap_id> <taker state> [timeout]: drive the Taker actor (and mine zebra on demand) until the Node reports that state
+  log "driving the Taker's ZEC actor on the Node until ${1:0:12} shows $2"
+  python3 scripts/node-e2e.py --pair Zcash zec-drive --swap-id "$1" --until "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive to $2"
 }
 
 # ---- scenarios ------------------------------------------------------------------
@@ -256,6 +298,16 @@ scenario_taker_refund() {
   taker_wait refunded "$swap"
   maker_wait refunded "$swap"
 }
+scenario_zec_happy() {
+  local swap; zec_provision; take swap
+  note "The Taker's first LEZ lock is the ZEC actor's: it is driven on the Node host, not from the desk; the Maker then funds Zcash and claims LEZ with the secret"
+  zec_drive "$swap" claim_available
+  maker_wait awaiting_taker_claim "$swap"
+  taker_act "$claim_action" "$swap"
+  note "The Zcash claim waits for a zebra block; the Taker actor is driven until it observes it"
+  zec_drive "$swap" completed 900
+  finish "$swap"
+}
 scenario_maker_refund() {
   require_fast; local swap; publish; take swap
   taker_act "$lock_action" "$swap"
@@ -282,6 +334,7 @@ run_one() {
     taker-refund) scenario_taker_refund ;;
     maker-refund) scenario_maker_refund ;;
     node-offline) scenario_node_offline ;;
+    zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
@@ -290,6 +343,6 @@ run_one() {
 all=(happy restart-taker restart-maker survivor concurrent taker-refund maker-refund node-offline)
 case "$scenario" in
   all) for name in "${all[@]}"; do run_one "$name"; done ;;
-  "") echo "usage: scripts/ui-e2e.sh <scenario|all> [--direction TakerSellsForeign|TakerSellsLez]" >&2; exit 64 ;;
+  "") echo "usage: scripts/ui-e2e.sh <scenario|all> [--direction TakerSellsForeign|TakerSellsLez] [--pair Bitcoin|Zcash] [--record]" >&2; exit 64 ;;
   *) run_one "$scenario" ;;
 esac

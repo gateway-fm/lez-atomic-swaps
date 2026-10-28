@@ -21,6 +21,30 @@ QString formatBtc(qint64 sats)
     return QString::number(static_cast<double>(sats) / 100000000.0, 'f', 8) + " BTC";
 }
 
+// The desks render the pairs the Nodes settle themselves: Bitcoin (offers
+// the Maker desk publishes) and Zcash (prepared corridors from
+// scripts/zec-provision.sh, 1 ZEC = 100 000 000 zatoshis, 8 decimals like
+// Bitcoin). Any other pair is left out of the rows.
+bool nodePair(const QString& pair)
+{
+    return pair == QStringLiteral("Bitcoin") || pair == QStringLiteral("Zcash");
+}
+
+QString pairSymbol(const QString& pair)
+{
+    return pair == QStringLiteral("Zcash") ? QStringLiteral("ZEC") : QStringLiteral("BTC");
+}
+
+QString formatZec(qint64 zatoshis)
+{
+    return QString::number(static_cast<double>(zatoshis) / 100000000.0, 'f', 8) + " ZEC";
+}
+
+QString formatForeign(const QString& pair, qint64 units)
+{
+    return pair == QStringLiteral("Zcash") ? formatZec(units) : formatBtc(units);
+}
+
 QString formatLez(qint64 units)
 {
     // "1,000 LEZ": the grouped form the desks and their suites expect.
@@ -34,10 +58,10 @@ QString directionName(const QString& routeDirection)
                                                              : QStringLiteral("taker_sells_foreign");
 }
 
-QString directionDisplay(const QString& name)
+QString directionDisplay(const QString& name, const QString& pair)
 {
-    return name == QStringLiteral("taker_sells_lez") ? QStringLiteral("LEZ → BTC")
-                                                     : QStringLiteral("BTC → LEZ");
+    return name == QStringLiteral("taker_sells_lez") ? "LEZ → " + pairSymbol(pair)
+                                                     : pairSymbol(pair) + " → LEZ";
 }
 
 QJsonObject routeObject(const QString& direction)
@@ -79,28 +103,32 @@ QJsonObject offerRow(const QJsonObject& offer, const QString& state, const QStri
 {
     const QJsonObject configuration = offer.value("pair_configuration").toObject();
     const QJsonObject price = offer.value("price").toObject();
+    const QString pair = configuration.value("route").toObject().value("pair").toString();
     const QString direction = directionName(configuration.value("route").toObject().value("direction").toString());
     const qint64 minimumSats = integerField(configuration, "minimum_foreign_units");
     const qint64 maximumSats = integerField(configuration, "maximum_foreign_units");
     qint64 minimumLez = 0, maximumLez = 0;
     const bool quotable = quoteLez(price, minimumSats, minimumLez) && quoteLez(price, maximumSats, maximumLez);
     const bool takerPaysBitcoin = direction == QStringLiteral("taker_sells_foreign");
-    const QString bitcoin = rangeDisplay(minimumSats, maximumSats, formatBtc);
+    const QString bitcoin = rangeDisplay(minimumSats, maximumSats, pair == QStringLiteral("Zcash") ? formatZec : formatBtc);
     const QString lez = quotable ? rangeDisplay(minimumLez, maximumLez, formatLez) : QStringLiteral("unquotable");
     return QJsonObject{
         {"offer_id", offer.value("id").toString()},
         {"maker_wallet_label", makerLabel},
         {"state", state},
+        {"pair", pair},
+        {"pair_symbol", pairSymbol(pair)},
         {"minimum_foreign_units", minimumSats},
         {"maximum_foreign_units", maximumSats},
         {"lez_units_per_lot", integerField(price, "lez_units_per_lot")},
         {"foreign_units_per_lot", integerField(price, "foreign_units_per_lot")},
         {"bitcoin_sats", maximumSats},
-        {"bitcoin_display", bitcoin},
+        {"bitcoin_display", bitcoin},  // the foreign leg, whatever the pair (the key predates Zcash)
+        {"foreign_display", bitcoin},
         {"lez_units", maximumLez},
         {"lez_display", lez},
         {"direction", direction},
-        {"direction_display", directionDisplay(direction)},
+        {"direction_display", directionDisplay(direction, pair)},
         {"taker_pays_display", takerPaysBitcoin ? bitcoin : lez},
         {"taker_receives_display", takerPaysBitcoin ? lez : bitcoin},
         {"expires_at_unix_seconds", offer.value("expires_at_unix_seconds")},
@@ -124,15 +152,33 @@ struct SwapRow {
 // lifecycle state: a refund it offers while the Maker's lock is still
 // nominally awaited means the Maker missed its window.
 SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool locked,
-                 const QString& direction, const QString& bitcoin, const QString& lez, qint64 lockFeeSat)
+                 const QString& direction, const QString& pair, const QString& bitcoin, const QString& lez,
+                 qint64 lockFeeSat)
 {
-    const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");
+    const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");  // sells the foreign coin
+    const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
+    const QString foreignTag = pair == QStringLiteral("Zcash") ? "zec" : "btc";
     const QString mine = sellsBitcoin ? bitcoin : lez;          // what this Taker locks
     const QString theirs = sellsBitcoin ? lez : bitcoin;        // what it claims
-    const QString myChain = sellsBitcoin ? "Bitcoin" : "LEZ";
-    const QString theirChain = sellsBitcoin ? "LEZ" : "Bitcoin";
-    const QString refundAction = sellsBitcoin ? "refund_btc" : "refund_lez";
-    const QString claimAction = sellsBitcoin ? "claim_lez" : "claim_btc";
+    const QString myChain = sellsBitcoin ? foreignChain : "LEZ";
+    const QString theirChain = sellsBitcoin ? "LEZ" : foreignChain;
+    const QString refundAction = sellsBitcoin ? "refund_" + foreignTag : "refund_lez";
+    const QString claimAction = sellsBitcoin ? "claim_lez" : "claim_" + foreignTag;
+    if (pair == QStringLiteral("Zcash")) {
+        // The Taker Node has no lock RPC for ZEC: the actor's first LEZ lock
+        // is driven on the Node host (lez-zec-taker-actor … drive), so the
+        // desk reports it rather than offering a button that cannot work.
+        if (nodeState == "awaiting_first_lock")
+            return {"lock_pending", "LEZ lock pending", 20,
+                    "Your ZEC actor submits the escrow lock when it is driven on the Node; the desk only follows it", "", ""};
+        // The ZEC projection folds every phase between the Taker's lock and the
+        // Maker's revealing claim into refund_available: the swap is moving and
+        // a refund is merely allowed, which is not "the Maker missed its window".
+        if (nodeState == "refund_available" && availableAction == QStringLiteral("refund"))
+            return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
+                    "The Maker's Node funds " + theirChain + " and claims LEZ with the secret; Refund recovers your "
+                        + mine + " if it never does", refundAction, "Refund " + mine};
+    }
     if (availableAction == QStringLiteral("refund") && nodeState != "refund_available")
         return {"refund_ready", "The Maker missed its lock window", 60,
                 "Your Node offers the recovery path; nothing else can happen on this swap",
@@ -149,8 +195,8 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
                         ? "Your move — Lock " + mine + " broadcasts the exact funding transaction your wallet signed"
                               + (lockFeeSat > 0 ? " · network fee " + QString::number(lockFeeSat) + " sat" : QString())
                         : "Your move — Lock " + mine + " submits the escrow initialization and funding your sidecar prepared",
-                    sellsBitcoin ? "lock_btc" : "lock_lez", "Lock " + mine};
-        return {sellsBitcoin ? "locking_btc" : "locking_lez", myChain + " lock confirming", 35,
+                    sellsBitcoin ? "lock_" + foreignTag : "lock_lez", "Lock " + mine};
+        return {sellsBitcoin ? "locking_" + foreignTag : "locking_lez", myChain + " lock confirming", 35,
                 "Your Node observes the lock; the Maker locks " + theirChain + " once it is confirmed", "", ""};
     }
     if (nodeState == "awaiting_second_lock")
@@ -167,7 +213,7 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     // and re-drives the actor, so a stalled claim or refund has a way back
     // other than the CLI. The desk used to show only a progress bar here.
     if (nodeState == "claim_in_progress")
-        return {sellsBitcoin ? "claiming_lez" : "claiming_btc", theirChain + " claim submitted", 85,
+        return {sellsBitcoin ? "claiming_lez" : "claiming_" + foreignTag, theirChain + " claim submitted", 85,
                 "Your Node observes the claim; the Maker's follow-up " + myChain + " claim completes the swap",
                 claimAction, "Retry claim"};
     if (nodeState == "completed")
@@ -189,11 +235,13 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
 // locks Bitcoin and claims LEZ. The actor's `next_action` names recovery
 // once the Maker's lock window is gone.
 SwapRow makerRow(const QString& phase, const QString& nextAction, const QString& scheduleState,
-                 const QString& direction, const QString& failureClass, bool claimSent)
+                 const QString& direction, const QString& pair, const QString& failureClass, bool claimSent)
 {
     const bool sellsLez = direction == QStringLiteral("taker_sells_foreign");
-    const QString myChain = sellsLez ? "LEZ" : "Bitcoin";      // what this Maker locks
-    const QString theirChain = sellsLez ? "Bitcoin" : "LEZ";   // what the Taker locks and the Maker claims
+    const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
+    const QString foreignTag = pair == QStringLiteral("Zcash") ? "zec" : "btc";
+    const QString myChain = sellsLez ? "LEZ" : foreignChain;      // what this Maker locks
+    const QString theirChain = sellsLez ? foreignChain : "LEZ";   // what the Taker locks and the Maker claims
     // A refunded leg is reported before any recovery routing (the actor still
     // names the Taker's recovery as what is left to observe, which is not a
     // missed lock window), but one refunded leg is not an unwound swap: until
@@ -221,11 +269,22 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     if (nextAction == QStringLiteral("recover_maker_leg"))
         return {"recovering", "Claim window closed", 55,
                 "The Taker's claim can no longer land; your Node refunds its " + myChain + " lock", "", ""};
+    // ZEC (TakerSellsLez): the Maker funds Zcash second, claims LEZ first with
+    // the secret, and refunds Zcash at the agreement's height if LEZ never pays.
+    if (nextAction == QStringLiteral("refund_zcash"))
+        return {"recovering", "Refunding Zcash", 55,
+                "The LEZ leg will not pay; your Node refunds its Zcash lock once the refund height is reached", "", ""};
+    if (phase == "both_legs_locked" && nextAction == QStringLiteral("claim_lez"))
+        return {"claiming_lez", "Claiming LEZ", 70,
+                "Your Node claims the LEZ escrow with the secret; the Taker then claims " + foreignChain, "", ""};
+    if (pair == QStringLiteral("Zcash") && phase == "claim_evidence_available")
+        return {"awaiting_taker_claim", "Waiting for the Taker's " + foreignChain + " claim", 85,
+                "Your LEZ claim revealed the secret; the Taker's " + foreignChain + " claim completes the swap", "", ""};
     if (phase == "offered" || phase == "awaiting_taker_confirmations")
         return {"awaiting_taker_lock", "Waiting for the Taker's " + theirChain + " lock", 20,
                 "Your Node observes " + theirChain + "; nothing to click", "", ""};
     if (phase == "taker_lock_confirmed" || phase == "awaiting_maker_confirmations")
-        return {sellsLez ? "funding_lez" : "locking_btc", sellsLez ? "Funding the LEZ escrow" : "Locking Bitcoin", 45,
+        return {sellsLez ? "funding_lez" : "locking_" + foreignTag, sellsLez ? "Funding the LEZ escrow" : "Locking " + foreignChain, 45,
                 "Your Node locks " + myChain + " automatically now that the Taker's " + theirChain + " lock is confirmed", "", ""};
     // The Taker claims what this Maker locked (myChain); its own lock is the
     // other asset. Selling LEZ the Maker waits for the Taker's LEZ claim.
@@ -235,7 +294,7 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     // Sent and waiting to confirm is most of this phase's life on a public
     // network; saying so is what tells a waiting Maker from a hung one.
     if (phase == "claim_evidence_available")
-        return {sellsLez ? "claiming_btc" : "claiming_lez", claimSent ? theirChain + " claim sent" : "Claiming " + theirChain, 85,
+        return {sellsLez ? "claiming_" + foreignTag : "claiming_lez", claimSent ? theirChain + " claim sent" : "Claiming " + theirChain, 85,
                 claimSent ? "Your Node sent its " + theirChain + " claim; the swap completes when it confirms"
                           : "Your Node claims " + theirChain + " with the revealed secret", "", ""};
     if (phase == "completed")
@@ -289,19 +348,26 @@ QJsonArray effectsFor(const QJsonArray& effects)
             {"transaction_id", id},
             {"confirmations", effect.value("confirmations")},
             {"pending", effect.value("pending").toBool()},
-            {"explorer_url", chain == QStringLiteral("Bitcoin") ? "http://127.0.0.1:3002/tx/" + id
-                                                                : "http://127.0.0.1:3003/#/tx/" + id},
+            // The stack runs explorers for Bitcoin and LEZ; Zcash has none here.
+            {"explorer_url", chain == QStringLiteral("Bitcoin") ? QJsonValue("http://127.0.0.1:3002/tx/" + id)
+                             : chain == QStringLiteral("LEZ") ? QJsonValue("http://127.0.0.1:3003/#/tx/" + id)
+                                                              : QJsonValue()},
         });
     }
     return rows;
 }
 
 QJsonObject swapRowObject(const SwapRow& row, const QString& swapId, const QString& offerId,
-                          const QString& direction, const QString& makerLabel,
+                          const QString& direction, const QString& pair, const QString& makerLabel,
                           const QString& takerLabel, const QString& role, qint64 generation,
-                          const QJsonObject& terms, const QString& fill, const QJsonArray& effects)
+                          const QJsonObject& terms, const QString& fill, const QJsonArray& effects,
+                          const QString& privacyGuidance = QString())
 {
     const bool canAct = !row.action.isEmpty();
+    // The Node's privacy guidance on a ZEC swap: a transparent claim is public.
+    const QString privacy = privacyGuidance == QStringLiteral("shield_received_transparent_zec_separately")
+        ? QStringLiteral("After a transparent ZEC claim, move funds to a shielded wallet address.")
+        : QString();
     return QJsonObject{
         {"ui_swap_id", swapId},
         {"protocol_swap_id", swapId},
@@ -309,7 +375,10 @@ QJsonObject swapRowObject(const SwapRow& row, const QString& swapId, const QStri
         {"maker_wallet_label", makerLabel},
         {"taker_wallet_label", takerLabel},
         {"direction", direction},
-        {"direction_display", directionDisplay(direction)},
+        {"direction_display", directionDisplay(direction, pair)},
+        {"pair", pair},
+        {"pair_symbol", pairSymbol(pair)},
+        {"privacy_display", privacy.isEmpty() ? QJsonValue() : QJsonValue(privacy)},
         {"state", row.state},
         {"state_label", row.label},
         {"progress_percent", row.percent},
@@ -434,8 +503,7 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
     for (const QJsonValue& candidate : takerOffers(rpc, error)) {
         const QJsonObject view = candidate.toObject();
         const QJsonObject offer = view.value("offer").toObject();
-        if (offer.value("pair_configuration").toObject().value("route").toObject().value("pair").toString()
-            != QStringLiteral("Bitcoin")) continue;
+        if (!nodePair(offer.value("pair_configuration").toObject().value("route").toObject().value("pair").toString())) continue;
         offersById.insert(offer.value("id").toString(), view);
         orderBook.append(offerRow(offer, QStringLiteral("pending"), QStringLiteral("Munich Vault 01")));
     }
@@ -447,19 +515,21 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
     if (listed.ok) {
         for (const QJsonValue& candidate : listed.result.toObject().value("swaps").toArray()) {
             const QJsonObject swap = candidate.toObject();
-            if (swap.value("route").toObject().value("pair").toString() != QStringLiteral("Bitcoin")) continue;
+            const QString pair = swap.value("route").toObject().value("pair").toString();
+            if (!nodePair(pair)) continue;
             const QString swapId = swap.value("swap_id").toString();
             const QString direction = directionName(swap.value("route").toObject().value("direction").toString());
             const SwapRow row = takerRow(swap.value("state").toString(), swap.value("available_action").toString(),
-                                         lockedSwaps.contains(swapId), direction,
-                                         formatBtc(integerField(swap, "foreign_units")),
+                                         lockedSwaps.contains(swapId), direction, pair,
+                                         formatForeign(pair, integerField(swap, "foreign_units")),
                                          formatLez(integerField(swap, "lez_units")),
                                          integerField(swap, "bitcoin_lock_fee_sat"));
-            swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction,
+            swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction, pair,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),
                                        swap.value("terms").toObject(), QString(),
-                                       swap.value("effects").toArray()));
+                                       swap.value("effects").toArray(),
+                                       swap.value("privacy_guidance").toString()));
             if (row.state == "completed") ++completed;
             else if (row.state != "refunded") ++active;
             if (!row.action.isEmpty()) ++needsAction;
@@ -625,8 +695,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
     for (const QJsonValue& candidate : offers.result.toArray()) {
         const QJsonObject record = candidate.toObject();
         const QJsonObject offer = record.value("offer").toObject();
-        if (offer.value("pair_configuration").toObject().value("route").toObject().value("pair").toString()
-            != QStringLiteral("Bitcoin")) continue;
+        if (!nodePair(offer.value("pair_configuration").toObject().value("route").toObject().value("pair").toString())) continue;
         const QString state = makerOfferState(record.value("status").toString());
         QJsonObject row = offerRow(offer, state, wallet.label);
         row.insert("revision", record.value("revision"));
@@ -641,7 +710,8 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
     if (history.ok) {
         for (const QJsonValue& candidate : history.result.toArray()) {
             const QJsonObject swap = candidate.toObject();
-            if (swap.value("pair").toString() != QStringLiteral("Bitcoin")) continue;
+            const QString pair = swap.value("pair").toString();
+            if (!nodePair(pair)) continue;
             const QString swapId = swap.value("id").toString();
             const QString direction = directionName(swap.value("direction").toString());
             QString phase, nextAction, schedule, failureClass;
@@ -666,8 +736,8 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             for (const QJsonValue& effect : effects)
                 claimSent = claimSent || (effect.toObject().value("pending").toBool()
                                           && effect.toObject().value("kind").toString() == QStringLiteral("followup_claim"));
-            const SwapRow row = makerRow(phase, nextAction, schedule, direction, failureClass, claimSent);
-            swaps.append(swapRowObject(row, swapId, QString(), direction, wallet.label,
+            const SwapRow row = makerRow(phase, nextAction, schedule, direction, pair, failureClass, claimSent);
+            swaps.append(swapRowObject(row, swapId, QString(), direction, pair, wallet.label,
                                        QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill, effects));
             if (row.state == "completed") ++completed;
             else if (row.state != "refunded" && row.state != "failed") ++active;

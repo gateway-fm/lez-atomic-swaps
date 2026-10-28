@@ -89,6 +89,11 @@ Item {
     function formatBtcSats(value) {
         return root.btcAmount(value) + " BTC"
     }
+    // The foreign leg of an order-book row or swap: BTC, or ZEC for a
+    // prepared Zcash corridor (8 decimals either way).
+    function formatForeign(pair, value) {
+        return root.btcAmount(value) + (pair === "Zcash" ? " ZEC" : " BTC")
+    }
     function formatLez(value) {
         return root.lezAmount(value) + " LEZ"
     }
@@ -305,12 +310,13 @@ Item {
         var numerator = amount * lezLot
         return Number.isSafeInteger(numerator) && numerator % satsLot === 0 ? numerator / satsLot : NaN
     }
-    // "1 BTC = 100,000 LEZ" for an offer's exact lot price.
+    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ") for an offer's exact lot price.
     function offerRate(offer) {
         return 100000000 * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
     }
-    function rateDisplay(perBitcoin) {
-        return "1 BTC = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
+    function rateDisplay(offer) {
+        var perCoin = root.offerRate(offer)
+        return "1 " + (offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
     }
     // The best rate on the book for `direction`: most LEZ per BTC when you
     // pay BTC, fewest when you sell LEZ.
@@ -340,7 +346,7 @@ Item {
         root.btcMarketBusy = true
         var requestId = "ui-taker-take-offer-" + String(Date.now())
         root.run(root.backend.btcTakeOffer(requestId, root.walletId(), String(offer.offer_id), String(sats)),
-            "Take " + String(offer.offer_id) + " for " + root.formatBtcSats(sats), function(result) {
+            "Take " + String(offer.offer_id) + " for " + root.formatForeign(offer.pair, sats), function(result) {
                 root.btcMarketBusy = false
                 root.applyBtcMarket(result)
                 root.statusMode = "success"
@@ -700,7 +706,7 @@ Item {
                                         // book, and when the Maker's signature stops being valid.
                                         RowLayout {
                                             Layout.fillWidth: true; spacing: 14
-                                            Label { text: root.rateDisplay(root.offerRate(takerOfferRow.modelData)); color: "#D9E2F2"; font.pixelSize: 10; font.family: "DejaVu Sans Mono" }
+                                            Label { text: root.rateDisplay(takerOfferRow.modelData); color: "#D9E2F2"; font.pixelSize: 10; font.family: "DejaVu Sans Mono" }
                                             Label {
                                                 text: takerOfferRow.behind > 0.005 ? takerOfferRow.behind.toFixed(2) + "% behind the best" : "best rate"
                                                 color: takerOfferRow.behind > 0.005 ? "#FFB8EC" : "#7EE100"; font.pixelSize: 10
@@ -760,7 +766,7 @@ Item {
                                 Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
                                 FieldLabel { text: "ASSET YOU RECEIVE" }
                                 FieldLabel { text: "YOUR SIDE" }
-                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Bitcoin"]; Layout.fillWidth: true }
+                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Bitcoin", "Zcash"]; Layout.fillWidth: true }
                                 LuxeCombo { id: direction; objectName: "takerDirection"; model: ["TakerSellsForeign", "TakerSellsLez"]; Layout.fillWidth: true }
                             }
                             RowLayout {
@@ -829,7 +835,10 @@ Item {
                             }
                             Label {
                                 objectName: "takerShielding"
-                                text: "Bitcoin amounts and transaction linkage are public; use fresh wallet addresses."
+                                // What the Node reports on a completed ZEC swap (ShieldReceivedTransparentZecSeparately).
+                                text: pair.currentText === "Zcash"
+                                    ? "After a transparent ZEC claim, move funds to a shielded wallet address."
+                                    : "Bitcoin amounts and transaction linkage are public; use fresh wallet addresses."
                                 color: "#A8AFBB"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             }
                         }
@@ -943,6 +952,15 @@ Item {
                 text: root.detailSwap ? String(root.detailSwap.ui_swap_id) : ""
                 color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
                 elide: Text.ElideMiddle; Layout.fillWidth: true
+            }
+            // The Node's own privacy guidance for this swap (a completed ZEC swap
+            // reports ShieldReceivedTransparentZecSeparately); the pair combo's
+            // label above is only the pre-take hint.
+            Label {
+                objectName: "takerSwapPrivacy"
+                visible: !!(root.detailSwap && root.detailSwap.privacy_display)
+                text: root.detailSwap ? String(root.detailSwap.privacy_display ?? "") : ""
+                color: "#C5A9FF"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             Repeater {
                 model: root.detailSwap ? (root.detailSwap.effects ?? []) : []
