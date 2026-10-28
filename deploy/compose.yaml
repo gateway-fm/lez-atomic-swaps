@@ -323,8 +323,9 @@ services:
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
+      - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
-    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/maker /run/lez/maker /delivery && chmod 0700 /run/lez/maker /delivery"]
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/maker /run/lez/maker /var/lib/lez/zec /delivery && chmod 0700 /run/lez/maker /var/lib/lez/zec /delivery"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -368,6 +369,8 @@ services:
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
+      # The Maker half of the prepared ZEC corridor (scripts/zec-provision.sh).
+      - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
       - ./runtime/lez/maker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
@@ -395,7 +398,8 @@ services:
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
-    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/taker /run/lez/taker && chmod 0700 /var/lib/lez/taker /run/lez/taker"]
+      - zec_taker:/var/lib/lez/zec
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/taker /run/lez/taker /var/lib/lez/zec && chmod 0700 /var/lib/lez/taker /run/lez/taker /var/lib/lez/zec"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -438,6 +442,8 @@ services:
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
+      # The Taker half of the prepared ZEC corridor plus its catalog.
+      - zec_taker:/var/lib/lez/zec
       - delivery_dir:/delivery:ro
       - maker_socket:/run/lez/maker
       - ./runtime/lez/taker:/run-lez-identity:ro
@@ -535,5 +541,9 @@ volumes:
     name: ${LEZ_VOLUME_PREFIX:-lez}-taker-state
   taker_socket:
     name: ${LEZ_VOLUME_PREFIX:-lez}-taker-socket
+  zec_maker:
+    name: ${LEZ_VOLUME_PREFIX:-lez}-zec-maker
+  zec_taker:
+    name: ${LEZ_VOLUME_PREFIX:-lez}-zec-taker
   delivery_dir:
     name: ${LEZ_VOLUME_PREFIX:-lez}-delivery-dir
