@@ -1527,7 +1527,7 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
     let claimant_hash = pubkey_hash(&claimant_key);
     let (network, environment, zcash_anchor, refund_lock, earlier_latest_ms, later_earliest) =
         match profile {
-            ZecProfileId::DeterministicLocalV1 => (
+            ZecProfileId::DeterministicLocalV1 | ZecProfileId::DeterministicLocalDevnetV1 => (
                 NetworkType::Regtest,
                 LezEnvironmentV1::DeterministicLocalV0_2,
                 116,

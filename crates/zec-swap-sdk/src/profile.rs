@@ -11,6 +11,13 @@ use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 pub enum ZecProfileId {
     /// Controlled standalone/Regtest profile used only by deterministic tests.
     DeterministicLocalV1,
+    /// The deterministic Regtest profile with a LEZ refund delay a devnet can
+    /// meet: the LEZ escrow program emits a timestamp validity window that
+    /// ends at the agreement's LEZ refund time, and sixty seconds after the
+    /// agreement's anchor is less than a Node recreate plus a take on a chain
+    /// that finalises in minutes. Same confirmations, Zcash refund height and
+    /// margin as [`Self::DeterministicLocalV1`].
+    DeterministicLocalDevnetV1,
     /// LEZ 0.2 and Zcash public-testnet acceptance profile.
     PublicTestnetV1,
 }
@@ -21,6 +28,7 @@ impl ZecProfileId {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::DeterministicLocalV1 => "deterministic-local-v1",
+            Self::DeterministicLocalDevnetV1 => "deterministic-local-devnet-v1",
             Self::PublicTestnetV1 => "public-testnet-v1",
         }
     }
@@ -78,6 +86,17 @@ impl ZecRefundProfile {
                 lez_confirmations: 1,
                 zcash_confirmations: 1,
                 lez_refund_delay: UnixSeconds::new(60),
+                zcash_refund_blocks: 4,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+            },
+            ZecProfileId::DeterministicLocalDevnetV1 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu6_2,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(1_800),
                 zcash_refund_blocks: 4,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
