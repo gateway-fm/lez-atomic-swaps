@@ -796,7 +796,13 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             .drive_claim()
             .await
             .map(claim_outcome)
-            .map_err(|_| ActorCommandError::ClaimUnavailable)?
+            .map_err(|error| {
+                // The lifecycle error names the gate that held the claim back
+                // (funding depth, port, persistence); the exit code stays a
+                // secret-free class, the reason goes to stderr for the operator.
+                eprintln!("actor claim unavailable: {error:?}");
+                ActorCommandError::ClaimUnavailable
+            })?
     };
     Ok(ActorEffectOutputV1::from_active(
         config.role(),
