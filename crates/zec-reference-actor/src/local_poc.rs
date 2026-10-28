@@ -74,6 +74,9 @@ struct ProvisionSpec {
     run_id: RunId,
     swap_id: String,
     direction: LocalPocDirection,
+    /// Recovery profile; absent means the deterministic test-lane profile.
+    #[serde(default)]
+    profile: LocalPocProfile,
     lez_runtime: LezRuntimeSpec,
     bridge: BridgeSpec,
     zebra_endpoint: Url,
@@ -109,6 +112,27 @@ impl LocalPocLezSignerFiles {
 struct LezSignerMaterial {
     maker: Zeroizing<Vec<u8>>,
     taker: Zeroizing<Vec<u8>>,
+}
+
+/// The named profiles a local corridor may be provisioned under.
+#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum LocalPocProfile {
+    /// `deterministic-local-v1`: the isolated test lane (60 s LEZ refund delay).
+    #[default]
+    DeterministicLocalV1,
+    /// `deterministic-local-devnet-v1`: the same lane with a 30 min LEZ refund
+    /// delay, for a chain that finalises in minutes.
+    DeterministicLocalDevnetV1,
+}
+
+impl LocalPocProfile {
+    const fn id(self) -> ZecProfileId {
+        match self {
+            Self::DeterministicLocalV1 => ZecProfileId::DeterministicLocalV1,
+            Self::DeterministicLocalDevnetV1 => ZecProfileId::DeterministicLocalDevnetV1,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
@@ -1127,7 +1151,7 @@ fn build_agreement(
         .duration_since(UNIX_EPOCH)
         .context("system clock precedes Unix epoch")?
         .as_secs();
-    let profile = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
+    let profile = ZecRefundProfile::for_id(spec.profile.id());
     let zcash_anchor = zebra_tip_height
         .checked_add(1)
         .context("Zebra funding anchor overflow")?;
@@ -1178,7 +1202,7 @@ fn build_agreement(
         Zatoshis::from_u64(ZCASH_PRINCIPAL_ZATOSHIS)?,
         contract,
     );
-    let binding = ZecSwapBinding::new(ZecProfileId::DeterministicLocalV1, expected_output)?;
+    let binding = ZecSwapBinding::new(spec.profile.id(), expected_output)?;
     let funding_inputs = ZcashFundingInputSetV1::new(vec![ZcashFundingInputV1::new(
         *candidate.outpoint.hash(),
         candidate.outpoint.n(),
@@ -1195,7 +1219,7 @@ fn build_agreement(
     let body = ZecAgreementBodyV1::new(
         swap_id.as_str(),
         spec.direction.protocol(),
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(spec.profile.id()),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new(maker_lez_account, maker_public.serialize()),
             ZecParticipantIdentityV1::new(taker_lez_account, taker_public.serialize()),

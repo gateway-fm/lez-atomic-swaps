@@ -15,6 +15,17 @@ fn named_profiles_match_the_reviewed_immutable_parameters() {
     assert_eq!(local.required_margin(), UnixSeconds::new(30));
     assert_eq!(local.expiry_delta_blocks(), 40);
 
+    let devnet = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV1);
+    assert_eq!(devnet.id().as_str(), "deterministic-local-devnet-v1");
+    assert_eq!(devnet.zcash_network(), NetworkType::Regtest);
+    assert_eq!(devnet.consensus_branch_id(), BranchId::Nu6_2);
+    assert_eq!(devnet.lez_confirmations(), 1);
+    assert_eq!(devnet.zcash_confirmations(), 1);
+    assert_eq!(devnet.lez_refund_delay(), UnixSeconds::new(1_800));
+    assert_eq!(devnet.zcash_refund_blocks(), 4);
+    assert_eq!(devnet.required_margin(), UnixSeconds::new(30));
+    assert_eq!(devnet.expiry_delta_blocks(), 40);
+
     let public = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV1);
     assert_eq!(public.id().as_str(), "public-testnet-v1");
     assert_eq!(public.zcash_network(), NetworkType::Test);

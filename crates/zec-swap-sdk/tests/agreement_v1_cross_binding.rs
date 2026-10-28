@@ -198,7 +198,9 @@ impl Fixture {
             self.contract_claimant_hash,
         );
         let (network, branch) = match self.binding_profile {
-            ZecProfileId::DeterministicLocalV1 => (NetworkType::Regtest, BranchId::Nu6_2),
+            ZecProfileId::DeterministicLocalV1 | ZecProfileId::DeterministicLocalDevnetV1 => {
+                (NetworkType::Regtest, BranchId::Nu6_2)
+            }
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
         };
         let output = ExpectedBip199Output::new(
