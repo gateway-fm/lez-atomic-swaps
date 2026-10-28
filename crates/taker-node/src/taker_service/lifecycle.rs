@@ -396,6 +396,8 @@ pub(super) fn register(
         return Ok(());
     }
     spawn_dynamic_observer(Arc::clone(state));
+    #[cfg(feature = "pair-zec")]
+    spawn_zec_redriver(Arc::clone(state));
     let balances_state = Arc::clone(state);
     module.register_async_method("taker_wallet_balances_v1", move |params, _, _| {
         let state = Arc::clone(&balances_state);
@@ -987,14 +989,18 @@ const fn facade_action(action: TakerTerminalActionV1) -> TakerFacadeActionV1 {
     }
 }
 
+const fn terminal_action_of(action: TakerFacadeActionV1) -> TakerTerminalActionV1 {
+    match action {
+        TakerFacadeActionV1::Claim => TakerTerminalActionV1::Claim,
+        TakerFacadeActionV1::Refund => TakerTerminalActionV1::Refund,
+    }
+}
+
 fn action_commit(admission: &TakerActionAdmissionV1) -> TakerActionCommitV1 {
     TakerActionCommitV1 {
         schema_version: 1,
         swap_id: admission.swap_id().clone(),
-        action: match admission.action() {
-            TakerFacadeActionV1::Claim => TakerTerminalActionV1::Claim,
-            TakerFacadeActionV1::Refund => TakerTerminalActionV1::Refund,
-        },
+        action: terminal_action_of(admission.action()),
         requested_after_generation: admission.requested_after_generation(),
         was_replay: admission.was_replay(),
     }
@@ -1801,6 +1807,118 @@ fn spawn_dynamic_observer(state: Arc<TakerServiceState>) {
     });
 }
 
+/// How often the Node re-drives an admitted Zcash terminal action.
+#[cfg(feature = "pair-zec")]
+const ZEC_REDRIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Re-drives of one swap's admitted action per process before the Node stops
+/// and leaves the next drive to a Retry: four hours at the interval.
+#[cfg(feature = "pair-zec")]
+const ZEC_REDRIVE_BUDGET: u32 = 480;
+
+/// Whether `spent` re-drives leave room for another.
+#[cfg(feature = "pair-zec")]
+const fn zec_redrive_budget_allows(spent: u32) -> bool {
+    spent < ZEC_REDRIVE_BUDGET
+}
+
+/// Starts the re-driver of admitted Zcash actions when a runtime is available.
+#[cfg(feature = "pair-zec")]
+fn spawn_zec_redriver(state: Arc<TakerServiceState>) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        eprintln!("taker zec redriver: no async runtime; admitted actions re-drive only on demand");
+        return;
+    };
+    handle.spawn(async move {
+        let mut spent = std::collections::HashMap::new();
+        loop {
+            tokio::time::sleep(ZEC_REDRIVE_INTERVAL).await;
+            Box::pin(redrive_admitted_zec_actions(&state, &mut spent)).await;
+        }
+    });
+}
+
+/// A Zcash swap's admitted claim or refund is finished by the Node. The ZEC
+/// actor only moves when it is driven, and the owner's request admitted the
+/// action once: each tick re-drives it exactly as a replay of that request
+/// would, against the generation it was admitted at, until the actor reports
+/// the action complete or the per-swap budget is spent. One press of
+/// "Refund" or "Claim" is enough; a Retry remains a replay of the same request.
+#[cfg(feature = "pair-zec")]
+async fn redrive_admitted_zec_actions(
+    state: &TakerServiceState,
+    spent: &mut std::collections::HashMap<SwapId, u32>,
+) {
+    let Some(initiation) = state.initiation.clone() else {
+        return;
+    };
+    let swaps = {
+        let Ok(context) = initiation.lock() else {
+            return;
+        };
+        context.zec_bound_swaps()
+    };
+    for prepared in swaps {
+        let swap_id = prepared.swap_id().clone();
+        let Ok(Some(admission)) = lookup_admitted_action_for_swap(&initiation, &swap_id).await
+        else {
+            continue;
+        };
+        let action = terminal_action_of(admission.action());
+        let drives = spent.entry(swap_id.clone()).or_insert(0);
+        if !zec_redrive_budget_allows(*drives) {
+            if *drives == ZEC_REDRIVE_BUDGET {
+                eprintln!(
+                    "taker zec redriver: {} {action:?} not terminal after {ZEC_REDRIVE_BUDGET} drives; the next drive is a Retry",
+                    swap_id.as_str()
+                );
+                *drives += 1;
+            }
+            continue;
+        }
+        let Some(receipt_binding) = prepared.execution().receipt_binding() else {
+            continue;
+        };
+        let Ok((config, held_lock)) = load_bound_action_actor(&prepared, receipt_binding).await
+        else {
+            continue;
+        };
+        match replay_actor_effect_is_required(
+            &config,
+            &held_lock,
+            action,
+            admission.requested_after_generation(),
+        )
+        .await
+        {
+            Ok(true) => {
+                if *drives == 0 {
+                    eprintln!(
+                        "taker zec redriver: {} re-drives the admitted {action:?} every {}s until terminal",
+                        swap_id.as_str(),
+                        ZEC_REDRIVE_INTERVAL.as_secs()
+                    );
+                }
+                *drives += 1;
+                if let Ok(effect_config) =
+                    reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock)
+                        .await
+                {
+                    let _ =
+                        execute_terminal_actor_command(&effect_config, &held_lock, action).await;
+                }
+            }
+            // The action is complete: nothing left to drive for this admission.
+            Ok(false) => {
+                spent.remove(&swap_id);
+            }
+            // The actor is unreadable or mid-move; this tick's attempt is spent.
+            Err(_) => *drives += 1,
+        }
+        drop(held_lock);
+    }
+}
+
 /// Pairs whose lifecycle this Node runs itself.
 const fn route_has_node_lifecycle(pair: Pair) -> bool {
     match pair {
@@ -2506,6 +2624,22 @@ mod tests {
         assert!(replay_actor_effect_required(parked(), 4, TakerTerminalActionV1::Refund).unwrap());
         // A claim admitted at 4 is not re-entered through the refund phases.
         assert!(!replay_actor_effect_required(parked(), 4, TakerTerminalActionV1::Claim).unwrap());
+    }
+
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn zec_redrive_budget_is_bounded_and_facade_actions_map_back() {
+        assert!(zec_redrive_budget_allows(0));
+        assert!(zec_redrive_budget_allows(ZEC_REDRIVE_BUDGET - 1));
+        assert!(!zec_redrive_budget_allows(ZEC_REDRIVE_BUDGET));
+        // Four hours of 30 s ticks before the Node leaves the next drive to a Retry.
+        assert_eq!(
+            u64::from(ZEC_REDRIVE_BUDGET) * ZEC_REDRIVE_INTERVAL.as_secs(),
+            4 * 3600
+        );
+        for action in [TakerTerminalActionV1::Claim, TakerTerminalActionV1::Refund] {
+            assert_eq!(terminal_action_of(facade_action(action)), action);
+        }
     }
 
     #[test]

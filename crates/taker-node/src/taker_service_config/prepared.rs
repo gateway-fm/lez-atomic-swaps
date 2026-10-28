@@ -76,6 +76,20 @@ impl ConfiguredTakerInitiationContext {
             .collect()
     }
 
+    /// Prepared Zcash swaps whose actor is activated (receipt bound): the
+    /// swaps whose admitted terminal action the Node keeps re-driving.
+    #[cfg(feature = "pair-zec")]
+    pub(crate) fn zec_bound_swaps(&self) -> Vec<PreparedTakerInitiationV1> {
+        self.prepared_by_offer
+            .values()
+            .filter(|prepared| {
+                prepared.facts().route().pair() == Pair::Zcash
+                    && prepared.execution().receipt_binding().is_some()
+            })
+            .cloned()
+            .collect()
+    }
+
     /// Adds a swap prepared at take time; the same offer may not be prepared twice.
     pub(crate) fn insert_prepared(
         &mut self,
