@@ -21,7 +21,7 @@ compose=(docker compose --env-file runtime/runtime.env)
 log() { printf '[reset %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 # Runs a command inside a fresh container of the role image with the role's
 # state volume mounted, as the Node uid, while the Node itself is stopped.
-in_role() { local role="$1"; shift; "${compose[@]}" run --rm --no-deps --entrypoint "$1" "$role-node" "${@:2}"; }
+in_role() { local role="$1"; shift; "${compose[@]}" run --rm -T --no-deps --entrypoint "$1" "$role-node" "${@:2}" </dev/null; }
 
 log "stopping both Nodes (their per-swap sidecars stop with them)"
 "${compose[@]}" stop maker-node taker-node >/dev/null
