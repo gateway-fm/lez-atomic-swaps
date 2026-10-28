@@ -218,14 +218,23 @@ case "$role" in
       args+=(--btc-role-config "$btc_state/btc-role.json")
       if [[ "$zec_ready" == 1 ]]; then
         # The authority group of crates/maker-node/src/bin/lez-maker-node.rs:
-        # the corridor's claim-recovery key under the id its actor config
-        # carries, the Zcash funder's preimage (the Maker in TakerSellsLez),
-        # the provisioned Maker config as the one actor template.
+        # the Node's claim-recovery key, the Zcash funder's preimage (the
+        # Maker in TakerSellsLez), the provisioned Maker config as the one
+        # actor template. The claim-recovery key is the Node's own and lives
+        # as long as its state volume: the ZEC recovery store re-validates
+        # every stored claim journal with the daemon's key on each start
+        # (swap-store zec_recovery.rs validate_existing_claim_envelopes; a
+        # different key id is KeyIdMismatch), so a per-corridor key would keep
+        # the Maker from starting after its first ZEC swap.
         mkdir -p "$zec_state/actors"
         chmod 0700 "$zec_state/actors"
+        if [[ ! -s "$state/zec-claim-recovery.key" ]]; then
+          head -c 32 /dev/urandom >"$state/zec-claim-recovery.key"
+          chmod 0600 "$state/zec-claim-recovery.key"
+        fi
         zec_actor_program="/usr/local/bin/lez-zec-maker-actor"
-        args+=(--maker-claim-key-id "$(jq -er '.claim_recovery.key_id' "$zec_config")"
-          --maker-claim-key-file "$zec_role/claim-recovery.key"
+        args+=(--maker-claim-key-id "${LEZ_ZEC_CLAIM_KEY_ID:-devnet-zec-claim-v1}"
+          --maker-claim-key-file "$state/zec-claim-recovery.key"
           --zec-source-maker-config "$zec_config"
           --zec-maker-actor-root "$zec_state/actors"
           --zec-actor-program "$zec_actor_program"
