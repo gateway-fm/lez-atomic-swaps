@@ -29,7 +29,7 @@ zeroize = "=1.9.0"
 jsonrpsee-server = "=0.26.0"
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 tempfile = "=3.27.0"
-tokio = { version = "=1.52.3", features = ["macros", "rt"] }
+tokio = { version = "=1.53.3", features = ["macros", "rt"] }
 
 [lints]
 workspace = true
