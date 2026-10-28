@@ -33,6 +33,9 @@ indexer_host="${LEZ_INDEXER_HOST:-indexer}"
 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
+# The ZEC actors reach Zebra the same way (deterministic_local route).
+zebra_host="${LEZ_ZEBRA_HOST:-zebra}"
+socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr "TCP:${zebra_host}:18232" &
 for _ in $(seq 1 60); do
   curl -sf --max-time 3 --user "$(cat "$cookie_src")" -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18443/ >/dev/null 2>&1 && break
@@ -132,6 +135,52 @@ else
   echo "$role: market bootstrap manifest absent; starting without the Bitcoin lifecycle"
 fi
 
+# ---- Zcash corridor (optional) ----------------------------------------------
+# scripts/zec-provision.sh fills /var/lib/lez/zec from the live chains with one
+# prepared ZEC swap: <role>/actor-config.json, lez-runtime.json, lez-signer.key,
+# sidecar.capability and the claim keys of this role only, plus prepared.json
+# (the Taker's catalog). The ZEC actors expect a running role-local LEZ sidecar
+# at the config's loopback bridge.endpoint and neither Node launches one for
+# ZEC, so it is started here with the recipe the BTC lifecycle uses for its
+# per-swap sidecars (crates/btc-role-lifecycle/src/sidecar.rs). Material
+# provisioned on another chain is ignored rather than loaded: a catalog whose
+# envelope no longer authenticates would keep the Taker from starting at all.
+zec_state="/var/lib/lez/zec"
+zec_role="$zec_state/$role"
+zec_config="$zec_role/actor-config.json"
+zec_ready=0
+if [[ -s "$zec_config" && "$btc_lifecycle_ready" == 1 ]]; then
+  chmod 0700 "$zec_state" 2>/dev/null || true
+  zec_chain="$(jq -r '.bridge.runtime | "\(.channel_id) \(.genesis_block_hash) \(.escrow_program_id)"' "$zec_config")"
+  if [[ "$zec_chain" != "$channel_id $lez_genesis_hash $escrow_program_id" ]]; then
+    echo "$role: ZEC corridor under $zec_state was provisioned for another chain; ignored (re-run scripts/zec-provision.sh)"
+  else
+    zec_run_id="$(jq -er '.run_id' "$zec_config")"
+    zec_endpoint="$(jq -er '.bridge.endpoint' "$zec_config")"
+    zec_listen="${zec_endpoint#http://}"
+    zec_listen="${zec_listen%%/*}"
+    [[ "$zec_listen" =~ ^127\.0\.0\.1:[0-9]+$ ]] || { echo "$role: ZEC bridge endpoint $zec_endpoint is not loopback" >&2; exit 1; }
+    zec_sidecar_state="$zec_state/sidecar/$zec_run_id"
+    mkdir -p "$zec_state/sidecar" "$zec_sidecar_state"
+    chmod 0700 "$zec_state/sidecar" "$zec_sidecar_state"
+    /usr/local/bin/lez-v02-bridge-poc --listen-address "$zec_listen" --node-profile local \
+      --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
+      --runtime-file "$zec_role/lez-runtime.json" --capability-file "$zec_role/sidecar.capability" \
+      --private-key-file "$zec_role/lez-signer.key" --state-directory "$zec_sidecar_state" \
+      --authenticated-transfer-program-id "$auth_transfer_program_id" \
+      </dev/null >>"$zec_state/sidecar.log" 2>&1 &
+    for _ in $(seq 1 90); do
+      if (exec 3<>"/dev/tcp/127.0.0.1/${zec_listen##*:}") 2>/dev/null; then zec_ready=1; break; fi
+      sleep 1
+    done
+    if [[ "$zec_ready" == 1 ]]; then
+      echo "$role ZEC corridor $zec_run_id: sidecar listening on $zec_listen"
+    else
+      echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen within 90 s; ZEC stays off (see $zec_state/sidecar.log)" >&2
+    fi
+  fi
+fi
+
 case "$role" in
   maker)
     if [[ ! -s "$state/delivery-signing.key" ]]; then
@@ -154,6 +203,25 @@ case "$role" in
       --actor-supervisor)
     if [[ "$btc_lifecycle_ready" == 1 ]]; then
       args+=(--btc-role-config "$btc_state/btc-role.json")
+      if [[ "$zec_ready" == 1 ]]; then
+        # The authority group of crates/maker-node/src/bin/lez-maker-node.rs:
+        # the corridor's claim-recovery key under the id its actor config
+        # carries, the Zcash funder's preimage (the Maker in TakerSellsLez),
+        # the provisioned Maker config as the one actor template.
+        mkdir -p "$zec_state/actors"
+        chmod 0700 "$zec_state/actors"
+        zec_actor_program="/usr/local/bin/lez-zec-maker-actor"
+        args+=(--maker-claim-key-id "$(jq -er '.claim_recovery.key_id' "$zec_config")"
+          --maker-claim-key-file "$zec_role/claim-recovery.key"
+          --zec-source-maker-config "$zec_config"
+          --zec-maker-actor-root "$zec_state/actors"
+          --zec-actor-program "$zec_actor_program"
+          --zec-actor-program-sha256 "$(sha256sum "$zec_actor_program" | cut -d' ' -f1)")
+        if [[ -s "$zec_role/claim-preimage.key" ]]; then
+          args+=(--maker-claim-preimage-file "$zec_role/claim-preimage.key")
+        fi
+        echo "maker ZEC authority configured (corridor $zec_run_id)"
+      fi
     else
       # Without the lifecycle the Chat socket still needs a pair authority: a
       # static role root is the legacy shape; keep Chat off until bootstrap.
@@ -172,11 +240,21 @@ case "$role" in
     [[ "$maker_identity" =~ ^(02|03)[0-9a-f]{64}$ ]] || { echo "maker public identity unavailable" >&2; exit 1; }
     [[ -s "$state/registry.sqlite3" ]] || /usr/local/bin/lez-taker-registry-init --database "$state/registry.sqlite3"
     if [[ "$btc_lifecycle_ready" == 1 ]]; then
-      jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" '
+      # The prepared ZEC catalog (taker_service_config/prepared.rs) only when
+      # this corridor's sidecar answers; the key stays absent otherwise so a
+      # Node built without pair-zec still accepts the role config.
+      zec_catalog='[]'
+      if [[ "$zec_ready" == 1 && -s "$zec_state/prepared.json" ]]; then
+        zec_catalog="$(jq -c '.' "$zec_state/prepared.json")"
+      fi
+      jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" \
+        --argjson prepared "$zec_catalog" '
         {schema_version:1,
          delivery_sources:[{directory:"/delivery", maker_public_key:$identity, source_id:"local-maker"}],
          chat_socket:"/run/lez/maker/chat.sock", maximum_offers:16,
-         initiation:{execute_prepared:true, registry_database:$registry, btc_role_config:$role_config}}' >"$state/role.json"
+         initiation:({execute_prepared:true, registry_database:$registry, btc_role_config:$role_config}
+                     + (if ($prepared|length) > 0 then {prepared_zec:$prepared} else {} end))}' >"$state/role.json"
+      echo "taker: $(jq length <<<"$zec_catalog") prepared ZEC entries configured"
     else
       jq -n --arg identity "$maker_identity" '
         {schema_version:1,

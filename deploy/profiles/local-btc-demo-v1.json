@@ -221,6 +221,10 @@
         {
           "path": "volume:lez-maker-state",
           "backup": "critical"
+        },
+        {
+          "path": "volume:lez-zec-maker",
+          "backup": "critical"
         }
       ],
       "credentials": [
@@ -263,6 +267,10 @@
       "state": [
         {
           "path": "volume:lez-taker-state",
+          "backup": "critical"
+        },
+        {
+          "path": "volume:lez-zec-taker",
           "backup": "critical"
         }
       ],
