@@ -1822,6 +1822,37 @@ const fn zec_redrive_budget_allows(spent: u32) -> bool {
     spent < ZEC_REDRIVE_BUDGET
 }
 
+/// What the re-driver remembers about one swap's admitted action.
+#[cfg(feature = "pair-zec")]
+#[derive(Default)]
+struct ZecRedriveProgress {
+    drives: u32,
+    last_error: Option<String>,
+}
+
+#[cfg(feature = "pair-zec")]
+impl ZecRedriveProgress {
+    /// One log line when a tick's error first appears or changes kind, so the
+    /// operator sees why a swap is not moving without reading the actor.
+    fn report(
+        &mut self,
+        swap_id: &SwapId,
+        action: TakerTerminalActionV1,
+        step: &str,
+        error: ActionError,
+    ) {
+        let kind = format!("{error:?}");
+        if self.last_error.as_deref() != Some(kind.as_str()) {
+            eprintln!(
+                "taker zec redriver: {} {action:?} {step}: {kind} after {} drive(s); the next tick retries",
+                swap_id.as_str(),
+                self.drives
+            );
+            self.last_error = Some(kind);
+        }
+    }
+}
+
 /// Starts the re-driver of admitted Zcash actions when a runtime is available.
 #[cfg(feature = "pair-zec")]
 fn spawn_zec_redriver(state: Arc<TakerServiceState>) {
@@ -1847,7 +1878,7 @@ fn spawn_zec_redriver(state: Arc<TakerServiceState>) {
 #[cfg(feature = "pair-zec")]
 async fn redrive_admitted_zec_actions(
     state: &TakerServiceState,
-    spent: &mut std::collections::HashMap<SwapId, u32>,
+    spent: &mut std::collections::HashMap<SwapId, ZecRedriveProgress>,
 ) {
     let Some(initiation) = state.initiation.clone() else {
         return;
@@ -1865,14 +1896,14 @@ async fn redrive_admitted_zec_actions(
             continue;
         };
         let action = terminal_action_of(admission.action());
-        let drives = spent.entry(swap_id.clone()).or_insert(0);
-        if !zec_redrive_budget_allows(*drives) {
-            if *drives == ZEC_REDRIVE_BUDGET {
+        let progress = spent.entry(swap_id.clone()).or_default();
+        if !zec_redrive_budget_allows(progress.drives) {
+            if progress.drives == ZEC_REDRIVE_BUDGET {
                 eprintln!(
                     "taker zec redriver: {} {action:?} not terminal after {ZEC_REDRIVE_BUDGET} drives; the next drive is a Retry",
                     swap_id.as_str()
                 );
-                *drives += 1;
+                progress.drives += 1;
             }
             continue;
         }
@@ -1892,20 +1923,25 @@ async fn redrive_admitted_zec_actions(
         .await
         {
             Ok(true) => {
-                if *drives == 0 {
+                if progress.drives == 0 {
                     eprintln!(
                         "taker zec redriver: {} re-drives the admitted {action:?} every {}s until terminal",
                         swap_id.as_str(),
                         ZEC_REDRIVE_INTERVAL.as_secs()
                     );
                 }
-                *drives += 1;
-                if let Ok(effect_config) =
-                    reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock)
-                        .await
+                progress.drives += 1;
+                match reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock)
+                    .await
                 {
-                    let _ =
-                        execute_terminal_actor_command(&effect_config, &held_lock, action).await;
+                    Ok(effect_config) => {
+                        if let Err(error) =
+                            execute_terminal_actor_command(&effect_config, &held_lock, action).await
+                        {
+                            progress.report(&swap_id, action, "drive", error);
+                        }
+                    }
+                    Err(error) => progress.report(&swap_id, action, "custody", error),
                 }
             }
             // The action is complete: nothing left to drive for this admission.
@@ -1913,7 +1949,10 @@ async fn redrive_admitted_zec_actions(
                 spent.remove(&swap_id);
             }
             // The actor is unreadable or mid-move; this tick's attempt is spent.
-            Err(_) => *drives += 1,
+            Err(error) => {
+                progress.drives += 1;
+                progress.report(&swap_id, action, "status", error);
+            }
         }
         drop(held_lock);
     }
