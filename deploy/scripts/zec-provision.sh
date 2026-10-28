@@ -38,7 +38,7 @@
 # and runtime/zec/current names the run id. Every corridor is pinned to the
 # chain it was provisioned on: after `up.sh --fresh-lez`, run this again.
 #
-#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check]
+#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N]
 #     --no-restart        steps 1-7 only (the Nodes keep running; the material
 #                         is picked up on their next recreate)
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
@@ -53,10 +53,12 @@ export BTC_RPC_PASSWORD
 
 RESTART=1
 CHAIN_CHECK=1
+SWAPS=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
     --skip-chain-check) CHAIN_CHECK=0; shift ;;
+    --swaps) SWAPS="$2"; shift 2 ;;
     -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -151,14 +153,27 @@ recreate_nodes() {
   wait_healthy lez-taker-node
 }
 
+[[ "$SWAPS" =~ ^[12]$ ]] || fail "--swaps takes 1 or 2"
 stamp="$(date +%s)"
 run_id="zec-devnet-$stamp"
-swap_id="zec-devnet-swap-$stamp"
-offer_id="zec-devnet-offer-$stamp"
-reservation_id="zec-devnet-res-$stamp"
 out="runtime/zec/$run_id"
 mkdir -p "$out"
 chmod 0700 runtime/zec "$out"
+# Swap k of the run: the first keeps the single-swap names (corridor/, no
+# suffix); a second — the concurrent fixture — is "-b" throughout: its own
+# corridor root, agreement, offer, draft, sidecar ports and funder output, the
+# same run and the same signers. The Taker catalog lists both.
+SUFFIX=("" "-b")
+swap_id_of() { echo "zec-devnet-swap-$stamp${SUFFIX[$1]}"; }
+offer_id_of() { echo "zec-devnet-offer-$stamp${SUFFIX[$1]}"; }
+reservation_id_of() { echo "zec-devnet-res-$stamp${SUFFIX[$1]}"; }
+corridor_of() { echo "$CORRIDOR${SUFFIX[$1]}"; }
+run_id_of() { echo "$run_id${SUFFIX[$1]}"; }
+out_of() { if (( $1 == 0 )); then echo "$out"; else echo "$out/b"; fi; }
+maker_port_of() { echo $(( MAKER_BRIDGE_PORT + 2 * $1 )); }
+taker_port_of() { echo $(( TAKER_BRIDGE_PORT + 2 * $1 )); }
+for (( k = 1; k < SWAPS; k++ )); do mkdir -p "$(out_of $k)"; chmod 0700 "$(out_of $k)"; done
+swap_id="$(swap_id_of 0)"; offer_id="$(offer_id_of 0)"; reservation_id="$(reservation_id_of 0)"
 
 # ---- 0. the Maker's Delivery identity ------------------------------------------
 log "0/8 Maker Delivery identity"
@@ -242,10 +257,11 @@ finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
 # The actors scan LEZ from start_height for max_blocks (<= 4096, ~90 min
 # here): the lock they look for happens after this provisioning.
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
-python3 - "$out/spec.json" "$run_id" "$swap_id" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$MAKER_BRIDGE_PORT" "$TAKER_BRIDGE_PORT" "$discovery_start" <<'PY'
+for (( k = 0; k < SWAPS; k++ )); do
+python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$k" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
@@ -265,39 +281,47 @@ spec = {
     "bridge": {"maker_endpoint": f"http://127.0.0.1:{maker_port}", "taker_endpoint": f"http://127.0.0.1:{taker_port}"},
     "zebra_endpoint": "http://127.0.0.1:18232",
     "lez_discovery_start_height": int(start), "lez_discovery_max_blocks": 4096,
+    # Swap k funds from the (k+1)-th mature funder output: side-by-side
+    # corridors must not spend the same coinbase.
+    "zcash_funding_skip": int(skip),
 }
 json.dump(spec, open(out, "w"), indent=2)
-print(f"  spec: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}")
+print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}")
 PY
-chmod 0600 "$out/spec.json"
+chmod 0600 "$(out_of $k)/spec.json"
+done
 
 # ---- 3. provision -------------------------------------------------------------
 log "3/8 provision (staging volume $STAGING)"
 docker volume rm -f "$STAGING" >/dev/null 2>&1 || true
 docker volume create "$STAGING" >/dev/null
-helper 0:0 -v "$STAGING:$ZEC_ROOT" -v "$PWD/$out/spec.json:/in/spec.json:ro" \
+spec_mounts=()
+for (( k = 0; k < SWAPS; k++ )); do spec_mounts+=(-v "$PWD/$(out_of $k)/spec.json:/in/spec${SUFFIX[$k]}.json:ro"); done
+helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
   -v "$PWD/runtime/lez/maker/lez-signer.key:/in/maker.key:ro" -v "$PWD/runtime/lez/taker/lez-signer.key:/in/taker.key:ro" -- "
   set -e; umask 077
   mkdir -p $ZEC_ROOT/signers
-  install -m 0600 /in/spec.json $ZEC_ROOT/spec.json
+  for f in /in/spec*.json; do install -m 0600 \$f $ZEC_ROOT/\$(basename \$f); done
   install -m 0600 /in/maker.key $ZEC_ROOT/signers/maker.key
   install -m 0600 /in/taker.key $ZEC_ROOT/signers/taker.key
   chown -R $NODE_UID:$NODE_UID $ZEC_ROOT && chmod 0700 $ZEC_ROOT $ZEC_ROOT/signers"
 # --network host: the provisioner only accepts a loopback zebra endpoint, and
 # Compose publishes zebra on 127.0.0.1:18232.
+for (( k = 0; k < SWAPS; k++ )); do
 docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
   --entrypoint zec-local-poc-provision "$TAKER_IMAGE" \
-  --spec-file "$ZEC_ROOT/spec.json" --output-root "$CORRIDOR" \
+  --spec-file "$ZEC_ROOT/spec${SUFFIX[$k]}.json" --output-root "$(corridor_of $k)" \
   --maker-lez-signer-key-file "$ZEC_ROOT/signers/maker.key" \
-  --taker-lez-signer-key-file "$ZEC_ROOT/signers/taker.key" </dev/null >"$out/provision-summary.json" ||
-  fail "zec-local-poc-provision failed (see above)"
-python3 - "$out/provision-summary.json" <<'PY'
+  --taker-lez-signer-key-file "$ZEC_ROOT/signers/taker.key" </dev/null >"$(out_of $k)/provision-summary.json" ||
+  fail "zec-local-poc-provision failed for swap $k (see above)"
+python3 - "$(out_of $k)/provision-summary.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
 print(f"  provisioned run {s['run_id']}: agreement sha256 {s['signed_agreement_sha256'][:16]}…, "
       f"zebra tip {s['zebra_tip_height']}, zcash refund height {s['zcash_refund_height']}, "
       f"private_material_disclosed={s['private_material_disclosed']}")
 PY
+done
 
 # ---- 4. distribute ------------------------------------------------------------
 log "4/8 distribute into $MAKER_VOLUME / $TAKER_VOLUME"
@@ -308,24 +332,30 @@ helper 0:0 -v "$STAGING:/stage:ro" -v "$MAKER_VOLUME:/maker" -v "$TAKER_VOLUME:/
   set -e; umask 077
   for role in maker taker; do
     vol=/\$role
-    if [[ -e \$vol/corridor ]]; then
-      old=\$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"run_id\"])' \$vol/corridor/\$role/actor-config.json 2>/dev/null || date +%s)
-      mkdir -p \$vol/archive && mv \$vol/corridor \$vol/archive/\$old
-    fi
+    for c in \$vol/corridor \$vol/corridor-*; do
+      [[ -e \$c ]] || continue
+      old=\$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"run_id\"])' \$c/\$role/actor-config.json 2>/dev/null || date +%s)
+      mkdir -p \$vol/archive && mv \$c \$vol/archive/\$old
+    done
     rm -f \$vol/prepared.json
-    mkdir -m 0700 \$vol/corridor
-    cp -a /stage/corridor/shared \$vol/corridor/
-    cp -a /stage/corridor/\$role \$vol/corridor/
+    for c in /stage/corridor /stage/corridor-*; do
+      [[ -d \$c ]] || continue
+      mkdir -m 0700 \$vol/\$(basename \$c)
+      cp -a \$c/shared \$vol/\$(basename \$c)/
+      cp -a \$c/\$role \$vol/\$(basename \$c)/
+    done
     chown -R $NODE_UID:$NODE_UID \$vol && chmod -R go-rwx \$vol
   done
-  mkdir -p /taker/taker-swaps/$run_id && chown $NODE_UID:$NODE_UID /taker/taker-swaps /taker/taker-swaps/$run_id && chmod 0700 /taker/taker-swaps /taker/taker-swaps/$run_id
-  echo '  maker volume:'; find /maker/corridor -type f | sort | sed 's|^|    |'
-  echo '  taker volume:'; find /taker/corridor -type f | sort | sed 's|^|    |'"
+  for r in $(for (( k = 0; k < SWAPS; k++ )); do run_id_of $k; done); do
+    mkdir -p /taker/taker-swaps/\$r && chown $NODE_UID:$NODE_UID /taker/taker-swaps /taker/taker-swaps/\$r && chmod 0700 /taker/taker-swaps /taker/taker-swaps/\$r
+  done
+  echo '  maker volume:'; find /maker/corridor* -type f | sort | sed 's|^|    |'
+  echo '  taker volume:'; find /taker/corridor* -type f | sort | sed 's|^|    |'"
 # The staging copy held both roles' secrets side by side; nothing reads it again.
 docker volume rm -f "$STAGING" >/dev/null
 
 # ---- 5. publish and discover the offer -----------------------------------------
-log "5/8 Zcash offer $offer_id"
+log "5/8 Zcash offer(s) $(for (( k = 0; k < SWAPS; k++ )); do offer_id_of $k; done | tr '\n' ' ')"
 # One live Zcash offer at a time: a desk (or a Taker picking "the Zcash row")
 # must not land on an offer whose catalog entry this run replaces.
 stale="$(rpc_result maker maker_offer_list '{"states":["active"]}' | python3 -c 'import json,sys
@@ -359,56 +389,66 @@ if pr: r["expected_pair_revision"]=int(pr)
 if prr: r["expected_price_revision"]=int(prr)
 print(json.dumps(r))' "$stamp" "$ROUTE" "$FOREIGN_UNITS" "$LEZ_UNITS" "$pair_rev" "$price_rev" "$OFFER_TTL_SECONDS")"
 rpc_result maker maker_local_route_save_v1 "$request" >/dev/null
-rpc_result maker maker_offer_publish "{\"request_id\":\"zec-devnet-publish-$stamp\",\"offer_id\":\"$offer_id\",\"route\":$ROUTE}" >/dev/null
-entry=""
-for _ in $(seq 1 30); do
-  entry="$(rpc_result taker taker_offer_list_v1 "{\"schema_version\":1,\"route\":$ROUTE}" |
-    python3 -c 'import json,sys
+COMMITMENT=(); EXPIRES_AT=()
+for (( k = 0; k < SWAPS; k++ )); do
+  this_offer="$(offer_id_of $k)"
+  rpc_result maker maker_offer_publish "{\"request_id\":\"zec-devnet-publish-$stamp${SUFFIX[$k]}\",\"offer_id\":\"$this_offer\",\"route\":$ROUTE}" >/dev/null
+  entry=""
+  for _ in $(seq 1 30); do
+    entry="$(rpc_result taker taker_offer_list_v1 "{\"schema_version\":1,\"route\":$ROUTE}" |
+      python3 -c 'import json,sys
 want=sys.argv[1]
 for e in json.load(sys.stdin)["offers"]:
     if e["offer"]["id"]==want:
         print(json.dumps({"commitment":bytes(e["signed_envelope_sha256"]).hex(),
                           "expires_at":e["offer"]["expires_at_unix_seconds"],
-                          "maker_identity":e["maker_identity"]})); break' "$offer_id")"
-  [[ -n "$entry" ]] && break
-  sleep 2
+                          "maker_identity":e["maker_identity"]})); break' "$this_offer")"
+    [[ -n "$entry" ]] && break
+    sleep 2
+  done
+  [[ -n "$entry" ]] || fail "Taker did not list $this_offer within 60 s"
+  COMMITMENT[$k]="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["commitment"])' "$entry")"
+  EXPIRES_AT[$k]="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["expires_at"])' "$entry")"
+  log "  Taker lists $this_offer: commitment ${COMMITMENT[$k]}, expires at ${EXPIRES_AT[$k]}"
 done
-[[ -n "$entry" ]] || fail "Taker did not list $offer_id within 60 s"
-commitment="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["commitment"])' "$entry")"
-expires_at="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["expires_at"])' "$entry")"
-log "  Taker lists it: commitment $commitment, expires at $expires_at"
+commitment="${COMMITMENT[0]}"; expires_at="${EXPIRES_AT[0]}"
 
 # ---- 6. chat draft -----------------------------------------------------------
-log "6/8 unsigned Chat draft (reservation $reservation_id)"
+log "6/8 unsigned Chat draft(s)"
+for (( k = 0; k < SWAPS; k++ )); do
 docker run --rm --user "$NODE_UID:$NODE_UID" -v "$TAKER_VOLUME:$ZEC_ROOT" \
   --entrypoint zec-local-poc-chat-draft "$TAKER_IMAGE" \
-  --source-agreement-file "$CORRIDOR/shared/agreement-v2.borsh" --now-unix-seconds "$(date +%s)" \
-  --reservation-id "$reservation_id" --offer-commitment "$commitment" \
-  --offer-expires-at-unix-seconds "$expires_at" \
-  --output-file "$CORRIDOR/taker/unsigned-draft.borsh" </dev/null >"$out/draft-summary.json" ||
-  fail "zec-local-poc-chat-draft failed (see above)"
-python3 - "$out/draft-summary.json" <<'PY'
+  --source-agreement-file "$(corridor_of $k)/shared/agreement-v2.borsh" --now-unix-seconds "$(date +%s)" \
+  --reservation-id "$(reservation_id_of $k)" --offer-commitment "${COMMITMENT[$k]}" \
+  --offer-expires-at-unix-seconds "${EXPIRES_AT[$k]}" \
+  --output-file "$(corridor_of $k)/taker/unsigned-draft.borsh" </dev/null >"$(out_of $k)/draft-summary.json" ||
+  fail "zec-local-poc-chat-draft failed for swap $k (see above)"
+python3 - "$(out_of $k)/draft-summary.json" "$(reservation_id_of $k)" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
-print(f"  draft sha256 {s['draft_sha256'][:16]}… for swap {s['swap_id']}, offer commitment {s['offer_commitment'][:16]}…")
+print(f"  draft sha256 {s['draft_sha256'][:16]}… for swap {s['swap_id']} (reservation {sys.argv[2]}), offer commitment {s['offer_commitment'][:16]}…")
 PY
+done
 
 # ---- 7. the Taker catalog ------------------------------------------------------
 log "7/8 prepared.json"
 # The Delivery file is the exact signed envelope (run_local_delivery.rs:
 # publish writes `encoded`, authenticate hashes the file bytes), so its sha256
 # must be the commitment the Taker listed.
+rm -f "$out/prepared.json"
+for (( k = 0; k < SWAPS; k++ )); do
+this_corridor="$(corridor_of $k)"
 sums="$(helper 0:0 -v "$DELIVERY_VOLUME:/delivery:ro" -v "$TAKER_VOLUME:$ZEC_ROOT" -- "
   set -e; umask 077
-  install -m 0600 -o $NODE_UID -g $NODE_UID /delivery/$offer_id.offer.json $CORRIDOR/taker/signed-envelope.offer.json
-  cd $CORRIDOR/taker && sha256sum signed-envelope.offer.json unsigned-draft.borsh actor-config.json")"
+  install -m 0600 -o $NODE_UID -g $NODE_UID /delivery/$(offer_id_of $k).offer.json $this_corridor/taker/signed-envelope.offer.json
+  cd $this_corridor/taker && sha256sum signed-envelope.offer.json unsigned-draft.borsh actor-config.json")"
 envelope_sha="$(awk '$2=="signed-envelope.offer.json"{print $1}' <<<"$sums")"
 draft_sha="$(awk '$2=="unsigned-draft.borsh"{print $1}' <<<"$sums")"
 config_sha="$(awk '$2=="actor-config.json"{print $1}' <<<"$sums")"
-[[ "$envelope_sha" == "$commitment" ]] || fail "Delivery file sha256 $envelope_sha != listed commitment $commitment"
-python3 - "$out/prepared.json" "$CORRIDOR" "$ZEC_ROOT" "$run_id" "$swap_id" "$offer_id" "$reservation_id" \
+[[ "$envelope_sha" == "${COMMITMENT[$k]}" ]] || fail "Delivery file sha256 $envelope_sha != listed commitment ${COMMITMENT[$k]}"
+python3 - "$out/prepared.json" "$this_corridor" "$ZEC_ROOT" "$(run_id_of $k)" "$(swap_id_of $k)" "$(offer_id_of $k)" "$(reservation_id_of $k)" \
   "$FOREIGN_UNITS" "$LEZ_UNITS" "$envelope_sha" "$draft_sha" "$config_sha" <<'PY'
-import json, sys
+import json, os, sys
 (out, corridor, root, run_id, swap_id, offer_id, reservation_id, fu, lu, env_sha, draft_sha, cfg_sha) = sys.argv[1:]
 swap_dir = f"{root}/taker-swaps/{run_id}"
 entry = {
@@ -422,13 +462,16 @@ entry = {
     "actor_root": f"{swap_dir}/actor",
     "receipt_output": f"{swap_dir}/receipt.json",
 }
-json.dump([entry], open(out, "w"), indent=2)
+entries = json.load(open(out)) if os.path.exists(out) else []
+entries.append(entry)
+json.dump(entries, open(out, "w"), indent=2)
 PY
+done
 chmod 0600 "$out/prepared.json"
 docker run --rm -i --user 0:0 -v "$TAKER_VOLUME:$ZEC_ROOT" --entrypoint bash "$TAKER_IMAGE" -c \
   "umask 077; cat >$ZEC_ROOT/prepared.json && chown $NODE_UID:$NODE_UID $ZEC_ROOT/prepared.json" <"$out/prepared.json"
 echo "$run_id" >runtime/zec/current
-log "  catalog: one entry ($swap_id / $offer_id), swap files under $ZEC_ROOT/taker-swaps/$run_id"
+log "  catalog: $SWAPS entr$([[ $SWAPS == 1 ]] && echo y || echo ies) ($(for (( k = 0; k < SWAPS; k++ )); do echo -n "$(swap_id_of $k) / $(offer_id_of $k); "; done)), swap files under $ZEC_ROOT/taker-swaps/<run id>"
 
 if [[ "$RESTART" == 0 ]]; then
   log "8/8 skipped (--no-restart): recreate maker-node and taker-node to load corridor $run_id"
@@ -440,9 +483,15 @@ log "8/8 recreating maker-node, then taker-node"
 recreate_nodes
 docker logs lez-maker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  maker: /'
 docker logs lez-taker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  taker: /'
+for (( k = 1; k < SWAPS; k++ )); do
+  docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(maker_port_of $k))" </dev/null && log "  maker sidecar answers on 127.0.0.1:$(maker_port_of $k)" || fail "maker sidecar for swap $k does not answer"
+  docker exec lez-taker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(taker_port_of $k))" </dev/null && log "  taker sidecar answers on 127.0.0.1:$(taker_port_of $k)" || fail "taker sidecar for swap $k does not answer"
+done
 docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$MAKER_BRIDGE_PORT)" </dev/null && log "  maker sidecar answers on 127.0.0.1:$MAKER_BRIDGE_PORT" || fail "maker sidecar not listening"
 docker exec lez-taker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$TAKER_BRIDGE_PORT)" </dev/null && log "  taker sidecar answers on 127.0.0.1:$TAKER_BRIDGE_PORT" || fail "taker sidecar not listening"
 rpc_result maker maker_health '{"schema_version":1}' | python3 -c 'import json,sys; h=json.load(sys.stdin); print("  maker_health: ready=%s degraded=%s" % (h.get("ready"), h.get("degraded")))'
 listed="$(rpc_result taker taker_offer_list_v1 "{\"schema_version\":1,\"route\":$ROUTE}" | python3 -c 'import json,sys; print(" ".join(e["offer"]["id"] for e in json.load(sys.stdin)["offers"]))')"
-[[ " $listed " == *" $offer_id "* ]] || fail "Taker does not list $offer_id after the restart"
-log "  Taker lists $offer_id; corridor $run_id is live"
+for (( k = 0; k < SWAPS; k++ )); do
+  [[ " $listed " == *" $(offer_id_of $k) "* ]] || fail "Taker does not list $(offer_id_of $k) after the restart"
+done
+log "  Taker lists $(for (( k = 0; k < SWAPS; k++ )); do offer_id_of $k; done | tr '\n' ' '); corridor $run_id is live"

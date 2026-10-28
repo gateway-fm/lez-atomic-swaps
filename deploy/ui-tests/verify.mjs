@@ -507,16 +507,21 @@ if (role === "maker") {
       // from the row's own model behind each Take button. An offer the Maker
       // desk just published reaches this order book over Delivery, so the
       // row is awaited rather than demanded at once.
+      // A journey with several rows of this pair names the offer to take.
+      const wantedOffer = process.env.INTERACTIVE_OFFER_ID || "";
       let target = null;
       await app.waitFor(async () => {
         const buttons = await app.findByProperty("objectName", "takerTakeOffer");
         const seen = [];
         for (const match of buttons.matches ?? []) {
-          const row = await evaluateIn(app, match.id, "String(modelData.direction) + ' ' + String(modelData.pair ?? 'Bitcoin')");
+          const row = await evaluateIn(app, match.id,
+            "String(modelData.direction) + ' ' + String(modelData.pair ?? 'Bitcoin') + ' ' + String(modelData.offer_id ?? '')");
           seen.push(row.result);
-          if (row.ok === true && row.result === `${wantedDirection} ${uiPair}`) { target = match.id; return; }
+          if (row.ok !== true) continue;
+          const [direction, pair, offerId] = String(row.result).split(" ");
+          if (direction === wantedDirection && pair === uiPair && (!wantedOffer || offerId === wantedOffer)) { target = match.id; return; }
         }
-        throw new Error(`no takeable ${wantedDirection} ${uiPair} order-book row yet (rows: ${seen.join(", ") || "none"})`);
+        throw new Error(`no takeable ${wantedDirection} ${uiPair}${wantedOffer ? ` ${wantedOffer}` : ""} order-book row yet (rows: ${seen.join(", ") || "none"})`);
       }, { timeout: 180000, interval: 5000, description: `${wantedDirection} ${uiPair} order-book row` });
       narrate(zcash
         ? "Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor"

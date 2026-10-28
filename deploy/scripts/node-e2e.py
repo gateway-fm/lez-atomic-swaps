@@ -1251,16 +1251,23 @@ def zebra_mine(blocks: int, why: str) -> None:
     log(f"  zebra: mined {blocks} block(s) → height {zebra('getblockcount')} ({why})")
 
 
-def zec_provision() -> dict:
-    """One fresh corridor: zec-provision.sh end to end, Nodes recreated. Returns the
-    catalog entry plus the provisioning facts the scenario asserts against."""
+ZEC_CORRIDORS: list[dict] = []
+
+
+def zec_provision(swaps: int = 1, swap_id: str | None = None) -> dict:
+    """One fresh corridor run: zec-provision.sh end to end, Nodes recreated. With
+    `swaps` 2 the run holds two prepared entries (the concurrent fixture: its own
+    corridor root, agreement, offer, sidecar ports and funder output each).
+    Returns the first entry's corridor facts, or the entry of `swap_id` when the
+    corridor is reused; every entry is kept in ZEC_CORRIDORS."""
     if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1":
         # The corridor the Nodes already run with (runtime/zec/current), for a
         # run that must not recreate them; its catalog entry must be untaken.
         log("  reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)")
     else:
-        log("  provisioning a ZEC corridor (zec-provision.sh; this recreates both Nodes)")
-        result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "zec-provision.sh"), "--skip-chain-check"],
+        log(f"  provisioning a ZEC corridor with {swaps} prepared swap(s) (zec-provision.sh; this recreates both Nodes)")
+        result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "zec-provision.sh"), "--skip-chain-check",
+                                 "--swaps", str(swaps)],
                                 capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, stdin=subprocess.DEVNULL)
         for line in result.stdout.strip().splitlines()[-6:]:
             log(f"    {line}")
@@ -1268,28 +1275,43 @@ def zec_provision() -> dict:
             raise Failure(f"zec-provision.sh failed: {result.stderr.strip()[-300:] or result.stdout.strip()[-300:]}")
     run_id = (RUNTIME / "zec" / "current").read_text().strip()
     out = RUNTIME / "zec" / run_id
-    entry = json.loads((out / "prepared.json").read_text())[0]
-    summary = json.loads((out / "provision-summary.json").read_text())
-    # The Maker's actor config names the coinbase outpoint its funding spends; it
-    # is the one fact that lets the scenario find the funding and claim on zebra.
-    reader = ("import json,sys; c=json.load(open('/var/lib/lez/zec/corridor/maker/actor-config.json'));"
-              " print(json.dumps(c['zcash_funding_outpoints']))")
-    read = subprocess.run(["docker", "exec", NODES["maker"][0], "python3", "-c", reader],
-                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
-    if read.returncode != 0 or not read.stdout.strip():
-        raise Failure(f"could not read the Maker's funding outpoint: {read.stderr.strip()[:200]}")
-    spec = json.loads((out / "spec.json").read_text())
-    profile = spec.get("profile", "deterministic-local-v1")
-    corridor = {"run_id": run_id, "offer_id": entry["offer_id"], "catalog_swap_id": entry["swap_id"],
-                "profile": profile,
-                # zec-swap-sdk profile.rs: the only parameter the devnet profile changes.
-                "lez_refund_delay_seconds": 1800 if profile == "deterministic-local-devnet-v1" else 60,
-                "receipt_output": entry["receipt_output"], "actor_root": entry["actor_root"],
-                "zebra_tip_at_provisioning": int(summary["zebra_tip_height"]),
-                "zcash_refund_height": int(summary["zcash_refund_height"]),
-                "funding_outpoints": json.loads(read.stdout)}
-    log(f"  corridor {run_id} ({profile}): offer {corridor['offer_id']}, zebra tip {corridor['zebra_tip_at_provisioning']}, "
-        f"Zcash refund height {corridor['zcash_refund_height']}")
+    entries = json.loads((out / "prepared.json").read_text())
+    corridors = []
+    for index, entry in enumerate(entries):
+        # Entry k of the run: its files under runtime/zec/<run>/ (k = 0) or
+        # runtime/zec/<run>/b/, its corridor root corridor/ or corridor-b/.
+        entry_out = out if index == 0 else out / "b"
+        corridor_root = "/var/lib/lez/zec/corridor" + ("" if index == 0 else "-b")
+        summary = json.loads((entry_out / "provision-summary.json").read_text())
+        # The Maker's actor config names the coinbase outpoint its funding spends; it
+        # is the one fact that lets the scenario find the funding and claim on zebra.
+        reader = ("import json,sys; c=json.load(open(sys.argv[1] + '/maker/actor-config.json'));"
+                  " print(json.dumps(c['zcash_funding_outpoints']))")
+        read = subprocess.run(["docker", "exec", NODES["maker"][0], "python3", "-c", reader, corridor_root],
+                              capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+        if read.returncode != 0 or not read.stdout.strip():
+            raise Failure(f"could not read the Maker's funding outpoint for entry {index}: {read.stderr.strip()[:200]}")
+        spec = json.loads((entry_out / "spec.json").read_text())
+        profile = spec.get("profile", "deterministic-local-v1")
+        corridors.append({"run_id": run_id, "entry": index, "offer_id": entry["offer_id"], "catalog_swap_id": entry["swap_id"],
+                          "profile": profile,
+                          # zec-swap-sdk profile.rs: the only parameter the devnet profile changes.
+                          "lez_refund_delay_seconds": 1800 if profile == "deterministic-local-devnet-v1" else 60,
+                          "receipt_output": entry["receipt_output"], "actor_root": entry["actor_root"],
+                          "zebra_tip_at_provisioning": int(summary["zebra_tip_height"]),
+                          "zcash_refund_height": int(summary["zcash_refund_height"]),
+                          "funding_outpoints": json.loads(read.stdout)})
+    for corridor in corridors:
+        log(f"  corridor {run_id} entry {corridor['entry']} ({corridor['profile']}): offer {corridor['offer_id']}, "
+            f"zebra tip {corridor['zebra_tip_at_provisioning']}, Zcash refund height {corridor['zcash_refund_height']}")
+    ZEC_CORRIDORS.clear()
+    ZEC_CORRIDORS.extend(corridors)
+    corridor = corridors[0]
+    if swap_id is not None:
+        matching = [c for c in corridors if c["catalog_swap_id"] == swap_id]
+        if not matching:
+            raise Failure(f"swap {swap_id[:12]} is not an entry of corridor {run_id} ({[c['catalog_swap_id'] for c in corridors]})")
+        corridor = matching[0]
     ZEC_CORRIDOR.clear()
     ZEC_CORRIDOR.update(corridor)
     return corridor
@@ -1493,6 +1515,86 @@ def scenario_zec_happy(stamp: str) -> dict:
             "zcash_refund_height": corridor["zcash_refund_height"]}
 
 
+def zec_drive_all_until(swaps: list[tuple[str, str, dict]], states: set[str], timeout: int, describe: str = "") -> dict[str, dict]:
+    """Drives several Taker actors in turn (one drive each per round) until every
+    swap's Node state is in `states`; the mining policy is applied per corridor."""
+    deadline = time.time() + timeout
+    done: dict[str, dict] = {}
+    last: dict[str, tuple] = {}
+    while time.time() < deadline:
+        for swap_id, config, corridor in swaps:
+            if swap_id in done:
+                continue
+            effect = zec_drive(config)
+            described = zec_describe(effect)
+            view = taker_view(swap_id)
+            state = view["state"]
+            if last.get(swap_id) != (state, described):
+                log(f"  taker {swap_id[:12]}: {state} (gen {view.get('progress_generation')}) | drive: {described} "
+                    f"| maker: {maker_phase(swap_id)} | zebra {zebra('getblockcount')}")
+                last[swap_id] = (state, described)
+            if state in states:
+                done[swap_id] = view
+            elif state in TERMINAL:
+                raise Failure(f"swap {swap_id[:12]} ended in {state} while waiting for {sorted(states)} {describe}")
+            else:
+                zec_mining_policy(effect, corridor)
+        if len(done) == len(swaps):
+            return done
+        time.sleep(10)
+    pending = [s[0][:12] for s in swaps if s[0] not in done]
+    raise Failure(f"swaps {pending} did not reach {sorted(states)} within {timeout}s {describe}")
+
+
+def scenario_zec_concurrent(stamp: str) -> dict:
+    """Two prepared entries of one corridor run, taken and settled side by side:
+    two agreements, two Maker fundings from distinct coinbase outputs, two
+    Taker claims; both Nodes list both swaps completed."""
+    zec_provision(swaps=2)
+    corridors = list(ZEC_CORRIDORS)
+    if len(corridors) != 2:
+        raise Failure(f"expected two prepared entries, the corridor has {len(corridors)}")
+    swaps = []
+    for corridor in corridors:
+        swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+        config = zec_taker_actor_config(corridor["receipt_output"])
+        zec_activate(config)
+        swaps.append((swap_id, config, corridor))
+    log(f"  both taken: {swaps[0][0][:12]} and {swaps[1][0][:12]}; driving both Taker actors in turn")
+    views = zec_drive_all_until(swaps, {"claim_available"}, timeout=3000,
+                                describe="(two Taker LEZ locks → two Maker Zcash fundings → two Maker LEZ claims)")
+    fundings = {}
+    for swap_id, _, corridor in swaps:
+        outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+        funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if funding is None:
+            raise Failure(f"{swap_id[:12]} is claim_available, but no zebra block spends its provisioned coinbase outpoint")
+        fundings[swap_id] = funding
+        log(f"  Maker's Zcash funding for {swap_id[:12]}: {funding[0]} in zebra block {funding[1]}")
+    if len({fundings[s[0]][0] for s in swaps}) != 2:
+        raise Failure("the two Maker fundings are one transaction: the corridors shared a funder output")
+    for index, (swap_id, _, _) in enumerate(swaps):
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-{index}",
+                                                       "swap_id": swap_id, "expected_generation": views[swap_id]["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed Zcash on {swap_id[:12]} (replay={result.get('was_replay')})")
+    zec_drive_all_until(swaps, {"completed"}, timeout=1200, describe="(two claim inclusions)")
+    claims = {}
+    for swap_id, _, _ in swaps:
+        funding = fundings[swap_id]
+        claim_tx = zec_spend_of((funding[0], 0), funding[1])
+        if claim_tx is None:
+            raise Failure(f"{swap_id[:12]} reports completed, but no zebra block spends its funding output")
+        claims[swap_id] = claim_tx
+        log(f"  Taker's Zcash claim for {swap_id[:12]}: {claim_tx[0]} in zebra block {claim_tx[1]}")
+        wait_completed(swap_id, timeout=600)
+    return {"swaps": [{"swap_id": swap_id, "offer_id": corridor["offer_id"], "entry": corridor["entry"],
+                       "zcash_funding": {"transaction_id": fundings[swap_id][0], "height": fundings[swap_id][1]},
+                       "zcash_claim": {"transaction_id": claims[swap_id][0], "height": claims[swap_id][1]}}
+                      for swap_id, _, corridor in swaps],
+            "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"]}
+
+
 def zec_export_tool(swap_id: str) -> bool:
     """`node-e2e.py --pair Zcash zec-export --swap-id …`: the ZEC counterpart of
     export-node-evidence.py for the desk journeys. A ZEC swap has no Bitcoin
@@ -1501,7 +1603,7 @@ def zec_export_tool(swap_id: str) -> bool:
     that spend the provisioned coinbase output (the Maker's funding) and the
     funding output itself (the Taker's claim or the Maker's refund), with their
     heights. Written to runtime/evidence/zec/<swap_id>.json."""
-    corridor = zec_provision()
+    corridor = zec_provision(swap_id=swap_id)
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
     funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
@@ -1538,7 +1640,7 @@ def zec_refund_tail_tool(swap_id: str) -> bool:
     Maker's Zcash refund in a block; the Taker's own observation of that refund
     is the desk's "Retry refund", so it is left to the desk."""
     os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
-    corridor = zec_provision()
+    corridor = zec_provision(swap_id=swap_id)
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
     funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
@@ -1555,13 +1657,35 @@ def zec_refund_tail_tool(swap_id: str) -> bool:
     return True
 
 
+def zec_drive_many_tool(swap_ids: list[str], until: str, timeout: int) -> bool:
+    """`zec-drive --swap-id a --swap-id b --until <state>`: the desk's concurrent
+    journey drives both Taker actors in turn on the corridor the Nodes run with."""
+    os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
+    swaps = []
+    try:
+        for swap_id in swap_ids:
+            corridor = dict(zec_provision(swap_id=swap_id))
+            config = zec_taker_actor_config(corridor["receipt_output"])
+            status = zec_status(config)
+            if not status or status.get("state") != "active":
+                zec_activate(config)
+            swaps.append((swap_id, config, corridor))
+        views = zec_drive_all_until(swaps, set(until.split("|")), timeout, describe=f"(zec-drive to {until})")
+    except Failure as failure:
+        log(f"FAILED: {failure}")
+        return False
+    for swap_id, view in views.items():
+        log(f"  taker {swap_id[:12]} is {view.get('state')}")
+    return True
+
+
 def zec_drive_tool(swap_id: str, until: str, timeout: int, mine_pending_only: bool = False,
                    until_phase: str | None = None) -> bool:
     """`node-e2e.py --pair Zcash zec-drive --swap-id … --until <state>`: the host-side
     actor driving the desk journeys need between their steps (ui-e2e.sh), on the
     corridor the Nodes currently run with. No preflight, no summary file."""
     os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
-    corridor = zec_provision()
+    corridor = zec_provision(swap_id=swap_id)
     config = zec_taker_actor_config(corridor["receipt_output"])
     try:
         # The first drive after the desk's take activates the actor; later
@@ -1864,6 +1988,7 @@ ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
+    "zec-concurrent": scenario_zec_concurrent,
 }
 
 
@@ -1971,7 +2096,8 @@ def run(name: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-drive", "zec-export", "zec-refund-tail", "all"])
-    parser.add_argument("--swap-id", help="zec-drive / zec-export / zec-refund-tail: the swap to act on")
+    parser.add_argument("--swap-id", action="append", default=[],
+                        help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
     parser.add_argument("--mine-pending-only", action="store_true",
                         help="zec-drive: mine zebra only for what waits in the mempool, never for depth (refund journeys)")
     parser.add_argument("--until", help="zec-drive: Taker state(s) to reach, '|'-separated")
@@ -1987,6 +2113,11 @@ def main() -> int:
         ROUTE.update({"pair": "Zcash", "direction": "TakerSellsLez"})
         REVERSE = True
         FOREIGN_UNITS, LEZ_UNITS = ZEC_FOREIGN_UNITS, ZEC_LEZ_UNITS
+        if args.scenario == "zec-drive" and len(args.swap_id) > 1:
+            if not args.until or args.until_phase or args.mine_pending_only:
+                parser.error("zec-drive with several --swap-id takes --until only")
+            return 0 if zec_drive_many_tool(args.swap_id, args.until, args.timeout) else 1
+        args.swap_id = args.swap_id[0] if args.swap_id else None
         if args.scenario == "zec-drive":
             if not (args.swap_id and (args.until or args.until_phase)):
                 parser.error("zec-drive needs --swap-id and --until or --until-phase")

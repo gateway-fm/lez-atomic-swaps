@@ -182,10 +182,10 @@ require_fast() { [[ "${LEZ_TIMING_PROFILE:-local}" == fast ]] || fail "this scen
 
 # ---- desk steps -----------------------------------------------------------------
 publish() { step "Maker desk publishes $direction offers until two are pending" maker; }
-take() { # take <var>: the Taker desk takes one offer of this direction; the new swap id lands in <var>
+take() { # take <var> [offer_id]: the Taker desk takes one offer of this direction (that offer's row when named); the new swap id lands in <var>
   local -n out="$1"
   mapfile -t baseline_swaps < <(taker_swaps | awk '{print $1}')
-  step "Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)" taker PREPARE_INTERACTIVE_BTC=1
+  step "Taker desk takes an offer${2:+ ($2)} (the Taker Node reserves, plans, signs and activates)" taker PREPARE_INTERACTIVE_BTC=1 "INTERACTIVE_OFFER_ID=${2:-}"
   out="$(new_swaps | awk 'NR == 1 {print $1}')"
   [ -n "$out" ] || fail "the Taker Node lists no new swap"
   mapfile -t baseline_swaps < <(taker_swaps | awk '{print $1}')
@@ -247,9 +247,9 @@ export_evidence() { # export_evidence <swap_id>
   fi
 }
 # ---- ZEC host-side steps (the Node offers only claim/refund for ZEC) ----------------
-zec_provision() { # one fresh corridor; recreates both Nodes (zec-provision.sh step 8)
-  log "provisioning a ZEC corridor (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} 2>&1 | tail -4 | sed 's/^/   /'
+zec_provision() { # zec_provision [swaps]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
+  log "provisioning a ZEC corridor with ${1:-1} prepared swap(s) (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
+  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --swaps "${1:-1}" 2>&1 | tail -4 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh"
   wait_healthy lez-maker-node; wait_healthy lez-taker-node
   # The desk shows the corridor's lot; verify.mjs asserts the amounts it is given.
@@ -265,6 +265,12 @@ zec_drive() { # zec_drive <swap_id> <taker state> [timeout]: drive the Taker act
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive to $2"
 }
 
+zec_drive_both() { # zec_drive_both <swap_a> <swap_b> <taker state> [timeout]: drive both Taker actors in turn until both show that state
+  log "driving both Taker ZEC actors on the Node until ${1:0:12} and ${2:0:12} show $3"
+  python3 scripts/node-e2e.py --pair Zcash zec-drive --swap-id "$1" --swap-id "$2" --until "$3" --timeout "${4:-3000}" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive (both) to $3"
+}
+zec_offer_ids() { python3 -c 'import json,sys; print("\n".join(e["offer_id"] for e in json.load(open(sys.argv[1]))))' "runtime/zec/$(cat runtime/zec/current)/prepared.json"; }
 zec_refund_tail() { # zec_refund_tail <swap_id>: zebra to the refund height, the Maker's refund queued, its Zcash refund in a block
   log "mining zebra to the agreement's refund height; the Maker Node refunds its Zcash (operator action) once it sees the LEZ leg refunded"
   python3 scripts/node-e2e.py --pair Zcash zec-refund-tail --swap-id "$1" 2>&1 | sed 's/^/   /'
@@ -371,6 +377,44 @@ scenario_zec_happy() {
   wait "$taker_pid" || fail "Taker desk: completed"
   export_evidence "$swap"
 }
+scenario_zec_concurrent() {
+  # Two prepared entries of one corridor run, taken from the desk one after the
+  # other and settled side by side: both Maker fundings (distinct coinbase
+  # outputs), both revealing LEZ claims, both Zcash claims from the Taker desk;
+  # both desks show two rows completed.
+  local swap_a swap_b offers maker_a maker_b taker_a
+  if [[ "$record" == 1 ]]; then
+    log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
+    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    wait_healthy lez-maker-node; wait_healthy lez-taker-node
+  fi
+  zec_provision 2
+  mapfile -t offers < <(zec_offer_ids)
+  [[ "${#offers[@]}" == 2 ]] || fail "the corridor run lists ${#offers[@]} offers, not 2"
+  take swap_a "${offers[0]}"
+  note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node runs a second prepared ceremony with the Maker"
+  take swap_b "${offers[1]}"
+  note "Both Takers' LEZ locks are the ZEC actors', driven on the Node host in turn; the Maker Node funds Zcash for each from its own coinbase output and claims LEZ on each"
+  maker_wait_bg maker_a awaiting_taker_claim "$swap_a"
+  maker_wait_bg maker_b awaiting_taker_claim "$swap_b"
+  desk_head_start
+  zec_drive_both "$swap_a" "$swap_b" claim_available
+  wait "$maker_a" || fail "Maker desk: awaiting_taker_claim ($swap_a)"
+  wait "$maker_b" || fail "Maker desk: awaiting_taker_claim ($swap_b)"
+  taker_act "$claim_action" "$swap_a"
+  taker_act "$claim_action" "$swap_b"
+  note "Both Zcash claims wait for zebra blocks; both desks watch the two swaps complete while the Taker actors observe them"
+  maker_wait_bg maker_a completed "$swap_a"
+  taker_wait_bg taker_a completed "$swap_a"
+  desk_head_start
+  zec_drive_both "$swap_a" "$swap_b" completed 1200
+  wait "$maker_a" || fail "Maker desk: completed ($swap_a)"
+  wait "$taker_a" || fail "Taker desk: completed ($swap_a)"
+  maker_wait completed "$swap_b"
+  taker_wait completed "$swap_b"
+  export_evidence "$swap_a"
+  export_evidence "$swap_b"
+}
 scenario_zec_maker_refund() {
   # Both legs locked, the Maker's Zcash funding kept at one confirmation (below
   # the pre-reveal gate), the Taker refunds LEZ from its desk at the agreement's
@@ -429,6 +473,7 @@ run_one() {
     node-offline) scenario_node_offline ;;
     zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
     zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
+    zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video

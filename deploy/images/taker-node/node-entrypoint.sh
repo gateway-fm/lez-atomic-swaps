@@ -150,36 +150,49 @@ zec_state="/var/lib/lez/zec"
 zec_role="$zec_state/corridor/$role"
 zec_config="$zec_role/actor-config.json"
 zec_ready=0
-if [[ -s "$zec_config" && "$btc_lifecycle_ready" == 1 ]]; then
+# Every corridor root the provisioner left (corridor/, and corridor-b/ for the
+# concurrent fixture) gets its own sidecar on the loopback port its config
+# names; the Maker takes every corridor's config as an actor template. The
+# Node is ZEC-ready when the first corridor's sidecar answers.
+zec_configs=()
+for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state"/corridor-*/"$role"/actor-config.json; do
+  [[ -s "$zec_candidate" && "$btc_lifecycle_ready" == 1 ]] || continue
   chmod 0700 "$zec_state" 2>/dev/null || true
-  zec_chain="$(jq -r '.bridge.runtime | "\(.channel_id) \(.genesis_block_hash) \(.escrow_program_id)"' "$zec_config")"
+  zec_chain="$(jq -r '.bridge.runtime | "\(.channel_id) \(.genesis_block_hash) \(.escrow_program_id)"' "$zec_candidate")"
   if [[ "$zec_chain" != "$channel_id $lez_genesis_hash $escrow_program_id" ]]; then
-    echo "$role: ZEC corridor under $zec_state was provisioned for another chain; ignored (re-run scripts/zec-provision.sh)"
-  else
-    zec_run_id="$(jq -er '.run_id' "$zec_config")"
-    zec_endpoint="$(jq -er '.bridge.endpoint' "$zec_config")"
-    zec_listen="${zec_endpoint#http://}"
-    zec_listen="${zec_listen%%/*}"
-    [[ "$zec_listen" =~ ^127\.0\.0\.1:[0-9]+$ ]] || { echo "$role: ZEC bridge endpoint $zec_endpoint is not loopback" >&2; exit 1; }
-    zec_sidecar_state="$zec_state/sidecar/$zec_run_id"
-    mkdir -p "$zec_state/sidecar" "$zec_sidecar_state"
-    chmod 0700 "$zec_state/sidecar" "$zec_sidecar_state"
-    /usr/local/bin/lez-v02-bridge-poc --listen-address "$zec_listen" --node-profile local \
-      --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
-      --runtime-file "$zec_role/lez-runtime.json" --capability-file "$zec_role/sidecar.capability" \
-      --private-key-file "$zec_role/lez-signer.key" --state-directory "$zec_sidecar_state" \
-      --authenticated-transfer-program-id "$auth_transfer_program_id" \
-      </dev/null >>"$zec_state/sidecar.log" 2>&1 &
-    for _ in $(seq 1 90); do
-      if (exec 3<>"/dev/tcp/127.0.0.1/${zec_listen##*:}") 2>/dev/null; then zec_ready=1; break; fi
-      sleep 1
-    done
-    if [[ "$zec_ready" == 1 ]]; then
-      echo "$role ZEC corridor $zec_run_id: sidecar listening on $zec_listen"
-    else
-      echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen within 90 s; ZEC stays off (see $zec_state/sidecar.log)" >&2
-    fi
+    echo "$role: ZEC corridor ${zec_candidate%/$role/actor-config.json} was provisioned for another chain; ignored (re-run scripts/zec-provision.sh)"
+    continue
   fi
+  zec_candidate_role="${zec_candidate%/actor-config.json}"
+  zec_run_id="$(jq -er '.run_id' "$zec_candidate")"
+  zec_endpoint="$(jq -er '.bridge.endpoint' "$zec_candidate")"
+  zec_listen="${zec_endpoint#http://}"
+  zec_listen="${zec_listen%%/*}"
+  [[ "$zec_listen" =~ ^127\.0\.0\.1:[0-9]+$ ]] || { echo "$role: ZEC bridge endpoint $zec_endpoint is not loopback" >&2; exit 1; }
+  zec_sidecar_state="$zec_state/sidecar/$zec_run_id"
+  mkdir -p "$zec_state/sidecar" "$zec_sidecar_state"
+  chmod 0700 "$zec_state/sidecar" "$zec_sidecar_state"
+  /usr/local/bin/lez-v02-bridge-poc --listen-address "$zec_listen" --node-profile local \
+    --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
+    --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
+    --private-key-file "$zec_candidate_role/lez-signer.key" --state-directory "$zec_sidecar_state" \
+    --authenticated-transfer-program-id "$auth_transfer_program_id" \
+    </dev/null >>"$zec_state/sidecar.log" 2>&1 &
+  zec_candidate_ready=0
+  for _ in $(seq 1 90); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/${zec_listen##*:}") 2>/dev/null; then zec_candidate_ready=1; break; fi
+    sleep 1
+  done
+  if [[ "$zec_candidate_ready" == 1 ]]; then
+    echo "$role ZEC corridor $zec_run_id: sidecar listening on $zec_listen"
+    zec_configs+=("$zec_candidate")
+    [[ "$zec_candidate" == "$zec_config" ]] && zec_ready=1
+  else
+    echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen within 90 s; ZEC stays off for it (see $zec_state/sidecar.log)" >&2
+  fi
+done
+if [[ "$zec_ready" == 1 ]]; then
+  zec_run_id="$(jq -er '.run_id' "$zec_config")"
 fi
 
 case "$role" in
@@ -235,14 +248,16 @@ case "$role" in
         zec_actor_program="/usr/local/bin/lez-zec-maker-actor"
         args+=(--maker-claim-key-id "${LEZ_ZEC_CLAIM_KEY_ID:-devnet-zec-claim-v1}"
           --maker-claim-key-file "$state/zec-claim-recovery.key"
-          --zec-source-maker-config "$zec_config"
           --zec-maker-actor-root "$zec_state/actors"
           --zec-actor-program "$zec_actor_program"
           --zec-actor-program-sha256 "$(sha256sum "$zec_actor_program" | cut -d' ' -f1)")
+        for zec_template in "${zec_configs[@]}"; do
+          args+=(--zec-source-maker-config "$zec_template")
+        done
         if [[ -s "$zec_role/claim-preimage.key" ]]; then
           args+=(--maker-claim-preimage-file "$zec_role/claim-preimage.key")
         fi
-        echo "maker ZEC authority configured (corridor $zec_run_id)"
+        echo "maker ZEC authority configured (corridor $zec_run_id, ${#zec_configs[@]} template(s))"
       fi
     else
       # Without the lifecycle the Chat socket still needs a pair authority: a
