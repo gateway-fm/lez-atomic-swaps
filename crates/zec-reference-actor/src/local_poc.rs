@@ -82,6 +82,12 @@ struct ProvisionSpec {
     zebra_endpoint: Url,
     lez_discovery_start_height: u64,
     lez_discovery_max_blocks: u32,
+    /// Mature funder outputs to pass over before taking one. Two corridors
+    /// provisioned side by side (a concurrent-swap fixture) would otherwise
+    /// both be funded from the first mature output, since neither has spent
+    /// it yet when the second is provisioned; the second names 1.
+    #[serde(default)]
+    zcash_funding_skip: u32,
 }
 
 /// Owner-private LEZ signer files provisioned before a fresh local genesis.
@@ -343,7 +349,8 @@ pub async fn provision_local_v0_2_corridor_with_signers(
         PublicKey::from_secret_key(&Secp256k1::signing_only(), &funding_zcash_secret);
     funding_zcash_secret.non_secure_erase();
     let (candidate, tip_height, genesis_hash) =
-        select_mature_regtest_candidate(&rpc, &funding_zcash_public).await?;
+        select_mature_regtest_candidate(&rpc, &funding_zcash_public, spec.zcash_funding_skip)
+            .await?;
 
     let swap_id = SwapId::new(spec.swap_id.clone()).context("invalid swap ID")?;
     let fixture = build_agreement(
@@ -1013,6 +1020,7 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
 async fn select_mature_regtest_candidate(
     rpc: &HttpZebraRpc,
     funding_key: &PublicKey,
+    skip: u32,
 ) -> Result<(SelectedCandidate, u32, BlockHash)> {
     let identity = ZebraChainIdentity::deterministic_regtest_nu6_2();
     let before = rpc
@@ -1039,6 +1047,7 @@ async fn select_mature_regtest_candidate(
     let owner_script: Script = TransparentAddress::from_pubkey(funding_key).script().into();
     let tip_height = u32::from(before.tip_height());
     let mut selected = None;
+    let mut passed_over = 0u32;
     for height in 1..=tip_height {
         if tip_height.saturating_sub(height).saturating_add(1) < COINBASE_MATURITY_CONFIRMATIONS {
             break;
@@ -1110,6 +1119,10 @@ async fn select_mature_regtest_candidate(
                     unspent.output() == output,
                     "Zebra UTXO facts differ from the canonical transaction"
                 );
+                if passed_over < skip {
+                    passed_over += 1;
+                    continue;
+                }
                 selected = Some(SelectedCandidate {
                     outpoint,
                     output: output.clone(),
@@ -1133,7 +1146,11 @@ async fn select_mature_regtest_candidate(
         before == after,
         "Zebra tip changed during candidate selection"
     );
-    let candidate = selected.context("no mature deterministic Zebra funder output is available")?;
+    let candidate = selected.with_context(|| {
+        format!(
+            "no mature deterministic Zebra funder output is available after passing over {skip}"
+        )
+    })?;
     Ok((candidate, tip_height, genesis))
 }
 
