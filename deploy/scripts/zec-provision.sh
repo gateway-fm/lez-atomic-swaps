@@ -73,6 +73,10 @@ TAKER_BRIDGE_PORT="${LEZ_ZEC_TAKER_BRIDGE_PORT:-19902}"
 FOREIGN_UNITS=100000000
 LEZ_UNITS=50000
 ROUTE='{"pair":"Zcash","direction":"TakerSellsLez"}'
+# The offer's validity bounds the catalog's: the draft copies the offer expiry
+# into the transcript and the take checks it. The store's maximum, so one
+# corridor outlives one suite.
+OFFER_TTL_SECONDS="${LEZ_ZEC_OFFER_TTL_SECONDS:-86400}"
 MIN_MATURE_OUTPUTS=10
 MATURITY=100
 
@@ -129,6 +133,11 @@ for c in lez-maker-node lez-taker-node lez-zebra; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
 done
 if [[ "$CHAIN_CHECK" == 1 ]]; then
+  # ensure-chain.sh recreates a stalled chain, which throws away any suite in
+  # flight; the tmux runners mark /tmp/fast.log with DONE or STALLED when done.
+  if [[ -f /tmp/fast.log ]] && ! grep -qE "^(DONE|STALLED)$" /tmp/fast.log; then
+    fail "a suite is still running (/tmp/fast.log has no DONE/STALLED); pass --skip-chain-check or wait"
+  fi
   chain="$(bash scripts/ensure-chain.sh)" || fail "LEZ chain is $chain"
   log "  LEZ chain: $chain"
 else
@@ -236,6 +245,8 @@ helper 0:0 -v "$STAGING:/stage:ro" -v "$MAKER_VOLUME:/maker" -v "$TAKER_VOLUME:/
   mkdir -p /taker/taker-swaps/$run_id && chown $NODE_UID:$NODE_UID /taker/taker-swaps /taker/taker-swaps/$run_id && chmod 0700 /taker/taker-swaps /taker/taker-swaps/$run_id
   echo '  maker volume:'; find /maker/corridor -type f | sort | sed 's|^|    |'
   echo '  taker volume:'; find /taker/corridor -type f | sort | sed 's|^|    |'"
+# The staging copy held both roles' secrets side by side; nothing reads it again.
+docker volume rm -f "$STAGING" >/dev/null
 
 # ---- 5. publish and discover the offer -----------------------------------------
 log "5/8 Zcash offer $offer_id"
@@ -251,15 +262,15 @@ price_rev="$(revision_for maker_local_price_list)"
 # form (maker_application.rs: gcd must be 1): 50 000 LEZ units per 1 ZEC is
 # 1 LEZ unit per 2 000 zatoshis, and quoting FOREIGN_UNITS then yields LEZ_UNITS.
 request="$(python3 -c 'import json,sys,math
-stamp,route,fu,lu,pr,prr=sys.argv[1:]
+stamp,route,fu,lu,pr,prr,ttl=sys.argv[1:]
 g=math.gcd(int(lu),int(fu))
 r={"request_id":f"zec-devnet-route-{stamp}",
    "configuration":{"route":json.loads(route),"enabled":True,"price_source":"local",
-                    "minimum_foreign_units":int(fu),"maximum_foreign_units":int(fu),"offer_ttl_seconds":3600},
+                    "minimum_foreign_units":int(fu),"maximum_foreign_units":int(fu),"offer_ttl_seconds":int(ttl)},
    "price":{"route":json.loads(route),"lez_units_per_lot":int(lu)//g,"foreign_units_per_lot":int(fu)//g}}
 if pr: r["expected_pair_revision"]=int(pr)
 if prr: r["expected_price_revision"]=int(prr)
-print(json.dumps(r))' "$stamp" "$ROUTE" "$FOREIGN_UNITS" "$LEZ_UNITS" "$pair_rev" "$price_rev")"
+print(json.dumps(r))' "$stamp" "$ROUTE" "$FOREIGN_UNITS" "$LEZ_UNITS" "$pair_rev" "$price_rev" "$OFFER_TTL_SECONDS")"
 rpc_result maker maker_local_route_save_v1 "$request" >/dev/null
 rpc_result maker maker_offer_publish "{\"request_id\":\"zec-devnet-publish-$stamp\",\"offer_id\":\"$offer_id\",\"route\":$ROUTE}" >/dev/null
 entry=""
