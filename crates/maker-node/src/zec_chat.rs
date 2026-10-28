@@ -224,6 +224,12 @@ impl std::fmt::Debug for ZecMakerActorProvisioner {
 }
 
 impl ZecMakerActorProvisioner {
+    /// The SHA-256 the ZEC Maker actor program was pinned at when this Node started.
+    #[must_use]
+    pub const fn actor_program_sha256(&self) -> [u8; 32] {
+        self.actor_program_sha256
+    }
+
     /// Validates a bounded per-swap Maker authority registry and exact actor program.
     ///
     /// # Errors

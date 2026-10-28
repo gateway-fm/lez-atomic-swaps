@@ -1026,17 +1026,23 @@ fn register_maker_actor_repin_method(module: &mut RpcModule<MakerRpc>) -> anyhow
         |params, context, _| {
             let request: MakerActorActionRequestV1 = params.one()?;
             let id = SwapId::new(request.id).map_err(invalid_request)?;
-            let program_sha256 = context
-                .btc_lifecycle
-                .as_ref()
-                .ok_or_else(|| rpc_error(NOT_FOUND, "no Bitcoin actor is configured"))?
-                .actor_program_sha256()
-                .map_err(internal_store_error)?;
             let now = trusted_now_unix_seconds()?;
-            let commit = context
+            let mut store = context
                 .store
                 .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            // The pin to move to is the program this Node runs for the swap's
+            // own actor kind: a ZEC swap re-pins to the ZEC actor, never to the
+            // Bitcoin one (devnet finding: a Node image upgrade stranded an
+            // in-flight ZEC swap as actor_deployment_invalid with no repin).
+            let kind = store
+                .maker_actor_process(&id)
+                .map_err(maker_actor_process_error)?
+                .ok_or_else(|| rpc_error(NOT_FOUND, "maker actor not found"))?
+                .manifest()
+                .kind();
+            let program_sha256 = repin_program_sha256(&context, kind)?;
+            let commit = store
                 .repin_maker_actor_program(
                     &request.request_id,
                     &id,
@@ -1054,6 +1060,34 @@ fn register_maker_actor_repin_method(module: &mut RpcModule<MakerRpc>) -> anyhow
         },
     )?;
     Ok(())
+}
+
+/// The program SHA-256 a swap of `kind` re-pins to: the actor this Node runs
+/// for that pair. A pair this Node does not run cannot be re-pinned.
+fn repin_program_sha256(
+    context: &MakerRpc,
+    kind: MakerActorKindV1,
+) -> Result<[u8; 32], ErrorObjectOwned> {
+    match kind {
+        MakerActorKindV1::Bitcoin => context
+            .btc_lifecycle
+            .as_ref()
+            .ok_or_else(|| rpc_error(NOT_FOUND, "no Bitcoin actor is configured"))?
+            .actor_program_sha256()
+            .map_err(internal_store_error),
+        #[cfg(feature = "pair-zec")]
+        MakerActorKindV1::Zcash => context
+            .zec_actor_provisioner
+            .as_ref()
+            .map(|provisioner| provisioner.actor_program_sha256())
+            .ok_or_else(|| rpc_error(NOT_FOUND, "no Zcash actor is configured")),
+        #[cfg(not(feature = "pair-zec"))]
+        MakerActorKindV1::Zcash => Err(rpc_error(NOT_FOUND, "no Zcash actor is configured")),
+        MakerActorKindV1::Monero => Err(rpc_error(
+            NOT_FOUND,
+            "Monero actors are not re-pinned through this method",
+        )),
+    }
 }
 
 fn register_maker_actor_action_method(
