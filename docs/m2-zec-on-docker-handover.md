@@ -407,3 +407,35 @@ steps follow 1–8 and are reviewed the same way, one commit each.
 
 Ground rules unchanged. The sequencing note on rfp#122 (#115 modules before
 M2) is the owner's to address in the comment; do not write around it.
+
+## Part C — the LEZ finality heartbeat (owner-mandated)
+
+Added 2026-10-28 10:00Z. Upstream logos-blockchain#3643: on the pinned Bedrock
+(`dst` = the 0.2.4 release + five tracing/genesis commits, revision
+`538cec4e`, built 2026-09-11 — there is no newer 0.2.x; 0.3.2 is a different
+config flow) the indexer's finalized height freezes after a quiet stretch
+while the sequencer keeps publishing. Every run so far shows finality moving
+*while transactions flow* (bootstrap, swaps) and stopping afterwards; a
+chain lasts ~1 h 40 under suite load; a fresh recreation can come up wedged.
+The hypothesis to test, then ship: **a steady trickle of transactions keeps
+finality moving.**
+
+The primitive already exists. `lez-v02-bridge-poc` exposes a bounded
+local-profile *clock transaction* (`PrepareCurrentProfileClock` +
+`SubmitTransaction`, `crates/lez-bridge-client/src/lib.rs:761`), and
+`compat/lez-v0_2-sidecar/src/bin/lez-v02-local-clock-driver.rs` already
+prepares, submits and waits for finality on one. It carries no escrow state
+and needs only a funded signer.
+
+| # | Step | Done when |
+|---|---|---|
+| 16a | **Experiment first.** A `lez-v02-finality-heartbeat` (new bin in the sidecar crate, or a loop around the clock driver) that submits one clock transaction every `--interval` seconds (default 30) through a dedicated heartbeat sidecar with its own identity (mint it like the role identities, fund it in the genesis the way the Maker/Taker are), logging `height_before`, `height_after`, tx id, and `finalized` sampled every minute to `runtime/heartbeat/heartbeat.log`. Run it on an otherwise *idle* fresh chain for 3 hours. Control: the previous idle chains froze within ~2 h; a chain that finalises for 3 h with the heartbeat and freezes without it is the result | A table in `~/m2-work/HEARTBEAT.md`: start, interval, finalized height per 10 min, first stall if any; the same for a control chain without it |
+| 16b | If 16a holds: a `lez-heartbeat` Compose service (profile `lez`, `restart: unless-stopped`, loopback-only sidecar inside the container like the Nodes', 0700 state under `runtime/heartbeat/`), registered in `deploy/profiles/local-btc-demo-v1.json` (the drift check demands it), started by `up.sh`, with `ensure-chain.sh` reporting whether the heartbeat is alive before it decides a chain is dead | A chain carries the full BTC node-e2e suite (≥ 3 h) without a recreation; `ensure-chain.sh` prints `ok` throughout |
+| 16c | If 16a does not hold: write that down with the numbers (it is still evidence for #3643), keep the gate-and-recreate model, and post the data on #3643 | The comment is drafted in `~/m2-work/3643-COMMENT.md` for the owner |
+
+This is BTC-stack infrastructure, so it may ship with M3's regression tooling
+rather than wait for M2; the owner said as much. Keep the heartbeat's signer
+separate from both role identities so its transactions never touch a swap's
+accounts, and make the interval and the enable flag environment-driven
+(`LEZ_HEARTBEAT_SECONDS`, `0` disables) so a run can be reproduced with and
+without it.
