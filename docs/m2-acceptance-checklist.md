@@ -75,16 +75,18 @@ the set, as the BTC scenarios do today.
    the tag, map the six deliverables to links, state the direction and
    desk-lock scope in the body, do not tick Logos's boxes.
 
-## One thing the owner must decide before the comment goes out
+## Sequencing against the rfp#122 note — decided
 
 The only comment on rfp#122 (2026-10-16) records the 13 October call:
 *"Gateway moves the Docker stack into Logos modules before starting M2
-(gateway-fm/lez-atomic-swaps#115). M2 remains unchanged otherwise."* This
-branch delivers M2 on the Docker stack by the owner's decision. The
-submission comment has to address that sequencing head-on — either the
-modules work landed first, or M2 is being delivered on Docker with #115
-tracked separately and why — otherwise the reviewer's first question is
-the one already written down.
+(gateway-fm/lez-atomic-swaps#115). M2 remains unchanged otherwise."* Decided
+2026-10-28: **a clean M2 on the Docker stack first, the modules migration
+(#115) afterwards.** The LEZ modules gave trouble when tried, and the owner
+does not want M2's evidence to depend on them. The submission comment says
+this in its first lines — M2 is delivered on the Docker stack that M3 was
+accepted on, #115 follows as its own change and is tracked separately —
+rather than leaving the reviewer to ask the question already written
+down on the issue. No claim is made about the modules' readiness.
 
 ## Claim discipline
 
