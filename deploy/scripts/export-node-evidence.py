@@ -39,7 +39,12 @@ def fail(message: str) -> None:
 
 
 def docker(container: str, *command: str, stdin: str | None = None) -> str:
-    result = subprocess.run(["docker", "exec", "-i", container, *command], input=stdin,
+    # -i only when something is actually piped in. Attached to a stdin nobody
+    # writes to, `docker exec` waits on it forever once the command inside has
+    # exited, which suspends any runner that is not an interactive terminal.
+    interactive = ["-i"] if stdin is not None else []
+    result = subprocess.run(["docker", "exec", *interactive, container, *command],
+                            **({"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}),
                             capture_output=True, text=True, check=False)
     if result.returncode != 0:
         fail(f"{container}: {' '.join(command[:2])} failed: {result.stderr.strip()[:300]}")
