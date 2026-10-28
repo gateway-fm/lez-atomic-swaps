@@ -322,8 +322,9 @@ async function publishOfferOnce(app, predicate) {
 
 // What the Maker desk is waiting for, in the words of the direction.
 function makerNarration(state) {
-  const mine = reverseDirection ? "Bitcoin" : "LEZ";
-  const theirs = reverseDirection ? "LEZ" : "Bitcoin";
+  // What the Maker locks and what it claims, by pair and direction.
+  const mine = zcash ? "Zcash" : reverseDirection ? "Bitcoin" : "LEZ";
+  const theirs = zcash ? "LEZ" : reverseDirection ? "LEZ" : "Bitcoin";
   switch (state) {
     case "awaiting_taker_claim":
       return `Nothing to click here: the Maker Node locks ${mine} on its own once the Taker's ${theirs} lock is final; the desk waits for "awaiting the Taker's claim"`;
@@ -396,7 +397,9 @@ if (role === "maker") {
     let pending = pendingHere(munich.inventory);
     // The Node publishes one offer per click; two open offers prove the
     // inventory is indexed to this Node's identity and survives a refresh.
-    while (pending < 2) {
+    // A Zcash journey publishes nothing from the desk: its offer came from the
+    // prepared corridor, and a Bitcoin offer has no place in a ZEC recording.
+    while (!zcash && pending < 2) {
       const target = pending + 1;
       narrate(reverseDirection
         ? `New offer: the Maker sells ${btcShort} for ${lezText}; Publish sends it to the Maker Node, which signs and announces it over Delivery`
@@ -408,11 +411,13 @@ if (role === "maker") {
       pending = pendingHere(munich.inventory);
     }
     if (munich.selected_wallet_id !== "maker-munich-01" || munich.runner_ready !== true
-        || Number(munich.summary?.pending_offers ?? 0) < 2) {
+        || (!zcash && Number(munich.summary?.pending_offers ?? 0) < 2)) {
       throw new Error(`Node-indexed offer totals are wrong: ${JSON.stringify(munich).slice(0, 500)}`);
     }
     console.log(`  inventory: Munich Vault 01 (Maker Node) open offers=${pending} · market=${munich.summary.pending_offers}`);
-    narrate(`Inventory: ${pending} open ${reverseDirection ? "sell-BTC" : "sell-LEZ"} offers indexed by the Maker Node`);
+    narrate(zcash
+      ? `Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk`
+      : `Inventory: ${pending} open ${reverseDirection ? "sell-BTC" : "sell-LEZ"} offers indexed by the Maker Node`);
   });
 
   // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the desk
@@ -619,4 +624,16 @@ process.on("exit", () => {
   try { rmSync(freshUserDir, { recursive: true, force: true }); } catch {}
 });
 
+// A recording keeps the desk on screen after its last step (RECORD_MIN_DWELL
+// seconds, set by record-step.sh): a step that finishes a second after the
+// desk's first paint would otherwise be a black segment, and the last caption
+// needs frames to sit on. The framework ends a passed run with process.exit,
+// so the exit itself is deferred by the dwell; the app is closed on exit.
+if (process.env.RECORD_MIN_DWELL) {
+  const exitNow = process.exit.bind(process);
+  process.exit = (code) => {
+    if (code === 0 || code === undefined) setTimeout(() => exitNow(code), Number(process.env.RECORD_MIN_DWELL) * 1000);
+    else exitNow(code);
+  };
+}
 await run();

@@ -95,9 +95,13 @@ ui() { # ui <role> [ENV=VALUE...]
   [[ -z "${INTERACTIVE_TIMEOUT_MS:-}" ]] || envs+=(-e "INTERACTIVE_TIMEOUT_MS=$INTERACTIVE_TIMEOUT_MS")
   for kv in "$@"; do envs+=(-e "$kv"); done
   if [[ "$record" == 1 ]]; then
-    segment_index=$((segment_index + 1))
-    local segment; segment="$(printf '%s-%s-%02d-%s' "$direction" "$scenario" "$segment_index" "$role")"
-    segments+=("$segment")
+    local segment
+    if [[ -n "${UI_SEGMENT:-}" ]]; then segment="$UI_SEGMENT"   # a background step: assigned by step_bg in the parent
+    else
+      segment_index=$((segment_index + 1))
+      segment="$(printf '%s-%s-%02d-%s' "$direction" "$scenario" "$segment_index" "$role")"
+      segments+=("$segment")
+    fi
     # The desk container records as uid 4713 into this bind mount: it must be
     # writable by that user on a host where the directory did not exist yet.
     mkdir -p "$videos" && chmod 0777 "$videos"
@@ -120,14 +124,17 @@ ui_offline() {
     grep -E '✓|✗|^    [a-zA-Z]|passed|failed|Error'
   return "${PIPESTATUS[0]}"
 }
-# The scenario video: its segments joined in order (same size, rate and codec).
+# The scenario video: its segments joined in order and re-encoded once, so the
+# trimmed segments' timestamps start clean (a stream copy of trimmed segments
+# can leave the first frames out of order for players).
 join_video() {
   [[ "$record" == 1 && "${#segments[@]}" -gt 0 ]] || return 0
   local list="$videos/$direction-$scenario.txt" out="$videos/$direction-$scenario.mp4" seg
   : > "$list"
   for seg in "${segments[@]}"; do [[ -s "$videos/$seg.mp4" ]] && printf "file '%s'\n" "$seg.mp4" >> "$list"; done
   docker compose "${stack_compose[@]}" run --rm -T --no-deps -v "$videos:/recordings" -w /recordings \
-    --entrypoint ffmpeg basecamp-ui -hide_banner -loglevel error -y -f concat -safe 0 -i "$direction-$scenario.txt" -c copy "$direction-$scenario.mp4" </dev/null >/dev/null 2>&1 \
+    --entrypoint ffmpeg basecamp-ui -hide_banner -loglevel error -y -f concat -safe 0 -i "$direction-$scenario.txt" \
+      -c:v libx264 -preset veryfast -crf 24 -pix_fmt yuv420p -r "${RECORD_FPS:-6}" -fps_mode cfr -an "$direction-$scenario.mp4" </dev/null >/dev/null 2>&1 \
     && log "video: runtime/evidence/videos/$direction-$scenario.mp4" \
     || log "video join failed for $direction-$scenario"
   for seg in "${segments[@]}"; do rm -f "$videos/$seg.mp4" "$videos/$seg.events" "$videos/$seg.srt" "$videos/$seg.raw.mp4"; done
@@ -194,9 +201,41 @@ maker_wait() { # the awaiting-claim label names the asset the Taker claims: what
   fi
   step "Maker desk shows ${2:0:12} at $1" maker INTERACTIVE_ACTION=wait "INTERACTIVE_STATE=$1" "INTERACTIVE_SWAP_ID=$2" "INTERACTIVE_EXPECT_LABEL=$label"
 }
+maker_wait_label() { # the awaiting-claim label names the asset the Taker claims: what the Maker locked
+  [[ "$1" == awaiting_taker_claim ]] || { echo ""; return; }
+  if [[ "$pair" == Zcash ]]; then echo "Waiting for the Taker's Zcash claim"
+  elif [[ "$direction" == TakerSellsLez ]]; then echo "Waiting for the Taker's Bitcoin claim"
+  else echo "Waiting for the Taker's LEZ claim"; fi
+}
+# A desk step in the background: the desk opens now and waits on screen while
+# the chain moves (the ZEC lifecycle is driven on the Node host, not from a
+# desk button, so the only way to see it happen on a desk is to have the desk
+# open first); the caller `wait`s for it. Its recording segment is assigned
+# here, in the parent, so join_video keeps the step order.
+step_bg() { # step_bg <pid-var> <title> <role> [ENV=VALUE...]
+  local pid_var="$1"; shift
+  local segment=""
+  if [[ "$record" == 1 ]]; then
+    segment_index=$((segment_index + 1))
+    segment="$(printf '%s-%s-%02d-%s' "$direction" "$scenario" "$segment_index" "$2")"
+    segments+=("$segment")
+  fi
+  # A failed step leaves through fail's exit 1; a passed one must not report
+  # the status of step's trailing `show` (the foreground path never checks it).
+  ( UI_SEGMENT="$segment" step "$@"; exit 0 ) &
+  printf -v "$pid_var" '%s' "$!"
+  step_note=""
+}
+maker_wait_bg() { local pid_var="$1"; shift; step_bg "$pid_var" "Maker desk shows ${2:0:12} at $1" maker INTERACTIVE_ACTION=wait "INTERACTIVE_STATE=$1" "INTERACTIVE_SWAP_ID=$2" "INTERACTIVE_EXPECT_LABEL=$(maker_wait_label "$1")"; }
+taker_wait_bg() { local pid_var="$1"; shift; step_bg "$pid_var" "Taker desk shows ${2:0:12} at $1" taker INTERACTIVE_ACTION=wait "INTERACTIVE_STATE=$1" "INTERACTIVE_SWAP_ID=$2"; }
+# Let a background desk render before the chain is moved under it (recording only).
+desk_head_start() { [[ "$record" == 1 ]] && sleep "${RECORD_DESK_HEAD_START:-40}" || true; }
 finish() { # finish <swap_id>: both desks show the swap completed, then export the chain evidence
   maker_wait completed "$1"
   taker_wait completed "$1"
+  export_evidence "$1"
+}
+export_evidence() { # export_evidence <swap_id>
   [[ "${LEZ_EXPORT_EVIDENCE:-1}" == 1 ]] || return 0
   if [[ "$pair" == Bitcoin ]]; then
     python3 scripts/export-node-evidence.py --swap "$1" || fail "evidence export"
@@ -299,14 +338,27 @@ scenario_taker_refund() {
   maker_wait refunded "$swap"
 }
 scenario_zec_happy() {
-  local swap; zec_provision; take swap
-  note "The Taker's first LEZ lock is the ZEC actor's: it is driven on the Node host, not from the desk; the Maker then funds Zcash and claims LEZ with the secret"
+  local swap maker_pid taker_pid
+  if [[ "$record" == 1 ]]; then
+    log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
+    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    wait_healthy lez-maker-node; wait_healthy lez-taker-node
+  fi
+  zec_provision; take swap
+  note "The Taker's first LEZ lock is the ZEC actor's: it is driven on the Node host, not from the desk; the Maker desk watches its row while the Maker Node funds Zcash and claims LEZ with the secret"
+  maker_wait_bg maker_pid awaiting_taker_claim "$swap"
+  desk_head_start
   zec_drive "$swap" claim_available
-  maker_wait awaiting_taker_claim "$swap"
+  wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
   taker_act "$claim_action" "$swap"
-  note "The Zcash claim waits for a zebra block; the Taker actor is driven until it observes it"
+  note "The Zcash claim waits for a zebra block; both desks watch the swap complete while the Taker actor observes it"
+  maker_wait_bg maker_pid completed "$swap"
+  taker_wait_bg taker_pid completed "$swap"
+  desk_head_start
   zec_drive "$swap" completed 900
-  finish "$swap"
+  wait "$maker_pid" || fail "Maker desk: completed"
+  wait "$taker_pid" || fail "Taker desk: completed"
+  export_evidence "$swap"
 }
 scenario_maker_refund() {
   require_fast; local swap; publish; take swap
