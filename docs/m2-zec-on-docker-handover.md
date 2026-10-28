@@ -439,3 +439,120 @@ separate from both role identities so its transactions never touch a swap's
 accounts, and make the interval and the enable flag environment-driven
 (`LEZ_HEARTBEAT_SECONDS`, `0` disables) so a run can be reproduced with and
 without it.
+
+## Part D — both directions, no tag yet (owner decisions, 2026-10-28)
+
+Three decisions from the owner, recorded here so the work follows them:
+
+1. **Sequencing:** a clean M2 on the Docker stack first; the modules
+   migration (#115) afterwards. The rfp#122 comment says so up front.
+2. **Both directions, both pairs.** BTC: the full M3-shaped regression —
+   `node-e2e.py` 14 × `TakerSellsForeign` **and** 14 × `TakerSellsLez`, the
+   desk suites, and the desk scenarios forward (8) and reversed (7). ZEC:
+   `TakerSellsLez` **and** `TakerSellsForeign` through the Nodes, node-e2e
+   and desk, with recordings per D1.
+3. **No tag yet.** The release will be `0.3.0`, cut only when everything is
+   done and the evidence is in. Until then: this branch and a PR to `main`
+   (open it early as a draft so CI runs on every push; step 15's "tag"
+   becomes "PR ready for review, release notes drafted").
+
+### ZEC `TakerSellsForeign` through the Nodes — what the tree has and lacks
+
+Facts (file references exact at `fd9618f4`):
+
+- The SDK and the reference actors do both directions
+  (`sdk_lifecycle.rs`: `assert_maker_happy_path_zcash_to_lez` and
+  `…_lez_to_zcash`; the 2026-07-14 PoC certificates cover both). The
+  provisioner takes `direction` and assigns the funder key to whichever
+  role funds Zcash (`local_poc.rs:1174`: funder `[0x04;32]`, the other
+  `[0x02;32]`).
+- The Maker supervisor already names every action of both directions
+  (`actor_supervisor/runtime.rs:133-137`: `lez_initialize`, `lez_fund`,
+  `zcash_fund`, `lez_revealing_claim`, `zcash_followup_claim`; `:935`
+  `claim_lez | claim_zcash`; `:940` `refund_zcash`). In
+  `TakerSellsForeign` the Maker observes the Taker's Zcash funding, locks
+  LEZ (`lez_initialize` + `lez_fund`), and after the Taker's revealing LEZ
+  claim takes `zcash_followup_claim`.
+- **The Taker Node is the gap.** `zec_actor_progress`
+  (`taker_service/lifecycle.rs`) offers the desk a claim only for
+  `Phase::ClaimEvidenceAvailable if next_action == ClaimZcash`; with
+  `next_action == ClaimLez` — the Taker's revealing claim, which is the
+  `TakerSellsForeign` path — it answers `attention_required`. Its refund arm
+  is direction-agnostic. The Taker's first lock (here: funding the Zcash
+  HTLC, `ZecLifecycleAction::FundZcash`) has no Node RPC in either
+  direction; the harness drives the actor, as it does the LEZ lock today.
+- **Keys collide with today's identity pin.** The Maker's Delivery identity
+  is pinned to the funder key `[0x04;32]` (`b6900c82`). In
+  `TakerSellsForeign` the provisioner gives that key to the *Taker* (it
+  must own mature coinbase; zebra mines only to `zebrad.toml`'s one
+  `miner_address`) and the Maker gets `[0x02;32]`, which is not its
+  Delivery identity, so `zec_chat.rs:362` refuses the draft. Two roles
+  cannot share a key either (BIP-199 funder and claimant hashes must
+  differ). The provisioner applies the 100-confirmation maturity rule to
+  every candidate (`local_poc.rs:1043,1106`), not only to coinbase, so a
+  plain transfer plus `generate 100` makes any key a funder on regtest.
+
+Design (replaces the interim pin; this is advisory 6 made necessary):
+
+- **zebra mines to the Maker.** `gen-config.sh` mints the Maker's Delivery
+  key as an identity under `runtime/lez/maker/` (as it does
+  `lez-signer.key`), derives the transparent address of that key, and
+  renders it as `zebrad.toml`'s `miner_address` (the asset becomes a
+  template). The Maker's Zcash key, Chat key and Delivery identity are then
+  one minted secret, never a constant. The `0x04` pin and
+  `runtime/secrets/maker-delivery-signing.key` go.
+- **The provisioner takes both keys explicitly**: `--maker-zcash-key-file`
+  and `--taker-zcash-key-file` (owner-private 32 bytes), keeping
+  `FUNDED_ZCASH_KEY_BYTE` only as the default for the test lane. In
+  `TakerSellsLez` the Maker (miner) funds from coinbase as today. In
+  `TakerSellsForeign` `zec-provision.sh` first moves 2 ZEC from the Maker's
+  key to the Taker's key with a plain transparent transaction, mines 100
+  blocks, and the provisioner selects that output for the Taker.
+- **Taker Node:** in `zec_actor_progress`, `ClaimEvidenceAvailable` with
+  `next_action == ClaimLez` maps to `claim_available` + `Claim` (the actor's
+  `ActorCommand::Claim` already runs the agreement-ordered claim for either
+  role), with the privacy guidance only when the Taker receives Zcash.
+  Nothing else in the Node is direction-specific for ZEC; verify by
+  grepping `TakerSellsLez` in `taker-node/src` and `maker-node/src`.
+- **Harness:** `node-e2e.py --pair Zcash --direction TakerSellsForeign`:
+  the Taker's first lock is `FundZcash` (drive + mine for depth), the
+  Maker's LEZ lock and the Taker's revealing LEZ claim follow, the Maker's
+  `zcash_followup_claim` closes it. Refunds mirror the forward ones with
+  the roles swapped. Desks: same journeys reversed (`--direction`).
+
+| # | Step | Done when |
+|---|---|---|
+| 17 | gen-config mints the Maker's Delivery key and renders zebra's `miner_address` from it; provisioner takes both role keys; the interim pin and `runtime/secrets/maker-delivery-signing.key` removed; `zec-provision.sh` funds the Taker's key in `TakerSellsForeign` | `zec-happy` (`TakerSellsLez`) still passes clean on a chain built from scratch with no `0x04` anywhere |
+| 18 | Taker Node `zec_actor_progress` reverse-claim arm + unit test | The existing `pair-zec` Node tests pass plus one that drives `ClaimEvidenceAvailable`/`ClaimLez` to `claim_available` |
+| 19 | `node-e2e.py --pair Zcash --direction TakerSellsForeign`: `zec-happy`, `zec-taker-refund`, `zec-maker-refund`, then the rest of the ZEC matrix (step 9) in both directions | All green on fresh chains; `RESULTS.txt` lines carry the direction |
+| 20 | Desk ZEC journeys reversed; recordings for both directions | MP4s for both |
+| 21 | BTC reverse regression: `node-e2e.py --direction TakerSellsLez` ×14, desk scenarios reversed ×7, on fresh chains | All green; evidence set lists all 45 + the ZEC checks |
+| 22 | Draft PR `feat/m2-zec-on-docker` → `main` (opened early as a draft so CI runs), release notes for `0.3.0` drafted but **no tag** | PR open, CI green including the Zebra gate |
+
+Order: finish steps 5–7 in `TakerSellsLez` first (they are the proof the
+leg works), then 17–18 (they change the identity model and must not land
+while a forward corridor is live), then 19–21 on fresh chains, then Part B
+and Part C. Chain budget: each direction's node matrix is a chain of its
+own (~90 min), the desks another.
+
+## Commit protocol, amended (CI on PR #118, 2026-10-28)
+
+- **Every commit carries `Signed-off-by: <author name> <author email>`**
+  matching its author (`git commit -s`). The `public-readiness` DCO gate
+  checks each commit on the PR. None of the branch's commits had one, so
+  the existing history is rewritten **once**, by the box, at a quiet commit
+  boundary (nothing uncommitted, no scenario running):
+  ```sh
+  git rebase 4b76e2f7 --exec 'git commit --amend --no-edit --trailer "Signed-off-by: $(git log -1 --format=%an) <$(git log -1 --format=%ae)>"'
+  git push --force-with-lease origin feat/m2-zec-on-docker
+  ```
+  The reviewer then resets the laptop clone to origin. Commits already
+  carrying a matching sign-off (the cherry-picks from #116) get a duplicate
+  trailer at worst; `--trailer` with the default `ifExists` adds it, which
+  the gate accepts — check one such commit after the rewrite.
+- **Dependency gate:** `cargo-deny` fails on advisories that PR #116
+  already cleared. Cherry-pick its three dependency commits
+  (`6a6162fd` rustls 0.23.46, `14aee0cd` sidecar lockfile, `4f42195a`
+  reproducers lockfile), signed off.
+- The draft PR exists so CI runs on every push; its other red jobs are
+  read from the logs as they land and go into REVIEW.md.

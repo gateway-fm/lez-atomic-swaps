@@ -45,9 +45,9 @@ reviewer can run, and where it stands on `feat/m2-zec-on-docker` today.
 
 | Phase | Checks | Scope statement |
 |---|---|---|
-| `node-e2e.py --pair Zcash`, TakerSellsLez | happy, replay, wrong-inputs, restart-taker, restart-maker, survivor, concurrent, taker-refund, maker-refund, regenerated-catalog, tampered-catalog (fast profile for the refunds) | Node-driven ZEC settles in `TakerSellsLez`; `TakerSellsForeign` is covered at SDK level (`sdk_lifecycle.rs`, both directions) and by the M2 PoC corridor certificates, not through the Nodes — say so, as D1 did for direction |
+| `node-e2e.py --pair Zcash`, **both directions** (handover Part D) | happy, replay, wrong-inputs, restart-taker, restart-maker, survivor, concurrent, taker-refund, maker-refund, regenerated-catalog, tampered-catalog (fast profile for the refunds) | Decided 2026-10-28: both directions through the Nodes. `TakerSellsLez` works today; `TakerSellsForeign` needs the Taker Node's reverse-claim arm and the key model in handover Part D |
 | desk scenarios, Zcash | happy, concurrent, one refund (+ restart-taker if the catalog survives a restart, which it should) | The Taker's first LEZ lock is driven by the harness through the Taker actor, not a desk button; the desk covers take → track → claim/refund. State it |
-| BTC regression on the same binaries | `node-e2e.py` 14 × TakerSellsForeign, desks 8 (the current run), **plus** 14 × TakerSellsLez and 7 reversed desk scenarios if the M3 bar of "both directions" is to hold for BTC in this tag | Decide: the full 45 (one more day of chain time) or the forward 22 with the reverse owed to the M5/M7 regression |
+| BTC regression on the same binaries | `node-e2e.py` 14 × TakerSellsForeign **and** 14 × TakerSellsLez, the desk suites, desk scenarios forward (8) and reversed (7): the full M3-shaped 45 | Decided 2026-10-28: the full 45, both directions |
 | CI | the Zebra regtest gate green on the pushed commit | — |
 
 Every scenario exports its Node evidence (`export-node-evidence.py`) under
@@ -69,22 +69,26 @@ the set, as the BTC scenarios do today.
 7. `docs/milestone-metrics.md` and `docs/m6-zec-reconciliation.md`: the
    reconciliation's "what bringing ZEC back would take" is now done or
    scoped — update it rather than leave it contradicting the tree.
-8. A release tag with notes and the three MP4s as assets (tag name is the
-   owner's call: M3 used `v0.2.5` for recordings and `v0.2.6` for the docs).
+8. **No tag until everything is done and the evidence is in** (owner,
+   2026-10-28). The release will be `0.3.0`; until then a draft PR from
+   `feat/m2-zec-on-docker` to `main` so CI runs on every push, with the
+   release notes drafted alongside.
 9. The rfp#122 comment, in the shape of the accepted rfp#123 one: point at
    the tag, map the six deliverables to links, state the direction and
    desk-lock scope in the body, do not tick Logos's boxes.
 
-## One thing the owner must decide before the comment goes out
+## Sequencing against the rfp#122 note — decided
 
 The only comment on rfp#122 (2026-10-16) records the 13 October call:
 *"Gateway moves the Docker stack into Logos modules before starting M2
-(gateway-fm/lez-atomic-swaps#115). M2 remains unchanged otherwise."* This
-branch delivers M2 on the Docker stack by the owner's decision. The
-submission comment has to address that sequencing head-on — either the
-modules work landed first, or M2 is being delivered on Docker with #115
-tracked separately and why — otherwise the reviewer's first question is
-the one already written down.
+(gateway-fm/lez-atomic-swaps#115). M2 remains unchanged otherwise."* Decided
+2026-10-28: **a clean M2 on the Docker stack first, the modules migration
+(#115) afterwards.** The LEZ modules gave trouble when tried, and the owner
+does not want M2's evidence to depend on them. The submission comment says
+this in its first lines — M2 is delivered on the Docker stack that M3 was
+accepted on, #115 follows as its own change and is tracked separately —
+rather than leaving the reviewer to ask the question already written
+down on the issue. No claim is made about the modules' readiness.
 
 ## Claim discipline
 
