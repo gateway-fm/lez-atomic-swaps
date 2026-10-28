@@ -137,16 +137,17 @@ fi
 
 # ---- Zcash corridor (optional) ----------------------------------------------
 # scripts/zec-provision.sh fills /var/lib/lez/zec from the live chains with one
-# prepared ZEC swap: <role>/actor-config.json, lez-runtime.json, lez-signer.key,
-# sidecar.capability and the claim keys of this role only, plus prepared.json
-# (the Taker's catalog). The ZEC actors expect a running role-local LEZ sidecar
+# prepared ZEC swap under corridor/ (the provisioner's output root, which must
+# be new and is the prefix of every path inside its files): <role>/actor-config.json,
+# lez-runtime.json, lez-signer.key, sidecar.capability and the claim keys of
+# this role only, plus prepared.json (the Taker's catalog) beside it. The ZEC actors expect a running role-local LEZ sidecar
 # at the config's loopback bridge.endpoint and neither Node launches one for
 # ZEC, so it is started here with the recipe the BTC lifecycle uses for its
 # per-swap sidecars (crates/btc-role-lifecycle/src/sidecar.rs). Material
 # provisioned on another chain is ignored rather than loaded: a catalog whose
 # envelope no longer authenticates would keep the Taker from starting at all.
 zec_state="/var/lib/lez/zec"
-zec_role="$zec_state/$role"
+zec_role="$zec_state/corridor/$role"
 zec_config="$zec_role/actor-config.json"
 zec_ready=0
 if [[ -s "$zec_config" && "$btc_lifecycle_ready" == 1 ]]; then
