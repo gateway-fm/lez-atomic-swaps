@@ -1347,10 +1347,24 @@ fn zec_actor_progress(
             Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
         ),
         Phase::Refunded => (TakerSwapStateV1::Refunded, None, None),
-        Phase::ClaimEvidenceAvailable
-        | Phase::MakerLegRefunded
-        | Phase::TakerLegRefunded
-        | Phase::MakerRecoveryAvailable => (TakerSwapStateV1::AttentionRequired, None, None),
+        // The Taker's LEZ leg is back; the Maker's Zcash refund is still owed.
+        // The refund stays offered: a replay of the admitted request (or a new
+        // one at this generation) re-drives the recovery until the Taker has
+        // observed that refund, as the BTC projection reads the same phase.
+        Phase::TakerLegRefunded => (
+            TakerSwapStateV1::RefundInProgress,
+            Some(TakerTerminalActionV1::Refund),
+            None,
+        ),
+        // The Maker's leg is back first and the Taker owns the next refund.
+        Phase::MakerLegRefunded if next_action == ZecLifecycleAction::RefundZcash => (
+            TakerSwapStateV1::RefundAvailable,
+            Some(TakerTerminalActionV1::Refund),
+            None,
+        ),
+        Phase::ClaimEvidenceAvailable | Phase::MakerLegRefunded | Phase::MakerRecoveryAvailable => {
+            (TakerSwapStateV1::AttentionRequired, None, None)
+        }
     }
 }
 
@@ -2354,7 +2368,27 @@ mod tests {
         );
         assert_eq!(
             zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::RefundZcash),
+            (
+                TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None,
+            )
+        );
+        assert_eq!(
+            zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::Wait),
             (TakerSwapStateV1::AttentionRequired, None, None)
+        );
+        // Devnet finding (M2 step 5): after the Taker's own LEZ refund the actor
+        // parks at TakerLegRefunded until it observes the Maker's Zcash refund;
+        // the desk reads "refund in progress" with Refund still offered, never
+        // "attention required".
+        assert_eq!(
+            zec_actor_progress(Phase::TakerLegRefunded, ZecLifecycleAction::Wait),
+            (
+                TakerSwapStateV1::RefundInProgress,
+                Some(TakerTerminalActionV1::Refund),
+                None,
+            )
         );
         assert_eq!(
             zec_actor_progress(Phase::Completed, ZecLifecycleAction::Complete),
