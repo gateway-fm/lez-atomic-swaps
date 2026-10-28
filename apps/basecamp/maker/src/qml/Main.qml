@@ -471,7 +471,7 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true; spacing: 16
                     Label {
-                        text: "LEZ / BTC — Maker Desk"
+                        text: "LEZ — Maker Desk"
                         color: "#F7F8FA"; font.pixelSize: 24; font.weight: Font.Bold; font.letterSpacing: -0.5
                         Layout.fillWidth: true
                     }

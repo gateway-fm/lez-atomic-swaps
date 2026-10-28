@@ -543,7 +543,7 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true; spacing: 16
                     Label {
-                        text: "LEZ / BTC — Taker Desk"
+                        text: "LEZ — Taker Desk"
                         color: "#F7F8FA"; font.pixelSize: 24; font.weight: Font.Bold; font.letterSpacing: -0.5
                         Layout.fillWidth: true
                     }

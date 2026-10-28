@@ -366,7 +366,7 @@ ROLE_FUNCTIONS
                 RowLayout {
                     Layout.fillWidth: true; spacing: 16
                     Label {
-                        text: "LEZ / BTC — ROLE_TITLE Desk"
+                        text: "LEZ — ROLE_TITLE Desk"
                         color: "#F7F8FA"; font.pixelSize: 24; font.weight: Font.Bold; font.letterSpacing: -0.5
                         Layout.fillWidth: true
                     }
