@@ -17,7 +17,7 @@
 #
 #   scripts/ensure-chain.sh [check_window_seconds] [recheck_window_seconds]
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 check_window="${1:-60}"
 recheck_window="${2:-180}"
