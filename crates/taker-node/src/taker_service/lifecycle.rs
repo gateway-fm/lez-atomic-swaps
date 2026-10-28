@@ -583,7 +583,16 @@ async fn terminal_action(
     )
     .await?;
     if let Some(admission) = replay {
-        if replay_actor_effect_is_required(&config, &held_lock, action, expected_generation).await?
+        // The replay re-drives the actor against the generation the request was
+        // admitted at, not the caller's: a refund replay is admitted through the
+        // leg-refunded phases only relative to that one.
+        if replay_actor_effect_is_required(
+            &config,
+            &held_lock,
+            action,
+            admission.requested_after_generation(),
+        )
+        .await?
         {
             let effect_config =
                 reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock)
@@ -2480,6 +2489,23 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn a_refund_replay_is_redriven_against_its_admitted_generation() {
+        // Admitted at 4; the actor has since moved through the Taker's leg
+        // refund to revision 7 and offers no action there. The desk's Retry
+        // re-sends the request with the row's current generation: judged by
+        // that one the replay has nothing to do, judged by the admitted one it
+        // continues the refund. The replay path uses the admitted one.
+        let parked = || active(Phase::TakerLegRefunded, 7, None);
+        assert!(matches!(
+            replay_actor_effect_required(parked(), 7, TakerTerminalActionV1::Refund),
+            Err(ActionError::Unavailable)
+        ));
+        assert!(replay_actor_effect_required(parked(), 4, TakerTerminalActionV1::Refund).unwrap());
+        // A claim admitted at 4 is not re-entered through the refund phases.
+        assert!(!replay_actor_effect_required(parked(), 4, TakerTerminalActionV1::Claim).unwrap());
     }
 
     #[test]
