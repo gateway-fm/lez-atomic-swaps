@@ -207,7 +207,7 @@ rg -F './scripts/check-lez-v02-docker-isolation.sh' "$ci_workflow" >/dev/null \
 
 assert_trivy_step \
   'Scan repository-owned runtime base for high and critical vulnerabilities' \
-  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b' 1
+  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88' 1
 assert_trivy_step \
   'Report pinned Risc0 guest builder high and critical vulnerabilities' \
   'risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' 0

@@ -89,7 +89,7 @@ if rg -q '^\s*cap_add:' "$compose_file"; then
 fi
 
 required_dockerfile_terms=(
-  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
   'COPY --chmod=0555 sequencer_service /usr/local/bin/sequencer_service'
   'COPY --chmod=0555 indexer_service /usr/local/bin/indexer_service'
   'COPY --chmod=0555 r0vm /usr/local/bin/r0vm'

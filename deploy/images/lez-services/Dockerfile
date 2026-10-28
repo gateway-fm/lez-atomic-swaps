@@ -1,4 +1,4 @@
-FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
 
 LABEL org.logos-co.atomic-swaps.purpose="local-lez-v0.2-services"
 LABEL org.opencontainers.image.source="https://github.com/logos-blockchain/logos-execution-zone"
