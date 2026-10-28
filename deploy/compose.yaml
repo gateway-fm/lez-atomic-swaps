@@ -374,6 +374,8 @@ services:
       - delivery_dir:/delivery
       - ./runtime/lez/maker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
+      # Optional pinned Delivery signing key (maker-delivery-signing.key).
+      - ./runtime/secrets:/run-secrets:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777

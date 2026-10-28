@@ -188,6 +188,18 @@ case "$role" in
       od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$state/delivery-signing.key"
       chmod 0600 "$state/delivery-signing.key"
     fi
+    # A pinned Delivery identity (scripts/zec-provision.sh writes one): the
+    # ZEC corridor binds the Maker's Delivery identity, its Chat signing key
+    # and its Zcash key together (crates/maker-node/src/zec_chat.rs,
+    # crates/taker-node/src/zec_taker_accept.rs), and the corridor's Maker
+    # Zcash key is the regtest funder key, so the Delivery key must be that
+    # key too. Replacing it orphans offers signed by the previous identity;
+    # the script that pins it removes their Delivery files.
+    pinned_delivery_key="/run-secrets/maker-delivery-signing.key"
+    if [[ -r "$pinned_delivery_key" ]] && ! cmp -s "$pinned_delivery_key" "$state/delivery-signing.key"; then
+      install -m 0600 "$pinned_delivery_key" "$state/delivery-signing.key"
+      echo "maker Delivery signing key pinned from $pinned_delivery_key"
+    fi
     if [[ ! -s "$state/btc-chat-signing.key" ]]; then
       od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$state/btc-chat-signing.key"
       chmod 0600 "$state/btc-chat-signing.key"

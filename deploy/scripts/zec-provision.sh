@@ -9,6 +9,15 @@
 # This script runs that ceremony with the provisioners staged in the Taker
 # image (zec-local-poc-provision, zec-local-poc-chat-draft):
 #
+#   0. the Maker's Delivery identity: the ZEC ceremony binds the Maker's
+#      Delivery identity, Chat signing key and Zcash key into one key
+#      (maker-node zec_chat.rs:362, taker-node zec_taker_accept.rs:541), and the
+#      provisioner's Maker Zcash key is the regtest funder key [0x04; 32] that
+#      owns the coinbase it spends. So the Maker's Delivery signing key is
+#      pinned to that key (runtime/secrets/maker-delivery-signing.key, read by
+#      the entrypoint). The first time, both Nodes are recreated and the offer
+#      files signed by the old identity are removed: a Taker's discovery fails
+#      outright on a file it cannot authenticate. Devnet only, obviously.
 #   1. preconditions: Nodes and zebra up, LEZ finalising, >= 10 mature coinbase
 #      outputs on zebra (mined to the miner address of assets/zebra/zebrad.toml,
 #      whose key the provisioner holds; never another address);
@@ -79,6 +88,11 @@ ROUTE='{"pair":"Zcash","direction":"TakerSellsLez"}'
 OFFER_TTL_SECONDS="${LEZ_ZEC_OFFER_TTL_SECONDS:-86400}"
 MIN_MATURE_OUTPUTS=10
 MATURITY=100
+# The provisioner's Maker Zcash key (local_poc.rs FUNDED_ZCASH_KEY_BYTE), the
+# key behind zebra's miner address; the Maker's Delivery identity must be it.
+FUNDER_KEY_HEX="$(printf '04%.0s' $(seq 1 32))"
+DELIVERY_KEY_FILE=runtime/secrets/maker-delivery-signing.key
+MAKER_IMAGE="${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}"
 
 log() { printf '[zec-provision %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { echo "zec-provision failed: $*" >&2; exit 1; }
@@ -118,6 +132,25 @@ helper() { # helper <uid> [docker run flags...] -- <bash -c script>
   docker run --rm --user "$uid" --entrypoint bash "${flags[@]}" "$TAKER_IMAGE" -c "$1" </dev/null
 }
 
+wait_healthy() { # wait_healthy <container> <seconds>
+  local c="$1" status
+  for _ in $(seq 1 $(( ${2:-360} / 3 ))); do
+    status="$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || echo missing)"
+    [[ "$status" == healthy ]] && return 0
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" != true ]]; then docker logs "$c" 2>&1 | tail -20; fail "$c exited"; fi
+    sleep 3
+  done
+  fail "$c not healthy after ${2:-360} s"
+}
+# The Taker pins the Maker's Delivery identity when it starts, so the Maker
+# must be up (and have republished its identity) before the Taker is recreated.
+recreate_nodes() {
+  "${compose[@]}" up -d --no-deps --force-recreate maker-node >/dev/null 2>&1
+  wait_healthy lez-maker-node
+  "${compose[@]}" up -d --no-deps --force-recreate taker-node >/dev/null 2>&1
+  wait_healthy lez-taker-node
+}
+
 stamp="$(date +%s)"
 run_id="zec-devnet-$stamp"
 swap_id="zec-devnet-swap-$stamp"
@@ -127,11 +160,41 @@ out="runtime/zec/$run_id"
 mkdir -p "$out"
 chmod 0700 runtime/zec "$out"
 
-# ---- 1. preconditions ---------------------------------------------------------
-log "1/8 preconditions"
+# ---- 0. the Maker's Delivery identity ------------------------------------------
+log "0/8 Maker Delivery identity"
 for c in lez-maker-node lez-taker-node lez-zebra; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
 done
+if [[ ! -s "$DELIVERY_KEY_FILE" ]] || [[ "$(tr -d ' \n' <"$DELIVERY_KEY_FILE")" != "$FUNDER_KEY_HEX" ]]; then
+  # Same shape and mode as runtime/lez/<role>/lez-signer.key: the Node reads it as uid 4713.
+  printf '%s' "$FUNDER_KEY_HEX" >"$DELIVERY_KEY_FILE"
+  chmod 0644 "$DELIVERY_KEY_FILE"
+  log "  wrote $DELIVERY_KEY_FILE (the regtest funder key)"
+fi
+# The CLI reads only an owner-owned 0600 file: copy the key into one first.
+expected_identity="$(docker run --rm --user 0:0 -v "$PWD/$DELIVERY_KEY_FILE:/in/key:ro" --entrypoint bash "$MAKER_IMAGE" \
+  -c 'umask 077; install -m 0600 /in/key /tmp/k && lez-maker-cli delivery-identity --signing-key-file /tmp/k' </dev/null |
+  tr -d ' \n' | grep -o '0[23][0-9a-f]\{64\}')" ||
+  fail "lez-maker-cli delivery-identity failed on $DELIVERY_KEY_FILE"
+current_identity="$(docker run --rm -v "$DELIVERY_VOLUME:/d:ro" --entrypoint cat "$TAKER_IMAGE" /d/maker-delivery-identity.pub </dev/null 2>/dev/null | tr -d ' \n')"
+if [[ "$current_identity" == "$expected_identity" ]]; then
+  log "  Maker Delivery identity is the corridor key ($expected_identity)"
+else
+  [[ "$RESTART" == 1 ]] || fail "the Maker's Delivery identity ($current_identity) is not the corridor key ($expected_identity); rerun without --no-restart to pin it"
+  log "  pinning the Maker Delivery identity $current_identity → $expected_identity (both Nodes recreated)"
+  "${compose[@]}" stop maker-node taker-node >/dev/null 2>&1
+  # Offer files signed by the previous identity would fail the Taker's
+  # discovery outright (run_local_delivery.rs: verify_envelope(...)?).
+  removed="$(helper 0:0 -v "$DELIVERY_VOLUME:/delivery" -- 'shopt -s nullglob; f=(/delivery/*.offer.json); rm -f -- "${f[@]}"; echo ${#f[@]}')"
+  log "  removed $removed Delivery offer file(s) of the previous identity"
+  recreate_nodes
+  current_identity="$(docker run --rm -v "$DELIVERY_VOLUME:/d:ro" --entrypoint cat "$TAKER_IMAGE" /d/maker-delivery-identity.pub </dev/null | tr -d ' \n')"
+  [[ "$current_identity" == "$expected_identity" ]] || fail "the Maker republished $current_identity, not $expected_identity"
+  log "  Maker Delivery identity is now $expected_identity"
+fi
+
+# ---- 1. preconditions ---------------------------------------------------------
+log "1/8 preconditions"
 if [[ "$CHAIN_CHECK" == 1 ]]; then
   # ensure-chain.sh recreates a stalled chain, which throws away any suite in
   # flight; the tmux runners mark /tmp/fast.log with DONE or STALLED when done.
@@ -349,17 +412,8 @@ if [[ "$RESTART" == 0 ]]; then
 fi
 
 # ---- 8. recreate the Nodes -----------------------------------------------------
-log "8/8 recreating maker-node and taker-node"
-"${compose[@]}" up -d --no-deps --force-recreate maker-node taker-node >/dev/null 2>&1
-for c in lez-maker-node lez-taker-node; do
-  for _ in $(seq 1 120); do
-    status="$(docker inspect -f '{{.State.Health.Status}}' "$c" 2>/dev/null || echo missing)"
-    [[ "$status" == healthy ]] && break
-    [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || { docker logs "$c" 2>&1 | tail -20; fail "$c exited"; }
-    sleep 3
-  done
-  [[ "$status" == healthy ]] || fail "$c not healthy after 6 min"
-done
+log "8/8 recreating maker-node, then taker-node"
+recreate_nodes
 docker logs lez-maker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  maker: /'
 docker logs lez-taker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  taker: /'
 docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$MAKER_BRIDGE_PORT)" </dev/null && log "  maker sidecar answers on 127.0.0.1:$MAKER_BRIDGE_PORT" || fail "maker sidecar not listening"
