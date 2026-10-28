@@ -25,13 +25,14 @@ use lez_zec_swap_sdk::{
     LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezMakerLockObservationPort,
     LezNodeSnapshotV1, LezObservationError, LezStableTipV1, LezTakerFirstLockObservationPort,
     MakerLockDriveOutcome, MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1,
-    OfferDiscovery, PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort, ZcashMakerLockObservationPort,
-    ZcashTakerFirstLockObservationPort, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1,
-    ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
+    ObserveTakerFirstLockOutcome, OfferDiscovery, PreparedFirstLockSubmissionV1,
+    TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1,
+    ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
+    ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
+    derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, params};
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -101,6 +102,105 @@ async fn maker_claimant_requires_zcash_second_leg_then_reopens_lez_funding() {
     assert_eq!(evidence.step(), FirstLockStepV1::LezFund);
     assert_eq!(evidence.expected_submission_id(), &[0x31; 32]);
     assert_eq!(evidence.transaction_id(), lowerhex([0x31; 32]));
+}
+
+/// The devnet case: blocks land between the Maker's polls, so it commits the
+/// same confirmed Taker lock again at greater depth (revisions 1 and 2) before
+/// its own Zcash lock lands at revision 3. The funding source must still find
+/// the second lock, and still answer `SecondLockUnavailable` without one.
+#[tokio::test]
+async fn maker_claimant_finds_the_second_lock_past_a_re_observed_first_lock() {
+    let directory = TestDirectory::new("maker-claimant-reobserved");
+    let path = directory.path().join("reobserved.sqlite3");
+    let agreement = signed_agreement(
+        "sqlite-lez-maker-reobserved",
+        SwapDirection::TakerSellsLez,
+        false,
+    );
+    let swap_id = agreement.coordinator().id().clone();
+
+    let observe = |tip_height: u64| {
+        let agreement = agreement.clone();
+        let path = path.clone();
+        async move {
+            let ports = TestPorts {
+                taker_lez: Some(
+                    CanonicalLezEscrowObservationV1::validate(
+                        &agreement,
+                        &lez_taker_lock_snapshot_at(&agreement, 2, tip_height),
+                    )
+                    .expect("canonical taker LEZ observation"),
+                ),
+            };
+            let store =
+                SqliteZecRecoveryStore::open(&path, Participant::Maker).expect("open maker store");
+            ZecPairSdk::new(
+                Participant::Maker,
+                NoDiscovery,
+                NoNegotiation,
+                ports.clone(),
+                ports,
+                store,
+            )
+        }
+    };
+
+    let sdk = observe(102).await;
+    let mut active = sdk
+        .activate(accept(&agreement, Participant::Maker))
+        .await
+        .expect("activate maker");
+    let _ = active
+        .observe_taker_first_lock()
+        .await
+        .expect("commit observed taker LEZ lock");
+    drop(active);
+
+    let sdk = observe(104).await;
+    let mut active = sdk
+        .resume(&swap_id)
+        .await
+        .expect("resume maker")
+        .expect("maker swap is durable");
+    let again = active
+        .observe_taker_first_lock()
+        .await
+        .expect("re-observe the deeper taker LEZ lock");
+    assert!(
+        matches!(again, ObserveTakerFirstLockOutcome::Projected(_)),
+        "a deeper observation of the same lock commits its own revision: {again:?}"
+    );
+    assert_eq!(
+        reopened_source(&path, Participant::Maker)
+            .canonical_lez_funding(&agreement)
+            .await,
+        Err(SqliteCanonicalLezFundingSourceError::SecondLockUnavailable),
+        "no second lock yet"
+    );
+
+    let outcome = active
+        .drive_maker_lock(
+            FirstLockPlanV1::zcash(prepared(FirstLockStepV1::ZcashFund, [0x52; 32]))
+                .expect("maker Zcash plan"),
+        )
+        .await
+        .expect("drive maker second lock");
+    let MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(evidence)) =
+        outcome
+    else {
+        panic!("expected confirmed maker Zcash funding, got {outcome:?}")
+    };
+    let _ = active
+        .project_maker_lock(evidence)
+        .await
+        .expect("commit maker Zcash second lock at revision 3");
+    drop(active);
+
+    let evidence = reopened_source(&path, Participant::Maker)
+        .canonical_lez_funding(&agreement)
+        .await
+        .expect("the second lock is found past the re-observed first lock");
+    assert_eq!(evidence.step(), FirstLockStepV1::LezFund);
 }
 
 #[tokio::test]
@@ -528,6 +628,16 @@ fn canonical_lez_taker_lock(agreement: &ZecAgreementV1) -> CanonicalLezEscrowObs
 }
 
 fn lez_taker_lock_snapshot(agreement: &ZecAgreementV1, metadata_version: u8) -> LezNodeSnapshotV1 {
+    lez_taker_lock_snapshot_at(agreement, metadata_version, 102)
+}
+
+/// The same canonical Taker lock seen from a deeper stable tip: what a Maker
+/// whose polls straddle new blocks observes the second time around.
+fn lez_taker_lock_snapshot_at(
+    agreement: &ZecAgreementV1,
+    metadata_version: u8,
+    tip_height: u64,
+) -> LezNodeSnapshotV1 {
     let terms = agreement.lez_terms();
     let LezAssetV1::Native {
         authenticated_transfer_program_id,
@@ -558,7 +668,7 @@ fn lez_taker_lock_snapshot(agreement: &ZecAgreementV1, metadata_version: u8) -> 
         terms.chain().environment(),
         *terms.chain().channel_id(),
         *terms.chain().genesis_block_hash(),
-        LezStableTipV1::new([0x42; 32], 102, [0x42; 32], 102),
+        LezStableTipV1::new([0x42; 32], tip_height, [0x42; 32], tip_height),
         LezFundTransactionSnapshotV1::new(
             [0x31; 32],
             *terms.escrow_program_id(),

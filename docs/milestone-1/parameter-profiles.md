@@ -125,6 +125,14 @@ principal outputs never absorb an unnegotiated fee.
 - `deterministic-local-v1`: ephemeral regtest/standalone networks, controlled
   block generation, one confirmation, and shortened deadlines expressed only
   in fixtures. It is rejected on public network IDs.
+- `deterministic-local-devnet-v1`: `deterministic-local-v1` with a 30-minute
+  LEZ refund delay instead of 60 seconds, for a local devnet whose LEZ chain
+  finalises in minutes (the LEZ escrow's validity window ends at the
+  agreement's refund time, so a lock that takes longer than the delay to
+  reach the chain is rejected). Same confirmations, Zcash refund height and
+  margin; rejected on public network IDs like the test-lane profile. Evidence
+  produced under it says so, since its refund timings differ from the M6
+  certificates'.
 - `public-testnet-v1`: the values in this document; required for testnet smoke
   suites and recorded demos.
 - `mainnet`: absent by design until calibration and formal review are complete.
