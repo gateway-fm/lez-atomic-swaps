@@ -560,29 +560,29 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             if store
                 .load_first_lock_intent(active.agreement().coordinator().id())
                 .await
-                .map_err(|_| ActorCommandError::DriveUnavailable)?
+                .map_err(unavailable_drive)?
                 .is_none()
             {
                 let plan = match active.next_action() {
                     ZecLifecycleAction::CreateAndFundLez => lez
                         .prepare_native_first_lock(active.agreement())
                         .await
-                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                        .map_err(unavailable_drive)?,
                     ZecLifecycleAction::FundZcash => planner
                         .plan(active.agreement(), funding_outpoints(config))
                         .await
-                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                        .map_err(unavailable_drive)?,
                     _ => return Err(ActorCommandError::DriveConfigurationUnavailable),
                 };
                 active
                     .stage_first_lock(plan)
                     .await
-                    .map_err(|_| ActorCommandError::DriveUnavailable)?;
+                    .map_err(unavailable_drive)?;
             }
             match active
                 .drive_first_lock()
                 .await
-                .map_err(|_| ActorCommandError::DriveUnavailable)?
+                .map_err(unavailable_drive)?
             {
                 FirstLockDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
                     operation: first_lock_operation(step),
@@ -596,7 +596,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                     active
                         .project_first_lock(evidence)
                         .await
-                        .map_err(|_| ActorCommandError::DriveUnavailable)?;
+                        .map_err(unavailable_drive)?;
                     ActorEffectOutcomeV1::Projected {
                         operation: ActorOperationV1::TakerFirstLock,
                     }
@@ -606,7 +606,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         (Participant::Maker, Phase::Offered | Phase::AwaitingTakerConfirmations) => match active
             .observe_taker_first_lock()
             .await
-            .map_err(|_| ActorCommandError::DriveUnavailable)?
+            .map_err(unavailable_drive)?
         {
             ObserveTakerFirstLockOutcome::AwaitingStableObservation(_) => {
                 ActorEffectOutcomeV1::AwaitingObservation {
@@ -624,24 +624,24 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             let plan = match store
                 .load_maker_lock_intent(active.agreement().coordinator().id())
                 .await
-                .map_err(|_| ActorCommandError::DriveUnavailable)?
+                .map_err(unavailable_drive)?
             {
                 Some(intent) => intent.plan().clone(),
                 None => match active.agreement().direction() {
                     SwapDirection::TakerSellsForeign => lez
                         .prepare_native_first_lock(active.agreement())
                         .await
-                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                        .map_err(unavailable_drive)?,
                     SwapDirection::TakerSellsLez => planner
                         .plan(active.agreement(), funding_outpoints(config))
                         .await
-                        .map_err(|_| ActorCommandError::DriveUnavailable)?,
+                        .map_err(unavailable_drive)?,
                 },
             };
             match active
                 .drive_maker_lock(plan)
                 .await
-                .map_err(|_| ActorCommandError::DriveUnavailable)?
+                .map_err(unavailable_drive)?
             {
                 MakerLockDriveOutcome::AlreadyLocked { .. } => ActorEffectOutcomeV1::Unchanged {
                     operation: ActorOperationV1::MakerLock,
@@ -672,7 +672,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                     active
                         .project_maker_lock(evidence)
                         .await
-                        .map_err(|_| ActorCommandError::DriveUnavailable)?;
+                        .map_err(unavailable_drive)?;
                     ActorEffectOutcomeV1::Projected {
                         operation: ActorOperationV1::MakerLock,
                     }
@@ -701,7 +701,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             let outcome = active
                 .drive_claim()
                 .await
-                .map_err(|_| ActorCommandError::DriveUnavailable)?;
+                .map_err(unavailable_drive)?;
             claim_outcome(outcome)
         }
         (_, Phase::Completed) => ActorEffectOutcomeV1::Completed,
@@ -810,6 +810,20 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         outcome,
         &active,
     ))
+}
+
+/// One bounded drive attempt failed closed. The lifecycle error's Debug form
+/// (variant names, no material) goes to stderr so the operator learns which
+/// gate held, as for the claim; the exit class stays `DriveUnavailable`.
+fn unavailable_drive<E: std::fmt::Debug>(error: E) -> ActorCommandError {
+    eprintln!("actor drive unavailable: {error:?}");
+    ActorCommandError::DriveUnavailable
+}
+
+/// As [`unavailable_drive`], for the agreement-ordered recovery attempt.
+fn unavailable_recovery<E: std::fmt::Debug>(error: E) -> ActorCommandError {
+    eprintln!("actor recovery unavailable: {error:?}");
+    ActorCommandError::RecoveryUnavailable
 }
 
 const fn ensure_claim_phase(phase: Phase) -> Result<(), ActorCommandError> {
@@ -921,7 +935,7 @@ async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComma
     let outcome = active
         .drive_refund()
         .await
-        .map_err(|_| ActorCommandError::RecoveryUnavailable)?;
+        .map_err(unavailable_recovery)?;
     Ok(ActorEffectOutputV1::from_active(
         config.role(),
         ActorEffectCommandV1::Recover,
@@ -1086,9 +1100,28 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
 
 #[cfg(test)]
 mod tests {
+    use lez_bridge_adapter::{ContextOwningLezPortError, SqliteCanonicalLezFundingSourceError};
+    use lez_zec_swap_sdk::ZecSdkError;
     use serde_json::json;
 
     use super::*;
+
+    /// The reason the actor writes to stderr before exiting `ClaimUnavailable`
+    /// is the lifecycle error's Debug form: variant names only, no material.
+    /// This is the line the devnet showed when the Maker's Zcash lock sat one
+    /// revision past the slot the funding source looked at.
+    #[test]
+    fn claim_unavailable_reason_is_exact_and_secret_free() {
+        let error = ZecSdkError::LezClaim(Box::new(ContextOwningLezPortError::Recovery(Box::new(
+            SqliteCanonicalLezFundingSourceError::SecondLockUnavailable,
+        ))));
+        assert_eq!(
+            format!("actor claim unavailable: {error:?}"),
+            "actor claim unavailable: LezClaim(Recovery(SecondLockUnavailable))"
+        );
+        let preimage = ClaimPreimage::new([0x44; 32]);
+        assert!(!format!("{preimage:?}").contains("44"), "{preimage:?}");
+    }
 
     #[test]
     fn status_projection_preserves_typed_lifecycle_values_and_wire_schema() {

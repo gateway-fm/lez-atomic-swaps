@@ -5,7 +5,7 @@ use std::fmt;
 use async_trait::async_trait;
 use lez_bridge_protocol::Hex32;
 use lez_swap_core::{Participant, SwapDirection};
-use lez_swap_store::SqliteZecRecoveryStore;
+use lez_swap_store::{SqliteZecRecoveryStore, StoreError};
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, FirstLockConfirmedEvidenceV1, FirstLockStepV1, RecoveryStore,
     ZecAgreementV1,
@@ -91,10 +91,10 @@ impl SqliteCanonicalLezFundingSource {
                     break;
                 }
                 Ok(None) => {}
-                // The store refuses a predecessor past its active revision: the
-                // journal ends here. A failure at the fixed slot itself is still
-                // a store failure.
-                Err(_) if offset > 0 => break,
+                // The store refuses a predecessor past its active revision with
+                // exactly this error: the journal ends here. Anything else, or a
+                // failure at the fixed slot itself, is a store failure.
+                Err(StoreError::InvalidZecRecoveryState) if offset > 0 => break,
                 Err(_) => return Err(SqliteCanonicalLezFundingSourceError::RecoveryUnavailable),
             }
         }
@@ -154,7 +154,7 @@ impl SqliteCanonicalLezFundingSource {
                     break;
                 }
                 Ok(None) => {}
-                Err(_) if offset > 0 => break,
+                Err(StoreError::InvalidZecRecoveryState) if offset > 0 => break,
                 Err(_) => return Err(SqliteCanonicalLezFundingSourceError::RecoveryUnavailable),
             }
         }

@@ -4084,7 +4084,22 @@ fn validate_claim_auxiliary_state(
         }
         let record = decode_claim_intent_record(&intent_row)?;
         let intent = if intent_row.closed_revision.is_none() {
-            record.revalidate(accepted, coordinator, active_revision)?
+            let staged = revision_from_sql(intent_row.staged_revision)?;
+            if staged == active_revision {
+                record.revalidate(accepted, coordinator, active_revision)?
+            } else {
+                // A staged, never-submitted claim intent that the agreement-
+                // ordered recovery overtook: the journal moved on through
+                // refund transitions only (an observed counterparty refund, or
+                // the owner's own), so the claim can no longer be submitted and
+                // the intent stays as the durable record of what was prepared.
+                // It is validated where it was staged; anything other than a
+                // refund slot after it is corruption and still fails closed.
+                ensure_refund_only_slots(connection, role, swap_id, staged, active_revision)?;
+                let staged_coordinator =
+                    claim_coordinator_at(connection, role, accepted, staged, key)?;
+                record.revalidate(accepted, &staged_coordinator, staged)?
+            }
         } else {
             let committed = intent_row
                 .closed_revision
@@ -4122,6 +4137,32 @@ fn validate_claim_auxiliary_state(
             *intent.expected_submission_id(),
             exact.to_vec(),
         )?;
+    }
+    Ok(())
+}
+
+/// Every journal slot in `from..to` must hold exactly a refund transition and
+/// no claim transition: the revisions an open claim intent was overtaken by.
+fn ensure_refund_only_slots(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+    from: u64,
+    to: u64,
+) -> Result<(), StoreError> {
+    if from >= to {
+        return Err(StoreError::InvalidZecRecoveryState);
+    }
+    for predecessor in from..to {
+        let predecessor_sql = sql_u64(predecessor)?;
+        let refund = load_refund_transition_row(connection, role, swap_id, predecessor_sql)?;
+        let owned_claim =
+            load_owned_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+        let observed_claim =
+            load_observed_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+        if refund.is_none() || owned_claim.is_some() || observed_claim.is_some() {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
     }
     Ok(())
 }
