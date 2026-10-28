@@ -267,7 +267,23 @@ case "$role" in
       # Node built without pair-zec still accepts the role config.
       zec_catalog='[]'
       if [[ "$zec_ready" == 1 && -s "$zec_state/prepared.json" ]]; then
-        zec_catalog="$(jq -c '.' "$zec_state/prepared.json")"
+        # Every entry's signed envelope must carry the Maker identity this Node
+        # pins now (prepared.rs authenticates it at load and a mismatch fails
+        # the whole start); a catalog built under another identity is dropped.
+        if python3 - "$zec_state/prepared.json" "$maker_identity" <<'PY'
+import json, sys
+entries = json.load(open(sys.argv[1]))
+for entry in entries:
+    envelope = json.load(open(entry["signed_envelope"]["path"]))
+    if bytes(envelope["maker_public_key"]).hex() != sys.argv[2]:
+        sys.exit(1)
+sys.exit(0 if entries else 1)
+PY
+        then
+          zec_catalog="$(jq -c '.' "$zec_state/prepared.json")"
+        else
+          echo "taker: prepared ZEC catalog was built under another Maker identity; ignored (re-run scripts/zec-provision.sh)"
+        fi
       fi
       jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" \
         --argjson prepared "$zec_catalog" '

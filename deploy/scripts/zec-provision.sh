@@ -166,11 +166,18 @@ for c in lez-maker-node lez-taker-node lez-zebra; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
 done
 if [[ ! -s "$DELIVERY_KEY_FILE" ]] || [[ "$(tr -d ' \n' <"$DELIVERY_KEY_FILE")" != "$FUNDER_KEY_HEX" ]]; then
-  # Same shape and mode as runtime/lez/<role>/lez-signer.key: the Node reads it as uid 4713.
+  # 0644, like runtime/lez/<role>/lez-signer.key: the Maker reads it as uid 4713
+  # through a read-only bind mount, and the host user is not that uid. The
+  # value is the public regtest test key [0x04; 32], not a secret; this is a
+  # devnet convenience and must be described as such wherever it is cited.
   printf '%s' "$FUNDER_KEY_HEX" >"$DELIVERY_KEY_FILE"
   chmod 0644 "$DELIVERY_KEY_FILE"
   log "  wrote $DELIVERY_KEY_FILE (the regtest funder key)"
 fi
+# gen-config.sh leaves runtime/secrets 0700; the Maker (uid 4713) must traverse
+# it to read the key through the ro mount. 0711 exposes no listing and the
+# private files in it keep their own 0600.
+chmod 0711 runtime/secrets
 # The CLI reads only an owner-owned 0600 file: copy the key into one first.
 expected_identity="$(docker run --rm --user 0:0 -v "$PWD/$DELIVERY_KEY_FILE:/in/key:ro" --entrypoint bash "$MAKER_IMAGE" \
   -c 'umask 077; install -m 0600 /in/key /tmp/k && lez-maker-cli delivery-identity --signing-key-file /tmp/k' </dev/null |
@@ -187,6 +194,9 @@ else
   # discovery outright (run_local_delivery.rs: verify_envelope(...)?).
   removed="$(helper 0:0 -v "$DELIVERY_VOLUME:/delivery" -- 'shopt -s nullglob; f=(/delivery/*.offer.json); rm -f -- "${f[@]}"; echo ${#f[@]}')"
   log "  removed $removed Delivery offer file(s) of the previous identity"
+  # The Taker's catalog envelope was signed by that identity too; without the
+  # catalog the Taker starts with no ZEC entry until step 7 writes a new one.
+  helper 0:0 -v "$TAKER_VOLUME:/taker" -- 'rm -f /taker/prepared.json'
   recreate_nodes
   current_identity="$(docker run --rm -v "$DELIVERY_VOLUME:/d:ro" --entrypoint cat "$TAKER_IMAGE" /d/maker-delivery-identity.pub </dev/null | tr -d ' \n')"
   [[ "$current_identity" == "$expected_identity" ]] || fail "the Maker republished $current_identity, not $expected_identity"
@@ -244,6 +254,9 @@ def base58(raw: bytes) -> str:
 ids = {r: json.load(open(f"runtime/lez/{r}/identity.json"))["account_id"] for r in ("maker", "taker")}
 spec = {
     "schema_version": 1, "run_id": run_id, "swap_id": swap_id, "direction": "taker_sells_lez",
+    # The LEZ escrow's validity window ends at the agreement's LEZ refund time;
+    # the test-lane profile's 60 s cannot be met here (zec-swap-sdk profile.rs).
+    "profile": "deterministic-local-devnet-v1",
     "lez_runtime": {
         "chain_id": channel, "channel_id": channel, "genesis_block_hash": genesis,
         "escrow_program_id": escrow,
@@ -313,6 +326,17 @@ docker volume rm -f "$STAGING" >/dev/null
 
 # ---- 5. publish and discover the offer -----------------------------------------
 log "5/8 Zcash offer $offer_id"
+# One live Zcash offer at a time: a desk (or a Taker picking "the Zcash row")
+# must not land on an offer whose catalog entry this run replaces.
+stale="$(rpc_result maker maker_offer_list '{"states":["active"]}' | python3 -c 'import json,sys
+route=json.loads(sys.argv[1])
+for r in json.load(sys.stdin):
+    if r["offer"]["pair_configuration"]["route"]==route: print(r["offer"]["id"], r["revision"])' "$ROUTE")"
+while read -r old_id old_rev; do
+  [[ -n "$old_id" ]] || continue
+  rpc_result maker maker_offer_withdraw "{\"request_id\":\"zec-devnet-withdraw-$stamp-$old_rev\",\"offer_id\":\"$old_id\",\"expected_revision\":$old_rev}" >/dev/null &&
+    log "  withdrew stale Zcash offer $old_id" || log "  could not withdraw $old_id (continuing)"
+done <<<"$stale"
 revision_for() { # revision_for <method>: the revision of the Zcash route entry, if any
   rpc_result maker "$1" '{}' | python3 -c 'import json,sys
 route=json.loads(sys.argv[1])
