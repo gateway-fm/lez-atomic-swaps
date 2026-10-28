@@ -26,6 +26,7 @@ __pycache__/
 
 # Image payloads staged by deploy/scripts/stage-assets.sh
 /deploy/images/*/lez-*
+/deploy/images/taker-node/zec-local-poc-*
 /deploy/images/lez-services/sequencer_service
 /deploy/images/lez-services/indexer_service
 /deploy/images/lez-services/r0vm
