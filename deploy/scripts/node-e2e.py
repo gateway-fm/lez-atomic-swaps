@@ -1580,43 +1580,32 @@ def zec_drive_until_phase(swap_id: str, config: str, phases: set[str], timeout: 
 ZEC_REFUND_REQUESTS: dict[tuple[str, str], int] = {}
 
 
-def zec_refund_until_terminal(swap_id: str, stamp: str, timeout: int, config: str | None = None,
-                              lez_leg_phases: frozenset[str] = frozenset(), stop_at_leg: bool = True) -> dict:
+def zec_refund_until_terminal(swap_id: str, stamp: str, timeout: int,
+                              until: frozenset[str] = frozenset({"refunded"})) -> dict:
     """The Taker's LEZ refund as an operator action, repeated with one request id:
     the Node answers taker_action_execution_unavailable until the actor's recovery
     checks pass (lock confirmed, maker lock proven absent or the deadline gone),
     admits it once they do, and a replay re-drives the admitted recovery, which
     is also how the Taker observes its refund finalising (the Node never drives a
-    ZEC actor on its own).
-
-    With both legs locked the Taker's LEZ refund is only the first half: the
-    actor parks at `taker_leg_refunded` until it observes the Maker's Zcash
-    refund, and the Taker Node shows that phase as `attention_required` (the
-    desk cannot act on it). A caller that expects this passes the actor config
-    and `lez_leg_phases`; the helper then returns as soon as the actor reports
-    one of those phases, with the actor status under `actor`, or, with
-    `stop_at_leg` false, keeps replaying the refund request through them until
-    the Taker has observed the Maker's refund and the Node shows `refunded`."""
+    ZEC actor on its own). Returns the Taker's view once its state is in `until`;
+    attention_required and completed fail. With both legs locked the Node reads
+    `refund_in_progress` from the admission until the Taker has observed the
+    Maker's Zcash refund, then `refunded`; a caller that has to act in between
+    (mine to the refund height, queue the Maker's refund) asks for either and
+    comes back for `refunded`."""
     deadline = time.time() + timeout
     attempt = 0
-    parked = None
     request_id = f"e2e-refund-{stamp}"
+    last_state = None
     while time.time() < deadline:
         view = taker_view(swap_id)
-        if view["state"] == "refunded":
+        if view["state"] != last_state:
+            log(f"  taker {swap_id[:12]}: {view['state']} (generation {view.get('progress_generation')})")
+            last_state = view["state"]
+        if view["state"] in until:
             return view
-        if view["state"] == "attention_required" and config and lez_leg_phases:
-            status = zec_status(config)
-            if status and status.get("phase") in lez_leg_phases:
-                if stop_at_leg:
-                    log(f"  taker actor at {status['phase']} (revision {status.get('revision')}); the Node shows attention_required until the Maker's leg is refunded too")
-                    return {**view, "actor": status}
-                if parked != status.get("phase"):
-                    log(f"  taker actor at {status['phase']}; replaying the refund request until it observes the Maker's refund")
-                    parked = status.get("phase")
-                view = {**view, "state": f"attention_required/{status['phase']}"}
         if view["state"] in {"attention_required", "completed"}:
-            raise Failure(f"swap {swap_id[:12]} ended in {view['state']} instead of refunded")
+            raise Failure(f"swap {swap_id[:12]} ended in {view['state']} instead of {'/'.join(sorted(until))}")
         attempt += 1
         # A replay carries the generation the request was admitted at (as the
         # desk does): the Node matches the durable record on it, and admits a
@@ -1638,7 +1627,7 @@ def zec_refund_until_terminal(swap_id: str, stamp: str, timeout: int, config: st
             if attempt % 4 == 1:
                 log(f"  refund not yet accepted (attempt {attempt}: {category}); taker {view['state']} | maker: {maker_phase(swap_id)}")
         time.sleep(15)
-    raise Failure(f"swap {swap_id[:12]} was not refunded within {timeout}s")
+    raise Failure(f"swap {swap_id[:12]} was not {'/'.join(sorted(until))} within {timeout}s")
 
 
 def wait_maker_terminal(swap_id: str, timeout: int, describe: str) -> str:
@@ -1764,8 +1753,8 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
     log(f"  Maker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker refunds LEZ instead of waiting")
     opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
     wait_until(opens + 15, "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)")
-    zec_refund_until_terminal(swap_id, stamp, timeout=1800, config=config, lez_leg_phases=frozenset({"taker_leg_refunded"}))
-    log("  Taker refunded its LEZ escrow; the Maker's Zcash refund is owed next")
+    zec_refund_until_terminal(swap_id, stamp, timeout=1800, until=frozenset({"refund_in_progress", "refunded"}))
+    log("  the Taker's LEZ refund is admitted and in progress on the Node; the Maker's Zcash refund is owed next")
     return zec_maker_refund_tail(swap_id, stamp, config, corridor, funding)
 
 
@@ -1816,8 +1805,7 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
     log(f"  Maker's Zcash refund {refund_tx[0]} is in zebra block {refund_tx[1]}; Maker ended {phase}")
     if phase not in {"refunded", "maker_leg_refunded", "taker_leg_refunded"}:
         raise Failure(f"the Maker ended in {phase}, not a refunded phase")
-    taker = zec_refund_until_terminal(swap_id, stamp, timeout=900, config=config,
-                                      lez_leg_phases=frozenset({"taker_leg_refunded"}), stop_at_leg=False)
+    taker = zec_refund_until_terminal(swap_id, stamp, timeout=900)
     log(f"  Taker observed the Maker's Zcash refund; Taker ended {taker['state']}")
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
