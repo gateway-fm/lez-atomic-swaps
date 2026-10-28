@@ -61,6 +61,12 @@ stopped_node=""
 trap '[[ -z "$stopped_node" ]] || docker start "$stopped_node" >/dev/null 2>&1' EXIT
 stop_node() { stopped_node="$1"; docker stop "$1" >/dev/null; }
 start_node() { docker start "$1" >/dev/null; stopped_node=""; wait_healthy "$1"; }
+# Every desk runs through `compose run -T` with stdin closed. Without -T,
+# compose allocates a pseudo-TTY and attaches stdin; a runner that is not in
+# the terminal's foreground process group -- a detached tmux session, CI --
+# then takes SIGTTIN on the first read and the whole scenario suspends. It
+# looks exactly like a hang: the step prints, nothing follows, and the Nodes
+# stay healthy. `ps` shows state T.
 ui() { # ui <role> [ENV=VALUE...]
   local role="$1"; shift; local envs=(-e "M3_UI_DIRECTION=$direction" -e "DESK_DEBUG=${DESK_DEBUG:-0}")
   # verify.mjs reads the trade size from these, so they have to cross into the
@@ -81,22 +87,22 @@ ui() { # ui <role> [ENV=VALUE...]
     local segment; segment="$(printf '%s-%s-%02d-%s' "$direction" "$scenario" "$segment_index" "$role")"
     segments+=("$segment")
     mkdir -p "$videos"
-    docker compose "${stack_compose[@]}" run --rm --no-deps "${envs[@]}" \
+    docker compose "${stack_compose[@]}" run --rm -T --no-deps "${envs[@]}" \
       -e "STEP_TITLE=${step_title:-}" -v "$videos:/recordings" \
-      --entrypoint bash basecamp-ui /ui-tests/record-step.sh "$role" "$segment" 2>&1 |
+      --entrypoint bash basecamp-ui /ui-tests/record-step.sh "$role" "$segment" </dev/null 2>&1 |
       grep -E '✓|✗|^    [a-zA-Z]|»|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:' | grep -viE 'locale'
     return "${PIPESTATUS[0]}"
   fi
-  docker compose "${stack_compose[@]}" run --rm --no-deps "${envs[@]}" \
-    --entrypoint node basecamp-ui /ui-tests/verify.mjs "$role" 2>&1 |
+  docker compose "${stack_compose[@]}" run --rm -T --no-deps "${envs[@]}" \
+    --entrypoint node basecamp-ui /ui-tests/verify.mjs "$role" </dev/null 2>&1 |
     grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:' | grep -viE 'locale'
 }
 # The same desk runner for the offline status check (#91): its own entry point,
 # because verify.mjs assumes a reachable Node from its first step.
 ui_offline() {
-  docker compose "${stack_compose[@]}" run --rm --no-deps \
+  docker compose "${stack_compose[@]}" run --rm -T --no-deps \
     -e "M3_UI_DIRECTION=$direction" \
-    --entrypoint node basecamp-ui /ui-tests/verify-node-offline.mjs "$1" 2>&1 |
+    --entrypoint node basecamp-ui /ui-tests/verify-node-offline.mjs "$1" </dev/null 2>&1 |
     grep -E '✓|✗|^    [a-zA-Z]|passed|failed|Error'
   return "${PIPESTATUS[0]}"
 }
@@ -106,8 +112,8 @@ join_video() {
   local list="$videos/$direction-$scenario.txt" out="$videos/$direction-$scenario.mp4" seg
   : > "$list"
   for seg in "${segments[@]}"; do [[ -s "$videos/$seg.mp4" ]] && printf "file '%s'\n" "$seg.mp4" >> "$list"; done
-  docker compose "${stack_compose[@]}" run --rm --no-deps -v "$videos:/recordings" -w /recordings \
-    --entrypoint ffmpeg basecamp-ui -hide_banner -loglevel error -y -f concat -safe 0 -i "$direction-$scenario.txt" -c copy "$direction-$scenario.mp4" >/dev/null 2>&1 \
+  docker compose "${stack_compose[@]}" run --rm -T --no-deps -v "$videos:/recordings" -w /recordings \
+    --entrypoint ffmpeg basecamp-ui -hide_banner -loglevel error -y -f concat -safe 0 -i "$direction-$scenario.txt" -c copy "$direction-$scenario.mp4" </dev/null >/dev/null 2>&1 \
     && log "video: runtime/evidence/videos/$direction-$scenario.mp4" \
     || log "video join failed for $direction-$scenario"
   for seg in "${segments[@]}"; do rm -f "$videos/$seg.mp4" "$videos/$seg.events" "$videos/$seg.srt" "$videos/$seg.raw.mp4"; done
