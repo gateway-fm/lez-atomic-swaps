@@ -12,6 +12,11 @@ COPY lez-runtime-healthcheck /payload/lez-runtime-healthcheck
 COPY lez-btc-taker-actor /payload/lez-btc-taker-actor
 COPY lez-zec-taker-actor /payload/lez-zec-taker-actor
 COPY lez-v02-bridge-poc /payload/lez-v02-bridge-poc
+# The ZEC corridor provisioners: a prepared ZEC swap is built from live
+# chain facts (scripts/zec-provision.sh), not composed at take time.
+COPY zec-local-poc-provision /payload/zec-local-poc-provision
+COPY zec-local-poc-chat-draft /payload/zec-local-poc-chat-draft
+COPY zec-local-poc-chat-finalize /payload/zec-local-poc-chat-finalize
 RUN strip /payload/*
 
 FROM python:3.12-slim-bookworm
@@ -31,6 +36,9 @@ COPY --from=strip --chmod=0555 /payload/lez-runtime-healthcheck /usr/local/bin/l
 COPY --from=strip --chmod=0555 /payload/lez-btc-taker-actor /usr/local/bin/lez-btc-taker-actor
 COPY --from=strip --chmod=0555 /payload/lez-zec-taker-actor /usr/local/bin/lez-zec-taker-actor
 COPY --from=strip --chmod=0555 /payload/lez-v02-bridge-poc /usr/local/bin/lez-v02-bridge-poc
+COPY --from=strip --chmod=0555 /payload/zec-local-poc-provision /usr/local/bin/zec-local-poc-provision
+COPY --from=strip --chmod=0555 /payload/zec-local-poc-chat-draft /usr/local/bin/zec-local-poc-chat-draft
+COPY --from=strip --chmod=0555 /payload/zec-local-poc-chat-finalize /usr/local/bin/zec-local-poc-chat-finalize
 COPY --chmod=0555 node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
 RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez \
     && mkdir -p /var/lib/lez/taker /run/lez/taker \
