@@ -1297,6 +1297,10 @@ fn view_from_actor_status(
             ..
         } => (state, revision, available_action, privacy_guidance),
     };
+    // The shielding guidance is for a Taker that received transparent Zcash:
+    // selling LEZ. A Taker that sold Zcash received LEZ and has nothing to shield.
+    let privacy_guidance =
+        privacy_guidance.filter(|_| facts.route().direction() == SwapDirection::TakerSellsLez);
     TakerSwapViewV1 {
         schema_version: 1,
         swap_id: facts.swap_id().clone(),
@@ -1336,11 +1340,22 @@ fn zec_actor_progress(
             Some(TakerTerminalActionV1::Refund),
             None,
         ),
-        Phase::ClaimEvidenceAvailable if next_action == ZecLifecycleAction::ClaimZcash => (
-            TakerSwapStateV1::ClaimAvailable,
-            Some(TakerTerminalActionV1::Claim),
-            None,
-        ),
+        // The Taker's claim, whichever leg it is: the Zcash follow-up claim
+        // (TakerSellsLez) or the revealing LEZ claim as first claimant
+        // (TakerSellsForeign); the actor's Claim runs the agreement-ordered
+        // claim for either role.
+        Phase::ClaimEvidenceAvailable
+            if matches!(
+                next_action,
+                ZecLifecycleAction::ClaimZcash | ZecLifecycleAction::ClaimLez
+            ) =>
+        {
+            (
+                TakerSwapStateV1::ClaimAvailable,
+                Some(TakerTerminalActionV1::Claim),
+                None,
+            )
+        }
         Phase::Completed => (
             TakerSwapStateV1::Completed,
             None,
@@ -2365,6 +2380,20 @@ mod tests {
                 Some(TakerTerminalActionV1::Claim),
                 None,
             )
+        );
+        // The reverse direction's Taker is the first claimant: its revealing LEZ
+        // claim is offered the same way (Part D, step 18).
+        assert_eq!(
+            zec_actor_progress(Phase::ClaimEvidenceAvailable, ZecLifecycleAction::ClaimLez),
+            (
+                TakerSwapStateV1::ClaimAvailable,
+                Some(TakerTerminalActionV1::Claim),
+                None,
+            )
+        );
+        assert_eq!(
+            zec_actor_progress(Phase::ClaimEvidenceAvailable, ZecLifecycleAction::Wait),
+            (TakerSwapStateV1::AttentionRequired, None, None)
         );
         assert_eq!(
             zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::RefundZcash),
