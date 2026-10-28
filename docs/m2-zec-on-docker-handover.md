@@ -385,3 +385,25 @@ alone are fine.
   mature output and fails closed if there is none.
 - `check-runtime-profiles.py` needs `cargo` on the host; run the drift part
   with the Python snippet in `f09b8301`'s message if cargo is absent.
+
+## Part B — acceptance, in M3's shape
+
+Added 2026-10-28 09:00Z. M3 was accepted on three things: recordings per
+chain, a named SDK with a stage → API → test map plus a runnable offline
+example, and a node guide that states routes, wallet creation, funding and
+the direction each route serves. `docs/m2-acceptance-checklist.md` maps
+rfp#122's six deliverables to artefacts, proofs and today's state. These
+steps follow 1–8 and are reviewed the same way, one commit each.
+
+| # | Step | Done when |
+|---|---|---|
+| 9 | ZEC scenario matrix in `node-e2e.py --pair Zcash`: beyond `zec-happy` and the two refunds, `replay`, `wrong-inputs`, `restart-taker`, `restart-maker`, `survivor`, `concurrent` (two prepared entries), `regenerated-catalog`, `tampered-catalog` — each the ZEC analogue of the BTC scenario of the same name, skipping only what the catalog model makes meaningless (say which, and why, in the scenario's docstring) | All pass on a fresh chain; `RESULTS.txt` lines in the M3 format |
+| 10 | Desk ZEC journeys: `zec-happy`, `zec-concurrent`, one refund; all three recorded with `--record`; the Taker row shows the shield-after-swap label | Three MP4s under `runtime/evidence/videos/`, each from a passing run |
+| 11 | `docs/sdk-lez-zec.md` (the five stages → `lez-zec-swap-sdk` public API → the `sdk_lifecycle.rs` test that drives each; the port / bridge-adapter boundary stated as in `sdk-lez-btc.md`), `crates/zec-swap-sdk/README.md`, `crates/zec-swap-sdk/examples/full-lifecycle.rs` offline against the in-memory store, printing each stage; the privacy-posture section | `cargo run -p lez-zec-swap-sdk --example full-lifecycle` reaches `Completed` and a second swap reaches `Refunded`; `cargo doc` warning-free; clippy pedantic clean on the example |
+| 12 | CI: bring the Zebra regtest gate and the un-parked ZEC tests over from PR #116 (`8be5d829`, `2bf2e8f6`, `999bddfe`; check whether `25877a27` and the three `deps:` advisory commits are needed for green) | `ci` green on the pushed commit, Zebra job included |
+| 13 | `docs/zcash-testnet-setup.md` checked against the five U8 topics; direction per route stated; traceability rows F4, U1, U6, U10, S1, S5, S8, D1 edited in place; `submission/MILESTONES.md` gains the M2 section; `m6-zec-reconciliation.md` updated | `scripts/check-requirements-traceability.sh` passes; every link resolves |
+| 14 | Evidence set `docs/evidence/regression-m2-<date>/` with `PROVENANCE.md` (commit, image digests, chain recreations, corridor run ids per scenario) and `RESULTS.txt`; per-scenario Node evidence exported | Set committed; nothing private in it (run the scan) |
+| 15 | Release tag with notes and the three MP4s; draft of the rfp#122 comment in `~/m2-work/RFP-122-COMMENT.md` for the owner (not posted) | Owner reviews |
+
+Ground rules unchanged. The sequencing note on rfp#122 (#115 modules before
+M2) is the owner's to address in the comment; do not write around it.
