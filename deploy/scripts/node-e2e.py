@@ -68,10 +68,15 @@ def rpc(role: str, method: str, params: object, timeout: int = 300) -> dict:
     """One owner-RPC call; returns the full JSON-RPC envelope."""
     container, socket = NODES[role]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": [params]})
+    # No -i: curl takes the body from --data and never reads stdin, while the
+    # attached stream leaves `docker exec` waiting on a stdin that the detached
+    # runner never closes. The curl inside the container has long exited by
+    # then, so --max-time does not bound the wait and the scenario hangs until
+    # its own timeout. Every other exec here already runs without -i.
     result = subprocess.run(
-        ["docker", "exec", "-i", container, "curl", "-sS", "--max-time", str(timeout), "--unix-socket", socket,
+        ["docker", "exec", container, "curl", "-sS", "--max-time", str(timeout), "--unix-socket", socket,
          "-H", "content-type: application/json", "--data", body, "http://localhost/"],
-        capture_output=True, text=True, check=False)
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if result.returncode != 0 or not result.stdout.strip():
         return {"error": {"code": -1, "message": f"transport: {result.stderr.strip()[:200]}"}}
     return json.loads(result.stdout)
