@@ -198,21 +198,31 @@ def sign_funding(required: dict) -> str:
     return bitcoin("finalizepsbt", signed["psbt"])["hex"]
 
 
+# A take that answers dependency-unavailable is retried on this schedule. The
+# cheap races it was written for (a LEZ read that overtook the moving tip, Core
+# briefly busy) clear in seconds, but the Maker also answers it while it is
+# still locking LEZ for an earlier swap -- it serialises that step and tells the
+# Taker to come back once the lock lands, which takes minutes on a loaded host.
+# Thirty seconds of retries turned that wait into a scenario failure.
+TAKE_RETRY_BACKOFF = (10, 20, 40, 60, 60, 60)
+
+
 def initiate(request: dict) -> dict:
-    """One take. A dependency-unavailable answer (a LEZ read that raced the
-    moving tip, Core briefly busy) is retried with the same request id, which
-    replays the take from its durable record instead of starting another."""
-    for attempt in range(4):
+    """One take, retried with the same request id so a retry replays the take
+    from its durable record instead of starting another."""
+    for attempt in range(len(TAKE_RETRY_BACKOFF) + 1):
         reply = rpc("taker", "taker_swap_initiate_v1", request, timeout=420)
         if "result" in reply:
             return reply["result"]
         if reply["error"].get("code") == -32018 and "funding_transaction_hex" not in request:
             request["funding_transaction_hex"] = sign_funding(reply["error"]["data"])
             continue
-        if reply["error"].get("code") != -32010 or attempt == 3:
+        if reply["error"].get("code") != -32010 or attempt == len(TAKE_RETRY_BACKOFF):
             raise Failure(f"taker taker_swap_initiate_v1 failed: {json.dumps(reply['error'])[:300]}")
-        log(f"  take answered dependency-unavailable ({(reply['error'].get('data') or {}).get('category')}); retrying")
-        time.sleep(10)
+        delay = TAKE_RETRY_BACKOFF[attempt]
+        log(f"  take answered dependency-unavailable "
+            f"({(reply['error'].get('data') or {}).get('category')}); retrying in {delay} s")
+        time.sleep(delay)
     raise Failure("unreachable")
 
 
