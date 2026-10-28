@@ -1652,6 +1652,153 @@ fn assert_sqlite_zcash_claim_contexts(
     }));
 }
 
+/// Devnet finding (M2 step 5, zec-maker-refund): with both legs locked the
+/// Maker staged its revealing claim, the submission failed, the Taker refunded
+/// its LEZ leg and the Maker observed that refund. From then on every
+/// claim-capable open of the Maker's store failed closed: the open claim
+/// intent was revalidated against the head coordinator, which the observed
+/// refund had moved past the intent's phase. The intent is now validated where
+/// it was staged when only refund slots follow it, and the Maker can go on to
+/// refund its own leg and reopen at every step.
+#[tokio::test]
+async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_intent() {
+    let id = "sqlite-claim-intent-overtaken-by-refund";
+    let direction = SwapDirection::TakerSellsLez;
+    let data = TempDir::new().expect("isolated directory");
+    let maker_path = data.path().join("maker.sqlite3");
+    let taker_path = data.path().join("taker.sqlite3");
+    let secret = [0x45; 32];
+    let wire = agreement_wire_direction_with_digest(
+        id,
+        FixtureVariant::Local,
+        direction,
+        Sha256::digest(secret).into(),
+    );
+    let swap_id = SwapId::new(id).expect("swap id");
+    let port = SqliteClaimPort::default();
+    let maker_store = claim_store(&maker_path, Participant::Maker);
+    let taker_store = claim_store(&taker_path, Participant::Taker);
+    let mut maker = claim_sdk(Participant::Maker, port.clone(), maker_store.clone())
+        .activate_with_claim_preimage(
+            accept(&wire, Participant::Maker),
+            ClaimPreimage::new(secret),
+        )
+        .await
+        .expect("maker protects its activation preimage");
+    let mut taker = claim_sdk(Participant::Taker, port.clone(), taker_store.clone())
+        .activate(accept(&wire, Participant::Taker))
+        .await
+        .expect("taker activation");
+    drive_sqlite_claim_locks(direction, &port, &mut maker, &mut taker).await;
+    assert_eq!(maker.status(), Phase::BothLegsLocked);
+    assert_eq!(maker.agreement().lez_claimant(), Participant::Maker);
+
+    // The Maker's revealing claim is staged, then its submission fails.
+    port.fail_claim_after_accept(ClaimStepV1::RevealingLez);
+    assert!(maker.drive_claim().await.is_err());
+    assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingLez]);
+    assert_eq!(maker_claim_intent_revisions(&maker_path, id), (2, None));
+
+    // The Taker refunds its LEZ leg; the Maker observes it instead of claiming.
+    assert_eq!(
+        taker
+            .drive_refund()
+            .await
+            .expect("taker submits its LEZ refund"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Lez)
+    );
+    assert_eq!(
+        taker
+            .drive_refund()
+            .await
+            .expect("taker projects its LEZ refund"),
+        RefundDriveOutcome::Projected {
+            step: RefundStepV1::Lez,
+            revision: 3
+        }
+    );
+    maker
+        .drive_refund()
+        .await
+        .expect("maker observes the Taker's LEZ refund past its staged claim");
+    assert_eq!(maker.status(), Phase::TakerLegRefunded);
+
+    // Every claim-capable open of the Maker's store works again, and the
+    // journal replays to the observed refund.
+    let reopened = claim_store(&maker_path, Participant::Maker);
+    let mut resumed = claim_sdk(Participant::Maker, port.clone(), reopened)
+        .resume_all_capable(&swap_id)
+        .await
+        .expect("resume through the reopened store")
+        .expect("active swap");
+    assert_eq!(resumed.status(), Phase::TakerLegRefunded);
+
+    // The Maker refunds its own Zcash leg through the reopened store.
+    assert_eq!(
+        resumed
+            .drive_refund()
+            .await
+            .expect("maker submits its Zcash refund"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
+    );
+    assert_eq!(
+        resumed
+            .drive_refund()
+            .await
+            .expect("maker projects its Zcash refund"),
+        RefundDriveOutcome::Refunded { revision: 4 }
+    );
+    let again = claim_sdk(
+        Participant::Maker,
+        port.clone(),
+        claim_store(&maker_path, Participant::Maker),
+    )
+    .resume_all_capable(&swap_id)
+    .await
+    .expect("resume after the Zcash refund")
+    .expect("terminal swap");
+    assert_eq!(again.status(), Phase::Refunded);
+
+    assert_claim_slot_behind_refund_fails_closed(&maker_path, id);
+}
+
+fn maker_claim_intent_revisions(path: &std::path::Path, id: &str) -> (i64, Option<i64>) {
+    Connection::open(path)
+        .expect("inspect the staged claim intent")
+        .query_row(
+            "SELECT staged_revision, closed_revision FROM zec_sdk_claim_intents
+             WHERE local_role='maker' AND swap_id=?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("one claim intent")
+}
+
+/// A claim slot behind the staged intent is still corruption: a forged owned
+/// claim transition behind the refund makes the claim-capable open fail closed.
+fn assert_claim_slot_behind_refund_fails_closed(path: &std::path::Path, id: &str) {
+    Connection::open(path)
+        .expect("forge a claim slot")
+        .execute(
+            "INSERT INTO zec_sdk_owned_claim_transitions
+             (local_role, swap_id, transition_kind, predecessor_revision, committed_revision,
+              intent_staged_revision, payload_version, payload_json)
+             VALUES ('maker', ?1, 'revealing_lez', 2, 3, 2, 1, '{}')",
+            params![id],
+        )
+        .expect("forged row");
+    let error = SqliteZecRecoveryStore::open_claim_capable(
+        path,
+        Participant::Maker,
+        ProtectedClaimKey::new("sqlite-test-claim-key-v1", [0x7a; 32]).expect("test claim key"),
+    )
+    .expect_err("a claim slot behind the refund fails closed");
+    assert!(
+        matches!(error, StoreError::InvalidZecRecoveryState),
+        "{error:?}"
+    );
+}
+
 fn claim_store(path: &std::path::Path, participant: Participant) -> SqliteZecRecoveryStore {
     SqliteZecRecoveryStore::open_claim_capable(
         path,
