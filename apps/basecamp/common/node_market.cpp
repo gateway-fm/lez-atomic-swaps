@@ -178,8 +178,19 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
             return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
                     "The Maker's Node funds " + theirChain + " and claims LEZ with the secret; Refund recovers your "
                         + mine + " if it never does", refundAction, "Refund " + mine};
+        // The Taker's LEZ refund is in flight or back; the Maker's Zcash refund
+        // follows at the agreement's height and the Node observes it. The Maker
+        // missed nothing: both legs were locked and the Taker refunded by choice.
+        if (nodeState == "refund_in_progress")
+            return {"refunding", "Refunding LEZ · waiting for the Maker's " + theirChain + " refund", 70,
+                    "Your LEZ refund is admitted; the Node follows it and the Maker's " + theirChain
+                        + " refund, Retry re-drives it if it stalls", refundAction, "Retry refund"};
     }
-    if (availableAction == QStringLiteral("refund") && nodeState != "refund_available")
+    // A refund already submitted keeps Refund offered as "Retry refund" (the
+    // ZEC projection does this through the refunded-leg phases); that row is
+    // "Refund submitted" below, never a missed lock window.
+    if (availableAction == QStringLiteral("refund") && nodeState != "refund_available"
+        && nodeState != "refund_in_progress")
         return {"refund_ready", "The Maker missed its lock window", 60,
                 "Your Node offers the recovery path; nothing else can happen on this swap",
                 refundAction, "Refund " + mine};

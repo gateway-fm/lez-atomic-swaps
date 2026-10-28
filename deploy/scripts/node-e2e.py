@@ -1418,8 +1418,11 @@ def zec_mining_policy(effect: dict | None, corridor: dict) -> None:
 
 
 def zec_drive_until(swap_id: str, config: str, states: set[str], timeout: int, corridor: dict,
-                    describe: str = "") -> dict:
-    """Drives the Taker actor and polls both Nodes until the Taker's state is in `states`."""
+                    describe: str = "", mine_pending_only: bool = False) -> dict:
+    """Drives the Taker actor and polls both Nodes until the Taker's state is in `states`.
+    With `mine_pending_only` a zebra block is generated only to include what waits
+    in the mempool, never for depth: the Maker's funding then stays at one
+    confirmation, below the pre-reveal gate, which is the refund journeys' setup."""
     deadline = time.time() + timeout
     last_state = last_effect = None
     while time.time() < deadline:
@@ -1435,7 +1438,12 @@ def zec_drive_until(swap_id: str, config: str, states: set[str], timeout: int, c
             return view
         if state in TERMINAL:
             raise Failure(f"swap {swap_id[:12]} ended in {state} while waiting for {sorted(states)} {describe}")
-        zec_mining_policy(effect, corridor)
+        if mine_pending_only:
+            pool = zebra("getrawmempool")
+            if isinstance(pool, list) and pool:
+                zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+        else:
+            zec_mining_policy(effect, corridor)
         time.sleep(10)
     raise Failure(f"swap {swap_id[:12]} did not reach {sorted(states)} within {timeout}s (last {last_state}, "
                   f"drive {last_effect}) {describe}")
@@ -1522,7 +1530,33 @@ def zec_export_tool(swap_id: str) -> bool:
     return True
 
 
-def zec_drive_tool(swap_id: str, until: str, timeout: int) -> bool:
+def zec_refund_tail_tool(swap_id: str) -> bool:
+    """`node-e2e.py --pair Zcash zec-refund-tail --swap-id …`: the host side of a
+    desk refund journey after the Taker desk admitted its LEZ refund. Mines
+    zebra to the agreement's refund height, queues the Maker's refund (the
+    operator action the Maker desk has no button for), and waits for the
+    Maker's Zcash refund in a block; the Taker's own observation of that refund
+    is the desk's "Retry refund", so it is left to the desk."""
+    os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
+    corridor = zec_provision()
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None:
+        log("FAILED: no zebra block spends the provisioned outpoint (the Maker never funded)")
+        return False
+    stamp = corridor["run_id"].rsplit("-", 1)[1]
+    try:
+        result = zec_maker_refund_tail(swap_id, stamp, config, corridor, funding, taker_observes=False)
+    except Failure as failure:
+        log(f"FAILED: {failure}")
+        return False
+    log(f"  Maker refunded Zcash in block {result['zcash_refund']['height']} ({result['zcash_refund']['transaction_id'][:12]}…); Maker {result['maker_terminal_phase']}")
+    return True
+
+
+def zec_drive_tool(swap_id: str, until: str, timeout: int, mine_pending_only: bool = False,
+                   until_phase: str | None = None) -> bool:
     """`node-e2e.py --pair Zcash zec-drive --swap-id … --until <state>`: the host-side
     actor driving the desk journeys need between their steps (ui-e2e.sh), on the
     corridor the Nodes currently run with. No preflight, no summary file."""
@@ -1538,11 +1572,20 @@ def zec_drive_tool(swap_id: str, until: str, timeout: int) -> bool:
             zec_activate(config)
         else:
             log(f"  Taker actor already active at {status.get('phase')} (revision {status.get('revision')})")
-        view = zec_drive_until(swap_id, config, set(until.split("|")), timeout, corridor, describe=f"(zec-drive to {until})")
+        if until_phase:
+            # The Node reads refund_available from the Taker's confirmed LEZ lock
+            # on; a refund journey has to stop at the actor's phase instead,
+            # once the Maker's Zcash funding is in (both legs locked).
+            view = zec_drive_until_phase(swap_id, config, set(until_phase.split("|")), timeout, corridor,
+                                         mine_pending_only=mine_pending_only, describe=f"(zec-drive to phase {until_phase})")
+        else:
+            view = zec_drive_until(swap_id, config, set(until.split("|")), timeout, corridor, describe=f"(zec-drive to {until})",
+                                   mine_pending_only=mine_pending_only)
     except Failure as failure:
         log(f"FAILED: {failure}")
         return False
-    log(f"  taker {swap_id[:12]} is {view['state']}")
+    # A state drive returns the Taker's view, a phase drive the actor's last effect.
+    log(f"  taker {swap_id[:12]} is {view.get('state') or view.get('phase')}")
     return True
 
 
@@ -1758,7 +1801,8 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
     return zec_maker_refund_tail(swap_id, stamp, config, corridor, funding)
 
 
-def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict, funding: tuple[str, int]) -> dict:
+def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict, funding: tuple[str, int],
+                          taker_observes: bool = True) -> dict:
     """From the Taker's refunded LEZ leg to both Nodes `refunded`: zebra is mined
     to the agreement's refund height, the Maker (which re-observes the LEZ leg
     on its next attempt) refunds its Zcash funding, and the Taker's replayed
@@ -1805,13 +1849,15 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
     log(f"  Maker's Zcash refund {refund_tx[0]} is in zebra block {refund_tx[1]}; Maker ended {phase}")
     if phase not in {"refunded", "maker_leg_refunded", "taker_leg_refunded"}:
         raise Failure(f"the Maker ended in {phase}, not a refunded phase")
+    summary = {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+               "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+               "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
+               "zcash_refund_height": corridor["zcash_refund_height"], "maker_terminal_phase": phase}
+    if not taker_observes:
+        return summary
     taker = zec_refund_until_terminal(swap_id, stamp, timeout=900)
     log(f"  Taker observed the Maker's Zcash refund; Taker ended {taker['state']}")
-    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
-            "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
-            "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
-            "zcash_refund_height": corridor["zcash_refund_height"], "maker_terminal_phase": phase,
-            "taker_terminal_state": taker["state"]}
+    return {**summary, "taker_terminal_state": taker["state"]}
 
 
 ZEC_SCENARIOS = {
@@ -1924,9 +1970,12 @@ def run(name: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-drive", "zec-export", "all"])
-    parser.add_argument("--swap-id", help="zec-drive / zec-export: the swap to drive or export")
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-drive", "zec-export", "zec-refund-tail", "all"])
+    parser.add_argument("--swap-id", help="zec-drive / zec-export / zec-refund-tail: the swap to act on")
+    parser.add_argument("--mine-pending-only", action="store_true",
+                        help="zec-drive: mine zebra only for what waits in the mempool, never for depth (refund journeys)")
     parser.add_argument("--until", help="zec-drive: Taker state(s) to reach, '|'-separated")
+    parser.add_argument("--until-phase", help="zec-drive: Taker actor phase(s) to reach instead, '|'-separated")
     parser.add_argument("--timeout", type=int, default=2400, help="zec-drive: seconds")
     parser.add_argument("--direction", choices=["TakerSellsForeign", "TakerSellsLez"], default="TakerSellsForeign",
                         help="which side the Taker sells; TakerSellsLez locks LEZ first and claims Bitcoin")
@@ -1939,9 +1988,13 @@ def main() -> int:
         REVERSE = True
         FOREIGN_UNITS, LEZ_UNITS = ZEC_FOREIGN_UNITS, ZEC_LEZ_UNITS
         if args.scenario == "zec-drive":
-            if not (args.swap_id and args.until):
-                parser.error("zec-drive needs --swap-id and --until")
-            return 0 if zec_drive_tool(args.swap_id, args.until, args.timeout) else 1
+            if not (args.swap_id and (args.until or args.until_phase)):
+                parser.error("zec-drive needs --swap-id and --until or --until-phase")
+            return 0 if zec_drive_tool(args.swap_id, args.until or "", args.timeout, args.mine_pending_only, args.until_phase) else 1
+        if args.scenario == "zec-refund-tail":
+            if not args.swap_id:
+                parser.error("zec-refund-tail needs --swap-id")
+            return 0 if zec_refund_tail_tool(args.swap_id) else 1
         if args.scenario == "zec-export":
             if not args.swap_id:
                 parser.error("zec-export needs --swap-id")

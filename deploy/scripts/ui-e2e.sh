@@ -265,6 +265,17 @@ zec_drive() { # zec_drive <swap_id> <taker state> [timeout]: drive the Taker act
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive to $2"
 }
 
+zec_refund_tail() { # zec_refund_tail <swap_id>: zebra to the refund height, the Maker's refund queued, its Zcash refund in a block
+  log "mining zebra to the agreement's refund height; the Maker Node refunds its Zcash (operator action) once it sees the LEZ leg refunded"
+  python3 scripts/node-e2e.py --pair Zcash zec-refund-tail --swap-id "$1" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-refund-tail"
+}
+wait_until_unix() { # wait_until_unix <unix seconds> <what for>
+  local now; now="$(date -u +%s)"
+  (( now >= $1 )) && return 0
+  log "waiting $(( $1 - now ))s $2"
+  while (( $(date -u +%s) < $1 )); do sleep 15; done
+}
 # ---- scenarios ------------------------------------------------------------------
 scenario_happy() {
   local swap; publish; take swap
@@ -360,6 +371,36 @@ scenario_zec_happy() {
   wait "$taker_pid" || fail "Taker desk: completed"
   export_evidence "$swap"
 }
+scenario_zec_maker_refund() {
+  # Both legs locked, the Maker's Zcash funding kept at one confirmation (below
+  # the pre-reveal gate), the Taker refunds LEZ from its desk at the agreement's
+  # refund time (30 min after provisioning on the devnet profile), the Maker
+  # Node refunds its Zcash at the refund height, the Taker Node re-drives the
+  # admitted refund on its own until it has observed that; both desks show the
+  # swap refunded. One press of Refund; no Retry.
+  local swap maker_pid taker_pid opens
+  if [[ "$record" == 1 ]]; then
+    log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
+    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    wait_healthy lez-maker-node; wait_healthy lez-taker-node
+  fi
+  zec_provision; take swap
+  note "The Taker's first LEZ lock is the ZEC actor's, driven on the Node host; the Maker Node funds Zcash, and zebra is mined only for what waits in the mempool, so the funding stays one block deep and the Maker cannot claim yet"
+  python3 scripts/node-e2e.py --pair Zcash zec-drive --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive to both_legs_locked"
+  opens=$(( $(cat runtime/zec/current | sed 's/.*-//') + 1800 + 15 ))
+  wait_until_unix "$opens" "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)"
+  note "The LEZ refund time has passed and the Maker never claimed; the Taker desk offers Refund and the Maker desk watches its Zcash come back"
+  maker_wait_bg maker_pid refunded "$swap"
+  desk_head_start
+  taker_act "$refund_action" "$swap"
+  note "Refund pressed once: the Taker Node re-drives the admitted refund every 30 s; the Maker Node refunds its Zcash at the refund height and the Taker observes it"
+  taker_wait_bg taker_pid refunded "$swap"
+  zec_refund_tail "$swap"
+  wait "$maker_pid" || fail "Maker desk: refunded"
+  wait "$taker_pid" || fail "Taker desk: refunded"
+  export_evidence "$swap"
+}
 scenario_maker_refund() {
   require_fast; local swap; publish; take swap
   taker_act "$lock_action" "$swap"
@@ -387,6 +428,7 @@ run_one() {
     maker-refund) scenario_maker_refund ;;
     node-offline) scenario_node_offline ;;
     zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
+    zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
