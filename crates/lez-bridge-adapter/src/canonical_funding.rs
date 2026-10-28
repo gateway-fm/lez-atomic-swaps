@@ -15,6 +15,14 @@ use crate::CanonicalLezFundingSource;
 
 const TAKER_FIRST_LOCK_PREDECESSOR: u64 = 0;
 const MAKER_SECOND_LOCK_PREDECESSOR: u64 = 1;
+/// The second lock sits right after the first-lock observation only when that
+/// observation was committed once. On a chain whose blocks land between the
+/// observer's polls the same confirmed first lock is re-observed at a greater
+/// depth and each re-observation commits its own revision (seen on the Docker
+/// devnet: `maker_observed_taker_first_lock` at revisions 1 and 2, the Zcash
+/// lock at 3), so the second lock is looked for in a bounded range of
+/// predecessor revisions rather than at one fixed slot.
+const SECOND_LOCK_PREDECESSOR_SCAN: u64 = 16;
 
 /// Store-derived canonical LEZ funding authority for one local claimant.
 ///
@@ -70,20 +78,33 @@ impl SqliteCanonicalLezFundingSource {
         &self,
         agreement: &ZecAgreementV1,
     ) -> Result<FirstLockConfirmedEvidenceV1, SqliteCanonicalLezFundingSourceError> {
-        let transition = self
-            .store
-            .load_observed_maker_lock_transition(
-                agreement.coordinator().id(),
-                MAKER_SECOND_LOCK_PREDECESSOR,
-            )
-            .await
-            .map_err(|_| SqliteCanonicalLezFundingSourceError::RecoveryUnavailable)?
-            .ok_or(SqliteCanonicalLezFundingSourceError::FundingTransitionUnavailable)?;
+        let mut found = None;
+        for offset in 0..SECOND_LOCK_PREDECESSOR_SCAN {
+            let predecessor = MAKER_SECOND_LOCK_PREDECESSOR + offset;
+            match self
+                .store
+                .load_observed_maker_lock_transition(agreement.coordinator().id(), predecessor)
+                .await
+            {
+                Ok(Some(transition)) => {
+                    found = Some((predecessor, transition));
+                    break;
+                }
+                Ok(None) => {}
+                // The store refuses a predecessor past its active revision: the
+                // journal ends here. A failure at the fixed slot itself is still
+                // a store failure.
+                Err(_) if offset > 0 => break,
+                Err(_) => return Err(SqliteCanonicalLezFundingSourceError::RecoveryUnavailable),
+            }
+        }
+        let (predecessor, transition) =
+            found.ok_or(SqliteCanonicalLezFundingSourceError::FundingTransitionUnavailable)?;
         if transition.schema_version() != 1
             || transition.swap_id() != agreement.coordinator().id()
             || transition.agreement_commitment() != agreement.agreement_commitment()
             || transition.local_participant() != Participant::Taker
-            || transition.predecessor_revision() != MAKER_SECOND_LOCK_PREDECESSOR
+            || transition.predecessor_revision() != predecessor
         {
             return Err(SqliteCanonicalLezFundingSourceError::InvalidRecoveryState);
         }
@@ -120,15 +141,28 @@ impl SqliteCanonicalLezFundingSource {
         // A revealing claim must not be prepared from the first LEZ leg alone.
         // The maker-local Zcash second-lock transition proves the opposite asset
         // was durably locked at the exact next aggregate revision.
-        let maker_zcash = self
-            .store
-            .load_maker_lock_transition(agreement.coordinator().id(), MAKER_SECOND_LOCK_PREDECESSOR)
-            .await
-            .map_err(|_| SqliteCanonicalLezFundingSourceError::RecoveryUnavailable)?
-            .ok_or(SqliteCanonicalLezFundingSourceError::SecondLockUnavailable)?;
+        let mut found = None;
+        for offset in 0..SECOND_LOCK_PREDECESSOR_SCAN {
+            let predecessor = MAKER_SECOND_LOCK_PREDECESSOR + offset;
+            match self
+                .store
+                .load_maker_lock_transition(agreement.coordinator().id(), predecessor)
+                .await
+            {
+                Ok(Some(transition)) => {
+                    found = Some((predecessor, transition));
+                    break;
+                }
+                Ok(None) => {}
+                Err(_) if offset > 0 => break,
+                Err(_) => return Err(SqliteCanonicalLezFundingSourceError::RecoveryUnavailable),
+            }
+        }
+        let (predecessor, maker_zcash) =
+            found.ok_or(SqliteCanonicalLezFundingSourceError::SecondLockUnavailable)?;
         if maker_zcash.schema_version() != 1
             || maker_zcash.swap_id() != agreement.coordinator().id()
-            || maker_zcash.predecessor_revision() != MAKER_SECOND_LOCK_PREDECESSOR
+            || maker_zcash.predecessor_revision() != predecessor
             || maker_zcash.evidence().schema_version() != 1
             || maker_zcash.evidence().step() != FirstLockStepV1::ZcashFund
             || maker_zcash.evidence().confirmations()
