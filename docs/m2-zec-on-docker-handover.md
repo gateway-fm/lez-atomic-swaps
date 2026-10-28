@@ -534,3 +534,25 @@ leg works), then 17–18 (they change the identity model and must not land
 while a forward corridor is live), then 19–21 on fresh chains, then Part B
 and Part C. Chain budget: each direction's node matrix is a chain of its
 own (~90 min), the desks another.
+
+## Commit protocol, amended (CI on PR #118, 2026-10-28)
+
+- **Every commit carries `Signed-off-by: <author name> <author email>`**
+  matching its author (`git commit -s`). The `public-readiness` DCO gate
+  checks each commit on the PR. None of the branch's commits had one, so
+  the existing history is rewritten **once**, by the box, at a quiet commit
+  boundary (nothing uncommitted, no scenario running):
+  ```sh
+  git rebase 4b76e2f7 --exec 'git commit --amend --no-edit --trailer "Signed-off-by: $(git log -1 --format=%an) <$(git log -1 --format=%ae)>"'
+  git push --force-with-lease origin feat/m2-zec-on-docker
+  ```
+  The reviewer then resets the laptop clone to origin. Commits already
+  carrying a matching sign-off (the cherry-picks from #116) get a duplicate
+  trailer at worst; `--trailer` with the default `ifExists` adds it, which
+  the gate accepts — check one such commit after the rewrite.
+- **Dependency gate:** `cargo-deny` fails on advisories that PR #116
+  already cleared. Cherry-pick its three dependency commits
+  (`6a6162fd` rustls 0.23.46, `14aee0cd` sidecar lockfile, `4f42195a`
+  reproducers lockfile), signed off.
+- The draft PR exists so CI runs on every push; its other red jobs are
+  read from the logs as they land and go into REVIEW.md.
