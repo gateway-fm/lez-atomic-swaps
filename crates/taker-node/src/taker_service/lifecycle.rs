@@ -56,7 +56,7 @@ use crate::{
 /// registry, the held lock, the admission fences and the error mapping stay
 /// identical across pairs; only the actor crate differs.
 #[allow(clippy::large_enum_variant)]
-enum RouteActor {
+pub(super) enum RouteActor {
     Btc {
         config: btc_reference_actor::ActorConfig,
         swap_id: SwapId,
@@ -66,8 +66,20 @@ enum RouteActor {
 }
 
 /// Typed, pair-neutral view of one actor's durable progress.
+/// The Zcash actor's status as the supervisor reads it.
+#[cfg(feature = "pair-zec")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LifecycleStatus {
+pub(super) enum ZecActorStatus {
+    NotActivated,
+    Active {
+        phase: Phase,
+        revision: u64,
+        next_action: ZecLifecycleAction,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LifecycleStatus {
     NotActivated,
     Active {
         phase: Phase,
@@ -82,7 +94,7 @@ impl RouteActor {
     /// Reloads the receipt-bound actor of `pair`, pinning the receipt digest and
     /// identity and confining the bundle to the configured actor root.
     #[allow(clippy::too_many_arguments)]
-    fn load_for_monitor(
+    pub(super) fn load_for_monitor(
         pair: Pair,
         receipt: &Path,
         actor_root: &Path,
@@ -121,7 +133,7 @@ impl RouteActor {
         }
     }
 
-    fn swap_id(&self) -> &SwapId {
+    pub(super) fn swap_id(&self) -> &SwapId {
         match self {
             Self::Btc { swap_id, .. } => swap_id,
             #[cfg(feature = "pair-zec")]
@@ -156,7 +168,7 @@ impl RouteActor {
         planned_lock_fee_sat(self.state_db())
     }
 
-    fn state_db(&self) -> &Path {
+    pub(super) fn state_db(&self) -> &Path {
         match self {
             Self::Btc { config, .. } => config.state_db(),
             #[cfg(feature = "pair-zec")]
@@ -165,7 +177,7 @@ impl RouteActor {
     }
 
     /// Everything a custody re-read must reproduce byte for byte.
-    fn custody_identity(&self) -> (SwapId, PathBuf, PathBuf, [u8; 32]) {
+    pub(super) fn custody_identity(&self) -> (SwapId, PathBuf, PathBuf, [u8; 32]) {
         match self {
             Self::Btc { config, swap_id } => (
                 swap_id.clone(),
@@ -184,7 +196,7 @@ impl RouteActor {
     }
 
     /// Reads durable status without touching a chain.
-    async fn status(&self) -> Result<LifecycleStatus, ()> {
+    pub(super) async fn status(&self) -> Result<LifecycleStatus, ()> {
         match self {
             Self::Btc { config, .. } => {
                 use btc_reference_actor::{
@@ -246,6 +258,56 @@ impl RouteActor {
                     }
                 })
             }
+        }
+    }
+
+    /// The Zcash actor's durable status as the supervisor decides on it:
+    /// phase, revision and next action, or not activated.
+    #[cfg(feature = "pair-zec")]
+    pub(super) async fn zec_status(
+        &self,
+    ) -> Result<ZecActorStatus, zec_reference_actor::ActorCommandError> {
+        use zec_reference_actor::{
+            ActorCommand, ActorCommandError, ActorCommandOutputV1, ActorStatusProjectionV1,
+            execute_actor_command,
+        };
+        let Self::Zec(config) = self else {
+            return Err(ActorCommandError::StatusUnavailable);
+        };
+        match execute_actor_command(config, ActorCommand::Status).await? {
+            ActorCommandOutputV1::Status(status) => Ok(match status.projection() {
+                ActorStatusProjectionV1::NotActivated => ZecActorStatus::NotActivated,
+                ActorStatusProjectionV1::Active {
+                    phase,
+                    revision,
+                    next_action,
+                } => ZecActorStatus::Active {
+                    phase,
+                    revision,
+                    next_action,
+                },
+            }),
+            ActorCommandOutputV1::Effect(_) => Err(ActorCommandError::StatusUnavailable),
+        }
+    }
+
+    /// One Zcash actor effect (activate, drive, claim, recover) as the
+    /// supervisor runs it; the actor's secret-free JSON output comes back for
+    /// the effect log line and the progress snapshot.
+    #[cfg(feature = "pair-zec")]
+    pub(super) async fn zec_effect(
+        &self,
+        command: zec_reference_actor::ActorCommand,
+    ) -> Result<serde_json::Value, zec_reference_actor::ActorCommandError> {
+        use zec_reference_actor::{ActorCommandError, ActorCommandOutputV1, execute_actor_command};
+        let Self::Zec(config) = self else {
+            return Err(ActorCommandError::DriveUnavailable);
+        };
+        match execute_actor_command(config, command).await? {
+            ActorCommandOutputV1::Effect(effect) => {
+                serde_json::to_value(effect).map_err(|_| ActorCommandError::DriveUnavailable)
+            }
+            ActorCommandOutputV1::Status(_) => Err(ActorCommandError::DriveUnavailable),
         }
     }
 
@@ -397,7 +459,7 @@ pub(super) fn register(
     }
     spawn_dynamic_observer(Arc::clone(state));
     #[cfg(feature = "pair-zec")]
-    spawn_zec_redriver(Arc::clone(state));
+    super::zec_supervisor::spawn_zec_supervisor(Arc::clone(state));
     let balances_state = Arc::clone(state);
     module.register_async_method("taker_wallet_balances_v1", move |params, _, _| {
         let state = Arc::clone(&balances_state);
@@ -452,7 +514,7 @@ pub(super) fn register(
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
             list_swaps(state, request)
                 .await
-                .map_err(map_monitoring_error)
+                .map_err(|error| map_monitoring_error(&error))
         }
     })?;
 
@@ -465,7 +527,7 @@ pub(super) fn register(
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
             monitor_swap(state, request)
                 .await
-                .map_err(map_monitoring_error)
+                .map_err(|error| map_monitoring_error(&error))
         }
     })?;
 
@@ -548,7 +610,7 @@ fn register_terminal_methods(
 }
 
 #[derive(Clone, Copy, Debug)]
-enum ActionError {
+pub(super) enum ActionError {
     UnsupportedSchemaVersion,
     NotFound,
     ProgressChanged,
@@ -705,7 +767,7 @@ async fn resolve_action_authority(
     .map_err(|_| ActionError::RegistryUnavailable)?
 }
 
-async fn load_bound_action_actor(
+pub(super) async fn load_bound_action_actor(
     prepared: &PreparedTakerInitiationV1,
     receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
 ) -> Result<(RouteActor, ActorHeldLock), ActionError> {
@@ -745,7 +807,7 @@ async fn load_bound_action_actor(
     .map_err(|_| ActionError::DependencyUnavailable)?
 }
 
-async fn reload_action_actor_custody(
+pub(super) async fn reload_action_actor_custody(
     prepared: &PreparedTakerInitiationV1,
     receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
     config: &RouteActor,
@@ -807,7 +869,7 @@ async fn replay_actor_effect_is_required(
     replay_actor_effect_required(status, expected_generation, action)
 }
 
-fn replay_actor_effect_required(
+pub(super) fn replay_actor_effect_required(
     status: LifecycleStatus,
     expected_generation: u64,
     action: TakerTerminalActionV1,
@@ -862,7 +924,7 @@ async fn lookup_action_replay(
     .map_err(|_| ActionError::RegistryUnavailable)?
 }
 
-async fn lookup_admitted_action_for_swap(
+pub(super) async fn lookup_admitted_action_for_swap(
     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     swap_id: &SwapId,
 ) -> Result<Option<TakerActionAdmissionV1>, ActionError> {
@@ -916,7 +978,7 @@ async fn admit_terminal_action(
         let mut context = context
             .lock()
             .map_err(|_| ActionError::RegistryUnavailable)?;
-        context
+        let admission = context
             .registry_mut()
             .admit_action(
                 &request_id,
@@ -925,7 +987,20 @@ async fn admit_terminal_action(
                 expected_generation,
                 admitted_at,
             )
-            .map_err(map_action_store_error)
+            .map_err(map_action_store_error)?;
+        // The owner's action runs now, not after the row's backoff; a failed
+        // row is requeued by it, as on the Maker.
+        #[cfg(feature = "pair-zec")]
+        if let Err(error) = context
+            .schedule_mut()
+            .requeue_for_action(swap_id.as_str(), admitted_at)
+        {
+            eprintln!(
+                "taker actor {}: schedule requeue after the admitted {action:?} failed: {error}",
+                swap_id.as_str()
+            );
+        }
+        Ok(admission)
     })
     .await
     .map_err(|_| ActionError::RegistryUnavailable)?
@@ -971,7 +1046,7 @@ fn claim_submitted_marker(state_db: &Path) -> Option<PathBuf> {
     Some(state_db.parent()?.parent()?.join("claim-submitted"))
 }
 
-fn mark_claim_submitted(state_db: &Path) {
+pub(super) fn mark_claim_submitted(state_db: &Path) {
     if let Some(marker) = claim_submitted_marker(state_db) {
         let _ = std::fs::OpenOptions::new()
             .write(true)
@@ -984,7 +1059,7 @@ fn mark_claim_submitted(state_db: &Path) {
 /// Names one failed actor step on stderr so `docker compose logs` explains
 /// what the RPC caller only sees as `taker_action_execution_unavailable`.
 /// Only the error's variant name is printed, never its payload.
-fn report_actor_failure(step: &str, error: &dyn std::fmt::Debug) {
+pub(super) fn report_actor_failure(step: &str, error: &dyn std::fmt::Debug) {
     let rendered = format!("{error:?}");
     let class = rendered.split(['(', '{', ' ']).next().unwrap_or_default();
     eprintln!(
@@ -1000,7 +1075,7 @@ const fn facade_action(action: TakerTerminalActionV1) -> TakerFacadeActionV1 {
     }
 }
 
-const fn terminal_action_of(action: TakerFacadeActionV1) -> TakerTerminalActionV1 {
+pub(super) const fn terminal_action_of(action: TakerFacadeActionV1) -> TakerTerminalActionV1 {
     match action {
         TakerFacadeActionV1::Claim => TakerTerminalActionV1::Claim,
         TakerFacadeActionV1::Refund => TakerTerminalActionV1::Refund,
@@ -1074,13 +1149,16 @@ fn map_action_error(error: ActionError) -> ErrorObjectOwned {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum MonitoringError {
     UnsupportedSchemaVersion,
     NotFound,
     /// The swap's own bundle (receipt, actor configuration) no longer passes
     /// the checks it was bound with; the swap needs attention, the Node is fine.
     BundleInvalid,
+    /// The swap's actor is held by the supervisor (a drive in flight); the
+    /// path is the actor's state database, for the marker read.
+    ActorBusy(PathBuf),
     DependencyUnavailable,
     RegistryUnavailable,
     ResultLimitExceeded,
@@ -1154,17 +1232,18 @@ async fn project_swap(
 ) -> Result<TakerSwapViewV1, MonitoringError> {
     let lookup = Arc::clone(initiation);
     let swap_id = swap_id.clone();
+    let lookup_id = swap_id.clone();
     let (prepared, facts, receipt_binding) = tokio::task::spawn_blocking(move || {
         let mut context = lookup
             .lock()
             .map_err(|_| MonitoringError::RegistryUnavailable)?;
         let prepared = context
-            .prepared_for_swap(&swap_id)
+            .prepared_for_swap(&lookup_id)
             .cloned()
             .ok_or(MonitoringError::NotFound)?;
         let facts = context
             .registry_mut()
-            .lookup_initiation_for_monitor(&swap_id, prepared.authority())
+            .lookup_initiation_for_monitor(&lookup_id, prepared.authority())
             .map_err(|_| MonitoringError::RegistryUnavailable)?
             .ok_or(MonitoringError::NotFound)?;
         if &facts != prepared.facts() {
@@ -1192,6 +1271,36 @@ async fn project_swap(
                 Err(MonitoringError::BundleInvalid) => {
                     Ok(commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap)
                 }
+                // The supervisor holds the actor: the row is what its last
+                // attempt observed (the Maker's progress-snapshot pattern).
+                #[cfg(feature = "pair-zec")]
+                Err(MonitoringError::ActorBusy(state_db))
+                    if prepared.facts().route().pair() == Pair::Zcash =>
+                {
+                    let record = super::zec_supervisor::schedule_record(initiation, &swap_id).await;
+                    match record.as_ref().and_then(|record| record.progress()) {
+                        // A snapshot older than the bound is not answered: a
+                        // stale claim_available would mislead the desk.
+                        Some(snapshot) if super::zec_supervisor::snapshot_is_fresh(snapshot) => {
+                            let mut view =
+                                super::zec_supervisor::view_from_snapshot(&facts, snapshot);
+                            if view.state == TakerSwapStateV1::AwaitingFirstLock
+                                && lez_depositor_balance_marker(&state_db)
+                                    .is_some_and(|marker| marker.is_file())
+                            {
+                                view.state = TakerSwapStateV1::AttentionRequired;
+                                view.available_action = None;
+                                view.attention_reason =
+                                    Some("lez_depositor_balance_insufficient".to_owned());
+                            }
+                            super::zec_supervisor::overlay_schedule(&mut view, record.as_ref());
+                            let admitted = lookup_monitored_action(initiation, &swap_id).await?;
+                            overlay_admitted_action(view, admitted.as_ref())
+                        }
+                        _ => Err(MonitoringError::DependencyUnavailable),
+                    }
+                }
+                Err(MonitoringError::ActorBusy(_)) => Err(MonitoringError::DependencyUnavailable),
                 other => other,
             }
         }
@@ -1236,9 +1345,17 @@ async fn project_receipt_bound_swap(
             })
         };
         let before = load()?;
+        // A Zcash actor is driven by the Node's supervisor, which holds its
+        // lock for a whole drive; a read does not wait that out, it answers
+        // from the supervisor's last snapshot instead (project_swap).
+        let wait = if pair == Pair::Zcash {
+            MONITOR_LOCK_WAIT_SUPERVISED
+        } else {
+            LOCK_WAIT
+        };
         let held_lock =
-            ActorHeldLock::acquire_for_within(before.swap_id(), before.state_db(), LOCK_WAIT)
-                .map_err(|_| MonitoringError::DependencyUnavailable)?;
+            ActorHeldLock::acquire_for_within(before.swap_id(), before.state_db(), wait)
+                .map_err(|_| MonitoringError::ActorBusy(before.state_db().to_path_buf()))?;
         let config = load()?;
         if before.custody_identity() != config.custody_identity() {
             return Err(MonitoringError::DependencyUnavailable);
@@ -1278,8 +1395,17 @@ async fn project_receipt_bound_swap(
         view.available_action = None;
         view.attention_reason = Some("lez_depositor_balance_insufficient".to_owned());
     }
+    #[cfg(feature = "pair-zec")]
+    if pair == Pair::Zcash {
+        let record = super::zec_supervisor::schedule_record(initiation, config.swap_id()).await;
+        super::zec_supervisor::overlay_schedule(&mut view, record.as_ref());
+    }
     overlay_admitted_action(view, admitted_action.as_ref())
 }
+
+/// How long a read waits for a supervised Zcash actor's lock before it
+/// answers from the supervisor's snapshot.
+const MONITOR_LOCK_WAIT_SUPERVISED: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Reads `fee_sat` from the funding plan the take wrote beside the actor's
 /// state (`<swap>/actor/state.sqlite3` and `<swap>/bitcoin/funding-plan.json`).
@@ -1376,6 +1502,8 @@ fn view_from_actor_status(
         available_action,
         privacy_guidance,
         attention_reason: None,
+        last_failure_class: None,
+        observed_at: None,
         terms: None,
         effects: Vec::new(),
         bitcoin_lock_fee_sat: None,
@@ -1384,7 +1512,7 @@ fn view_from_actor_status(
 
 /// Maps the ZEC actor's durable phase to what the Taker desk may do next.
 #[cfg(feature = "pair-zec")]
-fn zec_actor_progress(
+pub(super) fn zec_actor_progress(
     phase: Phase,
     next_action: ZecLifecycleAction,
 ) -> (
@@ -1394,6 +1522,13 @@ fn zec_actor_progress(
 ) {
     match phase {
         Phase::Offered => (TakerSwapStateV1::AwaitingFirstLock, None, None),
+        // TakerSellsForeign: the Taker is the LEZ claimant, and its revealing
+        // LEZ claim is the owner's action once both legs are locked.
+        Phase::BothLegsLocked if next_action == ZecLifecycleAction::ClaimLez => (
+            TakerSwapStateV1::ClaimAvailable,
+            Some(TakerTerminalActionV1::Claim),
+            None,
+        ),
         Phase::AwaitingTakerConfirmations
         | Phase::TakerLockConfirmed
         | Phase::AwaitingMakerConfirmations
@@ -1441,13 +1576,18 @@ fn zec_actor_progress(
             Some(TakerTerminalActionV1::Refund),
             None,
         ),
+        // TakerSellsForeign: the Taker's revealing LEZ claim is final and the
+        // Maker's Zcash follow-up claim completes the swap; nothing to press.
+        Phase::ClaimEvidenceAvailable if next_action == ZecLifecycleAction::Wait => {
+            (TakerSwapStateV1::ClaimInProgress, None, None)
+        }
         Phase::ClaimEvidenceAvailable | Phase::MakerLegRefunded | Phase::MakerRecoveryAvailable => {
             (TakerSwapStateV1::AttentionRequired, None, None)
         }
     }
 }
 
-fn map_monitoring_error(error: MonitoringError) -> ErrorObjectOwned {
+fn map_monitoring_error(error: &MonitoringError) -> ErrorObjectOwned {
     match error {
         MonitoringError::UnsupportedSchemaVersion => rpc_error(
             INVALID_PARAMS_CODE,
@@ -1464,7 +1604,7 @@ fn map_monitoring_error(error: MonitoringError) -> ErrorObjectOwned {
             "Taker swap bundle invalid",
             "taker_swap_bundle_invalid",
         ),
-        MonitoringError::DependencyUnavailable => rpc_error(
+        MonitoringError::ActorBusy(_) | MonitoringError::DependencyUnavailable => rpc_error(
             DEPENDENCY_UNAVAILABLE_CODE,
             "Taker dependency unavailable",
             "taker_monitor_unavailable",
@@ -1733,7 +1873,7 @@ async fn lock_swap(
 /// follow-up claim is awaited.
 /// How long an owner's request waits for the observer to release a swap's
 /// actor lock before it reports the dependency unavailable.
-const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+pub(super) const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 const fn taker_observation_phase(phase: Phase) -> bool {
     matches!(
@@ -1859,157 +1999,6 @@ fn spawn_dynamic_observer(state: Arc<TakerServiceState>) {
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
         }
     });
-}
-
-/// How often the Node re-drives an admitted Zcash terminal action.
-#[cfg(feature = "pair-zec")]
-const ZEC_REDRIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Re-drives of one swap's admitted action per process before the Node stops
-/// and leaves the next drive to a Retry: four hours at the interval.
-#[cfg(feature = "pair-zec")]
-const ZEC_REDRIVE_BUDGET: u32 = 480;
-
-/// Whether `spent` re-drives leave room for another.
-#[cfg(feature = "pair-zec")]
-const fn zec_redrive_budget_allows(spent: u32) -> bool {
-    spent < ZEC_REDRIVE_BUDGET
-}
-
-/// What the re-driver remembers about one swap's admitted action.
-#[cfg(feature = "pair-zec")]
-#[derive(Default)]
-struct ZecRedriveProgress {
-    drives: u32,
-    last_error: Option<String>,
-}
-
-#[cfg(feature = "pair-zec")]
-impl ZecRedriveProgress {
-    /// One log line when a tick's error first appears or changes kind, so the
-    /// operator sees why a swap is not moving without reading the actor.
-    fn report(
-        &mut self,
-        swap_id: &SwapId,
-        action: TakerTerminalActionV1,
-        step: &str,
-        error: ActionError,
-    ) {
-        let kind = format!("{error:?}");
-        if self.last_error.as_deref() != Some(kind.as_str()) {
-            eprintln!(
-                "taker zec redriver: {} {action:?} {step}: {kind} after {} drive(s); the next tick retries",
-                swap_id.as_str(),
-                self.drives
-            );
-            self.last_error = Some(kind);
-        }
-    }
-}
-
-/// Starts the re-driver of admitted Zcash actions when a runtime is available.
-#[cfg(feature = "pair-zec")]
-fn spawn_zec_redriver(state: Arc<TakerServiceState>) {
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        eprintln!("taker zec redriver: no async runtime; admitted actions re-drive only on demand");
-        return;
-    };
-    handle.spawn(async move {
-        let mut spent = std::collections::HashMap::new();
-        loop {
-            tokio::time::sleep(ZEC_REDRIVE_INTERVAL).await;
-            Box::pin(redrive_admitted_zec_actions(&state, &mut spent)).await;
-        }
-    });
-}
-
-/// A Zcash swap's admitted claim or refund is finished by the Node. The ZEC
-/// actor only moves when it is driven, and the owner's request admitted the
-/// action once: each tick re-drives it exactly as a replay of that request
-/// would, against the generation it was admitted at, until the actor reports
-/// the action complete or the per-swap budget is spent. One press of
-/// "Refund" or "Claim" is enough; a Retry remains a replay of the same request.
-#[cfg(feature = "pair-zec")]
-async fn redrive_admitted_zec_actions(
-    state: &TakerServiceState,
-    spent: &mut std::collections::HashMap<SwapId, ZecRedriveProgress>,
-) {
-    let Some(initiation) = state.initiation.clone() else {
-        return;
-    };
-    let swaps = {
-        let Ok(context) = initiation.lock() else {
-            return;
-        };
-        context.zec_bound_swaps()
-    };
-    for prepared in swaps {
-        let swap_id = prepared.swap_id().clone();
-        let Ok(Some(admission)) = lookup_admitted_action_for_swap(&initiation, &swap_id).await
-        else {
-            continue;
-        };
-        let action = terminal_action_of(admission.action());
-        let progress = spent.entry(swap_id.clone()).or_default();
-        if !zec_redrive_budget_allows(progress.drives) {
-            if progress.drives == ZEC_REDRIVE_BUDGET {
-                eprintln!(
-                    "taker zec redriver: {} {action:?} not terminal after {ZEC_REDRIVE_BUDGET} drives; the next drive is a Retry",
-                    swap_id.as_str()
-                );
-                progress.drives += 1;
-            }
-            continue;
-        }
-        let Some(receipt_binding) = prepared.execution().receipt_binding() else {
-            continue;
-        };
-        let Ok((config, held_lock)) = load_bound_action_actor(&prepared, receipt_binding).await
-        else {
-            continue;
-        };
-        match replay_actor_effect_is_required(
-            &config,
-            &held_lock,
-            action,
-            admission.requested_after_generation(),
-        )
-        .await
-        {
-            Ok(true) => {
-                if progress.drives == 0 {
-                    eprintln!(
-                        "taker zec redriver: {} re-drives the admitted {action:?} every {}s until terminal",
-                        swap_id.as_str(),
-                        ZEC_REDRIVE_INTERVAL.as_secs()
-                    );
-                }
-                progress.drives += 1;
-                match reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock)
-                    .await
-                {
-                    Ok(effect_config) => {
-                        if let Err(error) =
-                            execute_terminal_actor_command(&effect_config, &held_lock, action).await
-                        {
-                            progress.report(&swap_id, action, "drive", error);
-                        }
-                    }
-                    Err(error) => progress.report(&swap_id, action, "custody", error),
-                }
-            }
-            // The action is complete: nothing left to drive for this admission.
-            Ok(false) => {
-                spent.remove(&swap_id);
-            }
-            // The actor is unreadable or mid-move; this tick's attempt is spent.
-            Err(error) => {
-                progress.drives += 1;
-                progress.report(&swap_id, action, "status", error);
-            }
-        }
-        drop(held_lock);
-    }
 }
 
 /// Pairs whose lifecycle this Node runs itself.
@@ -2283,9 +2272,10 @@ async fn execute_prepared_btc(
         report_actor_failure("take", &error);
         InitiationError::ExecutionUnavailable
     })?;
-    // The BTC actor keeps no durable state until it is activated; the ZEC actor
-    // activates during provisioning. Activate here so the first monitor call
-    // already reports revision 0 instead of "not activated".
+    // The BTC actor keeps no durable state until it is activated; activate here
+    // so the first monitor call already reports revision 0 instead of "not
+    // activated". The ZEC actor is activated by the Node's supervisor on its
+    // first attempt after the take (zec_supervisor.rs), not here.
     let receipt = execution.receipt_output().to_path_buf();
     let swap_id = prepared.swap_id().clone();
     let (route_actor, held_lock) = tokio::task::spawn_blocking(move || {
@@ -2407,6 +2397,8 @@ fn commit_from_facts(
             available_action: None,
             privacy_guidance: None,
             attention_reason: None,
+            last_failure_class: None,
+            observed_at: None,
             terms: None,
             effects: Vec::new(),
             bitcoin_lock_fee_sat: None,
@@ -2602,10 +2594,12 @@ mod tests {
                 None,
             )
         );
-        // The reverse direction's Taker is the first claimant: its revealing LEZ
-        // claim is offered the same way (Part D, step 18).
+        // The reverse direction's Taker is the first claimant: the SDK offers
+        // its revealing LEZ claim at BothLegsLocked (next_action claim_lez), and
+        // once that claim is final (ClaimEvidenceAvailable, next_action wait)
+        // only the Maker's Zcash follow-up claim is left to observe.
         assert_eq!(
-            zec_actor_progress(Phase::ClaimEvidenceAvailable, ZecLifecycleAction::ClaimLez),
+            zec_actor_progress(Phase::BothLegsLocked, ZecLifecycleAction::ClaimLez),
             (
                 TakerSwapStateV1::ClaimAvailable,
                 Some(TakerTerminalActionV1::Claim),
@@ -2614,6 +2608,11 @@ mod tests {
         );
         assert_eq!(
             zec_actor_progress(Phase::ClaimEvidenceAvailable, ZecLifecycleAction::Wait),
+            (TakerSwapStateV1::ClaimInProgress, None, None)
+        );
+        // A Maker-only pair the Taker never produces reads as needing attention.
+        assert_eq!(
+            zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::Wait),
             (TakerSwapStateV1::AttentionRequired, None, None)
         );
         assert_eq!(
@@ -2720,17 +2719,8 @@ mod tests {
         assert!(!replay_actor_effect_required(parked(), 4, TakerTerminalActionV1::Claim).unwrap());
     }
 
-    #[cfg(feature = "pair-zec")]
     #[test]
-    fn zec_redrive_budget_is_bounded_and_facade_actions_map_back() {
-        assert!(zec_redrive_budget_allows(0));
-        assert!(zec_redrive_budget_allows(ZEC_REDRIVE_BUDGET - 1));
-        assert!(!zec_redrive_budget_allows(ZEC_REDRIVE_BUDGET));
-        // Four hours of 30 s ticks before the Node leaves the next drive to a Retry.
-        assert_eq!(
-            u64::from(ZEC_REDRIVE_BUDGET) * ZEC_REDRIVE_INTERVAL.as_secs(),
-            4 * 3600
-        );
+    fn facade_actions_map_back_to_terminal_actions() {
         for action in [TakerTerminalActionV1::Claim, TakerTerminalActionV1::Refund] {
             assert_eq!(terminal_action_of(facade_action(action)), action);
         }

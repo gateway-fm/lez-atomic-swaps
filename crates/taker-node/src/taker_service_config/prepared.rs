@@ -36,6 +36,9 @@ const MAX_SIGNING_KEY_BYTES: u64 = 32;
 pub struct ConfiguredTakerInitiationContext {
     execute_prepared: bool,
     registry: SqliteTakerFacadeStore,
+    /// The Zcash actors' supervision schedule, its own file beside the registry.
+    #[cfg(feature = "pair-zec")]
+    schedule: lez_swap_store::SqliteTakerActorSchedule,
     prepared_by_offer: BTreeMap<Box<str>, PreparedTakerInitiationV1>,
     /// Node-owned Bitcoin lifecycle: prepares any live Bitcoin offer at take time.
     dynamic_btc: Option<std::sync::Arc<DynamicBtcRole>>,
@@ -152,6 +155,17 @@ impl ConfiguredTakerInitiationContext {
             return Err(());
         }
         prepared.execution.receipt_binding = Some(binding);
+        // A bound Zcash swap is the supervisor's from here: queued at
+        // generation zero, due at the next tick (a replay keeps its row).
+        #[cfg(feature = "pair-zec")]
+        if prepared.facts().route().pair() == Pair::Zcash {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs());
+            self.schedule
+                .register(prepared.swap_id().as_str(), now)
+                .map_err(|_| ())?;
+        }
         Ok(())
     }
 
@@ -159,6 +173,12 @@ impl ConfiguredTakerInitiationContext {
     #[must_use]
     pub const fn registry_mut(&mut self) -> &mut SqliteTakerFacadeStore {
         &mut self.registry
+    }
+
+    /// Mutably borrows the Zcash actors' supervision schedule.
+    #[cfg(feature = "pair-zec")]
+    pub(crate) const fn schedule_mut(&mut self) -> &mut lez_swap_store::SqliteTakerActorSchedule {
+        &mut self.schedule
     }
 }
 
@@ -418,6 +438,15 @@ pub(super) fn build_initiation_context(
 ) -> Result<ConfiguredTakerInitiationContext, TakerServiceStartupError> {
     let registry = SqliteTakerFacadeStore::open_existing(&configuration.registry_database)
         .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
+    // The schedule is created on first start beside the registry; the
+    // registry itself validates its exact table set and is not touched.
+    #[cfg(feature = "pair-zec")]
+    let schedule = lez_swap_store::SqliteTakerActorSchedule::open(
+        configuration
+            .registry_database
+            .with_file_name("taker-actor-schedule.sqlite3"),
+    )
+    .map_err(|_| TakerServiceStartupError::InitiationUnavailable)?;
     let mut prepared_by_offer = BTreeMap::new();
 
     for (expected_pair, configured) in configuration.entries() {
@@ -483,6 +512,8 @@ pub(super) fn build_initiation_context(
     Ok(ConfiguredTakerInitiationContext {
         execute_prepared: configuration.execute_prepared,
         registry,
+        #[cfg(feature = "pair-zec")]
+        schedule,
         prepared_by_offer,
         dynamic_btc,
     })

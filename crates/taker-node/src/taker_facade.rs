@@ -314,6 +314,15 @@ pub struct TakerSwapViewV1 {
     /// (`lez_depositor_balance_insufficient`: the LEZ lot cannot be funded).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attention_reason: Option<String>,
+    /// Why the Node's supervisor last backed off on this swap's actor, or
+    /// why it stopped (a `failed` row): one of the shared failure classes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure_class: Option<String>,
+    /// Set when the row was answered from the Node's last status snapshot
+    /// because the actor was busy (Unix seconds of that observation); absent
+    /// on a row read from the actor itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<u64>,
     /// The countersigned schedule and amounts, once the BTC agreement is bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terms: Option<BtcAgreementTermsV1>,

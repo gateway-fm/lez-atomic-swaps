@@ -30,7 +30,9 @@ log "stopping both Nodes (their per-swap sidecars stop with them)"
 log "Taker: swap directories and registry rows"
 in_role taker bash -c 'for pair in /var/lib/lez/taker/*/; do
   rm -rf "$pair"swaps/* "$pair"sidecar-state "$pair"sidecar.log
-done'
+done
+# the Zcash actors'"'"' supervision schedule (one row per taken swap) goes with the swaps
+rm -f /var/lib/lez/taker/taker-actor-schedule.sqlite3 /var/lib/lez/taker/taker-actor-schedule.sqlite3-wal /var/lib/lez/taker/taker-actor-schedule.sqlite3-shm'
 in_role taker python3 - <<'PY'
 import sqlite3
 store = sqlite3.connect("/var/lib/lez/taker/registry.sqlite3")

@@ -23,6 +23,7 @@ mod maker_offer;
 mod platform_contract;
 pub use platform_contract::{is_owner_private_regular_file, open_no_symlinks};
 mod public_effect_journal;
+mod taker_actor_schedule;
 mod taker_facade_registry;
 mod xmr_effect_workflow_journal;
 mod zec_recovery;
@@ -75,6 +76,10 @@ pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
     PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
     PublicEffectState, PublicEffectSubmissionResult, SqlitePublicEffectJournal,
+};
+pub use taker_actor_schedule::{
+    COORDINATOR_RESTARTED, SqliteTakerActorSchedule, TakerActorLeaseV1,
+    TakerActorProgressSnapshotV1, TakerActorScheduleError, TakerActorScheduleRecordV1,
 };
 pub use taker_facade_registry::{
     SqliteTakerFacadeStore, TakerActionAdmissionV1, TakerFacadeActionV1, TakerFacadeStoreError,
