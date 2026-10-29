@@ -1549,11 +1549,20 @@ fn register_methods(
         state.validate_runtime(&request.context, &request.runtime)?;
         let operation = request.clone();
         let runtime = Arc::clone(&state.runtime);
+        // A native escrow pair transaction is asked for again only after the
+        // caller observed it absent, so its journaled acceptance is decided on
+        // the chain again: landed (already known), nonce taken (superseded,
+        // D1) or sent again. A replayed "accepted" never reached the node
+        // (chain 35, 2026-10-29). Other submissions keep their one attempt.
+        let decide_again = runtime
+            .native_escrow_lineage_member(&request.transaction)
+            .await;
         state
-            .execute(
+            .execute_with_policy(
                 METHOD_SUBMIT_TRANSACTION,
                 &request.context,
                 &request,
+                decide_again,
                 || async move {
                     runtime
                         .submit_transaction(&operation)
@@ -2034,6 +2043,34 @@ impl ServerState {
         Operation: FnOnce() -> Fut,
         Fut: Future<Output = Result<Value, OperationFailure>>,
     {
+        // The XMR claim authorization's node facts move: its journaled
+        // success is decided again. Everything else replays.
+        self.execute_with_policy(
+            method,
+            context,
+            request,
+            method == METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+            operation,
+        )
+        .await
+    }
+
+    /// As [`Self::execute`]; `decide_success_again` re-runs the operation for
+    /// a journaled success instead of replaying it (errors and in-flight
+    /// markers stay single-attempt either way).
+    async fn execute_with_policy<Request, Operation, Fut>(
+        &self,
+        method: &'static str,
+        context: &MessageContext,
+        request: &Request,
+        decide_success_again: bool,
+        operation: Operation,
+    ) -> Result<Value, ErrorObjectOwned>
+    where
+        Request: Serialize,
+        Operation: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Value, OperationFailure>>,
+    {
         self.validate_context(context)?;
         let (request_sha256, replay_request) =
             encode_request(method, request).map_err(|failure| protocol_error(context, failure))?;
@@ -2042,8 +2079,7 @@ impl ServerState {
             if let Some(outcome) = store
                 .replay(context.request_id.as_str(), method, &request_sha256)
                 .map_err(|failure| protocol_error(context, failure))?
-                && (method != METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
-                    || !matches!(&outcome, PersistedOutcome::Success(_)))
+                && !(decide_success_again && matches!(outcome, PersistedOutcome::Success(_)))
             {
                 return outcome.into_rpc_result();
             }

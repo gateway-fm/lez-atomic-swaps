@@ -1402,6 +1402,15 @@ impl BridgeRuntime {
         )
     }
 
+    /// Whether these exact bytes are one of the native escrow pair's
+    /// transactions this sidecar planned (the original pair or a re-plan).
+    pub async fn native_escrow_lineage_member(&self, prepared: &PreparedTransaction) -> bool {
+        matches!(
+            self.planner.native_escrow_planned_nonce(prepared).await,
+            Ok(Some(_))
+        )
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-

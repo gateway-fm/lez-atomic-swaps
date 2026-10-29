@@ -639,14 +639,29 @@ async fn fund_supersession_keeps_the_initialization_and_replays_identically() {
         .expect("lineage replay after restart");
     assert_eq!(another_context.funding, replanned.funding);
     assert_eq!(restarted_chain.nonce_calls(), 0);
-    // The recovered lineage still owns the re-planned funding (already known).
-    let known = restarted
+    // The recovered lineage still owns the re-planned funding. Asked again
+    // for the same bytes the sidecar decides on the chain again instead of
+    // replaying the journaled acceptance (chain 35: a replayed "accepted"
+    // never reached the node after the first copy was dropped at execution);
+    // the signer's nonce has moved past this plan above, so the answer is
+    // Superseded and nothing is resent.
+    let decided = restarted
         .client()
         .submit_transaction(submit_request(signer, &replanned.funding))
         .await
-        .expect("known funding");
-    assert_eq!(known.outcome, SubmissionOutcome::Accepted);
-    assert_eq!(chain.send_count(), 2, "journal replay, no resend");
+        .expect("re-planned funding decided again");
+    assert_eq!(
+        decided.outcome,
+        SubmissionOutcome::Superseded {
+            planned_nonce: nonce_of(&replanned.funding, signer),
+            live_nonce: FIRST_NONCE + 5,
+        }
+    );
+    assert_eq!(
+        chain.send_count(),
+        2,
+        "decided on the chain again: nothing resent"
+    );
 
     restarted.server.stop().await.expect("stop");
     sequencer.stop().expect("sequencer stop");
@@ -758,4 +773,75 @@ async fn initialize_supersessions_chain_and_the_sixth_is_refused_by_name() {
     fresh_sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
     fresh_sequencer.stopped().await;
+}
+
+/// The live failure of chain 35: the actor resubmits the same exact bytes
+/// under the same durable request id whenever it observes them absent. A
+/// journaled acceptance must not be replayed for that: the decision is made
+/// again on the chain — the bytes go out again while nothing changed, and
+/// once another transaction of the signer took the nonce the answer is
+/// Superseded, so the actor can re-plan.
+#[tokio::test]
+async fn a_resubmission_after_a_journaled_acceptance_is_decided_on_the_chain_again() {
+    let (signer, key) = account(31);
+    let (claimant, _) = account(32);
+    let chain = Chain::new();
+    let (endpoint, sequencer) = start_sequencer(chain.clone()).await;
+    let directory = secure_directory();
+    let sidecar = start_sidecar(signer, key, &endpoint, directory.path(), &chain).await;
+
+    let pair = prepare(&sidecar, signer, claimant).await;
+    let request = submit_request(signer, &pair.initialization);
+    let accepted = sidecar
+        .client()
+        .submit_transaction(request.clone())
+        .await
+        .expect("first submission");
+    assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(chain.send_count(), 1);
+
+    // Nothing changed on the chain: the resubmission reaches the node again
+    // instead of being answered from the journal.
+    let again = sidecar
+        .client()
+        .submit_transaction(request.clone())
+        .await
+        .expect("resubmission");
+    assert_eq!(again.outcome, SubmissionOutcome::Accepted);
+    assert_eq!(chain.send_count(), 2, "the exact bytes went out again");
+
+    // The signer's other transactions took the nonce (the first submission
+    // was dropped at execution): the same request is now Superseded.
+    chain.set_live_nonce(FIRST_NONCE + 2);
+    let superseded = sidecar
+        .client()
+        .submit_transaction(request.clone())
+        .await
+        .expect("resubmission after the nonce passed");
+    assert_eq!(
+        superseded.outcome,
+        SubmissionOutcome::Superseded {
+            planned_nonce: FIRST_NONCE,
+            live_nonce: FIRST_NONCE + 2,
+        }
+    );
+    assert_eq!(
+        chain.send_count(),
+        2,
+        "superseded bytes are never broadcast"
+    );
+
+    // Landed bytes are reported known, not resent.
+    chain.include_exact(&pair.initialization);
+    let known = sidecar
+        .client()
+        .submit_transaction(request)
+        .await
+        .expect("resubmission of included bytes");
+    assert_eq!(known.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(chain.send_count(), 2);
+
+    sidecar.server.stop().await.expect("stop");
+    sequencer.stop().expect("sequencer stop");
+    sequencer.stopped().await;
 }

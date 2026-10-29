@@ -589,8 +589,13 @@ async fn run_effect(
             },
         )
     };
+    // A re-plan inside an otherwise identical `submitted` is a distinct effect.
+    let replans = effect
+        .get("replans")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
     let line = format!(
-        "{} {} {} {} {} {}",
+        "{} {} {} {} {} {} replans={replans}",
         command_name(command),
         field("outcome"),
         field("operation"),
