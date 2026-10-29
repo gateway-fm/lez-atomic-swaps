@@ -1067,6 +1067,9 @@ fn map_action_error(error: ActionError) -> ErrorObjectOwned {
 enum MonitoringError {
     UnsupportedSchemaVersion,
     NotFound,
+    /// The swap's own bundle (receipt, actor configuration) no longer passes
+    /// the checks it was bound with; the swap needs attention, the Node is fine.
+    BundleInvalid,
     DependencyUnavailable,
     RegistryUnavailable,
     ResultLimitExceeded,
@@ -1169,7 +1172,17 @@ async fn project_swap(
         Err(_) => Err(MonitoringError::DependencyUnavailable),
         Ok(_) => {
             let receipt_binding = receipt_binding.ok_or(MonitoringError::DependencyUnavailable)?;
-            project_receipt_bound_swap(initiation, &prepared, &facts, receipt_binding).await
+            match project_receipt_bound_swap(initiation, &prepared, &facts, receipt_binding).await {
+                // The bundle the swap was bound with (its receipt, its copied
+                // actor configuration) fails the checks it was pinned by: an
+                // altered or damaged copy. That swap needs attention and
+                // cannot be acted on; it must not read as a Node outage, nor
+                // hide every other swap from the list.
+                Err(MonitoringError::BundleInvalid) => {
+                    Ok(commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap)
+                }
+                other => other,
+            }
         }
     }
 }
@@ -1187,6 +1200,9 @@ async fn project_receipt_bound_swap(
     let receipt_sha256 = receipt_binding.sha256();
     let receipt_identity = receipt_binding.identity();
     let (config, held_lock, terms, effects, lock_fee) = tokio::task::spawn_blocking(move || {
+        // Loading reads and re-verifies the swap's own files against the
+        // binding the take recorded; it fails only on that bundle, never on a
+        // dependency, so its failure is the swap's, not the Node's.
         let load = || {
             RouteActor::load_for_monitor(
                 pair,
@@ -1197,7 +1213,7 @@ async fn project_receipt_bound_swap(
                 receipt_identity.device(),
                 receipt_identity.inode(),
             )
-            .map_err(|_| MonitoringError::DependencyUnavailable)
+            .map_err(|_| MonitoringError::BundleInvalid)
         };
         let before = load()?;
         let held_lock =
@@ -1409,6 +1425,11 @@ fn map_monitoring_error(error: MonitoringError) -> ErrorObjectOwned {
             SWAP_NOT_FOUND_CODE,
             "Taker swap not found",
             "swap_not_found",
+        ),
+        MonitoringError::BundleInvalid => rpc_error(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker swap bundle invalid",
+            "taker_swap_bundle_invalid",
         ),
         MonitoringError::DependencyUnavailable => rpc_error(
             DEPENDENCY_UNAVAILABLE_CODE,
