@@ -235,12 +235,29 @@ pub trait LezFirstLockPort: Send + Sync {
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<FirstLockObservation, Self::Error>;
 
-    /// Submits byte-identical durable material after a stable absence.
+    /// Submits byte-identical durable material after a stable absence, or
+    /// reports that the plan's nonce was taken and nothing went out.
     async fn submit_first_lock(
         &self,
         agreement: &crate::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<FirstLockSubmitOutcome, Self::Error>;
+}
+
+/// What the LEZ adapter did with one exact first-lock submission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FirstLockSubmitOutcome {
+    /// The node accepted the exact bytes or already knew them.
+    Accepted,
+    /// Nothing was submitted: the planned signer nonce is behind the live one
+    /// and the transaction is not included (see
+    /// [`crate::FirstLockDriveOutcome::Superseded`]).
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Typed Zcash first-lock action and observation boundary.
@@ -387,6 +404,22 @@ pub trait RecoveryStore: Clone + Send + Sync {
         swap_id: &SwapId,
     ) -> Result<Option<FirstLockIntentV1>, Self::Error>;
 
+    /// Atomically replaces the open first-lock plan with its re-plan and keeps
+    /// the superseded plan as lineage. Replaying the same re-plan is
+    /// `ExistingSame`; a different plan under a used index, or no open plan to
+    /// retire, is `Conflict`.
+    async fn restage_first_lock_intent(
+        &self,
+        intent: &FirstLockIntentV1,
+        supersession: &crate::FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Every recorded re-plan of this swap's LEZ lock, oldest first.
+    async fn load_first_lock_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<crate::FirstLockSupersessionV1>, Self::Error>;
+
     /// Atomically commits exact confirmed evidence with the next aggregate
     /// revision and closes the matching pending intent.
     async fn commit_first_lock_transition(
@@ -439,6 +472,13 @@ pub trait RecoveryStore: Clone + Send + Sync {
         &self,
         swap_id: &SwapId,
     ) -> Result<Option<MakerLockIntentV1>, Self::Error>;
+
+    /// The maker's counterpart of `restage_first_lock_intent`.
+    async fn restage_maker_lock_intent(
+        &self,
+        intent: &MakerLockIntentV1,
+        supersession: &crate::FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
 
     /// Atomically commits maker funding and closes its retained intent.
     async fn commit_maker_lock_transition(

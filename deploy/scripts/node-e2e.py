@@ -1422,6 +1422,25 @@ def zec_status(config: str) -> dict | None:
         return None
 
 
+def zec_replans(config: str) -> list[dict]:
+    """The re-plans of the Taker actor's LEZ first lock (D1): one row per
+    supersession with both nonces and both transaction ids, from the actor's
+    status (`lez_first_lock_replans`, absent when none)."""
+    status = zec_status(config) or {}
+    return list(status.get("lez_first_lock_replans") or [])
+
+
+def zec_log_replans(swap_id: str, config: str) -> list[dict]:
+    replans = zec_replans(config)
+    if not replans:
+        log(f"  {swap_id[:12]}: the Taker re-planned its LEZ lock 0 times")
+    for replan in replans:
+        log(f"  {swap_id[:12]}: LEZ {replan.get('step')} re-plan {replan.get('replan_index')}: nonce "
+            f"{replan.get('superseded_nonce')} → {replan.get('replanned_nonce')}, tx "
+            f"{str(replan.get('superseded_transaction_id'))[:12]} → {str(replan.get('replanned_transaction_id'))[:12]}")
+    return replans
+
+
 def zec_describe(effect: dict | None) -> str:
     if not effect:
         return "drive refused"
@@ -1555,8 +1574,19 @@ def scenario_zec_happy(stamp: str) -> dict:
         raise Failure(f"after a restart the Maker reports {swap_id[:12]} as {maker_phase(swap_id)} "
                       f"({view.get('schedule_state')}), not completed/terminal")
     log("  Maker restarted and still reports the swap completed")
+    # D1 acceptance on a lone swap: the Maker funded in one or two attempts
+    # (the second only when its first drive saw the lock before its depth) and
+    # the Taker never re-planned its LEZ lock (no other swap took its nonce).
+    maker_attempts = int(view.get("attempt_count") or 0)
+    replans = zec_log_replans(swap_id, config)
+    log(f"  Maker funding attempt count {maker_attempts}; Taker LEZ re-plan count {len(replans)}")
+    if maker_attempts < 1 or maker_attempts > 2:
+        raise Failure(f"the Maker needed {maker_attempts} attempts for a lone swap; 1 or 2 expected")
+    if replans:
+        raise Failure(f"the Taker re-planned its LEZ lock {len(replans)} times on a lone swap; 0 expected")
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
             "maker_restart_after_completion": "completed",
+            "maker_funding_attempt_count": maker_attempts, "taker_lez_replans": replans,
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
             "zcash_claim": {"transaction_id": claim_tx[0], "height": claim_tx[1]},
             "zcash_refund_height": corridor["zcash_refund_height"]}
@@ -1641,9 +1671,18 @@ def scenario_zec_concurrent(stamp: str) -> dict:
         claims[swap_id] = claim_tx
         log(f"  Taker's Zcash claim for {swap_id[:12]}: {claim_tx[0]} in zebra block {claim_tx[1]}")
         wait_completed(swap_id, timeout=600)
+    # D1: two Taker locks of one signer interleave; whichever lost its nonce
+    # re-planned in the same drive attempt. The lineage (both nonces, both
+    # transaction ids per re-plan) is the evidence, zero re-plans is a pass too.
+    replans = {swap_id: zec_log_replans(swap_id, config) for swap_id, config, _ in swaps}
+    for swap_id, rows in replans.items():
+        for row in rows:
+            if int(row.get("replanned_nonce", 0)) <= int(row.get("superseded_nonce", 0)):
+                raise Failure(f"{swap_id[:12]}: a re-plan did not advance the nonce: {row}")
     return {"swaps": [{"swap_id": swap_id, "offer_id": corridor["offer_id"], "entry": corridor["entry"],
                        "zcash_funding": {"transaction_id": fundings[swap_id][0], "height": fundings[swap_id][1]},
-                       "zcash_claim": {"transaction_id": claims[swap_id][0], "height": claims[swap_id][1]}}
+                       "zcash_claim": {"transaction_id": claims[swap_id][0], "height": claims[swap_id][1]},
+                       "taker_lez_replans": replans[swap_id]}
                       for swap_id, _, corridor in swaps],
             "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"]}
 

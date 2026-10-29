@@ -116,6 +116,12 @@ pub enum ZecSdkError {
     /// No durable first-lock plan exists for the active agreement.
     #[error("no durable first-lock plan exists for the active agreement")]
     MissingFirstLockIntent,
+    /// The re-plan does not retire the open plan and install the new one.
+    #[error("the first-lock re-plan does not supersede the open plan")]
+    FirstLockSupersessionMismatch,
+    /// The supersession record itself is malformed.
+    #[error(transparent)]
+    InvalidFirstLockSupersession(#[from] crate::FirstLockSupersessionError),
     /// No durable maker-lock plan exists for the active agreement.
     #[error("no durable maker-lock plan exists for the active agreement")]
     MissingMakerLockIntent,

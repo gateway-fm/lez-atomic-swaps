@@ -272,6 +272,8 @@ fn every_logical_operation_rejects_an_unusable_request_window_shape() {
             Some(bounded),
         ),
         (BridgeOperationKind::NativeEscrowFundSubmit, Some(bounded)),
+        (BridgeOperationKind::NativeEscrowSupersede1, Some(bounded)),
+        (BridgeOperationKind::NativeEscrowSupersede5, Some(bounded)),
         (BridgeOperationKind::RevealingClaimPrepare, Some(bounded)),
         (
             BridgeOperationKind::RevealingClaimExactObserve,

@@ -9,20 +9,21 @@ use lez_zec_swap_sdk::{
     ClaimPreimage, ClaimRecoveryStore, ClaimStepV1, CreateFirstLockOutcome,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockIntentRecordV1,
     FirstLockObservation, FirstLockPlanV1, FirstLockProjectionCommit, FirstLockRecordError,
-    FirstLockStepV1, FirstLockTransitionError, FirstLockTransitionRecordV1, LezEnvironmentV1,
-    LezNodeRemovalSnapshotV1, LezObservationEventV1, LezObservationReconciliationV1,
-    LezObservationTrackerError, LezObservationTrackerV1, LezStableTipV1,
-    MAX_FIRST_LOCK_SUBMISSION_BYTES, MAX_ZEC_AGREEMENT_RECORD_BYTES,
-    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockObservationV1,
-    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, ObservedTakerFirstLockEvidenceV1,
-    ObservedTakerFirstLockTransitionError, ObservedTakerFirstLockTransitionRecordV1,
-    PreparedFirstLockSubmissionV1, PreparedRefundSubmissionV1, RefundDriveOutcome,
-    RefundEligibilityObservationV1, RefundEvidenceV1, RefundFundingWaitReasonV1,
-    RefundIntentRecordV1, RefundIntentV1, RefundRecordError, RefundStepV1, RefundSubmitOutcomeV1,
-    RefundTransitionRecordV1, RefundTransitionV1, TakerFirstLockObservationV1,
-    ZcashClaimContextError, ZcashFundingContextV1, ZcashFundingObservationV1,
-    ZcashFundingWaitReasonV1, ZecAgreementV1Error, ZecLifecycleAction, ZecPairSdk, ZecProfileId,
-    ZecSdkError,
+    FirstLockStepV1, FirstLockSupersessionError, FirstLockSupersessionInputV1,
+    FirstLockSupersessionV1, FirstLockTransitionError, FirstLockTransitionRecordV1,
+    LezEnvironmentV1, LezNodeRemovalSnapshotV1, LezObservationEventV1,
+    LezObservationReconciliationV1, LezObservationTrackerError, LezObservationTrackerV1,
+    LezStableTipV1, MAX_FIRST_LOCK_REPLANS, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+    MAX_ZEC_AGREEMENT_RECORD_BYTES, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
+    MakerLockObservationV1, ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome,
+    ObservedTakerFirstLockEvidenceV1, ObservedTakerFirstLockTransitionError,
+    ObservedTakerFirstLockTransitionRecordV1, PreparedFirstLockSubmissionV1,
+    PreparedRefundSubmissionV1, RecoveryStore, RefundDriveOutcome, RefundEligibilityObservationV1,
+    RefundEvidenceV1, RefundFundingWaitReasonV1, RefundIntentRecordV1, RefundIntentV1,
+    RefundRecordError, RefundStepV1, RefundSubmitOutcomeV1, RefundTransitionRecordV1,
+    RefundTransitionV1, TakerFirstLockObservationV1, ZcashClaimContextError, ZcashFundingContextV1,
+    ZcashFundingObservationV1, ZcashFundingWaitReasonV1, ZecAgreementV1Error, ZecLifecycleAction,
+    ZecPairSdk, ZecProfileId, ZecSdkError,
 };
 use sha2::{Digest as _, Sha256};
 use zcash_encoding::ReverseHex;
@@ -4229,4 +4230,179 @@ async fn maker_polls_again_when_the_lez_lock_is_replaced() {
         ))
     ));
     assert!(zcash.1.submissions().is_empty());
+}
+
+/// D1: the sidecar reports the planned nonce taken (a concurrent swap of the
+/// same signer took it); nothing is submitted, the plan is re-planned at the
+/// live nonce and restaged with its lineage, and the next drive submits the
+/// re-planned bytes. Replaying the restage is idempotent; a record that does
+/// not link the open plan to the new one is refused.
+#[tokio::test]
+#[allow(clippy::too_many_lines, reason = "one re-plan told end to end")]
+async fn a_superseded_lez_initialize_is_restaged_and_its_re_plan_is_submitted() {
+    let wire = agreement_wire(
+        "sdk-first-lock-lez-superseded",
+        SwapDirection::TakerSellsLez,
+        FixtureVariant::Local,
+    );
+    let store = MemoryStore::default();
+    let lez = MemoryLezPort::default();
+    let sdk = first_lock_sdk(
+        Participant::Taker,
+        wire,
+        lez.clone(),
+        MemoryZcashPort::default(),
+        store.clone(),
+    );
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("agreement");
+    let active = sdk.activate(accepted).await.expect("activation");
+    let lez_plan = |initialize: u8, fund: u8, initialize_byte: u8, fund_byte: u8| {
+        FirstLockPlanV1::lez(
+            PreparedFirstLockSubmissionV1::new(
+                FirstLockStepV1::LezInitialize,
+                [initialize; 32],
+                vec![initialize_byte],
+            )
+            .expect("initialize"),
+            PreparedFirstLockSubmissionV1::new(
+                FirstLockStepV1::LezFund,
+                [fund; 32],
+                vec![fund_byte],
+            )
+            .expect("fund"),
+        )
+        .expect("ordered plan")
+    };
+    active
+        .stage_first_lock(lez_plan(0x11, 0x12, 0x71, 0x72))
+        .await
+        .expect("first plan durable");
+
+    lez.0.supersede_as(FirstLockStepV1::LezInitialize, 7, 9);
+    assert_eq!(
+        active.drive_first_lock().await.expect("superseded drive"),
+        FirstLockDriveOutcome::Superseded {
+            step: FirstLockStepV1::LezInitialize,
+            planned_nonce: 7,
+            live_nonce: 9,
+        }
+    );
+    assert!(
+        lez.0.submissions().is_empty(),
+        "nothing goes out on a taken nonce"
+    );
+
+    let supersession = FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+        replan_index: 1,
+        step: FirstLockStepV1::LezInitialize,
+        superseded_initialize_id: [0x11; 32],
+        superseded_fund_id: [0x12; 32],
+        superseded_nonce: 7,
+        replanned_initialize_id: [0x21; 32],
+        replanned_fund_id: [0x22; 32],
+        replanned_nonce: 9,
+    })
+    .expect("supersession");
+    let replanned = lez_plan(0x21, 0x22, 0x81, 0x82);
+    assert!(matches!(
+        active
+            .restage_first_lock(lez_plan(0x31, 0x22, 0x91, 0x82), &supersession)
+            .await,
+        Err(ZecSdkError::FirstLockSupersessionMismatch)
+    ));
+    assert_eq!(
+        active
+            .restage_first_lock(replanned.clone(), &supersession)
+            .await
+            .expect("restage"),
+        CreateFirstLockOutcome::Created
+    );
+    assert_eq!(
+        active
+            .restage_first_lock(replanned.clone(), &supersession)
+            .await
+            .expect("replayed restage"),
+        CreateFirstLockOutcome::ExistingSame
+    );
+    assert_eq!(
+        store
+            .load_first_lock_intent(active.agreement().coordinator().id())
+            .await
+            .expect("intent")
+            .expect("open intent")
+            .plan(),
+        &replanned
+    );
+    assert_eq!(
+        active.first_lock_supersessions().await.expect("lineage"),
+        vec![supersession.clone()]
+    );
+    let (superseded_id, replanned_id) = supersession.step_identities();
+    assert_eq!((superseded_id, replanned_id), (&[0x11; 32], &[0x21; 32]));
+
+    lez.0.clear_superseded(FirstLockStepV1::LezInitialize);
+    assert_eq!(
+        active.drive_first_lock().await.expect("re-planned drive"),
+        FirstLockDriveOutcome::Submitted(FirstLockStepV1::LezInitialize)
+    );
+    assert_eq!(
+        lez.0.submissions(),
+        vec![(FirstLockStepV1::LezInitialize, vec![0x81])],
+        "the re-planned bytes went out, the superseded ones never did"
+    );
+    assert_eq!(active.status(), Phase::Offered);
+}
+
+#[test]
+fn a_supersession_record_names_a_lez_step_an_advanced_nonce_and_changed_identities() {
+    let input = FirstLockSupersessionInputV1 {
+        replan_index: 1,
+        step: FirstLockStepV1::LezFund,
+        superseded_initialize_id: [0x11; 32],
+        superseded_fund_id: [0x12; 32],
+        superseded_nonce: 8,
+        replanned_initialize_id: [0x11; 32],
+        replanned_fund_id: [0x22; 32],
+        replanned_nonce: 9,
+    };
+    assert!(FirstLockSupersessionV1::new(input).is_ok());
+    assert_eq!(
+        FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+            step: FirstLockStepV1::ZcashFund,
+            ..input
+        }),
+        Err(FirstLockSupersessionError::NotLezStep)
+    );
+    assert_eq!(
+        FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+            replan_index: MAX_FIRST_LOCK_REPLANS + 1,
+            ..input
+        }),
+        Err(FirstLockSupersessionError::IndexOutOfBounds(6))
+    );
+    assert_eq!(
+        FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+            replanned_nonce: 8,
+            ..input
+        }),
+        Err(FirstLockSupersessionError::NonceDidNotAdvance)
+    );
+    // A fund re-plan keeps the initialization; an initialize re-plan changes both.
+    assert_eq!(
+        FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+            replanned_initialize_id: [0x21; 32],
+            ..input
+        }),
+        Err(FirstLockSupersessionError::IdentitiesDoNotMatchStep)
+    );
+    assert_eq!(
+        FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+            step: FirstLockStepV1::LezInitialize,
+            ..input
+        }),
+        Err(FirstLockSupersessionError::IdentitiesDoNotMatchStep)
+    );
 }

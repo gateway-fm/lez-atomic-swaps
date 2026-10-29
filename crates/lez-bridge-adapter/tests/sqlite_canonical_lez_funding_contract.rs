@@ -20,14 +20,14 @@ use lez_swap_store::SqliteZecRecoveryStore;
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, CanonicalLezEscrowObservationV1, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1,
-    FirstLockStepV1, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1, LezEnvironmentV1,
-    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundInstructionV1,
-    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezMakerLockObservationPort,
-    LezNodeSnapshotV1, LezObservationError, LezStableTipV1, LezTakerFirstLockObservationPort,
-    MakerLockDriveOutcome, MakerLockObservationV1, NegotiationChannel, NegotiationTranscriptV1,
-    ObserveTakerFirstLockOutcome, OfferDiscovery, PreparedFirstLockSubmissionV1,
-    TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFirstLockPort,
-    ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
+    FirstLockStepV1, FirstLockSubmitOutcome, LezAssetV1, LezChainIdentityV1, LezCustodySnapshotV1,
+    LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
+    LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
+    LezMakerLockObservationPort, LezNodeSnapshotV1, LezObservationError, LezStableTipV1,
+    LezTakerFirstLockObservationPort, MakerLockDriveOutcome, MakerLockObservationV1,
+    NegotiationChannel, NegotiationTranscriptV1, ObserveTakerFirstLockOutcome, OfferDiscovery,
+    PreparedFirstLockSubmissionV1, TakerFirstLockObservationV1, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashTakerFirstLockObservationPort,
     ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementRecordV1, ZecAgreementV1,
     ZecLezTermsV1, ZecPairSdk, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
     ZecProfileRecordV1, ZecRefundPlanV1, ZecSwapBinding, ZecSwapBindingRecordV1,
@@ -376,8 +376,8 @@ impl LezFirstLockPort for TestPorts {
         &self,
         _agreement: &ZecAgreementV1,
         _submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
+        Ok(FirstLockSubmitOutcome::Accepted)
     }
 }
 

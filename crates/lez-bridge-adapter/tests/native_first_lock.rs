@@ -21,7 +21,7 @@ use lez_bridge_protocol::{
     EscrowObservationTarget, EscrowState, ExactTransactionBytes, FundingFoundFacts,
     FundingObservation, Hex32, InitializationFoundFacts, InitializationObservation, MessageContext,
     NativeAmount, NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeEscrowAccountObservation, NativeEscrowStep, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
     NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveNativeRefundRequest,
@@ -31,7 +31,8 @@ use lez_bridge_protocol::{
     PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PreparedTransaction, RequestId,
     RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
     RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
-    SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
+    SubmitTransactionRequest, SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
+    SupersedeNativeEscrowPrepareResult, TransactionId,
 };
 use lez_swap_core::{Chain, LezUnixMilliseconds, Participant, SwapDirection, UnixSeconds};
 use lez_swap_store::{
@@ -154,6 +155,13 @@ struct ContextPrepareTransport {
 #[async_trait]
 impl LezBridgeTransport for ContextPrepareTransport {
     type Error = FakeError;
+
+    async fn supersede_native_escrow_prepare(
+        &self,
+        _request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, Self::Error> {
+        Err(FakeError)
+    }
 
     async fn prepare_native_escrow(
         &self,
@@ -3536,6 +3544,13 @@ async fn unknown_observation_transport_outcome_is_not_retried() {
 impl LezBridgeTransport for FakeTransport {
     type Error = FakeError;
 
+    async fn supersede_native_escrow_prepare(
+        &self,
+        _request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, Self::Error> {
+        Err(FakeError)
+    }
+
     async fn prepare_native_escrow(
         &self,
         request: PrepareNativeEscrowRequest,
@@ -3726,6 +3741,13 @@ struct FailingTransport {
 impl LezBridgeTransport for FailingTransport {
     type Error = FakeError;
 
+    async fn supersede_native_escrow_prepare(
+        &self,
+        _request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, Self::Error> {
+        Err(FakeError)
+    }
+
     async fn prepare_native_escrow(
         &self,
         _request: PrepareNativeEscrowRequest,
@@ -3767,6 +3789,13 @@ struct WrongContextTransport;
 #[async_trait]
 impl LezBridgeTransport for WrongContextTransport {
     type Error = FakeError;
+
+    async fn supersede_native_escrow_prepare(
+        &self,
+        _request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, Self::Error> {
+        Err(FakeError)
+    }
 
     async fn prepare_native_escrow(
         &self,
@@ -4565,4 +4594,149 @@ fn program_bytes(words: &[u32; 8]) -> [u8; 32] {
         chunk.copy_from_slice(&word.to_le_bytes());
     }
     bytes
+}
+
+/// A sidecar that re-plans: it echoes the superseded pair it was given, keeps
+/// the initialization for a fund re-plan and answers with fresh funding bytes.
+#[derive(Clone, Debug, Default)]
+struct SupersedeTransport {
+    requests: Arc<Mutex<Vec<SupersedeNativeEscrowPrepareRequest>>>,
+    echo_wrong_pair: bool,
+    replan_index: u32,
+}
+
+#[async_trait]
+impl LezBridgeTransport for SupersedeTransport {
+    type Error = FakeError;
+
+    async fn prepare_native_escrow(
+        &self,
+        request: PrepareNativeEscrowRequest,
+    ) -> Result<PrepareNativeEscrowResult, Self::Error> {
+        Ok(prepared_response(request.context))
+    }
+
+    async fn supersede_native_escrow_prepare(
+        &self,
+        request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, Self::Error> {
+        self.requests
+            .lock()
+            .expect("supersede request log")
+            .push(request.clone());
+        let superseded_initialization = if self.echo_wrong_pair {
+            TransactionId::from_bytes([0x99; 32])
+        } else {
+            request.superseded_initialization_transaction_id
+        };
+        Ok(SupersedeNativeEscrowPrepareResult::new(
+            request.context,
+            superseded_initialization,
+            request.superseded_funding_transaction_id,
+            8,
+            9,
+            self.replan_index,
+            PreparedTransaction::new(
+                TransactionId::from_bytes([0x11; 32]),
+                ExactTransactionBytes::new(vec![0xaa, 0xbb]).expect("kept initialize bytes"),
+            ),
+            PreparedTransaction::new(
+                TransactionId::from_bytes([0x23; 32]),
+                ExactTransactionBytes::new(vec![0xce, 0xdf]).expect("re-planned fund bytes"),
+            ),
+        ))
+    }
+}
+
+/// D1: a fund re-plan keeps the initialization, installs new funding bytes
+/// and comes back with a record naming both nonces and both identities; an
+/// echo of another pair, or another index, is refused.
+#[tokio::test]
+async fn a_fund_re_plan_keeps_the_initialization_and_links_both_generations() {
+    let agreement = agreement();
+    let transport = SupersedeTransport {
+        replan_index: 1,
+        ..SupersedeTransport::default()
+    };
+    let adapter = LezBridgeAdapter::new(
+        transport.clone(),
+        RunId::new("native-run-0001").expect("run id"),
+        runtime(&agreement),
+        Participant::Taker,
+    )
+    .expect("taker adapter");
+    let plan = adapter
+        .prepare_native_first_lock(&agreement, RequestId::new("prepare-0001").expect("id"))
+        .await
+        .expect("plan");
+    let replanned = adapter
+        .supersede_native_first_lock(
+            &agreement,
+            RequestId::new("supersede-0001").expect("id"),
+            &plan,
+            FirstLockStepV1::LezFund,
+            1,
+        )
+        .await
+        .expect("re-plan");
+    let FirstLockPlanV1::Lez { initialize, fund } = &replanned.plan else {
+        panic!("a LEZ plan");
+    };
+    assert_eq!(initialize.expected_submission_id(), &[0x11; 32]);
+    assert_eq!(fund.expected_submission_id(), &[0x23; 32]);
+    assert_eq!(fund.exact_submission(), &[0xce, 0xdf]);
+    let record = &replanned.supersession;
+    assert_eq!(record.replan_index(), 1);
+    assert_eq!(record.step(), FirstLockStepV1::LezFund);
+    assert_eq!(record.superseded_fund_id(), &[0x22; 32]);
+    assert_eq!(record.replanned_fund_id(), &[0x23; 32]);
+    assert_eq!(
+        (record.superseded_nonce(), record.replanned_nonce()),
+        (8, 9)
+    );
+    assert!(record.links(&plan, &replanned.plan));
+    let requests = transport.requests.lock().expect("supersede request log");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].step, NativeEscrowStep::Fund);
+    assert_eq!(
+        requests[0].superseded_initialization_transaction_id,
+        TransactionId::from_bytes([0x11; 32])
+    );
+    drop(requests);
+
+    assert!(matches!(
+        adapter
+            .supersede_native_first_lock(
+                &agreement,
+                RequestId::new("supersede-0002").expect("id"),
+                &plan,
+                FirstLockStepV1::LezFund,
+                2,
+            )
+            .await,
+        Err(PrepareNativeFirstLockError::SupersessionMismatch)
+    ));
+    let wrong_echo = LezBridgeAdapter::new(
+        SupersedeTransport {
+            replan_index: 1,
+            echo_wrong_pair: true,
+            ..SupersedeTransport::default()
+        },
+        RunId::new("native-run-0001").expect("run id"),
+        runtime(&agreement),
+        Participant::Taker,
+    )
+    .expect("taker adapter");
+    assert!(matches!(
+        wrong_echo
+            .supersede_native_first_lock(
+                &agreement,
+                RequestId::new("supersede-0003").expect("id"),
+                &plan,
+                FirstLockStepV1::LezFund,
+                1,
+            )
+            .await,
+        Err(PrepareNativeFirstLockError::SupersessionMismatch)
+    ));
 }

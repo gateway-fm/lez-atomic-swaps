@@ -25,6 +25,16 @@ pub enum BridgeOperationKind {
     NativeEscrowInitializeSubmit,
     /// Submit the prepared native escrow funding transaction.
     NativeEscrowFundSubmit,
+    /// Re-plan the native escrow pair for the first time after a superseded nonce.
+    NativeEscrowSupersede1,
+    /// Second re-plan of the native escrow pair.
+    NativeEscrowSupersede2,
+    /// Third re-plan of the native escrow pair.
+    NativeEscrowSupersede3,
+    /// Fourth re-plan of the native escrow pair.
+    NativeEscrowSupersede4,
+    /// Fifth and last re-plan of the native escrow pair.
+    NativeEscrowSupersede5,
     /// Prepare the revealing LEZ claim.
     RevealingClaimPrepare,
     /// Observe the revealing LEZ claim by exact prepared identity.
@@ -46,6 +56,20 @@ pub enum BridgeOperationKind {
 }
 
 impl BridgeOperationKind {
+    /// The operation owning re-plan number `index` (one-based); `None` past
+    /// the bound, which the caller reports as exhausted.
+    #[must_use]
+    pub const fn native_escrow_supersede(index: u32) -> Option<Self> {
+        match index {
+            1 => Some(Self::NativeEscrowSupersede1),
+            2 => Some(Self::NativeEscrowSupersede2),
+            3 => Some(Self::NativeEscrowSupersede3),
+            4 => Some(Self::NativeEscrowSupersede4),
+            5 => Some(Self::NativeEscrowSupersede5),
+            _ => None,
+        }
+    }
+
     const fn name(self) -> &'static str {
         match self {
             Self::NativeEscrowPrepare => "native_escrow_prepare",
@@ -53,6 +77,11 @@ impl BridgeOperationKind {
             Self::NativeEscrowDiscoveryObserve => "native_escrow_discovery_observe",
             Self::NativeEscrowInitializeSubmit => "native_escrow_initialize_submit",
             Self::NativeEscrowFundSubmit => "native_escrow_fund_submit",
+            Self::NativeEscrowSupersede1 => "native_escrow_supersede_1",
+            Self::NativeEscrowSupersede2 => "native_escrow_supersede_2",
+            Self::NativeEscrowSupersede3 => "native_escrow_supersede_3",
+            Self::NativeEscrowSupersede4 => "native_escrow_supersede_4",
+            Self::NativeEscrowSupersede5 => "native_escrow_supersede_5",
             Self::RevealingClaimPrepare => "revealing_claim_prepare",
             Self::RevealingClaimExactObserve => "revealing_claim_exact_observe",
             Self::RevealingClaimDiscoveryObserve => "revealing_claim_discovery_observe",

@@ -60,12 +60,14 @@ pub use claim_record::{
 pub use first_lock::{
     CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
     FirstLockIntentError, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockStepV1, FirstLockTransitionError, FirstLockTransitionV1,
-    MAX_FIRST_LOCK_SUBMISSION_BYTES, PreparedFirstLockSubmissionV1,
+    FirstLockProjectionCommit, FirstLockStepV1, FirstLockSupersessionError,
+    FirstLockSupersessionInputV1, FirstLockSupersessionV1, FirstLockTransitionError,
+    FirstLockTransitionV1, MAX_FIRST_LOCK_REPLANS, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+    PreparedFirstLockSubmissionV1,
 };
 pub use first_lock_record::{
-    FIRST_LOCK_RECORD_SCHEMA_V1, FirstLockIntentRecordV1, FirstLockRecordError,
-    FirstLockTransitionRecordV1,
+    FIRST_LOCK_RECORD_SCHEMA_V1, FIRST_LOCK_SUPERSESSION_RECORD_SCHEMA_V1, FirstLockIntentRecordV1,
+    FirstLockRecordError, FirstLockSupersessionRecordV1, FirstLockTransitionRecordV1,
 };
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
@@ -121,8 +123,8 @@ pub use observed_taker_lock::{
 };
 
 pub use ports::{
-    ClaimRecoveryStore, CreateAgreementOutcome, LezClaimPort, LezFirstLockPort,
-    LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
+    ClaimRecoveryStore, CreateAgreementOutcome, FirstLockSubmitOutcome, LezClaimPort,
+    LezFirstLockPort, LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
     NegotiationChannel, OfferDiscovery, RecoveryStore, RefundRecoveryStore, ZcashClaimPort,
     ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashRefundPort,
     ZcashTakerFirstLockObservationPort,

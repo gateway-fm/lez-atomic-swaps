@@ -17,8 +17,8 @@ use lez_swap_store::{
 };
 use lez_zec_swap_sdk::{
     CanonicalLezEscrowObservationV1, ClaimPreimage, FirstLockConfirmedEvidenceV1,
-    FirstLockObservation, FirstLockPlanV1, FirstLockStepV1, LezClaimPort, LezFirstLockPort,
-    LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
+    FirstLockObservation, FirstLockPlanV1, FirstLockStepV1, FirstLockSubmitOutcome, LezClaimPort,
+    LezFirstLockPort, LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
     MakerLockObservationV1, PreparedClaimSubmissionV1, PreparedFirstLockSubmissionV1,
     PreparedRefundSubmissionV1, RecoveryStore, RefundEligibilityObservationV1, RefundObservationV1,
     RefundSubmitOutcomeV1, RevealingClaimObservationV1, TakerFirstLockObservationV1,
@@ -31,7 +31,8 @@ use crate::{
     LezBridgeFirstLockTransport, LezBridgeObservationTransport, LezBridgeRefundTransport,
     LezBridgeTransport, NativeFirstLockSubmitOutcome, NativeRefundAdapterError,
     NativeRefundPageObservation, NativeRevealingClaimAdapterError, ObserveNativeEscrowError,
-    PrepareNativeFirstLockError, RevealingClaimSubmitOutcome, bridge_participant,
+    PrepareNativeFirstLockError, RevealingClaimSubmitOutcome, SupersededFirstLockPlanV1,
+    bridge_participant,
 };
 
 type BoxError = Box<dyn Error + Send + Sync + 'static>;
@@ -116,6 +117,12 @@ pub enum ContextOwningLezPortError {
     /// No complete durable LEZ initialize/fund plan exists for this actor.
     #[error("complete durable LEZ initialize/fund plan is missing")]
     MissingLezPlan,
+    /// The LEZ plan was re-planned the bounded number of times already.
+    #[error(
+        "LEZ first-lock plan was re-planned {} times already",
+        lez_zec_swap_sdk::MAX_FIRST_LOCK_REPLANS
+    )]
+    ReplanExhausted,
     /// The durable plan belongs to another swap, agreement, or actor.
     #[error("durable LEZ initialize/fund plan context mismatch")]
     LezPlanContextMismatch,
@@ -491,7 +498,7 @@ where
         &self,
         agreement: &ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
         let plan = self.durable_lez_plan(agreement).await?;
         let operation = match submission.step() {
             FirstLockStepV1::LezInitialize => BridgeOperationKind::NativeEscrowInitializeSubmit,
@@ -512,12 +519,71 @@ where
             .await
             .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
         match outcome {
-            NativeFirstLockSubmitOutcome::Accepted => Ok(()),
+            NativeFirstLockSubmitOutcome::Accepted => Ok(FirstLockSubmitOutcome::Accepted),
+            NativeFirstLockSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            } => Ok(FirstLockSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            }),
             NativeFirstLockSubmitOutcome::Unknown => {
                 self.resume_ambiguous(&key, &context)?;
                 Err(ContextOwningLezPortError::UnknownSubmission)
             }
         }
+    }
+}
+
+impl<Factory, Contexts, Store, Funding>
+    ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
+where
+    Factory: FreshLezBridgeTransportFactory,
+    Factory::Transport: LezBridgeTransport,
+    Contexts: BridgeRequestContextSource,
+    Store: RecoveryStore,
+{
+    /// Re-plans the open LEZ plan after `FirstLockSubmitOutcome::Superseded`.
+    ///
+    /// The re-plan index is the count of recorded re-plans plus one; each
+    /// index owns its durable request context, so a retry of the same re-plan
+    /// replays the same sidecar answer. Past the bound the swap fails by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed context, journal, transport, bound, or record error.
+    pub async fn supersede_native_first_lock(
+        &self,
+        agreement: &ZecAgreementV1,
+        plan: &FirstLockPlanV1,
+        step: FirstLockStepV1,
+    ) -> Result<SupersededFirstLockPlanV1, ContextOwningLezPortError> {
+        let recorded = self
+            .store
+            .load_first_lock_supersessions(agreement.coordinator().id())
+            .await
+            .map_err(|error| ContextOwningLezPortError::Recovery(Box::new(error)))?;
+        let replan_index = u32::try_from(recorded.len())
+            .ok()
+            .and_then(|count| count.checked_add(1))
+            .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
+        let operation = BridgeOperationKind::native_escrow_supersede(replan_index)
+            .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
+        let (key, context) = self.reserve_context(agreement, operation)?;
+        let adapter = self.fresh_adapter()?;
+        let result = adapter
+            .supersede_native_first_lock(
+                agreement,
+                context.request_id().clone(),
+                plan,
+                step,
+                replan_index,
+            )
+            .await;
+        if matches!(&result, Err(PrepareNativeFirstLockError::Transport(_))) {
+            self.resume_ambiguous(&key, &context)?;
+        }
+        result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
     }
 }
 

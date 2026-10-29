@@ -366,6 +366,12 @@ pub(super) fn failure_of(error: ActorCommandError) -> AttemptFailure {
         ActorCommandError::LezDepositorBalanceInsufficient => {
             AttemptFailure::Retry("lez_depositor_balance_insufficient")
         }
+        // The LEZ first lock was re-planned the bounded number of times and
+        // its nonce was taken again: nothing is on the chain, the swap stops
+        // by name (D1).
+        ActorCommandError::FirstLockReplanExhausted => {
+            AttemptFailure::Fail("lez_first_lock_replan_exhausted")
+        }
         ActorCommandError::NotActivated => AttemptFailure::Retry("actor_not_activated"),
         // Material is read from files the corridor and the sidecar write (the
         // capability file, the keys): a file not there yet, or rotated, is

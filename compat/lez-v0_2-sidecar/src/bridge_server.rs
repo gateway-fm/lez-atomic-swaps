@@ -32,15 +32,17 @@ use lez_bridge_protocol::{
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
     METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_CLAIM,
     METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    METHOD_VERIFY_CURRENT_PROFILE_CLOCK, MessageContext, ObserveCurrentClockRequest,
-    ObserveEscrowRequest, ObserveFinalizedClockRequest, ObserveFinalizedWitnessedClaimRequest,
-    ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
-    ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
-    PrepareCurrentProfileClockRequest, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
-    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
-    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER,
-    RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest, VerifyCurrentProfileClockRequest,
+    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE, METHOD_VERIFY_CURRENT_PROFILE_CLOCK, MessageContext,
+    ObserveCurrentClockRequest, ObserveEscrowRequest, ObserveFinalizedClockRequest,
+    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
+    ObserveNativeRefundRequest, ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest,
+    Participant, PrepareCurrentProfileClockRequest, PrepareNativeEscrowRequest,
+    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
+    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
+    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
+    ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
+    SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult,
+    VerifyCurrentProfileClockRequest,
 };
 use lez_bridge_protocol::{
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
@@ -314,6 +316,10 @@ type RestoredRequests = (
         lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
         lez_bridge_protocol::PrepareNativeXmrPunishV3Result,
     )>,
+    Vec<(
+        SupersedeNativeEscrowPrepareRequest,
+        SupersedeNativeEscrowPrepareResult,
+    )>,
 );
 
 impl DurableStore {
@@ -365,6 +371,7 @@ impl DurableStore {
                             entry.method.as_str(),
                             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
                                 | METHOD_PREPARE_NATIVE_ESCROW
+                                | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
                                 | METHOD_PREPARE_WITNESSED_ESCROW
                                 | METHOD_PREPARE_REVEALING_CLAIM
                                 | METHOD_PREPARE_WITNESSED_CLAIM
@@ -533,6 +540,7 @@ impl DurableStore {
         let mut xmr_refund_v3 = None;
         let mut completed_xmr_refund_v3 = None;
         let mut xmr_punish_v3 = None;
+        let mut supersessions = Vec::new();
         for entry in self.persisted.entries.values() {
             let PersistedOutcome::Success(value) = &entry.outcome else {
                 continue;
@@ -547,6 +555,16 @@ impl DurableStore {
                 return Err(BridgeServerError::InvalidDurableState);
             }
             match entry.method.as_str() {
+                // Every supersession replays (idempotent by the superseded
+                // identities), so the journal's key order does not matter.
+                METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE => {
+                    supersessions.push((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
                 METHOD_PREPARE_NATIVE_ESCROW if prepare.is_none() => {
                     prepare = Some((
                         serde_json::from_value(request)
@@ -725,6 +743,7 @@ impl DurableStore {
             xmr_refund_v3,
             completed_xmr_refund_v3,
             xmr_punish_v3,
+            supersessions,
         ))
     }
 }
@@ -790,6 +809,13 @@ impl From<BridgeRuntimeError> for OperationFailure {
                 code: ErrorCode::DepositorBalanceInsufficient,
                 message: "LEZ depositor balance is below the native escrow amount",
             },
+            BridgeRuntimeError::ReplanExhausted => Self {
+                code: ErrorCode::ReplanExhausted,
+                message: "the native escrow pair was re-planned the maximum number of times",
+            },
+            BridgeRuntimeError::SupersessionInclusionMismatch => Self::invalid_request(
+                "native escrow initialization inclusion does not match the superseded step",
+            ),
         }
     }
 }
@@ -898,10 +924,20 @@ async fn restore_runtime_requests(
         restored_xmr_refund_v3,
         restored_xmr_refund_completion_v3,
         restored_xmr_punish_v3,
+        restored_supersessions,
     ) = restored;
     if let Some((request, expected)) = restored_prepare {
         let observed = runtime
             .prepare_native_escrow(request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    for (request, expected) in restored_supersessions {
+        let observed = runtime
+            .supersede_native_escrow_prepare(request)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
         if observed != expected {
@@ -1179,6 +1215,29 @@ fn register_methods(
                     || async move {
                         runtime
                             .prepare_native_escrow(operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
+        METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE,
+        |params, state, _| async move {
+            let request: SupersedeNativeEscrowPrepareRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .supersede_native_escrow_prepare(operation)
                             .await
                             .map_err(Into::into)
                             .and_then(to_value)
@@ -2005,6 +2064,7 @@ impl ServerState {
             method,
             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
                 | METHOD_PREPARE_NATIVE_ESCROW
+                | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_CLAIM
@@ -2089,6 +2149,7 @@ fn encode_request<Request: Serialize>(
     let replay_request = matches!(
         method,
         METHOD_PREPARE_NATIVE_ESCROW
+            | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_CLAIM
@@ -2135,6 +2196,7 @@ fn valid_method(method: &str) -> bool {
             | METHOD_VERIFY_CURRENT_PROFILE_CLOCK
             | METHOD_PREPARE_CURRENT_PROFILE_CLOCK
             | METHOD_PREPARE_NATIVE_ESCROW
+            | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_OBSERVE_ESCROW
             | METHOD_OBSERVE_WITNESSED_ESCROW

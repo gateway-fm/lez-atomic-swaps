@@ -805,6 +805,13 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         Some(zec_reference_actor::LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE) => {
             ChildRunError::Retry("lez_depositor_balance_insufficient")
         }
+        // The Zcash actor re-planned the LEZ first lock the bounded number of
+        // times and its nonce was taken again: nothing is on the chain, the
+        // swap stops by name (D1).
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE) => {
+            ChildRunError::Fail("lez_first_lock_replan_exhausted")
+        }
         _ => ChildRunError::Retry("actor_exit_failed"),
     }
 }
@@ -1789,6 +1796,13 @@ mod exit_classification_tests {
         assert!(matches!(
             classify_exit(ExitStatus::from_raw(2 << 8)),
             ChildRunError::Retry("actor_exit_failed")
+        ));
+        let exhausted = ExitStatus::from_raw(
+            zec_reference_actor::LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE << 8,
+        );
+        assert!(matches!(
+            classify_exit(exhausted),
+            ChildRunError::Fail("lez_first_lock_replan_exhausted")
         ));
     }
 }

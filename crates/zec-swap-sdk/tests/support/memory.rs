@@ -17,14 +17,14 @@ use lez_zec_swap_sdk::{
     ClaimMaterialPurpose, ClaimPreimage, ClaimRecoveryStore, ClaimStepV1, ClaimSubmissionContext,
     CreateAgreementOutcome, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockStepV1, FirstLockTransitionV1, FollowupClaimEvidenceV1,
-    FollowupClaimObservationV1, FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1,
-    LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1, LezClaimNodeSnapshotV1, LezClaimPort,
-    LezClaimTransactionSnapshotV1, LezCustodySnapshotV1, LezEnvironmentV1,
-    LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort, LezFundInstructionV1,
-    LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezMakerLockObservationPort,
-    LezNodeRemovalSnapshotV1, LezNodeSnapshotV1, LezRefundPort, LezStableTipV1,
-    LezTakerFirstLockObservationPort, MakerLockIntentV1, MakerLockObservationV1,
+    FirstLockProjectionCommit, FirstLockStepV1, FirstLockSubmitOutcome, FirstLockSupersessionV1,
+    FirstLockTransitionV1, FollowupClaimEvidenceV1, FollowupClaimObservationV1,
+    FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezAssetV1, LezChainIdentityV1,
+    LezClaimInstructionV1, LezClaimNodeSnapshotV1, LezClaimPort, LezClaimTransactionSnapshotV1,
+    LezCustodySnapshotV1, LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1,
+    LezFirstLockPort, LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1,
+    LezMakerLockObservationPort, LezNodeRemovalSnapshotV1, LezNodeSnapshotV1, LezRefundPort,
+    LezStableTipV1, LezTakerFirstLockObservationPort, MakerLockIntentV1, MakerLockObservationV1,
     MakerLockTransitionV1, NegotiationChannel, NegotiationTranscriptV1,
     ObservedFollowupClaimTransitionRecordV1, ObservedFollowupClaimTransitionV1,
     ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionRecordV1,
@@ -160,6 +160,7 @@ pub(crate) struct MemoryStore {
     pub(crate) refund_transitions: Arc<Mutex<RefundTransitionMap>>,
     pub(crate) claim_nonce_sequence: Arc<Mutex<u64>>,
     pub(crate) first_locks: Arc<Mutex<HashMap<String, FirstLockIntentV1>>>,
+    pub(crate) supersessions: Arc<Mutex<HashMap<String, Vec<FirstLockSupersessionV1>>>>,
     pub(crate) first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
     pub(crate) observed_taker_first_lock_transitions:
         Arc<Mutex<HashMap<(String, u64), ObservedTakerFirstLockTransitionV1>>>,
@@ -567,6 +568,51 @@ impl RecoveryStore for MemoryStore {
             .cloned())
     }
 
+    async fn restage_first_lock_intent(
+        &self,
+        intent: &FirstLockIntentV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        let key = intent.swap_id().as_str().to_owned();
+        let mut records = self.first_locks.lock().expect("first-lock lock");
+        let mut lineage = self.supersessions.lock().expect("supersession lock");
+        let history = lineage.entry(key.clone()).or_default();
+        let Some(open) = records.get(&key) else {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        };
+        if let Some(recorded) = history
+            .iter()
+            .find(|recorded| recorded.replan_index() == supersession.replan_index())
+        {
+            return Ok(if recorded == supersession && open == intent {
+                CreateFirstLockOutcome::ExistingSame
+            } else {
+                CreateFirstLockOutcome::Conflict
+            });
+        }
+        if !supersession.links(open.plan(), intent.plan())
+            || supersession.replan_index() != u32::try_from(history.len()).unwrap() + 1
+        {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        }
+        history.push(supersession.clone());
+        records.insert(key, intent.clone());
+        Ok(CreateFirstLockOutcome::Created)
+    }
+
+    async fn load_first_lock_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<FirstLockSupersessionV1>, Self::Error> {
+        Ok(self
+            .supersessions
+            .lock()
+            .expect("supersession lock")
+            .get(swap_id.as_str())
+            .cloned()
+            .unwrap_or_default())
+    }
+
     async fn commit_first_lock_transition(
         &self,
         transition: &FirstLockTransitionV1,
@@ -746,6 +792,38 @@ impl RecoveryStore for MemoryStore {
             .expect("maker-lock lock")
             .get(swap_id.as_str())
             .cloned())
+    }
+
+    async fn restage_maker_lock_intent(
+        &self,
+        intent: &MakerLockIntentV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        let key = intent.swap_id().as_str().to_owned();
+        let mut records = self.maker_locks.lock().expect("maker-lock lock");
+        let mut lineage = self.supersessions.lock().expect("supersession lock");
+        let history = lineage.entry(key.clone()).or_default();
+        let Some(open) = records.get(&key) else {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        };
+        if let Some(recorded) = history
+            .iter()
+            .find(|recorded| recorded.replan_index() == supersession.replan_index())
+        {
+            return Ok(if recorded == supersession && open == intent {
+                CreateFirstLockOutcome::ExistingSame
+            } else {
+                CreateFirstLockOutcome::Conflict
+            });
+        }
+        if !supersession.links(open.plan(), intent.plan())
+            || supersession.replan_index() != u32::try_from(history.len()).unwrap() + 1
+        {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        }
+        history.push(supersession.clone());
+        records.insert(key, intent.clone());
+        Ok(CreateFirstLockOutcome::Created)
     }
 
     async fn commit_maker_lock_transition(
@@ -1778,7 +1856,7 @@ impl LezFirstLockPort for MemoryLezTakerLockObservation {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
         self.2.submit(submission)
     }
 }
@@ -2000,7 +2078,7 @@ impl ZcashFirstLockPort for MemoryZcashTakerLockObservation {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<(), Self::Error> {
-        self.1.submit(submission)
+        self.1.submit(submission).map(|_| ())
     }
 }
 
@@ -2195,6 +2273,8 @@ pub(crate) struct MemoryFirstLockPort {
     pub(crate) observations: Arc<Mutex<HashMap<FirstLockStepV1, FirstLockObservation>>>,
     pub(crate) submissions: Arc<Mutex<FirstLockSubmissions>>,
     pub(crate) fail_after_accept: Arc<Mutex<Vec<FirstLockStepV1>>>,
+    /// Steps whose planned nonce the fake node reports as taken: (planned, live).
+    pub(crate) superseded: Arc<Mutex<HashMap<FirstLockStepV1, (u128, u128)>>>,
 }
 
 impl MemoryFirstLockPort {
@@ -2216,10 +2296,44 @@ impl MemoryFirstLockPort {
             .push(step);
     }
 
+    /// The next submission of `step` is refused as superseded, like a sidecar
+    /// that sees the account past the planned nonce; nothing is recorded as
+    /// submitted.
+    pub(crate) fn supersede_as(
+        &self,
+        step: FirstLockStepV1,
+        planned_nonce: u128,
+        live_nonce: u128,
+    ) {
+        self.superseded
+            .lock()
+            .expect("superseded lock")
+            .insert(step, (planned_nonce, live_nonce));
+    }
+
+    pub(crate) fn clear_superseded(&self, step: FirstLockStepV1) {
+        self.superseded
+            .lock()
+            .expect("superseded lock")
+            .remove(&step);
+    }
+
     pub(crate) fn submit(
         &self,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), TestPortError> {
+    ) -> Result<FirstLockSubmitOutcome, TestPortError> {
+        if let Some((planned_nonce, live_nonce)) = self
+            .superseded
+            .lock()
+            .expect("superseded lock")
+            .get(&submission.step())
+            .copied()
+        {
+            return Ok(FirstLockSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            });
+        }
         self.submissions
             .lock()
             .expect("submissions lock")
@@ -2234,7 +2348,7 @@ impl MemoryFirstLockPort {
                 "node accepted before transport failure".to_owned(),
             ))
         } else {
-            Ok(())
+            Ok(FirstLockSubmitOutcome::Accepted)
         }
     }
 }
@@ -2265,7 +2379,7 @@ impl LezFirstLockPort for MemoryLezPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
         self.0.submit(submission)
     }
 }
@@ -2297,7 +2411,7 @@ impl ZcashFirstLockPort for MemoryZcashPort {
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<(), Self::Error> {
-        self.0.submit(submission)
+        self.0.submit(submission).map(|_| ())
     }
 }
 

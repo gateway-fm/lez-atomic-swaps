@@ -171,6 +171,12 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     if (nodeState == "attention_required" && attentionReason == QStringLiteral("lez_depositor_balance_insufficient"))
         return {"attention_required", "LEZ balance too low to fund this swap", 15,
                 "Your account holds less LEZ than this swap's " + lez + " lot; fund it and your Node submits the lock on its own", "", ""};
+    // The LEZ lock was re-planned five times and its nonce was taken again by
+    // another swap of the same account: nothing is on the chain, the Node
+    // stopped this swap by name. Nothing to click: take it again later.
+    if (nodeState == "attention_required" && attentionReason == QStringLiteral("lez_first_lock_replan_exhausted"))
+        return {"attention_required", "LEZ lock stopped: nonce taken five times", 15,
+                "Other swaps of your account kept taking this swap's LEZ nonce; nothing was locked. Take the offer again when fewer swaps are in flight", "", ""};
     if (pair == QStringLiteral("Zcash")) {
         // The Taker Node has no lock RPC for ZEC: the actor's first LEZ lock
         // is driven on the Node host (lez-zec-taker-actor … drive), so the
@@ -283,6 +289,11 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     if (attentionReason == QStringLiteral("lez_depositor_balance_insufficient"))
         return {"attention_required", "LEZ balance too low to fund this swap", 45,
                 "Your Node's account holds less LEZ than this swap's lot; fund it and the next attempt funds the escrow on its own", "", ""};
+    // The Maker's LEZ lock was re-planned five times and its nonce was taken
+    // again by another swap of the same account; nothing is on the chain.
+    if (attentionReason == QStringLiteral("lez_first_lock_replan_exhausted"))
+        return {"attention_required", "LEZ lock stopped: nonce taken five times", 45,
+                "Other swaps of your Node's account kept taking this swap's LEZ nonce; nothing was locked and the Taker refunds at the deadline", "", ""};
     if (phase == "maker_leg_refunded")
         return {"refunding", "Refunding", 80,
                 "Your " + myChain + " lock came back; the Taker's " + theirChain + " refund is still owed", "", ""};

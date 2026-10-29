@@ -6,13 +6,13 @@ use crate::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimIntentV1, ClaimPreimage, ClaimRecoveryStore,
     ClaimStepV1, CreateAgreementOutcome, CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1,
     FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockTransitionV1, FollowupClaimObservationV1,
-    FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort,
-    LezMakerLockObservationPort, LezObservationEventV1, LezObservationReconciliationV1,
-    LezObservationTrackerV1, LezRefundPort, LezTakerFirstLockObservationPort,
-    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
-    MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, ObserveMakerLockOutcome,
-    ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
+    FirstLockProjectionCommit, FirstLockSubmitOutcome, FirstLockSupersessionV1,
+    FirstLockTransitionV1, FollowupClaimObservationV1, FollowupClaimTransitionRecordV1,
+    FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort, LezMakerLockObservationPort,
+    LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerV1, LezRefundPort,
+    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
+    MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel,
+    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
     ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionV1,
     ObservedRevealingClaimTransitionRecordV1, ObservedRevealingClaimTransitionV1,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
@@ -486,6 +486,20 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
     Store: RecoveryStore,
 {
+    /// Every recorded re-plan of this swap's LEZ lock, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured store error.
+    pub async fn first_lock_supersessions(
+        &self,
+    ) -> Result<Vec<FirstLockSupersessionV1>, ZecSdkError> {
+        self.store
+            .load_first_lock_supersessions(self.agreement().coordinator().id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
     /// Atomically projects confirmed final first-lock evidence, probing an exact
     /// predecessor slot after an unknown store outcome.
     ///
@@ -808,6 +822,61 @@ where
         let outcome = self
             .store
             .create_first_lock_intent(&intent)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
+            CreateFirstLockOutcome::Conflict => Err(ZecSdkError::FirstLockConflict),
+        }
+    }
+
+    /// Replaces the open first-lock plan with its re-plan after
+    /// [`FirstLockDriveOutcome::Superseded`], keeping the superseded plan as
+    /// lineage. The record must retire exactly the open plan and install
+    /// exactly `plan`; replaying the same re-plan is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the wrong role or phase, a missing open plan, a record that
+    /// does not link the two plans, or a conflicting durable re-plan.
+    pub async fn restage_first_lock(
+        &self,
+        plan: FirstLockPlanV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Taker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Taker,
+                actual: self.local_participant(),
+            });
+        }
+        if self.status() != Phase::Offered {
+            return Err(ZecSdkError::FirstLockNotOffered(self.status()));
+        }
+        let swap_id = self.agreement().coordinator().id();
+        let Some(open) = self
+            .store
+            .load_first_lock_intent(swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Err(ZecSdkError::MissingFirstLockIntent);
+        };
+        open.validate_for_active(self.agreement(), self.local_participant(), self.revision())?;
+        // A replay finds the re-plan already open; the store then checks the
+        // recorded supersession is the same one (`ExistingSame`).
+        if open.plan() != &plan && !supersession.links(open.plan(), &plan) {
+            return Err(ZecSdkError::FirstLockSupersessionMismatch);
+        }
+        let intent = FirstLockIntentV1::from_active(
+            self.agreement(),
+            self.local_participant(),
+            self.revision(),
+            plan,
+        )?;
+        let outcome = self
+            .store
+            .restage_first_lock_intent(&intent, supersession)
             .await
             .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
         match outcome {
@@ -1210,20 +1279,14 @@ where
             FirstLockPlanV1::Zcash { funding } => self.drive_zcash_step(funding).await,
             FirstLockPlanV1::Lez { initialize, fund } => {
                 match self.observe_lez_step(initialize).await? {
-                    FirstLockObservation::Absent => {
-                        self.submit_lez_step(initialize).await?;
-                        Ok(FirstLockDriveOutcome::Submitted(initialize.step()))
-                    }
+                    FirstLockObservation::Absent => Ok(self.submit_lez_step(initialize).await?),
                     FirstLockObservation::Unstable => Ok(
                         FirstLockDriveOutcome::AwaitingStableObservation(initialize.step()),
                     ),
                     FirstLockObservation::Confirmed(evidence) => {
                         self.validate_first_lock_observation(initialize, &evidence)?;
                         match self.observe_lez_step(fund).await? {
-                            FirstLockObservation::Absent => {
-                                self.submit_lez_step(fund).await?;
-                                Ok(FirstLockDriveOutcome::Submitted(fund.step()))
-                            }
+                            FirstLockObservation::Absent => Ok(self.submit_lez_step(fund).await?),
                             FirstLockObservation::Unstable => Ok(
                                 FirstLockDriveOutcome::AwaitingStableObservation(fund.step()),
                             ),
@@ -1291,11 +1354,23 @@ where
     async fn submit_lez_step(
         &self,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), ZecSdkError> {
-        self.lez
+    ) -> Result<FirstLockDriveOutcome, ZecSdkError> {
+        let outcome = self
+            .lez
             .submit_first_lock(self.agreement(), submission)
             .await
-            .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))
+            .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))?;
+        Ok(match outcome {
+            FirstLockSubmitOutcome::Accepted => FirstLockDriveOutcome::Submitted(submission.step()),
+            FirstLockSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            } => FirstLockDriveOutcome::Superseded {
+                step: submission.step(),
+                planned_nonce,
+                live_nonce,
+            },
+        })
     }
 }
 
@@ -1371,6 +1446,54 @@ where
         Ok(MakerLockDriveOutcome::Lock(
             self.drive_lock_plan(intent.plan()).await?,
         ))
+    }
+
+    /// The maker's counterpart of `restage_first_lock`: replaces the open
+    /// opposite-chain plan with its re-plan at the same staged revision.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the wrong role, a missing open plan, a record that does not
+    /// link the two plans, or a conflicting durable re-plan.
+    pub async fn restage_maker_lock(
+        &self,
+        plan: FirstLockPlanV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Maker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Maker,
+                actual: self.local_participant(),
+            });
+        }
+        let swap_id = self.coordinator.id().clone();
+        let Some(open) = self
+            .store
+            .load_maker_lock_intent(&swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Err(ZecSdkError::MissingMakerLockIntent);
+        };
+        open.validate_for_active(self.agreement(), self.revision)?;
+        if open.plan() != &plan && !supersession.links(open.plan(), &plan) {
+            return Err(ZecSdkError::FirstLockSupersessionMismatch);
+        }
+        let intent = MakerLockIntentV1::from_active(
+            self.agreement(),
+            self.local_participant(),
+            open.staged_revision(),
+            plan,
+        )?;
+        let outcome = self
+            .store
+            .restage_maker_lock_intent(&intent, supersession)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
+            CreateFirstLockOutcome::Conflict => Err(ZecSdkError::MakerLockConflict),
+        }
     }
 }
 

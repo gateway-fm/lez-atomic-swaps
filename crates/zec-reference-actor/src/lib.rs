@@ -26,6 +26,10 @@ pub use command::{
 /// every other failure exits 2. The Maker Node's supervisor names its backoff
 /// from it, the Taker Node reads the marker the same refusal leaves.
 pub const LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE: i32 = 3;
+/// Exit code of a drive that re-planned the LEZ first lock the bounded number
+/// of times and found its nonce taken again
+/// ([`ActorCommandError::FirstLockReplanExhausted`]): the swap stops by name.
+pub const LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 4;
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
@@ -101,6 +105,9 @@ pub fn run_actor_process(expected_role: ActorRole) {
         .unwrap_or_else(|error| match error {
             ActorCommandError::LezDepositorBalanceInsufficient => {
                 exit_with_code(error, LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE)
+            }
+            ActorCommandError::FirstLockReplanExhausted => {
+                exit_with_code(error, LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE)
             }
             _ => exit_with(error),
         });

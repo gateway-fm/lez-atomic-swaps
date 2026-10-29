@@ -24,7 +24,8 @@ use lez_zec_swap_sdk::{
     CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ClaimDriveOutcome, ClaimPreimage,
     ClaimRecoveryStore, ClaimStepV1, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockStepV1, FollowupClaimEvidenceV1,
+    FirstLockProjectionCommit, FirstLockStepV1, FirstLockSubmitOutcome,
+    FirstLockSupersessionInputV1, FirstLockSupersessionV1, FollowupClaimEvidenceV1,
     FollowupClaimObservationV1, LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1,
     LezClaimNodeSnapshotV1, LezClaimPort, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1,
     LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
@@ -425,8 +426,9 @@ impl LezFirstLockPort for MakerHappyPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
-        self.submit(submission)
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
+        self.submit(submission)?;
+        Ok(FirstLockSubmitOutcome::Accepted)
     }
 }
 
@@ -731,9 +733,9 @@ impl LezFirstLockPort for SqliteClaimPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
         self.submit_lock(submission);
-        Ok(())
+        Ok(FirstLockSubmitOutcome::Accepted)
     }
 }
 
@@ -5923,4 +5925,115 @@ fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }
+}
+
+/// D1: the Taker's open LEZ plan is replaced by its re-plan in one
+/// transaction, the superseded plan and the record (both nonces, both
+/// identities) stay as lineage, a replay is idempotent, a different plan under
+/// a used index is a conflict, and a reopened store reads the same lineage.
+#[tokio::test]
+async fn a_taker_lez_first_lock_re_plan_keeps_its_lineage_in_sqlite() {
+    let data = TempDir::new().expect("isolated recovery directory");
+    let taker_path = data.path().join("taker.sqlite3");
+    let secret = [0x5d; 32];
+    let wire = agreement_wire_direction_with_digest(
+        "sqlite-first-lock-replan",
+        FixtureVariant::Local,
+        SwapDirection::TakerSellsLez,
+        Sha256::digest(secret).into(),
+    );
+    let port = SqliteClaimPort::default();
+    let taker_store = claim_store(&taker_path, Participant::Taker);
+    let taker_sdk = claim_sdk(Participant::Taker, port.clone(), taker_store.clone());
+    let taker = taker_sdk
+        .activate(accept(&wire, Participant::Taker))
+        .await
+        .expect("taker activation");
+    let (first_plan, _) = taker_lock_fixture(SwapDirection::TakerSellsLez);
+    taker
+        .stage_first_lock(first_plan.clone())
+        .await
+        .expect("durable first plan");
+    let swap_id = taker.agreement().coordinator().id().clone();
+    assert!(
+        taker_store
+            .load_first_lock_supersessions(&swap_id)
+            .await
+            .expect("lineage")
+            .is_empty()
+    );
+
+    let replanned = FirstLockPlanV1::lez(
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezInitialize, [0x43; 32], vec![0x71])
+            .expect("re-planned initialize"),
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezFund, [0x44; 32], vec![0x72])
+            .expect("re-planned fund"),
+    )
+    .expect("re-planned plan");
+    let supersession = FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+        replan_index: 1,
+        step: FirstLockStepV1::LezInitialize,
+        superseded_initialize_id: [0x33; 32],
+        superseded_fund_id: [0x34; 32],
+        superseded_nonce: 4,
+        replanned_initialize_id: [0x43; 32],
+        replanned_fund_id: [0x44; 32],
+        replanned_nonce: 6,
+    })
+    .expect("supersession");
+    assert_eq!(
+        taker
+            .restage_first_lock(replanned.clone(), &supersession)
+            .await
+            .expect("restage"),
+        CreateFirstLockOutcome::Created
+    );
+    assert_eq!(
+        taker
+            .restage_first_lock(replanned.clone(), &supersession)
+            .await
+            .expect("replayed restage"),
+        CreateFirstLockOutcome::ExistingSame
+    );
+    assert_eq!(
+        taker_store
+            .load_first_lock_intent(&swap_id)
+            .await
+            .expect("intent")
+            .expect("open intent")
+            .plan(),
+        &replanned
+    );
+    // A different re-plan under the used index is refused: the open plan is
+    // now the re-planned one, so the record no longer links it either way.
+    let other = FirstLockPlanV1::lez(
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezInitialize, [0x53; 32], vec![0x81])
+            .expect("other initialize"),
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezFund, [0x54; 32], vec![0x82])
+            .expect("other fund"),
+    )
+    .expect("other plan");
+    assert!(matches!(
+        taker.restage_first_lock(other, &supersession).await,
+        Err(ZecSdkError::FirstLockSupersessionMismatch)
+    ));
+
+    drop(taker);
+    let reopened = claim_store(&taker_path, Participant::Taker);
+    assert_eq!(
+        reopened
+            .load_first_lock_supersessions(&swap_id)
+            .await
+            .expect("lineage after reopen"),
+        vec![supersession]
+    );
+    assert_eq!(
+        reopened
+            .load_first_lock_intent(&swap_id)
+            .await
+            .expect("intent after reopen")
+            .expect("open intent")
+            .plan(),
+        &replanned
+    );
 }

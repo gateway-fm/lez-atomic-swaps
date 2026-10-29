@@ -13,18 +13,18 @@ use lez_bridge_protocol::{
     FinalizedWitnessedFundingScanOutcome, FinalizedWitnessedInitializationFacts,
     FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts, FundingObservation, Hex32,
     InitializationFoundFacts, InitializationObservation, MAX_DISCOVERY_BLOCKS,
-    METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2, METHOD_COMPLETE_WITNESSED_CLAIM,
-    METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2, METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2,
-    METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2, METHOD_OBSERVE_WITNESSED_ESCROW,
-    METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2, METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
-    METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, MessageContext, NativeAmount, NativeClaimInstructionFacts,
-    NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
-    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts,
-    NativeInitializeInstructionFacts, NativeRefundFoundFacts, NativeRefundInstructionFacts,
-    NativeRefundObservation, NativeRefundObservationTarget, ObserveCurrentClockRequest,
-    ObserveCurrentClockResult, ObserveEscrowRequest, ObserveEscrowResult,
-    ObserveFinalizedClockRequest, ObserveFinalizedClockResult,
+    MAX_NATIVE_ESCROW_REPLANS, METHOD_COMPLETE_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_COMPLETE_WITNESSED_CLAIM, METHOD_OBSERVE_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_OBSERVE_WITNESSED_ASSET_ESCROW_V2, METHOD_OBSERVE_WITNESSED_ASSET_REFUND_V2,
+    METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_WITNESSED_ASSET_CLAIM_V2,
+    METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
+    METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW, MessageContext, NativeAmount,
+    NativeClaimInstructionFacts, NativeCustodyFacts, NativeEscrowAccountFacts,
+    NativeEscrowAccountObservation, NativeEscrowStep, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
+    NativeRefundInstructionFacts, NativeRefundObservation, NativeRefundObservationTarget,
+    ObserveCurrentClockRequest, ObserveCurrentClockResult, ObserveEscrowRequest,
+    ObserveEscrowResult, ObserveFinalizedClockRequest, ObserveFinalizedClockResult,
     ObserveFinalizedWitnessedAssetClaimV2Request, ObserveFinalizedWitnessedAssetClaimV2Result,
     ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedClaimResult,
     ObserveFinalizedWitnessedFundingRequest, ObserveFinalizedWitnessedFundingResult,
@@ -43,10 +43,11 @@ use lez_bridge_protocol::{
     RequestId, RevealingClaimFoundFacts, RevealingClaimObservation,
     RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
     RuntimeDescriptor, SchemaVersion, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TokenHoldingFactsV2, TransactionId, WITNESSED_LEZ_ASSET_TERMS_VERSION,
-    WitnessedAssetClaimInstructionFactsV2, WitnessedAssetCustodyFactsV2,
-    WitnessedAssetObservedPrepareEffectV2, WitnessedAssetPrepareStepV2,
-    WitnessedAssetPreparedEffectV2, WitnessedAssetRefundFoundFactsV2,
+    SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
+    SupersedeNativeEscrowPrepareResult, TokenHoldingFactsV2, TransactionId,
+    WITNESSED_LEZ_ASSET_TERMS_VERSION, WitnessedAssetClaimInstructionFactsV2,
+    WitnessedAssetCustodyFactsV2, WitnessedAssetObservedPrepareEffectV2,
+    WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, WitnessedAssetRefundFoundFactsV2,
     WitnessedAssetRefundInstructionFactsV2, WitnessedAssetRefundObservationV2,
     WitnessedClaimInstructionFacts, WitnessedEscrowMetadataFacts, WitnessedFundingFoundFacts,
     WitnessedFundingObservation, WitnessedInitializationFoundFacts,
@@ -1805,6 +1806,54 @@ fn exact_submit_and_typed_error_replies_roundtrip() {
     let decoded: ProtocolErrorReply =
         serde_json::from_str(&serde_json::to_string(&error).unwrap()).unwrap();
     assert_eq!(decoded, error);
+}
+
+#[test]
+fn superseded_submission_and_supersede_prepare_roundtrip() {
+    // The outcome names both nonces: the journal of the caller carries them.
+    let result = SubmitTransactionResult::new(
+        context(),
+        TransactionId::from_bytes([14; 32]),
+        SubmissionOutcome::Superseded {
+            planned_nonce: 7,
+            live_nonce: 9,
+        },
+    );
+    let encoded = serde_json::to_string(&result).unwrap();
+    assert!(
+        encoded.contains(r#""outcome":{"superseded":{"planned_nonce":7,"live_nonce":9}}"#),
+        "{encoded}"
+    );
+    let decoded: SubmitTransactionResult = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, result);
+
+    let request = SupersedeNativeEscrowPrepareRequest::new(
+        context(),
+        runtime(),
+        TransactionId::from_bytes([14; 32]),
+        TransactionId::from_bytes([15; 32]),
+        NativeEscrowStep::Fund,
+    );
+    let encoded = serde_json::to_string(&request).unwrap();
+    assert!(encoded.contains(r#""step":"fund""#), "{encoded}");
+    let decoded: SupersedeNativeEscrowPrepareRequest = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, request);
+
+    let result = SupersedeNativeEscrowPrepareResult::new(
+        context(),
+        TransactionId::from_bytes([14; 32]),
+        TransactionId::from_bytes([15; 32]),
+        8,
+        9,
+        1,
+        tx(14),
+        tx(16),
+    );
+    let decoded: SupersedeNativeEscrowPrepareResult =
+        serde_json::from_str(&serde_json::to_string(&result).unwrap()).unwrap();
+    assert_eq!(decoded, result);
+    assert_eq!(MAX_NATIVE_ESCROW_REPLANS, 5);
+    assert!(serde_json::to_string(&ErrorCode::ReplanExhausted).is_ok());
 }
 
 #[test]

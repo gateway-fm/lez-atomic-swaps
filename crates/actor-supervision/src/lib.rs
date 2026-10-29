@@ -165,13 +165,48 @@ pub fn log_effect_value(role: &str, swap_id: &str, command: &str, value: &serde_
         )
     };
     eprintln!(
-        "{role} {swap_id}: {command} → {} {} (phase {}, revision {}, next {})",
+        "{role} {swap_id}: {command} → {} {} (phase {}, revision {}, next {}){}",
         field("outcome"),
         field("operation"),
         field("phase"),
         field("revision"),
-        field("next_action")
+        field("next_action"),
+        replans_suffix(value)
     );
+}
+
+/// The re-plans of a LEZ first lock, each with both nonces and both
+/// transaction ids, as the effect's `replans` array reports them; empty when
+/// the effect had none.
+#[must_use]
+pub fn replans_suffix(value: &serde_json::Value) -> String {
+    let Some(replans) = value.get("replans").and_then(serde_json::Value::as_array) else {
+        return String::new();
+    };
+    if replans.is_empty() {
+        return String::new();
+    }
+    let text = |replan: &serde_json::Value, name: &str| {
+        replan.get(name).map_or_else(
+            || "-".to_owned(),
+            |v| v.as_str().map_or_else(|| v.to_string(), str::to_owned),
+        )
+    };
+    let items: Vec<String> = replans
+        .iter()
+        .map(|replan| {
+            format!(
+                "{} {} nonce {}→{} tx {}→{}",
+                text(replan, "replan_index"),
+                text(replan, "step"),
+                text(replan, "superseded_nonce"),
+                text(replan, "replanned_nonce"),
+                text(replan, "superseded_transaction_id"),
+                text(replan, "replanned_transaction_id")
+            )
+        })
+        .collect();
+    format!(" re-planned [{}]", items.join("; "))
 }
 
 #[cfg(test)]
@@ -199,6 +234,7 @@ mod tests {
     #[test]
     fn failure_classes_are_short_lowercase_identifiers() {
         assert!(validate_failure_class("lez_depositor_balance_insufficient"));
+        assert!(validate_failure_class("lez_first_lock_replan_exhausted"));
         assert!(validate_failure_class("actor_timeout"));
         assert!(!validate_failure_class(""));
         assert!(!validate_failure_class("Actor-Timeout"));

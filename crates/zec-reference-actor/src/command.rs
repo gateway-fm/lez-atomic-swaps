@@ -8,7 +8,8 @@ use std::{
 use lez_bridge_adapter::{
     ActorBridgeRequestContextSource, BridgeDiscoveryWindowSource,
     CapabilityFileBridgeClientFactory, ContextOwningLezBridgePorts, ContextOwningLezPortError,
-    PrepareNativeFirstLockError, SqliteCanonicalLezFundingSource, validate_runtime_binding,
+    PrepareNativeFirstLockError, SqliteCanonicalLezFundingSource, SupersededFirstLockPlanV1,
+    validate_runtime_binding,
 };
 use lez_bridge_client::BridgeClientError;
 use lez_bridge_protocol::{DiscoveryWindow, ErrorCode};
@@ -20,9 +21,10 @@ use lez_zebra_node_adapter::{
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimPreimage, ClaimStepV1, FirstLockDriveOutcome,
-    FirstLockStepV1, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
-    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, RecoveryStore, RefundDriveOutcome,
-    RefundFundingWaitReasonV1, RefundStepV1, ZecLifecycleAction, ZecPairSdk,
+    FirstLockPlanV1, FirstLockStepV1, FirstLockSupersessionV1, MAX_FIRST_LOCK_REPLANS,
+    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, ObserveMakerLockOutcome,
+    ObserveTakerFirstLockOutcome, RecoveryStore, RefundDriveOutcome, RefundFundingWaitReasonV1,
+    RefundStepV1, ZecLifecycleAction, ZecPairSdk,
 };
 use secp256k1::SecretKey;
 use serde::Serialize;
@@ -86,12 +88,16 @@ enum ActorEffectCommandV1 {
     Recover,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 enum ActorEffectOutcomeV1 {
     Activated,
     Submitted {
         operation: ActorOperationV1,
+        /// The re-plans this drive made before the bytes went out (concurrent
+        /// swaps of one signer take each other's nonces); absent when none.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        replans: Vec<ActorReplanV1>,
     },
     AwaitingObservation {
         operation: ActorOperationV1,
@@ -184,6 +190,7 @@ impl ActorStatusV1 {
         phase: Phase,
         revision: u64,
         next_action: ZecLifecycleAction,
+        lez_first_lock_replans: Vec<ActorReplanV1>,
     ) -> Self {
         Self {
             schema_version: STATUS_SCHEMA_VERSION,
@@ -192,6 +199,7 @@ impl ActorStatusV1 {
                 phase: phase.into(),
                 revision,
                 next_action: next_action.into(),
+                lez_first_lock_replans,
             },
         }
     }
@@ -205,22 +213,35 @@ impl ActorStatusV1 {
     /// Project the wire-oriented status into typed lifecycle values.
     #[must_use]
     pub const fn projection(&self) -> ActorStatusProjectionV1 {
-        match self.state {
+        match &self.state {
             ActorStateV1::NotActivated => ActorStatusProjectionV1::NotActivated,
             ActorStateV1::Active {
                 phase,
                 revision,
                 next_action,
+                ..
             } => ActorStatusProjectionV1::Active {
                 phase: phase.as_phase(),
-                revision,
+                revision: *revision,
                 next_action: next_action.as_lifecycle_action(),
             },
         }
     }
+
+    /// The re-plans of the LEZ first lock recorded for this swap, oldest first.
+    #[must_use]
+    pub fn lez_first_lock_replans(&self) -> &[ActorReplanV1] {
+        match &self.state {
+            ActorStateV1::NotActivated => &[],
+            ActorStateV1::Active {
+                lez_first_lock_replans,
+                ..
+            } => lez_first_lock_replans,
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum ActorStateV1 {
     NotActivated,
@@ -228,7 +249,35 @@ enum ActorStateV1 {
         phase: ActorPhaseV1,
         revision: u64,
         next_action: ActorNextActionV1,
+        /// Every re-plan of the LEZ first lock, oldest first; absent when none.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        lez_first_lock_replans: Vec<ActorReplanV1>,
     },
+}
+
+/// One re-plan of the LEZ first lock: both nonces and both transaction ids.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ActorReplanV1 {
+    replan_index: u32,
+    step: ActorOperationV1,
+    superseded_nonce: u128,
+    replanned_nonce: u128,
+    superseded_transaction_id: String,
+    replanned_transaction_id: String,
+}
+
+impl From<&FirstLockSupersessionV1> for ActorReplanV1 {
+    fn from(value: &FirstLockSupersessionV1) -> Self {
+        let (superseded, replanned) = value.step_identities();
+        Self {
+            replan_index: value.replan_index(),
+            step: first_lock_operation(value.step()),
+            superseded_nonce: value.superseded_nonce(),
+            replanned_nonce: value.replanned_nonce(),
+            superseded_transaction_id: hex::encode(superseded),
+            replanned_transaction_id: hex::encode(replanned),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -359,6 +408,12 @@ pub enum ActorCommandError {
     /// The LEZ depositor cannot fund the escrow amount; nothing was submitted.
     #[error("LEZ depositor balance is insufficient for the escrow amount")]
     LezDepositorBalanceInsufficient,
+    /// The LEZ first lock was re-planned the bounded number of times and its
+    /// nonce was taken again; nothing was submitted, the swap stops by name.
+    #[error(
+        "LEZ first lock was re-planned {MAX_FIRST_LOCK_REPLANS} times; its nonce keeps being taken"
+    )]
+    FirstLockReplanExhausted,
     /// Fresh claim material could not be loaded safely.
     #[error("actor claim material is unavailable")]
     ClaimMaterialUnavailable,
@@ -585,22 +640,57 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                     .await
                     .map_err(unavailable_drive)?;
             }
-            match active.drive_first_lock().await.map_err(unavailable_drive)? {
-                FirstLockDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
-                    operation: first_lock_operation(step),
-                },
-                FirstLockDriveOutcome::AwaitingStableObservation(step) => {
-                    ActorEffectOutcomeV1::AwaitingObservation {
-                        operation: first_lock_operation(step),
+            // One drive attempt re-plans and resubmits in place while the
+            // sidecar reports the planned nonce taken (D1): the port bounds
+            // the re-plans per swap, the swap fails by name past the bound.
+            let mut replans = Vec::new();
+            loop {
+                match active.drive_first_lock().await.map_err(unavailable_drive)? {
+                    FirstLockDriveOutcome::Submitted(step) => {
+                        break ActorEffectOutcomeV1::Submitted {
+                            operation: first_lock_operation(step),
+                            replans,
+                        };
                     }
-                }
-                FirstLockDriveOutcome::ReadyForFundingProjection(evidence) => {
-                    active
-                        .project_first_lock(evidence)
-                        .await
-                        .map_err(unavailable_drive)?;
-                    ActorEffectOutcomeV1::Projected {
-                        operation: ActorOperationV1::TakerFirstLock,
+                    FirstLockDriveOutcome::AwaitingStableObservation(step) => {
+                        break ActorEffectOutcomeV1::AwaitingObservation {
+                            operation: first_lock_operation(step),
+                        };
+                    }
+                    FirstLockDriveOutcome::ReadyForFundingProjection(evidence) => {
+                        active
+                            .project_first_lock(evidence)
+                            .await
+                            .map_err(unavailable_drive)?;
+                        break ActorEffectOutcomeV1::Projected {
+                            operation: ActorOperationV1::TakerFirstLock,
+                        };
+                    }
+                    FirstLockDriveOutcome::Superseded {
+                        step,
+                        planned_nonce,
+                        live_nonce,
+                    } => {
+                        let open = store
+                            .load_first_lock_intent(active.agreement().coordinator().id())
+                            .await
+                            .map_err(unavailable_drive)?
+                            .ok_or(ActorCommandError::DriveUnavailable)?;
+                        let replanned = replan_lez_first_lock(
+                            &lez,
+                            active.agreement(),
+                            open.plan(),
+                            step,
+                            planned_nonce,
+                            live_nonce,
+                            replans.len(),
+                        )
+                        .await?;
+                        active
+                            .restage_first_lock(replanned.plan, &replanned.supersession)
+                            .await
+                            .map_err(unavailable_drive)?;
+                        replans.push(ActorReplanV1::from(&replanned.supersession));
                     }
                 }
             }
@@ -640,43 +730,78 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                         .map_err(unavailable_drive)?,
                 },
             };
-            match active
-                .drive_maker_lock(plan)
-                .await
-                .map_err(unavailable_drive)?
-            {
-                MakerLockDriveOutcome::AlreadyLocked { .. } => ActorEffectOutcomeV1::Unchanged {
-                    operation: ActorOperationV1::MakerLock,
-                },
-                MakerLockDriveOutcome::AwaitingEligibility(
-                    MakerFundingEligibilityOutcome::CanonicalStateChanged(_),
-                ) => ActorEffectOutcomeV1::Projected {
-                    operation: ActorOperationV1::TakerFirstLock,
-                },
-                MakerLockDriveOutcome::AwaitingEligibility(_) => {
-                    ActorEffectOutcomeV1::AwaitingObservation {
-                        operation: ActorOperationV1::TakerFirstLock,
+            // As the Taker's first lock: re-plan and resubmit in place while
+            // the sidecar reports the Maker's LEZ nonce taken (D1).
+            let mut plan = plan;
+            let mut replans = Vec::new();
+            loop {
+                match active
+                    .drive_maker_lock(plan.clone())
+                    .await
+                    .map_err(unavailable_drive)?
+                {
+                    MakerLockDriveOutcome::AlreadyLocked { .. } => {
+                        break ActorEffectOutcomeV1::Unchanged {
+                            operation: ActorOperationV1::MakerLock,
+                        };
                     }
-                }
-                MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::Submitted(step)) => {
-                    ActorEffectOutcomeV1::Submitted {
-                        operation: first_lock_operation(step),
+                    MakerLockDriveOutcome::AwaitingEligibility(
+                        MakerFundingEligibilityOutcome::CanonicalStateChanged(_),
+                    ) => {
+                        break ActorEffectOutcomeV1::Projected {
+                            operation: ActorOperationV1::TakerFirstLock,
+                        };
                     }
-                }
-                MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::AwaitingStableObservation(
-                    step,
-                )) => ActorEffectOutcomeV1::AwaitingObservation {
-                    operation: first_lock_operation(step),
-                },
-                MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::ReadyForFundingProjection(
-                    evidence,
-                )) => {
-                    active
-                        .project_maker_lock(evidence)
-                        .await
-                        .map_err(unavailable_drive)?;
-                    ActorEffectOutcomeV1::Projected {
-                        operation: ActorOperationV1::MakerLock,
+                    MakerLockDriveOutcome::AwaitingEligibility(_) => {
+                        break ActorEffectOutcomeV1::AwaitingObservation {
+                            operation: ActorOperationV1::TakerFirstLock,
+                        };
+                    }
+                    MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::Submitted(step)) => {
+                        break ActorEffectOutcomeV1::Submitted {
+                            operation: first_lock_operation(step),
+                            replans,
+                        };
+                    }
+                    MakerLockDriveOutcome::Lock(
+                        FirstLockDriveOutcome::AwaitingStableObservation(step),
+                    ) => {
+                        break ActorEffectOutcomeV1::AwaitingObservation {
+                            operation: first_lock_operation(step),
+                        };
+                    }
+                    MakerLockDriveOutcome::Lock(
+                        FirstLockDriveOutcome::ReadyForFundingProjection(evidence),
+                    ) => {
+                        active
+                            .project_maker_lock(evidence)
+                            .await
+                            .map_err(unavailable_drive)?;
+                        break ActorEffectOutcomeV1::Projected {
+                            operation: ActorOperationV1::MakerLock,
+                        };
+                    }
+                    MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::Superseded {
+                        step,
+                        planned_nonce,
+                        live_nonce,
+                    }) => {
+                        let replanned = replan_lez_first_lock(
+                            &lez,
+                            active.agreement(),
+                            &plan,
+                            step,
+                            planned_nonce,
+                            live_nonce,
+                            replans.len(),
+                        )
+                        .await?;
+                        active
+                            .restage_maker_lock(replanned.plan.clone(), &replanned.supersession)
+                            .await
+                            .map_err(unavailable_drive)?;
+                        replans.push(ActorReplanV1::from(&replanned.supersession));
+                        plan = replanned.plan;
                     }
                 }
             }
@@ -858,6 +983,65 @@ fn lez_first_lock_or_refusal<Plan>(
     }
 }
 
+/// Re-plans the LEZ first lock whose `step` the sidecar reported superseded,
+/// in the same drive attempt. Logs both nonces and both transaction ids. Past
+/// the bound (the port's, or the sidecar's `ErrorCode::ReplanExhausted`) the
+/// swap fails by name; anything else is an unavailable drive.
+async fn replan_lez_first_lock<Factory, Contexts, Store, Funding>(
+    lez: &ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>,
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    plan: &FirstLockPlanV1,
+    step: FirstLockStepV1,
+    planned_nonce: u128,
+    live_nonce: u128,
+    replans_this_attempt: usize,
+) -> Result<SupersededFirstLockPlanV1, ActorCommandError>
+where
+    Factory: lez_bridge_adapter::FreshLezBridgeTransportFactory,
+    Factory::Transport: lez_bridge_adapter::LezBridgeTransport,
+    Contexts: lez_bridge_adapter::BridgeRequestContextSource,
+    Store: RecoveryStore,
+{
+    if replans_this_attempt >= MAX_FIRST_LOCK_REPLANS as usize {
+        return Err(ActorCommandError::FirstLockReplanExhausted);
+    }
+    match lez.supersede_native_first_lock(agreement, plan, step).await {
+        Ok(replanned) => {
+            let (superseded, replanned_id) = replanned.supersession.step_identities();
+            eprintln!(
+                "actor drive: LEZ {step:?} superseded (planned nonce {planned_nonce}, live {live_nonce}); re-plan {} at nonce {}: tx {} → {}",
+                replanned.supersession.replan_index(),
+                replanned.supersession.replanned_nonce(),
+                hex::encode(superseded),
+                hex::encode(replanned_id)
+            );
+            Ok(replanned)
+        }
+        Err(error) if is_replan_exhausted(&error) => {
+            eprintln!("actor drive refused: {error:?}");
+            Err(ActorCommandError::FirstLockReplanExhausted)
+        }
+        Err(error) => Err(unavailable_drive(error)),
+    }
+}
+
+/// Whether a re-plan was refused because the bound is spent, at the port or
+/// at the sidecar (`ErrorCode::ReplanExhausted`).
+fn is_replan_exhausted(error: &ContextOwningLezPortError) -> bool {
+    if matches!(error, ContextOwningLezPortError::ReplanExhausted) {
+        return true;
+    }
+    let ContextOwningLezPortError::Adapter(adapter) = error else {
+        return false;
+    };
+    let Some(PrepareNativeFirstLockError::Transport(BridgeClientError::Remote(remote))) =
+        adapter.downcast_ref::<PrepareNativeFirstLockError<BridgeClientError>>()
+    else {
+        return false;
+    };
+    remote.code() == ErrorCode::ReplanExhausted
+}
+
 /// Whether a first-lock preparation failed because the bridge refused the
 /// depositor's balance (`ErrorCode::DepositorBalanceInsufficient`), reached
 /// through the port, adapter and transport error layers.
@@ -899,6 +1083,7 @@ const fn claim_outcome(outcome: ClaimDriveOutcome) -> ActorEffectOutcomeV1 {
     match outcome {
         ClaimDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
             operation: claim_operation(step),
+            replans: Vec::new(),
         },
         ClaimDriveOutcome::AwaitingStableObservation(step) => {
             ActorEffectOutcomeV1::AwaitingObservation {
@@ -1022,6 +1207,7 @@ const fn recovery_outcome(outcome: RefundDriveOutcome) -> ActorEffectOutcomeV1 {
     match outcome {
         RefundDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
             operation: refund_operation(step),
+            replans: Vec::new(),
         },
         RefundDriveOutcome::AwaitingStableObservation(step) => {
             ActorEffectOutcomeV1::AwaitingObservation {
@@ -1143,12 +1329,22 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
         .map_err(|_| ActorCommandError::StatusReplayUnavailable)?;
 
     Ok(match active {
-        Some(active) => ActorStatusV1::active(
-            config.role(),
-            active.status(),
-            active.revision(),
-            active.next_action(),
-        ),
+        Some(active) => {
+            let replans = active
+                .first_lock_supersessions()
+                .await
+                .map_err(|_| ActorCommandError::StatusReplayUnavailable)?
+                .iter()
+                .map(ActorReplanV1::from)
+                .collect();
+            ActorStatusV1::active(
+                config.role(),
+                active.status(),
+                active.revision(),
+                active.next_action(),
+                replans,
+            )
+        }
         None => ActorStatusV1::not_activated(config.role()),
     })
 }
@@ -1211,8 +1407,13 @@ mod tests {
             Phase::MakerRecoveryAvailable,
         ];
         for phase in phases {
-            let status =
-                ActorStatusV1::active(ActorRole::Maker, phase, 17, ZecLifecycleAction::Wait);
+            let status = ActorStatusV1::active(
+                ActorRole::Maker,
+                phase,
+                17,
+                ZecLifecycleAction::Wait,
+                Vec::new(),
+            );
             assert_eq!(status.role(), ActorRole::Maker);
             assert_eq!(
                 status.projection(),
@@ -1234,8 +1435,13 @@ mod tests {
             ZecLifecycleAction::Complete,
         ];
         for next_action in actions {
-            let status =
-                ActorStatusV1::active(ActorRole::Maker, Phase::BothLegsLocked, 23, next_action);
+            let status = ActorStatusV1::active(
+                ActorRole::Maker,
+                Phase::BothLegsLocked,
+                23,
+                next_action,
+                Vec::new(),
+            );
             assert_eq!(
                 status.projection(),
                 ActorStatusProjectionV1::Active {
@@ -1251,6 +1457,7 @@ mod tests {
             Phase::BothLegsLocked,
             23,
             ZecLifecycleAction::ClaimLez,
+            Vec::new(),
         );
         assert_eq!(
             serde_json::to_value(&active).expect("status serializes"),

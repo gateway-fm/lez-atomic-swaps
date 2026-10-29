@@ -68,13 +68,14 @@ use lez_bridge_protocol::{
     PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
     RequestId, RunId, RuntimeDescriptor, SubmissionOutcome,
     SubmitNativeXmrClaimAuthorizationV3Request, SubmitNativeXmrClaimAuthorizationV3Result,
-    SubmitTransactionRequest, SubmitTransactionResult, VerifyCurrentProfileClockRequest,
+    SubmitTransactionRequest, SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
+    SupersedeNativeEscrowPrepareResult, VerifyCurrentProfileClockRequest,
     VerifyCurrentProfileClockResult, WitnessedAssetPreparedEffectV2,
     WitnessedAssetRefundObservationV2, WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2,
     WitnessedLezAssetV2, WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
 };
 pub use lez_bridge_protocol::{
-    MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
+    MAX_NATIVE_ESCROW_REPLANS, MAX_RPC_BODY_BYTES, METHOD_CLASSIFY_FINALIZED_NATIVE_XMR_EFFECT_V3,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CUSTODY_CREATION_V2,
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_FUNDING_V2,
@@ -96,7 +97,8 @@ pub use lez_bridge_protocol::{
     METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_ASSET_REFUND_V2,
     METHOD_PREPARE_WITNESSED_CLAIM, METHOD_PREPARE_WITNESSED_ESCROW,
     METHOD_SUBMIT_NATIVE_XMR_CLAIM_AUTHORIZATION_V3, METHOD_SUBMIT_TRANSACTION,
-    METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
+    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE, METHOD_VERIFY_CURRENT_PROFILE_CLOCK, RUN_ID_HEADER,
+    SIDECAR_ROLE_HEADER,
 };
 use secp256k1::{
     Message as SecpMessage, Secp256k1, XOnlyPublicKey, schnorr::Signature as SchnorrSignature,
@@ -229,6 +231,8 @@ pub enum BridgeOperation {
     VerifyCurrentProfileClock,
     /// Randomized native initialization and funding preparation.
     PrepareNativeEscrow,
+    /// Re-plan of the native pair after a superseded nonce (D1).
+    SupersedeNativeEscrowPrepare,
     /// Aggregate-witness initialization and funding preparation.
     PrepareWitnessedEscrow,
     /// Native initialization and funding observation.
@@ -856,7 +860,7 @@ impl BridgeClient {
         let terms = preparation.terms.to_input();
         let expected_attempts = match request.submission.outcome {
             SubmissionOutcome::Accepted => 1,
-            SubmissionOutcome::AlreadyKnown => 0,
+            SubmissionOutcome::AlreadyKnown | SubmissionOutcome::Superseded { .. } => 0,
         };
         if result.runtime != request.runtime
             || result.terms != preparation.terms
@@ -925,6 +929,49 @@ impl BridgeClient {
         validate_prepared(operation, &result.funding)?;
         if result.initialization.transaction_id == result.funding.transaction_id
             || result.initialization.exact_bytes == result.funding.exact_bytes
+        {
+            return Err(BridgeClientError::MalformedPreparedTransaction { operation });
+        }
+        Ok(result)
+    }
+
+    /// Re-plans the native pair after a [`SubmissionOutcome::Superseded`]
+    /// submission; the superseded identities are echoed and checked.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime mismatch, unknown delivery, strict
+    /// decoding failure, echoed identities that differ from the request,
+    /// duplicate transaction IDs/bytes, a re-plan index outside the protocol
+    /// bound, or protocol error (`ReplanExhausted` after the fifth re-plan).
+    pub async fn supersede_native_escrow_prepare(
+        &self,
+        request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, BridgeClientError> {
+        let operation = BridgeOperation::SupersedeNativeEscrowPrepare;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let superseded_initialization = request.superseded_initialization_transaction_id;
+        let superseded_funding = request.superseded_funding_transaction_id;
+        let result: SupersedeNativeEscrowPrepareResult = self
+            .request(
+                operation,
+                METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_prepared(operation, &result.initialization)?;
+        validate_prepared(operation, &result.funding)?;
+        if result.superseded_initialization_transaction_id != superseded_initialization
+            || result.superseded_funding_transaction_id != superseded_funding
+            || result.initialization.transaction_id == result.funding.transaction_id
+            || result.initialization.exact_bytes == result.funding.exact_bytes
+            || result.replan_index == 0
+            || result.replan_index > MAX_NATIVE_ESCROW_REPLANS
+            || result.replanned_nonce <= result.superseded_nonce
         {
             return Err(BridgeClientError::MalformedPreparedTransaction { operation });
         }
