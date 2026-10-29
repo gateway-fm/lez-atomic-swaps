@@ -5,7 +5,30 @@
 //!
 //! The process mechanics differ by Node (the Maker runs its actors as sealed
 //! child processes, the Taker runs its Zcash actor in-process under the swap's
-//! lock), so only the vocabulary lives here.
+//! lock), so only the vocabulary lives here. The Maker's `actor_supervisor/
+//! runtime.rs` state machine (its own schedule and attempt types in
+//! `lez-swap-store`) is the reference the Taker's `zec_supervisor.rs` mirrors
+//! until the Maker adopts these shared types (a follow-up, not M2); each Node
+//! keeps a test that every failure class it emits is in this alphabet
+//! ([`validate_failure_class`]), so the two cannot drift apart in their words.
+
+/// The failure-class literals a source file emits as `Retry("…")`,
+/// `Fail("…")` or `failure_class: "…"`, for the per-Node alphabet tests.
+#[must_use]
+pub fn failure_class_literals(source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for marker in ["Retry(\"", "Fail(\""] {
+        for (index, _) in source.match_indices(marker) {
+            let rest = &source[index + marker.len()..];
+            if let Some(end) = rest.find('"') {
+                found.push(rest[..end].to_owned());
+            }
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
 
 /// Durable process-scheduler state of one supervised actor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -183,6 +206,18 @@ mod tests {
         assert_eq!(
             AttemptFailure::Fail("actor_deployment_invalid").class(),
             "actor_deployment_invalid"
+        );
+    }
+
+    #[test]
+    fn failure_class_literals_are_read_from_source() {
+        let source = r#"Err(ChildRunError::Retry("actor_timeout")) ; AttemptFailure::Fail("actor_deployment_invalid") ; Retry("actor_timeout")"#;
+        assert_eq!(
+            super::failure_class_literals(source),
+            vec![
+                "actor_deployment_invalid".to_owned(),
+                "actor_timeout".to_owned()
+            ]
         );
     }
 

@@ -1792,3 +1792,23 @@ mod exit_classification_tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod failure_alphabet_tests {
+    /// Every failure class this supervisor emits is a word of the shared
+    /// alphabet, so the Maker's and the Taker's logs and rows cannot drift.
+    #[test]
+    fn every_failure_class_the_maker_emits_is_in_the_shared_alphabet() {
+        let classes = lez_actor_supervision::failure_class_literals(include_str!("runtime.rs"));
+        assert!(classes.len() >= 10, "{classes:?}");
+        for class in &classes {
+            assert!(
+                lez_actor_supervision::validate_failure_class(class),
+                "{class} is not a failure class"
+            );
+        }
+        assert!(lez_actor_supervision::validate_failure_class(
+            "coordinator_restarted"
+        ));
+    }
+}
