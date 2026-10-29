@@ -1,0 +1,73 @@
+{
+  "corridor": "zec-devnet-1793310037",
+  "direction": "TakerSellsLez",
+  "exported_at_unix_seconds": 1793310199,
+  "maker": {
+    "error": null,
+    "node_view": {
+      "actor_kind": "zcash",
+      "attempt_count": 10,
+      "lease_generation": 10,
+      "manual_action": null,
+      "progress": {
+        "observation": {
+          "next_action": "complete",
+          "phase": "completed",
+          "revision": 6,
+          "state": "active"
+        },
+        "observed_at": 1793310188,
+        "source_generation": 10
+      },
+      "schedule_state": "terminal",
+      "schema_version": 1,
+      "swap_id": "zec-devnet-swap-1793310037"
+    }
+  },
+  "offer_id": "zec-devnet-offer-1793310037",
+  "pair": "Zcash",
+  "profile": "deterministic-local-devnet-v1",
+  "schema_version": 1,
+  "swap_id": "zec-devnet-swap-1793310037",
+  "taker": {
+    "actor_status": {
+      "next_action": "complete",
+      "phase": "completed",
+      "revision": 4,
+      "role": "taker",
+      "schema_version": 1,
+      "state": "active"
+    },
+    "node_view": {
+      "available_action": null,
+      "foreign_units": 100000000,
+      "lez_units": 50000,
+      "offer_id": "zec-devnet-offer-1793310037",
+      "privacy_guidance": "shield_received_transparent_zec_separately",
+      "progress_generation": 4,
+      "route": {
+        "direction": "TakerSellsLez",
+        "pair": "Zcash"
+      },
+      "schema_version": 1,
+      "state": "completed",
+      "swap_id": "zec-devnet-swap-1793310037"
+    }
+  },
+  "zcash_refund_height": 317,
+  "zebra": {
+    "funding_output_spend": {
+      "height": 316,
+      "transaction_id": "e5f0f7985c90712ea000a6e56c4c6b1ea7e1141c27f2dea90df2f8c0894f73c9"
+    },
+    "maker_funding": {
+      "height": 309,
+      "transaction_id": "d7dcfb32b5789ab56dbc8ec84396284fdafe573a63eb7779aac6a8b09e3fd90b"
+    },
+    "provisioned_outpoint": {
+      "output_index": 0,
+      "transaction_id": "c584fe84fbd433abf3f0f76bd8dfe5dd93df0808867841bfba0534b781ba00cf"
+    },
+    "tip_height": 316
+  }
+}

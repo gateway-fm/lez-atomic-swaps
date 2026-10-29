@@ -1,0 +1,39 @@
+M2 regression on the Docker devnet — 2026-10-29 (UTC)
+
+Acceptance of D1 (concurrent ZEC in the BTC shape: two swaps of one signer taken
+together; the second swap's LEZ lock is re-planned in the same drive attempt when
+its nonce was taken), on the final images (de8f42a4), chain 40:
+
+  zec-concurrent   PASSED  168 s  21:40:30–21:43:18
+      swap zec-devnet-swap-1793310037-b: LEZ lez_initialize re-plan 1: nonce 1 → 2,
+        tx ac3dc0e3e533… → bf453ce8944a…; re-plan 2: nonce 2 → 3, tx bf453ce8944a… → ceaa24a642c0…
+        lock confirmed 21:42:06, both legs locked 21:42:30, claim_available 21:43:03 (zebra 315
+        of refund height 317), completed on both Nodes 21:43:17
+      swap zec-devnet-swap-1793310037: no re-plan, completed on both Nodes 21:43:16
+      Maker fundings: d7dcfb32… (block 309), 7cdd9b25… (block 310); claims e5f0f798…, a77dd5e6… (block 316)
+      exports: zec/zec-devnet-swap-1793310037.json, zec/zec-devnet-swap-1793310037-b.json
+        (taker.actor_status.lez_first_lock_replans carries both rows: index, step, both nonces, both ids)
+  zec-happy        PASSED  662 s  21:44:44–21:55:47
+      Maker funding attempt count 2 (projected the Taker's lock 1 time), Taker re-plans 0,
+      Maker restart after completion: still completed/terminal
+      export: zec/zec-devnet-swap-1793310807.json
+
+Earlier passes of the same pair today (for the record): zec-happy chain 37 19:06
+(154 s, images one diagnostic commit before 8f01a687) and chain 38 19:56 (228 s);
+zec-concurrent chain 38 20:15 (172 s, images 8f01a687; node-logs/zec-concurrent-8f01a687-taker-actor.log).
+
+ZEC Node matrix on the 8f01a687 images (chains 38/39):
+
+  zec-replay                PASSED  127 s   zec-restart-maker        PASSED  172 s
+  zec-wrong-inputs          PASSED  145 s   zec-survivor             PASSED  555 s
+  zec-restart-taker         PASSED  124 s   zec-regenerated-catalog  PASSED  118 s
+  zec-tampered-catalog      PASSED   38 s   zec-concurrent-staggered PASSED  256 s
+
+Not in this set: zec-balance-refusal (PASSED 14:38Z on chain 32 with the supervisor
+images, before D1; needs a chain created with LEZ_BOOTSTRAP_DEFER_CLAIM), the BTC
+reverse regression and the desk recordings (owed; the reverse desk's taker-refund
+journey passed its steps three times and lost its refund finalization to a chain
+freeze each time).
+
+Node evidence: node-logs/<scenario>-{taker,maker}-actor.log are the actors' effect
+lines captured from `docker logs` since each scenario's start.
