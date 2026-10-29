@@ -142,9 +142,7 @@ fn complete_zec_chat(
     let template_preimage = provisioner
         .template_claim_preimage(&request.final_agreement_wire, now_unix_seconds)
         .map_err(|_| rpc_error(INTERNAL_ERROR, "maker claim authority is unavailable"))?;
-    let claim_preimage = template_preimage
-        .as_ref()
-        .or(context.maker_claim_preimage.as_deref());
+    let claim_preimage = template_preimage.as_ref();
     if let Some(replay) = completion_store
         .preflight_maker_zec_scheduled_completion_replay_for_role(
             &request.request_id,
@@ -307,6 +305,12 @@ impl ZecMakerActorProvisioner {
             actor_program,
             actor_program_sha256,
         })
+    }
+
+    /// How many pinned Maker templates this catalog holds.
+    #[must_use]
+    pub fn template_count(&self) -> usize {
+        self.source_maker_configs.len()
     }
 
     /// The claim preimage of the pinned template for this agreement, when the

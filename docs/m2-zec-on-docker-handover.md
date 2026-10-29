@@ -180,7 +180,7 @@ Read these before writing anything; they decide the design.
 8. **Maker side.** The daemon takes the authority group together
    (`crates/maker-node/src/bin/lez-maker-node.rs:240-284`):
    `--maker-claim-key-id <any id> --maker-claim-key-file <32 raw bytes>
-   [--maker-claim-preimage-file <32 raw bytes>] --zec-source-maker-config
+   --zec-source-maker-config
    <provisioned maker/actor-config.json> --zec-maker-actor-root <abs,
    canonical, 0700, existing> --zec-actor-program /usr/local/bin/lez-zec-maker-actor
    --zec-actor-program-sha256 <sha256 of that file>`. Reference launch:

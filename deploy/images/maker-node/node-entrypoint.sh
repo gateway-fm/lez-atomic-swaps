@@ -254,9 +254,8 @@ case "$role" in
         for zec_template in "${zec_configs[@]}"; do
           args+=(--zec-source-maker-config "$zec_template")
         done
-        if [[ -s "$zec_role/claim-preimage.key" ]]; then
-          args+=(--maker-claim-preimage-file "$zec_role/claim-preimage.key")
-        fi
+        # No Node-wide claim preimage: a completion takes the secret from the
+        # agreement's own pinned template (each corridor entry carries one).
         echo "maker ZEC authority configured (corridor $zec_run_id, ${#zec_configs[@]} template(s))"
       fi
     else
