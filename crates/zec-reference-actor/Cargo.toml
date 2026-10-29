@@ -32,6 +32,14 @@ path = "src/bin/zec-local-poc-chat-finalize.rs"
 name = "zec-local-poc-provision"
 path = "src/bin/zec-local-poc-provision.rs"
 
+[[bin]]
+name = "zec-local-poc-identity"
+path = "src/bin/zec-local-poc-identity.rs"
+
+[[bin]]
+name = "zec-local-poc-transfer"
+path = "src/bin/zec-local-poc-transfer.rs"
+
 [lints]
 workspace = true
 

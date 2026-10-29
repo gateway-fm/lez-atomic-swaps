@@ -27,9 +27,11 @@ pub use config::{
 };
 pub use local_poc::{
     LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocLezSignerFiles,
-    LocalPocProvisionSummary, LocalPocZcashKeyFiles, finalize_local_v0_2_chat_corridor,
-    prepare_local_v0_2_chat_draft, provision_local_v0_2_corridor,
-    provision_local_v0_2_corridor_with_material, provision_local_v0_2_corridor_with_signers,
+    LocalPocProvisionSummary, LocalPocTransferSummary, LocalPocZcashIdentity,
+    LocalPocZcashKeyFiles, finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
+    provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_material,
+    provision_local_v0_2_corridor_with_signers, transfer_local_v0_2_regtest,
+    zcash_identity_from_key_file,
 };
 pub use maker_provision::{
     ZecActorProvisionV1, ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,

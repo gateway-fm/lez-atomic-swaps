@@ -19,12 +19,13 @@ use lez_zebra_node_adapter::{
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
     LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationTranscriptV1,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1, ZcashFundingInputV1,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementDraftV1, ZecAgreementRecordV1,
-    ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
+    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+    ZcashFundingInputSetV1, ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementDraftV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_transparent_transfer_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -187,6 +188,133 @@ fn read_zcash_key_file(path: &Path, role: &str) -> Result<Zeroizing<[u8; 32]>> {
     SecretKey::from_slice(&key[..])
         .map_err(|_| anyhow::anyhow!("{role} Zcash key is not a valid secret"))?;
     Ok(key)
+}
+
+/// A Zcash key's public identity on the deterministic Regtest fixture.
+#[derive(Clone, Debug, Serialize)]
+pub struct LocalPocZcashIdentity {
+    /// Compressed secp256k1 public key, hex.
+    pub public_key: String,
+    /// HASH160 of the public key, hex: the BIP-199 participant hash.
+    pub public_key_hash: String,
+    /// The key's Regtest P2PKH address (`tm…`), zebra's `miner_address` form.
+    pub transparent_address: String,
+}
+
+/// Regtest transparent P2PKH address prefix (ZIP-? constant shared with testnet).
+const REGTEST_P2PKH_PREFIX: [u8; 2] = [0x1D, 0x25];
+
+fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
+    let TransparentAddress::PublicKeyHash(hash) = TransparentAddress::from_pubkey(public_key)
+    else {
+        bail!("public key did not derive a P2PKH address");
+    };
+    let mut payload = Vec::with_capacity(26);
+    payload.extend_from_slice(&REGTEST_P2PKH_PREFIX);
+    payload.extend_from_slice(&hash);
+    let checksum = Sha256::digest(Sha256::digest(&payload));
+    payload.extend_from_slice(&checksum[..4]);
+    Ok(bs58::encode(payload).into_string())
+}
+
+/// Reads an owner-private Zcash key file and reports its public identity.
+///
+/// # Errors
+///
+/// Fails for an absent, non-private, malformed or invalid key file.
+pub fn zcash_identity_from_key_file(path: &Path) -> Result<LocalPocZcashIdentity> {
+    let secret = read_zcash_key_file(path, "Zcash")?;
+    let mut secret_key = SecretKey::from_slice(&secret[..])?;
+    let public_key = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret_key);
+    secret_key.non_secure_erase();
+    Ok(LocalPocZcashIdentity {
+        public_key: hex::encode(public_key.serialize()),
+        public_key_hash: hex::encode(public_key_hash(&public_key)),
+        transparent_address: regtest_p2pkh_address(&public_key)?,
+    })
+}
+
+/// What one Regtest transfer between the roles' keys produced.
+#[derive(Clone, Debug, Serialize)]
+pub struct LocalPocTransferSummary {
+    /// The transfer's transaction id as the RPC displays it.
+    pub transaction_id: String,
+    /// Value paid to the recipient, zatoshis.
+    pub value_zatoshis: u64,
+    /// The sender's Regtest address (the spent mature output's owner).
+    pub from_address: String,
+    /// The recipient's Regtest address.
+    pub to_address: String,
+    /// Zebra tip height when the output was selected.
+    pub zebra_tip_height: u32,
+}
+
+/// Moves `value_zatoshis` from the key in `from_key_file` to the key in
+/// `to_key_file` with one plain transparent transaction on the deterministic
+/// Regtest fixture, spending one mature output of the sender (the first, or
+/// the one after `skip` mature outputs) and returning the change. The output
+/// becomes a corridor funder candidate for the recipient once it is 100
+/// blocks deep. Test lane only: it funds the Taker's key before a
+/// `TakerSellsForeign` corridor is provisioned.
+///
+/// # Errors
+///
+/// Fails closed for unsafe key files, equal keys, a non-Regtest Zebra, a
+/// missing mature output, an unaffordable value, or a rejected broadcast.
+pub async fn transfer_local_v0_2_regtest(
+    zebra_endpoint: &Url,
+    from_key_file: &Path,
+    to_key_file: &Path,
+    value_zatoshis: u64,
+    skip: u32,
+) -> Result<LocalPocTransferSummary> {
+    let from = read_zcash_key_file(from_key_file, "sender")?;
+    let to = read_zcash_key_file(to_key_file, "recipient")?;
+    ensure!(*from != *to, "sender and recipient Zcash keys must differ");
+    let mut from_secret = SecretKey::from_slice(&from[..])?;
+    let mut to_secret = SecretKey::from_slice(&to[..])?;
+    let secp = Secp256k1::signing_only();
+    let from_public = PublicKey::from_secret_key(&secp, &from_secret);
+    let to_public = PublicKey::from_secret_key(&secp, &to_secret);
+    to_secret.non_secure_erase();
+    let rpc = HttpZebraRpc::connect(
+        &HttpZebraRpcConfig::new(zebra_endpoint.as_str())
+            .with_request_timeout(Duration::from_secs(30))
+            .with_max_concurrent_requests(1),
+    )
+    .context("failed to connect bounded local Zebra RPC")?;
+    let (candidate, tip_height, _) =
+        select_mature_regtest_candidate(&rpc, &from_public, skip).await?;
+    let value = Zatoshis::from_u64(value_zatoshis).context("invalid transfer value")?;
+    let request = TransparentFundingRequest::new(
+        vec![TransparentUtxo::new(
+            candidate.outpoint.clone(),
+            candidate.output.clone(),
+        )],
+        from_public,
+        value,
+        Zatoshis::from_u64(FUNDING_FEE_ZATOSHIS)?,
+        Zatoshis::from_u64(MINIMUM_CHANGE_ZATOSHIS)?,
+        BlockHeight::from_u32(tip_height.saturating_add(100)),
+        BranchId::Nu6_2,
+    )?;
+    let transaction = build_transparent_transfer_transaction(&request, &to_public, &from_secret)?;
+    from_secret.non_secure_erase();
+    let mut bytes = Vec::new();
+    transaction
+        .write(&mut bytes)
+        .context("transfer transaction serialization failed")?;
+    let transaction_id = rpc
+        .send_raw_transaction(&bytes)
+        .await
+        .context("Zebra rejected the transfer")?;
+    Ok(LocalPocTransferSummary {
+        transaction_id: hex::encode(txid_display_hex(transaction_id).as_bytes()),
+        value_zatoshis,
+        from_address: regtest_p2pkh_address(&from_public)?,
+        to_address: regtest_p2pkh_address(&to_public)?,
+        zebra_tip_height: tip_height,
+    })
 }
 
 fn load_zcash_key_material(
@@ -1533,6 +1661,22 @@ pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to write private file {}", path.display()))?;
     file.sync_all()
         .with_context(|| format!("failed to sync private file {}", path.display()))
+}
+
+#[cfg(test)]
+mod zcash_identity_tests {
+    use super::*;
+
+    #[test]
+    fn the_test_lane_funder_key_is_the_asset_miner_address() {
+        let secret = SecretKey::from_slice(&[FUNDED_ZCASH_KEY_BYTE; 32]).unwrap();
+        let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret);
+        // deploy/assets/zebra/zebrad.toml mines to this address today.
+        assert_eq!(
+            regtest_p2pkh_address(&public).unwrap(),
+            "tmNAP26Sw5Ra2jepAoTr1kqdkggawba6Akd"
+        );
+    }
 }
 
 #[cfg(test)]

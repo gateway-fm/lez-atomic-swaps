@@ -69,7 +69,7 @@ pub use first_lock_record::{
 };
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
-    build_funding_transaction, select_funding_utxos,
+    build_funding_transaction, build_transparent_transfer_transaction, select_funding_utxos,
 };
 pub use lez_claim_observation::{
     CANONICAL_LEZ_CLAIM_SNAPSHOT_SCHEMA_V1, CanonicalLezClaimSnapshotRecordV1,
