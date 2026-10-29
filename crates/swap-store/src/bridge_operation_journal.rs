@@ -445,10 +445,9 @@ impl SqliteBridgeOperationJournal {
     }
 }
 
-fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), StoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(
-        "
+/// The journal table; the operation names are a SQL CHECK, so a new
+/// operation needs the table rebuilt in a journal created before it existed.
+const BRIDGE_OPERATION_CONTEXTS_TABLE: &str = "
         CREATE TABLE IF NOT EXISTS bridge_operation_contexts (
             run_id              TEXT NOT NULL,
             swap_id             TEXT NOT NULL,
@@ -461,7 +460,10 @@ fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), S
                 'revealing_claim_discovery_observe', 'revealing_claim_submit',
                 'native_refund_prepare', 'native_refund_eligibility_observe',
                 'native_refund_exact_observe', 'native_refund_discovery_observe',
-                'native_refund_submit'
+                'native_refund_submit',
+                'native_escrow_supersede_1', 'native_escrow_supersede_2',
+                'native_escrow_supersede_3', 'native_escrow_supersede_4',
+                'native_escrow_supersede_5'
             )),
             poll_sequence       INTEGER NOT NULL CHECK (poll_sequence >= 0),
             request_id          TEXT NOT NULL,
@@ -481,13 +483,50 @@ fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), S
                 OR (state = 'completed' AND completion_outcome IS NOT NULL)
             )
         ) STRICT;
+";
+
+const BRIDGE_OPERATION_CONTEXTS_INDEXES: &str = "
         CREATE UNIQUE INDEX IF NOT EXISTS bridge_operation_one_active
             ON bridge_operation_contexts (run_id, swap_id, local_role, operation)
             WHERE state = 'active';
         CREATE UNIQUE INDEX IF NOT EXISTS bridge_operation_request_once
             ON bridge_operation_contexts (run_id, local_role, request_id);
-        ",
-    )?;
+";
+
+/// An operation name every current journal lists; its absence from the stored
+/// table definition marks a journal created before the supersede operations.
+const NEWEST_OPERATION_NAME: &str = "native_escrow_supersede_5";
+
+fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), StoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let stored: Option<String> = transaction
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_operation_contexts'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(definition) = stored
+        && !definition.contains(NEWEST_OPERATION_NAME)
+    {
+        // A journal from before the supersede operations: rebuild the table
+        // under the current CHECK, keeping every row (the names it holds are
+        // all still allowed). Indexes follow the rename and die with the old
+        // table; the current ones are created below.
+        transaction.execute_batch(
+            "ALTER TABLE bridge_operation_contexts RENAME TO bridge_operation_contexts_before_supersede;",
+        )?;
+        transaction.execute_batch(BRIDGE_OPERATION_CONTEXTS_TABLE)?;
+        transaction.execute_batch(
+            "
+            INSERT INTO bridge_operation_contexts
+            SELECT * FROM bridge_operation_contexts_before_supersede;
+            DROP TABLE bridge_operation_contexts_before_supersede;
+            ",
+        )?;
+    }
+    transaction.execute_batch(BRIDGE_OPERATION_CONTEXTS_TABLE)?;
+    transaction.execute_batch(BRIDGE_OPERATION_CONTEXTS_INDEXES)?;
     transaction.commit()?;
     Ok(())
 }
