@@ -51,6 +51,8 @@ Basecamp bundle, both role packages and the Chat/Delivery modules in the pinned
 Nix image, builds the Node binaries and Bitcoin actors in the pinned Rust
 image, builds the LEZ services, r0vm, rapidsnark, the escrow artifact, the LEZ
 sidecar and the four wallet identities in throwaway containers of the builder
+(the sidecar carries its source-tree stamp; staging and the Node image builds
+refuse a sidecar built from another `compat/lez-v0_2-sidecar` tree)
 image (`builder/`, caches in `lez-build-*` volumes, outputs in
 `provision/data`), stages every image payload, then runs `up.sh`, the market
 bootstrap (one throwaway container on the stack network), both UI suites and

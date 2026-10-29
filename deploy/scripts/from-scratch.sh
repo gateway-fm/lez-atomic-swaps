@@ -301,6 +301,8 @@ phase_rust() {
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do
     git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/$role-node/build-source.txt"
+    # what sidecar these Node binaries expect beside them (checked by the image build)
+    sidecar_tree_stamp > "$DEPLOY_ROOT/images/$role-node/sidecar-expected.txt"
   done
   log "Node binaries staged"
 }
@@ -433,6 +435,19 @@ build_escrow() {
 
 # the LEZ v0.2 sidecar, the vault-claim tool and the identity tool (link libpython3.12)
 # This crate is part of the checkout too; never trust payload existence.
+# The sidecar sources' identity: the git tree of compat/lez-v0_2-sidecar at
+# HEAD, plus a digest of any uncommitted change under it. Written by the
+# sidecar build beside its binary, expected by the Node builds from the same
+# checkout, compared at stage time and again inside the Node image builds, so
+# a sidecar built from another tree cannot ride into an image (a binary staged
+# on 2026-10-28 predated every sidecar commit of its branch and did).
+sidecar_tree_stamp() {
+  local tree dirty
+  tree="$(git -C "$REPO_ROOT" rev-parse HEAD:compat/lez-v0_2-sidecar)"
+  dirty="$(git -C "$REPO_ROOT" diff HEAD -- compat/lez-v0_2-sidecar | sha256sum | cut -c1-12)"
+  if git -C "$REPO_ROOT" diff --quiet HEAD -- compat/lez-v0_2-sidecar; then echo "$tree"; else echo "$tree-dirty-$dirty"; fi
+}
+
 build_sidecar() {
   log "building the LEZ sidecar and its tools"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
@@ -441,6 +456,7 @@ build_sidecar() {
       /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
+  sidecar_tree_stamp > "$PROVISION/sidecar/source-tree.txt"
 }
 
 # persistent wallet identities the market and the LEZ genesis share
@@ -483,13 +499,18 @@ phase_stage() {
   PHASE=stage
   install -m 0755 "$PROVISION/lez-services/sequencer_service" "$PROVISION/lez-services/indexer_service" \
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
+  # Fail closed on a sidecar built from another sidecar tree (or one with no
+  # tree stamp at all): rebuild it from this checkout first.
+  local expected staged
+  expected="$(sidecar_tree_stamp)"
+  staged="$(cat "$PROVISION/sidecar/source-tree.txt" 2>/dev/null || true)"
+  [[ "$staged" == "$expected" ]] || fail "the staged sidecar ($PROVISION/sidecar/lez-v02-bridge-poc, tree ${staged:-unstamped}) was not built from this checkout's compat/lez-v0_2-sidecar ($expected); run from-scratch.sh --only build:sidecar first"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
-  # A sidecar staged by an older run carries no source stamp; record this
-  # checkout rather than fail the stage (build_sidecar writes the stamp).
-  [[ -f "$PROVISION/sidecar/source-commit.txt" ]] || git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
   for role in maker taker; do
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
+    cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"
+    echo "$expected" > "$DEPLOY_ROOT/images/$role-node/sidecar-expected.txt"
   done
   # the market bootstrap tools (deploy/images/lez-tools, profile "tools")
   install -m 0755 "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" \

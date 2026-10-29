@@ -36,3 +36,5 @@ __pycache__/
 # Source receipts for locally built evidence payloads
 /deploy/images/*/build-source.txt
 /deploy/images/*/sidecar-source.txt
+/deploy/images/*/sidecar-tree.txt
+/deploy/images/*/sidecar-expected.txt
