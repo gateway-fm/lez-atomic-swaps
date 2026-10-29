@@ -473,7 +473,9 @@ impl BridgeRuntime {
         // initialization had been submitted.
         let depositor = self
             .node
-            .native_account(AccountId::new(*request.terms.depositor_account_id().as_bytes()))
+            .native_account(AccountId::new(
+                *request.terms.depositor_account_id().as_bytes(),
+            ))
             .await?;
         if depositor.balance < request.terms.amount().as_u128() {
             return Err(BridgeRuntimeError::DepositorBalanceInsufficient);
