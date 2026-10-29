@@ -57,17 +57,14 @@ const MAX_LEZ_SIGNER_KEY_BYTES: usize = 65;
 // `FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg`. Newer chains differ.
 const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
-/// Domain tag of the fixture's per-swap claim preimage.
-const PREIMAGE_DOMAIN: &[u8] = b"zec-local-poc-claim-preimage:";
-
-/// The fixture's claim preimage for one swap: deterministic for the swap id,
-/// distinct across swaps.
-fn fixture_preimage(swap_id: &str) -> [u8; 32] {
-    Sha256::new()
-        .chain_update(PREIMAGE_DOMAIN)
-        .chain_update(swap_id.as_bytes())
-        .finalize()
-        .into()
+/// The claim secret of one provisioned swap: 32 bytes from the OS RNG, owner-
+/// private like the keys beside it (stored only in the funder's bundle; the
+/// agreement carries its SHA-256). Never derived from public inputs such as
+/// the swap id, which the agreement, the offers and the evidence all show.
+fn fresh_claim_preimage() -> anyhow::Result<Zeroizing<[u8; 32]>> {
+    let mut preimage = Zeroizing::new([0_u8; 32]);
+    getrandom::fill(&mut preimage[..]).map_err(|_| anyhow::anyhow!("claim preimage RNG"))?;
+    Ok(preimage)
 }
 const LEZ_NATIVE_AMOUNT: u128 = 50_000;
 const ZCASH_PRINCIPAL_ZATOSHIS: u64 = 100_000_000;
@@ -1458,7 +1455,7 @@ fn build_agreement(
     // BIP-199 scripts identical, and the second swap's Taker discovered the
     // first swap's funding as its Maker lock, then tried to spend an output
     // already claimed (zec-concurrent, chain 37, 2026-10-29).
-    let preimage = Zeroizing::new(fixture_preimage(&spec.swap_id));
+    let preimage = fresh_claim_preimage()?;
     let secret_digest: [u8; 32] = Sha256::digest(&preimage[..]).into();
     let maker_hash = public_key_hash(&maker_public);
     let taker_hash = public_key_hash(&taker_public);
@@ -1789,5 +1786,30 @@ mod signer_tests {
         overflow.push(10);
         assert!(validate_external_lez_signer_encoding(&overflow).is_ok());
         assert!(derive_lez_signer_account(&overflow).is_err());
+    }
+}
+
+#[cfg(test)]
+mod claim_preimage_tests {
+    use lez_zec_swap_sdk::Bip199Contract;
+    use sha2::{Digest as _, Sha256};
+
+    use super::fresh_claim_preimage;
+
+    /// Two swaps provisioned together get different secrets, hence different
+    /// digests and different BIP-199 scripts even with the same keys, amount
+    /// and refund height (the shape of two catalog entries at one anchor).
+    #[test]
+    fn two_provisioned_swaps_have_different_secrets_and_scripts() {
+        let first = fresh_claim_preimage().expect("rng");
+        let second = fresh_claim_preimage().expect("rng");
+        assert_ne!(*first, *second);
+        assert_ne!(*first, [0_u8; 32]);
+        let digest = |preimage: &[u8; 32]| -> [u8; 32] { Sha256::digest(preimage).into() };
+        let contract = |preimage: &[u8; 32]| {
+            Bip199Contract::new(240, [0x11; 20], digest(preimage), [0x22; 20])
+        };
+        assert_ne!(digest(&first), digest(&second));
+        assert_ne!(contract(&first), contract(&second));
     }
 }
