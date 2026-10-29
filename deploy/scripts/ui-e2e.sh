@@ -261,6 +261,12 @@ zec_provision() { # zec_provision [swaps]: one fresh corridor run with that many
   export LEZ_UI_ZEC_AMOUNT LEZ_UI_ZEC_LEZ_AMOUNT
   log "corridor lot: $LEZ_UI_ZEC_AMOUNT ZEC for $LEZ_UI_ZEC_LEZ_AMOUNT LEZ units"
 }
+zec_provision_add() { # a second corridor beside the live one (its own Zcash anchor); recreates both Nodes with both
+  log "adding a second ZEC corridor beside the live one (zec-provision.sh --add: offer, draft, catalog of both, Nodes recreated)"
+  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --add 2>&1 | tail -4 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh --add"
+  wait_healthy lez-maker-node; wait_healthy lez-taker-node
+}
 zec_drive() { # zec_drive <swap_id> <taker state> [timeout]: drive the Taker actor (and mine zebra on demand) until the Node reports that state
   log "driving the Taker's ZEC actor on the Node until ${1:0:12} shows $2"
   python3 scripts/node-e2e.py --pair Zcash zec-drive --swap-id "$1" --until "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
@@ -380,31 +386,33 @@ scenario_zec_happy() {
   export_evidence "$swap"
 }
 scenario_zec_concurrent() {
-  # Two prepared entries of one corridor run, taken from the desk one after the
-  # other and settled side by side: both Maker fundings (distinct coinbase
-  # outputs), both revealing LEZ claims, both Zcash claims from the Taker desk;
-  # both desks show two rows completed.
+  # Two prepared ZEC swaps open side by side: the first provisioned, taken and
+  # brought to claim_available; a second corridor added beside it (its own
+  # Zcash anchor and refund window, Nodes recreated with both), taken and
+  # brought there too; both Zcash claims from the Taker desk; both desks show
+  # two rows completed. Staggered because each role's LEZ transactions share
+  # one account (a second lock or claim prepared before the first is final
+  # goes out with a stale nonce) and because one anchor's four-block Zcash
+  # window does not hold two swaps.
   local swap_a swap_b offers maker_a maker_b taker_a
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
     bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
-  zec_provision 2
-  mapfile -t offers < <(zec_offer_ids)
-  [[ "${#offers[@]}" == 2 ]] || fail "the corridor run lists ${#offers[@]} offers, not 2"
-  take swap_a "${offers[0]}"
-  note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node runs a second prepared ceremony with the Maker"
-  take swap_b "${offers[1]}"
-  # One LEZ account per role: the two swaps' LEZ steps run one after the
-  # other (a lock or claim prepared while the other swap's is unfinalised is
-  # submitted with a stale nonce and never lands); the Zcash claims overlap.
-  note "The first swap's LEZ lock is the ZEC actor's, driven on the Node host; the Maker Node funds Zcash from its first coinbase output and claims LEZ while the Maker desk watches both rows"
+  zec_provision
+  take swap_a
+  note "The first swap's LEZ lock is the ZEC actor's, driven on the Node host; the Maker Node funds Zcash from its first coinbase output and claims LEZ while the Maker desk watches the row"
   maker_wait_bg maker_a awaiting_taker_claim "$swap_a"
   desk_head_start
   zec_drive "$swap_a" claim_available
   wait "$maker_a" || fail "Maker desk: awaiting_taker_claim ($swap_a)"
-  note "The second swap follows the same path from its own corridor: its LEZ lock, the Maker's second Zcash funding from a second coinbase output, the Maker's second LEZ claim"
+  zec_provision_add
+  mapfile -t offers < <(zec_offer_ids)
+  [[ "${#offers[@]}" == 2 ]] || fail "the catalog lists ${#offers[@]} offers after --add, not 2"
+  note "A second corridor is live beside the first: a new Zcash row is on the book while the first swap waits for its Zcash claim; the Taker takes it too"
+  take swap_b "${offers[1]}"
+  note "The second swap follows the same path from its own corridor: its LEZ lock, the Maker's Zcash funding from a second coinbase output, the Maker's second LEZ claim; the first row stays open beside it"
   maker_wait_bg maker_b awaiting_taker_claim "$swap_b"
   desk_head_start
   zec_drive "$swap_b" claim_available

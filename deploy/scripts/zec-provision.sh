@@ -38,7 +38,7 @@
 # and runtime/zec/current names the run id. Every corridor is pinned to the
 # chain it was provisioned on: after `up.sh --fresh-lez`, run this again.
 #
-#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--zcash-refund-blocks N]
+#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add]
 #     --no-restart        steps 1-7 only (the Nodes keep running; the material
 #                         is picked up on their next recreate)
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
@@ -54,13 +54,13 @@ export BTC_RPC_PASSWORD
 RESTART=1
 CHAIN_CHECK=1
 SWAPS=1
-ZCASH_REFUND_BLOCKS=""   # empty: the profile's (4 on the devnet profile); two swaps default to 12
+ADD=0   # --add: a second corridor ("-b") beside the live one, with its own Zcash anchor; the catalog lists both
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
     --skip-chain-check) CHAIN_CHECK=0; shift ;;
     --swaps) SWAPS="$2"; shift 2 ;;
-    --zcash-refund-blocks) ZCASH_REFUND_BLOCKS="$2"; shift 2 ;;
+    --add) ADD=1; shift ;;
     -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -156,10 +156,16 @@ recreate_nodes() {
 }
 
 [[ "$SWAPS" =~ ^[12]$ ]] || fail "--swaps takes 1 or 2"
-# Two swaps share one Zcash refund window: two fundings, their pre-reveal depth
-# and two claims need more than the devnet profile's four blocks.
-if [[ -z "$ZCASH_REFUND_BLOCKS" && "$SWAPS" == 2 ]]; then ZCASH_REFUND_BLOCKS=12; fi
-[[ -z "$ZCASH_REFUND_BLOCKS" || "$ZCASH_REFUND_BLOCKS" =~ ^[0-9]+$ ]] || fail "--zcash-refund-blocks takes a block count"
+# Two swaps provisioned at once share one Zcash anchor and so one four-block
+# refund window (the agreement's BIP-199 deadline is profile-derived, it cannot
+# be widened): two fundings, their pre-reveal depth and two claims do not fit.
+# The concurrent fixture therefore adds its second corridor later (--add), once
+# the first swap's blocks are mined, so it gets an anchor and a window of its own.
+if [[ "$ADD" == 1 ]]; then
+  [[ "$SWAPS" == 1 ]] || fail "--add provisions one corridor beside the live one"
+  previous_run="$(cat runtime/zec/current 2>/dev/null)" || fail "--add needs a live corridor (runtime/zec/current)"
+  [[ -s "runtime/zec/$previous_run/prepared.json" ]] || fail "--add: runtime/zec/$previous_run/prepared.json is missing"
+fi
 stamp="$(date +%s)"
 run_id="zec-devnet-$stamp"
 out="runtime/zec/$run_id"
@@ -170,15 +176,25 @@ chmod 0700 runtime/zec "$out"
 # corridor root, agreement, offer, draft, sidecar ports and funder output, the
 # same run and the same signers. The Taker catalog lists both.
 SUFFIX=("" "-b")
-swap_id_of() { echo "zec-devnet-swap-$stamp${SUFFIX[$1]}"; }
-offer_id_of() { echo "zec-devnet-offer-$stamp${SUFFIX[$1]}"; }
-reservation_id_of() { echo "zec-devnet-res-$stamp${SUFFIX[$1]}"; }
-corridor_of() { echo "$CORRIDOR${SUFFIX[$1]}"; }
-run_id_of() { echo "$run_id${SUFFIX[$1]}"; }
-out_of() { if (( $1 == 0 )); then echo "$out"; else echo "$out/b"; fi; }
-maker_port_of() { echo $(( MAKER_BRIDGE_PORT + 2 * $1 )); }
-taker_port_of() { echo $(( TAKER_BRIDGE_PORT + 2 * $1 )); }
-for (( k = 1; k < SWAPS; k++ )); do mkdir -p "$(out_of $k)"; chmod 0700 "$(out_of $k)"; done
+# Swap k of this run occupies slot k (+1 with --add: the run's one swap is the
+# "-b" corridor beside the live one); names, ports, files and the funder output
+# follow the slot.
+slot_of() { echo $(( $1 + ADD )); }
+swap_id_of() { echo "zec-devnet-swap-$stamp${SUFFIX[$(slot_of $1)]}"; }
+offer_id_of() { echo "zec-devnet-offer-$stamp${SUFFIX[$(slot_of $1)]}"; }
+reservation_id_of() { echo "zec-devnet-res-$stamp${SUFFIX[$(slot_of $1)]}"; }
+corridor_of() { echo "$CORRIDOR${SUFFIX[$(slot_of $1)]}"; }
+run_id_of() { echo "$run_id${SUFFIX[$(slot_of $1)]}"; }
+out_of() { if (( $(slot_of $1) == 0 )); then echo "$out"; else echo "$out/b"; fi; }
+maker_port_of() { echo $(( MAKER_BRIDGE_PORT + 2 * $(slot_of $1) )); }
+taker_port_of() { echo $(( TAKER_BRIDGE_PORT + 2 * $(slot_of $1) )); }
+for (( k = 0; k < SWAPS; k++ )); do mkdir -p "$(out_of $k)"; chmod 0700 "$(out_of $k)"; done
+if [[ "$ADD" == 1 ]]; then
+  # The harness reads entry 0's files at the run root: carry the live corridor's over.
+  for f in spec.json provision-summary.json draft-summary.json; do
+    [[ -s "runtime/zec/$previous_run/$f" ]] && install -m 0600 "runtime/zec/$previous_run/$f" "$out/$f"
+  done
+fi
 swap_id="$(swap_id_of 0)"; offer_id="$(offer_id_of 0)"; reservation_id="$(reservation_id_of 0)"
 
 # ---- 0. the Maker's Delivery identity ------------------------------------------
@@ -265,9 +281,9 @@ finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$k" "$ZCASH_REFUND_BLOCKS" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, refund_blocks) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
@@ -291,11 +307,8 @@ spec = {
     # corridors must not spend the same coinbase.
     "zcash_funding_skip": int(skip),
 }
-if refund_blocks:
-    spec["zcash_refund_blocks"] = int(refund_blocks)
 json.dump(spec, open(out, "w"), indent=2)
-print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}"
-      + (f", Zcash refund window {refund_blocks} blocks" if refund_blocks else ""))
+print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}")
 PY
 chmod 0600 "$(out_of $k)/spec.json"
 done
@@ -305,7 +318,7 @@ log "3/8 provision (staging volume $STAGING)"
 docker volume rm -f "$STAGING" >/dev/null 2>&1 || true
 docker volume create "$STAGING" >/dev/null
 spec_mounts=()
-for (( k = 0; k < SWAPS; k++ )); do spec_mounts+=(-v "$PWD/$(out_of $k)/spec.json:/in/spec${SUFFIX[$k]}.json:ro"); done
+for (( k = 0; k < SWAPS; k++ )); do spec_mounts+=(-v "$PWD/$(out_of $k)/spec.json:/in/spec${SUFFIX[$(slot_of $k)]}.json:ro"); done
 helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
   -v "$PWD/runtime/lez/maker/lez-signer.key:/in/maker.key:ro" -v "$PWD/runtime/lez/taker/lez-signer.key:/in/taker.key:ro" -- "
   set -e; umask 077
@@ -319,7 +332,7 @@ helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
 for (( k = 0; k < SWAPS; k++ )); do
 docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
   --entrypoint zec-local-poc-provision "$TAKER_IMAGE" \
-  --spec-file "$ZEC_ROOT/spec${SUFFIX[$k]}.json" --output-root "$(corridor_of $k)" \
+  --spec-file "$ZEC_ROOT/spec${SUFFIX[$(slot_of $k)]}.json" --output-root "$(corridor_of $k)" \
   --maker-lez-signer-key-file "$ZEC_ROOT/signers/maker.key" \
   --taker-lez-signer-key-file "$ZEC_ROOT/signers/taker.key" </dev/null >"$(out_of $k)/provision-summary.json" ||
   fail "zec-local-poc-provision failed for swap $k (see above)"
@@ -341,12 +354,14 @@ helper 0:0 -v "$STAGING:/stage:ro" -v "$MAKER_VOLUME:/maker" -v "$TAKER_VOLUME:/
   set -e; umask 077
   for role in maker taker; do
     vol=/\$role
-    for c in \$vol/corridor \$vol/corridor-*; do
-      [[ -e \$c ]] || continue
-      old=\$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"run_id\"])' \$c/\$role/actor-config.json 2>/dev/null || date +%s)
-      mkdir -p \$vol/archive && mv \$c \$vol/archive/\$old
-    done
-    rm -f \$vol/prepared.json
+    if [[ $ADD == 0 ]]; then
+      for c in \$vol/corridor \$vol/corridor-*; do
+        [[ -e \$c ]] || continue
+        old=\$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"run_id\"])' \$c/\$role/actor-config.json 2>/dev/null || date +%s)
+        mkdir -p \$vol/archive && mv \$c \$vol/archive/\$old
+      done
+      rm -f \$vol/prepared.json
+    fi
     for c in /stage/corridor /stage/corridor-*; do
       [[ -d \$c ]] || continue
       mkdir -m 0700 \$vol/\$(basename \$c)
@@ -367,7 +382,8 @@ docker volume rm -f "$STAGING" >/dev/null
 log "5/8 Zcash offer(s) $(for (( k = 0; k < SWAPS; k++ )); do offer_id_of $k; done | tr '\n' ' ')"
 # One live Zcash offer at a time: a desk (or a Taker picking "the Zcash row")
 # must not land on an offer whose catalog entry this run replaces.
-stale="$(rpc_result maker maker_offer_list '{"states":["active"]}' | python3 -c 'import json,sys
+stale=""
+[[ "$ADD" == 1 ]] || stale="$(rpc_result maker maker_offer_list '{"states":["active"]}' | python3 -c 'import json,sys
 route=json.loads(sys.argv[1])
 for r in json.load(sys.stdin):
     if r["offer"]["pair_configuration"]["route"]==route: print(r["offer"]["id"], r["revision"])' "$ROUTE")"
@@ -445,6 +461,7 @@ log "7/8 prepared.json"
 # publish writes `encoded`, authenticate hashes the file bytes), so its sha256
 # must be the commitment the Taker listed.
 rm -f "$out/prepared.json"
+if [[ "$ADD" == 1 ]]; then install -m 0600 "runtime/zec/$previous_run/prepared.json" "$out/prepared.json"; fi
 for (( k = 0; k < SWAPS; k++ )); do
 this_corridor="$(corridor_of $k)"
 sums="$(helper 0:0 -v "$DELIVERY_VOLUME:/delivery:ro" -v "$TAKER_VOLUME:$ZEC_ROOT" -- "
@@ -480,7 +497,7 @@ chmod 0600 "$out/prepared.json"
 docker run --rm -i --user 0:0 -v "$TAKER_VOLUME:$ZEC_ROOT" --entrypoint bash "$TAKER_IMAGE" -c \
   "umask 077; cat >$ZEC_ROOT/prepared.json && chown $NODE_UID:$NODE_UID $ZEC_ROOT/prepared.json" <"$out/prepared.json"
 echo "$run_id" >runtime/zec/current
-log "  catalog: $SWAPS entr$([[ $SWAPS == 1 ]] && echo y || echo ies) ($(for (( k = 0; k < SWAPS; k++ )); do echo -n "$(swap_id_of $k) / $(offer_id_of $k); "; done)), swap files under $ZEC_ROOT/taker-swaps/<run id>"
+log "  catalog: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$out/prepared.json") entries; this run: $(for (( k = 0; k < SWAPS; k++ )); do echo -n "$(swap_id_of $k) / $(offer_id_of $k); "; done) swap files under $ZEC_ROOT/taker-swaps/<run id>"
 
 if [[ "$RESTART" == 0 ]]; then
   log "8/8 skipped (--no-restart): recreate maker-node and taker-node to load corridor $run_id"
@@ -492,9 +509,9 @@ log "8/8 recreating maker-node, then taker-node"
 recreate_nodes
 docker logs lez-maker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  maker: /'
 docker logs lez-taker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  taker: /'
-for (( k = 1; k < SWAPS; k++ )); do
-  docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(maker_port_of $k))" </dev/null && log "  maker sidecar answers on 127.0.0.1:$(maker_port_of $k)" || fail "maker sidecar for swap $k does not answer"
-  docker exec lez-taker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(taker_port_of $k))" </dev/null && log "  taker sidecar answers on 127.0.0.1:$(taker_port_of $k)" || fail "taker sidecar for swap $k does not answer"
+for (( s = 1; s < SWAPS + ADD; s++ )); do
+  docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( MAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  maker sidecar answers on 127.0.0.1:$(( MAKER_BRIDGE_PORT + 2 * s ))" || fail "maker sidecar for slot $s does not answer"
+  docker exec lez-taker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( TAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  taker sidecar answers on 127.0.0.1:$(( TAKER_BRIDGE_PORT + 2 * s ))" || fail "taker sidecar for slot $s does not answer"
 done
 docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$MAKER_BRIDGE_PORT)" </dev/null && log "  maker sidecar answers on 127.0.0.1:$MAKER_BRIDGE_PORT" || fail "maker sidecar not listening"
 docker exec lez-taker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$TAKER_BRIDGE_PORT)" </dev/null && log "  taker sidecar answers on 127.0.0.1:$TAKER_BRIDGE_PORT" || fail "taker sidecar not listening"

@@ -1254,20 +1254,24 @@ def zebra_mine(blocks: int, why: str) -> None:
 ZEC_CORRIDORS: list[dict] = []
 
 
-def zec_provision(swaps: int = 1, swap_id: str | None = None) -> dict:
+def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False) -> dict:
     """One fresh corridor run: zec-provision.sh end to end, Nodes recreated. With
-    `swaps` 2 the run holds two prepared entries (the concurrent fixture: its own
-    corridor root, agreement, offer, sidecar ports and funder output each).
-    Returns the first entry's corridor facts, or the entry of `swap_id` when the
-    corridor is reused; every entry is kept in ZEC_CORRIDORS."""
+    `swaps` 2 the run holds two prepared entries at one Zcash anchor; with `add`
+    a second corridor ("-b": its own root, agreement, offer, sidecar ports,
+    funder output and Zcash anchor) is provisioned beside the live one and the
+    catalog lists both — the concurrent fixture, whose second swap needs a
+    refund window of its own. Returns the first entry's corridor facts, or the
+    entry of `swap_id` when the corridor is reused; every entry is kept in
+    ZEC_CORRIDORS."""
     if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1":
         # The corridor the Nodes already run with (runtime/zec/current), for a
         # run that must not recreate them; its catalog entry must be untaken.
         log("  reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)")
     else:
-        log(f"  provisioning a ZEC corridor with {swaps} prepared swap(s) (zec-provision.sh; this recreates both Nodes)")
+        log(f"  provisioning a ZEC corridor {'beside the live one' if add else f'with {swaps} prepared swap(s)'} "
+            "(zec-provision.sh; this recreates both Nodes)")
         result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "zec-provision.sh"), "--skip-chain-check",
-                                 "--swaps", str(swaps)],
+                                 "--swaps", str(swaps), *(["--add"] if add else [])],
                                 capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, stdin=subprocess.DEVNULL)
         for line in result.stdout.strip().splitlines()[-6:]:
             log(f"    {line}")
@@ -1558,28 +1562,35 @@ def scenario_zec_concurrent(stamp: str) -> dict:
     by side: two agreements, two Maker fundings from distinct coinbase outputs,
     two Taker claims; both Nodes list both swaps completed.
 
-    The LEZ steps of the two swaps are sequenced: each role signs its LEZ
-    transactions with one account, and a first lock (or a Maker claim) prepared
-    while the other swap's is still unfinalised is submitted with a stale nonce,
-    rejected by the sequencer at execution ("Nonce mismatch") and never
-    re-planned by the actor (found 2026-10-29 on the devnet). So swap A runs to
-    claim_available (its Maker claim final) before swap B's actor is first
-    driven; only the Zcash claims overlap."""
-    zec_provision(swaps=2)
+    The two swaps are staggered, for two reasons found on the devnet
+    (2026-10-29). Each role signs its LEZ transactions with one account: a first
+    lock (or a Maker claim) prepared while the other swap's is still unfinalised
+    goes out with a stale nonce, is rejected by the sequencer at execution
+    ("Nonce mismatch") and is never re-planned by the actor. And two corridors
+    provisioned at one Zcash anchor share one four-block refund window, which
+    two fundings, their depth and two claims do not fit. So swap A is provisioned,
+    taken and driven to claim_available (its Maker claim final); then corridor B
+    is added beside it with its own anchor (zec-provision.sh --add, Nodes
+    recreated with both), taken and driven likewise; the Zcash claims overlap."""
+    first = zec_provision()
+    swap_a = zec_take_or_resume(first["offer_id"], stamp)
+    config_a = zec_taker_actor_config(first["receipt_output"])
+    zec_activate(config_a)
+    views = {swap_a: zec_drive_until(swap_a, config_a, {"claim_available"}, timeout=2400, corridor=first,
+                                     describe=f"({swap_a}: Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")}
+    zec_provision(add=True)
     corridors = list(ZEC_CORRIDORS)
-    if len(corridors) != 2:
-        raise Failure(f"expected two prepared entries, the corridor has {len(corridors)}")
-    swaps = []
-    for corridor in corridors:
-        swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
-        config = zec_taker_actor_config(corridor["receipt_output"])
-        swaps.append((swap_id, config, corridor))
-    log(f"  both taken: {swaps[0][0]} and {swaps[1][0]}; LEZ steps sequenced (one account per role)")
-    views = {}
-    for swap_id, config, corridor in swaps:
-        zec_activate(config)
-        views[swap_id] = zec_drive_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
-                                         describe=f"({swap_id}: Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")
+    if len(corridors) != 2 or corridors[0]["catalog_swap_id"] != swap_a:
+        raise Failure(f"expected the live entry {swap_a} plus one added, the catalog lists "
+                      f"{[c['catalog_swap_id'] for c in corridors]}")
+    second = corridors[1]
+    swap_b = zec_take_or_resume(second["offer_id"], stamp)
+    config_b = zec_taker_actor_config(second["receipt_output"])
+    zec_activate(config_b)
+    log(f"  {swap_a} is claim_available and {swap_b} is taken beside it (Nodes recreated with both corridors)")
+    views[swap_b] = zec_drive_until(swap_b, config_b, {"claim_available"}, timeout=2400, corridor=second,
+                                    describe=f"({swap_b}: Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")
+    swaps = [(swap_a, config_a, corridors[0]), (swap_b, config_b, second)]
     fundings = {}
     for swap_id, _, corridor in swaps:
         outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
