@@ -88,6 +88,11 @@ struct ProvisionSpec {
     /// it yet when the second is provisioned; the second names 1.
     #[serde(default)]
     zcash_funding_skip: u32,
+    /// Zcash refund window in blocks after the funding anchor; absent means
+    /// the profile's. A concurrent-swap fixture needs more than the devnet
+    /// profile's four: two fundings, their depth and two claims do not fit.
+    #[serde(default)]
+    zcash_refund_blocks: Option<u32>,
 }
 
 /// Owner-private LEZ signer files provisioned before a fresh local genesis.
@@ -1173,7 +1178,10 @@ fn build_agreement(
         .checked_add(1)
         .context("Zebra funding anchor overflow")?;
     let zcash_refund_height = zcash_anchor
-        .checked_add(profile.zcash_refund_blocks())
+        .checked_add(
+            spec.zcash_refund_blocks
+                .unwrap_or_else(|| profile.zcash_refund_blocks()),
+        )
         .context("Zebra refund height overflow")?;
     let lez_refund_seconds = now
         .checked_add(profile.lez_refund_delay().value())

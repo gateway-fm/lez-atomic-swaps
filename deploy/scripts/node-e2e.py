@@ -1433,7 +1433,14 @@ def zec_mining_policy(effect: dict | None, corridor: dict) -> None:
     if effect and effect.get("outcome") in {"awaiting_safe_zcash_funding", "awaiting_observation"} \
             and effect.get("operation") in {None, "zcash_fund", "maker_lock"} \
             and effect.get("phase") in {"awaiting_maker_confirmations", "taker_lock_confirmed", "both_legs_locked"}:
-        if height + 1 < corridor["zcash_refund_height"]:
+        # Depth is mined only for a funding that exists: before the Maker has
+        # funded there is nothing to bury, and every block spent here shortens
+        # the Zcash refund window the Maker needs to fund safely at all.
+        if zec_funding_confirmations(corridor) is None:
+            if not corridor.get("_logged_waiting_for_funding"):
+                log(f"  zebra at {height}: not mining, the Maker's Zcash funding is not out yet")
+                corridor["_logged_waiting_for_funding"] = True
+        elif height + 1 < corridor["zcash_refund_height"]:
             zebra_mine(1, f"Taker waits for Zcash funding depth ({effect.get('outcome')})")
         else:
             log(f"  zebra at {height}: not mining, the refund height {corridor['zcash_refund_height']} is next")
@@ -1453,7 +1460,7 @@ def zec_drive_until(swap_id: str, config: str, states: set[str], timeout: int, c
         view = taker_view(swap_id)
         state = view["state"]
         if state != last_state or described != last_effect:
-            log(f"  taker {swap_id[:12]}: {state} (gen {view.get('progress_generation')}) | drive: {described} "
+            log(f"  taker {swap_id}: {state} (gen {view.get('progress_generation')}) | drive: {described} "
                 f"| maker: {maker_phase(swap_id)} | zebra {zebra('getblockcount')}")
             last_state, last_effect = state, described
         if state in states:
@@ -1530,7 +1537,7 @@ def zec_drive_all_until(swaps: list[tuple[str, str, dict]], states: set[str], ti
             view = taker_view(swap_id)
             state = view["state"]
             if last.get(swap_id) != (state, described):
-                log(f"  taker {swap_id[:12]}: {state} (gen {view.get('progress_generation')}) | drive: {described} "
+                log(f"  taker {swap_id}: {state} (gen {view.get('progress_generation')}) | drive: {described} "
                     f"| maker: {maker_phase(swap_id)} | zebra {zebra('getblockcount')}")
                 last[swap_id] = (state, described)
             if state in states:
@@ -1547,9 +1554,17 @@ def zec_drive_all_until(swaps: list[tuple[str, str, dict]], states: set[str], ti
 
 
 def scenario_zec_concurrent(stamp: str) -> dict:
-    """Two prepared entries of one corridor run, taken and settled side by side:
-    two agreements, two Maker fundings from distinct coinbase outputs, two
-    Taker claims; both Nodes list both swaps completed."""
+    """Two prepared entries of one corridor run, taken together and settled side
+    by side: two agreements, two Maker fundings from distinct coinbase outputs,
+    two Taker claims; both Nodes list both swaps completed.
+
+    The LEZ steps of the two swaps are sequenced: each role signs its LEZ
+    transactions with one account, and a first lock (or a Maker claim) prepared
+    while the other swap's is still unfinalised is submitted with a stale nonce,
+    rejected by the sequencer at execution ("Nonce mismatch") and never
+    re-planned by the actor (found 2026-10-29 on the devnet). So swap A runs to
+    claim_available (its Maker claim final) before swap B's actor is first
+    driven; only the Zcash claims overlap."""
     zec_provision(swaps=2)
     corridors = list(ZEC_CORRIDORS)
     if len(corridors) != 2:
@@ -1558,11 +1573,13 @@ def scenario_zec_concurrent(stamp: str) -> dict:
     for corridor in corridors:
         swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
         config = zec_taker_actor_config(corridor["receipt_output"])
-        zec_activate(config)
         swaps.append((swap_id, config, corridor))
-    log(f"  both taken: {swaps[0][0][:12]} and {swaps[1][0][:12]}; driving both Taker actors in turn")
-    views = zec_drive_all_until(swaps, {"claim_available"}, timeout=3000,
-                                describe="(two Taker LEZ locks → two Maker Zcash fundings → two Maker LEZ claims)")
+    log(f"  both taken: {swaps[0][0]} and {swaps[1][0]}; LEZ steps sequenced (one account per role)")
+    views = {}
+    for swap_id, config, corridor in swaps:
+        zec_activate(config)
+        views[swap_id] = zec_drive_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                                         describe=f"({swap_id}: Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")
     fundings = {}
     for swap_id, _, corridor in swaps:
         outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))

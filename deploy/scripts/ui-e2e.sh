@@ -396,12 +396,18 @@ scenario_zec_concurrent() {
   take swap_a "${offers[0]}"
   note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node runs a second prepared ceremony with the Maker"
   take swap_b "${offers[1]}"
-  note "Both Takers' LEZ locks are the ZEC actors', driven on the Node host in turn; the Maker Node funds Zcash for each from its own coinbase output and claims LEZ on each"
+  # One LEZ account per role: the two swaps' LEZ steps run one after the
+  # other (a lock or claim prepared while the other swap's is unfinalised is
+  # submitted with a stale nonce and never lands); the Zcash claims overlap.
+  note "The first swap's LEZ lock is the ZEC actor's, driven on the Node host; the Maker Node funds Zcash from its first coinbase output and claims LEZ while the Maker desk watches both rows"
   maker_wait_bg maker_a awaiting_taker_claim "$swap_a"
+  desk_head_start
+  zec_drive "$swap_a" claim_available
+  wait "$maker_a" || fail "Maker desk: awaiting_taker_claim ($swap_a)"
+  note "The second swap follows the same path from its own corridor: its LEZ lock, the Maker's second Zcash funding from a second coinbase output, the Maker's second LEZ claim"
   maker_wait_bg maker_b awaiting_taker_claim "$swap_b"
   desk_head_start
-  zec_drive_both "$swap_a" "$swap_b" claim_available
-  wait "$maker_a" || fail "Maker desk: awaiting_taker_claim ($swap_a)"
+  zec_drive "$swap_b" claim_available
   wait "$maker_b" || fail "Maker desk: awaiting_taker_claim ($swap_b)"
   taker_act "$claim_action" "$swap_a"
   taker_act "$claim_action" "$swap_b"

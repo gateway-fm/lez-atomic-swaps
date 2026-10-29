@@ -38,7 +38,7 @@
 # and runtime/zec/current names the run id. Every corridor is pinned to the
 # chain it was provisioned on: after `up.sh --fresh-lez`, run this again.
 #
-#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N]
+#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--zcash-refund-blocks N]
 #     --no-restart        steps 1-7 only (the Nodes keep running; the material
 #                         is picked up on their next recreate)
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
@@ -54,11 +54,13 @@ export BTC_RPC_PASSWORD
 RESTART=1
 CHAIN_CHECK=1
 SWAPS=1
+ZCASH_REFUND_BLOCKS=""   # empty: the profile's (4 on the devnet profile); two swaps default to 12
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
     --skip-chain-check) CHAIN_CHECK=0; shift ;;
     --swaps) SWAPS="$2"; shift 2 ;;
+    --zcash-refund-blocks) ZCASH_REFUND_BLOCKS="$2"; shift 2 ;;
     -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -154,6 +156,10 @@ recreate_nodes() {
 }
 
 [[ "$SWAPS" =~ ^[12]$ ]] || fail "--swaps takes 1 or 2"
+# Two swaps share one Zcash refund window: two fundings, their pre-reveal depth
+# and two claims need more than the devnet profile's four blocks.
+if [[ -z "$ZCASH_REFUND_BLOCKS" && "$SWAPS" == 2 ]]; then ZCASH_REFUND_BLOCKS=12; fi
+[[ -z "$ZCASH_REFUND_BLOCKS" || "$ZCASH_REFUND_BLOCKS" =~ ^[0-9]+$ ]] || fail "--zcash-refund-blocks takes a block count"
 stamp="$(date +%s)"
 run_id="zec-devnet-$stamp"
 out="runtime/zec/$run_id"
@@ -259,9 +265,9 @@ finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$k" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$k" "$ZCASH_REFUND_BLOCKS" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, refund_blocks) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
@@ -285,8 +291,11 @@ spec = {
     # corridors must not spend the same coinbase.
     "zcash_funding_skip": int(skip),
 }
+if refund_blocks:
+    spec["zcash_refund_blocks"] = int(refund_blocks)
 json.dump(spec, open(out, "w"), indent=2)
-print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}")
+print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}"
+      + (f", Zcash refund window {refund_blocks} blocks" if refund_blocks else ""))
 PY
 chmod 0600 "$(out_of $k)/spec.json"
 done
