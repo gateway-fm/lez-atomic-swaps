@@ -121,8 +121,10 @@ async fn main() -> Result<()> {
     );
     let signer = read_private_key(&arguments.private_key_file)?;
     let sender = AccountId::from(&PublicKey::new_from_private_key(&signer));
+    // Identity files print account ids in upper-case hex; the protocol's
+    // Hex32 wants lower-case.
     let recipient = AccountId::new(
-        *Hex32::from_hex(&arguments.recipient_account_id)
+        *Hex32::from_hex(&arguments.recipient_account_id.to_ascii_lowercase())
             .context("invalid recipient account id")?
             .as_bytes(),
     );
@@ -131,8 +133,12 @@ async fn main() -> Result<()> {
         "the recipient must differ from the sender"
     );
     let program = program_id_from_hex(
-        Hex32::from_hex(&arguments.authenticated_transfer_program_id)
-            .context("invalid authenticated transfer program id")?,
+        Hex32::from_hex(
+            &arguments
+                .authenticated_transfer_program_id
+                .to_ascii_lowercase(),
+        )
+        .context("invalid authenticated transfer program id")?,
     );
     let node = OfficialNodeRpc::connect_local(&arguments.sequencer_url)
         .context("invalid sequencer endpoint")?;

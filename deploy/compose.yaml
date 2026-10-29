@@ -571,11 +571,11 @@ services:
         socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
         sleep 1
         program="$(sed -n 's/^M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID=//p' /run-market/market-bootstrap.env | head -1)"
-        recipient="$(jq -r '.account_id_hex' /market/identities/heartbeat-echo-02/identity.json)"
+        recipient="$(jq -r '.account_id_hex' /market/identities/heartbeat-echo-02/identity.json | tr 'A-F' 'a-f')"
         exec lez-v02-heartbeat --sequencer-url http://127.0.0.1:3040 --indexer-url http://127.0.0.1:8779 \
           --private-key-file /market/identities/heartbeat-pulse-01/lez-signer.key \
-          --recipient-account-id "$recipient" --authenticated-transfer-program-id "$program" \
-          --interval-seconds "$LEZ_HEARTBEAT_SECONDS" --stall-seconds "$LEZ_HEARTBEAT_STALL_SECONDS" \
+          --recipient-account-id "$$recipient" --authenticated-transfer-program-id "$$program" \
+          --interval-seconds "$$LEZ_HEARTBEAT_SECONDS" --stall-seconds "$$LEZ_HEARTBEAT_STALL_SECONDS" \
           --status-file /heartbeat/status.json
 
 networks:
