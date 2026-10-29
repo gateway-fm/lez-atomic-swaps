@@ -279,7 +279,10 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
 * **Bitcoin**: the standing `bitcoin-core` regtest chain (`txindex`,
   `txospenderindex`), continuously mined by `btc-miner`. Swap transactions are
   native chain transactions, visible in the Bitcoin explorer.
-* **LEZ**: the standing `bedrock` / `sequencer` / `indexer` chain, whose genesis
+* **LEZ**: the standing `bedrock` / `sequencer` / `indexer` chain (genesis allocations
+  of 2 000 000 LEZ to each role's signer and settlement wallet, `gen-config.sh`: a
+  ZEC corridor's 50 000-LEZ lot leaves the depositor for good on a completed swap,
+  so a whole matrix fits on one chain), whose genesis
   funds four persistent wallets (Munich, Basel, Zurich, Limmat). Balances
   accumulate across swaps; the UI's wallet ledger shows true opening → closing
   values, not per-run genesis allocations.

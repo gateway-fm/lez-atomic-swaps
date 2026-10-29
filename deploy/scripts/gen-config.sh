@@ -14,8 +14,14 @@ readonly LEZ_SOURCE="$DEPLOY_ROOT/assets/lez-source"
 readonly channel_id="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
 readonly maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
 readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
-readonly maker_genesis_allocation=100000
-readonly taker_genesis_allocation=200000
+# 2 000 000 LEZ each: a whole scenario matrix on one chain with margin. A ZEC
+# corridor's lot is 50 000 LEZ and it leaves the depositor for good on a
+# completed swap (the Taker in TakerSellsLez, the Maker in TakerSellsForeign);
+# the old 200 000 covered four swaps, and the fifth failed its LEZ funding
+# (the escrow program reports an insufficient depositor balance as
+# "native funding account binding mismatch", error 6003).
+readonly maker_genesis_allocation=2000000
+readonly taker_genesis_allocation=2000000
 # Persistent settlement wallets (owner account ids of the identities held in
 # the market root, LEZ_MARKET_ROOT). Swaps run on this long-standing chain and
 # these accounts accumulate real balances across swaps — the local analog of
@@ -31,8 +37,8 @@ wallet_basel_account_id="$(wallet_account_id maker-basel-02 A81AE1KTGdZ5GCDfy4Xd
 wallet_zurich_account_id="$(wallet_account_id taker-zurich-01 4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM)"
 wallet_limmat_account_id="$(wallet_account_id taker-limmat-02 5A8bRmav5wjYQex6z7SpuuNNyhesqHwweAqjc3eWfchH)"
 readonly wallet_munich_account_id wallet_basel_account_id wallet_zurich_account_id wallet_limmat_account_id
-readonly wallet_maker_allocation=100000
-readonly wallet_taker_allocation=200000
+readonly wallet_maker_allocation=2000000
+readonly wallet_taker_allocation=2000000
 
 # Preserve the selected volume namespace on ordinary restarts too.
 volume_prefix="${LEZ_VOLUME_PREFIX:-}"
