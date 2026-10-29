@@ -346,7 +346,7 @@ helper 0:0 -v "$STAGING:/stage:ro" -v "$MAKER_VOLUME:/maker" -v "$TAKER_VOLUME:/
     done
     chown -R $NODE_UID:$NODE_UID \$vol && chmod -R go-rwx \$vol
   done
-  for r in $(for (( k = 0; k < SWAPS; k++ )); do run_id_of $k; done); do
+  for r in $(for (( k = 0; k < SWAPS; k++ )); do run_id_of $k; done | tr '\n' ' '); do
     mkdir -p /taker/taker-swaps/\$r && chown $NODE_UID:$NODE_UID /taker/taker-swaps /taker/taker-swaps/\$r && chmod 0700 /taker/taker-swaps /taker/taker-swaps/\$r
   done
   echo '  maker volume:'; find /maker/corridor* -type f | sort | sed 's|^|    |'
