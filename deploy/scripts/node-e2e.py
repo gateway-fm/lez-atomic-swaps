@@ -1624,6 +1624,213 @@ def scenario_zec_concurrent(stamp: str) -> dict:
             "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"]}
 
 
+def zec_finish(swap_id: str, config: str, corridor: dict, stamp: str, suffix: str = "") -> dict:
+    """Drives a taken ZEC swap from wherever it is to completed on both Nodes:
+    the actor to claim_available, the Taker's Zcash claim through the Node, the
+    actor to completed. Returns the claim reply."""
+    view = zec_drive_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                           describe="(Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}{suffix}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker claimed Zcash on {swap_id[:12]} (replay={result.get('was_replay')})")
+    zec_drive_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait_completed(swap_id, timeout=600)
+    return result
+
+
+def scenario_zec_replay(stamp: str) -> dict:
+    """ZEC analogue of `replay`: the corridor's offer publication replayed with
+    the provisioner's own request id, the take replayed with its request id
+    (same swap), the Zcash claim replayed. Skipped: the BTC lock replay —
+    a ZEC swap's first LEZ lock is the actor's durable intent, driven here,
+    not a Node request; its idempotence is every drive's."""
+    corridor = zec_provision()
+    run_stamp = corridor["run_id"].rsplit("-", 1)[1]
+    again = call("maker", "maker_offer_publish", {"request_id": f"zec-devnet-publish-{run_stamp}",
+                                                  "offer_id": corridor["offer_id"], "route": ROUTE})
+    if again.get("was_replay") is not True:
+        raise Failure(f"offer publication replay was not idempotent: {again}")
+    log("  offer publication replayed")
+    entry = discover(corridor["offer_id"])
+    request = take_request(corridor["offer_id"], entry, f"e2e-take-{stamp}")
+    first = initiate(request)
+    second = initiate(request)
+    if second.get("was_replay") is not True or second["swap"]["swap_id"] != first["swap"]["swap_id"]:
+        raise Failure(f"take replay was not idempotent: {second}")
+    swap_id = first["swap"]["swap_id"]
+    log(f"  take replayed for {swap_id[:12]}")
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_activate(config)
+    view = zec_drive_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                           describe="(Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")
+    params = {"schema_version": 1, "request_id": f"e2e-claim-{stamp}", "swap_id": swap_id,
+              "expected_generation": view["progress_generation"]}
+    call("taker", "taker_swap_claim_v1", params, timeout=300)
+    replay = call("taker", "taker_swap_claim_v1", params, timeout=300)
+    if replay.get("was_replay") is not True:
+        raise Failure(f"claim replay was not idempotent: {replay}")
+    log("  claim replayed")
+    zec_drive_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait_completed(swap_id, timeout=600)
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    if len(listed) != 1 or listed[0]["state"] != "completed":
+        raise Failure(f"swap list disagrees after replays: {listed}")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"]}
+
+
+def scenario_zec_wrong_inputs(stamp: str) -> dict:
+    """ZEC analogue of `wrong-inputs`: a publish request id reused for another
+    offer, a stale withdraw revision, a take with a mismatched envelope hash,
+    an off-preset amount and a wrong LEZ quote, claim and refund on an unknown
+    swap, a claim before the Maker funded, the consumed lot leaving Delivery
+    and refusing a second take. Skipped: `taker_swap_lock_v1` on an unknown
+    swap — a ZEC swap has no Node lock request (the LEZ lock is the actor's)."""
+    corridor = zec_provision()
+    offer_id = corridor["offer_id"]
+    run_stamp = corridor["run_id"].rsplit("-", 1)[1]
+    record = next(r for r in call("maker", "maker_offer_list", {}) if r["offer"]["id"] == offer_id)
+    expect_error("reusing a publish request id for another offer", "maker", "maker_offer_publish",
+                 {"request_id": f"zec-devnet-publish-{run_stamp}", "offer_id": offer_id + "-other", "route": ROUTE})
+    expect_error("withdrawing with a stale revision", "maker", "maker_offer_withdraw",
+                 {"request_id": f"e2e-stale-{stamp}", "offer_id": offer_id, "expected_revision": record["revision"] + 5})
+    entry = discover(offer_id)
+    bad_hash = take_request(offer_id, entry, f"e2e-badhash-{stamp}")
+    bad_hash["signed_envelope_sha256"] = [(b + 1) % 256 for b in entry["signed_envelope_sha256"]]
+    expect_error("taking with a mismatched envelope hash", "taker", "taker_swap_initiate_v1", bad_hash)
+    off_preset = take_request(offer_id, entry, f"e2e-offpreset-{stamp}")
+    off_preset["foreign_units"] = FOREIGN_UNITS - 1
+    expect_error("taking an off-preset amount", "taker", "taker_swap_initiate_v1", off_preset)
+    wrong_quote = take_request(offer_id, entry, f"e2e-wrongquote-{stamp}")
+    wrong_quote["expected_lez_units"] = LEZ_UNITS + 1
+    expect_error("taking with a wrong LEZ quote", "taker", "taker_swap_initiate_v1", wrong_quote)
+    expect_error("claiming an unknown swap", "taker", "taker_swap_claim_v1",
+                 {"schema_version": 1, "request_id": f"e2e-noswap-{stamp}", "swap_id": "00" * 32, "expected_generation": 0})
+    expect_error("refunding an unknown swap", "taker", "taker_swap_refund_v1",
+                 {"schema_version": 1, "request_id": f"e2e-noswap-refund-{stamp}", "swap_id": "00" * 32, "expected_generation": 0})
+    swap_id = zec_take_or_resume(offer_id, stamp)
+    expect_error("claiming before the Maker funded", "taker", "taker_swap_claim_v1",
+                 {"schema_version": 1, "request_id": f"e2e-early-{stamp}", "swap_id": swap_id, "expected_generation": 0})
+    deadline = time.time() + 30
+    while time.time() < deadline and offer_id in {e["offer"]["id"] for e in call("taker", "taker_offer_list_v1", {"schema_version": 1})["offers"]}:
+        time.sleep(2)
+    if offer_id in {e["offer"]["id"] for e in call("taker", "taker_offer_list_v1", {"schema_version": 1})["offers"]}:
+        raise Failure("the consumed lot is still discoverable")
+    expect_error("taking the consumed lot again", "taker", "taker_swap_initiate_v1",
+                 take_request(offer_id, entry, f"e2e-again-{stamp}"))
+    log("  consumed lot left Delivery and cannot be taken again")
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_activate(config)
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"]}
+
+
+def scenario_zec_restart(stamp: str, role: str) -> dict:
+    """ZEC analogue of `restart-<role>`: the Taker's LEZ lock final on both
+    Nodes, the role's Node restarted, the swap carried to completed afterwards
+    (the Taker's actor is driven from here across its Node's restart; the
+    Maker's supervisor resumes its actor from the store)."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_activate(config)
+    zec_drive_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
+                    describe="(Taker LEZ lock final)")
+    container, _ = NODES[role]
+    log(f"  restarting {container}")
+    docker("restart", container)
+    wait_healthy(role)
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "restarted": container}
+
+
+def scenario_zec_survivor(stamp: str) -> dict:
+    """ZEC analogue of `survivor`: the Taker Node stopped right after its Zcash
+    claim was broadcast; the Maker completes alone (its follow-up observes the
+    claim once zebra includes it — zebra is mined from here, as always); the
+    Taker Node restarted and its actor driven to completed."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_activate(config)
+    view = zec_drive_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                           describe="(Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")
+    call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                          "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+         timeout=300)
+    log("  stopping the Taker Node right after its Zcash claim")
+    docker("stop", NODES["taker"][0])
+    try:
+        deadline = time.time() + 1800
+        while time.time() < deadline:
+            phase = maker_phase(swap_id)
+            pool = zebra("getrawmempool")
+            log(f"  maker {swap_id[:12]}: {phase} | zebra mempool {len(pool) if isinstance(pool, list) else '?'}")
+            if phase == "completed":
+                break
+            if isinstance(pool, list) and pool:
+                zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+            time.sleep(20)
+        else:
+            raise Failure("Maker did not complete without the Taker")
+    finally:
+        docker("start", NODES["taker"][0])
+        wait_healthy("taker")
+    zec_drive_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(Taker back)")
+    wait_completed(swap_id, timeout=600)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"]}
+
+
+def scenario_zec_regenerated_catalog(stamp: str) -> dict:
+    """ZEC analogue of `regenerated-config`: a swap taken under one rendering of
+    the live role configuration (which carries the prepared ZEC catalog)
+    survives a re-render and a Taker Node restart, reloads against its own
+    receipt and stays actionable to completion."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_activate(config)
+    zec_drive_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
+                    describe="(Taker LEZ lock final)")
+    regenerate_runtime_config()
+    log("  restarting the Taker Node onto the re-rendered configuration")
+    docker("restart", NODES["taker"][0])
+    wait_healthy("taker")
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    if len(listed) != 1 or listed[0]["state"] in TERMINAL:
+        raise Failure(f"the swap did not reload after the restart: {listed}")
+    log(f"  swap {swap_id[:12]} reloaded as {listed[0]['state']}")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "reloaded_state": listed[0]["state"]}
+
+
+def scenario_zec_tampered_catalog(stamp: str) -> dict:
+    """ZEC analogue of `tampered-config`: the actor configuration a swap was
+    taken under (the swap's own copy, pinned by its receipt) is altered; after
+    a Taker Node restart the swap is not actionable and a claim is refused.
+    The catalog source itself is not altered: its sha256 is pinned at the
+    Node's start and a mismatch keeps the whole catalog out, which the
+    entrypoint already reports."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    docker("exec", NODES["taker"][0], "sh", "-c", f"printf '\n' >> {config}")
+    log("  appended one byte to the swap's copied actor-config.json")
+    docker("restart", NODES["taker"][0])
+    wait_healthy("taker")
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    state = listed[0]["state"] if listed else "absent"
+    reply = rpc("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-tampered-{stamp}",
+                                                 "swap_id": swap_id, "expected_generation": 0}, timeout=120)
+    if "result" in reply:
+        raise Failure(f"a claim was accepted on a swap whose saved actor configuration was altered ({state})")
+    if listed and state not in {"attention_required"}:
+        raise Failure(f"the altered swap still lists as {state} instead of attention_required")
+    category = (reply["error"].get("data") or {}).get("category") if isinstance(reply["error"].get("data"), dict) else None
+    log(f"  swap {swap_id[:12]} after the tamper: {state}; claim refused ({category or reply['error'].get('message')})")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "state_after_tamper": state, "claim_refusal": category}
+
+
 def zec_export_tool(swap_id: str) -> bool:
     """`node-e2e.py --pair Zcash zec-export --swap-id …`: the ZEC counterpart of
     export-node-evidence.py for the desk journeys. A ZEC swap has no Bitcoin
@@ -2018,6 +2225,13 @@ ZEC_SCENARIOS = {
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,
+    "zec-replay": scenario_zec_replay,
+    "zec-wrong-inputs": scenario_zec_wrong_inputs,
+    "zec-restart-taker": lambda stamp: scenario_zec_restart(stamp, "taker"),
+    "zec-restart-maker": lambda stamp: scenario_zec_restart(stamp, "maker"),
+    "zec-survivor": scenario_zec_survivor,
+    "zec-regenerated-catalog": scenario_zec_regenerated_catalog,
+    "zec-tampered-catalog": scenario_zec_tampered_catalog,
 }
 
 
