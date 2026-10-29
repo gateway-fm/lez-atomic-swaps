@@ -403,13 +403,19 @@ fn resolve_claimed_attempt(
             },
             MakerActorSupervisorResolution::Blocked,
         ),
-        ClaimedAttempt::Backoff(failure_class) => (
-            MakerActorAttemptResolution::Backoff {
-                not_before: now.saturating_add(config.failure_backoff_seconds),
-                failure_class: failure_class.into(),
-            },
-            MakerActorSupervisorResolution::Backoff,
-        ),
+        ClaimedAttempt::Backoff(failure_class) => {
+            eprintln!(
+                "maker actor {}: attempt backs off ({failure_class})",
+                lease.record().swap_id().as_str()
+            );
+            (
+                MakerActorAttemptResolution::Backoff {
+                    not_before: now.saturating_add(config.failure_backoff_seconds),
+                    failure_class: failure_class.into(),
+                },
+                MakerActorSupervisorResolution::Backoff,
+            )
+        }
         ClaimedAttempt::Terminal => (
             MakerActorAttemptResolution::Terminal,
             MakerActorSupervisorResolution::Terminal,
@@ -436,6 +442,30 @@ fn resolve_claimed_attempt(
         generation: lease.generation(),
         resolution,
     })
+}
+
+/// One secret-free line per supervised effect: the actor's outcome,
+/// operation, phase, revision and next action, so an operator can see what a
+/// swap's attempts return without reading the actor's journal.
+fn log_effect(swap_id: &str, command: ActorEffectCommand, effect: &[u8]) {
+    let Ok(value) = serde_json::from_slice::<Value>(effect) else {
+        return;
+    };
+    let field = |name: &str| {
+        value.get(name).map_or_else(
+            || "-".to_owned(),
+            |v| v.as_str().map_or_else(|| v.to_string(), str::to_owned),
+        )
+    };
+    eprintln!(
+        "maker actor {swap_id}: {} → {} {} (phase {}, revision {}, next {})",
+        command.name(),
+        field("outcome"),
+        field("operation"),
+        field("phase"),
+        field("revision"),
+        field("next_action")
+    );
 }
 
 enum ClaimedAttempt {
@@ -612,6 +642,7 @@ fn run_claimed_attempt_with_lock(
         else {
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         };
+        log_effect(lease.record().swap_id().as_str(), command, &effect);
         if status_revision.is_some_and(|revision| parsed_effect.revision < revision) {
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         }
