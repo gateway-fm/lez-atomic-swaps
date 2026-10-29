@@ -55,8 +55,9 @@ else
 fi
 # Zcash: a prepared corridor (scripts/zec-provision.sh), TakerSellsLez only for
 # now (Part D: TakerSellsForeign through the Nodes lands at step 20). The
-# Taker's first LEZ lock has no desk button; it is driven through the Taker
-# actor on the Node (node-e2e.py --pair Zcash zec-drive) between desk steps.
+# Taker's first LEZ lock has no desk button; the Taker Node drives its actor
+# itself, and node-e2e.py --pair Zcash zec-wait polls (and mines zebra) between
+# desk steps.
 case "$pair" in
   Bitcoin) ;;
   Zcash) direction=TakerSellsLez; lock_action=""; claim_action=claim_zec; refund_action=refund_lez; lock_wallet=lez-maker ;;
@@ -210,9 +211,9 @@ maker_wait_label() { # the awaiting-claim label names the asset the Taker claims
   else echo "Waiting for the Taker's LEZ claim"; fi
 }
 # A desk step in the background: the desk opens now and waits on screen while
-# the chain moves (the ZEC lifecycle is driven on the Node host, not from a
-# desk button, so the only way to see it happen on a desk is to have the desk
-# open first); the caller `wait`s for it. Its recording segment is assigned
+# the chain moves (the Taker Node drives the ZEC lifecycle itself, not a desk
+# button, so the only way to see it happen on a desk is to have the desk open
+# first); the caller `wait`s for it. Its recording segment is assigned
 # here, in the parent, so join_video keeps the step order.
 step_bg() { # step_bg <pid-var> <title> <role> [ENV=VALUE...]
   local pid_var="$1"; shift
@@ -267,16 +268,16 @@ zec_provision_add() { # a second corridor beside the live one (its own Zcash anc
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh --add"
   wait_healthy lez-maker-node; wait_healthy lez-taker-node
 }
-zec_drive() { # zec_drive <swap_id> <taker state> [timeout]: drive the Taker actor (and mine zebra on demand) until the Node reports that state
+zec_wait() { # zec_wait <swap_id> <taker state> [timeout]: wait (the Taker Node drives its actor; zebra is mined on demand) until the Node reports that state
   log "driving the Taker's ZEC actor on the Node until ${1:0:12} shows $2"
-  python3 scripts/node-e2e.py --pair Zcash zec-drive --swap-id "$1" --until "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
-  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive to $2"
+  python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$1" --until "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to $2"
 }
 
-zec_drive_both() { # zec_drive_both <swap_a> <swap_b> <taker state> [timeout]: drive both Taker actors in turn until both show that state
+zec_wait_both() { # zec_wait_both <swap_a> <swap_b> <taker state> [timeout]: wait until both swaps show that state (the Taker Node drives both actors)
   log "driving both Taker ZEC actors on the Node until ${1:0:12} and ${2:0:12} show $3"
-  python3 scripts/node-e2e.py --pair Zcash zec-drive --swap-id "$1" --swap-id "$2" --until "$3" --timeout "${4:-3000}" 2>&1 | sed 's/^/   /'
-  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive (both) to $3"
+  python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$1" --swap-id "$2" --until "$3" --timeout "${4:-3000}" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait (both) to $3"
 }
 zec_offer_ids() { python3 -c 'import json,sys; print("\n".join(e["offer_id"] for e in json.load(open(sys.argv[1]))))' "runtime/zec/$(cat runtime/zec/current)/prepared.json"; }
 zec_refund_tail() { # zec_refund_tail <swap_id>: zebra to the refund height, the Maker's refund queued, its Zcash refund in a block
@@ -370,22 +371,61 @@ scenario_zec_happy() {
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
   zec_provision; take swap
-  note "The Taker's first LEZ lock is the ZEC actor's: it is driven on the Node host, not from the desk; the Maker desk watches its row while the Maker Node funds Zcash and claims LEZ with the secret"
+  note "The Taker Node drives the LEZ lock on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Zcash and claims LEZ with the secret"
   maker_wait_bg maker_pid awaiting_taker_claim "$swap"
   desk_head_start
-  zec_drive "$swap" claim_available
+  zec_wait "$swap" claim_available
   wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
   taker_act "$claim_action" "$swap"
-  note "The Zcash claim waits for a zebra block; both desks watch the swap complete while the Taker actor observes it"
+  note "The Zcash claim waits for a zebra block; both desks watch the swap complete while the Taker Node observes it"
   maker_wait_bg maker_pid completed "$swap"
   taker_wait_bg taker_pid completed "$swap"
   desk_head_start
-  zec_drive "$swap" completed 900
+  zec_wait "$swap" completed 900
   wait "$maker_pid" || fail "Maker desk: completed"
   wait "$taker_pid" || fail "Taker desk: completed"
   export_evidence "$swap"
 }
 scenario_zec_concurrent() {
+  # The BTC concurrent shape: two prepared entries of one corridor run, both
+  # taken from the desk, both actors driven by the Taker Node with their LEZ
+  # steps interleaving on the same role accounts, both Maker fundings (distinct
+  # coinbase outputs), both revealing LEZ claims, both Zcash claims from the
+  # Taker desk; both desks show two rows completed.
+  local swap_a swap_b offers maker_a maker_b taker_a
+  if [[ "$record" == 1 ]]; then
+    log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
+    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    wait_healthy lez-maker-node; wait_healthy lez-taker-node
+  fi
+  zec_provision 2
+  mapfile -t offers < <(zec_offer_ids)
+  [[ "${#offers[@]}" == 2 ]] || fail "the corridor run lists ${#offers[@]} offers, not 2"
+  take swap_a "${offers[0]}"
+  note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node runs a second prepared ceremony with the Maker"
+  take swap_b "${offers[1]}"
+  note "The Taker Node drives both LEZ locks on its own, their steps interleaving on one account; the Maker Node funds Zcash for each from its own coinbase output and claims LEZ on each while the Maker desk watches both rows"
+  maker_wait_bg maker_a awaiting_taker_claim "$swap_a"
+  maker_wait_bg maker_b awaiting_taker_claim "$swap_b"
+  desk_head_start
+  zec_wait_both "$swap_a" "$swap_b" claim_available
+  wait "$maker_a" || fail "Maker desk: awaiting_taker_claim ($swap_a)"
+  wait "$maker_b" || fail "Maker desk: awaiting_taker_claim ($swap_b)"
+  taker_act "$claim_action" "$swap_a"
+  taker_act "$claim_action" "$swap_b"
+  note "Both Zcash claims wait for zebra blocks; both desks watch the two swaps complete while the Taker Node observes them"
+  maker_wait_bg maker_a completed "$swap_a"
+  taker_wait_bg taker_a completed "$swap_a"
+  desk_head_start
+  zec_wait_both "$swap_a" "$swap_b" completed 1200
+  wait "$maker_a" || fail "Maker desk: completed ($swap_a)"
+  wait "$taker_a" || fail "Taker desk: completed ($swap_a)"
+  maker_wait completed "$swap_b"
+  taker_wait completed "$swap_b"
+  export_evidence "$swap_a"
+  export_evidence "$swap_b"
+}
+scenario_zec_concurrent_staggered() {
   # Two prepared ZEC swaps open side by side: the first provisioned, taken and
   # brought to claim_available; a second corridor added beside it (its own
   # Zcash anchor and refund window, Nodes recreated with both), taken and
@@ -402,10 +442,10 @@ scenario_zec_concurrent() {
   fi
   zec_provision
   take swap_a
-  note "The first swap's LEZ lock is the ZEC actor's, driven on the Node host; the Maker Node funds Zcash from its first coinbase output and claims LEZ while the Maker desk watches the row"
+  note "The Taker Node drives the first swap's LEZ lock on its own; the Maker Node funds Zcash from its first coinbase output and claims LEZ while the Maker desk watches the row"
   maker_wait_bg maker_a awaiting_taker_claim "$swap_a"
   desk_head_start
-  zec_drive "$swap_a" claim_available
+  zec_wait "$swap_a" claim_available
   wait "$maker_a" || fail "Maker desk: awaiting_taker_claim ($swap_a)"
   zec_provision_add
   mapfile -t offers < <(zec_offer_ids)
@@ -415,15 +455,15 @@ scenario_zec_concurrent() {
   note "The second swap follows the same path from its own corridor: its LEZ lock, the Maker's Zcash funding from a second coinbase output, the Maker's second LEZ claim; the first row stays open beside it"
   maker_wait_bg maker_b awaiting_taker_claim "$swap_b"
   desk_head_start
-  zec_drive "$swap_b" claim_available
+  zec_wait "$swap_b" claim_available
   wait "$maker_b" || fail "Maker desk: awaiting_taker_claim ($swap_b)"
   taker_act "$claim_action" "$swap_a"
   taker_act "$claim_action" "$swap_b"
-  note "Both Zcash claims wait for zebra blocks; both desks watch the two swaps complete while the Taker actors observe them"
+  note "Both Zcash claims wait for zebra blocks; both desks watch the two swaps complete while the Taker Node observes them"
   maker_wait_bg maker_a completed "$swap_a"
   taker_wait_bg taker_a completed "$swap_a"
   desk_head_start
-  zec_drive_both "$swap_a" "$swap_b" completed 1200
+  zec_wait_both "$swap_a" "$swap_b" completed 1200
   wait "$maker_a" || fail "Maker desk: completed ($swap_a)"
   wait "$taker_a" || fail "Taker desk: completed ($swap_a)"
   maker_wait completed "$swap_b"
@@ -435,7 +475,7 @@ scenario_zec_maker_refund() {
   # Both legs locked, the Maker's Zcash funding kept at one confirmation (below
   # the pre-reveal gate), the Taker refunds LEZ from its desk at the agreement's
   # refund time (30 min after provisioning on the devnet profile), the Maker
-  # Node refunds its Zcash at the refund height, the Taker Node re-drives the
+  # Node refunds its Zcash at the refund height, the Taker Node's supervisor runs the
   # admitted refund on its own until it has observed that; both desks show the
   # swap refunded. One press of Refund; no Retry.
   local swap maker_pid taker_pid opens
@@ -445,16 +485,16 @@ scenario_zec_maker_refund() {
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
   zec_provision; take swap
-  note "The Taker's first LEZ lock is the ZEC actor's, driven on the Node host; the Maker Node funds Zcash, and zebra is mined only for what waits in the mempool, so the funding stays one block deep and the Maker cannot claim yet"
-  python3 scripts/node-e2e.py --pair Zcash zec-drive --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
-  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-drive to both_legs_locked"
+  note "The Taker Node drives the LEZ lock on its own; the Maker Node funds Zcash, and zebra is mined only for what waits in the mempool, so the funding stays one block deep and the Maker cannot claim yet"
+  python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to both_legs_locked"
   opens=$(( $(cat runtime/zec/current | sed 's/.*-//') + 1800 + 15 ))
   wait_until_unix "$opens" "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)"
   note "The LEZ refund time has passed and the Maker never claimed; the Taker desk offers Refund and the Maker desk watches its Zcash come back"
   maker_wait_bg maker_pid refunded "$swap"
   desk_head_start
   taker_act "$refund_action" "$swap"
-  note "Refund pressed once: the Taker Node re-drives the admitted refund every 30 s; the Maker Node refunds its Zcash at the refund height and the Taker observes it"
+  note "Refund pressed once: the Taker Node's supervisor runs the admitted refund until it is final; the Maker Node refunds its Zcash at the refund height and the Taker observes it"
   taker_wait_bg taker_pid refunded "$swap"
   zec_refund_tail "$swap"
   wait "$maker_pid" || fail "Maker desk: refunded"
@@ -490,6 +530,7 @@ run_one() {
     zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
     zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
     zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
+    zec-concurrent-staggered) [[ "$pair" == Zcash ]] || fail "zec-concurrent-staggered needs --pair Zcash"; scenario_zec_concurrent_staggered ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
