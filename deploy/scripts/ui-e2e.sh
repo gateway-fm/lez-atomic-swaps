@@ -155,7 +155,9 @@ raw = sys.stdin.read()
 for s in (json.loads(raw) if raw else {}).get("result", {}).get("swaps", []):
     print(s["swap_id"], s["state"], s.get("progress_generation", 0), s.get("available_action") or "-")'
 }
-new_swaps() { taker_swaps | grep -v -F -f <(printf "%s\n" "${baseline_swaps[@]:-__none__}"); }
+# Whole-id comparison: a fixed-string filter would also drop a swap whose id
+# extends a baseline id (the concurrent fixture's "<id>-b").
+new_swaps() { taker_swaps | awk -v b="${baseline_swaps[*]:-__none__}" 'BEGIN { n = split(b, a, " "); for (i = 1; i <= n; i++) seen[a[i]] = 1 } !seen[$1]'; }
 show() { new_swaps | sed 's/^/   /'; }
 step() { log "$1"; step_title="${step_note:+$step_note · }$1"; step_note=""; shift; if ! ui "$@"; then show; fail "step failed"; fi; show; }
 note() { log "$1"; step_note="$1"; }  # a scripted action, narrated at the start of the next recorded step
