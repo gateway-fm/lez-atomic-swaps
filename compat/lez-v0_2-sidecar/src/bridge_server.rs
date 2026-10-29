@@ -240,6 +240,12 @@ struct PersistedEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     replay_request: Option<Value>,
     outcome: PersistedOutcome,
+    /// Earlier decisions of the same request, oldest first: a submission that
+    /// is decided on the chain again keeps its first acceptance here, so the
+    /// journal is history, never an overwrite, and a crash between a decision
+    /// and its record replays deterministically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    earlier_outcomes: Vec<PersistedOutcome>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -464,7 +470,17 @@ impl DurableStore {
         context: &MessageContext,
         request_sha256: &str,
     ) -> Result<(), OperationFailure> {
-        self.ensure_capacity()?;
+        // A submission decided again keeps every earlier decision of its
+        // request id behind the new in-flight marker.
+        let earlier_outcomes =
+            if let Some(previous) = self.persisted.entries.get(context.request_id.as_str()) {
+                let mut earlier = previous.earlier_outcomes.clone();
+                earlier.push(previous.outcome.clone());
+                earlier
+            } else {
+                self.ensure_capacity()?;
+                Vec::new()
+            };
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -478,6 +494,7 @@ impl DurableStore {
                         message: "official node submission outcome is unknown",
                     },
                 )),
+                earlier_outcomes,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())
@@ -498,6 +515,20 @@ impl DurableStore {
         {
             self.ensure_capacity()?;
         }
+        // The in-flight marker a submission reserved carries the earlier
+        // decisions; the final outcome replaces the marker and keeps them.
+        let earlier_outcomes = self
+            .persisted
+            .entries
+            .get(context.request_id.as_str())
+            .map(|previous| {
+                let mut earlier = previous.earlier_outcomes.clone();
+                if !matches!(previous.outcome, PersistedOutcome::SubmissionInFlight(_)) {
+                    earlier.push(previous.outcome.clone());
+                }
+                earlier
+            })
+            .unwrap_or_default();
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -505,6 +536,7 @@ impl DurableStore {
                 request_sha256,
                 replay_request,
                 outcome,
+                earlier_outcomes,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())

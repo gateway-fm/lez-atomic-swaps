@@ -831,6 +831,33 @@ async fn a_resubmission_after_a_journaled_acceptance_is_decided_on_the_chain_aga
         "superseded bytes are never broadcast"
     );
 
+    // The journal is history, not an overwrite: the request id's entry holds
+    // the first acceptance and the resend behind the Superseded decision.
+    let journal: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(directory.path().join("bridge-idempotency.json")).expect("journal file"),
+    )
+    .expect("journal json");
+    let entry = journal["entries"][request.context.request_id.as_str()].clone();
+    let earlier = entry["earlier_outcomes"]
+        .as_array()
+        .expect("earlier decisions kept");
+    assert_eq!(
+        earlier.len(),
+        2,
+        "both earlier acceptances are kept: {entry}"
+    );
+    assert!(
+        earlier.iter().all(
+            |outcome| outcome["kind"] == "success" && outcome["value"]["outcome"] == "accepted"
+        ),
+        "{entry}"
+    );
+    assert_eq!(entry["outcome"]["kind"], "success", "{entry}");
+    assert!(
+        entry["outcome"]["value"]["outcome"]["superseded"].is_object(),
+        "{entry}"
+    );
+
     // Landed bytes are reported known, not resent.
     chain.include_exact(&pair.initialization);
     let known = sidecar
