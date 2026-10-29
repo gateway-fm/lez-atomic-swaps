@@ -1,6 +1,6 @@
 //! Pre-lock and post-lock LEZ/ZEC SDK facades.
 
-use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
+use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapDirection, SwapId, UnixSeconds};
 
 use crate::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimIntentV1, ClaimPreimage, ClaimRecoveryStore,
@@ -1044,28 +1044,62 @@ where
             });
         }
         let direction = self.agreement().direction();
-        match self.observe_taker_first_lock().await? {
-            ObserveTakerFirstLockOutcome::Unchanged(_) => Ok(match direction {
-                lez_swap_core::SwapDirection::TakerSellsForeign => {
-                    classify_unchanged_maker_eligibility(self.status(), self.revision)
+        // The lock the tracker knew before this observation, by its inclusion
+        // (transaction, block). A head that moves only in tip and confirmations
+        // is the same lock, deeper: that progress is projected durably like any
+        // event, but it must not send the Maker back to "poll again" — on a
+        // chain that anything else moves (a second swap, the devnet heartbeat)
+        // the Maker would otherwise re-project on every attempt and never fund.
+        let lez_head_before = self.lez_taker_lock_tracker.current().cloned();
+        let zcash_head_before = self.zcash_taker_lock_tracker.current().cloned();
+        let observed = self.observe_taker_first_lock().await?;
+        let same_lock_deeper = match (&observed, direction) {
+            (ObserveTakerFirstLockOutcome::Projected(_), SwapDirection::TakerSellsLez) => {
+                match (&lez_head_before, self.lez_taker_lock_tracker.current()) {
+                    (Some(before), Some(after)) => {
+                        crate::lez_observation::same_lez_inclusion(before, after)
+                    }
+                    _ => false,
                 }
-                lez_swap_core::SwapDirection::TakerSellsLez => {
-                    classify_unchanged_lez_maker_eligibility(
-                        self.status(),
-                        self.revision,
-                        self.coordinator.required_confirmations(Participant::Taker),
-                        self.agreement().lez_terms().chain().environment(),
-                        self.lez_taker_lock_tracker.current().map(|current| {
-                            (current.confirmations().get(), current.inclusion_status())
-                        }),
-                    )
+            }
+            (ObserveTakerFirstLockOutcome::Projected(_), SwapDirection::TakerSellsForeign) => {
+                match (&zcash_head_before, self.zcash_taker_lock_tracker.current()) {
+                    (Some(before), Some(after)) => {
+                        crate::observation::same_canonical_inclusion(before, after)
+                    }
+                    _ => false,
                 }
-            }),
+            }
+            _ => false,
+        };
+        match observed {
+            ObserveTakerFirstLockOutcome::Unchanged(_) => Ok(self.classify_maker_eligibility()),
+            ObserveTakerFirstLockOutcome::Projected(_) if same_lock_deeper => {
+                Ok(self.classify_maker_eligibility())
+            }
             ObserveTakerFirstLockOutcome::AwaitingStableObservation(step) => Ok(
                 MakerFundingEligibilityOutcome::AwaitingStableObservation(step),
             ),
             ObserveTakerFirstLockOutcome::Projected(commit) => Ok(
                 MakerFundingEligibilityOutcome::CanonicalStateChanged(commit),
+            ),
+        }
+    }
+
+    /// The Maker's funding eligibility from the tracker head as it stands.
+    fn classify_maker_eligibility(&self) -> MakerFundingEligibilityOutcome {
+        match self.agreement().direction() {
+            SwapDirection::TakerSellsForeign => {
+                classify_unchanged_maker_eligibility(self.status(), self.revision)
+            }
+            SwapDirection::TakerSellsLez => classify_unchanged_lez_maker_eligibility(
+                self.status(),
+                self.revision,
+                self.coordinator.required_confirmations(Participant::Taker),
+                self.agreement().lez_terms().chain().environment(),
+                self.lez_taker_lock_tracker
+                    .current()
+                    .map(|current| (current.confirmations().get(), current.inclusion_status())),
             ),
         }
     }

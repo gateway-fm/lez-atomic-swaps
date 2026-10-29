@@ -1565,14 +1565,16 @@ async fn assert_forward_reorg_history(
         .respond(Ok(TakerFirstLockObservationV1::CanonicalZcash(Box::new(
             deeper.clone(),
         ))));
+    // The same lock seen deeper is projected durably (revision 3) and the
+    // Maker is eligible from that head at once: depth is progress of the lock
+    // it knows, not a changed canonical state (a changed state is a removal or
+    // a replacement, below).
     assert_eq!(
         restarted
             .refresh_maker_funding_eligibility()
             .await
             .expect("changed depth commits before eligibility"),
-        MakerFundingEligibilityOutcome::CanonicalStateChanged(FirstLockProjectionCommit::new(
-            3, true
-        ))
+        MakerFundingEligibilityOutcome::Eligible { revision: 3 }
     );
     assert_eq!(restarted.status(), Phase::TakerLockConfirmed);
     assert_eq!(restarted.revision(), 3);
@@ -4125,4 +4127,106 @@ fn claim_preimage_is_redacted_and_not_a_wire_record() {
     let preimage = ClaimPreimage::new([0x42; 32]);
     assert_eq!(preimage.expose_secret(), &[0x42; 32]);
     assert_eq!(format!("{preimage:?}"), "ClaimPreimage([REDACTED])");
+}
+
+/// The Taker's LEZ lock seen again at a deeper tip is the same lock, deeper:
+/// the Maker's funding eligibility must proceed from it, not send the Maker
+/// back to "poll again" (on a chain anything else moves, that never ended).
+#[tokio::test]
+async fn maker_funds_when_the_same_lez_lock_is_observed_deeper() {
+    let id = "sdk-maker-funds-deeper-lez-lock";
+    let wire = agreement_wire(id, SwapDirection::TakerSellsLez, FixtureVariant::Local);
+    let store = MemoryStore::default();
+    let lez = MemoryLezTakerLockObservation::default();
+    let zcash = MemoryZcashTakerLockObservation::default();
+    let sdk = maker_lock_sdk(wire, lez.clone(), zcash.clone(), store);
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker agreement");
+    let mut active = sdk.activate(accepted).await.expect("maker activation");
+    lez.0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            canonical_lez_taker_lock(active.agreement()),
+        ))));
+    assert!(matches!(
+        active.observe_taker_first_lock().await,
+        Ok(ObserveTakerFirstLockOutcome::Projected(_))
+    ));
+    assert_eq!(
+        (active.status(), active.revision()),
+        (Phase::TakerLockConfirmed, 1)
+    );
+    // The same transaction in the same block, the tip one block further and
+    // the inclusion now finalized: progress of the lock the Maker already knows.
+    let deeper = CanonicalLezEscrowObservationV1::validate(
+        active.agreement(),
+        &canonical_lez_snapshot(active.agreement(), LezSnapshotMutation::DeeperFinalized),
+    )
+    .expect("deeper canonical observation");
+    lez.0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            deeper,
+        ))));
+    let plan = zcash_first_lock_plan([0x91; 32], vec![0xc1]);
+    assert_eq!(
+        active
+            .drive_maker_lock(plan)
+            .await
+            .expect("the deeper head is projected and funding proceeds"),
+        MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::Submitted(FirstLockStepV1::ZcashFund))
+    );
+    assert_eq!(
+        active.revision(),
+        2,
+        "the deeper head was projected durably"
+    );
+    assert_eq!(
+        zcash.1.submissions(),
+        vec![(FirstLockStepV1::ZcashFund, vec![0xc1])]
+    );
+}
+
+/// A replaced LEZ lock (another transaction in another block) is a changed
+/// canonical state: the Maker projects it and polls again before funding.
+#[tokio::test]
+async fn maker_polls_again_when_the_lez_lock_is_replaced() {
+    let id = "sdk-maker-replaced-lez-lock";
+    let wire = agreement_wire(id, SwapDirection::TakerSellsLez, FixtureVariant::Local);
+    let store = MemoryStore::default();
+    let lez = MemoryLezTakerLockObservation::default();
+    let zcash = MemoryZcashTakerLockObservation::default();
+    let sdk = maker_lock_sdk(wire, lez.clone(), zcash.clone(), store);
+    let accepted = sdk
+        .negotiate_at(&Offer(1), Proposal, ACCEPTED_AT)
+        .await
+        .expect("maker agreement");
+    let mut active = sdk.activate(accepted).await.expect("maker activation");
+    let canonical = canonical_lez_taker_lock(active.agreement());
+    lez.0
+        .respond(Ok(TakerFirstLockObservationV1::CanonicalLez(Box::new(
+            canonical.clone(),
+        ))));
+    assert!(matches!(
+        active.observe_taker_first_lock().await,
+        Ok(ObserveTakerFirstLockOutcome::Projected(_))
+    ));
+    let removed = canonical_lez_removal_for(active.agreement(), &canonical, [0xbb; 32], 104);
+    let replacement = CanonicalLezEscrowObservationV1::validate(
+        active.agreement(),
+        &canonical_lez_snapshot(active.agreement(), LezSnapshotMutation::ReplacementSafe),
+    )
+    .expect("replacement observation");
+    lez.0.respond(Ok(TakerFirstLockObservationV1::LezReplaced {
+        removed: Box::new(removed),
+        canonical: Box::new(replacement),
+    }));
+    let plan = zcash_first_lock_plan([0x92; 32], vec![0xc2]);
+    assert!(matches!(
+        active.drive_maker_lock(plan).await,
+        Ok(MakerLockDriveOutcome::AwaitingEligibility(
+            MakerFundingEligibilityOutcome::CanonicalStateChanged(_)
+        ))
+    ));
+    assert!(zcash.1.submissions().is_empty());
 }

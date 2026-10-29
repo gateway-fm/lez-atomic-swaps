@@ -853,7 +853,7 @@ impl LezObservationTrackerV1 {
     }
 }
 
-fn same_lez_inclusion(
+pub(crate) fn same_lez_inclusion(
     left: &CanonicalLezEscrowObservationV1,
     right: &CanonicalLezEscrowObservationV1,
 ) -> bool {
