@@ -740,22 +740,8 @@ async fn terminal_action(
     // receipt-bound file identities under the still-held swap lock before secrets.
     let effect_config =
         reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock).await?;
-    match execute_terminal_actor_command(&effect_config, &held_lock, action).await {
-        Ok(()) => {}
-        // A Zcash action is admitted durably and the Node's own supervisor
-        // executes it from here on (its row names the class while it backs
-        // off). A refusal of this first attempt, right after the status said
-        // the action is available, is a transient of the chains (the funding
-        // observation reads unstable when a block lands between its two tip
-        // samples); it is the supervisor's to retry, not the caller's.
-        Err(ActionError::DependencyUnavailable) if effect_config.is_zec() => {
-            report_actor_failure(
-                "first attempt after admission",
-                &"retried by the supervisor",
-            );
-        }
-        Err(error) => return Err(error),
-    }
+    let first_attempt = execute_terminal_actor_command(&effect_config, &held_lock, action).await;
+    first_attempt_reply(effect_config.is_zec(), first_attempt)?;
     revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock).await?;
     Ok(action_commit(&admission))
 }
@@ -1032,6 +1018,30 @@ async fn admit_terminal_action(
     })
     .await
     .map_err(|_| ActionError::RegistryUnavailable)?
+}
+
+/// What the caller hears about the first attempt of an admitted action. A
+/// Zcash action is admitted durably and the Node's own supervisor executes it
+/// from here on (its row names the class while it backs off): a refusal of
+/// this first attempt, right after the status said the action is available,
+/// is a transient of the chains (the funding observation reads unstable when
+/// a block lands between its two tip samples) and the supervisor's to retry,
+/// so the caller gets the admission. A Bitcoin action is executed here and
+/// its failure is the caller's; every other error stays an error for both.
+fn first_attempt_reply(
+    pair_is_zec: bool,
+    attempt: Result<(), ActionError>,
+) -> Result<(), ActionError> {
+    match attempt {
+        Err(ActionError::DependencyUnavailable) if pair_is_zec => {
+            report_actor_failure(
+                "first attempt after admission",
+                &"retried by the supervisor",
+            );
+            Ok(())
+        }
+        other => other,
+    }
 }
 
 async fn execute_terminal_actor_command(
@@ -2510,6 +2520,24 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 9afd25a8: an admitted Zcash action whose first attempt is refused is
+    /// the supervisor's to retry, so the caller gets the admission; a Bitcoin
+    /// action keeps its reply, and every other error stays an error.
+    #[test]
+    fn a_refused_first_attempt_is_the_supervisors_for_zcash_and_the_callers_for_bitcoin() {
+        assert!(first_attempt_reply(true, Err(ActionError::DependencyUnavailable)).is_ok());
+        assert!(matches!(
+            first_attempt_reply(false, Err(ActionError::DependencyUnavailable)),
+            Err(ActionError::DependencyUnavailable)
+        ));
+        assert!(matches!(
+            first_attempt_reply(true, Err(ActionError::Conflict)),
+            Err(ActionError::Conflict)
+        ));
+        assert!(first_attempt_reply(true, Ok(())).is_ok());
+        assert!(first_attempt_reply(false, Ok(())).is_ok());
+    }
 
     #[test]
     fn the_planned_lock_fee_is_read_from_the_swaps_funding_plan() {
