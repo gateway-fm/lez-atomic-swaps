@@ -40,7 +40,9 @@ for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02; do
   identity="$MARKET_ROOT/identities/$wallet/identity.json"
   [[ -f "$identity" ]] || fail "$wallet identity missing: $identity"
   role="${wallet%%-*}"
-  allocation=100000; [[ "$role" == taker ]] && allocation=200000
+  # Must equal gen-config.sh's wallet_{maker,taker}_allocation: the one-time
+  # claim moves exactly the genesis vault balance to the owner account.
+  allocation=2000000
   WALLETS+=("$wallet $role $(jq -er '.account_id' "$identity") $(jq -er '.vault_account_id' "$identity") $allocation")
 done
 
