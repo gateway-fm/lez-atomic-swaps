@@ -312,7 +312,7 @@ async fn send_one(
     if let Err(error) = node.submit_prepared_transaction(&prepared).await {
         eprintln!(
             "heartbeat: submit refused (nonce {}): {error}; a fresh nonce next tick",
-            account.nonce
+            u128::from(account.nonce)
         );
         sent.included = Some(false);
         return sent;
