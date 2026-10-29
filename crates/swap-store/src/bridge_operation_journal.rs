@@ -94,6 +94,16 @@ impl BridgeOperationKind {
         }
     }
 
+    const fn is_submission(self) -> bool {
+        matches!(
+            self,
+            Self::NativeEscrowInitializeSubmit
+                | Self::NativeEscrowFundSubmit
+                | Self::RevealingClaimSubmit
+                | Self::NativeRefundSubmit
+        )
+    }
+
     const fn is_observation(self) -> bool {
         matches!(
             self,
@@ -432,6 +442,53 @@ impl SqliteBridgeOperationJournal {
         })
     }
 
+    /// Retires the active submission context of a plan that was superseded:
+    /// its bytes will never be sent again, and the re-planned bytes need a
+    /// request id of their own (a sidecar refuses an id reused for a different
+    /// body). The next `begin_or_resume` on the key allocates the next poll.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed store error for a non-submission operation, a stale or
+    /// missing active context, or `SQLite` failure.
+    pub fn retire_superseded_submission(
+        &mut self,
+        key: &BridgeOperationKey,
+        expected: &DurableBridgeRequestContext,
+    ) -> Result<(), StoreError> {
+        if !key.operation.is_submission() {
+            return Err(StoreError::InvalidBridgeOperationContext);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let active = load_active_context(&transaction, key)?
+            .ok_or(StoreError::MissingBridgeOperationContext)?;
+        if active != *expected {
+            return Err(StoreError::BridgeOperationContextConflict);
+        }
+        let updated = transaction.execute(
+            "
+            UPDATE bridge_operation_contexts
+            SET state = 'completed', completion_outcome = 'superseded'
+            WHERE run_id = ?1 AND swap_id = ?2 AND local_role = ?3
+              AND operation = ?4 AND poll_sequence = ?5 AND state = 'active'
+            ",
+            params![
+                key.run_id.as_str(),
+                key.swap_id.as_str(),
+                participant_name(key.local_role),
+                key.operation.name(),
+                sequence_to_sql(expected.poll_sequence)?,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::BridgeOperationContextConflict);
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Loads the active context for exactly one run/role/swap/operation key.
     ///
     /// # Errors
@@ -471,7 +528,7 @@ const BRIDGE_OPERATION_CONTEXTS_TABLE: &str = "
             window_max_blocks   INTEGER CHECK (window_max_blocks > 0),
             state               TEXT NOT NULL CHECK (state IN ('active', 'completed')),
             completion_outcome  TEXT CHECK (
-                completion_outcome IN ('succeeded', 'typed_error')
+                completion_outcome IN ('succeeded', 'typed_error', 'superseded')
             ),
             PRIMARY KEY (run_id, swap_id, local_role, operation, poll_sequence),
             CHECK (
@@ -493,9 +550,10 @@ const BRIDGE_OPERATION_CONTEXTS_INDEXES: &str = "
             ON bridge_operation_contexts (run_id, local_role, request_id);
 ";
 
-/// An operation name every current journal lists; its absence from the stored
-/// table definition marks a journal created before the supersede operations.
-const NEWEST_OPERATION_NAME: &str = "native_escrow_supersede_5";
+/// A token every current table definition carries (the `superseded`
+/// completion outcome); its absence marks a journal created before the
+/// supersede operations and their retirement outcome.
+const NEWEST_DEFINITION_TOKEN: &str = "'superseded'";
 
 fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), StoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -507,7 +565,7 @@ fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), S
         )
         .optional()?;
     if let Some(definition) = stored
-        && !definition.contains(NEWEST_OPERATION_NAME)
+        && !definition.contains(NEWEST_DEFINITION_TOKEN)
     {
         // A journal from before the supersede operations: rebuild the table
         // under the current CHECK, keeping every row (the names it holds are

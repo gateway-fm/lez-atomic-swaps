@@ -663,8 +663,63 @@ fn a_journal_from_before_the_supersede_operations_is_rebuilt_on_open() {
         )
         .expect("table definition");
     assert!(definition.contains("native_escrow_supersede_5"));
+    assert!(definition.contains("'superseded'"));
     drop(journal);
     // Opening again is a no-op (no second rebuild, rows intact).
     let journal = SqliteBridgeOperationJournal::open(&path).expect("reopen migrated journal");
     assert!(journal.current(&prepare_key).expect("read").is_some());
+}
+
+/// A superseded plan's submit context is retired so the re-planned bytes get
+/// a request id of their own; observations cannot be retired this way, a
+/// stale context is refused, and the next reservation takes the next poll.
+#[test]
+fn a_superseded_submission_context_is_retired_and_the_next_reservation_is_fresh() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("bridge-context-retire.sqlite");
+    let mut journal = SqliteBridgeOperationJournal::open(&path).expect("open journal");
+    let submit_key = key(
+        "run-retire",
+        "swap-retire",
+        Participant::Taker,
+        BridgeOperationKind::NativeEscrowInitializeSubmit,
+    );
+    let first = journal
+        .begin_or_resume(&submit_key, &request("initialize-submit-0001", None))
+        .expect("first submit context")
+        .context()
+        .clone();
+    assert!(matches!(
+        journal.retire_superseded_submission(
+            &key(
+                "run-retire",
+                "swap-retire",
+                Participant::Taker,
+                BridgeOperationKind::NativeEscrowExactObserve,
+            ),
+            &first,
+        ),
+        Err(StoreError::InvalidBridgeOperationContext)
+    ));
+    journal
+        .retire_superseded_submission(&submit_key, &first)
+        .expect("retire the superseded submission");
+    assert!(journal.current(&submit_key).expect("read").is_none());
+    assert!(matches!(
+        journal.retire_superseded_submission(&submit_key, &first),
+        Err(StoreError::MissingBridgeOperationContext)
+    ));
+    let second = journal
+        .begin_or_resume(&submit_key, &request("initialize-submit-0002", None))
+        .expect("fresh submit context for the re-planned bytes");
+    assert!(!second.was_replay());
+    assert_eq!(
+        second.context().request_id().as_str(),
+        "initialize-submit-0002"
+    );
+    assert_eq!(second.context().poll_sequence(), first.poll_sequence() + 1);
+    assert!(matches!(
+        journal.retire_superseded_submission(&submit_key, &first),
+        Err(StoreError::BridgeOperationContextConflict)
+    ));
 }

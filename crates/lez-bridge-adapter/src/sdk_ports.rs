@@ -583,7 +583,34 @@ where
         if matches!(&result, Err(PrepareNativeFirstLockError::Transport(_))) {
             self.resume_ambiguous(&key, &context)?;
         }
-        result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))
+        let replanned =
+            result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
+        // The superseded bytes are never sent again; the re-planned ones need
+        // request ids of their own (a sidecar refuses an id reused for a
+        // different body). Retire the submit contexts of every step the
+        // re-plan replaced; a fund re-plan keeps the initialization.
+        let retired: &[BridgeOperationKind] = match step {
+            FirstLockStepV1::LezInitialize => &[
+                BridgeOperationKind::NativeEscrowInitializeSubmit,
+                BridgeOperationKind::NativeEscrowFundSubmit,
+            ],
+            FirstLockStepV1::LezFund | FirstLockStepV1::ZcashFund => {
+                &[BridgeOperationKind::NativeEscrowFundSubmit]
+            }
+        };
+        let mut journal = self.journal()?;
+        for operation in retired {
+            let submit_key = self.key(agreement, *operation);
+            if let Some(current) = journal
+                .current(&submit_key)
+                .map_err(ContextOwningLezPortError::Journal)?
+            {
+                journal
+                    .retire_superseded_submission(&submit_key, &current)
+                    .map_err(ContextOwningLezPortError::Journal)?;
+            }
+        }
+        Ok(replanned)
     }
 }
 

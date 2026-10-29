@@ -4695,14 +4695,15 @@ async fn a_fund_re_plan_keeps_the_initialization_and_links_both_generations() {
         (8, 9)
     );
     assert!(record.links(&plan, &replanned.plan));
-    let requests = transport.requests.lock().expect("supersede request log");
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].step, NativeEscrowStep::Fund);
-    assert_eq!(
-        requests[0].superseded_initialization_transaction_id,
-        TransactionId::from_bytes([0x11; 32])
-    );
-    drop(requests);
+    {
+        let requests = transport.requests.lock().expect("supersede request log");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].step, NativeEscrowStep::Fund);
+        assert_eq!(
+            requests[0].superseded_initialization_transaction_id,
+            TransactionId::from_bytes([0x11; 32])
+        );
+    }
 
     assert!(matches!(
         adapter
