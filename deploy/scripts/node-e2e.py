@@ -1346,14 +1346,15 @@ def zec_activate(config: str) -> None:
     log(f"  Taker actor activated: {zec_describe(effect)}")
 
 
-def zec_take_or_resume(offer_id: str, stamp: str) -> str:
+def zec_take_or_resume(offer_id: str, stamp: str, suffix: str = "") -> str:
     """A prepared entry is one take: when this offer was already taken (a rerun
-    after a harness failure), the existing swap is resumed instead."""
+    after a harness failure), the existing swap is resumed instead. `suffix`
+    keeps the take request ids of one scenario's several takes apart."""
     for swap in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]:
         if swap.get("offer_id") == offer_id and swap["state"] not in TERMINAL:
             log(f"  resuming swap {swap['swap_id'][:12]} already taken for {offer_id} ({swap['state']})")
             return swap["swap_id"]
-    swap_id, _ = take(offer_id, stamp)
+    swap_id, _ = take(offer_id, stamp, suffix)
     return swap_id
 
 
@@ -1573,7 +1574,7 @@ def scenario_zec_concurrent(stamp: str) -> dict:
     is added beside it with its own anchor (zec-provision.sh --add, Nodes
     recreated with both), taken and driven likewise; the Zcash claims overlap."""
     first = zec_provision()
-    swap_a = zec_take_or_resume(first["offer_id"], stamp)
+    swap_a = zec_take_or_resume(first["offer_id"], stamp, "-a")
     config_a = zec_taker_actor_config(first["receipt_output"])
     zec_activate(config_a)
     views = {swap_a: zec_drive_until(swap_a, config_a, {"claim_available"}, timeout=2400, corridor=first,
@@ -1584,7 +1585,7 @@ def scenario_zec_concurrent(stamp: str) -> dict:
         raise Failure(f"expected the live entry {swap_a} plus one added, the catalog lists "
                       f"{[c['catalog_swap_id'] for c in corridors]}")
     second = corridors[1]
-    swap_b = zec_take_or_resume(second["offer_id"], stamp)
+    swap_b = zec_take_or_resume(second["offer_id"], stamp, "-b")
     config_b = zec_taker_actor_config(second["receipt_output"])
     zec_activate(config_b)
     log(f"  {swap_a} is claim_available and {swap_b} is taken beside it (Nodes recreated with both corridors)")
