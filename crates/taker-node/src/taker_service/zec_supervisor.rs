@@ -30,7 +30,8 @@ use super::{
     TakerServiceState,
     lifecycle::{
         LOCK_WAIT, LifecycleStatus, RouteActor, ZecActorStatus, lookup_admitted_action_for_swap,
-        mark_claim_submitted, replay_actor_effect_required, terminal_action_of, zec_actor_progress,
+        mark_claim_submitted, reload_action_actor_custody, replay_actor_effect_required,
+        terminal_action_of, zec_actor_progress,
     },
 };
 use crate::{
@@ -366,12 +367,17 @@ pub(super) fn failure_of(error: ActorCommandError) -> AttemptFailure {
             AttemptFailure::Retry("lez_depositor_balance_insufficient")
         }
         ActorCommandError::NotActivated => AttemptFailure::Retry("actor_not_activated"),
+        // Material is read from files the corridor and the sidecar write (the
+        // capability file, the keys): a file not there yet, or rotated, is
+        // retried; the row names it meanwhile.
         ActorCommandError::ActivationMaterialUnavailable
         | ActorCommandError::DriveMaterialUnavailable
-        | ActorCommandError::DriveConfigurationUnavailable
         | ActorCommandError::ClaimMaterialUnavailable
+        | ActorCommandError::RecoveryMaterialUnavailable => {
+            AttemptFailure::Retry("actor_material_unavailable")
+        }
+        ActorCommandError::DriveConfigurationUnavailable
         | ActorCommandError::ClaimConfigurationUnavailable
-        | ActorCommandError::RecoveryMaterialUnavailable
         | ActorCommandError::RecoveryConfigurationUnavailable => {
             AttemptFailure::Fail("actor_deployment_invalid")
         }
@@ -488,23 +494,74 @@ async fn attempt(
         Decision::Claim => ActorCommand::Claim,
         Decision::Recover => ActorCommand::Recover,
     };
-    let effect = match tokio::time::timeout(ATTEMPT_TIMEOUT, config.zec_effect(command)).await {
-        Err(_) => {
-            return (
-                ClaimedAttempt::Failure(AttemptFailure::Retry("actor_timeout")),
-                snapshot,
-            );
-        }
-        Ok(Err(error)) => {
-            eprintln!(
-                "{ROLE} {}: {} refused: {error}",
-                swap_id.as_str(),
-                command_name(command)
-            );
-            return (ClaimedAttempt::Failure(failure_of(error)), snapshot);
-        }
-        Ok(Ok(effect)) => effect,
+    let (effect, snapshot) = match run_effect(
+        prepared,
+        receipt_binding,
+        &config,
+        &held_lock,
+        command,
+        snapshot,
+        memory,
+    )
+    .await
+    {
+        Ok(ran) => ran,
+        Err((failure, snapshot)) => return (ClaimedAttempt::Failure(failure), snapshot),
     };
+    let phase = effect
+        .get("phase")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("-");
+    drop(held_lock);
+    if terminal_phase(phase) {
+        if admitted.is_some() {
+            (ClaimedAttempt::ManualActionCompleted, snapshot)
+        } else {
+            (ClaimedAttempt::Terminal, snapshot)
+        }
+    } else {
+        (ClaimedAttempt::Requeue, snapshot)
+    }
+}
+
+/// Reloads the config, runs one effect under the held lock, validates custody
+/// afterwards and logs the effect once per distinct outcome. Errors carry the
+/// failure class and the snapshot the status already produced.
+async fn run_effect(
+    prepared: &PreparedTakerInitiationV1,
+    receipt_binding: crate::taker_service_config::PreparedReceiptBindingV1,
+    config: &RouteActor,
+    held_lock: &ActorHeldLock,
+    command: ActorCommand,
+    snapshot: Option<TakerActorProgressSnapshotV1>,
+    memory: &SharedLogMemory,
+) -> Result<
+    (serde_json::Value, Option<TakerActorProgressSnapshotV1>),
+    (AttemptFailure, Option<TakerActorProgressSnapshotV1>),
+> {
+    let swap_id = prepared.swap_id().clone();
+    // The config that answered the status has its file bindings from before
+    // that read; the actor's material check refuses an effect on a config
+    // whose state database moved under it (the status opened it). Every Node
+    // path reloads before an effect (reload_action_actor_custody); so here.
+    let Ok(effect_config) =
+        reload_action_actor_custody(prepared, receipt_binding, config, held_lock).await
+    else {
+        return Err((AttemptFailure::Retry("actor_custody_changed"), snapshot));
+    };
+    let effect =
+        match tokio::time::timeout(ATTEMPT_TIMEOUT, effect_config.zec_effect(command)).await {
+            Err(_) => return Err((AttemptFailure::Retry("actor_timeout"), snapshot)),
+            Ok(Err(error)) => {
+                eprintln!(
+                    "{ROLE} {}: {} refused: {error}",
+                    swap_id.as_str(),
+                    command_name(command)
+                );
+                return Err((failure_of(error), snapshot));
+            }
+            Ok(Ok(effect)) => effect,
+        };
     if command == ActorCommand::Claim {
         mark_claim_submitted(config.state_db());
     }
@@ -512,10 +569,7 @@ async fn attempt(
         .validate_for_state(config.swap_id(), config.state_db())
         .is_err()
     {
-        return (
-            ClaimedAttempt::Failure(AttemptFailure::Retry("actor_custody_changed")),
-            snapshot,
-        );
+        return Err((AttemptFailure::Retry("actor_custody_changed"), snapshot));
     }
     // One line per distinct effect: a drive that returns the same observation
     // every 5 s is logged once, a change (outcome, phase, revision, next) again.
@@ -542,20 +596,7 @@ async fn attempt(
         log_effect_value(ROLE, swap_id.as_str(), command_name(command), &effect);
     }
     let snapshot = snapshot_of_effect(&effect).or(snapshot);
-    let phase = effect
-        .get("phase")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("-");
-    drop(held_lock);
-    if terminal_phase(phase) {
-        if admitted.is_some() {
-            (ClaimedAttempt::ManualActionCompleted, snapshot)
-        } else {
-            (ClaimedAttempt::Terminal, snapshot)
-        }
-    } else {
-        (ClaimedAttempt::Requeue, snapshot)
-    }
+    Ok((effect, snapshot))
 }
 
 const fn command_name(command: ActorCommand) -> &'static str {
@@ -935,6 +976,10 @@ mod tests {
         assert_eq!(
             failure_of(ActorCommandError::DriveConfigurationUnavailable),
             AttemptFailure::Fail("actor_deployment_invalid")
+        );
+        assert_eq!(
+            failure_of(ActorCommandError::DriveMaterialUnavailable),
+            AttemptFailure::Retry("actor_material_unavailable")
         );
         assert_eq!(
             failure_of(ActorCommandError::DriveStoreUnavailable),

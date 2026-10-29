@@ -494,9 +494,10 @@ impl BridgeDiscoveryWindowSource for ConfiguredDiscoveryWindow {
 
 #[allow(clippy::too_many_lines)]
 async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommandError> {
-    let material = config
-        .load_drive_material()
-        .map_err(|_| ActorCommandError::DriveMaterialUnavailable)?;
+    let material = config.load_drive_material().map_err(|error| {
+        eprintln!("actor drive material unavailable: {error:?}");
+        ActorCommandError::DriveMaterialUnavailable
+    })?;
     let participant = config.role().sdk_participant();
     let identity = zebra_identity(config)?;
     let mut rpc_config = if let Some(api_key) = material.zebra_api_key() {
