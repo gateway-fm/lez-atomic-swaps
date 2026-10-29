@@ -2460,6 +2460,22 @@ SCENARIOS = {
 }
 
 
+def heartbeat_verdict() -> tuple[bool, int, int] | None:
+    """(stalled, seconds since finality moved, finalized height) from the
+    heartbeat's status file when it is present and at most two ticks old
+    (the service writes it every tick; LEZ_HEARTBEAT_SECONDS in runtime.env)."""
+    status_file = RUNTIME / "heartbeat" / "status.json"
+    try:
+        status = json.loads(status_file.read_text())
+        interval = int(next((line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                             if line.startswith("LEZ_HEARTBEAT_SECONDS=")), "20") or 20)
+    except (OSError, ValueError, StopIteration):
+        return None
+    if interval <= 0 or time.time() - int(status.get("at_unix", 0)) > 2 * interval + 15:
+        return None
+    return bool(status.get("stalled")), int(status.get("finality_flat_seconds", 0)), int(status.get("finalized") or 0)
+
+
 def preflight() -> None:
     """The standing LEZ indexer stops serving historical reads once its state
     breakpoints lag (the Maker's sidecar then reports `unavailable` and never
@@ -2490,6 +2506,18 @@ def preflight() -> None:
     # waived deliberately; the scenario then proves the chain for itself.
     if os.environ.get("LEZ_E2E_SKIP_FINALITY_PREFLIGHT") == "1":
         log("preflight: LEZ finality check waived by request")
+        return
+    # The finality heartbeat (deploy/README.md, Part C) already watches this
+    # chain when it runs: its status file says whether finality is flat right
+    # now and when it last moved, so a fresh status answers in one read. The
+    # sample below stays as the fallback when the service is off or stale.
+    verdict = heartbeat_verdict()
+    if verdict is not None:
+        stalled, flat_seconds, finalized = verdict
+        if stalled:
+            raise Failure(f"the finality heartbeat declares a stall: finalized {finalized} flat for {flat_seconds} s "
+                          "while the sequencer advances; recreate the LEZ chain (see project notes) before running swaps")
+        log(f"preflight: the finality heartbeat saw finality move {flat_seconds} s ago (finalized {finalized})")
         return
     window = int(os.environ.get("LEZ_E2E_FINALITY_WINDOW_SECONDS", "300"))
     log(f"preflight: LEZ finality advancing (window {window} s)")

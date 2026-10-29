@@ -32,6 +32,23 @@ finalized() {
     python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null
 }
 
+# The finality heartbeat (README, Part C) already watches the chain when it
+# runs: a fresh runtime/heartbeat/status.json (at most two ticks old) answers
+# at once — `stalled` means recreate now, otherwise ok — and the sample below
+# is the fallback when the service is off or its status is stale.
+heartbeat_verdict() { # prints stalled | moving, or nothing when there is no fresh status
+  local status=runtime/heartbeat/status.json interval
+  [[ -s "$status" ]] || return 0
+  interval="$(sed -n 's/^LEZ_HEARTBEAT_SECONDS=//p' runtime/runtime.env 2>/dev/null | head -1)"
+  python3 - "$status" "${interval:-20}" <<'PY' 2>/dev/null
+import json, sys, time
+status = json.load(open(sys.argv[1])); interval = int(sys.argv[2] or 20)
+if interval <= 0 or time.time() - int(status.get("at_unix", 0)) > 2 * interval + 15:
+    sys.exit(0)
+print("stalled" if status.get("stalled") else "moving")
+PY
+}
+
 advances() { # advances <window_seconds>
   local window="$1" first second waited=0
   first="$(finalized)"
@@ -45,7 +62,11 @@ advances() { # advances <window_seconds>
   return 1
 }
 
-if advances "$check_window"; then echo ok; exit 0; fi
+case "$(heartbeat_verdict)" in
+  moving) echo ok; exit 0 ;;
+  stalled) echo "heartbeat: stall declared; recreating" >&2 ;;
+  *) if advances "$check_window"; then echo ok; exit 0; fi ;;
+esac
 if bash scripts/up.sh --fresh-lez >"${LEZ_FRESH_LOG:-/dev/null}" 2>&1 && advances "$recheck_window"; then
   echo recreated; exit 0
 fi
