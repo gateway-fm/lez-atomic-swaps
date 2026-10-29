@@ -202,8 +202,12 @@ watch it leave the Taker order book; `docker restart lez-taker-node` between
 lock and claim and watch the observer resume; `docker restart
 lez-bitcoin-core` and watch the next action still reach Core through the
 Node's own loopback forwarder. Where to look when something stalls:
-`docker compose logs maker-node taker-node`, the swap directory's
-`sidecar.log`, and
+`docker compose logs maker-node taker-node` (the Maker's actor supervisor
+prints one secret-free line per supervised effect and per backoff — command,
+outcome, operation, phase, revision, next action — and the Taker Node one line
+when it re-drives an admitted Zcash action or when a swap's bundle fails its
+checks; on the devnet that is a line every few seconds per open swap), the
+swap directory's `sidecar.log`, and
 `docker exec lez-taker-node lez-btc-taker-actor --config /var/lib/lez/taker/btc/swaps/<reservation id>/actor/actor-config.json status`.
 
 ## Swap scenarios through the Node APIs
