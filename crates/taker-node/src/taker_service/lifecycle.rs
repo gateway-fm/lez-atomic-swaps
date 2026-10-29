@@ -1213,7 +1213,16 @@ async fn project_receipt_bound_swap(
                 receipt_identity.device(),
                 receipt_identity.inode(),
             )
-            .map_err(|_| MonitoringError::BundleInvalid)
+            .map_err(|error| {
+                // Named once per failed load so an operator can tell an altered
+                // bundle from a disk that cannot be read (both read as the
+                // swap needing attention).
+                eprintln!(
+                    "taker monitor: swap {} bundle failed its checks: {error:#}",
+                    swap_id.as_str()
+                );
+                MonitoringError::BundleInvalid
+            })
         };
         let before = load()?;
         let held_lock =
