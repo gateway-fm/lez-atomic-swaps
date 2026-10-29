@@ -29,6 +29,11 @@ use zeroize::Zeroizing;
 
 const STATUS_SCHEMA_VERSION: u16 = 1;
 const STALL_REPEAT: Duration = Duration::from_mins(5);
+/// The inclusion wait is shorter than any interval, so ticks never pile up; a
+/// transaction still pending when it ends is reported as such and the next
+/// tick starts from a fresh nonce.
+const INCLUSION_WAIT: Duration = Duration::from_secs(15);
+const INCLUSION_POLL: Duration = Duration::from_millis(500);
 
 /// Keep a quiet LEZ devnet chain finalizing with one tiny transaction per tick, and say when it stops.
 #[derive(Debug, Parser)]
@@ -73,6 +78,17 @@ struct Status {
     stalled_since_unix: Option<u64>,
     last_transaction_id: Option<String>,
     last_transaction_included: Option<bool>,
+    /// Submit to inclusion, when it was included within the wait.
+    last_inclusion_ms: Option<u64>,
+    sender_balance: Option<u128>,
+}
+
+/// What one tick's transaction came to.
+#[derive(Debug, Default)]
+struct Sent {
+    transaction_id: Option<String>,
+    included: Option<bool>,
+    inclusion_ms: Option<u64>,
     sender_balance: Option<u128>,
 }
 
@@ -96,8 +112,8 @@ fn unix_now() -> u64 {
 async fn main() -> Result<()> {
     let arguments = Arguments::parse();
     ensure!(
-        (5..=600).contains(&arguments.interval_seconds),
-        "interval must be 5..=600 seconds"
+        (20..=600).contains(&arguments.interval_seconds),
+        "interval must be 20..=600 seconds (the inclusion wait is 15 s)"
     );
     ensure!(
         (30..=3600).contains(&arguments.stall_seconds),
@@ -170,8 +186,7 @@ async fn tick(
 ) {
     let stall_after = Duration::from_secs(arguments.stall_seconds);
     clockwork.tick += 1;
-    let (last_transaction_id, last_transaction_included, sender_balance) =
-        send_one(node, signer, program, sender, recipient).await;
+    let sent = send_one(node, signer, program, sender, recipient).await;
     let tip = node.sequencer_tip().await.ok();
     let finalized = indexer.last_finalized_block_id().await.ok().flatten();
     let now = Instant::now();
@@ -215,11 +230,12 @@ async fn tick(
     eprintln!(
         "heartbeat: tick {} tx {} ({}) tip {} finalized {} (flat {} s){}",
         clockwork.tick,
-        last_transaction_id.as_deref().unwrap_or("-"),
-        match last_transaction_included {
-            Some(true) => "included",
-            Some(false) => "not included yet",
-            None => "not sent",
+        sent.transaction_id.as_deref().unwrap_or("-"),
+        match (sent.included, sent.inclusion_ms) {
+            (Some(true), Some(ms)) => format!("included in {ms} ms"),
+            (Some(true), None) => "included".to_owned(),
+            (Some(false), _) => format!("not included within {} s", INCLUSION_WAIT.as_secs()),
+            (None, _) => "not sent".to_owned(),
         },
         tip.map_or_else(|| "-".to_owned(), |t| t.to_string()),
         finalized.map_or_else(|| "-".to_owned(), |f| f.to_string()),
@@ -240,9 +256,10 @@ async fn tick(
         finality_flat_seconds: flat.as_secs(),
         stalled: clockwork.stalled_since.is_some(),
         stalled_since_unix: clockwork.stalled_since.map(|(_, unix)| unix),
-        last_transaction_id,
-        last_transaction_included,
-        sender_balance,
+        last_transaction_id: sent.transaction_id,
+        last_transaction_included: sent.included,
+        last_inclusion_ms: sent.inclusion_ms,
+        sender_balance: sent.sender_balance,
     };
     if let Err(error) = write_status(&arguments.status_file, &status) {
         eprintln!("heartbeat: status file not written: {error:#}");
@@ -250,27 +267,32 @@ async fn tick(
 }
 
 /// One tick's transaction: the sender's nonce and balance from the sequencer,
-/// one signed unit transfer, its submission and a bounded wait for inclusion.
-/// Nothing here stops the loop; a failed tick is one line and a `-` in the
-/// status, and the next tick tries again.
+/// one signed unit transfer, one submission and a bounded wait for inclusion
+/// (submit → included is the tick's latency). Nothing retries inside a tick:
+/// a rejected submit or a nonce the chain has moved past is one line, and the
+/// next tick reads a fresh nonce.
 async fn send_one(
     node: &OfficialNodeRpc,
     signer: &PrivateKey,
     program: [u32; 8],
     sender: AccountId,
     recipient: AccountId,
-) -> (Option<String>, Option<bool>, Option<u128>) {
+) -> Sent {
     let account = match node.native_account(sender).await {
         Ok(account) => account,
         Err(error) => {
             eprintln!("heartbeat: sender account unavailable: {error}");
-            return (None, None, None);
+            return Sent::default();
         }
     };
     let balance = account.balance;
+    let mut sent = Sent {
+        sender_balance: Some(balance),
+        ..Sent::default()
+    };
     if balance == 0 {
         eprintln!("heartbeat: the sender holds no LEZ; sampling without a transaction");
-        return (None, None, Some(balance));
+        return sent;
     }
     let prepared = match prepare_unit_transfer(
         signer,
@@ -282,19 +304,37 @@ async fn send_one(
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("heartbeat: transfer could not be prepared: {error}");
-            return (None, None, Some(balance));
+            return sent;
         }
     };
-    let transaction_id = hex::encode(prepared.transaction_id.as_bytes());
+    sent.transaction_id = Some(hex::encode(prepared.transaction_id.as_bytes()));
+    let submitted_at = Instant::now();
     if let Err(error) = node.submit_prepared_transaction(&prepared).await {
-        eprintln!("heartbeat: submit failed: {error}");
-        return (Some(transaction_id), Some(false), Some(balance));
+        eprintln!(
+            "heartbeat: submit refused (nonce {}): {error}; a fresh nonce next tick",
+            account.nonce
+        );
+        sent.included = Some(false);
+        return sent;
     }
-    let included = node
-        .wait_prepared_transaction_inclusion(&prepared)
-        .await
-        .is_ok();
-    (Some(transaction_id), Some(included), Some(balance))
+    sent.included = Some(false);
+    while submitted_at.elapsed() < INCLUSION_WAIT {
+        match node.prepared_transaction_is_included(&prepared).await {
+            Ok(true) => {
+                sent.included = Some(true);
+                sent.inclusion_ms =
+                    Some(u64::try_from(submitted_at.elapsed().as_millis()).unwrap_or(u64::MAX));
+                break;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("heartbeat: inclusion read failed: {error}");
+                break;
+            }
+        }
+        tokio::time::sleep(INCLUSION_POLL).await;
+    }
+    sent
 }
 
 fn write_status(path: &Path, status: &Status) -> Result<()> {
