@@ -2199,7 +2199,13 @@ async fn bind_prepared_receipt(
             .lock()
             .map_err(|_| InitiationError::Internal)?
             .bind_prepared_receipt(&swap_id)
-            .map_err(|()| InitiationError::ExecutionUnavailable)
+            .map_err(|()| {
+                eprintln!(
+                    "taker {}: binding the acceptance receipt failed (receipt identity or supervisor schedule)",
+                    swap_id.as_str()
+                );
+                InitiationError::ExecutionUnavailable
+            })
     })
     .await
     .map_err(|_| InitiationError::Internal)?
@@ -2383,7 +2389,10 @@ async fn execute_prepared_zec(
         &actor,
     )
     .await
-    .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    .map_err(|error| {
+        eprintln!("taker ZEC take failed: {error:#}");
+        InitiationError::ExecutionUnavailable
+    })?;
     Ok(())
 }
 
