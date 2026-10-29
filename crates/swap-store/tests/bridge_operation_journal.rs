@@ -723,3 +723,30 @@ fn a_superseded_submission_context_is_retired_and_the_next_reservation_is_fresh(
         Err(StoreError::BridgeOperationContextConflict)
     ));
 }
+
+/// Every operation of the alphabet reserves a context under the current SQL
+/// CHECK: the enum and the constraint are two spellings of one list, and a
+/// name missing from the CHECK stopped a swap once (`NativeEscrowSupersede1`,
+/// chain 36, 2026-10-29).
+#[test]
+fn every_operation_name_inserts_under_the_journal_check() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("bridge-context-alphabet.sqlite");
+    let mut journal = SqliteBridgeOperationJournal::open(&path).expect("open journal");
+    for (index, operation) in BridgeOperationKind::ALL.iter().enumerate() {
+        let operation_key = key(
+            "run-alphabet",
+            &format!("swap-alphabet-{index:02}"),
+            Participant::Taker,
+            *operation,
+        );
+        let window = operation.requires_window().then(|| window(100));
+        let reserved = journal
+            .begin_or_resume(
+                &operation_key,
+                &request(&format!("alphabet-{index:02}"), window),
+            )
+            .unwrap_or_else(|error| panic!("{operation:?} must insert under the CHECK: {error}"));
+        assert!(!reserved.was_replay());
+    }
+}

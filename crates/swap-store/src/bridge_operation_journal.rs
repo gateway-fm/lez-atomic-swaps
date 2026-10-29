@@ -56,6 +56,31 @@ pub enum BridgeOperationKind {
 }
 
 impl BridgeOperationKind {
+    /// Every operation, in declaration order. The journal's SQL CHECK lists
+    /// the same names; a test inserts each of these under it so the alphabet
+    /// and the constraint cannot drift apart again (they did once, 2026-10-29).
+    pub const ALL: [Self; 19] = [
+        Self::NativeEscrowPrepare,
+        Self::NativeEscrowExactObserve,
+        Self::NativeEscrowDiscoveryObserve,
+        Self::NativeEscrowInitializeSubmit,
+        Self::NativeEscrowFundSubmit,
+        Self::NativeEscrowSupersede1,
+        Self::NativeEscrowSupersede2,
+        Self::NativeEscrowSupersede3,
+        Self::NativeEscrowSupersede4,
+        Self::NativeEscrowSupersede5,
+        Self::RevealingClaimPrepare,
+        Self::RevealingClaimExactObserve,
+        Self::RevealingClaimDiscoveryObserve,
+        Self::RevealingClaimSubmit,
+        Self::NativeRefundPrepare,
+        Self::NativeRefundEligibilityObserve,
+        Self::NativeRefundExactObserve,
+        Self::NativeRefundDiscoveryObserve,
+        Self::NativeRefundSubmit,
+    ];
+
     /// The operation owning re-plan number `index` (one-based); `None` past
     /// the bound, which the caller reports as exhausted.
     #[must_use]
@@ -117,7 +142,9 @@ impl BridgeOperationKind {
         )
     }
 
-    const fn requires_window(self) -> bool {
+    /// Whether a request of this operation must carry a discovery window.
+    #[must_use]
+    pub const fn requires_window(self) -> bool {
         matches!(
             self,
             Self::NativeEscrowDiscoveryObserve
