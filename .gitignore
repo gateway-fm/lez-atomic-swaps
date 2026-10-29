@@ -12,6 +12,8 @@ result-*/
 *.swp
 *.tmp
 *.log
+# An evidence set's Node logs are evidence; they travel with their SHA256SUMS.
+!docs/evidence/**/*.log
 .DS_Store
 __pycache__/
 

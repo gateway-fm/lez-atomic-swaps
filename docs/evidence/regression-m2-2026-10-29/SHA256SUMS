@@ -1,6 +1,5 @@
 fa2cdd24cfdc6e14e7ab39685df19c91684d9a6f937d9c2aa7b6825aec5aff61  ./PROVENANCE.md
 f8dc78cb9e4d580a5301f2b616b269974b1b58bf2af23cf5db0530dea447466f  ./RESULTS.txt
-123a83f881d3d4ec76200fd6f9e410c44f5628a8c882f6043c9c6e4dd5e6c09c  ./SHA256SUMS
 5f973cede54aa7c22a72a346443630c58bcdc86a14ff256cc98065524e5e3974  ./node-logs/zec-concurrent-8f01a687-taker-actor.log
 3f4d1ecdde3f0702c3b21016062905175c606a5a0649d9c9ec3015252a644d03  ./node-logs/zec-concurrent-staggered-taker-actor.log
 372edfa01696d1e0ef7412fc3129d7f7b1d022d647fb322503beb4dfba0ba18d  ./node-logs/zec-concurrent-v2-maker-actor.log
