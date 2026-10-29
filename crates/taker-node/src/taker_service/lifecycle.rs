@@ -953,6 +953,18 @@ async fn execute_terminal_actor_command(
         })
 }
 
+/// The marker the ZEC Taker actor leaves beside its state when the LEZ bridge
+/// refused the first lock for the depositor's balance
+/// (`<swap>/actor/taker/lez-depositor-balance-insufficient`).
+fn lez_depositor_balance_marker(state_db: &Path) -> Option<PathBuf> {
+    Some(
+        state_db
+            .parent()?
+            .parent()?
+            .join("lez-depositor-balance-insufficient"),
+    )
+}
+
 /// The marker a Node-owned Bitcoin swap keeps once its revealing claim was
 /// submitted, so the observer may drive `BothLegsLocked` afterwards (the
 /// drive then only observes the claim) but never before (it would claim).
@@ -1255,6 +1267,18 @@ async fn project_receipt_bound_swap(
     view.terms = terms;
     view.effects = effects;
     view.bitcoin_lock_fee_sat = lock_fee;
+    // A Zcash swap whose LEZ depositor cannot fund the lot: the actor leaves a
+    // marker beside its state when the bridge refuses the first lock for the
+    // balance, and the row reads as needing attention with that reason until
+    // the account is funded (the marker goes when a preparation succeeds).
+    if pair == Pair::Zcash
+        && view.state == TakerSwapStateV1::AwaitingFirstLock
+        && lez_depositor_balance_marker(config.state_db()).is_some_and(|marker| marker.is_file())
+    {
+        view.state = TakerSwapStateV1::AttentionRequired;
+        view.available_action = None;
+        view.attention_reason = Some("lez_depositor_balance_insufficient".to_owned());
+    }
     overlay_admitted_action(view, admitted_action.as_ref())
 }
 
@@ -1352,6 +1376,7 @@ fn view_from_actor_status(
         state,
         available_action,
         privacy_guidance,
+        attention_reason: None,
         terms: None,
         effects: Vec::new(),
         bitcoin_lock_fee_sat: None,
@@ -2382,6 +2407,7 @@ fn commit_from_facts(
             state,
             available_action: None,
             privacy_guidance: None,
+            attention_reason: None,
             terms: None,
             effects: Vec::new(),
             bitcoin_lock_fee_sat: None,

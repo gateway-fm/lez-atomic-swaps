@@ -68,6 +68,9 @@ pub enum BridgeRuntimeError {
     /// Submission could have reached the sequencer but no acknowledgement is known.
     #[error("official v0.2 transaction submission outcome is unknown")]
     UnknownSubmissionOutcome,
+    /// The depositor's native balance cannot cover the escrow amount.
+    #[error("LEZ depositor balance is below the native escrow amount")]
+    DepositorBalanceInsufficient,
 }
 
 impl From<NativePrepareError> for BridgeRuntimeError {
@@ -464,6 +467,17 @@ impl BridgeRuntime {
         &self,
         request: lez_bridge_protocol::PrepareNativeEscrowRequest,
     ) -> Result<lez_bridge_protocol::PrepareNativeEscrowResult, BridgeRuntimeError> {
+        // A depositor that cannot fund the escrow gets a named refusal here,
+        // before any plan is reserved: the escrow program would only report
+        // its generic account-binding error at the funding step, after the
+        // initialization had been submitted.
+        let depositor = self
+            .node
+            .native_account(AccountId::new(*request.terms.depositor_account_id().as_bytes()))
+            .await?;
+        if depositor.balance < request.terms.amount().as_u128() {
+            return Err(BridgeRuntimeError::DepositorBalanceInsufficient);
+        }
         self.planner.prepare(request).await.map_err(Into::into)
     }
 

@@ -542,6 +542,25 @@ impl OfficialNodeRpc {
         })
     }
 
+    /// Reads one native account as the sequencer holds it now.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed when the official RPC is unavailable.
+    pub async fn native_account(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Account, RuntimeBoundaryError> {
+        self.client
+            .check_health()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)?;
+        self.client
+            .get_account(account_id)
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)
+    }
+
     /// Reads runtime identity, consensus clock, and four native escrow accounts
     /// under one unchanged sequencer tip.
     ///

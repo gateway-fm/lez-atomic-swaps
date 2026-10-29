@@ -310,6 +310,10 @@ pub struct TakerSwapViewV1 {
     pub available_action: Option<TakerTerminalActionV1>,
     /// Non-effect guidance shown only after receiving transparent ZEC by claim.
     pub privacy_guidance: Option<TakerPrivacyGuidanceV1>,
+    /// Why the swap needs the owner's attention, when the Node knows
+    /// (`lez_depositor_balance_insufficient`: the LEZ lot cannot be funded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_reason: Option<String>,
     /// The countersigned schedule and amounts, once the BTC agreement is bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terms: Option<BtcAgreementTermsV1>,

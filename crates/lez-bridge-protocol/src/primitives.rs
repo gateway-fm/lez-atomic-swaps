@@ -1569,6 +1569,9 @@ pub enum ErrorCode {
     MovingTip,
     /// Submission may have reached the node, but its outcome is unknown.
     UnknownSubmissionOutcome,
+    /// The LEZ depositor's native balance is below the escrow amount; the
+    /// first lock was not prepared. The owner funds the account or ends the swap.
+    DepositorBalanceInsufficient,
     /// An internal bounded sidecar operation failed.
     Internal,
 }

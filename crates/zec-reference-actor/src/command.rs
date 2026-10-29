@@ -1,15 +1,17 @@
 use std::{
     convert::Infallible,
     fs, io,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use lez_bridge_adapter::{
     ActorBridgeRequestContextSource, BridgeDiscoveryWindowSource,
-    CapabilityFileBridgeClientFactory, ContextOwningLezBridgePorts,
-    SqliteCanonicalLezFundingSource, validate_runtime_binding,
+    CapabilityFileBridgeClientFactory, ContextOwningLezBridgePorts, ContextOwningLezPortError,
+    PrepareNativeFirstLockError, SqliteCanonicalLezFundingSource, validate_runtime_binding,
 };
-use lez_bridge_protocol::DiscoveryWindow;
+use lez_bridge_client::BridgeClientError;
+use lez_bridge_protocol::{DiscoveryWindow, ErrorCode};
 use lez_swap_core::{Participant, Phase, SwapDirection, UnixSeconds};
 use lez_swap_store::{BridgeOperationKey, SqliteBridgeOperationJournal, SqliteZecRecoveryStore};
 use lez_zebra_node_adapter::{
@@ -354,6 +356,9 @@ pub enum ActorCommandError {
     /// One bounded lifecycle attempt failed closed.
     #[error("actor drive is unavailable")]
     DriveUnavailable,
+    /// The LEZ depositor cannot fund the escrow amount; nothing was submitted.
+    #[error("LEZ depositor balance is insufficient for the escrow amount")]
+    LezDepositorBalanceInsufficient,
     /// Fresh claim material could not be loaded safely.
     #[error("actor claim material is unavailable")]
     ClaimMaterialUnavailable,
@@ -564,10 +569,31 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                 .is_none()
             {
                 let plan = match active.next_action() {
-                    ZecLifecycleAction::CreateAndFundLez => lez
-                        .prepare_native_first_lock(active.agreement())
-                        .await
-                        .map_err(unavailable_drive)?,
+                    ZecLifecycleAction::CreateAndFundLez => {
+                        let prepared = lez.prepare_native_first_lock(active.agreement()).await;
+                        let marker = lez_depositor_balance_marker(config.role_state_db());
+                        match prepared {
+                            Ok(plan) => {
+                                if let Some(marker) = marker.as_ref() {
+                                    let _ = fs::remove_file(marker);
+                                }
+                                plan
+                            }
+                            Err(error) if is_depositor_balance_refusal(&error) => {
+                                // The bridge refused before reserving a plan: the
+                                // depositor cannot fund the lot. The marker lets
+                                // the Node show the owner why, instead of this
+                                // drive being retried every tick forever.
+                                if let Some(marker) = marker.as_ref() {
+                                    let _ =
+                                        fs::write(marker, b"lez_depositor_balance_insufficient\n");
+                                }
+                                eprintln!("actor drive refused: {error:?}");
+                                return Err(ActorCommandError::LezDepositorBalanceInsufficient);
+                            }
+                            Err(error) => return Err(unavailable_drive(error)),
+                        }
+                    }
                     ZecLifecycleAction::FundZcash => planner
                         .plan(active.agreement(), funding_outpoints(config))
                         .await
@@ -808,6 +834,33 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
 /// One bounded drive attempt failed closed. The lifecycle error's Debug form
 /// (variant names, no material) goes to stderr so the operator learns which
 /// gate held, as for the claim; the exit class stays `DriveUnavailable`.
+/// The marker the Taker Node reads as "needs attention: LEZ balance"; beside
+/// the actor's state like the Bitcoin actor's claim-submitted marker
+/// (`<swap>/actor/<role>/lez-depositor-balance-insufficient`).
+fn lez_depositor_balance_marker(state_db: &Path) -> Option<PathBuf> {
+    Some(
+        state_db
+            .parent()?
+            .parent()?
+            .join("lez-depositor-balance-insufficient"),
+    )
+}
+
+/// Whether a first-lock preparation failed because the bridge refused the
+/// depositor's balance (`ErrorCode::DepositorBalanceInsufficient`), reached
+/// through the port, adapter and transport error layers.
+fn is_depositor_balance_refusal(error: &ContextOwningLezPortError) -> bool {
+    let ContextOwningLezPortError::Adapter(adapter) = error else {
+        return false;
+    };
+    let Some(PrepareNativeFirstLockError::Transport(BridgeClientError::Remote(remote))) =
+        adapter.downcast_ref::<PrepareNativeFirstLockError<BridgeClientError>>()
+    else {
+        return false;
+    };
+    remote.code() == ErrorCode::DepositorBalanceInsufficient
+}
+
 fn unavailable_drive<E: std::fmt::Debug>(error: E) -> ActorCommandError {
     eprintln!("actor drive unavailable: {error:?}");
     ActorCommandError::DriveUnavailable

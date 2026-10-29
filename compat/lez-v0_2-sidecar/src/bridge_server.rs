@@ -786,6 +786,10 @@ impl From<BridgeRuntimeError> for OperationFailure {
                 code: ErrorCode::UnknownSubmissionOutcome,
                 message: "official node submission outcome is unknown",
             },
+            BridgeRuntimeError::DepositorBalanceInsufficient => Self {
+                code: ErrorCode::DepositorBalanceInsufficient,
+                message: "LEZ depositor balance is below the native escrow amount",
+            },
         }
     }
 }
