@@ -107,6 +107,101 @@ impl std::fmt::Debug for LocalPocLezSignerFiles {
     }
 }
 
+/// Owner-private Zcash key files of both roles: 32 raw bytes or 64 hex
+/// characters each. Absent, the deterministic test-lane keys apply.
+pub struct LocalPocZcashKeyFiles {
+    maker: PathBuf,
+    taker: PathBuf,
+}
+
+impl std::fmt::Debug for LocalPocZcashKeyFiles {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalPocZcashKeyFiles")
+            .field("maker", &"<redacted>")
+            .field("taker", &"<redacted>")
+            .finish()
+    }
+}
+
+impl LocalPocZcashKeyFiles {
+    /// Binds one complete Maker/Taker Zcash key pair.
+    #[must_use]
+    pub fn new(maker: PathBuf, taker: PathBuf) -> Self {
+        Self { maker, taker }
+    }
+}
+
+/// The two roles' Zcash secrets the corridor is built with.
+struct ZcashKeyMaterial {
+    maker: Zeroizing<[u8; 32]>,
+    taker: Zeroizing<[u8; 32]>,
+}
+
+impl ZcashKeyMaterial {
+    /// The test-lane constants: the funder of `direction` owns the coinbase
+    /// key, the other role the second constant.
+    fn deterministic(direction: LocalPocDirection) -> Self {
+        let (maker_byte, taker_byte) = match direction.zcash_funder() {
+            ActorRole::Maker => (FUNDED_ZCASH_KEY_BYTE, OTHER_ZCASH_KEY_BYTE),
+            ActorRole::Taker => (OTHER_ZCASH_KEY_BYTE, FUNDED_ZCASH_KEY_BYTE),
+        };
+        Self {
+            maker: Zeroizing::new([maker_byte; 32]),
+            taker: Zeroizing::new([taker_byte; 32]),
+        }
+    }
+
+    fn funder(&self, direction: LocalPocDirection) -> &Zeroizing<[u8; 32]> {
+        match direction.zcash_funder() {
+            ActorRole::Maker => &self.maker,
+            ActorRole::Taker => &self.taker,
+        }
+    }
+}
+
+/// Reads one owner-private Zcash key file: 32 raw bytes, or 64 hex characters
+/// with an optional trailing newline, that form a valid secp256k1 secret.
+fn read_zcash_key_file(path: &Path, role: &str) -> Result<Zeroizing<[u8; 32]>> {
+    ensure!(path.is_absolute(), "{role} Zcash key path must be absolute");
+    let (bytes, _) = read_bounded_identified(path, 65, FilePrivacy::OwnerPrivate)
+        .map_err(|_| anyhow::anyhow!("{role} Zcash key file is unavailable or unsafe"))?;
+    let bytes = Zeroizing::new(bytes);
+    let mut key = Zeroizing::new([0_u8; 32]);
+    match bytes.len() {
+        32 => key.copy_from_slice(bytes.as_slice()),
+        64 | 65 => {
+            let text = std::str::from_utf8(&bytes[..64])
+                .map_err(|_| anyhow::anyhow!("{role} Zcash key file is not hex"))?;
+            ensure!(
+                bytes.len() == 64 || bytes[64] == b'\n',
+                "{role} Zcash key file has trailing content"
+            );
+            let mut decoded = Zeroizing::new([0_u8; 32]);
+            hex::decode_to_slice(text, &mut decoded[..])
+                .map_err(|_| anyhow::anyhow!("{role} Zcash key file is not hex"))?;
+            key.copy_from_slice(&decoded[..]);
+        }
+        _ => bail!("{role} Zcash key file must hold 32 bytes or 64 hex characters"),
+    }
+    SecretKey::from_slice(&key[..])
+        .map_err(|_| anyhow::anyhow!("{role} Zcash key is not a valid secret"))?;
+    Ok(key)
+}
+
+fn load_zcash_key_material(
+    key_files: Option<&LocalPocZcashKeyFiles>,
+    direction: LocalPocDirection,
+) -> Result<ZcashKeyMaterial> {
+    let Some(files) = key_files else {
+        return Ok(ZcashKeyMaterial::deterministic(direction));
+    };
+    let maker = read_zcash_key_file(&files.maker, "Maker")?;
+    let taker = read_zcash_key_file(&files.taker, "Taker")?;
+    ensure!(*maker != *taker, "Maker and Taker Zcash keys must differ");
+    Ok(ZcashKeyMaterial { maker, taker })
+}
+
 impl LocalPocLezSignerFiles {
     /// Binds one complete Maker/Taker signer pair for private no-clobber copying.
     #[must_use]
@@ -314,13 +409,35 @@ pub async fn provision_local_v0_2_corridor(
 ///
 /// In addition to [`provision_local_v0_2_corridor`], fails for absent, aliased,
 /// non-canonical, non-private, malformed, equal, or account-mismatched signers.
-#[allow(clippy::too_many_lines)]
 pub async fn provision_local_v0_2_corridor_with_signers(
     spec_file: &Path,
     output_root: &Path,
     signer_files: Option<&LocalPocLezSignerFiles>,
 ) -> Result<LocalPocProvisionSummary> {
+    provision_local_v0_2_corridor_with_material(spec_file, output_root, signer_files, None).await
+}
+
+/// Provisions a local corridor with optional pre-provisioned LEZ signers and
+/// optional explicit Zcash keys for both roles.
+///
+/// With key files, the role that funds Zcash in the spec's direction must own
+/// mature Regtest outputs under its key (zebra mines to the Maker's; a Taker
+/// that funds is paid by a plain transfer first). Without them the
+/// deterministic test-lane keys apply, as before.
+///
+/// # Errors
+///
+/// In addition to [`provision_local_v0_2_corridor_with_signers`], fails for an
+/// absent, non-private, malformed or equal Zcash key file pair.
+#[allow(clippy::too_many_lines)]
+pub async fn provision_local_v0_2_corridor_with_material(
+    spec_file: &Path,
+    output_root: &Path,
+    signer_files: Option<&LocalPocLezSignerFiles>,
+    zcash_key_files: Option<&LocalPocZcashKeyFiles>,
+) -> Result<LocalPocProvisionSummary> {
     let spec = load_spec(spec_file)?;
+    let zcash_keys = load_zcash_key_material(zcash_key_files, spec.direction)?;
     let signer_material = load_lez_signer_material(
         signer_files,
         &spec.lez_runtime.maker_signer_account_id_base58,
@@ -343,8 +460,8 @@ pub async fn provision_local_v0_2_corridor_with_signers(
             .with_max_concurrent_requests(1),
     )
     .context("failed to connect bounded local Zebra RPC")?;
-    let mut funding_zcash_secret = SecretKey::from_slice(&[FUNDED_ZCASH_KEY_BYTE; 32])
-        .context("invalid deterministic Zcash funder key")?;
+    let mut funding_zcash_secret = SecretKey::from_slice(&zcash_keys.funder(spec.direction)[..])
+        .context("invalid Zcash funder key")?;
     let funding_zcash_public =
         PublicKey::from_secret_key(&Secp256k1::signing_only(), &funding_zcash_secret);
     funding_zcash_secret.non_secure_erase();
@@ -355,6 +472,7 @@ pub async fn provision_local_v0_2_corridor_with_signers(
     let swap_id = SwapId::new(spec.swap_id.clone()).context("invalid swap ID")?;
     let fixture = build_agreement(
         &spec,
+        &zcash_keys,
         &swap_id,
         maker_lez_account,
         taker_lez_account,
@@ -1157,6 +1275,7 @@ async fn select_mature_regtest_candidate(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_agreement(
     spec: &ProvisionSpec,
+    zcash_keys: &ZcashKeyMaterial,
     swap_id: &SwapId,
     maker_lez_account: [u8; 32],
     taker_lez_account: [u8; 32],
@@ -1188,12 +1307,8 @@ fn build_agreement(
         .checked_add(AGREEMENT_LIFETIME_SECONDS)
         .context("agreement expiry overflow")?;
 
-    let (maker_key_byte, taker_key_byte) = match spec.direction.zcash_funder() {
-        ActorRole::Maker => (FUNDED_ZCASH_KEY_BYTE, OTHER_ZCASH_KEY_BYTE),
-        ActorRole::Taker => (OTHER_ZCASH_KEY_BYTE, FUNDED_ZCASH_KEY_BYTE),
-    };
-    let maker_bytes = Zeroizing::new([maker_key_byte; 32]);
-    let taker_bytes = Zeroizing::new([taker_key_byte; 32]);
+    let maker_bytes = zcash_keys.maker.clone();
+    let taker_bytes = zcash_keys.taker.clone();
     let mut maker_secret = SecretKey::from_slice(maker_bytes.as_ref())?;
     let mut taker_secret = SecretKey::from_slice(taker_bytes.as_ref())?;
     let secp = Secp256k1::signing_only();
