@@ -21,29 +21,34 @@ logs carry the actors' effect lines (`deploy/scripts/node-e2e.py` captures
 | `9baa9cd9`, `0abae8b1` | fixture: one claim secret per provisioned swap (from the OS RNG, owner-private) |
 | `c0510362` | taker-node: a failed take / receipt binding names its cause |
 | `8f01a687`, `de8f42a4` | maker-node: a Zcash completion takes the claim preimage from the agreement's own template; no Node-wide secret (`--maker-claim-preimage-file` deprecated, refused for a catalog of more than one template) |
+| `7264bf6c` | zec-sdk: `deterministic-local-devnet-v2` carries the eight-block Zcash refund window; `-v1` keeps its four (profiles are immutable per id); the devnet provisioner and the harness ask for v2 |
+| `6648c363`, `2bde2fd2`, `b978e406` | swap-store: every bridge operation name inserts under the journal's CHECK; taker-node: the first-attempt reply rule is a tested helper; sidecar: a submission decided again keeps its earlier decisions in the journal |
+| `bdb34862` | deploy README: the finality heartbeat is the liveness detector, not a keep-alive |
 
-HEAD at the final build: `de8f42a4` (branch `feat/m2-zec-on-docker-signed`, PR #119).
+HEAD at the final build: `b978e406` (branch `feat/m2-zec-on-docker-signed`, PR #119).
 
 ## Images
 
 Built by `deploy/scripts/from-scratch.sh --only build:sidecar`, `--only rust`,
 `--only stage`, then `docker compose build tools maker-node taker-node`
-(21:36Z). Both Node images check the staged sidecar's tree stamp against the
+(22:46Z). Both Node images check the staged sidecar's tree stamp against the
 one their binaries expect.
 
 | image | id | digest |
 |---|---|---|
-| `lez-taker-node:local` | `3ae8bed8f502` | `sha256:3ae8bed8f50266fc84ac5506c0147db26aaf12aa6971d5706a08b3c5f1c2baab` |
-| `lez-maker-node:local` | `2d9431251405` | `sha256:2d9431251405fc80ae38001161de20a2cc415ac31852e03c24033f0866c103f5` |
-| `lez-tools:local` | `31301c4f13f9` | unchanged since the `e9ad978a` sidecar build (cache hit, identical content) |
+| `lez-taker-node:local` | `5992f60d52bc` | `sha256:5992f60d52bc35f2e9039cf225a93f3c116793ddc89af09a5e316a731ed4dd87` |
+| `lez-maker-node:local` | `0b6adca1d97a` | `sha256:0b6adca1d97a633c37870a6d60f8e476099e9edfa6859fa8da145bf91ee0889d` |
+| `lez-tools:local` | `bb62c44bcadd` | `sha256:bb62c44bcaddb0625ed8cb5d5b5c1f6954ef055166af70372824312735f24150` |
 
-Sidecar tree stamp: `be4a0621d0d9496fc8e0c28ced96e5ef6e48b873`.
+Sidecar tree stamp: `93e4194519db1a1911db140f1d2c4e6004dda869`.
 
 The ZEC Node matrix (RESULTS.txt, second table) ran on the images of
-`8f01a687` (taker `460d268e57b4`-lineage rebuilt at 20:08Z); the two commits
-after it change the fixture's secret source and remove the Maker's Node-wide
-secret, neither of which a single-template scenario exercises. The acceptance
-pair was rerun on the final images (first table).
+`8f01a687` under the mutated v1 profile (anchor + 9, the same window v2 now
+carries under its own id); the commits after it change the fixture's secret
+source, remove the Maker's Node-wide secret, introduce the v2 id and keep the
+sidecar's journal history, none of which a single-template scenario
+exercises. The acceptance pair was rerun on the final images and the v2
+profile (first table); those exports are the deliverable evidence.
 
 ## Chains
 
@@ -57,7 +62,9 @@ each chain. Today's chains and the scenarios they carried:
 | 37 | 18:37 | ~19:33 (56 min) | zec-happy PASSED 19:06 (154 s) |
 | 38 | 19:38 | ~20:24 (46 min) | zec-concurrent PASSED 20:15 (`8f01a687`), zec-happy PASSED 19:56 (228 s), zec-replay, zec-wrong-inputs |
 | 39 | 20:29 | ~21:05 (36 min) | zec-restart-taker, zec-restart-maker, zec-survivor, zec-regenerated-catalog, zec-tampered-catalog, zec-concurrent-staggered |
-| 40 | 21:39 | alive at 21:56 | **zec-concurrent and zec-happy on the final images, the exports in `zec/`** |
+| 40 | 21:39 | alive at 21:56, left | zec-concurrent and zec-happy on de8f42a4 under the mutated v1 profile (mechanism evidence) |
+| 41 | 22:03 | alive at 22:41 (38 min), left | reverse desk taker-refund: its steps passed, the Maker's reconciliation never came (FINDINGS 19) |
+| 42 | 23:09 (second genesis: the first froze during the bootstrap's vault sweeps) | alive at 23:26 (finalized 115, flat 0 s) | **zec-concurrent and zec-happy on the final images and profile v2; the exports in `zec/`** |
 
 The freezes are the known Bedrock behaviour (#3643): blocks keep being
 published and transactions keep being included while the finalized height
@@ -69,8 +76,8 @@ flight finish but not a new chain-dependent step.
 
 | scenario | corridor run | chain |
 |---|---|---|
-| zec-concurrent (final) | `zec-devnet-1793310037` (entries 0 and 1, zebra anchor 308, Zcash refund height 317) | 40 |
-| zec-happy (final) | `zec-devnet-1793310807` | 40 |
+| zec-concurrent (final, v2) | `zec-devnet-1793315427` (entries 0 and 1, zebra anchor 322, Zcash refund height 331) | 42 |
+| zec-happy (final, v2) | `zec-devnet-1793316189` | 42 |
 | zec-concurrent (`8f01a687`) | `zec-devnet-1793304752` | 38 |
 | zec-replay | `zec-devnet-1793304997` | 38 |
 | zec-wrong-inputs | `zec-devnet-1793305200` | 38 |
@@ -83,8 +90,12 @@ flight finish but not a new chain-dependent step.
 
 ## Profile in force
 
-`deterministic-local-devnet-v1`: LEZ confirmations 1, Zcash confirmations 1,
-LEZ refund delay 1 800 s, Zcash refund window 8 blocks (4 before `4f077eb4`:
-two swaps taken together at one Zcash anchor need the first swap's four blocks
-plus the second swap's), required margin 30 s. Allocations 2 000 000 LEZ per
+`deterministic-local-devnet-v2`: LEZ confirmations 1, Zcash confirmations 1,
+LEZ refund delay 1 800 s, Zcash refund window 8 blocks, required margin 30 s.
+It is `deterministic-local-devnet-v1` (four blocks, unchanged) under a new id:
+profiles are immutable per id, and two swaps taken together at one Zcash
+anchor need the first swap's four blocks plus the second swap's. The earlier
+runs of 2026-10-29 that say `-v1` with anchor + 9 ran a build in which v1's
+window had been widened in place (4f077eb4, reverted by 7264bf6c); they are
+mechanism evidence, not shipped. Allocations 2 000 000 LEZ per
 role. Zebra regtest is mined by the harness one block per reason.
