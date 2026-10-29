@@ -282,7 +282,10 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
 * **LEZ**: the standing `bedrock` / `sequencer` / `indexer` chain (genesis allocations
   of 2 000 000 LEZ to each role's signer and settlement wallet, `gen-config.sh`: a
   ZEC corridor's 50 000-LEZ lot leaves the depositor for good on a completed swap,
-  so a whole matrix fits on one chain), whose genesis
+  so a whole matrix fits on one chain; `LEZ_BOOTSTRAP_DEFER_CLAIM=<wallet>` on
+  `up.sh --fresh-lez` leaves one wallet's allocation in its vault, which is how
+  the depositor-balance refusal is shown, and `scripts/bootstrap-market.sh`
+  run again claims it), whose genesis
   funds four persistent wallets (Munich, Basel, Zurich, Limmat). Balances
   accumulate across swaps; the UI's wallet ledger shows true opening → closing
   values, not per-run genesis allocations.

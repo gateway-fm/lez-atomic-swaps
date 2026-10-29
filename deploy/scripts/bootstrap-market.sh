@@ -29,6 +29,7 @@ docker run --rm --network lez-swap-chains --user "$(id -u):$(id -g)" \
   -e MARKET_ROOT=/market -e ESCROW_PROGRAM_ID="$escrow_pin" \
   -e DEPLOYER=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer \
   -e VAULT_CLAIM_BIN=/provision/sidecar/lez-v02-vault-claim-poc \
+  -e LEZ_BOOTSTRAP_DEFER_CLAIM="${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" \
   lez-builder:local bash -c 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
     socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
     sleep 1; bash /scripts/market-bootstrap.sh'
