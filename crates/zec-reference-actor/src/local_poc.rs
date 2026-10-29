@@ -57,7 +57,18 @@ const MAX_LEZ_SIGNER_KEY_BYTES: usize = 65;
 // `FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg`. Newer chains differ.
 const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
-const PREIMAGE_BYTE: u8 = 0x44;
+/// Domain tag of the fixture's per-swap claim preimage.
+const PREIMAGE_DOMAIN: &[u8] = b"zec-local-poc-claim-preimage:";
+
+/// The fixture's claim preimage for one swap: deterministic for the swap id,
+/// distinct across swaps.
+fn fixture_preimage(swap_id: &str) -> [u8; 32] {
+    Sha256::new()
+        .chain_update(PREIMAGE_DOMAIN)
+        .chain_update(swap_id.as_bytes())
+        .finalize()
+        .into()
+}
 const LEZ_NATIVE_AMOUNT: u128 = 50_000;
 const ZCASH_PRINCIPAL_ZATOSHIS: u64 = 100_000_000;
 const FUNDING_FEE_ZATOSHIS: u64 = 10_000;
@@ -1442,7 +1453,12 @@ fn build_agreement(
     let secp = Secp256k1::signing_only();
     let maker_public = PublicKey::from_secret_key(&secp, &maker_secret);
     let taker_public = PublicKey::from_secret_key(&secp, &taker_secret);
-    let preimage = Zeroizing::new([PREIMAGE_BYTE; 32]);
+    // One secret per swap. Fixture swaps taken together share keys, amounts
+    // and (at one anchor) the refund height; a shared preimage made their
+    // BIP-199 scripts identical, and the second swap's Taker discovered the
+    // first swap's funding as its Maker lock, then tried to spend an output
+    // already claimed (zec-concurrent, chain 37, 2026-10-29).
+    let preimage = Zeroizing::new(fixture_preimage(&spec.swap_id));
     let secret_digest: [u8; 32] = Sha256::digest(&preimage[..]).into();
     let maker_hash = public_key_hash(&maker_public);
     let taker_hash = public_key_hash(&taker_public);
