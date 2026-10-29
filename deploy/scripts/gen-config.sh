@@ -39,6 +39,19 @@ wallet_limmat_account_id="$(wallet_account_id taker-limmat-02 5A8bRmav5wjYQex6z7
 readonly wallet_munich_account_id wallet_basel_account_id wallet_zurich_account_id wallet_limmat_account_id
 readonly wallet_maker_allocation=2000000
 readonly wallet_taker_allocation=2000000
+# The finality heartbeat's two accounts (sender, recipient): funded only when
+# their identities exist in the market root (from-scratch.sh / start.sh mint
+# them); 100 000 units is 23 days of one unit per 20 s. LEZ_HEARTBEAT_SECONDS
+# (0 disables the service) and LEZ_HEARTBEAT_STALL_SECONDS reach up.sh and the
+# service through runtime.env.
+heartbeat_pulse_account_id="$(wallet_account_id heartbeat-pulse-01 "")"
+heartbeat_echo_account_id="$(wallet_account_id heartbeat-echo-02 "")"
+heartbeat_allocation=0
+if [[ -n "$heartbeat_pulse_account_id" && -n "$heartbeat_echo_account_id" ]]; then heartbeat_allocation=100000; fi
+readonly heartbeat_pulse_account_id heartbeat_echo_account_id heartbeat_allocation
+heartbeat_seconds="${LEZ_HEARTBEAT_SECONDS:-20}"
+heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-120}"
+[[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_stall_seconds" =~ ^[0-9]+$ ]] || { echo "LEZ_HEARTBEAT_SECONDS and LEZ_HEARTBEAT_STALL_SECONDS must be integers" >&2; exit 1; }
 
 # Preserve the selected volume namespace on ordinary restarts too.
 volume_prefix="${LEZ_VOLUME_PREFIX:-}"
@@ -105,6 +118,8 @@ jq --arg channel "$channel_id" --arg funding "$funding_key" \
   --arg zurich "$wallet_zurich_account_id" --arg limmat "$wallet_limmat_account_id" \
   --argjson wallet_maker_amount "$wallet_maker_allocation" \
   --argjson wallet_taker_amount "$wallet_taker_allocation" \
+  --arg pulse "$heartbeat_pulse_account_id" --arg echo "$heartbeat_echo_account_id" \
+  --argjson heartbeat_amount "$heartbeat_allocation" \
   '.home = "/var/lib/sequencer_service"
    | .bedrock_config.node_url = "http://bedrock:18080"
    | .bedrock_config.channel_id = $channel
@@ -117,15 +132,19 @@ jq --arg channel "$channel_id" --arg funding "$funding_key" \
        {"supply_account": {"account_id": $basel, "balance": $wallet_maker_amount}},
        {"supply_account": {"account_id": $zurich, "balance": $wallet_taker_amount}},
        {"supply_account": {"account_id": $limmat, "balance": $wallet_taker_amount}}
-     ]' \
+     ] + (if $heartbeat_amount > 0 then [
+       {"supply_account": {"account_id": $pulse, "balance": $heartbeat_amount}},
+       {"supply_account": {"account_id": $echo, "balance": $heartbeat_amount}}
+     ] else [] end)' \
   "$LEZ_SOURCE/sequencer-config/sequencer_config.json" \
   >"$RUNTIME/config/sequencer_config.json"
 
 jq -e --arg channel "$channel_id" '.channel_id == $channel' "$RUNTIME/config/indexer_config.json" >/dev/null
 jq -e --arg channel "$channel_id" '.bedrock_config.channel_id == $channel' "$RUNTIME/config/sequencer_config.json" >/dev/null
-[[ "$(jq -r '.genesis | length' "$RUNTIME/config/sequencer_config.json")" == 6 ]]
+expected_genesis_accounts=6; (( heartbeat_allocation > 0 )) && expected_genesis_accounts=8
+[[ "$(jq -r '.genesis | length' "$RUNTIME/config/sequencer_config.json")" == "$expected_genesis_accounts" ]]
 [[ "$(jq -r '[.genesis[].supply_account.account_id] | unique | length' \
-  "$RUNTIME/config/sequencer_config.json")" == 6 ]]
+  "$RUNTIME/config/sequencer_config.json")" == "$expected_genesis_accounts" ]]
 
 # The sequencer generates its own bedrock signing key under its state dir
 # (load_or_create_signing_key); no key file is mounted for the local stack.
@@ -256,6 +275,9 @@ printf '%s\n' \
   "LEZ_MARKET_ROOT=$market_root" \
   "LEZ_WALLET_MAKER_ALLOCATION=$wallet_maker_allocation" \
   "LEZ_WALLET_TAKER_ALLOCATION=$wallet_taker_allocation" \
+  "LEZ_HEARTBEAT_ALLOCATION=$heartbeat_allocation" \
+  "LEZ_HEARTBEAT_SECONDS=$heartbeat_seconds" \
+  "LEZ_HEARTBEAT_STALL_SECONDS=$heartbeat_stall_seconds" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
 

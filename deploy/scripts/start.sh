@@ -84,7 +84,7 @@ else
   log "pulling ${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG}"
   docker compose --profile tools pull --quiet tools
 fi
-for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02; do
+for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   [[ -f "$LEZ_WALLET_IDENTITIES/$wallet/identity.json" ]] && continue
   log "minting the $wallet identity"
   rm -rf "${LEZ_WALLET_IDENTITIES:?}/$wallet"

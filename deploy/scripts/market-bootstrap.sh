@@ -42,11 +42,17 @@ account_balance() { indexer getAccount "[\"$1\"]" | jq -r '.result.balance // em
 : "${LEZ_WALLET_MAKER_ALLOCATION:?LEZ_WALLET_MAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 : "${LEZ_WALLET_TAKER_ALLOCATION:?LEZ_WALLET_TAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 WALLETS=()
-for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02; do
+# The heartbeat's two accounts are claimed like the wallets (the claim tool's
+# --role is a journal label; the heartbeat uses `taker`), with their own
+# allocation, when the identities exist (an older market root has none).
+for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   identity="$MARKET_ROOT/identities/$wallet/identity.json"
+  if [[ "$wallet" == heartbeat-* && ! -f "$identity" ]]; then echo "$wallet: no identity in this market root; the heartbeat has no account on this chain"; continue; fi
   [[ -f "$identity" ]] || fail "$wallet identity missing: $identity"
   role="${wallet%%-*}"
   allocation="$LEZ_WALLET_MAKER_ALLOCATION"; [[ "$role" == taker ]] && allocation="$LEZ_WALLET_TAKER_ALLOCATION"
+  if [[ "$role" == heartbeat ]]; then allocation="${LEZ_HEARTBEAT_ALLOCATION:-0}"; role=taker; fi
+  [[ "$allocation" != 0 ]] || { echo "$wallet: no allocation on this chain; skipped"; continue; }
   [[ "$allocation" =~ ^[0-9]+$ ]] || fail "$role wallet allocation is not a number: $allocation"
   WALLETS+=("$wallet $role $(jq -er '.account_id' "$identity") $(jq -er '.vault_account_id' "$identity") $allocation")
 done

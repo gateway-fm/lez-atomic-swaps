@@ -35,6 +35,7 @@ docker run --rm --network lez-swap-chains --user "$(id -u):$(id -g)" \
   -e VAULT_CLAIM_BIN=/provision/sidecar/lez-v02-vault-claim-poc \
   -e LEZ_BOOTSTRAP_DEFER_CLAIM="${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" \
   -e LEZ_WALLET_MAKER_ALLOCATION="$wallet_maker_allocation" -e LEZ_WALLET_TAKER_ALLOCATION="$wallet_taker_allocation" \
+  -e LEZ_HEARTBEAT_ALLOCATION="$(sed -n 's/^LEZ_HEARTBEAT_ALLOCATION=//p' runtime/runtime.env | head -1)" \
   lez-builder:local bash -c 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
     socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
     sleep 1; bash /scripts/market-bootstrap.sh'

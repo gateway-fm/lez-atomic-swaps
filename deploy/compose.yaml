@@ -516,6 +516,7 @@ services:
       # refuses to claim without them.
       LEZ_WALLET_MAKER_ALLOCATION: ${LEZ_WALLET_MAKER_ALLOCATION:-}
       LEZ_WALLET_TAKER_ALLOCATION: ${LEZ_WALLET_TAKER_ALLOCATION:-}
+      LEZ_HEARTBEAT_ALLOCATION: ${LEZ_HEARTBEAT_ALLOCATION:-0}
     volumes:
       - ${LEZ_MARKET_ROOT}:/market
       - ./scripts:/scripts:ro
@@ -528,6 +529,54 @@ services:
     pids_limit: 256
     restart: "no"
     logging: *default-logging
+
+  # The LEZ finality heartbeat (Part C): one authenticated transfer of one unit
+  # from heartbeat-pulse-01 to heartbeat-echo-02 every LEZ_HEARTBEAT_SECONDS,
+  # the sequencer tip and the finalized height on every tick, and a stall
+  # declared (one loud line + runtime/heartbeat/status.json) when finality is
+  # flat for LEZ_HEARTBEAT_STALL_SECONDS while the tip moves. up.sh starts it
+  # when LEZ_HEARTBEAT_SECONDS is not 0. The tools image carries the binary; the
+  # market root is mounted read-only for the sender's key; the official tools
+  # accept only literal-loopback endpoints, so socat forwards them.
+  heartbeat:
+    image: ${LEZ_IMAGE_PREFIX:-lez}-tools:${LEZ_IMAGE_TAG:-local}
+    container_name: lez-heartbeat
+    profiles: [heartbeat]
+    user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
+    environment:
+      LEZ_HEARTBEAT_SECONDS: ${LEZ_HEARTBEAT_SECONDS:-20}
+      LEZ_HEARTBEAT_STALL_SECONDS: ${LEZ_HEARTBEAT_STALL_SECONDS:-120}
+    volumes:
+      - ${LEZ_MARKET_ROOT}/identities:/market/identities:ro
+      - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
+      - ./runtime/heartbeat:/heartbeat
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,mode=1777
+    networks: [chains]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      sequencer:
+        condition: service_healthy
+      indexer:
+        condition: service_healthy
+    logging: *default-logging
+    command:
+      - |
+        set -eu
+        socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
+        socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
+        sleep 1
+        program="$(sed -n 's/^M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID=//p' /run-market/market-bootstrap.env | head -1)"
+        recipient="$(jq -r '.account_id_hex' /market/identities/heartbeat-echo-02/identity.json)"
+        exec lez-v02-heartbeat --sequencer-url http://127.0.0.1:3040 --indexer-url http://127.0.0.1:8779 \
+          --private-key-file /market/identities/heartbeat-pulse-01/lez-signer.key \
+          --recipient-account-id "$recipient" --authenticated-transfer-program-id "$program" \
+          --interval-seconds "$LEZ_HEARTBEAT_SECONDS" --stall-seconds "$LEZ_HEARTBEAT_STALL_SECONDS" \
+          --status-file /heartbeat/status.json
 
 networks:
   chains:

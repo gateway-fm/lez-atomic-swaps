@@ -80,7 +80,9 @@ GUEST_ELF_SHA256="$(pinned expected_elf_sha256)"
 readonly ESCROW_PROGRAM_ID GUEST_ELF_SHA256
 readonly BUILDER_IMAGE=lez-builder:local
 readonly BUILDER_LOCK="$DEPLOY_ROOT/builder/image.lock"
-readonly WALLETS=(maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02)
+# The four settlement wallets, and the two accounts of the finality heartbeat
+# (sender and recipient; never a role's or a wallet's account).
+readonly WALLETS=(maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02)
 
 # Workspace layout. Hosts provisioned before the ephemeral builder keep their
 # market root under runner-work/; a fresh workspace uses market/ directly.
@@ -451,9 +453,9 @@ sidecar_tree_stamp() {
 build_sidecar() {
   log "building the LEZ sidecar and its tools"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --bin lez-v02-heartbeat --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
-      /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
+      /cache/target/sidecar/debug/lez-v02-heartbeat /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
   sidecar_tree_stamp > "$PROVISION/sidecar/source-tree.txt"
@@ -515,6 +517,7 @@ phase_stage() {
   # the market bootstrap tools (deploy/images/lez-tools, profile "tools")
   install -m 0755 "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" \
     "$PROVISION/sidecar/lez-v02-vault-claim-poc" "$PROVISION/sidecar/lez-v02-local-actor-identity" \
+    "$PROVISION/sidecar/lez-v02-heartbeat" \
     "$DEPLOY_ROOT/images/lez-tools/"
   (cd "$DEPLOY_ROOT" && bash scripts/stage-assets.sh)
 }

@@ -542,6 +542,18 @@ impl OfficialNodeRpc {
         })
     }
 
+    /// The sequencer's current tip height (its last created block).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeBoundaryError::NodeUnavailable`] when the node does not answer.
+    pub async fn sequencer_tip(&self) -> Result<u64, RuntimeBoundaryError> {
+        self.client
+            .get_last_block_id()
+            .await
+            .map_err(|_| RuntimeBoundaryError::NodeUnavailable)
+    }
+
     /// Reads one native account as the sequencer holds it now.
     ///
     /// # Errors

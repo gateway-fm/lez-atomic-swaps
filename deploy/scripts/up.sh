@@ -203,6 +203,19 @@ if [[ "$FRESH_LEZ" == 1 ]]; then
 fi
 [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]] || python3 scripts/verify-market.py 2>&1 | tail -1
 
+# The finality heartbeat (Part C): on unless runtime.env says LEZ_HEARTBEAT_SECONDS=0
+# or the market root has no heartbeat identities (an older root; gen-config
+# then funds no heartbeat account and the bootstrap claims none).
+heartbeat_seconds="$(sed -n 's/^LEZ_HEARTBEAT_SECONDS=//p' runtime/runtime.env | head -1)"
+heartbeat_allocation="$(sed -n 's/^LEZ_HEARTBEAT_ALLOCATION=//p' runtime/runtime.env | head -1)"
+if [[ "${heartbeat_seconds:-0}" != 0 && "${heartbeat_allocation:-0}" != 0 ]]; then
+  echo "[5/6] finality heartbeat (one unit every ${heartbeat_seconds} s)…"
+  mkdir -p runtime/heartbeat
+  docker compose --profile heartbeat up -d heartbeat
+else
+  echo "[5/6] finality heartbeat off (LEZ_HEARTBEAT_SECONDS=${heartbeat_seconds:-0}, allocation ${heartbeat_allocation:-0})"
+fi
+
 if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
   echo "API stack ready; run python3 scripts/record-evidence.py after market bootstrap."
   exit 0

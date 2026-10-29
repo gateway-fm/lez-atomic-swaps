@@ -297,6 +297,20 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
   funds four persistent wallets (Munich, Basel, Zurich, Limmat). Balances
   accumulate across swaps; the UI's wallet ledger shows true opening → closing
   values, not per-run genesis allocations.
+* **Finality heartbeat** (`heartbeat` service, `lez-v02-heartbeat` from the
+  tools image): the pinned Bedrock's finalized height has frozen on quiet
+  chains while the sequencer kept publishing (logos-blockchain#3643), so the
+  devnet keeps a trickle going: one authenticated transfer of one LEZ unit from
+  `heartbeat-pulse-01` to `heartbeat-echo-02` (two identities minted beside the
+  wallets, funded 100 000 each in the genesis, claimed by the market bootstrap;
+  never a role's or a wallet's account) every `LEZ_HEARTBEAT_SECONDS` (default
+  20; `0` in `runtime/runtime.env` disables it, `gen-config.sh` writes it), with
+  one log line per tick (`heartbeat: tick n tx … tip T finalized F (flat s)`).
+  When the finalized height is flat for `LEZ_HEARTBEAT_STALL_SECONDS` (default
+  120) while the tip advances it prints `heartbeat: STALL …` (again every five
+  minutes while it lasts, once when it clears) and writes
+  `runtime/heartbeat/status.json` with `stalled: true`, which the runners read
+  instead of waiting out a vault sweep on a dead chain.
 
 Both carry `org.logos-co.atomic-swaps.{run,scope,component}` labels
 (`market-btc-0001` / `market-lez-0001`). The one-time bootstrap — escrow
