@@ -35,6 +35,12 @@ scripts/zec-provision.sh, which also recreates both Nodes, then
     node-e2e.py --pair Zcash zec-maker-refund  both legs locked, the Taker refunds LEZ
                                          instead of waiting; the Maker refunds Zcash at
                                          the agreement's height; refund found in a block
+    node-e2e.py --pair Zcash zec-balance-refusal  the Taker's LEZ account cannot fund the
+                                         lot: the first drive is refused by name, the Node
+                                         shows attention_required with the reason, the
+                                         account is funded (the deferred vault claim), the
+                                         next drive locks and the swap completes. Needs a
+                                         chain created with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
 
 The ZEC refund windows come from the agreement, not the timing profile. Under
 the devnet profile zec-provision.sh asks for (deterministic-local-devnet-v1)
@@ -61,6 +67,7 @@ import pathlib
 import subprocess
 import sys
 import time
+import urllib.request
 
 DEPLOY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNTIME = DEPLOY_ROOT / "runtime"
@@ -1375,6 +1382,23 @@ def zec_drive(config: str) -> dict | None:
         return None
 
 
+def zec_drive_exit(config: str) -> tuple[int, str]:
+    """One `drive` of the Taker's ZEC actor, with its exit code and stderr: the
+    balance refusal is exit 3 (`LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE`)."""
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
+                             "--config", config, "drive"],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=300)
+    return result.returncode, result.stderr
+
+
+def lez_account_balance(account_id: str) -> int:
+    """The LEZ indexer's balance of an account, over its published loopback port."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getAccount", "params": [account_id]}).encode()
+    request = urllib.request.Request("http://127.0.0.1:8779/", data=body, headers={"content-type": "application/json"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return int(json.load(response)["result"]["balance"])
+
+
 def zec_status(config: str) -> dict | None:
     """One `status` of the Taker's ZEC actor (durable phase, no chain access)."""
     result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
@@ -1559,6 +1583,126 @@ def zec_drive_all_until(swaps: list[tuple[str, str, dict]], states: set[str], ti
 
 
 def scenario_zec_concurrent(stamp: str) -> dict:
+    """ZEC analogue of `concurrent`, in the BTC shape: two prepared entries of
+    one corridor run (`--swaps 2`), both taken together, both Taker actors
+    driven in turn with their LEZ steps interleaving on the same role accounts,
+    two Maker fundings from distinct coinbase outputs, two Taker claims, both
+    completed on both Nodes. The staggered variant (A final before B starts)
+    is `zec-concurrent-staggered`, a fixture, not the evidence."""
+    zec_provision(swaps=2)
+    corridors = list(ZEC_CORRIDORS)
+    if len(corridors) != 2:
+        raise Failure(f"expected two prepared entries, the corridor has {len(corridors)}")
+    swaps = []
+    for index, corridor in enumerate(corridors):
+        swap_id = zec_take_or_resume(corridor["offer_id"], stamp, "-ab"[index:index + 1].join(["-", ""]))
+        config = zec_taker_actor_config(corridor["receipt_output"])
+        zec_activate(config)
+        swaps.append((swap_id, config, corridor))
+    log(f"  both taken: {swaps[0][0]} and {swaps[1][0]}; driving both Taker actors in turn")
+    views = zec_drive_all_until(swaps, {"claim_available"}, timeout=3000,
+                                describe="(two Taker LEZ locks → two Maker Zcash fundings → two Maker LEZ claims)")
+    fundings = {}
+    for swap_id, _, corridor in swaps:
+        outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+        funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if funding is None:
+            raise Failure(f"{swap_id[:12]} is claim_available, but no zebra block spends its provisioned coinbase outpoint")
+        fundings[swap_id] = funding
+        log(f"  Maker's Zcash funding for {swap_id[:12]}: {funding[0]} in zebra block {funding[1]}")
+    if len({fundings[s[0]][0] for s in swaps}) != 2:
+        raise Failure("the two Maker fundings are one transaction: the corridors shared a funder output")
+    for index, (swap_id, _, _) in enumerate(swaps):
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-{index}",
+                                                       "swap_id": swap_id, "expected_generation": views[swap_id]["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed Zcash on {swap_id[:12]} (replay={result.get('was_replay')})")
+    zec_drive_all_until(swaps, {"completed"}, timeout=1200, describe="(two claim inclusions)")
+    claims = {}
+    for swap_id, _, _ in swaps:
+        funding = fundings[swap_id]
+        claim_tx = zec_spend_of((funding[0], 0), funding[1])
+        if claim_tx is None:
+            raise Failure(f"{swap_id[:12]} reports completed, but no zebra block spends its funding output")
+        claims[swap_id] = claim_tx
+        log(f"  Taker's Zcash claim for {swap_id[:12]}: {claim_tx[0]} in zebra block {claim_tx[1]}")
+        wait_completed(swap_id, timeout=600)
+    return {"swaps": [{"swap_id": swap_id, "offer_id": corridor["offer_id"], "entry": corridor["entry"],
+                       "zcash_funding": {"transaction_id": fundings[swap_id][0], "height": fundings[swap_id][1]},
+                       "zcash_claim": {"transaction_id": claims[swap_id][0], "height": claims[swap_id][1]}}
+                      for swap_id, _, corridor in swaps],
+            "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"]}
+
+
+def scenario_zec_balance_refusal(stamp: str) -> dict:
+    """The LEZ depositor cannot fund the lot. The Taker Node's signer is the
+    market wallet taker-zurich-01; a chain created with
+    LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01 leaves its allocation in the
+    vault, so the account holds nothing. The first drive is refused by name
+    (actor exit 3), the Node lists the swap as attention_required with
+    lez_depositor_balance_insufficient and offers no action, the Node's own
+    re-driver leaves it so, and after the account is funded (bootstrap-market.sh
+    run again claims the vault) the next drive submits the lock with no other
+    owner action and the swap completes. The Taker Node does not drive the ZEC
+    first lock itself (the desk journeys drive it between steps, as this
+    harness does), so the recovery is the next drive, not a self-re-drive."""
+    identity = json.loads((RUNTIME / "lez" / "taker" / "identity.json").read_text())
+    account = identity["account_id"]
+    before = lez_account_balance(account)
+    if before >= ZEC_LEZ_UNITS:
+        raise Failure(f"the Taker's LEZ account holds {before}, not less than the {ZEC_LEZ_UNITS} lot: recreate the "
+                      "chain with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01 (up.sh --fresh-lez) so its allocation "
+                      "stays in the vault")
+    log(f"  Taker LEZ account holds {before}, below the {ZEC_LEZ_UNITS} lot")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_activate(config)
+    code, stderr = zec_drive_exit(config)
+    last = (stderr.strip().splitlines() or [""])[-1]
+    if code != 3:
+        raise Failure(f"the first drive exited {code}, not 3 (the balance refusal): {last[-200:]}")
+    log(f"  first drive refused by name: exit {code}: {last[:160]}")
+    view = taker_view(swap_id)
+    if view["state"] != "attention_required" or view.get("attention_reason") != "lez_depositor_balance_insufficient":
+        raise Failure(f"the Taker lists {swap_id[:12]} as {view['state']} ({view.get('attention_reason')}), not "
+                      "attention_required with lez_depositor_balance_insufficient")
+    if view.get("available_action"):
+        raise Failure(f"the refused swap offers {view['available_action']}; it must offer nothing")
+    log(f"  taker {swap_id}: {view['state']} ({view['attention_reason']}), no action offered | maker: {maker_phase(swap_id)}")
+    # A second drive while still unfunded must be the same refusal, not a lock.
+    code, _ = zec_drive_exit(config)
+    if code != 3:
+        raise Failure(f"a second unfunded drive exited {code}, not 3")
+    log("  a second unfunded drive is refused the same way")
+    log("  funding the account: scripts/bootstrap-market.sh claims the deferred vault")
+    result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "bootstrap-market.sh")],
+                            capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, timeout=1200)
+    if result.returncode != 0:
+        raise Failure(f"bootstrap-market.sh failed: {(result.stderr or result.stdout)[-300:]}")
+    after = lez_account_balance(account)
+    if after < ZEC_LEZ_UNITS:
+        raise Failure(f"after the claim the Taker's LEZ account holds {after}, still below the lot")
+    market_root = pathlib.Path(next(line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                                    if line.startswith("LEZ_MARKET_ROOT=")))
+    claim = json.loads((market_root / "bootstrap" / "taker-zurich-01-claim.json").read_text())
+    log(f"  Taker LEZ account holds {after} (vault claim {claim['transaction_id'][:16]}…)")
+    # Recovery: the next drive prepares the lock (the marker goes), the Node's
+    # row leaves attention_required, and the swap runs to completed as usual.
+    view = zec_drive_until(swap_id, config, {"awaiting_first_lock", "awaiting_second_lock", "claim_available"}, timeout=600,
+                           corridor=corridor, describe="(first drive after funding)")
+    if view.get("attention_reason"):
+        raise Failure(f"funded and driven, the row still carries attention_reason={view['attention_reason']}")
+    log(f"  taker {swap_id}: {view['state']} after funding, no attention_reason")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
+            "lez_lot": ZEC_LEZ_UNITS, "taker_lez_balance_before": before, "taker_lez_balance_after_claim": after,
+            "refusal": {"actor_exit_code": 3, "state": "attention_required", "attention_reason": "lez_depositor_balance_insufficient"},
+            "funding": {"vault_claim_transaction_id": claim["transaction_id"], "allocation": claim["allocation"]},
+            "recovery": "the next drive after funding locked LEZ; the swap completed"}
+
+
+def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     """Two prepared entries of one corridor run, taken together and settled side
     by side: two agreements, two Maker fundings from distinct coinbase outputs,
     two Taker claims; both Nodes list both swaps completed.
@@ -2225,6 +2369,7 @@ ZEC_SCENARIOS = {
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,
+    "zec-concurrent-staggered": scenario_zec_concurrent_staggered,
     "zec-replay": scenario_zec_replay,
     "zec-wrong-inputs": scenario_zec_wrong_inputs,
     "zec-restart-taker": lambda stamp: scenario_zec_restart(stamp, "taker"),
@@ -2232,6 +2377,7 @@ ZEC_SCENARIOS = {
     "zec-survivor": scenario_zec_survivor,
     "zec-regenerated-catalog": scenario_zec_regenerated_catalog,
     "zec-tampered-catalog": scenario_zec_tampered_catalog,
+    "zec-balance-refusal": scenario_zec_balance_refusal,
 }
 
 
