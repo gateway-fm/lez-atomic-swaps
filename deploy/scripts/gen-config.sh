@@ -254,6 +254,8 @@ printf '%s\n' \
   "BTC_RPC_USER=lezrpc" \
   "BTC_RPC_PASSWORD=$btc_rpc_password" \
   "LEZ_MARKET_ROOT=$market_root" \
+  "LEZ_WALLET_MAKER_ALLOCATION=$wallet_maker_allocation" \
+  "LEZ_WALLET_TAKER_ALLOCATION=$wallet_taker_allocation" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
 

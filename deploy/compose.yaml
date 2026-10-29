@@ -512,6 +512,10 @@ services:
       ESCROW_PROGRAM_ID: ${LEZ_ESCROW_PROGRAM_ID:-}
       DEPLOYER: /usr/local/bin/lez-zec-escrow-v02-deployer
       VAULT_CLAIM_BIN: /usr/local/bin/lez-v02-vault-claim-poc
+      # The genesis allocations, from runtime.env (gen-config.sh); the bootstrap
+      # refuses to claim without them.
+      LEZ_WALLET_MAKER_ALLOCATION: ${LEZ_WALLET_MAKER_ALLOCATION:-}
+      LEZ_WALLET_TAKER_ALLOCATION: ${LEZ_WALLET_TAKER_ALLOCATION:-}
     volumes:
       - ${LEZ_MARKET_ROOT}:/market
       - ./scripts:/scripts:ro

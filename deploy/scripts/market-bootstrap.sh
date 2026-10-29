@@ -35,14 +35,19 @@ account_balance() { indexer getAccount "[\"$1\"]" | jq -r '.result.balance // em
 # Wallet roster: name role owner_account vault_account allocation, read from
 # the identities the genesis funded (deploy/scripts/gen-config.sh reads the
 # same files), so a fresh workspace with fresh identities stays consistent.
+# The allocation is the one gen-config.sh wrote to runtime.env for the genesis
+# (LEZ_WALLET_{MAKER,TAKER}_ALLOCATION, passed in by the callers): the one-time
+# claim moves exactly the genesis vault balance to the owner account, and a
+# second copy of the number here once refused a fresh chain for an hour.
+: "${LEZ_WALLET_MAKER_ALLOCATION:?LEZ_WALLET_MAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
+: "${LEZ_WALLET_TAKER_ALLOCATION:?LEZ_WALLET_TAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 WALLETS=()
 for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02; do
   identity="$MARKET_ROOT/identities/$wallet/identity.json"
   [[ -f "$identity" ]] || fail "$wallet identity missing: $identity"
   role="${wallet%%-*}"
-  # Must equal gen-config.sh's wallet_{maker,taker}_allocation: the one-time
-  # claim moves exactly the genesis vault balance to the owner account.
-  allocation=2000000
+  allocation="$LEZ_WALLET_MAKER_ALLOCATION"; [[ "$role" == taker ]] && allocation="$LEZ_WALLET_TAKER_ALLOCATION"
+  [[ "$allocation" =~ ^[0-9]+$ ]] || fail "$role wallet allocation is not a number: $allocation"
   WALLETS+=("$wallet $role $(jq -er '.account_id' "$identity") $(jq -er '.vault_account_id' "$identity") $allocation")
 done
 

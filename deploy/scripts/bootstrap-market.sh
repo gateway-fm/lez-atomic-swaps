@@ -19,6 +19,10 @@ PROVISION="${LEZ_PROVISION:-$WORKSPACE/provision/data}"
 cd "$DEPLOY_ROOT"
 
 market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
+# The genesis allocations gen-config.sh wrote; the claims must match them exactly.
+wallet_maker_allocation="$(sed -n 's/^LEZ_WALLET_MAKER_ALLOCATION=//p' runtime/runtime.env | head -1)"
+wallet_taker_allocation="$(sed -n 's/^LEZ_WALLET_TAKER_ALLOCATION=//p' runtime/runtime.env | head -1)"
+[[ "$wallet_maker_allocation" =~ ^[0-9]+$ && "$wallet_taker_allocation" =~ ^[0-9]+$ ]] || { echo "runtime/runtime.env carries no LEZ_WALLET_{MAKER,TAKER}_ALLOCATION; run scripts/gen-config.sh runtime again" >&2; exit 65; }
 [[ -d "$market_root/identities" ]] || { echo "LEZ_MARKET_ROOT in runtime/runtime.env must hold the wallet identities" >&2; exit 65; }
 [[ -x "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" ]] || { echo "escrow deployer missing under $PROVISION; run from-scratch.sh --only build" >&2; exit 65; }
 escrow_pin="$(sed -n 's/^ *expected_image_id="\([0-9a-f]\{64\}\)".*/\1/p' "$REPO_ROOT/scripts/verify-lez-v02-provisional.sh" | head -1)"
@@ -30,6 +34,7 @@ docker run --rm --network lez-swap-chains --user "$(id -u):$(id -g)" \
   -e DEPLOYER=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer \
   -e VAULT_CLAIM_BIN=/provision/sidecar/lez-v02-vault-claim-poc \
   -e LEZ_BOOTSTRAP_DEFER_CLAIM="${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" \
+  -e LEZ_WALLET_MAKER_ALLOCATION="$wallet_maker_allocation" -e LEZ_WALLET_TAKER_ALLOCATION="$wallet_taker_allocation" \
   lez-builder:local bash -c 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
     socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
     sleep 1; bash /scripts/market-bootstrap.sh'
