@@ -18,6 +18,13 @@ pub enum ZecProfileId {
     /// that finalises in minutes. Same confirmations, Zcash refund height and
     /// margin as [`Self::DeterministicLocalV1`].
     DeterministicLocalDevnetV1,
+    /// [`Self::DeterministicLocalDevnetV1`] with an eight-block Zcash refund
+    /// window. Profiles are immutable per id: two swaps of one signer taken
+    /// together at one Zcash anchor need the first swap's four blocks (funding,
+    /// two pre-reveal confirmations, claim) plus the second swap's own, and
+    /// changing V1's four under its id would have invalidated every agreement
+    /// and export made under it (2026-10-29).
+    DeterministicLocalDevnetV2,
     /// LEZ 0.2 and Zcash public-testnet acceptance profile.
     PublicTestnetV1,
 }
@@ -29,6 +36,7 @@ impl ZecProfileId {
         match self {
             Self::DeterministicLocalV1 => "deterministic-local-v1",
             Self::DeterministicLocalDevnetV1 => "deterministic-local-devnet-v1",
+            Self::DeterministicLocalDevnetV2 => "deterministic-local-devnet-v2",
             Self::PublicTestnetV1 => "public-testnet-v1",
         }
     }
@@ -91,6 +99,17 @@ impl ZecRefundProfile {
                 expiry_delta_blocks: 40,
             },
             ZecProfileId::DeterministicLocalDevnetV1 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu6_2,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(1_800),
+                zcash_refund_blocks: 4,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+            },
+            ZecProfileId::DeterministicLocalDevnetV2 => Self {
                 id,
                 zcash_network: NetworkType::Regtest,
                 consensus_branch_id: BranchId::Nu6_2,

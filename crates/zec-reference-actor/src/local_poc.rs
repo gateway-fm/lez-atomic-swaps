@@ -361,6 +361,9 @@ enum LocalPocProfile {
     /// `deterministic-local-devnet-v1`: the same lane with a 30 min LEZ refund
     /// delay, for a chain that finalises in minutes.
     DeterministicLocalDevnetV1,
+    /// `deterministic-local-devnet-v2`: the devnet lane with the eight-block
+    /// Zcash refund window two swaps taken together need.
+    DeterministicLocalDevnetV2,
 }
 
 impl LocalPocProfile {
@@ -368,6 +371,7 @@ impl LocalPocProfile {
         match self {
             Self::DeterministicLocalV1 => ZecProfileId::DeterministicLocalV1,
             Self::DeterministicLocalDevnetV1 => ZecProfileId::DeterministicLocalDevnetV1,
+            Self::DeterministicLocalDevnetV2 => ZecProfileId::DeterministicLocalDevnetV2,
         }
     }
 }

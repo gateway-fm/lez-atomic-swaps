@@ -46,7 +46,7 @@ scripts/zec-provision.sh, which also recreates both Nodes, then
                                          chain created with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
 
 The ZEC refund windows come from the agreement, not the timing profile. Under
-the devnet profile zec-provision.sh asks for (deterministic-local-devnet-v1)
+the devnet profile zec-provision.sh asks for (deterministic-local-devnet-v2)
 the Taker's LEZ refund opens 30 minutes after the corridor was provisioned
 and the Maker's Zcash refund at an absolute zebra height (tip at provisioning
 + 5); the refund scenarios read those from the corridor and wait for them
@@ -1311,7 +1311,7 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False)
         corridors.append({"run_id": run_id, "entry": index, "offer_id": entry["offer_id"], "catalog_swap_id": entry["swap_id"],
                           "profile": profile,
                           # zec-swap-sdk profile.rs: the only parameter the devnet profile changes.
-                          "lez_refund_delay_seconds": 1800 if profile == "deterministic-local-devnet-v1" else 60,
+                          "lez_refund_delay_seconds": 1800 if profile.startswith("deterministic-local-devnet-v") else 60,
                           "receipt_output": entry["receipt_output"], "actor_root": entry["actor_root"],
                           "zebra_tip_at_provisioning": int(summary["zebra_tip_height"]),
                           "zcash_refund_height": int(summary["zcash_refund_height"]),

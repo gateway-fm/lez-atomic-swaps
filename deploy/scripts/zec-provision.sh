@@ -294,7 +294,7 @@ spec = {
     "schema_version": 1, "run_id": run_id, "swap_id": swap_id, "direction": "taker_sells_lez",
     # The LEZ escrow's validity window ends at the agreement's LEZ refund time;
     # the test-lane profile's 60 s cannot be met here (zec-swap-sdk profile.rs).
-    "profile": "deterministic-local-devnet-v1",
+    "profile": "deterministic-local-devnet-v2",
     "lez_runtime": {
         "chain_id": channel, "channel_id": channel, "genesis_block_hash": genesis,
         "escrow_program_id": escrow,

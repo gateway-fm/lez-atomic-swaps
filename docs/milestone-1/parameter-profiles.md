@@ -125,6 +125,12 @@ principal outputs never absorb an unnegotiated fee.
 - `deterministic-local-v1`: ephemeral regtest/standalone networks, controlled
   block generation, one confirmation, and shortened deadlines expressed only
   in fixtures. It is rejected on public network IDs.
+- `deterministic-local-devnet-v2`: `deterministic-local-devnet-v1` with an
+  eight-block Zcash refund window: two swaps of one signer taken together at
+  one Zcash anchor need the first swap's four blocks (funding, two pre-reveal
+  confirmations, claim) plus the second swap's own. Profiles are immutable per
+  id, so the wider window is a new id; the devnet provisioner asks for v2
+  since 2026-10-29.
 - `deterministic-local-devnet-v1`: `deterministic-local-v1` with a 30-minute
   LEZ refund delay instead of 60 seconds, for a local devnet whose LEZ chain
   finalises in minutes (the LEZ escrow's validity window ends at the

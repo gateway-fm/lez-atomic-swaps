@@ -115,7 +115,9 @@ only, and the evidence set says so.
 `ZecRefundProfile` names immutable parameter sets
 ([`docs/milestone-1/parameter-profiles.md`](milestone-1/parameter-profiles.md)):
 `deterministic-local-v1` for the isolated test lane, `public-testnet-v1` for
-the public networks, and `deterministic-local-devnet-v1` for a local devnet
+the public networks, and `deterministic-local-devnet-v2` (eight-block Zcash
+refund window; `-v1` is its four-block predecessor, kept for the agreements
+signed under it) for a local devnet
 whose LEZ chain finalises in minutes rather than instantly. The LEZ escrow
 program emits a timestamp validity window that ends at the agreement's LEZ
 refund time, so a profile's `lez_refund_delay` is also the longest a lock may

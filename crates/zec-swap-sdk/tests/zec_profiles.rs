@@ -22,7 +22,7 @@ fn named_profiles_match_the_reviewed_immutable_parameters() {
     assert_eq!(devnet.lez_confirmations(), 1);
     assert_eq!(devnet.zcash_confirmations(), 1);
     assert_eq!(devnet.lez_refund_delay(), UnixSeconds::new(1_800));
-    assert_eq!(devnet.zcash_refund_blocks(), 8);
+    assert_eq!(devnet.zcash_refund_blocks(), 4);
     assert_eq!(devnet.required_margin(), UnixSeconds::new(30));
     assert_eq!(devnet.expiry_delta_blocks(), 40);
 
@@ -150,4 +150,20 @@ fn both_directions_keep_lez_before_zcash_while_mapping_role_deadlines() {
             }
         }
     }
+}
+
+/// Profiles are immutable per id: the devnet's wider Zcash window is V2, V1
+/// keeps its four blocks so every agreement signed under it still validates.
+#[test]
+fn devnet_v2_widens_the_zcash_refund_window_and_v1_keeps_its_four_blocks() {
+    let v1 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV1);
+    let v2 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV2);
+    assert_eq!(v2.id().as_str(), "deterministic-local-devnet-v2");
+    assert_eq!(v1.zcash_refund_blocks(), 4);
+    assert_eq!(v2.zcash_refund_blocks(), 8);
+    assert_eq!(v1.lez_refund_delay(), v2.lez_refund_delay());
+    assert_eq!(v1.required_margin(), v2.required_margin());
+    assert_eq!(v1.lez_confirmations(), v2.lez_confirmations());
+    assert_eq!(v1.zcash_confirmations(), v2.zcash_confirmations());
+    assert_eq!(v1.zcash_network(), v2.zcash_network());
 }
