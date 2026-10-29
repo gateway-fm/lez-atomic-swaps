@@ -3,6 +3,7 @@ unmaintained = "workspace"
 yanked = "deny"
 unused-ignored-advisory = "deny"
 ignore = [
+    { id = "RUSTSEC-2026-0387", reason = "Exact LEZ v0.2.4 (programs -> lee -> k256 0.13 -> elliptic-curve 0.13) forces crypto-bigint 0.5.5 into the methods host graph; the fixed 0.7.6 line is reachable only through the k256 0.14 pre-release. The methods tests execute only checked LEZ state transitions and sign nothing with it; the guest ELF is built from its own locked graph. Treat as a Logos-owned production blocker and re-audit on every Risc0 or LEZ pin change." },
     { id = "RUSTSEC-2023-0071", reason = "Exact Risc0 3.0.5 methods build tooling forces rsa 0.9.10 through rzup. The verifier proves rzup publish/install features are absent; the methods tests execute only checked LEZ state transitions. Re-audit on every Risc0 or LEZ pin change." },
     { id = "RUSTSEC-2025-0055", reason = "Exact Risc0 3.0.5 methods tooling forces tracing-subscriber 0.2.25 through arkworks. The verifier proves vulnerable fmt and ansi features are absent. Re-audit on every Risc0 or LEZ pin change." },
 ]
@@ -21,7 +22,7 @@ allow = [
 ]
 confidence-threshold = 0.93
 exceptions = [
-    { crate = "webpki-roots@1.0.8", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "webpki-roots@1.0.11", allow = ["CDLA-Permissive-2.0"] },
 ]
 
 [[licenses.clarify]]

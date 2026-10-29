@@ -3,6 +3,7 @@ unmaintained = "workspace"
 yanked = "deny"
 unused-ignored-advisory = "deny"
 ignore = [
+    { id = "RUSTSEC-2026-0387", reason = "Exact LEZ v0.2.4 (common -> lee -> k256 0.13 -> elliptic-curve 0.13) forces crypto-bigint 0.5.5 into the locked deployer; the fixed 0.7.6 line is reachable only through the k256 0.14 pre-release. The deployer submits one deployment transaction per devnet to a local sequencer with devnet keys and observes by JSON-RPC. Treat as a Logos-owned production blocker and re-audit on every Risc0 or LEZ pin change." },
     { id = "RUSTSEC-2023-0071", reason = "The exact embedded Risc0 3.0.5 methods graph forces rsa 0.9.10 through rzup. The verifier proves rzup publish/install features are absent; the deployer performs no RSA private-key operation. Re-audit on every Risc0 or LEZ pin change." },
     { id = "RUSTSEC-2025-0055", reason = "The exact embedded Risc0 3.0.5 methods graph forces tracing-subscriber 0.2.25 through arkworks. The verifier proves vulnerable fmt and ansi features are absent. Re-audit on every Risc0 or LEZ pin change." },
     { id = "RUSTSEC-2026-0118", reason = "Official LEZ v0.2.0 RPC/transaction types pull the Logos libp2p graph and Hickory 0.25.0-alpha.5 into the locked deployer. The verifier proves DNSSEC features are absent, and deployer tests exercise only the bounded fixed-URL JSON-RPC client. This Logos-owned exception is an M2 disclosure and remains a production-release blocker." },
@@ -25,8 +26,8 @@ confidence-threshold = 0.93
 exceptions = [
     { crate = "tiny-keccak@2.0.2", allow = ["CC0-1.0"] },
     { crate = "webpki-root-certs@0.26.11", allow = ["CDLA-Permissive-2.0"] },
-    { crate = "webpki-root-certs@1.0.8", allow = ["CDLA-Permissive-2.0"] },
-    { crate = "webpki-roots@1.0.8", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "webpki-root-certs@1.0.11", allow = ["CDLA-Permissive-2.0"] },
+    { crate = "webpki-roots@1.0.11", allow = ["CDLA-Permissive-2.0"] },
 ]
 
 # SPEL carries both files at the exact PR head but omits Cargo license fields.
