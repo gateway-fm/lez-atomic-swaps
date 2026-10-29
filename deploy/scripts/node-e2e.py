@@ -64,6 +64,7 @@ Nodes); the harness refuses to start them under the `local` profile.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import pathlib
@@ -1441,6 +1442,36 @@ def zec_log_replans(swap_id: str, config: str) -> list[dict]:
     return replans
 
 
+def maker_effect_lines(swap_id: str, since: str) -> list[str]:
+    """The Maker Node's effect lines for one swap since `since` (RFC 3339), in
+    order: `<command> → <outcome> <operation> (phase …, revision …, next …)`."""
+    result = subprocess.run(["docker", "logs", "--since", since, NODES["maker"][0]],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
+    prefix = f"maker actor {swap_id}: "
+    lines = []
+    for line in (result.stdout + result.stderr).splitlines():
+        if prefix in line and " → " in line:
+            lines.append(line.split(prefix, 1)[1].strip())
+    return lines
+
+
+def maker_funding_attempts(swap_id: str, since: str) -> tuple[int, int]:
+    """(funding attempts, re-projections): the Maker's drives at
+    taker_lock_confirmed up to and including the one that submitted the Zcash
+    funding, and how many times it projected the Taker's first lock. D2 was a
+    Maker that re-projected the same lock on every attempt and never funded."""
+    attempts = 0
+    reprojections = 0
+    for line in maker_effect_lines(swap_id, since):
+        if "projected taker_first_lock" in line:
+            reprojections += 1
+        if line.startswith("drive → ") and "(phase taker_lock_confirmed" in line:
+            attempts += 1
+            if "submitted zcash_fund" in line:
+                break
+    return attempts, reprojections
+
+
 def zec_describe(effect: dict | None) -> str:
     if not effect:
         return "drive refused"
@@ -1539,6 +1570,7 @@ def zec_wait_until(swap_id: str, config: str, states: set[str], timeout: int, co
 
 
 def scenario_zec_happy(stamp: str) -> dict:
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -1577,16 +1609,19 @@ def scenario_zec_happy(stamp: str) -> dict:
     # D1 acceptance on a lone swap: the Maker funded in one or two attempts
     # (the second only when its first drive saw the lock before its depth) and
     # the Taker never re-planned its LEZ lock (no other swap took its nonce).
-    maker_attempts = int(view.get("attempt_count") or 0)
+    maker_attempts, reprojections = maker_funding_attempts(swap_id, since)
     replans = zec_log_replans(swap_id, config)
-    log(f"  Maker funding attempt count {maker_attempts}; Taker LEZ re-plan count {len(replans)}")
-    if maker_attempts < 1 or maker_attempts > 2:
-        raise Failure(f"the Maker needed {maker_attempts} attempts for a lone swap; 1 or 2 expected")
+    log(f"  Maker funding attempt count {maker_attempts} (projected the Taker's lock {reprojections} time(s); "
+        f"{view.get('attempt_count')} supervisor attempts over the swap); Taker LEZ re-plan count {len(replans)}")
+    if maker_attempts < 1 or maker_attempts > 2 or reprojections != 1:
+        raise Failure(f"the Maker needed {maker_attempts} funding attempts and projected the Taker's lock "
+                      f"{reprojections} time(s) for a lone swap; 1–2 and 1 expected")
     if replans:
         raise Failure(f"the Taker re-planned its LEZ lock {len(replans)} times on a lone swap; 0 expected")
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
             "maker_restart_after_completion": "completed",
-            "maker_funding_attempt_count": maker_attempts, "taker_lez_replans": replans,
+            "maker_funding_attempt_count": maker_attempts, "maker_taker_lock_projections": reprojections,
+            "taker_lez_replans": replans,
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
             "zcash_claim": {"transaction_id": claim_tx[0], "height": claim_tx[1]},
             "zcash_refund_height": corridor["zcash_refund_height"]}

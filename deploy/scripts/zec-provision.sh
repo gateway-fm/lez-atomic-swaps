@@ -387,10 +387,19 @@ stale=""
 route=json.loads(sys.argv[1])
 for r in json.load(sys.stdin):
     if r["offer"]["pair_configuration"]["route"]==route: print(r["offer"]["id"], r["revision"])' "$ROUTE")"
+# One request id per stale offer (a counter, not the offer's revision: two
+# stale offers at revision 1 shared an id once and the second was refused as
+# a conflicting mutation, 2026-10-29). A refused withdrawal is logged, not
+# fatal: rpc_result's own failure stays inside the subshell.
+withdrawn=0
 while read -r old_id old_rev; do
   [[ -n "$old_id" ]] || continue
-  rpc_result maker maker_offer_withdraw "{\"request_id\":\"zec-devnet-withdraw-$stamp-$old_rev\",\"offer_id\":\"$old_id\",\"expected_revision\":$old_rev}" >/dev/null &&
-    log "  withdrew stale Zcash offer $old_id" || log "  could not withdraw $old_id (continuing)"
+  withdrawn=$((withdrawn + 1))
+  if ( rpc_result maker maker_offer_withdraw "{\"request_id\":\"zec-devnet-withdraw-$stamp-$withdrawn\",\"offer_id\":\"$old_id\",\"expected_revision\":$old_rev}" >/dev/null 2>&1 ); then
+    log "  withdrew stale Zcash offer $old_id"
+  else
+    log "  could not withdraw $old_id (continuing)"
+  fi
 done <<<"$stale"
 revision_for() { # revision_for <method>: the revision of the Zcash route entry, if any
   rpc_result maker "$1" '{}' | python3 -c 'import json,sys

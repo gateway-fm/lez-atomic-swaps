@@ -91,6 +91,19 @@ pub(super) enum LifecycleStatus {
 }
 
 impl RouteActor {
+    /// Whether this is the Zcash pair's in-process actor, whose admitted
+    /// actions the Taker Node's supervisor retries by itself.
+    pub(super) const fn is_zec(&self) -> bool {
+        #[cfg(feature = "pair-zec")]
+        {
+            matches!(self, Self::Zec(_))
+        }
+        #[cfg(not(feature = "pair-zec"))]
+        {
+            false
+        }
+    }
+
     /// Reloads the receipt-bound actor of `pair`, pinning the receipt digest and
     /// identity and confining the bundle to the configured actor root.
     #[allow(clippy::too_many_arguments)]
@@ -727,7 +740,22 @@ async fn terminal_action(
     // receipt-bound file identities under the still-held swap lock before secrets.
     let effect_config =
         reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock).await?;
-    execute_terminal_actor_command(&effect_config, &held_lock, action).await?;
+    match execute_terminal_actor_command(&effect_config, &held_lock, action).await {
+        Ok(()) => {}
+        // A Zcash action is admitted durably and the Node's own supervisor
+        // executes it from here on (its row names the class while it backs
+        // off). A refusal of this first attempt, right after the status said
+        // the action is available, is a transient of the chains (the funding
+        // observation reads unstable when a block lands between its two tip
+        // samples); it is the supervisor's to retry, not the caller's.
+        Err(ActionError::DependencyUnavailable) if effect_config.is_zec() => {
+            report_actor_failure(
+                "first attempt after admission",
+                &"retried by the supervisor",
+            );
+        }
+        Err(error) => return Err(error),
+    }
     revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock).await?;
     Ok(action_commit(&admission))
 }

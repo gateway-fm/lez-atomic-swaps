@@ -59,6 +59,15 @@ for table in ("maker_btc_negotiations", "maker_zec_negotiations", "maker_xmr_neg
 counts["maker_offers (reserved/consumed)"] = store.execute(
     "delete from maker_offers where state in ('reserved', 'consumed')").rowcount
 counts["swaps (+ actor registrations, progress, events, projections)"] = store.execute("delete from swaps").rowcount
+# The Maker's ZEC recovery store lives in this database (zec_sdk_* tables) and
+# revalidates every persisted agreement at start; a reset leaves none behind,
+# so a profile change between runs cannot keep the Node from starting.
+zec_tables = [row[0] for row in store.execute(
+    "select name from sqlite_master where type = 'table' and name like 'zec_sdk_%' order by name")]
+if "zec_sdk_agreements" in zec_tables:
+    counts["zec_sdk_agreements (+ every ZEC recovery row)"] = store.execute("delete from zec_sdk_agreements").rowcount
+    for table in zec_tables:
+        store.execute(f'delete from "{table}"')
 store.commit()
 store.execute("vacuum")
 for table, count in counts.items():
