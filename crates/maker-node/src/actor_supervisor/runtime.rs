@@ -813,8 +813,17 @@ fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
     }
 }
 
-fn classify_exit(_status: ExitStatus) -> ChildRunError {
-    ChildRunError::Retry("actor_exit_failed")
+fn classify_exit(status: ExitStatus) -> ChildRunError {
+    match status.code() {
+        // The Zcash actor's named refusal: the account holds less LEZ than the
+        // lot. A backoff, not a failure: the next attempt funds the escrow by
+        // itself once the account is funded, and the class says why meanwhile.
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE) => {
+            ChildRunError::Retry("lez_depositor_balance_insufficient")
+        }
+        _ => ChildRunError::Retry("actor_exit_failed"),
+    }
 }
 
 fn wait_for_child(
@@ -1779,5 +1788,28 @@ mod tests {
                 parse_effect(&bytes, ActorEffectCommand::Claim, MakerActorKindV1::Zcash,).is_err()
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "pair-zec"))]
+mod exit_classification_tests {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
+
+    use super::{ChildRunError, classify_exit};
+
+    #[test]
+    fn the_zec_actor_balance_refusal_backs_off_by_name_and_other_exits_do_not() {
+        let refused = ExitStatus::from_raw(
+            zec_reference_actor::LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE << 8,
+        );
+        assert!(matches!(
+            classify_exit(refused),
+            ChildRunError::Retry("lez_depositor_balance_insufficient")
+        ));
+        assert!(matches!(
+            classify_exit(ExitStatus::from_raw(2 << 8)),
+            ChildRunError::Retry("actor_exit_failed")
+        ));
     }
 }

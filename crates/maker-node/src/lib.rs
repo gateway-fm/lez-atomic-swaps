@@ -749,6 +749,12 @@ pub struct MakerActorMonitorV1 {
     /// polled again, and nothing else tells the owner that or why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_failure_class: Option<String>,
+    /// Why the row needs the owner, when the actor said so by name:
+    /// `lez_depositor_balance_insufficient` while the Node's account holds
+    /// less LEZ than a Zcash swap's lot (the next attempt funds the escrow by
+    /// itself once the account is funded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_reason: Option<String>,
     /// Latest validated actor lifecycle projection, when available.
     pub progress: Option<MakerActorProgressViewV1>,
     /// Latest explicit owner action, when available.
@@ -985,6 +991,26 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 .flatten()
                 .and_then(|config| btc_reference_actor::actor_effects(&config).ok())
                 .unwrap_or_default();
+            // A Zcash actor short of LEZ for its lot leaves a marker beside its
+            // state (`zec_reference_actor::lez_depositor_balance_marker`); the
+            // owner reads the reason here as the Taker's view names it.
+            #[cfg(feature = "pair-zec")]
+            let attention_reason = (record.manifest().kind() == MakerActorKindV1::Zcash)
+                .then(|| {
+                    ActorConfig::load_private_pinned_sha256(
+                        record.manifest().config_path(),
+                        record.manifest().config_sha256(),
+                    )
+                    .ok()
+                })
+                .flatten()
+                .and_then(|config| {
+                    zec_reference_actor::lez_depositor_balance_marker(config.role_state_db())
+                })
+                .filter(|marker| marker.is_file())
+                .map(|_| "lez_depositor_balance_insufficient".to_owned());
+            #[cfg(not(feature = "pair-zec"))]
+            let attention_reason: Option<String> = None;
             Ok(MakerActorMonitorV1 {
                 schema_version: 1,
                 swap_id: record.swap_id().as_str().into(),
@@ -993,6 +1019,7 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 lease_generation: record.lease_generation(),
                 attempt_count: record.attempt_count(),
                 last_failure_class: record.last_failure_class().map(str::to_owned),
+                attention_reason,
                 progress,
                 manual_action,
                 terms: context

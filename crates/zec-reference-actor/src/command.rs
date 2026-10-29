@@ -569,31 +569,10 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                 .is_none()
             {
                 let plan = match active.next_action() {
-                    ZecLifecycleAction::CreateAndFundLez => {
-                        let prepared = lez.prepare_native_first_lock(active.agreement()).await;
-                        let marker = lez_depositor_balance_marker(config.role_state_db());
-                        match prepared {
-                            Ok(plan) => {
-                                if let Some(marker) = marker.as_ref() {
-                                    let _ = fs::remove_file(marker);
-                                }
-                                plan
-                            }
-                            Err(error) if is_depositor_balance_refusal(&error) => {
-                                // The bridge refused before reserving a plan: the
-                                // depositor cannot fund the lot. The marker lets
-                                // the Node show the owner why, instead of this
-                                // drive being retried every tick forever.
-                                if let Some(marker) = marker.as_ref() {
-                                    let _ =
-                                        fs::write(marker, b"lez_depositor_balance_insufficient\n");
-                                }
-                                eprintln!("actor drive refused: {error:?}");
-                                return Err(ActorCommandError::LezDepositorBalanceInsufficient);
-                            }
-                            Err(error) => return Err(unavailable_drive(error)),
-                        }
-                    }
+                    ZecLifecycleAction::CreateAndFundLez => lez_first_lock_or_refusal(
+                        lez.prepare_native_first_lock(active.agreement()).await,
+                        config,
+                    )?,
                     ZecLifecycleAction::FundZcash => planner
                         .plan(active.agreement(), funding_outpoints(config))
                         .await
@@ -650,10 +629,10 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             {
                 Some(intent) => intent.plan().clone(),
                 None => match active.agreement().direction() {
-                    SwapDirection::TakerSellsForeign => lez
-                        .prepare_native_first_lock(active.agreement())
-                        .await
-                        .map_err(unavailable_drive)?,
+                    SwapDirection::TakerSellsForeign => lez_first_lock_or_refusal(
+                        lez.prepare_native_first_lock(active.agreement()).await,
+                        config,
+                    )?,
                     SwapDirection::TakerSellsLez => planner
                         .plan(active.agreement(), funding_outpoints(config))
                         .await
@@ -834,16 +813,48 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
 /// One bounded drive attempt failed closed. The lifecycle error's Debug form
 /// (variant names, no material) goes to stderr so the operator learns which
 /// gate held, as for the claim; the exit class stays `DriveUnavailable`.
-/// The marker the Taker Node reads as "needs attention: LEZ balance"; beside
-/// the actor's state like the Bitcoin actor's claim-submitted marker
-/// (`<swap>/actor/<role>/lez-depositor-balance-insufficient`).
-fn lez_depositor_balance_marker(state_db: &Path) -> Option<PathBuf> {
+/// The marker a Node reads as "needs attention: LEZ balance"; beside the
+/// actor's state like the Bitcoin actor's claim-submitted marker
+/// (`<swap>/actor/<role>/lez-depositor-balance-insufficient`). Both roles
+/// leave it: the Taker selling LEZ and the Maker buying the foreign coin are
+/// each the LEZ depositor of their direction.
+#[must_use]
+pub fn lez_depositor_balance_marker(role_state_db: &Path) -> Option<PathBuf> {
     Some(
-        state_db
+        role_state_db
             .parent()?
             .parent()?
             .join("lez-depositor-balance-insufficient"),
     )
+}
+
+/// The LEZ first-lock plan for this role, or the named refusal when the
+/// bridge found the depositor short of the lot. A refusal leaves the marker
+/// so the Node shows the owner why instead of this drive being retried in
+/// silence; a later successful preparation removes it, and the drive is
+/// retried by the Node (the Taker's re-driver, the Maker's backoff) with no
+/// owner action once the account is funded.
+fn lez_first_lock_or_refusal<Plan>(
+    prepared: Result<Plan, ContextOwningLezPortError>,
+    config: &ActorConfig,
+) -> Result<Plan, ActorCommandError> {
+    let marker = lez_depositor_balance_marker(config.role_state_db());
+    match prepared {
+        Ok(plan) => {
+            if let Some(marker) = marker.as_ref() {
+                let _ = fs::remove_file(marker);
+            }
+            Ok(plan)
+        }
+        Err(error) if is_depositor_balance_refusal(&error) => {
+            if let Some(marker) = marker.as_ref() {
+                let _ = fs::write(marker, b"lez_depositor_balance_insufficient\n");
+            }
+            eprintln!("actor drive refused: {error:?}");
+            Err(ActorCommandError::LezDepositorBalanceInsufficient)
+        }
+        Err(error) => Err(unavailable_drive(error)),
+    }
 }
 
 /// Whether a first-lock preparation failed because the bridge refused the

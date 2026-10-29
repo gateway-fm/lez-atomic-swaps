@@ -18,8 +18,14 @@ mod test_crash_hook;
 
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
-    ActorStatusV1, execute_actor_command,
+    ActorStatusV1, execute_actor_command, lez_depositor_balance_marker,
 };
+
+/// Exit code of a drive the actor refused because the LEZ depositor cannot
+/// fund the lot ([`ActorCommandError::LezDepositorBalanceInsufficient`]);
+/// every other failure exits 2. The Maker Node's supervisor names its backoff
+/// from it, the Taker Node reads the marker the same refusal leaves.
+pub const LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE: i32 = 3;
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
@@ -92,7 +98,12 @@ pub fn run_actor_process(expected_role: ActorRole) {
         .unwrap_or_else(|_| exit_with("actor runtime is unavailable"));
     let output = runtime
         .block_on(execute_actor_command(&config, cli.command))
-        .unwrap_or_else(|error| exit_with(error));
+        .unwrap_or_else(|error| match error {
+            ActorCommandError::LezDepositorBalanceInsufficient => {
+                exit_with_code(error, LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE)
+            }
+            _ => exit_with(error),
+        });
     let json =
         serde_json::to_string(&output).unwrap_or_else(|_| exit_with("actor output is unavailable"));
     pause_after_submitted_effect_if_armed(&config, &json);
@@ -137,8 +148,12 @@ fn pause_after_submitted_effect_if_armed(config: &ActorConfig, output: &str) {
 fn pause_after_submitted_effect_if_armed(_config: &ActorConfig, _output: &str) {}
 
 fn exit_with(message: impl fmt::Display) -> ! {
+    exit_with_code(message, 2)
+}
+
+fn exit_with_code(message: impl fmt::Display, code: i32) -> ! {
     eprintln!("{message}");
-    std::process::exit(2);
+    std::process::exit(code);
 }
 
 fn parse_config_fd(value: &str) -> Result<i32, String> {

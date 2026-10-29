@@ -953,16 +953,15 @@ async fn execute_terminal_actor_command(
         })
 }
 
-/// The marker the ZEC Taker actor leaves beside its state when the LEZ bridge
+/// The marker the ZEC actor leaves beside its state when the LEZ bridge
 /// refused the first lock for the depositor's balance
 /// (`<swap>/actor/taker/lez-depositor-balance-insufficient`).
-fn lez_depositor_balance_marker(state_db: &Path) -> Option<PathBuf> {
-    Some(
-        state_db
-            .parent()?
-            .parent()?
-            .join("lez-depositor-balance-insufficient"),
-    )
+#[cfg(feature = "pair-zec")]
+use zec_reference_actor::lez_depositor_balance_marker;
+/// Without the Zcash pair no actor leaves the marker.
+#[cfg(not(feature = "pair-zec"))]
+fn lez_depositor_balance_marker(_state_db: &Path) -> Option<PathBuf> {
+    None
 }
 
 /// The marker a Node-owned Bitcoin swap keeps once its revealing claim was
