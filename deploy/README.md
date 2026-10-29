@@ -202,11 +202,15 @@ watch it leave the Taker order book; `docker restart lez-taker-node` between
 lock and claim and watch the observer resume; `docker restart
 lez-bitcoin-core` and watch the next action still reach Core through the
 Node's own loopback forwarder. Where to look when something stalls:
-`docker compose logs maker-node taker-node` (the Maker's actor supervisor
-prints one secret-free line per supervised effect and per backoff — command,
-outcome, operation, phase, revision, next action — and the Taker Node one line
-when it re-drives an admitted Zcash action or when a swap's bundle fails its
-checks; on the devnet that is a line every few seconds per open swap), the
+`docker compose logs maker-node taker-node` (both Nodes' actor supervisors
+print one secret-free line per distinct supervised effect — `maker actor <swap>:
+drive → …` / `taker actor <swap>: drive → …` with command, outcome, operation,
+phase, revision, next action — a line per backoff class when it first appears
+or changes, and the Taker Node one line when a swap's bundle fails its checks;
+the Taker Node drives its Zcash actor itself, from the take's activation
+through the LEZ lock and the observation of the Maker's legs to
+claim_available, every 5 s while something moves and every 30 s after a
+failure, with the class on the row's `last_failure_class`), the
 swap directory's `sidecar.log`, and
 `docker exec lez-taker-node lez-btc-taker-actor --config /var/lib/lez/taker/btc/swaps/<reservation id>/actor/actor-config.json status`.
 
@@ -355,7 +359,7 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 | `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
 | `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
 | `maker-node` | `images/maker-node` | Maker-only image (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; the entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints |
-| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
+| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
 | `tools` (profile `tools`) | `images/lez-tools` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault-claim tool and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
 | `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass. Both desks read their market from the Nodes (`apps/basecamp/common/node_market.cpp`): offers, takes, the Taker's lock and claim, and the Maker's automatic progress |
 
