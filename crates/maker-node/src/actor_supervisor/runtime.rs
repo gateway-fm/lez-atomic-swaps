@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use lez_actor_supervision::terminal_phase;
 use lez_swap_core::SwapId;
 use lez_swap_store::{
     ActorHeldLock, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
@@ -444,28 +445,10 @@ fn resolve_claimed_attempt(
     })
 }
 
-/// One secret-free line per supervised effect: the actor's outcome,
-/// operation, phase, revision and next action, so an operator can see what a
-/// swap's attempts return without reading the actor's journal.
+/// One secret-free line per supervised effect, in the words both Nodes use
+/// (`lez_actor_supervision::log_effect`).
 fn log_effect(swap_id: &str, command: ActorEffectCommand, effect: &[u8]) {
-    let Ok(value) = serde_json::from_slice::<Value>(effect) else {
-        return;
-    };
-    let field = |name: &str| {
-        value.get(name).map_or_else(
-            || "-".to_owned(),
-            |v| v.as_str().map_or_else(|| v.to_string(), str::to_owned),
-        )
-    };
-    eprintln!(
-        "maker actor {swap_id}: {} → {} {} (phase {}, revision {}, next {})",
-        command.name(),
-        field("outcome"),
-        field("operation"),
-        field("phase"),
-        field("revision"),
-        field("next_action")
-    );
+    lez_actor_supervision::log_effect("maker actor", swap_id, command.name(), effect);
 }
 
 enum ClaimedAttempt {
@@ -1239,10 +1222,6 @@ fn xmr_next_action_accepted(next_action: &str) -> bool {
 #[cfg(not(feature = "pair-xmr"))]
 const fn xmr_next_action_accepted(_next_action: &str) -> bool {
     false
-}
-
-fn terminal_phase(phase: &str) -> bool {
-    matches!(phase, "completed" | "refunded")
 }
 
 #[cfg(test)]

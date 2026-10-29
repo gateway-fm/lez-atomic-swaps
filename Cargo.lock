@@ -1844,6 +1844,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lez-actor-supervision"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "lez-adaptor-role-runner"
 version = "0.1.0"
 dependencies = [
@@ -2046,6 +2053,7 @@ dependencies = [
  "hyper-util",
  "jsonrpsee",
  "jsonrpsee-http-client",
+ "lez-actor-supervision",
  "lez-adaptor-role-runner",
  "lez-bridge-client",
  "lez-bridge-protocol",
@@ -2149,6 +2157,7 @@ dependencies = [
  "bitcoin",
  "command-fds",
  "getrandom 0.3.4",
+ "lez-actor-supervision",
  "lez-adaptor-signature",
  "lez-bridge-protocol",
  "lez-btc-swap-sdk",
@@ -2191,6 +2200,7 @@ dependencies = [
  "hyper-util",
  "jsonrpsee",
  "jsonrpsee-http-client",
+ "lez-actor-supervision",
  "lez-adaptor-role-runner",
  "lez-bridge-client",
  "lez-bridge-protocol",
