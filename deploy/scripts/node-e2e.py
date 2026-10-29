@@ -1231,10 +1231,10 @@ def scenario_tampered_config(stamp: str) -> dict:
 # A ZEC swap is prepared, not composed: the Taker takes a Zcash offer only from a
 # static prepared_zec catalog entry, built from live chain facts by
 # scripts/zec-provision.sh (which publishes the offer, writes the catalog and
-# recreates both Nodes). The Taker Node runs its ZEC actor only for status, claim
-# and recover; it never drives it, so the first LEZ lock and every observation up
-# to claim_available are driven from here with `lez-zec-taker-actor … drive`
-# inside the Taker container. Zebra has no miner: blocks are generated here, one
+# recreates both Nodes). The Taker Node supervises its ZEC actor itself (the
+# activation, the first LEZ lock and every observation up to claim_available);
+# the harness only polls the Nodes and reads the actor's phase with
+# `lez-zec-taker-actor … status`. Zebra has no miner: blocks are generated here, one
 # when something waits in its mempool and one when the Taker reports it is
 # waiting for safe funding depth (the pre-reveal gate wants two confirmations),
 # never otherwise, because the agreement's Zcash refund height is absolute.
@@ -1525,7 +1525,7 @@ def scenario_zec_happy(stamp: str) -> dict:
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
     # The Taker's LEZ lock, the Maker's Zcash funding and its revealing LEZ claim,
-    # all observed by the driven Taker actor; the Node then offers the claim.
+    # all driven and observed by the Taker Node's supervisor; the Node then offers the claim.
     view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
                            describe="(Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)")
     funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
@@ -1600,7 +1600,7 @@ def zec_wait_all_until(swaps: list[tuple[str, str, dict]], states: set[str], tim
 def scenario_zec_concurrent(stamp: str) -> dict:
     """ZEC analogue of `concurrent`, in the BTC shape: two prepared entries of
     one corridor run (`--swaps 2`), both taken together, both Taker actors
-    driven in turn with their LEZ steps interleaving on the same role accounts,
+    driven by the Taker Node with their LEZ steps interleaving on the same role accounts,
     two Maker fundings from distinct coinbase outputs, two Taker claims, both
     completed on both Nodes. The staggered variant (A final before B starts)
     is `zec-concurrent-staggered`, a fixture, not the evidence."""
@@ -1767,9 +1767,10 @@ def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     ("Nonce mismatch") and is never re-planned by the actor. And two corridors
     provisioned at one Zcash anchor share one four-block refund window, which
     two fundings, their depth and two claims do not fit. So swap A is provisioned,
-    taken and driven to claim_available (its Maker claim final); then corridor B
-    is added beside it with its own anchor (zec-provision.sh --add, Nodes
-    recreated with both), taken and driven likewise; the Zcash claims overlap."""
+    taken and brought to claim_available by the Nodes (its Maker claim final);
+    then corridor B is added beside it with its own anchor (zec-provision.sh
+    --add, Nodes recreated with both), taken and brought there likewise; the
+    Zcash claims overlap."""
     first = zec_provision()
     swap_a = zec_take_or_resume(first["offer_id"], stamp, "-a")
     config_a = zec_taker_actor_config(first["receipt_output"])
@@ -1838,8 +1839,9 @@ def scenario_zec_replay(stamp: str) -> dict:
     """ZEC analogue of `replay`: the corridor's offer publication replayed with
     the provisioner's own request id, the take replayed with its request id
     (same swap), the Zcash claim replayed. Skipped: the BTC lock replay —
-    a ZEC swap's first LEZ lock is the actor's durable intent, driven here,
-    not a Node request; its idempotence is every drive's."""
+    a ZEC swap's first LEZ lock is the actor's durable intent, driven by the
+    Taker Node's supervisor, not a Node request; its idempotence is every
+    attempt's."""
     corridor = zec_provision()
     run_stamp = corridor["run_id"].rsplit("-", 1)[1]
     again = call("maker", "maker_offer_publish", {"request_id": f"zec-devnet-publish-{run_stamp}",
@@ -1921,8 +1923,10 @@ def scenario_zec_wrong_inputs(stamp: str) -> dict:
 def scenario_zec_restart(stamp: str, role: str) -> dict:
     """ZEC analogue of `restart-<role>`: the Taker's LEZ lock final on both
     Nodes, the role's Node restarted, the swap carried to completed afterwards
-    (the Taker's actor is driven from here across its Node's restart; the
-    Maker's supervisor resumes its actor from the store)."""
+    by the Nodes alone (each Node's supervisor resumes its actor from its
+    store; a Taker row left leased by the restart is requeued as
+    `coordinator_restarted`, which the Taker's view reports as
+    last_failure_class until its next attempt)."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -1930,17 +1934,34 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
                     describe="(Taker LEZ lock final)")
     container, _ = NODES[role]
     log(f"  restarting {container}")
+    restarted_at = time.time()
     docker("restart", container)
     wait_healthy(role)
+    classes = set()
+    if role == "taker":
+        # What the supervisor says about the restart: a row it held during the
+        # restart comes back as coordinator_restarted; one between attempts
+        # comes back as it was. Both are fine; the log records which.
+        for _ in range(4):
+            view = taker_view(swap_id)
+            if view.get("last_failure_class"):
+                classes.add(view["last_failure_class"])
+            time.sleep(5)
+        restart_lines = subprocess.run(["docker", "logs", "--since", f"{int(time.time() - restarted_at) + 5}s", container],
+                                       capture_output=True, text=True, check=False).stderr
+        if "coordinator_restarted" in restart_lines:
+            classes.add("coordinator_restarted")
+        log(f"  after the restart the Taker's schedule reports {sorted(classes) or 'no failure class'}; the supervisor resumes")
     zec_finish(swap_id, config, corridor, stamp)
-    return {"swap_id": swap_id, "corridor": corridor["run_id"], "restarted": container}
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "restarted": container,
+            "taker_schedule_after_restart": sorted(classes)}
 
 
 def scenario_zec_survivor(stamp: str) -> dict:
     """ZEC analogue of `survivor`: the Taker Node stopped right after its Zcash
     claim was broadcast; the Maker completes alone (its follow-up observes the
     claim once zebra includes it — zebra is mined from here, as always); the
-    Taker Node restarted and its actor driven to completed."""
+    Taker Node restarted and its supervisor carrying the actor to completed."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
