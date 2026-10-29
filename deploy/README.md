@@ -298,9 +298,13 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
   accumulate across swaps; the UI's wallet ledger shows true opening → closing
   values, not per-run genesis allocations.
 * **Finality heartbeat** (`heartbeat` service, `lez-v02-heartbeat` from the
-  tools image): the pinned Bedrock's finalized height has frozen on quiet
-  chains while the sequencer kept publishing (logos-blockchain#3643), so the
-  devnet keeps a trickle going: one authenticated transfer of one LEZ unit from
+  tools image): the pinned Bedrock's finalized height freezes while the
+  sequencer keeps publishing (logos-blockchain#3643). The service is the
+  **liveness detector**, not a keep-alive: measured on 2026-10-29, chains with
+  the heartbeat from genesis froze after 36–56 minutes (controls without it
+  after 17–30) while every heartbeat transfer kept being included in about
+  two seconds, so a steady trickle does not prevent the freeze; it names it
+  within two minutes. It sends one authenticated transfer of one LEZ unit from
   `heartbeat-pulse-01` to `heartbeat-echo-02` (two identities minted beside the
   wallets, funded 100 000 each in the genesis, claimed by the market bootstrap;
   never a role's or a wallet's account) every `LEZ_HEARTBEAT_SECONDS` (default
