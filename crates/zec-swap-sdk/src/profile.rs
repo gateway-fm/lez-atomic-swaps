@@ -97,7 +97,13 @@ impl ZecRefundProfile {
                 lez_confirmations: 1,
                 zcash_confirmations: 1,
                 lez_refund_delay: UnixSeconds::new(1_800),
-                zcash_refund_blocks: 4,
+                // Two swaps of one signer taken together (zec-concurrent, the
+                // BTC shape) share one Zcash anchor: the first swap's funding,
+                // its two pre-reveal confirmations and its claim take four
+                // blocks, and the second swap's lock re-plans behind them (D1,
+                // 2026-10-29). Four blocks held one swap; eight hold both,
+                // with the harness mining one block per reason.
+                zcash_refund_blocks: 8,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
             },

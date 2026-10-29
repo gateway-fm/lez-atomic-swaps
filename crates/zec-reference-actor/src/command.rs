@@ -809,9 +809,8 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         (Participant::Taker, Phase::TakerLockConfirmed) => match active
             .observe_maker_lock()
             .await
-            .map_err(|_| {
-            ActorCommandError::DriveUnavailable
-        })? {
+            .map_err(unavailable_drive)?
+        {
             ObserveMakerLockOutcome::AwaitingStableObservation(_) => {
                 ActorEffectOutcomeV1::AwaitingObservation {
                     operation: ActorOperationV1::MakerLock,

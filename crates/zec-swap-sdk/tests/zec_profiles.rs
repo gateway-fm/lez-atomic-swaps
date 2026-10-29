@@ -22,7 +22,7 @@ fn named_profiles_match_the_reviewed_immutable_parameters() {
     assert_eq!(devnet.lez_confirmations(), 1);
     assert_eq!(devnet.zcash_confirmations(), 1);
     assert_eq!(devnet.lez_refund_delay(), UnixSeconds::new(1_800));
-    assert_eq!(devnet.zcash_refund_blocks(), 4);
+    assert_eq!(devnet.zcash_refund_blocks(), 8);
     assert_eq!(devnet.required_margin(), UnixSeconds::new(30));
     assert_eq!(devnet.expiry_delta_blocks(), 40);
 

@@ -2089,6 +2089,12 @@ def zec_export_tool(swap_id: str) -> bool:
     that spend the provisioned coinbase output (the Maker's funding) and the
     funding output itself (the Taker's claim or the Maker's refund), with their
     heights. Written to runtime/evidence/zec/<swap_id>.json."""
+    # An export reads the corridor the Nodes already run with; provisioning a
+    # fresh one here would recreate both Nodes and discard the swap it is
+    # meant to document (it did, once, 2026-10-29 18:24Z).
+    if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") != "1":
+        raise Failure("zec-export reads the live corridor: run it with LEZ_ZEC_REUSE_CORRIDOR=1 "
+                      "(and the runtime env), it never provisions")
     corridor = zec_provision(swap_id=swap_id)
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
