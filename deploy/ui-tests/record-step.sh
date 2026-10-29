@@ -48,6 +48,11 @@ const first = cues.findIndex((cue, i) => i > 0 || cue.text !== title);
 // moment later, so the trim point sits RECORD_TRIM_LEAD_MS after that cue.
 const trim = first > 0 ? cues[first].t + Number(process.env.RECORD_TRIM_LEAD_MS || 1500) : 0;
 cues = cues.map((cue) => ({ ...cue, t: Math.max(0, cue.t - trim) }));
+// Cues from before the trim all land on 0 and would stack; every caption gets
+// at least 1.5 s of its own, in order, so the lead's narration reads one line
+// at a time instead of five at once.
+let last = -1500;
+cues = cues.map((cue) => { const t = Math.max(cue.t, last + 1500); last = t; return { ...cue, t }; });
 const stamp = (ms) => { ms = Math.max(0, Math.round(ms)); const h = Math.floor(ms / 3600000); const m = Math.floor(ms % 3600000 / 60000); const s = Math.floor(ms % 60000 / 1000); const r = ms % 1000; return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")},${String(r).padStart(3, "0")}`; };
 let out = "";
 cues.forEach((cue, i) => {
