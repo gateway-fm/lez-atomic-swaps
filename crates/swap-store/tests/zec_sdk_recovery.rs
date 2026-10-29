@@ -3705,9 +3705,9 @@ async fn assert_sqlite_maker_lock_happy_path(
     .expect("stale maker agreement");
     let (plan, expected_drives, evidence) = maker_lock_fixture(direction);
     let mut actual_drives =
-        vec![drive_once_across_intervening_update(&mut active, &chain, direction, &plan).await];
+        drive_twice_across_a_deeper_taker_lock(&mut active, &chain, direction, &plan).await;
 
-    for _ in 1..expected_drives.len() {
+    for _ in actual_drives.len()..expected_drives.len() {
         let MakerLockDriveOutcome::Lock(outcome) = active
             .drive_maker_lock(plan.clone())
             .await
@@ -3744,12 +3744,16 @@ async fn assert_sqlite_maker_lock_happy_path(
     assert_maker_lock_reopens(path, id).await;
 }
 
-async fn drive_once_across_intervening_update(
+/// D2: the Taker's lock seen again deeper between two Maker drives is the
+/// same lock, deeper. It is projected durably (revision 2) and the Maker's
+/// next drive proceeds to its next step from that head instead of being sent
+/// back to "poll again"; nothing is resubmitted.
+async fn drive_twice_across_a_deeper_taker_lock(
     active: &mut ActiveZecSwap<MakerHappyPort, MakerHappyPort, SqliteZecRecoveryStore>,
     chain: &MakerHappyPort,
     direction: SwapDirection,
     plan: &FirstLockPlanV1,
-) -> FirstLockDriveOutcome {
+) -> Vec<FirstLockDriveOutcome> {
     let MakerLockDriveOutcome::Lock(first_drive) = active
         .drive_maker_lock(plan.clone())
         .await
@@ -3759,20 +3763,20 @@ async fn drive_once_across_intervening_update(
     };
     let submitted_before_update = chain.submitted_steps();
     chain.respond(deeper_taker_lock(active.agreement(), direction));
-    assert_eq!(
-        active
-            .drive_maker_lock(plan.clone())
-            .await
-            .expect("canonical update commits before another maker step"),
-        MakerLockDriveOutcome::AwaitingEligibility(
-            MakerFundingEligibilityOutcome::CanonicalStateChanged(FirstLockProjectionCommit::new(
-                2, false
-            ))
-        )
-    );
+    let MakerLockDriveOutcome::Lock(second_drive) = active
+        .drive_maker_lock(plan.clone())
+        .await
+        .expect("the deeper lock is projected and the maker drive proceeds")
+    else {
+        panic!("a deeper view of the same taker lock keeps the maker eligible (D2)")
+    };
     assert_eq!(active.revision(), 2);
-    assert_eq!(chain.submitted_steps(), submitted_before_update);
-    first_drive
+    let submitted_after_update = chain.submitted_steps();
+    assert!(
+        submitted_after_update.starts_with(&submitted_before_update),
+        "a deeper view of the same lock never resubmits an earlier step"
+    );
+    vec![first_drive, second_drive]
 }
 
 fn deeper_taker_lock(
