@@ -193,8 +193,8 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         // selling ZEC, the Maker funds the LEZ escrow and the Taker claims it.
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund"))
             return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
-                    (sellsBitcoin ? "The Maker's Node funds the LEZ escrow once your Zcash funding is confirmed"
-                                  : "The Maker's Node funds Zcash and claims LEZ with the secret")
+                    QString(sellsBitcoin ? "The Maker's Node funds the LEZ escrow once your Zcash funding is confirmed"
+                                         : "The Maker's Node funds Zcash and claims LEZ with the secret")
                         + "; Refund recovers your " + mine + " if it never does", refundAction, "Refund " + mine};
         // The Taker's own refund is in flight or back; the Maker's refund of
         // the other leg follows at its deadline and the Node observes it. The
