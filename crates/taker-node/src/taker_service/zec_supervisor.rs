@@ -19,7 +19,7 @@
 
 use std::{
     sync::{Arc, Mutex},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use lez_actor_supervision::{AttemptFailure, AttemptResolution, log_effect_value, terminal_phase};
@@ -43,6 +43,60 @@ use crate::{
     ConfiguredTakerInitiationContext, PreparedTakerInitiationV1, TakerSwapStateV1, TakerSwapViewV1,
     TakerTerminalActionV1,
 };
+
+/// The Taker settles every swap as one LEZ account, and the bridge plans a
+/// revealing LEZ claim at that account's committed nonce. Selling ZEC, two
+/// swaps whose claims are prepared before the first is final carry the same
+/// nonce and one of them never lands (FINDINGS 24 of the M2 devnet run: both
+/// at nonce 1, the second superseded, its swap left to the refund). So one
+/// revealing LEZ claim is in flight per Node: another swap's claim waits
+/// (requeued, no failure class) until the first is observed final, or for at
+/// most [`LEZ_CLAIM_IN_FLIGHT_MAX`].
+static LEZ_CLAIM_IN_FLIGHT: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+const LEZ_CLAIM_IN_FLIGHT_MAX: Duration = Duration::from_mins(5);
+
+/// Whether `swap_id` may submit its revealing LEZ claim now.
+pub(super) fn lez_claim_gate_open(swap_id: &SwapId) -> bool {
+    let Ok(mut held) = LEZ_CLAIM_IN_FLIGHT.lock() else {
+        return true;
+    };
+    match held.as_ref() {
+        Some((holder, since))
+            if holder != swap_id.as_str() && since.elapsed() < LEZ_CLAIM_IN_FLIGHT_MAX =>
+        {
+            false
+        }
+        Some((holder, _)) if holder != swap_id.as_str() => {
+            *held = None;
+            true
+        }
+        _ => true,
+    }
+}
+
+/// `swap_id` submitted its revealing LEZ claim.
+pub(super) fn note_lez_claim_submitted(swap_id: &SwapId) {
+    if let Ok(mut held) = LEZ_CLAIM_IN_FLIGHT.lock() {
+        *held = Some((swap_id.as_str().to_owned(), Instant::now()));
+    }
+}
+
+/// `swap_id`'s revealing LEZ claim is observed (or the swap left the window).
+fn note_lez_claim_settled(swap_id: &SwapId) {
+    if let Ok(mut held) = LEZ_CLAIM_IN_FLIGHT.lock()
+        && held
+            .as_ref()
+            .is_some_and(|(holder, _)| holder == swap_id.as_str())
+    {
+        *held = None;
+    }
+}
+
+/// A Zcash claim at both legs locked is the Taker's revealing LEZ claim
+/// (`TakerSellsForeign`); selling LEZ the Taker's claim is on Zcash.
+const fn submits_lez_claim(phase: Phase, command: ActorCommand) -> bool {
+    matches!(command, ActorCommand::Claim) && matches!(phase, Phase::BothLegsLocked)
+}
 
 /// How often the supervisor looks for due swaps.
 const TICK: Duration = Duration::from_secs(5);
@@ -505,6 +559,13 @@ async fn attempt(
         Err(failure) => return (ClaimedAttempt::Failure(failure), None),
     };
     let snapshot = snapshot_of_status(status);
+    let phase_before = match status {
+        ZecActorStatus::Active { phase, .. } => Some(phase),
+        ZecActorStatus::NotActivated => None,
+    };
+    if phase_before.is_some_and(|phase| !matches!(phase, Phase::BothLegsLocked)) {
+        note_lez_claim_settled(&swap_id);
+    }
     let command = match decide(status, admitted) {
         Decision::Terminal => return (ClaimedAttempt::Terminal, snapshot),
         Decision::ManualActionCompleted => {
@@ -516,6 +577,10 @@ async fn attempt(
         Decision::Claim => ActorCommand::Claim,
         Decision::Recover => ActorCommand::Recover,
     };
+    let lez_claim = phase_before.is_some_and(|phase| submits_lez_claim(phase, command));
+    if lez_claim && !lez_claim_gate_open(&swap_id) {
+        return (ClaimedAttempt::Requeue, snapshot);
+    }
     let (effect, snapshot) = match run_effect(
         prepared,
         receipt_binding,
@@ -530,6 +595,9 @@ async fn attempt(
         Ok(ran) => ran,
         Err((failure, snapshot)) => return (ClaimedAttempt::Failure(failure), snapshot),
     };
+    if lez_claim && effect.get("outcome").and_then(serde_json::Value::as_str) == Some("submitted") {
+        note_lez_claim_submitted(&swap_id);
+    }
     let phase = effect
         .get("phase")
         .and_then(serde_json::Value::as_str)
@@ -831,10 +899,12 @@ mod tests {
     use zec_reference_actor::ActorCommandError;
 
     use super::{
-        Decision, ZecActorStatus, action_from_name, action_name, decide, failure_of,
-        phase_from_name, phase_name,
+        Decision, SwapId, ZecActorStatus, action_from_name, action_name, decide, failure_of,
+        lez_claim_gate_open, note_lez_claim_settled, note_lez_claim_submitted, phase_from_name,
+        phase_name, submits_lez_claim,
     };
     use crate::TakerTerminalActionV1;
+    use zec_reference_actor::ActorCommand;
 
     const fn active(
         phase: Phase,
@@ -934,6 +1004,35 @@ mod tests {
             ),
             Decision::Observe
         );
+    }
+
+    #[test]
+    fn one_revealing_lez_claim_is_in_flight_per_node() {
+        let first = SwapId::new("zec-gate-test-swap-a".to_owned()).unwrap();
+        let second = SwapId::new("zec-gate-test-swap-b".to_owned()).unwrap();
+        assert!(lez_claim_gate_open(&first));
+        note_lez_claim_submitted(&first);
+        // The holder may re-run its own claim; another swap waits.
+        assert!(lez_claim_gate_open(&first));
+        assert!(!lez_claim_gate_open(&second));
+        // Settling another swap does not release the holder's claim.
+        note_lez_claim_settled(&second);
+        assert!(!lez_claim_gate_open(&second));
+        note_lez_claim_settled(&first);
+        assert!(lez_claim_gate_open(&second));
+        // Only a claim at both legs locked is a LEZ claim.
+        assert!(submits_lez_claim(
+            Phase::BothLegsLocked,
+            ActorCommand::Claim
+        ));
+        assert!(!submits_lez_claim(
+            Phase::ClaimEvidenceAvailable,
+            ActorCommand::Claim
+        ));
+        assert!(!submits_lez_claim(
+            Phase::BothLegsLocked,
+            ActorCommand::Drive
+        ));
     }
 
     #[test]

@@ -744,7 +744,8 @@ async fn terminal_action(
     // receipt-bound file identities under the still-held swap lock before secrets.
     let effect_config =
         reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock).await?;
-    let first_attempt = execute_terminal_actor_command(&effect_config, &held_lock, action).await;
+    let first_attempt =
+        gated_first_attempt(&effect_config, &held_lock, &swap_id, action, phase).await;
     first_attempt_reply(effect_config.is_zec(), first_attempt)?;
     revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock).await?;
     Ok(action_commit(&admission))
@@ -1088,6 +1089,37 @@ fn first_attempt_reply(
         }
         other => other,
     }
+}
+
+/// The admission's first attempt. Selling ZEC the claim at both legs locked
+/// is a revealing LEZ claim: while another swap's is in flight it is not
+/// attempted here (the admission is answered and the Node's supervisor
+/// submits it once the first is final, FINDINGS 24).
+async fn gated_first_attempt(
+    config: &RouteActor,
+    held_lock: &ActorHeldLock,
+    swap_id: &SwapId,
+    action: TakerTerminalActionV1,
+    phase: Phase,
+) -> Result<(), ActionError> {
+    let lez_claim =
+        config.is_zec() && action == TakerTerminalActionV1::Claim && phase == Phase::BothLegsLocked;
+    #[cfg(feature = "pair-zec")]
+    if lez_claim && !super::zec_supervisor::lez_claim_gate_open(swap_id) {
+        report_actor_failure(
+            "first attempt after admission",
+            &"another swap's revealing LEZ claim is in flight; the supervisor submits this one next",
+        );
+        return Ok(());
+    }
+    let attempt = execute_terminal_actor_command(config, held_lock, action).await;
+    #[cfg(feature = "pair-zec")]
+    if lez_claim && attempt.is_ok() {
+        super::zec_supervisor::note_lez_claim_submitted(swap_id);
+    }
+    #[cfg(not(feature = "pair-zec"))]
+    let _ = (lez_claim, swap_id);
+    attempt
 }
 
 async fn execute_terminal_actor_command(
