@@ -1304,14 +1304,17 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False)
         entry_out = out if index == 0 else out / "b"
         corridor_root = "/var/lib/lez/zec/corridor" + ("" if index == 0 else "-b")
         summary = json.loads((entry_out / "provision-summary.json").read_text())
-        # The Maker's actor config names the coinbase outpoint its funding spends; it
-        # is the one fact that lets the scenario find the funding and claim on zebra.
-        reader = ("import json,sys; c=json.load(open(sys.argv[1] + '/maker/actor-config.json'));"
+        # The Zcash funder's actor config names the outpoint its funding spends
+        # (the Maker's coinbase when the Taker sells LEZ, the Taker's paid output
+        # when it sells ZEC); it is the one fact that lets the scenario find the
+        # funding and its spend on zebra. The summary says which role funds.
+        funder = summary.get("zcash_candidate_owner", "maker")
+        reader = (f"import json,sys; c=json.load(open(sys.argv[1] + '/{funder}/actor-config.json'));"
                   " print(json.dumps(c['zcash_funding_outpoints']))")
-        read = subprocess.run(["docker", "exec", NODES["maker"][0], "python3", "-c", reader, corridor_root],
+        read = subprocess.run(["docker", "exec", NODES[funder][0], "python3", "-c", reader, corridor_root],
                               capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
         if read.returncode != 0 or not read.stdout.strip():
-            raise Failure(f"could not read the Maker's funding outpoint for entry {index}: {read.stderr.strip()[:200]}")
+            raise Failure(f"could not read the {funder}'s funding outpoint for entry {index}: {read.stderr.strip()[:200]}")
         spec = json.loads((entry_out / "spec.json").read_text())
         profile = spec.get("profile", "deterministic-local-v1")
         corridors.append({"run_id": run_id, "entry": index, "offer_id": entry["offer_id"], "catalog_swap_id": entry["swap_id"],
