@@ -1341,13 +1341,10 @@ async fn select_mature_regtest_candidate(
             let Some(bundle) = transaction.transparent_bundle() else {
                 continue;
             };
-            if bundle
-                .vin
-                .first()
-                .is_none_or(|input| input.prevout() != &OutPoint::NULL)
-            {
-                continue;
-            }
+            // Any transparent output paying the funder's key is a candidate:
+            // the coinbase zebra mines to the Maker's key, or the plain payment
+            // the devnet provisioner makes to the Taker's key when the Taker
+            // funds Zcash. Both wait out the same depth below.
             for (index, output) in bundle.vout.iter().enumerate() {
                 if output.script_pubkey() != &owner_script
                     || u64::from(output.value())
