@@ -260,7 +260,9 @@ done
 # The identity tool reads owner-private files only; the mounted copy is 0644
 # like lez-signer.key (the entrypoint re-installs it 0600), so derive from a
 # private copy under runtime/secrets.
-maker_zcash_private="$(mktemp "$RUNTIME/secrets/zcash-key.XXXXXX")"
+# (an absolute path: the identity tool refuses a relative key path, and up.sh
+# passes the runtime directory as a relative one)
+maker_zcash_private="$(mktemp "$(cd "$RUNTIME" && pwd -P)/secrets/zcash-key.XXXXXX")"
 trap 'rm -f "$maker_zcash_private"' EXIT
 install -m 0600 "$RUNTIME/lez/maker/zcash.key" "$maker_zcash_private"
 zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
