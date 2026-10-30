@@ -355,7 +355,13 @@ Item {
             })
     }
     function runTakerAction(swap) {
-        if (root.btcMarketBusy || swap.can_act !== true) return
+        // A press the desk cannot act on says why instead of vanishing.
+        if (root.btcMarketBusy || swap.can_act !== true) {
+            var reason = root.btcMarketBusy ? "another request is still in flight" : "this swap offers no action now"
+            root.output = "Action not sent: " + reason
+            root.note("error", String(swap.action_label ?? "Action") + " · not sent: " + reason)
+            return
+        }
         root.btcMarketBusy = true
         // One id per swap and action: the Node keys replay on it, so a retry
         // re-drives the admitted action instead of colliding with it. A Node

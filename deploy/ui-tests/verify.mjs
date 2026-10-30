@@ -248,10 +248,18 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
   let retries = 0;
   await app.waitFor(async () => {
     const text = await property(app, outputName, "text");
-    if (text === before) {
-      if (Date.now() - pressedAt > 20000 && unanswered < 4) {
+    // The desk's own placeholder while a request is in flight is not a reply:
+    // the step waits for the Node's answer, so the app is never closed under
+    // a request it has not finished.
+    // "Action not sent: …" is the desk declining the press (busy, or no action
+    // on the row): it is pressed again like a press with no reply. Every
+    // re-press prints RETRIED-PRESS: a recorded journey that needed one is
+    // not an asset (the video shows the unanswered press).
+    const declined = text.startsWith("Action not sent");
+    if (text === before || declined || text.startsWith("Waiting for owner-local Node")) {
+      if ((declined || Date.now() - pressedAt > 20000) && unanswered < 4) {
         unanswered += 1;
-        console.log(`  ${expectedText} produced no reply; pressing again (${unanswered}/4)`);
+        console.log(`  RETRIED-PRESS ${expectedText} ${declined ? `declined by the desk (${text})` : "produced no reply"}; pressing again (${unanswered}/4)`);
         await evaluateIn(app, target, "clicked()");
         pressedAt = Date.now();
       }
