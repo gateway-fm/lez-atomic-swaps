@@ -366,7 +366,11 @@ Item {
         // One id per swap and action: the Node keys replay on it, so a retry
         // re-drives the admitted action instead of colliding with it. A Node
         // request id holds 64 characters, so the swap is named by its prefix.
-        var requestId = "ui-taker-" + String(swap.action_required).replace(/_/g, "-") + "-" + String(swap.ui_swap_id).slice(0, 16)
+        // A prepared ZEC swap id is the catalog's (zec-devnet-swap-<stamp>[-b]):
+        // its first 16 characters are the same for every swap, so it is named
+        // by its last 16; a Bitcoin swap id (64 hex) keeps its prefix.
+        var swapTag = swap.pair === "Zcash" ? String(swap.ui_swap_id).slice(-16) : String(swap.ui_swap_id).slice(0, 16)
+        var requestId = "ui-taker-" + String(swap.action_required).replace(/_/g, "-") + "-" + swapTag
         root.run(root.backend.btcSwapAction(requestId, root.walletId(), String(swap.ui_swap_id), String(swap.action_required)),
             String(swap.action_label), function(result) {
                 root.btcMarketBusy = false
