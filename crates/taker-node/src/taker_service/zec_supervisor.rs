@@ -6,6 +6,11 @@
 //! effect. The owner's boundary is unchanged: a claim or a refund runs only
 //! after the owner admitted it (`taker_swap_claim_v1` / `taker_swap_refund_v1`);
 //! the supervisor never drives an actor whose next action is a claim.
+//! An open admission is read before the phase table, so a phase where the
+//! table drives must also drive with the admission open when the admitted
+//! action is done: selling ZEC, a finished revealing LEZ claim leaves
+//! (ClaimEvidenceAvailable, Wait), where a drive observes the Maker's Zcash
+//! follow-up claim (FINDINGS 22 of the M2 devnet run).
 //!
 //! The actor runs in-process under the swap's lock, as the Node's status,
 //! claim and recover calls always did; the Maker's child-process mechanics
