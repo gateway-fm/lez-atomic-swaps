@@ -9,7 +9,7 @@
 //! An open admission is read before the phase table, so a phase where the
 //! table drives must also drive with the admission open when the admitted
 //! action is done: selling ZEC, a finished revealing LEZ claim leaves
-//! (ClaimEvidenceAvailable, Wait), where a drive observes the Maker's Zcash
+//! (`ClaimEvidenceAvailable`, `Wait`), where a drive observes the Maker's Zcash
 //! follow-up claim (FINDINGS 22 of the M2 devnet run).
 //!
 //! The actor runs in-process under the swap's lock, as the Node's status,
@@ -35,8 +35,8 @@ use super::{
     TakerServiceState,
     lifecycle::{
         LOCK_WAIT, LifecycleStatus, RouteActor, ZecActorStatus, lookup_admitted_action_for_swap,
-        mark_claim_submitted, reload_action_actor_custody, replay_actor_effect_required,
-        terminal_action_of, zec_actor_progress,
+        mark_claim_submitted, reload_action_actor_custody, terminal_action_of, zec_actor_progress,
+        zec_replay_actor_effect_required,
     },
 };
 use crate::{
@@ -328,7 +328,7 @@ pub(super) fn decide(
             available_action,
             privacy_guidance,
         };
-        match replay_actor_effect_required(status, expected_generation, action) {
+        match zec_replay_actor_effect_required(status, expected_generation, action) {
             Ok(true) => {
                 return match action {
                     TakerTerminalActionV1::Claim => Decision::Claim,
@@ -920,6 +920,12 @@ mod tests {
                 Decision::Drive
             );
         }
+        // Selling ZEC the claim window also admits the owner's refund: a Taker
+        // that never claims reaches its Zcash refund through the recovery.
+        assert_eq!(
+            decide(claimable, Some((TakerTerminalActionV1::Refund, 4))),
+            Decision::Recover
+        );
         // A refund admission at that shape stays an observation.
         assert_eq!(
             decide(

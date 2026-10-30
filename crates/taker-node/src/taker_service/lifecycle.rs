@@ -706,7 +706,9 @@ async fn terminal_action(
         .validate_for_state(config.swap_id(), config.state_db())
         .map_err(|_| ActionError::DependencyUnavailable)?;
     let LifecycleStatus::Active {
+        phase,
         revision,
+        state,
         available_action,
         ..
     } = status
@@ -716,7 +718,9 @@ async fn terminal_action(
     if revision != expected_generation {
         return Err(ActionError::ProgressChanged);
     }
-    if available_action != Some(action) {
+    if available_action != Some(action)
+        && !(config.is_zec() && zec_claim_window_admits_refund(phase, state, action))
+    {
         return Err(ActionError::Unavailable);
     }
     if let Some(superseded) = superseded {
@@ -880,6 +884,48 @@ async fn replay_actor_effect_is_required(
     held_lock
         .validate_for_state(config.swap_id(), config.state_db())
         .map_err(|_| ActionError::DependencyUnavailable)?;
+    if config.is_zec() {
+        zec_replay_actor_effect_required(status, expected_generation, action)
+    } else {
+        replay_actor_effect_required(status, expected_generation, action)
+    }
+}
+
+/// Selling ZEC, both legs locked is the Taker's claim window: the Node offers
+/// the revealing LEZ claim. A Taker that does not claim must still reach its
+/// Zcash refund, and the supervisor never drives there (a drive would be the
+/// claim), so a refund request is admitted at this shape too and runs the
+/// agreement-ordered recovery: the actor waits for the Maker's LEZ refund and
+/// the Zcash refund height before it submits. Zcash route only; in ZEC the
+/// pair (`BothLegsLocked`, `ClaimAvailable`) occurs only in `TakerSellsForeign`.
+pub(super) const fn zec_claim_window_admits_refund(
+    phase: Phase,
+    state: TakerSwapStateV1,
+    action: TakerTerminalActionV1,
+) -> bool {
+    matches!(action, TakerTerminalActionV1::Refund)
+        && matches!(phase, Phase::BothLegsLocked)
+        && matches!(state, TakerSwapStateV1::ClaimAvailable)
+}
+
+/// `replay_actor_effect_required` for the Zcash route, which also admits the
+/// refund of its claim window ([`zec_claim_window_admits_refund`]).
+pub(super) fn zec_replay_actor_effect_required(
+    status: LifecycleStatus,
+    expected_generation: u64,
+    action: TakerTerminalActionV1,
+) -> Result<bool, ActionError> {
+    if let LifecycleStatus::Active {
+        phase,
+        revision,
+        state,
+        ..
+    } = status
+        && revision == expected_generation
+        && zec_claim_window_admits_refund(phase, state, action)
+    {
+        return Ok(true);
+    }
     replay_actor_effect_required(status, expected_generation, action)
 }
 
@@ -2782,6 +2828,35 @@ mod tests {
         assert!(replay_actor_effect_required(parked(), 4, TakerTerminalActionV1::Refund).unwrap());
         // A claim admitted at 4 is not re-entered through the refund phases.
         assert!(!replay_actor_effect_required(parked(), 4, TakerTerminalActionV1::Claim).unwrap());
+    }
+
+    #[test]
+    fn only_the_zcash_route_admits_a_refund_in_the_taker_sells_foreign_claim_window() {
+        let claim_window = || LifecycleStatus::Active {
+            phase: Phase::BothLegsLocked,
+            revision: 4,
+            state: TakerSwapStateV1::ClaimAvailable,
+            available_action: Some(TakerTerminalActionV1::Claim),
+            privacy_guidance: None,
+        };
+        assert!(
+            zec_replay_actor_effect_required(claim_window(), 4, TakerTerminalActionV1::Refund)
+                .unwrap()
+        );
+        assert!(
+            zec_replay_actor_effect_required(claim_window(), 4, TakerTerminalActionV1::Claim)
+                .unwrap()
+        );
+        // The generic rule (the Bitcoin route) is unchanged: one offered action.
+        assert!(matches!(
+            replay_actor_effect_required(claim_window(), 4, TakerTerminalActionV1::Refund),
+            Err(ActionError::Unavailable)
+        ));
+        // Admitted at an older generation the refund is not re-run here.
+        assert!(!matches!(
+            zec_replay_actor_effect_required(claim_window(), 3, TakerTerminalActionV1::Refund),
+            Ok(true)
+        ));
     }
 
     #[test]

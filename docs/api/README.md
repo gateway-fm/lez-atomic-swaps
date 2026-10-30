@@ -333,6 +333,13 @@ request ID. Poll after admission: canonical chain observations and recovery
 deadlines determine when funds actually settle. The maker's corresponding
 settlement actions are normally driven by its supervisor.
 
+A Zcash swap in which the Taker sells ZEC reports one action, the claim, while
+both legs are locked (`claim_available`). A Taker that does not claim may still
+send `taker_swap_refund_v1` at that generation: the Node admits it and runs the
+agreement-ordered recovery, which waits for the Maker's LEZ refund and the
+Zcash refund height before it submits the Taker's HTLC refund. Bitcoin swaps
+admit only the reported action.
+
 ## Retries, errors, and observation limits
 
 Never treat timeout, connection loss, or an HTTP error as proof of no mutation.
