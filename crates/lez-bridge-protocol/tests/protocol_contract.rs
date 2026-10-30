@@ -44,7 +44,8 @@ use lez_bridge_protocol::{
     RevealingClaimObservationTarget, RevealingPreimage, RunId, RuntimeCompatibility,
     RuntimeDescriptor, SchemaVersion, SubmissionOutcome, SubmitTransactionRequest,
     SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
-    SupersedeNativeEscrowPrepareResult, TokenHoldingFactsV2, TransactionId,
+    SupersedeNativeEscrowPrepareResult, SupersedeRevealingClaimRequest,
+    SupersedeRevealingClaimResult, TokenHoldingFactsV2, TransactionId,
     WITNESSED_LEZ_ASSET_TERMS_VERSION, WitnessedAssetClaimInstructionFactsV2,
     WitnessedAssetCustodyFactsV2, WitnessedAssetObservedPrepareEffectV2,
     WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, WitnessedAssetRefundFoundFactsV2,
@@ -1854,6 +1855,38 @@ fn superseded_submission_and_supersede_prepare_roundtrip() {
     assert_eq!(decoded, result);
     assert_eq!(MAX_NATIVE_ESCROW_REPLANS, 5);
     assert!(serde_json::to_string(&ErrorCode::ReplanExhausted).is_ok());
+}
+
+#[test]
+fn supersede_revealing_claim_roundtrip() {
+    let request = SupersedeRevealingClaimRequest::new(
+        context(),
+        runtime(),
+        TransactionId::from_bytes([21; 32]),
+    );
+    let encoded = serde_json::to_string(&request).unwrap();
+    assert!(
+        encoded.contains(r#""superseded_claim_transaction_id""#),
+        "{encoded}"
+    );
+    let decoded: SupersedeRevealingClaimRequest = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, request);
+    let result = SupersedeRevealingClaimResult::new(
+        context(),
+        TransactionId::from_bytes([21; 32]),
+        1,
+        2,
+        1,
+        tx(22),
+    );
+    let decoded: SupersedeRevealingClaimResult =
+        serde_json::from_str(&serde_json::to_string(&result).unwrap()).unwrap();
+    assert_eq!(decoded, result);
+    assert_eq!(lez_bridge_protocol::MAX_REVEALING_CLAIM_REPLANS, 5);
+    assert_eq!(
+        lez_bridge_protocol::METHOD_SUPERSEDE_REVEALING_CLAIM,
+        "lez_bridge.v1.supersede_revealing_claim"
+    );
 }
 
 #[test]

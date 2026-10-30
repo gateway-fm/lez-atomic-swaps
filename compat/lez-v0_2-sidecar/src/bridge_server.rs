@@ -32,17 +32,17 @@ use lez_bridge_protocol::{
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
     METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_CLAIM,
     METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
-    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE, METHOD_VERIFY_CURRENT_PROFILE_CLOCK, MessageContext,
-    ObserveCurrentClockRequest, ObserveEscrowRequest, ObserveFinalizedClockRequest,
-    ObserveFinalizedWitnessedClaimRequest, ObserveFinalizedWitnessedFundingRequest,
-    ObserveNativeRefundRequest, ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest,
-    Participant, PrepareCurrentProfileClockRequest, PrepareNativeEscrowRequest,
-    PrepareNativeEscrowResult, PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareRevealingClaimRequest, PrepareRevealingClaimResult, PrepareWitnessedClaimRequest,
-    PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult,
-    ProtocolErrorReply, RUN_ID_HEADER, RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest,
-    SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult,
-    VerifyCurrentProfileClockRequest,
+    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE, METHOD_SUPERSEDE_REVEALING_CLAIM,
+    METHOD_VERIFY_CURRENT_PROFILE_CLOCK, MessageContext, ObserveCurrentClockRequest,
+    ObserveEscrowRequest, ObserveFinalizedClockRequest, ObserveFinalizedWitnessedClaimRequest,
+    ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
+    ObserveRevealingClaimRequest, ObserveWitnessedEscrowRequest, Participant,
+    PrepareCurrentProfileClockRequest, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER,
+    RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest, SupersedeNativeEscrowPrepareRequest,
+    SupersedeNativeEscrowPrepareResult, VerifyCurrentProfileClockRequest,
 };
 use lez_bridge_protocol::{
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
@@ -378,6 +378,7 @@ impl DurableStore {
                             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
                                 | METHOD_PREPARE_NATIVE_ESCROW
                                 | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+                                | METHOD_SUPERSEDE_REVEALING_CLAIM
                                 | METHOD_PREPARE_WITNESSED_ESCROW
                                 | METHOD_PREPARE_REVEALING_CLAIM
                                 | METHOD_PREPARE_WITNESSED_CLAIM
@@ -1279,6 +1280,29 @@ fn register_methods(
         },
     )?;
     module.register_async_method(
+        METHOD_SUPERSEDE_REVEALING_CLAIM,
+        |params, state, _| async move {
+            let request: lez_bridge_protocol::SupersedeRevealingClaimRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_SUPERSEDE_REVEALING_CLAIM,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .supersede_revealing_claim(operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
         METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2,
         |params, state, _| async move {
             let request = Arc::new(
@@ -1586,9 +1610,14 @@ fn register_methods(
         // the chain again: landed (already known), nonce taken (superseded,
         // D1) or sent again. A replayed "accepted" never reached the node
         // (chain 35, 2026-10-29). Other submissions keep their one attempt.
+        // The same for an owned revealing claim (FINDINGS 24): a claim whose
+        // nonce another claim of this signer took is named Superseded.
         let decide_again = runtime
             .native_escrow_lineage_member(&request.transaction)
-            .await;
+            .await
+            || runtime
+                .revealing_claim_lineage_member(&request.transaction)
+                .await;
         state
             .execute_with_policy(
                 METHOD_SUBMIT_TRANSACTION,
@@ -2133,6 +2162,7 @@ impl ServerState {
             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
                 | METHOD_PREPARE_NATIVE_ESCROW
                 | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+                | METHOD_SUPERSEDE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_CLAIM
@@ -2218,6 +2248,7 @@ fn encode_request<Request: Serialize>(
         method,
         METHOD_PREPARE_NATIVE_ESCROW
             | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+            | METHOD_SUPERSEDE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_CLAIM
@@ -2265,6 +2296,7 @@ fn valid_method(method: &str) -> bool {
             | METHOD_PREPARE_CURRENT_PROFILE_CLOCK
             | METHOD_PREPARE_NATIVE_ESCROW
             | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+            | METHOD_SUPERSEDE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_OBSERVE_ESCROW
             | METHOD_OBSERVE_WITNESSED_ESCROW

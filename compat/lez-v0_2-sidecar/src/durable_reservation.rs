@@ -73,6 +73,13 @@ pub(crate) enum ReservationKind {
     NativeEscrowSupersession3,
     NativeEscrowSupersession4,
     NativeEscrowSupersession5,
+    /// A re-plan of the owned revealing claim after its nonce was taken
+    /// (FINDINGS 24); the original stays in `NativeClaim`.
+    NativeClaimSupersession1,
+    NativeClaimSupersession2,
+    NativeClaimSupersession3,
+    NativeClaimSupersession4,
+    NativeClaimSupersession5,
     XmrNativeEscrowV3,
     XmrNativeClaimAuthorizationV3,
     XmrNativeClaimV3,
@@ -107,6 +114,19 @@ impl ReservationKind {
         }
     }
 
+    /// The lineage slot for the `index`-th re-plan (one-based) of the owned
+    /// revealing claim; `None` past the protocol bound.
+    pub(crate) const fn native_claim_supersession(index: u32) -> Option<Self> {
+        match index {
+            1 => Some(Self::NativeClaimSupersession1),
+            2 => Some(Self::NativeClaimSupersession2),
+            3 => Some(Self::NativeClaimSupersession3),
+            4 => Some(Self::NativeClaimSupersession4),
+            5 => Some(Self::NativeClaimSupersession5),
+            _ => None,
+        }
+    }
+
     const fn filename(self) -> &'static str {
         match self {
             Self::NativeEscrow => "native-escrow-reservation.v1.json",
@@ -115,6 +135,11 @@ impl ReservationKind {
             Self::NativeEscrowSupersession3 => "native-escrow-supersession.3.v1.json",
             Self::NativeEscrowSupersession4 => "native-escrow-supersession.4.v1.json",
             Self::NativeEscrowSupersession5 => "native-escrow-supersession.5.v1.json",
+            Self::NativeClaimSupersession1 => "native-claim-supersession.1.v1.json",
+            Self::NativeClaimSupersession2 => "native-claim-supersession.2.v1.json",
+            Self::NativeClaimSupersession3 => "native-claim-supersession.3.v1.json",
+            Self::NativeClaimSupersession4 => "native-claim-supersession.4.v1.json",
+            Self::NativeClaimSupersession5 => "native-claim-supersession.5.v1.json",
             Self::XmrNativeEscrowV3 => "xmr-native-escrow-reservation.v3.json",
             Self::XmrNativeClaimAuthorizationV3 => {
                 "xmr-native-claim-authorization-reservation.v3.json"

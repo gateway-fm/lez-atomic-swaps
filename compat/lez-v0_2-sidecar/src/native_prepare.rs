@@ -16,8 +16,8 @@ use lez_bridge_protocol::{
     CompleteWitnessedAssetClaimV2Request, CompleteWitnessedAssetClaimV2Result,
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
     CurrentProfileClockAccountSnapshot, ExactMessageBytes, ExactTransactionBytes, Hex32,
-    MAX_NATIVE_ESCROW_REPLANS, MessageContext, NativeEscrowStep, Participant,
-    PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult,
+    MAX_NATIVE_ESCROW_REPLANS, MAX_REVEALING_CLAIM_REPLANS, MessageContext, NativeEscrowStep,
+    Participant, PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult,
     PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
     PrepareNativeRefundResult, PrepareNativeXmrClaimAuthorizationV3Request,
     PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
@@ -31,7 +31,8 @@ use lez_bridge_protocol::{
     PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
     PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
     SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest,
-    SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult, TransactionId,
+    SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult,
+    SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult, TransactionId,
     WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, XmrNativeEffectV3,
     XmrNativeEscrowTermsV3,
 };
@@ -240,6 +241,15 @@ impl NativeEscrowSupersession {
     }
 }
 
+/// One re-plan of the owned revealing claim (FINDINGS 24). The original claim
+/// stays in `ActiveClaimPrepare`; the lineage's current claim is the last
+/// supersession's.
+#[derive(Clone)]
+struct ClaimSupersession {
+    request: SupersedeRevealingClaimRequest,
+    result: SupersedeRevealingClaimResult,
+}
+
 /// Reads the single signer nonce of one exact prepared native escrow transaction.
 fn prepared_signer_nonce(
     prepared: &PreparedTransaction,
@@ -275,6 +285,7 @@ struct PlannerState {
     active_xmr_punish_v3: Option<ActiveXmrPunishPrepareV3>,
     active_witnessed_escrow: Option<ActiveWitnessedEscrowPrepare>,
     active_claim: Option<ActiveClaimPrepare>,
+    claim_supersessions: Vec<ClaimSupersession>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
     completed_witnessed_claim: Option<ActiveWitnessedClaimCompletion>,
     active_refund: Option<ActiveRefundPrepare>,
@@ -2362,6 +2373,7 @@ impl NativeEscrowPlanner {
 
         #[cfg(target_os = "linux")]
         if let Some(recovered) = self.recover_durable_claim(request)? {
+            state.claim_supersessions = self.recover_claim_supersessions(request, &recovered)?;
             state.active_claim = Some(ActiveClaimPrepare {
                 request_sha256,
                 result: recovered.clone(),
@@ -2389,6 +2401,8 @@ impl NativeEscrowPlanner {
                 let recovered = self
                     .recover_durable_claim(request)?
                     .ok_or(DurableReservationError::Filesystem)?;
+                state.claim_supersessions =
+                    self.recover_claim_supersessions(request, &recovered)?;
                 state.active_claim = Some(ActiveClaimPrepare {
                     request_sha256,
                     result: recovered.clone(),
@@ -2748,24 +2762,314 @@ impl NativeEscrowPlanner {
             .active_claim
             .as_ref()
             .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let member = Self::claim_lineage_member(&state, claim_transaction_id);
         if active.result.context.run_id != request.context.run_id
             || active.result.context.sidecar_role != request.context.sidecar_role
             || request.runtime != self.expected_runtime
             || active.terms != request.terms
-            || active.result.claim.transaction_id != claim_transaction_id
+            || member.is_none()
             || active.funding_transaction_id.as_bytes() == &[0; 32]
         {
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
-        let source = PrepareRevealingClaimRequest::new(
+        let claim = member.ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let source = Self::claim_source(active, &self.expected_runtime);
+        self.validate_prepared_claim(
+            &source,
+            &PrepareRevealingClaimResult::new(source.context.clone(), claim.clone()),
+        )?;
+        Ok((claim, *active.preimage))
+    }
+
+    fn claim_source(
+        active: &ActiveClaimPrepare,
+        runtime: &lez_bridge_protocol::RuntimeDescriptor,
+    ) -> PrepareRevealingClaimRequest {
+        PrepareRevealingClaimRequest::new(
             active.result.context.clone(),
-            self.expected_runtime.clone(),
+            runtime.clone(),
             active.terms.clone(),
             active.funding_transaction_id,
             lez_bridge_protocol::RevealingPreimage::new(*active.preimage),
+        )
+    }
+
+    /// The claim of this sidecar's lineage (original or re-plan) with that id.
+    fn claim_lineage_member(
+        state: &PlannerState,
+        claim_transaction_id: TransactionId,
+    ) -> Option<PreparedTransaction> {
+        let active = state.active_claim.as_ref()?;
+        if active.result.claim.transaction_id == claim_transaction_id {
+            return Some(active.result.claim.clone());
+        }
+        state
+            .claim_supersessions
+            .iter()
+            .find(|supersession| supersession.result.claim.transaction_id == claim_transaction_id)
+            .map(|supersession| supersession.result.claim.clone())
+    }
+
+    fn current_claim_in(state: &PlannerState) -> Option<PreparedTransaction> {
+        state.claim_supersessions.last().map_or_else(
+            || {
+                state
+                    .active_claim
+                    .as_ref()
+                    .map(|active| active.result.claim.clone())
+            },
+            |supersession| Some(supersession.result.claim.clone()),
+        )
+    }
+
+    /// The signer nonce planned into `prepared` when it is a claim of this
+    /// sidecar's revealing-claim lineage (original or any re-plan).
+    ///
+    /// # Errors
+    ///
+    /// Rejects lineage bytes that no longer decode for the isolated signer.
+    pub async fn revealing_claim_planned_nonce(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<Option<u128>, NativePrepareError> {
+        let state = self.state.lock().await;
+        if Self::claim_lineage_member(&state, prepared.transaction_id).as_ref() != Some(prepared) {
+            return Ok(None);
+        }
+        prepared_signer_nonce(prepared, self.signer_account_id).map(Some)
+    }
+
+    fn validate_claim_supersede_request(
+        &self,
+        active: &ActiveClaimPrepare,
+        request: &SupersedeRevealingClaimRequest,
+    ) -> Result<(), NativePrepareError> {
+        if request.context.run_id != active.result.context.run_id
+            || request.context.sidecar_role != active.result.context.sidecar_role
+            || request.runtime != self.expected_runtime
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_claim_supersession(
+        &self,
+        source: &PrepareRevealingClaimRequest,
+        predecessor: &PreparedTransaction,
+        request: &SupersedeRevealingClaimRequest,
+        result: &SupersedeRevealingClaimResult,
+    ) -> Result<(), NativePrepareError> {
+        if result.context != request.context
+            || result.superseded_claim_transaction_id != request.superseded_claim_transaction_id
+            || result.superseded_claim_transaction_id != predecessor.transaction_id
+            || result.replan_index == 0
+            || result.replan_index > MAX_REVEALING_CLAIM_REPLANS
+            || result.replanned_nonce <= result.superseded_nonce
+            || result.superseded_nonce
+                != prepared_signer_nonce(predecessor, self.signer_account_id)?
+            || result.replanned_nonce
+                != prepared_signer_nonce(&result.claim, self.signer_account_id)?
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        self.validate_prepared_claim(
+            source,
+            &PrepareRevealingClaimResult::new(source.context.clone(), result.claim.clone()),
+        )
+    }
+
+    /// Answers a request naming an already superseded claim from the lineage
+    /// (the caller's context echoed), without a node call.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime drift and a missing claim preparation.
+    pub async fn replayed_claim_supersession(
+        &self,
+        request: &SupersedeRevealingClaimRequest,
+    ) -> Result<Option<SupersedeRevealingClaimResult>, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_claim
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_claim_supersede_request(active, request)?;
+        Ok(state
+            .claim_supersessions
+            .iter()
+            .find(|supersession| {
+                supersession.request.superseded_claim_transaction_id
+                    == request.superseded_claim_transaction_id
+            })
+            .map(|supersession| {
+                let mut answer = supersession.result.clone();
+                answer.context = request.context.clone();
+                answer
+            }))
+    }
+
+    /// The lineage's current claim after checking that `request` names it, for
+    /// the runtime's inclusion check before a fresh supersession.
+    ///
+    /// # Errors
+    ///
+    /// Rejects drift, a missing preparation, a claim that is not the current
+    /// one, and an exhausted lineage.
+    pub async fn current_claim_for_supersession(
+        &self,
+        request: &SupersedeRevealingClaimRequest,
+    ) -> Result<PreparedTransaction, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_claim
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_claim_supersede_request(active, request)?;
+        let current = Self::current_claim_in(&state).ok_or(NativePrepareError::MissingPrepare)?;
+        if current.transaction_id != request.superseded_claim_transaction_id {
+            return Err(NativePrepareError::SupersededPairMismatch);
+        }
+        if state.claim_supersessions.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
+            return Err(NativePrepareError::ReplanExhausted);
+        }
+        Ok(current)
+    }
+
+    /// Re-plans the current owned revealing claim at the live signer nonce:
+    /// the same claim message (terms, escrow, preimage, funding binding) with
+    /// the next nonce, reserved into lineage slot `n` before it is exposed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects drift, a claim that is not the current one, a nonce that is
+    /// still live, an exhausted lineage, and durable-reservation failures.
+    pub async fn supersede_revealing_claim(
+        &self,
+        request: SupersedeRevealingClaimRequest,
+    ) -> Result<SupersedeRevealingClaimResult, NativePrepareError> {
+        let mut state = self.state.lock().await;
+        let active = state
+            .active_claim
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_claim_supersede_request(active, &request)?;
+        let source = Self::claim_source(active, &self.expected_runtime);
+        if let Some(existing) = state.claim_supersessions.iter().find(|supersession| {
+            supersession.request.superseded_claim_transaction_id
+                == request.superseded_claim_transaction_id
+        }) {
+            let mut answer = existing.result.clone();
+            answer.context = request.context.clone();
+            return Ok(answer);
+        }
+        let current = Self::current_claim_in(&state).ok_or(NativePrepareError::MissingPrepare)?;
+        if current.transaction_id != request.superseded_claim_transaction_id {
+            return Err(NativePrepareError::SupersededPairMismatch);
+        }
+        let replan_index = u32::try_from(state.claim_supersessions.len())
+            .ok()
+            .and_then(|count| count.checked_add(1))
+            .filter(|index| *index <= MAX_REVEALING_CLAIM_REPLANS)
+            .ok_or(NativePrepareError::ReplanExhausted)?;
+        let superseded_nonce = prepared_signer_nonce(&current, self.signer_account_id)?;
+        let live_nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        if live_nonce <= superseded_nonce {
+            return Err(NativePrepareError::SupersededNonceStillLive);
+        }
+        let claim = self.prepare_message(self.claim_message(&source, live_nonce)?)?;
+        let result = SupersedeRevealingClaimResult::new(
+            request.context.clone(),
+            request.superseded_claim_transaction_id,
+            superseded_nonce,
+            live_nonce,
+            replan_index,
+            claim,
         );
-        self.validate_prepared_claim(&source, &active.result)?;
-        Ok((active.result.claim.clone(), *active.preimage))
+        self.validate_claim_supersession(&source, &current, &request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref() {
+            let kind = ReservationKind::native_claim_supersession(replan_index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            match store.create(kind, &request, &result) {
+                Ok(()) => {}
+                Err(DurableReservationError::AlreadyReserved) => {
+                    let (stored_request, stored_result) = store
+                        .load::<SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult>(
+                            kind,
+                        )?
+                        .ok_or(DurableReservationError::Filesystem)?;
+                    self.validate_claim_supersession(
+                        &source,
+                        &current,
+                        &stored_request,
+                        &stored_result,
+                    )?;
+                    let mut answer = stored_result.clone();
+                    answer.context = request.context.clone();
+                    state.claim_supersessions.push(ClaimSupersession {
+                        request: stored_request,
+                        result: stored_result,
+                    });
+                    return Ok(answer);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        state.claim_supersessions.push(ClaimSupersession {
+            request,
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Loads the durable claim lineage slots 1..k in order after the original
+    /// claim was recovered; a slot after an absent one is corrupt state.
+    #[cfg(target_os = "linux")]
+    fn recover_claim_supersessions(
+        &self,
+        source: &PrepareRevealingClaimRequest,
+        original: &PrepareRevealingClaimResult,
+    ) -> Result<Vec<ClaimSupersession>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut supersessions = Vec::new();
+        let mut predecessor = original.claim.clone();
+        let mut absent_from = None;
+        for index in 1..=MAX_REVEALING_CLAIM_REPLANS {
+            let kind = ReservationKind::native_claim_supersession(index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            let loaded = store
+                .load::<SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult>(kind)?;
+            match (loaded, absent_from) {
+                (None, None) => absent_from = Some(index),
+                (None, Some(_)) => {}
+                (Some(_), Some(_)) => {
+                    return Err(DurableReservationError::CorruptReservation.into());
+                }
+                (Some((stored_request, stored_result)), None) => {
+                    if stored_result.replan_index != index {
+                        return Err(DurableReservationError::CorruptReservation.into());
+                    }
+                    self.validate_claim_supersession(
+                        source,
+                        &predecessor,
+                        &stored_request,
+                        &stored_result,
+                    )?;
+                    predecessor = stored_result.claim.clone();
+                    supersessions.push(ClaimSupersession {
+                        request: stored_request,
+                        result: stored_result,
+                    });
+                }
+            }
+        }
+        Ok(supersessions)
     }
 
     /// Returns the exact owned native refund after checking observation identity.
@@ -3101,17 +3405,16 @@ impl NativeEscrowPlanner {
             self.validate_prepared_refund(&active.request, &active.result)?;
             return Ok(());
         }
+        // The owned revealing claim, original or any re-plan of its lineage.
         if let Some(active) = state.active_claim.as_ref()
-            && &active.result.claim == prepared
+            && Self::claim_lineage_member(&state, prepared.transaction_id).as_ref()
+                == Some(prepared)
         {
-            let source = PrepareRevealingClaimRequest::new(
-                active.result.context.clone(),
-                self.expected_runtime.clone(),
-                active.terms.clone(),
-                active.funding_transaction_id,
-                lez_bridge_protocol::RevealingPreimage::new(*active.preimage),
-            );
-            self.validate_prepared_claim(&source, &active.result)?;
+            let source = Self::claim_source(active, &self.expected_runtime);
+            self.validate_prepared_claim(
+                &source,
+                &PrepareRevealingClaimResult::new(source.context.clone(), prepared.clone()),
+            )?;
             return Ok(());
         }
         if self.validate_completed_xmr_submission(&state, prepared)? {

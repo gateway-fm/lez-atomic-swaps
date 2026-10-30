@@ -532,6 +532,40 @@ impl BridgeRuntime {
             })
     }
 
+    /// Re-plans the owned revealing claim after [`SubmissionOutcome::Superseded`]
+    /// (FINDINGS 24). A request naming an already superseded claim is answered
+    /// from the durable lineage without a node call; a fresh supersession first
+    /// checks the named claim is not included (an included claim is never
+    /// re-planned), then the planner re-plans at the live nonce.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the planner's drift, bound and reservation failures; adds
+    /// `SupersessionInclusionMismatch` for an included claim and `Unavailable`
+    /// for node facts.
+    pub async fn supersede_revealing_claim(
+        &self,
+        request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, BridgeRuntimeError> {
+        if let Some(replayed) = self.planner.replayed_claim_supersession(&request).await? {
+            return Ok(replayed);
+        }
+        let current = self
+            .planner
+            .current_claim_for_supersession(&request)
+            .await?;
+        if self.node.prepared_transaction_is_included(&current).await? {
+            return Err(BridgeRuntimeError::SupersessionInclusionMismatch);
+        }
+        self.planner
+            .supersede_revealing_claim(request)
+            .await
+            .map_err(|error| match error {
+                NativePrepareError::NonceUnavailable => BridgeRuntimeError::Unavailable,
+                other => other.into(),
+            })
+    }
+
     /// Prepares one exact XMR-native initialization/funding pair without submission.
     ///
     /// # Errors
@@ -1411,6 +1445,15 @@ impl BridgeRuntime {
         )
     }
 
+    /// Whether these exact bytes are one of the owned revealing claims this
+    /// sidecar planned (the original claim or a re-plan).
+    pub async fn revealing_claim_lineage_member(&self, prepared: &PreparedTransaction) -> bool {
+        matches!(
+            self.planner.revealing_claim_planned_nonce(prepared).await,
+            Ok(Some(_))
+        )
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-
@@ -1454,6 +1497,30 @@ impl BridgeRuntime {
                 .planner
                 .native_escrow_planned_nonce(&request.transaction)
                 .await?
+        {
+            let live_nonce = self
+                .planner
+                .live_signer_nonce()
+                .await
+                .map_err(|_| BridgeRuntimeError::Unavailable)?;
+            if live_nonce > planned_nonce {
+                return Ok(SubmitTransactionResult::new(
+                    request.context.clone(),
+                    request.transaction.transaction_id,
+                    SubmissionOutcome::Superseded {
+                        planned_nonce,
+                        live_nonce,
+                    },
+                ));
+            }
+        }
+        // An owned revealing claim whose nonce another transaction of this
+        // signer took can never land either: named, never rebroadcast; the
+        // caller re-plans the same claim at the live nonce (FINDINGS 24).
+        if let Some(planned_nonce) = self
+            .planner
+            .revealing_claim_planned_nonce(&request.transaction)
+            .await?
         {
             let live_nonce = self
                 .planner

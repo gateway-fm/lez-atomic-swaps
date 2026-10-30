@@ -69,7 +69,8 @@ use lez_bridge_protocol::{
     RequestId, RunId, RuntimeDescriptor, SubmissionOutcome,
     SubmitNativeXmrClaimAuthorizationV3Request, SubmitNativeXmrClaimAuthorizationV3Result,
     SubmitTransactionRequest, SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
-    SupersedeNativeEscrowPrepareResult, VerifyCurrentProfileClockRequest,
+    SupersedeNativeEscrowPrepareResult, SupersedeRevealingClaimRequest,
+    SupersedeRevealingClaimResult, VerifyCurrentProfileClockRequest,
     VerifyCurrentProfileClockResult, WitnessedAssetPreparedEffectV2,
     WitnessedAssetRefundObservationV2, WitnessedEscrowMetadataFacts, WitnessedLezAssetTermsV2,
     WitnessedLezAssetV2, WitnessedNativeEscrowTerms, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
@@ -233,6 +234,8 @@ pub enum BridgeOperation {
     PrepareNativeEscrow,
     /// Re-plan of the native pair after a superseded nonce (D1).
     SupersedeNativeEscrowPrepare,
+    /// Re-plan of an owned revealing claim after a superseded nonce.
+    SupersedeRevealingClaim,
     /// Aggregate-witness initialization and funding preparation.
     PrepareWitnessedEscrow,
     /// Native initialization and funding observation.
@@ -971,6 +974,46 @@ impl BridgeClient {
             || result.initialization.exact_bytes == result.funding.exact_bytes
             || result.replan_index == 0
             || result.replan_index > MAX_NATIVE_ESCROW_REPLANS
+            || result.replanned_nonce <= result.superseded_nonce
+        {
+            return Err(BridgeClientError::MalformedPreparedTransaction { operation });
+        }
+        Ok(result)
+    }
+
+    /// Re-plans an owned revealing claim whose signer nonce another
+    /// transaction of the same signer took first: the same claim at the live
+    /// nonce. A replay naming the same superseded claim returns the same claim.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on context/runtime mismatch, unknown delivery, strict
+    /// decoding failure, an echoed identity that differs from the request, a
+    /// re-plan that returns the superseded claim, a re-plan index outside the
+    /// protocol bound, or protocol error (`ReplanExhausted` after the fifth).
+    pub async fn supersede_revealing_claim(
+        &self,
+        request: SupersedeRevealingClaimRequest,
+    ) -> Result<SupersedeRevealingClaimResult, BridgeClientError> {
+        let operation = BridgeOperation::SupersedeRevealingClaim;
+        let context = request.context.clone();
+        self.validate_request_runtime(operation, &context, &request.runtime)?;
+        self.reserve_context(operation, &context)?;
+        let superseded = request.superseded_claim_transaction_id;
+        let result: SupersedeRevealingClaimResult = self
+            .request(
+                operation,
+                lez_bridge_protocol::METHOD_SUPERSEDE_REVEALING_CLAIM,
+                request,
+                &context,
+            )
+            .await?;
+        Self::validate_response_context(operation, &context, &result.context)?;
+        validate_prepared(operation, &result.claim)?;
+        if result.superseded_claim_transaction_id != superseded
+            || result.claim.transaction_id == superseded
+            || result.replan_index == 0
+            || result.replan_index > lez_bridge_protocol::MAX_REVEALING_CLAIM_REPLANS
             || result.replanned_nonce <= result.superseded_nonce
         {
             return Err(BridgeClientError::MalformedPreparedTransaction { operation });

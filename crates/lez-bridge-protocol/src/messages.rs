@@ -270,6 +270,10 @@ impl PrepareNativeEscrowResult {
 /// refused with [`ErrorCode::ReplanExhausted`].
 pub const MAX_NATIVE_ESCROW_REPLANS: u32 = 5;
 
+/// Upper bound on re-plans of one owned revealing claim; the sixth
+/// supersession is refused with [`ErrorCode::ReplanExhausted`].
+pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 5;
+
 /// The native escrow transaction whose nonce was taken.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -373,6 +377,82 @@ impl SupersedeNativeEscrowPrepareResult {
             replan_index,
             initialization,
             funding,
+        }
+    }
+}
+
+/// Re-plans an owned revealing claim after [`SubmissionOutcome::Superseded`]
+/// (or an observation that found its nonce taken): the same claim message at
+/// the signer's live nonce.
+///
+/// The sidecar checks that the named claim is the current one of its lineage
+/// (or the one most recently superseded, for an idempotent replay), that it is
+/// not included, and that the re-plan bound is not exceeded. The superseded
+/// claim stays on disk as lineage.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SupersedeRevealingClaimRequest {
+    /// Version, isolation, correlation, and role fields.
+    pub context: MessageContext,
+    /// Expected runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// The superseded claim transaction.
+    pub superseded_claim_transaction_id: TransactionId,
+}
+
+impl SupersedeRevealingClaimRequest {
+    /// Creates a claim supersession request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        superseded_claim_transaction_id: TransactionId,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            superseded_claim_transaction_id,
+        }
+    }
+}
+
+/// The re-planned revealing claim, with the supersession it answers.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SupersedeRevealingClaimResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Echoed superseded claim identity.
+    pub superseded_claim_transaction_id: TransactionId,
+    /// Signer nonce the superseded claim was planned at.
+    pub superseded_nonce: u128,
+    /// Signer nonce the claim is planned at now.
+    pub replanned_nonce: u128,
+    /// One-based count of re-plans of this claim, at most
+    /// [`MAX_REVEALING_CLAIM_REPLANS`].
+    pub replan_index: u32,
+    /// Exact re-planned claim transaction.
+    pub claim: PreparedTransaction,
+}
+
+impl SupersedeRevealingClaimResult {
+    /// Creates a claim supersession result.
+    pub const fn new(
+        context: MessageContext,
+        superseded_claim_transaction_id: TransactionId,
+        superseded_nonce: u128,
+        replanned_nonce: u128,
+        replan_index: u32,
+        claim: PreparedTransaction,
+    ) -> Self {
+        Self {
+            context,
+            superseded_claim_transaction_id,
+            superseded_nonce,
+            replanned_nonce,
+            replan_index,
+            claim,
         }
     }
 }
