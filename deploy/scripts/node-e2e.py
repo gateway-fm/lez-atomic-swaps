@@ -1805,6 +1805,73 @@ def zec_wait_recovered(swap_id: str, timeout: int) -> dict:
     raise Failure(f"the Taker still shows attention_required {timeout}s after the account was funded (last {last})")
 
 
+def scenario_zec_balance_refusal_foreign(stamp: str) -> dict:
+    """TakerSellsForeign: the Maker is the LEZ depositor and cannot fund the
+    lot. The Maker Node's signer is the market wallet maker-munich-01; a chain
+    created with LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01 leaves its
+    allocation in the vault. The Taker funds the Zcash HTLC as usual; the
+    Maker's LEZ lock is refused by name (the supervisor names
+    lez_depositor_balance_insufficient on the Maker's row and backs off,
+    nothing locked); after the account is funded (bootstrap-market.sh claims
+    the vault) the supervisor's next attempt locks LEZ with no owner action and
+    the swap completes."""
+    identity = json.loads((RUNTIME / "lez" / "maker" / "identity.json").read_text())
+    account = identity["account_id"]
+    before = lez_account_balance(account)
+    if before >= ZEC_LEZ_UNITS:
+        raise Failure(f"the Maker's LEZ account holds {before}, not less than the {ZEC_LEZ_UNITS} lot: recreate the "
+                      "chain with LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01 (up.sh --fresh-lez) so its allocation "
+                      "stays in the vault")
+    log(f"  Maker LEZ account holds {before}, below the {ZEC_LEZ_UNITS} lot")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    deadline = time.time() + 900
+    refused = None
+    last = None
+    while time.time() < deadline:
+        view = maker_view(swap_id)
+        key = (view.get("schedule_state"), view.get("attention_reason"), view.get("last_failure_class"), maker_phase(swap_id))
+        if key != last:
+            log(f"  maker {swap_id[:12]}: schedule {key[0]}, reason {key[1]}, class {key[2]}, phase {key[3]}")
+            last = key
+        if view.get("attention_reason") == "lez_depositor_balance_insufficient":
+            refused = view
+            break
+        if view.get("schedule_state") in {"failed", "terminal"}:
+            raise Failure(f"the Maker's row ended {view.get('schedule_state')} before any balance refusal")
+        # the Taker's Zcash funding needs blocks before the Maker tries to lock
+        zec_mining_policy(zec_actor_phase(config), corridor)
+        time.sleep(10)
+    if refused is None:
+        raise Failure(f"no balance refusal on the Maker's row within 900 s (last {last})")
+    time.sleep(45)
+    again = maker_view(swap_id)
+    if again.get("attention_reason") != "lez_depositor_balance_insufficient" or again.get("schedule_state") == "failed":
+        raise Failure(f"45 s later the Maker's row reads {again.get('schedule_state')} ({again.get('attention_reason')}), "
+                      "not the standing refusal")
+    log("  45 s later the Maker's row still names the refusal (the supervisor backs off, nothing locked)")
+    log("  funding the Maker's account: scripts/bootstrap-market.sh claims the deferred vault")
+    result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "bootstrap-market.sh")],
+                            capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, timeout=1200)
+    if result.returncode != 0:
+        raise Failure(f"bootstrap-market.sh failed: {(result.stderr or result.stdout)[-300:]}")
+    after = lez_account_balance(account)
+    if after < ZEC_LEZ_UNITS:
+        raise Failure(f"after the claim the Maker's LEZ account holds {after}, still below the lot")
+    market_root = pathlib.Path(next(line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                                    if line.startswith("LEZ_MARKET_ROOT=")))
+    claim = json.loads((market_root / "bootstrap" / "maker-munich-01-claim.json").read_text())
+    log(f"  Maker LEZ account holds {after} (vault claim {claim['transaction_id'][:16]}…)")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
+            "lez_lot": ZEC_LEZ_UNITS, "maker_lez_balance_before": before, "maker_lez_balance_after_claim": after,
+            "refusal": {"role": "maker", "attention_reason": "lez_depositor_balance_insufficient",
+                        "schedule_state": refused.get("schedule_state")},
+            "funding": {"vault_claim_transaction_id": claim["transaction_id"], "allocation": claim["allocation"]},
+            "recovery": "the Maker Node's supervisor locked LEZ on its retry after funding; the swap completed"}
+
+
 def scenario_zec_balance_refusal(stamp: str) -> dict:
     """The LEZ depositor cannot fund the lot. The Taker Node's signer is the
     market wallet taker-zurich-01; a chain created with
@@ -1817,6 +1884,8 @@ def scenario_zec_balance_refusal(stamp: str) -> dict:
     owner action and the swap completes. The Taker Node does not drive the ZEC
     first lock itself (the desk journeys drive it between steps, as this
     harness does), so the recovery is the next drive, not a self-re-drive."""
+    if not zec_taker_sells_lez():
+        return scenario_zec_balance_refusal_foreign(stamp)
     identity = json.loads((RUNTIME / "lez" / "taker" / "identity.json").read_text())
     account = identity["account_id"]
     before = lez_account_balance(account)
