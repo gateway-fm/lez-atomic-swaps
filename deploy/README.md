@@ -516,4 +516,7 @@ The two Basecamp desks drive the Nodes' fixed, genuine LEZ/BTC lifecycle and
 present its completed evidence. They do not yet expose arbitrary amounts,
 external wallets, public networks, or production signing; each Node settles as
 one configured identity. Both Nodes listen only on owner-only Unix sockets; no
-component on the stack holds the host Docker socket.
+component on the stack holds the host Docker socket. Devnet-only caveat: the
+role keys under `runtime/lez/<role>/` (`lez-signer.key`, `zcash.key`) are
+host copies at mode 0644 so the Nodes' uid can read them through the bind
+mount; each entrypoint re-installs them owner-private in its state volume.

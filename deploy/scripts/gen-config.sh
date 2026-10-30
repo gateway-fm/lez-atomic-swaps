@@ -261,9 +261,11 @@ done
 # like lez-signer.key (the entrypoint re-installs it 0600), so derive from a
 # private copy under runtime/secrets.
 maker_zcash_private="$(mktemp "$RUNTIME/secrets/zcash-key.XXXXXX")"
+trap 'rm -f "$maker_zcash_private"' EXIT
 install -m 0600 "$RUNTIME/lez/maker/zcash.key" "$maker_zcash_private"
-zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || { rm -f "$maker_zcash_private"; exit 1; }
+zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
 rm -f "$maker_zcash_private"
+trap - EXIT
 chmod 0644 "$RUNTIME/lez/maker/zcash.key" "$RUNTIME/lez/taker/zcash.key"
 mkdir -p "$RUNTIME/zebra"
 sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$RUNTIME/zebra/zebrad.toml"
