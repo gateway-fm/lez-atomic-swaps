@@ -309,6 +309,29 @@
       ]
     },
     {
+      "id": "heartbeat",
+      "lifecycle": "service",
+      "executable": "lez-v02-heartbeat",
+      "role": "shared",
+      "pair": "all",
+      "sockets": [],
+      "state": [
+        {
+          "path": "runtime/heartbeat",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "The heartbeat identity's LEZ signer key (minted into the market root by the tools; devnet only)"
+      ],
+      "public_identities": [],
+      "health": "status.json rewritten every tick (compose profile heartbeat; off with LEZ_HEARTBEAT_SECONDS=0)",
+      "depends_on": [
+        "sequencer",
+        "indexer"
+      ]
+    },
+    {
       "id": "basecamp-ui",
       "lifecycle": "service",
       "executable": "lez-maker-ui + lez-taker-ui",
