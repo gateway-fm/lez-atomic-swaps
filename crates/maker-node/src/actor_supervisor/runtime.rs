@@ -603,8 +603,8 @@ fn run_claimed_attempt_with_lock(
                 }
             },
         };
-        if config.effect_cutoff_reached() {
-            return Ok(ClaimedAttempt::Backoff("actor_effect_cutoff"));
+        if let Some(class) = effect_held_back(store, lease, config, command, &status) {
+            return Ok(ClaimedAttempt::Backoff(class));
         }
         let effect = match run_child(
             store,
@@ -796,6 +796,79 @@ fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
     }
 }
 
+/// Why an effect waits this attempt, if it does: the effect cutoff, or the
+/// one-revealing-LEZ-claim-in-flight gate.
+fn effect_held_back(
+    store: &SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    config: &MakerActorSupervisorConfig,
+    command: ActorEffectCommand,
+    status: &[u8],
+) -> Option<&'static str> {
+    if config.effect_cutoff_reached() {
+        Some("actor_effect_cutoff")
+    } else if revealing_claim_held_back(store, lease, command, status) {
+        Some("lez_revealing_claim_in_flight")
+    } else {
+        None
+    }
+}
+
+/// The Maker settles every Zcash swap as one LEZ account: its revealing LEZ
+/// claims (`TakerSellsLez`) are planned at that account's committed nonce, so
+/// one is in flight at a time (FINDINGS 24). A Zcash claim at both legs
+/// locked waits while another non-terminal Zcash actor holds its in-flight
+/// marker — written when its claim is submitted, removed when the claim is
+/// final. Durable, never released on a timer.
+#[cfg(feature = "pair-zec")]
+fn revealing_claim_held_back(
+    store: &SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    command: ActorEffectCommand,
+    status: &[u8],
+) -> bool {
+    let manifest = lease.record().manifest();
+    if !matches!(command, ActorEffectCommand::Claim)
+        || manifest.kind() != MakerActorKindV1::Zcash
+        || serde_json::from_slice::<Value>(status)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("phase")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .as_deref()
+            != Some("both_legs_locked")
+    {
+        return false;
+    }
+    let Ok(records) = store.list_maker_actor_processes() else {
+        // Unknown peers: hold the claim back rather than race a nonce.
+        return true;
+    };
+    records.iter().any(|record| {
+        record.swap_id() != manifest.swap_id()
+            && record.manifest().kind() == MakerActorKindV1::Zcash
+            && record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal
+            && zec_reference_actor::revealing_claim_in_flight_marker(
+                record.manifest().state_database_path(),
+            )
+            .is_some_and(|marker| marker.is_file())
+    })
+}
+
+/// Without the Zcash pair no Maker actor submits a revealing LEZ claim.
+#[cfg(not(feature = "pair-zec"))]
+const fn revealing_claim_held_back(
+    _store: &SqliteSwapStore,
+    _lease: &MakerActorLeaseV1,
+    _command: ActorEffectCommand,
+    _status: &[u8],
+) -> bool {
+    false
+}
+
 fn classify_exit(status: ExitStatus) -> ChildRunError {
     match status.code() {
         // The Zcash actor's named refusal: the account holds less LEZ than the
@@ -811,6 +884,13 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE) => {
             ChildRunError::Fail("lez_first_lock_replan_exhausted")
+        }
+        // The Zcash actor re-planned its revealing LEZ claim the bounded number
+        // of times and its nonce was taken again: the claim is never abandoned
+        // for a refund; the swap needs attention by name (FINDINGS 24).
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE) => {
+            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
         }
         _ => ChildRunError::Retry("actor_exit_failed"),
     }
@@ -1847,6 +1927,13 @@ mod exit_classification_tests {
         assert!(matches!(
             classify_exit(exhausted),
             ChildRunError::Fail("lez_first_lock_replan_exhausted")
+        ));
+        let claim_exhausted = ExitStatus::from_raw(
+            zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE << 8,
+        );
+        assert!(matches!(
+            classify_exit(claim_exhausted),
+            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
         ));
     }
 }

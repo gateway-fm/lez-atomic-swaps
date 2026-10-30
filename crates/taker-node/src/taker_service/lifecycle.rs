@@ -719,7 +719,7 @@ async fn terminal_action(
         return Err(ActionError::ProgressChanged);
     }
     if available_action != Some(action)
-        && !(config.is_zec() && zec_claim_window_admits_refund(phase, state, action))
+        && !route_admits_claim_window_refund(&config, phase, state, action)
     {
         return Err(ActionError::Unavailable);
     }
@@ -744,8 +744,9 @@ async fn terminal_action(
     // receipt-bound file identities under the still-held swap lock before secrets.
     let effect_config =
         reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock).await?;
+    let gate_open = admission_claim_gate_open(&initiation, &prepared);
     let first_attempt =
-        gated_first_attempt(&effect_config, &held_lock, &swap_id, action, phase).await;
+        gated_first_attempt(&effect_config, &held_lock, action, phase, gate_open).await;
     first_attempt_reply(effect_config.is_zec(), first_attempt)?;
     revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock).await?;
     Ok(action_commit(&admission))
@@ -886,7 +887,12 @@ async fn replay_actor_effect_is_required(
         .validate_for_state(config.swap_id(), config.state_db())
         .map_err(|_| ActionError::DependencyUnavailable)?;
     if config.is_zec() {
-        zec_replay_actor_effect_required(status, expected_generation, action)
+        zec_replay_actor_effect_required(
+            status,
+            expected_generation,
+            action,
+            revealing_claim_was_submitted(config.state_db()),
+        )
     } else {
         replay_actor_effect_required(status, expected_generation, action)
     }
@@ -899,14 +905,42 @@ async fn replay_actor_effect_is_required(
 /// agreement-ordered recovery: the actor waits for the Maker's LEZ refund and
 /// the Zcash refund height before it submits. Zcash route only; in ZEC the
 /// pair (`BothLegsLocked`, `ClaimAvailable`) occurs only in `TakerSellsForeign`.
+/// Never once a revealing claim of this swap was submitted (`claim_submitted`:
+/// its marker exists): the secret may be public and the Maker could take the
+/// Zcash, so the claim must be pursued (re-planned if its nonce was taken),
+/// never traded for the refund (FINDINGS 24).
 pub(super) const fn zec_claim_window_admits_refund(
     phase: Phase,
     state: TakerSwapStateV1,
     action: TakerTerminalActionV1,
+    claim_submitted: bool,
 ) -> bool {
-    matches!(action, TakerTerminalActionV1::Refund)
+    !claim_submitted
+        && matches!(action, TakerTerminalActionV1::Refund)
         && matches!(phase, Phase::BothLegsLocked)
         && matches!(state, TakerSwapStateV1::ClaimAvailable)
+}
+
+/// The Zcash route's claim-window refund for this actor (never on Bitcoin,
+/// never after a revealing claim was submitted).
+fn route_admits_claim_window_refund(
+    config: &RouteActor,
+    phase: Phase,
+    state: TakerSwapStateV1,
+    action: TakerTerminalActionV1,
+) -> bool {
+    config.is_zec()
+        && zec_claim_window_admits_refund(
+            phase,
+            state,
+            action,
+            revealing_claim_was_submitted(config.state_db()),
+        )
+}
+
+/// Whether this swap's actor has ever submitted a revealing LEZ claim.
+pub(super) fn revealing_claim_was_submitted(state_db: &Path) -> bool {
+    revealing_claim_submitted_marker(state_db).is_some_and(|marker| marker.is_file())
 }
 
 /// `replay_actor_effect_required` for the Zcash route, which also admits the
@@ -915,6 +949,7 @@ pub(super) fn zec_replay_actor_effect_required(
     status: LifecycleStatus,
     expected_generation: u64,
     action: TakerTerminalActionV1,
+    claim_submitted: bool,
 ) -> Result<bool, ActionError> {
     if let LifecycleStatus::Active {
         phase,
@@ -923,7 +958,7 @@ pub(super) fn zec_replay_actor_effect_required(
         ..
     } = status
         && revision == expected_generation
-        && zec_claim_window_admits_refund(phase, state, action)
+        && zec_claim_window_admits_refund(phase, state, action, claim_submitted)
     {
         return Ok(true);
     }
@@ -1091,6 +1126,24 @@ fn first_attempt_reply(
     }
 }
 
+/// The Zcash claim gate (one revealing LEZ claim in flight per Node,
+/// FINDINGS 24) as the admission sees it; always open without the pair.
+#[cfg(feature = "pair-zec")]
+fn admission_claim_gate_open(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    prepared: &PreparedTakerInitiationV1,
+) -> bool {
+    super::zec_supervisor::lez_claim_gate_open(initiation, prepared)
+}
+
+#[cfg(not(feature = "pair-zec"))]
+const fn admission_claim_gate_open(
+    _initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    _prepared: &PreparedTakerInitiationV1,
+) -> bool {
+    true
+}
+
 /// The admission's first attempt. Selling ZEC the claim at both legs locked
 /// is a revealing LEZ claim: while another swap's is in flight it is not
 /// attempted here (the admission is answered and the Node's supervisor
@@ -1098,28 +1151,20 @@ fn first_attempt_reply(
 async fn gated_first_attempt(
     config: &RouteActor,
     held_lock: &ActorHeldLock,
-    swap_id: &SwapId,
     action: TakerTerminalActionV1,
     phase: Phase,
+    gate_open: bool,
 ) -> Result<(), ActionError> {
     let lez_claim =
         config.is_zec() && action == TakerTerminalActionV1::Claim && phase == Phase::BothLegsLocked;
-    #[cfg(feature = "pair-zec")]
-    if lez_claim && !super::zec_supervisor::lez_claim_gate_open(swap_id) {
+    if lez_claim && !gate_open {
         report_actor_failure(
             "first attempt after admission",
             &"another swap's revealing LEZ claim is in flight; the supervisor submits this one next",
         );
         return Ok(());
     }
-    let attempt = execute_terminal_actor_command(config, held_lock, action).await;
-    #[cfg(feature = "pair-zec")]
-    if lez_claim && attempt.is_ok() {
-        super::zec_supervisor::note_lez_claim_submitted(swap_id);
-    }
-    #[cfg(not(feature = "pair-zec"))]
-    let _ = (lez_claim, swap_id);
-    attempt
+    execute_terminal_actor_command(config, held_lock, action).await
 }
 
 async fn execute_terminal_actor_command(
@@ -1148,7 +1193,12 @@ async fn execute_terminal_actor_command(
 /// refused the first lock for the depositor's balance
 /// (`<swap>/actor/taker/lez-depositor-balance-insufficient`).
 #[cfg(feature = "pair-zec")]
-use zec_reference_actor::lez_depositor_balance_marker;
+use zec_reference_actor::{lez_depositor_balance_marker, revealing_claim_submitted_marker};
+/// Without the Zcash pair no actor submits a revealing LEZ claim.
+#[cfg(not(feature = "pair-zec"))]
+fn revealing_claim_submitted_marker(_state_db: &Path) -> Option<PathBuf> {
+    None
+}
 /// Without the Zcash pair no actor leaves the marker.
 #[cfg(not(feature = "pair-zec"))]
 fn lez_depositor_balance_marker(_state_db: &Path) -> Option<PathBuf> {
@@ -2872,21 +2922,46 @@ mod tests {
             privacy_guidance: None,
         };
         assert!(
-            zec_replay_actor_effect_required(claim_window(), 4, TakerTerminalActionV1::Refund)
-                .unwrap()
+            zec_replay_actor_effect_required(
+                claim_window(),
+                4,
+                TakerTerminalActionV1::Refund,
+                false
+            )
+            .unwrap()
         );
         assert!(
-            zec_replay_actor_effect_required(claim_window(), 4, TakerTerminalActionV1::Claim)
-                .unwrap()
+            zec_replay_actor_effect_required(
+                claim_window(),
+                4,
+                TakerTerminalActionV1::Claim,
+                false
+            )
+            .unwrap()
         );
         // The generic rule (the Bitcoin route) is unchanged: one offered action.
         assert!(matches!(
             replay_actor_effect_required(claim_window(), 4, TakerTerminalActionV1::Refund),
             Err(ActionError::Unavailable)
         ));
+        // Once a revealing claim was submitted the claim window's refund is refused.
+        assert!(matches!(
+            zec_replay_actor_effect_required(
+                claim_window(),
+                4,
+                TakerTerminalActionV1::Refund,
+                true
+            ),
+            Err(ActionError::Unavailable)
+        ));
         // Admitted at an older generation the refund is not re-run here.
         assert!(!matches!(
-            zec_replay_actor_effect_required(claim_window(), 3, TakerTerminalActionV1::Refund),
+            zec_replay_actor_effect_required(
+                claim_window(),
+                3,
+                TakerTerminalActionV1::Refund,
+                false
+            ),
             Ok(true)
         ));
     }
