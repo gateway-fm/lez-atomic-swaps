@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# zec-provision.sh — build one prepared ZEC<->LEZ swap (TakerSellsLez) on the
-# running devnet and hand it to both Nodes.
+# zec-provision.sh — build one prepared ZEC<->LEZ swap on the running devnet,
+# in either direction (--direction, TakerSellsLez by default), and hand it to
+# both Nodes.
 #
 # A ZEC swap is prepared, not composed: the Taker Node takes a Zcash offer only
 # from a static `prepared_zec` catalog entry whose files were provisioned from
@@ -333,19 +334,26 @@ helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
   install -m 0600 /in/taker-zcash.key $ZEC_ROOT/signers/taker-zcash.key
   chown -R $NODE_UID:$NODE_UID $ZEC_ROOT && chmod 0700 $ZEC_ROOT $ZEC_ROOT/signers"
 if [[ "$DIRECTION" == TakerSellsForeign ]]; then
-  # The Taker funds Zcash: it needs a mature output under its own key. Zebra
-  # mines to the Maker's key only, so the Maker pays the Taker once, and 100
-  # blocks make that output a funder candidate (the provisioner's maturity
-  # rule applies to every candidate, not only to coinbase).
-  log "  TakerSellsForeign: paying the Taker's key $TAKER_FUNDING_ZATOSHIS zatoshis from the Maker's, then 100 blocks"
-  docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
-    --entrypoint zec-local-poc-transfer "$TAKER_IMAGE" \
-    --zebra-endpoint http://127.0.0.1:18232 --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
-    --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" --value-zatoshis "$TAKER_FUNDING_ZATOSHIS" </dev/null >"$out/taker-funding.json" ||
-    fail "zec-local-poc-transfer failed (see above)"
-  log "  transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"][:16] + "… to " + s["to_address"])' "$out/taker-funding.json")"
+  # The Taker funds Zcash: it needs mature outputs under its own key. Zebra
+  # mines to the Maker's key only, so the Maker pays the Taker, and 100 blocks
+  # make those outputs funder candidates (the provisioner's maturity rule
+  # applies to every candidate, not only to coinbase). Swap k spends the
+  # (k+1)-th mature output, so a two-swap run gets two payments, in two
+  # blocks so their order is their height; --add pays two as well, so the
+  # second slot finds its output whether or not the live corridor spent its own.
+  payments="$SWAPS"; (( ADD == 1 )) && payments=2
+  log "  TakerSellsForeign: paying the Taker's key $TAKER_FUNDING_ZATOSHIS zatoshis from the Maker's, $payments time(s), then 100 blocks"
+  for (( p = 0; p < payments; p++ )); do
+    docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
+      --entrypoint zec-local-poc-transfer "$TAKER_IMAGE" \
+      --zebra-endpoint http://127.0.0.1:18232 --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
+      --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" --value-zatoshis "$TAKER_FUNDING_ZATOSHIS" </dev/null >"$out/taker-funding-$p.json" ||
+      fail "zec-local-poc-transfer failed (see above)"
+    log "  transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"][:16] + "… to " + s["to_address"])' "$out/taker-funding-$p.json")"
+    zebra generate "[1]" >/dev/null || fail "zebra generate failed"
+  done
   for _ in $(seq 1 10); do zebra generate "[10]" >/dev/null || fail "zebra generate failed"; done
-  log "  zebra height $(zebra getblockcount): the Taker's output is mature"
+  log "  zebra height $(zebra getblockcount): the Taker's outputs are mature"
 fi
 # --network host: the provisioner only accepts a loopback zebra endpoint, and
 # Compose publishes zebra on 127.0.0.1:18232.

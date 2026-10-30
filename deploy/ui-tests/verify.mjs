@@ -323,8 +323,8 @@ async function publishOfferOnce(app, predicate) {
 // What the Maker desk is waiting for, in the words of the direction.
 function makerNarration(state) {
   // What the Maker locks and what it claims, by pair and direction.
-  const mine = zcash ? "Zcash" : reverseDirection ? "Bitcoin" : "LEZ";
-  const theirs = zcash ? "LEZ" : reverseDirection ? "LEZ" : "Bitcoin";
+  const mine = zcash ? (reverseDirection ? "Zcash" : "LEZ") : reverseDirection ? "Bitcoin" : "LEZ";
+  const theirs = zcash ? (reverseDirection ? "LEZ" : "Zcash") : reverseDirection ? "LEZ" : "Bitcoin";
   switch (state) {
     case "awaiting_taker_claim":
       return `Nothing to click here: the Maker Node locks ${mine} on its own once the Taker's ${theirs} lock is final; the desk waits for "awaiting the Taker's claim"`;
@@ -564,7 +564,7 @@ if (role === "maker") {
       }
       console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · ${zcash ? "LEZ lock pending (actor-driven)" : "Taker lock action ready"}`);
       narrate(zcash
-        ? `Swap ${taken.slice(0, 12)} is in "My orders"; its first LEZ lock is driven through the Taker actor on the Node, not a desk button`
+        ? `Swap ${taken.slice(0, 12)} is in "My orders"; its first lock (${reverseDirection ? "the LEZ escrow" : "the Zcash HTLC"}) is driven by the Taker Node's supervisor, not a desk button`
         : `Swap ${taken.slice(0, 12)} is in "My orders" and needs the Taker: its ${reverseDirection ? "LEZ" : "Bitcoin"} lock`);
     });
   }
@@ -588,13 +588,23 @@ if (role === "maker") {
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
       claim_zec: [`Claim ${zecText}: the Maker's LEZ claim revealed the secret; the Taker's claim spends the Zcash HTLC on the transparent pool`,
                   "Zcash claim broadcast; once it is in a block the swap completes. The claim is transparent: move the funds to a shielded address afterwards"],
+      refund_zec: ["The Maker never locked LEZ and the HTLC's refund height is reached: the desk offers Refund; pressing it admits the refund, which the Node drives on the transparent pool",
+                   "Refund admitted; the Taker Node broadcasts the HTLC refund when the height allows and follows it to a block"],
     };
+    // Selling ZEC the Taker's LEZ claim is the revealing one of a hashlock, not of an adaptor signature.
+    if (zcash && action === "claim_lez") {
+      return [`Claim ${zecLezText}: the revealing claim spends the LEZ escrow and discloses the hashlock secret`,
+              "LEZ claim submitted; the Maker Node uses the revealed secret for its Zcash claim, which completes the swap"][moment === "before" ? 0 : 1];
+    }
     return (texts[action] ?? [action, action])[moment === "before" ? 0 : 1];
   }
 
   // A refund is admitted at once and driven by the Node until the chain
   // clocks allow it, so its row settles into refunding/refunded much later.
-  const takerActions = zcash
+  const takerActions = zcash && !reverseDirection
+    ? { claim_lez: [`Claim ${zecLezText}`, ["claiming_lez", "claim_ready", "completed"], 45000],
+        refund_zec: [`Refund ${zecText}`, ["refunding", "refunded"], waitTimeoutMs] }
+    : zcash
     ? { claim_zec: [`Claim ${zecText}`, ["claiming_zec", "claim_ready", "completed"], 45000],
         refund_lez: [`Refund ${zecLezText}`, ["refunding", "refunded"], waitTimeoutMs],
         // The admitted refund keeps its button as "Retry refund": the same

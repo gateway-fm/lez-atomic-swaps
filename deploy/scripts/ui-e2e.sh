@@ -53,14 +53,22 @@ if [[ "$direction" == TakerSellsLez ]]; then
 else
   lock_action=lock_btc; claim_action=claim_lez; refund_action=refund_btc; lock_wallet=lez-taker
 fi
-# Zcash: a prepared corridor (scripts/zec-provision.sh), TakerSellsLez only for
-# now (Part D: TakerSellsForeign through the Nodes lands at step 20). The
-# Taker's first LEZ lock has no desk button; the Taker Node drives its actor
-# itself, and node-e2e.py --pair Zcash zec-wait polls (and mines zebra) between
-# desk steps.
+# Zcash: a prepared corridor (scripts/zec-provision.sh --direction …) in either
+# direction, TakerSellsLez unless --direction says TakerSellsForeign. The
+# Taker's first lock (the LEZ escrow, or the Zcash HTLC when it sells ZEC) has
+# no desk button; the Taker Node drives its actor itself, and node-e2e.py
+# --pair Zcash zec-wait polls (and mines zebra) between desk steps. Selling
+# LEZ the Taker claims Zcash and refunds LEZ; selling ZEC it claims LEZ (the
+# revealing claim) and refunds its Zcash HTLC.
+zec_direction_given=0
+for arg in "$@"; do [[ "$arg" == --direction ]] && zec_direction_given=1; done
 case "$pair" in
   Bitcoin) ;;
-  Zcash) direction=TakerSellsLez; lock_action=""; claim_action=claim_zec; refund_action=refund_lez; lock_wallet=lez-maker ;;
+  Zcash)
+    [[ "$zec_direction_given" == 1 ]] || direction=TakerSellsLez
+    lock_action=""; lock_wallet=lez-maker
+    if [[ "$direction" == TakerSellsLez ]]; then claim_action=claim_zec; refund_action=refund_lez
+    else claim_action=claim_lez; refund_action=refund_zec; fi ;;
   *) echo "--pair must be Bitcoin or Zcash" >&2; exit 64 ;;
 esac
 
@@ -198,7 +206,8 @@ taker_wait() { step "Taker desk shows ${2:0:12} at $1" taker INTERACTIVE_ACTION=
 maker_wait() { # the awaiting-claim label names the asset the Taker claims: what the Maker locked
   local label=""
   if [[ "$1" == awaiting_taker_claim ]]; then
-    if [[ "$pair" == Zcash ]]; then label="Waiting for the Taker's Zcash claim"
+    if [[ "$pair" == Zcash && "$direction" == TakerSellsLez ]]; then label="Waiting for the Taker's Zcash claim"
+    elif [[ "$pair" == Zcash ]]; then label="Waiting for the Taker's LEZ claim"
     elif [[ "$direction" == TakerSellsLez ]]; then label="Waiting for the Taker's Bitcoin claim"
     else label="Waiting for the Taker's LEZ claim"; fi
   fi
@@ -206,7 +215,8 @@ maker_wait() { # the awaiting-claim label names the asset the Taker claims: what
 }
 maker_wait_label() { # the awaiting-claim label names the asset the Taker claims: what the Maker locked
   [[ "$1" == awaiting_taker_claim ]] || { echo ""; return; }
-  if [[ "$pair" == Zcash ]]; then echo "Waiting for the Taker's Zcash claim"
+  if [[ "$pair" == Zcash && "$direction" == TakerSellsLez ]]; then echo "Waiting for the Taker's Zcash claim"
+  elif [[ "$pair" == Zcash ]]; then echo "Waiting for the Taker's LEZ claim"
   elif [[ "$direction" == TakerSellsLez ]]; then echo "Waiting for the Taker's Bitcoin claim"
   else echo "Waiting for the Taker's LEZ claim"; fi
 }
@@ -246,13 +256,13 @@ export_evidence() { # export_evidence <swap_id>
     # export-node-evidence.py reads the Bitcoin swap stores; a ZEC swap's record
     # is the corridor, both Nodes' views, the Taker actor's status and the zebra
     # transactions, written by node-e2e.py to runtime/evidence/zec/<swap>.json.
-    LEZ_ZEC_REUSE_CORRIDOR=1 python3 scripts/node-e2e.py --pair Zcash zec-export --swap-id "$1" || fail "ZEC evidence export"
+    LEZ_ZEC_REUSE_CORRIDOR=1 python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-export --swap-id "$1" || fail "ZEC evidence export"
   fi
 }
 # ---- ZEC host-side steps (the Node offers only claim/refund for ZEC) ----------------
 zec_provision() { # zec_provision [swaps]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
   log "provisioning a ZEC corridor with ${1:-1} prepared swap(s) (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --swaps "${1:-1}" 2>&1 | tail -4 | sed 's/^/   /'
+  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" 2>&1 | tail -4 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh"
   wait_healthy lez-maker-node; wait_healthy lez-taker-node
   # The desk shows the corridor's lot; verify.mjs asserts the amounts it is given.
@@ -264,25 +274,25 @@ zec_provision() { # zec_provision [swaps]: one fresh corridor run with that many
 }
 zec_provision_add() { # a second corridor beside the live one (its own Zcash anchor); recreates both Nodes with both
   log "adding a second ZEC corridor beside the live one (zec-provision.sh --add: offer, draft, catalog of both, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --add 2>&1 | tail -4 | sed 's/^/   /'
+  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --add 2>&1 | tail -4 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh --add"
   wait_healthy lez-maker-node; wait_healthy lez-taker-node
 }
 zec_wait() { # zec_wait <swap_id> <taker state> [timeout]: wait (the Taker Node drives its actor; zebra is mined on demand) until the Node reports that state
   log "driving the Taker's ZEC actor on the Node until ${1:0:12} shows $2"
-  python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$1" --until "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-wait --swap-id "$1" --until "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to $2"
 }
 
 zec_wait_both() { # zec_wait_both <swap_a> <swap_b> <taker state> [timeout]: wait until both swaps show that state (the Taker Node drives both actors)
   log "driving both Taker ZEC actors on the Node until ${1:0:12} and ${2:0:12} show $3"
-  python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$1" --swap-id "$2" --until "$3" --timeout "${4:-3000}" 2>&1 | sed 's/^/   /'
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-wait --swap-id "$1" --swap-id "$2" --until "$3" --timeout "${4:-3000}" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait (both) to $3"
 }
 zec_offer_ids() { python3 -c 'import json,sys; print("\n".join(e["offer_id"] for e in json.load(open(sys.argv[1]))))' "runtime/zec/$(cat runtime/zec/current)/prepared.json"; }
 zec_refund_tail() { # zec_refund_tail <swap_id>: zebra to the refund height, the Maker's refund queued, its Zcash refund in a block
   log "mining zebra to the agreement's refund height; the Maker Node refunds its Zcash (operator action) once it sees the LEZ leg refunded"
-  python3 scripts/node-e2e.py --pair Zcash zec-refund-tail --swap-id "$1" 2>&1 | sed 's/^/   /'
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-refund-tail --swap-id "$1" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-refund-tail"
 }
 wait_until_unix() { # wait_until_unix <unix seconds> <what for>
@@ -371,13 +381,21 @@ scenario_zec_happy() {
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
   zec_provision; take swap
-  note "The Taker Node drives the LEZ lock on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Zcash and claims LEZ with the secret"
+  if [[ "$direction" == TakerSellsLez ]]; then
+    note "The Taker Node drives the LEZ lock on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Zcash and claims LEZ with the secret"
+  else
+    note "The Taker Node funds the Zcash HTLC on its own, straight after the take; the Maker desk watches its row while the Maker Node locks the LEZ escrow"
+  fi
   maker_wait_bg maker_pid awaiting_taker_claim "$swap"
   desk_head_start
   zec_wait "$swap" claim_available
   wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
   taker_act "$claim_action" "$swap"
-  note "The Zcash claim waits for a zebra block; both desks watch the swap complete while the Taker Node observes it"
+  if [[ "$direction" == TakerSellsLez ]]; then
+    note "The Zcash claim waits for a zebra block; both desks watch the swap complete while the Taker Node observes it"
+  else
+    note "The Taker's LEZ claim revealed the secret; the Maker Node's Zcash claim waits for a zebra block, and both desks watch the swap complete"
+  fi
   maker_wait_bg maker_pid completed "$swap"
   taker_wait_bg taker_pid completed "$swap"
   desk_head_start
@@ -479,6 +497,7 @@ scenario_zec_maker_refund() {
   # admitted refund on its own until it has observed that; both desks show the
   # swap refunded. One press of Refund; no Retry.
   local swap maker_pid taker_pid opens
+  [[ "$direction" == TakerSellsLez ]] || fail "zec-maker-refund on the desks is the TakerSellsLez journey; node-e2e.py --pair Zcash --direction TakerSellsForeign zec-maker-refund covers the other direction"
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
     bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
