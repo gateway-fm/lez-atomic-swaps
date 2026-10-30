@@ -60,6 +60,12 @@ fi
 # --pair Zcash zec-wait polls (and mines zebra) between desk steps. Selling
 # LEZ the Taker claims Zcash and refunds LEZ; selling ZEC it claims LEZ (the
 # revealing claim) and refunds its Zcash HTLC.
+# Zcash desk journeys, both directions: zec-happy, zec-concurrent,
+# zec-concurrent-staggered (selling LEZ), zec-maker-refund, and the BTC-parity
+# set (REVIEW 21:08Z): zec-taker-refund (the Maker Node stopped after it saw the
+# first lock), zec-restart-taker / zec-restart-maker, zec-survivor (the Taker
+# Node stopped after its claim), zec-node-offline (both Nodes down with a Zcash
+# swap open). Host steps between desk presses are node-e2e.py zec-wait/zec-step.
 case "$pair" in
   Bitcoin) ;;
   Zcash)
@@ -293,6 +299,30 @@ zec_refund_tail() { # zec_refund_tail <swap_id>: zebra to the refund height, the
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-refund-tail --swap-id "$1" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-refund-tail"
 }
+zec_wait_phase() { # zec_wait_phase <swap_id> <Taker actor phases, '|'-separated> [timeout]: zebra mined for a reason
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-wait --swap-id "$1" --until-phase "$2" --timeout "${3:-2400}" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to phase $2"
+}
+zec_step() { # zec_step <swap_id> <step> [timeout]: a host step of a ZEC desk journey (node-e2e.py zec-step)
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-step --swap-id "$1" --step "$2" --timeout "${3:-1800}" 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-step $2"
+}
+zec_first_lock_phases="taker_lock_confirmed|awaiting_maker_confirmations|both_legs_locked"
+zec_claim_and_complete() { # zec_claim_and_complete <swap_id>: from the open swap to completed on both desks
+  local maker_pid taker_pid
+  maker_wait_bg maker_pid awaiting_taker_claim "$1"
+  desk_head_start
+  zec_wait "$1" claim_available
+  wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
+  taker_act "$claim_action" "$1"
+  maker_wait_bg maker_pid completed "$1"
+  taker_wait_bg taker_pid completed "$1"
+  desk_head_start
+  zec_wait "$1" completed 900
+  wait "$maker_pid" || fail "Maker desk: completed"
+  wait "$taker_pid" || fail "Taker desk: completed"
+  export_evidence "$1"
+}
 wait_until_unix() { # wait_until_unix <unix seconds> <what for>
   local now; now="$(date -u +%s)"
   (( now >= $1 )) && return 0
@@ -495,7 +525,7 @@ scenario_zec_maker_refund() {
   # admitted refund on its own until it has observed that; both desks show the
   # swap refunded. One press of Refund; no Retry.
   local swap maker_pid taker_pid opens
-  [[ "$direction" == TakerSellsLez ]] || fail "zec-maker-refund on the desks is the TakerSellsLez journey; node-e2e.py --pair Zcash --direction TakerSellsForeign zec-maker-refund covers the other direction"
+  if [[ "$direction" != TakerSellsLez ]]; then scenario_zec_maker_refund_foreign; return; fi
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
     bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
@@ -517,6 +547,78 @@ scenario_zec_maker_refund() {
   wait "$maker_pid" || fail "Maker desk: refunded"
   wait "$taker_pid" || fail "Taker desk: refunded"
   export_evidence "$swap"
+}
+# ---- ZEC desk journeys for BTC parity (REVIEW 21:08Z), both directions ----------
+scenario_zec_restart() { # scenario_zec_restart <maker|taker>
+  local swap; zec_provision; take swap
+  note "The Taker Node drives its first lock on its own; the $1 Node is restarted once it is confirmed"
+  zec_wait_phase "$swap" "$zec_first_lock_phases"
+  note "The $1 Node is restarted now, between the Taker's first lock and its claim; swaps survive a Node restart"
+  docker restart "lez-$1-node" >/dev/null; wait_healthy "lez-$1-node"
+  zec_claim_and_complete "$swap"
+}
+scenario_zec_survivor() {
+  local swap maker_pid; zec_provision; take swap
+  maker_wait_bg maker_pid awaiting_taker_claim "$swap"
+  desk_head_start
+  zec_wait "$swap" claim_available
+  wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
+  taker_act "$claim_action" "$swap"
+  note "The Taker Node is stopped right after its claim; the Maker Node completes the swap on its own"
+  stop_node lez-taker-node
+  zec_step "$swap" maker-completes 1500
+  maker_wait completed "$swap"
+  note "The Taker Node is started again; its desk catches up with the completed swap"
+  start_node lez-taker-node
+  zec_wait "$swap" completed 900
+  taker_wait completed "$swap"
+  export_evidence "$swap"
+}
+scenario_zec_taker_refund() {
+  local swap; zec_provision; take swap
+  note "The Maker Node observes the Taker's first lock and is stopped before it can lock its own leg; the Taker must recover its funds"
+  zec_step "$swap" maker-down-after-first-lock 1500; stopped_node=lez-maker-node
+  zec_step "$swap" refund-point
+  zec_wait "$swap" refund_available 900
+  note "The Taker's refund is due with no Maker lock; the Taker desk offers Refund"
+  taker_act "$refund_action" "$swap"
+  zec_wait "$swap" refunded 1800
+  taker_wait refunded "$swap"
+  note "The Maker Node is started again and reconciles the refunded swap"
+  zec_step "$swap" maker-up-reconcile 1200; stopped_node=""
+  maker_wait refunded "$swap"
+}
+scenario_zec_maker_refund_foreign() {
+  # Selling ZEC: both legs locked, the Taker never presses its LEZ claim; at the
+  # LEZ refund time the Maker refunds its LEZ escrow, then the Taker presses
+  # Refund in the claim window and its Zcash comes back at the refund height.
+  local swap maker_pid; zec_provision; take swap
+  maker_wait_bg maker_pid awaiting_taker_claim "$swap"
+  desk_head_start
+  zec_wait "$swap" claim_available
+  wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
+  note "The Taker never claims; at the LEZ refund time the Maker Node refunds its LEZ escrow"
+  zec_step "$swap" maker-lez-refund 1800
+  zec_wait "$swap" refund_available 900
+  note "The Maker's LEZ is back; the Taker desk presses Refund and its Zcash comes back at the refund height"
+  taker_act "$refund_action" "$swap"
+  zec_wait "$swap" refunded 1800
+  maker_wait refunded "$swap"
+  taker_wait refunded "$swap"
+  export_evidence "$swap"
+}
+scenario_zec_node_offline() {
+  # The desk link check is the same code for both pairs; its ZEC run holds an
+  # open Zcash swap on both desks through the outage, then completes it.
+  local swap maker_pid; zec_provision; take swap
+  maker_wait_bg maker_pid awaiting_taker_claim "$swap"
+  desk_head_start
+  zec_wait "$swap" claim_available
+  wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
+  note "A Zcash swap is open at claim_available on both desks while both Nodes go down"
+  scenario_node_offline
+  note "Both Nodes are back; the Taker claims and the swap completes"
+  zec_claim_and_complete "$swap"
 }
 scenario_maker_refund() {
   require_fast; local swap; publish; take swap
@@ -548,6 +650,11 @@ run_one() {
     zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
     zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
     zec-concurrent-staggered) [[ "$pair" == Zcash ]] || fail "zec-concurrent-staggered needs --pair Zcash"; scenario_zec_concurrent_staggered ;;
+    zec-taker-refund) [[ "$pair" == Zcash ]] || fail "zec-taker-refund needs --pair Zcash"; scenario_zec_taker_refund ;;
+    zec-restart-taker) [[ "$pair" == Zcash ]] || fail "zec-restart-taker needs --pair Zcash"; scenario_zec_restart taker ;;
+    zec-restart-maker) [[ "$pair" == Zcash ]] || fail "zec-restart-maker needs --pair Zcash"; scenario_zec_restart maker ;;
+    zec-survivor) [[ "$pair" == Zcash ]] || fail "zec-survivor needs --pair Zcash"; scenario_zec_survivor ;;
+    zec-node-offline) [[ "$pair" == Zcash ]] || fail "zec-node-offline needs --pair Zcash"; scenario_zec_node_offline ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
