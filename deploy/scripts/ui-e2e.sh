@@ -30,11 +30,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 set -a; source runtime/runtime.env; set +a
 export BTC_RPC_PASSWORD
 
-scenario="${1:-}"; direction="TakerSellsForeign"; pair="Bitcoin"; record=0
+scenario="${1:-}"; direction="TakerSellsForeign"; pair="Bitcoin"; record=0; zec_direction_given=0
 shift || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --direction) direction="$2"; shift 2 ;;
+    --direction) direction="$2"; zec_direction_given=1; shift 2 ;;
     --pair) pair="$2"; shift 2 ;;
     --record) record=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
@@ -60,8 +60,6 @@ fi
 # --pair Zcash zec-wait polls (and mines zebra) between desk steps. Selling
 # LEZ the Taker claims Zcash and refunds LEZ; selling ZEC it claims LEZ (the
 # revealing claim) and refunds its Zcash HTLC.
-zec_direction_given=0
-for arg in "$@"; do [[ "$arg" == --direction ]] && zec_direction_given=1; done
 case "$pair" in
   Bitcoin) ;;
   Zcash)

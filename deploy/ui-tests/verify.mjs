@@ -234,14 +234,31 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     }
     throw new Error(`${expectedText} is not ready${wanted ? ` on ${wanted.slice(0, 12)}` : ""}`);
   }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
+  // A press counts once the desk shows a reply to it: the output text changes.
+  // A press that produced none (the desk was still busy loading, so its
+  // handler returned without a request) is pressed again; a row that merely
+  // stays in an accepted state is not proof that anything was sent.
+  const before = await property(app, outputName, "text");
   await evaluateIn(app, target, "clicked()");
+  let pressedAt = Date.now();
+  let unanswered = 0;
   // A refusal the Node reports as a dependency being unavailable is what the
   // owner retries by pressing again (the API run retries the same way); any
   // other refusal fails the step.
   let retries = 0;
   await app.waitFor(async () => {
+    const text = await property(app, outputName, "text");
+    if (text === before) {
+      if (Date.now() - pressedAt > 20000 && unanswered < 4) {
+        unanswered += 1;
+        console.log(`  ${expectedText} produced no reply; pressing again (${unanswered}/4)`);
+        await evaluateIn(app, target, "clicked()");
+        pressedAt = Date.now();
+      }
+      throw new Error(`${expectedText} has no reply yet`);
+    }
     let envelope = null;
-    try { envelope = JSON.parse(await property(app, outputName, "text")); } catch { /* not a reply */ }
+    try { envelope = JSON.parse(text); } catch { /* not a reply */ }
     if (envelope?.ok === false) {
       const code = String(envelope.error?.code ?? envelope.code ?? "");
       if (/unavailable/.test(code) && retries < 4) {
