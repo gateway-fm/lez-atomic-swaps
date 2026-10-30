@@ -1383,7 +1383,7 @@ def zec_taker_claims() -> str:
 
 
 def zec_flow() -> str:
-    return (zec_flow() if zec_taker_sells_lez()
+    return ("(Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)" if zec_taker_sells_lez()
             else "(Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered)")
 
 
