@@ -1559,6 +1559,17 @@ def zec_mining_policy(phase: str | None, corridor: dict) -> None:
         if confirmations is not None and confirmations < 2 and height + 1 < corridor["zcash_refund_height"]:
             zebra_mine(1, f"Maker's funding has {confirmations} confirmation(s); the pre-reveal gate wants 2")
             return
+    if not zec_taker_sells_lez():
+        # Selling ZEC the funding is the Taker's own, in a block from the
+        # start; past the two pre-reveal confirmations nothing waits on zebra
+        # depth (the Maker locks LEZ, the Taker claims LEZ), and every block
+        # mined here shortens the window the Maker's follow-up Zcash claim
+        # needs (two swaps of one corridor share it).
+        if phase in {"taker_lock_confirmed", "both_legs_locked"}:
+            confirmations = zec_funding_confirmations(corridor)
+            if confirmations is not None and confirmations < 2 and height + 1 < corridor["zcash_refund_height"]:
+                zebra_mine(1, f"Taker's funding has {confirmations} confirmation(s); the pre-reveal gate wants 2")
+        return
     if phase in {"awaiting_maker_confirmations", "taker_lock_confirmed", "both_legs_locked"}:
         # Depth is mined only for a funding that exists: before the Maker has
         # funded there is nothing to bury, and every block spent here shortens
