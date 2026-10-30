@@ -337,8 +337,11 @@ A Zcash swap in which the Taker sells ZEC reports one action, the claim, while
 both legs are locked (`claim_available`). A Taker that does not claim may still
 send `taker_swap_refund_v1` at that generation: the Node admits it and runs the
 agreement-ordered recovery, which waits for the Maker's LEZ refund and the
-Zcash refund height before it submits the Taker's HTLC refund. Bitcoin swaps
-admit only the reported action.
+Zcash refund height before it submits the Taker's HTLC refund; before that
+height it waits (`awaiting_deadline`) and broadcasts nothing. One action is
+admitted per swap, so pressing Refund in the claim window gives up the claim:
+a later claim request at that generation is refused as a conflict. Bitcoin
+swaps admit only the reported action.
 
 ## Retries, errors, and observation limits
 
