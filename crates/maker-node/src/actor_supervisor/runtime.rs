@@ -1026,7 +1026,16 @@ fn parse_effect(
             phase,
             next_action,
         ) {
+            // TakerSellsLez: the Maker's own revealing LEZ claim, projected by
+            // a claim or a drive; the Taker's Zcash claim is what remains.
             (Some("lez_revealing_claim"), "claim_evidence_available", "wait") => false,
+            // TakerSellsForeign: the Taker's revealing LEZ claim, observed and
+            // projected by a drive; the Maker's own Zcash claim is next.
+            (Some("lez_revealing_claim"), "claim_evidence_available", "claim_zcash")
+                if matches!(command, ActorEffectCommand::Drive) =>
+            {
+                false
+            }
             (Some("zcash_followup_claim"), "completed", "complete") => true,
             (Some("lez_revealing_claim" | "zcash_followup_claim"), _, _) => return Err(()),
             _ if matches!(command, ActorEffectCommand::Claim) => return Err(()),
@@ -1624,11 +1633,6 @@ mod tests {
                 "claim_zcash",
             ),
             (ActorEffectCommand::Drive, "completed", "complete"),
-            (
-                ActorEffectCommand::Drive,
-                "claim_evidence_available",
-                "claim_zcash",
-            ),
         ] {
             let mut output: Value = serde_json::from_slice(&exact).unwrap();
             output["command"] = Value::from(command.name());
@@ -1643,6 +1647,46 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn parser_accepts_a_drive_projecting_the_takers_revealing_claim_in_taker_sells_foreign() {
+        // Selling ZEC the Taker's LEZ claim reveals the secret; the Maker's
+        // drive at both_legs_locked observes it and its own Zcash claim is next.
+        let observed = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "role": "maker",
+            "command": "drive",
+            "outcome": "projected",
+            "operation": "lez_revealing_claim",
+            "phase": "claim_evidence_available",
+            "revision": 5,
+            "next_action": "claim_zcash"
+        }))
+        .unwrap();
+        let parsed = parse_effect(
+            &observed,
+            ActorEffectCommand::Drive,
+            MakerActorKindV1::Zcash,
+        )
+        .unwrap();
+        assert!(!parsed.terminal);
+        assert_eq!(
+            parsed.progress,
+            MakerActorProgressObservationV1::active("claim_evidence_available", 5, "claim_zcash")
+                .unwrap()
+        );
+        // The claim command never projects someone else's claim.
+        let mut claim: Value = serde_json::from_slice(&observed).unwrap();
+        claim["command"] = Value::from("claim");
+        assert!(
+            parse_effect(
+                &serde_json::to_vec(&claim).unwrap(),
+                ActorEffectCommand::Claim,
+                MakerActorKindV1::Zcash,
+            )
+            .is_err()
+        );
     }
 
     #[test]
