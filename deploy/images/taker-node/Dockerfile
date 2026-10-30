@@ -15,6 +15,8 @@ COPY lez-v02-bridge-poc /payload/lez-v02-bridge-poc
 # The ZEC corridor provisioners: a prepared ZEC swap is built from live
 # chain facts (scripts/zec-provision.sh), not composed at take time.
 COPY zec-local-poc-provision /payload/zec-local-poc-provision
+COPY zec-local-poc-identity /payload/zec-local-poc-identity
+COPY zec-local-poc-transfer /payload/zec-local-poc-transfer
 COPY zec-local-poc-chat-draft /payload/zec-local-poc-chat-draft
 COPY zec-local-poc-chat-finalize /payload/zec-local-poc-chat-finalize
 RUN strip /payload/*
@@ -37,6 +39,8 @@ COPY --from=strip --chmod=0555 /payload/lez-btc-taker-actor /usr/local/bin/lez-b
 COPY --from=strip --chmod=0555 /payload/lez-zec-taker-actor /usr/local/bin/lez-zec-taker-actor
 COPY --from=strip --chmod=0555 /payload/lez-v02-bridge-poc /usr/local/bin/lez-v02-bridge-poc
 COPY --from=strip --chmod=0555 /payload/zec-local-poc-provision /usr/local/bin/zec-local-poc-provision
+COPY --from=strip --chmod=0555 /payload/zec-local-poc-identity /usr/local/bin/zec-local-poc-identity
+COPY --from=strip --chmod=0555 /payload/zec-local-poc-transfer /usr/local/bin/zec-local-poc-transfer
 COPY --from=strip --chmod=0555 /payload/zec-local-poc-chat-draft /usr/local/bin/zec-local-poc-chat-draft
 COPY --from=strip --chmod=0555 /payload/zec-local-poc-chat-finalize /usr/local/bin/zec-local-poc-chat-finalize
 COPY --chmod=0555 node-entrypoint.sh /usr/local/bin/node-entrypoint.sh

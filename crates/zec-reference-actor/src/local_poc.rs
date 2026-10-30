@@ -1688,7 +1688,8 @@ mod zcash_identity_tests {
     fn the_test_lane_funder_key_is_the_asset_miner_address() {
         let secret = SecretKey::from_slice(&[FUNDED_ZCASH_KEY_BYTE; 32]).unwrap();
         let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret);
-        // deploy/assets/zebra/zebrad.toml mines to this address today.
+        // tests/e2e/zebra/zebrad.toml (the isolated lane) mines to this address;
+        // the devnet mints its own Maker key (deploy/scripts/gen-config.sh).
         assert_eq!(
             regtest_p2pkh_address(&public).unwrap(),
             "tmNAP26Sw5Ra2jepAoTr1kqdkggawba6Akd"

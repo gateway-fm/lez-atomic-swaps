@@ -11,16 +11,18 @@
 #
 #   0. the Maker's Delivery identity: the ZEC ceremony binds the Maker's
 #      Delivery identity, Chat signing key and Zcash key into one key
-#      (maker-node zec_chat.rs:362, taker-node zec_taker_accept.rs:541), and the
-#      provisioner's Maker Zcash key is the regtest funder key [0x04; 32] that
-#      owns the coinbase it spends. So the Maker's Delivery signing key is
-#      pinned to that key (runtime/secrets/maker-delivery-signing.key, read by
-#      the entrypoint). The first time, both Nodes are recreated and the offer
-#      files signed by the old identity are removed: a Taker's discovery fails
-#      outright on a file it cannot authenticate. Devnet only, obviously.
+#      (maker-node zec_chat.rs:362, taker-node zec_taker_accept.rs:541). Each
+#      role's Zcash key is minted by gen-config.sh beside its LEZ identity
+#      (runtime/lez/<role>/zcash.key); the Maker's is its Delivery signing key
+#      (the entrypoint installs it) and zebra mines to its address, so the
+#      Maker owns the coinbase it spends. If the Maker runs under another
+#      identity, both Nodes are recreated and the offer files signed by the old
+#      identity are removed: a Taker's discovery fails outright on a file it
+#      cannot authenticate. In TakerSellsForeign the Taker funds Zcash: the
+#      Maker pays the Taker's key once and 100 blocks make that output mature.
 #   1. preconditions: Nodes and zebra up, LEZ finalising, >= 10 mature coinbase
-#      outputs on zebra (mined to the miner address of assets/zebra/zebrad.toml,
-#      whose key the provisioner holds; never another address);
+#      outputs on zebra (mined to the Maker's minted Zcash key, the miner_address
+#      gen-config.sh renders into runtime/zebra/zebrad.toml; never another address);
 #   2. spec from runtime/lez/<role>/identity.json, runtime.env and the market
 #      bootstrap manifest (the same facts the entrypoints render for BTC);
 #   3. provision the corridor into a staging volume, as the Node uid, at the
@@ -38,7 +40,7 @@
 # and runtime/zec/current names the run id. Every corridor is pinned to the
 # chain it was provisioned on: after `up.sh --fresh-lez`, run this again.
 #
-#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add]
+#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add] [--direction TakerSellsLez|TakerSellsForeign]
 #     --no-restart        steps 1-7 only (the Nodes keep running; the material
 #                         is picked up on their next recreate)
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
@@ -55,12 +57,14 @@ RESTART=1
 CHAIN_CHECK=1
 SWAPS=1
 ADD=0   # --add: a second corridor ("-b") beside the live one, with its own Zcash anchor; the catalog lists both
+DIRECTION=TakerSellsLez   # --direction: who sells what; TakerSellsForeign funds the Taker's Zcash key first
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
     --skip-chain-check) CHAIN_CHECK=0; shift ;;
     --swaps) SWAPS="$2"; shift 2 ;;
     --add) ADD=1; shift ;;
+    --direction) DIRECTION="$2"; shift 2 ;;
     -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -85,17 +89,25 @@ TAKER_BRIDGE_PORT="${LEZ_ZEC_TAKER_BRIDGE_PORT:-19902}"
 # The provisioner's template: 1 ZEC against 50 000 LEZ units (local_poc.rs).
 FOREIGN_UNITS=100000000
 LEZ_UNITS=50000
-ROUTE='{"pair":"Zcash","direction":"TakerSellsLez"}'
+ROUTE="{\"pair\":\"Zcash\",\"direction\":\"$DIRECTION\"}"
+case "$DIRECTION" in
+  TakerSellsLez) SPEC_DIRECTION=taker_sells_lez ;;
+  TakerSellsForeign) SPEC_DIRECTION=taker_sells_foreign ;;
+  *) echo "zec-provision failed: --direction must be TakerSellsLez or TakerSellsForeign" >&2; exit 64 ;;
+esac
+# Each role's Zcash key is minted beside its LEZ identity (gen-config.sh); the
+# Maker's is also its Delivery signing key and zebra's miner address.
+MAKER_ZCASH_KEY_FILE=runtime/lez/maker/zcash.key
+TAKER_ZCASH_KEY_FILE=runtime/lez/taker/zcash.key
+TAKER_FUNDING_ZATOSHIS=200000000   # 2 ZEC moved to the Taker's key before a TakerSellsForeign corridor
 # The offer's validity bounds the catalog's: the draft copies the offer expiry
 # into the transcript and the take checks it. The store's maximum, so one
 # corridor outlives one suite.
 OFFER_TTL_SECONDS="${LEZ_ZEC_OFFER_TTL_SECONDS:-86400}"
 MIN_MATURE_OUTPUTS=10
 MATURITY=100
-# The provisioner's Maker Zcash key (local_poc.rs FUNDED_ZCASH_KEY_BYTE), the
-# key behind zebra's miner address; the Maker's Delivery identity must be it.
-FUNDER_KEY_HEX="$(printf '04%.0s' $(seq 1 32))"
-DELIVERY_KEY_FILE=runtime/secrets/maker-delivery-signing.key
+# lez-maker-cli in the Maker image derives the Delivery identity of the Maker's
+# minted Zcash key (the one zebra mines to); the running Maker must be it.
 MAKER_IMAGE="${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}"
 
 log() { printf '[zec-provision %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -202,27 +214,17 @@ log "0/8 Maker Delivery identity"
 for c in lez-maker-node lez-taker-node lez-zebra; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
 done
-if [[ ! -s "$DELIVERY_KEY_FILE" ]] || [[ "$(tr -d ' \n' <"$DELIVERY_KEY_FILE")" != "$FUNDER_KEY_HEX" ]]; then
-  # 0644, like runtime/lez/<role>/lez-signer.key: the Maker reads it as uid 4713
-  # through a read-only bind mount, and the host user is not that uid. The
-  # value is the public regtest test key [0x04; 32], not a secret; this is a
-  # devnet convenience and must be described as such wherever it is cited.
-  printf '%s' "$FUNDER_KEY_HEX" >"$DELIVERY_KEY_FILE"
-  chmod 0644 "$DELIVERY_KEY_FILE"
-  log "  wrote $DELIVERY_KEY_FILE (the regtest funder key)"
-fi
-# gen-config.sh leaves runtime/secrets 0700; the Maker (uid 4713) must traverse
-# it to read the key through the ro mount. 0711 exposes no listing and the
-# private files in it keep their own 0600.
-chmod 0711 runtime/secrets
+for f in "$MAKER_ZCASH_KEY_FILE" "$TAKER_ZCASH_KEY_FILE"; do
+  [[ -s "$f" ]] || fail "$f is missing: run scripts/gen-config.sh runtime (it mints both roles' Zcash keys)"
+done
 # The CLI reads only an owner-owned 0600 file: copy the key into one first.
-expected_identity="$(docker run --rm --user 0:0 -v "$PWD/$DELIVERY_KEY_FILE:/in/key:ro" --entrypoint bash "$MAKER_IMAGE" \
+expected_identity="$(docker run --rm --user 0:0 -v "$PWD/$MAKER_ZCASH_KEY_FILE:/in/key:ro" --entrypoint bash "$MAKER_IMAGE" \
   -c 'umask 077; install -m 0600 /in/key /tmp/k && lez-maker-cli delivery-identity --signing-key-file /tmp/k' </dev/null |
   tr -d ' \n' | grep -o '0[23][0-9a-f]\{64\}')" ||
-  fail "lez-maker-cli delivery-identity failed on $DELIVERY_KEY_FILE"
+  fail "lez-maker-cli delivery-identity failed on $MAKER_ZCASH_KEY_FILE"
 current_identity="$(docker run --rm -v "$DELIVERY_VOLUME:/d:ro" --entrypoint cat "$TAKER_IMAGE" /d/maker-delivery-identity.pub </dev/null 2>/dev/null | tr -d ' \n')"
 if [[ "$current_identity" == "$expected_identity" ]]; then
-  log "  Maker Delivery identity is the corridor key ($expected_identity)"
+  log "  Maker Delivery identity is its minted Zcash key ($expected_identity)"
 else
   [[ "$RESTART" == 1 ]] || fail "the Maker's Delivery identity ($current_identity) is not the corridor key ($expected_identity); rerun without --no-restart to pin it"
   log "  pinning the Maker Delivery identity $current_identity → $expected_identity (both Nodes recreated)"
@@ -281,9 +283,9 @@ finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
@@ -291,7 +293,7 @@ def base58(raw: bytes) -> str:
     return "1" * (len(raw) - len(raw.lstrip(b"\0"))) + text
 ids = {r: json.load(open(f"runtime/lez/{r}/identity.json"))["account_id"] for r in ("maker", "taker")}
 spec = {
-    "schema_version": 1, "run_id": run_id, "swap_id": swap_id, "direction": "taker_sells_lez",
+    "schema_version": 1, "run_id": run_id, "swap_id": swap_id, "direction": direction,
     # The LEZ escrow's validity window ends at the agreement's LEZ refund time;
     # the test-lane profile's 60 s cannot be met here (zec-swap-sdk profile.rs).
     "profile": "deterministic-local-devnet-v2",
@@ -320,13 +322,31 @@ docker volume create "$STAGING" >/dev/null
 spec_mounts=()
 for (( k = 0; k < SWAPS; k++ )); do spec_mounts+=(-v "$PWD/$(out_of $k)/spec.json:/in/spec${SUFFIX[$(slot_of $k)]}.json:ro"); done
 helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
-  -v "$PWD/runtime/lez/maker/lez-signer.key:/in/maker.key:ro" -v "$PWD/runtime/lez/taker/lez-signer.key:/in/taker.key:ro" -- "
+  -v "$PWD/runtime/lez/maker/lez-signer.key:/in/maker.key:ro" -v "$PWD/runtime/lez/taker/lez-signer.key:/in/taker.key:ro" \
+  -v "$PWD/$MAKER_ZCASH_KEY_FILE:/in/maker-zcash.key:ro" -v "$PWD/$TAKER_ZCASH_KEY_FILE:/in/taker-zcash.key:ro" -- "
   set -e; umask 077
   mkdir -p $ZEC_ROOT/signers
   for f in /in/spec*.json; do install -m 0600 \$f $ZEC_ROOT/\$(basename \$f); done
   install -m 0600 /in/maker.key $ZEC_ROOT/signers/maker.key
   install -m 0600 /in/taker.key $ZEC_ROOT/signers/taker.key
+  install -m 0600 /in/maker-zcash.key $ZEC_ROOT/signers/maker-zcash.key
+  install -m 0600 /in/taker-zcash.key $ZEC_ROOT/signers/taker-zcash.key
   chown -R $NODE_UID:$NODE_UID $ZEC_ROOT && chmod 0700 $ZEC_ROOT $ZEC_ROOT/signers"
+if [[ "$DIRECTION" == TakerSellsForeign ]]; then
+  # The Taker funds Zcash: it needs a mature output under its own key. Zebra
+  # mines to the Maker's key only, so the Maker pays the Taker once, and 100
+  # blocks make that output a funder candidate (the provisioner's maturity
+  # rule applies to every candidate, not only to coinbase).
+  log "  TakerSellsForeign: paying the Taker's key $TAKER_FUNDING_ZATOSHIS zatoshis from the Maker's, then 100 blocks"
+  docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
+    --entrypoint zec-local-poc-transfer "$TAKER_IMAGE" \
+    --zebra-endpoint http://127.0.0.1:18232 --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
+    --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" --value-zatoshis "$TAKER_FUNDING_ZATOSHIS" </dev/null >"$out/taker-funding.json" ||
+    fail "zec-local-poc-transfer failed (see above)"
+  log "  transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"][:16] + "… to " + s["to_address"])' "$out/taker-funding.json")"
+  for _ in $(seq 1 10); do zebra generate "[10]" >/dev/null || fail "zebra generate failed"; done
+  log "  zebra height $(zebra getblockcount): the Taker's output is mature"
+fi
 # --network host: the provisioner only accepts a loopback zebra endpoint, and
 # Compose publishes zebra on 127.0.0.1:18232.
 for (( k = 0; k < SWAPS; k++ )); do
@@ -334,7 +354,9 @@ docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_RO
   --entrypoint zec-local-poc-provision "$TAKER_IMAGE" \
   --spec-file "$ZEC_ROOT/spec${SUFFIX[$(slot_of $k)]}.json" --output-root "$(corridor_of $k)" \
   --maker-lez-signer-key-file "$ZEC_ROOT/signers/maker.key" \
-  --taker-lez-signer-key-file "$ZEC_ROOT/signers/taker.key" </dev/null >"$(out_of $k)/provision-summary.json" ||
+  --taker-lez-signer-key-file "$ZEC_ROOT/signers/taker.key" \
+  --maker-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
+  --taker-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" </dev/null >"$(out_of $k)/provision-summary.json" ||
   fail "zec-local-poc-provision failed for swap $k (see above)"
 python3 - "$(out_of $k)/provision-summary.json" <<'PY'
 import json, sys

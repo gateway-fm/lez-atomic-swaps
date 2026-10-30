@@ -97,7 +97,9 @@ services:
     ports:
       - "127.0.0.1:18232:18232"
     volumes:
-      - ./assets/zebra/zebrad.toml:/run-config/zebrad.toml:ro
+      # Rendered by scripts/gen-config.sh from assets/zebra/zebrad.toml: the
+      # miner_address is the Maker's minted Zcash key (runtime/lez/maker/zcash.key).
+      - ./runtime/zebra/zebrad.toml:/run-config/zebrad.toml:ro
       - zebra_data:/var/lib/zebra
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=128m,mode=1777
@@ -374,8 +376,6 @@ services:
       - delivery_dir:/delivery
       - ./runtime/lez/maker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
-      # Optional pinned Delivery signing key (maker-delivery-signing.key).
-      - ./runtime/secrets:/run-secrets:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     tmpfs:
       - /tmp:rw,nosuid,size=64m,mode=1777

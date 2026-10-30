@@ -231,6 +231,44 @@ for pair in maker:maker-munich-01 taker:taker-zurich-01; do
   # Bind mounts keep host ownership; the entrypoint copies these owner-private.
   chmod 0644 "$RUNTIME/lez/$role"/* 2>/dev/null || true
 done
+# Each role's Zcash key, minted once beside its LEZ identity and kept across
+# reruns: the Maker's is also its Delivery signing key (the entrypoint installs
+# it; the ZEC ceremony binds Delivery identity, Chat key and Zcash key into one
+# key) and zebra mines to its transparent address, so the Maker owns the
+# coinbase the ZEC provisioner spends; the Taker's key funds Zcash in
+# TakerSellsForeign (scripts/zec-provision.sh pays it once from the Maker's).
+# Nothing here is a constant: a fresh runtime mints fresh keys. The address
+# comes from zec-local-poc-identity, staged on the host by from-scratch.sh
+# --only rust or, once the stage is gone, run from the Taker image.
+zcash_transparent_address() { # zcash_transparent_address <owner-private key file>
+  local key="$1" tool="$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" identity
+  if [[ -x "$tool" ]]; then
+    identity="$("$tool" --zcash-key-file "$key")"
+  else
+    identity="$(docker run --rm --user "$(id -u):$(id -g)" -v "$key:/in/zcash.key:ro" \
+      --entrypoint zec-local-poc-identity "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" \
+      --zcash-key-file /in/zcash.key </dev/null)"
+  fi || { echo "zec-local-poc-identity failed: stage it (from-scratch.sh --only rust) or build the Taker image first" >&2; return 1; }
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["transparent_address"])' <<<"$identity"
+}
+for role in maker taker; do
+  if [[ ! -s "$RUNTIME/lez/$role/zcash.key" ]]; then
+    (umask 077; openssl rand -hex 32 >"$RUNTIME/lez/$role/zcash.key")
+    echo "minted the $role Zcash key: runtime/lez/$role/zcash.key"
+  fi
+done
+# The identity tool reads owner-private files only; the mounted copy is 0644
+# like lez-signer.key (the entrypoint re-installs it 0600), so derive from a
+# private copy under runtime/secrets.
+maker_zcash_private="$(mktemp "$RUNTIME/secrets/zcash-key.XXXXXX")"
+install -m 0600 "$RUNTIME/lez/maker/zcash.key" "$maker_zcash_private"
+zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || { rm -f "$maker_zcash_private"; exit 1; }
+rm -f "$maker_zcash_private"
+chmod 0644 "$RUNTIME/lez/maker/zcash.key" "$RUNTIME/lez/taker/zcash.key"
+mkdir -p "$RUNTIME/zebra"
+sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$RUNTIME/zebra/zebrad.toml"
+chmod 0644 "$RUNTIME/zebra/zebrad.toml"
+echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): runtime/zebra/zebrad.toml"
 mkdir -p "$RUNTIME/sockets"
 rm -f "$RUNTIME/runtime.env"
 # Recovery timing profile for the Node-owned Bitcoin lifecycle. `local` keeps

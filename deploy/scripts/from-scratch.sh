@@ -288,6 +288,7 @@ phase_rust() {
     taker-node/lez-taker-chat-gateway taker-node/lez-taker-registry-init
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
     taker-node/zec-local-poc-provision taker-node/zec-local-poc-chat-draft taker-node/zec-local-poc-chat-finalize
+    taker-node/zec-local-poc-identity taker-node/zec-local-poc-transfer
     zebra/lez-runtime-healthcheck
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to

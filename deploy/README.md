@@ -444,7 +444,10 @@ Both Nodes settle a BTC↔LEZ swap themselves: no runner, no demo controller
 on the stack.
 `node-entrypoint.sh` renders each role's inputs into its state volume — the
 LEZ identity (`runtime/lez/<role>`, the Maker is wallet `maker-munich-01`, the
-Taker `taker-zurich-01`), the Bitcoin RPC cookie and, once
+Taker `taker-zurich-01`; beside it `zcash.key`, the role's Zcash key that
+`gen-config.sh` mints once — the Maker's is also its Delivery signing key and
+the address zebra mines to, rendered into `runtime/zebra/zebrad.toml`; the
+Taker's funds Zcash when it sells it), the Bitcoin RPC cookie and, once
 `market-bootstrap.sh` has recorded the escrow deployment in
 `runner-work/market/market-bootstrap.env`, the `btc-role.json` that names the
 Bitcoin network, endpoints, wallet, policy, LEZ chain identity and the sidecar

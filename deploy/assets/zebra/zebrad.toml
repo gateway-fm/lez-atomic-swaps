@@ -1,7 +1,10 @@
 # Test-only Regtest node. RPC has no cookie because Compose publishes it only on
 # an ephemeral 127.0.0.1 port and deletes all state with the project.
 [mining]
-miner_address = "tmNAP26Sw5Ra2jepAoTr1kqdkggawba6Akd"
+# Template: scripts/gen-config.sh renders runtime/zebra/zebrad.toml from this
+# file with the Maker's minted Zcash key as the miner address (compose mounts
+# the rendered copy). The placeholder is not an address.
+miner_address = "__LEZ_MAKER_ZCASH_ADDRESS__"
 
 [network]
 network = "Regtest"
