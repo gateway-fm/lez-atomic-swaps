@@ -330,6 +330,17 @@ pub(super) fn decide(
                     TakerTerminalActionV1::Refund => Decision::Recover,
                 };
             }
+            // Selling ZEC, the admitted claim is the Taker's revealing LEZ
+            // claim; once it is final (ClaimEvidenceAvailable, next action
+            // Wait) the admission is done, but the swap completes only when
+            // a drive observes the Maker's Zcash follow-up claim.
+            Ok(false) | Err(_)
+                if action == TakerTerminalActionV1::Claim
+                    && phase == Phase::ClaimEvidenceAvailable
+                    && next_action == ZecLifecycleAction::Wait =>
+            {
+                return Decision::Drive;
+            }
             // Admitted and done, or admitted against a generation the actor
             // has left: the owner's paths say so; here there is only observing.
             Ok(false) | Err(_) => return Decision::Observe,
@@ -892,6 +903,25 @@ mod tests {
                 None
             ),
             Decision::Drive
+        );
+        // The same while the owner's claim admission is still open (the live
+        // shape: the admission at generation 4 is done, the actor moved on).
+        for generation in [4, 6] {
+            assert_eq!(
+                decide(
+                    active(Phase::ClaimEvidenceAvailable, 6, ZecLifecycleAction::Wait),
+                    Some((TakerTerminalActionV1::Claim, generation))
+                ),
+                Decision::Drive
+            );
+        }
+        // A refund admission at that shape stays an observation.
+        assert_eq!(
+            decide(
+                active(Phase::ClaimEvidenceAvailable, 6, ZecLifecycleAction::Wait),
+                Some((TakerTerminalActionV1::Refund, 6))
+            ),
+            Decision::Observe
         );
     }
 
