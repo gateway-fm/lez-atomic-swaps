@@ -3396,6 +3396,120 @@ async fn assert_pre_reveal_funding_gate(
     assert_exact_funding_submission(&mut fixture, &agreement, &expected_context, secret).await;
 }
 
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one re-planned claim is followed end to end per direction"
+)]
+async fn a_superseded_revealing_claim_is_replanned_restaged_and_lands_in_both_directions() {
+    // FINDINGS 24: two claims of one LEZ account prepared at one nonce; the
+    // one that lost is named Superseded, re-planned (same claim, live nonce),
+    // restaged with its lineage and margin, resubmitted and projected.
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-claim-replan-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xb1; 32],
+        ),
+        (
+            "sdk-claim-replan-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xb2; 32],
+        ),
+    ] {
+        let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+        lock_claim_actor_fixture(direction, &mut fixture).await;
+        let agreement = fixture.maker.agreement().clone();
+        fixture
+            .corridor
+            .expose_funding_as(exact_zcash_funding_observation(&agreement));
+        *fixture
+            .corridor
+            .supersede_claim
+            .lock()
+            .expect("supersede claim lock") = Some(([0xc1; 32], 1, 2));
+        assert_eq!(
+            drive_revealing_actor(&mut fixture)
+                .await
+                .expect("superseded is an outcome"),
+            ClaimDriveOutcome::Superseded {
+                step: ClaimStepV1::RevealingLez,
+                planned_nonce: 1,
+                live_nonce: 2,
+            }
+        );
+        assert!(
+            fixture.corridor.submissions().is_empty(),
+            "nothing went out"
+        );
+        let actor = match first_claimant {
+            Participant::Maker => &mut fixture.maker,
+            Participant::Taker => &mut fixture.taker,
+        };
+        let open = actor
+            .open_revealing_claim_submission()
+            .await
+            .expect("open claim");
+        assert_eq!(open.expected_submission_id(), &[0xc1; 32]);
+        let mut exact = vec![0x6c, 0x65, 0x7a];
+        exact.extend_from_slice(&secret);
+        exact.push(2);
+        let replanned = lez_zec_swap_sdk::PreparedClaimSubmissionV1::new(
+            ClaimStepV1::RevealingLez,
+            [0xc4; 32],
+            exact.clone(),
+        )
+        .expect("re-planned claim");
+        let supersession = lez_zec_swap_sdk::ClaimSupersessionV1::new(
+            lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+                replan_index: 1,
+                superseded_id: [0xc1; 32],
+                superseded_nonce: 1,
+                replanned_id: [0xc4; 32],
+                replanned_nonce: 2,
+                lez_refund_margin_ms: 1_200_000,
+            },
+        )
+        .expect("supersession");
+        assert_eq!(
+            actor
+                .restage_revealing_claim(&replanned, &supersession)
+                .await
+                .expect("restaged"),
+            lez_zec_swap_sdk::CreateFirstLockOutcome::Created
+        );
+        assert_eq!(
+            actor
+                .restage_revealing_claim(&replanned, &supersession)
+                .await
+                .expect("replayed restage"),
+            lez_zec_swap_sdk::CreateFirstLockOutcome::ExistingSame
+        );
+        let lineage = actor.claim_supersessions().await.expect("lineage");
+        assert_eq!(lineage, vec![supersession]);
+        assert_eq!(lineage[0].lez_refund_margin_ms(), 1_200_000);
+        assert_eq!(
+            drive_revealing_actor(&mut fixture)
+                .await
+                .expect("re-planned claim goes out"),
+            ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+        );
+        assert_eq!(fixture.corridor.revealing_submission_bytes(), vec![exact]);
+        fixture.corridor.confirm_revealing_claim(secret);
+        assert!(matches!(
+            drive_revealing_actor(&mut fixture)
+                .await
+                .expect("re-planned claim projected"),
+            ClaimDriveOutcome::Projected {
+                step: ClaimStepV1::RevealingLez,
+                ..
+            }
+        ));
+    }
+}
+
 async fn assert_funding_wait(
     fixture: &mut ClaimActorFixture,
     observation: ZcashFundingObservationV1,

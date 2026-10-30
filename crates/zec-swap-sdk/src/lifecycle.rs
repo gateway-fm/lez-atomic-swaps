@@ -122,6 +122,12 @@ pub enum ZecSdkError {
     /// The supersession record itself is malformed.
     #[error(transparent)]
     InvalidFirstLockSupersession(#[from] crate::FirstLockSupersessionError),
+    /// The claim re-plan does not retire the open claim and install the new one.
+    #[error("the revealing-claim re-plan does not supersede the open claim")]
+    ClaimSupersessionMismatch,
+    /// The claim supersession record itself is malformed.
+    #[error(transparent)]
+    InvalidClaimSupersession(#[from] crate::ClaimSupersessionError),
     /// No durable maker-lock plan exists for the active agreement.
     #[error("no durable maker-lock plan exists for the active agreement")]
     MissingMakerLockIntent,

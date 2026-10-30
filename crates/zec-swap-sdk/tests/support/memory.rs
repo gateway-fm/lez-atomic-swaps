@@ -161,6 +161,8 @@ pub(crate) struct MemoryStore {
     pub(crate) claim_nonce_sequence: Arc<Mutex<u64>>,
     pub(crate) first_locks: Arc<Mutex<HashMap<String, FirstLockIntentV1>>>,
     pub(crate) supersessions: Arc<Mutex<HashMap<String, Vec<FirstLockSupersessionV1>>>>,
+    pub(crate) claim_supersessions:
+        Arc<Mutex<HashMap<String, Vec<lez_zec_swap_sdk::ClaimSupersessionV1>>>>,
     pub(crate) first_lock_transitions: Arc<Mutex<HashMap<(String, u64), FirstLockTransitionV1>>>,
     pub(crate) observed_taker_first_lock_transitions:
         Arc<Mutex<HashMap<(String, u64), ObservedTakerFirstLockTransitionV1>>>,
@@ -1067,6 +1069,62 @@ impl ClaimRecoveryStore for MemoryStore {
             .cloned())
     }
 
+    async fn restage_claim_intent(
+        &self,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+        supersession: &lez_zec_swap_sdk::ClaimSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        if protected.fingerprint() != intent.protected_payload_fingerprint() {
+            return Err(TestPortError(
+                "claim intent and protected payload disagree".to_owned(),
+            ));
+        }
+        let key = intent.swap_id().as_str().to_owned();
+        let mut intents = self.claim_intents.lock().expect("claim intents lock");
+        let mut lineage = self.claim_supersessions.lock().expect("claim lineage lock");
+        let history = lineage.entry(key.clone()).or_default();
+        let Some((open, _)) = intents.get(&key) else {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        };
+        if let Some(recorded) = history
+            .iter()
+            .find(|recorded| recorded.replan_index() == supersession.replan_index())
+        {
+            return Ok(
+                if recorded == supersession
+                    && open.expected_submission_id() == intent.expected_submission_id()
+                {
+                    CreateFirstLockOutcome::ExistingSame
+                } else {
+                    CreateFirstLockOutcome::Conflict
+                },
+            );
+        }
+        if open.expected_submission_id() != supersession.superseded_id()
+            || intent.expected_submission_id() != supersession.replanned_id()
+            || supersession.replan_index() != u32::try_from(history.len()).unwrap() + 1
+        {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        }
+        history.push(*supersession);
+        intents.insert(key, (intent.clone(), protected.clone()));
+        Ok(CreateFirstLockOutcome::Created)
+    }
+
+    async fn load_claim_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<lez_zec_swap_sdk::ClaimSupersessionV1>, Self::Error> {
+        Ok(self
+            .claim_supersessions
+            .lock()
+            .expect("claim lineage lock")
+            .get(swap_id.as_str())
+            .cloned()
+            .unwrap_or_default())
+    }
+
     async fn commit_revealing_claim_transition(
         &self,
         transition: &RevealingClaimTransitionV1,
@@ -1511,8 +1569,15 @@ pub(crate) enum ClaimPortEvent {
     SubmitReveal,
 }
 
+/// The claim identity whose next submission is answered Superseded, with the
+/// planned and live nonces.
+pub(crate) type SupersededClaimSlot = ([u8; 32], u128, u128);
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct MemoryClaimCorridor {
+    /// FINDINGS 24: the next submission of this claim identity answers
+    /// Superseded{planned, live} instead of going out.
+    pub(crate) supersede_claim: Arc<Mutex<Option<SupersededClaimSlot>>>,
     pub(crate) submissions: Arc<Mutex<Vec<ClaimStepV1>>>,
     pub(crate) revealing_submission_bytes: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(crate) revealing_preimage: Arc<Mutex<Option<[u8; 32]>>>,
@@ -1901,7 +1966,7 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
     ) -> Result<RevealingClaimObservationV1, Self::Error> {
         self.4.record_event(ClaimPortEvent::ObserveReveal);
         if prepared.step() != ClaimStepV1::RevealingLez
-            || prepared.expected_submission_id() != &[0xc1; 32]
+            || !matches!(prepared.expected_submission_id(), [0xc1 | 0xc4, ..])
         {
             return Err(TestPortError(
                 "unexpected prepared LEZ claim identity".to_owned(),
@@ -1916,7 +1981,11 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
             RevealingClaimEvidenceV1::from_prepared_lez_claim_snapshot(
                 agreement,
                 prepared,
-                canonical_lez_claim_snapshot(agreement, preimage),
+                canonical_lez_claim_snapshot_for(
+                    agreement,
+                    preimage,
+                    *prepared.expected_submission_id(),
+                ),
             )
             .map(RevealingClaimObservationV1::Confirmed)
             .map_err(|error| TestPortError(error.to_string()))
@@ -1946,20 +2015,34 @@ impl LezClaimPort for MemoryLezTakerLockObservation {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
         if prepared.step() != ClaimStepV1::RevealingLez
-            || prepared.expected_submission_id() != &[0xc1; 32]
+            || !matches!(prepared.expected_submission_id(), [0xc1 | 0xc4, ..])
             || !prepared.exact_submission().starts_with(&[0x6c, 0x65, 0x7a])
         {
             return Err(TestPortError(
                 "unexpected deterministic LEZ claim bytes".to_owned(),
             ));
         }
+        let superseded = self
+            .4
+            .supersede_claim
+            .lock()
+            .expect("supersede claim lock")
+            .take_if(|(id, _, _)| id == prepared.expected_submission_id());
+        if let Some((_, planned_nonce, live_nonce)) = superseded {
+            return Ok(
+                lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Superseded {
+                    planned_nonce,
+                    live_nonce,
+                },
+            );
+        }
         self.4.record_event(ClaimPortEvent::SubmitReveal);
         self.4
             .record_revealing_submission(prepared.exact_submission());
         self.4.record_submission(ClaimStepV1::RevealingLez);
-        Ok(())
+        Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
     }
 }
 
@@ -2433,6 +2516,16 @@ pub(crate) fn canonical_lez_claim_snapshot(
     agreement: &lez_zec_swap_sdk::ZecAgreementV1,
     preimage: [u8; 32],
 ) -> LezClaimNodeSnapshotV1 {
+    canonical_lez_claim_snapshot_for(agreement, preimage, [0xc1; 32])
+}
+
+/// The canonical snapshot of the claim with this transaction identity (a
+/// re-planned claim lands under its own identity, FINDINGS 24).
+pub(crate) fn canonical_lez_claim_snapshot_for(
+    agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+    preimage: [u8; 32],
+    claim_id: [u8; 32],
+) -> LezClaimNodeSnapshotV1 {
     let terms = agreement.lez_terms();
     let LezAssetV1::Native {
         authenticated_transfer_program_id,
@@ -2465,8 +2558,8 @@ pub(crate) fn canonical_lez_claim_snapshot(
         *terms.chain().genesis_block_hash(),
         LezStableTipV1::new([0xc3; 32], 199, [0xc3; 32], 199),
         LezClaimTransactionSnapshotV1::new(
-            [0xc1; 32],
-            [0xc1; 32],
+            claim_id,
+            claim_id,
             *terms.escrow_program_id(),
             claimant,
             vec![

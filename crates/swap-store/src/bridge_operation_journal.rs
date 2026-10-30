@@ -43,6 +43,17 @@ pub enum BridgeOperationKind {
     RevealingClaimDiscoveryObserve,
     /// Submit the revealing LEZ claim.
     RevealingClaimSubmit,
+    /// Re-plan the revealing LEZ claim for the first time after a superseded
+    /// nonce (FINDINGS 24).
+    RevealingClaimSupersede1,
+    /// Second re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede2,
+    /// Third re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede3,
+    /// Fourth re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede4,
+    /// Fifth and last re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede5,
     /// Prepare the fixed-destination native refund.
     NativeRefundPrepare,
     /// Observe owner-side native refund eligibility before preparation.
@@ -59,7 +70,7 @@ impl BridgeOperationKind {
     /// Every operation, in declaration order. The journal's SQL CHECK lists
     /// the same names; a test inserts each of these under it so the alphabet
     /// and the constraint cannot drift apart again (they did once, 2026-10-29).
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 24] = [
         Self::NativeEscrowPrepare,
         Self::NativeEscrowExactObserve,
         Self::NativeEscrowDiscoveryObserve,
@@ -74,6 +85,11 @@ impl BridgeOperationKind {
         Self::RevealingClaimExactObserve,
         Self::RevealingClaimDiscoveryObserve,
         Self::RevealingClaimSubmit,
+        Self::RevealingClaimSupersede1,
+        Self::RevealingClaimSupersede2,
+        Self::RevealingClaimSupersede3,
+        Self::RevealingClaimSupersede4,
+        Self::RevealingClaimSupersede5,
         Self::NativeRefundPrepare,
         Self::NativeRefundEligibilityObserve,
         Self::NativeRefundExactObserve,
@@ -95,6 +111,20 @@ impl BridgeOperationKind {
         }
     }
 
+    /// The operation owning claim re-plan number `index` (one-based); `None`
+    /// past the bound, which the caller reports as exhausted.
+    #[must_use]
+    pub const fn revealing_claim_supersede(index: u32) -> Option<Self> {
+        match index {
+            1 => Some(Self::RevealingClaimSupersede1),
+            2 => Some(Self::RevealingClaimSupersede2),
+            3 => Some(Self::RevealingClaimSupersede3),
+            4 => Some(Self::RevealingClaimSupersede4),
+            5 => Some(Self::RevealingClaimSupersede5),
+            _ => None,
+        }
+    }
+
     const fn name(self) -> &'static str {
         match self {
             Self::NativeEscrowPrepare => "native_escrow_prepare",
@@ -111,6 +141,11 @@ impl BridgeOperationKind {
             Self::RevealingClaimExactObserve => "revealing_claim_exact_observe",
             Self::RevealingClaimDiscoveryObserve => "revealing_claim_discovery_observe",
             Self::RevealingClaimSubmit => "revealing_claim_submit",
+            Self::RevealingClaimSupersede1 => "revealing_claim_supersede_1",
+            Self::RevealingClaimSupersede2 => "revealing_claim_supersede_2",
+            Self::RevealingClaimSupersede3 => "revealing_claim_supersede_3",
+            Self::RevealingClaimSupersede4 => "revealing_claim_supersede_4",
+            Self::RevealingClaimSupersede5 => "revealing_claim_supersede_5",
             Self::NativeRefundPrepare => "native_refund_prepare",
             Self::NativeRefundEligibilityObserve => "native_refund_eligibility_observe",
             Self::NativeRefundExactObserve => "native_refund_exact_observe",
@@ -547,7 +582,10 @@ const BRIDGE_OPERATION_CONTEXTS_TABLE: &str = "
                 'native_refund_submit',
                 'native_escrow_supersede_1', 'native_escrow_supersede_2',
                 'native_escrow_supersede_3', 'native_escrow_supersede_4',
-                'native_escrow_supersede_5'
+                'native_escrow_supersede_5',
+                'revealing_claim_supersede_1', 'revealing_claim_supersede_2',
+                'revealing_claim_supersede_3', 'revealing_claim_supersede_4',
+                'revealing_claim_supersede_5'
             )),
             poll_sequence       INTEGER NOT NULL CHECK (poll_sequence >= 0),
             request_id          TEXT NOT NULL,
@@ -577,10 +615,11 @@ const BRIDGE_OPERATION_CONTEXTS_INDEXES: &str = "
             ON bridge_operation_contexts (run_id, local_role, request_id);
 ";
 
-/// A token every current table definition carries (the `superseded`
-/// completion outcome); its absence marks a journal created before the
-/// supersede operations and their retirement outcome.
-const NEWEST_DEFINITION_TOKEN: &str = "'superseded'";
+/// A token only the current table definition carries (the last claim
+/// re-plan operation, FINDINGS 24); its absence marks a journal created
+/// before it — before the claim re-plans, or before every supersede operation
+/// and their `superseded` retirement outcome (D1).
+const NEWEST_DEFINITION_TOKEN: &str = "'revealing_claim_supersede_5'";
 
 fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), StoreError> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;

@@ -2602,7 +2602,7 @@ mod tests {
             &self,
             _agreement: &ZecAgreementV1,
             _prepared: &PreparedClaimSubmissionV1,
-        ) -> Result<(), Self::Error> {
+        ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
             panic!("already-confirmed revealing claim is never submitted")
         }
     }

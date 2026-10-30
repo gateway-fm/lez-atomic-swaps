@@ -805,7 +805,7 @@ impl LezClaimPort for SqliteClaimPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
         if !prepared
             .exact_submission()
             .starts_with(b"sqlite-lez-claim:")
@@ -824,7 +824,7 @@ impl LezClaimPort for SqliteClaimPort {
         {
             Err(TestPortError("claim accepted before transport failure"))
         } else {
-            Ok(())
+            Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
         }
     }
 }
@@ -2553,6 +2553,103 @@ async fn claim_retry_observes_exact_durable_bytes_before_any_rebroadcast() {
     assert_unknown_revealing_submission_is_observed().await;
     assert_unknown_followup_submission_reuses_context_after_reopen().await;
     assert_stale_revealing_commit_is_replayed().await;
+}
+
+#[tokio::test]
+async fn a_restaged_revealing_claim_and_its_lineage_survive_a_reopen() {
+    // FINDINGS 24: the re-planned claim replaces the open intent atomically,
+    // the superseded one stays as lineage, a replay is ExistingSame, a
+    // different claim under the used index conflicts, and all of it is what a
+    // reopened store returns.
+    let id = "sqlite-claim-replan-lineage";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture.port.expose_exact_funding();
+    assert_eq!(
+        fixture.taker.drive_claim().await.expect("first submission"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+    );
+    let open = fixture
+        .taker
+        .open_revealing_claim_submission()
+        .await
+        .expect("open claim");
+    let mut replanned_id = *open.expected_submission_id();
+    replanned_id[0] ^= 0xff;
+    let mut exact = open.exact_submission().to_vec();
+    exact.push(2);
+    let replanned =
+        PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, replanned_id, exact.clone())
+            .expect("re-planned claim");
+    let supersession =
+        lez_zec_swap_sdk::ClaimSupersessionV1::new(lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+            replan_index: 1,
+            superseded_id: *open.expected_submission_id(),
+            superseded_nonce: 7,
+            replanned_id,
+            replanned_nonce: 8,
+            lez_refund_margin_ms: 900_000,
+        })
+        .expect("supersession");
+    assert_eq!(
+        fixture
+            .taker
+            .restage_revealing_claim(&replanned, &supersession)
+            .await
+            .expect("restaged"),
+        CreateFirstLockOutcome::Created
+    );
+    assert_eq!(
+        fixture
+            .taker
+            .restage_revealing_claim(&replanned, &supersession)
+            .await
+            .expect("replayed"),
+        CreateFirstLockOutcome::ExistingSame
+    );
+    // The same index naming another claim is refused.
+    let mut other_id = replanned_id;
+    other_id[1] ^= 0xff;
+    let other = PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, other_id, exact.clone())
+        .expect("other claim");
+    let clash =
+        lez_zec_swap_sdk::ClaimSupersessionV1::new(lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+            replan_index: 1,
+            superseded_id: replanned_id,
+            superseded_nonce: 8,
+            replanned_id: other_id,
+            replanned_nonce: 9,
+            lez_refund_margin_ms: 800_000,
+        })
+        .expect("clashing supersession");
+    assert!(
+        fixture
+            .taker
+            .restage_revealing_claim(&other, &clash)
+            .await
+            .is_err()
+    );
+
+    drop(fixture.taker);
+    drop(fixture.taker_store);
+    let recovered = claim_sdk(
+        Participant::Taker,
+        fixture.port.clone(),
+        claim_store(&fixture.taker_path, Participant::Taker),
+    )
+    .resume_claim_capable(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("reopen")
+    .expect("durable revealing claimant");
+    let reopened = recovered
+        .open_revealing_claim_submission()
+        .await
+        .expect("open after reopen");
+    assert_eq!(reopened.expected_submission_id(), &replanned_id);
+    assert_eq!(reopened.exact_submission(), exact.as_slice());
+    assert_eq!(
+        recovered.claim_supersessions().await.expect("lineage"),
+        vec![supersession]
+    );
 }
 
 async fn assert_unsafe_revealing_funding_retains_one_intent_across_restart() {

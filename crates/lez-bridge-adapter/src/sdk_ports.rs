@@ -980,7 +980,7 @@ where
         &self,
         agreement: &ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
         let (key, context) =
             self.reserve_context(agreement, BridgeOperationKind::RevealingClaimSubmit)?;
         let outcome = self
@@ -989,12 +989,88 @@ where
             .await
             .map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
         match outcome {
-            RevealingClaimSubmitOutcome::Accepted => Ok(()),
+            RevealingClaimSubmitOutcome::Accepted => {
+                Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
+            }
+            RevealingClaimSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            } => Ok(
+                lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Superseded {
+                    planned_nonce,
+                    live_nonce,
+                },
+            ),
             RevealingClaimSubmitOutcome::Unknown => {
                 self.resume_ambiguous(&key, &context)?;
                 Err(ContextOwningLezPortError::UnknownSubmission)
             }
         }
+    }
+}
+
+impl<Factory, Contexts, Store, Funding>
+    ContextOwningLezBridgePorts<Factory, Contexts, Store, Funding>
+where
+    Factory: FreshLezBridgeTransportFactory,
+    Factory::Transport: LezBridgeClaimTransport,
+    Contexts: BridgeRequestContextSource,
+    Store: lez_zec_swap_sdk::ClaimRecoveryStore,
+{
+    /// Re-plans the open owned revealing claim after its submission was
+    /// answered `Superseded` (FINDINGS 24): the same claim at the live nonce.
+    ///
+    /// The re-plan index is the count of recorded claim re-plans plus one;
+    /// each index owns its durable request context, so a retry of the same
+    /// re-plan replays the same sidecar answer. Past the bound the swap stops
+    /// by name. The superseded claim's submit context is retired so the
+    /// re-planned bytes get a request id of their own.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed context, journal, transport, bound, or record error.
+    pub async fn supersede_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        superseded: &PreparedClaimSubmissionV1,
+    ) -> Result<crate::SupersededRevealingClaimV1, ContextOwningLezPortError> {
+        let recorded = self
+            .store
+            .load_claim_supersessions(agreement.coordinator().id())
+            .await
+            .map_err(|error| ContextOwningLezPortError::Recovery(Box::new(error)))?;
+        let replan_index = u32::try_from(recorded.len())
+            .ok()
+            .and_then(|count| count.checked_add(1))
+            .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
+        let operation = BridgeOperationKind::revealing_claim_supersede(replan_index)
+            .ok_or(ContextOwningLezPortError::ReplanExhausted)?;
+        let (key, context) = self.reserve_context(agreement, operation)?;
+        let result = self
+            .fresh_adapter()?
+            .supersede_native_revealing_claim(
+                agreement,
+                context.request_id().clone(),
+                superseded,
+                replan_index,
+            )
+            .await;
+        if matches!(&result, Err(NativeRevealingClaimAdapterError::Transport(_))) {
+            self.resume_ambiguous(&key, &context)?;
+        }
+        let replanned =
+            result.map_err(|error| ContextOwningLezPortError::Adapter(Box::new(error)))?;
+        let submit_key = self.key(agreement, BridgeOperationKind::RevealingClaimSubmit);
+        let mut journal = self.journal()?;
+        if let Some(current) = journal
+            .current(&submit_key)
+            .map_err(ContextOwningLezPortError::Journal)?
+        {
+            journal
+                .retire_superseded_submission(&submit_key, &current)
+                .map_err(ContextOwningLezPortError::Journal)?;
+        }
+        Ok(replanned)
     }
 }
 

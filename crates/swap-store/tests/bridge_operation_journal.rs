@@ -670,6 +670,107 @@ fn a_journal_from_before_the_supersede_operations_is_rebuilt_on_open() {
     assert!(journal.current(&prepare_key).expect("read").is_some());
 }
 
+/// FINDINGS 24: a D1-era journal (escrow re-plans, no claim re-plans) is
+/// rebuilt the same way and admits the claim re-plan operations.
+#[test]
+fn a_journal_from_before_the_claim_replans_is_rebuilt_on_open() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("bridge-context-d1.sqlite");
+    {
+        let connection = Connection::open(&path).expect("old journal");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE bridge_operation_contexts (
+                    run_id              TEXT NOT NULL,
+                    swap_id             TEXT NOT NULL,
+                    local_role          TEXT NOT NULL CHECK (local_role IN ('maker', 'taker')),
+                    operation           TEXT NOT NULL CHECK (operation IN (
+                        'native_escrow_prepare', 'native_escrow_exact_observe',
+                        'native_escrow_discovery_observe',
+                        'native_escrow_initialize_submit', 'native_escrow_fund_submit',
+                        'revealing_claim_prepare', 'revealing_claim_exact_observe',
+                        'revealing_claim_discovery_observe', 'revealing_claim_submit',
+                        'native_refund_prepare', 'native_refund_eligibility_observe',
+                        'native_refund_exact_observe', 'native_refund_discovery_observe',
+                        'native_refund_submit',
+                        'native_escrow_supersede_1', 'native_escrow_supersede_2',
+                        'native_escrow_supersede_3', 'native_escrow_supersede_4',
+                        'native_escrow_supersede_5'
+                    )),
+                    poll_sequence       INTEGER NOT NULL CHECK (poll_sequence >= 0),
+                    request_id          TEXT NOT NULL,
+                    window_start_height TEXT,
+                    window_max_blocks   INTEGER CHECK (window_max_blocks > 0),
+                    state               TEXT NOT NULL CHECK (state IN ('active', 'completed')),
+                    completion_outcome  TEXT CHECK (
+                        completion_outcome IN ('succeeded', 'typed_error', 'superseded')
+                    ),
+                    PRIMARY KEY (run_id, swap_id, local_role, operation, poll_sequence)
+                ) STRICT;
+                CREATE UNIQUE INDEX bridge_operation_one_active
+                    ON bridge_operation_contexts (run_id, swap_id, local_role, operation)
+                    WHERE state = 'active';
+                CREATE UNIQUE INDEX bridge_operation_request_once
+                    ON bridge_operation_contexts (run_id, local_role, request_id);
+                INSERT INTO bridge_operation_contexts VALUES (
+                    'run-before-supersede', 'swap-before-supersede', 'taker', 'native_escrow_prepare', 0,
+                    'old-prepare-0001', NULL, NULL, 'active', NULL
+                );
+                ",
+            )
+            .expect("old journal shape");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("owner-private old journal");
+    }
+
+    let mut journal = SqliteBridgeOperationJournal::open(&path).expect("open rebuilds the table");
+    let prepare_key = key(
+        "run-before-supersede",
+        "swap-before-supersede",
+        Participant::Taker,
+        BridgeOperationKind::NativeEscrowPrepare,
+    );
+    let kept = journal
+        .current(&prepare_key)
+        .expect("read kept row")
+        .expect("the old active context survives the rebuild");
+    assert_eq!(kept.request_id().as_str(), "old-prepare-0001");
+
+    let supersede_key = key(
+        "run-before-supersede",
+        "swap-before-supersede",
+        Participant::Taker,
+        BridgeOperationKind::revealing_claim_supersede(1).expect("first claim re-plan"),
+    );
+    let reserved = journal
+        .begin_or_resume(&supersede_key, &request("claim-supersede-0001", None))
+        .expect("the supersede operation is allowed after the rebuild");
+    assert_eq!(
+        reserved.context().request_id().as_str(),
+        "claim-supersede-0001"
+    );
+
+    let definition: String = Connection::open(&path)
+        .expect("reopen")
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_operation_contexts'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("table definition");
+    assert!(definition.contains("native_escrow_supersede_5"));
+    assert!(definition.contains("'superseded'"));
+    drop(journal);
+    // Opening again is a no-op (no second rebuild, rows intact).
+    let journal = SqliteBridgeOperationJournal::open(&path).expect("reopen migrated journal");
+    assert!(journal.current(&prepare_key).expect("read").is_some());
+}
+
 /// A superseded plan's submit context is retired so the re-planned bytes get
 /// a request id of their own; observations cannot be retired this way, a
 /// stale context is refused, and the next reservation takes the next poll.

@@ -8,8 +8,8 @@ use std::{
 use lez_bridge_adapter::{
     ActorBridgeRequestContextSource, BridgeDiscoveryWindowSource,
     CapabilityFileBridgeClientFactory, ContextOwningLezBridgePorts, ContextOwningLezPortError,
-    PrepareNativeFirstLockError, SqliteCanonicalLezFundingSource, SupersededFirstLockPlanV1,
-    validate_runtime_binding,
+    NativeRevealingClaimAdapterError, PrepareNativeFirstLockError, SqliteCanonicalLezFundingSource,
+    SupersededFirstLockPlanV1, validate_runtime_binding,
 };
 use lez_bridge_client::BridgeClientError;
 use lez_bridge_protocol::{DiscoveryWindow, ErrorCode};
@@ -22,9 +22,9 @@ use lez_zebra_node_adapter::{
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimPreimage, ClaimStepV1, FirstLockDriveOutcome,
     FirstLockPlanV1, FirstLockStepV1, FirstLockSupersessionV1, MAX_FIRST_LOCK_REPLANS,
-    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, ObserveMakerLockOutcome,
-    ObserveTakerFirstLockOutcome, RecoveryStore, RefundDriveOutcome, RefundFundingWaitReasonV1,
-    RefundStepV1, ZecLifecycleAction, ZecPairSdk,
+    MAX_REVEALING_CLAIM_REPLANS, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
+    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, RecoveryStore, RefundDriveOutcome,
+    RefundFundingWaitReasonV1, RefundStepV1, ZecLifecycleAction, ZecPairSdk,
 };
 use secp256k1::SecretKey;
 use serde::Serialize;
@@ -264,6 +264,24 @@ pub struct ActorReplanV1 {
     replanned_nonce: u128,
     superseded_transaction_id: String,
     replanned_transaction_id: String,
+    /// For a revealing claim: the agreement's LEZ refund time minus the clock
+    /// at the re-plan, milliseconds (the claim must land before it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lez_refund_margin_ms: Option<i64>,
+}
+
+impl From<&lez_zec_swap_sdk::ClaimSupersessionV1> for ActorReplanV1 {
+    fn from(value: &lez_zec_swap_sdk::ClaimSupersessionV1) -> Self {
+        Self {
+            replan_index: value.replan_index(),
+            step: claim_operation(ClaimStepV1::RevealingLez),
+            superseded_nonce: value.superseded_nonce(),
+            replanned_nonce: value.replanned_nonce(),
+            superseded_transaction_id: hex::encode(value.superseded_id()),
+            replanned_transaction_id: hex::encode(value.replanned_id()),
+            lez_refund_margin_ms: Some(value.lez_refund_margin_ms()),
+        }
+    }
 }
 
 impl From<&FirstLockSupersessionV1> for ActorReplanV1 {
@@ -276,6 +294,7 @@ impl From<&FirstLockSupersessionV1> for ActorReplanV1 {
             replanned_nonce: value.replanned_nonce(),
             superseded_transaction_id: hex::encode(superseded),
             replanned_transaction_id: hex::encode(replanned),
+            lez_refund_margin_ms: None,
         }
     }
 }
@@ -414,6 +433,13 @@ pub enum ActorCommandError {
         "LEZ first lock was re-planned {MAX_FIRST_LOCK_REPLANS} times; its nonce keeps being taken"
     )]
     FirstLockReplanExhausted,
+    /// The owned revealing LEZ claim was re-planned the bounded number of
+    /// times and its nonce was taken again; the claim was never abandoned and
+    /// the swap needs attention by name (FINDINGS 24).
+    #[error(
+        "revealing LEZ claim was re-planned {MAX_REVEALING_CLAIM_REPLANS} times; its nonce keeps being taken"
+    )]
+    RevealingClaimReplanExhausted,
     /// Fresh claim material could not be loaded safely.
     #[error("actor claim material is unavailable")]
     ClaimMaterialUnavailable,
@@ -824,8 +850,13 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             },
         },
         (_, Phase::BothLegsLocked | Phase::ClaimEvidenceAvailable) => {
-            let outcome = active.drive_claim().await.map_err(unavailable_drive)?;
-            claim_outcome(outcome)
+            drive_claim_with_replans(
+                &mut active,
+                &lez,
+                config,
+                ActorCommandError::DriveUnavailable,
+            )
+            .await?
         }
         (_, Phase::Completed) => ActorEffectOutcomeV1::Completed,
         _ => return Err(ActorCommandError::DriveUnavailable),
@@ -904,7 +935,7 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
     let zcash = ZebraRpcZcashPort::new(rpc, signer, identity, participant)
         .map_err(|_| ActorCommandError::ClaimConfigurationUnavailable)?
         .with_counterparty_scan_blocks(config.counterparty_scan_blocks());
-    let sdk = ZecPairSdk::new(participant, (), (), lez, zcash, store);
+    let sdk = ZecPairSdk::new(participant, (), (), lez.clone(), zcash, store);
     let mut active = sdk
         .resume_all_capable(config.swap_id())
         .await
@@ -915,17 +946,13 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
     let outcome = if active.status() == Phase::Completed {
         ActorEffectOutcomeV1::Completed
     } else {
-        active
-            .drive_claim()
-            .await
-            .map(claim_outcome)
-            .map_err(|error| {
-                // The lifecycle error names the gate that held the claim back
-                // (funding depth, port, persistence); the exit code stays a
-                // secret-free class, the reason goes to stderr for the operator.
-                eprintln!("actor claim unavailable: {error:?}");
-                ActorCommandError::ClaimUnavailable
-            })?
+        drive_claim_with_replans(
+            &mut active,
+            &lez,
+            config,
+            ActorCommandError::ClaimUnavailable,
+        )
+        .await?
     };
     Ok(ActorEffectOutputV1::from_active(
         config.role(),
@@ -1078,6 +1105,189 @@ const fn ensure_claim_phase(phase: Phase) -> Result<(), ActorCommandError> {
     }
 }
 
+/// The marker a revealing LEZ claim leaves the moment it is submitted, kept
+/// for the life of the swap: a refund in the claim window is refused once it
+/// exists (FINDINGS 24, the secret may be public).
+/// (`<swap>/actor/<role>/revealing-claim-submitted`.)
+#[must_use]
+pub fn revealing_claim_submitted_marker(role_state_db: &Path) -> Option<PathBuf> {
+    Some(
+        role_state_db
+            .parent()?
+            .parent()?
+            .join("revealing-claim-submitted"),
+    )
+}
+
+/// The marker of a revealing LEZ claim submitted and not yet observed final:
+/// while another swap of the same Node holds it, that Node keeps its own
+/// revealing claim back (one per LEZ account in flight; FINDINGS 24). Removed
+/// when the claim is projected, never on a timer.
+/// (`<swap>/actor/<role>/revealing-claim-in-flight`.)
+#[must_use]
+pub fn revealing_claim_in_flight_marker(role_state_db: &Path) -> Option<PathBuf> {
+    Some(
+        role_state_db
+            .parent()?
+            .parent()?
+            .join("revealing-claim-in-flight"),
+    )
+}
+
+/// One claim attempt; an owned revealing claim whose nonce was taken is
+/// re-planned and resubmitted in the same attempt (FINDINGS 24), each re-plan
+/// recorded with both nonces, both ids and the margin to the LEZ refund time.
+/// Past the bound the swap stops by name; it is never abandoned.
+async fn drive_claim_with_replans<Factory, Contexts, Funding, Zcash>(
+    active: &mut lez_zec_swap_sdk::ActiveZecSwap<
+        ContextOwningLezBridgePorts<Factory, Contexts, SqliteZecRecoveryStore, Funding>,
+        Zcash,
+        SqliteZecRecoveryStore,
+    >,
+    lez: &ContextOwningLezBridgePorts<Factory, Contexts, SqliteZecRecoveryStore, Funding>,
+    config: &ActorConfig,
+    unavailable: ActorCommandError,
+) -> Result<ActorEffectOutcomeV1, ActorCommandError>
+where
+    Factory: lez_bridge_adapter::FreshLezBridgeTransportFactory,
+    Factory::Transport: lez_bridge_adapter::LezBridgeClaimTransport,
+    Contexts: lez_bridge_adapter::BridgeRequestContextSource,
+    Funding: lez_bridge_adapter::CanonicalLezFundingSource,
+    Zcash: lez_zec_swap_sdk::ZcashClaimPort,
+{
+    let mut replans = Vec::new();
+    loop {
+        let outcome = match active.drive_claim().await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // The lifecycle error names the gate that held the claim back
+                // (funding depth, port, persistence); the exit code stays a
+                // secret-free class, the reason goes to stderr for the operator.
+                eprintln!("actor claim unavailable: {error:?}");
+                return Err(unavailable);
+            }
+        };
+        match outcome {
+            ClaimDriveOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+                ..
+            } => {
+                if replans.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
+                    return Err(ActorCommandError::RevealingClaimReplanExhausted);
+                }
+                let open = active
+                    .open_revealing_claim_submission()
+                    .await
+                    .map_err(|error| {
+                        eprintln!("actor claim unavailable: {error:?}");
+                        ActorCommandError::ClaimUnavailable
+                    })?;
+                let replanned = match lez
+                    .supersede_revealing_claim(active.agreement(), &open)
+                    .await
+                {
+                    Ok(replanned) => replanned,
+                    Err(error) if is_claim_replan_exhausted(&error) => {
+                        eprintln!("actor claim refused: {error:?}");
+                        return Err(ActorCommandError::RevealingClaimReplanExhausted);
+                    }
+                    Err(error) => {
+                        eprintln!("actor claim unavailable: {error:?}");
+                        return Err(unavailable);
+                    }
+                };
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |elapsed| {
+                        i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+                    });
+                let refund_at_ms =
+                    i64::try_from(active.agreement().lez_refund_at_ms()).unwrap_or(i64::MAX);
+                let supersession = lez_zec_swap_sdk::ClaimSupersessionV1::new(
+                    lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+                        replan_index: replanned.replan_index,
+                        superseded_id: *open.expected_submission_id(),
+                        superseded_nonce: replanned.superseded_nonce,
+                        replanned_id: *replanned.claim.expected_submission_id(),
+                        replanned_nonce: replanned.replanned_nonce,
+                        lez_refund_margin_ms: refund_at_ms.saturating_sub(now_ms),
+                    },
+                )
+                .map_err(|_| ActorCommandError::ClaimUnavailable)?;
+                eprintln!(
+                    "actor claim: revealing LEZ claim superseded (planned nonce {planned_nonce}, live {live_nonce}); re-plan {} at nonce {}: {} -> {}; {} s left before the LEZ refund time",
+                    supersession.replan_index(),
+                    supersession.replanned_nonce(),
+                    hex::encode(supersession.superseded_id()),
+                    hex::encode(supersession.replanned_id()),
+                    supersession.lez_refund_margin_ms() / 1000
+                );
+                active
+                    .restage_revealing_claim(&replanned.claim, &supersession)
+                    .await
+                    .map_err(|error| {
+                        eprintln!("actor claim unavailable: {error:?}");
+                        ActorCommandError::ClaimUnavailable
+                    })?;
+                replans.push(ActorReplanV1::from(&supersession));
+            }
+            ClaimDriveOutcome::Submitted(step) => {
+                if step == ClaimStepV1::RevealingLez {
+                    mark_revealing_claim_submitted(config);
+                }
+                return Ok(ActorEffectOutcomeV1::Submitted {
+                    operation: claim_operation(step),
+                    replans,
+                });
+            }
+            other => {
+                if !matches!(active.status(), Phase::BothLegsLocked) {
+                    clear_revealing_claim_in_flight(config);
+                }
+                return Ok(claim_outcome(other));
+            }
+        }
+    }
+}
+
+/// Both claim markers: submitted (for the life of the swap) and in flight.
+fn mark_revealing_claim_submitted(config: &ActorConfig) {
+    for marker in [
+        revealing_claim_submitted_marker(config.role_state_db()),
+        revealing_claim_in_flight_marker(config.role_state_db()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let _ = fs::write(marker, b"revealing LEZ claim submitted\n");
+    }
+}
+
+/// The revealing claim is observed final (the swap left both legs locked).
+fn clear_revealing_claim_in_flight(config: &ActorConfig) {
+    if let Some(marker) = revealing_claim_in_flight_marker(config.role_state_db()) {
+        let _ = fs::remove_file(marker);
+    }
+}
+
+/// Whether a claim re-plan was refused because the bound is spent, at the
+/// port or at the sidecar (`ErrorCode::ReplanExhausted`).
+fn is_claim_replan_exhausted(error: &ContextOwningLezPortError) -> bool {
+    if matches!(error, ContextOwningLezPortError::ReplanExhausted) {
+        return true;
+    }
+    let ContextOwningLezPortError::Adapter(adapter) = error else {
+        return false;
+    };
+    let Some(NativeRevealingClaimAdapterError::Transport(BridgeClientError::Remote(remote))) =
+        adapter.downcast_ref::<NativeRevealingClaimAdapterError<BridgeClientError>>()
+    else {
+        return false;
+    };
+    remote.code() == ErrorCode::ReplanExhausted
+}
+
 const fn claim_outcome(outcome: ClaimDriveOutcome) -> ActorEffectOutcomeV1 {
     match outcome {
         ClaimDriveOutcome::Submitted(step) => ActorEffectOutcomeV1::Submitted {
@@ -1096,6 +1306,10 @@ const fn claim_outcome(outcome: ClaimDriveOutcome) -> ActorEffectOutcomeV1 {
             operation: claim_operation(step),
         },
         ClaimDriveOutcome::Completed { .. } => ActorEffectOutcomeV1::Completed,
+        // Re-planned in `drive_claim_with_replans` before it gets here.
+        ClaimDriveOutcome::Superseded { step, .. } => ActorEffectOutcomeV1::AwaitingObservation {
+            operation: claim_operation(step),
+        },
     }
 }
 

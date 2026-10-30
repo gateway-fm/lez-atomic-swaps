@@ -40,11 +40,12 @@ pub use agreement_v1::{
     ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1, ZecTransactionPolicyV1,
 };
 pub use claim::{
-    ClaimDriveOutcome, ClaimError, ClaimIntentV1, ClaimStepV1, FollowupClaimEvidenceV1,
+    ClaimDriveOutcome, ClaimError, ClaimIntentV1, ClaimStepV1, ClaimSupersessionError,
+    ClaimSupersessionInputV1, ClaimSupersessionV1, FollowupClaimEvidenceV1,
     FollowupClaimObservationV1, FollowupClaimTransitionV1, MAX_CLAIM_SUBMISSION_BYTES,
-    ObservedFollowupClaimTransitionV1, ObservedRevealingClaimTransitionV1,
-    PreparedClaimSubmissionV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
-    RevealingClaimTransitionV1, ZcashFundingWaitReasonV1,
+    MAX_REVEALING_CLAIM_REPLANS, ObservedFollowupClaimTransitionV1,
+    ObservedRevealingClaimTransitionV1, PreparedClaimSubmissionV1, RevealingClaimEvidenceV1,
+    RevealingClaimObservationV1, RevealingClaimTransitionV1, ZcashFundingWaitReasonV1,
 };
 pub use claim_material::{
     ClaimMaterialContext, ClaimMaterialPurpose, ClaimSubmissionContext,
@@ -125,9 +126,9 @@ pub use observed_taker_lock::{
 pub use ports::{
     ClaimRecoveryStore, CreateAgreementOutcome, FirstLockSubmitOutcome, LezClaimPort,
     LezFirstLockPort, LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
-    NegotiationChannel, OfferDiscovery, RecoveryStore, RefundRecoveryStore, ZcashClaimPort,
-    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashRefundPort,
-    ZcashTakerFirstLockObservationPort,
+    NegotiationChannel, OfferDiscovery, RecoveryStore, RefundRecoveryStore,
+    RevealingClaimSubmitOutcomeV1, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashRefundPort, ZcashTakerFirstLockObservationPort,
 };
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use refund::{

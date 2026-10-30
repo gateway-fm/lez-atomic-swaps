@@ -1635,6 +1635,98 @@ where
         }
     }
 
+    /// The open owned revealing claim, reopened from protected storage: what a
+    /// re-plan names as superseded (FINDINGS 24).
+    ///
+    /// # Errors
+    ///
+    /// Rejects a role that is not the LEZ claimant, a phase other than both
+    /// legs locked, a missing intent and storage failures.
+    pub async fn open_revealing_claim_submission(
+        &self,
+    ) -> Result<crate::PreparedClaimSubmissionV1, ZecSdkError> {
+        if self.local_participant() != self.agreement().lez_claimant() {
+            return Err(ZecSdkError::WrongRole {
+                expected: self.agreement().lez_claimant(),
+                actual: self.local_participant(),
+            });
+        }
+        if self.status() != Phase::BothLegsLocked {
+            return Err(ZecSdkError::ClaimNotReady(self.status()));
+        }
+        let (intent, protected) = self
+            .load_claim_intent()
+            .await?
+            .ok_or(ZecSdkError::MissingClaimIntent)?;
+        self.store
+            .open_claim_submission(self.agreement(), &intent, &protected)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
+    /// Every recorded re-plan of this swap's revealing claim, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub async fn claim_supersessions(
+        &self,
+    ) -> Result<Vec<crate::ClaimSupersessionV1>, ZecSdkError> {
+        self.store
+            .load_claim_supersessions(self.coordinator.id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
+    /// Replaces the open revealing-claim intent with its re-plan (the same
+    /// claim at the live nonce) and keeps the superseded one as lineage. A
+    /// replay finds the re-plan already open and is `ExistingSame`.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a role that is not the LEZ claimant, a phase other than both
+    /// legs locked, a missing intent, a re-plan that does not link the open
+    /// claim to the new one, and storage conflicts.
+    pub async fn restage_revealing_claim(
+        &self,
+        replanned: &crate::PreparedClaimSubmissionV1,
+        supersession: &crate::ClaimSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, ZecSdkError> {
+        let open = self.open_revealing_claim_submission().await?;
+        if open.expected_submission_id() != replanned.expected_submission_id()
+            && !supersession.links(&open, replanned)
+        {
+            return Err(ZecSdkError::ClaimSupersessionMismatch);
+        }
+        let protected = self
+            .store
+            .protect_claim_submission(
+                self.agreement(),
+                self.local_participant(),
+                self.revision,
+                replanned,
+            )
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        let intent = ClaimIntentV1::from_active(
+            self.agreement(),
+            &self.coordinator,
+            self.local_participant(),
+            self.revision,
+            replanned,
+            *protected.fingerprint(),
+        )?;
+        let outcome = self
+            .store
+            .restage_claim_intent(&intent, &protected, supersession)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
+            CreateFirstLockOutcome::Conflict => Err(ZecSdkError::ClaimIntentConflict),
+        }
+    }
+
     async fn drive_owned_revealing_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
         let (intent, protected) = self.revealing_claim_intent().await?;
         let prepared = self
@@ -1681,11 +1773,24 @@ where
                         )?;
                     }
                 }
-                self.lez
+                let outcome = self
+                    .lez
                     .submit_revealing_claim(self.agreement(), &prepared)
                     .await
                     .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
-                Ok(ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez))
+                Ok(match outcome {
+                    crate::RevealingClaimSubmitOutcomeV1::Accepted => {
+                        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+                    }
+                    crate::RevealingClaimSubmitOutcomeV1::Superseded {
+                        planned_nonce,
+                        live_nonce,
+                    } => ClaimDriveOutcome::Superseded {
+                        step: ClaimStepV1::RevealingLez,
+                        planned_nonce,
+                        live_nonce,
+                    },
+                })
             }
             RevealingClaimObservationV1::Unstable => Ok(
                 ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingLez),

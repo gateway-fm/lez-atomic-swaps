@@ -308,6 +308,12 @@ pub trait LezBridgeClaimTransport: Send + Sync {
         &self,
         request: SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, Self::Error>;
+
+    /// Re-plans the owned revealing claim after its nonce was taken.
+    async fn supersede_revealing_claim(
+        &self,
+        request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, Self::Error>;
 }
 
 #[async_trait]
@@ -333,6 +339,13 @@ impl LezBridgeClaimTransport for BridgeClient {
         request: SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, Self::Error> {
         BridgeClient::submit_transaction(self, request).await
+    }
+
+    async fn supersede_revealing_claim(
+        &self,
+        request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, Self::Error> {
+        BridgeClient::supersede_revealing_claim(self, request).await
     }
 }
 
@@ -592,6 +605,15 @@ pub enum RevealingClaimSubmitOutcome {
     Accepted,
     /// Delivery or response validation failed after the attempt began.
     Unknown,
+    /// Nothing was submitted: the claim's signer nonce was taken by another
+    /// transaction of the same signer and the claim is not included; it is
+    /// re-planned at the live nonce (FINDINGS 24).
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Failure binding one native revealing-claim operation to the accepted agreement.
@@ -724,6 +746,31 @@ impl<T: LezBridgeTransport> LezBridgeAdapter<T> {
         )
         .map_err(PrepareNativeFirstLockError::FirstLockPlan)?;
         FirstLockPlanV1::lez(initialize, fund).map_err(PrepareNativeFirstLockError::FirstLockPlan)
+    }
+}
+
+/// The re-planned revealing claim with the nonces and index of its re-plan.
+/// (No `Debug`: it holds exact claim bytes.)
+pub struct SupersededRevealingClaimV1 {
+    /// The re-planned claim to restage.
+    pub claim: PreparedClaimSubmissionV1,
+    /// One-based re-plan count, agreed with the sidecar.
+    pub replan_index: u32,
+    /// Signer nonce the superseded claim was planned at.
+    pub superseded_nonce: u128,
+    /// Signer nonce the claim is planned at now.
+    pub replanned_nonce: u128,
+}
+
+impl std::fmt::Debug for SupersededRevealingClaimV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SupersededRevealingClaimV1")
+            .field("claim_id", &self.claim.expected_submission_id())
+            .field("replan_index", &self.replan_index)
+            .field("superseded_nonce", &self.superseded_nonce)
+            .field("replanned_nonce", &self.replanned_nonce)
+            .finish_non_exhaustive()
     }
 }
 
@@ -1591,6 +1638,56 @@ impl<T: LezBridgeClaimTransport> LezBridgeAdapter<T> {
         .map_err(NativeRevealingClaimAdapterError::Claim)
     }
 
+    /// Re-plans the owned revealing claim after the sidecar reported its nonce
+    /// taken: the same claim at the live nonce (FINDINGS 24). The sidecar keeps
+    /// the superseded claim as lineage and answers the same request with the
+    /// same claim; `replan_index` is the caller's count of recorded re-plans
+    /// plus one and must agree with the sidecar's.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-claimant use, a non-LEZ claim, a response for another
+    /// context or claim, an index the sidecar disagrees with, and transport
+    /// failures.
+    pub async fn supersede_native_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        superseded: &PreparedClaimSubmissionV1,
+        replan_index: u32,
+    ) -> Result<SupersededRevealingClaimV1, NativeRevealingClaimAdapterError<T::Error>> {
+        self.validate_claimant(agreement)?;
+        let superseded_transaction = prepared_claim_transaction(superseded)?;
+        let context = self.claim_context(request_id);
+        let response = self
+            .transport
+            .supersede_revealing_claim(lez_bridge_protocol::SupersedeRevealingClaimRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                superseded_transaction.transaction_id,
+            ))
+            .await
+            .map_err(NativeRevealingClaimAdapterError::Transport)?;
+        if response.context != context
+            || response.superseded_claim_transaction_id != superseded_transaction.transaction_id
+            || response.replan_index != replan_index
+        {
+            return Err(NativeRevealingClaimAdapterError::ResponseContextMismatch);
+        }
+        let claim = PreparedClaimSubmissionV1::new(
+            ClaimStepV1::RevealingLez,
+            *response.claim.transaction_id.as_bytes(),
+            response.claim.exact_bytes.into_vec(),
+        )
+        .map_err(NativeRevealingClaimAdapterError::Claim)?;
+        Ok(SupersededRevealingClaimV1 {
+            claim,
+            replan_index: response.replan_index,
+            superseded_nonce: response.superseded_nonce,
+            replanned_nonce: response.replanned_nonce,
+        })
+    }
+
     /// Observes the claimant's exact protected revealing-claim identity once.
     ///
     /// # Errors
@@ -1678,8 +1775,13 @@ impl<T: LezBridgeClaimTransport> LezBridgeAdapter<T> {
             SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
                 RevealingClaimSubmitOutcome::Accepted
             }
-            // Nothing was submitted; the next attempt observes first.
-            SubmissionOutcome::Superseded { .. } => RevealingClaimSubmitOutcome::Unknown,
+            SubmissionOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            } => RevealingClaimSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            },
         })
     }
 

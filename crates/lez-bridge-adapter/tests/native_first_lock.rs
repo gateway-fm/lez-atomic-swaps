@@ -829,6 +829,13 @@ impl ClaimTransport {
 impl LezBridgeClaimTransport for ClaimTransport {
     type Error = FakeError;
 
+    async fn supersede_revealing_claim(
+        &self,
+        _request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, Self::Error> {
+        Err(FakeError)
+    }
+
     async fn prepare_revealing_claim(
         &self,
         request: PrepareRevealingClaimRequest,

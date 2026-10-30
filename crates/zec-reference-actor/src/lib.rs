@@ -19,6 +19,7 @@ mod test_crash_hook;
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
     ActorStatusV1, execute_actor_command, lez_depositor_balance_marker,
+    revealing_claim_in_flight_marker, revealing_claim_submitted_marker,
 };
 
 /// Exit code of a drive the actor refused because the LEZ depositor cannot
@@ -30,6 +31,12 @@ pub const LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE: i32 = 3;
 /// of times and found its nonce taken again
 /// ([`ActorCommandError::FirstLockReplanExhausted`]): the swap stops by name.
 pub const LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 4;
+
+/// Exit code of an actor whose owned revealing LEZ claim was re-planned the
+/// bounded number of times and keeps losing its nonce
+/// ([`ActorCommandError::RevealingClaimReplanExhausted`], FINDINGS 24): the
+/// swap needs attention by name; it is never turned into a refund.
+pub const LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 5;
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
@@ -108,6 +115,9 @@ pub fn run_actor_process(expected_role: ActorRole) {
             }
             ActorCommandError::FirstLockReplanExhausted => {
                 exit_with_code(error, LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE)
+            }
+            ActorCommandError::RevealingClaimReplanExhausted => {
+                exit_with_code(error, LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE)
             }
             _ => exit_with(error),
         });

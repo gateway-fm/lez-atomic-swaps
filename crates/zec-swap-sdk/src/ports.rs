@@ -123,12 +123,28 @@ pub trait LezClaimPort: Send + Sync {
         &self,
         agreement: &ZecAgreementV1,
     ) -> Result<RevealingClaimObservationV1, Self::Error>;
-    /// Submits exact bytes reopened from protected durable storage.
+    /// Submits exact bytes reopened from protected durable storage, or reports
+    /// that the claim's signer nonce was taken and nothing went out.
     async fn submit_revealing_claim(
         &self,
         agreement: &ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<RevealingClaimSubmitOutcomeV1, Self::Error>;
+}
+
+/// What the LEZ adapter did with one exact owned revealing claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RevealingClaimSubmitOutcomeV1 {
+    /// The node accepted the exact bytes or already knew them.
+    Accepted,
+    /// Nothing was submitted: the planned signer nonce is behind the live one
+    /// and the claim is not included (see [`crate::ClaimDriveOutcome::Superseded`]).
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Narrow Zcash boundary for the preimage-consuming follow-up claim.
@@ -540,6 +556,23 @@ pub trait ClaimRecoveryStore: RecoveryStore {
         intent: &ClaimIntentV1,
         protected: &ProtectedClaimPayloadEnvelope,
     ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Atomically replaces the open revealing-claim intent and its protected
+    /// submission with the re-planned claim, keeping the supersession as
+    /// lineage. Replaying the same re-plan is `ExistingSame`; a different claim
+    /// under a used index, or no open intent to retire, is `Conflict`.
+    async fn restage_claim_intent(
+        &self,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+        supersession: &crate::ClaimSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Every recorded re-plan of this swap's revealing claim, oldest first.
+    async fn load_claim_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<crate::ClaimSupersessionV1>, Self::Error>;
 
     /// Loads the pending intent and its protected exact submission.
     async fn load_claim_intent(
