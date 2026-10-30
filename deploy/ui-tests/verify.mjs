@@ -22,15 +22,12 @@ if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
 const reverseDirection = uiDirection === "TakerSellsLez";
 const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
 // Zcash rows come from a prepared corridor (scripts/zec-provision.sh), one lot
-// per corridor (amounts below), TakerSellsLez only for now. The Taker's first
-// LEZ lock is driven on the Node host through the Taker actor, so a fresh
-// Zcash swap shows no button.
-// Part D: TakerSellsForeign through the Nodes lands at step 20; drop the
-// direction guard below then.
+// per corridor (amounts below), in either direction. The Taker's first lock
+// (the LEZ escrow, or the Zcash HTLC when it sells ZEC) is driven by the
+// Taker Node's supervisor, so a fresh Zcash swap shows no button.
 const uiPair = process.env.M3_UI_PAIR || "Bitcoin";
 if (!["Bitcoin", "Zcash"].includes(uiPair)) throw new Error("M3_UI_PAIR must be Bitcoin or Zcash");
 const zcash = uiPair === "Zcash";
-if (zcash && !reverseDirection) throw new Error("Zcash journeys run TakerSellsLez only");
 
 const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
 // both plugins in one app: the product shape (maker + taker in the sidebar)
