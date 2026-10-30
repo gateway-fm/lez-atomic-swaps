@@ -244,6 +244,7 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
         available_action: None,
         privacy_guidance: Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
         attention_reason: None,
+        revealing_claim_held_by: None,
         last_failure_class: None,
         observed_at: None,
         terms: None,

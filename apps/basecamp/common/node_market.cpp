@@ -153,7 +153,8 @@ struct SwapRow {
 // nominally awaited means the Maker missed its window.
 SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool locked,
                  const QString& direction, const QString& pair, const QString& bitcoin, const QString& lez,
-                 qint64 lockFeeSat, const QString& attentionReason = QString())
+                 qint64 lockFeeSat, const QString& attentionReason = QString(),
+                 const QString& heldBy = QString())
 {
     const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");  // sells the foreign coin
     const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
@@ -177,6 +178,13 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     if (nodeState == "attention_required" && attentionReason == QStringLiteral("lez_first_lock_replan_exhausted"))
         return {"attention_required", "LEZ lock stopped: nonce taken five times", 15,
                 "Other swaps of your account kept taking this swap's LEZ nonce; nothing was locked. Take the offer again when fewer swaps are in flight", "", ""};
+    // One revealing LEZ claim is in flight per Node until it is final; this
+    // swap's claim waits behind another's and its own LEZ refund time is near.
+    // The Node claims by itself the moment the holder's claim is final.
+    if (nodeState == "attention_required" && attentionReason == QStringLiteral("lez_revealing_claim_held_near_refund"))
+        return {"attention_required", "LEZ claim waiting near its deadline", 80,
+                "Your Node sends one LEZ claim at a time; swap " + (heldBy.isEmpty() ? QStringLiteral("(unknown)") : heldBy.right(12))
+                    + " is still finishing its claim. This swap claims as soon as that one is final", "", ""};
     if (pair == QStringLiteral("Zcash")) {
         // The Taker Node has no lock RPC for ZEC: its supervisor drives the
         // actor's first lock itself (the LEZ escrow when the Taker sells LEZ,
@@ -280,7 +288,7 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
 // once the Maker's lock window is gone.
 SwapRow makerRow(const QString& phase, const QString& nextAction, const QString& scheduleState,
                  const QString& direction, const QString& pair, const QString& failureClass, bool claimSent,
-                 const QString& attentionReason = QString())
+                 const QString& attentionReason = QString(), const QString& heldBy = QString())
 {
     const bool sellsLez = direction == QStringLiteral("taker_sells_foreign");
     const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
@@ -313,6 +321,12 @@ SwapRow makerRow(const QString& phase, const QString& nextAction, const QString&
     if (attentionReason == QStringLiteral("lez_first_lock_replan_exhausted"))
         return {"attention_required", "LEZ lock stopped: nonce taken five times", 45,
                 "Other swaps of your Node's account kept taking this swap's LEZ nonce; nothing was locked and the Taker refunds at the deadline", "", ""};
+    // One revealing LEZ claim is in flight per Node until it is final; this
+    // swap's claim waits behind another's and its own LEZ refund time is near.
+    if (attentionReason == QStringLiteral("lez_revealing_claim_held_near_refund"))
+        return {"attention_required", "LEZ claim waiting near its deadline", 80,
+                "Your Node sends one LEZ claim at a time; swap " + (heldBy.isEmpty() ? QStringLiteral("(unknown)") : heldBy.right(12))
+                    + " is still finishing its claim. This swap claims as soon as that one is final", "", ""};
     if (phase == "maker_leg_refunded")
         return {"refunding", "Refunding", 80,
                 "Your " + myChain + " lock came back; the Taker's " + theirChain + " refund is still owed", "", ""};
@@ -580,7 +594,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                          formatForeign(pair, integerField(swap, "foreign_units")),
                                          formatLez(integerField(swap, "lez_units")),
                                          integerField(swap, "bitcoin_lock_fee_sat"),
-                                         swap.value("attention_reason").toString());
+                                         swap.value("attention_reason").toString(),
+                                         swap.value("revealing_claim_held_by").toString());
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction, pair,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),
@@ -771,7 +786,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             if (!nodePair(pair)) continue;
             const QString swapId = swap.value("id").toString();
             const QString direction = directionName(swap.value("direction").toString());
-            QString phase, nextAction, schedule, failureClass, attentionReason;
+            QString phase, nextAction, schedule, failureClass, attentionReason, heldBy;
             QJsonObject terms;
             QJsonArray effects;
             const Reply monitored = decode(rpc.call("maker_actor_monitor_v1", compact({{"id", swapId}})));
@@ -780,6 +795,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
                 schedule = result.value("schedule_state").toString();
                 failureClass = result.value("last_failure_class").toString();
                 attentionReason = result.value("attention_reason").toString();
+                heldBy = result.value("revealing_claim_held_by").toString();
                 terms = result.value("terms").toObject();
                 effects = result.value("effects").toArray();
                 const QJsonObject observation = result.value("progress").toObject().value("observation").toObject();
@@ -794,7 +810,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             for (const QJsonValue& effect : effects)
                 claimSent = claimSent || (effect.toObject().value("pending").toBool()
                                           && effect.toObject().value("kind").toString() == QStringLiteral("followup_claim"));
-            const SwapRow row = makerRow(phase, nextAction, schedule, direction, pair, failureClass, claimSent, attentionReason);
+            const SwapRow row = makerRow(phase, nextAction, schedule, direction, pair, failureClass, claimSent, attentionReason, heldBy);
             swaps.append(swapRowObject(row, swapId, QString(), direction, pair, wallet.label,
                                        QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill, effects));
             if (row.state == "completed") ++completed;

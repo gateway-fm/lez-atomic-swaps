@@ -746,6 +746,11 @@ pub struct MakerActorMonitorV1 {
     /// itself once the account is funded).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attention_reason: Option<String>,
+    /// With `lez_revealing_claim_held_near_refund`: the swap whose revealing
+    /// LEZ claim is in flight and holds this one's back (one per Node, until
+    /// it is final) while this swap's own LEZ refund time is near.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revealing_claim_held_by: Option<String>,
     /// Latest validated actor lifecycle projection, when available.
     pub progress: Option<MakerActorProgressViewV1>,
     /// Latest explicit owner action, when available.
@@ -937,6 +942,46 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
     Ok(())
 }
 
+/// Why a Zcash row needs its owner, by name, and the holding swap for a
+/// revealing claim held behind another's: a Zcash actor short of LEZ for its
+/// lot leaves a marker beside its state
+/// (`zec_reference_actor::lez_depositor_balance_marker`), and the supervisor's
+/// one-claim gate names the holder beside it as the swap's own LEZ refund time
+/// nears (removed when the claim goes ahead).
+#[cfg(feature = "pair-zec")]
+fn zec_attention(
+    record: &lez_swap_store::MakerActorProcessRecordV1,
+) -> (Option<String>, Option<String>) {
+    if record.manifest().kind() != MakerActorKindV1::Zcash {
+        return (None, None);
+    }
+    let held_by = (record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal)
+        .then(|| {
+            zec_reference_actor::revealing_claim_holder(record.manifest().state_database_path())
+        })
+        .flatten();
+    let balance = ActorConfig::load_private_pinned_sha256(
+        record.manifest().config_path(),
+        record.manifest().config_sha256(),
+    )
+    .ok()
+    .and_then(|config| zec_reference_actor::lez_depositor_balance_marker(config.role_state_db()))
+    .filter(|marker| marker.is_file())
+    .map(|_| "lez_depositor_balance_insufficient".to_owned());
+    let reason = balance.or_else(|| {
+        held_by
+            .as_ref()
+            .map(|_| "lez_revealing_claim_held_near_refund".to_owned())
+    });
+    (reason, held_by)
+}
+
+/// Without the Zcash pair no row has a Zcash reason.
+#[cfg(not(feature = "pair-zec"))]
+const fn zec_attention<T>(_record: &T) -> (Option<String>, Option<String>) {
+    (None, None)
+}
+
 fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<MakerActorMonitorV1>, _>(
         "maker_actor_monitor_v1",
@@ -985,23 +1030,7 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
             // A Zcash actor short of LEZ for its lot leaves a marker beside its
             // state (`zec_reference_actor::lez_depositor_balance_marker`); the
             // owner reads the reason here as the Taker's view names it.
-            #[cfg(feature = "pair-zec")]
-            let attention_reason = (record.manifest().kind() == MakerActorKindV1::Zcash)
-                .then(|| {
-                    ActorConfig::load_private_pinned_sha256(
-                        record.manifest().config_path(),
-                        record.manifest().config_sha256(),
-                    )
-                    .ok()
-                })
-                .flatten()
-                .and_then(|config| {
-                    zec_reference_actor::lez_depositor_balance_marker(config.role_state_db())
-                })
-                .filter(|marker| marker.is_file())
-                .map(|_| "lez_depositor_balance_insufficient".to_owned());
-            #[cfg(not(feature = "pair-zec"))]
-            let attention_reason: Option<String> = None;
+            let (attention_reason, revealing_claim_held_by) = zec_attention(record);
             Ok(MakerActorMonitorV1 {
                 schema_version: 1,
                 swap_id: record.swap_id().as_str().into(),
@@ -1011,6 +1040,7 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 attempt_count: record.attempt_count(),
                 last_failure_class: record.last_failure_class().map(str::to_owned),
                 attention_reason,
+                revealing_claim_held_by,
                 progress,
                 manual_action,
                 terms: context

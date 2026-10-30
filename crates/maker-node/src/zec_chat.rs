@@ -138,9 +138,11 @@ fn complete_zec_chat(
         .as_ref()
         .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
     // One claim secret per swap: the pinned template of this agreement owns
-    // its preimage; the Node-wide preimage file answers for a catalog of one.
+    // its preimage. Read before the replay check, which compares it with the
+    // stored one, and without the transcript's expiry, so a replay answers
+    // after it (8f01a687 applied the expiry here and broke such replays).
     let template_preimage = provisioner
-        .template_claim_preimage(&request.final_agreement_wire, now_unix_seconds)
+        .template_claim_preimage(&request.final_agreement_wire)
         .map_err(|_| rpc_error(INTERNAL_ERROR, "maker claim authority is unavailable"))?;
     let claim_preimage = template_preimage.as_ref();
     if let Some(replay) = completion_store
@@ -315,8 +317,14 @@ impl ZecMakerActorProvisioner {
 
     /// The claim preimage of the pinned template for this agreement, when the
     /// template owns one (the Maker funds Zcash and claims LEZ). Each
-    /// provisioned swap carries its own secret; a catalog of one template
-    /// may still rely on the Node-wide preimage file.
+    /// provisioned swap carries its own secret.
+    ///
+    /// The agreement is decoded and checked here only to find its template,
+    /// so the transcript's expiry is not applied (the wire is validated at
+    /// time zero, before any transcript expires): an exact replay of a
+    /// completion is answered after the transcript expired, and a fresh
+    /// completion is refused for expiry by its own acceptance at the current
+    /// time.
     ///
     /// # Errors
     ///
@@ -324,11 +332,10 @@ impl ZecMakerActorProvisioner {
     pub fn template_claim_preimage(
         &self,
         final_agreement_wire: &[u8],
-        accepted_at_unix_seconds: u64,
     ) -> anyhow::Result<Option<ClaimPreimage>> {
         let accepted = AcceptedZecAgreementV1::accept_wire_at(
             final_agreement_wire,
-            lez_swap_core::UnixSeconds::new(accepted_at_unix_seconds),
+            lez_swap_core::UnixSeconds::new(0),
             Participant::Maker,
             0,
         )?;

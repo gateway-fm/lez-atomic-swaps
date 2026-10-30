@@ -75,6 +75,8 @@ pub(super) enum ZecActorStatus {
         phase: Phase,
         revision: u64,
         next_action: ZecLifecycleAction,
+        /// The agreement's LEZ refund time, Unix milliseconds.
+        lez_refund_at_ms: Option<u64>,
     },
 }
 
@@ -93,6 +95,13 @@ pub(super) enum LifecycleStatus {
 impl RouteActor {
     /// Whether this is the Zcash pair's in-process actor, whose admitted
     /// actions the Taker Node's supervisor retries by itself.
+    #[cfg_attr(
+        not(feature = "pair-zec"),
+        expect(
+            clippy::unused_self,
+            reason = "without the Zcash pair no route is the Zcash actor"
+        )
+    )]
     pub(super) const fn is_zec(&self) -> bool {
         #[cfg(feature = "pair-zec")]
         {
@@ -298,6 +307,7 @@ impl RouteActor {
                     phase,
                     revision,
                     next_action,
+                    lez_refund_at_ms: status.lez_refund_at_ms(),
                 },
             }),
             ActorCommandOutputV1::Effect(_) => Err(ActorCommandError::StatusUnavailable),
@@ -1193,7 +1203,32 @@ async fn execute_terminal_actor_command(
 /// refused the first lock for the depositor's balance
 /// (`<swap>/actor/taker/lez-depositor-balance-insufficient`).
 #[cfg(feature = "pair-zec")]
-use zec_reference_actor::{lez_depositor_balance_marker, revealing_claim_submitted_marker};
+use zec_reference_actor::{
+    lez_depositor_balance_marker, revealing_claim_holder, revealing_claim_submitted_marker,
+};
+/// Without the Zcash pair no revealing claim is held behind another.
+#[cfg(not(feature = "pair-zec"))]
+fn revealing_claim_holder(_state_db: &Path) -> Option<String> {
+    None
+}
+
+/// A Zcash swap whose revealing claim the supervisor holds behind another
+/// swap's as its own LEZ refund time nears: the row needs attention and names
+/// the holder (the marker is removed when the claim goes ahead). The admissible
+/// action stays: the owner may still refund in the claim window.
+fn overlay_held_revealing_claim(view: &mut TakerSwapViewV1, state_db: &Path) {
+    if matches!(
+        view.state,
+        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
+    ) {
+        return;
+    }
+    if let Some(holder) = revealing_claim_holder(state_db) {
+        view.state = TakerSwapStateV1::AttentionRequired;
+        view.attention_reason = Some("lez_revealing_claim_held_near_refund".to_owned());
+        view.revealing_claim_held_by = Some(holder);
+    }
+}
 /// Without the Zcash pair no actor submits a revealing LEZ claim.
 #[cfg(not(feature = "pair-zec"))]
 fn revealing_claim_submitted_marker(_state_db: &Path) -> Option<PathBuf> {
@@ -1324,7 +1359,16 @@ enum MonitoringError {
     BundleInvalid,
     /// The swap's actor is held by the supervisor (a drive in flight); the
     /// path is the actor's state database, for the marker read.
-    ActorBusy(PathBuf),
+    ActorBusy(
+        #[cfg_attr(
+            not(feature = "pair-zec"),
+            expect(
+                dead_code,
+                reason = "the Zcash supervisor's snapshot path reads the state database"
+            )
+        )]
+        PathBuf,
+    ),
     DependencyUnavailable,
     RegistryUnavailable,
     ResultLimitExceeded,
@@ -1459,6 +1503,7 @@ async fn project_swap(
                                 view.attention_reason =
                                     Some("lez_depositor_balance_insufficient".to_owned());
                             }
+                            overlay_held_revealing_claim(&mut view, &state_db);
                             super::zec_supervisor::overlay_schedule(&mut view, record.as_ref());
                             let admitted = lookup_monitored_action(initiation, &swap_id).await?;
                             overlay_admitted_action(view, admitted.as_ref())
@@ -1560,6 +1605,9 @@ async fn project_receipt_bound_swap(
         view.state = TakerSwapStateV1::AttentionRequired;
         view.available_action = None;
         view.attention_reason = Some("lez_depositor_balance_insufficient".to_owned());
+    }
+    if pair == Pair::Zcash {
+        overlay_held_revealing_claim(&mut view, config.state_db());
     }
     #[cfg(feature = "pair-zec")]
     if pair == Pair::Zcash {
@@ -1668,6 +1716,7 @@ fn view_from_actor_status(
         available_action,
         privacy_guidance,
         attention_reason: None,
+        revealing_claim_held_by: None,
         last_failure_class: None,
         observed_at: None,
         terms: None,
@@ -2572,6 +2621,7 @@ fn commit_from_facts(
             available_action: None,
             privacy_guidance: None,
             attention_reason: None,
+            revealing_claim_held_by: None,
             last_failure_class: None,
             observed_at: None,
             terms: None,
@@ -2648,6 +2698,58 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REVIEW 16:33Z: a revealing claim held behind another swap's as its own
+    /// LEZ refund time nears reads as needing attention and names the holder;
+    /// the action the actor offers stays, and a settled swap is never marked.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_claim_held_near_its_refund_time_names_its_holder_on_the_row() {
+        use lez_swap_core::{Pair, SwapDirection, SwapId};
+        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        let swap = tempfile::tempdir().expect("swap directory");
+        let state_db = swap.path().join("taker").join("state").join("zec.sqlite3");
+        std::fs::create_dir_all(state_db.parent().expect("state directory")).expect("dirs");
+        let row = |state| TakerSwapViewV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m7-held-swap").unwrap(),
+            offer_id: MakerOfferId::new("m7-held-offer").unwrap(),
+            route: MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign).unwrap(),
+            foreign_units: 10_000,
+            lez_units: 25_000,
+            progress_generation: 7,
+            state,
+            available_action: Some(TakerTerminalActionV1::Claim),
+            privacy_guidance: None,
+            attention_reason: None,
+            revealing_claim_held_by: None,
+            last_failure_class: None,
+            observed_at: None,
+            terms: None,
+            effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
+        };
+        let mut view = row(TakerSwapStateV1::ClaimAvailable);
+        overlay_held_revealing_claim(&mut view, &state_db);
+        assert_eq!(view, row(TakerSwapStateV1::ClaimAvailable));
+
+        zec_reference_actor::record_revealing_claim_holder(&state_db, Some("m7-holder-swap"));
+        overlay_held_revealing_claim(&mut view, &state_db);
+        assert_eq!(view.state, TakerSwapStateV1::AttentionRequired);
+        assert_eq!(
+            view.attention_reason.as_deref(),
+            Some("lez_revealing_claim_held_near_refund")
+        );
+        assert_eq!(
+            view.revealing_claim_held_by.as_deref(),
+            Some("m7-holder-swap")
+        );
+        assert_eq!(view.available_action, Some(TakerTerminalActionV1::Claim));
+
+        let mut settled = row(TakerSwapStateV1::Completed);
+        overlay_held_revealing_claim(&mut settled, &state_db);
+        assert_eq!(settled, row(TakerSwapStateV1::Completed));
+    }
 
     /// 9afd25a8: an admitted Zcash action whose first attempt is refused is
     /// the supervisor's to retry, so the caller gets the admission; a Bitcoin

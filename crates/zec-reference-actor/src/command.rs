@@ -191,6 +191,7 @@ impl ActorStatusV1 {
         revision: u64,
         next_action: ZecLifecycleAction,
         lez_first_lock_replans: Vec<ActorReplanV1>,
+        lez_refund_at_ms: Option<u64>,
     ) -> Self {
         Self {
             schema_version: STATUS_SCHEMA_VERSION,
@@ -200,6 +201,7 @@ impl ActorStatusV1 {
                 revision,
                 next_action: next_action.into(),
                 lez_first_lock_replans,
+                lez_refund_at_ms,
             },
         }
     }
@@ -239,6 +241,19 @@ impl ActorStatusV1 {
             } => lez_first_lock_replans,
         }
     }
+
+    /// The agreement's LEZ refund time (Unix milliseconds) of an active
+    /// actor: a revealing LEZ claim must be final before it. The Nodes read
+    /// it to surface a claim held behind another swap's as its window closes.
+    #[must_use]
+    pub const fn lez_refund_at_ms(&self) -> Option<u64> {
+        match &self.state {
+            ActorStateV1::NotActivated => None,
+            ActorStateV1::Active {
+                lez_refund_at_ms, ..
+            } => *lez_refund_at_ms,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -252,6 +267,9 @@ enum ActorStateV1 {
         /// Every re-plan of the LEZ first lock, oldest first; absent when none.
         #[serde(skip_serializing_if = "Vec::is_empty")]
         lez_first_lock_replans: Vec<ActorReplanV1>,
+        /// The agreement's LEZ refund time, Unix milliseconds.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lez_refund_at_ms: Option<u64>,
     },
 }
 
@@ -1134,6 +1152,66 @@ pub fn revealing_claim_in_flight_marker(role_state_db: &Path) -> Option<PathBuf>
     )
 }
 
+/// How near its own LEZ refund time a revealing LEZ claim held behind another
+/// swap's (one in flight per Node) is surfaced as needing attention with the
+/// holder named, so a stuck holder cannot make it miss its claim in silence
+/// (REVIEW 16:33Z). Ten minutes; the hold itself is kept: two claims at one
+/// nonce would supersede each other.
+pub const REVEALING_CLAIM_HOLD_ATTENTION_MS: u64 = 600_000;
+
+/// Whether a claim held now, `now_ms`, is within the attention margin of the
+/// swap's LEZ refund time (or past it).
+#[must_use]
+pub const fn revealing_claim_hold_needs_attention(lez_refund_at_ms: u64, now_ms: u64) -> bool {
+    lez_refund_at_ms.saturating_sub(now_ms) <= REVEALING_CLAIM_HOLD_ATTENTION_MS
+}
+
+/// The marker a Node writes beside a swap whose revealing LEZ claim it holds
+/// behind another swap's while the swap's own LEZ refund time is near; it
+/// names the holding swap. Removed by the Node when the claim goes ahead and
+/// by the actor when the claim is submitted or the swap moves on.
+/// (`<swap>/actor/<role>/revealing-claim-held-by`.)
+#[must_use]
+pub fn revealing_claim_held_by_marker(role_state_db: &Path) -> Option<PathBuf> {
+    Some(
+        role_state_db
+            .parent()?
+            .parent()?
+            .join("revealing-claim-held-by"),
+    )
+}
+
+/// Names `holder` in the held-by marker, or removes the marker (`None`).
+pub fn record_revealing_claim_holder(role_state_db: &Path, holder: Option<&str>) {
+    let Some(marker) = revealing_claim_held_by_marker(role_state_db) else {
+        return;
+    };
+    match holder {
+        Some(holder) if valid_swap_id_text(holder) => {
+            let _ = fs::write(marker, format!("{holder}\n"));
+        }
+        _ => {
+            let _ = fs::remove_file(marker);
+        }
+    }
+}
+
+/// The holding swap named by the held-by marker, when present and well formed.
+#[must_use]
+pub fn revealing_claim_holder(role_state_db: &Path) -> Option<String> {
+    let text = fs::read_to_string(revealing_claim_held_by_marker(role_state_db)?).ok()?;
+    let holder = text.trim();
+    valid_swap_id_text(holder).then(|| holder.to_owned())
+}
+
+fn valid_swap_id_text(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
+}
+
 /// One claim attempt; an owned revealing claim whose nonce was taken is
 /// re-planned and resubmitted in the same attempt (FINDINGS 24), each re-plan
 /// recorded with both nonces, both ids and the margin to the LEZ refund time.
@@ -1262,6 +1340,7 @@ fn mark_revealing_claim_submitted(config: &ActorConfig) {
     {
         let _ = fs::write(marker, b"revealing LEZ claim submitted\n");
     }
+    record_revealing_claim_holder(config.role_state_db(), None);
 }
 
 /// The revealing claim is observed final (the swap left both legs locked).
@@ -1269,6 +1348,7 @@ fn clear_revealing_claim_in_flight(config: &ActorConfig) {
     if let Some(marker) = revealing_claim_in_flight_marker(config.role_state_db()) {
         let _ = fs::remove_file(marker);
     }
+    record_revealing_claim_holder(config.role_state_db(), None);
 }
 
 /// Whether a claim re-plan was refused because the bound is spent, at the
@@ -1556,6 +1636,7 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
                 active.revision(),
                 active.next_action(),
                 replans,
+                Some(active.agreement().lez_refund_at_ms()),
             )
         }
         None => ActorStatusV1::not_activated(config.role()),
@@ -1626,6 +1707,7 @@ mod tests {
                 17,
                 ZecLifecycleAction::Wait,
                 Vec::new(),
+                None,
             );
             assert_eq!(status.role(), ActorRole::Maker);
             assert_eq!(
@@ -1654,6 +1736,7 @@ mod tests {
                 23,
                 next_action,
                 Vec::new(),
+                None,
             );
             assert_eq!(
                 status.projection(),
@@ -1671,6 +1754,7 @@ mod tests {
             23,
             ZecLifecycleAction::ClaimLez,
             Vec::new(),
+            None,
         );
         assert_eq!(
             serde_json::to_value(&active).expect("status serializes"),
@@ -1682,6 +1766,59 @@ mod tests {
                 "revision": 23,
                 "next_action": "claim_lez"
             })
+        );
+    }
+
+    #[test]
+    fn an_active_status_carries_the_lez_refund_time() {
+        let status = ActorStatusV1::active(
+            ActorRole::Taker,
+            Phase::BothLegsLocked,
+            9,
+            ZecLifecycleAction::ClaimLez,
+            Vec::new(),
+            Some(1_800_000),
+        );
+        assert_eq!(status.lez_refund_at_ms(), Some(1_800_000));
+        assert_eq!(
+            serde_json::to_value(&status).expect("status serializes")["lez_refund_at_ms"],
+            json!(1_800_000)
+        );
+        assert_eq!(
+            ActorStatusV1::not_activated(ActorRole::Taker).lez_refund_at_ms(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_held_claim_names_its_holder_only_near_its_refund_time() {
+        assert!(!revealing_claim_hold_needs_attention(
+            10_000_000,
+            10_000_000 - REVEALING_CLAIM_HOLD_ATTENTION_MS - 1
+        ));
+        assert!(revealing_claim_hold_needs_attention(
+            10_000_000,
+            10_000_000 - REVEALING_CLAIM_HOLD_ATTENTION_MS
+        ));
+        assert!(revealing_claim_hold_needs_attention(10_000_000, 20_000_000));
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let state_db = root.path().join("taker").join("state").join("actor.sqlite");
+        std::fs::create_dir_all(state_db.parent().expect("parent")).expect("dirs");
+        assert_eq!(revealing_claim_holder(&state_db), None);
+        record_revealing_claim_holder(&state_db, Some("swap-0a1b"));
+        assert_eq!(
+            revealing_claim_holder(&state_db).as_deref(),
+            Some("swap-0a1b")
+        );
+        record_revealing_claim_holder(&state_db, Some("not a swap id\n"));
+        assert_eq!(revealing_claim_holder(&state_db), None);
+        record_revealing_claim_holder(&state_db, Some("swap-0a1b"));
+        record_revealing_claim_holder(&state_db, None);
+        assert!(
+            !revealing_claim_held_by_marker(&state_db)
+                .expect("marker path")
+                .exists()
         );
     }
 

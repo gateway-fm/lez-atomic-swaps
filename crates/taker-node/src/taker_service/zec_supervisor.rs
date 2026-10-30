@@ -30,7 +30,10 @@ use lez_swap_store::{
     TakerInitiationFactsV1,
 };
 use lez_zec_swap_sdk::ZecLifecycleAction;
-use zec_reference_actor::{ActorCommand, ActorCommandError};
+use zec_reference_actor::{
+    ActorCommand, ActorCommandError, record_revealing_claim_holder,
+    revealing_claim_hold_needs_attention,
+};
 
 use super::{
     TakerServiceState,
@@ -56,30 +59,64 @@ use crate::{
 /// (restarts keep it) and never released on a timer.
 const REVEALING_CLAIM_IN_FLIGHT: &str = "revealing-claim-in-flight";
 
+/// The class of a revealing claim held behind another swap's while its own
+/// LEZ refund time is near ([`zec_reference_actor::REVEALING_CLAIM_HOLD_ATTENTION_MS`]):
+/// the row reads as needing attention and names the holder; the claim is
+/// still attempted at the requeue cadence and goes ahead once the gate opens.
+pub(super) const REVEALING_CLAIM_HELD_NEAR_REFUND: &str = "lez_revealing_claim_held_near_refund";
+
+/// The peer of `own` whose revealing LEZ claim is in flight
+/// (`<actor root>/taker/revealing-claim-in-flight`), if any.
+pub(super) fn peer_revealing_claim_holder<'a, Id>(
+    own: &Path,
+    peers: impl IntoIterator<Item = (&'a Path, Id)>,
+) -> Option<Id> {
+    peers
+        .into_iter()
+        .find(|(root, _)| {
+            *root != own && root.join("taker").join(REVEALING_CLAIM_IN_FLIGHT).is_file()
+        })
+        .map(|(_, id)| id)
+}
+
 /// Whether any of `actor_roots` other than `own` holds a revealing LEZ claim
-/// in flight (`<actor root>/taker/revealing-claim-in-flight`).
+/// in flight.
+#[cfg(test)]
 pub(super) fn peer_revealing_claim_in_flight<'a>(
     own: &Path,
     actor_roots: impl IntoIterator<Item = &'a Path>,
 ) -> bool {
-    actor_roots
-        .into_iter()
-        .any(|root| root != own && root.join("taker").join(REVEALING_CLAIM_IN_FLIGHT).is_file())
+    peer_revealing_claim_holder(own, actor_roots.into_iter().map(|root| (root, ()))).is_some()
 }
 
-/// The gate for `prepared`'s revealing claim over every bound Zcash swap.
+/// The gate for `prepared`'s revealing claim over every bound Zcash swap:
+/// `Ok(None)` open, `Ok(Some(holder))` held behind that swap's claim, `Err`
+/// held with the holder unknown (the context could not be read).
+pub(super) fn lez_claim_holder(
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    prepared: &PreparedTakerInitiationV1,
+) -> Result<Option<String>, ()> {
+    let Ok(context) = initiation.lock() else {
+        return Err(());
+    };
+    let bound = context.zec_bound_swaps();
+    Ok(peer_revealing_claim_holder(
+        prepared.execution().actor_root(),
+        bound.iter().map(|swap| {
+            (
+                swap.execution().actor_root(),
+                swap.swap_id().as_str().to_owned(),
+            )
+        }),
+    ))
+}
+
+/// The gate for `prepared`'s revealing claim, open or held.
 pub(super) fn lez_claim_gate_open(
     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     prepared: &PreparedTakerInitiationV1,
 ) -> bool {
-    let Ok(context) = initiation.lock() else {
-        return false;
-    };
-    let bound = context.zec_bound_swaps();
-    !peer_revealing_claim_in_flight(
-        prepared.execution().actor_root(),
-        bound.iter().map(|swap| swap.execution().actor_root()),
-    )
+    matches!(lez_claim_holder(initiation, prepared), Ok(None))
 }
 
 /// A Zcash claim at both legs locked is the Taker's revealing LEZ claim
@@ -223,7 +260,7 @@ async fn supervise_due_swaps(state: &TakerServiceState, memory: &SharedLogMemory
         .unwrap_or_default()
     };
     for prepared in due {
-        supervise_one(&initiation, &prepared, memory).await;
+        Box::pin(supervise_one(&initiation, &prepared, memory)).await;
     }
 }
 
@@ -257,6 +294,10 @@ async fn supervise_one(
                 not_before: now.saturating_add(REQUEUE_SECONDS),
             }
         }
+        ClaimedAttempt::HeldNearRefund => AttemptResolution::Backoff {
+            not_before: now.saturating_add(REQUEUE_SECONDS),
+            failure_class: REVEALING_CLAIM_HELD_NEAR_REFUND.to_owned(),
+        },
         ClaimedAttempt::Terminal => AttemptResolution::Terminal,
         ClaimedAttempt::ManualActionCompleted => AttemptResolution::ManualActionCompleted,
         ClaimedAttempt::Failure(AttemptFailure::Retry(class)) => {
@@ -316,6 +357,9 @@ async fn resolve(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ClaimedAttempt {
     Requeue,
+    /// The revealing claim is held behind another swap's and this swap's own
+    /// LEZ refund time is near: requeued, with the attention class.
+    HeldNearRefund,
     Terminal,
     ManualActionCompleted,
     Failure(AttemptFailure),
@@ -364,6 +408,7 @@ pub(super) fn decide_with(
         phase,
         revision,
         next_action,
+        ..
     } = status
     else {
         return Decision::Activate;
@@ -582,9 +627,32 @@ async fn attempt(
         Decision::Recover => ActorCommand::Recover,
     };
     let lez_claim = phase_before.is_some_and(|phase| submits_lez_claim(phase, command));
-    if lez_claim && !lez_claim_gate_open(initiation, prepared) {
-        return (ClaimedAttempt::Requeue, snapshot);
+    let holder = if lez_claim {
+        match lez_claim_holder(initiation, prepared) {
+            Ok(holder) => holder,
+            Err(()) => return (ClaimedAttempt::Requeue, snapshot),
+        }
+    } else {
+        None
+    };
+    if let Some(holder) = holder {
+        let lez_refund_at_ms = match status {
+            ZecActorStatus::Active {
+                lez_refund_at_ms, ..
+            } => lez_refund_at_ms,
+            ZecActorStatus::NotActivated => None,
+        };
+        return held_claim(
+            &swap_id,
+            &config,
+            lez_refund_at_ms,
+            &holder,
+            memory,
+            snapshot,
+        );
     }
+    // Not held (or not a revealing claim): no holder to name any more.
+    record_revealing_claim_holder(config.state_db(), None);
     let (effect, snapshot) = match run_effect(
         prepared,
         receipt_binding,
@@ -613,6 +681,35 @@ async fn attempt(
     } else {
         (ClaimedAttempt::Requeue, snapshot)
     }
+}
+
+/// A revealing claim held behind `holder`'s: requeued; within the attention
+/// margin of this swap's own LEZ refund time the holder is named beside the
+/// actor's state, the row needs attention, and the Node says so once.
+fn held_claim(
+    swap_id: &SwapId,
+    config: &RouteActor,
+    lez_refund_at_ms: Option<u64>,
+    holder: &str,
+    memory: &SharedLogMemory,
+    snapshot: Option<TakerActorProgressSnapshotV1>,
+) -> (ClaimedAttempt, Option<TakerActorProgressSnapshotV1>) {
+    let now_ms = now_unix().saturating_mul(1000);
+    let Some(refund_at_ms) =
+        lez_refund_at_ms.filter(|at| revealing_claim_hold_needs_attention(*at, now_ms))
+    else {
+        record_revealing_claim_holder(config.state_db(), None);
+        return (ClaimedAttempt::Requeue, snapshot);
+    };
+    record_revealing_claim_holder(config.state_db(), Some(holder));
+    if log_memory(memory).failure_changed(swap_id.as_str(), REVEALING_CLAIM_HELD_NEAR_REFUND) {
+        eprintln!(
+            "{ROLE} {}: revealing LEZ claim held behind swap {holder}'s, {} s before this swap's LEZ refund time; needs attention ({REVEALING_CLAIM_HELD_NEAR_REFUND})",
+            swap_id.as_str(),
+            refund_at_ms.saturating_sub(now_ms) / 1000
+        );
+    }
+    (ClaimedAttempt::HeldNearRefund, snapshot)
 }
 
 /// Reloads the config, runs one effect under the held lock, validates custody
@@ -801,6 +898,7 @@ fn snapshot_of_status(status: ZecActorStatus) -> Option<TakerActorProgressSnapsh
             phase,
             revision,
             next_action,
+            ..
         } => Some(snapshot_from(phase, revision, next_action)),
     }
 }
@@ -884,6 +982,7 @@ pub(super) fn view_from_snapshot(
         available_action,
         privacy_guidance,
         attention_reason: None,
+        revealing_claim_held_by: None,
         last_failure_class: None,
         observed_at: Some(snapshot.observed_at),
         terms: None,
@@ -901,7 +1000,8 @@ mod tests {
 
     use super::{
         Decision, ZecActorStatus, action_from_name, action_name, decide, decide_with, failure_of,
-        peer_revealing_claim_in_flight, phase_from_name, phase_name, submits_lez_claim,
+        peer_revealing_claim_holder, peer_revealing_claim_in_flight, phase_from_name, phase_name,
+        submits_lez_claim,
     };
     use crate::TakerTerminalActionV1;
     use zec_reference_actor::ActorCommand;
@@ -915,6 +1015,7 @@ mod tests {
             phase,
             revision,
             next_action,
+            lez_refund_at_ms: None,
         }
     }
 
@@ -1032,8 +1133,21 @@ mod tests {
             &roots[1],
             roots[1..].iter().map(std::path::PathBuf::as_path)
         ));
+        // The held swap learns which swap holds it, to name it.
+        let named = || {
+            roots
+                .iter()
+                .map(std::path::PathBuf::as_path)
+                .zip(["swap-a", "swap-b", "swap-c"])
+        };
+        assert_eq!(
+            peer_revealing_claim_holder(&roots[2], named()),
+            Some("swap-a")
+        );
+        assert_eq!(peer_revealing_claim_holder(&roots[0], named()), None);
         std::fs::remove_file(&marker).unwrap();
         assert!(!peer_revealing_claim_in_flight(&roots[1], all()));
+        assert_eq!(peer_revealing_claim_holder(&roots[2], named()), None);
         // The marker name is the actor's.
         let state_db = roots[0].join("taker").join("state").join("zec.sqlite3");
         assert_eq!(
@@ -1191,6 +1305,9 @@ mod tests {
         }
         assert!(lez_actor_supervision::validate_failure_class(
             lez_swap_store::COORDINATOR_RESTARTED
+        ));
+        assert!(lez_actor_supervision::validate_failure_class(
+            super::REVEALING_CLAIM_HELD_NEAR_REFUND
         ));
     }
 

@@ -314,6 +314,11 @@ pub struct TakerSwapViewV1 {
     /// (`lez_depositor_balance_insufficient`: the LEZ lot cannot be funded).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attention_reason: Option<String>,
+    /// With `lez_revealing_claim_held_near_refund`: the swap whose revealing
+    /// LEZ claim is in flight and holds this one's back (one per Node, until
+    /// it is final) while this swap's own LEZ refund time is near.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revealing_claim_held_by: Option<String>,
     /// Why the Node's supervisor last backed off on this swap's actor, or
     /// why it stopped (a `failed` row): one of the shared failure classes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
