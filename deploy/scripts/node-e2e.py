@@ -1954,6 +1954,83 @@ def scenario_zec_balance_refusal(stamp: str) -> dict:
             "recovery": "the Taker Node's supervisor locked LEZ on its retry after funding; the swap completed"}
 
 
+def taker_node_log_since(since: str) -> str:
+    """The Taker Node's log since `since` (RFC 3339), stdout and stderr."""
+    read = subprocess.run(["docker", "logs", "--since", since, NODES["taker"][0]], capture_output=True,
+                          text=True, check=False, stdin=subprocess.DEVNULL)
+    return read.stdout + read.stderr
+
+
+def scenario_zec_claim_collision(stamp: str) -> dict:
+    """FINDINGS 24, live: a revealing LEZ claim whose nonce another transaction
+    of the same account takes is Superseded, re-planned at the live nonce and
+    lands (REVIEW 19:38Z). The one-claim gate keeps two claims apart, but not a
+    claim and the account's other LEZ transactions, so the collision is made
+    from a swap of the other direction on the same Taker Node.
+
+    Swap A sells ZEC (run with --direction TakerSellsForeign) and is brought to
+    claim_available; corridor C, selling LEZ, is added beside it (no zebra
+    blocks are mined for it, so A keeps its Zcash window) and taken. The Taker
+    Node submits C's LEZ first lock on its own; the moment its log says so the
+    harness presses A's claim, which is planned from the account's live nonce
+    while C's lock is not yet in a block (blocks every 10 s): both carry one
+    nonce, C's arrived first. A must then show its claim superseded and
+    re-planned (both nonces, both ids, the margin to its LEZ refund time) and
+    complete. When C's lock was already in a block by then, nothing collided:
+    the scenario says so by name (NO-COLLISION) and fails, so a runner can try
+    again. C is left to the Nodes; the scenario does not wait for it."""
+    if zec_taker_sells_lez():
+        raise Failure("zec-claim-collision runs with --direction TakerSellsForeign (swap A sells ZEC)")
+    first = zec_provision()
+    swap_a = zec_take_or_resume(first["offer_id"], stamp, "-a")
+    config_a = zec_taker_actor_config(first["receipt_output"])
+    zec_wait_until(swap_a, config_a, {"claim_available"}, timeout=2400, corridor=first,
+                   describe=f"({swap_a}: {zec_flow()[1:-1]})")
+    ROUTE["direction"] = "TakerSellsLez"
+    try:
+        zec_provision(add=True)
+        corridors = list(ZEC_CORRIDORS)
+        if len(corridors) != 2 or corridors[0]["catalog_swap_id"] != swap_a:
+            raise Failure(f"expected the live entry {swap_a} plus one added, the catalog lists "
+                          f"{[c['catalog_swap_id'] for c in corridors]}")
+        view_a = taker_view(swap_a)
+        if view_a["state"] != "claim_available":
+            raise Failure(f"after the Nodes were recreated with corridor C, {swap_a[:12]} reads {view_a['state']}")
+        since = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        swap_c = zec_take_or_resume(corridors[1]["offer_id"], stamp, "-c")
+    finally:
+        ROUTE["direction"] = "TakerSellsForeign"
+    marker = f"taker actor {swap_c}: drive → submitted lez_"
+    deadline = time.time() + 600
+    while marker not in taker_node_log_since(since):
+        if time.time() > deadline:
+            raise Failure(f"the Taker Node did not submit {swap_c[:12]}'s LEZ first lock within 600 s")
+        time.sleep(0.3)
+    pressed = time.time()
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-a",
+                                                   "swap_id": swap_a, "expected_generation": view_a["progress_generation"]},
+                  timeout=300)
+    press_delay = round(time.time() - pressed, 1)
+    log(f"  {swap_c[:12]}'s LEZ first lock submitted; A's claim admitted {press_delay} s later "
+        f"(replay={result.get('was_replay')})")
+    zec_wait_until(swap_a, config_a, {"completed"}, timeout=1200, corridor=corridors[0],
+                   describe=f"({swap_a}: the revealing LEZ claim, the Maker's follow-up Zcash claim)")
+    wait_completed(swap_a, timeout=600)
+    node_log = taker_node_log_since(since)
+    superseded = [line.strip() for line in node_log.splitlines() if "revealing LEZ claim superseded" in line]
+    first_lock_replans = [line.strip() for line in node_log.splitlines()
+                          if swap_c in line and "re-plan" in line]
+    for line in superseded + first_lock_replans:
+        log(f"  node: {line[:260]}")
+    if not superseded:
+        raise Failure("NO-COLLISION: A completed without a superseded claim (C's lock was in a block before "
+                      "A's claim was planned, or C's lock lost the nonce instead"
+                      f"{': ' + first_lock_replans[0][:120] if first_lock_replans else ''}); try again")
+    return {"swap_a": swap_a, "swap_c": swap_c, "corridor": corridors[0]["run_id"],
+            "claim_supersessions": superseded, "c_first_lock_replans": first_lock_replans,
+            "claim_press_delay_seconds": press_delay}
+
+
 def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     """Two prepared entries of one corridor run, taken together and settled side
     by side: two agreements, two Maker fundings from distinct coinbase outputs,
@@ -2760,6 +2837,7 @@ ZEC_SCENARIOS = {
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,
     "zec-concurrent-staggered": scenario_zec_concurrent_staggered,
+    "zec-claim-collision": scenario_zec_claim_collision,
     "zec-replay": scenario_zec_replay,
     "zec-wrong-inputs": scenario_zec_wrong_inputs,
     "zec-restart-taker": lambda stamp: scenario_zec_restart(stamp, "taker"),
