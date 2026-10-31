@@ -299,6 +299,18 @@ pub trait ZcashFirstLockPort: Send + Sync {
         agreement: &crate::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<(), Self::Error>;
+
+    /// Whether an absent funding transaction can no longer confirm: the chain
+    /// tip has reached its expiry height (ZIP-203). A recovery treats a
+    /// submitted funding as absent only then (FINDINGS 27). The default never
+    /// reports a lapse, so a recovery waits rather than strand the funding.
+    async fn first_lock_lapsed(
+        &self,
+        _agreement: &crate::ZecAgreementV1,
+        _submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
 }
 
 /// Observation-only LEZ boundary used by the maker for the taker's first lock.

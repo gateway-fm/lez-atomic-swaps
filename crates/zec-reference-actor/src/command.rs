@@ -1566,7 +1566,10 @@ async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComma
         .ok_or(ActorCommandError::NotActivated)?;
 
     ensure_recovery_phase(active.status())?;
-    let outcome = active.drive_refund().await.map_err(unavailable_recovery)?;
+    let outcome = active
+        .drive_refund(wall_clock_ms())
+        .await
+        .map_err(unavailable_recovery)?;
     Ok(ActorEffectOutputV1::from_active(
         config,
         ActorEffectCommandV1::Recover,
@@ -1625,6 +1628,13 @@ const fn recovery_outcome(outcome: RefundDriveOutcome) -> ActorEffectOutcomeV1 {
         RefundDriveOutcome::Projected { step, .. } => ActorEffectOutcomeV1::Projected {
             operation: refund_operation(step),
         },
+        // The party's own submitted lock is neither confirmed nor lapsed: the
+        // recovery waits on it rather than end with it outstanding (FINDINGS 27).
+        RefundDriveOutcome::AwaitingOwnLockSettlement(step) => {
+            ActorEffectOutcomeV1::AwaitingObservation {
+                operation: first_lock_operation(step),
+            }
+        }
         RefundDriveOutcome::Refunded { .. } => ActorEffectOutcomeV1::Refunded,
     }
 }

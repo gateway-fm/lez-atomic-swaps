@@ -2163,6 +2163,14 @@ impl ZcashFirstLockPort for MemoryZcashTakerLockObservation {
     ) -> Result<(), Self::Error> {
         self.1.submit(submission).map(|_| ())
     }
+
+    async fn first_lock_lapsed(
+        &self,
+        _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
+        _submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<bool, Self::Error> {
+        Ok(*self.1.lapsed.lock().expect("lapsed lock"))
+    }
 }
 
 #[async_trait]
@@ -2358,9 +2366,15 @@ pub(crate) struct MemoryFirstLockPort {
     pub(crate) fail_after_accept: Arc<Mutex<Vec<FirstLockStepV1>>>,
     /// Steps whose planned nonce the fake node reports as taken: (planned, live).
     pub(crate) superseded: Arc<Mutex<HashMap<FirstLockStepV1, (u128, u128)>>>,
+    /// Whether an absent Zcash funding is reported as lapsed (its expiry passed).
+    pub(crate) lapsed: Arc<Mutex<bool>>,
 }
 
 impl MemoryFirstLockPort {
+    pub(crate) fn set_lapsed(&self, lapsed: bool) {
+        *self.lapsed.lock().expect("lapsed lock") = lapsed;
+    }
+
     pub(crate) fn observe_as(&self, step: FirstLockStepV1, observation: FirstLockObservation) {
         self.observations
             .lock()

@@ -2722,7 +2722,7 @@ async fn assert_early_one_leg_deadline(fixture: &mut ClaimActorFixture, step: Re
     assert_eq!(
         fixture
             .taker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("early one-leg deadline is a wait"),
         RefundDriveOutcome::AwaitingDeadline(step)
@@ -2751,7 +2751,7 @@ async fn project_one_leg_refund(fixture: &mut ClaimActorFixture, step: RefundSte
     assert_eq!(
         fixture
             .taker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("Taker submits its one-leg refund"),
         RefundDriveOutcome::Submitted(step)
@@ -2763,7 +2763,7 @@ async fn project_one_leg_refund(fixture: &mut ClaimActorFixture, step: RefundSte
     assert_eq!(
         fixture
             .taker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("Taker projects its one-leg refund"),
         RefundDriveOutcome::Refunded { revision: 2 }
@@ -2771,7 +2771,7 @@ async fn project_one_leg_refund(fixture: &mut ClaimActorFixture, step: RefundSte
     assert_eq!(
         fixture
             .maker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("Maker only observes the one-leg refund"),
         RefundDriveOutcome::Refunded { revision: 2 }
@@ -2791,7 +2791,7 @@ async fn assert_one_leg_terminal_replay(id: &str, fixture: &mut ClaimActorFixtur
     assert_eq!(
         fixture
             .maker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("maker terminal replay"),
         RefundDriveOutcome::Refunded { revision: 2 }
@@ -2799,7 +2799,7 @@ async fn assert_one_leg_terminal_replay(id: &str, fixture: &mut ClaimActorFixtur
     assert_eq!(
         fixture
             .taker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("taker terminal replay"),
         RefundDriveOutcome::Refunded { revision: 2 }
@@ -2814,6 +2814,250 @@ async fn assert_one_leg_terminal_replay(id: &str, fixture: &mut ClaimActorFixtur
     );
     assert_eq!(fixture.refunds.events(), events_before_replay);
     assert_eq!(fixture.refunds.submissions(), submissions_before_replay);
+}
+
+/// FINDINGS 27 fixture: the Taker's lock is confirmed, the Maker has observed
+/// it and submitted its own opposite-chain lock, which is still absent.
+async fn maker_lock_submitted_after_taker_lock(
+    id: &str,
+    direction: SwapDirection,
+    first_claimant: Participant,
+    secret: [u8; 32],
+) -> ClaimActorFixture {
+    let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+    project_actor_taker_first_lock(direction, &mut fixture.taker, &fixture.lez, &fixture.zcash)
+        .await;
+    expose_taker_lock_to_maker(direction, &fixture.maker, &fixture.lez, &fixture.zcash);
+    fixture
+        .maker
+        .observe_taker_first_lock()
+        .await
+        .expect("maker observes the taker lock");
+    let plan = match direction {
+        SwapDirection::TakerSellsLez => zcash_first_lock_plan([0x81; 32], vec![0xb1]),
+        SwapDirection::TakerSellsForeign => {
+            lez_first_lock_plan([0x71; 32], vec![0xa1], [0x72; 32], vec![0xa2])
+        }
+    };
+    fixture
+        .maker
+        .drive_maker_lock(plan)
+        .await
+        .expect("maker submits its own lock");
+    assert_eq!(fixture.maker.status(), Phase::TakerLockConfirmed);
+    fixture
+}
+
+/// The Taker refunds the only leg the swap's record shows locked (its own).
+async fn taker_refunds_its_one_leg(fixture: &mut ClaimActorFixture, step: RefundStepV1) {
+    let position = match step {
+        RefundStepV1::Lez => ChainPosition::lez_timestamp_from_milliseconds_floor(
+            LezUnixMilliseconds::new(fixture.taker.agreement().lez_refund_at_ms()),
+        ),
+        RefundStepV1::Zcash => ChainPosition::block_height(
+            Chain::Zcash,
+            u64::from(fixture.taker.agreement().zcash_refund_at_height()),
+        ),
+    };
+    fixture
+        .refunds
+        .set_eligibility(step, RefundEligibilityObservationV1::canonical(position));
+    assert_eq!(
+        fixture
+            .taker
+            .drive_refund(LezUnixMilliseconds::new(0))
+            .await
+            .expect("taker submits"),
+        RefundDriveOutcome::Submitted(step)
+    );
+    fixture.refunds.confirm(step);
+    assert!(matches!(
+        fixture
+            .taker
+            .drive_refund(LezUnixMilliseconds::new(0))
+            .await
+            .expect("taker projects"),
+        RefundDriveOutcome::Refunded { .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_makers_zcash_funding_that_confirms_after_the_taker_refund_is_projected_and_refunded() {
+    // FINDINGS 27, as on the devnet (V5, 2026-10-31): selling LEZ the Maker's
+    // Zcash funding confirms only after the Taker refunded its LEZ.
+    let mut fixture = Box::pin(maker_lock_submitted_after_taker_lock(
+        "sdk-own-lock-zcash-late",
+        SwapDirection::TakerSellsLez,
+        Participant::Maker,
+        [0xd1; 32],
+    ))
+    .await;
+    taker_refunds_its_one_leg(&mut fixture, RefundStepV1::Lez).await;
+    // Absent and not lapsed: the Maker waits; it never ends Refunded with it.
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(0))
+            .await
+            .expect("waits"),
+        RefundDriveOutcome::AwaitingOwnLockSettlement(FirstLockStepV1::ZcashFund)
+    );
+    assert_eq!(fixture.maker.status(), Phase::TakerLockConfirmed);
+    // The funding confirms late: projected as the Maker's leg, then the
+    // Taker's LEZ refund is observed from both legs locked.
+    let funding = canonical_zcash_taker_lock(fixture.maker.agreement())
+        .transaction_id()
+        .to_string();
+    fixture.zcash.1.observe_as(
+        FirstLockStepV1::ZcashFund,
+        FirstLockObservation::Confirmed(confirmed_zcash_first_lock([0x81; 32], &funding)),
+    );
+    let observed = fixture
+        .maker
+        .drive_refund(LezUnixMilliseconds::new(0))
+        .await
+        .expect("projects its leg and observes the LEZ refund");
+    assert!(
+        matches!(
+            observed,
+            RefundDriveOutcome::Projected {
+                step: RefundStepV1::Lez,
+                ..
+            }
+        ),
+        "{observed:?}"
+    );
+    assert_eq!(fixture.maker.status(), Phase::TakerLegRefunded);
+    // Its own Zcash leg is refunded before it may end.
+    fixture.refunds.set_eligibility(
+        RefundStepV1::Zcash,
+        RefundEligibilityObservationV1::canonical(ChainPosition::block_height(
+            Chain::Zcash,
+            u64::from(fixture.maker.agreement().zcash_refund_at_height()),
+        )),
+    );
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(0))
+            .await
+            .expect("submits"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
+    );
+    fixture.refunds.confirm(RefundStepV1::Zcash);
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(0))
+            .await
+            .expect("refunded"),
+        RefundDriveOutcome::Refunded { .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_makers_zcash_funding_absent_past_its_expiry_lets_the_recovery_end() {
+    let mut fixture = Box::pin(maker_lock_submitted_after_taker_lock(
+        "sdk-own-lock-zcash-lapsed",
+        SwapDirection::TakerSellsLez,
+        Participant::Maker,
+        [0xd2; 32],
+    ))
+    .await;
+    taker_refunds_its_one_leg(&mut fixture, RefundStepV1::Lez).await;
+    fixture.zcash.1.set_lapsed(true);
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(0))
+            .await
+            .expect("lapsed funding"),
+        RefundDriveOutcome::Refunded { .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_makers_lez_funding_settles_before_its_recovery_ends() {
+    // Selling ZEC the Maker's own lock is the LEZ escrow (initialize + fund).
+    let mut fixture = Box::pin(maker_lock_submitted_after_taker_lock(
+        "sdk-own-lock-lez",
+        SwapDirection::TakerSellsForeign,
+        Participant::Taker,
+        [0xd3; 32],
+    ))
+    .await;
+    taker_refunds_its_one_leg(&mut fixture, RefundStepV1::Zcash).await;
+    let lapses_at = fixture.maker.agreement().lez_refund_at_ms() + 30_000;
+    // Inside the escrow's validity window an absent initialize may still land.
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(lapses_at - 1))
+            .await
+            .expect("waits"),
+        RefundDriveOutcome::AwaitingOwnLockSettlement(FirstLockStepV1::LezInitialize)
+    );
+    // An initialize that landed with the fund still absent: still waiting.
+    fixture.lez.2.observe_as(
+        FirstLockStepV1::LezInitialize,
+        confirmed_first_lock_observation(
+            FirstLockStepV1::LezInitialize,
+            [0x71; 32],
+            "own-lock-lez-initialize",
+        ),
+    );
+    assert_eq!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(lapses_at - 1))
+            .await
+            .expect("waits"),
+        RefundDriveOutcome::AwaitingOwnLockSettlement(FirstLockStepV1::LezFund)
+    );
+    assert_eq!(fixture.maker.status(), Phase::TakerLockConfirmed);
+    // Past the window the fund can never land: the recovery ends.
+    assert!(matches!(
+        fixture
+            .maker
+            .drive_refund(LezUnixMilliseconds::new(lapses_at))
+            .await
+            .expect("lapsed"),
+        RefundDriveOutcome::Refunded { .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_takers_own_first_lock_cannot_end_its_recovery_before_it_is_projected() {
+    // The Taker's own funding (Zcash selling ZEC, LEZ selling LEZ): no refund
+    // step exists before its first lock is projected, so nothing ends early.
+    for (id, direction, first_claimant, secret, plan) in [
+        (
+            "sdk-own-first-lock-zcash",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xd4; 32],
+            zcash_first_lock_plan([0x31; 32], vec![0x51]),
+        ),
+        (
+            "sdk-own-first-lock-lez",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xd5; 32],
+            lez_first_lock_plan([0x41; 32], vec![0x61], [0x42; 32], vec![0x62]),
+        ),
+    ] {
+        let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+        fixture.taker.stage_first_lock(plan).await.expect("stage");
+        fixture.taker.drive_first_lock().await.expect("submit");
+        assert_eq!(fixture.taker.status(), Phase::Offered);
+        assert!(matches!(
+            fixture
+                .taker
+                .drive_refund(LezUnixMilliseconds::new(u64::MAX))
+                .await,
+            Err(ZecSdkError::RefundNotReady(Phase::Offered))
+        ));
+    }
 }
 
 async fn assert_taker_one_leg_recovery(
@@ -3123,11 +3367,19 @@ async fn refund_contract_keeps_lez_before_zcash_in_both_directions() {
         assert_eq!(fixture.taker.status(), Phase::Refunded);
         assert_eq!(fixture.taker.revision(), 4);
         assert_eq!(
-            fixture.maker.drive_refund().await.expect("maker replay"),
+            fixture
+                .maker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+                .expect("maker replay"),
             RefundDriveOutcome::Refunded { revision: 4 }
         );
         assert_eq!(
-            fixture.taker.drive_refund().await.expect("taker replay"),
+            fixture
+                .taker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+                .expect("taker replay"),
             RefundDriveOutcome::Refunded { revision: 4 }
         );
 
@@ -3288,8 +3540,18 @@ async fn drive_refund_actor(
     participant: Participant,
 ) -> Result<RefundDriveOutcome, ZecSdkError> {
     match participant {
-        Participant::Maker => fixture.maker.drive_refund().await,
-        Participant::Taker => fixture.taker.drive_refund().await,
+        Participant::Maker => {
+            fixture
+                .maker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+        }
+        Participant::Taker => {
+            fixture
+                .taker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+        }
     }
 }
 

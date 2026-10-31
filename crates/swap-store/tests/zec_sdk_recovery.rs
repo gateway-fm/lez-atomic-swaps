@@ -1125,8 +1125,16 @@ async fn drive_refund_actor(
     taker: &mut ClaimActive,
 ) -> Result<RefundDriveOutcome, ZecSdkError> {
     match participant {
-        Participant::Maker => maker.drive_refund().await,
-        Participant::Taker => taker.drive_refund().await,
+        Participant::Maker => {
+            maker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+        }
+        Participant::Taker => {
+            taker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+        }
     }
 }
 
@@ -1454,14 +1462,14 @@ async fn schema_v10_refund_journal_reaches_refunded_and_reopens_in_both_directio
         .expect("taker agreement");
         assert_eq!(
             maker_reopen
-                .drive_refund()
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
                 .await
                 .expect("maker replays durable refund journal"),
             RefundDriveOutcome::Refunded { revision: 4 }
         );
         assert_eq!(
             taker_reopen
-                .drive_refund()
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
                 .await
                 .expect("taker replays durable refund journal"),
             RefundDriveOutcome::Refunded { revision: 4 }
@@ -1709,14 +1717,14 @@ async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_int
     // The Taker refunds its LEZ leg; the Maker observes it instead of claiming.
     assert_eq!(
         taker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("taker submits its LEZ refund"),
         RefundDriveOutcome::Submitted(RefundStepV1::Lez)
     );
     assert_eq!(
         taker
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("taker projects its LEZ refund"),
         RefundDriveOutcome::Projected {
@@ -1725,7 +1733,7 @@ async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_int
         }
     );
     maker
-        .drive_refund()
+        .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("maker observes the Taker's LEZ refund past its staged claim");
     assert_eq!(maker.status(), Phase::TakerLegRefunded);
@@ -1743,14 +1751,14 @@ async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_int
     // The Maker refunds its own Zcash leg through the reopened store.
     assert_eq!(
         resumed
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("maker submits its Zcash refund"),
         RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
     );
     assert_eq!(
         resumed
-            .drive_refund()
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("maker projects its Zcash refund"),
         RefundDriveOutcome::Refunded { revision: 4 }

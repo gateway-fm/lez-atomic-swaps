@@ -2239,8 +2239,8 @@ const fn next_refund_step(
 
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
-    Lez: LezRefundPort,
-    Zcash: ZcashRefundPort,
+    Lez: LezRefundPort + LezFirstLockPort,
+    Zcash: ZcashRefundPort + ZcashFirstLockPort,
     Store: RefundRecoveryStore,
 {
     /// Advances the agreement-fixed LEZ-then-Zcash timeout recovery without peer input.
@@ -2255,8 +2255,21 @@ where
     /// Returns a structured validation, adapter, or persistence error. Claim and completed phases,
     /// wrong refund order, wrong roles, early deadlines, reorged funding, substituted identities,
     /// and revision drift all fail closed.
-    pub async fn drive_refund(&mut self) -> Result<RefundDriveOutcome, ZecSdkError> {
+    ///
+    /// `now` is the caller's trusted clock. Before any refund step, this party's own submitted
+    /// lock that the swap's record does not yet show (the Maker's opposite-chain lock at
+    /// `TakerLockConfirmed`) is settled: observed only — never submitted — and projected as its
+    /// locked leg when it confirmed, so the recovery refunds it; while it is neither confirmed nor
+    /// lapsed the recovery waits ([`RefundDriveOutcome::AwaitingOwnLockSettlement`]) and never
+    /// ends with it outstanding (FINDINGS 27).
+    pub async fn drive_refund(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
         self.replay_refund_transitions().await?;
+        if let Some(wait) = self.settle_own_lock(now).await? {
+            return Ok(wait);
+        }
         let step = match self.status() {
             Phase::Refunded => {
                 return Ok(RefundDriveOutcome::Refunded {
@@ -2272,6 +2285,86 @@ where
             self.drive_owned_refund(step).await
         } else {
             self.observe_counterparty_refund(step).await
+        }
+    }
+
+    /// Settles the Maker's own submitted opposite-chain lock before the
+    /// recovery may run on (FINDINGS 27). `None`: nothing to settle, or it was
+    /// projected (the swap now has both legs locked), or it lapsed and can
+    /// never land; `Some(wait)`: it is pending, or absent but not lapsed.
+    async fn settle_own_lock(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<Option<RefundDriveOutcome>, ZecSdkError> {
+        if self.local_participant() != Participant::Maker
+            || self.status() != Phase::TakerLockConfirmed
+        {
+            return Ok(None);
+        }
+        let Some(intent) = self
+            .store
+            .load_maker_lock_intent(self.coordinator.id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(None);
+        };
+        intent.validate_for_active(self.agreement(), self.revision)?;
+        let lez_lapsed = || {
+            let margin_ms =
+                crate::ZecRefundProfile::for_id(self.agreement().binding().profile_id())
+                    .required_margin()
+                    .value()
+                    .saturating_mul(1000);
+            now.value()
+                >= self
+                    .agreement()
+                    .lez_refund_at_ms()
+                    .saturating_add(margin_ms)
+        };
+        let (step, observation) = match intent.plan() {
+            FirstLockPlanV1::Zcash { funding } => {
+                let observation = self
+                    .zcash
+                    .observe_first_lock(self.agreement(), funding)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashFirstLock(Box::new(error)))?;
+                if matches!(observation, FirstLockObservation::Absent)
+                    && self
+                        .zcash
+                        .first_lock_lapsed(self.agreement(), funding)
+                        .await
+                        .map_err(|error| ZecSdkError::ZcashFirstLock(Box::new(error)))?
+                {
+                    return Ok(None);
+                }
+                (funding.step(), (funding, observation))
+            }
+            FirstLockPlanV1::Lez { initialize, fund } => {
+                match self.observe_lez_step(initialize).await? {
+                    FirstLockObservation::Absent if lez_lapsed() => return Ok(None),
+                    FirstLockObservation::Confirmed(evidence) => {
+                        self.validate_first_lock_observation(initialize, &evidence)?;
+                        let observation = self.observe_lez_step(fund).await?;
+                        if matches!(observation, FirstLockObservation::Absent) && lez_lapsed() {
+                            return Ok(None);
+                        }
+                        (fund.step(), (fund, observation))
+                    }
+                    other => (initialize.step(), (initialize, other)),
+                }
+            }
+        };
+        let (submission, observation) = observation;
+        match observation {
+            FirstLockObservation::Confirmed(evidence) => {
+                self.validate_first_lock_observation(submission, &evidence)?;
+                self.project_maker_lock(evidence).await?;
+                Ok(None)
+            }
+            FirstLockObservation::Absent | FirstLockObservation::Unstable => {
+                Ok(Some(RefundDriveOutcome::AwaitingOwnLockSettlement(step)))
+            }
         }
     }
 

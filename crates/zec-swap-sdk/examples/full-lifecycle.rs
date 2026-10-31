@@ -390,14 +390,14 @@ async fn refunded_swap() {
         .set_submit_outcome(RefundStepV1::Lez, RefundSubmitOutcomeV1::Accepted);
     assert_eq!(
         taker
-            .drive_refund()
+            .drive_refund(EXAMPLE_NOW)
             .await
             .expect("taker refunds its LEZ escrow"),
         RefundDriveOutcome::Submitted(RefundStepV1::Lez)
     );
     corridor.refunds.confirm(RefundStepV1::Lez);
     let projected = taker
-        .drive_refund()
+        .drive_refund(EXAMPLE_NOW)
         .await
         .expect("taker observes its LEZ refund");
     assert!(matches!(
@@ -408,7 +408,7 @@ async fn refunded_swap() {
         }
     ));
     maker
-        .drive_refund()
+        .drive_refund(EXAMPLE_NOW)
         .await
         .expect("maker observes the LEZ refund");
     println!(
@@ -422,7 +422,7 @@ async fn refunded_swap() {
     );
     assert_eq!(
         maker
-            .drive_refund()
+            .drive_refund(EXAMPLE_NOW)
             .await
             .expect("maker refunds its Zcash HTLC"),
         RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
@@ -430,14 +430,14 @@ async fn refunded_swap() {
     corridor.refunds.confirm(RefundStepV1::Zcash);
     assert!(matches!(
         maker
-            .drive_refund()
+            .drive_refund(EXAMPLE_NOW)
             .await
             .expect("maker observes its Zcash refund"),
         RefundDriveOutcome::Refunded { .. }
     ));
     assert!(matches!(
         taker
-            .drive_refund()
+            .drive_refund(EXAMPLE_NOW)
             .await
             .expect("taker observes the Zcash refund"),
         RefundDriveOutcome::Refunded { .. }
