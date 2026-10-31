@@ -18,10 +18,10 @@ mod test_crash_hook;
 
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
-    ActorStatusV1, REVEALING_CLAIM_HOLD_ATTENTION_MS, execute_actor_command,
-    lez_depositor_balance_marker, record_revealing_claim_holder, revealing_claim_held_by_marker,
-    revealing_claim_hold_needs_attention, revealing_claim_holder, revealing_claim_in_flight_marker,
-    revealing_claim_submitted_marker,
+    ActorStatusV1, execute_actor_command, lez_depositor_balance_marker,
+    record_revealing_claim_holder, revealing_claim_held_by_marker,
+    revealing_claim_hold_attention_ms, revealing_claim_hold_needs_attention,
+    revealing_claim_holder, revealing_claim_in_flight_marker, revealing_claim_submitted_marker,
 };
 
 /// Exit code of a drive the actor refused because the LEZ depositor cannot

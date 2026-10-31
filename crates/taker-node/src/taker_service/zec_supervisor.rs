@@ -60,7 +60,8 @@ use crate::{
 const REVEALING_CLAIM_IN_FLIGHT: &str = "revealing-claim-in-flight";
 
 /// The class of a revealing claim held behind another swap's while its own
-/// LEZ refund time is near ([`zec_reference_actor::REVEALING_CLAIM_HOLD_ATTENTION_MS`]):
+/// LEZ refund time is near (a third of its LEZ refund delay,
+/// [`zec_reference_actor::revealing_claim_hold_attention_ms`]):
 /// the row reads as needing attention and names the holder; the claim is
 /// still attempted at the requeue cadence and goes ahead once the gate opens.
 pub(super) const REVEALING_CLAIM_HELD_NEAR_REFUND: &str = "lez_revealing_claim_held_near_refund";
@@ -636,16 +637,18 @@ async fn attempt(
         None
     };
     if let Some(holder) = holder {
-        let lez_refund_at_ms = match status {
+        let refund_and_attention_ms = match status {
             ZecActorStatus::Active {
-                lez_refund_at_ms, ..
-            } => lez_refund_at_ms,
+                lez_refund_at_ms,
+                revealing_claim_hold_attention_ms,
+                ..
+            } => lez_refund_at_ms.zip(revealing_claim_hold_attention_ms),
             ZecActorStatus::NotActivated => None,
         };
         return held_claim(
             &swap_id,
             &config,
-            lez_refund_at_ms,
+            refund_and_attention_ms,
             &holder,
             memory,
             snapshot,
@@ -689,14 +692,15 @@ async fn attempt(
 fn held_claim(
     swap_id: &SwapId,
     config: &RouteActor,
-    lez_refund_at_ms: Option<u64>,
+    refund_and_attention_ms: Option<(u64, u64)>,
     holder: &str,
     memory: &SharedLogMemory,
     snapshot: Option<TakerActorProgressSnapshotV1>,
 ) -> (ClaimedAttempt, Option<TakerActorProgressSnapshotV1>) {
     let now_ms = now_unix().saturating_mul(1000);
-    let Some(refund_at_ms) =
-        lez_refund_at_ms.filter(|at| revealing_claim_hold_needs_attention(*at, now_ms))
+    let Some(refund_at_ms) = refund_and_attention_ms
+        .filter(|(at, attention)| revealing_claim_hold_needs_attention(*at, *attention, now_ms))
+        .map(|(at, _)| at)
     else {
         record_revealing_claim_holder(config.state_db(), None);
         return (ClaimedAttempt::Requeue, snapshot);
@@ -1016,6 +1020,7 @@ mod tests {
             revision,
             next_action,
             lez_refund_at_ms: None,
+            revealing_claim_hold_attention_ms: None,
         }
     }
 

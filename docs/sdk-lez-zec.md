@@ -115,14 +115,18 @@ only, and the evidence set says so.
 `ZecRefundProfile` names immutable parameter sets
 ([`docs/milestone-1/parameter-profiles.md`](milestone-1/parameter-profiles.md)):
 `deterministic-local-v1` for the isolated test lane, `public-testnet-v1` for
-the public networks, and `deterministic-local-devnet-v2` (eight-block Zcash
-refund window; `-v1` is its four-block predecessor, kept for the agreements
-signed under it) for a local devnet
+the public networks, and `deterministic-local-devnet-v3` (eight-block Zcash
+refund window and a 12-minute LEZ refund delay; `-v2` is its 30-minute
+predecessor and `-v1` the four-block one, both kept for the agreements signed
+under them) for a local devnet
 whose LEZ chain finalises in minutes rather than instantly. The LEZ escrow
 program emits a timestamp validity window that ends at the agreement's LEZ
 refund time, so a profile's `lez_refund_delay` is also the longest a lock may
 take to reach the chain after the agreement's anchor; the devnet profile
-sets it to 30 minutes. The profile is part of the signed agreement
+sets it to 12 minutes (v3), short enough for a refund to finish inside the
+pinned devnet chain's finality lifetime (upstream #3643). A revealing claim
+held behind another swap's needs attention a third of that delay before the
+refund time. The profile is part of the signed agreement
 (`ZecProfileRecordV1`), and evidence states which profile it ran under.
 
 ## Privacy posture

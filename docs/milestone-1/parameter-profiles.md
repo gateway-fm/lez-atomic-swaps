@@ -129,8 +129,17 @@ principal outputs never absorb an unnegotiated fee.
   eight-block Zcash refund window: two swaps of one signer taken together at
   one Zcash anchor need the first swap's four blocks (funding, two pre-reveal
   confirmations, claim) plus the second swap's own. Profiles are immutable per
-  id, so the wider window is a new id; the devnet provisioner asks for v2
-  since 2026-10-29.
+  id, so the wider window is a new id; the devnet provisioner asked for v2
+  from 2026-10-29 to 2026-10-31.
+- `deterministic-local-devnet-v3`: `deterministic-local-devnet-v2` with a
+  12-minute LEZ refund delay. The pinned devnet LEZ chain freezes finality
+  (upstream #3643) 17–56 minutes after it is created, about 27 minutes on the
+  review host; a refund under v2's 30 minutes needs about 34 minutes of
+  finality and never completed there. Twelve minutes keep a refund within
+  about 17 minutes of finality and still leave the longest measured
+  take-to-claim (about 7 minutes) a window. A held revealing claim needs
+  attention a third of the delay before the refund time (4 minutes here).
+  Devnet only; the devnet provisioner asks for v3 since 2026-10-31.
 - `deterministic-local-devnet-v1`: `deterministic-local-v1` with a 30-minute
   LEZ refund delay instead of 60 seconds, for a local devnet whose LEZ chain
   finalises in minutes (the LEZ escrow's validity window ends at the

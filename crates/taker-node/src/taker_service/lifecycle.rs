@@ -77,6 +77,8 @@ pub(super) enum ZecActorStatus {
         next_action: ZecLifecycleAction,
         /// The agreement's LEZ refund time, Unix milliseconds.
         lez_refund_at_ms: Option<u64>,
+        /// How near that time a held revealing claim needs attention, ms.
+        revealing_claim_hold_attention_ms: Option<u64>,
     },
 }
 
@@ -308,6 +310,7 @@ impl RouteActor {
                     revision,
                     next_action,
                     lez_refund_at_ms: status.lez_refund_at_ms(),
+                    revealing_claim_hold_attention_ms: status.revealing_claim_hold_attention_ms(),
                 },
             }),
             ActorCommandOutputV1::Effect(_) => Err(ActorCommandError::StatusUnavailable),

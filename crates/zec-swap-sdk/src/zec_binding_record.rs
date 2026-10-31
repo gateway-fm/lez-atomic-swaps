@@ -23,8 +23,11 @@ pub enum ZecProfileRecordV1 {
     /// The Borsh tag is the variant index (wire tag 2).
     DeterministicLocalDevnetV1,
     /// The devnet profile with the eight-block Zcash refund window (wire tag
-    /// 3). Last on purpose: tags are append-only.
+    /// 3).
     DeterministicLocalDevnetV2,
+    /// The devnet profile with the 12-minute LEZ refund delay (wire tag 4).
+    /// Last on purpose: tags are append-only.
+    DeterministicLocalDevnetV3,
 }
 
 impl From<ZecProfileId> for ZecProfileRecordV1 {
@@ -33,6 +36,7 @@ impl From<ZecProfileId> for ZecProfileRecordV1 {
             ZecProfileId::DeterministicLocalV1 => Self::DeterministicLocalV1,
             ZecProfileId::DeterministicLocalDevnetV1 => Self::DeterministicLocalDevnetV1,
             ZecProfileId::DeterministicLocalDevnetV2 => Self::DeterministicLocalDevnetV2,
+            ZecProfileId::DeterministicLocalDevnetV3 => Self::DeterministicLocalDevnetV3,
             ZecProfileId::PublicTestnetV1 => Self::PublicTestnetV1,
         }
     }
@@ -44,6 +48,7 @@ impl From<ZecProfileRecordV1> for ZecProfileId {
             ZecProfileRecordV1::DeterministicLocalV1 => Self::DeterministicLocalV1,
             ZecProfileRecordV1::DeterministicLocalDevnetV1 => Self::DeterministicLocalDevnetV1,
             ZecProfileRecordV1::DeterministicLocalDevnetV2 => Self::DeterministicLocalDevnetV2,
+            ZecProfileRecordV1::DeterministicLocalDevnetV3 => Self::DeterministicLocalDevnetV3,
             ZecProfileRecordV1::PublicTestnetV1 => Self::PublicTestnetV1,
         }
     }

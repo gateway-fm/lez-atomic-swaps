@@ -200,7 +200,8 @@ impl Fixture {
         let (network, branch) = match self.binding_profile {
             ZecProfileId::DeterministicLocalV1
             | ZecProfileId::DeterministicLocalDevnetV1
-            | ZecProfileId::DeterministicLocalDevnetV2 => (NetworkType::Regtest, BranchId::Nu6_2),
+            | ZecProfileId::DeterministicLocalDevnetV2
+            | ZecProfileId::DeterministicLocalDevnetV3 => (NetworkType::Regtest, BranchId::Nu6_2),
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
         };
         let output = ExpectedBip199Output::new(

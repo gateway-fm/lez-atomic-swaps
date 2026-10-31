@@ -50,8 +50,9 @@ both Nodes, then
                                          chain created with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
 
 The ZEC refund windows come from the agreement, not the timing profile. Under
-the devnet profile zec-provision.sh asks for (deterministic-local-devnet-v2)
-the Taker's LEZ refund opens 30 minutes after the corridor was provisioned
+the devnet profile zec-provision.sh asks for (deterministic-local-devnet-v3)
+the Taker's LEZ refund opens the profile's LEZ refund delay (12 min under
+deterministic-local-devnet-v3) after the corridor was provisioned
 and the Maker's Zcash refund at an absolute zebra height (tip at provisioning
 + 5); the refund scenarios read those from the corridor and wait for them
 rather than guessing, so neither needs the `fast` timing profile.
@@ -1271,6 +1272,20 @@ def zebra_mine(blocks: int, why: str) -> None:
 ZEC_CORRIDORS: list[dict] = []
 
 
+def zec_profile_refund_delay(profile: str) -> int:
+    """The LEZ refund delay of a ZEC profile, seconds (zec-swap-sdk profile.rs:
+    the only parameter the harness waits on)."""
+    return {"deterministic-local-devnet-v1": 1800, "deterministic-local-devnet-v2": 1800,
+            "deterministic-local-devnet-v3": 720}.get(profile, 60)
+
+
+def zec_current_refund_delay() -> int:
+    """The LEZ refund delay of the corridor the Nodes run with (runtime/zec/current)."""
+    run_id = (RUNTIME / "zec" / "current").read_text().strip()
+    spec = json.loads((RUNTIME / "zec" / run_id / "spec.json").read_text())
+    return zec_profile_refund_delay(spec.get("profile", "deterministic-local-v1"))
+
+
 def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False) -> dict:
     """One fresh corridor run: zec-provision.sh end to end, Nodes recreated. With
     `swaps` 2 the run holds two prepared entries at one Zcash anchor; with `add`
@@ -1327,7 +1342,7 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False)
         corridors.append({"run_id": run_id, "entry": index, "offer_id": entry["offer_id"], "catalog_swap_id": entry["swap_id"],
                           "profile": profile,
                           # zec-swap-sdk profile.rs: the only parameter the devnet profile changes.
-                          "lez_refund_delay_seconds": 1800 if profile.startswith("deterministic-local-devnet-v") else 60,
+                          "lez_refund_delay_seconds": zec_profile_refund_delay(profile),
                           "receipt_output": entry["receipt_output"], "actor_root": entry["actor_root"],
                           "zebra_tip_at_provisioning": int(summary["zebra_tip_height"]),
                           "zcash_refund_height": int(summary["zcash_refund_height"]),
@@ -2623,7 +2638,7 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
         # taken from the corridor's run id stamp, which the script sets to the
         # provisioning second.
         opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
-        wait_until(opens + 15, "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)")
+        wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
         log("  the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed")
         zec_refund_until_terminal(swap_id, stamp, timeout=1800)
         log("  Taker refunded its LEZ escrow")
@@ -2725,7 +2740,7 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
         raise Failure("the Taker observed the Maker's lock, but no zebra block spends the provisioned outpoint")
     log(f"  Maker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker refunds LEZ instead of waiting")
     opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
-    wait_until(opens + 15, "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)")
+    wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
     zec_refund_until_terminal(swap_id, stamp, timeout=1800, until=frozenset({"refund_in_progress", "refunded"}))
     log("  the Taker's LEZ refund is admitted and in progress on the Node; the Maker's Zcash refund is owed next")
     return zec_maker_refund_tail(swap_id, stamp, config, corridor, funding)
@@ -2749,7 +2764,7 @@ def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
         raise Failure("the Taker's claim is offered, but no zebra block spends the provisioned outpoint")
     log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker never claims")
     opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
-    wait_until(opens + 15, "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)")
+    wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
     if maker_view(swap_id).get("schedule_state") != "terminal":
         try:
             result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
@@ -3035,8 +3050,8 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
         wait_healthy("maker")
     if step == "refund-point" and zec_taker_sells_lez():
         run_id = (RUNTIME / "zec" / "current").read_text().strip()
-        wait_until(int(run_id.rsplit("-", 1)[1]) + 1800 + 15,
-                   "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)")
+        wait_until(int(run_id.rsplit("-", 1)[1]) + zec_current_refund_delay() + 15,
+                   "for the agreement's LEZ refund time (the profile's delay after provisioning)")
         log("  the Taker's refund is due")
         return True
     corridor = zec_provision(swap_id=swap_id)
@@ -3062,7 +3077,7 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
             docker("stop", NODES["maker"][0])
         elif step == "refund-point":
             if zec_taker_sells_lez():
-                wait_until(opens + 15, "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)")
+                wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
             else:
                 height = int(zebra("getblockcount"))
                 if height < corridor["zcash_refund_height"]:
@@ -3091,7 +3106,7 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
             else:
                 raise Failure(f"the Maker did not complete {swap_id[:12]} on its own within {timeout}s")
         elif step == "maker-lez-refund":
-            wait_until(opens + 15, "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)")
+            wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
             if maker_view(swap_id).get("schedule_state") != "terminal":
                 try:
                     result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-desk-refund-{stamp}")

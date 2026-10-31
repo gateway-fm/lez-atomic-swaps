@@ -874,11 +874,15 @@ fn revealing_claim_held_back(
             .as_millis(),
     )
     .unwrap_or(u64::MAX);
-    let lez_refund_at_ms = status
-        .as_ref()
-        .and_then(|value| value.get("lez_refund_at_ms"))
-        .and_then(Value::as_u64);
-    let hold = claim_hold(holder.is_some(), lez_refund_at_ms, now_ms);
+    let read = |key: &str| {
+        status
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_u64)
+    };
+    let refund_and_attention_ms =
+        read("lez_refund_at_ms").zip(read("revealing_claim_hold_attention_ms"));
+    let hold = claim_hold(holder.is_some(), refund_and_attention_ms, now_ms);
     let Some(holder) = holder.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
         return hold;
@@ -895,19 +899,19 @@ fn revealing_claim_held_back(
 }
 
 /// The gate's answer for a Zcash claim at both legs locked: open without a
-/// holder; held behind one; named once its own LEZ refund time (from the
-/// actor's status) is within the attention margin. Without a refund time the
-/// claim is held without the attention.
+/// holder; held behind one; named once its own LEZ refund time is within the
+/// attention margin (both from the actor's status: a third of the agreement's
+/// LEZ refund delay). Without them the claim is held without the attention.
 #[cfg(feature = "pair-zec")]
 const fn claim_hold(
     holder: bool,
-    lez_refund_at_ms: Option<u64>,
+    refund_and_attention_ms: Option<(u64, u64)>,
     now_ms: u64,
 ) -> RevealingClaimHold {
-    match (holder, lez_refund_at_ms) {
+    match (holder, refund_and_attention_ms) {
         (false, _) => RevealingClaimHold::Open,
-        (true, Some(at))
-            if zec_reference_actor::revealing_claim_hold_needs_attention(at, now_ms) =>
+        (true, Some((at, attention)))
+            if zec_reference_actor::revealing_claim_hold_needs_attention(at, attention, now_ms) =>
         {
             RevealingClaimHold::HeldNearRefund
         }
@@ -1969,25 +1973,35 @@ mod exit_classification_tests {
     #[test]
     fn a_held_revealing_claim_needs_attention_only_near_its_refund_time() {
         use super::{RevealingClaimHold, claim_hold};
-        let margin = zec_reference_actor::REVEALING_CLAIM_HOLD_ATTENTION_MS;
-        let refund_at = 10_000_000;
+        // A third of the agreement's LEZ refund delay: the devnet V2 (30 min)
+        // and V3 (12 min) profiles.
+        for delay_seconds in [1_800, 720] {
+            let margin = zec_reference_actor::revealing_claim_hold_attention_ms(delay_seconds);
+            let refund_at = 10_000_000;
+            let at = Some((refund_at, margin));
+            assert_eq!(claim_hold(false, at, refund_at), RevealingClaimHold::Open);
+            assert_eq!(
+                claim_hold(true, at, refund_at - margin - 1),
+                RevealingClaimHold::Held
+            );
+            assert_eq!(
+                claim_hold(true, at, refund_at - margin),
+                RevealingClaimHold::HeldNearRefund
+            );
+            assert_eq!(
+                claim_hold(true, at, refund_at + 1),
+                RevealingClaimHold::HeldNearRefund
+            );
+            assert_eq!(claim_hold(true, None, refund_at), RevealingClaimHold::Held);
+        }
         assert_eq!(
-            claim_hold(false, Some(refund_at), refund_at),
-            RevealingClaimHold::Open
+            zec_reference_actor::revealing_claim_hold_attention_ms(720),
+            240_000
         );
         assert_eq!(
-            claim_hold(true, Some(refund_at), refund_at - margin - 1),
-            RevealingClaimHold::Held
+            zec_reference_actor::revealing_claim_hold_attention_ms(1_800),
+            600_000
         );
-        assert_eq!(
-            claim_hold(true, Some(refund_at), refund_at - margin),
-            RevealingClaimHold::HeldNearRefund
-        );
-        assert_eq!(
-            claim_hold(true, Some(refund_at), refund_at + 1),
-            RevealingClaimHold::HeldNearRefund
-        );
-        assert_eq!(claim_hold(true, None, refund_at), RevealingClaimHold::Held);
     }
 
     #[test]

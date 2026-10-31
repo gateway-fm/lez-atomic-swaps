@@ -192,6 +192,7 @@ impl ActorStatusV1 {
         next_action: ZecLifecycleAction,
         lez_first_lock_replans: Vec<ActorReplanV1>,
         lez_refund_at_ms: Option<u64>,
+        revealing_claim_hold_attention_ms: Option<u64>,
     ) -> Self {
         Self {
             schema_version: STATUS_SCHEMA_VERSION,
@@ -202,6 +203,7 @@ impl ActorStatusV1 {
                 next_action: next_action.into(),
                 lez_first_lock_replans,
                 lez_refund_at_ms,
+                revealing_claim_hold_attention_ms,
             },
         }
     }
@@ -254,6 +256,19 @@ impl ActorStatusV1 {
             } => *lez_refund_at_ms,
         }
     }
+
+    /// How near its LEZ refund time a held revealing claim of an active
+    /// actor needs attention ([`revealing_claim_hold_attention_ms`]).
+    #[must_use]
+    pub const fn revealing_claim_hold_attention_ms(&self) -> Option<u64> {
+        match &self.state {
+            ActorStateV1::NotActivated => None,
+            ActorStateV1::Active {
+                revealing_claim_hold_attention_ms,
+                ..
+            } => *revealing_claim_hold_attention_ms,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -270,6 +285,9 @@ enum ActorStateV1 {
         /// The agreement's LEZ refund time, Unix milliseconds.
         #[serde(skip_serializing_if = "Option::is_none")]
         lez_refund_at_ms: Option<u64>,
+        /// How near that time a held revealing claim needs attention, ms.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        revealing_claim_hold_attention_ms: Option<u64>,
     },
 }
 
@@ -1155,15 +1173,24 @@ pub fn revealing_claim_in_flight_marker(role_state_db: &Path) -> Option<PathBuf>
 /// How near its own LEZ refund time a revealing LEZ claim held behind another
 /// swap's (one in flight per Node) is surfaced as needing attention with the
 /// holder named, so a stuck holder cannot make it miss its claim in silence
-/// (REVIEW 16:33Z). Ten minutes; the hold itself is kept: two claims at one
-/// nonce would supersede each other.
-pub const REVEALING_CLAIM_HOLD_ATTENTION_MS: u64 = 600_000;
-
-/// Whether a claim held now, `now_ms`, is within the attention margin of the
-/// swap's LEZ refund time (or past it).
+/// (REVIEW 16:33Z): a third of the agreement's LEZ refund delay (10 min under
+/// a 30 min delay, 4 min under the devnet V3's 12; REVIEW 00:52Z), so a gated
+/// second claim is not flagged as soon as it waits. The hold itself is kept:
+/// two claims at one nonce would supersede each other.
 #[must_use]
-pub const fn revealing_claim_hold_needs_attention(lez_refund_at_ms: u64, now_ms: u64) -> bool {
-    lez_refund_at_ms.saturating_sub(now_ms) <= REVEALING_CLAIM_HOLD_ATTENTION_MS
+pub const fn revealing_claim_hold_attention_ms(lez_refund_delay_seconds: u64) -> u64 {
+    lez_refund_delay_seconds.saturating_mul(1000) / 3
+}
+
+/// Whether a claim held now, `now_ms`, is within `attention_ms` of the swap's
+/// LEZ refund time (or past it).
+#[must_use]
+pub const fn revealing_claim_hold_needs_attention(
+    lez_refund_at_ms: u64,
+    attention_ms: u64,
+    now_ms: u64,
+) -> bool {
+    lez_refund_at_ms.saturating_sub(now_ms) <= attention_ms
 }
 
 /// The marker a Node writes beside a swap whose revealing LEZ claim it holds
@@ -1637,6 +1664,13 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
                 active.next_action(),
                 replans,
                 Some(active.agreement().lez_refund_at_ms()),
+                Some(revealing_claim_hold_attention_ms(
+                    lez_zec_swap_sdk::ZecRefundProfile::for_id(
+                        active.agreement().binding().profile_id(),
+                    )
+                    .lez_refund_delay()
+                    .value(),
+                )),
             )
         }
         None => ActorStatusV1::not_activated(config.role()),
@@ -1708,6 +1742,7 @@ mod tests {
                 ZecLifecycleAction::Wait,
                 Vec::new(),
                 None,
+                None,
             );
             assert_eq!(status.role(), ActorRole::Maker);
             assert_eq!(
@@ -1737,6 +1772,7 @@ mod tests {
                 next_action,
                 Vec::new(),
                 None,
+                None,
             );
             assert_eq!(
                 status.projection(),
@@ -1754,6 +1790,7 @@ mod tests {
             23,
             ZecLifecycleAction::ClaimLez,
             Vec::new(),
+            None,
             None,
         );
         assert_eq!(
@@ -1778,8 +1815,10 @@ mod tests {
             ZecLifecycleAction::ClaimLez,
             Vec::new(),
             Some(1_800_000),
+            Some(600_000),
         );
         assert_eq!(status.lez_refund_at_ms(), Some(1_800_000));
+        assert_eq!(status.revealing_claim_hold_attention_ms(), Some(600_000));
         assert_eq!(
             serde_json::to_value(&status).expect("status serializes")["lez_refund_at_ms"],
             json!(1_800_000)
@@ -1792,15 +1831,41 @@ mod tests {
 
     #[test]
     fn a_held_claim_names_its_holder_only_near_its_refund_time() {
-        assert!(!revealing_claim_hold_needs_attention(
-            10_000_000,
-            10_000_000 - REVEALING_CLAIM_HOLD_ATTENTION_MS - 1
-        ));
-        assert!(revealing_claim_hold_needs_attention(
-            10_000_000,
-            10_000_000 - REVEALING_CLAIM_HOLD_ATTENTION_MS
-        ));
-        assert!(revealing_claim_hold_needs_attention(10_000_000, 20_000_000));
+        // A third of the agreement's LEZ refund delay: 10 min under the
+        // devnet V2's 30 min, 4 min under V3's 12 (REVIEW 00:52Z).
+        let v2 = revealing_claim_hold_attention_ms(
+            lez_zec_swap_sdk::ZecRefundProfile::for_id(
+                lez_zec_swap_sdk::ZecProfileId::DeterministicLocalDevnetV2,
+            )
+            .lez_refund_delay()
+            .value(),
+        );
+        let v3 = revealing_claim_hold_attention_ms(
+            lez_zec_swap_sdk::ZecRefundProfile::for_id(
+                lez_zec_swap_sdk::ZecProfileId::DeterministicLocalDevnetV3,
+            )
+            .lez_refund_delay()
+            .value(),
+        );
+        assert_eq!(v2, 600_000);
+        assert_eq!(v3, 240_000);
+        for margin in [v2, v3] {
+            assert!(!revealing_claim_hold_needs_attention(
+                10_000_000,
+                margin,
+                10_000_000 - margin - 1
+            ));
+            assert!(revealing_claim_hold_needs_attention(
+                10_000_000,
+                margin,
+                10_000_000 - margin
+            ));
+            assert!(revealing_claim_hold_needs_attention(
+                10_000_000, margin, 20_000_000
+            ));
+        }
+        // A V3 claim gated for two minutes of its twelve is not flagged.
+        assert!(!revealing_claim_hold_needs_attention(720_000, v3, 120_000));
 
         let root = tempfile::tempdir().expect("tempdir");
         let state_db = root.path().join("taker").join("state").join("actor.sqlite");

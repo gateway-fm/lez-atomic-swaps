@@ -1529,7 +1529,8 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
         match profile {
             ZecProfileId::DeterministicLocalV1
             | ZecProfileId::DeterministicLocalDevnetV1
-            | ZecProfileId::DeterministicLocalDevnetV2 => (
+            | ZecProfileId::DeterministicLocalDevnetV2
+            | ZecProfileId::DeterministicLocalDevnetV3 => (
                 NetworkType::Regtest,
                 LezEnvironmentV1::DeterministicLocalV0_2,
                 116,

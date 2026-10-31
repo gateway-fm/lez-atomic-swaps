@@ -307,6 +307,9 @@ zec_step() { # zec_step <swap_id> <step> [timeout]: a host step of a ZEC desk jo
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-step --swap-id "$1" --step "$2" --timeout "${3:-1800}" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-step $2"
 }
+zec_refund_delay() { # the LEZ refund delay of the corridor the Nodes run with, seconds (node-e2e.py's mapping)
+  python3 -c 'import importlib.util,sys; sys.argv=["x"]; s=importlib.util.spec_from_file_location("ne","scripts/node-e2e.py"); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.zec_current_refund_delay())'
+}
 zec_first_lock_phases="taker_lock_confirmed|awaiting_maker_confirmations|both_legs_locked"
 zec_claim_and_complete() { # zec_claim_and_complete <swap_id>: from the open swap to completed on both desks
   local maker_pid taker_pid
@@ -520,7 +523,7 @@ scenario_zec_concurrent_staggered() {
 scenario_zec_maker_refund() {
   # Both legs locked, the Maker's Zcash funding kept at one confirmation (below
   # the pre-reveal gate), the Taker refunds LEZ from its desk at the agreement's
-  # refund time (30 min after provisioning on the devnet profile), the Maker
+  # refund time (the profile's delay after provisioning: 12 min on the devnet V3), the Maker
   # Node refunds its Zcash at the refund height, the Taker Node's supervisor runs the
   # admitted refund on its own until it has observed that; both desks show the
   # swap refunded. One press of Refund; no Retry.
@@ -535,8 +538,8 @@ scenario_zec_maker_refund() {
   note "The Taker Node drives the LEZ lock on its own; the Maker Node funds Zcash, and zebra is mined only for what waits in the mempool, so the funding stays one block deep and the Maker cannot claim yet"
   python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to both_legs_locked"
-  opens=$(( $(cat runtime/zec/current | sed 's/.*-//') + 1800 + 15 ))
-  wait_until_unix "$opens" "for the agreement's LEZ refund time (devnet profile: 30 min after provisioning)"
+  opens=$(( $(cat runtime/zec/current | sed 's/.*-//') + $(zec_refund_delay) + 15 ))
+  wait_until_unix "$opens" "for the agreement's LEZ refund time (the profile's delay after provisioning)"
   note "The LEZ refund time has passed and the Maker never claimed; the Taker desk offers Refund and the Maker desk watches its Zcash come back"
   maker_wait_bg maker_pid refunded "$swap"
   desk_head_start
