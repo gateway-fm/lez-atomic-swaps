@@ -62,19 +62,19 @@ pub struct ActorEffectOutputV1 {
 
 impl ActorEffectOutputV1 {
     fn from_active<Lez, Zcash, Store>(
-        role: ActorRole,
+        config: &ActorConfig,
         command: ActorEffectCommandV1,
         outcome: ActorEffectOutcomeV1,
         active: &lez_zec_swap_sdk::ActiveZecSwap<Lez, Zcash, Store>,
     ) -> Self {
         Self {
             schema_version: STATUS_SCHEMA_VERSION,
-            role,
+            role: config.role(),
             command,
             outcome,
             phase: active.status().into(),
             revision: active.revision(),
-            next_action: active.next_action().into(),
+            next_action: reported_next_action(active, config, wall_clock_ms()).into(),
         }
     }
 }
@@ -476,6 +476,11 @@ pub enum ActorCommandError {
         "revealing LEZ claim was re-planned {MAX_REVEALING_CLAIM_REPLANS} times; its nonce keeps being taken"
     )]
     RevealingClaimReplanExhausted,
+    /// The revealing LEZ claim window closed before the claim was on LEZ: it
+    /// is never prepared or sent after it; the settlement is the refund
+    /// (FINDINGS 26).
+    #[error("the revealing LEZ claim window closed; the claim is not sent")]
+    ClaimWindowClosed,
     /// Fresh claim material could not be loaded safely.
     #[error("actor claim material is unavailable")]
     ClaimMaterialUnavailable,
@@ -581,11 +586,59 @@ async fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComm
     }
     .map_err(|_| ActorCommandError::ActivationUnavailable)?;
     Ok(ActorEffectOutputV1::from_active(
-        config.role(),
+        config,
         ActorEffectCommandV1::Activate,
         ActorEffectOutcomeV1::Activated,
         &active,
     ))
+}
+
+/// The wall clock in Unix milliseconds for the claim window (0 if the clock is
+/// before the epoch, which keeps the window open only for a broken clock that
+/// also breaks every other deadline here).
+fn wall_clock_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// The next action this role reports: the SDK's, except that the LEZ claimant
+/// whose claim window has closed (the agreement's LEZ refund time minus the
+/// required margin) without its claim having left is told to refund its
+/// Zcash, never to claim (FINDINGS 26). The LEZ claimant is always the Zcash
+/// funder. A claim already submitted inside the window is still followed.
+fn reported_next_action<Lez, Zcash, Store>(
+    active: &lez_zec_swap_sdk::ActiveZecSwap<Lez, Zcash, Store>,
+    config: &ActorConfig,
+    now_ms: u64,
+) -> ZecLifecycleAction {
+    let claim_submitted = revealing_claim_submitted_marker(config.role_state_db())
+        .is_some_and(|marker| marker.is_file());
+    claimant_next_action(
+        active.next_action(),
+        active.status(),
+        claim_submitted,
+        active.claim_window_closed(now_ms),
+    )
+}
+
+/// [`reported_next_action`]'s rule on its own.
+const fn claimant_next_action(
+    sdk_next: ZecLifecycleAction,
+    phase: Phase,
+    claim_submitted: bool,
+    window_closed: bool,
+) -> ZecLifecycleAction {
+    match (sdk_next, phase) {
+        (ZecLifecycleAction::ClaimLez, Phase::BothLegsLocked)
+            if !claim_submitted && window_closed =>
+        {
+            ZecLifecycleAction::RefundZcash
+        }
+        _ => sdk_next,
+    }
 }
 
 fn trusted_wall_clock() -> Result<UnixSeconds, ActorCommandError> {
@@ -899,7 +952,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
     };
 
     Ok(ActorEffectOutputV1::from_active(
-        config.role(),
+        config,
         ActorEffectCommandV1::Drive,
         outcome,
         &active,
@@ -991,7 +1044,7 @@ async fn claim(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
         .await?
     };
     Ok(ActorEffectOutputV1::from_active(
-        config.role(),
+        config,
         ActorEffectCommandV1::Claim,
         outcome,
         &active,
@@ -1239,6 +1292,31 @@ fn valid_swap_id_text(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':'))
 }
 
+/// One claim drive's result as the actor reports it: the claim-window refusal
+/// by name (FINDINGS 26), every other lifecycle error as `unavailable` with
+/// its reason on stderr (the exit code stays a secret-free class).
+fn claim_attempt(
+    result: Result<ClaimDriveOutcome, lez_zec_swap_sdk::ZecSdkError>,
+    unavailable: ActorCommandError,
+) -> Result<ClaimDriveOutcome, ActorCommandError> {
+    match result {
+        Ok(outcome) => Ok(outcome),
+        Err(lez_zec_swap_sdk::ZecSdkError::ClaimWindowClosed {
+            closes_at_ms,
+            now_ms,
+        }) => {
+            eprintln!(
+                "actor claim refused: the revealing LEZ claim window closed at {closes_at_ms} ms (now {now_ms} ms); nothing was sent, the settlement is the refund"
+            );
+            Err(ActorCommandError::ClaimWindowClosed)
+        }
+        Err(error) => {
+            eprintln!("actor claim unavailable: {error:?}");
+            Err(unavailable)
+        }
+    }
+}
+
 /// One claim attempt; an owned revealing claim whose nonce was taken is
 /// re-planned and resubmitted in the same attempt (FINDINGS 24), each re-plan
 /// recorded with both nonces, both ids and the margin to the LEZ refund time.
@@ -1262,16 +1340,7 @@ where
 {
     let mut replans = Vec::new();
     loop {
-        let outcome = match active.drive_claim().await {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                // The lifecycle error names the gate that held the claim back
-                // (funding depth, port, persistence); the exit code stays a
-                // secret-free class, the reason goes to stderr for the operator.
-                eprintln!("actor claim unavailable: {error:?}");
-                return Err(unavailable);
-            }
-        };
+        let outcome = claim_attempt(active.drive_claim(wall_clock_ms()).await, unavailable)?;
         match outcome {
             ClaimDriveOutcome::Superseded {
                 planned_nonce,
@@ -1497,7 +1566,7 @@ async fn recover(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComma
     ensure_recovery_phase(active.status())?;
     let outcome = active.drive_refund().await.map_err(unavailable_recovery)?;
     Ok(ActorEffectOutputV1::from_active(
-        config.role(),
+        config,
         ActorEffectCommandV1::Recover,
         recovery_outcome(outcome),
         &active,
@@ -1661,7 +1730,7 @@ async fn status(config: &ActorConfig) -> Result<ActorStatusV1, ActorCommandError
                 config.role(),
                 active.status(),
                 active.revision(),
-                active.next_action(),
+                reported_next_action(&active, config, wall_clock_ms()),
                 replans,
                 Some(active.agreement().lez_refund_at_ms()),
                 Some(revealing_claim_hold_attention_ms(
@@ -1884,6 +1953,35 @@ mod tests {
             !revealing_claim_held_by_marker(&state_db)
                 .expect("marker path")
                 .exists()
+        );
+    }
+
+    #[test]
+    fn a_claimant_whose_claim_window_closed_is_told_to_refund_unless_its_claim_left() {
+        use ZecLifecycleAction::{ClaimLez, ClaimZcash, RefundZcash, Wait};
+        // FINDINGS 26: closed window, nothing sent → the Zcash refund.
+        assert_eq!(
+            claimant_next_action(ClaimLez, Phase::BothLegsLocked, false, true),
+            RefundZcash
+        );
+        // Open window → the claim, as before.
+        assert_eq!(
+            claimant_next_action(ClaimLez, Phase::BothLegsLocked, false, false),
+            ClaimLez
+        );
+        // A claim that left inside the window is still followed.
+        assert_eq!(
+            claimant_next_action(ClaimLez, Phase::BothLegsLocked, true, true),
+            ClaimLez
+        );
+        // The follow-up Zcash claim and the observers are untouched.
+        assert_eq!(
+            claimant_next_action(ClaimZcash, Phase::ClaimEvidenceAvailable, false, true),
+            ClaimZcash
+        );
+        assert_eq!(
+            claimant_next_action(Wait, Phase::BothLegsLocked, false, true),
+            Wait
         );
     }
 

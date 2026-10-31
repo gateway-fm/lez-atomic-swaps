@@ -39,6 +39,11 @@ pub const LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 4;
 /// ([`ActorCommandError::RevealingClaimReplanExhausted`], FINDINGS 24): the
 /// swap needs attention by name; it is never turned into a refund.
 pub const LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 5;
+
+/// Exit code of a claim the actor refused because the revealing LEZ claim
+/// window had closed ([`ActorCommandError::ClaimWindowClosed`], FINDINGS 26):
+/// nothing was sent; the actor's status names the refund as the next action.
+pub const LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE: i32 = 6;
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
@@ -120,6 +125,9 @@ pub fn run_actor_process(expected_role: ActorRole) {
             }
             ActorCommandError::RevealingClaimReplanExhausted => {
                 exit_with_code(error, LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE)
+            }
+            ActorCommandError::ClaimWindowClosed => {
+                exit_with_code(error, LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE)
             }
             _ => exit_with(error),
         });

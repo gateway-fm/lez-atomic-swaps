@@ -2767,7 +2767,7 @@ mod tests {
             .await
             .expect("canonical maker LEZ lock projection");
         active
-            .drive_claim()
+            .drive_claim(0)
             .await
             .expect("canonical revealing claim projection");
         let context = active

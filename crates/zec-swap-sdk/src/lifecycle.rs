@@ -149,6 +149,19 @@ pub enum ZecSdkError {
     /// Claim driving is unavailable before both locks are confirmed.
     #[error("claim driving requires BothLegsLocked or later; active phase is {0:?}")]
     ClaimNotReady(Phase),
+    /// The revealing LEZ claim window closed (the agreement's LEZ refund time
+    /// minus the profile's required margin): a claim not already on LEZ is
+    /// never prepared or sent after it, because its preimage would be public
+    /// while the escrow can no longer pay it (FINDINGS 26).
+    #[error(
+        "the revealing LEZ claim window closed at {closes_at_ms} ms (now {now_ms} ms); the claim is not sent"
+    )]
+    ClaimWindowClosed {
+        /// Unix milliseconds at which the window closed.
+        closes_at_ms: u64,
+        /// The caller's trusted clock, Unix milliseconds.
+        now_ms: u64,
+    },
     /// Refund driving is unavailable in the active pre-lock, claim, or completed phase.
     #[error("refund driving is unavailable in phase {0:?}")]
     RefundNotReady(Phase),

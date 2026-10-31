@@ -345,6 +345,14 @@ Node has submitted the swap's revealing LEZ claim the refund is refused: the
 claim has revealed the secret, so the Node pursues it (re-planned at the live
 nonce if another transaction took its nonce, five times at most, then
 `lez_revealing_claim_replan_exhausted`) and never gives it up for a refund.
+The claim window closes at the agreement's LEZ refund time minus the profile's
+required margin. After it, a revealing claim that is not already on LEZ is
+never prepared or sent: the row reports `refund_available` with `refund` as
+its action instead of the claim, a claim request is refused, and a claim
+admitted inside the window but never sent runs as the swap's recovery
+(`lez_claim_window_closed` names a claim the actor refused). A claim sent
+inside the window is still followed. In both directions the LEZ claimant is
+the Zcash funder, so its settlement after the window is its Zcash refund.
 Bitcoin swaps admit only the reported action.
 
 ## Retries, errors, and observation limits

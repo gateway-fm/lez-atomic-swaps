@@ -422,6 +422,18 @@ pub(super) fn decide_with(
         };
     }
     if let Some((action, expected_generation)) = admitted {
+        // A claim admitted inside the claim window but never sent when it
+        // closed (the actor now reports the Zcash refund for its role): the
+        // claim can no longer land, so the admission runs as the swap's
+        // recovery, the only settlement left (FINDINGS 26). A claim that did
+        // leave inside the window is still followed (`claim_submitted`).
+        if action == TakerTerminalActionV1::Claim
+            && phase == Phase::BothLegsLocked
+            && next_action == ZecLifecycleAction::RefundZcash
+            && !claim_submitted
+        {
+            return Decision::Recover;
+        }
         let (state, available_action, privacy_guidance) = zec_actor_progress(phase, next_action);
         let status = LifecycleStatus::Active {
             phase,
@@ -491,6 +503,9 @@ pub(super) fn failure_of(error: ActorCommandError) -> AttemptFailure {
         ActorCommandError::RevealingClaimReplanExhausted => {
             AttemptFailure::Fail("lez_revealing_claim_replan_exhausted")
         }
+        // The actor refused a claim after the window closed (nothing sent);
+        // its next status names the refund and the admission recovers.
+        ActorCommandError::ClaimWindowClosed => AttemptFailure::Retry("lez_claim_window_closed"),
         ActorCommandError::FirstLockReplanExhausted => {
             AttemptFailure::Fail("lez_first_lock_replan_exhausted")
         }
@@ -1171,6 +1186,44 @@ mod tests {
         assert!(!submits_lez_claim(
             Phase::BothLegsLocked,
             ActorCommand::Drive
+        ));
+    }
+
+    #[test]
+    fn after_the_claim_window_the_row_offers_refund_and_an_unsent_admitted_claim_recovers() {
+        // FINDINGS 26: the actor reports the Zcash refund for the LEZ claimant
+        // once its claim window closed with nothing sent.
+        let closed = active(Phase::BothLegsLocked, 4, ZecLifecycleAction::RefundZcash);
+        // The row offers Refund, not the stale claim, so a new claim request
+        // is not admissible (the admission follows the offered action).
+        assert_eq!(
+            super::zec_actor_progress(Phase::BothLegsLocked, ZecLifecycleAction::RefundZcash),
+            (
+                crate::TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None
+            )
+        );
+        // A claim admitted inside the window and never sent runs as the
+        // recovery; a claim that did leave is still pursued as a claim.
+        assert_eq!(
+            decide_with(closed, Some((TakerTerminalActionV1::Claim, 4)), false),
+            Decision::Recover
+        );
+        assert_ne!(
+            decide_with(closed, Some((TakerTerminalActionV1::Claim, 4)), true),
+            Decision::Recover
+        );
+        // The refund admitted at the closed window runs; without an admission
+        // nothing is driven (the owner presses Refund).
+        assert_eq!(
+            decide_with(closed, Some((TakerTerminalActionV1::Refund, 4)), false),
+            Decision::Recover
+        );
+        assert_eq!(decide_with(closed, None, false), Decision::Observe);
+        assert!(matches!(
+            failure_of(ActorCommandError::ClaimWindowClosed),
+            super::AttemptFailure::Retry("lez_claim_window_closed")
         ));
     }
 

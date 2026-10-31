@@ -946,6 +946,13 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         Some(zec_reference_actor::LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE) => {
             ChildRunError::Fail("lez_first_lock_replan_exhausted")
         }
+        // The Zcash actor refused a revealing LEZ claim after its window
+        // closed (nothing sent); its next status names the Zcash refund and
+        // the supervisor recovers (FINDINGS 26).
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE) => {
+            ChildRunError::Retry("lez_claim_window_closed")
+        }
         // The Zcash actor re-planned its revealing LEZ claim the bounded number
         // of times and its nonce was taken again: the claim is never abandoned
         // for a refund; the swap needs attention by name (FINDINGS 24).
@@ -2030,6 +2037,14 @@ mod exit_classification_tests {
         assert!(matches!(
             classify_exit(claim_exhausted),
             ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+        ));
+        // FINDINGS 26: a claim refused after its window (nothing sent) backs
+        // off; the next status names the Zcash refund and the Maker recovers.
+        let window_closed =
+            ExitStatus::from_raw(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE << 8);
+        assert!(matches!(
+            classify_exit(window_closed),
+            ChildRunError::Retry("lez_claim_window_closed")
         ));
     }
 }

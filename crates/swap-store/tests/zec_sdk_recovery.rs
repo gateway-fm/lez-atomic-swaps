@@ -1697,7 +1697,7 @@ async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_int
 
     // The Maker's revealing claim is staged, then its submission fails.
     port.fail_claim_after_accept(ClaimStepV1::RevealingLez);
-    assert!(maker.drive_claim().await.is_err());
+    assert!(maker.drive_claim(0).await.is_err());
     assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingLez]);
     assert_eq!(maker_claim_intent_revisions(&maker_path, id), (2, None));
 
@@ -1916,17 +1916,17 @@ async fn drive_sqlite_claims(
     taker: &mut ClaimActive,
 ) {
     match first_claimant {
-        Participant::Maker => maker.drive_claim().await.expect("submit LEZ reveal"),
-        Participant::Taker => taker.drive_claim().await.expect("submit LEZ reveal"),
+        Participant::Maker => maker.drive_claim(0).await.expect("submit LEZ reveal"),
+        Participant::Taker => taker.drive_claim(0).await.expect("submit LEZ reveal"),
     };
     assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingLez]);
     port.confirm_revealing_claim(secret);
     maker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("maker observes LEZ reveal");
     taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("taker observes LEZ reveal");
     let follower_store = match first_claimant {
@@ -1940,8 +1940,8 @@ async fn drive_sqlite_claims(
         .expect("follower protected preimage");
     assert_eq!(recovered.expose_secret(), &secret);
     match first_claimant {
-        Participant::Maker => taker.drive_claim().await.expect("submit Zcash follow-up"),
-        Participant::Taker => maker.drive_claim().await.expect("submit Zcash follow-up"),
+        Participant::Maker => taker.drive_claim(0).await.expect("submit Zcash follow-up"),
+        Participant::Taker => maker.drive_claim(0).await.expect("submit Zcash follow-up"),
     };
     assert_eq!(
         port.claim_submissions(),
@@ -1949,11 +1949,11 @@ async fn drive_sqlite_claims(
     );
     port.confirm_followup_claim();
     maker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("maker observes completion");
     taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("taker observes completion");
 }
@@ -2450,7 +2450,7 @@ async fn assert_owned_claim_commit_rolls_back() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("stage and submit revealing claim");
     install_claim_abort_trigger(
@@ -2459,7 +2459,7 @@ async fn assert_owned_claim_commit_rolls_back() {
         "zec_sdk_owned_claim_transitions",
     );
     fixture.port.confirm_revealing_claim(fixture.secret);
-    assert!(fixture.taker.drive_claim().await.is_err());
+    assert!(fixture.taker.drive_claim(0).await.is_err());
     let connection = Connection::open(&fixture.taker_path).expect("inspect owned rollback");
     let active: i64 = connection
         .query_row(
@@ -2493,13 +2493,13 @@ async fn assert_observed_reveal_commit_rolls_back() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("submit revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("owner commits revealing claim");
     install_claim_abort_trigger(
@@ -2507,7 +2507,7 @@ async fn assert_observed_reveal_commit_rolls_back() {
         "observed",
         "zec_sdk_observed_claim_transitions",
     );
-    assert!(fixture.maker.drive_claim().await.is_err());
+    assert!(fixture.maker.drive_claim(0).await.is_err());
     let connection = Connection::open(&fixture.maker_path).expect("inspect observed rollback");
     let active: i64 = connection
         .query_row(
@@ -2565,7 +2565,11 @@ async fn a_restaged_revealing_claim_and_its_lineage_survive_a_reopen() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture.port.expose_exact_funding();
     assert_eq!(
-        fixture.taker.drive_claim().await.expect("first submission"),
+        fixture
+            .taker
+            .drive_claim(0)
+            .await
+            .expect("first submission"),
         ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
     );
     let open = fixture
@@ -2661,7 +2665,7 @@ async fn assert_unsafe_revealing_funding_retains_one_intent_across_restart() {
     assert_eq!(
         fixture
             .taker
-            .drive_claim()
+            .drive_claim(0)
             .await
             .expect("spent funding waits without reveal"),
         ClaimDriveOutcome::AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1::Spent)
@@ -2693,7 +2697,7 @@ async fn assert_unsafe_revealing_funding_retains_one_intent_across_restart() {
     fixture.port.expose_exact_funding();
     assert_eq!(
         recovered
-            .drive_claim()
+            .drive_claim(0)
             .await
             .expect("exact funding permits retained reveal"),
         ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
@@ -2710,25 +2714,25 @@ async fn assert_unknown_followup_submission_reuses_context_after_reopen() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("submit revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("owner commits revealing claim");
     fixture
         .maker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("follower durably extracts the preimage");
 
     fixture
         .port
         .fail_claim_after_accept(ClaimStepV1::FollowupZcash);
-    assert!(fixture.maker.drive_claim().await.is_err());
+    assert!(fixture.maker.drive_claim(0).await.is_err());
     assert_eq!(
         fixture.port.claim_submissions(),
         vec![ClaimStepV1::RevealingLez, ClaimStepV1::FollowupZcash]
@@ -2758,7 +2762,7 @@ async fn assert_unknown_followup_submission_reuses_context_after_reopen() {
     .expect("durable follower claim");
     fixture.port.confirm_followup_claim();
     recovered
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("observe accepted exact follow-up after reopen");
     assert_eq!(recovered.status(), Phase::Completed);
@@ -2786,7 +2790,7 @@ async fn assert_unknown_revealing_submission_is_observed() {
     fixture
         .port
         .fail_claim_after_accept(ClaimStepV1::RevealingLez);
-    assert!(fixture.taker.drive_claim().await.is_err());
+    assert!(fixture.taker.drive_claim(0).await.is_err());
     assert_eq!(
         fixture.port.claim_submissions(),
         vec![ClaimStepV1::RevealingLez]
@@ -2802,7 +2806,7 @@ async fn assert_unknown_revealing_submission_is_observed() {
     .expect("resume unknown revealing submission")
     .expect("durable taker claim");
     recovered
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("observe accepted revealing submission");
     assert_eq!(recovered.status(), Phase::ClaimEvidenceAvailable);
@@ -2819,7 +2823,7 @@ async fn assert_stale_revealing_commit_is_replayed() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("stage revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
@@ -2834,11 +2838,11 @@ async fn assert_stale_revealing_commit_is_replayed() {
     .expect("stale claim actor");
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("first actor commits revealing claim");
     stale
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("stale actor replays exact committed transition");
     assert_eq!(stale.status(), Phase::ClaimEvidenceAvailable);
@@ -2865,13 +2869,13 @@ async fn canonical_revealing_v2_replay_rejects_one_tampered_primitive() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("stage revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("commit canonical revealing claim");
 
@@ -2915,13 +2919,13 @@ async fn legacy_revealing_v1_is_read_compatible_but_new_writes_are_v2() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("stage revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(0)
         .await
         .expect("commit new canonical revealing claim");
 
