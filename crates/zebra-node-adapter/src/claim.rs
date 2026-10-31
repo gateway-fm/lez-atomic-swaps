@@ -2767,7 +2767,7 @@ mod tests {
             .await
             .expect("canonical maker LEZ lock projection");
         active
-            .drive_claim(0)
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("canonical revealing claim projection");
         let context = active

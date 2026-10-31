@@ -154,7 +154,7 @@ struct SwapRow {
 SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool locked,
                  const QString& direction, const QString& pair, const QString& bitcoin, const QString& lez,
                  qint64 lockFeeSat, const QString& attentionReason = QString(),
-                 const QString& heldBy = QString())
+                 const QString& heldBy = QString(), bool claimWindowClosed = false)
 {
     const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");  // sells the foreign coin
     const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
@@ -199,6 +199,13 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         // refund is merely allowed, which is not "the Maker missed its window".
         // Selling LEZ, the Maker funds Zcash and claims LEZ with the secret;
         // selling ZEC, the Maker funds the LEZ escrow and the Taker claims it.
+        // Selling ZEC with both legs locked, the Taker's revealing LEZ claim
+        // window closed with nothing sent (the Node says so): the claim is no
+        // longer offered and the refund is the settlement (FINDINGS 26). Not
+        // "waiting for the Maker's lock": the Maker locked long ago.
+        if (nodeState == "refund_available" && availableAction == QStringLiteral("refund") && claimWindowClosed)
+            return {"refund_ready", "Claim window closed", 70,
+                    "Refund recovers your " + mine + "; the Maker refunds its LEZ", refundAction, "Refund " + mine};
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund"))
             return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
                     QString(sellsBitcoin ? "The Maker's Node funds the LEZ escrow once your Zcash funding is confirmed"
@@ -595,7 +602,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                          formatLez(integerField(swap, "lez_units")),
                                          integerField(swap, "bitcoin_lock_fee_sat"),
                                          swap.value("attention_reason").toString(),
-                                         swap.value("revealing_claim_held_by").toString());
+                                         swap.value("revealing_claim_held_by").toString(),
+                                         swap.value("claim_window_closed").toBool());
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction, pair,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),

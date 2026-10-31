@@ -480,10 +480,11 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store> {
             .saturating_sub(margin_ms)
     }
 
-    /// Whether the revealing LEZ claim window is closed at `now_ms`.
+    /// Whether the revealing LEZ claim window is closed at `now` (the
+    /// caller's trusted clock).
     #[must_use]
-    pub fn claim_window_closed(&self, now_ms: u64) -> bool {
-        now_ms >= self.claim_window_closes_at_ms()
+    pub fn claim_window_closed(&self, now: crate::LezUnixMilliseconds) -> bool {
+        now.value() >= self.claim_window_closes_at_ms()
     }
 
     /// Next construction-specific role action, if one is currently safe.
@@ -1630,17 +1631,26 @@ where
     /// and commits canonical evidence before changing memory. Counterparties use observation-only
     /// ports and distinct durable transition slots.
     ///
+    /// `now` is the caller's trusted clock: the SDK keeps none, and the revealing LEZ claim is
+    /// refused once `now` reaches the claim window's close (the agreement's LEZ refund time minus
+    /// the profile's required margin; FINDINGS 26). A caller that passes a wrong clock — `0`, a
+    /// stale or attacker-set one — switches that guard off; pass the host's wall clock.
+    ///
     /// # Errors
     ///
     /// Rejects an invalid phase, missing protected material, conflicting durable intent, invalid
-    /// evidence/revision, or a structured store/chain adapter failure.
-    pub async fn drive_claim(&mut self, now_ms: u64) -> Result<ClaimDriveOutcome, ZecSdkError> {
+    /// evidence/revision, a revealing claim after its window ([`ZecSdkError::ClaimWindowClosed`]),
+    /// or a structured store/chain adapter failure.
+    pub async fn drive_claim(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
         self.replay_claim_transitions().await?;
         match self.status() {
             Phase::BothLegsLocked
                 if self.local_participant() == self.agreement().lez_claimant() =>
             {
-                self.drive_owned_revealing_claim(now_ms).await
+                self.drive_owned_revealing_claim(now).await
             }
             Phase::BothLegsLocked => self.observe_revealing_claim().await,
             Phase::ClaimEvidenceAvailable
@@ -1750,12 +1760,13 @@ where
 
     async fn drive_owned_revealing_claim(
         &mut self,
-        now_ms: u64,
+        now: crate::LezUnixMilliseconds,
     ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let now_ms = now.value();
         // After the claim window only a claim already on LEZ is followed;
         // nothing is staged, observed on Zcash or sent (FINDINGS 26).
         let closed = self
-            .claim_window_closed(now_ms)
+            .claim_window_closed(now)
             .then(|| ZecSdkError::ClaimWindowClosed {
                 closes_at_ms: self.claim_window_closes_at_ms(),
                 now_ms,
@@ -1765,7 +1776,7 @@ where
             (None, Some(refused)) => return Err(refused),
             (None, None) => self.revealing_claim_intent().await?,
         };
-        let closed = self.claim_window_closed(now_ms);
+        let closed = self.claim_window_closed(now);
         let prepared = self
             .store
             .open_claim_submission(self.agreement(), &intent, &protected)

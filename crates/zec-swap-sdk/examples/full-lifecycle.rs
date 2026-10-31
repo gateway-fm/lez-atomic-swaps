@@ -272,7 +272,8 @@ async fn lock_both_legs(corridor: &Corridor, maker: &mut Actor, taker: &mut Acto
 /// time minus the profile's margin) the SDK refuses to send a revealing claim
 /// (FINDINGS 26). The offline fixture's agreement is dated, so the example
 /// claims at time zero, inside its window.
-const EXAMPLE_NOW_MS: u64 = 0;
+const EXAMPLE_NOW: lez_zec_swap_sdk::LezUnixMilliseconds =
+    lez_zec_swap_sdk::LezUnixMilliseconds::new(0);
 
 async fn settled_swap() {
     println!("A swap that settles (TakerSellsLez)");
@@ -289,7 +290,7 @@ async fn settled_swap() {
 
     assert_eq!(maker.next_action(), ZecLifecycleAction::ClaimLez);
     maker
-        .drive_claim(EXAMPLE_NOW_MS)
+        .drive_claim(EXAMPLE_NOW)
         .await
         .expect("maker prepares and submits the revealing LEZ claim");
     assert_eq!(
@@ -298,11 +299,11 @@ async fn settled_swap() {
     );
     corridor.claims.confirm_revealing_claim(secret);
     maker
-        .drive_claim(EXAMPLE_NOW_MS)
+        .drive_claim(EXAMPLE_NOW)
         .await
         .expect("maker observes its LEZ claim");
     taker
-        .drive_claim(EXAMPLE_NOW_MS)
+        .drive_claim(EXAMPLE_NOW)
         .await
         .expect("taker observes the LEZ claim and extracts the secret");
     assert_eq!(taker.status(), Phase::ClaimEvidenceAvailable);
@@ -312,7 +313,7 @@ async fn settled_swap() {
     );
 
     taker
-        .drive_claim(EXAMPLE_NOW_MS)
+        .drive_claim(EXAMPLE_NOW)
         .await
         .expect("taker prepares and submits the follow-up Zcash claim");
     assert_eq!(
@@ -321,11 +322,11 @@ async fn settled_swap() {
     );
     corridor.claims.confirm_followup_claim();
     maker
-        .drive_claim(EXAMPLE_NOW_MS)
+        .drive_claim(EXAMPLE_NOW)
         .await
         .expect("maker observes the Zcash claim");
     taker
-        .drive_claim(EXAMPLE_NOW_MS)
+        .drive_claim(EXAMPLE_NOW)
         .await
         .expect("taker observes its Zcash claim");
     assert_eq!(maker.status(), Phase::Completed);

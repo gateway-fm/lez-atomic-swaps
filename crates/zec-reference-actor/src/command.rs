@@ -596,12 +596,14 @@ async fn activate(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorComm
 /// The wall clock in Unix milliseconds for the claim window (0 if the clock is
 /// before the epoch, which keeps the window open only for a broken clock that
 /// also breaks every other deadline here).
-fn wall_clock_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
+fn wall_clock_ms() -> lez_zec_swap_sdk::LezUnixMilliseconds {
+    lez_zec_swap_sdk::LezUnixMilliseconds::new(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |elapsed| {
+                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+            }),
+    )
 }
 
 /// The next action this role reports: the SDK's, except that the LEZ claimant
@@ -612,7 +614,7 @@ fn wall_clock_ms() -> u64 {
 fn reported_next_action<Lez, Zcash, Store>(
     active: &lez_zec_swap_sdk::ActiveZecSwap<Lez, Zcash, Store>,
     config: &ActorConfig,
-    now_ms: u64,
+    now_ms: lez_zec_swap_sdk::LezUnixMilliseconds,
 ) -> ZecLifecycleAction {
     let claim_submitted = revealing_claim_submitted_marker(config.role_state_db())
         .is_some_and(|marker| marker.is_file());

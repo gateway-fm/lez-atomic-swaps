@@ -906,6 +906,8 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     expected_active.progress_generation = 0;
     expected_active.available_action = None;
     expected_active.privacy_guidance = None;
+    // An activated Zcash swap's row names its Taker actor phase (REVIEW 08:59Z).
+    expected_active.actor_phase = Some("offered".to_owned());
     let active_monitor: TakerSwapViewV1 =
         serde_json::from_value(active_monitor_response["result"].clone()).unwrap();
     assert_eq!(active_monitor, expected_active);

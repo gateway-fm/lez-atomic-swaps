@@ -1219,6 +1219,21 @@ fn revealing_claim_holder(_state_db: &Path) -> Option<String> {
 /// swap's as its own LEZ refund time nears: the row needs attention and names
 /// the holder (the marker is removed when the claim goes ahead). The admissible
 /// action stays: the owner may still refund in the claim window.
+/// A Zcash row's actor phase, and selling ZEC whether the Taker's revealing
+/// claim window has closed: the Taker is the LEZ claimant, and at both legs
+/// locked its row offers the claim while the window is open and Refund once
+/// it closed with nothing sent (the actor reports its Zcash refund then;
+/// FINDINGS 26). Read before an admission overlay rewrites the action.
+#[cfg(feature = "pair-zec")]
+pub(super) fn overlay_zec_progress(view: &mut TakerSwapViewV1, phase: Phase) {
+    view.actor_phase = Some(super::zec_supervisor::phase_name(phase).to_owned());
+    view.claim_window_closed = (view.route.direction()
+        == lez_swap_core::SwapDirection::TakerSellsForeign
+        && phase == Phase::BothLegsLocked
+        && view.available_action == Some(TakerTerminalActionV1::Refund))
+    .then_some(true);
+}
+
 fn overlay_held_revealing_claim(view: &mut TakerSwapViewV1, state_db: &Path) {
     if matches!(
         view.state,
@@ -1497,6 +1512,11 @@ async fn project_swap(
                         Some(snapshot) if super::zec_supervisor::snapshot_is_fresh(snapshot) => {
                             let mut view =
                                 super::zec_supervisor::view_from_snapshot(&facts, snapshot);
+                            if let Some(phase) =
+                                super::zec_supervisor::phase_from_name(&snapshot.phase)
+                            {
+                                overlay_zec_progress(&mut view, phase);
+                            }
                             if view.state == TakerSwapStateV1::AwaitingFirstLock
                                 && lez_depositor_balance_marker(&state_db)
                                     .is_some_and(|marker| marker.is_file())
@@ -1593,7 +1613,19 @@ async fn project_receipt_bound_swap(
     held_lock
         .validate_for_state(config.swap_id(), config.state_db())
         .map_err(|_| MonitoringError::DependencyUnavailable)?;
+    let status_phase = match status {
+        LifecycleStatus::Active { phase, .. } => Some(phase),
+        LifecycleStatus::NotActivated => None,
+    };
     let mut view = view_from_actor_status(facts, status);
+    #[cfg(feature = "pair-zec")]
+    if pair == Pair::Zcash
+        && let Some(phase) = status_phase
+    {
+        overlay_zec_progress(&mut view, phase);
+    }
+    #[cfg(not(feature = "pair-zec"))]
+    let _ = status_phase;
     view.terms = terms;
     view.effects = effects;
     view.bitcoin_lock_fee_sat = lock_fee;
@@ -1720,6 +1752,8 @@ fn view_from_actor_status(
         privacy_guidance,
         attention_reason: None,
         revealing_claim_held_by: None,
+        actor_phase: None,
+        claim_window_closed: None,
         last_failure_class: None,
         observed_at: None,
         terms: None,
@@ -2625,6 +2659,8 @@ fn commit_from_facts(
             privacy_guidance: None,
             attention_reason: None,
             revealing_claim_held_by: None,
+            actor_phase: None,
+            claim_window_closed: None,
             last_failure_class: None,
             observed_at: None,
             terms: None,
@@ -2702,6 +2738,64 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 mod tests {
     use super::*;
 
+    /// FINDINGS 26 / REVIEW 08:59Z: selling ZEC, a row that offers Refund at
+    /// both legs locked is a closed claim window; the desk reads the flag.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_closed_claim_window_is_flagged_on_the_selling_zec_row_only() {
+        use lez_swap_core::{Pair, SwapDirection, SwapId};
+        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        let row = |direction, action| TakerSwapViewV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m7-window-swap").unwrap(),
+            offer_id: MakerOfferId::new("m7-window-offer").unwrap(),
+            route: MakerRouteV1::new(Pair::Zcash, direction).unwrap(),
+            foreign_units: 10_000,
+            lez_units: 25_000,
+            progress_generation: 4,
+            state: TakerSwapStateV1::RefundAvailable,
+            available_action: Some(action),
+            privacy_guidance: None,
+            attention_reason: None,
+            revealing_claim_held_by: None,
+            actor_phase: None,
+            claim_window_closed: None,
+            last_failure_class: None,
+            observed_at: None,
+            terms: None,
+            effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
+        };
+        let mut closed = row(
+            SwapDirection::TakerSellsForeign,
+            TakerTerminalActionV1::Refund,
+        );
+        overlay_zec_progress(&mut closed, Phase::BothLegsLocked);
+        assert_eq!(closed.claim_window_closed, Some(true));
+        assert_eq!(closed.actor_phase.as_deref(), Some("both_legs_locked"));
+        let mut open = row(
+            SwapDirection::TakerSellsForeign,
+            TakerTerminalActionV1::Claim,
+        );
+        overlay_zec_progress(&mut open, Phase::BothLegsLocked);
+        assert_eq!(open.claim_window_closed, None);
+        // Before both legs are locked a Refund is the pre-lock one.
+        let mut pre_lock = row(
+            SwapDirection::TakerSellsForeign,
+            TakerTerminalActionV1::Refund,
+        );
+        overlay_zec_progress(&mut pre_lock, Phase::TakerLockConfirmed);
+        assert_eq!(pre_lock.claim_window_closed, None);
+        assert_eq!(
+            pre_lock.actor_phase.as_deref(),
+            Some("taker_lock_confirmed")
+        );
+        // Selling LEZ the Taker is not the LEZ claimant: no window of its own.
+        let mut sells_lez = row(SwapDirection::TakerSellsLez, TakerTerminalActionV1::Refund);
+        overlay_zec_progress(&mut sells_lez, Phase::BothLegsLocked);
+        assert_eq!(sells_lez.claim_window_closed, None);
+    }
+
     /// REVIEW 16:33Z: a revealing claim held behind another swap's as its own
     /// LEZ refund time nears reads as needing attention and names the holder;
     /// the action the actor offers stays, and a settled swap is never marked.
@@ -2726,6 +2820,8 @@ mod tests {
             privacy_guidance: None,
             attention_reason: None,
             revealing_claim_held_by: None,
+            actor_phase: None,
+            claim_window_closed: None,
             last_failure_class: None,
             observed_at: None,
             terms: None,

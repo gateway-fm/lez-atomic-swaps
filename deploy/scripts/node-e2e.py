@@ -3033,7 +3033,8 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
             "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]}}
 
 
-ZEC_STEPS = ("maker-down-after-first-lock", "refund-point", "maker-up-reconcile", "maker-completes", "maker-lez-refund")
+ZEC_STEPS = ("maker-down-after-first-lock", "refund-point", "maker-up-reconcile", "maker-completes", "maker-lez-refund",
+             "claim-window-closed")
 
 
 def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
@@ -3052,7 +3053,10 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
       the Maker reports the swap completed, without the Taker Node (survivor);
     - maker-lez-refund: selling ZEC with the claim never pressed: at the LEZ
       refund time the Maker's refund is queued, its LEZ comes back, zebra is
-      mined to the Zcash refund height (maker-refund)."""
+      mined to the Zcash refund height (maker-refund);
+    - claim-window-closed: waits until the revealing claim window has closed
+      (the agreement's LEZ refund time minus the profile's 30 s margin) and
+      the Taker Node's row no longer offers the claim (FINDINGS 26)."""
     os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
     # The corridor read asks the Zcash funder's container for its outpoint:
     # selling LEZ that is the Maker, which these steps may find stopped.
@@ -3116,6 +3120,20 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
                 time.sleep(10)
             else:
                 raise Failure(f"the Maker did not complete {swap_id[:12]} on its own within {timeout}s")
+        elif step == "claim-window-closed":
+            closes = opens - 30
+            wait_until(closes + 15, "for the revealing claim window to close (LEZ refund time minus the 30 s margin)")
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                view = taker_view(swap_id)
+                if view.get("available_action") != "claim":
+                    log(f"  the window closed; the Taker row reads {view['state']} with {view.get('available_action')}")
+                    if view["state"] != "refund_available" or view.get("available_action") != "refund":
+                        raise Failure(f"after the window the row reads {view['state']}/{view.get('available_action')}, not refund_available/refund")
+                    break
+                time.sleep(5)
+            else:
+                raise Failure("the Taker row still offers the claim after the claim window closed (FINDINGS 26)")
         elif step == "maker-lez-refund":
             wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
             if maker_view(swap_id).get("schedule_state") != "terminal":

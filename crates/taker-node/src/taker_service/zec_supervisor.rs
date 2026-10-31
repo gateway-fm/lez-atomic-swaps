@@ -1002,6 +1002,8 @@ pub(super) fn view_from_snapshot(
         privacy_guidance,
         attention_reason: None,
         revealing_claim_held_by: None,
+        actor_phase: None,
+        claim_window_closed: None,
         last_failure_class: None,
         observed_at: Some(snapshot.observed_at),
         terms: None,

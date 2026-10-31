@@ -319,6 +319,16 @@ pub struct TakerSwapViewV1 {
     /// it is final) while this swap's own LEZ refund time is near.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revealing_claim_held_by: Option<String>,
+    /// A Zcash swap's Taker actor phase (`both_legs_locked`, …), so a desk
+    /// can say which part of the swap a state stands for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_phase: Option<String>,
+    /// Selling ZEC: `true` once the Taker's revealing LEZ claim window closed
+    /// with nothing sent (the agreement's LEZ refund time minus the profile's
+    /// required margin). The row then offers Refund and never the claim; a
+    /// desk names the state "claim window closed" (FINDINGS 26).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_window_closed: Option<bool>,
     /// Why the Node's supervisor last backed off on this swap's actor, or
     /// why it stopped (a `failed` row): one of the shared failure classes.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -123,6 +123,7 @@ pub use observed_taker_lock::{
     ObservedTakerFirstLockTransitionV1, TakerFirstLockObservationV1,
 };
 
+pub use lez_swap_core::LezUnixMilliseconds;
 pub use ports::{
     ClaimRecoveryStore, CreateAgreementOutcome, FirstLockSubmitOutcome, LezClaimPort,
     LezFirstLockPort, LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,

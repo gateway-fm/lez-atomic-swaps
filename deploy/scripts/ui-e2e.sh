@@ -610,6 +610,29 @@ scenario_zec_maker_refund_foreign() {
   taker_wait refunded "$swap"
   export_evidence "$swap"
 }
+scenario_zec_stale_window() {
+  # FINDINGS 26, selling ZEC: the Taker never claims; when the revealing claim
+  # window closes (the LEZ refund time minus 30 s) the Taker row stops
+  # offering the claim and offers Refund; one press; the Maker refunds its LEZ
+  # escrow and the Taker's Zcash refund lands at the refund height.
+  local swap maker_pid
+  [[ "$direction" == TakerSellsForeign ]] || fail "zec-stale-window is the selling-ZEC journey (--direction TakerSellsForeign)"
+  zec_provision; take swap
+  maker_wait_bg maker_pid awaiting_taker_claim "$swap"
+  desk_head_start
+  zec_wait "$swap" claim_available
+  wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
+  note "The Taker never claims. When the claim window closes (the LEZ refund time minus 30 s) the Taker row stops offering the claim and offers Refund"
+  zec_step "$swap" claim-window-closed 300
+  step "Taker desk shows ${swap:0:12} as the closed claim window" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=refund_ready "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Claim window closed"
+  taker_act "$refund_action" "$swap"
+  note "Refund pressed once; the Maker Node refunds its LEZ escrow and the Taker's Zcash refund lands at the refund height"
+  zec_step "$swap" maker-lez-refund 1800
+  zec_wait "$swap" refunded 1800
+  maker_wait refunded "$swap"
+  taker_wait refunded "$swap"
+  export_evidence "$swap"
+}
 scenario_zec_node_offline() {
   # The desk link check is the same code for both pairs; its ZEC run holds an
   # open Zcash swap on both desks through the outage, then completes it.
@@ -658,6 +681,7 @@ run_one() {
     zec-restart-maker) [[ "$pair" == Zcash ]] || fail "zec-restart-maker needs --pair Zcash"; scenario_zec_restart maker ;;
     zec-survivor) [[ "$pair" == Zcash ]] || fail "zec-survivor needs --pair Zcash"; scenario_zec_survivor ;;
     zec-node-offline) [[ "$pair" == Zcash ]] || fail "zec-node-offline needs --pair Zcash"; scenario_zec_node_offline ;;
+    zec-stale-window) [[ "$pair" == Zcash ]] || fail "zec-stale-window needs --pair Zcash"; scenario_zec_stale_window ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
