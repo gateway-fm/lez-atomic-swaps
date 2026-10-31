@@ -154,7 +154,8 @@ struct SwapRow {
 SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool locked,
                  const QString& direction, const QString& pair, const QString& bitcoin, const QString& lez,
                  qint64 lockFeeSat, const QString& attentionReason = QString(),
-                 const QString& heldBy = QString(), bool claimWindowClosed = false)
+                 const QString& heldBy = QString(), bool claimWindowClosed = false,
+                 const QString& actorPhase = QString())
 {
     const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");  // sells the foreign coin
     const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
@@ -203,6 +204,12 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         // window closed with nothing sent (the Node says so): the claim is no
         // longer offered and the refund is the settlement (FINDINGS 26). Not
         // "waiting for the Maker's lock": the Maker locked long ago.
+        // Selling ZEC, the Maker's LEZ is already back (its refund ran first);
+        // the Taker's Zcash refund is the one left (Zcash rows only).
+        if (sellsBitcoin && nodeState == "refund_available" && availableAction == QStringLiteral("refund")
+            && actorPhase == QStringLiteral("maker_leg_refunded"))
+            return {"refund_ready", "Maker's LEZ refunded", 75,
+                    "Refund recovers your " + mine, refundAction, "Refund " + mine};
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund") && claimWindowClosed)
             return {"refund_ready", "Claim window closed", 70,
                     "Refund recovers your " + mine + "; the Maker refunds its LEZ", refundAction, "Refund " + mine};
@@ -603,7 +610,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                          integerField(swap, "bitcoin_lock_fee_sat"),
                                          swap.value("attention_reason").toString(),
                                          swap.value("revealing_claim_held_by").toString(),
-                                         swap.value("claim_window_closed").toBool());
+                                         swap.value("claim_window_closed").toBool(),
+                                         swap.value("actor_phase").toString());
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction, pair,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),

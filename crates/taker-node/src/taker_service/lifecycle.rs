@@ -1234,6 +1234,52 @@ pub(super) fn overlay_zec_progress(view: &mut TakerSwapViewV1, phase: Phase) {
     .then_some(true);
 }
 
+/// A Zcash swap's refund admitted earlier and still owed reads as in progress
+/// whatever generation the actor reached since (its recovery advances the
+/// generation: both legs locked → the Maker's leg refunded): the actor still
+/// offers Refund, which stays as "Retry refund", and the row must not go back
+/// to "refund available" after the owner pressed it (V5 desk journey,
+/// 2026-10-31). Only while that admission is open: once the Node's schedule
+/// records the attempt as failed the row returns to refund available with the
+/// failure named, so the owner can press again (REVIEW 17:58Z). Applied after
+/// the schedule overlay; the shared overlay's generation rule is unchanged.
+#[cfg(feature = "pair-zec")]
+pub(super) fn overlay_zec_admitted_refund(
+    view: &mut TakerSwapViewV1,
+    admission: Option<&TakerActionAdmissionV1>,
+    record: Option<&lez_swap_store::TakerActorScheduleRecordV1>,
+) {
+    let refund_admitted =
+        admission.is_some_and(|admission| admission.action() == TakerFacadeActionV1::Refund);
+    let failed = record.is_some_and(|record| {
+        record.schedule_state() == lez_actor_supervision::ScheduleState::Failed
+    });
+    apply_zec_admitted_refund(view, refund_admitted, failed);
+}
+
+/// [`overlay_zec_admitted_refund`]'s rule on its own.
+#[cfg(feature = "pair-zec")]
+fn apply_zec_admitted_refund(view: &mut TakerSwapViewV1, refund_admitted: bool, failed: bool) {
+    // Refund is the actor's own action here: the Maker's leg is back, or the
+    // Taker's claim window closed with both legs locked.
+    let refund_owed = match view.actor_phase.as_deref() {
+        Some("maker_leg_refunded") => true,
+        Some("both_legs_locked") => view.claim_window_closed == Some(true),
+        _ => false,
+    };
+    if !refund_admitted || !refund_owed {
+        return;
+    }
+    if failed {
+        view.state = TakerSwapStateV1::RefundAvailable;
+        view.available_action = Some(TakerTerminalActionV1::Refund);
+    } else if view.state == TakerSwapStateV1::RefundAvailable
+        && view.available_action == Some(TakerTerminalActionV1::Refund)
+    {
+        view.state = TakerSwapStateV1::RefundInProgress;
+    }
+}
+
 fn overlay_held_revealing_claim(view: &mut TakerSwapViewV1, state_db: &Path) {
     if matches!(
         view.state,
@@ -1529,6 +1575,11 @@ async fn project_swap(
                             overlay_held_revealing_claim(&mut view, &state_db);
                             super::zec_supervisor::overlay_schedule(&mut view, record.as_ref());
                             let admitted = lookup_monitored_action(initiation, &swap_id).await?;
+                            overlay_zec_admitted_refund(
+                                &mut view,
+                                admitted.as_ref(),
+                                record.as_ref(),
+                            );
                             overlay_admitted_action(view, admitted.as_ref())
                         }
                         _ => Err(MonitoringError::DependencyUnavailable),
@@ -1648,6 +1699,7 @@ async fn project_receipt_bound_swap(
     if pair == Pair::Zcash {
         let record = super::zec_supervisor::schedule_record(initiation, config.swap_id()).await;
         super::zec_supervisor::overlay_schedule(&mut view, record.as_ref());
+        overlay_zec_admitted_refund(&mut view, admitted_action.as_ref(), record.as_ref());
     }
     overlay_admitted_action(view, admitted_action.as_ref())
 }
@@ -2737,6 +2789,65 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REVIEW 17:58Z: a refund admitted earlier reads in progress while it is
+    /// owed and its admission open, whatever the generation; a failed attempt
+    /// returns the row to refund available with the failure named.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn an_admitted_zcash_refund_reads_in_progress_until_its_attempt_fails() {
+        use lez_swap_core::{Pair, SwapDirection, SwapId};
+        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        let row = |phase: &str, window_closed: Option<bool>| TakerSwapViewV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("m7-refund-swap").unwrap(),
+            offer_id: MakerOfferId::new("m7-refund-offer").unwrap(),
+            route: MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign).unwrap(),
+            foreign_units: 10_000,
+            lez_units: 25_000,
+            progress_generation: 3,
+            state: TakerSwapStateV1::RefundAvailable,
+            available_action: Some(TakerTerminalActionV1::Refund),
+            privacy_guidance: None,
+            attention_reason: None,
+            revealing_claim_held_by: None,
+            actor_phase: Some(phase.to_owned()),
+            claim_window_closed: window_closed,
+            last_failure_class: None,
+            observed_at: None,
+            terms: None,
+            effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
+        };
+        // Admitted at generation 2, the actor at revision 3 (the Maker's leg back).
+        let mut owed = row("maker_leg_refunded", None);
+        apply_zec_admitted_refund(&mut owed, true, false);
+        assert_eq!(owed.state, TakerSwapStateV1::RefundInProgress);
+        assert_eq!(owed.available_action, Some(TakerTerminalActionV1::Refund));
+        // The same admission recorded as failed: refund available again.
+        let mut failed = row("maker_leg_refunded", None);
+        failed.state = TakerSwapStateV1::AttentionRequired;
+        failed.available_action = None;
+        failed.last_failure_class = Some("actor_drive_unavailable".to_owned());
+        apply_zec_admitted_refund(&mut failed, true, true);
+        assert_eq!(failed.state, TakerSwapStateV1::RefundAvailable);
+        assert_eq!(failed.available_action, Some(TakerTerminalActionV1::Refund));
+        assert_eq!(
+            failed.last_failure_class.as_deref(),
+            Some("actor_drive_unavailable")
+        );
+        // Both legs locked: only once the claim window closed.
+        let mut window_closed = row("both_legs_locked", Some(true));
+        apply_zec_admitted_refund(&mut window_closed, true, false);
+        assert_eq!(window_closed.state, TakerSwapStateV1::RefundInProgress);
+        let mut window_open = row("both_legs_locked", None);
+        apply_zec_admitted_refund(&mut window_open, true, false);
+        assert_eq!(window_open.state, TakerSwapStateV1::RefundAvailable);
+        // No refund admission: nothing changes.
+        let mut not_admitted = row("maker_leg_refunded", None);
+        apply_zec_admitted_refund(&mut not_admitted, false, false);
+        assert_eq!(not_admitted.state, TakerSwapStateV1::RefundAvailable);
+    }
 
     /// FINDINGS 26 / REVIEW 08:59Z: selling ZEC, a row that offers Refund at
     /// both legs locked is a closed claim window; the desk reads the flag.
