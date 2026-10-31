@@ -130,10 +130,10 @@ authority: whoever can run `docker exec` can already reach the Nodes.
 
 4. In **Settings → Package Repositories**, add
    `https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
-   and install **LEZ / BTC Maker** and **LEZ / BTC Taker**; Chat and Delivery
+   and install **LEZ Maker** and **LEZ Taker**; Chat and Delivery
    install with them.
-5. Open **LEZ / BTC Maker** and press **Check Node**; the desk shows
-   **Node ready**. Do the same on **LEZ / BTC Taker**. A swap then follows the
+5. Open **LEZ Maker** and press **Check Node**; the desk shows
+   **Node ready**. Do the same on **LEZ Taker**. A swap then follows the
    role-owned action order below, or the per-scenario guides in
    `docs/evidence/review-2026-09-12/REPRODUCE.md`.
 
@@ -231,7 +231,7 @@ export M6_BASECAMP_USER_DIR="$M6_MAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
 
-In Basecamp, open **LEZ / BTC Maker**, select **Munich Vault 01**, and click
+In Basecamp, open **LEZ Maker**, select **Munich Vault 01**, and click
 **Publish offer** three times. Select **Basel Vault 02** and publish twice.
 Each click creates exactly one independently takeable offer. Inventory is
 indexed to each wallet; a pending offer can
@@ -261,7 +261,7 @@ export M6_BASECAMP_USER_DIR="$M6_TAKER_USER"
 ../../scripts/m6-basecamp-launch-wrapper.sh
 ```
 
-In Basecamp, open **LEZ / BTC Taker**, select Zurich Wallet 01 or Limmat Wallet
+In Basecamp, open **LEZ Taker**, select Zurich Wallet 01 or Limmat Wallet
 02, and take a pending Maker offer. Move between the two desks only when that
 role's next action appears:
 

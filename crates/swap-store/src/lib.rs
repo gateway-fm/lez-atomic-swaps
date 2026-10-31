@@ -23,6 +23,7 @@ mod maker_offer;
 mod platform_contract;
 pub use platform_contract::{is_owner_private_regular_file, open_no_symlinks};
 mod public_effect_journal;
+mod taker_actor_schedule;
 mod taker_facade_registry;
 mod xmr_effect_workflow_journal;
 mod zec_recovery;
@@ -75,6 +76,10 @@ pub use public_effect_journal::{
     PreparedPublicEffect, PublicEffectChain, PublicEffectCommit, PublicEffectDecision,
     PublicEffectKey, PublicEffectObservation, PublicEffectOperation, PublicEffectSnapshot,
     PublicEffectState, PublicEffectSubmissionResult, SqlitePublicEffectJournal,
+};
+pub use taker_actor_schedule::{
+    COORDINATOR_RESTARTED, SqliteTakerActorSchedule, TakerActorLeaseV1,
+    TakerActorProgressSnapshotV1, TakerActorScheduleError, TakerActorScheduleRecordV1,
 };
 pub use taker_facade_registry::{
     SqliteTakerFacadeStore, TakerActionAdmissionV1, TakerFacadeActionV1, TakerFacadeStoreError,
@@ -2017,6 +2022,30 @@ fn migrate_zec_sdk_recovery(transaction: &rusqlite::Transaction<'_>) -> Result<(
         CREATE INDEX IF NOT EXISTS zec_sdk_open_first_lock_intents
             ON zec_sdk_first_lock_intents (local_role, swap_id)
             WHERE closed_revision IS NULL;
+        CREATE TABLE IF NOT EXISTS zec_sdk_claim_supersessions (
+            local_role          TEXT NOT NULL,
+            swap_id             TEXT NOT NULL,
+            replan_index        INTEGER NOT NULL CHECK (replan_index > 0),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            superseded_payload_version INTEGER NOT NULL CHECK (superseded_payload_version > 0),
+            superseded_payload_json    TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id, replan_index),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS zec_sdk_first_lock_supersessions (
+            local_role          TEXT NOT NULL,
+            swap_id             TEXT NOT NULL,
+            replan_index        INTEGER NOT NULL CHECK (replan_index > 0),
+            payload_version     INTEGER NOT NULL CHECK (payload_version > 0),
+            payload_json        TEXT NOT NULL,
+            superseded_payload_version INTEGER NOT NULL CHECK (superseded_payload_version > 0),
+            superseded_payload_json    TEXT NOT NULL,
+            PRIMARY KEY (local_role, swap_id, replan_index),
+            FOREIGN KEY (local_role, swap_id)
+                REFERENCES zec_sdk_agreements(local_role, swap_id) ON DELETE CASCADE
+        ) STRICT;
         CREATE TABLE IF NOT EXISTS zec_sdk_first_lock_transitions (
             local_role          TEXT NOT NULL,
             swap_id             TEXT NOT NULL,

@@ -1,7 +1,7 @@
 # Built from the checksum- and Guix-attestation-verified official 31.1 release
 # archive (cache carried over from the repository's own e2e provenance flow;
 # bin/ payloads below were extracted from that verified archive).
-FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b
+FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
 
 COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind
 COPY --chmod=0555 bin/bitcoin-cli /usr/local/bin/bitcoin-cli

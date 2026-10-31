@@ -7,14 +7,14 @@ if (!framework) throw new Error("LOGOS_QT_MCP must select the pinned official te
 
 const roles = {
   maker: {
-    launcher: "LEZ / BTC Maker",
-    heading: "LEZ / BTC — Maker Desk",
+    launcher: "LEZ Maker",
+    heading: "LEZ — Maker Desk",
     health: "Check Node",
     output: "makerOutput",
   },
   taker: {
-    launcher: "LEZ / BTC Taker",
-    heading: "LEZ / BTC — Taker Desk",
+    launcher: "LEZ Taker",
+    heading: "LEZ — Taker Desk",
     health: "Check Node",
     output: "takerOutput",
   },

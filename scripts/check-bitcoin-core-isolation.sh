@@ -91,14 +91,14 @@ if rg -q '^\s*cap_add:' "$compose_file"; then
 fi
 
 required_dockerfile_terms=(
-  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
   'org.opencontainers.image.source="https://github.com/bitcoin/bitcoin"'
   'org.opencontainers.image.version="31.1"'
   'org.opencontainers.image.revision="9be056a8a72b624dae9623b2f7bded92c2a21c91"'
   'ARG BITCOIN_CORE_ARCHIVE_SHA256'
   'org.logos-co.atomic-swaps.release-archive-sha256="${BITCOIN_CORE_ARCHIVE_SHA256}"'
   'org.opencontainers.image.licenses="MIT"'
-  'org.logos-co.atomic-swaps.guix-sigs-commit="11fb5156a16f27d71b61d18e23c5ffeb29cc6ee1"'
+  'org.logos-co.atomic-swaps.guix-sigs-commit="d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa"'
   'COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind'
   'COPY --chmod=0555 bin/bitcoin-cli /usr/local/bin/bitcoin-cli'
   'USER 65532:65532'
@@ -122,9 +122,9 @@ required_provenance_terms=(
   'BITCOIN_CORE_ARCHIVE_SHA256=b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e'
   'BITCOIN_CORE_ARCHIVE_SIZE=90293352'
   'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
-  'BITCOIN_CORE_GUIX_SIGS_COMMIT=11fb5156a16f27d71b61d18e23c5ffeb29cc6ee1'
+  'BITCOIN_CORE_GUIX_SIGS_COMMIT=d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa'
   'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
-  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
 )
 
 for term in "${required_provenance_terms[@]}"; do
@@ -144,9 +144,9 @@ required_aarch64_provenance_terms=(
   'BITCOIN_CORE_ARCHIVE_SHA256=dcf1873f2208ba4f962f3398d47e154c39c0084be8f4553e05c940d0ace3d004'
   'BITCOIN_CORE_ARCHIVE_SIZE=85851107'
   'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
-  'BITCOIN_CORE_GUIX_SIGS_COMMIT=11fb5156a16f27d71b61d18e23c5ffeb29cc6ee1'
+  'BITCOIN_CORE_GUIX_SIGS_COMMIT=d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa'
   'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
-  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
 )
 
 for term in "${required_aarch64_provenance_terms[@]}"; do

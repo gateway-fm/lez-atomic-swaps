@@ -7,8 +7,8 @@ use lez_zec_swap_sdk::{
     ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementDraftV1,
     ZecAgreementExecutionError, ZecAgreementRecordV1, ZecAgreementV1, ZecAgreementV1Error,
     ZecLezTermsV1, ZecMakerAgreementProposalV1, ZecParticipantIdentityV1, ZecParticipantsV1,
-    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecRolePayoutV1, ZecSwapBinding,
-    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecRolePayoutV1,
+    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
     derive_lez_native_custody_account_v1, derive_lez_swap_id_v1, derive_lez_token_account_v1,
     derive_nssa_v0_1_2_metadata_account_v1, derive_nssa_v0_1_2_native_custody_account_v1,
 };
@@ -198,7 +198,10 @@ impl Fixture {
             self.contract_claimant_hash,
         );
         let (network, branch) = match self.binding_profile {
-            ZecProfileId::DeterministicLocalV1 => (NetworkType::Regtest, BranchId::Nu6_2),
+            ZecProfileId::DeterministicLocalV1
+            | ZecProfileId::DeterministicLocalDevnetV1
+            | ZecProfileId::DeterministicLocalDevnetV2
+            | ZecProfileId::DeterministicLocalDevnetV3 => (NetworkType::Regtest, BranchId::Nu6_2),
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
         };
         let output = ExpectedBip199Output::new(
@@ -366,6 +369,38 @@ fn maker_validates_and_signs_before_the_taker_countersigns_exact_wire() {
         ZecMakerAgreementProposalV1::from_wire_at(&tampered, UnixSeconds::new(NOW)),
         Err(ZecAgreementV1Error::SignatureMismatch(Participant::Maker))
     ));
+}
+
+#[test]
+fn devnet_profile_round_trips_on_the_wire_and_an_unknown_tag_is_rejected() {
+    let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+    fixture.body_profile = ZecProfileId::DeterministicLocalDevnetV1;
+    fixture.binding_profile = ZecProfileId::DeterministicLocalDevnetV1;
+    // The fixture's bounds fit the 60 s delay; the devnet profile puts the LEZ
+    // deadline 1800 s after the anchor (100), so the bounds move with it.
+    fixture.earlier_latest_ms = 1_900_000;
+    fixture.later_earliest = 1_930;
+    let agreement = fixture
+        .validate()
+        .expect("devnet-profile agreement validates");
+    let wire = agreement.encode_wire().expect("bounded wire");
+    let decoded = ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+        .expect("the devnet profile decodes from its own wire");
+    assert_eq!(decoded.record(), agreement.record());
+    assert_eq!(
+        ZecRefundProfile::for_id(decoded.binding().profile_id()).lez_refund_delay(),
+        UnixSeconds::new(1_800)
+    );
+
+    // schema (2) + swap id length (4) + swap id + direction (1), then the profile tag.
+    let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+    assert_eq!(wire[profile_offset], 2, "the devnet profile is wire tag 2");
+    let mut unknown = wire.clone();
+    unknown[profile_offset] = 3;
+    assert!(
+        ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
+        "an unknown profile tag must not decode"
+    );
 }
 
 #[test]

@@ -24,7 +24,8 @@ use lez_zec_swap_sdk::{
     CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval, ClaimDriveOutcome, ClaimPreimage,
     ClaimRecoveryStore, ClaimStepV1, CreateFirstLockOutcome, ExpectedBip199Output,
     FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockStepV1, FollowupClaimEvidenceV1,
+    FirstLockProjectionCommit, FirstLockStepV1, FirstLockSubmitOutcome,
+    FirstLockSupersessionInputV1, FirstLockSupersessionV1, FollowupClaimEvidenceV1,
     FollowupClaimObservationV1, LezAssetV1, LezChainIdentityV1, LezClaimInstructionV1,
     LezClaimNodeSnapshotV1, LezClaimPort, LezClaimTransactionSnapshotV1, LezCustodySnapshotV1,
     LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1, LezFirstLockPort,
@@ -425,8 +426,9 @@ impl LezFirstLockPort for MakerHappyPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
-        self.submit(submission)
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
+        self.submit(submission)?;
+        Ok(FirstLockSubmitOutcome::Accepted)
     }
 }
 
@@ -731,9 +733,9 @@ impl LezFirstLockPort for SqliteClaimPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<FirstLockSubmitOutcome, Self::Error> {
         self.submit_lock(submission);
-        Ok(())
+        Ok(FirstLockSubmitOutcome::Accepted)
     }
 }
 
@@ -803,7 +805,7 @@ impl LezClaimPort for SqliteClaimPort {
         &self,
         _agreement: &lez_zec_swap_sdk::ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1, Self::Error> {
         if !prepared
             .exact_submission()
             .starts_with(b"sqlite-lez-claim:")
@@ -822,7 +824,7 @@ impl LezClaimPort for SqliteClaimPort {
         {
             Err(TestPortError("claim accepted before transport failure"))
         } else {
-            Ok(())
+            Ok(lez_zec_swap_sdk::RevealingClaimSubmitOutcomeV1::Accepted)
         }
     }
 }
@@ -1123,8 +1125,16 @@ async fn drive_refund_actor(
     taker: &mut ClaimActive,
 ) -> Result<RefundDriveOutcome, ZecSdkError> {
     match participant {
-        Participant::Maker => maker.drive_refund().await,
-        Participant::Taker => taker.drive_refund().await,
+        Participant::Maker => {
+            maker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+        }
+        Participant::Taker => {
+            taker
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+                .await
+        }
     }
 }
 
@@ -1452,14 +1462,14 @@ async fn schema_v10_refund_journal_reaches_refunded_and_reopens_in_both_directio
         .expect("taker agreement");
         assert_eq!(
             maker_reopen
-                .drive_refund()
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
                 .await
                 .expect("maker replays durable refund journal"),
             RefundDriveOutcome::Refunded { revision: 4 }
         );
         assert_eq!(
             taker_reopen
-                .drive_refund()
+                .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
                 .await
                 .expect("taker replays durable refund journal"),
             RefundDriveOutcome::Refunded { revision: 4 }
@@ -1652,6 +1662,158 @@ fn assert_sqlite_zcash_claim_contexts(
     }));
 }
 
+/// Devnet finding (M2 step 5, zec-maker-refund): with both legs locked the
+/// Maker staged its revealing claim, the submission failed, the Taker refunded
+/// its LEZ leg and the Maker observed that refund. From then on every
+/// claim-capable open of the Maker's store failed closed: the open claim
+/// intent was revalidated against the head coordinator, which the observed
+/// refund had moved past the intent's phase. The intent is now validated where
+/// it was staged when only refund slots follow it, and the Maker can go on to
+/// refund its own leg and reopen at every step.
+#[tokio::test]
+async fn claim_capable_store_reopens_after_recovery_overtakes_a_staged_claim_intent() {
+    let id = "sqlite-claim-intent-overtaken-by-refund";
+    let direction = SwapDirection::TakerSellsLez;
+    let data = TempDir::new().expect("isolated directory");
+    let maker_path = data.path().join("maker.sqlite3");
+    let taker_path = data.path().join("taker.sqlite3");
+    let secret = [0x45; 32];
+    let wire = agreement_wire_direction_with_digest(
+        id,
+        FixtureVariant::Local,
+        direction,
+        Sha256::digest(secret).into(),
+    );
+    let swap_id = SwapId::new(id).expect("swap id");
+    let port = SqliteClaimPort::default();
+    let maker_store = claim_store(&maker_path, Participant::Maker);
+    let taker_store = claim_store(&taker_path, Participant::Taker);
+    let mut maker = claim_sdk(Participant::Maker, port.clone(), maker_store.clone())
+        .activate_with_claim_preimage(
+            accept(&wire, Participant::Maker),
+            ClaimPreimage::new(secret),
+        )
+        .await
+        .expect("maker protects its activation preimage");
+    let mut taker = claim_sdk(Participant::Taker, port.clone(), taker_store.clone())
+        .activate(accept(&wire, Participant::Taker))
+        .await
+        .expect("taker activation");
+    drive_sqlite_claim_locks(direction, &port, &mut maker, &mut taker).await;
+    assert_eq!(maker.status(), Phase::BothLegsLocked);
+    assert_eq!(maker.agreement().lez_claimant(), Participant::Maker);
+
+    // The Maker's revealing claim is staged, then its submission fails.
+    port.fail_claim_after_accept(ClaimStepV1::RevealingLez);
+    assert!(
+        maker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .is_err()
+    );
+    assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingLez]);
+    assert_eq!(maker_claim_intent_revisions(&maker_path, id), (2, None));
+
+    // The Taker refunds its LEZ leg; the Maker observes it instead of claiming.
+    assert_eq!(
+        taker
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("taker submits its LEZ refund"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Lez)
+    );
+    assert_eq!(
+        taker
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("taker projects its LEZ refund"),
+        RefundDriveOutcome::Projected {
+            step: RefundStepV1::Lez,
+            revision: 3
+        }
+    );
+    maker
+        .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+        .await
+        .expect("maker observes the Taker's LEZ refund past its staged claim");
+    assert_eq!(maker.status(), Phase::TakerLegRefunded);
+
+    // Every claim-capable open of the Maker's store works again, and the
+    // journal replays to the observed refund.
+    let reopened = claim_store(&maker_path, Participant::Maker);
+    let mut resumed = claim_sdk(Participant::Maker, port.clone(), reopened)
+        .resume_all_capable(&swap_id)
+        .await
+        .expect("resume through the reopened store")
+        .expect("active swap");
+    assert_eq!(resumed.status(), Phase::TakerLegRefunded);
+
+    // The Maker refunds its own Zcash leg through the reopened store.
+    assert_eq!(
+        resumed
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("maker submits its Zcash refund"),
+        RefundDriveOutcome::Submitted(RefundStepV1::Zcash)
+    );
+    assert_eq!(
+        resumed
+            .drive_refund(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("maker projects its Zcash refund"),
+        RefundDriveOutcome::Refunded { revision: 4 }
+    );
+    let again = claim_sdk(
+        Participant::Maker,
+        port.clone(),
+        claim_store(&maker_path, Participant::Maker),
+    )
+    .resume_all_capable(&swap_id)
+    .await
+    .expect("resume after the Zcash refund")
+    .expect("terminal swap");
+    assert_eq!(again.status(), Phase::Refunded);
+
+    assert_claim_slot_behind_refund_fails_closed(&maker_path, id);
+}
+
+fn maker_claim_intent_revisions(path: &std::path::Path, id: &str) -> (i64, Option<i64>) {
+    Connection::open(path)
+        .expect("inspect the staged claim intent")
+        .query_row(
+            "SELECT staged_revision, closed_revision FROM zec_sdk_claim_intents
+             WHERE local_role='maker' AND swap_id=?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("one claim intent")
+}
+
+/// A claim slot behind the staged intent is still corruption: a forged owned
+/// claim transition behind the refund makes the claim-capable open fail closed.
+fn assert_claim_slot_behind_refund_fails_closed(path: &std::path::Path, id: &str) {
+    Connection::open(path)
+        .expect("forge a claim slot")
+        .execute(
+            "INSERT INTO zec_sdk_owned_claim_transitions
+             (local_role, swap_id, transition_kind, predecessor_revision, committed_revision,
+              intent_staged_revision, payload_version, payload_json)
+             VALUES ('maker', ?1, 'revealing_lez', 2, 3, 2, 1, '{}')",
+            params![id],
+        )
+        .expect("forged row");
+    let error = SqliteZecRecoveryStore::open_claim_capable(
+        path,
+        Participant::Maker,
+        ProtectedClaimKey::new("sqlite-test-claim-key-v1", [0x7a; 32]).expect("test claim key"),
+    )
+    .expect_err("a claim slot behind the refund fails closed");
+    assert!(
+        matches!(error, StoreError::InvalidZecRecoveryState),
+        "{error:?}"
+    );
+}
+
 fn claim_store(path: &std::path::Path, participant: Participant) -> SqliteZecRecoveryStore {
     SqliteZecRecoveryStore::open_claim_capable(
         path,
@@ -1767,17 +1929,23 @@ async fn drive_sqlite_claims(
     taker: &mut ClaimActive,
 ) {
     match first_claimant {
-        Participant::Maker => maker.drive_claim().await.expect("submit LEZ reveal"),
-        Participant::Taker => taker.drive_claim().await.expect("submit LEZ reveal"),
+        Participant::Maker => maker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("submit LEZ reveal"),
+        Participant::Taker => taker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("submit LEZ reveal"),
     };
     assert_eq!(port.claim_submissions(), vec![ClaimStepV1::RevealingLez]);
     port.confirm_revealing_claim(secret);
     maker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("maker observes LEZ reveal");
     taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("taker observes LEZ reveal");
     let follower_store = match first_claimant {
@@ -1791,8 +1959,14 @@ async fn drive_sqlite_claims(
         .expect("follower protected preimage");
     assert_eq!(recovered.expose_secret(), &secret);
     match first_claimant {
-        Participant::Maker => taker.drive_claim().await.expect("submit Zcash follow-up"),
-        Participant::Taker => maker.drive_claim().await.expect("submit Zcash follow-up"),
+        Participant::Maker => taker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("submit Zcash follow-up"),
+        Participant::Taker => maker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("submit Zcash follow-up"),
     };
     assert_eq!(
         port.claim_submissions(),
@@ -1800,11 +1974,11 @@ async fn drive_sqlite_claims(
     );
     port.confirm_followup_claim();
     maker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("maker observes completion");
     taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("taker observes completion");
 }
@@ -2301,7 +2475,7 @@ async fn assert_owned_claim_commit_rolls_back() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("stage and submit revealing claim");
     install_claim_abort_trigger(
@@ -2310,7 +2484,13 @@ async fn assert_owned_claim_commit_rolls_back() {
         "zec_sdk_owned_claim_transitions",
     );
     fixture.port.confirm_revealing_claim(fixture.secret);
-    assert!(fixture.taker.drive_claim().await.is_err());
+    assert!(
+        fixture
+            .taker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .is_err()
+    );
     let connection = Connection::open(&fixture.taker_path).expect("inspect owned rollback");
     let active: i64 = connection
         .query_row(
@@ -2344,13 +2524,13 @@ async fn assert_observed_reveal_commit_rolls_back() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("submit revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("owner commits revealing claim");
     install_claim_abort_trigger(
@@ -2358,7 +2538,13 @@ async fn assert_observed_reveal_commit_rolls_back() {
         "observed",
         "zec_sdk_observed_claim_transitions",
     );
-    assert!(fixture.maker.drive_claim().await.is_err());
+    assert!(
+        fixture
+            .maker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .is_err()
+    );
     let connection = Connection::open(&fixture.maker_path).expect("inspect observed rollback");
     let active: i64 = connection
         .query_row(
@@ -2406,6 +2592,107 @@ async fn claim_retry_observes_exact_durable_bytes_before_any_rebroadcast() {
     assert_stale_revealing_commit_is_replayed().await;
 }
 
+#[tokio::test]
+async fn a_restaged_revealing_claim_and_its_lineage_survive_a_reopen() {
+    // FINDINGS 24: the re-planned claim replaces the open intent atomically,
+    // the superseded one stays as lineage, a replay is ExistingSame, a
+    // different claim under the used index conflicts, and all of it is what a
+    // reopened store returns.
+    let id = "sqlite-claim-replan-lineage";
+    let mut fixture = locked_claim_fixture(id).await;
+    fixture.port.expose_exact_funding();
+    assert_eq!(
+        fixture
+            .taker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .expect("first submission"),
+        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+    );
+    let open = fixture
+        .taker
+        .open_revealing_claim_submission()
+        .await
+        .expect("open claim");
+    let mut replanned_id = *open.expected_submission_id();
+    replanned_id[0] ^= 0xff;
+    let mut exact = open.exact_submission().to_vec();
+    exact.push(2);
+    let replanned =
+        PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, replanned_id, exact.clone())
+            .expect("re-planned claim");
+    let supersession =
+        lez_zec_swap_sdk::ClaimSupersessionV1::new(lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+            replan_index: 1,
+            superseded_id: *open.expected_submission_id(),
+            superseded_nonce: 7,
+            replanned_id,
+            replanned_nonce: 8,
+            lez_refund_margin_ms: 900_000,
+        })
+        .expect("supersession");
+    assert_eq!(
+        fixture
+            .taker
+            .restage_revealing_claim(&replanned, &supersession)
+            .await
+            .expect("restaged"),
+        CreateFirstLockOutcome::Created
+    );
+    assert_eq!(
+        fixture
+            .taker
+            .restage_revealing_claim(&replanned, &supersession)
+            .await
+            .expect("replayed"),
+        CreateFirstLockOutcome::ExistingSame
+    );
+    // The same index naming another claim is refused.
+    let mut other_id = replanned_id;
+    other_id[1] ^= 0xff;
+    let other = PreparedClaimSubmissionV1::new(ClaimStepV1::RevealingLez, other_id, exact.clone())
+        .expect("other claim");
+    let clash =
+        lez_zec_swap_sdk::ClaimSupersessionV1::new(lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+            replan_index: 1,
+            superseded_id: replanned_id,
+            superseded_nonce: 8,
+            replanned_id: other_id,
+            replanned_nonce: 9,
+            lez_refund_margin_ms: 800_000,
+        })
+        .expect("clashing supersession");
+    assert!(
+        fixture
+            .taker
+            .restage_revealing_claim(&other, &clash)
+            .await
+            .is_err()
+    );
+
+    drop(fixture.taker);
+    drop(fixture.taker_store);
+    let recovered = claim_sdk(
+        Participant::Taker,
+        fixture.port.clone(),
+        claim_store(&fixture.taker_path, Participant::Taker),
+    )
+    .resume_claim_capable(&SwapId::new(id).expect("swap ID"))
+    .await
+    .expect("reopen")
+    .expect("durable revealing claimant");
+    let reopened = recovered
+        .open_revealing_claim_submission()
+        .await
+        .expect("open after reopen");
+    assert_eq!(reopened.expected_submission_id(), &replanned_id);
+    assert_eq!(reopened.exact_submission(), exact.as_slice());
+    assert_eq!(
+        recovered.claim_supersessions().await.expect("lineage"),
+        vec![supersession]
+    );
+}
+
 async fn assert_unsafe_revealing_funding_retains_one_intent_across_restart() {
     let id = "sqlite-unsafe-revealing-funding-restart";
     let mut fixture = locked_claim_fixture(id).await;
@@ -2415,7 +2702,7 @@ async fn assert_unsafe_revealing_funding_retains_one_intent_across_restart() {
     assert_eq!(
         fixture
             .taker
-            .drive_claim()
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("spent funding waits without reveal"),
         ClaimDriveOutcome::AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1::Spent)
@@ -2447,7 +2734,7 @@ async fn assert_unsafe_revealing_funding_retains_one_intent_across_restart() {
     fixture.port.expose_exact_funding();
     assert_eq!(
         recovered
-            .drive_claim()
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
             .await
             .expect("exact funding permits retained reveal"),
         ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
@@ -2464,25 +2751,31 @@ async fn assert_unknown_followup_submission_reuses_context_after_reopen() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("submit revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("owner commits revealing claim");
     fixture
         .maker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("follower durably extracts the preimage");
 
     fixture
         .port
         .fail_claim_after_accept(ClaimStepV1::FollowupZcash);
-    assert!(fixture.maker.drive_claim().await.is_err());
+    assert!(
+        fixture
+            .maker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .is_err()
+    );
     assert_eq!(
         fixture.port.claim_submissions(),
         vec![ClaimStepV1::RevealingLez, ClaimStepV1::FollowupZcash]
@@ -2512,7 +2805,7 @@ async fn assert_unknown_followup_submission_reuses_context_after_reopen() {
     .expect("durable follower claim");
     fixture.port.confirm_followup_claim();
     recovered
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("observe accepted exact follow-up after reopen");
     assert_eq!(recovered.status(), Phase::Completed);
@@ -2540,7 +2833,13 @@ async fn assert_unknown_revealing_submission_is_observed() {
     fixture
         .port
         .fail_claim_after_accept(ClaimStepV1::RevealingLez);
-    assert!(fixture.taker.drive_claim().await.is_err());
+    assert!(
+        fixture
+            .taker
+            .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
+            .await
+            .is_err()
+    );
     assert_eq!(
         fixture.port.claim_submissions(),
         vec![ClaimStepV1::RevealingLez]
@@ -2556,7 +2855,7 @@ async fn assert_unknown_revealing_submission_is_observed() {
     .expect("resume unknown revealing submission")
     .expect("durable taker claim");
     recovered
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("observe accepted revealing submission");
     assert_eq!(recovered.status(), Phase::ClaimEvidenceAvailable);
@@ -2573,7 +2872,7 @@ async fn assert_stale_revealing_commit_is_replayed() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("stage revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
@@ -2588,11 +2887,11 @@ async fn assert_stale_revealing_commit_is_replayed() {
     .expect("stale claim actor");
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("first actor commits revealing claim");
     stale
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("stale actor replays exact committed transition");
     assert_eq!(stale.status(), Phase::ClaimEvidenceAvailable);
@@ -2619,13 +2918,13 @@ async fn canonical_revealing_v2_replay_rejects_one_tampered_primitive() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("stage revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("commit canonical revealing claim");
 
@@ -2669,13 +2968,13 @@ async fn legacy_revealing_v1_is_read_compatible_but_new_writes_are_v2() {
     let mut fixture = locked_claim_fixture(id).await;
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("stage revealing claim");
     fixture.port.confirm_revealing_claim(fixture.secret);
     fixture
         .taker
-        .drive_claim()
+        .drive_claim(lez_zec_swap_sdk::LezUnixMilliseconds::new(0))
         .await
         .expect("commit new canonical revealing claim");
 
@@ -3556,9 +3855,9 @@ async fn assert_sqlite_maker_lock_happy_path(
     .expect("stale maker agreement");
     let (plan, expected_drives, evidence) = maker_lock_fixture(direction);
     let mut actual_drives =
-        vec![drive_once_across_intervening_update(&mut active, &chain, direction, &plan).await];
+        drive_twice_across_a_deeper_taker_lock(&mut active, &chain, direction, &plan).await;
 
-    for _ in 1..expected_drives.len() {
+    for _ in actual_drives.len()..expected_drives.len() {
         let MakerLockDriveOutcome::Lock(outcome) = active
             .drive_maker_lock(plan.clone())
             .await
@@ -3595,12 +3894,16 @@ async fn assert_sqlite_maker_lock_happy_path(
     assert_maker_lock_reopens(path, id).await;
 }
 
-async fn drive_once_across_intervening_update(
+/// D2: the Taker's lock seen again deeper between two Maker drives is the
+/// same lock, deeper. It is projected durably (revision 2) and the Maker's
+/// next drive proceeds to its next step from that head instead of being sent
+/// back to "poll again"; nothing is resubmitted.
+async fn drive_twice_across_a_deeper_taker_lock(
     active: &mut ActiveZecSwap<MakerHappyPort, MakerHappyPort, SqliteZecRecoveryStore>,
     chain: &MakerHappyPort,
     direction: SwapDirection,
     plan: &FirstLockPlanV1,
-) -> FirstLockDriveOutcome {
+) -> Vec<FirstLockDriveOutcome> {
     let MakerLockDriveOutcome::Lock(first_drive) = active
         .drive_maker_lock(plan.clone())
         .await
@@ -3610,20 +3913,20 @@ async fn drive_once_across_intervening_update(
     };
     let submitted_before_update = chain.submitted_steps();
     chain.respond(deeper_taker_lock(active.agreement(), direction));
-    assert_eq!(
-        active
-            .drive_maker_lock(plan.clone())
-            .await
-            .expect("canonical update commits before another maker step"),
-        MakerLockDriveOutcome::AwaitingEligibility(
-            MakerFundingEligibilityOutcome::CanonicalStateChanged(FirstLockProjectionCommit::new(
-                2, false
-            ))
-        )
-    );
+    let MakerLockDriveOutcome::Lock(second_drive) = active
+        .drive_maker_lock(plan.clone())
+        .await
+        .expect("the deeper lock is projected and the maker drive proceeds")
+    else {
+        panic!("a deeper view of the same taker lock keeps the maker eligible (D2)")
+    };
     assert_eq!(active.revision(), 2);
-    assert_eq!(chain.submitted_steps(), submitted_before_update);
-    first_drive
+    let submitted_after_update = chain.submitted_steps();
+    assert!(
+        submitted_after_update.starts_with(&submitted_before_update),
+        "a deeper view of the same lock never resubmits an earlier step"
+    );
+    vec![first_drive, second_drive]
 }
 
 fn deeper_taker_lock(
@@ -5776,4 +6079,115 @@ fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }
+}
+
+/// D1: the Taker's open LEZ plan is replaced by its re-plan in one
+/// transaction, the superseded plan and the record (both nonces, both
+/// identities) stay as lineage, a replay is idempotent, a different plan under
+/// a used index is a conflict, and a reopened store reads the same lineage.
+#[tokio::test]
+async fn a_taker_lez_first_lock_re_plan_keeps_its_lineage_in_sqlite() {
+    let data = TempDir::new().expect("isolated recovery directory");
+    let taker_path = data.path().join("taker.sqlite3");
+    let secret = [0x5d; 32];
+    let wire = agreement_wire_direction_with_digest(
+        "sqlite-first-lock-replan",
+        FixtureVariant::Local,
+        SwapDirection::TakerSellsLez,
+        Sha256::digest(secret).into(),
+    );
+    let port = SqliteClaimPort::default();
+    let taker_store = claim_store(&taker_path, Participant::Taker);
+    let taker_sdk = claim_sdk(Participant::Taker, port.clone(), taker_store.clone());
+    let taker = taker_sdk
+        .activate(accept(&wire, Participant::Taker))
+        .await
+        .expect("taker activation");
+    let (first_plan, _) = taker_lock_fixture(SwapDirection::TakerSellsLez);
+    taker
+        .stage_first_lock(first_plan.clone())
+        .await
+        .expect("durable first plan");
+    let swap_id = taker.agreement().coordinator().id().clone();
+    assert!(
+        taker_store
+            .load_first_lock_supersessions(&swap_id)
+            .await
+            .expect("lineage")
+            .is_empty()
+    );
+
+    let replanned = FirstLockPlanV1::lez(
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezInitialize, [0x43; 32], vec![0x71])
+            .expect("re-planned initialize"),
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezFund, [0x44; 32], vec![0x72])
+            .expect("re-planned fund"),
+    )
+    .expect("re-planned plan");
+    let supersession = FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+        replan_index: 1,
+        step: FirstLockStepV1::LezInitialize,
+        superseded_initialize_id: [0x33; 32],
+        superseded_fund_id: [0x34; 32],
+        superseded_nonce: 4,
+        replanned_initialize_id: [0x43; 32],
+        replanned_fund_id: [0x44; 32],
+        replanned_nonce: 6,
+    })
+    .expect("supersession");
+    assert_eq!(
+        taker
+            .restage_first_lock(replanned.clone(), &supersession)
+            .await
+            .expect("restage"),
+        CreateFirstLockOutcome::Created
+    );
+    assert_eq!(
+        taker
+            .restage_first_lock(replanned.clone(), &supersession)
+            .await
+            .expect("replayed restage"),
+        CreateFirstLockOutcome::ExistingSame
+    );
+    assert_eq!(
+        taker_store
+            .load_first_lock_intent(&swap_id)
+            .await
+            .expect("intent")
+            .expect("open intent")
+            .plan(),
+        &replanned
+    );
+    // A different re-plan under the used index is refused: the open plan is
+    // now the re-planned one, so the record no longer links it either way.
+    let other = FirstLockPlanV1::lez(
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezInitialize, [0x53; 32], vec![0x81])
+            .expect("other initialize"),
+        PreparedFirstLockSubmissionV1::new(FirstLockStepV1::LezFund, [0x54; 32], vec![0x82])
+            .expect("other fund"),
+    )
+    .expect("other plan");
+    assert!(matches!(
+        taker.restage_first_lock(other, &supersession).await,
+        Err(ZecSdkError::FirstLockSupersessionMismatch)
+    ));
+
+    drop(taker);
+    let reopened = claim_store(&taker_path, Participant::Taker);
+    assert_eq!(
+        reopened
+            .load_first_lock_supersessions(&swap_id)
+            .await
+            .expect("lineage after reopen"),
+        vec![supersession]
+    );
+    assert_eq!(
+        reopened
+            .load_first_lock_intent(&swap_id)
+            .await
+            .expect("intent after reopen")
+            .expect("open intent")
+            .plan(),
+        &replanned
+    );
 }

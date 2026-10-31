@@ -12,6 +12,8 @@ result-*/
 *.swp
 *.tmp
 *.log
+# An evidence set's Node logs are evidence; they travel with their SHA256SUMS.
+!docs/evidence/**/*.log
 .DS_Store
 __pycache__/
 
@@ -26,6 +28,7 @@ __pycache__/
 
 # Image payloads staged by deploy/scripts/stage-assets.sh
 /deploy/images/*/lez-*
+/deploy/images/taker-node/zec-local-poc-*
 /deploy/images/lez-services/sequencer_service
 /deploy/images/lez-services/indexer_service
 /deploy/images/lez-services/r0vm
@@ -35,3 +38,5 @@ __pycache__/
 # Source receipts for locally built evidence payloads
 /deploy/images/*/build-source.txt
 /deploy/images/*/sidecar-source.txt
+/deploy/images/*/sidecar-tree.txt
+/deploy/images/*/sidecar-expected.txt

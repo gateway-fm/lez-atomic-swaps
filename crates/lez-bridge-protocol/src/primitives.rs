@@ -1569,6 +1569,12 @@ pub enum ErrorCode {
     MovingTip,
     /// Submission may have reached the node, but its outcome is unknown.
     UnknownSubmissionOutcome,
+    /// The LEZ depositor's native balance is below the escrow amount; the
+    /// first lock was not prepared. The owner funds the account or ends the swap.
+    DepositorBalanceInsufficient,
+    /// The native escrow pair was re-planned `MAX_NATIVE_ESCROW_REPLANS` times
+    /// already; the swap fails by name instead of chasing the nonce forever.
+    ReplanExhausted,
     /// An internal bounded sidecar operation failed.
     Internal,
 }

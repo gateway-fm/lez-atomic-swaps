@@ -14,8 +14,14 @@ readonly LEZ_SOURCE="$DEPLOY_ROOT/assets/lez-source"
 readonly channel_id="b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748"
 readonly maker_account_id="B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd"
 readonly taker_account_id="34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"
-readonly maker_genesis_allocation=100000
-readonly taker_genesis_allocation=200000
+# 2 000 000 LEZ each: a whole scenario matrix on one chain with margin. A ZEC
+# corridor's lot is 50 000 LEZ and it leaves the depositor for good on a
+# completed swap (the Taker in TakerSellsLez, the Maker in TakerSellsForeign);
+# the old 200 000 covered four swaps, and the fifth failed its LEZ funding
+# (the escrow program reports an insufficient depositor balance as
+# "native funding account binding mismatch", error 6003).
+readonly maker_genesis_allocation=2000000
+readonly taker_genesis_allocation=2000000
 # Persistent settlement wallets (owner account ids of the identities held in
 # the market root, LEZ_MARKET_ROOT). Swaps run on this long-standing chain and
 # these accounts accumulate real balances across swaps — the local analog of
@@ -31,8 +37,21 @@ wallet_basel_account_id="$(wallet_account_id maker-basel-02 A81AE1KTGdZ5GCDfy4Xd
 wallet_zurich_account_id="$(wallet_account_id taker-zurich-01 4vDRakzuvKqJFJZ6k4ig3ybzds6fTLv1xDpwU283SwBM)"
 wallet_limmat_account_id="$(wallet_account_id taker-limmat-02 5A8bRmav5wjYQex6z7SpuuNNyhesqHwweAqjc3eWfchH)"
 readonly wallet_munich_account_id wallet_basel_account_id wallet_zurich_account_id wallet_limmat_account_id
-readonly wallet_maker_allocation=100000
-readonly wallet_taker_allocation=200000
+readonly wallet_maker_allocation=2000000
+readonly wallet_taker_allocation=2000000
+# The finality heartbeat's two accounts (sender, recipient): funded only when
+# their identities exist in the market root (from-scratch.sh / start.sh mint
+# them); 100 000 units is 23 days of one unit per 20 s. LEZ_HEARTBEAT_SECONDS
+# (0 disables the service) and LEZ_HEARTBEAT_STALL_SECONDS reach up.sh and the
+# service through runtime.env.
+heartbeat_pulse_account_id="$(wallet_account_id heartbeat-pulse-01 "")"
+heartbeat_echo_account_id="$(wallet_account_id heartbeat-echo-02 "")"
+heartbeat_allocation=0
+if [[ -n "$heartbeat_pulse_account_id" && -n "$heartbeat_echo_account_id" ]]; then heartbeat_allocation=100000; fi
+readonly heartbeat_pulse_account_id heartbeat_echo_account_id heartbeat_allocation
+heartbeat_seconds="${LEZ_HEARTBEAT_SECONDS:-20}"
+heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-120}"
+[[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_stall_seconds" =~ ^[0-9]+$ ]] || { echo "LEZ_HEARTBEAT_SECONDS and LEZ_HEARTBEAT_STALL_SECONDS must be integers" >&2; exit 1; }
 
 # Preserve the selected volume namespace on ordinary restarts too.
 volume_prefix="${LEZ_VOLUME_PREFIX:-}"
@@ -99,6 +118,8 @@ jq --arg channel "$channel_id" --arg funding "$funding_key" \
   --arg zurich "$wallet_zurich_account_id" --arg limmat "$wallet_limmat_account_id" \
   --argjson wallet_maker_amount "$wallet_maker_allocation" \
   --argjson wallet_taker_amount "$wallet_taker_allocation" \
+  --arg pulse "$heartbeat_pulse_account_id" --arg echo "$heartbeat_echo_account_id" \
+  --argjson heartbeat_amount "$heartbeat_allocation" \
   '.home = "/var/lib/sequencer_service"
    | .bedrock_config.node_url = "http://bedrock:18080"
    | .bedrock_config.channel_id = $channel
@@ -111,15 +132,19 @@ jq --arg channel "$channel_id" --arg funding "$funding_key" \
        {"supply_account": {"account_id": $basel, "balance": $wallet_maker_amount}},
        {"supply_account": {"account_id": $zurich, "balance": $wallet_taker_amount}},
        {"supply_account": {"account_id": $limmat, "balance": $wallet_taker_amount}}
-     ]' \
+     ] + (if $heartbeat_amount > 0 then [
+       {"supply_account": {"account_id": $pulse, "balance": $heartbeat_amount}},
+       {"supply_account": {"account_id": $echo, "balance": $heartbeat_amount}}
+     ] else [] end)' \
   "$LEZ_SOURCE/sequencer-config/sequencer_config.json" \
   >"$RUNTIME/config/sequencer_config.json"
 
 jq -e --arg channel "$channel_id" '.channel_id == $channel' "$RUNTIME/config/indexer_config.json" >/dev/null
 jq -e --arg channel "$channel_id" '.bedrock_config.channel_id == $channel' "$RUNTIME/config/sequencer_config.json" >/dev/null
-[[ "$(jq -r '.genesis | length' "$RUNTIME/config/sequencer_config.json")" == 6 ]]
+expected_genesis_accounts=6; (( heartbeat_allocation > 0 )) && expected_genesis_accounts=8
+[[ "$(jq -r '.genesis | length' "$RUNTIME/config/sequencer_config.json")" == "$expected_genesis_accounts" ]]
 [[ "$(jq -r '[.genesis[].supply_account.account_id] | unique | length' \
-  "$RUNTIME/config/sequencer_config.json")" == 6 ]]
+  "$RUNTIME/config/sequencer_config.json")" == "$expected_genesis_accounts" ]]
 
 # The sequencer generates its own bedrock signing key under its state dir
 # (load_or_create_signing_key); no key file is mounted for the local stack.
@@ -206,6 +231,48 @@ for pair in maker:maker-munich-01 taker:taker-zurich-01; do
   # Bind mounts keep host ownership; the entrypoint copies these owner-private.
   chmod 0644 "$RUNTIME/lez/$role"/* 2>/dev/null || true
 done
+# Each role's Zcash key, minted once beside its LEZ identity and kept across
+# reruns: the Maker's is also its Delivery signing key (the entrypoint installs
+# it; the ZEC ceremony binds Delivery identity, Chat key and Zcash key into one
+# key) and zebra mines to its transparent address, so the Maker owns the
+# coinbase the ZEC provisioner spends; the Taker's key funds Zcash in
+# TakerSellsForeign (scripts/zec-provision.sh pays it once from the Maker's).
+# Nothing here is a constant: a fresh runtime mints fresh keys. The address
+# comes from zec-local-poc-identity, staged on the host by from-scratch.sh
+# --only rust or, once the stage is gone, run from the Taker image.
+zcash_transparent_address() { # zcash_transparent_address <owner-private key file>
+  local key="$1" tool="$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" identity
+  if [[ -x "$tool" ]]; then
+    identity="$("$tool" --zcash-key-file "$key")"
+  else
+    identity="$(docker run --rm --user "$(id -u):$(id -g)" -v "$key:/in/zcash.key:ro" \
+      --entrypoint zec-local-poc-identity "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" \
+      --zcash-key-file /in/zcash.key </dev/null)"
+  fi || { echo "zec-local-poc-identity failed: stage it (from-scratch.sh --only rust) or build the Taker image first" >&2; return 1; }
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["transparent_address"])' <<<"$identity"
+}
+for role in maker taker; do
+  if [[ ! -s "$RUNTIME/lez/$role/zcash.key" ]]; then
+    (umask 077; openssl rand -hex 32 >"$RUNTIME/lez/$role/zcash.key")
+    echo "minted the $role Zcash key: runtime/lez/$role/zcash.key"
+  fi
+done
+# The identity tool reads owner-private files only; the mounted copy is 0644
+# like lez-signer.key (the entrypoint re-installs it 0600), so derive from a
+# private copy under runtime/secrets.
+# (an absolute path: the identity tool refuses a relative key path, and up.sh
+# passes the runtime directory as a relative one)
+maker_zcash_private="$(mktemp "$(cd "$RUNTIME" && pwd -P)/secrets/zcash-key.XXXXXX")"
+trap 'rm -f "$maker_zcash_private"' EXIT
+install -m 0600 "$RUNTIME/lez/maker/zcash.key" "$maker_zcash_private"
+zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
+rm -f "$maker_zcash_private"
+trap - EXIT
+chmod 0644 "$RUNTIME/lez/maker/zcash.key" "$RUNTIME/lez/taker/zcash.key"
+mkdir -p "$RUNTIME/zebra"
+sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$RUNTIME/zebra/zebrad.toml"
+chmod 0644 "$RUNTIME/zebra/zebrad.toml"
+echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): runtime/zebra/zebrad.toml"
 mkdir -p "$RUNTIME/sockets"
 rm -f "$RUNTIME/runtime.env"
 # Recovery timing profile for the Node-owned Bitcoin lifecycle. `local` keeps
@@ -248,6 +315,11 @@ printf '%s\n' \
   "BTC_RPC_USER=lezrpc" \
   "BTC_RPC_PASSWORD=$btc_rpc_password" \
   "LEZ_MARKET_ROOT=$market_root" \
+  "LEZ_WALLET_MAKER_ALLOCATION=$wallet_maker_allocation" \
+  "LEZ_WALLET_TAKER_ALLOCATION=$wallet_taker_allocation" \
+  "LEZ_HEARTBEAT_ALLOCATION=$heartbeat_allocation" \
+  "LEZ_HEARTBEAT_SECONDS=$heartbeat_seconds" \
+  "LEZ_HEARTBEAT_STALL_SECONDS=$heartbeat_stall_seconds" \
   >"$RUNTIME/runtime.env"
 chmod 0600 "$RUNTIME/runtime.env"
 

@@ -383,6 +383,34 @@ async fn stable_confirmed_absent_mempool_and_moving_tip_are_distinct() {
 }
 
 #[tokio::test]
+async fn an_absent_funding_lapses_once_the_tip_reaches_its_expiry_height() {
+    // FINDINGS 27 / ZIP-203: the fixture funding expires at height 200; a
+    // recovery may treat it as absent for good only from then on.
+    let agreement = agreement(SwapDirection::TakerSellsForeign);
+    let prepared = prepared(&agreement);
+    for (tip, lapsed) in [(TIP_HEIGHT, false), (199, false), (200, true), (260, true)] {
+        let (rpc, identity) = FakeRpc::confirmed(&agreement, &prepared);
+        rpc.edit(|state| {
+            let info = state.chain_infos[0];
+            state.chain_infos[0] = ZebraChainInfo::new(
+                info.rpc_chain(),
+                BlockHeight::from_u32(tip),
+                info.tip_hash(),
+                info.consensus_branch_id(),
+            );
+        });
+        let port = ZebraRpcSwapPort::new(rpc, identity, Participant::Taker);
+        assert_eq!(
+            port.first_lock_lapsed(&agreement, &prepared)
+                .await
+                .expect("lapse check"),
+            lapsed,
+            "tip {tip}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn reverse_maker_observes_and_submits_exact_zcash_funding() {
     let agreement = agreement(SwapDirection::TakerSellsLez);
     let prepared = prepared(&agreement);
@@ -1527,7 +1555,10 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
     let claimant_hash = pubkey_hash(&claimant_key);
     let (network, environment, zcash_anchor, refund_lock, earlier_latest_ms, later_earliest) =
         match profile {
-            ZecProfileId::DeterministicLocalV1 => (
+            ZecProfileId::DeterministicLocalV1
+            | ZecProfileId::DeterministicLocalDevnetV1
+            | ZecProfileId::DeterministicLocalDevnetV2
+            | ZecProfileId::DeterministicLocalDevnetV3 => (
                 NetworkType::Regtest,
                 LezEnvironmentV1::DeterministicLocalV0_2,
                 116,

@@ -56,7 +56,7 @@ use lez_bridge_protocol::{
     AccountIds, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
     ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
     InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeEscrowTerms, NativeEscrowTermsInput,
+    NativeEscrowAccountObservation, NativeEscrowStep, NativeEscrowTerms, NativeEscrowTermsInput,
     NativeRefundFoundFacts, NativeRefundObservation, NativeRefundObservationTarget,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
     ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
@@ -66,13 +66,15 @@ use lez_bridge_protocol::{
     PreparedTransaction, ProtocolValueError, RequestId, RevealingClaimFoundFacts,
     RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
     RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId,
+    SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
+    SupersedeNativeEscrowPrepareResult, TransactionId,
 };
 use lez_swap_core::{ChainPosition, LezUnixMilliseconds, Participant};
 use lez_zec_swap_sdk::{
     CanonicalLezEscrowObservationV1, ClaimError, ClaimPreimage, ClaimStepV1,
     FirstLockConfirmedEvidenceV1, FirstLockIntentError, FirstLockObservation, FirstLockPlanV1,
-    FirstLockStepV1, FirstLockTransitionError, LezAssetV1, LezClaimInstructionV1,
+    FirstLockStepV1, FirstLockSupersessionError, FirstLockSupersessionInputV1,
+    FirstLockSupersessionV1, FirstLockTransitionError, LezAssetV1, LezClaimInstructionV1,
     LezClaimNodeSnapshotV1, LezClaimObservationError, LezClaimTransactionSnapshotV1,
     LezCustodySnapshotV1, LezEnvironmentV1, LezEscrowMetadataSnapshotV1, LezEscrowStatusV1,
     LezFundInstructionV1, LezFundTransactionSnapshotV1, LezInclusionStatusV1, LezNodeSnapshotV1,
@@ -98,6 +100,12 @@ pub trait LezBridgeTransport: Send + Sync {
         &self,
         request: PrepareNativeEscrowRequest,
     ) -> Result<PrepareNativeEscrowResult, Self::Error>;
+
+    /// Re-plans the pair after a superseded nonce; idempotent per superseded pair.
+    async fn supersede_native_escrow_prepare(
+        &self,
+        request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, Self::Error>;
 }
 
 #[async_trait]
@@ -109,6 +117,13 @@ impl LezBridgeTransport for BridgeClient {
         request: PrepareNativeEscrowRequest,
     ) -> Result<PrepareNativeEscrowResult, Self::Error> {
         BridgeClient::prepare_native_escrow(self, request).await
+    }
+
+    async fn supersede_native_escrow_prepare(
+        &self,
+        request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, Self::Error> {
+        BridgeClient::supersede_native_escrow_prepare(self, request).await
     }
 }
 
@@ -293,6 +308,12 @@ pub trait LezBridgeClaimTransport: Send + Sync {
         &self,
         request: SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, Self::Error>;
+
+    /// Re-plans the owned revealing claim after its nonce was taken.
+    async fn supersede_revealing_claim(
+        &self,
+        request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, Self::Error>;
 }
 
 #[async_trait]
@@ -318,6 +339,13 @@ impl LezBridgeClaimTransport for BridgeClient {
         request: SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, Self::Error> {
         BridgeClient::submit_transaction(self, request).await
+    }
+
+    async fn supersede_revealing_claim(
+        &self,
+        request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, Self::Error> {
+        BridgeClient::supersede_revealing_claim(self, request).await
     }
 }
 
@@ -395,6 +423,12 @@ pub enum PrepareNativeFirstLockError<E: std::error::Error + 'static> {
     /// The selected step is not one of the complete durable LEZ plan's exact values.
     #[error("LEZ first-lock step differs from the complete durable plan")]
     PreparedPlanMismatch,
+    /// The sidecar's re-plan does not retire the plan it was asked to retire.
+    #[error("LEZ bridge re-plan does not supersede the requested plan")]
+    SupersessionMismatch,
+    /// The re-plan record itself is malformed.
+    #[error("LEZ bridge re-plan record is invalid")]
+    Supersession(#[source] FirstLockSupersessionError),
     /// No retry is attempted because delivery may have succeeded.
     #[error("LEZ bridge preparation outcome is unknown")]
     Transport(#[source] E),
@@ -472,6 +506,15 @@ pub enum NativeFirstLockSubmitOutcome {
     Accepted,
     /// Delivery or acknowledgement became ambiguous after the attempt began.
     Unknown,
+    /// Nothing was submitted: the signer nonce in the exact bytes is behind the
+    /// account's live nonce and the transaction is not included. The plan is
+    /// superseded and must be remade at the live nonce.
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Failure binding one native refund operation to the accepted agreement.
@@ -562,6 +605,15 @@ pub enum RevealingClaimSubmitOutcome {
     Accepted,
     /// Delivery or response validation failed after the attempt began.
     Unknown,
+    /// Nothing was submitted: the claim's signer nonce was taken by another
+    /// transaction of the same signer and the claim is not included; it is
+    /// re-planned at the live nonce (FINDINGS 24).
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Failure binding one native revealing-claim operation to the accepted agreement.
@@ -694,6 +746,128 @@ impl<T: LezBridgeTransport> LezBridgeAdapter<T> {
         )
         .map_err(PrepareNativeFirstLockError::FirstLockPlan)?;
         FirstLockPlanV1::lez(initialize, fund).map_err(PrepareNativeFirstLockError::FirstLockPlan)
+    }
+}
+
+/// The re-planned revealing claim with the nonces and index of its re-plan.
+/// (No `Debug`: it holds exact claim bytes.)
+pub struct SupersededRevealingClaimV1 {
+    /// The re-planned claim to restage.
+    pub claim: PreparedClaimSubmissionV1,
+    /// One-based re-plan count, agreed with the sidecar.
+    pub replan_index: u32,
+    /// Signer nonce the superseded claim was planned at.
+    pub superseded_nonce: u128,
+    /// Signer nonce the claim is planned at now.
+    pub replanned_nonce: u128,
+}
+
+impl std::fmt::Debug for SupersededRevealingClaimV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SupersededRevealingClaimV1")
+            .field("claim_id", &self.claim.expected_submission_id())
+            .field("replan_index", &self.replan_index)
+            .field("superseded_nonce", &self.superseded_nonce)
+            .field("replanned_nonce", &self.replanned_nonce)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The re-planned LEZ first-lock plan with the record linking it to the one it retires.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SupersededFirstLockPlanV1 {
+    /// The plan to restage; the initialization is kept when the step was fund.
+    pub plan: FirstLockPlanV1,
+    /// Both generations: nonces and identities.
+    pub supersession: FirstLockSupersessionV1,
+}
+
+impl<T: LezBridgeTransport> LezBridgeAdapter<T> {
+    /// Re-plans the durable LEZ plan after the sidecar reported its nonce taken.
+    ///
+    /// The sidecar keeps the superseded pair as lineage and answers the same
+    /// request with the same pair; `replan_index` is the caller's count of
+    /// recorded re-plans plus one and must agree with the sidecar's.
+    ///
+    /// # Errors
+    ///
+    /// Returns the typed role, runtime, transport, echo, or record error.
+    pub async fn supersede_native_first_lock(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        plan: &FirstLockPlanV1,
+        step: FirstLockStepV1,
+        replan_index: u32,
+    ) -> Result<SupersededFirstLockPlanV1, PrepareNativeFirstLockError<T::Error>> {
+        if self.local_participant != agreement.lez_depositor() {
+            return Err(PrepareNativeFirstLockError::WrongDepositor);
+        }
+        validate_runtime_binding(agreement, &self.runtime, self.local_participant)
+            .map_err(map_runtime_prepare_error)?;
+        let Some((superseded_initialize_id, superseded_fund_id)) = plan.lez_identities() else {
+            return Err(PrepareNativeFirstLockError::PreparedPlanMismatch);
+        };
+        let native_step = match step {
+            FirstLockStepV1::LezInitialize => NativeEscrowStep::Initialize,
+            FirstLockStepV1::LezFund => NativeEscrowStep::Fund,
+            FirstLockStepV1::ZcashFund => {
+                return Err(PrepareNativeFirstLockError::PreparedPlanMismatch);
+            }
+        };
+        let context = MessageContext::new(
+            self.run_id.clone(),
+            request_id,
+            bridge_participant(self.local_participant),
+        );
+        let response = self
+            .transport
+            .supersede_native_escrow_prepare(SupersedeNativeEscrowPrepareRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                TransactionId::from_bytes(*superseded_initialize_id),
+                TransactionId::from_bytes(*superseded_fund_id),
+                native_step,
+            ))
+            .await
+            .map_err(PrepareNativeFirstLockError::Transport)?;
+        if response.context != context {
+            return Err(PrepareNativeFirstLockError::ResponseContextMismatch);
+        }
+        if response.superseded_initialization_transaction_id.as_bytes() != superseded_initialize_id
+            || response.superseded_funding_transaction_id.as_bytes() != superseded_fund_id
+            || response.replan_index != replan_index
+        {
+            return Err(PrepareNativeFirstLockError::SupersessionMismatch);
+        }
+        let initialize = PreparedFirstLockSubmissionV1::new(
+            FirstLockStepV1::LezInitialize,
+            *response.initialization.transaction_id.as_bytes(),
+            response.initialization.exact_bytes.into_vec(),
+        )
+        .map_err(PrepareNativeFirstLockError::FirstLockPlan)?;
+        let fund = PreparedFirstLockSubmissionV1::new(
+            FirstLockStepV1::LezFund,
+            *response.funding.transaction_id.as_bytes(),
+            response.funding.exact_bytes.into_vec(),
+        )
+        .map_err(PrepareNativeFirstLockError::FirstLockPlan)?;
+        let supersession = FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+            replan_index,
+            step,
+            superseded_initialize_id: *superseded_initialize_id,
+            superseded_fund_id: *superseded_fund_id,
+            superseded_nonce: response.superseded_nonce,
+            replanned_initialize_id: *initialize.expected_submission_id(),
+            replanned_fund_id: *fund.expected_submission_id(),
+            replanned_nonce: response.replanned_nonce,
+        })
+        .map_err(PrepareNativeFirstLockError::Supersession)?;
+        Ok(SupersededFirstLockPlanV1 {
+            plan: FirstLockPlanV1::Lez { initialize, fund },
+            supersession,
+        })
     }
 }
 
@@ -910,6 +1084,13 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
             SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
                 NativeFirstLockSubmitOutcome::Accepted
             }
+            SubmissionOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            } => NativeFirstLockSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            },
         })
     }
 }
@@ -1315,6 +1496,9 @@ impl<T: LezBridgeRefundTransport> LezBridgeAdapter<T> {
             SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
                 RefundSubmitOutcomeV1::Accepted
             }
+            // Nothing was submitted; the refund is not re-planned here, the
+            // caller observes and decides.
+            SubmissionOutcome::Superseded { .. } => RefundSubmitOutcomeV1::DefinitivelyRejected,
         })
     }
 
@@ -1454,6 +1638,56 @@ impl<T: LezBridgeClaimTransport> LezBridgeAdapter<T> {
         .map_err(NativeRevealingClaimAdapterError::Claim)
     }
 
+    /// Re-plans the owned revealing claim after the sidecar reported its nonce
+    /// taken: the same claim at the live nonce (FINDINGS 24). The sidecar keeps
+    /// the superseded claim as lineage and answers the same request with the
+    /// same claim; `replan_index` is the caller's count of recorded re-plans
+    /// plus one and must agree with the sidecar's.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-claimant use, a non-LEZ claim, a response for another
+    /// context or claim, an index the sidecar disagrees with, and transport
+    /// failures.
+    pub async fn supersede_native_revealing_claim(
+        &self,
+        agreement: &ZecAgreementV1,
+        request_id: RequestId,
+        superseded: &PreparedClaimSubmissionV1,
+        replan_index: u32,
+    ) -> Result<SupersededRevealingClaimV1, NativeRevealingClaimAdapterError<T::Error>> {
+        self.validate_claimant(agreement)?;
+        let superseded_transaction = prepared_claim_transaction(superseded)?;
+        let context = self.claim_context(request_id);
+        let response = self
+            .transport
+            .supersede_revealing_claim(lez_bridge_protocol::SupersedeRevealingClaimRequest::new(
+                context.clone(),
+                self.runtime.clone(),
+                superseded_transaction.transaction_id,
+            ))
+            .await
+            .map_err(NativeRevealingClaimAdapterError::Transport)?;
+        if response.context != context
+            || response.superseded_claim_transaction_id != superseded_transaction.transaction_id
+            || response.replan_index != replan_index
+        {
+            return Err(NativeRevealingClaimAdapterError::ResponseContextMismatch);
+        }
+        let claim = PreparedClaimSubmissionV1::new(
+            ClaimStepV1::RevealingLez,
+            *response.claim.transaction_id.as_bytes(),
+            response.claim.exact_bytes.into_vec(),
+        )
+        .map_err(NativeRevealingClaimAdapterError::Claim)?;
+        Ok(SupersededRevealingClaimV1 {
+            claim,
+            replan_index: response.replan_index,
+            superseded_nonce: response.superseded_nonce,
+            replanned_nonce: response.replanned_nonce,
+        })
+    }
+
     /// Observes the claimant's exact protected revealing-claim identity once.
     ///
     /// # Errors
@@ -1541,6 +1775,13 @@ impl<T: LezBridgeClaimTransport> LezBridgeAdapter<T> {
             SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
                 RevealingClaimSubmitOutcome::Accepted
             }
+            SubmissionOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            } => RevealingClaimSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            },
         })
     }
 

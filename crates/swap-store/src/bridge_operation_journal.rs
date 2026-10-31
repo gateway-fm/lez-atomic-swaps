@@ -25,6 +25,16 @@ pub enum BridgeOperationKind {
     NativeEscrowInitializeSubmit,
     /// Submit the prepared native escrow funding transaction.
     NativeEscrowFundSubmit,
+    /// Re-plan the native escrow pair for the first time after a superseded nonce.
+    NativeEscrowSupersede1,
+    /// Second re-plan of the native escrow pair.
+    NativeEscrowSupersede2,
+    /// Third re-plan of the native escrow pair.
+    NativeEscrowSupersede3,
+    /// Fourth re-plan of the native escrow pair.
+    NativeEscrowSupersede4,
+    /// Fifth and last re-plan of the native escrow pair.
+    NativeEscrowSupersede5,
     /// Prepare the revealing LEZ claim.
     RevealingClaimPrepare,
     /// Observe the revealing LEZ claim by exact prepared identity.
@@ -33,6 +43,17 @@ pub enum BridgeOperationKind {
     RevealingClaimDiscoveryObserve,
     /// Submit the revealing LEZ claim.
     RevealingClaimSubmit,
+    /// Re-plan the revealing LEZ claim for the first time after a superseded
+    /// nonce (FINDINGS 24).
+    RevealingClaimSupersede1,
+    /// Second re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede2,
+    /// Third re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede3,
+    /// Fourth re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede4,
+    /// Fifth and last re-plan of the revealing LEZ claim.
+    RevealingClaimSupersede5,
     /// Prepare the fixed-destination native refund.
     NativeRefundPrepare,
     /// Observe owner-side native refund eligibility before preparation.
@@ -46,6 +67,64 @@ pub enum BridgeOperationKind {
 }
 
 impl BridgeOperationKind {
+    /// Every operation, in declaration order. The journal's SQL CHECK lists
+    /// the same names; a test inserts each of these under it so the alphabet
+    /// and the constraint cannot drift apart again (they did once, 2026-10-29).
+    pub const ALL: [Self; 24] = [
+        Self::NativeEscrowPrepare,
+        Self::NativeEscrowExactObserve,
+        Self::NativeEscrowDiscoveryObserve,
+        Self::NativeEscrowInitializeSubmit,
+        Self::NativeEscrowFundSubmit,
+        Self::NativeEscrowSupersede1,
+        Self::NativeEscrowSupersede2,
+        Self::NativeEscrowSupersede3,
+        Self::NativeEscrowSupersede4,
+        Self::NativeEscrowSupersede5,
+        Self::RevealingClaimPrepare,
+        Self::RevealingClaimExactObserve,
+        Self::RevealingClaimDiscoveryObserve,
+        Self::RevealingClaimSubmit,
+        Self::RevealingClaimSupersede1,
+        Self::RevealingClaimSupersede2,
+        Self::RevealingClaimSupersede3,
+        Self::RevealingClaimSupersede4,
+        Self::RevealingClaimSupersede5,
+        Self::NativeRefundPrepare,
+        Self::NativeRefundEligibilityObserve,
+        Self::NativeRefundExactObserve,
+        Self::NativeRefundDiscoveryObserve,
+        Self::NativeRefundSubmit,
+    ];
+
+    /// The operation owning re-plan number `index` (one-based); `None` past
+    /// the bound, which the caller reports as exhausted.
+    #[must_use]
+    pub const fn native_escrow_supersede(index: u32) -> Option<Self> {
+        match index {
+            1 => Some(Self::NativeEscrowSupersede1),
+            2 => Some(Self::NativeEscrowSupersede2),
+            3 => Some(Self::NativeEscrowSupersede3),
+            4 => Some(Self::NativeEscrowSupersede4),
+            5 => Some(Self::NativeEscrowSupersede5),
+            _ => None,
+        }
+    }
+
+    /// The operation owning claim re-plan number `index` (one-based); `None`
+    /// past the bound, which the caller reports as exhausted.
+    #[must_use]
+    pub const fn revealing_claim_supersede(index: u32) -> Option<Self> {
+        match index {
+            1 => Some(Self::RevealingClaimSupersede1),
+            2 => Some(Self::RevealingClaimSupersede2),
+            3 => Some(Self::RevealingClaimSupersede3),
+            4 => Some(Self::RevealingClaimSupersede4),
+            5 => Some(Self::RevealingClaimSupersede5),
+            _ => None,
+        }
+    }
+
     const fn name(self) -> &'static str {
         match self {
             Self::NativeEscrowPrepare => "native_escrow_prepare",
@@ -53,16 +132,36 @@ impl BridgeOperationKind {
             Self::NativeEscrowDiscoveryObserve => "native_escrow_discovery_observe",
             Self::NativeEscrowInitializeSubmit => "native_escrow_initialize_submit",
             Self::NativeEscrowFundSubmit => "native_escrow_fund_submit",
+            Self::NativeEscrowSupersede1 => "native_escrow_supersede_1",
+            Self::NativeEscrowSupersede2 => "native_escrow_supersede_2",
+            Self::NativeEscrowSupersede3 => "native_escrow_supersede_3",
+            Self::NativeEscrowSupersede4 => "native_escrow_supersede_4",
+            Self::NativeEscrowSupersede5 => "native_escrow_supersede_5",
             Self::RevealingClaimPrepare => "revealing_claim_prepare",
             Self::RevealingClaimExactObserve => "revealing_claim_exact_observe",
             Self::RevealingClaimDiscoveryObserve => "revealing_claim_discovery_observe",
             Self::RevealingClaimSubmit => "revealing_claim_submit",
+            Self::RevealingClaimSupersede1 => "revealing_claim_supersede_1",
+            Self::RevealingClaimSupersede2 => "revealing_claim_supersede_2",
+            Self::RevealingClaimSupersede3 => "revealing_claim_supersede_3",
+            Self::RevealingClaimSupersede4 => "revealing_claim_supersede_4",
+            Self::RevealingClaimSupersede5 => "revealing_claim_supersede_5",
             Self::NativeRefundPrepare => "native_refund_prepare",
             Self::NativeRefundEligibilityObserve => "native_refund_eligibility_observe",
             Self::NativeRefundExactObserve => "native_refund_exact_observe",
             Self::NativeRefundDiscoveryObserve => "native_refund_discovery_observe",
             Self::NativeRefundSubmit => "native_refund_submit",
         }
+    }
+
+    const fn is_submission(self) -> bool {
+        matches!(
+            self,
+            Self::NativeEscrowInitializeSubmit
+                | Self::NativeEscrowFundSubmit
+                | Self::RevealingClaimSubmit
+                | Self::NativeRefundSubmit
+        )
     }
 
     const fn is_observation(self) -> bool {
@@ -78,7 +177,9 @@ impl BridgeOperationKind {
         )
     }
 
-    const fn requires_window(self) -> bool {
+    /// Whether a request of this operation must carry a discovery window.
+    #[must_use]
+    pub const fn requires_window(self) -> bool {
         matches!(
             self,
             Self::NativeEscrowDiscoveryObserve
@@ -403,6 +504,53 @@ impl SqliteBridgeOperationJournal {
         })
     }
 
+    /// Retires the active submission context of a plan that was superseded:
+    /// its bytes will never be sent again, and the re-planned bytes need a
+    /// request id of their own (a sidecar refuses an id reused for a different
+    /// body). The next `begin_or_resume` on the key allocates the next poll.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed store error for a non-submission operation, a stale or
+    /// missing active context, or `SQLite` failure.
+    pub fn retire_superseded_submission(
+        &mut self,
+        key: &BridgeOperationKey,
+        expected: &DurableBridgeRequestContext,
+    ) -> Result<(), StoreError> {
+        if !key.operation.is_submission() {
+            return Err(StoreError::InvalidBridgeOperationContext);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let active = load_active_context(&transaction, key)?
+            .ok_or(StoreError::MissingBridgeOperationContext)?;
+        if active != *expected {
+            return Err(StoreError::BridgeOperationContextConflict);
+        }
+        let updated = transaction.execute(
+            "
+            UPDATE bridge_operation_contexts
+            SET state = 'completed', completion_outcome = 'superseded'
+            WHERE run_id = ?1 AND swap_id = ?2 AND local_role = ?3
+              AND operation = ?4 AND poll_sequence = ?5 AND state = 'active'
+            ",
+            params![
+                key.run_id.as_str(),
+                key.swap_id.as_str(),
+                participant_name(key.local_role),
+                key.operation.name(),
+                sequence_to_sql(expected.poll_sequence)?,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::BridgeOperationContextConflict);
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Loads the active context for exactly one run/role/swap/operation key.
     ///
     /// # Errors
@@ -416,10 +564,9 @@ impl SqliteBridgeOperationJournal {
     }
 }
 
-fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), StoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute_batch(
-        "
+/// The journal table; the operation names are a SQL CHECK, so a new
+/// operation needs the table rebuilt in a journal created before it existed.
+const BRIDGE_OPERATION_CONTEXTS_TABLE: &str = "
         CREATE TABLE IF NOT EXISTS bridge_operation_contexts (
             run_id              TEXT NOT NULL,
             swap_id             TEXT NOT NULL,
@@ -432,7 +579,13 @@ fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), S
                 'revealing_claim_discovery_observe', 'revealing_claim_submit',
                 'native_refund_prepare', 'native_refund_eligibility_observe',
                 'native_refund_exact_observe', 'native_refund_discovery_observe',
-                'native_refund_submit'
+                'native_refund_submit',
+                'native_escrow_supersede_1', 'native_escrow_supersede_2',
+                'native_escrow_supersede_3', 'native_escrow_supersede_4',
+                'native_escrow_supersede_5',
+                'revealing_claim_supersede_1', 'revealing_claim_supersede_2',
+                'revealing_claim_supersede_3', 'revealing_claim_supersede_4',
+                'revealing_claim_supersede_5'
             )),
             poll_sequence       INTEGER NOT NULL CHECK (poll_sequence >= 0),
             request_id          TEXT NOT NULL,
@@ -440,7 +593,7 @@ fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), S
             window_max_blocks   INTEGER CHECK (window_max_blocks > 0),
             state               TEXT NOT NULL CHECK (state IN ('active', 'completed')),
             completion_outcome  TEXT CHECK (
-                completion_outcome IN ('succeeded', 'typed_error')
+                completion_outcome IN ('succeeded', 'typed_error', 'superseded')
             ),
             PRIMARY KEY (run_id, swap_id, local_role, operation, poll_sequence),
             CHECK (
@@ -452,13 +605,52 @@ fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), S
                 OR (state = 'completed' AND completion_outcome IS NOT NULL)
             )
         ) STRICT;
+";
+
+const BRIDGE_OPERATION_CONTEXTS_INDEXES: &str = "
         CREATE UNIQUE INDEX IF NOT EXISTS bridge_operation_one_active
             ON bridge_operation_contexts (run_id, swap_id, local_role, operation)
             WHERE state = 'active';
         CREATE UNIQUE INDEX IF NOT EXISTS bridge_operation_request_once
             ON bridge_operation_contexts (run_id, local_role, request_id);
-        ",
-    )?;
+";
+
+/// A token only the current table definition carries (the last claim
+/// re-plan operation, FINDINGS 24); its absence marks a journal created
+/// before it — before the claim re-plans, or before every supersede operation
+/// and their `superseded` retirement outcome (D1).
+const NEWEST_DEFINITION_TOKEN: &str = "'revealing_claim_supersede_5'";
+
+fn migrate_bridge_operation_journal(connection: &mut Connection) -> Result<(), StoreError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let stored: Option<String> = transaction
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'bridge_operation_contexts'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(definition) = stored
+        && !definition.contains(NEWEST_DEFINITION_TOKEN)
+    {
+        // A journal from before the supersede operations: rebuild the table
+        // under the current CHECK, keeping every row (the names it holds are
+        // all still allowed). Indexes follow the rename and die with the old
+        // table; the current ones are created below.
+        transaction.execute_batch(
+            "ALTER TABLE bridge_operation_contexts RENAME TO bridge_operation_contexts_before_supersede;",
+        )?;
+        transaction.execute_batch(BRIDGE_OPERATION_CONTEXTS_TABLE)?;
+        transaction.execute_batch(
+            "
+            INSERT INTO bridge_operation_contexts
+            SELECT * FROM bridge_operation_contexts_before_supersede;
+            DROP TABLE bridge_operation_contexts_before_supersede;
+            ",
+        )?;
+    }
+    transaction.execute_batch(BRIDGE_OPERATION_CONTEXTS_TABLE)?;
+    transaction.execute_batch(BRIDGE_OPERATION_CONTEXTS_INDEXES)?;
     transaction.commit()?;
     Ok(())
 }

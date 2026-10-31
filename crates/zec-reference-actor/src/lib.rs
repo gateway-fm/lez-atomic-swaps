@@ -18,8 +18,32 @@ mod test_crash_hook;
 
 pub use command::{
     ActorCommandError, ActorCommandOutputV1, ActorEffectOutputV1, ActorStatusProjectionV1,
-    ActorStatusV1, execute_actor_command,
+    ActorStatusV1, execute_actor_command, lez_depositor_balance_marker,
+    record_revealing_claim_holder, revealing_claim_held_by_marker,
+    revealing_claim_hold_attention_ms, revealing_claim_hold_needs_attention,
+    revealing_claim_holder, revealing_claim_in_flight_marker, revealing_claim_submitted_marker,
 };
+
+/// Exit code of a drive the actor refused because the LEZ depositor cannot
+/// fund the lot ([`ActorCommandError::LezDepositorBalanceInsufficient`]);
+/// every other failure exits 2. The Maker Node's supervisor names its backoff
+/// from it, the Taker Node reads the marker the same refusal leaves.
+pub const LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE: i32 = 3;
+/// Exit code of a drive that re-planned the LEZ first lock the bounded number
+/// of times and found its nonce taken again
+/// ([`ActorCommandError::FirstLockReplanExhausted`]): the swap stops by name.
+pub const LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 4;
+
+/// Exit code of an actor whose owned revealing LEZ claim was re-planned the
+/// bounded number of times and keeps losing its nonce
+/// ([`ActorCommandError::RevealingClaimReplanExhausted`], FINDINGS 24): the
+/// swap needs attention by name; it is never turned into a refund.
+pub const LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 5;
+
+/// Exit code of a claim the actor refused because the revealing LEZ claim
+/// window had closed ([`ActorCommandError::ClaimWindowClosed`], FINDINGS 26):
+/// nothing was sent; the actor's status names the refund as the next action.
+pub const LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE: i32 = 6;
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
@@ -27,8 +51,11 @@ pub use config::{
 };
 pub use local_poc::{
     LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocLezSignerFiles,
-    LocalPocProvisionSummary, finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
-    provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_signers,
+    LocalPocProvisionSummary, LocalPocTransferSummary, LocalPocZcashIdentity,
+    LocalPocZcashKeyFiles, finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
+    provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_material,
+    provision_local_v0_2_corridor_with_signers, transfer_local_v0_2_regtest,
+    zcash_identity_from_key_file,
 };
 pub use maker_provision::{
     ZecActorProvisionV1, ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,
@@ -89,7 +116,21 @@ pub fn run_actor_process(expected_role: ActorRole) {
         .unwrap_or_else(|_| exit_with("actor runtime is unavailable"));
     let output = runtime
         .block_on(execute_actor_command(&config, cli.command))
-        .unwrap_or_else(|error| exit_with(error));
+        .unwrap_or_else(|error| match error {
+            ActorCommandError::LezDepositorBalanceInsufficient => {
+                exit_with_code(error, LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE)
+            }
+            ActorCommandError::FirstLockReplanExhausted => {
+                exit_with_code(error, LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE)
+            }
+            ActorCommandError::RevealingClaimReplanExhausted => {
+                exit_with_code(error, LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE)
+            }
+            ActorCommandError::ClaimWindowClosed => {
+                exit_with_code(error, LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE)
+            }
+            _ => exit_with(error),
+        });
     let json =
         serde_json::to_string(&output).unwrap_or_else(|_| exit_with("actor output is unavailable"));
     pause_after_submitted_effect_if_armed(&config, &json);
@@ -134,8 +175,12 @@ fn pause_after_submitted_effect_if_armed(config: &ActorConfig, output: &str) {
 fn pause_after_submitted_effect_if_armed(_config: &ActorConfig, _output: &str) {}
 
 fn exit_with(message: impl fmt::Display) -> ! {
+    exit_with_code(message, 2)
+}
+
+fn exit_with_code(message: impl fmt::Display, code: i32) -> ! {
     eprintln!("{message}");
-    std::process::exit(2);
+    std::process::exit(code);
 }
 
 fn parse_config_fd(value: &str) -> Result<i32, String> {

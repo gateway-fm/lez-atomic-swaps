@@ -15,6 +15,17 @@ fn named_profiles_match_the_reviewed_immutable_parameters() {
     assert_eq!(local.required_margin(), UnixSeconds::new(30));
     assert_eq!(local.expiry_delta_blocks(), 40);
 
+    let devnet = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV1);
+    assert_eq!(devnet.id().as_str(), "deterministic-local-devnet-v1");
+    assert_eq!(devnet.zcash_network(), NetworkType::Regtest);
+    assert_eq!(devnet.consensus_branch_id(), BranchId::Nu6_2);
+    assert_eq!(devnet.lez_confirmations(), 1);
+    assert_eq!(devnet.zcash_confirmations(), 1);
+    assert_eq!(devnet.lez_refund_delay(), UnixSeconds::new(1_800));
+    assert_eq!(devnet.zcash_refund_blocks(), 4);
+    assert_eq!(devnet.required_margin(), UnixSeconds::new(30));
+    assert_eq!(devnet.expiry_delta_blocks(), 40);
+
     let public = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV1);
     assert_eq!(public.id().as_str(), "public-testnet-v1");
     assert_eq!(public.zcash_network(), NetworkType::Test);
@@ -139,4 +150,36 @@ fn both_directions_keep_lez_before_zcash_while_mapping_role_deadlines() {
             }
         }
     }
+}
+
+/// Profiles are immutable per id: the devnet's wider Zcash window is V2, V1
+/// keeps its four blocks so every agreement signed under it still validates.
+#[test]
+fn devnet_v2_widens_the_zcash_refund_window_and_v1_keeps_its_four_blocks() {
+    let v1 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV1);
+    let v2 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV2);
+    assert_eq!(v2.id().as_str(), "deterministic-local-devnet-v2");
+    assert_eq!(v1.zcash_refund_blocks(), 4);
+    assert_eq!(v2.zcash_refund_blocks(), 8);
+    assert_eq!(v1.lez_refund_delay(), v2.lez_refund_delay());
+    assert_eq!(v1.required_margin(), v2.required_margin());
+    assert_eq!(v1.lez_confirmations(), v2.lez_confirmations());
+    assert_eq!(v1.zcash_confirmations(), v2.zcash_confirmations());
+    assert_eq!(v1.zcash_network(), v2.zcash_network());
+}
+
+/// V3 is V2 with a 12-minute LEZ refund delay (the devnet chain's finality
+/// lives ~27 min on the review host, upstream #3643); V2 keeps its 30 minutes.
+#[test]
+fn devnet_v3_shortens_the_lez_refund_delay_and_keeps_every_other_v2_parameter() {
+    let v2 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV2);
+    let v3 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV3);
+    assert_eq!(v3.id().as_str(), "deterministic-local-devnet-v3");
+    assert_eq!(v2.lez_refund_delay().value(), 1_800);
+    assert_eq!(v3.lez_refund_delay().value(), 720);
+    assert_eq!(v2.zcash_refund_blocks(), v3.zcash_refund_blocks());
+    assert_eq!(v2.required_margin(), v3.required_margin());
+    assert_eq!(v2.lez_confirmations(), v3.lez_confirmations());
+    assert_eq!(v2.zcash_confirmations(), v3.zcash_confirmations());
+    assert_eq!(v2.zcash_network(), v3.zcash_network());
 }

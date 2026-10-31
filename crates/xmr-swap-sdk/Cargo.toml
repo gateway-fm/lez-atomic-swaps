@@ -33,4 +33,4 @@ name = "lifecycle-wiring"
 path = "examples/lifecycle-wiring.rs"
 
 [dev-dependencies]
-tokio = { version = "=1.52.3", features = ["macros", "rt"] }
+tokio = { version = "=1.53.3", features = ["macros", "rt"] }

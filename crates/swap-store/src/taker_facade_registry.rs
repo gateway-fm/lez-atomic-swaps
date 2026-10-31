@@ -1332,12 +1332,16 @@ fn lookup_exact_action_request(
         .into_iter()
         .find(|row| row.request_id == *request_id)
         .ok_or(TakerFacadeStoreError::CorruptState)?;
-    if stored.swap_id != *swap_id
-        || stored.action != action
-        || stored.expected_generation != expected_generation
-    {
+    if stored.swap_id != *swap_id || stored.action != action {
         return Err(TakerFacadeStoreError::RequestConflict);
     }
+    // The generation fences a *new* request against a stale view. A request
+    // this registry already admitted is durable: whatever generation the
+    // caller holds now (a desk re-pressing "Retry refund" sends the row's
+    // current one, which has moved on since the admission), the same request
+    // id for the same swap and action is that request, replayed, and it is
+    // served from the record with the generation it was admitted at.
+    let _ = expected_generation;
     Ok(Some(TakerActionAdmissionV1 {
         swap_id: stored.swap_id,
         action: stored.action,

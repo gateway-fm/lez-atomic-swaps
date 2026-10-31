@@ -15,6 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use lez_actor_supervision::terminal_phase;
 use lez_swap_core::SwapId;
 use lez_swap_store::{
     ActorHeldLock, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
@@ -403,13 +404,19 @@ fn resolve_claimed_attempt(
             },
             MakerActorSupervisorResolution::Blocked,
         ),
-        ClaimedAttempt::Backoff(failure_class) => (
-            MakerActorAttemptResolution::Backoff {
-                not_before: now.saturating_add(config.failure_backoff_seconds),
-                failure_class: failure_class.into(),
-            },
-            MakerActorSupervisorResolution::Backoff,
-        ),
+        ClaimedAttempt::Backoff(failure_class) => {
+            eprintln!(
+                "maker actor {}: attempt backs off ({failure_class})",
+                lease.record().swap_id().as_str()
+            );
+            (
+                MakerActorAttemptResolution::Backoff {
+                    not_before: now.saturating_add(config.failure_backoff_seconds),
+                    failure_class: failure_class.into(),
+                },
+                MakerActorSupervisorResolution::Backoff,
+            )
+        }
         ClaimedAttempt::Terminal => (
             MakerActorAttemptResolution::Terminal,
             MakerActorSupervisorResolution::Terminal,
@@ -436,6 +443,12 @@ fn resolve_claimed_attempt(
         generation: lease.generation(),
         resolution,
     })
+}
+
+/// One secret-free line per supervised effect, in the words both Nodes use
+/// (`lez_actor_supervision::log_effect`).
+fn log_effect(swap_id: &str, command: ActorEffectCommand, effect: &[u8]) {
+    lez_actor_supervision::log_effect("maker actor", swap_id, command.name(), effect);
 }
 
 enum ClaimedAttempt {
@@ -590,8 +603,8 @@ fn run_claimed_attempt_with_lock(
                 }
             },
         };
-        if config.effect_cutoff_reached() {
-            return Ok(ClaimedAttempt::Backoff("actor_effect_cutoff"));
+        if let Some(class) = effect_held_back(store, lease, config, command, &status) {
+            return Ok(ClaimedAttempt::Backoff(class));
         }
         let effect = match run_child(
             store,
@@ -612,6 +625,7 @@ fn run_claimed_attempt_with_lock(
         else {
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         };
+        log_effect(lease.record().swap_id().as_str(), command, &effect);
         if status_revision.is_some_and(|revision| parsed_effect.revision < revision) {
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         }
@@ -782,8 +796,172 @@ fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
     }
 }
 
-fn classify_exit(_status: ExitStatus) -> ChildRunError {
-    ChildRunError::Retry("actor_exit_failed")
+/// Why an effect waits this attempt, if it does: the effect cutoff, or the
+/// one-revealing-LEZ-claim-in-flight gate — named
+/// `lez_revealing_claim_held_near_refund` once the held swap's own LEZ refund
+/// time is near, with the holder named beside its state for the monitor.
+fn effect_held_back(
+    store: &SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    config: &MakerActorSupervisorConfig,
+    command: ActorEffectCommand,
+    status: &[u8],
+) -> Option<&'static str> {
+    if config.effect_cutoff_reached() {
+        return Some("actor_effect_cutoff");
+    }
+    match revealing_claim_held_back(store, lease, command, status) {
+        RevealingClaimHold::Open => None,
+        RevealingClaimHold::Held => Some("lez_revealing_claim_in_flight"),
+        RevealingClaimHold::HeldNearRefund => Some("lez_revealing_claim_held_near_refund"),
+    }
+}
+
+/// The one-revealing-claim gate's answer for one effect (always open without
+/// the Zcash pair).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(feature = "pair-zec"), allow(dead_code))]
+enum RevealingClaimHold {
+    Open,
+    Held,
+    HeldNearRefund,
+}
+
+/// The Maker settles every Zcash swap as one LEZ account: its revealing LEZ
+/// claims (`TakerSellsLez`) are planned at that account's committed nonce, so
+/// one is in flight at a time (FINDINGS 24). A Zcash claim at both legs
+/// locked waits while another non-terminal Zcash actor holds its in-flight
+/// marker — written when its claim is submitted, removed when the claim is
+/// final. Durable, never released on a timer.
+#[cfg(feature = "pair-zec")]
+fn revealing_claim_held_back(
+    store: &SqliteSwapStore,
+    lease: &MakerActorLeaseV1,
+    command: ActorEffectCommand,
+    status: &[u8],
+) -> RevealingClaimHold {
+    let manifest = lease.record().manifest();
+    if manifest.kind() != MakerActorKindV1::Zcash {
+        return RevealingClaimHold::Open;
+    }
+    let own_state = manifest.state_database_path();
+    let status = serde_json::from_slice::<Value>(status).ok();
+    let phase = status
+        .as_ref()
+        .and_then(|value| value.get("phase"))
+        .and_then(Value::as_str);
+    if !matches!(command, ActorEffectCommand::Claim) || phase != Some("both_legs_locked") {
+        zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        return RevealingClaimHold::Open;
+    }
+    let Ok(records) = store.list_maker_actor_processes() else {
+        // Unknown peers: hold the claim back rather than race a nonce.
+        return RevealingClaimHold::Held;
+    };
+    let holder = records.iter().find(|record| {
+        record.swap_id() != manifest.swap_id()
+            && record.manifest().kind() == MakerActorKindV1::Zcash
+            && record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal
+            && zec_reference_actor::revealing_claim_in_flight_marker(
+                record.manifest().state_database_path(),
+            )
+            .is_some_and(|marker| marker.is_file())
+    });
+    let now_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX);
+    let read = |key: &str| {
+        status
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_u64)
+    };
+    let refund_and_attention_ms =
+        read("lez_refund_at_ms").zip(read("revealing_claim_hold_attention_ms"));
+    let hold = claim_hold(holder.is_some(), refund_and_attention_ms, now_ms);
+    let Some(holder) = holder.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
+        zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        return hold;
+    };
+    let holder = holder.swap_id().as_str();
+    if zec_reference_actor::revealing_claim_holder(own_state).as_deref() != Some(holder) {
+        eprintln!(
+            "maker {}: revealing LEZ claim held behind swap {holder}'s near this swap's LEZ refund time; needs attention (lez_revealing_claim_held_near_refund)",
+            manifest.swap_id().as_str()
+        );
+    }
+    zec_reference_actor::record_revealing_claim_holder(own_state, Some(holder));
+    RevealingClaimHold::HeldNearRefund
+}
+
+/// The gate's answer for a Zcash claim at both legs locked: open without a
+/// holder; held behind one; named once its own LEZ refund time is within the
+/// attention margin (both from the actor's status: a third of the agreement's
+/// LEZ refund delay). Without them the claim is held without the attention.
+#[cfg(feature = "pair-zec")]
+const fn claim_hold(
+    holder: bool,
+    refund_and_attention_ms: Option<(u64, u64)>,
+    now_ms: u64,
+) -> RevealingClaimHold {
+    match (holder, refund_and_attention_ms) {
+        (false, _) => RevealingClaimHold::Open,
+        (true, Some((at, attention)))
+            if zec_reference_actor::revealing_claim_hold_needs_attention(at, attention, now_ms) =>
+        {
+            RevealingClaimHold::HeldNearRefund
+        }
+        (true, _) => RevealingClaimHold::Held,
+    }
+}
+
+/// Without the Zcash pair no Maker actor submits a revealing LEZ claim.
+#[cfg(not(feature = "pair-zec"))]
+const fn revealing_claim_held_back(
+    _store: &SqliteSwapStore,
+    _lease: &MakerActorLeaseV1,
+    _command: ActorEffectCommand,
+    _status: &[u8],
+) -> RevealingClaimHold {
+    RevealingClaimHold::Open
+}
+
+fn classify_exit(status: ExitStatus) -> ChildRunError {
+    match status.code() {
+        // The Zcash actor's named refusal: the account holds less LEZ than the
+        // lot. A backoff, not a failure: the next attempt funds the escrow by
+        // itself once the account is funded, and the class says why meanwhile.
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE) => {
+            ChildRunError::Retry("lez_depositor_balance_insufficient")
+        }
+        // The Zcash actor re-planned the LEZ first lock the bounded number of
+        // times and its nonce was taken again: nothing is on the chain, the
+        // swap stops by name (D1).
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE) => {
+            ChildRunError::Fail("lez_first_lock_replan_exhausted")
+        }
+        // The Zcash actor refused a revealing LEZ claim after its window
+        // closed (nothing sent); its next status names the Zcash refund and
+        // the supervisor recovers (FINDINGS 26).
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE) => {
+            ChildRunError::Retry("lez_claim_window_closed")
+        }
+        // The Zcash actor re-planned its revealing LEZ claim the bounded number
+        // of times and its nonce was taken again: the claim is never abandoned
+        // for a refund; the swap needs attention by name (FINDINGS 24).
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE) => {
+            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+        }
+        _ => ChildRunError::Retry("actor_exit_failed"),
+    }
 }
 
 fn wait_for_child(
@@ -996,7 +1174,16 @@ fn parse_effect(
             phase,
             next_action,
         ) {
+            // TakerSellsLez: the Maker's own revealing LEZ claim, projected by
+            // a claim or a drive; the Taker's Zcash claim is what remains.
             (Some("lez_revealing_claim"), "claim_evidence_available", "wait") => false,
+            // TakerSellsForeign: the Taker's revealing LEZ claim, observed and
+            // projected by a drive; the Maker's own Zcash claim is next.
+            (Some("lez_revealing_claim"), "claim_evidence_available", "claim_zcash")
+                if matches!(command, ActorEffectCommand::Drive) =>
+            {
+                false
+            }
             (Some("zcash_followup_claim"), "completed", "complete") => true,
             (Some("lez_revealing_claim" | "zcash_followup_claim"), _, _) => return Err(()),
             _ if matches!(command, ActorEffectCommand::Claim) => return Err(()),
@@ -1199,10 +1386,6 @@ fn xmr_next_action_accepted(next_action: &str) -> bool {
 #[cfg(not(feature = "pair-xmr"))]
 const fn xmr_next_action_accepted(_next_action: &str) -> bool {
     false
-}
-
-fn terminal_phase(phase: &str) -> bool {
-    matches!(phase, "completed" | "refunded")
 }
 
 #[cfg(test)]
@@ -1598,11 +1781,6 @@ mod tests {
                 "claim_zcash",
             ),
             (ActorEffectCommand::Drive, "completed", "complete"),
-            (
-                ActorEffectCommand::Drive,
-                "claim_evidence_available",
-                "claim_zcash",
-            ),
         ] {
             let mut output: Value = serde_json::from_slice(&exact).unwrap();
             output["command"] = Value::from(command.name());
@@ -1617,6 +1795,46 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn parser_accepts_a_drive_projecting_the_takers_revealing_claim_in_taker_sells_foreign() {
+        // Selling ZEC the Taker's LEZ claim reveals the secret; the Maker's
+        // drive at both_legs_locked observes it and its own Zcash claim is next.
+        let observed = serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "role": "maker",
+            "command": "drive",
+            "outcome": "projected",
+            "operation": "lez_revealing_claim",
+            "phase": "claim_evidence_available",
+            "revision": 5,
+            "next_action": "claim_zcash"
+        }))
+        .unwrap();
+        let parsed = parse_effect(
+            &observed,
+            ActorEffectCommand::Drive,
+            MakerActorKindV1::Zcash,
+        )
+        .unwrap();
+        assert!(!parsed.terminal);
+        assert_eq!(
+            parsed.progress,
+            MakerActorProgressObservationV1::active("claim_evidence_available", 5, "claim_zcash")
+                .unwrap()
+        );
+        // The claim command never projects someone else's claim.
+        let mut claim: Value = serde_json::from_slice(&observed).unwrap();
+        claim["command"] = Value::from("claim");
+        assert!(
+            parse_effect(
+                &serde_json::to_vec(&claim).unwrap(),
+                ActorEffectCommand::Claim,
+                MakerActorKindV1::Zcash,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1748,5 +1966,105 @@ mod tests {
                 parse_effect(&bytes, ActorEffectCommand::Claim, MakerActorKindV1::Zcash,).is_err()
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "pair-zec"))]
+mod exit_classification_tests {
+    use std::os::unix::process::ExitStatusExt as _;
+    use std::process::ExitStatus;
+
+    use super::{ChildRunError, classify_exit};
+
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_held_revealing_claim_needs_attention_only_near_its_refund_time() {
+        use super::{RevealingClaimHold, claim_hold};
+        // A third of the agreement's LEZ refund delay: the devnet V2 (30 min)
+        // and V3 (12 min) profiles.
+        for delay_seconds in [1_800, 720] {
+            let margin = zec_reference_actor::revealing_claim_hold_attention_ms(delay_seconds);
+            let refund_at = 10_000_000;
+            let at = Some((refund_at, margin));
+            assert_eq!(claim_hold(false, at, refund_at), RevealingClaimHold::Open);
+            assert_eq!(
+                claim_hold(true, at, refund_at - margin - 1),
+                RevealingClaimHold::Held
+            );
+            assert_eq!(
+                claim_hold(true, at, refund_at - margin),
+                RevealingClaimHold::HeldNearRefund
+            );
+            assert_eq!(
+                claim_hold(true, at, refund_at + 1),
+                RevealingClaimHold::HeldNearRefund
+            );
+            assert_eq!(claim_hold(true, None, refund_at), RevealingClaimHold::Held);
+        }
+        assert_eq!(
+            zec_reference_actor::revealing_claim_hold_attention_ms(720),
+            240_000
+        );
+        assert_eq!(
+            zec_reference_actor::revealing_claim_hold_attention_ms(1_800),
+            600_000
+        );
+    }
+
+    #[test]
+    fn the_zec_actor_balance_refusal_backs_off_by_name_and_other_exits_do_not() {
+        let refused = ExitStatus::from_raw(
+            zec_reference_actor::LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE << 8,
+        );
+        assert!(matches!(
+            classify_exit(refused),
+            ChildRunError::Retry("lez_depositor_balance_insufficient")
+        ));
+        assert!(matches!(
+            classify_exit(ExitStatus::from_raw(2 << 8)),
+            ChildRunError::Retry("actor_exit_failed")
+        ));
+        let exhausted = ExitStatus::from_raw(
+            zec_reference_actor::LEZ_FIRST_LOCK_REPLAN_EXHAUSTED_EXIT_CODE << 8,
+        );
+        assert!(matches!(
+            classify_exit(exhausted),
+            ChildRunError::Fail("lez_first_lock_replan_exhausted")
+        ));
+        let claim_exhausted = ExitStatus::from_raw(
+            zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE << 8,
+        );
+        assert!(matches!(
+            classify_exit(claim_exhausted),
+            ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
+        ));
+        // FINDINGS 26: a claim refused after its window (nothing sent) backs
+        // off; the next status names the Zcash refund and the Maker recovers.
+        let window_closed =
+            ExitStatus::from_raw(zec_reference_actor::LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE << 8);
+        assert!(matches!(
+            classify_exit(window_closed),
+            ChildRunError::Retry("lez_claim_window_closed")
+        ));
+    }
+}
+
+#[cfg(test)]
+mod failure_alphabet_tests {
+    /// Every failure class this supervisor emits is a word of the shared
+    /// alphabet, so the Maker's and the Taker's logs and rows cannot drift.
+    #[test]
+    fn every_failure_class_the_maker_emits_is_in_the_shared_alphabet() {
+        let classes = lez_actor_supervision::failure_class_literals(include_str!("runtime.rs"));
+        assert!(classes.len() >= 10, "{classes:?}");
+        for class in &classes {
+            assert!(
+                lez_actor_supervision::validate_failure_class(class),
+                "{class} is not a failure class"
+            );
+        }
+        assert!(lez_actor_supervision::validate_failure_class(
+            "coordinator_restarted"
+        ));
     }
 }

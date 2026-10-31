@@ -9,12 +9,86 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     AcceptedZecAgreementV1, FirstLockConfirmedEvidenceV1, FirstLockIntentError, FirstLockIntentV1,
-    FirstLockPlanV1, FirstLockStepV1, FirstLockTransitionError, FirstLockTransitionV1,
-    PreparedFirstLockSubmissionV1,
+    FirstLockPlanV1, FirstLockStepV1, FirstLockSupersessionInputV1, FirstLockSupersessionV1,
+    FirstLockTransitionError, FirstLockTransitionV1, PreparedFirstLockSubmissionV1,
 };
 
 /// Stable payload version stored beside schema-v5 SDK recovery JSON.
 pub const FIRST_LOCK_RECORD_SCHEMA_V1: u16 = 1;
+
+/// Schema of one durable first-lock supersession row.
+pub const FIRST_LOCK_SUPERSESSION_RECORD_SCHEMA_V1: u16 = 1;
+
+/// Durable spelling of one LEZ first-lock re-plan.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FirstLockSupersessionRecordV1 {
+    schema_version: u16,
+    replan_index: u32,
+    step: Box<str>,
+    superseded_initialize_id: [u8; 32],
+    superseded_fund_id: [u8; 32],
+    superseded_nonce: u128,
+    replanned_initialize_id: [u8; 32],
+    replanned_fund_id: [u8; 32],
+    replanned_nonce: u128,
+}
+
+impl FirstLockSupersessionRecordV1 {
+    /// Durable schema number.
+    #[must_use]
+    pub const fn schema_version(&self) -> u16 {
+        self.schema_version
+    }
+
+    /// Re-plan index of the row.
+    #[must_use]
+    pub const fn replan_index(&self) -> u32 {
+        self.replan_index
+    }
+
+    /// Revalidates the untrusted row through the typed constructor.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an unsupported schema, an unknown step, or a record the
+    /// constructor refuses.
+    pub fn revalidate(&self) -> Result<FirstLockSupersessionV1, FirstLockRecordError> {
+        if self.schema_version != FIRST_LOCK_SUPERSESSION_RECORD_SCHEMA_V1 {
+            return Err(FirstLockRecordError::UnsupportedSchema {
+                record: "first-lock supersession",
+                actual: self.schema_version,
+            });
+        }
+        FirstLockSupersessionV1::new(FirstLockSupersessionInputV1 {
+            replan_index: self.replan_index,
+            step: parse_step(&self.step)?,
+            superseded_initialize_id: self.superseded_initialize_id,
+            superseded_fund_id: self.superseded_fund_id,
+            superseded_nonce: self.superseded_nonce,
+            replanned_initialize_id: self.replanned_initialize_id,
+            replanned_fund_id: self.replanned_fund_id,
+            replanned_nonce: self.replanned_nonce,
+        })
+        .map_err(FirstLockRecordError::InvalidSupersession)
+    }
+}
+
+impl From<&FirstLockSupersessionV1> for FirstLockSupersessionRecordV1 {
+    fn from(value: &FirstLockSupersessionV1) -> Self {
+        Self {
+            schema_version: FIRST_LOCK_SUPERSESSION_RECORD_SCHEMA_V1,
+            replan_index: value.replan_index(),
+            step: step_name(value.step()).into(),
+            superseded_initialize_id: *value.superseded_initialize_id(),
+            superseded_fund_id: *value.superseded_fund_id(),
+            superseded_nonce: value.superseded_nonce(),
+            replanned_initialize_id: *value.replanned_initialize_id(),
+            replanned_fund_id: *value.replanned_fund_id(),
+            replanned_nonce: value.replanned_nonce(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -293,6 +367,9 @@ pub enum FirstLockRecordError {
     /// A step field is not one of the stable primitive spellings.
     #[error("invalid first-lock step {0}")]
     InvalidStep(Box<str>),
+    /// A supersession row does not pass the typed constructor.
+    #[error(transparent)]
+    InvalidSupersession(#[from] crate::FirstLockSupersessionError),
     /// The swap ID differs from the independently accepted agreement.
     #[error("first-lock record swap ID mismatch")]
     SwapIdMismatch,

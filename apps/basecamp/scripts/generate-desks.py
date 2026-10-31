@@ -102,7 +102,7 @@ Item {
     function formatBtcSats(value) {
         return root.btcAmount(value) + " BTC"
     }
-    function formatLez(value) {
+FOREIGN_FORMAT    function formatLez(value) {
         return root.lezAmount(value) + " LEZ"
     }
     function decode(raw) {
@@ -366,7 +366,7 @@ ROLE_FUNCTIONS
                 RowLayout {
                     Layout.fillWidth: true; spacing: 16
                     Label {
-                        text: "LEZ / BTC — ROLE_TITLE Desk"
+                        text: "LEZ — ROLE_TITLE Desk"
                         color: "#F7F8FA"; font.pixelSize: 24; font.weight: Font.Bold; font.letterSpacing: -0.5
                         Layout.fillWidth: true
                     }
@@ -541,7 +541,7 @@ CHAT_ADDRESS_ROW
                 color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
                 elide: Text.ElideMiddle; Layout.fillWidth: true
             }
-            Repeater {
+SWAP_PRIVACY_LABEL            Repeater {
                 model: root.detailSwap ? (root.detailSwap.effects ?? []) : []
                 delegate: Rectangle {
                     id: effectRow
@@ -742,7 +742,7 @@ MAKER_PANELS = r'''
                                         anchors.fill: parent; anchors.margins: 12; spacing: 12
                                         ColumnLayout {
                                             Layout.fillWidth: true; spacing: 2
-                                            Label { text: makerOfferRow.sellsLez ? "You sell LEZ" : "You sell BTC"; color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                            Label { text: makerOfferRow.sellsLez ? "You sell LEZ" : "You sell " + String(makerOfferRow.modelData.pair_symbol ?? "BTC"); color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
                                             Label { text: String(makerOfferRow.modelData.offer_id); color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                         }
                                         Label { text: String(makerOfferRow.sellsLez ? makerOfferRow.modelData.lez_display : makerOfferRow.modelData.bitcoin_display); color: makerOfferRow.sellsLez ? "#7EE100" : "#B997FF"; font.pixelSize: 12; font.weight: Font.DemiBold }
@@ -920,12 +920,13 @@ TAKER_FUNCTIONS = r'''
         var numerator = amount * lezLot
         return Number.isSafeInteger(numerator) && numerator % satsLot === 0 ? numerator / satsLot : NaN
     }
-    // "1 BTC = 100,000 LEZ" for an offer's exact lot price.
+    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ") for an offer's exact lot price.
     function offerRate(offer) {
         return 100000000 * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
     }
-    function rateDisplay(perBitcoin) {
-        return "1 BTC = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
+    function rateDisplay(offer) {
+        var perCoin = root.offerRate(offer)
+        return "1 " + (offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
     }
     // The best rate on the book for `direction`: most LEZ per BTC when you
     // pay BTC, fewest when you sell LEZ.
@@ -955,7 +956,7 @@ TAKER_FUNCTIONS = r'''
         root.btcMarketBusy = true
         var requestId = "ui-taker-take-offer-" + String(Date.now())
         root.run(root.backend.btcTakeOffer(requestId, root.walletId(), String(offer.offer_id), String(sats)),
-            "Take " + String(offer.offer_id) + " for " + root.formatBtcSats(sats), function(result) {
+            "Take " + String(offer.offer_id) + " for " + root.formatForeign(offer.pair, sats), function(result) {
                 root.btcMarketBusy = false
                 root.applyBtcMarket(result)
                 root.statusMode = "success"
@@ -1165,7 +1166,7 @@ TAKER_PANELS = r'''
                                         // book, and when the Maker's signature stops being valid.
                                         RowLayout {
                                             Layout.fillWidth: true; spacing: 14
-                                            Label { text: root.rateDisplay(root.offerRate(takerOfferRow.modelData)); color: "#D9E2F2"; font.pixelSize: 10; font.family: "DejaVu Sans Mono" }
+                                            Label { text: root.rateDisplay(takerOfferRow.modelData); color: "#D9E2F2"; font.pixelSize: 10; font.family: "DejaVu Sans Mono" }
                                             Label {
                                                 text: takerOfferRow.behind > 0.005 ? takerOfferRow.behind.toFixed(2) + "% behind the best" : "best rate"
                                                 color: takerOfferRow.behind > 0.005 ? "#FFB8EC" : "#7EE100"; font.pixelSize: 10
@@ -1225,7 +1226,7 @@ TAKER_PANELS = r'''
                                 Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
                                 FieldLabel { text: "ASSET YOU RECEIVE" }
                                 FieldLabel { text: "YOUR SIDE" }
-                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Bitcoin"]; Layout.fillWidth: true }
+                                LuxeCombo { id: pair; objectName: "takerPair"; model: ["Bitcoin", "Zcash"]; Layout.fillWidth: true }
                                 LuxeCombo { id: direction; objectName: "takerDirection"; model: ["TakerSellsForeign", "TakerSellsLez"]; Layout.fillWidth: true }
                             }
                             RowLayout {
@@ -1294,7 +1295,10 @@ TAKER_PANELS = r'''
                             }
                             Label {
                                 objectName: "takerShielding"
-                                text: "Bitcoin amounts and transaction linkage are public; use fresh wallet addresses."
+                                // What the Node reports on a completed ZEC swap (ShieldReceivedTransparentZecSeparately).
+                                text: pair.currentText === "Zcash"
+                                    ? "After a transparent ZEC claim, move funds to a shielded wallet address."
+                                    : "Bitcoin amounts and transaction linkage are public; use fresh wallet addresses."
                                 color: "#A8AFBB"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
                             }
                         }
@@ -1319,6 +1323,27 @@ TAKER_CHAT_ADDRESS = r'''                            RowLayout {
                             }'''
 
 
+# The Taker's order book and swaps carry BTC or ZEC; the Maker desk keeps its
+# own per-row wording.
+TAKER_FOREIGN_FORMAT = r'''    // The foreign leg of an order-book row or swap: BTC, or ZEC for a
+    // prepared Zcash corridor (8 decimals either way).
+    function formatForeign(pair, value) {
+        return root.btcAmount(value) + (pair === "Zcash" ? " ZEC" : " BTC")
+    }
+'''
+
+TAKER_SWAP_PRIVACY_LABEL = r'''            // The Node's own privacy guidance for this swap (a completed ZEC swap
+            // reports ShieldReceivedTransparentZecSeparately); the pair combo's
+            // label above is only the pre-take hint.
+            Label {
+                objectName: "takerSwapPrivacy"
+                visible: !!(root.detailSwap && root.detailSwap.privacy_display)
+                text: root.detailSwap ? String(root.detailSwap.privacy_display ?? "") : ""
+                color: "#C5A9FF"; font.pixelSize: 11; wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+'''
+
+
 def render(role):
     maker = role == "maker"
     text = SKELETON
@@ -1326,6 +1351,8 @@ def render(role):
     text = text.replace("ROLE_PANELS", MAKER_PANELS if maker else TAKER_PANELS)
     text = text.replace("CHAT_ADDRESS_ROW", MAKER_CHAT_ADDRESS if maker else TAKER_CHAT_ADDRESS)
     text = text.replace("ROLE_OVERLAYS", MAKER_OVERLAYS if maker else "")
+    text = text.replace("FOREIGN_FORMAT", "" if maker else TAKER_FOREIGN_FORMAT)
+    text = text.replace("SWAP_PRIVACY_LABEL", "" if maker else TAKER_SWAP_PRIVACY_LABEL)
     text = text.replace("ON_FIRST_MARKET", "if (first) root.loadStoredTerms()" if maker else "")
     text = text.replace("HEALTH_DETAIL",
                         '(result.routes ?? []).length + " active route(s) · chat " + String(result.chat ?? "unknown") + " · delivery " + String(result.delivery ?? "unknown")'

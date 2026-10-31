@@ -40,11 +40,12 @@ pub use agreement_v1::{
     ZecParticipantsV1, ZecRefundPlanV1, ZecRolePayoutV1, ZecTransactionPolicyV1,
 };
 pub use claim::{
-    ClaimDriveOutcome, ClaimError, ClaimIntentV1, ClaimStepV1, FollowupClaimEvidenceV1,
+    ClaimDriveOutcome, ClaimError, ClaimIntentV1, ClaimStepV1, ClaimSupersessionError,
+    ClaimSupersessionInputV1, ClaimSupersessionV1, FollowupClaimEvidenceV1,
     FollowupClaimObservationV1, FollowupClaimTransitionV1, MAX_CLAIM_SUBMISSION_BYTES,
-    ObservedFollowupClaimTransitionV1, ObservedRevealingClaimTransitionV1,
-    PreparedClaimSubmissionV1, RevealingClaimEvidenceV1, RevealingClaimObservationV1,
-    RevealingClaimTransitionV1, ZcashFundingWaitReasonV1,
+    MAX_REVEALING_CLAIM_REPLANS, ObservedFollowupClaimTransitionV1,
+    ObservedRevealingClaimTransitionV1, PreparedClaimSubmissionV1, RevealingClaimEvidenceV1,
+    RevealingClaimObservationV1, RevealingClaimTransitionV1, ZcashFundingWaitReasonV1,
 };
 pub use claim_material::{
     ClaimMaterialContext, ClaimMaterialPurpose, ClaimSubmissionContext,
@@ -60,16 +61,18 @@ pub use claim_record::{
 pub use first_lock::{
     CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1, FirstLockDriveOutcome,
     FirstLockIntentError, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockStepV1, FirstLockTransitionError, FirstLockTransitionV1,
-    MAX_FIRST_LOCK_SUBMISSION_BYTES, PreparedFirstLockSubmissionV1,
+    FirstLockProjectionCommit, FirstLockStepV1, FirstLockSupersessionError,
+    FirstLockSupersessionInputV1, FirstLockSupersessionV1, FirstLockTransitionError,
+    FirstLockTransitionV1, MAX_FIRST_LOCK_REPLANS, MAX_FIRST_LOCK_SUBMISSION_BYTES,
+    PreparedFirstLockSubmissionV1,
 };
 pub use first_lock_record::{
-    FIRST_LOCK_RECORD_SCHEMA_V1, FirstLockIntentRecordV1, FirstLockRecordError,
-    FirstLockTransitionRecordV1,
+    FIRST_LOCK_RECORD_SCHEMA_V1, FIRST_LOCK_SUPERSESSION_RECORD_SCHEMA_V1, FirstLockIntentRecordV1,
+    FirstLockRecordError, FirstLockSupersessionRecordV1, FirstLockTransitionRecordV1,
 };
 pub use funding::{
     FundingBuildError, FundingSelection, TransparentFundingRequest, TransparentUtxo,
-    build_funding_transaction, select_funding_utxos,
+    build_funding_transaction, build_transparent_transfer_transaction, select_funding_utxos,
 };
 pub use lez_claim_observation::{
     CANONICAL_LEZ_CLAIM_SNAPSHOT_SCHEMA_V1, CanonicalLezClaimSnapshotRecordV1,
@@ -120,12 +123,13 @@ pub use observed_taker_lock::{
     ObservedTakerFirstLockTransitionV1, TakerFirstLockObservationV1,
 };
 
+pub use lez_swap_core::LezUnixMilliseconds;
 pub use ports::{
-    ClaimRecoveryStore, CreateAgreementOutcome, LezClaimPort, LezFirstLockPort,
-    LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
-    NegotiationChannel, OfferDiscovery, RecoveryStore, RefundRecoveryStore, ZcashClaimPort,
-    ZcashFirstLockPort, ZcashMakerLockObservationPort, ZcashRefundPort,
-    ZcashTakerFirstLockObservationPort,
+    ClaimRecoveryStore, CreateAgreementOutcome, FirstLockSubmitOutcome, LezClaimPort,
+    LezFirstLockPort, LezMakerLockObservationPort, LezRefundPort, LezTakerFirstLockObservationPort,
+    NegotiationChannel, OfferDiscovery, RecoveryStore, RefundRecoveryStore,
+    RevealingClaimSubmitOutcomeV1, ZcashClaimPort, ZcashFirstLockPort,
+    ZcashMakerLockObservationPort, ZcashRefundPort, ZcashTakerFirstLockObservationPort,
 };
 pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
 pub use refund::{

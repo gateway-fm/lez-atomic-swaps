@@ -6,6 +6,8 @@
 
 mod btc_dynamic;
 mod lifecycle;
+#[cfg(feature = "pair-zec")]
+mod zec_supervisor;
 
 pub(crate) use btc_dynamic::DynamicBtcRole;
 

@@ -330,6 +330,38 @@ pub fn build_funding_transaction(
     request: &TransparentFundingRequest,
     secret_key: &SecretKey,
 ) -> Result<Transaction, FundingBuildError> {
+    let contract_script = PubKey::parse(&Code(contract.p2sh_script_pubkey().to_vec()))
+        .map_err(|error| FundingBuildError::CanonicalBuilder(format!("{error:?}")))?;
+    let contract_address = TransparentAddress::from_script_pubkey(&contract_script)
+        .ok_or_else(|| FundingBuildError::CanonicalBuilder("invalid BIP-199 P2SH script".into()))?;
+    build_transparent_payment(request, &contract_address, secret_key)
+}
+
+/// Builds and ZIP-244-signs a plain transparent V5 transfer of the request's
+/// value to `recipient`'s P2PKH address, with the same selection, change and
+/// signing rules as a funding transaction. A test-lane helper: it moves
+/// regtest coin between the two roles' keys before a corridor is provisioned.
+///
+/// # Errors
+///
+/// Fails closed for selection errors, a foreign signing key, or canonical
+/// librustzcash construction/signing failures.
+pub fn build_transparent_transfer_transaction(
+    request: &TransparentFundingRequest,
+    recipient: &PublicKey,
+    secret_key: &SecretKey,
+) -> Result<Transaction, FundingBuildError> {
+    build_transparent_payment(request, &funding_address(recipient), secret_key)
+}
+
+/// One transparent payment of `request.contract_value` to `destination`
+/// (first output), change to the funding key (second), inputs selected from
+/// the request's candidates and signed with `secret_key`.
+fn build_transparent_payment(
+    request: &TransparentFundingRequest,
+    destination: &TransparentAddress,
+    secret_key: &SecretKey,
+) -> Result<Transaction, FundingBuildError> {
     let mut signing_set = TransparentSigningSet::new();
     let signing_pubkey = signing_set.add_key(*secret_key);
     if signing_pubkey != request.funding_pubkey {
@@ -346,12 +378,8 @@ pub fn build_funding_transaction(
             )
             .map_err(|error| FundingBuildError::CanonicalBuilder(error.to_string()))?;
     }
-    let contract_script = PubKey::parse(&Code(contract.p2sh_script_pubkey().to_vec()))
-        .map_err(|error| FundingBuildError::CanonicalBuilder(format!("{error:?}")))?;
-    let contract_address = TransparentAddress::from_script_pubkey(&contract_script)
-        .ok_or_else(|| FundingBuildError::CanonicalBuilder("invalid BIP-199 P2SH script".into()))?;
     builder
-        .add_output(&contract_address, request.contract_value)
+        .add_output(destination, request.contract_value)
         .map_err(|error| FundingBuildError::CanonicalBuilder(error.to_string()))?;
     if let Some(change) = selection.change {
         builder

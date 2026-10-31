@@ -16,6 +16,13 @@ exclude = [
 [advisories]
 unmaintained = "workspace"
 yanked = "deny"
+ignore = [
+    # crypto-bigint 0.5 (RUSTSEC-2026-0387, constant-time variability) is pulled
+    # only by k256 0.13 -> elliptic-curve 0.13, a dev-dependency of
+    # lez-btc-swap-sdk; the fixed 0.7.6 line needs the k256 0.14 pre-release.
+    # Re-check when k256 0.14 is released.
+    { id = "RUSTSEC-2026-0387", reason = "dev-dependency only (k256 0.13 test fixtures); no 0.5.x fix exists" },
+]
 
 [licenses]
 allow = [

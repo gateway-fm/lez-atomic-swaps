@@ -24,7 +24,7 @@ sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-bl
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.149"
 sha2 = "=0.10.9"
-tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "time"] }
 toml = "=0.8.23"
 tempfile = "=3.27.0"
 url = "=2.5.8"

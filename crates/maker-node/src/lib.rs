@@ -146,7 +146,6 @@ pub struct MakerRpc {
     #[cfg(feature = "pair-zec")]
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     #[cfg(feature = "pair-zec")]
-    maker_claim_preimage: Option<Arc<ClaimPreimage>>,
     #[cfg(feature = "pair-zec")]
     zec_actor_provisioner: Option<Arc<ZecMakerActorProvisioner>>,
 }
@@ -205,10 +204,6 @@ impl std::fmt::Debug for MakerRpc {
                 &self.zec_completion_store.as_ref().map(|_| "configured"),
             )
             .field(
-                "maker_claim_preimage",
-                &self.maker_claim_preimage.as_ref().map(|_| "[REDACTED]"),
-            )
-            .field(
                 "zec_actor_provisioner",
                 &self.zec_actor_provisioner.as_ref().map(|_| "configured"),
             );
@@ -237,7 +232,6 @@ impl MakerRpc {
             #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
             #[cfg(feature = "pair-zec")]
-            maker_claim_preimage: None,
             #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
         }
@@ -267,7 +261,6 @@ impl MakerRpc {
             #[cfg(feature = "pair-zec")]
             zec_completion_store: None,
             #[cfg(feature = "pair-zec")]
-            maker_claim_preimage: None,
             #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
         }
@@ -288,18 +281,16 @@ impl MakerRpc {
     #[cfg(feature = "pair-zec")]
     /// Attaches direction-aware ZEC agreement and Maker actor authority.
     ///
-    /// The Maker preimage is absent when the accepted direction assigns that
-    /// material to the Taker. Agreement completion rejects an absent preimage
-    /// if and only if the signed agreement makes the Maker the LEZ claimant.
+    /// The claim preimage of a swap whose LEZ claimant is the Maker comes from
+    /// that swap's pinned template at completion; the Node holds no secret of
+    /// its own, so one swap's claim cannot reveal another's.
     #[must_use]
     pub fn with_directional_zec_chat_authority(
         mut self,
         completion_store: SqliteZecRecoveryStore,
-        maker_claim_preimage: Option<ClaimPreimage>,
         actor_provisioner: Option<ZecMakerActorProvisioner>,
     ) -> Self {
         self.zec_completion_store = Some(Arc::new(completion_store));
-        self.maker_claim_preimage = maker_claim_preimage.map(Arc::new);
         self.zec_actor_provisioner = actor_provisioner.map(Arc::new);
         self
     }
@@ -749,6 +740,17 @@ pub struct MakerActorMonitorV1 {
     /// polled again, and nothing else tells the owner that or why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_failure_class: Option<String>,
+    /// Why the row needs the owner, when the actor said so by name:
+    /// `lez_depositor_balance_insufficient` while the Node's account holds
+    /// less LEZ than a Zcash swap's lot (the next attempt funds the escrow by
+    /// itself once the account is funded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_reason: Option<String>,
+    /// With `lez_revealing_claim_held_near_refund`: the swap whose revealing
+    /// LEZ claim is in flight and holds this one's back (one per Node, until
+    /// it is final) while this swap's own LEZ refund time is near.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revealing_claim_held_by: Option<String>,
     /// Latest validated actor lifecycle projection, when available.
     pub progress: Option<MakerActorProgressViewV1>,
     /// Latest explicit owner action, when available.
@@ -940,6 +942,46 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
     Ok(())
 }
 
+/// Why a Zcash row needs its owner, by name, and the holding swap for a
+/// revealing claim held behind another's: a Zcash actor short of LEZ for its
+/// lot leaves a marker beside its state
+/// (`zec_reference_actor::lez_depositor_balance_marker`), and the supervisor's
+/// one-claim gate names the holder beside it as the swap's own LEZ refund time
+/// nears (removed when the claim goes ahead).
+#[cfg(feature = "pair-zec")]
+fn zec_attention(
+    record: &lez_swap_store::MakerActorProcessRecordV1,
+) -> (Option<String>, Option<String>) {
+    if record.manifest().kind() != MakerActorKindV1::Zcash {
+        return (None, None);
+    }
+    let held_by = (record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal)
+        .then(|| {
+            zec_reference_actor::revealing_claim_holder(record.manifest().state_database_path())
+        })
+        .flatten();
+    let balance = ActorConfig::load_private_pinned_sha256(
+        record.manifest().config_path(),
+        record.manifest().config_sha256(),
+    )
+    .ok()
+    .and_then(|config| zec_reference_actor::lez_depositor_balance_marker(config.role_state_db()))
+    .filter(|marker| marker.is_file())
+    .map(|_| "lez_depositor_balance_insufficient".to_owned());
+    let reason = balance.or_else(|| {
+        held_by
+            .as_ref()
+            .map(|_| "lez_revealing_claim_held_near_refund".to_owned())
+    });
+    (reason, held_by)
+}
+
+/// Without the Zcash pair no row has a Zcash reason.
+#[cfg(not(feature = "pair-zec"))]
+const fn zec_attention<T>(_record: &T) -> (Option<String>, Option<String>) {
+    (None, None)
+}
+
 fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<MakerActorMonitorV1>, _>(
         "maker_actor_monitor_v1",
@@ -985,6 +1027,10 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 .flatten()
                 .and_then(|config| btc_reference_actor::actor_effects(&config).ok())
                 .unwrap_or_default();
+            // A Zcash actor short of LEZ for its lot leaves a marker beside its
+            // state (`zec_reference_actor::lez_depositor_balance_marker`); the
+            // owner reads the reason here as the Taker's view names it.
+            let (attention_reason, revealing_claim_held_by) = zec_attention(record);
             Ok(MakerActorMonitorV1 {
                 schema_version: 1,
                 swap_id: record.swap_id().as_str().into(),
@@ -993,6 +1039,8 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 lease_generation: record.lease_generation(),
                 attempt_count: record.attempt_count(),
                 last_failure_class: record.last_failure_class().map(str::to_owned),
+                attention_reason,
+                revealing_claim_held_by,
                 progress,
                 manual_action,
                 terms: context
@@ -1026,17 +1074,23 @@ fn register_maker_actor_repin_method(module: &mut RpcModule<MakerRpc>) -> anyhow
         |params, context, _| {
             let request: MakerActorActionRequestV1 = params.one()?;
             let id = SwapId::new(request.id).map_err(invalid_request)?;
-            let program_sha256 = context
-                .btc_lifecycle
-                .as_ref()
-                .ok_or_else(|| rpc_error(NOT_FOUND, "no Bitcoin actor is configured"))?
-                .actor_program_sha256()
-                .map_err(internal_store_error)?;
             let now = trusted_now_unix_seconds()?;
-            let commit = context
+            let mut store = context
                 .store
                 .lock()
-                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "swap store lock poisoned"))?;
+            // The pin to move to is the program this Node runs for the swap's
+            // own actor kind: a ZEC swap re-pins to the ZEC actor, never to the
+            // Bitcoin one (devnet finding: a Node image upgrade stranded an
+            // in-flight ZEC swap as actor_deployment_invalid with no repin).
+            let kind = store
+                .maker_actor_process(&id)
+                .map_err(maker_actor_process_error)?
+                .ok_or_else(|| rpc_error(NOT_FOUND, "maker actor not found"))?
+                .manifest()
+                .kind();
+            let program_sha256 = repin_program_sha256(&context, kind)?;
+            let commit = store
                 .repin_maker_actor_program(
                     &request.request_id,
                     &id,
@@ -1054,6 +1108,34 @@ fn register_maker_actor_repin_method(module: &mut RpcModule<MakerRpc>) -> anyhow
         },
     )?;
     Ok(())
+}
+
+/// The program SHA-256 a swap of `kind` re-pins to: the actor this Node runs
+/// for that pair. A pair this Node does not run cannot be re-pinned.
+fn repin_program_sha256(
+    context: &MakerRpc,
+    kind: MakerActorKindV1,
+) -> Result<[u8; 32], ErrorObjectOwned> {
+    match kind {
+        MakerActorKindV1::Bitcoin => context
+            .btc_lifecycle
+            .as_ref()
+            .ok_or_else(|| rpc_error(NOT_FOUND, "no Bitcoin actor is configured"))?
+            .actor_program_sha256()
+            .map_err(internal_store_error),
+        #[cfg(feature = "pair-zec")]
+        MakerActorKindV1::Zcash => context
+            .zec_actor_provisioner
+            .as_ref()
+            .map(|provisioner| provisioner.actor_program_sha256())
+            .ok_or_else(|| rpc_error(NOT_FOUND, "no Zcash actor is configured")),
+        #[cfg(not(feature = "pair-zec"))]
+        MakerActorKindV1::Zcash => Err(rpc_error(NOT_FOUND, "no Zcash actor is configured")),
+        MakerActorKindV1::Monero => Err(rpc_error(
+            NOT_FOUND,
+            "Monero actors are not re-pinned through this method",
+        )),
+    }
 }
 
 fn register_maker_actor_action_method(

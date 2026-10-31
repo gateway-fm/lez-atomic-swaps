@@ -23,10 +23,46 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py tampered-config     the swap's copied taker-role-config.json altered: the swap is refused after a restart
     node-e2e.py all              every scenario in sequence (stops at the first failure)
 
+With `--pair Zcash` the harness runs the ZEC↔LEZ scenarios instead, in either
+direction (`--direction TakerSellsLez`, the default for Zcash: the Taker locks
+LEZ, the Maker funds Zcash; `--direction TakerSellsForeign`: the Taker funds
+the Zcash HTLC, the Maker locks LEZ, the Taker's LEZ claim reveals the secret
+and the Maker's Zcash claim completes the swap). A prepared corridor is
+provisioned with scripts/zec-provision.sh --direction …, which also recreates
+both Nodes, then
+
+    node-e2e.py --pair Zcash zec-happy   take, the Taker Node drives its actor (activation,
+                                         LEZ lock, observation), Maker funds Zcash, Maker
+                                         claims LEZ, Taker claims Zcash; claim found in a
+                                         zebra block. The harness only polls and mines zebra;
+                                         ZEC_MANUAL_DRIVE=1 adds a hand drive per poll (for
+                                         diagnosis, never the evidence)
+    node-e2e.py --pair Zcash zec-taker-refund  Maker stopped before it funds; the Taker
+                                         refunds its LEZ escrow; the Maker reconciles
+    node-e2e.py --pair Zcash zec-maker-refund  both legs locked, the Taker refunds LEZ
+                                         instead of waiting; the Maker refunds Zcash at
+                                         the agreement's height; refund found in a block
+    node-e2e.py --pair Zcash zec-balance-refusal  the Taker's LEZ account cannot fund the
+                                         lot: the first drive is refused by name, the Node
+                                         shows attention_required with the reason, the
+                                         account is funded (the deferred vault claim), the
+                                         next drive locks and the swap completes. Needs a
+                                         chain created with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+
+The ZEC refund windows come from the agreement, not the timing profile. Under
+the devnet profile zec-provision.sh asks for (deterministic-local-devnet-v3)
+the Taker's LEZ refund opens the profile's LEZ refund delay (12 min under
+deterministic-local-devnet-v3) after the corridor was provisioned
+and the Maker's Zcash refund at an absolute zebra height (tip at provisioning
++ 5); the refund scenarios read those from the corridor and wait for them
+rather than guessing, so neither needs the `fast` timing profile.
+
 Every scenario runs in either Bitcoin direction: `--direction TakerSellsForeign`
 (the default; the Taker locks Bitcoin, the Maker LEZ) or `--direction
 TakerSellsLez` (the Taker locks LEZ first, the Maker Bitcoin, the Taker claims
-Bitcoin). The summary of a reverse run is `runtime/e2e/<scenario>-lez.json`.
+Bitcoin). The summary of a reverse run is `runtime/e2e/<scenario>-lez.json`;
+a Zcash run's is `runtime/e2e/<scenario>.json` (TakerSellsLez) or
+`runtime/e2e/<scenario>-foreign.json` (TakerSellsForeign).
 
 The refund scenarios need the `fast` timing profile
 (`LEZ_TIMING_PROFILE=fast scripts/gen-config.sh runtime`, then recreate the
@@ -35,18 +71,25 @@ Nodes); the harness refuses to start them under the `local` profile.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import time
+import urllib.request
 
 DEPLOY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNTIME = DEPLOY_ROOT / "runtime"
-ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}  # --direction replaces it
-REVERSE = False  # True when the Taker sells LEZ (locks LEZ first, claims Bitcoin)
+ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}  # --direction / --pair replace it
+REVERSE = False  # True when the Taker sells LEZ (locks LEZ first, claims the foreign coin)
 FOREIGN_UNITS = 1_000_000
 LEZ_UNITS = 1_000
+# The ZEC corridor's template (zec-reference-actor local_poc.rs): 1 ZEC for 50 000 LEZ units.
+ZEC_FOREIGN_UNITS = 100_000_000
+ZEC_LEZ_UNITS = 50_000
+ZEBRA_URL = "http://127.0.0.1:18232/"  # Compose publishes zebra's RPC on the host loopback
 NODES = {"maker": ("lez-maker-node", "/run/lez/maker/node.sock"),
          "taker": ("lez-taker-node", "/run/lez/taker/node.sock")}
 BTC_CLI = ["docker", "exec", "lez-bitcoin-core", "bitcoin-cli",
@@ -67,10 +110,15 @@ def rpc(role: str, method: str, params: object, timeout: int = 300) -> dict:
     """One owner-RPC call; returns the full JSON-RPC envelope."""
     container, socket = NODES[role]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": [params]})
+    # No -i: curl takes the body from --data and never reads stdin, while the
+    # attached stream leaves `docker exec` waiting on a stdin that the detached
+    # runner never closes. The curl inside the container has long exited by
+    # then, so --max-time does not bound the wait and the scenario hangs until
+    # its own timeout. Every other exec here already runs without -i.
     result = subprocess.run(
-        ["docker", "exec", "-i", container, "curl", "-sS", "--max-time", str(timeout), "--unix-socket", socket,
+        ["docker", "exec", container, "curl", "-sS", "--max-time", str(timeout), "--unix-socket", socket,
          "-H", "content-type: application/json", "--data", body, "http://localhost/"],
-        capture_output=True, text=True, check=False)
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if result.returncode != 0 or not result.stdout.strip():
         return {"error": {"code": -1, "message": f"transport: {result.stderr.strip()[:200]}"}}
     return json.loads(result.stdout)
@@ -192,21 +240,31 @@ def sign_funding(required: dict) -> str:
     return bitcoin("finalizepsbt", signed["psbt"])["hex"]
 
 
+# A take that answers dependency-unavailable is retried on this schedule. The
+# cheap races it was written for (a LEZ read that overtook the moving tip, Core
+# briefly busy) clear in seconds, but the Maker also answers it while it is
+# still locking LEZ for an earlier swap -- it serialises that step and tells the
+# Taker to come back once the lock lands, which takes minutes on a loaded host.
+# Thirty seconds of retries turned that wait into a scenario failure.
+TAKE_RETRY_BACKOFF = (10, 20, 40, 60, 60, 60)
+
+
 def initiate(request: dict) -> dict:
-    """One take. A dependency-unavailable answer (a LEZ read that raced the
-    moving tip, Core briefly busy) is retried with the same request id, which
-    replays the take from its durable record instead of starting another."""
-    for attempt in range(4):
+    """One take, retried with the same request id so a retry replays the take
+    from its durable record instead of starting another."""
+    for attempt in range(len(TAKE_RETRY_BACKOFF) + 1):
         reply = rpc("taker", "taker_swap_initiate_v1", request, timeout=420)
         if "result" in reply:
             return reply["result"]
         if reply["error"].get("code") == -32018 and "funding_transaction_hex" not in request:
             request["funding_transaction_hex"] = sign_funding(reply["error"]["data"])
             continue
-        if reply["error"].get("code") != -32010 or attempt == 3:
+        if reply["error"].get("code") != -32010 or attempt == len(TAKE_RETRY_BACKOFF):
             raise Failure(f"taker taker_swap_initiate_v1 failed: {json.dumps(reply['error'])[:300]}")
-        log(f"  take answered dependency-unavailable ({(reply['error'].get('data') or {}).get('category')}); retrying")
-        time.sleep(10)
+        delay = TAKE_RETRY_BACKOFF[attempt]
+        log(f"  take answered dependency-unavailable "
+            f"({(reply['error'].get('data') or {}).get('category')}); retrying in {delay} s")
+        time.sleep(delay)
     raise Failure("unreachable")
 
 
@@ -332,7 +390,7 @@ def claim(swap_id: str, stamp: str, suffix: str = "") -> dict:
     result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}{suffix}",
                                                    "swap_id": swap_id, "expected_generation": view["progress_generation"]},
                   timeout=300)
-    log(f"  Taker claimed {'Bitcoin' if REVERSE else 'LEZ'} (replay={result.get('was_replay')})")
+    log(f"  Taker claimed {ROUTE['pair'] if REVERSE else 'LEZ'} (replay={result.get('was_replay')})")
     return result
 
 
@@ -1177,6 +1235,2008 @@ def scenario_tampered_config(stamp: str) -> dict:
             "lock_refusal": (lock_reply["error"].get("data") or {}).get("category")}
 
 
+# ---- ZEC↔LEZ ------------------------------------------------------------------------
+# A ZEC swap is prepared, not composed: the Taker takes a Zcash offer only from a
+# static prepared_zec catalog entry, built from live chain facts by
+# scripts/zec-provision.sh (which publishes the offer, writes the catalog and
+# recreates both Nodes). The Taker Node supervises its ZEC actor itself (the
+# activation, the first LEZ lock and every observation up to claim_available);
+# the harness only polls the Nodes and reads the actor's phase with
+# `lez-zec-taker-actor … status`. Zebra has no miner: blocks are generated here, one
+# when something waits in its mempool and one when the Taker reports it is
+# waiting for safe funding depth (the pre-reveal gate wants two confirmations),
+# never otherwise, because the agreement's Zcash refund height is absolute.
+
+ZEC_CORRIDOR: dict = {}
+
+
+def zebra(method: str, params: list | None = None) -> object:
+    import urllib.request
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}).encode()
+    request = urllib.request.Request(ZEBRA_URL, data=body, headers={"content-type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            reply = json.load(response)
+    except OSError as error:
+        raise Failure(f"zebra {method} unreachable: {error}") from error
+    if reply.get("error"):
+        raise Failure(f"zebra {method} failed: {json.dumps(reply['error'])[:200]}")
+    return reply["result"]
+
+
+def zebra_mine(blocks: int, why: str) -> None:
+    zebra("generate", [blocks])
+    log(f"  zebra: mined {blocks} block(s) → height {zebra('getblockcount')} ({why})")
+
+
+ZEC_CORRIDORS: list[dict] = []
+
+
+def zec_profile_refund_delay(profile: str) -> int:
+    """The LEZ refund delay of a ZEC profile, seconds (zec-swap-sdk profile.rs:
+    the only parameter the harness waits on)."""
+    return {"deterministic-local-devnet-v1": 1800, "deterministic-local-devnet-v2": 1800,
+            "deterministic-local-devnet-v3": 720}.get(profile, 60)
+
+
+def zec_current_refund_delay() -> int:
+    """The LEZ refund delay of the corridor the Nodes run with (runtime/zec/current)."""
+    run_id = (RUNTIME / "zec" / "current").read_text().strip()
+    spec = json.loads((RUNTIME / "zec" / run_id / "spec.json").read_text())
+    return zec_profile_refund_delay(spec.get("profile", "deterministic-local-v1"))
+
+
+def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False) -> dict:
+    """One fresh corridor run: zec-provision.sh end to end, Nodes recreated. With
+    `swaps` 2 the run holds two prepared entries at one Zcash anchor; with `add`
+    a second corridor ("-b": its own root, agreement, offer, sidecar ports,
+    funder output and Zcash anchor) is provisioned beside the live one and the
+    catalog lists both — the concurrent fixture, whose second swap needs a
+    refund window of its own. Returns the first entry's corridor facts, or the
+    entry of `swap_id` when the corridor is reused; every entry is kept in
+    ZEC_CORRIDORS."""
+    if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1":
+        # The corridor the Nodes already run with (runtime/zec/current), for a
+        # run that must not recreate them; its catalog entry must be untaken.
+        log("  reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)")
+    else:
+        log(f"  provisioning a ZEC corridor {'beside the live one' if add else f'with {swaps} prepared swap(s)'} "
+            "(zec-provision.sh; this recreates both Nodes)")
+        result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "zec-provision.sh"), "--skip-chain-check",
+                                 "--direction", ROUTE["direction"], "--swaps", str(swaps), *(["--add"] if add else [])],
+                                capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, stdin=subprocess.DEVNULL)
+        for line in result.stdout.strip().splitlines()[-6:]:
+            log(f"    {line}")
+        if result.returncode != 0:
+            raise Failure(f"zec-provision.sh failed: {result.stderr.strip()[-300:] or result.stdout.strip()[-300:]}")
+    run_id = (RUNTIME / "zec" / "current").read_text().strip()
+    out = RUNTIME / "zec" / run_id
+    entries = json.loads((out / "prepared.json").read_text())
+    corridors = []
+    for index, entry in enumerate(entries):
+        # Entry k of the run: its files under runtime/zec/<run>/ (k = 0) or
+        # runtime/zec/<run>/b/, its corridor root corridor/ or corridor-b/.
+        entry_out = out if index == 0 else out / "b"
+        corridor_root = "/var/lib/lez/zec/corridor" + ("" if index == 0 else "-b")
+        summary = json.loads((entry_out / "provision-summary.json").read_text())
+        # The Zcash funder's actor config names the outpoint its funding spends
+        # (the Maker's coinbase when the Taker sells LEZ, the Taker's paid output
+        # when it sells ZEC); it is the one fact that lets the scenario find the
+        # funding and its spend on zebra. The summary says which role funds.
+        funder = summary.get("zcash_candidate_owner", "maker")
+        reader = (f"import json,sys; c=json.load(open(sys.argv[1] + '/{funder}/actor-config.json'));"
+                  " print(json.dumps(c['zcash_funding_outpoints']))")
+        read = subprocess.run(["docker", "exec", NODES[funder][0], "python3", "-c", reader, corridor_root],
+                              capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+        # A desk journey may have the funder's Node stopped (zec-taker-refund):
+        # the outpoint read once is kept beside the run's summaries and reused.
+        cached = entry_out / "funding-outpoints.json"
+        if read.returncode == 0 and read.stdout.strip():
+            cached.write_text(read.stdout)
+        elif cached.is_file():
+            read = subprocess.CompletedProcess(read.args, 0, cached.read_text(), "")
+        else:
+            raise Failure(f"could not read the {funder}'s funding outpoint for entry {index}: {read.stderr.strip()[:200]}")
+        spec = json.loads((entry_out / "spec.json").read_text())
+        profile = spec.get("profile", "deterministic-local-v1")
+        corridors.append({"run_id": run_id, "entry": index, "offer_id": entry["offer_id"], "catalog_swap_id": entry["swap_id"],
+                          "profile": profile,
+                          # zec-swap-sdk profile.rs: the only parameter the devnet profile changes.
+                          "lez_refund_delay_seconds": zec_profile_refund_delay(profile),
+                          "receipt_output": entry["receipt_output"], "actor_root": entry["actor_root"],
+                          "zebra_tip_at_provisioning": int(summary["zebra_tip_height"]),
+                          "zcash_refund_height": int(summary["zcash_refund_height"]),
+                          "funding_outpoints": json.loads(read.stdout)})
+    for corridor in corridors:
+        log(f"  corridor {run_id} entry {corridor['entry']} ({corridor['profile']}): offer {corridor['offer_id']}, "
+            f"zebra tip {corridor['zebra_tip_at_provisioning']}, Zcash refund height {corridor['zcash_refund_height']}")
+    ZEC_CORRIDORS.clear()
+    ZEC_CORRIDORS.extend(corridors)
+    corridor = corridors[0]
+    if swap_id is not None:
+        matching = [c for c in corridors if c["catalog_swap_id"] == swap_id]
+        if not matching:
+            raise Failure(f"swap {swap_id[:12]} is not an entry of corridor {run_id} ({[c['catalog_swap_id'] for c in corridors]})")
+        corridor = matching[0]
+    ZEC_CORRIDOR.clear()
+    ZEC_CORRIDOR.update(corridor)
+    return corridor
+
+
+def zec_taker_actor_config(receipt_output: str) -> str:
+    """The take wrote an acceptance receipt naming the provisioned Taker actor config."""
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "cat", receipt_output],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"no acceptance receipt at {receipt_output}: {result.stderr.strip()[:200]}")
+    receipt = json.loads(result.stdout)
+    log(f"  receipt: swap {receipt.get('swap_id')}, actor config {receipt.get('actor_config_file')}")
+    return receipt["actor_config_file"]
+
+
+# The Taker Node supervises its ZEC actor (activation, the LEZ lock, the
+# observation of the Maker's legs); the harness never drives it on a happy
+# path. ZEC_MANUAL_DRIVE=1 adds one hand drive per poll, for diagnosis of a
+# Node whose supervisor is suspected, and the log says so.
+MANUAL_DRIVE = os.environ.get("ZEC_MANUAL_DRIVE") == "1"
+
+
+# The ZEC lane in words, per direction. Selling LEZ the Taker locks LEZ first,
+# the Maker funds the Zcash HTLC and claims LEZ with the secret (revealing it),
+# and the Taker's Zcash claim completes the swap. Selling ZEC the Taker funds
+# the Zcash HTLC first, the Maker locks LEZ, the Taker's LEZ claim reveals the
+# secret and the Maker's follow-up Zcash claim completes the swap. Either way
+# the Node offers the Taker exactly one claim, and the Zcash funding and its
+# spend are what the harness checks on zebra.
+def zec_taker_sells_lez() -> bool:
+    return ROUTE["direction"] == "TakerSellsLez"
+
+
+def zec_zcash_funder() -> str:
+    return "Maker" if zec_taker_sells_lez() else "Taker"
+
+
+def zec_zcash_claimant() -> str:
+    return "Taker" if zec_taker_sells_lez() else "Maker"
+
+
+def zec_taker_claims() -> str:
+    return "Zcash" if zec_taker_sells_lez() else "LEZ"
+
+
+def zec_flow() -> str:
+    return ("(Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)" if zec_taker_sells_lez()
+            else "(Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered)")
+
+
+def zec_poll_effect(config: str) -> dict | None:
+    """The hand drive of one poll when ZEC_MANUAL_DRIVE=1; None otherwise."""
+    return zec_drive(config) if MANUAL_DRIVE else None
+
+
+def zec_actor_phase(config: str) -> str | None:
+    """The Taker actor's durable phase, read without driving it."""
+    status = zec_status(config)
+    if not status or status.get("state") != "active":
+        return None
+    return status.get("phase")
+
+
+def zec_take_or_resume(offer_id: str, stamp: str, suffix: str = "") -> str:
+    """A prepared entry is one take: when this offer was already taken (a rerun
+    after a harness failure), the existing swap is resumed instead. `suffix`
+    keeps the take request ids of one scenario's several takes apart."""
+    for swap in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]:
+        if swap.get("offer_id") == offer_id and swap["state"] not in TERMINAL:
+            log(f"  resuming swap {swap['swap_id'][:12]} already taken for {offer_id} ({swap['state']})")
+            return swap["swap_id"]
+    swap_id, _ = take(offer_id, stamp, suffix)
+    return swap_id
+
+
+def zec_drive(config: str) -> dict | None:
+    """One `drive` of the Taker's ZEC actor; None when the actor refused (transient
+    sidecar/chain reads) so the caller keeps polling."""
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
+                             "--config", config, "drive"],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=300)
+    text = result.stdout.strip()
+    if result.returncode != 0 or not text:
+        log(f"  drive: exit {result.returncode}: {(result.stderr.strip() or text)[-200:]}")
+        return None
+    try:
+        return json.loads(text.splitlines()[-1])
+    except ValueError:
+        log(f"  drive: unparsable output: {text[-200:]}")
+        return None
+
+
+def zec_drive_exit(config: str) -> tuple[int, str]:
+    """One `drive` of the Taker's ZEC actor, with its exit code and stderr: the
+    balance refusal is exit 3 (`LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE`)."""
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
+                             "--config", config, "drive"],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=300)
+    return result.returncode, result.stderr
+
+
+def lez_account_balance(account_id: str) -> int:
+    """The LEZ indexer's balance of an account, over its published loopback port."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getAccount", "params": [account_id]}).encode()
+    request = urllib.request.Request("http://127.0.0.1:8779/", data=body, headers={"content-type": "application/json"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return int(json.load(response)["result"]["balance"])
+
+
+def zec_status(config: str) -> dict | None:
+    """One `status` of the Taker's ZEC actor (durable phase, no chain access)."""
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
+                             "--config", config, "status"],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
+    text = result.stdout.strip()
+    if result.returncode != 0 or not text:
+        return None
+    try:
+        return json.loads(text.splitlines()[-1])
+    except ValueError:
+        return None
+
+
+def zec_replans(config: str) -> list[dict]:
+    """The re-plans of the Taker actor's LEZ first lock (D1): one row per
+    supersession with both nonces and both transaction ids, from the actor's
+    status (`lez_first_lock_replans`, absent when none)."""
+    status = zec_status(config) or {}
+    return list(status.get("lez_first_lock_replans") or [])
+
+
+def zec_log_replans(swap_id: str, config: str) -> list[dict]:
+    replans = zec_replans(config)
+    if not replans:
+        log(f"  {swap_id[:12]}: the Taker re-planned its LEZ lock 0 times")
+    for replan in replans:
+        log(f"  {swap_id[:12]}: LEZ {replan.get('step')} re-plan {replan.get('replan_index')}: nonce "
+            f"{replan.get('superseded_nonce')} → {replan.get('replanned_nonce')}, tx "
+            f"{str(replan.get('superseded_transaction_id'))[:12]} → {str(replan.get('replanned_transaction_id'))[:12]}")
+    return replans
+
+
+def maker_effect_lines(swap_id: str, since: str) -> list[str]:
+    """The Maker Node's effect lines for one swap since `since` (RFC 3339), in
+    order: `<command> → <outcome> <operation> (phase …, revision …, next …)`."""
+    result = subprocess.run(["docker", "logs", "--since", since, NODES["maker"][0]],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
+    prefix = f"maker actor {swap_id}: "
+    lines = []
+    for line in (result.stdout + result.stderr).splitlines():
+        if prefix in line and " → " in line:
+            lines.append(line.split(prefix, 1)[1].strip())
+    return lines
+
+
+def maker_funding_attempts(swap_id: str, since: str) -> tuple[int, int]:
+    """(funding attempts, re-projections): the Maker's drives at
+    taker_lock_confirmed up to and including the one that submitted the Zcash
+    funding, and how many times it projected the Taker's first lock. D2 was a
+    Maker that re-projected the same lock on every attempt and never funded."""
+    attempts = 0
+    reprojections = 0
+    # The Maker's lock is the Zcash funding when the Taker sells LEZ and the
+    # LEZ escrow funding (after its initialization) when the Taker sells ZEC.
+    locked = "submitted zcash_fund" if zec_taker_sells_lez() else "submitted lez_fund"
+    # A step resubmitted while it waits for inclusion (the same bytes, no
+    # re-plan logged) is the designed idempotent recovery, not a new attempt:
+    # each submitted operation counts once (2026-10-31, V3: lez_initialize and
+    # lez_fund each went out twice on a lone swap).
+    submitted: set[str] = set()
+    for line in maker_effect_lines(swap_id, since):
+        if "projected taker_first_lock" in line:
+            reprojections += 1
+        if line.startswith("drive → ") and "(phase taker_lock_confirmed" in line:
+            operation = line.split(" (phase", 1)[0]
+            if "→ submitted " in operation and "re-planned" not in line:
+                if operation in submitted:
+                    continue
+                submitted.add(operation)
+            attempts += 1
+            if locked in line:
+                break
+    return attempts, reprojections
+
+
+def zec_describe(effect: dict | None) -> str:
+    if not effect:
+        return "drive refused"
+    return " ".join(str(effect.get(k)) for k in ("outcome", "operation", "phase", "next_action") if effect.get(k))
+
+
+def zec_spend_of(outpoint: tuple[str, int], from_height: int) -> tuple[str, int] | None:
+    """The transaction in a zebra block at or above `from_height` that spends `outpoint`."""
+    tip = int(zebra("getblockcount"))
+    for height in range(from_height, tip + 1):
+        block = zebra("getblock", [str(height), 1])
+        for txid in block.get("tx") or []:
+            raw = zebra("getrawtransaction", [txid, 1])
+            for vin in raw.get("vin") or []:
+                if vin.get("txid") == outpoint[0] and int(vin.get("vout", -1)) == outpoint[1]:
+                    return txid, height
+    return None
+
+
+def zec_funding_confirmations(corridor: dict) -> int | None:
+    """Confirmations of the Maker's Zcash funding, once it is in a block."""
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    if "funding_txid" not in corridor:
+        found = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if found is None:
+            return None
+        corridor["funding_txid"] = found[0]
+    raw = zebra("getrawtransaction", [corridor["funding_txid"], 1])
+    return int(raw.get("confirmations") or 0)
+
+
+def zec_mining_policy(phase: str | None, corridor: dict) -> None:
+    """Mines at most one zebra block per poll, and only for a reason; `phase` is
+    the Taker actor's durable phase (read, not driven)."""
+    height = int(zebra("getblockcount"))
+    pool = zebra("getrawmempool")
+    if isinstance(pool, list) and pool:
+        zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+        return
+    # With both legs locked the Maker reveals the secret only once its Zcash
+    # funding is two deep (zcash_claim_context.rs MIN_PRE_REVEAL); the actor's
+    # phase says nothing about that, so the depth is read from zebra itself.
+    if phase == "both_legs_locked":
+        confirmations = zec_funding_confirmations(corridor)
+        if confirmations is not None and confirmations < 2 and height + 1 < corridor["zcash_refund_height"]:
+            zebra_mine(1, f"Maker's funding has {confirmations} confirmation(s); the pre-reveal gate wants 2")
+            return
+    if not zec_taker_sells_lez():
+        # Selling ZEC the funding is the Taker's own, in a block from the
+        # start; past the two pre-reveal confirmations nothing waits on zebra
+        # depth (the Maker locks LEZ, the Taker claims LEZ), and every block
+        # mined here shortens the window the Maker's follow-up Zcash claim
+        # needs (two swaps of one corridor share it).
+        if phase in {"taker_lock_confirmed", "both_legs_locked"}:
+            confirmations = zec_funding_confirmations(corridor)
+            if confirmations is not None and confirmations < 2 and height + 1 < corridor["zcash_refund_height"]:
+                zebra_mine(1, f"Taker's funding has {confirmations} confirmation(s); the pre-reveal gate wants 2")
+        return
+    if phase in {"awaiting_maker_confirmations", "taker_lock_confirmed", "both_legs_locked"}:
+        # Depth is mined only for a funding that exists: before the Maker has
+        # funded there is nothing to bury, and every block spent here shortens
+        # the Zcash refund window the Maker needs to fund safely at all.
+        if zec_funding_confirmations(corridor) is None:
+            if not corridor.get("_logged_waiting_for_funding"):
+                log(f"  zebra at {height}: not mining, the Maker's Zcash funding is not out yet")
+                corridor["_logged_waiting_for_funding"] = True
+        elif height + 1 < corridor["zcash_refund_height"]:
+            zebra_mine(1, f"Taker waits for Zcash funding depth (actor at {phase})")
+        else:
+            log(f"  zebra at {height}: not mining, the refund height {corridor['zcash_refund_height']} is next")
+
+
+def zec_wait_until(swap_id: str, config: str, states: set[str], timeout: int, corridor: dict,
+                   describe: str = "", mine_pending_only: bool = False) -> dict:
+    """Polls both Nodes until the Taker's state is in `states`; the Taker Node's
+    supervisor drives the actor meanwhile, the harness only mines zebra for a
+    reason. With `mine_pending_only` a zebra block is generated only to include
+    what waits in the mempool, never for depth: the Maker's funding then stays
+    at one confirmation, below the pre-reveal gate, which is the refund
+    journeys' setup."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        effect = zec_poll_effect(config)
+        phase = (effect or {}).get("phase") or zec_actor_phase(config)
+        view = taker_view(swap_id)
+        state = view["state"]
+        reason = view.get("attention_reason") or view.get("last_failure_class")
+        described = zec_describe(effect) if effect else f"actor at {phase or '-'}"
+        if (state, described, reason) != last:
+            log(f"  taker {swap_id}: {state} (gen {view.get('progress_generation')}{', ' + reason if reason else ''}) "
+                f"| {described} | maker: {maker_phase(swap_id)} | zebra {zebra('getblockcount')}")
+            last = (state, described, reason)
+        if state in states:
+            return view
+        if state in TERMINAL:
+            raise Failure(f"swap {swap_id[:12]} ended in {state}{' (' + reason + ')' if reason else ''} "
+                          f"while waiting for {sorted(states)} {describe}")
+        if mine_pending_only:
+            pool = zebra("getrawmempool")
+            if isinstance(pool, list) and pool:
+                zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+        else:
+            zec_mining_policy(phase, corridor)
+        time.sleep(10)
+    raise Failure(f"swap {swap_id[:12]} did not reach {sorted(states)} within {timeout}s (last {last}) {describe}")
+
+
+def scenario_zec_happy(stamp: str) -> dict:
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    # The Taker's first lock, the Maker's lock and (selling LEZ) its revealing
+    # LEZ claim, all driven and observed by the Taker Node's supervisor; the
+    # Node then offers the Taker its one claim.
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                           describe=zec_flow())
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None:
+        raise Failure("claim_available, but no zebra block spends the provisioned coinbase outpoint")
+    log(f"  {zec_zcash_funder()}'s Zcash funding {funding[0]} is in zebra block {funding[1]}")
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker claimed {zec_taker_claims()} (replay={result.get('was_replay')})")
+    # The Zcash claim (the Taker's, or the Maker's follow-up after the Taker's
+    # revealing LEZ claim) sits in zebra's mempool until a block is generated;
+    # the actors observe it on their next drive and the swap completes on both Nodes.
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    claim_tx = zec_spend_of((funding[0], 0), funding[1])
+    if claim_tx is None:
+        raise Failure("the Taker reports completed, but no zebra block spends the funding output")
+    log(f"  {zec_zcash_claimant()}'s Zcash claim {claim_tx[0]} is in zebra block {claim_tx[1]}")
+    wait_completed(swap_id, timeout=600)
+    # The Maker's ZEC recovery store re-validates every stored claim journal
+    # with the daemon's claim key on each start, so a Maker that completed a
+    # ZEC swap must come back on the same key and still report it completed.
+    log("  restarting the Maker Node after the completed swap (claim-journal revalidation)")
+    docker("restart", NODES["maker"][0])
+    wait_healthy("maker")
+    view = maker_view(swap_id)
+    if view.get("schedule_state") != "terminal" or maker_phase(swap_id) != "completed":
+        raise Failure(f"after a restart the Maker reports {swap_id[:12]} as {maker_phase(swap_id)} "
+                      f"({view.get('schedule_state')}), not completed/terminal")
+    log("  Maker restarted and still reports the swap completed")
+    # D1 acceptance on a lone swap: the Maker locked in one or two attempts
+    # (the second only when its first drive saw the lock before its depth;
+    # selling ZEC its LEZ lock is two submissions, initialization and funding,
+    # so one more) and the Taker never re-planned its LEZ lock (no other swap
+    # took its nonce; selling ZEC it has none).
+    maker_attempts, reprojections = maker_funding_attempts(swap_id, since)
+    replans = zec_log_replans(swap_id, config)
+    most = 2 if zec_taker_sells_lez() else 3
+    log(f"  Maker lock attempt count {maker_attempts} (projected the Taker's lock {reprojections} time(s); "
+        f"{view.get('attempt_count')} supervisor attempts over the swap); Taker LEZ re-plan count {len(replans)}")
+    if maker_attempts < 1 or maker_attempts > most or reprojections != 1:
+        raise Failure(f"the Maker needed {maker_attempts} lock attempts and projected the Taker's lock "
+                      f"{reprojections} time(s) for a lone swap; 1–{most} and 1 expected")
+    if replans:
+        raise Failure(f"the Taker re-planned its LEZ lock {len(replans)} times on a lone swap; 0 expected")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
+            "maker_restart_after_completion": "completed",
+            "maker_funding_attempt_count": maker_attempts, "maker_taker_lock_projections": reprojections,
+            "taker_lez_replans": replans,
+            "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+            "zcash_claim": {"transaction_id": claim_tx[0], "height": claim_tx[1]},
+            "zcash_refund_height": corridor["zcash_refund_height"]}
+
+
+def zec_wait_all_until(swaps: list[tuple[str, str, dict]], states: set[str], timeout: int, describe: str = "") -> dict[str, dict]:
+    """Polls several swaps in turn until every swap's Node state is in `states`;
+    the Taker Node's supervisor drives both actors, the mining policy is
+    applied per corridor."""
+    deadline = time.time() + timeout
+    done: dict[str, dict] = {}
+    last: dict[str, tuple] = {}
+    while time.time() < deadline:
+        for swap_id, config, corridor in swaps:
+            if swap_id in done:
+                continue
+            effect = zec_poll_effect(config)
+            phase = (effect or {}).get("phase") or zec_actor_phase(config)
+            view = taker_view(swap_id)
+            state = view["state"]
+            reason = view.get("attention_reason") or view.get("last_failure_class")
+            described = zec_describe(effect) if effect else f"actor at {phase or '-'}"
+            if last.get(swap_id) != (state, described, reason):
+                log(f"  taker {swap_id}: {state} (gen {view.get('progress_generation')}{', ' + reason if reason else ''}) "
+                    f"| {described} | maker: {maker_phase(swap_id)} | zebra {zebra('getblockcount')}")
+                last[swap_id] = (state, described, reason)
+            if state in states:
+                done[swap_id] = view
+            elif state in TERMINAL:
+                raise Failure(f"swap {swap_id[:12]} ended in {state}{' (' + reason + ')' if reason else ''} "
+                              f"while waiting for {sorted(states)} {describe}")
+            else:
+                zec_mining_policy(phase, corridor)
+        if len(done) == len(swaps):
+            return done
+        time.sleep(10)
+    pending = [s[0][:12] for s in swaps if s[0] not in done]
+    raise Failure(f"swaps {pending} did not reach {sorted(states)} within {timeout}s {describe}")
+
+
+def scenario_zec_concurrent(stamp: str) -> dict:
+    """ZEC analogue of `concurrent`, in the BTC shape: two prepared entries of
+    one corridor run (`--swaps 2`), both taken together, both Taker actors
+    driven by the Taker Node with their LEZ steps interleaving on the same role accounts,
+    two Maker fundings from distinct coinbase outputs, two Taker claims, both
+    completed on both Nodes. The staggered variant (A final before B starts)
+    is `zec-concurrent-staggered`, a fixture, not the evidence."""
+    zec_provision(swaps=2)
+    corridors = list(ZEC_CORRIDORS)
+    if len(corridors) != 2:
+        raise Failure(f"expected two prepared entries, the corridor has {len(corridors)}")
+    swaps = []
+    for index, corridor in enumerate(corridors):
+        swap_id = zec_take_or_resume(corridor["offer_id"], stamp, "-ab"[index:index + 1].join(["-", ""]))
+        config = zec_taker_actor_config(corridor["receipt_output"])
+        swaps.append((swap_id, config, corridor))
+    log(f"  both taken: {swaps[0][0]} and {swaps[1][0]}; driving both Taker actors in turn")
+    views = zec_wait_all_until(swaps, {"claim_available"}, timeout=3000,
+                                describe="(two swaps: " + zec_flow() + ")")
+    fundings = {}
+    for swap_id, _, corridor in swaps:
+        outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+        funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if funding is None:
+            raise Failure(f"{swap_id[:12]} is claim_available, but no zebra block spends its provisioned coinbase outpoint")
+        fundings[swap_id] = funding
+        log(f"  {zec_zcash_funder()}'s Zcash funding for {swap_id[:12]}: {funding[0]} in zebra block {funding[1]}")
+    if len({fundings[s[0]][0] for s in swaps}) != 2:
+        raise Failure(f"the two {zec_zcash_funder()} fundings are one transaction: the corridors shared a funder output")
+    for index, (swap_id, _, _) in enumerate(swaps):
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-{index}",
+                                                       "swap_id": swap_id, "expected_generation": views[swap_id]["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed {zec_taker_claims()} on {swap_id[:12]} (replay={result.get('was_replay')})")
+    zec_wait_all_until(swaps, {"completed"}, timeout=1200, describe="(two claim inclusions)")
+    claims = {}
+    for swap_id, _, _ in swaps:
+        funding = fundings[swap_id]
+        claim_tx = zec_spend_of((funding[0], 0), funding[1])
+        if claim_tx is None:
+            raise Failure(f"{swap_id[:12]} reports completed, but no zebra block spends its funding output")
+        claims[swap_id] = claim_tx
+        log(f"  {zec_zcash_claimant()}'s Zcash claim for {swap_id[:12]}: {claim_tx[0]} in zebra block {claim_tx[1]}")
+        wait_completed(swap_id, timeout=600)
+    # D1: two Taker locks of one signer interleave; whichever lost its nonce
+    # re-planned in the same drive attempt. The lineage (both nonces, both
+    # transaction ids per re-plan) is the evidence, zero re-plans is a pass too.
+    replans = {swap_id: zec_log_replans(swap_id, config) for swap_id, config, _ in swaps}
+    for swap_id, rows in replans.items():
+        for row in rows:
+            if int(row.get("replanned_nonce", 0)) <= int(row.get("superseded_nonce", 0)):
+                raise Failure(f"{swap_id[:12]}: a re-plan did not advance the nonce: {row}")
+    return {"swaps": [{"swap_id": swap_id, "offer_id": corridor["offer_id"], "entry": corridor["entry"],
+                       "zcash_funding": {"transaction_id": fundings[swap_id][0], "height": fundings[swap_id][1]},
+                       "zcash_claim": {"transaction_id": claims[swap_id][0], "height": claims[swap_id][1]},
+                       "taker_lez_replans": replans[swap_id]}
+                      for swap_id, _, corridor in swaps],
+            "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"]}
+
+
+def zec_wait_refused(swap_id: str, timeout: int) -> dict:
+    """Polls until the Taker row reads attention_required with the balance reason."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        view = taker_view(swap_id)
+        key = (view["state"], view.get("attention_reason"), view.get("last_failure_class"))
+        if key != last:
+            log(f"  taker {swap_id}: {key[0]} (reason {key[1]}, class {key[2]}) | maker: {maker_phase(swap_id)}")
+            last = key
+        if view["state"] == "attention_required" and view.get("attention_reason") == "lez_depositor_balance_insufficient":
+            if view.get("available_action"):
+                raise Failure(f"the refused swap offers {view['available_action']}; it must offer nothing")
+            return view
+        if view["state"] not in {"not_activated", "initiating", "awaiting_first_lock", "attention_required"}:
+            raise Failure(f"the Taker lists {swap_id[:12]} as {view['state']} before any refusal: the account was not short")
+        time.sleep(5)
+    raise Failure(f"no balance refusal on {swap_id[:12]} within {timeout}s (last {last})")
+
+
+def zec_wait_recovered(swap_id: str, timeout: int) -> dict:
+    """Polls until the row has left attention_required with no reason left on it."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        view = taker_view(swap_id)
+        key = (view["state"], view.get("attention_reason"), view.get("last_failure_class"))
+        if key != last:
+            log(f"  taker {swap_id}: {key[0]} (reason {key[1]}, class {key[2]}) | maker: {maker_phase(swap_id)}")
+            last = key
+        if view["state"] != "attention_required":
+            if view.get("attention_reason"):
+                raise Failure(f"funded, the row reads {view['state']} but still carries attention_reason={view['attention_reason']}")
+            return view
+        time.sleep(5)
+    raise Failure(f"the Taker still shows attention_required {timeout}s after the account was funded (last {last})")
+
+
+def scenario_zec_balance_refusal_foreign(stamp: str) -> dict:
+    """TakerSellsForeign: the Maker is the LEZ depositor and cannot fund the
+    lot. The Maker Node's signer is the market wallet maker-munich-01; a chain
+    created with LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01 leaves its
+    allocation in the vault. The Taker funds the Zcash HTLC as usual; the
+    Maker's LEZ lock is refused by name (the supervisor names
+    lez_depositor_balance_insufficient on the Maker's row and backs off,
+    nothing locked); after the account is funded (bootstrap-market.sh claims
+    the vault) the supervisor's next attempt locks LEZ with no owner action and
+    the swap completes."""
+    identity = json.loads((RUNTIME / "lez" / "maker" / "identity.json").read_text())
+    account = identity["account_id"]
+    before = lez_account_balance(account)
+    if before >= ZEC_LEZ_UNITS:
+        raise Failure(f"the Maker's LEZ account holds {before}, not less than the {ZEC_LEZ_UNITS} lot: recreate the "
+                      "chain with LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01 (up.sh --fresh-lez) so its allocation "
+                      "stays in the vault")
+    log(f"  Maker LEZ account holds {before}, below the {ZEC_LEZ_UNITS} lot")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    deadline = time.time() + 900
+    refused = None
+    last = None
+    while time.time() < deadline:
+        view = maker_view(swap_id)
+        key = (view.get("schedule_state"), view.get("attention_reason"), view.get("last_failure_class"), maker_phase(swap_id))
+        if key != last:
+            log(f"  maker {swap_id[:12]}: schedule {key[0]}, reason {key[1]}, class {key[2]}, phase {key[3]}")
+            last = key
+        if view.get("attention_reason") == "lez_depositor_balance_insufficient":
+            refused = view
+            break
+        if view.get("schedule_state") in {"failed", "terminal"}:
+            raise Failure(f"the Maker's row ended {view.get('schedule_state')} before any balance refusal")
+        # the Taker's Zcash funding needs blocks before the Maker tries to lock
+        zec_mining_policy(zec_actor_phase(config), corridor)
+        time.sleep(10)
+    if refused is None:
+        raise Failure(f"no balance refusal on the Maker's row within 900 s (last {last})")
+    time.sleep(45)
+    again = maker_view(swap_id)
+    if again.get("attention_reason") != "lez_depositor_balance_insufficient" or again.get("schedule_state") == "failed":
+        raise Failure(f"45 s later the Maker's row reads {again.get('schedule_state')} ({again.get('attention_reason')}), "
+                      "not the standing refusal")
+    log("  45 s later the Maker's row still names the refusal (the supervisor backs off, nothing locked)")
+    log("  funding the Maker's account: scripts/bootstrap-market.sh claims the deferred vault")
+    result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "bootstrap-market.sh")],
+                            capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, timeout=1200)
+    if result.returncode != 0:
+        raise Failure(f"bootstrap-market.sh failed: {(result.stderr or result.stdout)[-300:]}")
+    after = lez_account_balance(account)
+    if after < ZEC_LEZ_UNITS:
+        raise Failure(f"after the claim the Maker's LEZ account holds {after}, still below the lot")
+    market_root = pathlib.Path(next(line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                                    if line.startswith("LEZ_MARKET_ROOT=")))
+    claim = json.loads((market_root / "bootstrap" / "maker-munich-01-claim.json").read_text())
+    log(f"  Maker LEZ account holds {after} (vault claim {claim['transaction_id'][:16]}…)")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
+            "lez_lot": ZEC_LEZ_UNITS, "maker_lez_balance_before": before, "maker_lez_balance_after_claim": after,
+            "refusal": {"role": "maker", "attention_reason": "lez_depositor_balance_insufficient",
+                        "schedule_state": refused.get("schedule_state")},
+            "funding": {"vault_claim_transaction_id": claim["transaction_id"], "allocation": claim["allocation"]},
+            "recovery": "the Maker Node's supervisor locked LEZ on its retry after funding; the swap completed"}
+
+
+def scenario_zec_balance_refusal(stamp: str) -> dict:
+    """The LEZ depositor cannot fund the lot. The Taker Node's signer is the
+    market wallet taker-zurich-01; a chain created with
+    LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01 leaves its allocation in the
+    vault, so the account holds nothing. The first drive is refused by name
+    (actor exit 3), the Node lists the swap as attention_required with
+    lez_depositor_balance_insufficient and offers no action, the Node's own
+    re-driver leaves it so, and after the account is funded (bootstrap-market.sh
+    run again claims the vault) the next drive submits the lock with no other
+    owner action and the swap completes. The Taker Node does not drive the ZEC
+    first lock itself (the desk journeys drive it between steps, as this
+    harness does), so the recovery is the next drive, not a self-re-drive."""
+    if not zec_taker_sells_lez():
+        return scenario_zec_balance_refusal_foreign(stamp)
+    identity = json.loads((RUNTIME / "lez" / "taker" / "identity.json").read_text())
+    account = identity["account_id"]
+    before = lez_account_balance(account)
+    if before >= ZEC_LEZ_UNITS:
+        raise Failure(f"the Taker's LEZ account holds {before}, not less than the {ZEC_LEZ_UNITS} lot: recreate the "
+                      "chain with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01 (up.sh --fresh-lez) so its allocation "
+                      "stays in the vault")
+    log(f"  Taker LEZ account holds {before}, below the {ZEC_LEZ_UNITS} lot")
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    # The Taker Node's supervisor attempts the first lock within a tick; the
+    # bridge refuses it by name and the row says why, with no owner action.
+    refused = zec_wait_refused(swap_id, timeout=120)
+    log(f"  taker {swap_id}: {refused['state']} ({refused['attention_reason']}, class {refused.get('last_failure_class')}), "
+        f"no action offered | maker: {maker_phase(swap_id)}")
+    if MANUAL_DRIVE:
+        # Diagnosis only (ZEC_MANUAL_DRIVE=1): a hand drive meets the same refusal, exit 3.
+        code, stderr = zec_drive_exit(config)
+        last = (stderr.strip().splitlines() or [""])[-1]
+        if code != 3:
+            raise Failure(f"a hand drive exited {code}, not 3 (the balance refusal): {last[-200:]}")
+        log(f"  a hand drive is refused the same way: exit {code}: {last[:160]}")
+    # The supervisor keeps backing off (30 s) while the account is short.
+    time.sleep(45)
+    again = taker_view(swap_id)
+    if again["state"] != "attention_required" or again.get("attention_reason") != "lez_depositor_balance_insufficient":
+        raise Failure(f"45 s later the row reads {again['state']} ({again.get('attention_reason')}), not the standing refusal")
+    log("  45 s later the row still reads the refusal (the supervisor backs off, nothing locked)")
+    log("  funding the account: scripts/bootstrap-market.sh claims the deferred vault")
+    result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "bootstrap-market.sh")],
+                            capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, timeout=1200)
+    if result.returncode != 0:
+        raise Failure(f"bootstrap-market.sh failed: {(result.stderr or result.stdout)[-300:]}")
+    after = lez_account_balance(account)
+    if after < ZEC_LEZ_UNITS:
+        raise Failure(f"after the claim the Taker's LEZ account holds {after}, still below the lot")
+    market_root = pathlib.Path(next(line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                                    if line.startswith("LEZ_MARKET_ROOT=")))
+    claim = json.loads((market_root / "bootstrap" / "taker-zurich-01-claim.json").read_text())
+    log(f"  Taker LEZ account holds {after} (vault claim {claim['transaction_id'][:16]}…)")
+    # Recovery with no owner action: the supervisor's next attempt (its 30 s
+    # backoff) prepares the lock, the marker goes, the row leaves
+    # attention_required, and the swap runs to completed as usual.
+    funded_at = time.time()
+    view = zec_wait_recovered(swap_id, timeout=300)
+    log(f"  taker {swap_id}: {view['state']} {int(time.time() - funded_at)} s after funding, no attention_reason "
+        f"(the supervisor's retry; no hand drive)")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
+            "lez_lot": ZEC_LEZ_UNITS, "taker_lez_balance_before": before, "taker_lez_balance_after_claim": after,
+            "refusal": {"state": "attention_required", "attention_reason": "lez_depositor_balance_insufficient",
+                        "manual_drive_checked": MANUAL_DRIVE},
+            "funding": {"vault_claim_transaction_id": claim["transaction_id"], "allocation": claim["allocation"]},
+            "recovery": "the Taker Node's supervisor locked LEZ on its retry after funding; the swap completed"}
+
+
+def taker_node_log_since(since: str) -> str:
+    """The Taker Node's log since `since` (RFC 3339), stdout and stderr."""
+    read = subprocess.run(["docker", "logs", "--since", since, NODES["taker"][0]], capture_output=True,
+                          text=True, check=False, stdin=subprocess.DEVNULL)
+    return read.stdout + read.stderr
+
+
+def scenario_zec_claim_collision(stamp: str) -> dict:
+    """FINDINGS 24, live: a revealing LEZ claim whose nonce another transaction
+    of the same account takes is Superseded, re-planned at the live nonce and
+    lands (REVIEW 19:38Z). The one-claim gate keeps two claims apart, but not a
+    claim and the account's other LEZ transactions, so the collision is made
+    from a swap of the other direction on the same Taker Node.
+
+    Swap A sells ZEC (run with --direction TakerSellsForeign) and is brought to
+    claim_available; corridor C, selling LEZ, is added beside it (no zebra
+    blocks are mined for it, so A keeps its Zcash window) and taken. The Taker
+    Node submits C's LEZ first lock on its own; the moment its log says so the
+    harness presses A's claim, which is planned from the account's live nonce
+    while C's lock is not yet in a block (blocks every 10 s): both carry one
+    nonce, C's arrived first. A must then show its claim superseded and
+    re-planned (both nonces, both ids, the margin to its LEZ refund time) and
+    complete. When C's lock was already in a block by then, nothing collided:
+    the scenario says so by name (NO-COLLISION) and fails, so a runner can try
+    again. C is left to the Nodes; the scenario does not wait for it."""
+    if zec_taker_sells_lez():
+        raise Failure("zec-claim-collision runs with --direction TakerSellsForeign (swap A sells ZEC)")
+    first = zec_provision()
+    swap_a = zec_take_or_resume(first["offer_id"], stamp, "-a")
+    config_a = zec_taker_actor_config(first["receipt_output"])
+    zec_wait_until(swap_a, config_a, {"claim_available"}, timeout=2400, corridor=first,
+                   describe=f"({swap_a}: {zec_flow()[1:-1]})")
+    ROUTE["direction"] = "TakerSellsLez"
+    try:
+        zec_provision(add=True)
+        corridors = list(ZEC_CORRIDORS)
+        if len(corridors) != 2 or corridors[0]["catalog_swap_id"] != swap_a:
+            raise Failure(f"expected the live entry {swap_a} plus one added, the catalog lists "
+                          f"{[c['catalog_swap_id'] for c in corridors]}")
+        view_a = taker_view(swap_a)
+        if view_a["state"] != "claim_available":
+            raise Failure(f"after the Nodes were recreated with corridor C, {swap_a[:12]} reads {view_a['state']}")
+        since = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        swap_c = zec_take_or_resume(corridors[1]["offer_id"], stamp, "-c")
+    finally:
+        ROUTE["direction"] = "TakerSellsForeign"
+    marker = f"taker actor {swap_c}: drive → submitted lez_"
+    deadline = time.time() + 600
+    while marker not in taker_node_log_since(since):
+        if time.time() > deadline:
+            raise Failure(f"the Taker Node did not submit {swap_c[:12]}'s LEZ first lock within 600 s")
+        time.sleep(0.3)
+    pressed = time.time()
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-a",
+                                                   "swap_id": swap_a, "expected_generation": view_a["progress_generation"]},
+                  timeout=300)
+    press_delay = round(time.time() - pressed, 1)
+    log(f"  {swap_c[:12]}'s LEZ first lock submitted; A's claim admitted {press_delay} s later "
+        f"(replay={result.get('was_replay')})")
+    zec_wait_until(swap_a, config_a, {"completed"}, timeout=1200, corridor=corridors[0],
+                   describe=f"({swap_a}: the revealing LEZ claim, the Maker's follow-up Zcash claim)")
+    wait_completed(swap_a, timeout=600)
+    node_log = taker_node_log_since(since)
+    superseded = [line.strip() for line in node_log.splitlines() if "revealing LEZ claim superseded" in line]
+    first_lock_replans = [line.strip() for line in node_log.splitlines()
+                          if swap_c in line and "re-plan" in line]
+    for line in superseded + first_lock_replans:
+        log(f"  node: {line[:260]}")
+    if not superseded:
+        raise Failure("NO-COLLISION: A completed without a superseded claim (C's lock was in a block before "
+                      "A's claim was planned, or C's lock lost the nonce instead"
+                      f"{': ' + first_lock_replans[0][:120] if first_lock_replans else ''}); try again")
+    return {"swap_a": swap_a, "swap_c": swap_c, "corridor": corridors[0]["run_id"],
+            "claim_supersessions": superseded, "c_first_lock_replans": first_lock_replans,
+            "claim_press_delay_seconds": press_delay}
+
+
+def scenario_zec_concurrent_staggered(stamp: str) -> dict:
+    """Two prepared entries of one corridor run, taken together and settled side
+    by side: two agreements, two Maker fundings from distinct coinbase outputs,
+    two Taker claims; both Nodes list both swaps completed.
+
+    The two swaps are staggered, for two reasons found on the devnet
+    (2026-10-29). Each role signs its LEZ transactions with one account: a first
+    lock (or a Maker claim) prepared while the other swap's is still unfinalised
+    goes out with a stale nonce, is rejected by the sequencer at execution
+    ("Nonce mismatch") and is never re-planned by the actor. And two corridors
+    provisioned at one Zcash anchor share one four-block refund window, which
+    two fundings, their depth and two claims do not fit. So swap A is provisioned,
+    taken and brought to claim_available by the Nodes (its Maker claim final);
+    then corridor B is added beside it with its own anchor (zec-provision.sh
+    --add, Nodes recreated with both), taken and brought there likewise; the
+    Zcash claims overlap."""
+    first = zec_provision()
+    swap_a = zec_take_or_resume(first["offer_id"], stamp, "-a")
+    config_a = zec_taker_actor_config(first["receipt_output"])
+    views = {swap_a: zec_wait_until(swap_a, config_a, {"claim_available"}, timeout=2400, corridor=first,
+                                     describe=f"({swap_a}: {zec_flow()[1:-1]})")}
+    zec_provision(add=True)
+    corridors = list(ZEC_CORRIDORS)
+    if len(corridors) != 2 or corridors[0]["catalog_swap_id"] != swap_a:
+        raise Failure(f"expected the live entry {swap_a} plus one added, the catalog lists "
+                      f"{[c['catalog_swap_id'] for c in corridors]}")
+    second = corridors[1]
+    swap_b = zec_take_or_resume(second["offer_id"], stamp, "-b")
+    config_b = zec_taker_actor_config(second["receipt_output"])
+    log(f"  {swap_a} is claim_available and {swap_b} is taken beside it (Nodes recreated with both corridors)")
+    views[swap_b] = zec_wait_until(swap_b, config_b, {"claim_available"}, timeout=2400, corridor=second,
+                                    describe=f"({swap_b}: {zec_flow()[1:-1]})")
+    swaps = [(swap_a, config_a, corridors[0]), (swap_b, config_b, second)]
+    fundings = {}
+    for swap_id, _, corridor in swaps:
+        outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+        funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if funding is None:
+            raise Failure(f"{swap_id[:12]} is claim_available, but no zebra block spends its provisioned coinbase outpoint")
+        fundings[swap_id] = funding
+        log(f"  {zec_zcash_funder()}'s Zcash funding for {swap_id[:12]}: {funding[0]} in zebra block {funding[1]}")
+    if len({fundings[s[0]][0] for s in swaps}) != 2:
+        raise Failure(f"the two {zec_zcash_funder()} fundings are one transaction: the corridors shared a funder output")
+    for index, (swap_id, _, _) in enumerate(swaps):
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-{index}",
+                                                       "swap_id": swap_id, "expected_generation": views[swap_id]["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed {zec_taker_claims()} on {swap_id[:12]} (replay={result.get('was_replay')})")
+    zec_wait_all_until(swaps, {"completed"}, timeout=1200, describe="(two claim inclusions)")
+    claims = {}
+    for swap_id, _, _ in swaps:
+        funding = fundings[swap_id]
+        claim_tx = zec_spend_of((funding[0], 0), funding[1])
+        if claim_tx is None:
+            raise Failure(f"{swap_id[:12]} reports completed, but no zebra block spends its funding output")
+        claims[swap_id] = claim_tx
+        log(f"  {zec_zcash_claimant()}'s Zcash claim for {swap_id[:12]}: {claim_tx[0]} in zebra block {claim_tx[1]}")
+        wait_completed(swap_id, timeout=600)
+    return {"swaps": [{"swap_id": swap_id, "offer_id": corridor["offer_id"], "entry": corridor["entry"],
+                       "zcash_funding": {"transaction_id": fundings[swap_id][0], "height": fundings[swap_id][1]},
+                       "zcash_claim": {"transaction_id": claims[swap_id][0], "height": claims[swap_id][1]}}
+                      for swap_id, _, corridor in swaps],
+            "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"]}
+
+
+def zec_finish(swap_id: str, config: str, corridor: dict, stamp: str, suffix: str = "") -> dict:
+    """Drives a taken ZEC swap from wherever it is to completed on both Nodes:
+    the actor to claim_available, the Taker's Zcash claim through the Node, the
+    actor to completed. Returns the claim reply."""
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                           describe=zec_flow())
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}{suffix}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker claimed {zec_taker_claims()} on {swap_id[:12]} (replay={result.get('was_replay')})")
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait_completed(swap_id, timeout=600)
+    return result
+
+
+def scenario_zec_replay(stamp: str) -> dict:
+    """ZEC analogue of `replay`: the corridor's offer publication replayed with
+    the provisioner's own request id, the take replayed with its request id
+    (same swap), the Zcash claim replayed. Skipped: the BTC lock replay —
+    a ZEC swap's first LEZ lock is the actor's durable intent, driven by the
+    Taker Node's supervisor, not a Node request; its idempotence is every
+    attempt's."""
+    corridor = zec_provision()
+    run_stamp = corridor["run_id"].rsplit("-", 1)[1]
+    again = call("maker", "maker_offer_publish", {"request_id": f"zec-devnet-publish-{run_stamp}",
+                                                  "offer_id": corridor["offer_id"], "route": ROUTE})
+    if again.get("was_replay") is not True:
+        raise Failure(f"offer publication replay was not idempotent: {again}")
+    log("  offer publication replayed")
+    entry = discover(corridor["offer_id"])
+    request = take_request(corridor["offer_id"], entry, f"e2e-take-{stamp}")
+    first = initiate(request)
+    second = initiate(request)
+    if second.get("was_replay") is not True or second["swap"]["swap_id"] != first["swap"]["swap_id"]:
+        raise Failure(f"take replay was not idempotent: {second}")
+    swap_id = first["swap"]["swap_id"]
+    log(f"  take replayed for {swap_id[:12]}")
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                           describe=zec_flow())
+    params = {"schema_version": 1, "request_id": f"e2e-claim-{stamp}", "swap_id": swap_id,
+              "expected_generation": view["progress_generation"]}
+    call("taker", "taker_swap_claim_v1", params, timeout=300)
+    replay = call("taker", "taker_swap_claim_v1", params, timeout=300)
+    if replay.get("was_replay") is not True:
+        raise Failure(f"claim replay was not idempotent: {replay}")
+    log("  claim replayed")
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+    wait_completed(swap_id, timeout=600)
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    if len(listed) != 1 or listed[0]["state"] != "completed":
+        raise Failure(f"swap list disagrees after replays: {listed}")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"]}
+
+
+def scenario_zec_wrong_inputs(stamp: str) -> dict:
+    """ZEC analogue of `wrong-inputs`: a publish request id reused for another
+    offer, a stale withdraw revision, a take with a mismatched envelope hash,
+    an off-preset amount and a wrong LEZ quote, claim and refund on an unknown
+    swap, a claim before the Maker funded, the consumed lot leaving Delivery
+    and refusing a second take. Skipped: `taker_swap_lock_v1` on an unknown
+    swap — a ZEC swap has no Node lock request (the LEZ lock is the actor's)."""
+    corridor = zec_provision()
+    offer_id = corridor["offer_id"]
+    run_stamp = corridor["run_id"].rsplit("-", 1)[1]
+    record = next(r for r in call("maker", "maker_offer_list", {}) if r["offer"]["id"] == offer_id)
+    expect_error("reusing a publish request id for another offer", "maker", "maker_offer_publish",
+                 {"request_id": f"zec-devnet-publish-{run_stamp}", "offer_id": offer_id + "-other", "route": ROUTE})
+    expect_error("withdrawing with a stale revision", "maker", "maker_offer_withdraw",
+                 {"request_id": f"e2e-stale-{stamp}", "offer_id": offer_id, "expected_revision": record["revision"] + 5})
+    entry = discover(offer_id)
+    bad_hash = take_request(offer_id, entry, f"e2e-badhash-{stamp}")
+    bad_hash["signed_envelope_sha256"] = [(b + 1) % 256 for b in entry["signed_envelope_sha256"]]
+    expect_error("taking with a mismatched envelope hash", "taker", "taker_swap_initiate_v1", bad_hash)
+    off_preset = take_request(offer_id, entry, f"e2e-offpreset-{stamp}")
+    off_preset["foreign_units"] = FOREIGN_UNITS - 1
+    expect_error("taking an off-preset amount", "taker", "taker_swap_initiate_v1", off_preset)
+    wrong_quote = take_request(offer_id, entry, f"e2e-wrongquote-{stamp}")
+    wrong_quote["expected_lez_units"] = LEZ_UNITS + 1
+    expect_error("taking with a wrong LEZ quote", "taker", "taker_swap_initiate_v1", wrong_quote)
+    expect_error("claiming an unknown swap", "taker", "taker_swap_claim_v1",
+                 {"schema_version": 1, "request_id": f"e2e-noswap-{stamp}", "swap_id": "00" * 32, "expected_generation": 0})
+    expect_error("refunding an unknown swap", "taker", "taker_swap_refund_v1",
+                 {"schema_version": 1, "request_id": f"e2e-noswap-refund-{stamp}", "swap_id": "00" * 32, "expected_generation": 0})
+    swap_id = zec_take_or_resume(offer_id, stamp)
+    expect_error("claiming before the Maker funded", "taker", "taker_swap_claim_v1",
+                 {"schema_version": 1, "request_id": f"e2e-early-{stamp}", "swap_id": swap_id, "expected_generation": 0})
+    deadline = time.time() + 30
+    while time.time() < deadline and offer_id in {e["offer"]["id"] for e in call("taker", "taker_offer_list_v1", {"schema_version": 1})["offers"]}:
+        time.sleep(2)
+    if offer_id in {e["offer"]["id"] for e in call("taker", "taker_offer_list_v1", {"schema_version": 1})["offers"]}:
+        raise Failure("the consumed lot is still discoverable")
+    expect_error("taking the consumed lot again", "taker", "taker_swap_initiate_v1",
+                 take_request(offer_id, entry, f"e2e-again-{stamp}"))
+    log("  consumed lot left Delivery and cannot be taken again")
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"]}
+
+
+def scenario_zec_restart(stamp: str, role: str) -> dict:
+    """ZEC analogue of `restart-<role>`: the Taker's LEZ lock final on both
+    Nodes, the role's Node restarted, the swap carried to completed afterwards
+    by the Nodes alone (each Node's supervisor resumes its actor from its
+    store; a Taker row left leased by the restart is requeued as
+    `coordinator_restarted`, which the Taker's view reports as
+    last_failure_class until its next attempt)."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_wait_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
+                    describe="(Taker first lock final)")
+    container, _ = NODES[role]
+    log(f"  restarting {container}")
+    restarted_at = time.time()
+    docker("restart", container)
+    wait_healthy(role)
+    classes = set()
+    if role == "taker":
+        # What the supervisor says about the restart: a row it held during the
+        # restart comes back as coordinator_restarted; one between attempts
+        # comes back as it was. Both are fine; the log records which.
+        for _ in range(4):
+            view = taker_view(swap_id)
+            if view.get("last_failure_class"):
+                classes.add(view["last_failure_class"])
+            time.sleep(5)
+        restart_lines = subprocess.run(["docker", "logs", "--since", f"{int(time.time() - restarted_at) + 5}s", container],
+                                       capture_output=True, text=True, check=False).stderr
+        if "coordinator_restarted" in restart_lines:
+            classes.add("coordinator_restarted")
+        log(f"  after the restart the Taker's schedule reports {sorted(classes) or 'no failure class'}; the supervisor resumes")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "restarted": container,
+            "taker_schedule_after_restart": sorted(classes)}
+
+
+def scenario_zec_survivor(stamp: str) -> dict:
+    """ZEC analogue of `survivor`: the Taker Node stopped right after its Zcash
+    claim was broadcast; the Maker completes alone (its follow-up observes the
+    claim once zebra includes it — zebra is mined from here, as always); the
+    Taker Node restarted and its supervisor carrying the actor to completed."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                           describe=zec_flow())
+    call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                          "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+         timeout=300)
+    log(f"  stopping the Taker Node right after its {zec_taker_claims()} claim")
+    docker("stop", NODES["taker"][0])
+    try:
+        deadline = time.time() + 1800
+        while time.time() < deadline:
+            phase = maker_phase(swap_id)
+            pool = zebra("getrawmempool")
+            log(f"  maker {swap_id[:12]}: {phase} | zebra mempool {len(pool) if isinstance(pool, list) else '?'}")
+            if phase == "completed":
+                break
+            if isinstance(pool, list) and pool:
+                zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+            time.sleep(20)
+        else:
+            raise Failure("Maker did not complete without the Taker")
+    finally:
+        docker("start", NODES["taker"][0])
+        wait_healthy("taker")
+    zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(Taker back)")
+    wait_completed(swap_id, timeout=600)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"]}
+
+
+def scenario_zec_regenerated_catalog(stamp: str) -> dict:
+    """ZEC analogue of `regenerated-config`: a swap taken under one rendering of
+    the live role configuration (which carries the prepared ZEC catalog)
+    survives a re-render and a Taker Node restart, reloads against its own
+    receipt and stays actionable to completion."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_wait_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
+                    describe="(Taker first lock final)")
+    regenerate_runtime_config()
+    log("  restarting the Taker Node onto the re-rendered configuration")
+    docker("restart", NODES["taker"][0])
+    wait_healthy("taker")
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    if len(listed) != 1 or listed[0]["state"] in TERMINAL:
+        raise Failure(f"the swap did not reload after the restart: {listed}")
+    log(f"  swap {swap_id[:12]} reloaded as {listed[0]['state']}")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "reloaded_state": listed[0]["state"]}
+
+
+def scenario_zec_tampered_catalog(stamp: str) -> dict:
+    """ZEC analogue of `tampered-config`: the actor configuration a swap was
+    taken under (the swap's own copy, pinned by its receipt) is altered; after
+    a Taker Node restart the swap is not actionable and a claim is refused.
+    The catalog source itself is not altered: its sha256 is pinned at the
+    Node's start and a mismatch keeps the whole catalog out, which the
+    entrypoint already reports."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    docker("exec", NODES["taker"][0], "sh", "-c", f"printf '\n' >> {config}")
+    log("  appended one byte to the swap's copied actor-config.json")
+    docker("restart", NODES["taker"][0])
+    wait_healthy("taker")
+    listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
+    state = listed[0]["state"] if listed else "absent"
+    reply = rpc("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-tampered-{stamp}",
+                                                 "swap_id": swap_id, "expected_generation": 0}, timeout=120)
+    if "result" in reply:
+        raise Failure(f"a claim was accepted on a swap whose saved actor configuration was altered ({state})")
+    if listed and state not in {"attention_required"}:
+        raise Failure(f"the altered swap still lists as {state} instead of attention_required")
+    category = (reply["error"].get("data") or {}).get("category") if isinstance(reply["error"].get("data"), dict) else None
+    log(f"  swap {swap_id[:12]} after the tamper: {state}; claim refused ({category or reply['error'].get('message')})")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "state_after_tamper": state, "claim_refusal": category}
+
+
+def zec_export_tool(swap_id: str) -> bool:
+    """`node-e2e.py --pair Zcash zec-export --swap-id …`: the ZEC counterpart of
+    export-node-evidence.py for the desk journeys. A ZEC swap has no Bitcoin
+    swap store to read; its evidence is the corridor (id, profile), the Taker
+    actor's durable status, both Nodes' swap views, and the zebra transactions
+    that spend the provisioned coinbase output (the Maker's funding) and the
+    funding output itself (the Taker's claim or the Maker's refund), with their
+    heights. Written to runtime/evidence/zec/<swap_id>.json."""
+    # An export reads the corridor the Nodes already run with; provisioning a
+    # fresh one here would recreate both Nodes and discard the swap it is
+    # meant to document (it did, once, 2026-10-29 18:24Z).
+    if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") != "1":
+        raise Failure("zec-export reads the live corridor: run it with LEZ_ZEC_REUSE_CORRIDOR=1 "
+                      "(and the runtime env), it never provisions")
+    corridor = zec_provision(swap_id=swap_id)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    spend = zec_spend_of((funding[0], 0), funding[1]) if funding else None
+    maker = rpc("maker", "maker_actor_monitor_v1", {"id": swap_id}, timeout=30)
+    evidence = {
+        "schema_version": 1, "swap_id": swap_id, "pair": "Zcash", "direction": ROUTE["direction"],
+        "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
+        "zcash_refund_height": corridor["zcash_refund_height"],
+        "taker": {"node_view": taker_view(swap_id), "actor_status": zec_status(config)},
+        "maker": {"node_view": maker.get("result"), "error": maker.get("error")},
+        "zebra": {
+            "tip_height": int(zebra("getblockcount")),
+            "provisioned_outpoint": {"transaction_id": outpoint[0], "output_index": outpoint[1]},
+            "maker_funding": {"transaction_id": funding[0], "height": funding[1]} if funding else None,
+            "funding_output_spend": {"transaction_id": spend[0], "height": spend[1]} if spend else None,
+        },
+        "exported_at_unix_seconds": int(time.time()),
+    }
+    out = DEPLOY_ROOT / "runtime" / "evidence" / "zec"; out.mkdir(parents=True, exist_ok=True)
+    path = out / f"{swap_id}.json"
+    path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
+    log(f"  ZEC evidence written to {path} (taker {evidence['taker']['node_view'].get('state')}, "
+        f"maker {((maker.get('result') or {}).get('progress') or {}).get('observation', {}).get('phase', '?')}, "
+        f"funding {funding and funding[1]}, spend {spend and spend[1]})")
+    return True
+
+
+def zec_refund_tail_tool(swap_id: str) -> bool:
+    """`node-e2e.py --pair Zcash zec-refund-tail --swap-id …`: the host side of a
+    desk refund journey after the Taker desk admitted its LEZ refund. Mines
+    zebra to the agreement's refund height, queues the Maker's refund (the
+    operator action the Maker desk has no button for), and waits for the
+    Maker's Zcash refund in a block; the Taker's own observation of that refund
+    is the desk's "Retry refund", so it is left to the desk."""
+    os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
+    corridor = zec_provision(swap_id=swap_id)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None:
+        log("FAILED: no zebra block spends the provisioned outpoint (the Maker never funded)")
+        return False
+    stamp = corridor["run_id"].rsplit("-", 1)[1]
+    try:
+        result = zec_maker_refund_tail(swap_id, stamp, config, corridor, funding, taker_observes=False)
+    except Failure as failure:
+        log(f"FAILED: {failure}")
+        return False
+    log(f"  Maker refunded Zcash in block {result['zcash_refund']['height']} ({result['zcash_refund']['transaction_id'][:12]}…); Maker {result['maker_terminal_phase']}")
+    return True
+
+
+def zec_drive_many_tool(swap_ids: list[str], until: str, timeout: int) -> bool:
+    """`zec-wait --swap-id a --swap-id b --until <state>`: the desk's concurrent
+    journey waits for both swaps on the corridor the Nodes run with."""
+    os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
+    swaps = []
+    try:
+        for swap_id in swap_ids:
+            corridor = dict(zec_provision(swap_id=swap_id))
+            config = zec_taker_actor_config(corridor["receipt_output"])
+            swaps.append((swap_id, config, corridor))
+        views = zec_wait_all_until(swaps, set(until.split("|")), timeout, describe=f"(zec-drive to {until})")
+    except Failure as failure:
+        log(f"FAILED: {failure}")
+        return False
+    for swap_id, view in views.items():
+        log(f"  taker {swap_id[:12]} is {view.get('state')}")
+    return True
+
+
+def zec_drive_tool(swap_id: str, until: str, timeout: int, mine_pending_only: bool = False,
+                   until_phase: str | None = None) -> bool:
+    """`node-e2e.py --pair Zcash zec-wait --swap-id … --until <state>`: the desk
+    journeys' wait between their steps (ui-e2e.sh): the Taker Node drives its
+    actor, this polls both Nodes and mines zebra for a reason, on the corridor
+    the Nodes currently run with. No preflight, no summary file. `zec-drive` is
+    the same with a hand drive per poll (diagnosis)."""
+    os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
+    corridor = zec_provision(swap_id=swap_id)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    try:
+        if until_phase:
+            # The Node reads refund_available from the Taker's confirmed LEZ lock
+            # on; a refund journey has to stop at the actor's phase instead,
+            # once the Maker's Zcash funding is in (both legs locked).
+            view = zec_wait_until_phase(swap_id, config, set(until_phase.split("|")), timeout, corridor,
+                                         mine_pending_only=mine_pending_only, describe=f"(zec-drive to phase {until_phase})")
+        else:
+            view = zec_wait_until(swap_id, config, set(until.split("|")), timeout, corridor, describe=f"(zec-drive to {until})",
+                                   mine_pending_only=mine_pending_only)
+    except Failure as failure:
+        log(f"FAILED: {failure}")
+        return False
+    # A state drive returns the Taker's view, a phase drive the actor's last effect.
+    log(f"  taker {swap_id[:12]} is {view.get('state') or view.get('phase')}")
+    return True
+
+
+def zec_wait_until_phase(swap_id: str, config: str, phases: set[str], timeout: int, corridor: dict,
+                         mine_pending_only: bool, describe: str = "") -> dict:
+    """Polls until the Taker actor's own durable phase is in `phases` (the Node
+    reads refund_available from the confirmed LEZ lock on, so a refund
+    journey stops at the phase instead). With `mine_pending_only` a zebra
+    block is generated only to include what waits in the mempool, never for
+    depth: that keeps the Maker's funding at one confirmation, below the
+    pre-reveal gate."""
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        effect = zec_poll_effect(config)
+        phase = (effect or {}).get("phase") or zec_actor_phase(config)
+        view = taker_view(swap_id)
+        state = view["state"]
+        reason = view.get("attention_reason") or view.get("last_failure_class")
+        described = zec_describe(effect) if effect else f"actor at {phase or '-'}"
+        if (state, described, reason) != last:
+            log(f"  taker {swap_id[:12]}: {state}{' (' + reason + ')' if reason else ''} | {described} "
+                f"| maker: {maker_phase(swap_id)} | zebra {zebra('getblockcount')}")
+            last = (state, described, reason)
+        if phase in phases:
+            return {"phase": phase, "state": state}
+        if state in TERMINAL:
+            raise Failure(f"swap {swap_id[:12]} ended in {state} while waiting for phase {sorted(phases)} {describe}")
+        if mine_pending_only:
+            pool = zebra("getrawmempool")
+            if isinstance(pool, list) and pool:
+                zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+        else:
+            zec_mining_policy(phase, corridor)
+        time.sleep(10)
+    raise Failure(f"the Taker actor did not reach {sorted(phases)} within {timeout}s (last {last}) {describe}")
+
+
+# (swap id, request id) -> the generation the Taker admitted that refund request at.
+ZEC_REFUND_REQUESTS: dict[tuple[str, str], int] = {}
+
+
+def zec_refund_until_terminal(swap_id: str, stamp: str, timeout: int,
+                              until: frozenset[str] = frozenset({"refunded"}), mine_pending: bool = False) -> dict:
+    """The Taker's LEZ refund as an operator action, repeated with one request id:
+    the Node answers taker_action_execution_unavailable until the actor's recovery
+    checks pass (lock confirmed, maker lock proven absent or the deadline gone),
+    admits it once they do, and a replay re-drives the admitted recovery, which
+    is also how the Taker observes its refund finalising (the Node never drives a
+    ZEC actor on its own). Returns the Taker's view once its state is in `until`;
+    attention_required and completed fail. With both legs locked the Node reads
+    `refund_in_progress` from the admission until the Taker has observed the
+    Maker's Zcash refund, then `refunded`; a caller that has to act in between
+    (mine to the refund height, queue the Maker's refund) asks for either and
+    comes back for `refunded`. With `mine_pending` zebra is generated for
+    whatever waits in its mempool (the Taker's own Zcash refund when it sold
+    ZEC): a LEZ refund needs no block from here."""
+    deadline = time.time() + timeout
+    attempt = 0
+    request_id = f"e2e-refund-{stamp}"
+    last_state = None
+    while time.time() < deadline:
+        view = taker_view(swap_id)
+        if view["state"] != last_state:
+            log(f"  taker {swap_id[:12]}: {view['state']} (generation {view.get('progress_generation')})")
+            last_state = view["state"]
+        if view["state"] in until:
+            return view
+        if view["state"] in {"attention_required", "completed"}:
+            raise Failure(f"swap {swap_id[:12]} ended in {view['state']} instead of {'/'.join(sorted(until))}")
+        attempt += 1
+        # A replay carries the generation the request was admitted at (as the
+        # desk does): the Node matches the durable record on it, and admits a
+        # refund replay through the leg-refunded phases even after the actor's
+        # revision moved on. A fresh generation would be a different request.
+        generation = ZEC_REFUND_REQUESTS.get((swap_id, request_id), view["progress_generation"])
+        reply = rpc("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": request_id,
+                                                     "swap_id": swap_id, "expected_generation": generation},
+                    timeout=300)
+        if "result" in reply:
+            ZEC_REFUND_REQUESTS.setdefault((swap_id, request_id), generation)
+            if not reply["result"].get("was_replay") or attempt % 4 == 1:
+                log(f"  refund request {'replayed' if reply['result'].get('was_replay') else 'admitted'} "
+                    f"(attempt {attempt}, taker {view['state']} | maker: {maker_phase(swap_id)})")
+        else:
+            category = (reply["error"].get("data") or {}).get("category")
+            if category not in {"taker_action_execution_unavailable", "taker_action_conflict", "taker_action_unavailable"}:
+                raise Failure(f"taker_swap_refund_v1 failed: {json.dumps(reply['error'])[:300]}")
+            if attempt % 4 == 1:
+                log(f"  refund not yet accepted (attempt {attempt}: {category}); taker {view['state']} | maker: {maker_phase(swap_id)}")
+        if mine_pending:
+            pool = zebra("getrawmempool")
+            if isinstance(pool, list) and pool:
+                zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+        time.sleep(15)
+    raise Failure(f"swap {swap_id[:12]} was not {'/'.join(sorted(until))} within {timeout}s")
+
+
+def wait_maker_terminal(swap_id: str, timeout: int, describe: str) -> str:
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        view = maker_view(swap_id)
+        phase = maker_phase(swap_id)
+        if phase != last:
+            log(f"  maker {swap_id[:12]}: {phase} (schedule {view.get('schedule_state')})")
+            last = phase
+        if view.get("schedule_state") == "terminal":
+            return phase
+        time.sleep(15)
+    raise Failure(f"the Maker did not reach a terminal state within {timeout}s {describe} (last {last})")
+
+
+def zec_outpoint_unspent(outpoint: tuple[str, int]) -> bool:
+    return zebra("gettxout", [outpoint[0], outpoint[1]]) is not None
+
+
+def zec_cut_maker_zebra_route() -> None:
+    """The Maker Node reaches zebra through the socat forwarder its entrypoint
+    starts (127.0.0.1:18232 -> zebra). Killing it leaves the Maker able to
+    observe the Taker's LEZ lock through its sidecar but unable to plan or
+    submit its Zcash funding (connection refused); the next container start
+    brings the forwarder back."""
+    docker("exec", NODES["maker"][0], "pkill", "-f", "TCP:[^ ]*:18232")
+
+
+def zec_cut_maker_lez_submit_route() -> None:
+    """The Maker Node reaches the LEZ sequencer through the socat forwarder its
+    entrypoint starts (127.0.0.1:3040 -> sequencer); the indexer forwarder
+    (8779) is another process. Killing the sequencer one leaves the Maker able
+    to observe the Taker's Zcash funding through its sidecar but unable to
+    submit its LEZ lock; the next container start brings the forwarder back."""
+    docker("exec", NODES["maker"][0], "pkill", "-f", "TCP:[^ ]*:3040")
+
+
+def wait_maker_phase(swap_id: str, phases: set[str], timeout: int, describe: str) -> str:
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        view = maker_view(swap_id)
+        phase = maker_phase(swap_id)
+        if phase != last:
+            log(f"  maker {swap_id[:12]}: {phase} (schedule {view.get('schedule_state')})")
+            last = phase
+        if phase in phases:
+            return phase
+        time.sleep(15)
+    raise Failure(f"the Maker did not reach {sorted(phases)} within {timeout}s {describe} (last {last})")
+
+
+def scenario_zec_taker_refund(stamp: str) -> dict:
+    """The Taker locks LEZ, the Maker never funds Zcash, the Taker refunds at
+    the agreement's LEZ refund time (30 min after provisioning on the devnet
+    profile) and the Maker reconciles the refunded leg once it is back.
+
+    The Maker has to observe the Taker's lock before it goes down: the SDK's
+    agreement-ordered recovery starts from an observed first leg
+    (`next_refund_step` has no Offered arm, the actor's recovery gate agrees),
+    so a Maker that only ever saw the offer has nothing to reconcile and stays
+    at `offered`. Its zebra route is therefore cut instead of stopping it at
+    once: it observes the LEZ lock through the sidecar, cannot plan the Zcash
+    funding, and is stopped at `taker_lock_confirmed`."""
+    if not zec_taker_sells_lez():
+        return scenario_zec_taker_refund_foreign(stamp)
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    log("  cutting the Maker Node's zebra route: it will observe the Taker's lock but cannot fund Zcash")
+    zec_cut_maker_zebra_route()
+    try:
+        zec_wait_until_phase(swap_id, config, {"taker_lock_confirmed", "awaiting_maker_confirmations", "both_legs_locked"},
+                              timeout=1500, corridor=corridor, mine_pending_only=True,
+                              describe="(Taker LEZ lock confirmed, Maker without zebra)")
+        wait_maker_phase(swap_id, {"taker_lock_confirmed", "awaiting_maker_confirmations", "both_legs_locked"},
+                         timeout=900, describe="(Maker observing the Taker's LEZ lock without zebra)")
+        if zec_outpoint_unspent(outpoint) is not True:
+            raise Failure("the provisioned coinbase outpoint was spent although the Maker's zebra route was cut")
+        log("  the Maker observed the Taker's LEZ lock; stopping the Maker Node so it never funds Zcash")
+        docker("stop", NODES["maker"][0])
+        # The LEZ escrow refunds only once the chain clock passes the agreement's
+        # refund time: provisioning time + the profile's delay (30 min on the
+        # devnet profile). The provisioning summary does not carry it, so it is
+        # taken from the corridor's run id stamp, which the script sets to the
+        # provisioning second.
+        opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+        wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+        log("  the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed")
+        zec_refund_until_terminal(swap_id, stamp, timeout=1800)
+        log("  Taker refunded its LEZ escrow")
+    finally:
+        docker("start", NODES["maker"][0])
+        wait_healthy("maker")
+    # Back up, the Maker's own drive re-observes the Taker's lock and finds the
+    # escrow refunded, which its funding path refuses (no Zcash is ever sent).
+    # The operator's refund action runs the agreement-ordered recovery: the
+    # non-owner observes the Taker's LEZ refund and ends Refunded, as the
+    # SDK's one-leg recovery test does for both roles.
+    if maker_view(swap_id).get("schedule_state") != "terminal":
+        result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-taker-refund-{stamp}")
+        log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+    phase = wait_maker_terminal(swap_id, timeout=1200, describe="(reconciling the refunded LEZ leg)")
+    if zec_outpoint_unspent(outpoint) is not True:
+        raise Failure("the provisioned coinbase outpoint was spent: the Maker funded Zcash after all")
+    log(f"  zebra: the provisioned coinbase outpoint {outpoint[0][:12]}:{outpoint[1]} is still unspent; Maker ended {phase}")
+    if phase not in {"refunded", "taker_leg_refunded"}:
+        raise Failure(f"the Maker ended in {phase}, not a refunded phase")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "maker_terminal_phase": phase, "zcash_funding_outpoint_unspent": True}
+
+
+def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
+    """TakerSellsForeign: the Taker funds the Zcash HTLC, the Maker never locks
+    LEZ, the Taker refunds its Zcash at the agreement's refund height and the
+    Maker reconciles the refunded leg once it is back. As in the other
+    direction the Maker must have observed the Taker's first lock before it
+    goes down, so its sequencer route is cut instead of stopping it at once:
+    it observes the Zcash funding through its sidecar, cannot submit the LEZ
+    lock, and is stopped at `taker_lock_confirmed`."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    log("  cutting the Maker Node's sequencer route: it will observe the Taker's Zcash funding but cannot lock LEZ")
+    zec_cut_maker_lez_submit_route()
+    try:
+        zec_wait_until_phase(swap_id, config, {"taker_lock_confirmed", "awaiting_maker_confirmations", "both_legs_locked"},
+                              timeout=1500, corridor=corridor, mine_pending_only=False,
+                              describe="(Taker Zcash funding confirmed, Maker without a sequencer route)")
+        wait_maker_phase(swap_id, {"taker_lock_confirmed", "awaiting_maker_confirmations", "both_legs_locked"},
+                         timeout=900, describe="(Maker observing the Taker's Zcash funding without a sequencer route)")
+        funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if funding is None:
+            raise Failure("the Taker's actor confirmed its lock, but no zebra block spends the provisioned outpoint")
+        if zec_actor_phase(config) != "taker_lock_confirmed":
+            raise Failure(f"the Maker locked LEZ although its sequencer route was cut (Taker actor at {zec_actor_phase(config)})")
+        log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Maker observed it; "
+            "stopping the Maker Node so it never locks LEZ")
+        docker("stop", NODES["maker"][0])
+        height = int(zebra("getblockcount"))
+        if height < corridor["zcash_refund_height"]:
+            zebra_mine(corridor["zcash_refund_height"] - height, "the agreement's Zcash refund height")
+        log("  the Taker's Zcash funding is confirmed, the Maker is down and the refund height is reached")
+        zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True)
+        log("  Taker refunded its Zcash HTLC")
+    finally:
+        docker("start", NODES["maker"][0])
+        wait_healthy("maker")
+    # Back up, the Maker re-observes the Taker's funding and finds it refunded;
+    # the operator's refund action runs the agreement-ordered recovery and the
+    # non-owner ends Refunded.
+    if maker_view(swap_id).get("schedule_state") != "terminal":
+        result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-taker-refund-{stamp}")
+        log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+    phase = wait_maker_terminal(swap_id, timeout=1200, describe="(reconciling the refunded Zcash leg)")
+    refund_tx = zec_spend_of((funding[0], 0), funding[1])
+    if refund_tx is None:
+        raise Failure("no zebra block spends the Taker's funding output: the Taker did not refund Zcash")
+    log(f"  Taker's Zcash refund {refund_tx[0]} is in zebra block {refund_tx[1]}; Maker ended {phase}")
+    if phase not in {"refunded", "taker_leg_refunded"}:
+        raise Failure(f"the Maker ended in {phase}, not a refunded phase")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "maker_terminal_phase": phase,
+            "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+            "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
+            "zcash_refund_height": corridor["zcash_refund_height"]}
+
+
+def scenario_zec_maker_refund(stamp: str) -> dict:
+    """Both legs locked, the Maker's Zcash funding at one confirmation (below
+    the pre-reveal gate), the Taker refunds LEZ at the agreement's refund time,
+    zebra is mined to the agreement's refund height and the Maker refunds its
+    Zcash; the Taker observes that refund and both Nodes end `refunded`."""
+    if not zec_taker_sells_lez():
+        return scenario_zec_maker_refund_foreign(stamp)
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    # Both legs locked, the Maker's funding at one confirmation: below the
+    # pre-reveal gate (two), so the Maker cannot claim LEZ yet.
+    zec_wait_until_phase(swap_id, config, {"both_legs_locked", "awaiting_maker_confirmations"}, timeout=2400,
+                          corridor=corridor, mine_pending_only=True, describe="(Taker LEZ lock → Maker Zcash funding)")
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None:
+        raise Failure("the Taker observed the Maker's lock, but no zebra block spends the provisioned outpoint")
+    log(f"  Maker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker refunds LEZ instead of waiting")
+    opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+    wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+    zec_refund_until_terminal(swap_id, stamp, timeout=1800, until=frozenset({"refund_in_progress", "refunded"}))
+    log("  the Taker's LEZ refund is admitted and in progress on the Node; the Maker's Zcash refund is owed next")
+    return zec_maker_refund_tail(swap_id, stamp, config, corridor, funding)
+
+
+def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
+    """TakerSellsForeign: the Taker funds the Zcash HTLC, the Maker locks LEZ,
+    the Taker's LEZ claim is offered and never pressed; at the agreement's LEZ
+    refund time the Maker refunds its LEZ escrow (the queued recovery, as the
+    desk's Refund would), then zebra is mined to the Zcash refund height and
+    the Taker refunds its HTLC; both Nodes end `refunded`. The LEZ refund
+    comes first and the Zcash refund outlives it (F4)."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                   describe="(Taker Zcash funding → Maker LEZ lock; the claim is offered and left alone)")
+    funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+    if funding is None:
+        raise Failure("the Taker's claim is offered, but no zebra block spends the provisioned outpoint")
+    log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker never claims")
+    opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+    wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+    if maker_view(swap_id).get("schedule_state") != "terminal":
+        try:
+            result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
+            log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+        except Failure as error:
+            if "conflicts with durable state" not in str(error):
+                raise
+            log("  Maker refund request already recorded for this run; continuing")
+    phase = wait_maker_phase(swap_id, {"maker_leg_refunded", "refunded"}, timeout=1500,
+                             describe="(the Maker refunding its LEZ escrow)")
+    log(f"  the Maker's LEZ leg is back ({phase}); mining zebra to the agreement's refund height")
+    height = int(zebra("getblockcount"))
+    if height < corridor["zcash_refund_height"]:
+        zebra_mine(corridor["zcash_refund_height"] - height, "Zcash refund height")
+    taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True)
+    refund_tx = zec_spend_of((funding[0], 0), funding[1])
+    if refund_tx is None:
+        raise Failure("no zebra block spends the Taker's funding output: the Taker did not refund Zcash")
+    maker_terminal = wait_maker_terminal(swap_id, timeout=900, describe="(observing the Taker's Zcash refund)")
+    log(f"  Taker's Zcash refund {refund_tx[0]} is in zebra block {refund_tx[1]}; Taker ended {taker['state']}, Maker {maker_terminal}")
+    if maker_terminal not in {"refunded", "maker_leg_refunded", "taker_leg_refunded"}:
+        raise Failure(f"the Maker ended in {maker_terminal}, not a refunded phase")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+            "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
+            "zcash_refund_height": corridor["zcash_refund_height"], "maker_terminal_phase": maker_terminal,
+            "taker_terminal_state": taker["state"]}
+
+
+# ---- BTC/ZEC parity (REVIEW 21:08Z): early-lock, offline-after-lock, refund-then-maker-lock ----
+
+# A Node's loopback forwarders (node-entrypoint.sh): the ZEC sidecars read LEZ
+# through both the indexer and the sequencer one, and zebra through its own.
+ZEC_ROUTES = {"indexer": (8779, "indexer"), "sequencer": (3040, "sequencer"), "zebra": (18232, "zebra")}
+# The Taker actor's phases once its own first lock is confirmed (and no further).
+ZEC_FIRST_LOCK_CONFIRMED = {"taker_lock_confirmed"}
+ZEC_PAST_FIRST_LOCK = {"taker_lock_confirmed", "awaiting_maker_confirmations", "both_legs_locked"}
+# Phases that prove a party saw the first lock confirmed (maker_phase() falls
+# back to scheduler words before an observation, so this disqualifies rather
+# than allows).
+ZEC_SAW_FIRST_LOCK = ZEC_PAST_FIRST_LOCK | {"claim_evidence_available", "completed"}
+
+
+def zec_cut_routes(role: str, *names: str) -> None:
+    for name in names:
+        port, _ = ZEC_ROUTES[name]
+        subprocess.run(["docker", "exec", "-u", "root", NODES[role][0], "pkill", "-f", f"TCP:[^ ]*:{port}"],
+                       check=False, capture_output=True)
+
+
+def zec_restore_routes(role: str, *names: str) -> None:
+    """Idempotent (runs from a `finally`): clears, then starts each forwarder."""
+    for name in names:
+        port, host = ZEC_ROUTES[name]
+        subprocess.run(["docker", "exec", "-u", "root", NODES[role][0], "pkill", "-f", f"TCP:[^ ]*:{port}"],
+                       check=False, capture_output=True)
+        subprocess.run(["docker", "exec", "-d", "-u", "root", NODES[role][0], "socat",
+                        f"TCP-LISTEN:{port},bind=127.0.0.1,fork,reuseaddr", f"TCP:{host}:{port}"],
+                       check=False, capture_output=True)
+
+
+def zec_mempool() -> list:
+    pool = zebra("getrawmempool")
+    return pool if isinstance(pool, list) else []
+
+
+def zec_poll_until(what: str, timeout: int, check) -> None:
+    """Polls `check()` every 5 s without mining zebra."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if check():
+            return
+        time.sleep(5)
+    raise Failure(f"{what} did not happen within {timeout}s")
+
+
+def scenario_zec_early_lock(stamp: str) -> dict:
+    """R1 for Zcash: the party that locks second must not lock on a first leg it
+    has not seen confirmed. Selling LEZ the first leg is the Taker's LEZ lock and
+    the second the Maker's Zcash funding: the Maker's LEZ view (indexer and
+    sequencer forwarders) is cut right after the take, the Taker's lock is
+    confirmed, and for 90 s the Maker must not fund (its outpoint unspent, the
+    mempool empty, its actor before both legs). Selling ZEC the first leg is the
+    Taker's Zcash funding: it is held unmined in zebra's mempool and for 90 s
+    the Maker must not lock LEZ (its actor stays before taker_lock_confirmed).
+    The view is restored or the funding mined, and the swap completes."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    held = 90
+    if zec_taker_sells_lez():
+        log("  cutting the Maker's view of LEZ (indexer and sequencer forwarders) so it cannot see the Taker's lock")
+        zec_cut_routes("maker", "indexer", "sequencer")
+        try:
+            wait_lez_view("maker", restored=False)
+            zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=1500, corridor=corridor,
+                                 mine_pending_only=True, describe="(the Taker's LEZ lock, the Maker blind to it)")
+            if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
+                raise Failure(f"the Taker actor is at {zec_actor_phase(config)}: the Maker funded although blind to LEZ")
+            log(f"  the Taker's LEZ lock is confirmed and the Maker cannot see it; watching for {held}s")
+            deadline = time.time() + held
+            while time.time() < deadline:
+                if zec_outpoint_unspent(outpoint) is not True or zec_mempool():
+                    raise Failure("the Maker funded Zcash on a first leg it had not observed (R1)")
+                if maker_phase(swap_id) in {"awaiting_maker_confirmations", "both_legs_locked"}:
+                    raise Failure(f"the Maker reached {maker_phase(swap_id)} without seeing the Taker's lock")
+                time.sleep(5)
+            log(f"  the Maker stayed at {maker_phase(swap_id)} for {held}s and funded nothing")
+        finally:
+            zec_restore_routes("maker", "indexer", "sequencer")
+        wait_lez_view("maker", restored=True)
+        log("  the Maker can see LEZ again; it may now fund Zcash")
+    else:
+        log("  the Taker Node funds the Zcash HTLC; the harness mines nothing, so it stays unconfirmed")
+        zec_poll_until("the Taker's Zcash funding in zebra's mempool", 900, lambda: bool(zec_mempool()))
+        log(f"  the Taker's funding {zec_mempool()[0][:12]} waits in the mempool; watching the Maker for {held}s")
+        deadline = time.time() + held
+        while time.time() < deadline:
+            phase = maker_phase(swap_id)
+            if phase in ZEC_SAW_FIRST_LOCK:
+                raise Failure(f"the Maker reached {phase} on an unconfirmed Zcash funding (R1)")
+            if zec_actor_phase(config) in ZEC_SAW_FIRST_LOCK:
+                raise Failure(f"the Taker actor reached {zec_actor_phase(config)} on an unconfirmed funding")
+            time.sleep(5)
+        log(f"  the Maker stayed at {maker_phase(swap_id)} for {held}s; mining the funding now")
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "held_seconds": held, "second_leg_withheld": True}
+
+
+def scenario_zec_offline_after_lock(stamp: str) -> dict:
+    """R2 for Zcash: once the first lock is confirmed the swap proceeds on chain
+    state alone. Logos Chat and Delivery are cut on the Maker and stay down until
+    the swap is complete; neither Node is restarted."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=1500, corridor=corridor,
+                         mine_pending_only=False, describe="(the first lock confirmed)")
+    log("  cutting Logos Chat and Delivery, with the first lock confirmed")
+    cut_delivery_and_chat()
+    try:
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            health = maker_health()
+            if health.get("chat") == "unavailable" and health.get("delivery") == "unavailable":
+                break
+            time.sleep(5)
+        else:
+            raise Failure(f"the Maker did not report both dependencies unavailable: {json.dumps(health)[:200]}")
+        if not health.get("degraded"):
+            raise Failure("the Maker reports both dependencies unavailable but is not degraded")
+        log("  the Maker reports chat and delivery unavailable, and degraded")
+        zec_finish(swap_id, config, corridor, stamp)
+        log("  the swap completed with both off-chain dependencies down")
+    finally:
+        restore_delivery_and_chat()
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        if not maker_health().get("degraded"):
+            log("  both dependencies are back and the Maker is no longer degraded")
+            break
+        time.sleep(5)
+    else:
+        raise Failure("the Maker stayed degraded after both dependencies returned")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"]}
+
+
+def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
+    """A refund admitted while the second lock is unobserved, then the second
+    lock appears; the Nodes finish the recovery (the Maker's refund is queued as
+    the operator's action, as in every ZEC Maker refund). Selling LEZ: the
+    Maker's Zcash funding is held unmined in zebra's mempool through the LEZ
+    refund time, the Taker's refund is admitted, then the funding is mined; the
+    Taker refunds LEZ and the Maker its Zcash at the height. Selling ZEC: the
+    Taker's LEZ view is cut before the Maker locks LEZ; at the refund time the
+    refund is asked for blind (`blind_admission` says whether the Node admitted
+    it without seeing LEZ), the view comes back, the Maker refunds LEZ and the
+    Taker its Zcash."""
+    corridor = zec_provision()
+    swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
+    opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+    if zec_taker_sells_lez():
+        log("  the Taker Node locks LEZ; the Maker's Zcash funding will be held in zebra's mempool")
+        zec_poll_until("the Taker's LEZ lock confirmed and the Maker's funding in the mempool", 1500,
+                       lambda: zec_actor_phase(config) in ZEC_PAST_FIRST_LOCK and bool(zec_mempool()))
+        # gettxout counts a mempool spend as spent; what matters is a block.
+        if zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1) is not None:
+            raise Failure("the Maker's funding is already in a block; the harness mined nothing")
+        log(f"  the Maker's funding {zec_mempool()[0][:12]} is broadcast, unconfirmed; waiting for the LEZ refund time")
+        wait_until(opens + 15, "for the agreement's LEZ refund time with the Maker's funding unconfirmed")
+        view = zec_refund_until_terminal(swap_id, stamp, timeout=900,
+                                         until=frozenset({"refund_in_progress", "refunded"}))
+        log(f"  refund admitted ({view['state']}, generation {view.get('progress_generation')}), "
+            "the Maker's funding still unconfirmed")
+        zebra_mine(1, "the Maker's Zcash funding, now after the refund admission")
+        funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if funding is None:
+            raise Failure("the mined block did not include the Maker's funding")
+        log(f"  the Maker's funding {funding[0][:12]} is in zebra block {funding[1]}; the Nodes take it from here")
+        result = zec_maker_refund_tail(swap_id, stamp, config, corridor, funding)
+        return {**result, "refund_admitted_before_maker_lock": True}
+    log("  the Taker Node funds Zcash; the Taker's view of LEZ is cut before the Maker locks")
+    zec_poll_until("the Taker's Zcash funding in zebra's mempool", 900, lambda: bool(zec_mempool()))
+    zec_cut_routes("taker", "indexer", "sequencer")
+    blind_admission = False
+    try:
+        wait_lez_view("taker", restored=False)
+        zebra_mine(2, "the Taker's funding to the pre-reveal depth")
+        funding = zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1)
+        if funding is None:
+            raise Failure("no zebra block spends the provisioned outpoint after mining the Taker's funding")
+        maker = wait_maker_phase(swap_id, {"both_legs_locked", "awaiting_maker_confirmations"}, timeout=1200,
+                                 describe="(the Maker locking LEZ, the Taker blind to it)")
+        log(f"  the Maker locked LEZ ({maker}); the Taker actor is at {zec_actor_phase(config)}, blind to it")
+        if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
+            raise Failure(f"the Taker actor reached {zec_actor_phase(config)} although its LEZ view was cut")
+        wait_until(opens + 15, "for the agreement's LEZ refund time with the Taker blind to the Maker's lock")
+        reply = rpc("taker", "taker_swap_refund_v1", {
+            "schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+            "swap_id": swap_id, "expected_generation": taker_view(swap_id)["progress_generation"]})
+        blind_admission = "result" in reply
+        log("  refund admitted while blind" if blind_admission else
+            f"  BLIND-REFUND-UNAVAILABLE: the Node did not admit the refund without LEZ: "
+            f"{json.dumps(reply.get('error'))[:200]}")
+    finally:
+        zec_restore_routes("taker", "indexer", "sequencer")
+    wait_lez_view("taker", restored=True)
+    log("  the Taker sees LEZ again; the Maker refunds LEZ, then the Taker its Zcash")
+    if maker_view(swap_id).get("schedule_state") != "terminal":
+        try:
+            result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
+            log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+        except Failure as error:
+            if "conflicts with durable state" not in str(error):
+                raise
+    wait_maker_phase(swap_id, {"maker_leg_refunded", "refunded"}, timeout=1500,
+                     describe="(the Maker refunding its LEZ escrow)")
+    height = int(zebra("getblockcount"))
+    if height < corridor["zcash_refund_height"]:
+        zebra_mine(corridor["zcash_refund_height"] - height, "Zcash refund height")
+    taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True)
+    refund_tx = zec_spend_of((funding[0], 0), funding[1])
+    if refund_tx is None:
+        raise Failure("no zebra block spends the Taker's funding output: the Taker did not refund Zcash")
+    maker_terminal = wait_maker_terminal(swap_id, timeout=900, describe="(observing the Taker's Zcash refund)")
+    log(f"  Taker's Zcash refund {refund_tx[0][:12]} in zebra block {refund_tx[1]}; Taker {taker['state']}, Maker {maker_terminal}")
+    if maker_terminal not in {"refunded", "maker_leg_refunded", "taker_leg_refunded"}:
+        raise Failure(f"the Maker ended in {maker_terminal}, not a refunded phase")
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+            "blind_admission": blind_admission, "maker_terminal_phase": maker_terminal,
+            "taker_terminal_state": taker["state"],
+            "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]}}
+
+
+ZEC_STEPS = ("maker-down-after-first-lock", "refund-point", "maker-up-reconcile", "maker-completes", "maker-lez-refund",
+             "claim-window-closed")
+
+
+def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
+    """`node-e2e.py --pair Zcash zec-step --swap-id … --step …`: the host side of
+    the ZEC desk journeys that BTC's desks get from the chain or a stopped Node
+    (REVIEW 21:08Z parity), on the corridor the Nodes run with:
+
+    - maker-down-after-first-lock: the Maker observes the Taker's first lock
+      (its second-leg route cut: zebra selling LEZ, the sequencer selling ZEC),
+      then is stopped, so it never locks its own leg (zec-taker-refund);
+    - refund-point: the Taker's refund is due: the LEZ refund time selling LEZ,
+      the Zcash refund height (mined) selling ZEC;
+    - maker-up-reconcile: the Maker is started again, its refund queued (the
+      operator action the Maker desk has no button for), and it ends terminal;
+    - maker-completes: zebra is mined for whatever waits in the mempool until
+      the Maker reports the swap completed, without the Taker Node (survivor);
+    - maker-lez-refund: selling ZEC with the claim never pressed: at the LEZ
+      refund time the Maker's refund is queued, its LEZ comes back, zebra is
+      mined to the Zcash refund height (maker-refund);
+    - claim-window-closed: waits until the revealing claim window has closed
+      (the agreement's LEZ refund time minus the profile's 30 s margin) and
+      the Taker Node's row no longer offers the claim (FINDINGS 26)."""
+    os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
+    # The corridor read asks the Zcash funder's container for its outpoint:
+    # selling LEZ that is the Maker, which these steps may find stopped.
+    if step == "maker-up-reconcile":
+        docker("start", NODES["maker"][0])
+        wait_healthy("maker")
+    if step == "refund-point" and zec_taker_sells_lez():
+        run_id = (RUNTIME / "zec" / "current").read_text().strip()
+        wait_until(int(run_id.rsplit("-", 1)[1]) + zec_current_refund_delay() + 15,
+                   "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+        log("  the Taker's refund is due")
+        return True
+    corridor = zec_provision(swap_id=swap_id)
+    stamp = corridor["run_id"].rsplit("-", 1)[1]
+    opens = int(stamp) + corridor["lez_refund_delay_seconds"]
+    try:
+        if step == "maker-down-after-first-lock":
+            config = zec_taker_actor_config(corridor["receipt_output"])
+            sells_lez = zec_taker_sells_lez()
+            log("  cutting the Maker Node's " + ("zebra" if sells_lez else "sequencer")
+                + " route: it observes the Taker's first lock but cannot lock its own leg")
+            if sells_lez:
+                zec_cut_maker_zebra_route()
+            else:
+                zec_cut_maker_lez_submit_route()
+            zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=timeout, corridor=corridor,
+                                 mine_pending_only=sells_lez, describe="(the Taker's first lock confirmed)")
+            wait_maker_phase(swap_id, ZEC_PAST_FIRST_LOCK, timeout=900,
+                             describe="(the Maker observing the Taker's first lock)")
+            if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
+                raise Failure(f"the Maker locked its leg although its route was cut (Taker at {zec_actor_phase(config)})")
+            log("  the Maker observed the Taker's first lock; stopping the Maker Node")
+            docker("stop", NODES["maker"][0])
+        elif step == "refund-point":
+            if zec_taker_sells_lez():
+                wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+            else:
+                height = int(zebra("getblockcount"))
+                if height < corridor["zcash_refund_height"]:
+                    zebra_mine(corridor["zcash_refund_height"] - height, "the agreement's Zcash refund height")
+            log("  the Taker's refund is due")
+        elif step == "maker-up-reconcile":
+            if maker_view(swap_id).get("schedule_state") != "terminal":
+                result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-desk-refund-{stamp}")
+                log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+            phase = wait_maker_terminal(swap_id, timeout=timeout, describe="(reconciling the refunded leg)")
+            log(f"  the Maker ended {phase}")
+        elif step == "maker-completes":
+            deadline = time.time() + timeout
+            last = None
+            while time.time() < deadline:
+                pool = zec_mempool()
+                if pool:
+                    zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+                phase = maker_phase(swap_id)
+                if phase != last:
+                    log(f"  maker {swap_id[:12]}: {phase} | zebra {zebra('getblockcount')}")
+                    last = phase
+                if phase == "completed" and maker_view(swap_id).get("schedule_state") == "terminal":
+                    break
+                time.sleep(10)
+            else:
+                raise Failure(f"the Maker did not complete {swap_id[:12]} on its own within {timeout}s")
+        elif step == "claim-window-closed":
+            closes = opens - 30
+            wait_until(closes + 15, "for the revealing claim window to close (LEZ refund time minus the 30 s margin)")
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                view = taker_view(swap_id)
+                if view.get("available_action") != "claim":
+                    log(f"  the window closed; the Taker row reads {view['state']} with {view.get('available_action')}")
+                    if view["state"] != "refund_available" or view.get("available_action") != "refund":
+                        raise Failure(f"after the window the row reads {view['state']}/{view.get('available_action')}, not refund_available/refund")
+                    break
+                time.sleep(5)
+            else:
+                raise Failure("the Taker row still offers the claim after the claim window closed (FINDINGS 26)")
+        elif step == "maker-lez-refund":
+            wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+            if maker_view(swap_id).get("schedule_state") != "terminal":
+                try:
+                    result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-desk-refund-{stamp}")
+                    log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+                except Failure as error:
+                    if "conflicts with durable state" not in str(error):
+                        raise
+            phase = wait_maker_phase(swap_id, {"maker_leg_refunded", "refunded"}, timeout=timeout,
+                                     describe="(the Maker refunding its LEZ escrow)")
+            log(f"  the Maker's LEZ leg is back ({phase}); mining zebra to the Zcash refund height")
+            height = int(zebra("getblockcount"))
+            if height < corridor["zcash_refund_height"]:
+                zebra_mine(corridor["zcash_refund_height"] - height, "Zcash refund height")
+        else:
+            raise Failure(f"unknown zec-step {step}")
+    except Failure as failure:
+        log(f"FAILED: {failure}")
+        return False
+    return True
+
+
+def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict, funding: tuple[str, int],
+                          taker_observes: bool = True) -> dict:
+    """From the Taker's refunded LEZ leg to both Nodes `refunded`: zebra is mined
+    to the agreement's refund height, the Maker (which re-observes the LEZ leg
+    on its next attempt) refunds its Zcash funding, and the Taker's replayed
+    refund request re-drives its recovery until it has observed that refund."""
+    log("  mining zebra to the agreement's refund height")
+    height = int(zebra("getblockcount"))
+    if height < corridor["zcash_refund_height"]:
+        zebra_mine(corridor["zcash_refund_height"] - height, "Zcash refund height")
+    # The Maker's supervisor keeps retrying the claim it was routed to at
+    # both_legs_locked (now refused with RefundHeightReached); recovery is the
+    # operator's call, as on the desk. The queued refund runs the agreement-
+    # ordered recovery: the Maker observes the Taker's LEZ refund, then
+    # refunds its own Zcash leg at the refund height.
+    if maker_view(swap_id).get("schedule_state") != "terminal":
+        try:
+            result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
+            log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+        except Failure as error:
+            # A resumed run finds its own earlier request already recorded
+            # under this id; the Maker keeps that record and refuses a second
+            # one at another generation. The recovery it asked for still runs.
+            if "conflicts with durable state" not in str(error):
+                raise
+            log("  Maker refund request already recorded for this run; continuing")
+    deadline = time.time() + 1500
+    refund_tx = None
+    last = None
+    while time.time() < deadline:
+        pool = zebra("getrawmempool")
+        if isinstance(pool, list) and pool:
+            zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
+        refund_tx = zec_spend_of((funding[0], 0), funding[1])
+        view = maker_view(swap_id)
+        phase = maker_phase(swap_id)
+        if refund_tx and view.get("schedule_state") == "terminal":
+            break
+        if (phase, view.get("schedule_state")) != last:
+            log(f"  maker {swap_id[:12]}: {phase} (schedule {view.get('schedule_state')}) | zebra {zebra('getblockcount')}")
+            last = (phase, view.get("schedule_state"))
+        time.sleep(20)
+    if refund_tx is None:
+        raise Failure("no zebra block spends the Maker's funding output: the Maker did not refund Zcash")
+    phase = maker_phase(swap_id)
+    log(f"  Maker's Zcash refund {refund_tx[0]} is in zebra block {refund_tx[1]}; Maker ended {phase}")
+    if phase not in {"refunded", "maker_leg_refunded", "taker_leg_refunded"}:
+        raise Failure(f"the Maker ended in {phase}, not a refunded phase")
+    summary = {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
+               "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
+               "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
+               "zcash_refund_height": corridor["zcash_refund_height"], "maker_terminal_phase": phase}
+    if not taker_observes:
+        return summary
+    taker = zec_refund_until_terminal(swap_id, stamp, timeout=900)
+    log(f"  Taker observed the Maker's Zcash refund; Taker ended {taker['state']}")
+    return {**summary, "taker_terminal_state": taker["state"]}
+
+
+ZEC_SCENARIOS = {
+    "zec-happy": scenario_zec_happy,
+    "zec-taker-refund": scenario_zec_taker_refund,
+    "zec-maker-refund": scenario_zec_maker_refund,
+    "zec-concurrent": scenario_zec_concurrent,
+    "zec-concurrent-staggered": scenario_zec_concurrent_staggered,
+    "zec-claim-collision": scenario_zec_claim_collision,
+    "zec-early-lock": scenario_zec_early_lock,
+    "zec-offline-after-lock": scenario_zec_offline_after_lock,
+    "zec-refund-then-maker-lock": scenario_zec_refund_then_maker_lock,
+    "zec-replay": scenario_zec_replay,
+    "zec-wrong-inputs": scenario_zec_wrong_inputs,
+    "zec-restart-taker": lambda stamp: scenario_zec_restart(stamp, "taker"),
+    "zec-restart-maker": lambda stamp: scenario_zec_restart(stamp, "maker"),
+    "zec-survivor": scenario_zec_survivor,
+    "zec-regenerated-catalog": scenario_zec_regenerated_catalog,
+    "zec-tampered-catalog": scenario_zec_tampered_catalog,
+    "zec-balance-refusal": scenario_zec_balance_refusal,
+}
+
+
 SCENARIOS = {
     "happy": scenario_happy,
     "replay": scenario_replay,
@@ -1195,13 +3255,32 @@ SCENARIOS = {
 }
 
 
+def heartbeat_verdict() -> tuple[bool, int, int] | None:
+    """(stalled, seconds since finality moved, finalized height) from the
+    heartbeat's status file when it is present and at most two ticks old
+    (the service writes it every tick; LEZ_HEARTBEAT_SECONDS in runtime.env)."""
+    status_file = RUNTIME / "heartbeat" / "status.json"
+    try:
+        status = json.loads(status_file.read_text())
+        interval = int(next((line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                             if line.startswith("LEZ_HEARTBEAT_SECONDS=")), "20") or 20)
+    except (OSError, ValueError, StopIteration):
+        return None
+    if interval <= 0 or time.time() - int(status.get("at_unix", 0)) > 2 * interval + 15:
+        return None
+    return bool(status.get("stalled")), int(status.get("finality_flat_seconds", 0)), int(status.get("finalized") or 0)
+
+
 def preflight() -> None:
     """The standing LEZ indexer stops serving historical reads once its state
     breakpoints lag (the Maker's sidecar then reports `unavailable` and never
     funds); repair-indexer.sh checks and re-indexes when needed."""
     log("preflight: indexer historical reads")
-    result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "repair-indexer.sh")],
-                            capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT)
+    # The repair restarts the indexer when its historical reads fail; a run that
+    # shares the stack with another suite must only check (and fail honestly).
+    check_only = ["--check"] if os.environ.get("LEZ_E2E_INDEXER_CHECK_ONLY") == "1" else []
+    result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "repair-indexer.sh"), *check_only],
+                            capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, stdin=subprocess.DEVNULL)
     if result.returncode != 0:
         raise Failure(f"repair-indexer.sh failed: {result.stdout[-300:]} {result.stderr[-300:]}")
     for line in result.stdout.strip().splitlines()[-2:]:
@@ -1213,16 +3292,39 @@ def preflight() -> None:
     # finality for minutes and then catches up in one step, so a short sample
     # can show no progress on a chain the swaps still complete on; a frozen
     # chain shows none at all.
-    log("preflight: LEZ finality advancing")
+    # The burst behaviour above means the sample window is a judgement call, so
+    # it is configurable: a chain whose bedrock pauses for longer than the
+    # default needs a longer look before it is called frozen.
+    # On a chain whose finality only moves while swaps are running, this check
+    # gates the very traffic that would satisfy it. The comment above already
+    # notes swaps complete on chains that sample as frozen, so the check can be
+    # waived deliberately; the scenario then proves the chain for itself.
+    if os.environ.get("LEZ_E2E_SKIP_FINALITY_PREFLIGHT") == "1":
+        log("preflight: LEZ finality check waived by request")
+        return
+    # The finality heartbeat (deploy/README.md, Part C) already watches this
+    # chain when it runs: its status file says whether finality is flat right
+    # now and when it last moved, so a fresh status answers in one read. The
+    # sample below stays as the fallback when the service is off or stale.
+    verdict = heartbeat_verdict()
+    if verdict is not None:
+        stalled, flat_seconds, finalized = verdict
+        if stalled:
+            raise Failure(f"the finality heartbeat declares a stall: finalized {finalized} flat for {flat_seconds} s "
+                          "while the sequencer advances; recreate the LEZ chain (see project notes) before running swaps")
+        log(f"preflight: the finality heartbeat saw finality move {flat_seconds} s ago (finalized {finalized})")
+        return
+    window = int(os.environ.get("LEZ_E2E_FINALITY_WINDOW_SECONDS", "300"))
+    log(f"preflight: LEZ finality advancing (window {window} s)")
     first = lez_finalized_height()
     started = time.time()
-    while time.time() < started + 300:
+    while time.time() < started + window:
         time.sleep(10)
         second = lez_finalized_height()
         if second > first:
             log(f"  indexer finalized {first} → {second} in {round(time.time() - started)} s")
             return
-    raise Failure(f"LEZ finalized height stuck at {first} for 300 s: bedrock or the indexer is not advancing; "
+    raise Failure(f"LEZ finalized height stuck at {first} for {window} s: bedrock or the indexer is not advancing; "
                   "recreate the LEZ chain (see project notes) before running swaps")
 
 
@@ -1243,12 +3345,13 @@ def run(name: str) -> bool:
     stamp = str(int(time.time()))
     log(f"=== {name} (stamp {stamp})")
     started = time.time()
-    summary = {"scenario": name, "direction": ROUTE["direction"], "stamp": stamp, "timing": timing_profile()}
+    summary = {"scenario": name, "pair": ROUTE["pair"], "direction": ROUTE["direction"], "stamp": stamp,
+               "timing": timing_profile()}
     try:
         for role in ("maker", "taker"):
             wait_healthy(role, timeout=60)
         preflight()
-        summary.update(SCENARIOS[name](stamp))
+        summary.update({**SCENARIOS, **ZEC_SCENARIOS}[name](stamp))
         summary["result"] = "passed"
     except Failure as failure:
         summary["result"] = "failed"
@@ -1257,21 +3360,72 @@ def run(name: str) -> bool:
     summary["seconds"] = round(time.time() - started)
     out = RUNTIME / "e2e"
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{name}{'-lez' if REVERSE else ''}.json").write_text(json.dumps(summary, indent=2) + "\n")
+    suffix = ("" if REVERSE else "-foreign") if ROUTE["pair"] == "Zcash" else ("-lez" if REVERSE else "")
+    (out / f"{name}{suffix}.json").write_text(json.dumps(summary, indent=2) + "\n")
     log(f"=== {name}: {summary['result']} in {summary['seconds']}s")
     return summary["result"] == "passed"
 
 
 def main() -> int:
+    global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, "all"])
-    parser.add_argument("--direction", choices=["TakerSellsForeign", "TakerSellsLez"], default="TakerSellsForeign",
-                        help="which side the Taker sells; TakerSellsLez locks LEZ first and claims Bitcoin")
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "all"])
+    parser.add_argument("--swap-id", action="append", default=[],
+                        help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
+    parser.add_argument("--mine-pending-only", action="store_true",
+                        help="zec-drive: mine zebra only for what waits in the mempool, never for depth (refund journeys)")
+    parser.add_argument("--until", help="zec-drive: Taker state(s) to reach, '|'-separated")
+    parser.add_argument("--until-phase", help="zec-drive: Taker actor phase(s) to reach instead, '|'-separated")
+    parser.add_argument("--timeout", type=int, default=2400, help="zec-drive / zec-step: seconds")
+    parser.add_argument("--step", choices=ZEC_STEPS, help="zec-step: the host step of a ZEC desk journey")
+    parser.add_argument("--direction", choices=["TakerSellsForeign", "TakerSellsLez"], default=None,
+                        help="which side the Taker sells; TakerSellsLez locks LEZ first and claims the foreign coin "
+                             "(Bitcoin defaults to TakerSellsForeign, Zcash to TakerSellsLez)")
+    parser.add_argument("--pair", choices=["Bitcoin", "Zcash"], default="Bitcoin",
+                        help="Zcash runs the zec-* scenarios on a prepared corridor, in either direction")
     args = parser.parse_args()
-    global REVERSE
-    ROUTE["direction"] = args.direction
-    REVERSE = args.direction == "TakerSellsLez"
-    names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
+    global REVERSE, FOREIGN_UNITS, LEZ_UNITS
+    if args.pair == "Zcash":
+        ROUTE.update({"pair": "Zcash", "direction": args.direction or "TakerSellsLez"})
+        REVERSE = ROUTE["direction"] == "TakerSellsLez"
+        FOREIGN_UNITS, LEZ_UNITS = ZEC_FOREIGN_UNITS, ZEC_LEZ_UNITS
+        if args.scenario in {"zec-wait", "zec-drive"}:
+            # zec-wait polls the Nodes (the Taker Node drives its actor); zec-drive
+            # is the same wait with a hand drive per poll, for diagnosis only.
+            if args.scenario == "zec-drive":
+                MANUAL_DRIVE = True
+                log("  zec-drive: a hand drive per poll (ZEC_MANUAL_DRIVE); the Taker Node's supervisor drives too")
+            if len(args.swap_id) > 1:
+                if not args.until or args.until_phase or args.mine_pending_only:
+                    parser.error(f"{args.scenario} with several --swap-id takes --until only")
+                return 0 if zec_drive_many_tool(args.swap_id, args.until, args.timeout) else 1
+            swap_id = args.swap_id[0] if args.swap_id else None
+            if not (swap_id and (args.until or args.until_phase)):
+                parser.error(f"{args.scenario} needs --swap-id and --until or --until-phase")
+            return 0 if zec_drive_tool(swap_id, args.until or "", args.timeout, args.mine_pending_only, args.until_phase) else 1
+        args.swap_id = args.swap_id[0] if args.swap_id else None
+        if args.scenario == "zec-refund-tail":
+            if not args.swap_id:
+                parser.error("zec-refund-tail needs --swap-id")
+            return 0 if zec_refund_tail_tool(args.swap_id) else 1
+        if args.scenario == "zec-step":
+            if not (args.swap_id and args.step):
+                parser.error("zec-step needs --swap-id and --step")
+            return 0 if zec_step_tool(args.swap_id, args.step, args.timeout) else 1
+        if args.scenario == "zec-export":
+            if not args.swap_id:
+                parser.error("zec-export needs --swap-id")
+            return 0 if zec_export_tool(args.swap_id) else 1
+        names = list(ZEC_SCENARIOS) if args.scenario == "all" else [args.scenario]
+        unknown = [n for n in names if n not in ZEC_SCENARIOS]
+        if unknown:
+            parser.error(f"{unknown[0]} is a Bitcoin scenario; with --pair Zcash choose from {sorted(ZEC_SCENARIOS)}")
+    else:
+        ROUTE["direction"] = args.direction or "TakerSellsForeign"
+        REVERSE = ROUTE["direction"] == "TakerSellsLez"
+        names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
+        if any(n in ZEC_SCENARIOS for n in names):
+            parser.error("zec-* scenarios need --pair Zcash")
     for name in names:
         if not run(name):
             return 1

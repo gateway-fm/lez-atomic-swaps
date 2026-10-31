@@ -1,0 +1,25 @@
+taker actor zec-devnet-swap-1793304752: activate → activated - (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1793304752-b: activate → activated - (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1793304752: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1793304752-b: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1793304752: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez)
+actor drive: LEZ LezInitialize superseded (planned nonce 7, live 8); re-plan 1 at nonce 8: tx 530690e69bafa44a8ff0ec227fb6a673cb5af49a00899a3867a15081f05545f7 → ad61c746ba3e6bb1aee3e2c07b86b3ce43018d8bae9f5cf99413fe0d17abc46a
+taker actor zec-devnet-swap-1793304752-b: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez) re-planned [1 lez_initialize nonce 7→8 tx 530690e69bafa44a8ff0ec227fb6a673cb5af49a00899a3867a15081f05545f7→ad61c746ba3e6bb1aee3e2c07b86b3ce43018d8bae9f5cf99413fe0d17abc46a]
+taker actor zec-devnet-swap-1793304752-b: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1793304752: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+actor drive: LEZ LezInitialize superseded (planned nonce 8, live 9); re-plan 2 at nonce 9: tx ad61c746ba3e6bb1aee3e2c07b86b3ce43018d8bae9f5cf99413fe0d17abc46a → a4bacacff218775a10fd582ac37698b684df7284f87180f03935d7084e17f8b4
+taker actor zec-devnet-swap-1793304752-b: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez) re-planned [2 lez_initialize nonce 8→9 tx ad61c746ba3e6bb1aee3e2c07b86b3ce43018d8bae9f5cf99413fe0d17abc46a→a4bacacff218775a10fd582ac37698b684df7284f87180f03935d7084e17f8b4]
+taker actor zec-devnet-swap-1793304752: drive → awaiting_observation maker_lock (phase taker_lock_confirmed, revision 1, next wait)
+taker actor zec-devnet-swap-1793304752-b: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1793304752-b: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1793304752: drive → projected maker_lock (phase both_legs_locked, revision 2, next wait)
+taker actor zec-devnet-swap-1793304752: drive → awaiting_observation lez_revealing_claim (phase both_legs_locked, revision 2, next wait)
+taker actor zec-devnet-swap-1793304752-b: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+taker actor zec-devnet-swap-1793304752-b: drive → awaiting_observation maker_lock (phase taker_lock_confirmed, revision 1, next wait)
+taker actor zec-devnet-swap-1793304752: drive → projected lez_revealing_claim (phase claim_evidence_available, revision 3, next claim_zcash)
+taker actor zec-devnet-swap-1793304752-b: drive → projected maker_lock (phase both_legs_locked, revision 2, next wait)
+taker actor zec-devnet-swap-1793304752-b: drive → awaiting_observation lez_revealing_claim (phase both_legs_locked, revision 2, next wait)
+taker actor zec-devnet-swap-1793304752-b: drive → projected lez_revealing_claim (phase claim_evidence_available, revision 3, next claim_zcash)
+taker actor zec-devnet-swap-1793304752: claim → awaiting_observation zcash_followup_claim (phase claim_evidence_available, revision 3, next claim_zcash)
+taker actor zec-devnet-swap-1793304752-b: claim → projected zcash_followup_claim (phase completed, revision 4, next complete)
+taker actor zec-devnet-swap-1793304752: claim → projected zcash_followup_claim (phase completed, revision 4, next complete)

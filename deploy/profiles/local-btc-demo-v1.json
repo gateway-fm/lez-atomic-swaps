@@ -5,22 +5,358 @@
   "description": "Integrated local BTC/LEZ application whose two Nodes settle the swaps themselves (ADR 0213).",
   "artifact_identity_policy": "Pinned upstream image digests plus SHA-256-verified staged Rust and LEZ service binaries; scripts/stage-assets.sh is the profile gate.",
   "components": [
-    {"id":"bitcoin-init","lifecycle":"one_shot_init","executable":"chown","role":"shared","pair":"bitcoin","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":[]},
-    {"id":"bitcoin-core","lifecycle":"service","executable":"bitcoind","role":"shared","pair":"bitcoin","sockets":[],"state":[{"path":"volume:lez-bitcoin-core-data","backup":"critical"}],"credentials":["BTC RPC password"],"public_identities":[],"health":"bitcoin-cli getblockchaininfo","depends_on":["bitcoin-init"]},
-    {"id":"btc-miner","lifecycle":"service","executable":"btc-miner.sh","role":"shared","pair":"bitcoin","sockets":[],"state":[],"credentials":["BTC RPC password"],"public_identities":[],"health":"process","depends_on":["bitcoin-core"]},
-    {"id":"btc-explorer","lifecycle":"service","executable":"btc-rpc-explorer","role":"observer","pair":"bitcoin","sockets":[],"state":[],"credentials":["read-only BTC RPC password"],"public_identities":[],"health":"HTTP UI","depends_on":["bitcoin-core"]},
-    {"id":"lez-init","lifecycle":"one_shot_init","executable":"chown","role":"shared","pair":"lez","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":[]},
-    {"id":"bedrock","lifecycle":"service","executable":"logos-blockchain-node","role":"shared","pair":"lez","sockets":[],"state":[{"path":"deploy/runtime/bedrock","backup":"recreatable"}],"credentials":[],"public_identities":[],"health":"sequencer/indexer observation","depends_on":["lez-init"]},
-    {"id":"sequencer","lifecycle":"service","executable":"sequencer_service","role":"shared","pair":"lez","sockets":[],"state":[{"path":"deploy/runtime/sequencer","backup":"recreatable"}],"credentials":[],"public_identities":[],"health":"getBlock(1)","depends_on":["bedrock"]},
-    {"id":"indexer","lifecycle":"service","executable":"indexer_service","role":"shared","pair":"lez","sockets":[],"state":[{"path":"deploy/runtime/indexer","backup":"recreatable"}],"credentials":[],"public_identities":[],"health":"getLastFinalizedBlockId","depends_on":["sequencer"]},
-    {"id":"lez-explorer","lifecycle":"service","executable":"node","role":"observer","pair":"lez","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"HTTP UI","depends_on":["indexer"]},
-    {"id":"maker-init","lifecycle":"one_shot_init","executable":"chown","role":"maker","pair":"all","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":[]},
-    {"id":"maker-node","lifecycle":"service","executable":"lez-maker-node","role":"maker","pair":"all","sockets":["/run/lez/maker/node.sock"],"state":[{"path":"volume:lez-maker-state","backup":"critical"}],"credentials":["Maker-owned Delivery signing key"],"public_identities":["/delivery/maker-delivery-identity.pub"],"health":"maker_health","depends_on":["maker-init","bitcoin-core","indexer"]},
-    {"id":"taker-init","lifecycle":"one_shot_init","executable":"bash","role":"taker","pair":"all","sockets":[],"state":[],"credentials":[],"public_identities":[],"health":"successful exit","depends_on":["maker-node"]},
-    {"id":"taker-node","lifecycle":"service","executable":"lez-taker-node","role":"taker","pair":"all","sockets":["/run/lez/taker/node.sock"],"state":[{"path":"volume:lez-taker-state","backup":"critical"}],"credentials":["No private key in discovery-only profile"],"public_identities":["Read-only Maker Delivery public identity"],"health":"taker_health","depends_on":["taker-init"]},
-    {"id":"tools","lifecycle":"one_shot_tool","executable":"lez-zec-escrow-v02-deployer + lez-v02-vault-claim-poc + lez-v02-local-actor-identity","role":"shared","pair":"all","sockets":[],"state":[{"path":"market root (LEZ_MARKET_ROOT)","backup":"critical"}],"credentials":["Wallet identities it mints into the market root"],"public_identities":[],"health":"successful exit (compose profile tools; never a running service)","depends_on":["sequencer","indexer"]},
-    {"id":"basecamp-ui","lifecycle":"service","executable":"lez-maker-ui + lez-taker-ui","role":"both","pair":"all","sockets":[],"state":[],"credentials":["Role-local Chat/Delivery identities"],"public_identities":[],"health":"role package smoke tests","depends_on":["maker-node","taker-node"]}
+    {
+      "id": "bitcoin-init",
+      "lifecycle": "one_shot_init",
+      "executable": "chown",
+      "role": "shared",
+      "pair": "bitcoin",
+      "sockets": [],
+      "state": [],
+      "credentials": [],
+      "public_identities": [],
+      "health": "successful exit",
+      "depends_on": []
+    },
+    {
+      "id": "bitcoin-core",
+      "lifecycle": "service",
+      "executable": "bitcoind",
+      "role": "shared",
+      "pair": "bitcoin",
+      "sockets": [],
+      "state": [
+        {
+          "path": "volume:lez-bitcoin-core-data",
+          "backup": "critical"
+        }
+      ],
+      "credentials": [
+        "BTC RPC password"
+      ],
+      "public_identities": [],
+      "health": "bitcoin-cli getblockchaininfo",
+      "depends_on": [
+        "bitcoin-init"
+      ]
+    },
+    {
+      "id": "btc-miner",
+      "lifecycle": "service",
+      "executable": "btc-miner.sh",
+      "role": "shared",
+      "pair": "bitcoin",
+      "sockets": [],
+      "state": [],
+      "credentials": [
+        "BTC RPC password"
+      ],
+      "public_identities": [],
+      "health": "process",
+      "depends_on": [
+        "bitcoin-core"
+      ]
+    },
+    {
+      "id": "btc-explorer",
+      "lifecycle": "service",
+      "executable": "btc-rpc-explorer",
+      "role": "observer",
+      "pair": "bitcoin",
+      "sockets": [],
+      "state": [],
+      "credentials": [
+        "read-only BTC RPC password"
+      ],
+      "public_identities": [],
+      "health": "HTTP UI",
+      "depends_on": [
+        "bitcoin-core"
+      ]
+    },
+    {
+      "id": "zebra-init",
+      "lifecycle": "one_shot_init",
+      "executable": "chown",
+      "role": "shared",
+      "pair": "zcash",
+      "sockets": [],
+      "state": [],
+      "credentials": [],
+      "public_identities": [],
+      "health": "successful exit",
+      "depends_on": []
+    },
+    {
+      "id": "zebra",
+      "lifecycle": "service",
+      "executable": "zebrad",
+      "role": "shared",
+      "pair": "zcash",
+      "sockets": [],
+      "state": [
+        {
+          "path": "volume:lez-zebra-data",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [],
+      "public_identities": [],
+      "health": "zebrad getblockchaininfo",
+      "depends_on": [
+        "zebra-init"
+      ]
+    },
+    {
+      "id": "lez-init",
+      "lifecycle": "one_shot_init",
+      "executable": "chown",
+      "role": "shared",
+      "pair": "lez",
+      "sockets": [],
+      "state": [],
+      "credentials": [],
+      "public_identities": [],
+      "health": "successful exit",
+      "depends_on": []
+    },
+    {
+      "id": "bedrock",
+      "lifecycle": "service",
+      "executable": "logos-blockchain-node",
+      "role": "shared",
+      "pair": "lez",
+      "sockets": [],
+      "state": [
+        {
+          "path": "deploy/runtime/bedrock",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [],
+      "public_identities": [],
+      "health": "sequencer/indexer observation",
+      "depends_on": [
+        "lez-init"
+      ]
+    },
+    {
+      "id": "sequencer",
+      "lifecycle": "service",
+      "executable": "sequencer_service",
+      "role": "shared",
+      "pair": "lez",
+      "sockets": [],
+      "state": [
+        {
+          "path": "deploy/runtime/sequencer",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [],
+      "public_identities": [],
+      "health": "getBlock(1)",
+      "depends_on": [
+        "bedrock"
+      ]
+    },
+    {
+      "id": "indexer",
+      "lifecycle": "service",
+      "executable": "indexer_service",
+      "role": "shared",
+      "pair": "lez",
+      "sockets": [],
+      "state": [
+        {
+          "path": "deploy/runtime/indexer",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [],
+      "public_identities": [],
+      "health": "getLastFinalizedBlockId",
+      "depends_on": [
+        "sequencer"
+      ]
+    },
+    {
+      "id": "lez-explorer",
+      "lifecycle": "service",
+      "executable": "node",
+      "role": "observer",
+      "pair": "lez",
+      "sockets": [],
+      "state": [],
+      "credentials": [],
+      "public_identities": [],
+      "health": "HTTP UI",
+      "depends_on": [
+        "indexer"
+      ]
+    },
+    {
+      "id": "maker-init",
+      "lifecycle": "one_shot_init",
+      "executable": "chown",
+      "role": "maker",
+      "pair": "all",
+      "sockets": [],
+      "state": [],
+      "credentials": [],
+      "public_identities": [],
+      "health": "successful exit",
+      "depends_on": []
+    },
+    {
+      "id": "maker-node",
+      "lifecycle": "service",
+      "executable": "lez-maker-node",
+      "role": "maker",
+      "pair": "all",
+      "sockets": [
+        "/run/lez/maker/node.sock"
+      ],
+      "state": [
+        {
+          "path": "volume:lez-maker-state",
+          "backup": "critical"
+        },
+        {
+          "path": "volume:lez-zec-maker",
+          "backup": "critical"
+        }
+      ],
+      "credentials": [
+        "Maker-owned Delivery signing key"
+      ],
+      "public_identities": [
+        "/delivery/maker-delivery-identity.pub"
+      ],
+      "health": "maker_health",
+      "depends_on": [
+        "maker-init",
+        "bitcoin-core",
+        "indexer"
+      ]
+    },
+    {
+      "id": "taker-init",
+      "lifecycle": "one_shot_init",
+      "executable": "bash",
+      "role": "taker",
+      "pair": "all",
+      "sockets": [],
+      "state": [],
+      "credentials": [],
+      "public_identities": [],
+      "health": "successful exit",
+      "depends_on": [
+        "maker-node"
+      ]
+    },
+    {
+      "id": "taker-node",
+      "lifecycle": "service",
+      "executable": "lez-taker-node",
+      "role": "taker",
+      "pair": "all",
+      "sockets": [
+        "/run/lez/taker/node.sock"
+      ],
+      "state": [
+        {
+          "path": "volume:lez-taker-state",
+          "backup": "critical"
+        },
+        {
+          "path": "volume:lez-zec-taker",
+          "backup": "critical"
+        }
+      ],
+      "credentials": [
+        "No private key in discovery-only profile"
+      ],
+      "public_identities": [
+        "Read-only Maker Delivery public identity"
+      ],
+      "health": "taker_health",
+      "depends_on": [
+        "taker-init"
+      ]
+    },
+    {
+      "id": "tools",
+      "lifecycle": "one_shot_tool",
+      "executable": "lez-zec-escrow-v02-deployer + lez-v02-vault-claim-poc + lez-v02-local-actor-identity",
+      "role": "shared",
+      "pair": "all",
+      "sockets": [],
+      "state": [
+        {
+          "path": "market root (LEZ_MARKET_ROOT)",
+          "backup": "critical"
+        }
+      ],
+      "credentials": [
+        "Wallet identities it mints into the market root"
+      ],
+      "public_identities": [],
+      "health": "successful exit (compose profile tools; never a running service)",
+      "depends_on": [
+        "sequencer",
+        "indexer"
+      ]
+    },
+    {
+      "id": "heartbeat",
+      "lifecycle": "service",
+      "executable": "lez-v02-heartbeat",
+      "role": "shared",
+      "pair": "all",
+      "sockets": [],
+      "state": [
+        {
+          "path": "runtime/heartbeat",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "The heartbeat identity's LEZ signer key (minted into the market root by the tools; devnet only)"
+      ],
+      "public_identities": [],
+      "health": "status.json rewritten every tick (compose profile heartbeat; off with LEZ_HEARTBEAT_SECONDS=0)",
+      "depends_on": [
+        "sequencer",
+        "indexer"
+      ]
+    },
+    {
+      "id": "basecamp-ui",
+      "lifecycle": "service",
+      "executable": "lez-maker-ui + lez-taker-ui",
+      "role": "both",
+      "pair": "all",
+      "sockets": [],
+      "state": [],
+      "credentials": [
+        "Role-local Chat/Delivery identities"
+      ],
+      "public_identities": [],
+      "health": "role package smoke tests",
+      "depends_on": [
+        "maker-node",
+        "taker-node"
+      ]
+    }
   ],
-  "verification_commands": ["./scripts/check-runtime-profiles.py", "docker compose -f deploy/compose.yaml config --quiet"],
-  "nonclaims": ["Not safe for untrusted hosts", "Not a public-network deployment", "The runner container is a build and bootstrap host, not a swap participant"]
+  "verification_commands": [
+    "./scripts/check-runtime-profiles.py",
+    "docker compose -f deploy/compose.yaml config --quiet"
+  ],
+  "nonclaims": [
+    "Not safe for untrusted hosts",
+    "Not a public-network deployment",
+    "The runner container is a build and bootstrap host, not a swap participant"
+  ]
 }

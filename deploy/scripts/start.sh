@@ -84,7 +84,7 @@ else
   log "pulling ${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG}"
   docker compose --profile tools pull --quiet tools
 fi
-for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02; do
+for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   [[ -f "$LEZ_WALLET_IDENTITIES/$wallet/identity.json" ]] && continue
   log "minting the $wallet identity"
   rm -rf "${LEZ_WALLET_IDENTITIES:?}/$wallet"
@@ -121,7 +121,7 @@ docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-
 wait_nodes_ready() { # wait_nodes_ready <seconds>
   local deadline=$(( $(date +%s) + $1 ))
   node_ready() { # node_ready <role> <method> <params>
-    docker exec "lez-$1-node" curl -sS --max-time 5 --unix-socket "/run/lez/$1/node.sock" \
+    docker exec "lez-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
       -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null |
       python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",{}); sys.exit(0 if r.get("ready") is True and r.get("degraded") is not True else 1)' 2>/dev/null

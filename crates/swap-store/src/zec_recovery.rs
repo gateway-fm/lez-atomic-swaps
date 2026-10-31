@@ -13,10 +13,12 @@ use lez_zec_swap_sdk::{
     CLAIM_RECORD_SCHEMA_V2, ClaimIntentRecordV1, ClaimIntentV1, ClaimMaterialContext,
     ClaimMaterialPurpose, ClaimPreimage, ClaimRecoveryStore, ClaimStepV1, ClaimSubmissionContext,
     CreateAgreementOutcome, CreateFirstLockOutcome, FIRST_LOCK_RECORD_SCHEMA_V1,
-    FirstLockIntentRecordV1, FirstLockIntentV1, FirstLockProjectionCommit,
-    FirstLockTransitionRecordV1, FirstLockTransitionV1, FollowupClaimTransitionRecordV1,
-    FollowupClaimTransitionV1, LezAssetV1, LezObservationTrackerV1, MAKER_LOCK_RECORD_SCHEMA_V1,
-    MakerLockIntentRecordV1, MakerLockIntentV1, MakerLockTransitionRecordV1, MakerLockTransitionV1,
+    FIRST_LOCK_SUPERSESSION_RECORD_SCHEMA_V1, FirstLockIntentRecordV1, FirstLockIntentV1,
+    FirstLockPlanV1, FirstLockProjectionCommit, FirstLockSupersessionRecordV1,
+    FirstLockSupersessionV1, FirstLockTransitionRecordV1, FirstLockTransitionV1,
+    FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezAssetV1,
+    LezObservationTrackerV1, MAKER_LOCK_RECORD_SCHEMA_V1, MakerLockIntentRecordV1,
+    MakerLockIntentV1, MakerLockTransitionRecordV1, MakerLockTransitionV1,
     OBSERVED_MAKER_LOCK_SCHEMA_V1, ObservedFollowupClaimTransitionRecordV1,
     ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionRecordV1,
     ObservedMakerLockTransitionV1, ObservedRevealingClaimTransitionRecordV1,
@@ -929,6 +931,59 @@ impl RecoveryStore for SqliteZecRecoveryStore {
         Ok(Some(record.revalidate(&accepted, active_revision)?))
     }
 
+    async fn restage_first_lock_intent(
+        &self,
+        intent: &FirstLockIntentV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        self.require_role(intent.local_participant())?;
+        let record = FirstLockIntentRecordV1::from(intent);
+        let payload_version = i64::from(record.schema_version());
+        let payload_json = serde_json::to_string(&record)?;
+        let predecessor = sql_u64(intent.predecessor_revision())?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let agreement_row = load_agreement_row(&transaction, self.role_name(), intent.swap_id())?
+            .ok_or(StoreError::MissingZecRecoveryAgreement)?;
+        let active_revision = revision_from_sql(agreement_row.active_revision)?;
+        let accepted =
+            validated_agreement(&agreement_row, self.local_participant, intent.swap_id())?;
+        if &record.revalidate(&accepted, active_revision)? != intent {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let Some(row) = load_intent_row(&transaction, self.role_name(), intent.swap_id())? else {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        };
+        if row.closed_revision.is_some() || row.predecessor_revision != predecessor {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        }
+        let open = decode_intent_record(row.payload_version, &row.payload_json)?
+            .revalidate(&accepted, active_revision)?;
+        let outcome = restage_lock_row(
+            &transaction,
+            &RestageLockRow {
+                table: "zec_sdk_first_lock_intents",
+                role: self.role_name(),
+                swap_id: intent.swap_id(),
+                open_plan: open.plan(),
+                open_payload: (row.payload_version, &row.payload_json),
+                new_plan: intent.plan(),
+                new_payload: (payload_version, &payload_json),
+                supersession,
+            },
+        )?;
+        transaction.commit()?;
+        Ok(outcome)
+    }
+
+    async fn load_first_lock_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<FirstLockSupersessionV1>, Self::Error> {
+        let connection = self.connection()?;
+        load_supersession_rows(&connection, self.role_name(), swap_id)
+    }
+
     async fn commit_first_lock_transition(
         &self,
         transition: &FirstLockTransitionV1,
@@ -1431,6 +1486,57 @@ impl RecoveryStore for SqliteZecRecoveryStore {
         Ok(Some(intent))
     }
 
+    async fn restage_maker_lock_intent(
+        &self,
+        intent: &MakerLockIntentV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        self.require_role(intent.local_participant())?;
+        if self.local_participant != Participant::Maker {
+            return Err(StoreError::ZecRecoveryRoleMismatch);
+        }
+        let record = MakerLockIntentRecordV1::from(intent);
+        let payload_version = i64::from(record.schema_version());
+        let payload_json = serde_json::to_string(&record)?;
+        let staged_revision = sql_u64(intent.staged_revision())?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, _, _, _) = validated_maker_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            self.claim_key.as_deref(),
+            intent.swap_id(),
+        )?;
+        if &record.revalidate(&accepted)? != intent {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let Some(row) = load_maker_intent_row(&transaction, self.role_name(), intent.swap_id())?
+        else {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        };
+        if row.closed_revision.is_some() || row.staged_revision != staged_revision {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        }
+        let open = decode_maker_intent_record(row.payload_version, &row.payload_json)?
+            .revalidate(&accepted)?;
+        let outcome = restage_lock_row(
+            &transaction,
+            &RestageLockRow {
+                table: "zec_sdk_maker_lock_intents",
+                role: self.role_name(),
+                swap_id: intent.swap_id(),
+                open_plan: open.plan(),
+                open_payload: (row.payload_version, &row.payload_json),
+                new_plan: intent.plan(),
+                new_payload: (payload_version, &payload_json),
+                supersession,
+            },
+        )?;
+        transaction.commit()?;
+        Ok(outcome)
+    }
+
     async fn commit_maker_lock_transition(
         &self,
         transition: &MakerLockTransitionV1,
@@ -1808,6 +1914,126 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
         };
         transaction.commit()?;
         Ok(outcome)
+    }
+
+    async fn restage_claim_intent(
+        &self,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+        supersession: &lez_zec_swap_sdk::ClaimSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error> {
+        self.require_role(intent.local_participant())?;
+        if intent.step() != ClaimStepV1::RevealingLez {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let key = self.claim_key()?;
+        intent.validate_protected_payload_fingerprint(protected.fingerprint())?;
+        let record = ClaimIntentRecordV1::from(intent);
+        let payload_json = serde_json::to_string(&record)?;
+        let lineage = ClaimSupersessionRecordV1::from(supersession);
+        let lineage_json = serde_json::to_string(&lineage)?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let (accepted, active_revision, coordinator) = validated_claim_journal_head(
+            &transaction,
+            self.role_name(),
+            self.local_participant,
+            key,
+            intent.swap_id(),
+        )?;
+        if active_revision != intent.staged_revision()
+            || &record.revalidate(&accepted, &coordinator, active_revision)? != intent
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let exact =
+            protected.decrypt(key, claim_submission_context(accepted.agreement(), intent))?;
+        let _ = PreparedClaimSubmissionV1::new(
+            intent.step(),
+            *intent.expected_submission_id(),
+            exact.to_vec(),
+        )?;
+        let Some(open_row) =
+            load_claim_intent_row(&transaction, self.role_name(), intent.swap_id())?
+        else {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        };
+        if open_row.closed_revision.is_some() {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        }
+        let open = decode_claim_intent_record(&open_row)?.revalidate(
+            &accepted,
+            &coordinator,
+            active_revision,
+        )?;
+        let recorded =
+            load_claim_supersession_rows(&transaction, self.role_name(), intent.swap_id())?;
+        if let Some(existing) = recorded
+            .iter()
+            .find(|existing| existing.replan_index() == supersession.replan_index())
+        {
+            let outcome = if existing == supersession
+                && open.expected_submission_id() == intent.expected_submission_id()
+            {
+                CreateFirstLockOutcome::ExistingSame
+            } else {
+                CreateFirstLockOutcome::Conflict
+            };
+            transaction.commit()?;
+            return Ok(outcome);
+        }
+        let next_index = u32::try_from(recorded.len())
+            .ok()
+            .and_then(|count| count.checked_add(1));
+        if open.expected_submission_id() != supersession.superseded_id()
+            || intent.expected_submission_id() != supersession.replanned_id()
+            || next_index != Some(supersession.replan_index())
+        {
+            return Ok(CreateFirstLockOutcome::Conflict);
+        }
+        transaction.execute(
+            "INSERT INTO zec_sdk_claim_supersessions (
+                local_role, swap_id, replan_index, payload_version, payload_json,
+                superseded_payload_version, superseded_payload_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                self.role_name(),
+                intent.swap_id().as_str(),
+                i64::from(supersession.replan_index()),
+                i64::from(CLAIM_SUPERSESSION_RECORD_SCHEMA_V1),
+                lineage_json,
+                open_row.payload_version,
+                open_row.payload_json,
+            ],
+        )?;
+        transaction.execute(
+            "UPDATE zec_sdk_claim_intents SET
+                payload_version = ?3, payload_json = ?4, protected_version = ?5,
+                protected_ciphertext = ?6, protected_nonce = ?7, protected_key_id = ?8,
+                protected_fingerprint = ?9
+             WHERE local_role = ?1 AND swap_id = ?2 AND closed_revision IS NULL",
+            params![
+                self.role_name(),
+                intent.swap_id().as_str(),
+                i64::from(record.schema_version()),
+                payload_json,
+                i64::from(PROTECTED_CLAIM_SCHEMA_V1),
+                protected.ciphertext(),
+                protected.nonce().as_slice(),
+                protected.key_id(),
+                protected.fingerprint().as_slice()
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(CreateFirstLockOutcome::Created)
+    }
+
+    async fn load_claim_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<lez_zec_swap_sdk::ClaimSupersessionV1>, Self::Error> {
+        let connection = self.connection()?;
+        load_claim_supersession_rows(&connection, self.role_name(), swap_id)
     }
 
     async fn load_claim_intent(
@@ -2938,6 +3164,120 @@ fn load_agreement_row(
         .map_err(StoreError::from)
 }
 
+/// One re-plan of an open lock row: the superseded plan goes to the lineage
+/// table with the whole retired payload, the open row gets the new payload.
+struct RestageLockRow<'a> {
+    table: &'static str,
+    role: &'a str,
+    swap_id: &'a SwapId,
+    open_plan: &'a FirstLockPlanV1,
+    open_payload: (i64, &'a str),
+    new_plan: &'a FirstLockPlanV1,
+    new_payload: (i64, &'a str),
+    supersession: &'a FirstLockSupersessionV1,
+}
+
+fn restage_lock_row(
+    transaction: &Connection,
+    row: &RestageLockRow<'_>,
+) -> Result<CreateFirstLockOutcome, StoreError> {
+    let record = FirstLockSupersessionRecordV1::from(row.supersession);
+    let payload_version = i64::from(record.schema_version());
+    let payload_json = serde_json::to_string(&record)?;
+    let existing = load_supersession_rows(transaction, row.role, row.swap_id)?;
+    if let Some(recorded) = existing
+        .iter()
+        .find(|recorded| recorded.replan_index() == row.supersession.replan_index())
+    {
+        // A replay: the same re-plan already retired the same plan and the
+        // open row already carries the new one.
+        return Ok(
+            if recorded == row.supersession && row.open_payload == row.new_payload {
+                CreateFirstLockOutcome::ExistingSame
+            } else {
+                CreateFirstLockOutcome::Conflict
+            },
+        );
+    }
+    let next_index = u32::try_from(existing.len())
+        .ok()
+        .and_then(|count| count.checked_add(1))
+        .ok_or(StoreError::InvalidZecRecoveryState)?;
+    if row.supersession.replan_index() != next_index
+        || !row.supersession.links(row.open_plan, row.new_plan)
+    {
+        return Ok(CreateFirstLockOutcome::Conflict);
+    }
+    transaction.execute(
+        "
+        INSERT INTO zec_sdk_first_lock_supersessions (
+            local_role, swap_id, replan_index, payload_version, payload_json,
+            superseded_payload_version, superseded_payload_json
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        ",
+        params![
+            row.role,
+            row.swap_id.as_str(),
+            i64::from(row.supersession.replan_index()),
+            payload_version,
+            payload_json,
+            row.open_payload.0,
+            row.open_payload.1,
+        ],
+    )?;
+    let updated = transaction.execute(
+        &format!(
+            "UPDATE {} SET payload_version = ?3, payload_json = ?4
+             WHERE local_role = ?1 AND swap_id = ?2 AND closed_revision IS NULL",
+            row.table
+        ),
+        params![
+            row.role,
+            row.swap_id.as_str(),
+            row.new_payload.0,
+            row.new_payload.1
+        ],
+    )?;
+    if updated != 1 {
+        return Err(StoreError::InvalidZecRecoveryState);
+    }
+    Ok(CreateFirstLockOutcome::Created)
+}
+
+fn load_supersession_rows(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+) -> Result<Vec<FirstLockSupersessionV1>, StoreError> {
+    let mut statement = connection.prepare(
+        "
+        SELECT payload_version, payload_json
+        FROM zec_sdk_first_lock_supersessions
+        WHERE local_role = ?1 AND swap_id = ?2
+        ORDER BY replan_index ASC
+        ",
+    )?;
+    let rows = statement.query_map(params![role, swap_id.as_str()], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut lineage = Vec::new();
+    for row in rows {
+        let (payload_version, payload_json) = row?;
+        require_payload(
+            "SDK first-lock supersession",
+            payload_version,
+            i64::from(FIRST_LOCK_SUPERSESSION_RECORD_SCHEMA_V1),
+        )?;
+        let record: FirstLockSupersessionRecordV1 = serde_json::from_str(&payload_json)?;
+        let supersession = record.revalidate()?;
+        if supersession.replan_index() != u32::try_from(lineage.len()).unwrap_or(u32::MAX) + 1 {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        lineage.push(supersession);
+    }
+    Ok(lineage)
+}
+
 fn load_intent_row(
     connection: &Connection,
     role: &str,
@@ -3094,6 +3434,87 @@ fn load_claim_material_row(
         )
         .optional()
         .map_err(StoreError::from)
+}
+
+/// Schema of one stored revealing-claim supersession (FINDINGS 24).
+const CLAIM_SUPERSESSION_RECORD_SCHEMA_V1: u16 = 1;
+
+/// One stored revealing-claim re-plan: both identities and nonces, the index
+/// and the margin to the LEZ refund time when it was made.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct ClaimSupersessionRecordV1 {
+    replan_index: u32,
+    superseded_id: [u8; 32],
+    superseded_nonce: String,
+    replanned_id: [u8; 32],
+    replanned_nonce: String,
+    lez_refund_margin_ms: i64,
+}
+
+impl From<&lez_zec_swap_sdk::ClaimSupersessionV1> for ClaimSupersessionRecordV1 {
+    fn from(value: &lez_zec_swap_sdk::ClaimSupersessionV1) -> Self {
+        Self {
+            replan_index: value.replan_index(),
+            superseded_id: *value.superseded_id(),
+            superseded_nonce: value.superseded_nonce().to_string(),
+            replanned_id: *value.replanned_id(),
+            replanned_nonce: value.replanned_nonce().to_string(),
+            lez_refund_margin_ms: value.lez_refund_margin_ms(),
+        }
+    }
+}
+
+impl ClaimSupersessionRecordV1 {
+    fn revalidate(&self) -> Result<lez_zec_swap_sdk::ClaimSupersessionV1, StoreError> {
+        let nonce = |text: &str| -> Result<u128, StoreError> {
+            text.parse()
+                .map_err(|_| StoreError::InvalidZecRecoveryState)
+        };
+        lez_zec_swap_sdk::ClaimSupersessionV1::new(lez_zec_swap_sdk::ClaimSupersessionInputV1 {
+            replan_index: self.replan_index,
+            superseded_id: self.superseded_id,
+            superseded_nonce: nonce(&self.superseded_nonce)?,
+            replanned_id: self.replanned_id,
+            replanned_nonce: nonce(&self.replanned_nonce)?,
+            lez_refund_margin_ms: self.lez_refund_margin_ms,
+        })
+        .map_err(|_| StoreError::InvalidZecRecoveryState)
+    }
+}
+
+fn load_claim_supersession_rows(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+) -> Result<Vec<lez_zec_swap_sdk::ClaimSupersessionV1>, StoreError> {
+    let mut statement = connection.prepare(
+        "SELECT replan_index, payload_version, payload_json FROM zec_sdk_claim_supersessions
+         WHERE local_role = ?1 AND swap_id = ?2 ORDER BY replan_index",
+    )?;
+    let rows = statement.query_map(params![role, swap_id.as_str()], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut lineage = Vec::new();
+    for (position, row) in rows.enumerate() {
+        let (index, version, json) = row?;
+        if version != i64::from(CLAIM_SUPERSESSION_RECORD_SCHEMA_V1)
+            || usize::try_from(index).ok() != Some(position + 1)
+        {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        let record: ClaimSupersessionRecordV1 = serde_json::from_str(&json)?;
+        let supersession = record.revalidate()?;
+        if i64::from(supersession.replan_index()) != index {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
+        lineage.push(supersession);
+    }
+    Ok(lineage)
 }
 
 fn load_claim_intent_row(
@@ -4084,7 +4505,22 @@ fn validate_claim_auxiliary_state(
         }
         let record = decode_claim_intent_record(&intent_row)?;
         let intent = if intent_row.closed_revision.is_none() {
-            record.revalidate(accepted, coordinator, active_revision)?
+            let staged = revision_from_sql(intent_row.staged_revision)?;
+            if staged == active_revision {
+                record.revalidate(accepted, coordinator, active_revision)?
+            } else {
+                // A staged, never-submitted claim intent that the agreement-
+                // ordered recovery overtook: the journal moved on through
+                // refund transitions only (an observed counterparty refund, or
+                // the owner's own), so the claim can no longer be submitted and
+                // the intent stays as the durable record of what was prepared.
+                // It is validated where it was staged; anything other than a
+                // refund slot after it is corruption and still fails closed.
+                ensure_refund_only_slots(connection, role, swap_id, staged, active_revision)?;
+                let staged_coordinator =
+                    claim_coordinator_at(connection, role, accepted, staged, key)?;
+                record.revalidate(accepted, &staged_coordinator, staged)?
+            }
         } else {
             let committed = intent_row
                 .closed_revision
@@ -4122,6 +4558,32 @@ fn validate_claim_auxiliary_state(
             *intent.expected_submission_id(),
             exact.to_vec(),
         )?;
+    }
+    Ok(())
+}
+
+/// Every journal slot in `from..to` must hold exactly a refund transition and
+/// no claim transition: the revisions an open claim intent was overtaken by.
+fn ensure_refund_only_slots(
+    connection: &Connection,
+    role: &str,
+    swap_id: &SwapId,
+    from: u64,
+    to: u64,
+) -> Result<(), StoreError> {
+    if from >= to {
+        return Err(StoreError::InvalidZecRecoveryState);
+    }
+    for predecessor in from..to {
+        let predecessor_sql = sql_u64(predecessor)?;
+        let refund = load_refund_transition_row(connection, role, swap_id, predecessor_sql)?;
+        let owned_claim =
+            load_owned_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+        let observed_claim =
+            load_observed_claim_transition_row(connection, role, swap_id, predecessor_sql)?;
+        if refund.is_none() || owned_claim.is_some() || observed_claim.is_some() {
+            return Err(StoreError::InvalidZecRecoveryState);
+        }
     }
     Ok(())
 }

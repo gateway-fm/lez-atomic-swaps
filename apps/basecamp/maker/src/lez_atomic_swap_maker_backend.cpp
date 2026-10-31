@@ -129,7 +129,8 @@ QString LezAtomicSwapMakerBackend::btcSwapAction(
 {
     // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the
     // desk only refreshes. Manual claim and refund stay on the swap panel.
-    static const QRegularExpression swapPattern(QStringLiteral("^[0-9a-f]{64}$"));
+    // 64 hex for Bitcoin; a prepared ZEC swap keeps its catalog id.
+    static const QRegularExpression swapPattern(QStringLiteral("^[A-Za-z0-9._-]{8,128}$"));
     if (!marketRequest(requestId) || !makerWallet(walletId)
         || !swapPattern.match(swapId).hasMatch()
         || (action != QStringLiteral("fund_lez") && action != QStringLiteral("claim_btc")

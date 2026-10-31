@@ -73,6 +73,9 @@ const TAKER_ACTION_CONFLICT: i64 = -32_017;
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn separate_taker_countersigns_and_maker_atomically_accepts_before_response() {
+    // Build the peer Taker first: its build may take a minute, longer than a
+    // published offer lives across the Maker restart below.
+    cross_role::workspace_binary("lez-taker-cli");
     let run = tempdir().expect("isolated Chat process root");
     let runtime = run.path().join("runtime");
     fs::DirBuilder::new()
@@ -197,6 +200,9 @@ async fn separate_taker_countersigns_and_maker_atomically_accepts_before_respons
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn service_initiation_completes_real_chat_before_not_activated_response() {
+    // Build the peer Taker first: its build may take a minute, longer than a
+    // published offer lives across the Maker restart below.
+    cross_role::workspace_binary("lez-taker-cli");
     let run = tempdir().expect("isolated service Chat root");
     let runtime = run.path().join("runtime");
     fs::DirBuilder::new()
@@ -799,7 +805,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     assert!(replay.was_replay);
     assert_eq!(replay.swap, first.swap);
 
-    assert_eq!(registered.len(), 8, "registered methods: {registered:?}");
+    assert_eq!(registered.len(), 9, "registered methods: {registered:?}");
     for method in [
         "taker_health",
         "taker_offer_list_v1",
@@ -809,6 +815,7 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
         "taker_swap_monitor_v1",
         "taker_swap_claim_v1",
         "taker_swap_refund_v1",
+        "taker_wallet_balances_v1",
     ] {
         assert!(
             registered.contains(method),
@@ -840,11 +847,30 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
             "swap_not_found",
         );
     }
+    // A swap whose bound bundle fails the checks it was pinned by (a replaced
+    // receipt, a configuration copied from another swap) needs attention and
+    // offers no action; it is not a Node outage and does not hide the list
+    // (85e1e5c0).
+    for response in [&replaced_receipt_response, &crossed_pair_monitor_response] {
+        let view: TakerSwapViewV1 = serde_json::from_value(response["result"].clone())
+            .unwrap_or_else(|_| panic!("a swap with an altered bundle is a row: {response}"));
+        assert_eq!(
+            view.state,
+            TakerSwapStateV1::AttentionRequired,
+            "{response}"
+        );
+        assert_eq!(view.available_action, None, "{response}");
+    }
+    let crossed_list: TakerSwapListV1 =
+        serde_json::from_value(crossed_pair_list_response["result"].clone()).unwrap();
+    assert_eq!(crossed_list.swaps.len(), 1);
+    assert_eq!(
+        crossed_list.swaps[0].state,
+        TakerSwapStateV1::AttentionRequired
+    );
+    assert_eq!(crossed_list.swaps[0].available_action, None);
     for response in [
-        &replaced_receipt_response,
         &locked_actor_response,
-        &crossed_pair_monitor_response,
-        &crossed_pair_list_response,
         &corrupt_state_monitor_response,
         &corrupt_state_list_response,
         &missing_receipt_monitor_response,
@@ -880,6 +906,8 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     expected_active.progress_generation = 0;
     expected_active.available_action = None;
     expected_active.privacy_guidance = None;
+    // An activated Zcash swap's row names its Taker actor phase (REVIEW 08:59Z).
+    expected_active.actor_phase = Some("offered".to_owned());
     let active_monitor: TakerSwapViewV1 =
         serde_json::from_value(active_monitor_response["result"].clone()).unwrap();
     assert_eq!(active_monitor, expected_active);
@@ -894,9 +922,11 @@ async fn service_initiation_completes_real_chat_before_not_activated_response() 
     assert_eq!(active_recovered, expected_active);
     let in_progress: TakerSwapViewV1 =
         serde_json::from_value(in_progress_monitor_response["result"].clone()).unwrap();
-    let mut expected_in_progress = expected_active.clone();
-    expected_in_progress.state = TakerSwapStateV1::ClaimInProgress;
-    assert_eq!(in_progress, expected_in_progress);
+    // The admission is retained (below), but the actor offers no claim while
+    // it awaits its first lock, so the row is the actor's own view: an
+    // admitted action reads "in progress" only while the actor still offers
+    // it at that generation (ed22e20b).
+    assert_eq!(in_progress, expected_active);
     assert_eq!(in_progress.available_action, None);
     let retained_action = SqliteTakerFacadeStore::open_existing(&registry)
         .unwrap()

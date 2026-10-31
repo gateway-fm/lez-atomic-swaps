@@ -21,6 +21,13 @@ if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
 }
 const reverseDirection = uiDirection === "TakerSellsLez";
 const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
+// Zcash rows come from a prepared corridor (scripts/zec-provision.sh), one lot
+// per corridor (amounts below), in either direction. The Taker's first lock
+// (the LEZ escrow, or the Zcash HTLC when it sells ZEC) is driven by the
+// Taker Node's supervisor, so a fresh Zcash swap shows no button.
+const uiPair = process.env.M3_UI_PAIR || "Bitcoin";
+if (!["Bitcoin", "Zcash"].includes(uiPair)) throw new Error("M3_UI_PAIR must be Bitcoin or Zcash");
+const zcash = uiPair === "Zcash";
 
 const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
 // both plugins in one app: the product shape (maker + taker in the sidebar)
@@ -129,6 +136,14 @@ const btcAmount = process.env.LEZ_UI_BTC_AMOUNT || "0.01";
 const lezText = `${Number(lezAmount).toLocaleString("en-US")} LEZ`;
 const btcText = `${Number(btcAmount).toFixed(8)} BTC`;
 const btcShort = `${btcAmount} BTC`;
+// A Zcash row shows the prepared corridor's lot: ui-e2e.sh reads it from the
+// corridor's prepared.json and passes LEZ_UI_ZEC_AMOUNT (ZEC) and
+// LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), so a price change in zec-provision.sh
+// cannot silently break the journey.
+const zecAmount = process.env.LEZ_UI_ZEC_AMOUNT || "1";
+const zecLezAmount = process.env.LEZ_UI_ZEC_LEZ_AMOUNT || "50000";
+const zecText = `${Number(zecAmount).toFixed(8)} ZEC`;
+const zecLezText = `${Number(zecLezAmount).toLocaleString("en-US")} LEZ`;
 const makerTerms = [
   ["makerSellAmount", reverseDirection ? btcAmount : lezAmount, "amount"],
   ["makerReceiveAmount", reverseDirection ? lezAmount : btcAmount, "amount"],
@@ -190,6 +205,18 @@ async function deskSwaps(app) {
   return JSON.parse(reply.result);
 }
 
+// Whether the desk has a request in flight: its own busy flags, set when a
+// request goes out ("Sent over the owner-only channel") and cleared on the
+// Node's reply. A press is never repeated while one is in flight (REVIEW
+// 01:44Z: four re-presses under a pending refund showed as red errors).
+async function deskBusy(app) {
+  const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
+  if (wallet.matches?.length !== 1) return false;
+  const reply = await evaluateIn(app, wallet.matches[0].id,
+    "JSON.stringify(Boolean(root.busy) || Boolean(typeof root.btcMarketBusy !== 'undefined' && root.btcMarketBusy))");
+  return reply.ok === true && reply.result === "true";
+}
+
 // The desk's swap rows narrowed to the one the caller named (the Node names
 // each swap in its take reply; the desk carries it as `ui_swap_id`).
 function rowsFor(swaps, wanted) {
@@ -216,14 +243,45 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     }
     throw new Error(`${expectedText} is not ready${wanted ? ` on ${wanted.slice(0, 12)}` : ""}`);
   }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
+  // A press counts once the desk shows a reply to it: the output text changes.
+  // A press that produced none (the desk was still busy loading, so its
+  // handler returned without a request) is pressed again; a row that merely
+  // stays in an accepted state is not proof that anything was sent.
+  const before = await property(app, outputName, "text");
   await evaluateIn(app, target, "clicked()");
+  let pressedAt = Date.now();
+  let unanswered = 0;
   // A refusal the Node reports as a dependency being unavailable is what the
   // owner retries by pressing again (the API run retries the same way); any
   // other refusal fails the step.
   let retries = 0;
   await app.waitFor(async () => {
+    const text = await property(app, outputName, "text");
+    // The desk's own placeholder while a request is in flight is not a reply:
+    // the step waits for the Node's answer, so the app is never closed under
+    // a request it has not finished.
+    // "Action not sent: …" is the desk declining the press (busy, or no action
+    // on the row). While the desk has a request in flight (its busy flags, the
+    // "Waiting for owner-local Node" placeholder) the step waits for the
+    // Node's reply and never presses again. Only an idle desk that declined
+    // the press, or showed no reply to it for 20 s, is pressed again; every
+    // re-press prints RETRIED-PRESS, and a recorded journey that needed one is
+    // not an asset (the video shows the unanswered press).
+    const declined = text.startsWith("Action not sent");
+    const inFlight = text.startsWith("Waiting for owner-local Node") || await deskBusy(app);
+    if (text === before || declined || inFlight) {
+      if (inFlight) {
+        pressedAt = Date.now();
+      } else if ((declined || Date.now() - pressedAt > 20000) && unanswered < 4) {
+        unanswered += 1;
+        console.log(`  RETRIED-PRESS ${expectedText} ${declined ? `declined by the desk (${text})` : "produced no reply"}; pressing again (${unanswered}/4)`);
+        await evaluateIn(app, target, "clicked()");
+        pressedAt = Date.now();
+      }
+      throw new Error(`${expectedText} has no reply yet`);
+    }
     let envelope = null;
-    try { envelope = JSON.parse(await property(app, outputName, "text")); } catch { /* not a reply */ }
+    try { envelope = JSON.parse(text); } catch { /* not a reply */ }
     if (envelope?.ok === false) {
       const code = String(envelope.error?.code ?? envelope.code ?? "");
       if (/unavailable/.test(code) && retries < 4) {
@@ -304,8 +362,9 @@ async function publishOfferOnce(app, predicate) {
 
 // What the Maker desk is waiting for, in the words of the direction.
 function makerNarration(state) {
-  const mine = reverseDirection ? "Bitcoin" : "LEZ";
-  const theirs = reverseDirection ? "LEZ" : "Bitcoin";
+  // What the Maker locks and what it claims, by pair and direction.
+  const mine = zcash ? (reverseDirection ? "Zcash" : "LEZ") : reverseDirection ? "Bitcoin" : "LEZ";
+  const theirs = zcash ? (reverseDirection ? "LEZ" : "Zcash") : reverseDirection ? "LEZ" : "Bitcoin";
   switch (state) {
     case "awaiting_taker_claim":
       return `Nothing to click here: the Maker Node locks ${mine} on its own once the Taker's ${theirs} lock is final; the desk waits for "awaiting the Taker's claim"`;
@@ -320,14 +379,14 @@ function makerNarration(state) {
 
 if (role === "maker") {
   test("maker: launcher discoverable and app opens", async (app) => {
-    await app.waitFor(async () => app.expectTexts(["LEZ / BTC Maker"]), {
+    await app.waitFor(async () => app.expectTexts(["LEZ Maker"]), {
       timeout: 25000, interval: 500, description: "package discovery",
     });
-    await app.click("LEZ / BTC Maker");
+    await app.click("LEZ Maker");
     // "Node replied over the owner-local channel" is written when a reply
     // arrives, not when the view loads: the desk must prove the Node, not
     // its own readiness (#91).
-    await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Maker Desk", "Node replied over the owner-local channel"]), {
+    await app.waitFor(async () => app.expectTexts(["LEZ — Maker Desk", "Node replied over the owner-local channel"]), {
       timeout: 25000, interval: 500, description: "maker view + live backend",
     });
     narrate("Maker desk opened from the Basecamp launcher; it talks to the real Maker Node over its owner-only socket");
@@ -378,7 +437,9 @@ if (role === "maker") {
     let pending = pendingHere(munich.inventory);
     // The Node publishes one offer per click; two open offers prove the
     // inventory is indexed to this Node's identity and survives a refresh.
-    while (pending < 2) {
+    // A Zcash journey publishes nothing from the desk: its offer came from the
+    // prepared corridor, and a Bitcoin offer has no place in a ZEC recording.
+    while (!zcash && pending < 2) {
       const target = pending + 1;
       narrate(reverseDirection
         ? `New offer: the Maker sells ${btcShort} for ${lezText}; Publish sends it to the Maker Node, which signs and announces it over Delivery`
@@ -390,11 +451,13 @@ if (role === "maker") {
       pending = pendingHere(munich.inventory);
     }
     if (munich.selected_wallet_id !== "maker-munich-01" || munich.runner_ready !== true
-        || Number(munich.summary?.pending_offers ?? 0) < 2) {
+        || (!zcash && Number(munich.summary?.pending_offers ?? 0) < 2)) {
       throw new Error(`Node-indexed offer totals are wrong: ${JSON.stringify(munich).slice(0, 500)}`);
     }
     console.log(`  inventory: Munich Vault 01 (Maker Node) open offers=${pending} · market=${munich.summary.pending_offers}`);
-    narrate(`Inventory: ${pending} open ${reverseDirection ? "sell-BTC" : "sell-LEZ"} offers indexed by the Maker Node`);
+    narrate(zcash
+      ? `Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk`
+      : `Inventory: ${pending} open ${reverseDirection ? "sell-BTC" : "sell-LEZ"} offers indexed by the Maker Node`);
   });
 
   // The Maker Node's supervisor funds LEZ and claims Bitcoin itself; the desk
@@ -422,14 +485,14 @@ if (role === "maker") {
   }
 } else {
   test("taker: launcher discoverable and app opens", async (app) => {
-    await app.waitFor(async () => app.expectTexts(["LEZ / BTC Taker"]), {
+    await app.waitFor(async () => app.expectTexts(["LEZ Taker"]), {
       timeout: 25000, interval: 500, description: "package discovery",
     });
-    await app.click("LEZ / BTC Taker");
+    await app.click("LEZ Taker");
     // "Node replied over the owner-local channel" is written when a reply
     // arrives, not when the view loads: the desk must prove the Node, not
     // its own readiness (#91).
-    await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Taker Desk", "Node replied over the owner-local channel"]), {
+    await app.waitFor(async () => app.expectTexts(["LEZ — Taker Desk", "Node replied over the owner-local channel"]), {
       timeout: 25000, interval: 500, description: "taker view + live Node",
     });
     narrate("Taker desk opened from the Basecamp launcher; it talks to the real Taker Node over its owner-only socket");
@@ -442,7 +505,7 @@ if (role === "maker") {
     await app.expectTexts(["ACCOUNT", "My orders", "Available orders", "Zurich Wallet 01 · Taker Node"]);
     // The order book arrives with the first market snapshot after the view
     // opens; wait for the rendered rows instead of racing that request.
-    await app.waitFor(async () => app.expectTexts([btcText, lezText]), {
+    await app.waitFor(async () => app.expectTexts(zcash ? [zecText, zecLezText] : [btcText, lezText]), {
       timeout: 15000, interval: 500, description: "first market snapshot rendered",
     });
     {
@@ -484,22 +547,35 @@ if (role === "maker") {
       // from the row's own model behind each Take button. An offer the Maker
       // desk just published reaches this order book over Delivery, so the
       // row is awaited rather than demanded at once.
+      // A journey with several rows of this pair names the offer to take.
+      const wantedOffer = process.env.INTERACTIVE_OFFER_ID || "";
       let target = null;
       await app.waitFor(async () => {
         const buttons = await app.findByProperty("objectName", "takerTakeOffer");
         const seen = [];
         for (const match of buttons.matches ?? []) {
-          const direction = await evaluateIn(app, match.id, "String(modelData.direction)");
-          seen.push(direction.result);
-          if (direction.ok === true && direction.result === wantedDirection) { target = match.id; return; }
+          const row = await evaluateIn(app, match.id,
+            "String(modelData.direction) + ' ' + String(modelData.pair ?? 'Bitcoin') + ' ' + String(modelData.offer_id ?? '')");
+          seen.push(row.result);
+          if (row.ok !== true) continue;
+          const [direction, pair, offerId] = String(row.result).split(" ");
+          if (direction === wantedDirection && pair === uiPair && (!wantedOffer || offerId === wantedOffer)) { target = match.id; return; }
         }
-        throw new Error(`no takeable ${wantedDirection} order-book row yet (rows: ${seen.join(", ") || "none"})`);
-      }, { timeout: 180000, interval: 5000, description: `${wantedDirection} order-book row` });
-      narrate(reverseDirection
-        ? "Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap"
-        : "Take offer on a sell-LEZ row: the Taker Node reserves the lot, plans its Bitcoin funding, runs the signing ceremony with the Maker and activates the swap");
+        throw new Error(`no takeable ${wantedDirection} ${uiPair}${wantedOffer ? ` ${wantedOffer}` : ""} order-book row yet (rows: ${seen.join(", ") || "none"})`);
+      }, { timeout: 180000, interval: 5000, description: `${wantedDirection} ${uiPair} order-book row` });
+      narrate(zcash
+        ? "Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor"
+        : reverseDirection
+          ? "Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap"
+          : "Take offer on a sell-LEZ row: the Taker Node reserves the lot, plans its Bitcoin funding, runs the signing ceremony with the Maker and activates the swap");
       await evaluateIn(app, target, "clicked()");
-      const firstAction = reverseDirection ? "lock_lez" : "lock_btc";
+      // A Zcash swap has no desk lock: the Taker's first LEZ lock is the ZEC
+      // actor's, driven on the Node host. Right after the take the row reads
+      // "Preparing the swap" (the Node answers not_activated until the actor
+      // is activated there) and "LEZ lock pending" once it is; the desk only
+      // follows, so either state is the taken row.
+      const firstAction = zcash ? null : (reverseDirection ? "lock_lez" : "lock_btc");
+      const zcashTakenStates = ["preparing", "lock_pending"];
       // Older swaps may already show the same lock button: only the swap this
       // take created counts, and the Node names it in its reply. A rejected
       // take fails at once instead of waiting out the deadline.
@@ -517,17 +593,19 @@ if (role === "maker") {
         const swapId = envelope?.result?.taken?.swap?.swap_id;
         if (swapId) {
           const row = rowsFor(await deskSwaps(app), swapId)[0];
-          if (row?.action_required === firstAction) { taken = swapId; break; }
+          if (firstAction === null ? zcashTakenStates.includes(row?.state) : row?.action_required === firstAction) { taken = swapId; break; }
           if (Date.now() > deadline) {
-            throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction}`);
+            throw new Error(`swap ${swapId.slice(0, 12)} is ${row?.state ?? "missing"}, not ready to ${firstAction ?? "show as the prepared Zcash swap"}`);
           }
         } else if (Date.now() > deadline) {
           throw new Error("the Taker Node did not answer the take in time");
         }
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
-      console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · Taker lock action ready`);
-      narrate(`Swap ${taken.slice(0, 12)} is in "My orders" and needs the Taker: its ${reverseDirection ? "LEZ" : "Bitcoin"} lock`);
+      console.log(`  Node-owned swap ${taken.slice(0, 12)}: offer taken · ${zcash ? "LEZ lock pending (actor-driven)" : "Taker lock action ready"}`);
+      narrate(zcash
+        ? `Swap ${taken.slice(0, 12)} is in "My orders"; its first lock (${reverseDirection ? "the LEZ escrow" : "the Zcash HTLC"}) is driven by the Taker Node's supervisor, not a desk button`
+        : `Swap ${taken.slice(0, 12)} is in "My orders" and needs the Taker: its ${reverseDirection ? "LEZ" : "Bitcoin"} lock`);
     });
   }
 
@@ -544,15 +622,36 @@ if (role === "maker") {
                   "Bitcoin claim broadcast; the Maker Node uses the revealed secret to claim the LEZ escrow"],
       refund_btc: ["The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures",
                    "Refund admitted; the Taker Node broadcasts it when the timelock allows and follows it to confirmation"],
+      retry_refund_lez: ["Retry refund replays the admitted refund request; the Node re-drives the recovery on its own as well",
+                         "The Taker observed the Maker's Zcash refund; both legs are back and the swap is refunded"],
       refund_lez: ["The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached",
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
+      claim_zec: [`Claim ${zecText}: the Maker's LEZ claim revealed the secret; the Taker's claim spends the Zcash HTLC on the transparent pool`,
+                  "Zcash claim broadcast; once it is in a block the swap completes. The claim is transparent: move the funds to a shielded address afterwards"],
+      refund_zec: ["The Maker never locked LEZ and the HTLC's refund height is reached: the desk offers Refund; pressing it admits the refund, which the Node drives on the transparent pool",
+                   "Refund admitted; the Taker Node broadcasts the HTLC refund when the height allows and follows it to a block"],
     };
+    // Selling ZEC the Taker's LEZ claim is the revealing one of a hashlock, not of an adaptor signature.
+    if (zcash && action === "claim_lez") {
+      return [`Claim ${zecLezText}: the revealing claim spends the LEZ escrow and discloses the hashlock secret`,
+              "LEZ claim submitted; the Maker Node uses the revealed secret for its Zcash claim, which completes the swap"][moment === "before" ? 0 : 1];
+    }
     return (texts[action] ?? [action, action])[moment === "before" ? 0 : 1];
   }
 
   // A refund is admitted at once and driven by the Node until the chain
   // clocks allow it, so its row settles into refunding/refunded much later.
-  const takerActions = reverseDirection
+  const takerActions = zcash && !reverseDirection
+    ? { claim_lez: [`Claim ${zecLezText}`, ["claiming_lez", "claim_ready", "completed"], 45000],
+        refund_zec: [`Refund ${zecText}`, ["refunding", "refunded"], waitTimeoutMs] }
+    : zcash
+    ? { claim_zec: [`Claim ${zecText}`, ["claiming_zec", "claim_ready", "completed"], 45000],
+        refund_lez: [`Refund ${zecLezText}`, ["refunding", "refunded"], waitTimeoutMs],
+        // The admitted refund keeps its button as "Retry refund": the same
+        // request replayed, for an owner who does not want to wait for the
+        // Node's own re-drive (every 30 s until the row reads refunded).
+        retry_refund_lez: ["Retry refund", ["refunding", "refund_ready", "refunded"], waitTimeoutMs] }
+    : reverseDirection
     ? { lock_lez: [`Lock ${lezText}`, ["locking_lez"], 45000],
         claim_btc: [`Claim ${btcText}`, ["claiming_btc"], 45000],
         refund_lez: [`Refund ${lezText}`, ["refunding", "refunded"], waitTimeoutMs] }
@@ -586,4 +685,16 @@ process.on("exit", () => {
   try { rmSync(freshUserDir, { recursive: true, force: true }); } catch {}
 });
 
+// A recording keeps the desk on screen after its last step (RECORD_MIN_DWELL
+// seconds, set by record-step.sh): a step that finishes a second after the
+// desk's first paint would otherwise be a black segment, and the last caption
+// needs frames to sit on. The framework ends a passed run with process.exit,
+// so the exit itself is deferred by the dwell; the app is closed on exit.
+if (process.env.RECORD_MIN_DWELL) {
+  const exitNow = process.exit.bind(process);
+  process.exit = (code) => {
+    if (code === 0 || code === undefined) setTimeout(() => exitNow(code), Number(process.env.RECORD_MIN_DWELL) * 1000);
+    else exitNow(code);
+  };
+}
 await run();

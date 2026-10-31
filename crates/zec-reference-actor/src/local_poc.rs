@@ -19,12 +19,13 @@ use lez_zebra_node_adapter::{
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
     LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationTranscriptV1,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1, ZcashFundingInputV1,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementDraftV1, ZecAgreementRecordV1,
-    ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
-    derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
+    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
+    ZcashFundingInputSetV1, ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
+    ZecAgreementDraftV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
+    ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
+    build_transparent_transfer_transaction, derive_lez_metadata_account_v1,
+    derive_lez_native_custody_account_v1, derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -52,10 +53,19 @@ use crate::{ActorConfig, ActorRole, CandidateOutpoint, validate_actor_pair};
 const SPEC_SCHEMA_VERSION: u16 = 1;
 const MAX_SPEC_BYTES: usize = 32 * 1024;
 const MAX_LEZ_SIGNER_KEY_BYTES: usize = 65;
-const AUTHENTICATED_TRANSFER_PROGRAM: &str = "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg";
+// Retained v0.2.0 fixture transfer program, kept for the record:
+// `FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg`. Newer chains differ.
 const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
-const PREIMAGE_BYTE: u8 = 0x44;
+/// The claim secret of one provisioned swap: 32 bytes from the OS RNG, owner-
+/// private like the keys beside it (stored only in the funder's bundle; the
+/// agreement carries its SHA-256). Never derived from public inputs such as
+/// the swap id, which the agreement, the offers and the evidence all show.
+fn fresh_claim_preimage() -> anyhow::Result<Zeroizing<[u8; 32]>> {
+    let mut preimage = Zeroizing::new([0_u8; 32]);
+    getrandom::fill(&mut preimage[..]).map_err(|_| anyhow::anyhow!("claim preimage RNG"))?;
+    Ok(preimage)
+}
 const LEZ_NATIVE_AMOUNT: u128 = 50_000;
 const ZCASH_PRINCIPAL_ZATOSHIS: u64 = 100_000_000;
 const FUNDING_FEE_ZATOSHIS: u64 = 10_000;
@@ -73,11 +83,20 @@ struct ProvisionSpec {
     run_id: RunId,
     swap_id: String,
     direction: LocalPocDirection,
+    /// Recovery profile; absent means the deterministic test-lane profile.
+    #[serde(default)]
+    profile: LocalPocProfile,
     lez_runtime: LezRuntimeSpec,
     bridge: BridgeSpec,
     zebra_endpoint: Url,
     lez_discovery_start_height: u64,
     lez_discovery_max_blocks: u32,
+    /// Mature funder outputs to pass over before taking one. Two corridors
+    /// provisioned side by side (a concurrent-swap fixture) would otherwise
+    /// both be funded from the first mature output, since neither has spent
+    /// it yet when the second is provisioned; the second names 1.
+    #[serde(default)]
+    zcash_funding_skip: u32,
 }
 
 /// Owner-private LEZ signer files provisioned before a fresh local genesis.
@@ -97,6 +116,228 @@ impl std::fmt::Debug for LocalPocLezSignerFiles {
     }
 }
 
+/// Owner-private Zcash key files of both roles: 32 raw bytes or 64 hex
+/// characters each. Absent, the deterministic test-lane keys apply.
+pub struct LocalPocZcashKeyFiles {
+    maker: PathBuf,
+    taker: PathBuf,
+}
+
+impl std::fmt::Debug for LocalPocZcashKeyFiles {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalPocZcashKeyFiles")
+            .field("maker", &"<redacted>")
+            .field("taker", &"<redacted>")
+            .finish()
+    }
+}
+
+impl LocalPocZcashKeyFiles {
+    /// Binds one complete Maker/Taker Zcash key pair.
+    #[must_use]
+    pub fn new(maker: PathBuf, taker: PathBuf) -> Self {
+        Self { maker, taker }
+    }
+}
+
+/// The two roles' Zcash secrets the corridor is built with.
+struct ZcashKeyMaterial {
+    maker: Zeroizing<[u8; 32]>,
+    taker: Zeroizing<[u8; 32]>,
+}
+
+impl ZcashKeyMaterial {
+    /// The test-lane constants: the funder of `direction` owns the coinbase
+    /// key, the other role the second constant.
+    fn deterministic(direction: LocalPocDirection) -> Self {
+        let (maker_byte, taker_byte) = match direction.zcash_funder() {
+            ActorRole::Maker => (FUNDED_ZCASH_KEY_BYTE, OTHER_ZCASH_KEY_BYTE),
+            ActorRole::Taker => (OTHER_ZCASH_KEY_BYTE, FUNDED_ZCASH_KEY_BYTE),
+        };
+        Self {
+            maker: Zeroizing::new([maker_byte; 32]),
+            taker: Zeroizing::new([taker_byte; 32]),
+        }
+    }
+
+    fn funder(&self, direction: LocalPocDirection) -> &Zeroizing<[u8; 32]> {
+        match direction.zcash_funder() {
+            ActorRole::Maker => &self.maker,
+            ActorRole::Taker => &self.taker,
+        }
+    }
+}
+
+/// Reads one owner-private Zcash key file: 32 raw bytes, or 64 hex characters
+/// with an optional trailing newline, that form a valid secp256k1 secret.
+fn read_zcash_key_file(path: &Path, role: &str) -> Result<Zeroizing<[u8; 32]>> {
+    ensure!(path.is_absolute(), "{role} Zcash key path must be absolute");
+    let (bytes, _) = read_bounded_identified(path, 65, FilePrivacy::OwnerPrivate)
+        .map_err(|_| anyhow::anyhow!("{role} Zcash key file is unavailable or unsafe"))?;
+    let bytes = Zeroizing::new(bytes);
+    let mut key = Zeroizing::new([0_u8; 32]);
+    match bytes.len() {
+        32 => key.copy_from_slice(bytes.as_slice()),
+        64 | 65 => {
+            let text = std::str::from_utf8(&bytes[..64])
+                .map_err(|_| anyhow::anyhow!("{role} Zcash key file is not hex"))?;
+            ensure!(
+                bytes.len() == 64 || bytes[64] == b'\n',
+                "{role} Zcash key file has trailing content"
+            );
+            let mut decoded = Zeroizing::new([0_u8; 32]);
+            hex::decode_to_slice(text, &mut decoded[..])
+                .map_err(|_| anyhow::anyhow!("{role} Zcash key file is not hex"))?;
+            key.copy_from_slice(&decoded[..]);
+        }
+        _ => bail!("{role} Zcash key file must hold 32 bytes or 64 hex characters"),
+    }
+    SecretKey::from_slice(&key[..])
+        .map_err(|_| anyhow::anyhow!("{role} Zcash key is not a valid secret"))?;
+    Ok(key)
+}
+
+/// A Zcash key's public identity on the deterministic Regtest fixture.
+#[derive(Clone, Debug, Serialize)]
+pub struct LocalPocZcashIdentity {
+    /// Compressed secp256k1 public key, hex.
+    pub public_key: String,
+    /// HASH160 of the public key, hex: the BIP-199 participant hash.
+    pub public_key_hash: String,
+    /// The key's Regtest P2PKH address (`tm…`), zebra's `miner_address` form.
+    pub transparent_address: String,
+}
+
+/// Regtest transparent P2PKH address prefix (ZIP-? constant shared with testnet).
+const REGTEST_P2PKH_PREFIX: [u8; 2] = [0x1D, 0x25];
+
+fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
+    let TransparentAddress::PublicKeyHash(hash) = TransparentAddress::from_pubkey(public_key)
+    else {
+        bail!("public key did not derive a P2PKH address");
+    };
+    let mut payload = Vec::with_capacity(26);
+    payload.extend_from_slice(&REGTEST_P2PKH_PREFIX);
+    payload.extend_from_slice(&hash);
+    let checksum = Sha256::digest(Sha256::digest(&payload));
+    payload.extend_from_slice(&checksum[..4]);
+    Ok(bs58::encode(payload).into_string())
+}
+
+/// Reads an owner-private Zcash key file and reports its public identity.
+///
+/// # Errors
+///
+/// Fails for an absent, non-private, malformed or invalid key file.
+pub fn zcash_identity_from_key_file(path: &Path) -> Result<LocalPocZcashIdentity> {
+    let secret = read_zcash_key_file(path, "Zcash")?;
+    let mut secret_key = SecretKey::from_slice(&secret[..])?;
+    let public_key = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret_key);
+    secret_key.non_secure_erase();
+    Ok(LocalPocZcashIdentity {
+        public_key: hex::encode(public_key.serialize()),
+        public_key_hash: hex::encode(public_key_hash(&public_key)),
+        transparent_address: regtest_p2pkh_address(&public_key)?,
+    })
+}
+
+/// What one Regtest transfer between the roles' keys produced.
+#[derive(Clone, Debug, Serialize)]
+pub struct LocalPocTransferSummary {
+    /// The transfer's transaction id as the RPC displays it.
+    pub transaction_id: String,
+    /// Value paid to the recipient, zatoshis.
+    pub value_zatoshis: u64,
+    /// The sender's Regtest address (the spent mature output's owner).
+    pub from_address: String,
+    /// The recipient's Regtest address.
+    pub to_address: String,
+    /// Zebra tip height when the output was selected.
+    pub zebra_tip_height: u32,
+}
+
+/// Moves `value_zatoshis` from the key in `from_key_file` to the key in
+/// `to_key_file` with one plain transparent transaction on the deterministic
+/// Regtest fixture, spending one mature output of the sender (the first, or
+/// the one after `skip` mature outputs) and returning the change. The output
+/// becomes a corridor funder candidate for the recipient once it is 100
+/// blocks deep. Test lane only: it funds the Taker's key before a
+/// `TakerSellsForeign` corridor is provisioned.
+///
+/// # Errors
+///
+/// Fails closed for unsafe key files, equal keys, a non-Regtest Zebra, a
+/// missing mature output, an unaffordable value, or a rejected broadcast.
+pub async fn transfer_local_v0_2_regtest(
+    zebra_endpoint: &Url,
+    from_key_file: &Path,
+    to_key_file: &Path,
+    value_zatoshis: u64,
+    skip: u32,
+) -> Result<LocalPocTransferSummary> {
+    let from = read_zcash_key_file(from_key_file, "sender")?;
+    let to = read_zcash_key_file(to_key_file, "recipient")?;
+    ensure!(*from != *to, "sender and recipient Zcash keys must differ");
+    let mut from_secret = SecretKey::from_slice(&from[..])?;
+    let mut to_secret = SecretKey::from_slice(&to[..])?;
+    let secp = Secp256k1::signing_only();
+    let from_public = PublicKey::from_secret_key(&secp, &from_secret);
+    let to_public = PublicKey::from_secret_key(&secp, &to_secret);
+    to_secret.non_secure_erase();
+    let rpc = HttpZebraRpc::connect(
+        &HttpZebraRpcConfig::new(zebra_endpoint.as_str())
+            .with_request_timeout(Duration::from_secs(30))
+            .with_max_concurrent_requests(1),
+    )
+    .context("failed to connect bounded local Zebra RPC")?;
+    let (candidate, tip_height, _) =
+        select_mature_regtest_candidate(&rpc, &from_public, skip).await?;
+    let value = Zatoshis::from_u64(value_zatoshis).context("invalid transfer value")?;
+    let request = TransparentFundingRequest::new(
+        vec![TransparentUtxo::new(
+            candidate.outpoint.clone(),
+            candidate.output.clone(),
+        )],
+        from_public,
+        value,
+        Zatoshis::from_u64(FUNDING_FEE_ZATOSHIS)?,
+        Zatoshis::from_u64(MINIMUM_CHANGE_ZATOSHIS)?,
+        BlockHeight::from_u32(tip_height.saturating_add(100)),
+        BranchId::Nu6_2,
+    )?;
+    let transaction = build_transparent_transfer_transaction(&request, &to_public, &from_secret)?;
+    from_secret.non_secure_erase();
+    let mut bytes = Vec::new();
+    transaction
+        .write(&mut bytes)
+        .context("transfer transaction serialization failed")?;
+    let transaction_id = rpc
+        .send_raw_transaction(&bytes)
+        .await
+        .context("Zebra rejected the transfer")?;
+    Ok(LocalPocTransferSummary {
+        transaction_id: hex::encode(txid_display_hex(transaction_id).as_bytes()),
+        value_zatoshis,
+        from_address: regtest_p2pkh_address(&from_public)?,
+        to_address: regtest_p2pkh_address(&to_public)?,
+        zebra_tip_height: tip_height,
+    })
+}
+
+fn load_zcash_key_material(
+    key_files: Option<&LocalPocZcashKeyFiles>,
+    direction: LocalPocDirection,
+) -> Result<ZcashKeyMaterial> {
+    let Some(files) = key_files else {
+        return Ok(ZcashKeyMaterial::deterministic(direction));
+    };
+    let maker = read_zcash_key_file(&files.maker, "Maker")?;
+    let taker = read_zcash_key_file(&files.taker, "Taker")?;
+    ensure!(*maker != *taker, "Maker and Taker Zcash keys must differ");
+    Ok(ZcashKeyMaterial { maker, taker })
+}
+
 impl LocalPocLezSignerFiles {
     /// Binds one complete Maker/Taker signer pair for private no-clobber copying.
     #[must_use]
@@ -108,6 +349,35 @@ impl LocalPocLezSignerFiles {
 struct LezSignerMaterial {
     maker: Zeroizing<Vec<u8>>,
     taker: Zeroizing<Vec<u8>>,
+}
+
+/// The named profiles a local corridor may be provisioned under.
+#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum LocalPocProfile {
+    /// `deterministic-local-v1`: the isolated test lane (60 s LEZ refund delay).
+    #[default]
+    DeterministicLocalV1,
+    /// `deterministic-local-devnet-v1`: the same lane with a 30 min LEZ refund
+    /// delay, for a chain that finalises in minutes.
+    DeterministicLocalDevnetV1,
+    /// `deterministic-local-devnet-v2`: the devnet lane with the eight-block
+    /// Zcash refund window two swaps taken together need.
+    DeterministicLocalDevnetV2,
+    /// `deterministic-local-devnet-v3`: V2 with a 12 min LEZ refund delay, so
+    /// a refund fits the devnet chain's ~27 min of finality.
+    DeterministicLocalDevnetV3,
+}
+
+impl LocalPocProfile {
+    const fn id(self) -> ZecProfileId {
+        match self {
+            Self::DeterministicLocalV1 => ZecProfileId::DeterministicLocalV1,
+            Self::DeterministicLocalDevnetV1 => ZecProfileId::DeterministicLocalDevnetV1,
+            Self::DeterministicLocalDevnetV2 => ZecProfileId::DeterministicLocalDevnetV2,
+            Self::DeterministicLocalDevnetV3 => ZecProfileId::DeterministicLocalDevnetV3,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
@@ -283,13 +553,35 @@ pub async fn provision_local_v0_2_corridor(
 ///
 /// In addition to [`provision_local_v0_2_corridor`], fails for absent, aliased,
 /// non-canonical, non-private, malformed, equal, or account-mismatched signers.
-#[allow(clippy::too_many_lines)]
 pub async fn provision_local_v0_2_corridor_with_signers(
     spec_file: &Path,
     output_root: &Path,
     signer_files: Option<&LocalPocLezSignerFiles>,
 ) -> Result<LocalPocProvisionSummary> {
+    provision_local_v0_2_corridor_with_material(spec_file, output_root, signer_files, None).await
+}
+
+/// Provisions a local corridor with optional pre-provisioned LEZ signers and
+/// optional explicit Zcash keys for both roles.
+///
+/// With key files, the role that funds Zcash in the spec's direction must own
+/// mature Regtest outputs under its key (zebra mines to the Maker's; a Taker
+/// that funds is paid by a plain transfer first). Without them the
+/// deterministic test-lane keys apply, as before.
+///
+/// # Errors
+///
+/// In addition to [`provision_local_v0_2_corridor_with_signers`], fails for an
+/// absent, non-private, malformed or equal Zcash key file pair.
+#[allow(clippy::too_many_lines)]
+pub async fn provision_local_v0_2_corridor_with_material(
+    spec_file: &Path,
+    output_root: &Path,
+    signer_files: Option<&LocalPocLezSignerFiles>,
+    zcash_key_files: Option<&LocalPocZcashKeyFiles>,
+) -> Result<LocalPocProvisionSummary> {
     let spec = load_spec(spec_file)?;
+    let zcash_keys = load_zcash_key_material(zcash_key_files, spec.direction)?;
     let signer_material = load_lez_signer_material(
         signer_files,
         &spec.lez_runtime.maker_signer_account_id_base58,
@@ -312,17 +604,19 @@ pub async fn provision_local_v0_2_corridor_with_signers(
             .with_max_concurrent_requests(1),
     )
     .context("failed to connect bounded local Zebra RPC")?;
-    let mut funding_zcash_secret = SecretKey::from_slice(&[FUNDED_ZCASH_KEY_BYTE; 32])
-        .context("invalid deterministic Zcash funder key")?;
+    let mut funding_zcash_secret = SecretKey::from_slice(&zcash_keys.funder(spec.direction)[..])
+        .context("invalid Zcash funder key")?;
     let funding_zcash_public =
         PublicKey::from_secret_key(&Secp256k1::signing_only(), &funding_zcash_secret);
     funding_zcash_secret.non_secure_erase();
     let (candidate, tip_height, genesis_hash) =
-        select_mature_regtest_candidate(&rpc, &funding_zcash_public).await?;
+        select_mature_regtest_candidate(&rpc, &funding_zcash_public, spec.zcash_funding_skip)
+            .await?;
 
     let swap_id = SwapId::new(spec.swap_id.clone()).context("invalid swap ID")?;
     let fixture = build_agreement(
         &spec,
+        &zcash_keys,
         &swap_id,
         maker_lez_account,
         taker_lez_account,
@@ -955,10 +1249,11 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
         spec.schema_version == SPEC_SCHEMA_VERSION,
         "unsupported local PoC spec schema"
     );
-    ensure!(
-        spec.lez_runtime.authenticated_transfer_program_id_base58 == AUTHENTICATED_TRANSFER_PROGRAM,
-        "authenticated-transfer program does not match the retained v0.2 runtime"
-    );
+    // The authenticated-transfer program is whatever the chain in front of us
+    // deployed; the spec names it from the same manifest the Nodes read. It
+    // was once pinned to the retained v0.2.0 fixture, which refused every
+    // newer local chain (the v0.2.4 devnet ships `fe96c4...`, not `dcbbfe...`).
+    // The base58 value is still decoded and bound into the agreement below.
     ensure!(
         [
             spec.lez_runtime.chain_id,
@@ -987,6 +1282,7 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
 async fn select_mature_regtest_candidate(
     rpc: &HttpZebraRpc,
     funding_key: &PublicKey,
+    skip: u32,
 ) -> Result<(SelectedCandidate, u32, BlockHash)> {
     let identity = ZebraChainIdentity::deterministic_regtest_nu6_2();
     let before = rpc
@@ -1013,6 +1309,7 @@ async fn select_mature_regtest_candidate(
     let owner_script: Script = TransparentAddress::from_pubkey(funding_key).script().into();
     let tip_height = u32::from(before.tip_height());
     let mut selected = None;
+    let mut passed_over = 0u32;
     for height in 1..=tip_height {
         if tip_height.saturating_sub(height).saturating_add(1) < COINBASE_MATURITY_CONFIRMATIONS {
             break;
@@ -1048,13 +1345,10 @@ async fn select_mature_regtest_candidate(
             let Some(bundle) = transaction.transparent_bundle() else {
                 continue;
             };
-            if bundle
-                .vin
-                .first()
-                .is_none_or(|input| input.prevout() != &OutPoint::NULL)
-            {
-                continue;
-            }
+            // Any transparent output paying the funder's key is a candidate:
+            // the coinbase zebra mines to the Maker's key, or the plain payment
+            // the devnet provisioner makes to the Taker's key when the Taker
+            // funds Zcash. Both wait out the same depth below.
             for (index, output) in bundle.vout.iter().enumerate() {
                 if output.script_pubkey() != &owner_script
                     || u64::from(output.value())
@@ -1084,6 +1378,10 @@ async fn select_mature_regtest_candidate(
                     unspent.output() == output,
                     "Zebra UTXO facts differ from the canonical transaction"
                 );
+                if passed_over < skip {
+                    passed_over += 1;
+                    continue;
+                }
                 selected = Some(SelectedCandidate {
                     outpoint,
                     output: output.clone(),
@@ -1107,13 +1405,18 @@ async fn select_mature_regtest_candidate(
         before == after,
         "Zebra tip changed during candidate selection"
     );
-    let candidate = selected.context("no mature deterministic Zebra funder output is available")?;
+    let candidate = selected.with_context(|| {
+        format!(
+            "no mature deterministic Zebra funder output is available after passing over {skip}"
+        )
+    })?;
     Ok((candidate, tip_height, genesis))
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_agreement(
     spec: &ProvisionSpec,
+    zcash_keys: &ZcashKeyMaterial,
     swap_id: &SwapId,
     maker_lez_account: [u8; 32],
     taker_lez_account: [u8; 32],
@@ -1125,7 +1428,7 @@ fn build_agreement(
         .duration_since(UNIX_EPOCH)
         .context("system clock precedes Unix epoch")?
         .as_secs();
-    let profile = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
+    let profile = ZecRefundProfile::for_id(spec.profile.id());
     let zcash_anchor = zebra_tip_height
         .checked_add(1)
         .context("Zebra funding anchor overflow")?;
@@ -1145,18 +1448,19 @@ fn build_agreement(
         .checked_add(AGREEMENT_LIFETIME_SECONDS)
         .context("agreement expiry overflow")?;
 
-    let (maker_key_byte, taker_key_byte) = match spec.direction.zcash_funder() {
-        ActorRole::Maker => (FUNDED_ZCASH_KEY_BYTE, OTHER_ZCASH_KEY_BYTE),
-        ActorRole::Taker => (OTHER_ZCASH_KEY_BYTE, FUNDED_ZCASH_KEY_BYTE),
-    };
-    let maker_bytes = Zeroizing::new([maker_key_byte; 32]);
-    let taker_bytes = Zeroizing::new([taker_key_byte; 32]);
+    let maker_bytes = zcash_keys.maker.clone();
+    let taker_bytes = zcash_keys.taker.clone();
     let mut maker_secret = SecretKey::from_slice(maker_bytes.as_ref())?;
     let mut taker_secret = SecretKey::from_slice(taker_bytes.as_ref())?;
     let secp = Secp256k1::signing_only();
     let maker_public = PublicKey::from_secret_key(&secp, &maker_secret);
     let taker_public = PublicKey::from_secret_key(&secp, &taker_secret);
-    let preimage = Zeroizing::new([PREIMAGE_BYTE; 32]);
+    // One secret per swap. Fixture swaps taken together share keys, amounts
+    // and (at one anchor) the refund height; a shared preimage made their
+    // BIP-199 scripts identical, and the second swap's Taker discovered the
+    // first swap's funding as its Maker lock, then tried to spend an output
+    // already claimed (zec-concurrent, chain 37, 2026-10-29).
+    let preimage = fresh_claim_preimage()?;
     let secret_digest: [u8; 32] = Sha256::digest(&preimage[..]).into();
     let maker_hash = public_key_hash(&maker_public);
     let taker_hash = public_key_hash(&taker_public);
@@ -1176,7 +1480,7 @@ fn build_agreement(
         Zatoshis::from_u64(ZCASH_PRINCIPAL_ZATOSHIS)?,
         contract,
     );
-    let binding = ZecSwapBinding::new(ZecProfileId::DeterministicLocalV1, expected_output)?;
+    let binding = ZecSwapBinding::new(spec.profile.id(), expected_output)?;
     let funding_inputs = ZcashFundingInputSetV1::new(vec![ZcashFundingInputV1::new(
         *candidate.outpoint.hash(),
         candidate.outpoint.n(),
@@ -1193,7 +1497,7 @@ fn build_agreement(
     let body = ZecAgreementBodyV1::new(
         swap_id.as_str(),
         spec.direction.protocol(),
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(spec.profile.id()),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new(maker_lez_account, maker_public.serialize()),
             ZecParticipantIdentityV1::new(taker_lez_account, taker_public.serialize()),
@@ -1378,6 +1682,23 @@ pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 #[cfg(test)]
+mod zcash_identity_tests {
+    use super::*;
+
+    #[test]
+    fn the_test_lane_funder_key_is_the_asset_miner_address() {
+        let secret = SecretKey::from_slice(&[FUNDED_ZCASH_KEY_BYTE; 32]).unwrap();
+        let public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret);
+        // tests/e2e/zebra/zebrad.toml (the isolated lane) mines to this address;
+        // the devnet mints its own Maker key (deploy/scripts/gen-config.sh).
+        assert_eq!(
+            regtest_p2pkh_address(&public).unwrap(),
+            "tmNAP26Sw5Ra2jepAoTr1kqdkggawba6Akd"
+        );
+    }
+}
+
+#[cfg(test)]
 mod signer_tests {
     use std::{fs, os::unix::fs::PermissionsExt as _};
 
@@ -1471,5 +1792,30 @@ mod signer_tests {
         overflow.push(10);
         assert!(validate_external_lez_signer_encoding(&overflow).is_ok());
         assert!(derive_lez_signer_account(&overflow).is_err());
+    }
+}
+
+#[cfg(test)]
+mod claim_preimage_tests {
+    use lez_zec_swap_sdk::Bip199Contract;
+    use sha2::{Digest as _, Sha256};
+
+    use super::fresh_claim_preimage;
+
+    /// Two swaps provisioned together get different secrets, hence different
+    /// digests and different BIP-199 scripts even with the same keys, amount
+    /// and refund height (the shape of two catalog entries at one anchor).
+    #[test]
+    fn two_provisioned_swaps_have_different_secrets_and_scripts() {
+        let first = fresh_claim_preimage().expect("rng");
+        let second = fresh_claim_preimage().expect("rng");
+        assert_ne!(*first, *second);
+        assert_ne!(*first, [0_u8; 32]);
+        let digest = |preimage: &[u8; 32]| -> [u8; 32] { Sha256::digest(preimage).into() };
+        let contract = |preimage: &[u8; 32]| {
+            Bip199Contract::new(240, [0x11; 20], digest(preimage), [0x22; 20])
+        };
+        assert_ne!(digest(&first), digest(&second));
+        assert_ne!(contract(&first), contract(&second));
     }
 }

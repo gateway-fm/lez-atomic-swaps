@@ -189,6 +189,10 @@ pub enum RefundDriveOutcome {
         /// New durable role-local revision.
         revision: u64,
     },
+    /// No refund step was taken: this party's own submitted lock is neither
+    /// confirmed nor lapsed, so the recovery waits instead of ending with it
+    /// outstanding (FINDINGS 27); a confirmed one is projected and refunded.
+    AwaitingOwnLockSettlement(crate::FirstLockStepV1),
     /// Both refunds were already durably replayed or projected.
     Refunded {
         /// Terminal durable role-local revision.
