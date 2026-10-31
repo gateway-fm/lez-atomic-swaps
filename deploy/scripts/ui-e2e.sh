@@ -121,12 +121,12 @@ ui() { # ui <role> [ENV=VALUE...]
     docker compose "${stack_compose[@]}" run --rm -T --no-deps "${envs[@]}" \
       -e "STEP_TITLE=${step_title:-}" -v "$videos:/recordings" \
       --entrypoint bash basecamp-ui /ui-tests/record-step.sh "$role" "$segment" </dev/null 2>&1 |
-      grep -E '✓|✗|^    [a-zA-Z]|»|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:' | grep -viE 'locale'
+      grep -E '✓|✗|^    [a-zA-Z]|»|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:|RETRIED-PRESS|pressing again' | grep -viE 'locale'
     return "${PIPESTATUS[0]}"
   fi
   docker compose "${stack_compose[@]}" run --rm -T --no-deps "${envs[@]}" \
     --entrypoint node basecamp-ui /ui-tests/verify.mjs "$role" </dev/null 2>&1 |
-    grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:' | grep -viE 'locale'
+    grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:|RETRIED-PRESS|pressing again' | grep -viE 'locale'
 }
 # The same desk runner for the offline status check (#91): its own entry point,
 # because verify.mjs assumes a reachable Node from its first step.

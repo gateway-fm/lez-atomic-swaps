@@ -205,6 +205,18 @@ async function deskSwaps(app) {
   return JSON.parse(reply.result);
 }
 
+// Whether the desk has a request in flight: its own busy flags, set when a
+// request goes out ("Sent over the owner-only channel") and cleared on the
+// Node's reply. A press is never repeated while one is in flight (REVIEW
+// 01:44Z: four re-presses under a pending refund showed as red errors).
+async function deskBusy(app) {
+  const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
+  if (wallet.matches?.length !== 1) return false;
+  const reply = await evaluateIn(app, wallet.matches[0].id,
+    "JSON.stringify(Boolean(root.busy) || Boolean(typeof root.btcMarketBusy !== 'undefined' && root.btcMarketBusy))");
+  return reply.ok === true && reply.result === "true";
+}
+
 // The desk's swap rows narrowed to the one the caller named (the Node names
 // each swap in its take reply; the desk carries it as `ui_swap_id`).
 function rowsFor(swaps, wanted) {
@@ -249,12 +261,18 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     // the step waits for the Node's answer, so the app is never closed under
     // a request it has not finished.
     // "Action not sent: …" is the desk declining the press (busy, or no action
-    // on the row): it is pressed again like a press with no reply. Every
-    // re-press prints RETRIED-PRESS: a recorded journey that needed one is
+    // on the row). While the desk has a request in flight (its busy flags, the
+    // "Waiting for owner-local Node" placeholder) the step waits for the
+    // Node's reply and never presses again. Only an idle desk that declined
+    // the press, or showed no reply to it for 20 s, is pressed again; every
+    // re-press prints RETRIED-PRESS, and a recorded journey that needed one is
     // not an asset (the video shows the unanswered press).
     const declined = text.startsWith("Action not sent");
-    if (text === before || declined || text.startsWith("Waiting for owner-local Node")) {
-      if ((declined || Date.now() - pressedAt > 20000) && unanswered < 4) {
+    const inFlight = text.startsWith("Waiting for owner-local Node") || await deskBusy(app);
+    if (text === before || declined || inFlight) {
+      if (inFlight) {
+        pressedAt = Date.now();
+      } else if ((declined || Date.now() - pressedAt > 20000) && unanswered < 4) {
         unanswered += 1;
         console.log(`  RETRIED-PRESS ${expectedText} ${declined ? `declined by the desk (${text})` : "produced no reply"}; pressing again (${unanswered}/4)`);
         await evaluateIn(app, target, "clicked()");
