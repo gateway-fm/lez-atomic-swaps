@@ -2954,7 +2954,8 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
         log("  the Taker Node locks LEZ; the Maker's Zcash funding will be held in zebra's mempool")
         zec_poll_until("the Taker's LEZ lock confirmed and the Maker's funding in the mempool", 1500,
                        lambda: zec_actor_phase(config) in ZEC_PAST_FIRST_LOCK and bool(zec_mempool()))
-        if zec_outpoint_unspent(outpoint) is not True:
+        # gettxout counts a mempool spend as spent; what matters is a block.
+        if zec_spend_of(outpoint, corridor["zebra_tip_at_provisioning"] + 1) is not None:
             raise Failure("the Maker's funding is already in a block; the harness mined nothing")
         log(f"  the Maker's funding {zec_mempool()[0][:12]} is broadcast, unconfirmed; waiting for the LEZ refund time")
         wait_until(opens + 15, "for the agreement's LEZ refund time with the Maker's funding unconfirmed")
