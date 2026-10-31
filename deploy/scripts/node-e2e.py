@@ -1524,10 +1524,20 @@ def maker_funding_attempts(swap_id: str, since: str) -> tuple[int, int]:
     # The Maker's lock is the Zcash funding when the Taker sells LEZ and the
     # LEZ escrow funding (after its initialization) when the Taker sells ZEC.
     locked = "submitted zcash_fund" if zec_taker_sells_lez() else "submitted lez_fund"
+    # A step resubmitted while it waits for inclusion (the same bytes, no
+    # re-plan logged) is the designed idempotent recovery, not a new attempt:
+    # each submitted operation counts once (2026-10-31, V3: lez_initialize and
+    # lez_fund each went out twice on a lone swap).
+    submitted: set[str] = set()
     for line in maker_effect_lines(swap_id, since):
         if "projected taker_first_lock" in line:
             reprojections += 1
         if line.startswith("drive → ") and "(phase taker_lock_confirmed" in line:
+            operation = line.split(" (phase", 1)[0]
+            if "→ submitted " in operation and "re-planned" not in line:
+                if operation in submitted:
+                    continue
+                submitted.add(operation)
             attempts += 1
             if locked in line:
                 break
