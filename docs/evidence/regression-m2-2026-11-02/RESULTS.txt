@@ -159,6 +159,31 @@ Why the 13 failed in V6 (none is a defect in the code under test)
      After restarting lez-zebra (chain state on its volume, height kept) the rest of
      the block passed; the reruns restart zebra before each ZEC journey and pass.
 
-Recordings: the three ZEC desk recordings (Taker sells LEZ: happy, maker-refund,
-concurrent) were checked frame by frame by the reviewer and accepted (2026-10-31
-20:10Z, 20:31Z, 20:50Z). The other desk journeys ran unrecorded.
+Recordings (videos/), each a by-product of a desk journey that passed while being
+recorded, kept only without a re-press:
+
+  Taker sells LEZ (V6, 2026-10-31; checked frame by frame and accepted by the reviewer
+  at 20:10Z, 20:31Z, 20:50Z):
+    TakerSellsLez-zec-happy.mp4          journey 267 s   video 208 s
+    TakerSellsLez-zec-maker-refund.mp4   journey 970 s   video 292 s
+    TakerSellsLez-zec-concurrent.mp4     journey 391 s   video 336 s
+
+  Taker sells ZEC (2026-11-03, same images, each on a fresh chain, first try;
+  logs/record-tsf.log, logs/rec-TakerSellsForeign-*.log):
+    TakerSellsForeign-zec-happy.mp4         journey  455 s   video 188 s   14:13:40Z
+    TakerSellsForeign-zec-maker-refund.mp4  journey 1028 s   video 108 s   14:35:24Z
+    TakerSellsForeign-zec-concurrent.mp4    journey  643 s   video 375 s   15:04:38Z
+    TakerSellsForeign-zec-stale-window.mp4  journey 1011 s   video 124 s   15:27:18Z
+
+  Notes on the selling-ZEC desk copy (funds correct in every recording):
+    - zec-happy and zec-concurrent: while the revealing LEZ claim is in flight the Taker
+      row reads "LEZ claim submitted" under NEEDS YOU with a "Retry claim" button; a press
+      would be a replay (one revealing claim in flight per Node).
+    - zec-maker-refund: the Maker's LEZ is already back when the Taker presses Refund, but
+      the row reads "Claim window closed ... the Maker refunds its LEZ" before the press
+      and "Refunding Zcash · waiting for the Maker's LEZ refund" after it: the Taker actor
+      records the Maker's refund (phase maker_leg_refunded) only when it recovers.
+    - zec-stale-window: "Claim window closed" with Refund as the only action, as designed
+      (FINDINGS 26).
+
+The other desk journeys ran unrecorded.

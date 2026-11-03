@@ -1,5 +1,5 @@
-89d182fc9112001b88d671ba4645653ccd67a5a846d6ecbe7ed30511c4c7c528  ./PROVENANCE.md
-91aa12301462a8a217dce3e90115d32d8fbb567b6be66c2fdd9e36eabc9f2374  ./RESULTS.txt
+8599ae9c902ff5467d356eb131732756e881f3d5ca39020143e1a08312c02232  ./PROVENANCE.md
+5aed84ece4683fa8931c9c525c1fdc47280d7b4073864469f37920fc8364a8c0  ./RESULTS.txt
 2b4b1717c9bd9acf5acf6c551b7967462dc6924ec0ea2366ff3084241b7ce63c  ./e2e/concurrent-lez.json
 9a2a59c81885ec36737d1a12fc150448730ba762e60abdf05b9820a9102175ca  ./e2e/concurrent.json
 143b02cf84a861d11fb96b3a86755a983ba733c525b86c96abdfee5d4884dab7  ./e2e/early-lock-lez.json
@@ -60,6 +60,11 @@ a32d43049f0f7c61becfc0c45a9ff794c4406dd990aa31ca783acd76e5f4768b  ./e2e/zec-tamp
 1feae347f7aa2cf2626f0f94b4a46989390bce434da0c454d50cd7a646c3bc1f  ./e2e/zec-wrong-inputs-foreign.json
 a217ede114320d8a227a079e87507fe840ce42b39ae1ff22bb57118da0d7dec1  ./e2e/zec-wrong-inputs.json
 81ef4adea624a2f5ffcb604a64c3099f5860826288eef6ea79f230a91d1e5807  ./logs/final-v6.log
+aa6345b8b40766055b397bf807e462912410304a9e3fc945b7c43d640a412283  ./logs/rec-TakerSellsForeign-zec-concurrent-1.log
+a89843a0f7fc20f4c56b28657e41377adaf7c47eb023ae87c953c7388462bd5b  ./logs/rec-TakerSellsForeign-zec-happy-1.log
+f14642ee1c0e6e16eef95f8110853be1715d98231b2fc8eb2bcf4107e3734429  ./logs/rec-TakerSellsForeign-zec-maker-refund-1.log
+51a9dd22c30023975b4fbd609619614bdc5b97f4b0cf180117e824d360d75f37  ./logs/rec-TakerSellsForeign-zec-stale-window-1.log
+7fdd18722384fae28fd882c507fa0dda8b4b258258b7982e7c49e7411c0b633f  ./logs/record-tsf.log
 3abd54b055c6f59ed8d725edc7cb9194e5599157820f20babfffb87f474f94c5  ./logs/rerun-btc-early-lock-TakerSellsLez-1.log
 479dfe4ab4e95d6e1359ece03f8be17df40fc4b248d1b4f51068afc8b551d06c  ./logs/rerun-btc-maker-refund-TakerSellsLez-1.log
 47c2880188f073744c6369da467d3f883bd561097c93878ec70f15f045782a85  ./logs/rerun-btc-offline-after-lock-TakerSellsForeign-1.log
@@ -168,6 +173,10 @@ a5992bfcf8272bb58e10fc612de9a121a34081cde00eda0f5dfdf48d8094df98  ./logs/v6-zec-
 32785f25fe50145e83921dbcaf2381de85694955fcedcfa5c8202faa9d54f516  ./logs/v6-zec-tampered-catalog-TakerSellsLez-1.log
 cc7cba37f0e45599d1a51e30f4152003f309e0939a5c0d7ca0e2bc66d942fa97  ./logs/v6-zec-wrong-inputs-TakerSellsForeign-1.log
 f33af7cf1f1468f0028eb96ab4b668da3a8aec7d0c983ce2ae44766410a4ad5f  ./logs/v6-zec-wrong-inputs-TakerSellsLez-1.log
+a111847612fc73314b287a989881a6b7bb44ec683a6c861ff50963b31a725734  ./videos/TakerSellsForeign-zec-concurrent.mp4
+5f4128097d26c735d38cdd1d6394212885b2b60a1c93908ff76eb2e9be1d3790  ./videos/TakerSellsForeign-zec-happy.mp4
+e6c31a89a7471c9f401b12c88169cfde9dafc59abe30a1b7a097866fa3661b74  ./videos/TakerSellsForeign-zec-maker-refund.mp4
+e62b11951eeb7099ed906c78b46d7bd5b068502096ff2923d86c02cd2c77b4f9  ./videos/TakerSellsForeign-zec-stale-window.mp4
 230ac5cbee96093d7be1f83a90b572e9d0e04a731320658abcdff6d74634b16e  ./videos/TakerSellsLez-zec-concurrent.mp4
 9a4688831b8d1a21dcb6e78ef6bb7433bfbc65ae6e4b40d93a4874b4053b7bbb  ./videos/TakerSellsLez-zec-happy.mp4
 867efe16f847bc7cafddc87c58a64f667f94986fdf857d50425bc625ef5c3ffe  ./videos/TakerSellsLez-zec-maker-refund.mp4
@@ -190,3 +199,8 @@ a8ae7a2e6a5a3c41deb5bb9f03ffa8b575c0437682dd3655fe14f4740d0b71ab  ./zec/zec-devn
 40aaf710f0ee36bfdc83ae71dd5c2dd8810437274bbd1ed6edbc0c1da0711782  ./zec/zec-devnet-swap-1793513128.json
 c6957b161586fe1a3497e6da5820b2377b8e50d077909b70b67a1a52740e6e2f  ./zec/zec-devnet-swap-1793633328.json
 511c2cae70d9b82fb7d3e6c15c5064280af03b99e31cbff23a657c305113d6ed  ./zec/zec-devnet-swap-1793633899.json
+5e988fc87e5c3fb826b4d7d3f1b02fdf9784e8f318224c8f49a9ce3278770eff  ./zec/zec-devnet-swap-1793714800.json
+c1fd527dc56e80a2597f8ffc2dbbaf5f0e14d7536d5db236753a6944412d939c  ./zec/zec-devnet-swap-1793715503.json
+943bd4b15642620ffb7215534592ad3d228f352a5102e4a95d35ec24627f237a  ./zec/zec-devnet-swap-1793717666-b.json
+b5777a87ca5ceb599eb68dd506ccdc4bdf7b3a6c40e92f76f01bc751608e7ff8  ./zec/zec-devnet-swap-1793717666.json
+ef24d5166f17c830491888ecca604d03a2f6a35cfbec1a0b37abf0b4ad9a5aa8  ./zec/zec-devnet-swap-1793718634.json

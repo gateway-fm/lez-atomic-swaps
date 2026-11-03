@@ -167,8 +167,129 @@ rerun-v6.log:
 
 ## Recordings
 
-`videos/TakerSellsLez-zec-{happy,maker-refund,concurrent}.mp4`: the three ZEC
-desk recordings, both desks side by side, recorded by `ui-e2e.sh --record` on
-chains 400–402. A recording is kept only when no press had to be repeated
-(`RETRIED-PRESS` absent). The reviewer checked each one frame by frame and
-accepted it (2026-10-31 20:10Z, 20:31Z, 20:50Z).
+`videos/TakerSellsLez-zec-{happy,maker-refund,concurrent}.mp4`: recorded by
+`ui-e2e.sh --record` on chains 400–402 during V6; the reviewer checked each one
+frame by frame and accepted it (2026-10-31 20:10Z, 20:31Z, 20:50Z).
+`videos/TakerSellsForeign-zec-{happy,maker-refund,concurrent,stale-window}.mp4`:
+recorded on 2026-11-03 by a scratch runner (`logs/record-tsf.log`) on the same
+images, each on a fresh chain (recreations 454–457, all first attempt) with
+zebra restarted first, each on its first try. A recording is kept only when no
+press had to be repeated (`RETRIED-PRESS` absent). The desk-copy notes are in
+`RESULTS.txt`.
+
+## Changes BTC shares (owner rule: M3 scope frozen, every shared change listed)
+
+The M3 BTC code (`btc-*` crates, the BTC actors) is not changed on this branch.
+Code BTC shares with ZEC was changed. The rule used for this list: commits on
+this branch since `4b76e2f7` that touch `maker-node`, `taker-node`,
+`actor-supervision`, `swap-store`, `lez-bridge-*`, the sidecar, the deploy
+entrypoints and bootstrap, the lockfiles, or the shared desk code
+`apps/basecamp/common` and the Taker desk. Each is covered by the BTC
+regression in this set (Node 28/28, desks 16/16 on the same images).
+
+- 2bde2fd2 test(taker-node): the first-attempt reply rule of 9afd25a8 is a tested helper; the API README names it
+- 6648c363 test(swap-store): every bridge operation name inserts under the journal's CHECK
+- de8f42a4 fix(maker-node): no Node-wide Zcash claim preimage; the agreement's template is the only source
+- 8f01a687 fix(maker-node): a Zcash completion takes the claim preimage from the agreement's own template, not the Node-wide file
+- c0510362 chore(taker-node): a failed Zcash take and a failed receipt binding name their cause on stderr
+- 9afd25a8 fix(taker-node): a Zcash action's first attempt may be refused after its admission; the supervisor retries it, the caller gets the admission
+- b1714423 fix(adapter): a re-plan retires the superseded steps' submit contexts, so the re-planned bytes get request ids of their own (D1)
+- 0983e4ed fix(swap-store): the request-context journal admits the supersede operations and rebuilds an older journal on open (D1)
+- e9ad978a fix(sidecar): a journaled submission success is decided on the chain again, so a taken nonce is named Superseded on the resubmit (D1)
+- ac7739f4 test(swap-store): the Maker lock sqlite tests follow D2 (a deeper view of the same lock keeps the Maker eligible)
+- c3091862 feat(zec): a superseded LEZ nonce is re-planned in the same drive attempt, with its lineage (D1)
+- cac9476f feat(deploy): the LEZ finality heartbeat (Part C): one unit every 20 s, a stall declared in two minutes
+- b04a8ad6 fix(taker-node): the supervisor reloads the actor config before an effect; material failures retry
+- 7e63d2c1 feat(taker-node): the Taker Node supervises its Zcash actor itself, from activation to claim_available
+- 9ab3132c test(supervision): every failure class a Node emits is a word of the shared alphabet
+- 00788cb8 refactor(supervision): the schedule vocabulary both Nodes supervise actors with, lifted from the Maker
+- 090c30eb fix(deploy): the wallet allocation lives in one place, written by gen-config and read by the bootstrap
+- 25962a61 feat(deploy): LEZ_BOOTSTRAP_DEFER_CLAIM leaves one wallet's allocation in its vault
+- d5a86f72 feat(zec): the Maker is refused by name too, and both desks say "LEZ balance too low to fund this swap"
+- 92a755df fix(deploy): the market bootstrap's vault claim follows the 2 000 000 LEZ wallet allocation
+- 4060a9e3 feat(zec): a LEZ depositor that cannot fund the lot is refused by name and shown on the desk
+- d3a734b3 fix(deploy): 2 000 000 LEZ genesis and wallet allocations per role on the devnet
+- 7e0f5c95 fix(zec): name a failed bundle load; the Regtest transfer signs for the branch Zebra reports
+- 85e1e5c0 fix(taker-node): a swap whose bound bundle fails its checks needs attention; it does not fail the swap list
+- 5b3ee3d0 feat(maker-node): the actor supervisor logs each supervised effect and each backoff
+- 11f9bbdf fix(taker-node): the ZEC re-driver names the first error per swap; API doc states the replay rule
+- 82f6f701 feat(deploy): two prepared ZEC entries side by side — zec-provision.sh --swaps 2, the concurrent fixture
+- ee5ba914 feat(taker-node): the Node re-drives an admitted Zcash claim or refund on its own until terminal
+- 8dd7d823 fix(taker-node): an admitted action replays whatever generation the desk re-sends it with
+- 7aad0571 feat(taker-node): the Taker's revealing LEZ claim is offered in the reverse ZEC direction
+- 85ebab27 fix(maker-node): maker_actor_repin_v1 re-pins by the swap's actor kind
+- 6f94e6d3 fix(taker-node): a refunded Taker LEZ leg reads refund_in_progress, with Refund still offered
+- c584b4dd deps: tokio 1.53.3, rustls-webpki 0.103.16, webpki-roots 1.0.11, ctutils 0.4.6; crypto-bigint 0.5 documented
+- b7096233 deps(sidecar): clear nine advisories in the v0.2 sidecar lockfile
+- f8b3753c deps: update rustls to 0.23.46 for four advisories
+- b90730fc feat(deploy): node-e2e.py zec-taker-refund and zec-maker-refund on the devnet
+- fb639a81 test(zec): devnet profile wire round-trip, re-observed first lock, profile doc
+- 3322343c feat(deploy): node-e2e.py --pair Zcash zec-happy settles a ZEC/LEZ swap on the devnet
+- 4153a71a fix(zec): find the second lock past re-observed first locks; report claim errors
+- 74d0131a fix(deploy): one Maker ZEC claim-recovery key for the life of the state volume
+- 6a45046b fix(deploy): pin the Maker's Delivery identity to the ZEC corridor key
+- 969a573a feat(deploy): zec-provision.sh builds one prepared ZEC swap on the live devnet
+- c0498265 feat(deploy): mount a ZEC corridor volume per role and start its LEZ sidecar
+- 9a8fa971 fix(deploy): give the stack room on a slower, shared host
+- f6aaa864 fix(nodes): a revealing claim held near its LEZ refund time names its holder; the Maker ZEC process tests pass again (REVIEW 18:24Z)
+- 297531d7 fix(nodes): no refund once a revealing claim was submitted; one revealing LEZ claim in flight per Node until it is final, on both Nodes (FINDINGS 24)
+- f8dbd75f feat(zec): a superseded revealing claim is re-planned, restaged with its lineage and margin, and resubmitted in the same attempt (FINDINGS 24)
+- 5b769bcd feat(sidecar): a revealing claim whose nonce was taken is named Superseded and re-planned at the live nonce (FINDINGS 24)
+- 8de775ae fix(taker-node): selling ZEC, one revealing LEZ claim in flight per Node — a second waits until the first is final
+- 0d157589 fix(taker-node): selling ZEC, a Taker that does not claim can refund — the claim window admits a refund on the Zcash route
+- b27adb33 docs(taker-node): the ZEC supervisor's design note says an open admission is read before the phase table
+- c27d4271 fix(taker-node): selling ZEC, the Taker keeps driving after its revealing LEZ claim until it observes the Maker's Zcash claim
+- 3f8bcb48 fix(maker-node): a Zcash drive that projects the Taker's revealing LEZ claim is a valid output (TakerSellsForeign)
+- 512d892b fix(basecamp): the ZEC waiting-for-the-Maker's-lock sentence is a QString before it is joined
+- 204909a5 fix(basecamp): the ZEC Taker rows say what happens in each direction; the claim text no longer describes the Bitcoin adaptor flow
+- 9c318986 fix(basecamp): two Zcash swaps no longer share the Taker desk's action request id (Taker desk, shared with BTC)
+- 104da65a fix(basecamp,deploy): the Taker desk says when it does not send a press; the driver waits for the Node's reply and marks every re-press (Taker desk, shared with BTC)
+- b1dd0af8 fix(zec): selling ZEC, a refund pressed after the Maker refunded reads "refund in progress", and that row names the Maker's refund (REVIEW 17:58Z)
+- 47782164 fix(zec): a recovery never ends while the party's own submitted lock is unsettled; a lock that confirms late is projected and refunded (FINDINGS 27, REVIEW 12:08Z)
+- 955ea518 feat(zec): selling ZEC, the row after the claim window reads "Claim window closed"; the Taker view names it; drive_claim takes a typed trusted clock (REVIEW 08:49Z, 08:54Z, 08:59Z)
+- 129c8bb3 fix(zec): a revealing LEZ claim is never sent after its window closes; the claimant's row offers its refund instead (FINDINGS 26, REVIEW 08:22Z)
+- 396d58c4 feat(zec): DeterministicLocalDevnetV3 — the devnet profile with a 12-minute LEZ refund delay; a held revealing claim needs attention a third of the delay before its refund time (REVIEW 00:52Z)
+- 64aa1df8 feat(deploy): gen-config mints each role's Zcash key; zebra mines to the Maker's, which is its Delivery identity
+
+Desk-driver changes in the shared harness (`deploy/scripts/ui-e2e.sh`, `verify.mjs`): `6d9588c0`, `7f551c94`, `d637fab4`.
+
+## Findings fixed on this branch and where the run shows them
+
+- **24, a revealing claim that lost its nonce.** A revealing LEZ claim publishes
+  the secret; if another transaction of the same account took its nonce, the
+  claim could stay unlanded while the counterparty used the secret. Fixed by
+  re-planning it at the live nonce in the same attempt, never abandoning it
+  (`5b769bcd`, `f8dbd75f`); no refund once a revealing claim was submitted, and
+  one revealing claim in flight per Node until it is final (`297531d7`); a
+  claim held near its refund time names its holder (`f6aaa864`). In this set:
+  `zec-claim-collision` and `zec-concurrent` both ways.
+- **25**, a replay after the transcript expired (`f6aaa864`).
+- **26, a revealing claim after its window.** The SDK refuses it before
+  anything is sent and the claimant refunds instead (`129c8bb3`); the Taker
+  view and desk say "Claim window closed" (`955ea518`). In this set:
+  `ui zec-stale-window`. Residual: the margin must exceed inclusion latency.
+- **27, a late own lock stranded by a recovery.** A recovery first settles the
+  party's own submitted lock: a lock that confirmed late is refunded too, and
+  the recovery waits while it can still land (`47782164`). In this set:
+  `zec-refund-then-maker-lock` both ways. **BTC has the same gap**
+  (`project_own_maker_lock_before_recovery`); reported, not changed here (M3
+  frozen), the owner decides between an M2 fix and an M3 limitation.
+
+## Tests not run on this head
+
+- `zebra_runtime_restart.rs` (`#[ignore]`): needs `scripts/run-zebra-e2e.sh`
+  and two pinned Docker Zebra nodes.
+- `taker_service_process.rs` (`#[ignore]`): needs the external pinned-Basecamp
+  product driver.
+- CI does not yet run the Zebra regtest gate on this branch (`ci.yml` excludes
+  `lez-zebra-node-adapter` and `lez-zec-swap-sdk`); the gate is on PR #116
+  (`8be5d829`, `2bf2e8f6`, `999bddfe`). Locally the touched crates' tests pass
+  (847 at `47782164`).
+
+## Security scans
+
+- Aikido on the branch: 23 HIGH / 8 MEDIUM / 21 LOW resolved by the dependency
+  bumps (`c584b4dd`, `b7096233`, `f8b3753c`); one new HIGH was reported on
+  `5deb2512`, whose text is on the Aikido dashboard (not yet copied here).
+- Dependabot reports 2 open alerts (1 high, 1 low) on `main`, the default
+  branch; not triaged in this set.
