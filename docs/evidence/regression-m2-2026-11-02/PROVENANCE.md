@@ -272,8 +272,8 @@ Desk-driver changes in the shared harness (`deploy/scripts/ui-e2e.sh`, `verify.m
   party's own submitted lock: a lock that confirmed late is refunded too, and
   the recovery waits while it can still land (`47782164`). In this set:
   `zec-refund-then-maker-lock` both ways. **BTC has the same gap**
-  (`project_own_maker_lock_before_recovery`); reported, not changed here (M3
-  frozen), the owner decides between an M2 fix and an M3 limitation.
+  (`project_own_maker_lock_before_recovery`); not changed here: the owner
+  recorded it as an M3 limitation (2026-11-03), BTC scope stays frozen.
 
 ## Tests not run on this head
 
@@ -281,10 +281,13 @@ Desk-driver changes in the shared harness (`deploy/scripts/ui-e2e.sh`, `verify.m
   and two pinned Docker Zebra nodes.
 - `taker_service_process.rs` (`#[ignore]`): needs the external pinned-Basecamp
   product driver.
-- CI does not yet run the Zebra regtest gate on this branch (`ci.yml` excludes
-  `lez-zebra-node-adapter` and `lez-zec-swap-sdk`); the gate is on PR #116
-  (`8be5d829`, `2bf2e8f6`, `999bddfe`). Locally the touched crates' tests pass
-  (847 at `47782164`).
+- CI: the Zebra regtest gate and the ZEC test runs came over from PR #116 on
+  2026-11-03 (`ff958ec8`, `6574eeea`, `055bb204`; the Zebra test image's base
+  moved to a clean distroless in `b7251402`), after the runs in this set. Each
+  new step ran green locally first: clippy, tests and docs of the three ZEC
+  crates, the `pair-zec` Node tests, and `run-zebra-e2e.sh` with the Trivy
+  scan (0 HIGH/CRITICAL). The touched crates' tests passed earlier (847 at
+  `47782164`).
 
 ## Security scans
 
