@@ -210,9 +210,16 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
             && actorPhase == QStringLiteral("maker_leg_refunded"))
             return {"refund_ready", "Maker's LEZ refunded", 75,
                     "Refund recovers your " + mine, refundAction, "Refund " + mine};
+        // Selling ZEC the Taker's Zcash refund needs only the refund height,
+        // not the Maker's LEZ refund, and the Taker's actor records that
+        // refund only once it recovers: the row says neither "the Maker
+        // refunds" nor "waiting for" it, which read wrong once the Maker's
+        // LEZ was already back.
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund") && claimWindowClosed)
             return {"refund_ready", "Claim window closed", 70,
-                    "Refund recovers your " + mine + "; the Maker refunds its LEZ", refundAction, "Refund " + mine};
+                    sellsBitcoin ? "Refund recovers your " + mine + " at the refund height; the Maker's LEZ refund needs nothing from you"
+                                 : "Refund recovers your " + mine + "; the Maker refunds its LEZ",
+                    refundAction, "Refund " + mine};
         if (nodeState == "refund_available" && availableAction == QStringLiteral("refund"))
             return {"awaiting_maker_lock", "Waiting for the Maker's " + theirChain + " lock", 50,
                     QString(sellsBitcoin ? "The Maker's Node funds the LEZ escrow once your Zcash funding is confirmed"
@@ -221,6 +228,14 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         // The Taker's own refund is in flight or back; the Maker's refund of
         // the other leg follows at its deadline and the Node observes it. The
         // Maker missed nothing: both legs were locked and the Taker refunded by choice.
+        if (sellsBitcoin && nodeState == "refund_in_progress" && actorPhase == QStringLiteral("maker_leg_refunded"))
+            return {"refunding", "Refunding Zcash · the Maker's LEZ is already back", 75,
+                    "Your Zcash refund is admitted; the Node broadcasts it at the refund height and follows it to a block, Retry re-drives it if it stalls",
+                    refundAction, "Retry refund"};
+        if (sellsBitcoin && nodeState == "refund_in_progress")
+            return {"refunding", "Refunding Zcash", 70,
+                    "Your Zcash refund is admitted; the Node broadcasts it at the refund height and follows it to a block, Retry re-drives it if it stalls",
+                    refundAction, "Retry refund"};
         if (nodeState == "refund_in_progress")
             return {"refunding", "Refunding " + myChain + " · waiting for the Maker's " + theirChain + " refund", 70,
                     "Your " + myChain + " refund is admitted; the Node follows it and the Maker's " + theirChain
@@ -234,10 +249,16 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
                     sellsBitcoin ? "Your move — Claim " + theirs + " reveals the secret the Maker needs for its Zcash claim"
                                  : "Your move — Claim " + theirs + " spends the Zcash HTLC with the secret the Maker's LEZ claim revealed; it completes the swap",
                     claimAction, "Claim " + theirs};
+        // Selling ZEC the submitted claim is the revealing LEZ claim: the Node
+        // keeps one in flight and re-drives it until final, so the row has
+        // nothing to offer (it read "Retry claim" under NEEDS YOU while the
+        // claim was landing).
+        if (nodeState == "claim_in_progress" && sellsBitcoin)
+            return {"claiming_lez", "LEZ claim submitted", 85,
+                    "Your Node follows the claim to finality; the Maker's follow-up Zcash claim completes the swap", "", ""};
         if (nodeState == "claim_in_progress")
-            return {sellsBitcoin ? "claiming_lez" : "claiming_zec", theirChain + " claim submitted", 85,
-                    sellsBitcoin ? "Your Node observes the claim; the Maker's follow-up Zcash claim completes the swap"
-                                 : "Your Node submitted the Zcash claim; the swap completes when it is final",
+            return {"claiming_zec", theirChain + " claim submitted", 85,
+                    "Your Node submitted the Zcash claim; the swap completes when it is final",
                     claimAction, "Retry claim"};
     }
     // A refund already submitted keeps Refund offered as "Retry refund" (the
