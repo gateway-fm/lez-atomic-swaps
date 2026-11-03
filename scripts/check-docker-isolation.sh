@@ -52,7 +52,7 @@ fi
 
 required_dockerfile_terms=(
   'docker.io/zfnd/zebra:5.2.0@sha256:477e65add4dacf52074ba04da8d763c89c26cc57f911dba2127401f8e1da597d'
-  'gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512'
+  'gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1'
   'COPY --from=zebra /usr/local/bin/zebrad /usr/local/bin/zebrad'
   'USER 65532:65532'
   'ENTRYPOINT ["/usr/local/bin/zebrad"]'
