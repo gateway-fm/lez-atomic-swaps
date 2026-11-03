@@ -628,7 +628,7 @@ if (role === "maker") {
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
       claim_zec: [`Claim ${zecText}: the Maker's LEZ claim revealed the secret; the Taker's claim spends the Zcash HTLC on the transparent pool`,
                   "Zcash claim broadcast; once it is in a block the swap completes. The claim is transparent: move the funds to a shielded address afterwards"],
-      refund_zec: ["The Maker never locked LEZ and the HTLC's refund height is reached: the desk offers Refund; pressing it admits the refund, which the Node drives on the transparent pool",
+      refund_zec: ["The desk offers Refund for the Zcash HTLC; pressing it admits the refund, which the Node drives on the transparent pool once the HTLC's refund height is reached",
                    "Refund admitted; the Taker Node broadcasts the HTLC refund when the height allows and follows it to a block"],
     };
     // Selling ZEC the Taker's LEZ claim is the revealing one of a hashlock, not of an adaptor signature.
