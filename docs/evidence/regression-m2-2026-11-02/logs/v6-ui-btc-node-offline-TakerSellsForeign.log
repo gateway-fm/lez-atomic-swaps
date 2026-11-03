@@ -1,0 +1,14 @@
+
+[19:25:48] === node-offline (TakerSellsForeign)
+
+[19:25:53] Both Nodes are stopped before the maker desk opens; a desk must not report a connection it does not have
+  ✓ maker: an unreachable Node is never reported as connected
+  ✓ maker: the Node coming back is picked up
+2 passed, 0 failed
+
+[19:27:20] Both Nodes are stopped before the taker desk opens; a desk must not report a connection it does not have
+  ✓ taker: an unreachable Node is never reported as connected
+  ✓ taker: the Node coming back is picked up
+2 passed, 0 failed
+
+[19:28:43] === node-offline (TakerSellsForeign): passed in 175s

@@ -1,0 +1,41 @@
+
+[12:27:57] === taker-refund (TakerSellsLez)
+
+[12:28:04] Maker desk publishes TakerSellsLez offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[12:28:15] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   74b2a5e4b85c2cd26613913409db070216bc7c5a67d2b4a7522edd63f5cc1f89 awaiting_first_lock 0 -
+
+[12:28:28] The Maker Node is stopped before it can lock; the Taker locks anyway and must recover its funds later
+
+[12:28:29] Taker desk: lock_lez on 74b2a5e4b85c
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[12:28:42] The Maker's lock cutoff (600 s after the take) passes with no Maker lock; the desk then offers Refund
+
+[12:28:42] Taker desk: refund_lez on 74b2a5e4b85c
+  ✓ taker: launcher discoverable and app opens
+  » The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached
+  ✓ taker: perform refund_lez
+2 passed, 0 failed
+
+[12:38:31] The Maker Node is started again and reconciles the refunded swap
+
+[12:38:43] Taker desk shows 74b2a5e4b85c at refunded
+  ✓ taker: launcher discoverable and app opens
+  ✗ taker: swap reaches refunded
+    no taker swap 74b2a5e4b85c has reached refunded; desk shows refunding (Refund submitted)
+1 passed, 1 failed
+
+[13:08:58] FAILED: step failed

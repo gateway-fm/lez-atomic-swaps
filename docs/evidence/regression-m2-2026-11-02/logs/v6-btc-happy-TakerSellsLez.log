@@ -1,0 +1,16 @@
+[11:38:35] === happy (stamp 1793533115)
+[11:38:35] preflight: indexer historical reads
+[11:38:41]   indexer serves historical reads at the tip (27)
+[11:38:41] preflight: the finality heartbeat saw finality move 0 s ago (finalized 26)
+[11:38:41]   Maker published offer-e2e-1793533115
+[11:38:43]   Taker took offer-e2e-1793533115: swap 76d6ca00e56c (not_activated)
+[11:38:43]   Taker locked lez: d9e1c13424a3 (replay=False)
+[11:38:43]   taker 76d6ca00e56c: awaiting_first_lock (gen 0) | maker: leased
+[11:39:15]   taker 76d6ca00e56c: awaiting_second_lock (gen 1) | maker: offered
+[11:41:38]   taker 76d6ca00e56c: claim_available (gen 2) | maker: both_legs_locked
+[11:41:39]   Taker claimed Bitcoin (replay=False)
+[11:41:39]   taker 76d6ca00e56c: claim_in_progress (gen 2) | maker: both_legs_locked
+[11:44:18]   taker 76d6ca00e56c: completed (gen 4) | maker: completed
+[11:44:18]   both Nodes report 76d6ca00e56c completed
+[11:44:18]   the Bitcoin claim ea5a13a4ff4e is a Taproot key-path spend: one 64-byte signature, no script
+[11:44:18] === happy: passed in 343s

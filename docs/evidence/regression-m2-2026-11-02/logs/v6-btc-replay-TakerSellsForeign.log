@@ -1,0 +1,16 @@
+[06:39:25] === replay (stamp 1793515165)
+[06:39:25] preflight: indexer historical reads
+[06:39:34]   indexer serves historical reads at the tip (61)
+[06:39:34] preflight: the finality heartbeat saw finality move 0 s ago (finalized 61)
+[06:39:34]   Maker published offer-e2e-1793515165
+[06:39:36]   take replayed for b6f079640e7e
+[06:39:36]   Taker locked bitcoin: f97a634d9838 (replay=False)
+[06:39:36]   Taker locked bitcoin: f97a634d9838 (replay=True)
+[06:39:36]   taker b6f079640e7e: awaiting_first_lock (gen 0) | maker: leased
+[06:40:27]   taker b6f079640e7e: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[06:41:57]   taker b6f079640e7e: claim_available (gen 2) | maker: taker_lock_confirmed
+[06:42:10]   claim replayed
+[06:42:10]   taker b6f079640e7e: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[06:48:29]   taker b6f079640e7e: completed (gen 4) | maker: completed
+[06:48:30]   both Nodes report b6f079640e7e completed
+[06:48:30] === replay: passed in 545s
