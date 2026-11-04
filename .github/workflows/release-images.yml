@@ -112,7 +112,7 @@ jobs:
           done
           cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-vault-claim-poc,lez-v02-local-actor-identity,source-commit.txt} _out/sidecar/
           du -sh _out
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: node-payloads
           path: _out
@@ -155,7 +155,7 @@ jobs:
           mkdir -p _out
           cp "$LEZ_WORKSPACE"/provision/data/lez-services/{sequencer_service,indexer_service} _out/
           du -sh _out
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lez-services-payloads
           path: _out
@@ -183,12 +183,12 @@ jobs:
           persist-credentials: false
       - name: Install checksum-pinned ripgrep
         run: ./scripts/install-ci-ripgrep.sh
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: 1.96.0
       - name: Guest ELF at the pinned digest
         run: ./scripts/verify-lez-v02-provisional.sh
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: escrow-guest
           path: /tmp/lez-v02-guest-artifact/guest/zec_escrow_v02.bin
@@ -231,7 +231,7 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
       - name: r0vm (risc0 tag)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:r0vm
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: escrow-guest
           path: _guest
@@ -245,7 +245,7 @@ jobs:
           mkdir -p _out
           cp "$LEZ_WORKSPACE/provision/data/tools-arm/bin/r0vm" "$LEZ_WORKSPACE/provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer" _out/
           du -sh _out
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: escrow-payloads
           path: _out
@@ -295,15 +295,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: node-payloads
           path: _in/node
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: lez-services-payloads
           path: _in/lez-services
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: escrow-payloads
           path: _in/escrow
@@ -357,7 +357,7 @@ jobs:
         env:
           LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
         run: deploy/scripts/package-dist.sh "$LEZ_IMAGE_PREFIX" "$LEZ_IMAGE_TAG" "$RUNNER_TEMP/dist"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lez-swap-stack-bundle
           path: ${{ runner.temp }}/dist
@@ -391,7 +391,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: lez-swap-stack-bundle
           path: dist
