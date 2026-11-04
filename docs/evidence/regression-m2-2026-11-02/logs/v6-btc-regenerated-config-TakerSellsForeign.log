@@ -1,0 +1,14 @@
+[10:40:13] === regenerated-config (stamp 1793529613)
+[10:40:13] preflight: indexer historical reads
+[10:40:22]   indexer serves historical reads at the tip (376)
+[10:40:22] preflight: the finality heartbeat saw finality move 0 s ago (finalized 375)
+[10:40:23]   Maker published offer-e2e-1793529613
+[10:40:24]   Taker took offer-e2e-1793529613: swap ca92b108858d (not_activated)
+[10:40:24]   Taker locked bitcoin: ad282584580f (replay=False)
+[10:40:24]   runtime configuration rendered again (chain and identities unchanged)
+[10:40:24]   restarting the Taker Node onto the re-rendered configuration
+[10:40:31]   swap ca92b108858d reloaded as awaiting_first_lock
+[10:40:31]   taker ca92b108858d: awaiting_first_lock (gen 0) | maker: offered
+[10:41:33]   taker ca92b108858d: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[11:05:32] FAILED: swap ca92b108858d did not reach ['claim_available'] within 1500s (last awaiting_second_lock) (Maker funding)
+[11:05:32] === regenerated-config: failed in 1518s

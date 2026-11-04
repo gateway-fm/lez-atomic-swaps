@@ -22,8 +22,8 @@ reaches the chains through loopback forwarders inside its own container.
 ```mermaid
 flowchart TB
     subgraph UI["basecamp-ui (uid 4713, VNC :5901)"]
-        MakerDesk["LEZ / BTC Maker desk (lez-maker-ui.lgx)"]
-        TakerDesk["LEZ / BTC Taker desk (lez-taker-ui.lgx)"]
+        MakerDesk["LEZ Maker desk (lez-maker-ui.lgx)"]
+        TakerDesk["LEZ Taker desk (lez-taker-ui.lgx)"]
         Adapter["node_market.cpp: view model + actions"]
         Inspector["qt-mcp inspector ← ui-tests/verify.mjs"]
     end

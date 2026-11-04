@@ -1,0 +1,53 @@
+
+[16:45:42] === restart-maker (TakerSellsForeign)
+
+[16:48:57] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[16:49:06] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   23daeaff9aad6d195cc95c2060b1725c36cfc42569032766711428497f6644f5 awaiting_first_lock 0 -
+
+[16:49:18] Taker desk: lock_btc on 23daeaff9aad
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[16:49:30] The maker Node is restarted now, between the Taker's lock and its claim; swaps survive a Node restart
+
+[16:49:38] Maker desk shows 23daeaff9aad at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[16:51:33] Taker desk: claim_lez on 23daeaff9aad
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_lez
+2 passed, 0 failed
+
+[16:51:45] Maker desk shows 23daeaff9aad at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[16:53:44] Taker desk shows 23daeaff9aad at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 23daeaff9aad: runtime/evidence/23daeaff9aad6d195cc95c2060b1725c36cfc42569032766711428497f6644f5.json (5 effects, completed 2026-11-01T16:53:41Z)
+
+[16:54:03] === restart-maker (TakerSellsForeign): passed in 501s

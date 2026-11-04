@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
         > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin \
     && rm -rf /var/lib/apt/lists/*
@@ -53,9 +53,10 @@ ARG RISC0_TAG=v3.0.5
 ARG RZUP_VERSION=0.5.1
 ARG RAPIDSNARK_URL=https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-aarch64-pic-v0.0.8.zip
 ARG RAPIDSNARK_LIB_SHA256=43553a6ae796621c63837829fb8b35c46cd8f0ffdb1d88f3761eb10ddbe59657
+ARG GCC_TRIPLE=aarch64-linux-gnu
 ENV LEZ_TOOLS=/opt/lez-tools \
     RAPIDSNARK_LIB_DIR=/opt/lez-tools/rapidsnark \
-    BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/aarch64-linux-gnu/13/include
+    BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/${GCC_TRIPLE}/13/include
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN mkdir -p "$LEZ_TOOLS/rapidsnark" && tmp="$(mktemp -d)" \
     && curl -fsSL "$RAPIDSNARK_URL" -o "$tmp/r.zip" && unzip -qo "$tmp/r.zip" -d "$tmp/r" \

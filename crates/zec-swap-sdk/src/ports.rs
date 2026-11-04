@@ -123,12 +123,28 @@ pub trait LezClaimPort: Send + Sync {
         &self,
         agreement: &ZecAgreementV1,
     ) -> Result<RevealingClaimObservationV1, Self::Error>;
-    /// Submits exact bytes reopened from protected durable storage.
+    /// Submits exact bytes reopened from protected durable storage, or reports
+    /// that the claim's signer nonce was taken and nothing went out.
     async fn submit_revealing_claim(
         &self,
         agreement: &ZecAgreementV1,
         prepared: &PreparedClaimSubmissionV1,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<RevealingClaimSubmitOutcomeV1, Self::Error>;
+}
+
+/// What the LEZ adapter did with one exact owned revealing claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RevealingClaimSubmitOutcomeV1 {
+    /// The node accepted the exact bytes or already knew them.
+    Accepted,
+    /// Nothing was submitted: the planned signer nonce is behind the live one
+    /// and the claim is not included (see [`crate::ClaimDriveOutcome::Superseded`]).
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Narrow Zcash boundary for the preimage-consuming follow-up claim.
@@ -235,12 +251,29 @@ pub trait LezFirstLockPort: Send + Sync {
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<FirstLockObservation, Self::Error>;
 
-    /// Submits byte-identical durable material after a stable absence.
+    /// Submits byte-identical durable material after a stable absence, or
+    /// reports that the plan's nonce was taken and nothing went out.
     async fn submit_first_lock(
         &self,
         agreement: &crate::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<FirstLockSubmitOutcome, Self::Error>;
+}
+
+/// What the LEZ adapter did with one exact first-lock submission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FirstLockSubmitOutcome {
+    /// The node accepted the exact bytes or already knew them.
+    Accepted,
+    /// Nothing was submitted: the planned signer nonce is behind the live one
+    /// and the transaction is not included (see
+    /// [`crate::FirstLockDriveOutcome::Superseded`]).
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Typed Zcash first-lock action and observation boundary.
@@ -266,6 +299,18 @@ pub trait ZcashFirstLockPort: Send + Sync {
         agreement: &crate::ZecAgreementV1,
         submission: &PreparedFirstLockSubmissionV1,
     ) -> Result<(), Self::Error>;
+
+    /// Whether an absent funding transaction can no longer confirm: the chain
+    /// tip has reached its expiry height (ZIP-203). A recovery treats a
+    /// submitted funding as absent only then (FINDINGS 27). The default never
+    /// reports a lapse, so a recovery waits rather than strand the funding.
+    async fn first_lock_lapsed(
+        &self,
+        _agreement: &crate::ZecAgreementV1,
+        _submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<bool, Self::Error> {
+        Ok(false)
+    }
 }
 
 /// Observation-only LEZ boundary used by the maker for the taker's first lock.
@@ -387,6 +432,22 @@ pub trait RecoveryStore: Clone + Send + Sync {
         swap_id: &SwapId,
     ) -> Result<Option<FirstLockIntentV1>, Self::Error>;
 
+    /// Atomically replaces the open first-lock plan with its re-plan and keeps
+    /// the superseded plan as lineage. Replaying the same re-plan is
+    /// `ExistingSame`; a different plan under a used index, or no open plan to
+    /// retire, is `Conflict`.
+    async fn restage_first_lock_intent(
+        &self,
+        intent: &FirstLockIntentV1,
+        supersession: &crate::FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Every recorded re-plan of this swap's LEZ lock, oldest first.
+    async fn load_first_lock_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<crate::FirstLockSupersessionV1>, Self::Error>;
+
     /// Atomically commits exact confirmed evidence with the next aggregate
     /// revision and closes the matching pending intent.
     async fn commit_first_lock_transition(
@@ -439,6 +500,13 @@ pub trait RecoveryStore: Clone + Send + Sync {
         &self,
         swap_id: &SwapId,
     ) -> Result<Option<MakerLockIntentV1>, Self::Error>;
+
+    /// The maker's counterpart of `restage_first_lock_intent`.
+    async fn restage_maker_lock_intent(
+        &self,
+        intent: &MakerLockIntentV1,
+        supersession: &crate::FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
 
     /// Atomically commits maker funding and closes its retained intent.
     async fn commit_maker_lock_transition(
@@ -500,6 +568,23 @@ pub trait ClaimRecoveryStore: RecoveryStore {
         intent: &ClaimIntentV1,
         protected: &ProtectedClaimPayloadEnvelope,
     ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Atomically replaces the open revealing-claim intent and its protected
+    /// submission with the re-planned claim, keeping the supersession as
+    /// lineage. Replaying the same re-plan is `ExistingSame`; a different claim
+    /// under a used index, or no open intent to retire, is `Conflict`.
+    async fn restage_claim_intent(
+        &self,
+        intent: &ClaimIntentV1,
+        protected: &ProtectedClaimPayloadEnvelope,
+        supersession: &crate::ClaimSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, Self::Error>;
+
+    /// Every recorded re-plan of this swap's revealing claim, oldest first.
+    async fn load_claim_supersessions(
+        &self,
+        swap_id: &SwapId,
+    ) -> Result<Vec<crate::ClaimSupersessionV1>, Self::Error>;
 
     /// Loads the pending intent and its protected exact submission.
     async fn load_claim_intent(

@@ -14,6 +14,7 @@ mod finalized_asset_observation;
 mod finalized_claim_observation;
 mod finalized_refund_observation;
 mod finalized_xmr_observation;
+pub mod heartbeat;
 mod m4_finalized_facts;
 #[cfg(target_os = "linux")]
 mod m4_stage_a_composer;

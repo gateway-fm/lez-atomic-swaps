@@ -183,6 +183,8 @@ pub enum ZebraFirstLockError<E: std::error::Error + Send + Sync + 'static> {
 
 struct ValidatedSubmission {
     transaction_id: TxId,
+    /// The transaction's ZIP-203 expiry height (0: it never expires).
+    expiry_height: u32,
 }
 
 struct DiscoveredFunding {
@@ -215,6 +217,27 @@ where
     R: ZebraRpc,
 {
     type Error = ZebraFirstLockError<R::Error>;
+
+    async fn first_lock_lapsed(
+        &self,
+        agreement: &ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<bool, Self::Error> {
+        // ZIP-203: a transaction with expiry height E is invalid in any block
+        // above E, so once the tip has reached E (the next block is E + 1) an
+        // absent funding can never confirm. Expiry 0 means it never expires.
+        let validated = self.validate_submission(agreement, submission)?;
+        if validated.expiry_height == 0 {
+            return Ok(false);
+        }
+        let info = self
+            .rpc
+            .chain_info()
+            .await
+            .map_err(ZebraFirstLockError::Rpc)?;
+        self.validate_rpc_identity(info)?;
+        Ok(u32::from(info.tip_height()) >= validated.expiry_height)
+    }
 
     async fn observe_first_lock(
         &self,
@@ -753,7 +776,10 @@ where
         if output.script_pubkey().0.0 != expected.contract().p2sh_script_pubkey() {
             return Err(ZebraFirstLockError::OutputScriptMismatch);
         }
-        Ok(ValidatedSubmission { transaction_id })
+        Ok(ValidatedSubmission {
+            transaction_id,
+            expiry_height: u32::from(transaction.expiry_height()),
+        })
     }
 
     fn validate_rpc_identity(

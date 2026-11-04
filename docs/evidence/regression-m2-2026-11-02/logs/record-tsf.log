@@ -1,0 +1,32 @@
+[13:57:23] === ZEC RECORDINGS (TakerSellsForeign) at 25830abf (tree dirty: 0)
+[13:57:23] lez-maker-node:local build-source b1dd0af871ee id 129b81dbf912
+[13:57:24] lez-taker-node:local build-source b1dd0af871ee id 09d147a3cb99
+[13:57:24] === recreating the chain (recreation 454) free 158G
+[14:06:00] chain ok: [14:06:00] attempt 1: finalized moved 39 -> 41
+[14:06:05]       lez-zebra restarted
+[14:13:40] === recording ui zec-happy (TakerSellsForeign, try 1): PASSED in 455s
+      4 passed, 0 failed
+      [14:13:40] === zec-happy (TakerSellsForeign): passed in 455s
+[14:13:45]     kept <work>/evidence-final/videos/TakerSellsForeign-zec-happy.mp4 (9 frames)
+[14:13:45] === recreating the chain (recreation 455) free 229G
+[14:18:11] chain ok: [14:18:11] attempt 1: finalized moved 18 -> 21
+[14:18:16]       lez-zebra restarted
+[14:35:24] === recording ui zec-maker-refund (TakerSellsForeign, try 1): PASSED in 1028s
+      2 passed, 0 failed
+      [14:35:24] === zec-maker-refund (TakerSellsForeign): passed in 1028s
+[14:35:26]     kept <work>/evidence-final/videos/TakerSellsForeign-zec-maker-refund.mp4 (5 frames)
+[14:35:26] === recreating the chain (recreation 456) free 226G
+[14:53:51] chain ok: [14:53:51] attempt 1: finalized moved 18 -> 21
+[14:53:55]       lez-zebra restarted
+[15:04:38] === recording ui zec-concurrent (TakerSellsForeign, try 1): PASSED in 643s
+      2 passed, 0 failed
+      [15:04:38] === zec-concurrent (TakerSellsForeign): passed in 643s
+[15:04:44]     kept <work>/evidence-final/videos/TakerSellsForeign-zec-concurrent.mp4 (19 frames)
+[15:04:44] === recreating the chain (recreation 457) free 228G
+[15:10:22] chain ok: [15:10:22] attempt 1: finalized moved 25 -> 28
+[15:10:27]       lez-zebra restarted
+[15:27:18] === recording ui zec-stale-window (TakerSellsForeign, try 1): PASSED in 1011s
+      2 passed, 0 failed
+      [15:27:18] === zec-stale-window (TakerSellsForeign): passed in 1011s
+[15:27:21]     kept <work>/evidence-final/videos/TakerSellsForeign-zec-stale-window.mp4 (6 frames)
+[15:27:21] ZEC_RECORDINGS_DONE

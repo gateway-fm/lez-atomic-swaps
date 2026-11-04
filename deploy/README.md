@@ -51,6 +51,8 @@ Basecamp bundle, both role packages and the Chat/Delivery modules in the pinned
 Nix image, builds the Node binaries and Bitcoin actors in the pinned Rust
 image, builds the LEZ services, r0vm, rapidsnark, the escrow artifact, the LEZ
 sidecar and the four wallet identities in throwaway containers of the builder
+(the sidecar carries its source-tree stamp; staging and the Node image builds
+refuse a sidecar built from another `compat/lez-v0_2-sidecar` tree)
 image (`builder/`, caches in `lez-build-*` volumes, outputs in
 `provision/data`), stages every image payload, then runs `up.sh`, the market
 bootstrap (one throwaway container on the stack network), both UI suites and
@@ -120,11 +122,11 @@ its QML inspector against the live Maker and Taker Nodes). Skip with `SKIP_UI_VE
 Open the VNC URL; the two Basecamp microapps are the control surface and the
 two Nodes settle the swap:
 
-1. Open **LEZ / BTC Maker** (wallet **Munich Vault 01**, the Maker Node's
+1. Open **LEZ Maker** (wallet **Munich Vault 01**, the Maker Node's
    identity) and click **Publish offer**. Each click publishes one 0.01 BTC →
    1,000 LEZ offer through the Maker Node; withdrawn and consumed offers leave
    the Taker's order book.
-2. Open **LEZ / BTC Taker** (wallet **Zurich Wallet 01**, the Taker Node's
+2. Open **LEZ Taker** (wallet **Zurich Wallet 01**, the Taker Node's
    identity) and click **Take offer** on an order-book row. The Taker Node
    reserves the lot with the Maker, plans its Bitcoin funding, prepares its LEZ
    claim, runs the signing ceremony and activates its actor; the row then
@@ -162,10 +164,10 @@ btc() { docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf 
    `./scripts/reset-swaps.sh` gives you an empty swap history when you want a
    clean run.
 2. **Publish.** Connect VNC to `127.0.0.1:5901` (password `lezswap`), open
-   **LEZ / BTC Maker** and click **Publish offer**. Check it from outside:
+   **LEZ Maker** and click **Publish offer**. Check it from outside:
    `maker maker_offer_list` lists it `active` at revision 1, and
    `docker exec lez-taker-node ls /delivery` shows its signed file.
-3. **Discover and take.** Open **LEZ / BTC Taker**; the order book shows the
+3. **Discover and take.** Open **LEZ Taker**; the order book shows the
    offer as **Munich Vault 01 · 1,000 LEZ**. `taker taker_offer_list_v1` shows
    the same. Click **Take offer**. Within about ten seconds the row offers
    **Lock 0.01000000 BTC**. Meanwhile: `taker taker_swap_list_v1` lists the
@@ -202,8 +204,16 @@ watch it leave the Taker order book; `docker restart lez-taker-node` between
 lock and claim and watch the observer resume; `docker restart
 lez-bitcoin-core` and watch the next action still reach Core through the
 Node's own loopback forwarder. Where to look when something stalls:
-`docker compose logs maker-node taker-node`, the swap directory's
-`sidecar.log`, and
+`docker compose logs maker-node taker-node` (both Nodes' actor supervisors
+print one secret-free line per distinct supervised effect — `maker actor <swap>:
+drive → …` / `taker actor <swap>: drive → …` with command, outcome, operation,
+phase, revision, next action — a line per backoff class when it first appears
+or changes, and the Taker Node one line when a swap's bundle fails its checks;
+the Taker Node drives its Zcash actor itself, from the take's activation
+through the LEZ lock and the observation of the Maker's legs to
+claim_available, every 5 s while something moves and every 30 s after a
+failure, with the class on the row's `last_failure_class`), the
+swap directory's `sidecar.log`, and
 `docker exec lez-taker-node lez-btc-taker-actor --config /var/lib/lez/taker/btc/swaps/<reservation id>/actor/actor-config.json status`.
 
 ## Swap scenarios through the Node APIs
@@ -275,10 +285,36 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
 * **Bitcoin**: the standing `bitcoin-core` regtest chain (`txindex`,
   `txospenderindex`), continuously mined by `btc-miner`. Swap transactions are
   native chain transactions, visible in the Bitcoin explorer.
-* **LEZ**: the standing `bedrock` / `sequencer` / `indexer` chain, whose genesis
+* **LEZ**: the standing `bedrock` / `sequencer` / `indexer` chain (genesis allocations
+  of 2 000 000 LEZ to each role's signer and settlement wallet, `gen-config.sh`, which
+  writes them to `runtime/runtime.env` as `LEZ_WALLET_{MAKER,TAKER}_ALLOCATION` for the
+  market bootstrap's vault claims, the one place the number lives: a
+  ZEC corridor's 50 000-LEZ lot leaves the depositor for good on a completed swap,
+  so a whole matrix fits on one chain; `LEZ_BOOTSTRAP_DEFER_CLAIM=<wallet>` on
+  `up.sh --fresh-lez` leaves one wallet's allocation in its vault, which is how
+  the depositor-balance refusal is shown, and `scripts/bootstrap-market.sh`
+  run again claims it), whose genesis
   funds four persistent wallets (Munich, Basel, Zurich, Limmat). Balances
   accumulate across swaps; the UI's wallet ledger shows true opening → closing
   values, not per-run genesis allocations.
+* **Finality heartbeat** (`heartbeat` service, `lez-v02-heartbeat` from the
+  tools image): the pinned Bedrock's finalized height freezes while the
+  sequencer keeps publishing (logos-blockchain#3643). The service is the
+  **liveness detector**, not a keep-alive: measured on 2026-10-29, chains with
+  the heartbeat from genesis froze after 36–56 minutes (controls without it
+  after 17–30) while every heartbeat transfer kept being included in about
+  two seconds, so a steady trickle does not prevent the freeze; it names it
+  within two minutes. It sends one authenticated transfer of one LEZ unit from
+  `heartbeat-pulse-01` to `heartbeat-echo-02` (two identities minted beside the
+  wallets, funded 100 000 each in the genesis, claimed by the market bootstrap;
+  never a role's or a wallet's account) every `LEZ_HEARTBEAT_SECONDS` (default
+  20; `0` in `runtime/runtime.env` disables it, `gen-config.sh` writes it), with
+  one log line per tick (`heartbeat: tick n tx … tip T finalized F (flat s)`).
+  When the finalized height is flat for `LEZ_HEARTBEAT_STALL_SECONDS` (default
+  120) while the tip advances it prints `heartbeat: STALL …` (again every five
+  minutes while it lasts, once when it clears) and writes
+  `runtime/heartbeat/status.json` with `stalled: true`, which the runners read
+  instead of waiting out a vault sweep on a dead chain.
 
 Both carry `org.logos-co.atomic-swaps.{run,scope,component}` labels
 (`market-btc-0001` / `market-lez-0001`). The one-time bootstrap — escrow
@@ -343,7 +379,7 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 | `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
 | `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
 | `maker-node` | `images/maker-node` | Maker-only image (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; the entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints |
-| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
+| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
 | `tools` (profile `tools`) | `images/lez-tools` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault-claim tool and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
 | `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass. Both desks read their market from the Nodes (`apps/basecamp/common/node_market.cpp`): offers, takes, the Taker's lock and claim, and the Maker's automatic progress |
 
@@ -408,7 +444,10 @@ Both Nodes settle a BTC↔LEZ swap themselves: no runner, no demo controller
 on the stack.
 `node-entrypoint.sh` renders each role's inputs into its state volume — the
 LEZ identity (`runtime/lez/<role>`, the Maker is wallet `maker-munich-01`, the
-Taker `taker-zurich-01`), the Bitcoin RPC cookie and, once
+Taker `taker-zurich-01`; beside it `zcash.key`, the role's Zcash key that
+`gen-config.sh` mints once — the Maker's is also its Delivery signing key and
+the address zebra mines to, rendered into `runtime/zebra/zebrad.toml`; the
+Taker's funds Zcash when it sells it), the Bitcoin RPC cookie and, once
 `market-bootstrap.sh` has recorded the escrow deployment in
 `runner-work/market/market-bootstrap.env`, the `btc-role.json` that names the
 Bitcoin network, endpoints, wallet, policy, LEZ chain identity and the sidecar
@@ -477,4 +516,7 @@ The two Basecamp desks drive the Nodes' fixed, genuine LEZ/BTC lifecycle and
 present its completed evidence. They do not yet expose arbitrary amounts,
 external wallets, public networks, or production signing; each Node settles as
 one configured identity. Both Nodes listen only on owner-only Unix sockets; no
-component on the stack holds the host Docker socket.
+component on the stack holds the host Docker socket. Devnet-only caveat: the
+role keys under `runtime/lez/<role>/` (`lez-signer.key`, `zcash.key`) are
+host copies at mode 0644 so the Nodes' uid can read them through the bind
+mount; each entrypoint re-installs them owner-private in its state volume.

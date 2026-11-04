@@ -117,6 +117,18 @@ pub enum FirstLockPlanV1 {
 }
 
 impl FirstLockPlanV1 {
+    /// The initialize and fund identities of a LEZ plan; `None` for a Zcash plan.
+    #[must_use]
+    pub const fn lez_identities(&self) -> Option<(&[u8; 32], &[u8; 32])> {
+        match self {
+            Self::Zcash { .. } => None,
+            Self::Lez { initialize, fund } => Some((
+                initialize.expected_submission_id(),
+                fund.expected_submission_id(),
+            )),
+        }
+    }
+
     /// Builds the only valid Zcash plan shape.
     ///
     /// # Errors
@@ -276,6 +288,193 @@ pub enum FirstLockDriveOutcome {
     AwaitingStableObservation(FirstLockStepV1),
     /// Every first-lock step is observed; the adapter's final-step evidence is ready to project.
     ReadyForFundingProjection(FirstLockConfirmedEvidenceV1),
+    /// Nothing was submitted: the signer nonce planned for this LEZ step is
+    /// behind the account's live nonce (another transaction of the same signer
+    /// took it first, as concurrent swaps do) and the step is not included.
+    /// The plan is remade at the live nonce and restaged before the next drive.
+    Superseded {
+        /// The LEZ step whose nonce was taken.
+        step: FirstLockStepV1,
+        /// Signer nonce the step was planned at.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
+}
+
+/// Upper bound on re-plans of one LEZ first-lock pair; the actor fails the
+/// swap by name past it. Equal to the sidecar's `MAX_NATIVE_ESCROW_REPLANS`.
+pub const MAX_FIRST_LOCK_REPLANS: u32 = 5;
+
+/// One re-plan of a LEZ first-lock pair, durable next to the plan it replaced.
+///
+/// Both generations are named in full (both nonces, both transaction ids of
+/// each step) so the actor's effect line, the Node's journal and the evidence
+/// export carry the whole lineage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FirstLockSupersessionV1 {
+    replan_index: u32,
+    step: FirstLockStepV1,
+    superseded_initialize_id: [u8; 32],
+    superseded_fund_id: [u8; 32],
+    superseded_nonce: u128,
+    replanned_initialize_id: [u8; 32],
+    replanned_fund_id: [u8; 32],
+    replanned_nonce: u128,
+}
+
+/// Inputs of one supersession record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FirstLockSupersessionInputV1 {
+    /// One-based re-plan count of this pair.
+    pub replan_index: u32,
+    /// The LEZ step whose nonce was taken.
+    pub step: FirstLockStepV1,
+    /// Initialize identity of the superseded plan.
+    pub superseded_initialize_id: [u8; 32],
+    /// Fund identity of the superseded plan.
+    pub superseded_fund_id: [u8; 32],
+    /// Signer nonce the superseded step was planned at.
+    pub superseded_nonce: u128,
+    /// Initialize identity of the re-planned plan (kept when the step is fund).
+    pub replanned_initialize_id: [u8; 32],
+    /// Fund identity of the re-planned plan.
+    pub replanned_fund_id: [u8; 32],
+    /// Signer nonce the step is planned at now.
+    pub replanned_nonce: u128,
+}
+
+impl FirstLockSupersessionV1 {
+    /// Validates one supersession: a LEZ step, an index within the bound, a
+    /// nonce that moved forward, and identities that changed where the step
+    /// says they must (and stayed where it says they stay).
+    ///
+    /// # Errors
+    ///
+    /// Returns the first violated rule.
+    pub fn new(input: FirstLockSupersessionInputV1) -> Result<Self, FirstLockSupersessionError> {
+        if input.step == FirstLockStepV1::ZcashFund {
+            return Err(FirstLockSupersessionError::NotLezStep);
+        }
+        if input.replan_index == 0 || input.replan_index > MAX_FIRST_LOCK_REPLANS {
+            return Err(FirstLockSupersessionError::IndexOutOfBounds(
+                input.replan_index,
+            ));
+        }
+        if input.replanned_nonce <= input.superseded_nonce {
+            return Err(FirstLockSupersessionError::NonceDidNotAdvance);
+        }
+        let initialize_kept = input.superseded_initialize_id == input.replanned_initialize_id;
+        let fund_changed = input.superseded_fund_id != input.replanned_fund_id;
+        let shape_ok = match input.step {
+            FirstLockStepV1::LezInitialize => !initialize_kept && fund_changed,
+            FirstLockStepV1::LezFund => initialize_kept && fund_changed,
+            FirstLockStepV1::ZcashFund => false,
+        };
+        if !shape_ok {
+            return Err(FirstLockSupersessionError::IdentitiesDoNotMatchStep);
+        }
+        Ok(Self {
+            replan_index: input.replan_index,
+            step: input.step,
+            superseded_initialize_id: input.superseded_initialize_id,
+            superseded_fund_id: input.superseded_fund_id,
+            superseded_nonce: input.superseded_nonce,
+            replanned_initialize_id: input.replanned_initialize_id,
+            replanned_fund_id: input.replanned_fund_id,
+            replanned_nonce: input.replanned_nonce,
+        })
+    }
+
+    /// One-based re-plan count of this pair.
+    #[must_use]
+    pub const fn replan_index(&self) -> u32 {
+        self.replan_index
+    }
+
+    /// The LEZ step whose nonce was taken.
+    #[must_use]
+    pub const fn step(&self) -> FirstLockStepV1 {
+        self.step
+    }
+
+    /// Initialize identity of the superseded plan.
+    #[must_use]
+    pub const fn superseded_initialize_id(&self) -> &[u8; 32] {
+        &self.superseded_initialize_id
+    }
+
+    /// Fund identity of the superseded plan.
+    #[must_use]
+    pub const fn superseded_fund_id(&self) -> &[u8; 32] {
+        &self.superseded_fund_id
+    }
+
+    /// Signer nonce the superseded step was planned at.
+    #[must_use]
+    pub const fn superseded_nonce(&self) -> u128 {
+        self.superseded_nonce
+    }
+
+    /// Initialize identity of the re-planned plan.
+    #[must_use]
+    pub const fn replanned_initialize_id(&self) -> &[u8; 32] {
+        &self.replanned_initialize_id
+    }
+
+    /// Fund identity of the re-planned plan.
+    #[must_use]
+    pub const fn replanned_fund_id(&self) -> &[u8; 32] {
+        &self.replanned_fund_id
+    }
+
+    /// Signer nonce the step is planned at now.
+    #[must_use]
+    pub const fn replanned_nonce(&self) -> u128 {
+        self.replanned_nonce
+    }
+
+    /// The identity of the superseded step and of its re-plan.
+    #[must_use]
+    pub const fn step_identities(&self) -> (&[u8; 32], &[u8; 32]) {
+        match self.step {
+            FirstLockStepV1::LezInitialize | FirstLockStepV1::ZcashFund => (
+                &self.superseded_initialize_id,
+                &self.replanned_initialize_id,
+            ),
+            FirstLockStepV1::LezFund => (&self.superseded_fund_id, &self.replanned_fund_id),
+        }
+    }
+
+    /// Whether this record retires `superseded` and installs `replanned`.
+    #[must_use]
+    pub fn links(&self, superseded: &FirstLockPlanV1, replanned: &FirstLockPlanV1) -> bool {
+        matches!(
+            (superseded.lez_identities(), replanned.lez_identities()),
+            (Some((old_initialize, old_fund)), Some((new_initialize, new_fund)))
+                if old_initialize == &self.superseded_initialize_id
+                    && old_fund == &self.superseded_fund_id
+                    && new_initialize == &self.replanned_initialize_id
+                    && new_fund == &self.replanned_fund_id
+        )
+    }
+}
+
+/// Why a supersession record was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum FirstLockSupersessionError {
+    /// Only LEZ steps carry a signer nonce.
+    #[error("only a LEZ first-lock step can be superseded")]
+    NotLezStep,
+    /// The re-plan index is zero or past the bound.
+    #[error("first-lock re-plan index {0} is outside 1..={MAX_FIRST_LOCK_REPLANS}")]
+    IndexOutOfBounds(u32),
+    /// A re-plan at the same or an earlier nonce is not a supersession.
+    #[error("the re-planned nonce does not advance past the superseded one")]
+    NonceDidNotAdvance,
+    /// The identities did not change (or stay) the way the step requires.
+    #[error("the superseded and re-planned identities do not match the step")]
+    IdentitiesDoNotMatchStep,
 }
 
 /// Stable submission evidence produced by a typed chain observation adapter.

@@ -1,0 +1,245 @@
+M2 final regression on the Docker devnet — V6 (2026-10-31 19:47Z → 2026-11-01 22:32Z)
+and reruns of its failures (2026-11-02 09:58Z → 15:43Z), UTC
+
+One run of every scenario on one set of images (source b1dd0af8, see PROVENANCE.md),
+then each failure again on its own fresh chain, same images, no code change between.
+Result: 93 tests, 80 passed in V6, the 13 failures all passed on rerun (12 on the first
+try; the BTC desk taker-refund selling LEZ on its second, after another freeze).
+V7 (below) reran the desk journeys on images with the selling-ZEC desk copy fix: 25/25.
+
+ZEC profile deterministic-local-devnet-v3 (720 s LEZ refund delay); BTC fast profile.
+Every row's log is in logs/ (v6-*, rerun-*); final-v6.log and rerun-v6.log are the
+runners' own logs. Node summaries: e2e/<scenario>[-lez].json (a rerun's summary
+replaces the failed V6 one under the same name); ZEC exports: zec/; recordings: videos/.
+
+ZEC desk recordings (Taker sells LEZ): 3 tests
+  recording ui zec-happy (try 1)                               PASSED    267 s  (2026-10-31 20:03:00Z)
+  recording ui zec-maker-refund (try 1)                        PASSED    970 s  (2026-10-31 20:23:45Z)
+  recording ui zec-concurrent (try 1)                          PASSED    391 s  (2026-10-31 20:34:05Z)
+  -> 3 passed in V6, 0 more on rerun: 3/3
+
+ZEC balance refusal: 2 tests
+  zec-balance-refusal (TakerSellsLez)                          PASSED    189 s  (2026-10-31 20:53:58Z)
+  zec-balance-refusal (TakerSellsForeign)                      PASSED    252 s  (2026-10-31 21:42:36Z)
+  -> 2 passed in V6, 0 more on rerun: 2/2
+
+ZEC Node matrix and parity: 28 tests
+  zec-taker-refund (TakerSellsLez, try 1)                      PASSED   1456 s  (2026-10-31 22:11:23Z)
+  zec-maker-refund (TakerSellsLez, try 1)                      PASSED    897 s  (2026-10-31 22:38:23Z)
+  zec-refund-then-maker-lock (TakerSellsLez, try 1)            PASSED   1048 s  (2026-10-31 23:07:12Z)
+  zec-happy (TakerSellsLez, try 1)                             PASSED    100 s  (2026-10-31 23:09:55Z)
+  zec-replay (TakerSellsLez, try 1)                            PASSED    139 s  (2026-10-31 23:13:17Z)
+  zec-wrong-inputs (TakerSellsLez, try 1)                      PASSED    108 s  (2026-10-31 23:16:08Z)
+  zec-restart-taker (TakerSellsLez, try 1)                     PASSED    161 s  (2026-10-31 23:19:52Z)
+  zec-restart-maker (TakerSellsLez, try 1)                     PASSED    138 s  (2026-10-31 23:28:07Z)
+  zec-survivor (TakerSellsLez, try 1)                          PASSED    135 s  (2026-10-31 23:31:25Z)
+  zec-concurrent (TakerSellsLez, try 1)                        PASSED    642 s  (2026-10-31 23:43:15Z)
+  zec-regenerated-catalog (TakerSellsLez, try 1)               PASSED    124 s  (2026-10-31 23:46:27Z)
+  zec-tampered-catalog (TakerSellsLez, try 1)                  PASSED     37 s  (2026-10-31 23:48:07Z)
+  zec-early-lock (TakerSellsLez, try 1)                        PASSED    232 s  (2026-10-31 23:53:03Z)
+  zec-offline-after-lock (TakerSellsLez, try 1)                PASSED    145 s  (2026-11-01 00:15:30Z)
+  zec-taker-refund (TakerSellsForeign, try 1)                  PASSED    869 s  (2026-11-01 00:34:39Z)
+  zec-maker-refund (TakerSellsForeign, try 1)                  PASSED    917 s  (2026-11-01 00:54:41Z)
+  zec-refund-then-maker-lock (TakerSellsForeign, try 1)        PASSED    930 s  (2026-11-01 01:21:27Z)
+  zec-happy (TakerSellsForeign, try 1)                         PASSED    202 s  (2026-11-01 01:25:52Z)
+  zec-replay (TakerSellsForeign, try 1)                        PASSED    187 s  (2026-11-01 01:30:01Z)
+  zec-wrong-inputs (TakerSellsForeign, try 1)                  PASSED    200 s  (2026-11-01 01:34:31Z)
+  zec-restart-taker (TakerSellsForeign, try 1)                 PASSED    466 s  (2026-11-01 01:43:20Z)
+  zec-restart-maker (TakerSellsForeign, try 1)                 PASSED    221 s  (2026-11-01 01:48:04Z)
+  zec-survivor (TakerSellsForeign, try 1)                      PASSED    228 s  (2026-11-01 01:53:54Z)
+  zec-concurrent (TakerSellsForeign, try 1)                    PASSED    308 s  (2026-11-01 02:18:53Z)
+  zec-regenerated-catalog (TakerSellsForeign, try 1)           PASSED    723 s  (2026-11-01 02:32:04Z)
+  zec-tampered-catalog (TakerSellsForeign, try 1)              PASSED    125 s  (2026-11-01 02:35:12Z)
+  zec-early-lock (TakerSellsForeign, try 1)                    PASSED    290 s  (2026-11-01 02:41:06Z)
+  zec-offline-after-lock (TakerSellsForeign, try 1)            PASSED    209 s  (2026-11-01 02:45:38Z)
+  -> 28 passed in V6, 0 more on rerun: 28/28
+
+ZEC claim collision: 1 tests
+  zec-claim-collision (TakerSellsForeign, try 1)               PASSED    258 s  (2026-11-01 02:56:43Z)
+  -> 1 passed in V6, 0 more on rerun: 1/1
+
+ZEC desk journeys: 15 tests
+  ui zec-taker-refund (TakerSellsLez, try 1)                   PASSED   1059 s  (2026-11-01 03:26:12Z)
+  ui zec-concurrent-staggered (TakerSellsLez, try 1)           PASSED    302 s  (2026-11-01 03:32:17Z)
+  ui zec-restart-taker (TakerSellsLez, try 1)                  PASSED    159 s  (2026-11-01 03:36:04Z)
+  ui zec-restart-maker (TakerSellsLez, try 1)                  PASSED    192 s  (2026-11-01 03:40:19Z)
+  ui zec-survivor (TakerSellsLez, try 1)                       PASSED    178 s  (2026-11-01 03:44:25Z)
+  ui zec-node-offline (TakerSellsLez, try 1)                   PASSED    332 s  (2026-11-01 04:09:22Z)
+  ui zec-taker-refund (TakerSellsForeign, try 1)               PASSED    889 s  (2026-11-01 04:29:37Z)
+  ui zec-maker-refund (TakerSellsForeign, try 1)               PASSED    950 s  (2026-11-01 04:57:31Z)
+  ui zec-stale-window (TakerSellsForeign, try 1)               PASSED    921 s  (2026-11-01 05:31:58Z)
+  ui zec-happy (TakerSellsForeign, try 1)                      PASSED    229 s  (2026-11-01 05:36:51Z)
+  ui zec-concurrent (TakerSellsForeign, try 1)                 PASSED    364 s  (2026-11-01 05:43:58Z)
+  ui zec-restart-taker (TakerSellsForeign, try 1)              FAILED     23 s  (2026-11-01 05:50:50Z)
+                                                               rerun PASSED 264 s (2026-11-02 15:33:07Z)
+  ui zec-restart-maker (TakerSellsForeign, try 1)              FAILED      9 s  (2026-11-01 05:52:07Z)
+                                                               rerun PASSED 288 s (2026-11-02 15:43:01Z)
+  ui zec-survivor (TakerSellsForeign, try 1)                   PASSED    267 s  (2026-11-01 05:57:42Z)
+  ui zec-node-offline (TakerSellsForeign, try 1)               PASSED    843 s  (2026-11-01 06:12:48Z)
+  -> 13 passed in V6, 2 more on rerun: 15/15
+
+BTC Node suite: 28 tests
+  btc happy (TakerSellsForeign)                                PASSED    268 s  (2026-11-01 06:38:21Z)
+  btc replay (TakerSellsForeign)                               PASSED    546 s  (2026-11-01 06:48:30Z)
+  btc wrong-inputs (TakerSellsForeign)                         PASSED    169 s  (2026-11-01 06:52:22Z)
+  btc restart-taker (TakerSellsForeign)                        PASSED    307 s  (2026-11-01 06:58:33Z)
+  btc restart-maker (TakerSellsForeign)                        FAILED   1998 s  (2026-11-01 07:32:54Z)
+                                                               rerun PASSED 333 s (2026-11-02 14:12:41Z)
+  btc survivor (TakerSellsForeign)                             PASSED    339 s  (2026-11-01 07:45:08Z)
+  btc concurrent (TakerSellsForeign)                           PASSED    730 s  (2026-11-01 07:58:28Z)
+  btc early-lock (TakerSellsForeign)                           PASSED    585 s  (2026-11-01 08:09:17Z)
+  btc offline-after-lock (TakerSellsForeign)                   FAILED   2119 s  (2026-11-01 08:45:45Z)
+                                                               rerun PASSED 291 s (2026-11-02 14:30:47Z)
+  btc taker-refund (TakerSellsForeign)                         FAILED   2148 s  (2026-11-01 09:28:52Z)
+                                                               rerun PASSED 1432 s (2026-11-02 10:27:21Z)
+  btc maker-refund (TakerSellsForeign)                         PASSED   1914 s  (2026-11-01 10:07:59Z)
+  btc refund-then-maker-lock (TakerSellsForeign)               PASSED   1807 s  (2026-11-01 10:39:10Z)
+  btc regenerated-config (TakerSellsForeign)                   FAILED   1519 s  (2026-11-01 11:05:32Z)
+                                                               rerun PASSED 297 s (2026-11-02 14:40:49Z)
+  btc tampered-config (TakerSellsForeign)                      PASSED     15 s  (2026-11-01 11:33:18Z)
+  btc happy (TakerSellsLez)                                    PASSED    343 s  (2026-11-01 11:44:18Z)
+  btc replay (TakerSellsLez)                                   PASSED    325 s  (2026-11-01 11:50:47Z)
+  btc wrong-inputs (TakerSellsLez)                             PASSED    369 s  (2026-11-01 11:57:59Z)
+  btc restart-taker (TakerSellsLez)                            PASSED    312 s  (2026-11-01 12:04:14Z)
+  btc restart-maker (TakerSellsLez)                            PASSED    304 s  (2026-11-01 12:10:21Z)
+  btc survivor (TakerSellsLez)                                 PASSED    317 s  (2026-11-01 12:16:41Z)
+  btc concurrent (TakerSellsLez)                               PASSED    396 s  (2026-11-01 12:24:21Z)
+  btc early-lock (TakerSellsLez)                               FAILED   2171 s  (2026-11-01 13:01:41Z)
+                                                               rerun PASSED 341 s (2026-11-02 14:51:47Z)
+  btc offline-after-lock (TakerSellsLez)                       PASSED    260 s  (2026-11-01 13:12:09Z)
+  btc taker-refund (TakerSellsLez)                             FAILED   3384 s  (2026-11-01 14:09:37Z)
+                                                               rerun PASSED 2103 s (2026-11-02 11:07:20Z)
+  btc maker-refund (TakerSellsLez)                             FAILED   3405 s  (2026-11-01 15:12:54Z)
+                                                               rerun PASSED 2056 s (2026-11-02 11:46:05Z)
+  btc refund-then-maker-lock (TakerSellsLez)                   PASSED   1982 s  (2026-11-01 15:59:39Z)
+  btc regenerated-config (TakerSellsLez)                       PASSED    222 s  (2026-11-01 16:04:31Z)
+  btc tampered-config (TakerSellsLez)                          PASSED     13 s  (2026-11-01 16:05:54Z)
+  -> 21 passed in V6, 7 more on rerun: 28/28
+
+BTC desk journeys: 16 tests
+  ui happy (TakerSellsForeign)                                 PASSED    960 s  (2026-11-01 16:27:53Z)
+  ui restart-taker (TakerSellsForeign)                         PASSED    550 s  (2026-11-01 16:44:38Z)
+  ui restart-maker (TakerSellsForeign)                         PASSED    501 s  (2026-11-01 16:54:03Z)
+  ui survivor (TakerSellsForeign)                              FAILED   2015 s  (2026-11-01 17:28:41Z)
+                                                               rerun PASSED 664 s (2026-11-02 15:07:49Z)
+  ui concurrent (TakerSellsForeign)                            PASSED    979 s  (2026-11-01 17:52:24Z)
+  ui taker-refund (TakerSellsForeign)                          FAILED   2452 s  (2026-11-01 18:34:20Z)
+                                                               rerun PASSED 1905 s (2026-11-02 12:22:45Z)
+  ui maker-refund (TakerSellsForeign)                          PASSED   1867 s  (2026-11-01 19:12:01Z)
+  ui node-offline (TakerSellsForeign)                          PASSED    175 s  (2026-11-01 19:28:43Z)
+  ui happy (TakerSellsLez)                                     PASSED    414 s  (2026-11-01 19:41:17Z)
+  ui restart-taker (TakerSellsLez)                             FAILED   2276 s  (2026-11-01 20:20:22Z)
+                                                               rerun PASSED 322 s (2026-11-02 15:23:40Z)
+  ui restart-maker (TakerSellsLez)                             PASSED    412 s  (2026-11-01 20:33:26Z)
+  ui survivor (TakerSellsLez)                                  PASSED    762 s  (2026-11-01 20:47:17Z)
+  ui concurrent (TakerSellsLez)                                PASSED    562 s  (2026-11-01 21:03:21Z)
+  ui taker-refund (TakerSellsLez)                              FAILED   2667 s  (2026-11-01 21:48:57Z)
+                                                               rerun FAILED 2461 s (2026-11-02 13:08:58Z)
+                                                               rerun PASSED 2038 s (2026-11-02 13:48:36Z)
+  ui maker-refund (TakerSellsLez)                              PASSED   2025 s  (2026-11-01 22:28:47Z)
+  ui node-offline (TakerSellsLez)                              PASSED    167 s  (2026-11-01 22:32:37Z)
+  -> 12 passed in V6, 4 more on rerun: 16/16
+
+TOTAL 93/93
+
+V7 — the desk copy fix on the shared desk binary (2026-11-03 17:29Z → 2026-11-04 06:22Z)
+
+31df3352 changes the shared Taker desk (Zcash selling-ZEC rows only), so on the v7 images
+(PROVENANCE.md) the selling-ZEC desk journeys and, under the owner's rule for shared code,
+all 16 BTC desk journeys ran again. Refund journeys started on a fresh chain; a retry
+follows a failure only when finality is flat after it (every failure below: the devnet
+finality freeze, the chain froze 19-40 min after it came up, before the step that needed
+it — details in each log and in logs/final-v7.log).
+
+  recording ui zec-happy (TakerSellsForeign, try 1)              PASSED    543 s  (2026-11-03 17:44:49Z)
+  recording ui zec-maker-refund (TakerSellsForeign, try 1)       PASSED   1075 s  (2026-11-03 18:09:10Z)
+  recording ui zec-concurrent (TakerSellsForeign, try 1)         PASSED    585 s  (2026-11-03 18:24:41Z)
+  recording ui zec-stale-window (TakerSellsForeign, try 1)       PASSED   1007 s  (2026-11-03 18:46:29Z)
+  ui zec-taker-refund (TakerSellsForeign, try 1)                 PASSED    917 s  (2026-11-03 19:14:55Z)
+  ui zec-restart-taker (TakerSellsForeign, try 1)                PASSED    276 s  (2026-11-03 19:20:46Z)
+  ui zec-restart-maker (TakerSellsForeign, try 1)                PASSED    330 s  (2026-11-03 19:27:29Z)
+  ui zec-survivor (TakerSellsForeign, try 1)                     PASSED    479 s  (2026-11-03 19:36:42Z)
+  ui zec-node-offline (TakerSellsForeign, try 1)                 PASSED    467 s  (2026-11-03 19:45:43Z)
+  ui taker-refund (TakerSellsForeign, try 1)                     PASSED   1924 s  (2026-11-03 20:22:32Z)
+  ui maker-refund (TakerSellsForeign, try 1)                     PASSED   1862 s  (2026-11-03 20:58:15Z)
+  ui happy (TakerSellsForeign, try 1)                            PASSED   1007 s  (2026-11-03 21:30:23Z)
+  ui restart-taker (TakerSellsForeign, try 1)                    PASSED    403 s  (2026-11-03 21:38:16Z)
+  ui restart-maker (TakerSellsForeign, try 1)                    PASSED    543 s  (2026-11-03 21:48:23Z)
+  ui survivor (TakerSellsForeign, try 1)                         PASSED    342 s  (2026-11-03 21:55:10Z)
+  ui concurrent (TakerSellsForeign, try 1)                       PASSED    863 s  (2026-11-03 22:10:42Z)
+  ui node-offline (TakerSellsForeign, try 1)                     PASSED    178 s  (2026-11-03 22:14:43Z)
+  ui taker-refund (TakerSellsLez, try 1)                         FAILED   2471 s  (2026-11-03 23:01:36Z)
+  ui taker-refund (TakerSellsLez, try 2)                         FAILED   2447 s  (2026-11-03 23:47:54Z)
+  ui taker-refund (TakerSellsLez, try 3)                         FAILED   2457 s  (2026-11-04 00:34:33Z)
+  ui maker-refund (TakerSellsLez, try 1)                         FAILED   3863 s  (2026-11-04 01:45:02Z)
+  ui maker-refund (TakerSellsLez, try 2)                         FAILED   2925 s  (2026-11-04 02:40:53Z)
+  ui maker-refund (TakerSellsLez, try 3)                         PASSED   2012 s  (2026-11-04 03:19:59Z)
+  ui happy (TakerSellsLez, try 1)                                PASSED    247 s  (2026-11-04 03:25:10Z)
+  ui restart-taker (TakerSellsLez, try 1)                        FAILED   1852 s  (2026-11-04 03:57:05Z)
+  ui restart-taker (TakerSellsLez, try 2)                        PASSED    303 s  (2026-11-04 04:07:28Z)
+  ui restart-maker (TakerSellsLez, try 1)                        PASSED    446 s  (2026-11-04 04:16:03Z)
+  ui survivor (TakerSellsLez, try 1)                             FAILED   2048 s  (2026-11-04 04:51:14Z)
+  ui survivor (TakerSellsLez, try 2)                             PASSED    421 s  (2026-11-04 05:04:27Z)
+  ui concurrent (TakerSellsLez, try 1)                           PASSED    757 s  (2026-11-04 05:18:14Z)
+  ui node-offline (TakerSellsLez, try 1)                         PASSED    177 s  (2026-11-04 05:22:22Z)
+  recording ui zec-maker-refund (TakerSellsForeign, try 1)       PASSED    975 s  (2026-11-04 05:43:39Z)
+  ui taker-refund (TakerSellsLez, try 1)                         PASSED   1984 s  (2026-11-04 06:22:11Z)
+
+  Result: selling-ZEC desks 9/9 (4 recorded), BTC desks 16/16. The BTC taker-refund selling
+  LEZ needs ~32 min of finality (its LEZ refund opens 1800 s after the take); its three V7
+  tries met chains that froze at 21-27 min, and the follow-up round (logs/v7-followup.log)
+  passed on its first try.
+
+
+Why the 13 failed in V6 (none is a defect in the code under test)
+
+  11 BTC failures (7 Node, 4 desk): each timed out waiting on a step that needs LEZ
+     finality, and each was followed at once by the runner's own probe "finality flat
+     (N): recreating" — the devnet finality freeze (upstream #3643), which hit every
+     chain 20–40 min after it came up. Examples: btc restart-maker TakerSellsForeign,
+     finality stopped 07:02:23Z and the Taker's LEZ claim went out 07:02:35Z; btc
+     offline-after-lock TakerSellsForeign, stopped 08:15:39Z, claim 08:15:43Z (the claim
+     is the first step that needs finality after the second lock's, so it lands right
+     at the freeze). The V6 runner gave the ZEC refund scenarios a fresh chain each and
+     a retry on a flat chain, but ran the BTC blocks straight through, refunds in the
+     middle of a chain. On a fresh chain each passes.
+   2 ZEC desk failures (zec-restart-taker, zec-restart-maker TakerSellsForeign): the
+     corridor provisioner's zebra `generate` returned "failed to send mined block to
+     gossip task: no available capacity" (zebrad, up 46 h), before any swap existed.
+     After restarting lez-zebra (chain state on its volume, height kept) the rest of
+     the block passed; the reruns restart zebra before each ZEC journey and pass.
+
+Recordings (videos/), each a by-product of a desk journey that passed while being
+recorded, kept only without a re-press:
+
+  Taker sells LEZ (V6, 2026-10-31; checked frame by frame and accepted by the reviewer
+  at 20:10Z, 20:31Z, 20:50Z):
+    TakerSellsLez-zec-happy.mp4          journey 267 s   video 208 s
+    TakerSellsLez-zec-maker-refund.mp4   journey 970 s   video 292 s
+    TakerSellsLez-zec-concurrent.mp4     journey 391 s   video 336 s
+
+  Taker sells ZEC (V7, 2026-11-03/04, on the v7 images with the desk copy fix 31df3352,
+  each on a fresh chain, first try; logs/final-v7.log, logs/v7-rec-*.log, logs/v7-rerec.log):
+    TakerSellsForeign-zec-happy.mp4         journey  543 s   video 190 s   2026-11-03 17:44:49Z
+    TakerSellsForeign-zec-concurrent.mp4    journey  585 s   video 355 s   2026-11-03 18:24:41Z
+    TakerSellsForeign-zec-stale-window.mp4  journey 1007 s   video 123 s   2026-11-03 18:46:29Z
+    TakerSellsForeign-zec-maker-refund.mp4  journey  975 s   video  98 s   2026-11-04 05:43:39Z
+      (re-recorded after the driver's refund caption fix 2f69932a; the 18:09 V7 copy said
+       "The Maker never locked LEZ" over a swap whose Maker had locked, and is not shipped)
+
+  What the selling-ZEC rows show on the v7 images (funds correct in every recording):
+    - zec-happy, zec-concurrent: while the revealing LEZ claim lands the row reads
+      "LEZ claim submitted" under RUNNING with no button ("Your Node follows the claim to
+      finality").
+    - zec-maker-refund: before the press "Claim window closed — Refund recovers your
+      1.00000000 ZEC at the refund height; the Maker's LEZ refund needs nothing from you";
+      after it "Refunding Zcash · the Maker's LEZ is already back".
+    - zec-stale-window: "Claim window closed" with Refund as the only action (FINDINGS 26);
+      after the press "Refunding Zcash", then "Refunded · Your Zcash came back".
+    - The Maker desk in zec-maker-refund also lists two "You sell BTC" offers left by the
+      BTC desk journeys of the same run (they expire on their own).
+  The earlier selling-ZEC recordings of 2026-11-03 (b1dd0af8 images) showed the copy the
+  owner asked to fix: "Retry claim" offered under NEEDS YOU while the claim landed, and
+  the maker-refund row naming the Maker's refund as still to come. They are replaced.
+
+The other desk journeys ran unrecorded.

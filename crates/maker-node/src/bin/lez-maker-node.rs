@@ -44,7 +44,7 @@ use lez_swap_store::{
 #[cfg(feature = "pair-xmr")]
 use lez_xmr_swap_sdk::MoneroPrivateViewKey;
 #[cfg(feature = "pair-zec")]
-use lez_zec_swap_sdk::{ClaimPreimage, ProtectedClaimKey};
+use lez_zec_swap_sdk::ProtectedClaimKey;
 use rustix::fs::{FlockOperation, Mode, OFlags, flock};
 use sd_notify::NotifyState;
 #[cfg(feature = "pair-xmr")]
@@ -1179,11 +1179,7 @@ const fn zec_claim_arguments_absent(_arguments: &Arguments) -> bool {
 }
 
 #[cfg(feature = "pair-zec")]
-type ZecAuthority = (
-    SqliteZecRecoveryStore,
-    Option<ClaimPreimage>,
-    ZecMakerActorProvisioner,
-);
+type ZecAuthority = (SqliteZecRecoveryStore, ZecMakerActorProvisioner);
 
 #[cfg(feature = "pair-zec")]
 fn configured_zec_authority(
@@ -1198,22 +1194,32 @@ fn configured_zec_authority(
     ) {
         (None, None, None, None) => Ok(None),
         (Some(claim_key_id), Some(claim_key_file), preimage_file, Some(provisioner)) => {
+            // A Node-wide claim preimage was one secret for the whole catalog:
+            // every swap's LEZ claim would reveal every other open swap's. A
+            // completion takes the secret from the agreement's own template;
+            // the flag is deprecated, ignored for one template and refused
+            // for more.
+            if preimage_file.is_some() {
+                if provisioner.template_count() > 1 {
+                    bail!(
+                        "--maker-claim-preimage-file is one secret for a catalog of {} templates; drop the flag, each template carries its own claim preimage",
+                        provisioner.template_count()
+                    );
+                }
+                eprintln!(
+                    "maker: --maker-claim-preimage-file is deprecated and ignored; the completion takes the claim preimage from the agreement's own template"
+                );
+            }
             let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;
             let claim_key = ProtectedClaimKey::new(claim_key_id, *claim_key_material)
                 .context("validate maker claim-recovery key ID")?;
-            let preimage = preimage_file
-                .map(|path| {
-                    load_raw_secret(path, "maker claim preimage")
-                        .map(|material| ClaimPreimage::new(*material))
-                })
-                .transpose()?;
             let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
                 &arguments.database,
                 Participant::Maker,
                 claim_key,
             )
             .context("open maker ZEC recovery store")?;
-            Ok(Some((recovery_store, preimage, provisioner)))
+            Ok(Some((recovery_store, provisioner)))
         }
         _ => bail!(
             "ZEC claim, preimage, templates, root, program, and SHA-256 authority must be configured together"
@@ -1288,8 +1294,8 @@ fn maker_context(
     let context = MakerRpc::with_delivery_transport(store, delivery, signing_key);
     #[cfg(feature = "pair-zec")]
     let context = match zec_authority {
-        Some((recovery_store, preimage, provisioner)) => {
-            context.with_directional_zec_chat_authority(recovery_store, preimage, Some(provisioner))
+        Some((recovery_store, provisioner)) => {
+            context.with_directional_zec_chat_authority(recovery_store, Some(provisioner))
         }
         None => context,
     };

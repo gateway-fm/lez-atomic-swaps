@@ -64,8 +64,8 @@ cd lez-atomic-swaps/deploy
 
 The two Basecamp apps are also published as Logos modules; add the catalog
 `https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
-in Basecamp's package manager to install **LEZ / BTC Maker** and
-**LEZ / BTC Taker** at the release version. A native Basecamp on macOS reaches
+in Basecamp's package manager to install **LEZ Maker** and
+**LEZ Taker** at the release version. A native Basecamp on macOS reaches
 the Compose Nodes through `deploy/scripts/desk-sockets.py`; the steps are in
 [`apps/basecamp/README.md`](apps/basecamp/README.md#native-basecamp-on-macos).
 
@@ -89,9 +89,9 @@ The local product also exposes:
 
 ### Complete a swap
 
-1. In **LEZ / BTC Maker**, publish an offer (the Maker Node signs and
+1. In **LEZ Maker**, publish an offer (the Maker Node signs and
    publishes it through Delivery).
-2. In **LEZ / BTC Taker**, take that authenticated offer. The Taker Node
+2. In **LEZ Taker**, take that authenticated offer. The Taker Node
    reserves the lot, plans its Bitcoin funding, prepares its LEZ claim, runs
    the signing ceremony with the Maker Node and activates its actor.
 3. Follow the lifecycle: **Taker: Lock BTC → Maker Node funds LEZ → Taker:

@@ -42,7 +42,7 @@ spel-framework-core = { version = "=0.6.0", git = "https://github.com/logos-co/s
 thiserror = "=2.0.18"
 tempfile = "=3.27.0"
 token_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.4" }
-tokio = { version = "=1.52.3", features = ["io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "=1.53.3", features = ["io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tower = "=0.5.3"
 tower-http = { version = "=0.7.0", features = ["auth"] }
 url = "=2.5.8"
@@ -55,7 +55,7 @@ zeroize = "=1.9.0"
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]
-tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread"] }
 
 [lints.rust]
 missing_debug_implementations = "warn"

@@ -73,3 +73,9 @@ Build the Nodes with `pair-zec`, add Zebra to the stack, restore the pair
 selector and the shielding guidance in the Taker desk, give a ZEC swap a
 user-driven initiation like Bitcoin's, and record one desk-to-chain run. That
 is M2/M6 work for a later release, not part of v0.2.4.
+
+Done at M2 (2026-11-03, `feat/m2-zec-on-docker`): the Nodes build with
+`pair-zec`, Zebra runs in the Docker devnet, the Taker desk offers the pair and
+shows the shielding guidance on a completed ZEC row, the Taker Node drives a ZEC
+swap from the take, and the desk journeys are recorded in both directions
+([evidence set](evidence/regression-m2-2026-11-02/RESULTS.txt)).

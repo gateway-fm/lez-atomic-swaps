@@ -10,16 +10,25 @@
 # delivery_module) come from `.lgx` archives and land in the bundle's modules
 # directory, next to the modules Basecamp ships with.
 #
-# The module builder tags development builds `linux-arm64-dev`; the bundled
-# Basecamp selects the `linux-arm64` variant, so the variant file and the
+# The module builder tags development builds `<variant>-dev`; the bundled
+# Basecamp selects the plain `<variant>`, so the variant file and the
 # manifest's `main` and `hashes` keys are renamed here (values are unchanged:
 # the hashes cover the variant's contents, not its name).
+#
+# The variant must match the host the bundle will run on. Basecamp refuses a
+# foreign one ("installed for variant 'linux-arm64' which is not supported on
+# this platform") and then starts without the role modules, so the desks never
+# appear and every UI suite fails on a launcher it cannot find.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 source="${1:?nix install output directory or .lgx archive}"
 kind="${2:?maker, taker or module}"
-variant="${3:-linux-arm64}"
+case "$(uname -m)" in
+  x86_64 | amd64) host_variant=linux-amd64 ;;
+  *) host_variant=linux-arm64 ;;
+esac
+variant="${3:-$host_variant}"
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 66; }
 
 case "$kind" in

@@ -1,0 +1,18 @@
+[08:53:05] === taker-refund (stamp 1793523185)
+[08:53:05] preflight: indexer historical reads
+[08:53:10]   indexer serves historical reads at the tip (26)
+[08:53:10] preflight: the finality heartbeat saw finality move 0 s ago (finalized 25)
+[08:53:11]   Maker published offer-e2e-1793523185
+[08:53:12]   Taker took offer-e2e-1793523185: swap b8f5828b744d (not_activated)
+[08:53:12]   stopping the Maker Node so it never funds
+[08:53:15]   Taker locked bitcoin: adb6f2c1ac3a (replay=False)
+[08:53:16]   mined 16 blocks past the lock; the Maker cutoff is 600s after the take, the Taker's refund opens 600s after it
+[08:53:16]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[08:58:18]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[09:03:21]   refund request admitted (attempt 11, state awaiting_second_lock)
+[09:08:25]   refund request replayed (attempt 16, state refund_in_progress)
+[09:13:28]   refund request replayed (attempt 21, state refund_in_progress)
+[09:18:32]   refund request replayed (attempt 26, state refund_in_progress)
+[09:23:37]   refund request replayed (attempt 31, state refund_in_progress)
+[09:28:52] FAILED: swap b8f5828b744d was not refunded within 2100s
+[09:28:52] === taker-refund: failed in 2147s

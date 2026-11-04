@@ -25,7 +25,7 @@ sha2 = "=0.10.9"
 spel-framework-core = { version = "=0.5.0", git = "https://github.com/logos-co/spel.git", rev = "73fc462eb8f0a4d00f1a846437c627ec2e523f83" }
 tempfile = "=3.27.0"
 thiserror = "=2.0.18"
-tokio = { version = "=1.52.3", features = [
+tokio = { version = "=1.53.3", features = [
     "io-std",
     "io-util",
     "macros",
@@ -43,7 +43,7 @@ zeroize = "=1.9.0"
 lez-bridge-client = { version = "=0.1.0", path = "../../crates/lez-bridge-client" }
 sequencer_service_protocol = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2" }
 sequencer_service_rpc = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.1.2", default-features = false, features = ["server"] }
-tokio = { version = "=1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "=1.53.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 
 [lints.rust]
 missing_debug_implementations = "warn"

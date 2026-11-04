@@ -5,13 +5,50 @@ use std::{
     sync::Mutex,
 };
 
-static BUILD_LOCK: Mutex<()> = Mutex::new(());
+/// The peer binaries this test process has built, so each is built once.
+static BUILT: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// The pair features the peer binary is built with: the Maker test's own.
+/// A Zcash test run against a Taker built without the Zcash pair fails at its
+/// command line (`--accept-zec-offer` unknown), and any `lez-taker-cli`
+/// already in the target directory may have been built without it.
+fn peer_features() -> Vec<&'static str> {
+    let mut features = Vec::new();
+    if cfg!(feature = "pair-zec") {
+        features.push("pair-zec");
+    }
+    if cfg!(feature = "pair-xmr") {
+        features.push("pair-xmr");
+    }
+    features
+}
+
+/// The pairs the Taker CLI already in the target directory was built with,
+/// read from its help: each pair adds its own `--accept-<pair>-offer` flag.
+/// The workspace build of the Taker's own tests may have unified more features
+/// than this Maker test selects, so the binary is never rebuilt with fewer.
+fn existing_taker_pairs(profile_directory: &Path) -> Vec<&'static str> {
+    let cli = profile_directory.join(format!("lez-taker-cli{}", std::env::consts::EXE_SUFFIX));
+    let Ok(output) = Command::new(&cli).arg("--help").output() else {
+        return Vec::new();
+    };
+    let help = String::from_utf8_lossy(&output.stdout);
+    let mut pairs = Vec::new();
+    if help.contains("--accept-zec-offer") {
+        pairs.push("pair-zec");
+    }
+    if help.contains("--accept-xmr-offer") {
+        pairs.push("pair-xmr");
+    }
+    pairs
+}
 
 /// Resolves a separately owned workspace binary next to this test executable.
 ///
 /// Cargo only defines `CARGO_BIN_EXE_*` for binaries owned by the package under
-/// test. Build a missing peer binary from its owning package so focused tests
-/// remain directly runnable after the role-package split.
+/// test. The peer binary is built from its owning package, with this test's
+/// pair features, once per test process (a no-op when it is current), so a
+/// binary left in the target directory by another build is never trusted.
 pub fn workspace_binary(name: &str) -> PathBuf {
     let test_executable = std::env::current_exe().expect("resolve integration-test executable");
     let profile_directory = test_executable
@@ -19,12 +56,20 @@ pub fn workspace_binary(name: &str) -> PathBuf {
         .and_then(std::path::Path::parent)
         .expect("integration test runs below target/<profile>/deps");
     let executable = profile_directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-    if executable.is_file() {
+    let mut built = BUILT.lock().expect("lock peer-binary build");
+    if built.iter().any(|done| done == name) && executable.is_file() {
         return executable;
     }
-
-    let _build = BUILD_LOCK.lock().expect("lock peer-binary build");
-    if executable.is_file() {
+    // A Taker binary that already carries every pair this test needs is used
+    // as it is: rebuilding it with this test's narrower features would replace
+    // the binary the Taker package's own pair tests run (seen as "Taker actor
+    // configuration is unavailable" in a workspace run).
+    let existing = existing_taker_pairs(profile_directory);
+    if name.starts_with("lez-taker-")
+        && executable.is_file()
+        && peer_features().iter().all(|pair| existing.contains(pair))
+    {
+        built.push(name.to_owned());
         return executable;
     }
     let package = if name == "lez-chat-relay" {
@@ -59,6 +104,15 @@ pub fn workspace_binary(name: &str) -> PathBuf {
             "--bin",
             name,
         ]);
+    let mut features = peer_features();
+    for pair in existing {
+        if !features.contains(&pair) {
+            features.push(pair);
+        }
+    }
+    if package == "lez-taker-node" && !features.is_empty() {
+        command.args(["--features", &features.join(",")]);
+    }
     match profile {
         "debug" => {}
         "release" => {
@@ -71,5 +125,6 @@ pub fn workspace_binary(name: &str) -> PathBuf {
     let status = command.status().expect("run Cargo peer-binary build");
     assert!(status.success(), "build {name} from package {package}");
     assert!(executable.is_file(), "Cargo did not produce {name}");
+    built.push(name.to_owned());
     executable
 }

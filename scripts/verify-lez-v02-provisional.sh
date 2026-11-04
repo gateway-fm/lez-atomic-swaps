@@ -349,7 +349,11 @@ expected_root_advisories="$(printf '%s\n' \
   RUSTSEC-2023-0071 \
   RUSTSEC-2025-0055 \
   RUSTSEC-2026-0118 \
-  RUSTSEC-2026-0119)"
+  RUSTSEC-2026-0119 \
+  RUSTSEC-2026-0387 \
+  RUSTSEC-2026-0391 \
+  RUSTSEC-2026-0398 \
+  RUSTSEC-2026-0403)"
 actual_root_advisories="$(rg -o 'RUSTSEC-[0-9]{4}-[0-9]{4}' compat/lez-v0.2-provisional/deny.toml | sort -u)"
 if [[ "$actual_root_advisories" != "$expected_root_advisories" ]]; then
   echo "provisional root advisory exceptions changed; review scope and reachability" >&2
@@ -374,20 +378,28 @@ check_policy_advisories \
   "methods" \
   "compat/lez-v0.2-provisional/escrow/methods/deny.toml" \
   RUSTSEC-2023-0071 \
-  RUSTSEC-2025-0055
+  RUSTSEC-2025-0055 \
+  RUSTSEC-2026-0387
 check_policy_advisories \
   "guest" \
   "compat/lez-v0.2-provisional/escrow/methods/guest/deny.toml" \
   RUSTSEC-2023-0071 \
   RUSTSEC-2025-0055 \
-  RUSTSEC-2026-0285
+  RUSTSEC-2026-0285 \
+  RUSTSEC-2026-0346 \
+  RUSTSEC-2026-0348 \
+  RUSTSEC-2026-0349 \
+  RUSTSEC-2026-0381 \
+  RUSTSEC-2026-0382 \
+  RUSTSEC-2026-0385
 check_policy_advisories \
   "deployer" \
   "compat/lez-v0.2-provisional/escrow/deployer/deny.toml" \
   RUSTSEC-2023-0071 \
   RUSTSEC-2025-0055 \
   RUSTSEC-2026-0118 \
-  RUSTSEC-2026-0119
+  RUSTSEC-2026-0119 \
+  RUSTSEC-2026-0387
 
 rsa_tree="$(cargo tree --locked --manifest-path "$root_manifest" -e features -i rsa@0.9.10)"
 for dependency in "rzup v0.5.1" "risc0-zkvm v3.0.5" "lee_core v0.1.0"; do

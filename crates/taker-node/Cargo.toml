@@ -56,6 +56,7 @@ lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-logos-price-c-api = { version = "0.1.0", path = "../logos-price-c-api", default-features = false }
 lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
+lez-actor-supervision = { version = "0.1.0", path = "../actor-supervision" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
 lez-xmr-swap-sdk = { version = "0.1.0", path = "../xmr-swap-sdk", optional = true }
 lez-zec-swap-sdk = { version = "0.1.0", path = "../zec-swap-sdk", optional = true }

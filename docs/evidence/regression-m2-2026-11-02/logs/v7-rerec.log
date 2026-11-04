@@ -1,0 +1,11 @@
+[18:10:29] === V7 RE-RECORD at 2f69932a (tree dirty: 0)
+[18:10:29] lez-maker-node:local build-source 31df3352cdba id fdf9b0169cab
+[18:10:30] lez-taker-node:local build-source 31df3352cdba id 4c590a795fa6
+[05:22:37] === recreating the chain (recreation 500) free 206G
+[05:27:04] chain ok: [05:27:04] attempt 1: finalized moved 19 -> 22
+[05:27:06]       lez-zebra restarted
+[05:43:39] === recording ui zec-maker-refund (TakerSellsForeign, try 1): PASSED in 975s
+      2 passed, 0 failed
+      [05:43:39] === zec-maker-refund (TakerSellsForeign): passed in 975s
+[05:43:42]     kept <work>/evidence-v7/videos/TakerSellsForeign-zec-maker-refund.mp4 (5 frames)
+[05:43:42] V7_REREC_DONE

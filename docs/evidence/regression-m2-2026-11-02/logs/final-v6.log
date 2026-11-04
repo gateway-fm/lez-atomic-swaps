@@ -1,0 +1,342 @@
+[19:47:17] === FINAL V6 RUN at b1dd0af8 (tree dirty: 0)
+[19:47:18] lez-maker-node:local build-source b1dd0af871ee id 129b81dbf912
+[19:47:18] lez-taker-node:local build-source b1dd0af871ee id 09d147a3cb99
+[19:47:18] === recreating the chain (recreation 400) 
+[19:58:33] chain ok: [19:58:33] attempt 1: finalized moved 21 -> 23
+[20:03:00] === recording ui zec-happy (try 1): PASSED in 267s
+[20:03:03]     kept <work>/evidence-final/videos/TakerSellsLez-zec-happy.mp4 (10 frames)
+[20:03:03] === recreating the chain (recreation 401) 
+[20:07:35] chain ok: [20:07:35] attempt 1: finalized moved 20 -> 22
+[20:23:45] === recording ui zec-maker-refund (try 1): PASSED in 970s
+[20:23:49]     kept <work>/evidence-final/videos/TakerSellsLez-zec-maker-refund.mp4 (19 frames)
+[20:23:49] === recreating the chain (recreation 402) 
+[20:27:34] chain ok: [20:27:34] attempt 1: finalized moved 16 -> 18
+[20:34:05] === recording ui zec-concurrent (try 1): PASSED in 391s
+[20:34:09]     kept <work>/evidence-final/videos/TakerSellsLez-zec-concurrent.mp4 (18 frames)
+[20:34:09] === recreating the chain (recreation 403) LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+[20:50:49] chain ok: [20:50:49] attempt 1: finalized moved 51 -> 53
+[20:53:58] === zec-balance-refusal (TakerSellsLez): PASSED in 189s
+[20:53:58] === recreating the chain (recreation 404) LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01
+[21:38:24] chain ok: [21:38:24] attempt 4: finalized moved 17 -> 20
+[21:42:36] === zec-balance-refusal (TakerSellsForeign): PASSED in 252s
+[21:42:36] === recreating the chain (recreation 405) 
+[21:46:48] chain ok: [21:46:48] attempt 1: finalized moved 18 -> 20
+[22:11:23] === zec-taker-refund (TakerSellsLez, try 1): PASSED in 1456s
+      [21:59:26]   the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed
+      [22:11:23] === zec-taker-refund: passed in 1456s
+[22:11:23] === recreating the chain (recreation 406) 
+[22:23:08] chain ok: [22:23:08] attempt 1: finalized moved 19 -> 22
+[22:38:23] === zec-maker-refund (TakerSellsLez, try 1): PASSED in 897s
+      [22:38:23] === zec-maker-refund: passed in 896s
+[22:38:23] === recreating the chain (recreation 407) 
+[22:49:26] chain ok: [22:49:26] attempt 1: finalized moved 15 -> 18
+[23:07:12] === zec-refund-then-maker-lock (TakerSellsLez, try 1): PASSED in 1048s
+      [23:07:12] === zec-refund-then-maker-lock: passed in 1049s
+[23:09:55] === zec-happy (TakerSellsLez, try 1): PASSED in 100s
+      [23:09:55] === zec-happy: passed in 99s
+[23:13:17] === zec-replay (TakerSellsLez, try 1): PASSED in 139s
+      [23:13:17] === zec-replay: passed in 138s
+[23:16:08] === zec-wrong-inputs (TakerSellsLez, try 1): PASSED in 108s
+      [23:16:08] === zec-wrong-inputs: passed in 108s
+[23:19:52] === zec-restart-taker (TakerSellsLez, try 1): PASSED in 161s
+      [23:19:51] === zec-restart-taker: passed in 161s
+[23:21:37] finality flat (178): recreating
+[23:21:37] === recreating the chain (recreation 408) 
+[23:25:31] chain ok: [23:25:31] attempt 1: finalized moved 16 -> 19
+[23:28:07] === zec-restart-maker (TakerSellsLez, try 1): PASSED in 138s
+      [23:28:07] === zec-restart-maker: passed in 138s
+[23:31:25] === zec-survivor (TakerSellsLez, try 1): PASSED in 135s
+      [23:31:25] === zec-survivor: passed in 134s
+[23:43:15] === zec-concurrent (TakerSellsLez, try 1): PASSED in 642s
+      [23:43:15] === zec-concurrent: passed in 642s
+[23:46:27] === zec-regenerated-catalog (TakerSellsLez, try 1): PASSED in 124s
+      [23:46:27] === zec-regenerated-catalog: passed in 123s
+[23:48:07] === zec-tampered-catalog (TakerSellsLez, try 1): PASSED in 37s
+      [23:48:07] === zec-tampered-catalog: passed in 37s
+[23:53:03] === zec-early-lock (TakerSellsLez, try 1): PASSED in 232s
+      [23:53:03] === zec-early-lock: passed in 232s
+[23:54:49] finality flat (155): recreating
+[23:54:49] === recreating the chain (recreation 409) 
+[00:12:47] chain ok: [00:12:47] attempt 1: finalized moved 16 -> 19
+[00:15:30] === zec-offline-after-lock (TakerSellsLez, try 1): PASSED in 145s
+      [00:15:30] === zec-offline-after-lock: passed in 145s
+[00:15:30] === recreating the chain (recreation 410) 
+[00:19:53] chain ok: [00:19:53] attempt 1: finalized moved 19 -> 22
+[00:34:39] === zec-taker-refund (TakerSellsForeign, try 1): PASSED in 869s
+      [00:34:39] === zec-taker-refund: passed in 869s
+[00:34:39] === recreating the chain (recreation 411) 
+[00:39:06] chain ok: [00:39:06] attempt 1: finalized moved 19 -> 22
+[00:54:41] === zec-maker-refund (TakerSellsForeign, try 1): PASSED in 917s
+      [00:54:41] === zec-maker-refund: passed in 917s
+[00:54:41] === recreating the chain (recreation 412) 
+[01:05:38] chain ok: [01:05:38] attempt 1: finalized moved 16 -> 19
+[01:21:27] === zec-refund-then-maker-lock (TakerSellsForeign, try 1): PASSED in 930s
+      [01:21:27] === zec-refund-then-maker-lock: passed in 930s
+[01:25:52] === zec-happy (TakerSellsForeign, try 1): PASSED in 202s
+      [01:25:52] === zec-happy: passed in 201s
+[01:30:01] === zec-replay (TakerSellsForeign, try 1): PASSED in 187s
+      [01:30:01] === zec-replay: passed in 187s
+[01:34:31] === zec-wrong-inputs (TakerSellsForeign, try 1): PASSED in 200s
+      [01:34:31] === zec-wrong-inputs: passed in 200s
+[01:43:20] === zec-restart-taker (TakerSellsForeign, try 1): PASSED in 466s
+      [01:43:20] === zec-restart-taker: passed in 465s
+[01:48:04] === zec-restart-maker (TakerSellsForeign, try 1): PASSED in 221s
+      [01:48:04] === zec-restart-maker: passed in 220s
+[01:53:54] === zec-survivor (TakerSellsForeign, try 1): PASSED in 228s
+      [01:53:54] === zec-survivor: passed in 227s
+[01:55:39] finality flat (246): recreating
+[01:55:39] === recreating the chain (recreation 413) 
+[02:13:27] chain ok: [02:13:27] attempt 2: finalized moved 16 -> 19
+[02:18:53] === zec-concurrent (TakerSellsForeign, try 1): PASSED in 308s
+      [02:18:53] === zec-concurrent: passed in 308s
+[02:32:04] === zec-regenerated-catalog (TakerSellsForeign, try 1): PASSED in 723s
+      [02:32:04] === zec-regenerated-catalog: passed in 723s
+[02:35:12] === zec-tampered-catalog (TakerSellsForeign, try 1): PASSED in 125s
+      [02:35:12] === zec-tampered-catalog: passed in 125s
+[02:41:06] === zec-early-lock (TakerSellsForeign, try 1): PASSED in 290s
+      [02:41:06] === zec-early-lock: passed in 290s
+[02:45:38] === zec-offline-after-lock (TakerSellsForeign, try 1): PASSED in 209s
+      [02:45:38] === zec-offline-after-lock: passed in 209s
+[02:47:23] finality flat (193): recreating
+[02:47:23] === recreating the chain (recreation 414) 
+[02:52:07] chain ok: [02:52:07] attempt 1: finalized moved 21 -> 24
+[02:56:43] === zec-claim-collision (TakerSellsForeign, try 1): PASSED in 258s
+      [02:56:43]   node: actor claim: revealing LEZ claim superseded (planned nonce 1, live 2); re-plan 1 at nonce 2: d5ffc2dc2711f55e187691b2abe1ac03521a92f8bbe17e317b765044238e6c7c -> 97f6c5e1c52022773a4a41b70f779835d0
+      [02:56:43] === zec-claim-collision: passed in 258s
+[02:56:43] === recreating the chain (recreation 415) 
+[03:08:10] chain ok: [03:08:10] attempt 1: finalized moved 18 -> 21
+[03:26:12] === ui zec-taker-refund (TakerSellsLez, try 1): PASSED in 1059s
+      4 passed, 0 failed
+      [03:26:12] === zec-taker-refund (TakerSellsLez): passed in 1059s
+[03:32:17] === ui zec-concurrent-staggered (TakerSellsLez, try 1): PASSED in 302s
+      2 passed, 0 failed
+      [03:32:17] === zec-concurrent-staggered (TakerSellsLez): passed in 302s
+[03:36:04] === ui zec-restart-taker (TakerSellsLez, try 1): PASSED in 159s
+      4 passed, 0 failed
+      [03:36:04] === zec-restart-taker (TakerSellsLez): passed in 159s
+[03:40:19] === ui zec-restart-maker (TakerSellsLez, try 1): PASSED in 192s
+      4 passed, 0 failed
+      [03:40:19] === zec-restart-maker (TakerSellsLez): passed in 192s
+[03:44:25] === ui zec-survivor (TakerSellsLez, try 1): PASSED in 178s
+      2 passed, 0 failed
+      [03:44:24] === zec-survivor (TakerSellsLez): passed in 177s
+[03:46:10] finality flat (215): recreating
+[03:46:10] === recreating the chain (recreation 416) 
+[04:03:32] chain ok: [04:03:32] attempt 1: finalized moved 18 -> 21
+[04:09:22] === ui zec-node-offline (TakerSellsLez, try 1): PASSED in 332s
+      4 passed, 0 failed
+      [04:09:21] === zec-node-offline (TakerSellsLez): passed in 331s
+[04:09:22] === recreating the chain (recreation 417) 
+[04:14:24] chain ok: [04:14:24] attempt 1: finalized moved 22 -> 25
+[04:29:37] === ui zec-taker-refund (TakerSellsForeign, try 1): PASSED in 889s
+      4 passed, 0 failed
+      [04:29:37] === zec-taker-refund (TakerSellsForeign): passed in 889s
+[04:29:37] === recreating the chain (recreation 418) 
+[04:41:23] chain ok: [04:41:23] attempt 1: finalized moved 18 -> 21
+[04:57:31] === ui zec-maker-refund (TakerSellsForeign, try 1): PASSED in 950s
+      2 passed, 0 failed
+      [04:57:31] === zec-maker-refund (TakerSellsForeign): passed in 950s
+[04:57:31] === recreating the chain (recreation 419) 
+[05:16:13] chain ok: [05:16:13] attempt 2: finalized moved 21 -> 24
+[05:31:58] === ui zec-stale-window (TakerSellsForeign, try 1): PASSED in 921s
+      2 passed, 0 failed
+      [05:31:58] === zec-stale-window (TakerSellsForeign): passed in 921s
+[05:36:51] === ui zec-happy (TakerSellsForeign, try 1): PASSED in 229s
+      4 passed, 0 failed
+      [05:36:51] === zec-happy (TakerSellsForeign): passed in 229s
+[05:43:58] === ui zec-concurrent (TakerSellsForeign, try 1): PASSED in 364s
+      2 passed, 0 failed
+      [05:43:58] === zec-concurrent (TakerSellsForeign): passed in 364s
+[05:45:43] finality flat (138): recreating
+[05:45:43] === recreating the chain (recreation 420) 
+[05:50:04] chain ok: [05:50:04] attempt 1: finalized moved 17 -> 19
+[05:50:50] === ui zec-restart-taker (TakerSellsForeign, try 1): FAILED in 23s
+         zec-provision failed: zebra generate failed
+      [05:50:50] FAILED: zec-provision.sh
+[05:52:07] === ui zec-restart-maker (TakerSellsForeign, try 1): FAILED in 9s
+         zec-provision failed: zebra generate failed
+      [05:52:07] FAILED: zec-provision.sh
+[05:57:42] === ui zec-survivor (TakerSellsForeign, try 1): PASSED in 267s
+      2 passed, 0 failed
+      [05:57:42] === zec-survivor (TakerSellsForeign): passed in 267s
+[06:12:48] === ui zec-node-offline (TakerSellsForeign, try 1): PASSED in 843s
+      2 passed, 0 failed
+      [06:12:48] === zec-node-offline (TakerSellsForeign): passed in 843s
+[06:12:48] === recreating the chain (recreation 421) 
+[06:32:50] chain ok: [06:32:50] attempt 2: finalized moved 23 -> 25
+[06:38:21] === btc happy (TakerSellsForeign): PASSED in 268s
+      [06:38:21] === happy: passed in 268s
+[06:48:30] === btc replay (TakerSellsForeign): PASSED in 546s
+      [06:48:30] === replay: passed in 545s
+[06:52:22] === btc wrong-inputs (TakerSellsForeign): PASSED in 169s
+      [06:52:22] === wrong-inputs: passed in 169s
+[06:58:33] === btc restart-taker (TakerSellsForeign): PASSED in 307s
+      [06:58:33] === restart-taker: passed in 307s
+[07:32:54] === btc restart-maker (TakerSellsForeign): FAILED in 1998s
+      [07:32:54] FAILED: swap 623061ea83a0 did not reach ['completed'] within 1800s (last both_legs_locked) (Maker follow-up claim)
+      [07:32:54] === restart-maker: failed in 1997s
+[07:34:59] finality flat (185): recreating
+[07:34:59] === recreating the chain (recreation 422) 
+[07:39:10] chain ok: [07:39:10] attempt 1: finalized moved 18 -> 20
+[07:45:08] === btc survivor (TakerSellsForeign): PASSED in 339s
+      [07:45:08] === survivor: passed in 339s
+[07:58:28] === btc concurrent (TakerSellsForeign): PASSED in 730s
+      [07:58:28] === concurrent: passed in 730s
+[08:09:17] === btc early-lock (TakerSellsForeign): PASSED in 585s
+      [08:09:17] === early-lock: passed in 585s
+[08:45:45] === btc offline-after-lock (TakerSellsForeign): FAILED in 2119s
+      [08:45:45] FAILED: swap 77295e878b64 did not reach ['completed'] within 1800s (last both_legs_locked) (Maker follow-up claim)
+      [08:45:45] === offline-after-lock: failed in 2118s
+[08:47:30] finality flat (210): recreating
+[08:47:30] === recreating the chain (recreation 423) 
+[08:52:42] chain ok: [08:52:42] attempt 1: finalized moved 21 -> 24
+[09:28:52] === btc taker-refund (TakerSellsForeign): FAILED in 2148s
+      [09:28:52] FAILED: swap b8f5828b744d was not refunded within 2100s
+      [09:28:52] === taker-refund: failed in 2147s
+[09:30:37] finality flat (130): recreating
+[09:30:37] === recreating the chain (recreation 424) 
+[09:35:42] chain ok: [09:35:42] attempt 1: finalized moved 22 -> 25
+[10:07:59] === btc maker-refund (TakerSellsForeign): PASSED in 1914s
+      [10:07:59] === maker-refund: passed in 1914s
+[10:39:10] === btc refund-then-maker-lock (TakerSellsForeign): PASSED in 1807s
+      [10:39:10] === refund-then-maker-lock: passed in 1807s
+[11:05:32] === btc regenerated-config (TakerSellsForeign): FAILED in 1519s
+      [11:05:32] FAILED: swap ca92b108858d did not reach ['claim_available'] within 1500s (last awaiting_second_lock) (Maker funding)
+      [11:05:32] === regenerated-config: failed in 1518s
+[11:07:17] finality flat (387): recreating
+[11:07:17] === recreating the chain (recreation 425) 
+[11:32:45] chain ok: [11:32:45] attempt 2: finalized moved 19 -> 22
+[11:33:18] === btc tampered-config (TakerSellsForeign): PASSED in 15s
+      [11:33:18] === tampered-config: passed in 15s
+[11:33:18] === recreating the chain (recreation 426) 
+[11:37:31] chain ok: [11:37:31] attempt 1: finalized moved 18 -> 21
+[11:44:18] === btc happy (TakerSellsLez): PASSED in 343s
+      [11:44:18] === happy: passed in 343s
+[11:50:47] === btc replay (TakerSellsLez): PASSED in 325s
+      [11:50:47] === replay: passed in 325s
+[11:57:59] === btc wrong-inputs (TakerSellsLez): PASSED in 369s
+      [11:57:59] === wrong-inputs: passed in 369s
+[12:04:14] === btc restart-taker (TakerSellsLez): PASSED in 312s
+      [12:04:14] === restart-taker: passed in 311s
+[12:10:21] === btc restart-maker (TakerSellsLez): PASSED in 304s
+      [12:10:21] === restart-maker: passed in 303s
+[12:16:41] === btc survivor (TakerSellsLez): PASSED in 317s
+      [12:16:41] === survivor: passed in 317s
+[12:24:21] === btc concurrent (TakerSellsLez): PASSED in 396s
+      [12:24:21] === concurrent: passed in 397s
+[13:01:41] === btc early-lock (TakerSellsLez): FAILED in 2171s
+      [13:01:40] FAILED: swap be71b666b651 did not reach ['completed'] within 1800s (last claim_in_progress) (Maker follow-up claim)
+      [13:01:40] === early-lock: failed in 2170s
+[13:03:26] finality flat (311): recreating
+[13:03:26] === recreating the chain (recreation 427) 
+[13:07:31] chain ok: [13:07:31] attempt 1: finalized moved 17 -> 20
+[13:12:09] === btc offline-after-lock (TakerSellsLez): PASSED in 260s
+      [13:12:09] === offline-after-lock: passed in 260s
+[14:09:37] === btc taker-refund (TakerSellsLez): FAILED in 3384s
+      [14:09:37] FAILED: swap 66687198492f was not refunded within 3300s
+      [14:09:37] === taker-refund: failed in 3384s
+[14:11:24] finality flat (145): recreating
+[14:11:24] === recreating the chain (recreation 428) 
+[14:15:52] chain ok: [14:15:52] attempt 1: finalized moved 19 -> 22
+[15:12:54] === btc maker-refund (TakerSellsLez): FAILED in 3405s
+      [15:12:54] FAILED: swap c4c2a5d44806 was not refunded within 1500s
+      [15:12:54] === maker-refund: failed in 3405s
+[15:14:39] finality flat (129): recreating
+[15:14:39] === recreating the chain (recreation 429) 
+[15:26:18] chain ok: [15:26:18] attempt 1: finalized moved 17 -> 20
+[15:59:39] === btc refund-then-maker-lock (TakerSellsLez): PASSED in 1982s
+      [15:59:39] === refund-then-maker-lock: passed in 1981s
+[16:04:31] === btc regenerated-config (TakerSellsLez): PASSED in 222s
+      [16:04:31] === regenerated-config: passed in 222s
+[16:05:54] === btc tampered-config (TakerSellsLez): PASSED in 13s
+      [16:05:54] === tampered-config: passed in 13s
+[16:05:54] === recreating the chain (recreation 430) 
+[16:10:49] chain ok: [16:10:49] attempt 1: finalized moved 22 -> 24
+[16:27:53] === ui happy (TakerSellsForeign): PASSED in 960s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [16:27:53] === happy (TakerSellsForeign): passed in 960s
+[16:29:39] finality flat (113): recreating
+[16:29:39] === recreating the chain (recreation 431) 
+[16:35:10] chain ok: [16:35:10] attempt 1: finalized moved 24 -> 27
+[16:44:38] === ui restart-taker (TakerSellsForeign): PASSED in 550s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [16:44:38] === restart-taker (TakerSellsForeign): passed in 550s
+[16:54:03] === ui restart-maker (TakerSellsForeign): PASSED in 501s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [16:54:03] === restart-maker (TakerSellsForeign): passed in 501s
+[17:28:41] === ui survivor (TakerSellsForeign): FAILED in 2015s
+        ✗ maker: wait completed reached by the Node
+      3 passed, 1 failed
+      [17:28:41] FAILED: step failed
+[17:30:30] finality flat (147): recreating
+[17:30:30] === recreating the chain (recreation 432) 
+[17:35:47] chain ok: [17:35:47] attempt 1: finalized moved 23 -> 26
+[17:52:24] === ui concurrent (TakerSellsForeign): PASSED in 979s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [17:52:24] === concurrent (TakerSellsForeign): passed in 979s
+[18:34:20] === ui taker-refund (TakerSellsForeign): FAILED in 2452s
+        ✗ taker: swap reaches refunded
+      1 passed, 1 failed
+      [18:34:20] FAILED: step failed
+[18:36:05] finality flat (234): recreating
+[18:36:05] === recreating the chain (recreation 433) 
+[18:40:36] chain ok: [18:40:36] attempt 1: finalized moved 19 -> 22
+[19:12:01] === ui maker-refund (TakerSellsForeign): PASSED in 1867s
+        ✓ maker: wait refunded reached by the Node
+      4 passed, 0 failed
+      [19:12:01] === maker-refund (TakerSellsForeign): passed in 1867s
+[19:13:46] finality flat (176): recreating
+[19:13:46] === recreating the chain (recreation 434) 
+[19:25:29] chain ok: [19:25:29] attempt 1: finalized moved 22 -> 25
+[19:28:43] === ui node-offline (TakerSellsForeign): PASSED in 175s
+        ✓ taker: the Node coming back is picked up
+      2 passed, 0 failed
+      [19:28:43] === node-offline (TakerSellsForeign): passed in 175s
+[19:28:43] === recreating the chain (recreation 435) 
+[19:33:13] chain ok: [19:33:13] attempt 1: finalized moved 18 -> 20
+[19:41:17] === ui happy (TakerSellsLez): PASSED in 414s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [19:41:17] === happy (TakerSellsLez): passed in 414s
+[20:20:22] === ui restart-taker (TakerSellsLez): FAILED in 2276s
+        ✗ maker: wait completed reached by the Node
+      3 passed, 1 failed
+      [20:20:22] FAILED: step failed
+[20:22:07] finality flat (114): recreating
+[20:22:07] === recreating the chain (recreation 436) 
+[20:26:16] chain ok: [20:26:16] attempt 1: finalized moved 18 -> 20
+[20:33:26] === ui restart-maker (TakerSellsLez): PASSED in 412s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [20:33:26] === restart-maker (TakerSellsLez): passed in 412s
+[20:47:17] === ui survivor (TakerSellsLez): PASSED in 762s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [20:47:17] === survivor (TakerSellsLez): passed in 762s
+[20:49:02] finality flat (134): recreating
+[20:49:02] === recreating the chain (recreation 437) 
+[20:53:42] chain ok: [20:53:42] attempt 1: finalized moved 20 -> 23
+[21:03:21] === ui concurrent (TakerSellsLez): PASSED in 562s
+        ✓ taker: swap reaches completed
+      2 passed, 0 failed
+      [21:03:21] === concurrent (TakerSellsLez): passed in 562s
+[21:48:57] === ui taker-refund (TakerSellsLez): FAILED in 2667s
+        ✗ taker: swap reaches refunded
+      1 passed, 1 failed
+      [21:48:57] FAILED: step failed
+[21:50:43] finality flat (114): recreating
+[21:50:43] === recreating the chain (recreation 438) 
+[21:54:38] chain ok: [21:54:38] attempt 1: finalized moved 16 -> 19
+[22:28:47] === ui maker-refund (TakerSellsLez): PASSED in 2025s
+        ✓ maker: wait refunded reached by the Node
+      4 passed, 0 failed
+      [22:28:47] === maker-refund (TakerSellsLez): passed in 2025s
+[22:32:37] === ui node-offline (TakerSellsLez): PASSED in 167s
+        ✓ taker: the Node coming back is picked up
+      2 passed, 0 failed
+      [22:32:37] === node-offline (TakerSellsLez): passed in 167s
+[22:32:37] FINAL_V6_DONE

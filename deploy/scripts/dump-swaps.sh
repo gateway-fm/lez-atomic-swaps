@@ -9,7 +9,7 @@ label="${1:-manual}"
 out="runtime/e2e/dumps/${label}-$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$out"
 owner() { # role method
-  docker exec "lez-$1-node" curl -sS --max-time 60 --unix-socket "/run/lez/$1/node.sock" \
+  docker exec "lez-$1-node" curl -sS --max-time 720 --unix-socket "/run/lez/$1/node.sock" \
     -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[{\"schema_version\":1}]}" http://localhost/ \
     >"$out/$1-$2.json" 2>"$out/$1-$2.err" || true

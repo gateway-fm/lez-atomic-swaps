@@ -43,6 +43,148 @@ pub enum ClaimDriveOutcome {
     Projected { step: ClaimStepV1, revision: u64 },
     /// Both claims were already durably replayed or projected.
     Completed { revision: u64 },
+    /// Nothing was submitted: the owned revealing claim's signer nonce was
+    /// taken by another transaction of the same signer and the claim is not
+    /// included. The claim is re-planned at the live nonce (same claim, same
+    /// preimage) and restaged with [`crate::ActiveZecSwap::restage_revealing_claim`];
+    /// it is never abandoned (FINDINGS 24).
+    Superseded {
+        /// The claim step whose nonce was taken (always the revealing LEZ claim).
+        step: ClaimStepV1,
+        /// Signer nonce the claim was planned at.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
+}
+
+/// Upper bound on re-plans of one owned revealing claim; past it the actor
+/// stops the swap by name (attention required, never a refund). Equal to the
+/// sidecar's `MAX_REVEALING_CLAIM_REPLANS`.
+pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 5;
+
+/// One re-plan of the owned revealing LEZ claim, durable beside the claim
+/// intent it replaced: both nonces, both transaction identities and the
+/// remaining margin to the agreement's LEZ refund time when it was made.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClaimSupersessionV1 {
+    replan_index: u32,
+    superseded_id: [u8; 32],
+    superseded_nonce: u128,
+    replanned_id: [u8; 32],
+    replanned_nonce: u128,
+    lez_refund_margin_ms: i64,
+}
+
+/// Inputs of one claim supersession record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ClaimSupersessionInputV1 {
+    /// One-based re-plan count of this claim.
+    pub replan_index: u32,
+    /// Identity of the superseded claim transaction.
+    pub superseded_id: [u8; 32],
+    /// Signer nonce the superseded claim was planned at.
+    pub superseded_nonce: u128,
+    /// Identity of the re-planned claim transaction.
+    pub replanned_id: [u8; 32],
+    /// Signer nonce the claim is planned at now.
+    pub replanned_nonce: u128,
+    /// Agreement LEZ refund time minus the clock at the re-plan, milliseconds
+    /// (negative once the refund time has passed: the claim can no longer land).
+    pub lez_refund_margin_ms: i64,
+}
+
+/// Why a claim supersession record was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ClaimSupersessionError {
+    /// The re-plan index is zero or past the bound.
+    #[error("revealing-claim re-plan index {0} is outside 1..={MAX_REVEALING_CLAIM_REPLANS}")]
+    IndexOutOfBounds(u32),
+    /// The re-planned nonce does not move past the superseded one.
+    #[error("the re-planned claim nonce does not advance")]
+    NonceDidNotAdvance,
+    /// The re-plan kept the superseded identity or an identity is empty.
+    #[error("the re-planned claim identity does not replace the superseded one")]
+    IdentityDidNotChange,
+}
+
+impl ClaimSupersessionV1 {
+    /// Validates one claim supersession.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first violated rule.
+    pub fn new(input: ClaimSupersessionInputV1) -> Result<Self, ClaimSupersessionError> {
+        if input.replan_index == 0 || input.replan_index > MAX_REVEALING_CLAIM_REPLANS {
+            return Err(ClaimSupersessionError::IndexOutOfBounds(input.replan_index));
+        }
+        if input.replanned_nonce <= input.superseded_nonce {
+            return Err(ClaimSupersessionError::NonceDidNotAdvance);
+        }
+        if input.superseded_id == input.replanned_id
+            || input.superseded_id == [0; 32]
+            || input.replanned_id == [0; 32]
+        {
+            return Err(ClaimSupersessionError::IdentityDidNotChange);
+        }
+        Ok(Self {
+            replan_index: input.replan_index,
+            superseded_id: input.superseded_id,
+            superseded_nonce: input.superseded_nonce,
+            replanned_id: input.replanned_id,
+            replanned_nonce: input.replanned_nonce,
+            lez_refund_margin_ms: input.lez_refund_margin_ms,
+        })
+    }
+
+    /// One-based re-plan count of this claim.
+    #[must_use]
+    pub const fn replan_index(&self) -> u32 {
+        self.replan_index
+    }
+
+    /// Identity of the superseded claim transaction.
+    #[must_use]
+    pub const fn superseded_id(&self) -> &[u8; 32] {
+        &self.superseded_id
+    }
+
+    /// Signer nonce the superseded claim was planned at.
+    #[must_use]
+    pub const fn superseded_nonce(&self) -> u128 {
+        self.superseded_nonce
+    }
+
+    /// Identity of the re-planned claim transaction.
+    #[must_use]
+    pub const fn replanned_id(&self) -> &[u8; 32] {
+        &self.replanned_id
+    }
+
+    /// Signer nonce the claim is planned at now.
+    #[must_use]
+    pub const fn replanned_nonce(&self) -> u128 {
+        self.replanned_nonce
+    }
+
+    /// Agreement LEZ refund time minus the clock at the re-plan, milliseconds.
+    #[must_use]
+    pub const fn lez_refund_margin_ms(&self) -> i64 {
+        self.lez_refund_margin_ms
+    }
+
+    /// Whether this record retires `superseded` and installs `replanned`.
+    #[must_use]
+    pub fn links(
+        &self,
+        superseded: &PreparedClaimSubmissionV1,
+        replanned: &PreparedClaimSubmissionV1,
+    ) -> bool {
+        superseded.expected_submission_id() == &self.superseded_id
+            && replanned.expected_submission_id() == &self.replanned_id
+            && superseded.step() == ClaimStepV1::RevealingLez
+            && replanned.step() == ClaimStepV1::RevealingLez
+    }
 }
 
 /// Canonical LEZ revealing-claim observation.
