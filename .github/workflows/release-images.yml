@@ -112,7 +112,7 @@ jobs:
           done
           cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-vault-claim-poc,lez-v02-local-actor-identity,source-commit.txt} _out/sidecar/
           du -sh _out
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: node-payloads
           path: _out
@@ -155,7 +155,7 @@ jobs:
           mkdir -p _out
           cp "$LEZ_WORKSPACE"/provision/data/lez-services/{sequencer_service,indexer_service} _out/
           du -sh _out
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lez-services-payloads
           path: _out
@@ -188,7 +188,7 @@ jobs:
           toolchain: 1.96.0
       - name: Guest ELF at the pinned digest
         run: ./scripts/verify-lez-v02-provisional.sh
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: escrow-guest
           path: /tmp/lez-v02-guest-artifact/guest/zec_escrow_v02.bin
@@ -245,7 +245,7 @@ jobs:
           mkdir -p _out
           cp "$LEZ_WORKSPACE/provision/data/tools-arm/bin/r0vm" "$LEZ_WORKSPACE/provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer" _out/
           du -sh _out
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: escrow-payloads
           path: _out
@@ -357,7 +357,7 @@ jobs:
         env:
           LEZ_IMAGE_TAG: ${{ needs.plan.outputs.image_tag }}
         run: deploy/scripts/package-dist.sh "$LEZ_IMAGE_PREFIX" "$LEZ_IMAGE_TAG" "$RUNNER_TEMP/dist"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lez-swap-stack-bundle
           path: ${{ runner.temp }}/dist
