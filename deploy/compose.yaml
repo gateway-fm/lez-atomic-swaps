@@ -167,13 +167,17 @@ services:
     restart: "no"
     logging: *default-logging
 
+  # The LEZ v0.2 network node, run as the Logos (Basecamp) module a Basecamp
+  # user installs: blockchain_module 0.2.4 (node 0.2.4) hosted by a headless
+  # logoscore (images/lez-network-module). It keeps the bedrock contract: the
+  # same config and deployment files, the node HTTP API on bedrock:18080.
   bedrock:
-    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:9b316adee185fda52759422e378921a036dcfc9f4422c07bc0a81293e9c2ef35"
+    build: ./images/lez-network-module
+    image: ${LEZ_IMAGE_PREFIX:-lez}-network-module:${LEZ_IMAGE_TAG:-local}
     container_name: lez-bedrock
     depends_on:
       lez-init:
         condition: service_completed_successfully
-    entrypoint: ["/usr/bin/logos-blockchain-node"]
     command:
       - "/opt/lez-v0.2-source/bedrock/node-config.yaml"
       - "--deployment"
@@ -185,6 +189,12 @@ services:
       org.logos-co.atomic-swaps.run: market-lez-0001
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
       org.logos-co.atomic-swaps.component: bedrock
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/18080"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 20s
     working_dir: /work
     volumes:
       - ./assets/lez-source/bedrock:/opt/lez-v0.2-source/bedrock:ro
