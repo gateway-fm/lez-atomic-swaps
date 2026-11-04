@@ -962,7 +962,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
         let outcome = restage_lock_row(
             &transaction,
             &RestageLockRow {
-                table: "zec_sdk_first_lock_intents",
+                table: LockIntentTable::FirstLock,
                 role: self.role_name(),
                 swap_id: intent.swap_id(),
                 open_plan: open.plan(),
@@ -1523,7 +1523,7 @@ impl RecoveryStore for SqliteZecRecoveryStore {
         let outcome = restage_lock_row(
             &transaction,
             &RestageLockRow {
-                table: "zec_sdk_maker_lock_intents",
+                table: LockIntentTable::MakerLock,
                 role: self.role_name(),
                 swap_id: intent.swap_id(),
                 open_plan: open.plan(),
@@ -3164,10 +3164,35 @@ fn load_agreement_row(
         .map_err(StoreError::from)
 }
 
+/// The two lock-intent tables a re-plan can restage. Each names its own fixed
+/// UPDATE statement, so no SQL text is ever assembled at run time.
+#[derive(Clone, Copy)]
+enum LockIntentTable {
+    /// The Taker's first-lock intents.
+    FirstLock,
+    /// The Maker's lock intents.
+    MakerLock,
+}
+
+impl LockIntentTable {
+    const fn restage_sql(self) -> &'static str {
+        match self {
+            Self::FirstLock => {
+                "UPDATE zec_sdk_first_lock_intents SET payload_version = ?3, payload_json = ?4
+                 WHERE local_role = ?1 AND swap_id = ?2 AND closed_revision IS NULL"
+            }
+            Self::MakerLock => {
+                "UPDATE zec_sdk_maker_lock_intents SET payload_version = ?3, payload_json = ?4
+                 WHERE local_role = ?1 AND swap_id = ?2 AND closed_revision IS NULL"
+            }
+        }
+    }
+}
+
 /// One re-plan of an open lock row: the superseded plan goes to the lineage
 /// table with the whole retired payload, the open row gets the new payload.
 struct RestageLockRow<'a> {
-    table: &'static str,
+    table: LockIntentTable,
     role: &'a str,
     swap_id: &'a SwapId,
     open_plan: &'a FirstLockPlanV1,
@@ -3226,11 +3251,7 @@ fn restage_lock_row(
         ],
     )?;
     let updated = transaction.execute(
-        &format!(
-            "UPDATE {} SET payload_version = ?3, payload_json = ?4
-             WHERE local_role = ?1 AND swap_id = ?2 AND closed_revision IS NULL",
-            row.table
-        ),
+        row.table.restage_sql(),
         params![
             row.role,
             row.swap_id.as_str(),
