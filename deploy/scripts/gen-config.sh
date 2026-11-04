@@ -262,17 +262,31 @@ done
 # private copy under runtime/secrets.
 # (an absolute path: the identity tool refuses a relative key path, and up.sh
 # passes the runtime directory as a relative one)
-maker_zcash_private="$(mktemp "$(cd "$RUNTIME" && pwd -P)/secrets/zcash-key.XXXXXX")"
-trap 'rm -f "$maker_zcash_private"' EXIT
-install -m 0600 "$RUNTIME/lez/maker/zcash.key" "$maker_zcash_private"
-zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
-rm -f "$maker_zcash_private"
-trap - EXIT
+# Without the tool (neither staged nor in a built Taker image, e.g. a checkout
+# that has not built anything yet) the ZEC lane cannot run, like a missing LEZ
+# identity above: zebra keeps the template's miner address and says so. A tool
+# that is present but fails stops the script.
+zec_identity_tool_available() {
+  [[ -x "$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" ]] && return 0
+  command -v docker >/dev/null 2>&1 &&
+    docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1
+}
 chmod 0644 "$RUNTIME/lez/maker/zcash.key" "$RUNTIME/lez/taker/zcash.key"
 mkdir -p "$RUNTIME/zebra"
-sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$RUNTIME/zebra/zebrad.toml"
+if zec_identity_tool_available; then
+  maker_zcash_private="$(mktemp "$(cd "$RUNTIME" && pwd -P)/secrets/zcash-key.XXXXXX")"
+  trap 'rm -f "$maker_zcash_private"' EXIT
+  install -m 0600 "$RUNTIME/lez/maker/zcash.key" "$maker_zcash_private"
+  zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
+  rm -f "$maker_zcash_private"
+  trap - EXIT
+  sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$RUNTIME/zebra/zebrad.toml"
+  echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): runtime/zebra/zebrad.toml"
+else
+  cp "$DEPLOY_ROOT/assets/zebra/zebrad.toml" "$RUNTIME/zebra/zebrad.toml"
+  echo "warning: zec-local-poc-identity unavailable (stage it with from-scratch.sh --only rust or build the Taker image); zebra keeps the template miner address and the ZEC lane cannot run" >&2
+fi
 chmod 0644 "$RUNTIME/zebra/zebrad.toml"
-echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): runtime/zebra/zebrad.toml"
 mkdir -p "$RUNTIME/sockets"
 rm -f "$RUNTIME/runtime.env"
 # Recovery timing profile for the Node-owned Bitcoin lifecycle. `local` keeps
