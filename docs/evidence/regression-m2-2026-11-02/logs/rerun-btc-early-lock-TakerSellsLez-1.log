@@ -1,0 +1,18 @@
+[14:46:06] === early-lock (stamp 1793630766)
+[14:46:06] preflight: indexer historical reads
+[14:46:12]   indexer serves historical reads at the tip (26)
+[14:46:12] preflight: the finality heartbeat saw finality move 0 s ago (finalized 25)
+[14:46:12]   Maker published offer-e2e-1793630766
+[14:46:14]   Taker took offer-e2e-1793630766: swap b8345128a2f1 (not_activated)
+[14:46:14]   cutting the Maker's view of LEZ so it cannot see the Taker's lock
+[14:46:14]   Taker locked lez: 1817796e7e14 (replay=False)
+[14:46:14]   the Taker's LEZ lock is sent, and the Maker is blind to it
+[14:47:49]   the Maker stayed at offered for 90s, blind to the first leg
+[14:47:49]   the Maker can see LEZ again; it may now lock
+[14:49:02]   taker b8345128a2f1: claim_available (gen 2) | maker: both_legs_locked
+[14:49:02]   Taker claimed Bitcoin (replay=False)
+[14:49:03]   taker b8345128a2f1: claim_in_progress (gen 2) | maker: both_legs_locked
+[14:51:46]   taker b8345128a2f1: completed (gen 4) | maker: completed
+[14:51:47]   both Nodes report b8345128a2f1 completed
+[14:51:47]   the Bitcoin claim 56abbe473ead is a Taproot key-path spend: one 64-byte signature, no script
+[14:51:47] === early-lock: passed in 341s

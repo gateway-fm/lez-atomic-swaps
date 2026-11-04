@@ -1,0 +1,17 @@
+[23:47:30] === zec-tampered-catalog (stamp 1793490450)
+[23:47:30] preflight: indexer historical reads
+[23:47:36]   indexer serves historical reads at the tip (139)
+[23:47:36] preflight: the finality heartbeat saw finality move 0 s ago (finalized 139)
+[23:47:36]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[23:47:59]       taker: taker ZEC corridor zec-devnet-1793490456: sidecar listening on 127.0.0.1:19902
+[23:47:59]       taker: taker: 1 prepared ZEC entries configured
+[23:47:59]     [zec-provision 23:47:59]   maker sidecar answers on 127.0.0.1:19901
+[23:47:59]     [zec-provision 23:47:59]   taker sidecar answers on 127.0.0.1:19902
+[23:47:59]       maker_health: ready=True degraded=False
+[23:47:59]     [zec-provision 23:47:59]   Taker lists zec-devnet-offer-1793490456 ; corridor zec-devnet-1793490456 is live
+[23:48:00]   corridor zec-devnet-1793490456 entry 0 (deterministic-local-devnet-v3): offer zec-devnet-offer-1793490456, zebra tip 7816, Zcash refund height 7825
+[23:48:00]   Taker took zec-devnet-offer-1793490456: swap zec-devnet-s (not_activated)
+[23:48:00]   receipt: swap zec-devnet-swap-1793490456, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1793490456/actor/taker/actor-config.json
+[23:48:00]   appended one byte to the swap's copied actor-config.json
+[23:48:07]   swap zec-devnet-s after the tamper: attention_required; claim refused (taker_action_execution_unavailable)
+[23:48:07] === zec-tampered-catalog: passed in 37s

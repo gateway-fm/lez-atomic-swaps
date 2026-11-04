@@ -29,10 +29,10 @@ while (Date.now() < deadline) {
   await new Promise((r) => setTimeout(r, 500));
 }
 async function openDesk(app) {
-  const label = role === "maker" ? "LEZ / BTC Maker" : "LEZ / BTC Taker";
+  const label = role === "maker" ? "LEZ Maker" : "LEZ Taker";
   await app.waitFor(async () => app.expectTexts([label]), { timeout: 40000, interval: 500, description: "package discovery" });
   await app.click(label);
-  const desk = role === "maker" ? "LEZ / BTC — Maker Desk" : "LEZ / BTC — Taker Desk";
+  const desk = role === "maker" ? "LEZ — Maker Desk" : "LEZ — Taker Desk";
   await app.waitFor(async () => app.expectTexts([desk]), { timeout: 40000, interval: 500, description: "desk view" });
 }
 async function state(app) {

@@ -16,22 +16,25 @@ use lez_bridge_protocol::{
     CompleteWitnessedAssetClaimV2Request, CompleteWitnessedAssetClaimV2Result,
     CompleteWitnessedClaimRequest, CompleteWitnessedClaimResult,
     CurrentProfileClockAccountSnapshot, ExactMessageBytes, ExactTransactionBytes, Hex32,
-    MessageContext, Participant, PrepareCurrentProfileClockRequest,
-    PrepareCurrentProfileClockResult, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
-    PrepareNativeRefundRequest, PrepareNativeRefundResult,
-    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimAuthorizationV3Result,
-    PrepareNativeXmrClaimV3Request, PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request,
-    PrepareNativeXmrEscrowV3Result, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request,
-    PrepareNativeXmrRefundV3Result, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PrepareWitnessedAssetClaimV2Request, PrepareWitnessedAssetClaimV2Result,
-    PrepareWitnessedAssetEscrowV2Request, PrepareWitnessedAssetEscrowV2Result,
-    PrepareWitnessedAssetRefundV2Request, PrepareWitnessedAssetRefundV2Result,
-    PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult, PrepareWitnessedEscrowRequest,
-    PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolValueError,
-    RuntimeCompatibility, RuntimeDescriptor, SubmitNativeXmrClaimAuthorizationV3Request,
-    SubmitTransactionRequest, TransactionId, WitnessedAssetPrepareStepV2,
-    WitnessedAssetPreparedEffectV2, XmrNativeEffectV3, XmrNativeEscrowTermsV3,
+    MAX_NATIVE_ESCROW_REPLANS, MAX_REVEALING_CLAIM_REPLANS, MessageContext, NativeEscrowStep,
+    Participant, PrepareCurrentProfileClockRequest, PrepareCurrentProfileClockResult,
+    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
+    PrepareNativeRefundResult, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrClaimAuthorizationV3Result, PrepareNativeXmrClaimV3Request,
+    PrepareNativeXmrClaimV3Result, PrepareNativeXmrEscrowV3Request, PrepareNativeXmrEscrowV3Result,
+    PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result,
+    PrepareNativeXmrRefundV3Request, PrepareNativeXmrRefundV3Result, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PrepareWitnessedAssetClaimV2Request,
+    PrepareWitnessedAssetClaimV2Result, PrepareWitnessedAssetEscrowV2Request,
+    PrepareWitnessedAssetEscrowV2Result, PrepareWitnessedAssetRefundV2Request,
+    PrepareWitnessedAssetRefundV2Result, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
+    PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, PreparedTransaction,
+    PreparedWitnessedClaim, ProtocolValueError, RuntimeCompatibility, RuntimeDescriptor,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest,
+    SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult,
+    SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult, TransactionId,
+    WitnessedAssetPrepareStepV2, WitnessedAssetPreparedEffectV2, XmrNativeEffectV3,
+    XmrNativeEscrowTermsV3,
 };
 use nssa::{
     AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
@@ -100,6 +103,19 @@ pub enum NativePrepareError {
     /// Another request already owns this signer's active nonce pair.
     #[error("a distinct native escrow preparation already owns the nonce reservation")]
     ActivePrepare,
+    /// A supersession was requested before any native escrow pair was prepared.
+    #[error("no native escrow preparation exists to supersede")]
+    MissingPrepare,
+    /// The named superseded pair is neither the current pair of the lineage nor
+    /// an already superseded one with the same step.
+    #[error("the superseded pair is not the current native escrow pair")]
+    SupersededPairMismatch,
+    /// The account's live nonce has not passed the planned one; nothing to re-plan.
+    #[error("the superseded nonce is still the account's live nonce")]
+    SupersededNonceStillLive,
+    /// The pair was re-planned `MAX_NATIVE_ESCROW_REPLANS` times already.
+    #[error("the native escrow pair was re-planned the maximum number of times")]
+    ReplanExhausted,
     /// Another XMR claim authorization already owns this signer's nonce.
     #[error("a distinct XMR claim authorization already owns the nonce reservation")]
     ActiveXmrClaimAuthorizationPrepare,
@@ -210,6 +226,42 @@ struct ActivePrepare {
     result: PrepareNativeEscrowResult,
 }
 
+/// One re-plan of the native escrow pair (D1). The original pair stays in
+/// `ActivePrepare`; the lineage's current pair is the last supersession's.
+#[derive(Clone)]
+struct NativeEscrowSupersession {
+    request: SupersedeNativeEscrowPrepareRequest,
+    result: SupersedeNativeEscrowPrepareResult,
+}
+
+impl NativeEscrowSupersession {
+    fn names(&self, initialization: TransactionId, funding: TransactionId) -> bool {
+        self.request.superseded_initialization_transaction_id == initialization
+            && self.request.superseded_funding_transaction_id == funding
+    }
+}
+
+/// One re-plan of the owned revealing claim (FINDINGS 24). The original claim
+/// stays in `ActiveClaimPrepare`; the lineage's current claim is the last
+/// supersession's.
+#[derive(Clone)]
+struct ClaimSupersession {
+    request: SupersedeRevealingClaimRequest,
+    result: SupersedeRevealingClaimResult,
+}
+
+/// Reads the single signer nonce of one exact prepared native escrow transaction.
+fn prepared_signer_nonce(
+    prepared: &PreparedTransaction,
+    signer: AccountId,
+) -> Result<u128, NativePrepareError> {
+    let transaction = decode_prepared_for_signer(prepared, signer)?;
+    let [nonce] = transaction.message().nonces.as_slice() else {
+        return Err(NativePrepareError::InvalidTransactionBytes);
+    };
+    Ok(u128::from(*nonce))
+}
+
 fn xmr_effect_owner(effect: XmrNativeEffectV3) -> Participant {
     match effect {
         XmrNativeEffectV3::Initialize
@@ -223,6 +275,7 @@ fn xmr_effect_owner(effect: XmrNativeEffectV3) -> Participant {
 #[derive(Default)]
 struct PlannerState {
     active: Option<ActivePrepare>,
+    supersessions: Vec<NativeEscrowSupersession>,
     active_xmr_escrow_v3: Option<ActiveXmrEscrowPrepareV3>,
     active_xmr_claim_authorization_v3: Option<ActiveXmrClaimAuthorizationPrepareV3>,
     active_xmr_claim_v3: Option<ActiveXmrClaimPrepareV3>,
@@ -232,6 +285,7 @@ struct PlannerState {
     active_xmr_punish_v3: Option<ActiveXmrPunishPrepareV3>,
     active_witnessed_escrow: Option<ActiveWitnessedEscrowPrepare>,
     active_claim: Option<ActiveClaimPrepare>,
+    claim_supersessions: Vec<ClaimSupersession>,
     active_witnessed_claim: Option<ActiveWitnessedClaimPrepare>,
     completed_witnessed_claim: Option<ActiveWitnessedClaimCompletion>,
     active_refund: Option<ActiveRefundPrepare>,
@@ -733,6 +787,7 @@ impl NativeEscrowPlanner {
 
         #[cfg(target_os = "linux")]
         if let Some(recovered) = self.recover_durable(&request)? {
+            state.supersessions = self.recover_supersessions(&request, &recovered)?;
             state.active = Some(ActivePrepare {
                 request,
                 result: recovered.clone(),
@@ -756,6 +811,7 @@ impl NativeEscrowPlanner {
                 let recovered = self
                     .recover_durable(&request)?
                     .ok_or(DurableReservationError::Filesystem)?;
+                state.supersessions = self.recover_supersessions(&request, &recovered)?;
                 state.active = Some(ActivePrepare {
                     request,
                     result: recovered.clone(),
@@ -764,11 +820,482 @@ impl NativeEscrowPlanner {
             }
             return Err(error.into());
         }
+        state.supersessions.clear();
         state.active = Some(ActivePrepare {
             request,
             result: result.clone(),
         });
         Ok(result)
+    }
+
+    /// Re-plans the native escrow pair after the sequencer passed its nonce
+    /// ([`lez_bridge_protocol::SubmissionOutcome::Superseded`]).
+    ///
+    /// The original pair stays reserved; each re-plan is its own durable
+    /// lineage slot. A request naming a pair that is already superseded (any
+    /// slot) with the same step returns that slot's pair again with the
+    /// caller's context echoed, so a replay never spends another nonce.
+    /// Inclusion of the kept initialization is the runtime's check; the
+    /// planner only sees nonces.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime drift, a missing preparation, a pair that is not
+    /// the lineage's current one, a nonce the account has not passed, the
+    /// sixth re-plan, and every durable reservation failure.
+    pub async fn supersede(
+        &self,
+        request: SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<SupersedeNativeEscrowPrepareResult, NativePrepareError> {
+        let mut state = self.state.lock().await;
+        let active = state
+            .active
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?
+            .clone();
+        self.validate_supersede_request(&active.request, &request)?;
+        if let Some(replayed) = Self::replayed_supersession_in(&state, &request)? {
+            return Ok(replayed);
+        }
+        let (current_initialization, current_funding) = Self::current_pair_in(&state, &active);
+        if request.superseded_initialization_transaction_id != current_initialization.transaction_id
+            || request.superseded_funding_transaction_id != current_funding.transaction_id
+        {
+            return Err(NativePrepareError::SupersededPairMismatch);
+        }
+        let replan_index = u32::try_from(state.supersessions.len())
+            .ok()
+            .and_then(|count| count.checked_add(1))
+            .filter(|index| *index <= MAX_NATIVE_ESCROW_REPLANS)
+            .ok_or(NativePrepareError::ReplanExhausted)?;
+        let live_nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        let (superseded_nonce, initialization, funding) = self.replan_superseded(
+            &active.request,
+            (&current_initialization, &current_funding),
+            request.step,
+            live_nonce,
+        )?;
+        let result = SupersedeNativeEscrowPrepareResult::new(
+            request.context.clone(),
+            request.superseded_initialization_transaction_id,
+            request.superseded_funding_transaction_id,
+            superseded_nonce,
+            live_nonce,
+            replan_index,
+            initialization,
+            funding,
+        );
+        self.validate_supersession(
+            &active.request,
+            (&current_initialization, &current_funding),
+            &request,
+            &result,
+        )?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref() {
+            let kind = ReservationKind::native_escrow_supersession(replan_index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            match store.create(kind, &request, &result) {
+                Ok(()) => {}
+                Err(DurableReservationError::AlreadyReserved) => {
+                    // Another process of this signer re-planned first; adopt
+                    // its slot if it answers the same supersession.
+                    let (adopted, answer) = self.adopt_reserved_supersession(
+                        store,
+                        kind,
+                        &active.request,
+                        (&current_initialization, &current_funding),
+                        &request,
+                    )?;
+                    state.supersessions.push(adopted);
+                    return Ok(answer);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        state.supersessions.push(NativeEscrowSupersession {
+            request,
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Plans the re-planned pair at `live_nonce`: the kept initialization and a
+    /// new funding (step `Fund`), or a fresh consecutive pair (step
+    /// `Initialize`). Returns the superseded step's nonce with the pair.
+    fn replan_superseded(
+        &self,
+        active_request: &PrepareNativeEscrowRequest,
+        current: (&PreparedTransaction, &PreparedTransaction),
+        step: NativeEscrowStep,
+        live_nonce: u128,
+    ) -> Result<(u128, PreparedTransaction, PreparedTransaction), NativePrepareError> {
+        let (current_initialization, current_funding) = current;
+        let initialization_nonce =
+            prepared_signer_nonce(current_initialization, self.signer_account_id)?;
+        let funding_nonce = prepared_signer_nonce(current_funding, self.signer_account_id)?;
+        match step {
+            NativeEscrowStep::Fund => {
+                if live_nonce <= funding_nonce {
+                    return Err(NativePrepareError::SupersededNonceStillLive);
+                }
+                let (_, funding_message) =
+                    self.plan_messages(active_request, initialization_nonce, live_nonce)?;
+                Ok((
+                    funding_nonce,
+                    current_initialization.clone(),
+                    self.prepare_message(funding_message)?,
+                ))
+            }
+            NativeEscrowStep::Initialize => {
+                if live_nonce <= initialization_nonce {
+                    return Err(NativePrepareError::SupersededNonceStillLive);
+                }
+                let next = live_nonce
+                    .checked_add(1)
+                    .ok_or(NativePrepareError::NonceOverflow)?;
+                let pair = self.plan_pair(active_request, live_nonce, next)?;
+                Ok((initialization_nonce, pair.initialization, pair.funding))
+            }
+        }
+    }
+
+    /// Adopts a lineage slot another process reserved first, when it answers
+    /// the same supersession; the caller's context is echoed in the answer.
+    #[cfg(target_os = "linux")]
+    fn adopt_reserved_supersession(
+        &self,
+        store: &DurableReservationStore,
+        kind: ReservationKind,
+        active_request: &PrepareNativeEscrowRequest,
+        current: (&PreparedTransaction, &PreparedTransaction),
+        request: &SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<(NativeEscrowSupersession, SupersedeNativeEscrowPrepareResult), NativePrepareError>
+    {
+        let (stored_request, stored_result) = store
+            .load::<SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult>(kind)?
+            .ok_or(DurableReservationError::Filesystem)?;
+        self.validate_supersede_request(active_request, &stored_request)?;
+        self.validate_supersession(active_request, current, &stored_request, &stored_result)?;
+        if stored_request.step != request.step
+            || stored_request.superseded_initialization_transaction_id
+                != request.superseded_initialization_transaction_id
+            || stored_request.superseded_funding_transaction_id
+                != request.superseded_funding_transaction_id
+        {
+            return Err(NativePrepareError::ActivePrepare);
+        }
+        let mut answer = stored_result.clone();
+        answer.context = request.context.clone();
+        Ok((
+            NativeEscrowSupersession {
+                request: stored_request,
+                result: stored_result,
+            },
+            answer,
+        ))
+    }
+
+    /// Returns the stored answer when `request` names a pair this lineage has
+    /// already superseded with the same step (the caller's context echoed),
+    /// without a node call. `None` means a fresh supersession.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime drift, a missing preparation, and the same pair
+    /// named with a different step.
+    pub async fn replayed_supersession(
+        &self,
+        request: &SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<Option<SupersedeNativeEscrowPrepareResult>, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_supersede_request(&active.request, request)?;
+        Self::replayed_supersession_in(&state, request)
+    }
+
+    /// Returns the lineage's current pair after checking that `request` names
+    /// it, for the runtime's inclusion check before a fresh supersession.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime drift, a missing preparation, a pair that is not
+    /// the current one, and an exhausted lineage.
+    pub async fn current_pair_for_supersession(
+        &self,
+        request: &SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<(PreparedTransaction, PreparedTransaction), NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_supersede_request(&active.request, request)?;
+        let (initialization, funding) = Self::current_pair_in(&state, active);
+        if request.superseded_initialization_transaction_id != initialization.transaction_id
+            || request.superseded_funding_transaction_id != funding.transaction_id
+        {
+            return Err(NativePrepareError::SupersededPairMismatch);
+        }
+        if state.supersessions.len() >= MAX_NATIVE_ESCROW_REPLANS as usize {
+            return Err(NativePrepareError::ReplanExhausted);
+        }
+        Ok((initialization, funding))
+    }
+
+    /// The signer nonce planned into `prepared` when it is one transaction of
+    /// the native escrow lineage (original or any re-plan); `None` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Rejects lineage bytes that no longer decode for the isolated signer.
+    pub async fn native_escrow_planned_nonce(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<Option<u128>, NativePrepareError> {
+        let state = self.state.lock().await;
+        if !Self::lineage_contains(&state, prepared) {
+            return Ok(None);
+        }
+        prepared_signer_nonce(prepared, self.signer_account_id).map(Some)
+    }
+
+    /// The isolated signer's nonce as the node reports it now.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NativePrepareError::NonceUnavailable`] when the node fact
+    /// cannot be obtained.
+    pub async fn live_signer_nonce(&self) -> Result<u128, NativePrepareError> {
+        self.nonce_source
+            .account_nonce(self.signer_account_id)
+            .await
+    }
+
+    fn current_pair_in(
+        state: &PlannerState,
+        active: &ActivePrepare,
+    ) -> (PreparedTransaction, PreparedTransaction) {
+        state.supersessions.last().map_or_else(
+            || {
+                (
+                    active.result.initialization.clone(),
+                    active.result.funding.clone(),
+                )
+            },
+            |last| {
+                (
+                    last.result.initialization.clone(),
+                    last.result.funding.clone(),
+                )
+            },
+        )
+    }
+
+    fn lineage_contains(state: &PlannerState, prepared: &PreparedTransaction) -> bool {
+        state.active.as_ref().is_some_and(|active| {
+            &active.result.initialization == prepared || &active.result.funding == prepared
+        }) || state.supersessions.iter().any(|supersession| {
+            &supersession.result.initialization == prepared
+                || &supersession.result.funding == prepared
+        })
+    }
+
+    fn lineage_pair(
+        state: &PlannerState,
+        initialization_transaction_id: TransactionId,
+        funding_transaction_id: TransactionId,
+    ) -> Option<(PreparedTransaction, PreparedTransaction)> {
+        let active = state.active.as_ref()?;
+        if active.result.initialization.transaction_id == initialization_transaction_id
+            && active.result.funding.transaction_id == funding_transaction_id
+        {
+            return Some((
+                active.result.initialization.clone(),
+                active.result.funding.clone(),
+            ));
+        }
+        state
+            .supersessions
+            .iter()
+            .find(|supersession| {
+                supersession.result.initialization.transaction_id == initialization_transaction_id
+                    && supersession.result.funding.transaction_id == funding_transaction_id
+            })
+            .map(|found| {
+                (
+                    found.result.initialization.clone(),
+                    found.result.funding.clone(),
+                )
+            })
+    }
+
+    fn replayed_supersession_in(
+        state: &PlannerState,
+        request: &SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<Option<SupersedeNativeEscrowPrepareResult>, NativePrepareError> {
+        let Some(found) = state.supersessions.iter().find(|supersession| {
+            supersession.names(
+                request.superseded_initialization_transaction_id,
+                request.superseded_funding_transaction_id,
+            )
+        }) else {
+            return Ok(None);
+        };
+        if found.request.step != request.step {
+            return Err(NativePrepareError::SupersededPairMismatch);
+        }
+        let mut result = found.result.clone();
+        result.context = request.context.clone();
+        Ok(Some(result))
+    }
+
+    fn validate_supersede_request(
+        &self,
+        active_request: &PrepareNativeEscrowRequest,
+        request: &SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<(), NativePrepareError> {
+        if request.context.sidecar_role != self.role || request.runtime.sidecar_role != self.role {
+            return Err(NativePrepareError::WrongRole);
+        }
+        if request.runtime != self.expected_runtime
+            || request.runtime != active_request.runtime
+            || request.context.run_id != active_request.context.run_id
+            || request.context.sidecar_role != active_request.context.sidecar_role
+        {
+            return Err(NativePrepareError::WrongRuntime);
+        }
+        if request.superseded_initialization_transaction_id
+            == request.superseded_funding_transaction_id
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    /// Validates one supersession against the pair it replaces: the kept or
+    /// re-planned initialization, the funding at the reported nonce, both
+    /// messages rebuilt from the original terms, and the echoed identities.
+    fn validate_supersession(
+        &self,
+        active_request: &PrepareNativeEscrowRequest,
+        predecessor: (&PreparedTransaction, &PreparedTransaction),
+        request: &SupersedeNativeEscrowPrepareRequest,
+        result: &SupersedeNativeEscrowPrepareResult,
+    ) -> Result<(), NativePrepareError> {
+        let (predecessor_initialization, predecessor_funding) = predecessor;
+        if result.context != request.context
+            || result.superseded_initialization_transaction_id
+                != request.superseded_initialization_transaction_id
+            || result.superseded_funding_transaction_id != request.superseded_funding_transaction_id
+            || result.superseded_initialization_transaction_id
+                != predecessor_initialization.transaction_id
+            || result.superseded_funding_transaction_id != predecessor_funding.transaction_id
+            || result.replan_index == 0
+            || result.replan_index > MAX_NATIVE_ESCROW_REPLANS
+            || result.initialization == result.funding
+            || result.initialization.transaction_id == result.funding.transaction_id
+            || result.replanned_nonce <= result.superseded_nonce
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let initialization =
+            decode_prepared_for_signer(&result.initialization, self.signer_account_id)?;
+        let funding = decode_prepared_for_signer(&result.funding, self.signer_account_id)?;
+        let [initialization_nonce] = initialization.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        let [funding_nonce] = funding.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        let initialization_nonce = u128::from(*initialization_nonce);
+        let funding_nonce = u128::from(*funding_nonce);
+        let consistent = match request.step {
+            NativeEscrowStep::Fund => {
+                &result.initialization == predecessor_initialization
+                    && result.superseded_nonce
+                        == prepared_signer_nonce(predecessor_funding, self.signer_account_id)?
+                    && result.replanned_nonce == funding_nonce
+            }
+            NativeEscrowStep::Initialize => {
+                initialization_nonce.checked_add(1) == Some(funding_nonce)
+                    && result.superseded_nonce
+                        == prepared_signer_nonce(
+                            predecessor_initialization,
+                            self.signer_account_id,
+                        )?
+                    && result.replanned_nonce == initialization_nonce
+            }
+        };
+        if !consistent {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        let (expected_initialization, expected_funding) =
+            self.plan_messages(active_request, initialization_nonce, funding_nonce)?;
+        if initialization.message() != &expected_initialization
+            || funding.message() != &expected_funding
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    /// Loads the durable lineage slots 1..k in order after the original pair
+    /// was recovered; a slot present after an absent one is corrupt state.
+    #[cfg(target_os = "linux")]
+    fn recover_supersessions(
+        &self,
+        request: &PrepareNativeEscrowRequest,
+        original: &PrepareNativeEscrowResult,
+    ) -> Result<Vec<NativeEscrowSupersession>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut supersessions = Vec::new();
+        let mut predecessor = (original.initialization.clone(), original.funding.clone());
+        let mut absent_from = None;
+        for index in 1..=MAX_NATIVE_ESCROW_REPLANS {
+            let kind = ReservationKind::native_escrow_supersession(index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            let loaded = store
+                .load::<SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult>(
+                    kind,
+                )?;
+            match (loaded, absent_from) {
+                (None, None) => absent_from = Some(index),
+                (None, Some(_)) => {}
+                (Some(_), Some(_)) => {
+                    return Err(DurableReservationError::CorruptReservation.into());
+                }
+                (Some((stored_request, stored_result)), None) => {
+                    self.validate_supersede_request(request, &stored_request)?;
+                    self.validate_supersession(
+                        request,
+                        (&predecessor.0, &predecessor.1),
+                        &stored_request,
+                        &stored_result,
+                    )?;
+                    if stored_result.replan_index != index {
+                        return Err(DurableReservationError::CorruptReservation.into());
+                    }
+                    predecessor = (
+                        stored_result.initialization.clone(),
+                        stored_result.funding.clone(),
+                    );
+                    supersessions.push(NativeEscrowSupersession {
+                        request: stored_request,
+                        result: stored_result,
+                    });
+                }
+            }
+        }
+        Ok(supersessions)
     }
 
     /// Prepares and durably reserves the exact XMR-native initialization/funding pair.
@@ -1846,6 +2373,7 @@ impl NativeEscrowPlanner {
 
         #[cfg(target_os = "linux")]
         if let Some(recovered) = self.recover_durable_claim(request)? {
+            state.claim_supersessions = self.recover_claim_supersessions(request, &recovered)?;
             state.active_claim = Some(ActiveClaimPrepare {
                 request_sha256,
                 result: recovered.clone(),
@@ -1873,6 +2401,8 @@ impl NativeEscrowPlanner {
                 let recovered = self
                     .recover_durable_claim(request)?
                     .ok_or(DurableReservationError::Filesystem)?;
+                state.claim_supersessions =
+                    self.recover_claim_supersessions(request, &recovered)?;
                 state.active_claim = Some(ActiveClaimPrepare {
                     request_sha256,
                     result: recovered.clone(),
@@ -2167,13 +2697,23 @@ impl NativeEscrowPlanner {
             || active.request.context.sidecar_role != request.context.sidecar_role
             || active.request.runtime != request.runtime
             || active.request.terms != request.terms
-            || active.result.initialization.transaction_id != initialization_transaction_id
-            || active.result.funding.transaction_id != funding_transaction_id
         {
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
+        // A superseded pair is still ours and may still be observed by its
+        // identities; the lineage answers for the original and every re-plan.
+        let (initialization, funding) = Self::lineage_pair(
+            &state,
+            initialization_transaction_id,
+            funding_transaction_id,
+        )
+        .ok_or(NativePrepareError::InvalidTransactionBytes)?;
         self.validate_prepared(&active.request, &active.result)?;
-        Ok(active.result.clone())
+        Ok(PrepareNativeEscrowResult::new(
+            active.result.context.clone(),
+            initialization,
+            funding,
+        ))
     }
 
     /// Returns the exact owned witnessed initialization/funding pair after
@@ -2222,24 +2762,314 @@ impl NativeEscrowPlanner {
             .active_claim
             .as_ref()
             .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let member = Self::claim_lineage_member(&state, claim_transaction_id);
         if active.result.context.run_id != request.context.run_id
             || active.result.context.sidecar_role != request.context.sidecar_role
             || request.runtime != self.expected_runtime
             || active.terms != request.terms
-            || active.result.claim.transaction_id != claim_transaction_id
+            || member.is_none()
             || active.funding_transaction_id.as_bytes() == &[0; 32]
         {
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
-        let source = PrepareRevealingClaimRequest::new(
+        let claim = member.ok_or(NativePrepareError::InvalidTransactionBytes)?;
+        let source = Self::claim_source(active, &self.expected_runtime);
+        self.validate_prepared_claim(
+            &source,
+            &PrepareRevealingClaimResult::new(source.context.clone(), claim.clone()),
+        )?;
+        Ok((claim, *active.preimage))
+    }
+
+    fn claim_source(
+        active: &ActiveClaimPrepare,
+        runtime: &lez_bridge_protocol::RuntimeDescriptor,
+    ) -> PrepareRevealingClaimRequest {
+        PrepareRevealingClaimRequest::new(
             active.result.context.clone(),
-            self.expected_runtime.clone(),
+            runtime.clone(),
             active.terms.clone(),
             active.funding_transaction_id,
             lez_bridge_protocol::RevealingPreimage::new(*active.preimage),
+        )
+    }
+
+    /// The claim of this sidecar's lineage (original or re-plan) with that id.
+    fn claim_lineage_member(
+        state: &PlannerState,
+        claim_transaction_id: TransactionId,
+    ) -> Option<PreparedTransaction> {
+        let active = state.active_claim.as_ref()?;
+        if active.result.claim.transaction_id == claim_transaction_id {
+            return Some(active.result.claim.clone());
+        }
+        state
+            .claim_supersessions
+            .iter()
+            .find(|supersession| supersession.result.claim.transaction_id == claim_transaction_id)
+            .map(|supersession| supersession.result.claim.clone())
+    }
+
+    fn current_claim_in(state: &PlannerState) -> Option<PreparedTransaction> {
+        state.claim_supersessions.last().map_or_else(
+            || {
+                state
+                    .active_claim
+                    .as_ref()
+                    .map(|active| active.result.claim.clone())
+            },
+            |supersession| Some(supersession.result.claim.clone()),
+        )
+    }
+
+    /// The signer nonce planned into `prepared` when it is a claim of this
+    /// sidecar's revealing-claim lineage (original or any re-plan).
+    ///
+    /// # Errors
+    ///
+    /// Rejects lineage bytes that no longer decode for the isolated signer.
+    pub async fn revealing_claim_planned_nonce(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Result<Option<u128>, NativePrepareError> {
+        let state = self.state.lock().await;
+        if Self::claim_lineage_member(&state, prepared.transaction_id).as_ref() != Some(prepared) {
+            return Ok(None);
+        }
+        prepared_signer_nonce(prepared, self.signer_account_id).map(Some)
+    }
+
+    fn validate_claim_supersede_request(
+        &self,
+        active: &ActiveClaimPrepare,
+        request: &SupersedeRevealingClaimRequest,
+    ) -> Result<(), NativePrepareError> {
+        if request.context.run_id != active.result.context.run_id
+            || request.context.sidecar_role != active.result.context.sidecar_role
+            || request.runtime != self.expected_runtime
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        Ok(())
+    }
+
+    fn validate_claim_supersession(
+        &self,
+        source: &PrepareRevealingClaimRequest,
+        predecessor: &PreparedTransaction,
+        request: &SupersedeRevealingClaimRequest,
+        result: &SupersedeRevealingClaimResult,
+    ) -> Result<(), NativePrepareError> {
+        if result.context != request.context
+            || result.superseded_claim_transaction_id != request.superseded_claim_transaction_id
+            || result.superseded_claim_transaction_id != predecessor.transaction_id
+            || result.replan_index == 0
+            || result.replan_index > MAX_REVEALING_CLAIM_REPLANS
+            || result.replanned_nonce <= result.superseded_nonce
+            || result.superseded_nonce
+                != prepared_signer_nonce(predecessor, self.signer_account_id)?
+            || result.replanned_nonce
+                != prepared_signer_nonce(&result.claim, self.signer_account_id)?
+        {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
+        self.validate_prepared_claim(
+            source,
+            &PrepareRevealingClaimResult::new(source.context.clone(), result.claim.clone()),
+        )
+    }
+
+    /// Answers a request naming an already superseded claim from the lineage
+    /// (the caller's context echoed), without a node call.
+    ///
+    /// # Errors
+    ///
+    /// Rejects role/runtime drift and a missing claim preparation.
+    pub async fn replayed_claim_supersession(
+        &self,
+        request: &SupersedeRevealingClaimRequest,
+    ) -> Result<Option<SupersedeRevealingClaimResult>, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_claim
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_claim_supersede_request(active, request)?;
+        Ok(state
+            .claim_supersessions
+            .iter()
+            .find(|supersession| {
+                supersession.request.superseded_claim_transaction_id
+                    == request.superseded_claim_transaction_id
+            })
+            .map(|supersession| {
+                let mut answer = supersession.result.clone();
+                answer.context = request.context.clone();
+                answer
+            }))
+    }
+
+    /// The lineage's current claim after checking that `request` names it, for
+    /// the runtime's inclusion check before a fresh supersession.
+    ///
+    /// # Errors
+    ///
+    /// Rejects drift, a missing preparation, a claim that is not the current
+    /// one, and an exhausted lineage.
+    pub async fn current_claim_for_supersession(
+        &self,
+        request: &SupersedeRevealingClaimRequest,
+    ) -> Result<PreparedTransaction, NativePrepareError> {
+        let state = self.state.lock().await;
+        let active = state
+            .active_claim
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_claim_supersede_request(active, request)?;
+        let current = Self::current_claim_in(&state).ok_or(NativePrepareError::MissingPrepare)?;
+        if current.transaction_id != request.superseded_claim_transaction_id {
+            return Err(NativePrepareError::SupersededPairMismatch);
+        }
+        if state.claim_supersessions.len() >= MAX_REVEALING_CLAIM_REPLANS as usize {
+            return Err(NativePrepareError::ReplanExhausted);
+        }
+        Ok(current)
+    }
+
+    /// Re-plans the current owned revealing claim at the live signer nonce:
+    /// the same claim message (terms, escrow, preimage, funding binding) with
+    /// the next nonce, reserved into lineage slot `n` before it is exposed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects drift, a claim that is not the current one, a nonce that is
+    /// still live, an exhausted lineage, and durable-reservation failures.
+    pub async fn supersede_revealing_claim(
+        &self,
+        request: SupersedeRevealingClaimRequest,
+    ) -> Result<SupersedeRevealingClaimResult, NativePrepareError> {
+        let mut state = self.state.lock().await;
+        let active = state
+            .active_claim
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        self.validate_claim_supersede_request(active, &request)?;
+        let source = Self::claim_source(active, &self.expected_runtime);
+        if let Some(existing) = state.claim_supersessions.iter().find(|supersession| {
+            supersession.request.superseded_claim_transaction_id
+                == request.superseded_claim_transaction_id
+        }) {
+            let mut answer = existing.result.clone();
+            answer.context = request.context.clone();
+            return Ok(answer);
+        }
+        let current = Self::current_claim_in(&state).ok_or(NativePrepareError::MissingPrepare)?;
+        if current.transaction_id != request.superseded_claim_transaction_id {
+            return Err(NativePrepareError::SupersededPairMismatch);
+        }
+        let replan_index = u32::try_from(state.claim_supersessions.len())
+            .ok()
+            .and_then(|count| count.checked_add(1))
+            .filter(|index| *index <= MAX_REVEALING_CLAIM_REPLANS)
+            .ok_or(NativePrepareError::ReplanExhausted)?;
+        let superseded_nonce = prepared_signer_nonce(&current, self.signer_account_id)?;
+        let live_nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?;
+        if live_nonce <= superseded_nonce {
+            return Err(NativePrepareError::SupersededNonceStillLive);
+        }
+        let claim = self.prepare_message(self.claim_message(&source, live_nonce)?)?;
+        let result = SupersedeRevealingClaimResult::new(
+            request.context.clone(),
+            request.superseded_claim_transaction_id,
+            superseded_nonce,
+            live_nonce,
+            replan_index,
+            claim,
         );
-        self.validate_prepared_claim(&source, &active.result)?;
-        Ok((active.result.claim.clone(), *active.preimage))
+        self.validate_claim_supersession(&source, &current, &request, &result)?;
+        #[cfg(target_os = "linux")]
+        if let Some(store) = self.durable_store.as_ref() {
+            let kind = ReservationKind::native_claim_supersession(replan_index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            match store.create(kind, &request, &result) {
+                Ok(()) => {}
+                Err(DurableReservationError::AlreadyReserved) => {
+                    let (stored_request, stored_result) = store
+                        .load::<SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult>(
+                            kind,
+                        )?
+                        .ok_or(DurableReservationError::Filesystem)?;
+                    self.validate_claim_supersession(
+                        &source,
+                        &current,
+                        &stored_request,
+                        &stored_result,
+                    )?;
+                    let mut answer = stored_result.clone();
+                    answer.context = request.context.clone();
+                    state.claim_supersessions.push(ClaimSupersession {
+                        request: stored_request,
+                        result: stored_result,
+                    });
+                    return Ok(answer);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        state.claim_supersessions.push(ClaimSupersession {
+            request,
+            result: result.clone(),
+        });
+        Ok(result)
+    }
+
+    /// Loads the durable claim lineage slots 1..k in order after the original
+    /// claim was recovered; a slot after an absent one is corrupt state.
+    #[cfg(target_os = "linux")]
+    fn recover_claim_supersessions(
+        &self,
+        source: &PrepareRevealingClaimRequest,
+        original: &PrepareRevealingClaimResult,
+    ) -> Result<Vec<ClaimSupersession>, NativePrepareError> {
+        let Some(store) = self.durable_store.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut supersessions = Vec::new();
+        let mut predecessor = original.claim.clone();
+        let mut absent_from = None;
+        for index in 1..=MAX_REVEALING_CLAIM_REPLANS {
+            let kind = ReservationKind::native_claim_supersession(index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            let loaded = store
+                .load::<SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult>(kind)?;
+            match (loaded, absent_from) {
+                (None, None) => absent_from = Some(index),
+                (None, Some(_)) => {}
+                (Some(_), Some(_)) => {
+                    return Err(DurableReservationError::CorruptReservation.into());
+                }
+                (Some((stored_request, stored_result)), None) => {
+                    if stored_result.replan_index != index {
+                        return Err(DurableReservationError::CorruptReservation.into());
+                    }
+                    self.validate_claim_supersession(
+                        source,
+                        &predecessor,
+                        &stored_request,
+                        &stored_result,
+                    )?;
+                    predecessor = stored_result.claim.clone();
+                    supersessions.push(ClaimSupersession {
+                        request: stored_request,
+                        result: stored_result,
+                    });
+                }
+            }
+        }
+        Ok(supersessions)
     }
 
     /// Returns the exact owned native refund after checking observation identity.
@@ -2519,9 +3349,26 @@ impl NativeEscrowPlanner {
     ) -> Result<(), NativePrepareError> {
         let state = self.state.lock().await;
         if let Some(active) = state.active.as_ref()
-            && (&active.result.initialization == prepared || &active.result.funding == prepared)
+            && Self::lineage_contains(&state, prepared)
         {
             self.validate_prepared(&active.request, &active.result)?;
+            if let Some(last) = state.supersessions.last() {
+                let predecessor = state.supersessions.len().checked_sub(2).map_or_else(
+                    || (&active.result.initialization, &active.result.funding),
+                    |index| {
+                        (
+                            &state.supersessions[index].result.initialization,
+                            &state.supersessions[index].result.funding,
+                        )
+                    },
+                );
+                self.validate_supersession(
+                    &active.request,
+                    predecessor,
+                    &last.request,
+                    &last.result,
+                )?;
+            }
             return Ok(());
         }
         if let Some(active) = state.active_witnessed_escrow.as_ref()
@@ -2558,17 +3405,16 @@ impl NativeEscrowPlanner {
             self.validate_prepared_refund(&active.request, &active.result)?;
             return Ok(());
         }
+        // The owned revealing claim, original or any re-plan of its lineage.
         if let Some(active) = state.active_claim.as_ref()
-            && &active.result.claim == prepared
+            && Self::claim_lineage_member(&state, prepared.transaction_id).as_ref()
+                == Some(prepared)
         {
-            let source = PrepareRevealingClaimRequest::new(
-                active.result.context.clone(),
-                self.expected_runtime.clone(),
-                active.terms.clone(),
-                active.funding_transaction_id,
-                lez_bridge_protocol::RevealingPreimage::new(*active.preimage),
-            );
-            self.validate_prepared_claim(&source, &active.result)?;
+            let source = Self::claim_source(active, &self.expected_runtime);
+            self.validate_prepared_claim(
+                &source,
+                &PrepareRevealingClaimResult::new(source.context.clone(), prepared.clone()),
+            )?;
             return Ok(());
         }
         if self.validate_completed_xmr_submission(&state, prepared)? {

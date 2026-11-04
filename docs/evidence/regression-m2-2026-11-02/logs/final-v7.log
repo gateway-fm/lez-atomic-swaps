@@ -1,0 +1,150 @@
+[17:29:11] === V7 RUN at 31df3352 (tree dirty: 0)
+[17:29:12] lez-maker-node:local build-source 31df3352cdba id fdf9b0169cab
+[17:29:13] lez-taker-node:local build-source 31df3352cdba id 4c590a795fa6
+[17:29:13] === recreating the chain (recreation 458) free 197G
+[17:35:11] chain ok: [17:35:11] attempt 1: finalized moved 25 -> 28
+[17:35:18]       lez-zebra restarted
+[17:44:49] === recording ui zec-happy (TakerSellsForeign, try 1): PASSED in 543s
+      4 passed, 0 failed
+      [17:44:49] === zec-happy (TakerSellsForeign): passed in 543s
+[17:44:57]     kept <work>/evidence-v7/videos/TakerSellsForeign-zec-happy.mp4 (10 frames)
+[17:44:57] === recreating the chain (recreation 459) free 201G
+[17:50:39] chain ok: [17:50:39] attempt 1: finalized moved 24 -> 27
+[17:50:46]       lez-zebra restarted
+[18:09:10] === recording ui zec-maker-refund (TakerSellsForeign, try 1): PASSED in 1075s
+      2 passed, 0 failed
+      [18:09:10] === zec-maker-refund (TakerSellsForeign): passed in 1075s
+[18:09:12]     kept <work>/evidence-v7/videos/TakerSellsForeign-zec-maker-refund.mp4 (6 frames)
+[18:09:12] === recreating the chain (recreation 460) free 208G
+[18:14:28] chain ok: [18:14:28] attempt 1: finalized moved 23 -> 26
+[18:14:33]       lez-zebra restarted
+[18:24:41] === recording ui zec-concurrent (TakerSellsForeign, try 1): PASSED in 585s
+      2 passed, 0 failed
+      [18:24:41] === zec-concurrent (TakerSellsForeign): passed in 585s
+[18:24:46]     kept <work>/evidence-v7/videos/TakerSellsForeign-zec-concurrent.mp4 (19 frames)
+[18:24:46] === recreating the chain (recreation 461) free 210G
+[18:29:13] chain ok: [18:29:13] attempt 1: finalized moved 19 -> 22
+[18:29:17]       lez-zebra restarted
+[18:46:29] === recording ui zec-stale-window (TakerSellsForeign, try 1): PASSED in 1007s
+      2 passed, 0 failed
+      [18:46:29] === zec-stale-window (TakerSellsForeign): passed in 1007s
+[18:46:31]     kept <work>/evidence-v7/videos/TakerSellsForeign-zec-stale-window.mp4 (6 frames)
+[18:46:31] === recreating the chain (recreation 462) free 210G
+[18:59:09] chain ok: [18:59:09] attempt 1: finalized moved 23 -> 26
+[18:59:14]       lez-zebra restarted
+[19:14:55] === ui zec-taker-refund (TakerSellsForeign, try 1): PASSED in 917s
+      4 passed, 0 failed
+      [19:14:55] === zec-taker-refund (TakerSellsForeign): passed in 917s
+[19:15:45]       lez-zebra restarted
+[19:20:46] === ui zec-restart-taker (TakerSellsForeign, try 1): PASSED in 276s
+      4 passed, 0 failed
+      [19:20:46] === zec-restart-taker (TakerSellsForeign): passed in 276s
+[19:21:35]       lez-zebra restarted
+[19:27:29] === ui zec-restart-maker (TakerSellsForeign, try 1): PASSED in 330s
+      4 passed, 0 failed
+      [19:27:29] === zec-restart-maker (TakerSellsForeign): passed in 330s
+[19:28:18]       lez-zebra restarted
+[19:36:42] === ui zec-survivor (TakerSellsForeign, try 1): PASSED in 479s
+      2 passed, 0 failed
+      [19:36:42] === zec-survivor (TakerSellsForeign): passed in 479s
+[19:37:32]       lez-zebra restarted
+[19:45:43] === ui zec-node-offline (TakerSellsForeign, try 1): PASSED in 467s
+      2 passed, 0 failed
+      [19:45:43] === zec-node-offline (TakerSellsForeign): passed in 467s
+[19:45:43] === recreating the chain (recreation 463) free 208G
+[19:50:03] chain ok: [19:50:03] attempt 1: finalized moved 18 -> 21
+[20:22:32] === ui taker-refund (TakerSellsForeign, try 1): PASSED in 1924s
+      4 passed, 0 failed
+      [20:22:31] === taker-refund (TakerSellsForeign): passed in 1923s
+[20:22:32] === recreating the chain (recreation 464) free 205G
+[20:26:55] chain ok: [20:26:55] attempt 1: finalized moved 19 -> 22
+[20:58:15] === ui maker-refund (TakerSellsForeign, try 1): PASSED in 1862s
+      4 passed, 0 failed
+      [20:58:15] === maker-refund (TakerSellsForeign): passed in 1862s
+[21:00:00] finality flat (114): recreating
+[21:00:00] === recreating the chain (recreation 465) free 207G
+[21:13:13] chain ok: [21:13:13] attempt 1: finalized moved 24 -> 26
+[21:30:23] === ui happy (TakerSellsForeign, try 1): PASSED in 1007s
+      2 passed, 0 failed
+      [21:30:23] === happy (TakerSellsForeign): passed in 1007s
+[21:38:16] === ui restart-taker (TakerSellsForeign, try 1): PASSED in 403s
+      2 passed, 0 failed
+      [21:38:16] === restart-taker (TakerSellsForeign): passed in 403s
+[21:48:23] === ui restart-maker (TakerSellsForeign, try 1): PASSED in 543s
+      2 passed, 0 failed
+      [21:48:23] === restart-maker (TakerSellsForeign): passed in 543s
+[21:55:10] === ui survivor (TakerSellsForeign, try 1): PASSED in 342s
+      2 passed, 0 failed
+      [21:55:10] === survivor (TakerSellsForeign): passed in 342s
+[22:10:42] === ui concurrent (TakerSellsForeign, try 1): PASSED in 863s
+      2 passed, 0 failed
+      [22:10:42] === concurrent (TakerSellsForeign): passed in 863s
+[22:14:43] === ui node-offline (TakerSellsForeign, try 1): PASSED in 178s
+      2 passed, 0 failed
+      [22:14:43] === node-offline (TakerSellsForeign): passed in 178s
+[22:14:43] === recreating the chain (recreation 466) free 206G
+[22:20:06] chain ok: [22:20:06] attempt 1: finalized moved 24 -> 27
+[23:01:36] === ui taker-refund (TakerSellsLez, try 1): FAILED in 2471s
+      1 passed, 1 failed
+      [23:01:35] FAILED: step failed
+[23:02:41]       finality flat after the failure: one more try on a fresh chain
+[23:02:41] === recreating the chain (recreation 467) free 203G
+[23:06:49] chain ok: [23:06:49] attempt 1: finalized moved 17 -> 20
+[23:47:54] === ui taker-refund (TakerSellsLez, try 2): FAILED in 2447s
+      1 passed, 1 failed
+      [23:47:54] FAILED: step failed
+[23:48:55]       finality flat after the failure: one more try on a fresh chain
+[23:48:55] === recreating the chain (recreation 468) free 207G
+[23:53:18] chain ok: [23:53:18] attempt 1: finalized moved 19 -> 22
+[00:34:33] === ui taker-refund (TakerSellsLez, try 3): FAILED in 2457s
+      1 passed, 1 failed
+      [00:34:33] FAILED: step failed
+[00:35:41]       finality flat after the failure: one more try on a fresh chain
+[00:35:41] === recreating the chain (recreation 469) free 206G
+[00:40:20] chain ok: [00:40:20] attempt 1: finalized moved 20 -> 23
+[01:45:02] === ui maker-refund (TakerSellsLez, try 1): FAILED in 3863s
+      3 passed, 1 failed
+      [01:45:02] FAILED: step failed
+[01:46:12]       finality flat after the failure: one more try on a fresh chain
+[01:46:12] === recreating the chain (recreation 470) free 204G
+[01:51:44] chain ok: [01:51:44] attempt 1: finalized moved 24 -> 27
+[02:40:53] === ui maker-refund (TakerSellsLez, try 2): FAILED in 2925s
+      1 passed, 1 failed
+      [02:40:53] FAILED: step failed
+[02:42:07]       finality flat after the failure: one more try on a fresh chain
+[02:42:07] === recreating the chain (recreation 471) free 204G
+[02:46:09] chain ok: [02:46:09] attempt 1: finalized moved 17 -> 20
+[03:19:59] === ui maker-refund (TakerSellsLez, try 3): PASSED in 2012s
+      4 passed, 0 failed
+      [03:19:59] === maker-refund (TakerSellsLez): passed in 2012s
+[03:25:10] === ui happy (TakerSellsLez, try 1): PASSED in 247s
+      2 passed, 0 failed
+      [03:25:10] === happy (TakerSellsLez): passed in 247s
+[03:57:05] === ui restart-taker (TakerSellsLez, try 1): FAILED in 1852s
+      3 passed, 1 failed
+      [03:57:05] FAILED: step failed
+[03:58:05]       finality flat after the failure: one more try on a fresh chain
+[03:58:05] === recreating the chain (recreation 472) free 203G
+[04:02:01] chain ok: [04:02:01] attempt 1: finalized moved 16 -> 19
+[04:07:28] === ui restart-taker (TakerSellsLez, try 2): PASSED in 303s
+      2 passed, 0 failed
+      [04:07:28] === restart-taker (TakerSellsLez): passed in 303s
+[04:16:03] === ui restart-maker (TakerSellsLez, try 1): PASSED in 446s
+      2 passed, 0 failed
+      [04:16:03] === restart-maker (TakerSellsLez): passed in 446s
+[04:51:14] === ui survivor (TakerSellsLez, try 1): FAILED in 2048s
+      3 passed, 1 failed
+      [04:51:14] FAILED: step failed
+[04:52:15]       finality flat after the failure: one more try on a fresh chain
+[04:52:15] === recreating the chain (recreation 473) free 203G
+[04:57:03] chain ok: [04:57:03] attempt 1: finalized moved 21 -> 24
+[05:04:27] === ui survivor (TakerSellsLez, try 2): PASSED in 421s
+      2 passed, 0 failed
+      [05:04:27] === survivor (TakerSellsLez): passed in 421s
+[05:18:14] === ui concurrent (TakerSellsLez, try 1): PASSED in 757s
+      2 passed, 0 failed
+      [05:18:14] === concurrent (TakerSellsLez): passed in 757s
+[05:22:22] === ui node-offline (TakerSellsLez, try 1): PASSED in 177s
+      2 passed, 0 failed
+      [05:22:22] === node-offline (TakerSellsLez): passed in 177s
+[05:22:22] V7_DONE

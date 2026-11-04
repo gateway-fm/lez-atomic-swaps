@@ -21,13 +21,18 @@ compose=(docker compose --env-file runtime/runtime.env)
 log() { printf '[reset %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 # Runs a command inside a fresh container of the role image with the role's
 # state volume mounted, as the Node uid, while the Node itself is stopped.
-in_role() { local role="$1"; shift; "${compose[@]}" run --rm --no-deps --entrypoint "$1" "$role-node" "${@:2}"; }
+# -T, but stdin stays connected: two calls below feed python3 a heredoc.
+in_role() { local role="$1"; shift; "${compose[@]}" run --rm -T --no-deps --entrypoint "$1" "$role-node" "${@:2}"; }
 
 log "stopping both Nodes (their per-swap sidecars stop with them)"
 "${compose[@]}" stop maker-node taker-node >/dev/null
 
 log "Taker: swap directories and registry rows"
-in_role taker bash -c 'rm -rf /var/lib/lez/taker/btc/swaps/* /var/lib/lez/taker/btc/sidecar-state /var/lib/lez/taker/btc/sidecar.log'
+in_role taker bash -c 'for pair in /var/lib/lez/taker/*/; do
+  rm -rf "$pair"swaps/* "$pair"sidecar-state "$pair"sidecar.log
+done
+# the Zcash actors'"'"' supervision schedule (one row per taken swap) goes with the swaps
+rm -f /var/lib/lez/taker/taker-actor-schedule.sqlite3 /var/lib/lez/taker/taker-actor-schedule.sqlite3-wal /var/lib/lez/taker/taker-actor-schedule.sqlite3-shm'
 in_role taker python3 - <<'PY'
 import sqlite3
 store = sqlite3.connect("/var/lib/lez/taker/registry.sqlite3")
@@ -39,7 +44,9 @@ print("  registry: swaps, authorities and requests cleared")
 PY
 
 log "Maker: swap directories, actor registrations, negotiations, consumed offers"
-in_role maker bash -c 'rm -rf /var/lib/lez/maker/btc/swaps/* /var/lib/lez/maker/btc/sidecar-state /var/lib/lez/maker/btc/sidecar.log /var/lib/lez/maker/btc/lez-btc-maker-actor-trace'
+in_role maker bash -c 'for pair in /var/lib/lez/maker/*/; do
+  rm -rf "$pair"swaps/* "$pair"sidecar-state "$pair"sidecar.log "$pair"lez-*-maker-actor-trace
+done'
 in_role maker python3 - <<'PY'
 import sqlite3
 store = sqlite3.connect("/var/lib/lez/maker/maker.sqlite3")
@@ -52,6 +59,15 @@ for table in ("maker_btc_negotiations", "maker_zec_negotiations", "maker_xmr_neg
 counts["maker_offers (reserved/consumed)"] = store.execute(
     "delete from maker_offers where state in ('reserved', 'consumed')").rowcount
 counts["swaps (+ actor registrations, progress, events, projections)"] = store.execute("delete from swaps").rowcount
+# The Maker's ZEC recovery store lives in this database (zec_sdk_* tables) and
+# revalidates every persisted agreement at start; a reset leaves none behind,
+# so a profile change between runs cannot keep the Node from starting.
+zec_tables = [row[0] for row in store.execute(
+    "select name from sqlite_master where type = 'table' and name like 'zec_sdk_%' order by name")]
+if "zec_sdk_agreements" in zec_tables:
+    counts["zec_sdk_agreements (+ every ZEC recovery row)"] = store.execute("delete from zec_sdk_agreements").rowcount
+    for table in zec_tables:
+        store.execute(f'delete from "{table}"')
 store.commit()
 store.execute("vacuum")
 for table, count in counts.items():

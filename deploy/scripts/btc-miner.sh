@@ -10,7 +10,7 @@ rpc_host="${BTC_RPC_HOST:-bitcoin-core}"
 rpc_port="${BTC_RPC_PORT:-18443}"
 
 rpc() {
-  curl -fsS --max-time 5 --user "$rpc_user:$rpc_pass" \
+  curl -fsS --max-time 120 --user "$rpc_user:$rpc_pass" \
     --header 'content-type: application/json' \
     --data "$1" "http://${rpc_host}:${rpc_port}" | jq -r '.result // empty'
 }

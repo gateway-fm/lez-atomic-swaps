@@ -519,7 +519,7 @@ impl ZcashObservationTracker {
     }
 }
 
-fn same_canonical_inclusion(
+pub(crate) fn same_canonical_inclusion(
     left: &CanonicalZcashOutputObservation,
     right: &CanonicalZcashOutputObservation,
 ) -> bool {

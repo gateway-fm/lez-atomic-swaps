@@ -33,7 +33,7 @@ programs = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logo
 sequencer_core = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0", features = ["mock"] }
 tempfile = "=3.27.0"
 testnet_initial_state = { version = "=0.1.0", git = "https://github.com/logos-blockchain/logos-execution-zone.git", tag = "v0.2.0" }
-tokio = { version = "=1.52.3", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread", "time"] }
 
 [lints.rust]
 missing_debug_implementations = "warn"

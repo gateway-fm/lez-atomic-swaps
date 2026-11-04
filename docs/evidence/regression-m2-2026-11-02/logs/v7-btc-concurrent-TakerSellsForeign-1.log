@@ -1,0 +1,92 @@
+
+[21:56:19] === concurrent (TakerSellsForeign)
+
+[21:56:28] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[21:56:36] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   336c89142e1c7f05e88d88f396e07e0ef30f5cd6a627e7f250d44672c2b46d34 awaiting_first_lock 0 -
+
+[21:56:47] Taker desk: lock_btc on 336c89142e1c
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[21:56:59] Maker desk shows 336c89142e1c at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[22:04:49] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   86e2bc7b3be19380d20737fad957979f3fb715702d4e13fb4be27e7641ea4484 awaiting_first_lock 0 -
+
+[22:05:05] Taker desk: lock_btc on 86e2bc7b3be1
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[22:05:22] Maker desk shows 86e2bc7b3be1 at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[22:07:44] Taker desk: claim_lez on 336c89142e1c
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_lez
+2 passed, 0 failed
+
+[22:07:55] Taker desk: claim_lez on 86e2bc7b3be1
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_lez
+2 passed, 0 failed
+
+[22:08:08] Maker desk shows 336c89142e1c at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[22:10:08] Taker desk shows 336c89142e1c at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 336c89142e1c: runtime/evidence/336c89142e1c7f05e88d88f396e07e0ef30f5cd6a627e7f250d44672c2b46d34.json (5 effects, completed 2026-11-03T22:09:59Z)
+
+[22:10:26] Maker desk shows 86e2bc7b3be1 at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[22:10:34] Taker desk shows 86e2bc7b3be1 at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 86e2bc7b3be1: runtime/evidence/86e2bc7b3be19380d20737fad957979f3fb715702d4e13fb4be27e7641ea4484.json (5 effects, completed 2026-11-03T22:09:59Z)
+
+[22:10:42] === concurrent (TakerSellsForeign): passed in 863s

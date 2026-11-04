@@ -91,7 +91,7 @@ if rg -q '^\s*cap_add:' "$compose_file"; then
 fi
 
 required_dockerfile_terms=(
-  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
   'org.opencontainers.image.source="https://github.com/bitcoin/bitcoin"'
   'org.opencontainers.image.version="31.1"'
   'org.opencontainers.image.revision="9be056a8a72b624dae9623b2f7bded92c2a21c91"'
@@ -124,7 +124,7 @@ required_provenance_terms=(
   'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
   'BITCOIN_CORE_GUIX_SIGS_COMMIT=d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa'
   'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
-  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
 )
 
 for term in "${required_provenance_terms[@]}"; do
@@ -146,7 +146,7 @@ required_aarch64_provenance_terms=(
   'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
   'BITCOIN_CORE_GUIX_SIGS_COMMIT=d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa'
   'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
-  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b'
+  'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
 )
 
 for term in "${required_aarch64_provenance_terms[@]}"; do

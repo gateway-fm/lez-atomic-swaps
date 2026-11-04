@@ -1,0 +1,18 @@
+[08:10:27] === offline-after-lock (stamp 1793520627)
+[08:10:27] preflight: indexer historical reads
+[08:12:42]   re-indexing from bedrock…
+[08:12:42]   re-indexed to 203; historical reads restored (old database kept in runtime/indexer-broken-20261101-081040)
+[08:12:42] preflight: the finality heartbeat saw finality move 0 s ago (finalized 201)
+[08:12:42]   Maker published offer-e2e-1793520627
+[08:12:44]   Taker took offer-e2e-1793520627: swap 77295e878b64 (not_activated)
+[08:12:44]   Taker locked bitcoin: 41a0a38109af (replay=False)
+[08:12:44]   cutting Logos Chat and Delivery, with the first lock already on chain
+[08:12:44]   the Maker reports chat and delivery unavailable, and degraded
+[08:12:44]   taker 77295e878b64: awaiting_first_lock (gen 0) | maker: leased
+[08:13:25]   taker 77295e878b64: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[08:15:43]   taker 77295e878b64: claim_available (gen 2) | maker: taker_lock_confirmed
+[08:15:43]   Taker claimed LEZ (replay=False)
+[08:15:43]   taker 77295e878b64: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[08:27:49]   taker 77295e878b64: both_legs_locked (gen 2) | maker: both_legs_locked
+[08:45:45] FAILED: swap 77295e878b64 did not reach ['completed'] within 1800s (last both_legs_locked) (Maker follow-up claim)
+[08:45:45] === offline-after-lock: failed in 2118s

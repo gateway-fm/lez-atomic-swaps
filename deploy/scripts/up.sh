@@ -69,7 +69,7 @@ load_env() { set -a; source runtime/runtime.env; set +a; export BTC_RPC_PASSWORD
 wait_owner_health() { # wait_owner_health <seconds>
   local deadline=$(( $(date +%s) + $1 ))
   owner_ok() { # owner_ok <role> <method> <params>
-    docker exec "lez-$1-node" curl -sS --max-time 5 --unix-socket "/run/lez/$1/node.sock" \
+    docker exec "lez-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
       -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null | grep -q '"result"'
   }
@@ -95,7 +95,17 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   echo "[lez] recreating the LEZ chain; old state → runtime/lez-broken-$stamp"
   docker compose stop maker-node taker-node lez-explorer indexer sequencer bedrock >/dev/null 2>&1 || true
   mkdir -p "runtime/lez-broken-$stamp"
-  for d in bedrock sequencer indexer; do [[ -d "runtime/$d" ]] && mv "runtime/$d" "runtime/lez-broken-$stamp/"; done
+  # Bedrock writes its state as the image's own user (65532, mode 0700), which
+  # the host user cannot move on Linux. Docker Desktop maps every bind mount to
+  # the host user and hides that, so the plain mv only fails on a Linux host;
+  # fall back to a root shell in a container that is already present.
+  for d in bedrock sequencer indexer; do
+    [[ -d "runtime/$d" ]] || continue
+    mv "runtime/$d" "runtime/lez-broken-$stamp/" 2>/dev/null ||
+      docker run --rm --user 0 --volume "$PWD/runtime:/runtime" \
+        --entrypoint /bin/sh "${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}" \
+        -c "mv '/runtime/$d' '/runtime/lez-broken-$stamp/'"
+  done
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
   [[ -f "$market_root/bootstrap/deployment.json" ]] && mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$stamp.bak"
 fi
@@ -154,8 +164,8 @@ case "${LEZ_IMAGES:-build}" in
 esac
 
 echo "[3/6] starting chains…"
-docker compose up -d bitcoin-core btc-miner btc-explorer bedrock sequencer indexer lez-explorer
-wait_healthy 240 lez-bitcoin-core lez-sequencer lez-indexer
+docker compose up -d bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
+wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
 bash scripts/repair-indexer.sh >/dev/null 2>&1 || true
 # The Nodes' Core wallets (lez-maker, lez-taker) and the Taker's regtest
 # balance; idempotent, and after a wipe nothing else creates them.
@@ -185,7 +195,7 @@ if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 
 else
   docker compose up -d maker-node taker-node
 fi
-wait_healthy 240 lez-maker-node lez-taker-node
+wait_healthy 1200 lez-maker-node lez-taker-node
 wait_owner_health 120
 if [[ "$FRESH_LEZ" == 1 ]]; then
   echo "  forgetting swaps that referenced the old chain"
@@ -193,13 +203,26 @@ if [[ "$FRESH_LEZ" == 1 ]]; then
 fi
 [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]] || python3 scripts/verify-market.py 2>&1 | tail -1
 
+# The finality heartbeat (Part C): on unless runtime.env says LEZ_HEARTBEAT_SECONDS=0
+# or the market root has no heartbeat identities (an older root; gen-config
+# then funds no heartbeat account and the bootstrap claims none).
+heartbeat_seconds="$(sed -n 's/^LEZ_HEARTBEAT_SECONDS=//p' runtime/runtime.env | head -1)"
+heartbeat_allocation="$(sed -n 's/^LEZ_HEARTBEAT_ALLOCATION=//p' runtime/runtime.env | head -1)"
+if [[ "${heartbeat_seconds:-0}" != 0 && "${heartbeat_allocation:-0}" != 0 ]]; then
+  echo "[5/6] finality heartbeat (one unit every ${heartbeat_seconds} s)…"
+  mkdir -p runtime/heartbeat
+  docker compose --profile heartbeat up -d heartbeat
+else
+  echo "[5/6] finality heartbeat off (LEZ_HEARTBEAT_SECONDS=${heartbeat_seconds:-0}, allocation ${heartbeat_allocation:-0})"
+fi
+
 if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
   echo "API stack ready; run python3 scripts/record-evidence.py after market bootstrap."
   exit 0
 fi
 echo "[6/6] Basecamp UI…"
 docker compose up -d basecamp-ui
-wait_healthy 120 lez-basecamp-ui
+wait_healthy 600 lez-basecamp-ui
 ui_failed=0
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
   for role in maker taker; do

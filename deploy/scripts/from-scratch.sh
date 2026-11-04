@@ -80,7 +80,9 @@ GUEST_ELF_SHA256="$(pinned expected_elf_sha256)"
 readonly ESCROW_PROGRAM_ID GUEST_ELF_SHA256
 readonly BUILDER_IMAGE=lez-builder:local
 readonly BUILDER_LOCK="$DEPLOY_ROOT/builder/image.lock"
-readonly WALLETS=(maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02)
+# The four settlement wallets, and the two accounts of the finality heartbeat
+# (sender and recipient; never a role's or a wallet's account).
+readonly WALLETS=(maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02)
 
 # Workspace layout. Hosts provisioned before the ephemeral builder keep their
 # market root under runner-work/; a fresh workspace uses market/ directly.
@@ -285,6 +287,8 @@ phase_rust() {
     taker-node/lez-taker-node taker-node/lez-taker-cli
     taker-node/lez-taker-chat-gateway taker-node/lez-taker-registry-init
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
+    taker-node/zec-local-poc-provision taker-node/zec-local-poc-chat-draft taker-node/zec-local-poc-chat-finalize
+    taker-node/zec-local-poc-identity taker-node/zec-local-poc-transfer
     zebra/lez-runtime-healthcheck
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
@@ -295,11 +299,13 @@ phase_rust() {
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      cargo build --locked --bins -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
+      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec -p lez-maker-node -p lez-taker-node -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
       for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do
     git -C "$REPO_ROOT" rev-parse HEAD > "$DEPLOY_ROOT/images/$role-node/build-source.txt"
+    # what sidecar these Node binaries expect beside them (checked by the image build)
+    sidecar_tree_stamp > "$DEPLOY_ROOT/images/$role-node/sidecar-expected.txt"
   done
   log "Node binaries staged"
 }
@@ -432,14 +438,28 @@ build_escrow() {
 
 # the LEZ v0.2 sidecar, the vault-claim tool and the identity tool (link libpython3.12)
 # This crate is part of the checkout too; never trust payload existence.
+# The sidecar sources' identity: the git tree of compat/lez-v0_2-sidecar at
+# HEAD, plus a digest of any uncommitted change under it. Written by the
+# sidecar build beside its binary, expected by the Node builds from the same
+# checkout, compared at stage time and again inside the Node image builds, so
+# a sidecar built from another tree cannot ride into an image (a binary staged
+# on 2026-10-28 predated every sidecar commit of its branch and did).
+sidecar_tree_stamp() {
+  local tree dirty
+  tree="$(git -C "$REPO_ROOT" rev-parse HEAD:compat/lez-v0_2-sidecar)"
+  dirty="$(git -C "$REPO_ROOT" diff HEAD -- compat/lez-v0_2-sidecar | sha256sum | cut -c1-12)"
+  if git -C "$REPO_ROOT" diff --quiet HEAD -- compat/lez-v0_2-sidecar; then echo "$tree"; else echo "$tree-dirty-$dirty"; fi
+}
+
 build_sidecar() {
   log "building the LEZ sidecar and its tools"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --bin lez-v02-heartbeat --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
-      /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
+      /cache/target/sidecar/debug/lez-v02-heartbeat /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
+  sidecar_tree_stamp > "$PROVISION/sidecar/source-tree.txt"
 }
 
 # persistent wallet identities the market and the LEZ genesis share
@@ -482,17 +502,23 @@ phase_stage() {
   PHASE=stage
   install -m 0755 "$PROVISION/lez-services/sequencer_service" "$PROVISION/lez-services/indexer_service" \
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
+  # Fail closed on a sidecar built from another sidecar tree (or one with no
+  # tree stamp at all): rebuild it from this checkout first.
+  local expected staged
+  expected="$(sidecar_tree_stamp)"
+  staged="$(cat "$PROVISION/sidecar/source-tree.txt" 2>/dev/null || true)"
+  [[ "$staged" == "$expected" ]] || fail "the staged sidecar ($PROVISION/sidecar/lez-v02-bridge-poc, tree ${staged:-unstamped}) was not built from this checkout's compat/lez-v0_2-sidecar ($expected); run from-scratch.sh --only build:sidecar first"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
   install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
-  # A sidecar staged by an older run carries no source stamp; record this
-  # checkout rather than fail the stage (build_sidecar writes the stamp).
-  [[ -f "$PROVISION/sidecar/source-commit.txt" ]] || git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
   for role in maker taker; do
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
+    cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"
+    echo "$expected" > "$DEPLOY_ROOT/images/$role-node/sidecar-expected.txt"
   done
   # the market bootstrap tools (deploy/images/lez-tools, profile "tools")
   install -m 0755 "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" \
     "$PROVISION/sidecar/lez-v02-vault-claim-poc" "$PROVISION/sidecar/lez-v02-local-actor-identity" \
+    "$PROVISION/sidecar/lez-v02-heartbeat" \
     "$DEPLOY_ROOT/images/lez-tools/"
   (cd "$DEPLOY_ROOT" && bash scripts/stage-assets.sh)
 }

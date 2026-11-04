@@ -310,6 +310,34 @@ pub struct TakerSwapViewV1 {
     pub available_action: Option<TakerTerminalActionV1>,
     /// Non-effect guidance shown only after receiving transparent ZEC by claim.
     pub privacy_guidance: Option<TakerPrivacyGuidanceV1>,
+    /// Why the swap needs the owner's attention, when the Node knows
+    /// (`lez_depositor_balance_insufficient`: the LEZ lot cannot be funded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_reason: Option<String>,
+    /// With `lez_revealing_claim_held_near_refund`: the swap whose revealing
+    /// LEZ claim is in flight and holds this one's back (one per Node, until
+    /// it is final) while this swap's own LEZ refund time is near.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revealing_claim_held_by: Option<String>,
+    /// A Zcash swap's Taker actor phase (`both_legs_locked`, …), so a desk
+    /// can say which part of the swap a state stands for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_phase: Option<String>,
+    /// Selling ZEC: `true` once the Taker's revealing LEZ claim window closed
+    /// with nothing sent (the agreement's LEZ refund time minus the profile's
+    /// required margin). The row then offers Refund and never the claim; a
+    /// desk names the state "claim window closed" (FINDINGS 26).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_window_closed: Option<bool>,
+    /// Why the Node's supervisor last backed off on this swap's actor, or
+    /// why it stopped (a `failed` row): one of the shared failure classes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure_class: Option<String>,
+    /// Set when the row was answered from the Node's last status snapshot
+    /// because the actor was busy (Unix seconds of that observation); absent
+    /// on a row read from the actor itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<u64>,
     /// The countersigned schedule and amounts, once the BTC agreement is bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terms: Option<BtcAgreementTermsV1>,

@@ -1,0 +1,17 @@
+[12:25:30] === early-lock (stamp 1793535930)
+[12:25:30] preflight: indexer historical reads
+[12:29:22]   re-indexing from bedrock…
+[12:29:22]   re-indexed to 303; historical reads restored (old database kept in runtime/indexer-broken-20261101-122541)
+[12:29:22] preflight: the finality heartbeat saw finality move 0 s ago (finalized 303)
+[12:29:23]   Maker published offer-e2e-1793535930
+[12:29:24]   Taker took offer-e2e-1793535930: swap be71b666b651 (not_activated)
+[12:29:24]   cutting the Maker's view of LEZ so it cannot see the Taker's lock
+[12:29:25]   Taker locked lez: 1773ee62bf6a (replay=False)
+[12:29:25]   the Taker's LEZ lock is sent, and the Maker is blind to it
+[12:30:59]   the Maker stayed at offered for 90s, blind to the first leg
+[12:31:00]   the Maker can see LEZ again; it may now lock
+[12:31:32]   taker be71b666b651: claim_available (gen 2) | maker: both_legs_locked
+[12:31:32]   Taker claimed Bitcoin (replay=False)
+[12:31:33]   taker be71b666b651: claim_in_progress (gen 2) | maker: both_legs_locked
+[13:01:40] FAILED: swap be71b666b651 did not reach ['completed'] within 1800s (last claim_in_progress) (Maker follow-up claim)
+[13:01:40] === early-lock: failed in 2170s

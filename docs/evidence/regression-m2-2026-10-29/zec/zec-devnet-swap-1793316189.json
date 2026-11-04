@@ -1,0 +1,73 @@
+{
+  "corridor": "zec-devnet-1793316189",
+  "direction": "TakerSellsLez",
+  "exported_at_unix_seconds": 1793316325,
+  "maker": {
+    "error": null,
+    "node_view": {
+      "actor_kind": "zcash",
+      "attempt_count": 11,
+      "lease_generation": 11,
+      "manual_action": null,
+      "progress": {
+        "observation": {
+          "next_action": "complete",
+          "phase": "completed",
+          "revision": 5,
+          "state": "active"
+        },
+        "observed_at": 1793316299,
+        "source_generation": 11
+      },
+      "schedule_state": "terminal",
+      "schema_version": 1,
+      "swap_id": "zec-devnet-swap-1793316189"
+    }
+  },
+  "offer_id": "zec-devnet-offer-1793316189",
+  "pair": "Zcash",
+  "profile": "deterministic-local-devnet-v2",
+  "schema_version": 1,
+  "swap_id": "zec-devnet-swap-1793316189",
+  "taker": {
+    "actor_status": {
+      "next_action": "complete",
+      "phase": "completed",
+      "revision": 4,
+      "role": "taker",
+      "schema_version": 1,
+      "state": "active"
+    },
+    "node_view": {
+      "available_action": null,
+      "foreign_units": 100000000,
+      "lez_units": 50000,
+      "offer_id": "zec-devnet-offer-1793316189",
+      "privacy_guidance": "shield_received_transparent_zec_separately",
+      "progress_generation": 4,
+      "route": {
+        "direction": "TakerSellsLez",
+        "pair": "Zcash"
+      },
+      "schema_version": 1,
+      "state": "completed",
+      "swap_id": "zec-devnet-swap-1793316189"
+    }
+  },
+  "zcash_refund_height": 338,
+  "zebra": {
+    "funding_output_spend": {
+      "height": 334,
+      "transaction_id": "cebd4742b6e07ea4c3378d9713c7f9c25c6f099cfe80de55e532a40417ffbc3f"
+    },
+    "maker_funding": {
+      "height": 330,
+      "transaction_id": "a14da27726f74be569142aea5a134a33d059d6466a127f0706b7955008734079"
+    },
+    "provisioned_outpoint": {
+      "output_index": 0,
+      "transaction_id": "eff3b7abdcf7b3858ba736546fddc238818b6051c9772f41d897621c71aa73ce"
+    },
+    "tip_height": 334
+  }
+}

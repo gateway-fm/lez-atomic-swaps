@@ -1,0 +1,47 @@
+
+[16:55:06] === survivor (TakerSellsForeign)
+
+[16:55:12] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[16:55:20] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   64b8cb06b50a01df8b72757d550d6908a4ee4cde18080a135de92adfa6292bc5 awaiting_first_lock 0 -
+
+[16:55:30] Taker desk: lock_btc on 64b8cb06b50a
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[16:55:42] Maker desk shows 64b8cb06b50a at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[16:57:53] Taker desk: claim_lez on 64b8cb06b50a
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_lez
+2 passed, 0 failed
+
+[16:58:13] The Taker Node is stopped right after its revealing claim; the Maker Node completes the swap on its own
+
+[16:58:13] Maker desk shows 64b8cb06b50a at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  ✗ maker: wait completed reached by the Node
+    no maker swap 64b8cb06b50a has reached completed; desk shows recovering (Claim window closed)
+3 passed, 1 failed
+
+[17:28:41] FAILED: step failed

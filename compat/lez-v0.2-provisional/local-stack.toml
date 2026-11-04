@@ -59,7 +59,7 @@ cargo_build_jobs = 2
 cargo_profile = "release"
 cargo_toolchain_channel = "1.94.0"
 cargo_build_command = "cargo +1.94.0 build --locked --release --jobs 2 --package sequencer_service --package indexer_service"
-runtime_base_reference = "cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b"
+runtime_base_reference = "cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88"
 r0vm_version = "3.0.5"
 r0vm_sha256 = "36c016a5bb2ded5bd1f8f92cc487e6ffaeb1e95ec05850c983081a0f716b515b"
 # These exact lower-hex digests bind the locally executed service artifacts.

@@ -17,8 +17,8 @@ use lez_bridge_client::{
     METHOD_OBSERVE_FINALIZED_WITNESSED_FUNDING, METHOD_OBSERVE_NATIVE_REFUND,
     METHOD_OBSERVE_REVEALING_CLAIM, METHOD_OBSERVE_WITNESSED_ESCROW, METHOD_PREPARE_NATIVE_ESCROW,
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM, METHOD_PREPARE_WITNESSED_CLAIM,
-    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION, RUN_ID_HEADER, SIDECAR_ROLE_HEADER,
-    SidecarCapability,
+    METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE, RUN_ID_HEADER, SIDECAR_ROLE_HEADER, SidecarCapability,
 };
 use lez_bridge_protocol::{
     AccountIds, AggregateBip340Signature, ChainClock, ChainPosition, ChainTip,
@@ -30,8 +30,8 @@ use lez_bridge_protocol::{
     ExactTransactionBytes, FinalizedBlockIdentity, FinalizedWitnessedClaimFacts,
     FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget,
     FinalizedWitnessedInitializationFacts, FundingObservation, Hex32, InitializationObservation,
-    MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation, NativeEscrowTerms,
-    NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
+    MessageContext, NativeCustodyFacts, NativeEscrowAccountObservation, NativeEscrowStep,
+    NativeEscrowTerms, NativeEscrowTermsInput, NativeFundInstructionFacts, NativeRefundObservation,
     NativeRefundObservationTarget, ObserveCurrentClockRequest, ObserveCurrentClockResult,
     ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedClockRequest,
     ObserveFinalizedClockResult, ObserveFinalizedWitnessedClaimRequest,
@@ -45,7 +45,8 @@ use lez_bridge_protocol::{
     PrepareWitnessedEscrowResult, PreparedTransaction, PreparedWitnessedClaim, ProtocolErrorReply,
     RequestId, RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage,
     RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, TransactionId, WitnessedClaimInstructionFacts,
+    SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
+    SupersedeNativeEscrowPrepareResult, TransactionId, WitnessedClaimInstructionFacts,
     WitnessedEscrowMetadataFacts, WitnessedFundingObservation, WitnessedInitializationObservation,
     WitnessedNativeEscrowTerms, WitnessedNativeEscrowTermsInput,
     WitnessedNativeInitializeInstructionFacts,
@@ -100,6 +101,7 @@ enum Behavior {
     TypedRemoteError,
     DuplicatePrepared,
     WrongSubmitId,
+    SupersedeWrongEcho,
     SlowDescribe,
     SlowPrepare,
     SlowRefundPrepare,
@@ -313,6 +315,86 @@ fn register_methods(module: &mut RpcModule<Fixture>) {
     register_existing_transaction_methods(module);
     register_refund_methods(module);
     register_submit_method(module);
+    register_supersede_method(module);
+}
+
+#[tokio::test]
+async fn supersede_prepare_echoes_the_superseded_pair_and_is_single_attempt() {
+    let expected_runtime = runtime(Participant::Maker, 55);
+    let run = RunId::new(TEST_RUN).expect("run id");
+    let sidecar = spawn_sidecar(expected_runtime.clone(), MAKER_CAPABILITY, Behavior::Happy).await;
+    let client = client(
+        &sidecar.endpoint,
+        MAKER_CAPABILITY,
+        &run,
+        expected_runtime.clone(),
+        Duration::from_secs(1),
+    );
+    let request = SupersedeNativeEscrowPrepareRequest::new(
+        context(&run, Participant::Maker, "supersede"),
+        expected_runtime.clone(),
+        txid(41),
+        txid(42),
+        NativeEscrowStep::Fund,
+    );
+    let result = client
+        .supersede_native_escrow_prepare(request.clone())
+        .await
+        .expect("supersede");
+    assert_eq!(result.superseded_initialization_transaction_id, txid(41));
+    assert_eq!(result.superseded_funding_transaction_id, txid(42));
+    assert_eq!((result.superseded_nonce, result.replanned_nonce), (12, 14));
+    assert_eq!(result.replan_index, 1);
+    assert_ne!(
+        result.initialization.transaction_id,
+        result.funding.transaction_id
+    );
+    assert!(matches!(
+        client.supersede_native_escrow_prepare(request).await,
+        Err(BridgeClientError::RequestIdReused {
+            operation: BridgeOperation::SupersedeNativeEscrowPrepare
+        })
+    ));
+    assert_eq!(
+        sidecar
+            .fixture
+            .calls(METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE),
+        1
+    );
+    sidecar.handle.stop().expect("stop");
+
+    let wrong = spawn_sidecar(
+        expected_runtime.clone(),
+        MAKER_CAPABILITY,
+        Behavior::SupersedeWrongEcho,
+    )
+    .await;
+    let wrong_client = client_for(&wrong.endpoint, &run, expected_runtime.clone());
+    assert!(matches!(
+        wrong_client
+            .supersede_native_escrow_prepare(SupersedeNativeEscrowPrepareRequest::new(
+                context(&run, Participant::Maker, "supersede-wrong-echo"),
+                expected_runtime,
+                txid(41),
+                txid(42),
+                NativeEscrowStep::Fund,
+            ))
+            .await,
+        Err(BridgeClientError::MalformedPreparedTransaction {
+            operation: BridgeOperation::SupersedeNativeEscrowPrepare
+        })
+    ));
+    wrong.handle.stop().expect("stop");
+}
+
+fn client_for(endpoint: &str, run: &RunId, runtime: RuntimeDescriptor) -> BridgeClient {
+    client(
+        endpoint,
+        MAKER_CAPABILITY,
+        run,
+        runtime,
+        Duration::from_secs(1),
+    )
 }
 
 #[tokio::test]
@@ -1101,6 +1183,34 @@ fn typed_remote_error(context: MessageContext) -> ErrorObjectOwned {
             ErrorMessage::new("secret-looking remote detail").expect("bounded message"),
         )),
     )
+}
+
+fn register_supersede_method(module: &mut RpcModule<Fixture>) {
+    module
+        .register_method(
+            METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE,
+            |params, fixture, _| {
+                let request: SupersedeNativeEscrowPrepareRequest = params.one()?;
+                fixture.record(METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE);
+                let superseded_funding = if matches!(fixture.behavior, Behavior::SupersedeWrongEcho)
+                {
+                    txid(98)
+                } else {
+                    request.superseded_funding_transaction_id
+                };
+                Ok::<_, ErrorObjectOwned>(SupersedeNativeEscrowPrepareResult::new(
+                    response_context(&request.context, fixture.behavior),
+                    request.superseded_initialization_transaction_id,
+                    superseded_funding,
+                    12,
+                    14,
+                    1,
+                    prepared(41, 11),
+                    prepared(48, 18),
+                ))
+            },
+        )
+        .expect("supersede method");
 }
 
 fn register_submit_method(module: &mut RpcModule<Fixture>) {

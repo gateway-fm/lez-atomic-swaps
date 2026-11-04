@@ -1,0 +1,26 @@
+[12:11:24] === survivor (stamp 1793535084)
+[12:11:24] preflight: indexer historical reads
+[12:11:25]   indexer serves historical reads at the tip (206)
+[12:11:25] preflight: the finality heartbeat saw finality move 0 s ago (finalized 205)
+[12:11:26]   Maker published offer-e2e-1793535084
+[12:11:27]   Taker took offer-e2e-1793535084: swap cbc9002485c8 (not_activated)
+[12:11:27]   Taker locked lez: 79f211806a67 (replay=False)
+[12:11:27]   taker cbc9002485c8: awaiting_first_lock (gen 0) | maker: leased
+[12:11:58]   taker cbc9002485c8: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[12:13:30]   taker cbc9002485c8: claim_available (gen 2) | maker: both_legs_locked
+[12:13:31]   Taker claimed Bitcoin (replay=False)
+[12:13:31]   taker cbc9002485c8: claim_in_progress (gen 2) | maker: both_legs_locked
+[12:13:31]   stopping the Taker Node right after its revealing claim
+[12:13:32]   maker cbc9002485c8: both_legs_locked
+[12:13:52]   maker cbc9002485c8: both_legs_locked
+[12:14:12]   maker cbc9002485c8: both_legs_locked
+[12:14:32]   maker cbc9002485c8: both_legs_locked
+[12:14:52]   maker cbc9002485c8: both_legs_locked
+[12:15:12]   maker cbc9002485c8: both_legs_locked
+[12:15:33]   maker cbc9002485c8: claim_evidence_available
+[12:15:53]   maker cbc9002485c8: claim_evidence_available
+[12:16:13]   maker cbc9002485c8: completed
+[12:16:20]   taker cbc9002485c8: claim_in_progress (gen 3) | maker: completed
+[12:16:41]   taker cbc9002485c8: completed (gen 4) | maker: completed
+[12:16:41]   both Nodes report cbc9002485c8 completed
+[12:16:41] === survivor: passed in 317s

@@ -27,9 +27,11 @@ def rpc(role: str, method: str, params: object) -> dict:
     container, socket = SOCKETS[role]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": [params]})
     result = subprocess.run(
-        ["docker", "exec", "-i", container, "curl", "-sS", "--max-time", "30", "--unix-socket", socket,
+        # No -i: curl takes the body from --data and never reads stdin, and an
+        # attached stdin that nobody closes suspends a non-interactive runner.
+        ["docker", "exec", container, "curl", "-sS", "--max-time", "30", "--unix-socket", socket,
          "-H", "content-type: application/json", "--data", body, "http://localhost/"],
-        capture_output=True, text=True, check=False)
+        capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if result.returncode != 0 or not result.stdout:
         return {"error": {"code": -1, "message": f"transport: {result.stderr.strip()[:200]}"}}
     return json.loads(result.stdout)

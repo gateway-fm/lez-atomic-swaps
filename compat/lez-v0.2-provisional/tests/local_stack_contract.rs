@@ -420,7 +420,7 @@ fn service_packaging_uses_locked_sources_and_a_digest_pinned_runtime() {
     );
     assert_eq!(
         packaging.runtime_base_reference,
-        "cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b"
+        "cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88"
     );
     assert_eq!(packaging.r0vm_version, "3.0.5");
     assert_eq!(

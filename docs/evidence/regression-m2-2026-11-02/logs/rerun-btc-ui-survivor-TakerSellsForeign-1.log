@@ -1,0 +1,55 @@
+
+[14:56:45] === survivor (TakerSellsForeign)
+
+[14:56:51] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[14:56:58] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   feef7db6cf12051ec93f9f7cf7d88c5d40b4f601135d0af6cb19b68eec5faabe awaiting_first_lock 0 -
+
+[14:57:07] Taker desk: lock_btc on feef7db6cf12
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[14:57:19] Maker desk shows feef7db6cf12 at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[15:04:09] Taker desk: claim_lez on feef7db6cf12
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_lez
+2 passed, 0 failed
+
+[15:04:48] The Taker Node is stopped right after its revealing claim; the Maker Node completes the swap on its own
+
+[15:04:48] Maker desk shows feef7db6cf12 at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[15:07:02] The Taker Node is started again; its desk catches up with the completed swap
+
+[15:07:08] Taker desk shows feef7db6cf12 at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap feef7db6cf12: runtime/evidence/feef7db6cf12051ec93f9f7cf7d88c5d40b4f601135d0af6cb19b68eec5faabe.json (5 effects, completed 2026-11-02T15:06:37Z)
+
+[15:07:49] === survivor (TakerSellsForeign): passed in 664s

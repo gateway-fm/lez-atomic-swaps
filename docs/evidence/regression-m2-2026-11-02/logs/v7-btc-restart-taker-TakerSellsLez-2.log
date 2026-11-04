@@ -1,0 +1,53 @@
+
+[04:02:25] === restart-taker (TakerSellsLez)
+
+[04:02:31] Maker desk publishes TakerSellsLez offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[04:02:38] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   fe50d4a3d5fdd9ccefe6f0008148921e1da0a8f181b70d85aae3c00981ade9a2 awaiting_first_lock 0 -
+
+[04:02:47] Taker desk: lock_lez on fe50d4a3d5fd
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[04:03:00] The taker Node is restarted now, between the Taker's lock and its claim; swaps survive a Node restart
+
+[04:03:06] Maker desk shows fe50d4a3d5fd at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[04:04:38] Taker desk: claim_btc on fe50d4a3d5fd
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_btc
+2 passed, 0 failed
+
+[04:04:51] Maker desk shows fe50d4a3d5fd at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[04:07:20] Taker desk shows fe50d4a3d5fd at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap fe50d4a3d5fd: runtime/evidence/fe50d4a3d5fdd9ccefe6f0008148921e1da0a8f181b70d85aae3c00981ade9a2.json (5 effects, completed 2026-11-04T04:06:36Z)
+
+[04:07:28] === restart-taker (TakerSellsLez): passed in 303s

@@ -207,6 +207,7 @@ fn initiation_is_atomic_and_exactly_replays_after_restart() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One registry life: fence, admit, replay at later generations, reopen.
 fn action_admission_is_generation_fenced_and_exactly_replays_after_restart() {
     let root = private_root();
     let database = root.path().join("action-registry.sqlite3");
@@ -274,17 +275,47 @@ fn action_admission_is_generation_fenced_and_exactly_replays_after_restart() {
         )
         .unwrap();
     assert_eq!(replay, lookup);
-
-    assert_eq!(
-        reopened.admit_action(
+    // The same request id for the same swap and action is that request
+    // replayed whatever generation the caller holds now (a desk re-pressing
+    // "Retry refund" sends the row's current generation, which moved on since
+    // the admission); it is served with the generation it was admitted at.
+    let later = reopened
+        .admit_action(
             &action_request,
             facts.swap_id(),
-            TakerFacadeActionV1::Refund,
-            4,
-            1_002,
-        ),
-        Err(TakerFacadeStoreError::RequestConflict)
+            TakerFacadeActionV1::Claim,
+            7,
+            1_004,
+        )
+        .unwrap();
+    assert_eq!(later, lookup);
+    assert_eq!(later.requested_after_generation(), 4);
+    assert_eq!(
+        reopened
+            .lookup_exact_action(
+                &action_request,
+                facts.swap_id(),
+                TakerFacadeActionV1::Claim,
+                9,
+            )
+            .unwrap(),
+        Some(lookup.clone())
     );
+
+    // A *different* action under the admitted request id is a conflict at
+    // the admitted generation and at any later one.
+    for generation in [4, 7] {
+        assert_eq!(
+            reopened.admit_action(
+                &action_request,
+                facts.swap_id(),
+                TakerFacadeActionV1::Refund,
+                generation,
+                1_002,
+            ),
+            Err(TakerFacadeStoreError::RequestConflict)
+        );
+    }
     assert_eq!(
         reopened.admit_action(
             &request("m6-action-competing"),

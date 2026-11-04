@@ -63,6 +63,18 @@ pub const METHOD_PREPARE_NATIVE_REFUND: &str = "lez_bridge.v1.prepare_native_ref
 pub const METHOD_OBSERVE_NATIVE_REFUND: &str = "lez_bridge.v1.observe_native_refund";
 /// Stable JSON-RPC method for submitting exact persisted transaction bytes.
 pub const METHOD_SUBMIT_TRANSACTION: &str = "lez_bridge.v1.submit_transaction";
+/// Additive v1 method that re-plans a native escrow pair whose signer nonce
+/// another transaction of the same signer took first (see
+/// [`SubmissionOutcome::Superseded`]). The superseded pair is retired into the
+/// sidecar's durable lineage and never submitted again.
+pub const METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE: &str =
+    "lez_bridge.v1.supersede_native_escrow_prepare";
+/// Additive v1 method that re-plans an owned revealing claim whose signer
+/// nonce another transaction of the same signer took first (see
+/// [`SubmissionOutcome::Superseded`]): the same claim (terms, escrow,
+/// preimage) at the live nonce. The superseded claim is retired into the
+/// sidecar's durable lineage and never submitted again.
+pub const METHOD_SUPERSEDE_REVEALING_CLAIM: &str = "lez_bridge.v1.supersede_revealing_claim";
 
 /// Additive v2 method for preparing native or custom-token witnessed escrow effects.
 pub const METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2: &str =
@@ -148,8 +160,9 @@ pub use messages::{
     FinalizedWitnessedFundingFacts, FinalizedWitnessedFundingObservationTarget,
     FinalizedWitnessedFundingScanOutcome, FinalizedWitnessedInitializationFacts,
     FinalizedWitnessedInitializationScanOutcome, FundingFoundFacts, FundingObservation,
-    InitializationFoundFacts, InitializationObservation, NativeClaimInstructionFacts,
-    NativeCustodyFacts, NativeEscrowAccountFacts, NativeEscrowAccountObservation,
+    InitializationFoundFacts, InitializationObservation, MAX_NATIVE_ESCROW_REPLANS,
+    MAX_REVEALING_CLAIM_REPLANS, NativeClaimInstructionFacts, NativeCustodyFacts,
+    NativeEscrowAccountFacts, NativeEscrowAccountObservation, NativeEscrowStep,
     NativeFundInstructionFacts, NativeInitializeInstructionFacts, NativeRefundFoundFacts,
     NativeRefundInstructionFacts, NativeRefundMetadataFacts, NativeRefundObservation,
     NativeRefundObservationTarget, NativeRefundTerms, ObserveCurrentClockRequest,
@@ -172,7 +185,9 @@ pub use messages::{
     PreparedWitnessedClaim, ProtocolErrorReply, RevealingClaimFoundFacts,
     RevealingClaimObservation, RevealingClaimObservationTarget, RuntimeCompatibility,
     RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest, SubmitTransactionResult,
-    TokenHoldingFactsV2, WitnessedAssetClaimInstructionFactsV2, WitnessedAssetCustodyFactsV2,
+    SupersedeNativeEscrowPrepareRequest, SupersedeNativeEscrowPrepareResult,
+    SupersedeRevealingClaimRequest, SupersedeRevealingClaimResult, TokenHoldingFactsV2,
+    WitnessedAssetClaimInstructionFactsV2, WitnessedAssetCustodyFactsV2,
     WitnessedAssetEffectInstructionFactsV2, WitnessedAssetInitializationCustodyFactsV2,
     WitnessedAssetObservedPrepareEffectV2, WitnessedAssetPrepareStepV2,
     WitnessedAssetPreparedEffectV2, WitnessedAssetRefundFoundFactsV2,

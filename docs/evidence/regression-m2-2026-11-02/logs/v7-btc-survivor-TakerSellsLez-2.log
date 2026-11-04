@@ -1,0 +1,55 @@
+
+[04:57:26] === survivor (TakerSellsLez)
+
+[04:57:32] Maker desk publishes TakerSellsLez offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[04:57:39] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   6759c0e9fc6c9340cfb8af33f1e61dd314a47cbcd88708b6e05c8a513c596873 awaiting_first_lock 0 -
+
+[04:57:48] Taker desk: lock_lez on 6759c0e9fc6c
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[04:58:00] Maker desk shows 6759c0e9fc6c at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[05:00:46] Taker desk: claim_btc on 6759c0e9fc6c
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_btc
+2 passed, 0 failed
+
+[05:00:59] The Taker Node is stopped right after its revealing claim; the Maker Node completes the swap on its own
+
+[05:00:59] Maker desk shows 6759c0e9fc6c at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[05:03:22] The Taker Node is started again; its desk catches up with the completed swap
+
+[05:03:29] Taker desk shows 6759c0e9fc6c at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 6759c0e9fc6c: runtime/evidence/6759c0e9fc6c9340cfb8af33f1e61dd314a47cbcd88708b6e05c8a513c596873.json (5 effects, completed 2026-11-04T05:02:26Z)
+
+[05:04:27] === survivor (TakerSellsLez): passed in 421s

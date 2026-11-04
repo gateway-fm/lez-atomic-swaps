@@ -19,12 +19,24 @@ pub enum ZecProfileRecordV1 {
     DeterministicLocalV1,
     /// LEZ and Zcash public-testnet acceptance profile.
     PublicTestnetV1,
+    /// The deterministic Regtest profile with the devnet's LEZ refund delay.
+    /// The Borsh tag is the variant index (wire tag 2).
+    DeterministicLocalDevnetV1,
+    /// The devnet profile with the eight-block Zcash refund window (wire tag
+    /// 3).
+    DeterministicLocalDevnetV2,
+    /// The devnet profile with the 12-minute LEZ refund delay (wire tag 4).
+    /// Last on purpose: tags are append-only.
+    DeterministicLocalDevnetV3,
 }
 
 impl From<ZecProfileId> for ZecProfileRecordV1 {
     fn from(value: ZecProfileId) -> Self {
         match value {
             ZecProfileId::DeterministicLocalV1 => Self::DeterministicLocalV1,
+            ZecProfileId::DeterministicLocalDevnetV1 => Self::DeterministicLocalDevnetV1,
+            ZecProfileId::DeterministicLocalDevnetV2 => Self::DeterministicLocalDevnetV2,
+            ZecProfileId::DeterministicLocalDevnetV3 => Self::DeterministicLocalDevnetV3,
             ZecProfileId::PublicTestnetV1 => Self::PublicTestnetV1,
         }
     }
@@ -34,6 +46,9 @@ impl From<ZecProfileRecordV1> for ZecProfileId {
     fn from(value: ZecProfileRecordV1) -> Self {
         match value {
             ZecProfileRecordV1::DeterministicLocalV1 => Self::DeterministicLocalV1,
+            ZecProfileRecordV1::DeterministicLocalDevnetV1 => Self::DeterministicLocalDevnetV1,
+            ZecProfileRecordV1::DeterministicLocalDevnetV2 => Self::DeterministicLocalDevnetV2,
+            ZecProfileRecordV1::DeterministicLocalDevnetV3 => Self::DeterministicLocalDevnetV3,
             ZecProfileRecordV1::PublicTestnetV1 => Self::PublicTestnetV1,
         }
     }

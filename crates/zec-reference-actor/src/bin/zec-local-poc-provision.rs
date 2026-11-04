@@ -1,7 +1,9 @@
 use std::{fmt, path::PathBuf};
 
 use clap::Parser;
-use zec_reference_actor::{LocalPocLezSignerFiles, provision_local_v0_2_corridor_with_signers};
+use zec_reference_actor::{
+    LocalPocLezSignerFiles, LocalPocZcashKeyFiles, provision_local_v0_2_corridor_with_material,
+};
 
 #[derive(Clone, Parser)]
 #[command(about = "Provision one private deterministic LEZ-v0.2/Zebra corridor fixture")]
@@ -26,6 +28,12 @@ struct Arguments {
         requires = "maker_lez_signer_key_file"
     )]
     taker_lez_signer_key_file: Option<PathBuf>,
+    /// Owner-private Maker Zcash key (32 bytes or 64 hex); the test-lane key when absent.
+    #[arg(long, value_name = "PRIVATE_KEY", requires = "taker_zcash_key_file")]
+    maker_zcash_key_file: Option<PathBuf>,
+    /// Owner-private Taker Zcash key (32 bytes or 64 hex); the test-lane key when absent.
+    #[arg(long, value_name = "PRIVATE_KEY", requires = "maker_zcash_key_file")]
+    taker_zcash_key_file: Option<PathBuf>,
 }
 
 impl fmt::Debug for Arguments {
@@ -36,6 +44,8 @@ impl fmt::Debug for Arguments {
             .field("output_root", &"[REDACTED]")
             .field("maker_lez_signer_key_file", &"[REDACTED]")
             .field("taker_lez_signer_key_file", &"[REDACTED]")
+            .field("maker_zcash_key_file", &"[REDACTED]")
+            .field("taker_zcash_key_file", &"[REDACTED]")
             .finish()
     }
 }
@@ -51,10 +61,19 @@ async fn main() -> anyhow::Result<()> {
         (None, None) => None,
         _ => unreachable!("clap requires a complete LEZ signer pair"),
     };
-    let summary = provision_local_v0_2_corridor_with_signers(
+    let zcash_key_files = match (
+        arguments.maker_zcash_key_file,
+        arguments.taker_zcash_key_file,
+    ) {
+        (Some(maker), Some(taker)) => Some(LocalPocZcashKeyFiles::new(maker, taker)),
+        (None, None) => None,
+        _ => unreachable!("clap requires a complete Zcash key pair"),
+    };
+    let summary = provision_local_v0_2_corridor_with_material(
         &arguments.spec_file,
         &arguments.output_root,
         signer_files.as_ref(),
+        zcash_key_files.as_ref(),
     )
     .await?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
@@ -95,6 +114,10 @@ mod tests {
             "/private/maker.key",
             "--taker-lez-signer-key-file",
             "/private/taker.key",
+            "--maker-zcash-key-file",
+            "/private/maker-zcash.key",
+            "--taker-zcash-key-file",
+            "/private/taker-zcash.key",
         ])
         .unwrap();
         let debug = format!("{arguments:?}");
@@ -103,6 +126,8 @@ mod tests {
             "/private/output",
             "/private/maker.key",
             "/private/taker.key",
+            "/private/maker-zcash.key",
+            "/private/taker-zcash.key",
         ] {
             assert!(!debug.contains(secret_path));
         }

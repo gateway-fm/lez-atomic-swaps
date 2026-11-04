@@ -2,7 +2,9 @@
 # services: the escrow deployer and the vault-claim tool for the one-time
 # market bootstrap, and the identity tool that mints the wallet identities.
 # Runs only as `docker compose --profile tools run --rm tools …` (start.sh);
-# it is never a long-lived service and takes part in no swap.
+# it is never a long-lived service and takes part in no swap — except the
+# finality heartbeat (lez-v02-heartbeat), which the `heartbeat` compose service
+# runs from this image for as long as the chain lives.
 #
 # The staged payloads are debug builds; strip them so the image ships only
 # what runs.
@@ -13,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends binutils \
 COPY lez-zec-escrow-v02-deployer /payload/lez-zec-escrow-v02-deployer
 COPY lez-v02-vault-claim-poc /payload/lez-v02-vault-claim-poc
 COPY lez-v02-local-actor-identity /payload/lez-v02-local-actor-identity
+COPY lez-v02-heartbeat /payload/lez-v02-heartbeat
 RUN strip /payload/*
 
 # python:3.12 because the sidecar-family tools link libpython3.12, exactly
@@ -31,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=strip --chmod=0555 /payload/lez-zec-escrow-v02-deployer /usr/local/bin/lez-zec-escrow-v02-deployer
 COPY --from=strip --chmod=0555 /payload/lez-v02-vault-claim-poc /usr/local/bin/lez-v02-vault-claim-poc
 COPY --from=strip --chmod=0555 /payload/lez-v02-local-actor-identity /usr/local/bin/lez-v02-local-actor-identity
+COPY --from=strip --chmod=0555 /payload/lez-v02-heartbeat /usr/local/bin/lez-v02-heartbeat
 
 ENV HOME=/tmp
 WORKDIR /tmp
