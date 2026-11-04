@@ -1,0 +1,54 @@
+
+[01:52:08] === maker-refund (TakerSellsLez)
+
+[01:52:15] Maker desk publishes TakerSellsLez offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[01:52:27] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   7a6bda0453c535b7bad889dfaec418519dc59e7abf28e1ba9fc012e27a0de636 awaiting_first_lock 0 -
+
+[01:52:37] Taker desk: lock_lez on 7a6bda0453c5
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[01:52:49] Maker desk shows 7a6bda0453c5 at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[01:55:09] The Taker never claims; after its refund deadline (900 s after the take) the Maker Node refunds its own lock
+
+[01:55:09] Maker desk shows 7a6bda0453c5 at refunding
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunding (refunding)
+  ✓ maker: wait refunding reached by the Node
+4 passed, 0 failed
+
+[02:10:19] Taker desk: refund_lez on 7a6bda0453c5
+  ✓ taker: launcher discoverable and app opens
+  » The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached
+  ✓ taker: perform refund_lez
+2 passed, 0 failed
+
+[02:10:36] Taker desk shows 7a6bda0453c5 at refunded
+  ✓ taker: launcher discoverable and app opens
+  ✗ taker: swap reaches refunded
+    no taker swap 7a6bda0453c5 has reached refunded; desk shows refunding (Refund submitted)
+1 passed, 1 failed
+
+[02:40:53] FAILED: step failed

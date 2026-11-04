@@ -1,0 +1,51 @@
+
+[03:21:03] === happy (TakerSellsLez)
+
+[03:21:04] Maker desk publishes TakerSellsLez offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[03:21:11] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   50733dcb506fe5521698039df21723442eac2d8ddb3af13f9c53758d21fa0e06 awaiting_first_lock 0 -
+
+[03:21:20] Taker desk: lock_lez on 50733dcb506f
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[03:21:33] Maker desk shows 50733dcb506f at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[03:22:33] Taker desk: claim_btc on 50733dcb506f
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_btc
+2 passed, 0 failed
+
+[03:22:44] Maker desk shows 50733dcb506f at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[03:25:02] Taker desk shows 50733dcb506f at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 50733dcb506f: runtime/evidence/50733dcb506fe5521698039df21723442eac2d8ddb3af13f9c53758d21fa0e06.json (5 effects, completed 2026-11-04T03:24:32Z)
+
+[03:25:10] === happy (TakerSellsLez): passed in 247s

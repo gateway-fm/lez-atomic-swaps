@@ -1,0 +1,9 @@
+[05:22:42] === V7 FOLLOW-UP at 2f69932a (tree dirty: 0)
+[05:22:43] lez-maker-node:local build-source 31df3352cdba id fdf9b0169cab
+[05:22:43] lez-taker-node:local build-source 31df3352cdba id 4c590a795fa6
+[05:43:44] === recreating the chain (recreation 520) free 208G
+[05:48:48] chain ok: [05:48:48] attempt 1: finalized moved 23 -> 25
+[06:22:11] === ui taker-refund (TakerSellsLez, try 1): PASSED in 1984s
+      4 passed, 0 failed
+      [06:22:11] === taker-refund (TakerSellsLez): passed in 1984s
+[06:22:11] V7_FOLLOWUP_DONE

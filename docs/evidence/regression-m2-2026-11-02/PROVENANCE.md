@@ -165,15 +165,73 @@ rerun-v6.log:
 
 (TSF = TakerSellsForeign, the Taker sells BTC or ZEC; TSL = TakerSellsLez.)
 
+## V7: the desk copy fix, on new images
+
+The owner asked (2026-11-03) for the selling-ZEC desk copy seen in the first selling-ZEC
+recordings to be fixed on this branch. Commits after `b1dd0af8` that V7 ran on:
+
+| commit | what |
+|---|---|
+| `31df3352` | fix(basecamp): selling ZEC, the Taker row offers nothing while its revealing LEZ claim lands; its refund rows no longer wait for the Maker's LEZ refund (Zcash selling-ZEC rows only; BTC and selling-LEZ rows byte-identical) |
+| `ff958ec8`, `6574eeea`, `055bb204`, `b7251402` | CI: the Zebra regtest gate and the ZEC test runs from PR #116; the Zebra test image's base pin (CI and test files only) |
+| `784ee009` | docs |
+| `2f69932a` | fix(deploy): the desk driver's Zcash refund caption no longer says the Maker never locked (harness text, mounted read-only into the desk container; applied from the zec-stale-window recording on, and the zec-maker-refund recording was made again after it) |
+
+Images, built once from `31df3352` (2026-11-03 17:19–17:28Z) and not rebuilt during V7:
+
+| image | id |
+|---|---|
+| `lez-taker-node:local` | `sha256:4c590a795fa6…` (build-source `31df3352cdba`) |
+| `lez-maker-node:local` | `sha256:fdf9b0169cab…` (build-source `31df3352cdba`) |
+| `lez-basecamp-ui:local` | `sha256:56ddd0d0e6ed…` (the desk plugin carries the new row text) |
+
+The Rust sources are the same as at `b1dd0af8`; the Node images differ only in their
+build-source stamp. V7 ran the selling-ZEC desk journeys (the four recordings among them)
+and all 16 BTC desk journeys, because the change is in the shared Taker desk. Its chains:
+
+final-v7.log:
+
+| chain | up | carried |
+|---|---|---|
+| 458 | 2026-11-03 17:35Z (attempt 1) | rec zec-happy (TSF) ok |
+| 459 | 2026-11-03 17:50Z (attempt 1) | rec zec-maker-refund (TSF) ok |
+| 460 | 2026-11-03 18:14Z (attempt 1) | rec zec-concurrent (TSF) ok |
+| 461 | 2026-11-03 18:29Z (attempt 1) | rec zec-stale-window (TSF) ok |
+| 462 | 2026-11-03 18:59Z (attempt 1) | ui zec-taker-refund (TSF) ok, ui zec-restart-taker (TSF) ok, ui zec-restart-maker (TSF) ok, ui zec-survivor (TSF) ok, ui zec-node-offline (TSF) ok |
+| 463 | 2026-11-03 19:50Z (attempt 1) | ui taker-refund (TSF) ok |
+| 464 | 2026-11-03 20:26Z (attempt 1) | ui maker-refund (TSF) ok |
+| 465 | 2026-11-03 21:13Z (attempt 1) | ui happy (TSF) ok, ui restart-taker (TSF) ok, ui restart-maker (TSF) ok, ui survivor (TSF) ok, ui concurrent (TSF) ok, ui node-offline (TSF) ok |
+| 466 | 2026-11-03 22:20Z (attempt 1) | ui taker-refund (TSL) FAIL |
+| 467 | 2026-11-03 23:06Z (attempt 1) | ui taker-refund (TSL) FAIL |
+| 468 | 2026-11-03 23:53Z (attempt 1) | ui taker-refund (TSL) FAIL |
+| 469 | 2026-11-04 00:40Z (attempt 1) | ui maker-refund (TSL) FAIL |
+| 470 | 2026-11-04 01:51Z (attempt 1) | ui maker-refund (TSL) FAIL |
+| 471 | 2026-11-04 02:46Z (attempt 1) | ui maker-refund (TSL) ok, ui happy (TSL) ok, ui restart-taker (TSL) FAIL |
+| 472 | 2026-11-04 04:02Z (attempt 1) | ui restart-taker (TSL) ok, ui restart-maker (TSL) ok, ui survivor (TSL) FAIL |
+| 473 | 2026-11-04 04:57Z (attempt 1) | ui survivor (TSL) ok, ui concurrent (TSL) ok, ui node-offline (TSL) ok |
+
+v7-rerec.log:
+
+| chain | up | carried |
+|---|---|---|
+| 500 | 2026-11-04 05:27Z (attempt 1) | rec zec-maker-refund (TSF) ok |
+
+v7-followup.log:
+
+| chain | up | carried |
+|---|---|---|
+| 520 | 2026-11-04 05:48Z (attempt 1) | ui taker-refund (TSL) ok |
+
 ## Recordings
 
 `videos/TakerSellsLez-zec-{happy,maker-refund,concurrent}.mp4`: recorded by
 `ui-e2e.sh --record` on chains 400–402 during V6; the reviewer checked each one
 frame by frame and accepted it (2026-10-31 20:10Z, 20:31Z, 20:50Z).
 `videos/TakerSellsForeign-zec-{happy,maker-refund,concurrent,stale-window}.mp4`:
-recorded on 2026-11-03 by a scratch runner (`logs/record-tsf.log`) on the same
-images, each on a fresh chain (recreations 454–457, all first attempt) with
-zebra restarted first, each on its first try. A recording is kept only when no
+recorded in V7 on the v7 images (above), each on a fresh chain with zebra
+restarted first, each on its first try; zec-maker-refund again after `2f69932a`.
+The first selling-ZEC recordings (2026-11-03, `b1dd0af8` images,
+`logs/record-tsf.log`) are replaced; their logs stay in `logs/`. A recording is kept only when no
 press had to be repeated (`RETRIED-PRESS` absent). The desk-copy notes are in
 `RESULTS.txt`.
 
@@ -251,7 +309,9 @@ regression in this set (Node 28/28, desks 16/16 on the same images).
 - 396d58c4 feat(zec): DeterministicLocalDevnetV3 — the devnet profile with a 12-minute LEZ refund delay; a held revealing claim needs attention a third of the delay before its refund time (REVIEW 00:52Z)
 - 64aa1df8 feat(deploy): gen-config mints each role's Zcash key; zebra mines to the Maker's, which is its Delivery identity
 
-Desk-driver changes in the shared harness (`deploy/scripts/ui-e2e.sh`, `verify.mjs`): `6d9588c0`, `7f551c94`, `d637fab4`.
+- 31df3352 fix(basecamp): selling ZEC, the Taker row offers nothing while its revealing LEZ claim lands, and its refund rows no longer wait for the Maker's LEZ refund (shared Taker desk; covered by V7: BTC desks 16/16)
+
+Desk-driver changes in the shared harness (`deploy/scripts/ui-e2e.sh`, `verify.mjs`): `6d9588c0`, `7f551c94`, `d637fab4`, `2f69932a`.
 
 ## Findings fixed on this branch and where the run shows them
 
