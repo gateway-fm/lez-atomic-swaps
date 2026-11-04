@@ -246,12 +246,42 @@ pub enum LezNetworkName {
     Devnet,
 }
 
+/// How the sequencer is reached: on literal loopback, or at the one exact
+/// allowlisted official HTTPS origin.
+///
+/// The official origin serves no indexer, so the indexer stays loopback either
+/// way; the sidecar validates and connects each endpoint through its own
+/// profile. Omitted, a configuration means what it meant before this field.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LezSequencerRoute {
+    /// Literal-loopback HTTP, reached through an operator-run proxy if remote.
+    #[default]
+    Local,
+    /// The exact allowlisted official Testnet HTTPS origin, no proxy.
+    OfficialPublic,
+}
+
+impl LezSequencerRoute {
+    /// The `--node-profile` value the sidecar expects.
+    #[must_use]
+    pub const fn as_sidecar_profile(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::OfficialPublic => "official_public",
+        }
+    }
+}
+
 /// LEZ chain identity plus the role's sidecar and signer.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LezConfigV1 {
     #[serde(default)]
     pub network: LezNetworkName,
+    /// Outbound route for the sequencer; the indexer is always loopback.
+    #[serde(default)]
+    pub sequencer_route: LezSequencerRoute,
     pub channel_id: String,
     pub genesis_block_hash: String,
     pub escrow_program_id: String,

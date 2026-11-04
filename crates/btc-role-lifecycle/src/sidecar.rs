@@ -23,7 +23,7 @@ use lez_bridge_protocol::{RequestId, RunId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::BtcRoleRuntime,
+    config::{BtcRoleRuntime, LezSequencerRoute},
     layout::{SwapLayout, read_private, write_private_exact},
     lez::LezSidecar,
 };
@@ -147,12 +147,18 @@ impl SwapSidecar {
             .mode(0o600)
             .open(&self.record.log_file)?;
         let started = log.metadata()?.len();
-        let child = Command::new(&lez.sidecar_program)
+        let mut command = Command::new(&lez.sidecar_program);
+        // The official origin serves no indexer, so whenever the sequencer is
+        // not loopback the indexer is pinned back to the loopback profile.
+        if lez.sequencer_route != LezSequencerRoute::Local {
+            command.args(["--indexer-profile", "local"]);
+        }
+        let child = command
             .args([
                 "--listen-address",
                 &format!("127.0.0.1:{}", self.record.port),
                 "--node-profile",
-                "local",
+                lez.sequencer_route.as_sidecar_profile(),
                 "--sequencer-url",
                 &lez.sequencer_url,
                 "--indexer-url",
