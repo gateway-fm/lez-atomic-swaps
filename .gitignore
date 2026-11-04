@@ -32,6 +32,8 @@ __pycache__/
 /deploy/images/lez-services/sequencer_service
 /deploy/images/lez-services/indexer_service
 /deploy/images/lez-services/r0vm
+/deploy/images/lez-indexer-module/r0vm
+/deploy/images/lez-indexer-module/*.lgx
 /deploy/images/bitcoin-core/bin/
 /deploy/images/basecamp-ui/assets/
 

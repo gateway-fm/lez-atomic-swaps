@@ -259,20 +259,20 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # The LEZ v0.2 indexer as a Logos module: lez_indexer_module (1.1.1 source on
+  # LEZ v0.2.4, plus serve_rpc in builder/patches/lez-indexer-module) in a
+  # headless logoscore; the module serves indexer_service's own JSON-RPC on
+  # :8779, so the Nodes, the sidecar and the probes read it as before.
   indexer:
-    image: ${LEZ_IMAGE_PREFIX:-lez}-services:${LEZ_IMAGE_TAG:-local}
+    build: ./images/lez-indexer-module
+    image: ${LEZ_IMAGE_PREFIX:-lez}-indexer-module:${LEZ_IMAGE_TAG:-local}
     container_name: lez-indexer
-    entrypoint: ["/usr/local/bin/indexer_service"]
     command:
       - "/run-config/indexer_config.json"
       - "--port"
       - "8779"
-      - "--data-dir"
-      - "/var/lib/indexer_service"
     environment:
       HOME: /tmp
-      RUST_LOG: info
-      RISC0_SERVER_PATH: /usr/local/bin/r0vm
     labels:
       org.logos-co.atomic-swaps.run: market-lez-0001
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
@@ -284,7 +284,7 @@ services:
         condition: service_healthy
     volumes:
       - ./runtime/config/indexer_config.json:/run-config/indexer_config.json:ro
-      - ./runtime/indexer:/var/lib/indexer_service
+      - ./runtime/indexer:/work/state
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m,mode=1777
     networks: [chains]
@@ -296,7 +296,7 @@ services:
     cpus: 2.0
     mem_limit: 2g
     healthcheck:
-      test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:8779", "getLastFinalizedBlockId", "[]"]
+      test: ["CMD", "/usr/local/bin/lez-indexer-module-health", "8779"]
       interval: 10s
       timeout: 5s
       retries: 180

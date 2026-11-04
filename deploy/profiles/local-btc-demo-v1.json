@@ -163,7 +163,7 @@
     {
       "id": "indexer",
       "lifecycle": "service",
-      "executable": "indexer_service",
+      "executable": "lez-indexer-module",
       "role": "shared",
       "pair": "lez",
       "sockets": [],

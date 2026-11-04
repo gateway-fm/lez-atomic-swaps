@@ -8,7 +8,7 @@
 #
 # PHASE is one of the phases below, or one build step on its own
 # (`--only build:rapidsnark`, `build:lez-services`, `build:r0vm`,
-# `build:escrow`, `build:sidecar`, `build:identities`); that is how the
+# `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:identities`); that is how the
 # release workflow spreads the cold build over several runners.
 #
 # Every phase is idempotent: it checks what already exists and does only the
@@ -392,6 +392,49 @@ build_lez_services() {
   fi
 }
 
+# LEZ Logos modules built from source. Upstream sources are git submodules under
+# third_party/, each at its exact upstream commit and never edited; our additions
+# are patch files under builder/patches/<module>/ (0001-lez-*.patch applies to
+# logos-execution-zone, the others to the module), applied to a scratch copy here.
+# Each module's own flake builds the portable .lgx in a pinned nix container; the
+# nix store lives in the lez-build-nix volume.
+#   lez-indexer-module: 1.1.1 on LEZ v0.2.4 (+ the upstream nix risc0 fetch fix),
+#     plus the indexer FFI's indexer_rpc_call and the module's rpc()
+readonly LEZ_MODULES_LEZ_COMMIT=9edf4a622fe966199beed71685c6f0b855db0784
+readonly LEZ_INDEXER_MODULE_COMMIT=5033da442a7fde56121639859c96ebb347b75ba7
+readonly LEZ_NIX_IMAGE="nixos/nix:2.24.10@sha256:a09d508c2e46d3a4c7205ff3fa0d506d626a5a966c31e879df7efe737e22f003"
+submodule_at() { # submodule_at <path> <commit>: fail closed on a missing or moved submodule
+  local got; got="$(git -C "$REPO_ROOT/$1" rev-parse HEAD 2>/dev/null || true)"
+  [[ "$got" == "$2" ]] || fail "$1 is at ${got:-nothing}, expected $2 (git submodule update --init $1)"
+}
+build_logos_module() { # build_logos_module <out-name> <module submodule> <module commit> <patch dir>
+  local name="$1" modpath="$2" commit="$3" patches="$DEPLOY_ROOT/builder/patches/$4" out stamp
+  out="$PROVISION/$name"
+  submodule_at third_party/logos-execution-zone "$LEZ_MODULES_LEZ_COMMIT"
+  submodule_at "$modpath" "$commit"
+  stamp="$( { echo "$LEZ_MODULES_LEZ_COMMIT $commit"; cat "$patches"/*.patch; } | sha256sum | cut -c1-16)"
+  [[ -f "$out/$name.lgx" && "$(cat "$out/source-patches.stamp" 2>/dev/null)" == "$stamp" ]] && return 0
+  log "building $name (LEZ v0.2.4 + builder/patches/$4) as a portable lgx in nix (~40 min cold)"
+  # The provision tree may belong to root (a builder container made it), so the
+  # output directory and the stamp are written from inside the container.
+  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+    -v "$REPO_ROOT/third_party/logos-execution-zone:/up/lez:ro" -v "$REPO_ROOT/$modpath:/up/mod:ro" -v "$patches:/patches:ro" \
+    "$LEZ_NIX_IMAGE" sh -euc "
+      echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
+      rm -rf /tmp/src; mkdir -p /tmp/src
+      tar -C /up/lez --exclude=.git -cf - . | (mkdir /tmp/src/lez && tar -C /tmp/src/lez -xf -)
+      tar -C /up/mod --exclude=.git -cf - . | (mkdir /tmp/src/mod && tar -C /tmp/src/mod -xf -)
+      for p in /patches/*.patch; do
+        case \$(basename \$p) in 0001-lez-*) (cd /tmp/src/lez && git apply \$p) ;; *) (cd /tmp/src/mod && git apply \$p) ;; esac
+      done
+      nix build -L path:/tmp/src/mod#lgx-portable --override-input logos-execution-zone path:/tmp/src/lez --out-link /tmp/lgx 2>&1 | tail -3
+      mkdir -p /provision/$name; cp -L /tmp/lgx/*.lgx /provision/$name/$name.lgx
+      printf '%s\\n' '$stamp' > /provision/$name/source-patches.stamp"
+}
+build_indexer_module() {
+  build_logos_module lez_indexer_module third_party/lez-indexer-module "$LEZ_INDEXER_MODULE_COMMIT" lez-indexer-module
+}
+
 # r0vm from the risc0 tag (no arm64 release asset exists)
 build_r0vm() {
   if [[ ! -x "$PROVISION/tools-arm/bin/r0vm" ]]; then
@@ -492,6 +535,7 @@ phase_build() {
   build_step_wanted r0vm && build_r0vm
   build_step_wanted escrow && build_escrow
   build_step_wanted sidecar && build_sidecar
+  build_step_wanted indexer-module && build_indexer_module
   own_provision
   build_step_wanted identities && build_identities
   log "artifacts built into $PROVISION"
@@ -502,6 +546,9 @@ phase_stage() {
   PHASE=stage
   install -m 0755 "$PROVISION/lez-services/sequencer_service" "$PROVISION/lez-services/indexer_service" \
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
+  # the LEZ indexer as a Logos module, with the r0vm it executes programs with
+  install -m 0644 "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$DEPLOY_ROOT/images/lez-indexer-module/"
+  install -m 0755 "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-indexer-module/"
   # Fail closed on a sidecar built from another sidecar tree (or one with no
   # tree stamp at all): rebuild it from this checkout first.
   local expected staged
@@ -581,7 +628,7 @@ phase_swap() {
 
 case "$ONLY" in
   ""|host|sources|nix|rust|build|stage|stack|swap) ;;
-  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities) ;;
+  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module) ;;
   *) echo "unknown phase: $ONLY" >&2; exit 64 ;;
 esac
 for p in host sources nix rust build stage stack; do

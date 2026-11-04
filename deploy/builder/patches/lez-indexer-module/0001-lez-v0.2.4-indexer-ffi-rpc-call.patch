@@ -1,0 +1,333 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index d4c52e89..b5b514da 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -4235,13 +4235,18 @@ dependencies = [
+ name = "indexer_ffi"
+ version = "0.1.0"
+ dependencies = [
++ "anyhow",
+  "cbindgen",
+  "env_logger",
+  "futures",
+  "indexer_core",
++ "indexer_service",
+  "indexer_service_protocol",
++ "indexer_service_rpc",
++ "jsonrpsee",
+  "lee",
+  "log",
++ "serde",
+  "serde_json",
+  "tokio",
+ ]
+diff --git a/lez/indexer/ffi/Cargo.toml b/lez/indexer/ffi/Cargo.toml
+index 6b74ab8b..b553b1b5 100644
+--- a/lez/indexer/ffi/Cargo.toml
++++ b/lez/indexer/ffi/Cargo.toml
+@@ -14,6 +14,11 @@ log = { workspace = true }
+ tokio = { features = ["rt-multi-thread"], workspace = true }
+ futures.workspace = true
+ serde_json.workspace = true
++serde.workspace = true
++anyhow.workspace = true
++indexer_service.workspace = true
++indexer_service_rpc = { workspace = true, features = ["server"] }
++jsonrpsee = { workspace = true, features = ["server"] }
+ 
+ [build-dependencies]
+ cbindgen = "0.29"
+diff --git a/lez/indexer/ffi/src/api/mod.rs b/lez/indexer/ffi/src/api/mod.rs
+index 2e4be797..29665a44 100644
+--- a/lez/indexer/ffi/src/api/mod.rs
++++ b/lez/indexer/ffi/src/api/mod.rs
+@@ -4,5 +4,6 @@ pub mod lifecycle;
+ pub mod logging;
+ pub mod memory;
+ pub mod query;
++pub mod rpc;
+ pub mod result;
+ pub mod types;
+diff --git a/lez/indexer/ffi/src/api/rpc.rs b/lez/indexer/ffi/src/api/rpc.rs
+new file mode 100644
+index 00000000..627cbbf5
+--- /dev/null
++++ b/lez/indexer/ffi/src/api/rpc.rs
+@@ -0,0 +1,214 @@
++//! The indexer's JSON-RPC surface over the FFI, so a host (the Logos
++//! `lez_indexer_module`) can answer exactly as `indexer_service` does.
++//!
++//! [`indexer_rpc_call`] takes a JSON-RPC method name and its `params` (a
++//! positional array or a named object, as jsonrpsee accepts) and returns the
++//! JSON a jsonrpsee server would put in the response: `{"result": …}` or
++//! `{"error": {"code", "message", "data"}}`. Every method reads the store the
++//! same way `indexer_service::service::IndexerService` does and serialises the
++//! same `indexer_service_protocol` types, so the answers are byte-for-byte
++//! those of the JSON-RPC service at this LEZ version. Subscriptions are not
++//! offered here.
++
++use std::{
++    ffi::{CStr, CString, c_char},
++    net::SocketAddr,
++    sync::{Mutex, OnceLock},
++};
++
++use indexer_service_protocol::{AccountId, Block, BlockId, HashType, IndexerStatus, Transaction};
++use serde::de::DeserializeOwned;
++use serde_json::{Value, json};
++
++use crate::IndexerServiceFFI;
++
++const INVALID_PARAMS: i64 = -32602;
++const METHOD_NOT_FOUND: i64 = -32601;
++const INTERNAL_ERROR: i64 = -32603;
++
++fn err(code: i64, message: &str, data: Option<String>) -> Value {
++    match data {
++        Some(data) => json!({"error": {"code": code, "message": message, "data": data}}),
++        None => json!({"error": {"code": code, "message": message}}),
++    }
++}
++
++fn db_error(e: &anyhow::Error) -> Value {
++    err(INTERNAL_ERROR, "DBError", Some(format!("{e:#?}")))
++}
++
++/// The `index`-th positional parameter, or the named one.
++fn param<T: DeserializeOwned>(params: &Value, index: usize, name: &str) -> Result<T, Value> {
++    let raw = match params {
++        Value::Array(items) => items.get(index).cloned().unwrap_or(Value::Null),
++        Value::Object(map) => map.get(name).cloned().unwrap_or(Value::Null),
++        Value::Null => Value::Null,
++        _ => return Err(err(INVALID_PARAMS, "Invalid params", None)),
++    };
++    serde_json::from_value(raw).map_err(|e| err(INVALID_PARAMS, "Invalid params", Some(e.to_string())))
++}
++
++fn ok<T: serde::Serialize>(value: T) -> Value {
++    serde_json::to_value(value).map_or_else(
++        |e| err(INTERNAL_ERROR, "Internal error", Some(e.to_string())),
++        |result| json!({ "result": result }),
++    )
++}
++
++fn dispatch(indexer: &IndexerServiceFFI, method: &str, params: &Value) -> Result<Value, Value> {
++    let store = &indexer.core().store;
++    Ok(match method {
++        "getLastFinalizedBlockId" => ok(store.get_last_block_id().map_err(|e| db_error(&e))?),
++        "getBlockById" => {
++            let block_id: BlockId = param(params, 0, "block_id")?;
++            ok(store.get_block_at_id(block_id).map_err(|e| db_error(&e))?.map(Block::from))
++        }
++        "getBlockByHash" => {
++            let hash: HashType = param(params, 0, "block_hash")?;
++            ok(store.get_block_by_hash(hash.0).map_err(|e| db_error(&e))?.map(Block::from))
++        }
++        "getAccount" => {
++            let account_id: AccountId = param(params, 0, "account_id")?;
++            let account = indexer
++                .runtime()
++                .block_on(store.account_current_state(&account_id.into()))
++                .map_err(|e| db_error(&e))?;
++            ok(indexer_service_protocol::Account::from(account))
++        }
++        "getAccountAtBlock" => {
++            let account_id: AccountId = param(params, 0, "account_id")?;
++            let block_id: BlockId = param(params, 1, "block_id")?;
++            let account = store
++                .account_state_at_block(&account_id.into(), block_id)
++                .map_err(|e| db_error(&e))?;
++            ok(indexer_service_protocol::Account::from(account))
++        }
++        "getTransaction" => {
++            let hash: HashType = param(params, 0, "tx_hash")?;
++            ok(store.get_transaction_by_hash(hash.0).map_err(|e| db_error(&e))?.map(Transaction::from))
++        }
++        "getBlocks" => {
++            let before: Option<BlockId> = param(params, 0, "before")?;
++            let limit: u64 = param(params, 1, "limit")?;
++            let blocks = store.get_block_batch(before, limit).map_err(|e| db_error(&e))?;
++            ok(blocks.into_iter().map(Block::from).collect::<Vec<_>>())
++        }
++        "getTransactionsByAccount" => {
++            let account_id: AccountId = param(params, 0, "account_id")?;
++            let offset: u64 = param(params, 1, "offset")?;
++            let limit: u64 = param(params, 2, "limit")?;
++            let txs = store
++                .get_transactions_by_account(account_id.value, offset, limit)
++                .map_err(|e| db_error(&e))?;
++            ok(txs.into_iter().map(Transaction::from).collect::<Vec<_>>())
++        }
++        "getStatus" => ok(IndexerStatus::from(indexer.core().status())),
++        "checkHealth" => {
++            store.recalculate_final_state().map_err(|e| db_error(&e))?;
++            ok(())
++        }
++        _ => err(METHOD_NOT_FOUND, "Method not found", None),
++    })
++}
++
++/// Answer one indexer JSON-RPC call.
++///
++/// # Returns
++///
++/// A heap-allocated, null-terminated JSON string (`{"result": …}` or
++/// `{"error": …}`) that the caller MUST free with `free_cstring`; null only
++/// for a null `indexer` pointer.
++///
++/// # Safety
++///
++/// `indexer` must be a valid [`IndexerServiceFFI`] pointer; `method` and
++/// `params_json` must be valid null-terminated strings (`params_json` may be
++/// null for no parameters).
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn indexer_rpc_call(
++    indexer: *const IndexerServiceFFI,
++    method: *const c_char,
++    params_json: *const c_char,
++) -> *mut c_char {
++    if indexer.is_null() || method.is_null() {
++        log::error!("indexer_rpc_call with a null pointer. This is a bug.");
++        return std::ptr::null_mut();
++    }
++    let indexer = unsafe { &*indexer };
++    let method = unsafe { CStr::from_ptr(method) }.to_string_lossy().into_owned();
++    let params = if params_json.is_null() {
++        Value::Null
++    } else {
++        let text = unsafe { CStr::from_ptr(params_json) }.to_string_lossy();
++        if text.trim().is_empty() {
++            Value::Null
++        } else {
++            match serde_json::from_str(&text) {
++                Ok(v) => v,
++                Err(e) => {
++                    let out = err(-32700, "Parse error", Some(e.to_string()));
++                    return CString::new(out.to_string()).map_or(std::ptr::null_mut(), CString::into_raw);
++                }
++            }
++        }
++    };
++    let out = dispatch(indexer, &method, &params).unwrap_or_else(|e| e);
++    CString::new(out.to_string()).map_or(std::ptr::null_mut(), CString::into_raw)
++}
++
++/// The running JSON-RPC server of [`indexer_rpc_serve`], kept for the life of
++/// the process (dropping a jsonrpsee handle stops its server).
++static RPC_SERVER: OnceLock<Mutex<Option<jsonrpsee::server::ServerHandle>>> = OnceLock::new();
++
++/// Serve the indexer's JSON-RPC on `0.0.0.0:port` from this process: the
++/// `indexer_service::service::IndexerService` implementation over the indexer
++/// core this FFI already runs and ingests, on its runtime: every method; the
++/// finalized-block subscription is refused (it would ingest a second time).
++///
++/// # Returns
++///
++/// `Ok`, or `ClientError` when the server cannot bind or one already runs.
++///
++/// # Safety
++///
++/// `indexer` must be a valid [`IndexerServiceFFI`] pointer.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn indexer_rpc_serve(
++    indexer: *const IndexerServiceFFI,
++    port: u16,
++) -> crate::errors::OperationStatus {
++    use crate::errors::OperationStatus;
++    use indexer_service_rpc::RpcServer as _;
++    if indexer.is_null() {
++        log::error!("indexer_rpc_serve with a null indexer pointer. This is a bug.");
++        return OperationStatus::NullPointer;
++    }
++    let indexer = unsafe { &*indexer };
++    let slot = RPC_SERVER.get_or_init(|| Mutex::new(None));
++    let Ok(mut slot) = slot.lock() else {
++        return OperationStatus::ClientError;
++    };
++    if slot.is_some() {
++        log::error!("indexer_rpc_serve: a JSON-RPC server already runs");
++        return OperationStatus::ClientError;
++    }
++    let core = indexer.core().clone();
++    let started = indexer.runtime().block_on(async move {
++        let server = jsonrpsee::server::Server::builder()
++            .build(SocketAddr::from(([0, 0, 0, 0], port)))
++            .await?;
++        let service = indexer_service::service::IndexerService::from_core(core);
++        Ok::<_, std::io::Error>(server.start(service.into_rpc()))
++    });
++    match started {
++        Ok(handle) => {
++            log::info!("indexer JSON-RPC served on 0.0.0.0:{port}");
++            *slot = Some(handle);
++            OperationStatus::Ok
++        }
++        Err(e) => {
++            log::error!("indexer_rpc_serve: cannot serve on port {port}: {e}");
++            OperationStatus::ClientError
++        }
++    }
++}
+diff --git a/lez/indexer/service/src/service.rs b/lez/indexer/service/src/service.rs
+index 09759362..805df392 100644
+--- a/lez/indexer/service/src/service.rs
++++ b/lez/indexer/service/src/service.rs
+@@ -17,7 +17,9 @@ use tokio::sync::mpsc::UnboundedSender;
+ use tokio_util::sync::CancellationToken;
+ 
+ pub struct IndexerService {
+-    subscription_service: SubscriptionService,
++    /// The finalized-block subscriptions, which also drive this service's own
++    /// block ingestion; absent for a service over a core someone else ingests.
++    subscription_service: Option<SubscriptionService>,
+     indexer: IndexerCore,
+ }
+ 
+@@ -31,10 +33,22 @@ impl IndexerService {
+         let subscription_service = SubscriptionService::spawn_new(indexer.clone(), shutdown);
+ 
+         Ok(Self {
+-            subscription_service,
++            subscription_service: Some(subscription_service),
+             indexer,
+         })
+     }
++
++    /// The RPC service over an indexer core that is already running and
++    /// ingesting (the indexer FFI's), so that host serves exactly this JSON-RPC
++    /// without a second ingestion. The subscription loop is this service's
++    /// ingestion, so this service offers no finalized-block subscription.
++    #[must_use]
++    pub const fn from_core(indexer: IndexerCore) -> Self {
++        Self {
++            subscription_service: None,
++            indexer,
++        }
++    }
+ }
+ 
+ #[async_trait]
+@@ -43,12 +57,22 @@ impl indexer_service_rpc::RpcServer for IndexerService {
+         &self,
+         subscription_sink: jsonrpsee::PendingSubscriptionSink,
+     ) -> SubscriptionResult {
++        let Some(subscription_service) = &self.subscription_service else {
++            subscription_sink
++                .reject(ErrorObject::owned(
++                    ErrorCode::MethodNotFound.code(),
++                    "finalized-block subscriptions are not offered by this host",
++                    None::<()>,
++                ))
++                .await;
++            return Ok(());
++        };
+         let sink = subscription_sink.accept().await?;
+         info!(
+             "Accepted new subscription to finalized blocks with ID {:?}",
+             sink.subscription_id()
+         );
+-        self.subscription_service
++        subscription_service
+             .add_subscription(Subscription::new(sink))
+             .await?;
+ 
