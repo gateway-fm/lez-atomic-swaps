@@ -23,6 +23,26 @@ fn peer_features() -> Vec<&'static str> {
     features
 }
 
+/// The pairs the Taker CLI already in the target directory was built with,
+/// read from its help: each pair adds its own `--accept-<pair>-offer` flag.
+/// The workspace build of the Taker's own tests may have unified more features
+/// than this Maker test selects, so the binary is never rebuilt with fewer.
+fn existing_taker_pairs(profile_directory: &Path) -> Vec<&'static str> {
+    let cli = profile_directory.join(format!("lez-taker-cli{}", std::env::consts::EXE_SUFFIX));
+    let Ok(output) = Command::new(&cli).arg("--help").output() else {
+        return Vec::new();
+    };
+    let help = String::from_utf8_lossy(&output.stdout);
+    let mut pairs = Vec::new();
+    if help.contains("--accept-zec-offer") {
+        pairs.push("pair-zec");
+    }
+    if help.contains("--accept-xmr-offer") {
+        pairs.push("pair-xmr");
+    }
+    pairs
+}
+
 /// Resolves a separately owned workspace binary next to this test executable.
 ///
 /// Cargo only defines `CARGO_BIN_EXE_*` for binaries owned by the package under
@@ -38,6 +58,18 @@ pub fn workspace_binary(name: &str) -> PathBuf {
     let executable = profile_directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     let mut built = BUILT.lock().expect("lock peer-binary build");
     if built.iter().any(|done| done == name) && executable.is_file() {
+        return executable;
+    }
+    // A Taker binary that already carries every pair this test needs is used
+    // as it is: rebuilding it with this test's narrower features would replace
+    // the binary the Taker package's own pair tests run (seen as "Taker actor
+    // configuration is unavailable" in a workspace run).
+    let existing = existing_taker_pairs(profile_directory);
+    if name.starts_with("lez-taker-")
+        && executable.is_file()
+        && peer_features().iter().all(|pair| existing.contains(pair))
+    {
+        built.push(name.to_owned());
         return executable;
     }
     let package = if name == "lez-chat-relay" {
@@ -72,7 +104,12 @@ pub fn workspace_binary(name: &str) -> PathBuf {
             "--bin",
             name,
         ]);
-    let features = peer_features();
+    let mut features = peer_features();
+    for pair in existing {
+        if !features.contains(&pair) {
+            features.push(pair);
+        }
+    }
     if package == "lez-taker-node" && !features.is_empty() {
         command.args(["--features", &features.join(",")]);
     }
