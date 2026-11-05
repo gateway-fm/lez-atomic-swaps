@@ -64,6 +64,7 @@ pub(crate) fn xmr_claim_partial_matches_terms(
 use crate::durable_reservation::{
     DurableReservationError, DurableReservationStore, ReservationKind,
 };
+use crate::message_signer::{KeyFileSigner, MessageSigner, witness_binds};
 
 #[allow(dead_code, unused_imports, unused_mut)]
 mod generated_escrow_client {
@@ -419,7 +420,7 @@ pub(crate) enum OwnedSubmission {
 /// use their transaction IDs as canonical one-attempt request identities.
 pub struct NativeEscrowPlanner {
     role: Participant,
-    signer_key_bytes: Zeroizing<[u8; 32]>,
+    signer: Arc<dyn MessageSigner>,
     signer_account_id: AccountId,
     escrow_program_id: [u32; 8],
     authenticated_transfer_program_id: [u32; 8],
@@ -436,7 +437,7 @@ impl fmt::Debug for NativeEscrowPlanner {
         formatter
             .debug_struct("NativeEscrowPlanner")
             .field("role", &self.role)
-            .field("signer_key", &"[REDACTED]")
+            .field("signer", &self.signer)
             .field("signer_account_id", &self.signer_account_id)
             .field(
                 "escrow_program_id",
@@ -466,10 +467,6 @@ impl NativeEscrowPlanner {
     ///
     /// Rejects cross-wired role, compatibility, signer, program, or impossible
     /// program identities before retaining the key.
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "the isolated planner takes ownership of the upstream key before retaining only zeroizing bytes"
-    )]
     pub fn new<N>(
         role: Participant,
         signer_key: PrivateKey,
@@ -481,7 +478,35 @@ impl NativeEscrowPlanner {
     where
         N: NonceSource + 'static,
     {
-        let signer_account_id = AccountId::from(&PublicKey::new_from_private_key(&signer_key));
+        Self::new_with_signer(
+            role,
+            Arc::new(KeyFileSigner::new(signer_key)),
+            escrow_program_id,
+            authenticated_transfer_program_id,
+            expected_runtime,
+            nonce_source,
+        )
+    }
+
+    /// Binds one signer (the role's key or the LEZ wallet module holding it),
+    /// role, runtime, and the two deployed programs.
+    ///
+    /// # Errors
+    ///
+    /// Rejects cross-wired role, compatibility, signer, program, or impossible
+    /// program identities.
+    pub fn new_with_signer<N>(
+        role: Participant,
+        signer: Arc<dyn MessageSigner>,
+        escrow_program_id: [u32; 8],
+        authenticated_transfer_program_id: [u32; 8],
+        expected_runtime: RuntimeDescriptor,
+        nonce_source: Arc<N>,
+    ) -> Result<Self, NativePrepareError>
+    where
+        N: NonceSource + 'static,
+    {
+        let signer_account_id = signer.account_id();
         if expected_runtime.sidecar_role != role {
             return Err(NativePrepareError::WrongRole);
         }
@@ -501,11 +526,10 @@ impl NativeEscrowPlanner {
         {
             return Err(NativePrepareError::WrongAuthenticatedTransferProgram);
         }
-        let signer_key_bytes = Zeroizing::new(*signer_key.value());
         let nonce_source: Arc<dyn NonceSource> = nonce_source;
         Ok(Self {
             role,
-            signer_key_bytes,
+            signer,
             signer_account_id,
             escrow_program_id,
             authenticated_transfer_program_id,
@@ -542,9 +566,39 @@ impl NativeEscrowPlanner {
         N: NonceSource + 'static,
         P: AsRef<Path>,
     {
-        let mut planner = Self::new(
+        Self::new_durable_with_signer(
             role,
-            signer_key,
+            Arc::new(KeyFileSigner::new(signer_key)),
+            escrow_program_id,
+            authenticated_transfer_program_id,
+            expected_runtime,
+            nonce_source,
+            state_directory,
+        )
+    }
+
+    /// [`Self::new_durable`] with any signer ([`Self::new_with_signer`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::new_durable`].
+    #[cfg(target_os = "linux")]
+    pub fn new_durable_with_signer<N, P>(
+        role: Participant,
+        signer: Arc<dyn MessageSigner>,
+        escrow_program_id: [u32; 8],
+        authenticated_transfer_program_id: [u32; 8],
+        expected_runtime: RuntimeDescriptor,
+        nonce_source: Arc<N>,
+        state_directory: P,
+    ) -> Result<Self, NativePrepareError>
+    where
+        N: NonceSource + 'static,
+        P: AsRef<Path>,
+    {
+        let mut planner = Self::new_with_signer(
+            role,
+            signer,
             escrow_program_id,
             authenticated_transfer_program_id,
             expected_runtime,
@@ -5921,9 +5975,15 @@ impl NativeEscrowPlanner {
     }
 
     fn prepare_message(&self, message: Message) -> Result<PreparedTransaction, NativePrepareError> {
-        let signer_key = PrivateKey::try_new(*self.signer_key_bytes)
+        // Whoever signs, the witness must be exactly one valid signature over
+        // this message by the planner's bound account.
+        let witnesses = self
+            .signer
+            .witness(&message)
             .map_err(|_| NativePrepareError::InvalidSignature)?;
-        let witnesses = WitnessSet::for_message(&message, &[&signer_key]);
+        if !witness_binds(&witnesses, &message, self.signer_account_id) {
+            return Err(NativePrepareError::InvalidSignature);
+        }
         prepared_from_transaction(&PublicTransaction::new(message, witnesses))
     }
 }

@@ -20,6 +20,7 @@ mod m4_finalized_facts;
 mod m4_stage_a_composer;
 #[cfg(target_os = "linux")]
 mod m4_tag13_handoff;
+pub mod message_signer;
 mod native_prepare;
 mod runtime;
 mod server;

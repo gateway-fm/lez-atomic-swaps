@@ -191,7 +191,9 @@ echo "[5/6] Nodes…"
 # A changed runtime.env (a timing profile switch, say) reaches the Nodes only
 # through a recreate; entrypoints read it once.
 if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 1 ]]; then
-  docker compose up -d --force-recreate maker-node taker-node
+  # The roles' LEZ wallet signers start with them (depends_on) and are
+  # recreated with them, so a fresh chain gets fresh wallets too.
+  docker compose up -d --force-recreate maker-wallet taker-wallet maker-node taker-node
 else
   docker compose up -d maker-node taker-node
 fi

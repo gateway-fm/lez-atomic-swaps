@@ -46,6 +46,7 @@ COPY --from=fetch /opt/lez-modules /opt/lez-modules
 COPY --chmod=0444 wallet-lib.sh /usr/local/lib/lez-wallet-lib.sh
 COPY --chmod=0555 vault-claim.sh /usr/local/bin/lez-wallet-vault-claim
 COPY --chmod=0555 heartbeat.sh /usr/local/bin/lez-wallet-heartbeat
+COPY --chmod=0555 signer.sh /usr/local/bin/lez-wallet-signer
 ENV HOME=/tmp QT_QPA_PLATFORM=offscreen LANG=C.UTF-8
 USER 65532:65532
 WORKDIR /tmp

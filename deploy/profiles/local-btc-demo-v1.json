@@ -209,6 +209,31 @@
       "depends_on": []
     },
     {
+      "id": "maker-wallet",
+      "lifecycle": "service",
+      "executable": "lez-wallet-signer",
+      "role": "maker",
+      "pair": "lez",
+      "sockets": [
+        "/run/lez-wallet/maker/signer.sock"
+      ],
+      "state": [
+        {
+          "path": "volume:lez-maker-wallet",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "The Maker identity's LEZ signer key (held by the lez_core wallet module; the Maker Node no longer mounts it)"
+      ],
+      "public_identities": [],
+      "health": "signer socket present",
+      "depends_on": [
+        "maker-init",
+        "sequencer"
+      ]
+    },
+    {
       "id": "maker-node",
       "lifecycle": "service",
       "executable": "lez-maker-node",
@@ -236,6 +261,7 @@
       "health": "maker_health",
       "depends_on": [
         "maker-init",
+        "maker-wallet",
         "bitcoin-core",
         "indexer"
       ]
@@ -253,6 +279,31 @@
       "health": "successful exit",
       "depends_on": [
         "maker-node"
+      ]
+    },
+    {
+      "id": "taker-wallet",
+      "lifecycle": "service",
+      "executable": "lez-wallet-signer",
+      "role": "taker",
+      "pair": "lez",
+      "sockets": [
+        "/run/lez-wallet/taker/signer.sock"
+      ],
+      "state": [
+        {
+          "path": "volume:lez-taker-wallet",
+          "backup": "recreatable"
+        }
+      ],
+      "credentials": [
+        "The Taker identity's LEZ signer key (held by the lez_core wallet module; the Taker Node no longer mounts it)"
+      ],
+      "public_identities": [],
+      "health": "signer socket present",
+      "depends_on": [
+        "taker-init",
+        "sequencer"
       ]
     },
     {
@@ -282,7 +333,8 @@
       ],
       "health": "taker_health",
       "depends_on": [
-        "taker-init"
+        "taker-init",
+        "taker-wallet"
       ]
     },
     {

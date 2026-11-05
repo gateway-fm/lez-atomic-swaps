@@ -1,5 +1,5 @@
 diff --git a/metadata.json b/metadata.json
-index 7908a08..6fe9f1f 100644
+index 7908a08..93859ee 100644
 --- a/metadata.json
 +++ b/metadata.json
 @@ -1,7 +1,7 @@
@@ -7,15 +7,15 @@ index 7908a08..6fe9f1f 100644
    "name": "lez_core",
    "display_name": "LEZ Core Module",
 -  "version": "0.4.1",
-+  "version": "0.4.1-import.1",
++  "version": "0.4.1-import.2",
    "description": "Logos Execution Zone Core Module for Logos Core",
    "author": "Logos Blockchain Team",
    "type": "core",
 diff --git a/src/lez_core_module.cpp b/src/lez_core_module.cpp
-index 8ce0cab..d12e83d 100644
+index 8ce0cab..d5534ae 100644
 --- a/src/lez_core_module.cpp
 +++ b/src/lez_core_module.cpp
-@@ -305,6 +305,14 @@ std::string LEZCoreModule::create_account_private() {
+@@ -305,6 +305,35 @@ std::string LEZCoreModule::create_account_private() {
      return bytes32ToHex(id);
  }
  
@@ -27,14 +27,35 @@ index 8ce0cab..d12e83d 100644
 +    return static_cast<int64_t>(error);
 +}
 +
++std::string LEZCoreModule::sign_public_message_hash(const std::string& account_id_hex, const std::string& message_hash_hex) {
++    nlohmann::json obj = nlohmann::json::object();
++    FfiBytes32 id{}, hash{};
++    if (!hexToBytes32(account_id_hex, &id) || !hexToBytes32(message_hash_hex, &hash)) {
++        fprintf(stderr, "sign_public_message_hash: invalid hex\n");
++        obj["error"] = "sign_public_message_hash: account_id_hex and message_hash_hex must be 64 hex characters";
++        return obj.dump();
++    }
++    uint8_t signature[64]{};
++    FfiBytes32 publicKey{};
++    const WalletFfiError error = wallet_ffi_sign_public_message_hash(walletHandle, &id, &hash, &signature, &publicKey);
++    if (error != SUCCESS) {
++        fprintf(stderr, "sign_public_message_hash: wallet FFI error %d\n", error);
++        obj["error"] = "sign_public_message_hash: wallet FFI error " + std::to_string(error);
++        return obj.dump();
++    }
++    obj["signature"] = bytesToHex(signature, sizeof(signature));
++    obj["public_key"] = bytes32ToHex(publicKey);
++    return obj.dump();
++}
++
  LogosList LEZCoreModule::list_accounts() {
      LogosList result = nlohmann::json::array();
      FfiAccountList list{};
 diff --git a/src/lez_core_module.h b/src/lez_core_module.h
-index 863250f..f6d6853 100644
+index 863250f..ef22893 100644
 --- a/src/lez_core_module.h
 +++ b/src/lez_core_module.h
-@@ -39,6 +39,10 @@ public:
+@@ -39,6 +39,14 @@ public:
      // === Account Management ===
      std::string create_account_public();
      std::string create_account_private();
@@ -42,14 +63,18 @@ index 863250f..f6d6853 100644
 +    // wallet holds accounts whose keys exist outside it (wallet_ffi_import_public_account).
 +    // Returns 0 on success, the wallet FFI error code otherwise.
 +    int64_t import_public_account(const std::string& private_key_hex);
++    // Sign a 32-byte message hash (hex) with a held public account's key; builds and
++    // submits nothing (wallet_ffi_sign_public_message_hash). Returns
++    // {"signature": 128 hex, "public_key": 64 hex}, or {"error": ...}.
++    std::string sign_public_message_hash(const std::string& account_id_hex, const std::string& message_hash_hex);
      LogosList list_accounts();
  
      // === Account Queries ===
 diff --git a/tests/mocks/mock_wallet_ffi.cpp b/tests/mocks/mock_wallet_ffi.cpp
-index 7fe13a4..e29e5fa 100644
+index 7fe13a4..34ba10a 100644
 --- a/tests/mocks/mock_wallet_ffi.cpp
 +++ b/tests/mocks/mock_wallet_ffi.cpp
-@@ -88,6 +88,11 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle*, const char*, const char*,
+@@ -88,6 +88,21 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle*, const char*, const char*,
  
  // === Account management ===
  
@@ -58,18 +83,29 @@ index 7fe13a4..e29e5fa 100644
 +    return static_cast<WalletFfiError>(LOGOS_CMOCK_RETURN(int, "wallet_ffi_import_public_account"));
 +}
 +
++WalletFfiError wallet_ffi_sign_public_message_hash(WalletHandle*, const FfiBytes32*, const FfiBytes32*, uint8_t (*out_signature)[64], FfiBytes32* out_public_key) {
++    LOGOS_CMOCK_RECORD("wallet_ffi_sign_public_message_hash");
++    const int err = LOGOS_CMOCK_RETURN(int, "wallet_ffi_sign_public_message_hash");
++    if (err == 0 && out_signature && out_public_key) {
++        memset(*out_signature, 0xCD, sizeof(*out_signature));
++        memset(out_public_key->data, 0xEF, sizeof(out_public_key->data));
++    }
++    return static_cast<WalletFfiError>(err);
++}
++
  WalletFfiError wallet_ffi_create_account_public(WalletHandle*, FfiBytes32* out_id) {
      LOGOS_CMOCK_RECORD("wallet_ffi_create_account_public");
      const int err = LOGOS_CMOCK_RETURN(int, "wallet_ffi_create_account_public");
 diff --git a/tests/stubs/wallet_ffi.h b/tests/stubs/wallet_ffi.h
-index 03d126d..a669e72 100644
+index 03d126d..0df989a 100644
 --- a/tests/stubs/wallet_ffi.h
 +++ b/tests/stubs/wallet_ffi.h
-@@ -202,6 +202,7 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle *handle, const char *mnemoni
+@@ -202,6 +202,8 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle *handle, const char *mnemoni
  
  WalletFfiError wallet_ffi_create_account_public(WalletHandle* handle, FfiBytes32* out_id);
  WalletFfiError wallet_ffi_create_account_private(WalletHandle* handle, FfiBytes32* out_id);
 +WalletFfiError wallet_ffi_import_public_account(WalletHandle* handle, const char* private_key_hex);
++WalletFfiError wallet_ffi_sign_public_message_hash(WalletHandle* handle, const FfiBytes32* account_id, const FfiBytes32* message_hash, uint8_t (*out_signature)[64], FfiBytes32* out_public_key);
  WalletFfiError wallet_ffi_list_accounts(WalletHandle* handle, FfiAccountList* out_list);
  void wallet_ffi_free_account_list(FfiAccountList* list);
  

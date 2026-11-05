@@ -44,8 +44,19 @@ done
 mkdir -p "$btc_state" "$btc_state/swaps"
 rm -f "$run/node.sock" "$run/ready" "$run/chat.sock"
 
+# The role's LEZ signer: the LEZ wallet as the Logos lez_core module
+# (lez-wallet-signer, its socket at LEZ_WALLET_SIGNER_SOCKET) holds the key and
+# the Node never sees it; without the socket the Node keeps a copy of the key
+# file for its sidecars, as before.
+lez_wallet_socket="${LEZ_WALLET_SIGNER_SOCKET:-}"
 # Owner-private copies of the mounted identity and Bitcoin RPC credentials.
-install -m 0600 "$identity_src/lez-signer.key" "$btc_state/lez-signer.key"
+if [[ -z "$lez_wallet_socket" ]]; then
+  install -m 0600 "$identity_src/lez-signer.key" "$btc_state/lez-signer.key"
+else
+  rm -f "$btc_state/lez-signer.key"
+  for _ in $(seq 1 120); do [[ -S "$lez_wallet_socket" ]] && break; sleep 1; done
+  [[ -S "$lez_wallet_socket" ]] || { echo "$role: the LEZ wallet signer socket $lez_wallet_socket is not up" >&2; exit 1; }
+fi
 install -m 0600 "$identity_src/identity.json" "$btc_state/identity.json"
 install -m 0600 "$cookie_src" "$btc_state/btc-rpc-cookie"
 signer_account="$(jq -er '.account_id_hex' "$btc_state/identity.json")"
@@ -96,7 +107,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --arg channel "$channel_id" --arg genesis "$lez_genesis_hash" --arg program "$escrow_program_id" \
     --arg transfer "$auth_transfer_program_id" --arg sidecar_program /usr/local/bin/lez-v02-bridge-poc \
     --arg sequencer "$sequencer_url" --arg indexer "$indexer_url" --argjson port_base "$sidecar_port_base" \
-    --arg signer "$btc_state/lez-signer.key" \
+    --arg signer "$btc_state/lez-signer.key" --arg wallet_socket "$lez_wallet_socket" --arg signer_account "$signer_account" \
     --arg actor "$actor_program" --arg actor_sha "$actor_sha" \
     --arg btc_network "${LEZ_BTC_NETWORK:-regtest}" \
     --arg lez_network "${LEZ_LEZ_NETWORK:-devnet}" \
@@ -124,7 +135,8 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
      lez:{network:$lez_network, channel_id:$channel, genesis_block_hash:$genesis, escrow_program_id:$program,
           authenticated_transfer_program_id:$transfer, sidecar_program:$sidecar_program,
           sequencer_url:$sequencer, indexer_url:$indexer, sidecar_port_base:$port_base, sidecar_port_count:400,
-          signer_key_file:$signer,
+          signer_key_file:(if $wallet_socket == "" then $signer else null end),
+          wallet_signer:(if $wallet_socket == "" then null else {socket:$wallet_socket, account_id:($signer_account | ascii_downcase)} end),
           request_timeout_millis:120000, discovery_max_blocks:$discovery},
      recovery:{maker_second_lock_cutoff_seconds:$cutoff, earlier_refund_latest_seconds:$earlier,
                later_refund_earliest_seconds:$later, required_margin_seconds:$margin},
@@ -172,10 +184,17 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   zec_sidecar_state="$zec_state/sidecar/$zec_run_id"
   mkdir -p "$zec_state/sidecar" "$zec_sidecar_state"
   chmod 0700 "$zec_state/sidecar" "$zec_sidecar_state"
+  # The ZEC sidecar signs through the same LEZ wallet module when it is up; its
+  # account is the one the prepared runtime names.
+  if [[ -n "$lez_wallet_socket" ]]; then
+    zec_signer_args=(--wallet-signer-socket "$lez_wallet_socket" --signer-account-id "$(jq -er '.signer_account_id' "$zec_candidate_role/lez-runtime.json")")
+  else
+    zec_signer_args=(--private-key-file "$zec_candidate_role/lez-signer.key")
+  fi
   /usr/local/bin/lez-v02-bridge-poc --listen-address "$zec_listen" --node-profile local \
     --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
     --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
-    --private-key-file "$zec_candidate_role/lez-signer.key" --state-directory "$zec_sidecar_state" \
+    "${zec_signer_args[@]}" --state-directory "$zec_sidecar_state" \
     --authenticated-transfer-program-id "$auth_transfer_program_id" \
     </dev/null >>"$zec_state/sidecar.log" 2>&1 &
   zec_candidate_ready=0

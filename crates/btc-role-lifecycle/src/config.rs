@@ -265,9 +265,26 @@ pub struct LezConfigV1 {
     pub sidecar_port_base: u16,
     pub sidecar_port_count: u16,
     /// Hex LEZ signer key; its account is this role's LEZ owner account.
-    pub signer_key_file: PathBuf,
+    /// Absent when `wallet_signer` signs instead (exactly one of the two).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_key_file: Option<PathBuf>,
+    /// The LEZ wallet as a Logos module holding this role's key: its signer
+    /// socket and the account it signs for, which is this role's LEZ owner
+    /// account. The sidecars then hold no key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_signer: Option<LezWalletSignerV1>,
     pub request_timeout_millis: u64,
     pub discovery_max_blocks: u32,
+}
+
+/// A role's LEZ signer as the Logos `lez_core` wallet module (`lez-wallet-signer`).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LezWalletSignerV1 {
+    /// The owner-only unix socket the sidecars ask for signatures.
+    pub socket: PathBuf,
+    /// The account the wallet holds the key of (64 hex).
+    pub account_id: String,
 }
 
 /// Recovery schedule offsets, in seconds from the reservation time.
@@ -338,7 +355,6 @@ impl BtcRoleRuntime {
             ("swaps_root", &config.swaps_root),
             ("bitcoin.cookie_file", &config.bitcoin.cookie_file),
             ("lez.sidecar_program", &config.lez.sidecar_program),
-            ("lez.signer_key_file", &config.lez.signer_key_file),
             ("actor.program", &config.actor.program),
         ] {
             crate::layout::vet_configured_path(configured, label)?;
@@ -387,8 +403,7 @@ impl BtcRoleRuntime {
                 "LEZ authenticated-transfer program id",
             )?,
         );
-        let signer = lez::read_hex_secret(&config.lez.signer_key_file).context("LEZ signer key")?;
-        let lez_owner_account = lez::signer_account(&signer)?;
+        let lez_owner_account = lez_owner_account(&config.lez)?;
         // Catch a wrong-network address here, not inside a signed agreement.
         let bitcoin_claim_destination = config
             .bitcoin
@@ -477,7 +492,13 @@ impl BtcRoleRuntime {
     ///
     /// Fails when the key file is unreadable or malformed.
     pub fn lez_signer_key(&self) -> Result<Zeroizing<[u8; 32]>> {
-        lez::read_hex_secret(&self.config.lez.signer_key_file)
+        let key = self
+            .config
+            .lez
+            .signer_key_file
+            .as_deref()
+            .context("this role signs through the LEZ wallet module and holds no key")?;
+        lez::read_hex_secret(key)
     }
 }
 
@@ -486,6 +507,22 @@ pub const fn bridge_participant(role: Participant) -> BridgeParticipant {
     match role {
         Participant::Maker => BridgeParticipant::Maker,
         Participant::Taker => BridgeParticipant::Taker,
+    }
+}
+
+/// The role's LEZ owner account from its one signer: the key file's account,
+/// or the account the LEZ wallet module holds the key of.
+fn lez_owner_account(lez: &LezConfigV1) -> Result<[u8; 32]> {
+    match (&lez.signer_key_file, &lez.wallet_signer) {
+        (Some(key), None) => {
+            crate::layout::vet_configured_path(key, "lez.signer_key_file")?;
+            lez::signer_account(&lez::read_hex_secret(key).context("LEZ signer key")?)
+        }
+        (None, Some(wallet)) => {
+            crate::layout::vet_configured_path(&wallet.socket, "lez.wallet_signer.socket")?;
+            parse_hex32(&wallet.account_id, "LEZ wallet signer account")
+        }
+        _ => anyhow::bail!("exactly one of lez.signer_key_file and lez.wallet_signer is required"),
     }
 }
 
