@@ -1,0 +1,75 @@
+diff --git a/metadata.json b/metadata.json
+index 7908a08..6fe9f1f 100644
+--- a/metadata.json
++++ b/metadata.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "lez_core",
+   "display_name": "LEZ Core Module",
+-  "version": "0.4.1",
++  "version": "0.4.1-import.1",
+   "description": "Logos Execution Zone Core Module for Logos Core",
+   "author": "Logos Blockchain Team",
+   "type": "core",
+diff --git a/src/lez_core_module.cpp b/src/lez_core_module.cpp
+index 8ce0cab..d12e83d 100644
+--- a/src/lez_core_module.cpp
++++ b/src/lez_core_module.cpp
+@@ -305,6 +305,14 @@ std::string LEZCoreModule::create_account_private() {
+     return bytes32ToHex(id);
+ }
+ 
++int64_t LEZCoreModule::import_public_account(const std::string& private_key_hex) {
++    const WalletFfiError error = wallet_ffi_import_public_account(walletHandle, private_key_hex.c_str());
++    if (error != SUCCESS) {
++        fprintf(stderr, "import_public_account: wallet FFI error %d\n", error);
++    }
++    return static_cast<int64_t>(error);
++}
++
+ LogosList LEZCoreModule::list_accounts() {
+     LogosList result = nlohmann::json::array();
+     FfiAccountList list{};
+diff --git a/src/lez_core_module.h b/src/lez_core_module.h
+index 863250f..f6d6853 100644
+--- a/src/lez_core_module.h
++++ b/src/lez_core_module.h
+@@ -39,6 +39,10 @@ public:
+     // === Account Management ===
+     std::string create_account_public();
+     std::string create_account_private();
++    // Import an existing public account by its private key (hex), so the module
++    // wallet holds accounts whose keys exist outside it (wallet_ffi_import_public_account).
++    // Returns 0 on success, the wallet FFI error code otherwise.
++    int64_t import_public_account(const std::string& private_key_hex);
+     LogosList list_accounts();
+ 
+     // === Account Queries ===
+diff --git a/tests/mocks/mock_wallet_ffi.cpp b/tests/mocks/mock_wallet_ffi.cpp
+index 7fe13a4..e29e5fa 100644
+--- a/tests/mocks/mock_wallet_ffi.cpp
++++ b/tests/mocks/mock_wallet_ffi.cpp
+@@ -88,6 +88,11 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle*, const char*, const char*,
+ 
+ // === Account management ===
+ 
++WalletFfiError wallet_ffi_import_public_account(WalletHandle*, const char*) {
++    LOGOS_CMOCK_RECORD("wallet_ffi_import_public_account");
++    return static_cast<WalletFfiError>(LOGOS_CMOCK_RETURN(int, "wallet_ffi_import_public_account"));
++}
++
+ WalletFfiError wallet_ffi_create_account_public(WalletHandle*, FfiBytes32* out_id) {
+     LOGOS_CMOCK_RECORD("wallet_ffi_create_account_public");
+     const int err = LOGOS_CMOCK_RETURN(int, "wallet_ffi_create_account_public");
+diff --git a/tests/stubs/wallet_ffi.h b/tests/stubs/wallet_ffi.h
+index 03d126d..a669e72 100644
+--- a/tests/stubs/wallet_ffi.h
++++ b/tests/stubs/wallet_ffi.h
+@@ -202,6 +202,7 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle *handle, const char *mnemoni
+ 
+ WalletFfiError wallet_ffi_create_account_public(WalletHandle* handle, FfiBytes32* out_id);
+ WalletFfiError wallet_ffi_create_account_private(WalletHandle* handle, FfiBytes32* out_id);
++WalletFfiError wallet_ffi_import_public_account(WalletHandle* handle, const char* private_key_hex);
+ WalletFfiError wallet_ffi_list_accounts(WalletHandle* handle, FfiAccountList* out_list);
+ void wallet_ffi_free_account_list(FfiAccountList* list);
+ 

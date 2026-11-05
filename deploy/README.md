@@ -297,8 +297,9 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
   funds four persistent wallets (Munich, Basel, Zurich, Limmat). Balances
   accumulate across swaps; the UI's wallet ledger shows true opening → closing
   values, not per-run genesis allocations.
-* **Finality heartbeat** (`heartbeat` service, `lez-v02-heartbeat` from the
-  tools image): the pinned Bedrock's finalized height freezes while the
+* **Finality heartbeat** (`heartbeat` service, `lez-wallet-heartbeat` from the
+  lez-wallet-module image: its transfers go through the LEZ wallet as the Logos
+  lez_core module): the pinned Bedrock's finalized height freezes while the
   sequencer keeps publishing (logos-blockchain#3643). The service is the
   **liveness detector**, not a keep-alive: measured on 2026-10-29, chains with
   the heartbeat from genesis froze after 36–56 minutes (controls without it

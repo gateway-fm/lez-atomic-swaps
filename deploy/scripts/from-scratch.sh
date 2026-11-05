@@ -8,7 +8,7 @@
 #
 # PHASE is one of the phases below, or one build step on its own
 # (`--only build:rapidsnark`, `build:lez-services`, `build:r0vm`,
-# `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:identities`); that is how the
+# `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:wallet-module`, `build:identities`); that is how the
 # release workflow spreads the cold build over several runners.
 #
 # Every phase is idempotent: it checks what already exists and does only the
@@ -399,9 +399,13 @@ build_lez_services() {
 # Each module's own flake builds the portable .lgx in a pinned nix container; the
 # nix store lives in the lez-build-nix volume.
 #   lez-indexer-module: 1.1.1 on LEZ v0.2.4 (+ the upstream nix risc0 fetch fix),
-#     plus the indexer FFI's indexer_rpc_call and the module's rpc()
+#     plus the indexer FFI's indexer_rpc_call/indexer_rpc_serve and the module's
+#     rpc() and serve_rpc(port)
+#   logos-execution-zone-module (lez_core, the LEZ wallet): 0.4.1 on LEZ v0.2.4,
+#     plus import_public_account(private key hex) over wallet_ffi's own call
 readonly LEZ_MODULES_LEZ_COMMIT=9edf4a622fe966199beed71685c6f0b855db0784
 readonly LEZ_INDEXER_MODULE_COMMIT=5033da442a7fde56121639859c96ebb347b75ba7
+readonly LEZ_WALLET_MODULE_COMMIT=acf0cd501b262c4c15969e3735e85318297b85bf
 readonly LEZ_NIX_IMAGE="nixos/nix:2.24.10@sha256:a09d508c2e46d3a4c7205ff3fa0d506d626a5a966c31e879df7efe737e22f003"
 submodule_at() { # submodule_at <path> <commit>: fail closed on a missing or moved submodule
   local got; got="$(git -C "$REPO_ROOT/$1" rev-parse HEAD 2>/dev/null || true)"
@@ -433,6 +437,9 @@ build_logos_module() { # build_logos_module <out-name> <module submodule> <modul
 }
 build_indexer_module() {
   build_logos_module lez_indexer_module third_party/lez-indexer-module "$LEZ_INDEXER_MODULE_COMMIT" lez-indexer-module
+}
+build_wallet_module() {
+  build_logos_module lez_core third_party/logos-execution-zone-module "$LEZ_WALLET_MODULE_COMMIT" logos-execution-zone-module
 }
 
 # r0vm from the risc0 tag (no arm64 release asset exists)
@@ -536,6 +543,7 @@ phase_build() {
   build_step_wanted escrow && build_escrow
   build_step_wanted sidecar && build_sidecar
   build_step_wanted indexer-module && build_indexer_module
+  build_step_wanted wallet-module && build_wallet_module
   own_provision
   build_step_wanted identities && build_identities
   log "artifacts built into $PROVISION"
@@ -549,6 +557,9 @@ phase_stage() {
   # the LEZ indexer as a Logos module, with the r0vm it executes programs with
   install -m 0644 "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$DEPLOY_ROOT/images/lez-indexer-module/"
   install -m 0755 "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-indexer-module/"
+  # the LEZ wallet as a Logos module (lez_core), for the market bootstrap's vault
+  # claims and the finality heartbeat
+  install -m 0644 "$PROVISION/lez_core/lez_core.lgx" "$DEPLOY_ROOT/images/lez-wallet-module/"
   # Fail closed on a sidecar built from another sidecar tree (or one with no
   # tree stamp at all): rebuild it from this checkout first.
   local expected staged
@@ -628,7 +639,7 @@ phase_swap() {
 
 case "$ONLY" in
   ""|host|sources|nix|rust|build|stage|stack|swap) ;;
-  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module) ;;
+  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module) ;;
   *) echo "unknown phase: $ONLY" >&2; exit 64 ;;
 esac
 for p in host sources nix rust build stage stack; do
