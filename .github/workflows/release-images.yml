@@ -7,8 +7,10 @@ name: release-images
 #
 # The builds are the same phases scripts/from-scratch.sh runs on a developer
 # host, in the same pinned containers, spread over parallel arm64 runners:
-#   rust          Node binaries, Bitcoin actors, the LEZ sidecar family
-#   lez-services  sequencer + indexer from the pinned logos-execution-zone
+#   rust          Node binaries, Bitcoin actors, the LEZ sidecar and identity tool
+#   lez-services  the sequencer from the pinned logos-execution-zone
+#   lez-modules   the LEZ indexer and wallet as Logos modules (lgx, Nix, from the
+#                 third_party submodules plus builder/patches)
 #   escrow        r0vm and the digest-pinned escrow artifact (deployer)
 # Every job pulls the builder image pinned in deploy/builder/image.lock (the
 # prover toolchain is baked in), and the escrow and LEZ-services jobs restore
@@ -99,7 +101,7 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only rust
       - name: rapidsnark prover libraries
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
-      - name: LEZ sidecar, vault-claim and identity tools
+      - name: LEZ sidecar and identity tool
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:sidecar
       - name: Collect payloads
         run: |
@@ -110,7 +112,7 @@ jobs:
             cp deploy/images/$role/lez-* "_out/images/$role/"
             [[ ! -f deploy/images/$role/build-source.txt ]] || cp deploy/images/$role/build-source.txt "_out/images/$role/"
           done
-          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-vault-claim-poc,lez-v02-local-actor-identity,source-commit.txt} _out/sidecar/
+          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-local-actor-identity,source-commit.txt} _out/sidecar/
           du -sh _out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -120,7 +122,7 @@ jobs:
           if-no-files-found: error
 
   lez-services:
-    name: LEZ v0.2 sequencer and indexer
+    name: LEZ v0.2 sequencer
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 240
     permissions:
@@ -147,13 +149,13 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
       - name: rapidsnark prover libraries
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
-      - name: sequencer_service and indexer_service (rust 1.94.0, release)
+      - name: sequencer_service (rust 1.94.0, release)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:lez-services
       - name: Collect payloads
         run: |
           set -euo pipefail
           mkdir -p _out
-          cp "$LEZ_WORKSPACE"/provision/data/lez-services/{sequencer_service,indexer_service} _out/
+          cp "$LEZ_WORKSPACE"/provision/data/lez-services/sequencer_service _out/
           du -sh _out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -165,6 +167,38 @@ jobs:
   # The digest-pinned risc0 guest builder image exists only for amd64, so the
   # guest is built where that image runs natively and handed to the arm64 job
   # that builds the deployer around it; both check the pinned digest.
+  lez-modules:
+    name: LEZ indexer and wallet as Logos modules (Nix)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Free runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      # Each module's own flake builds its portable lgx from the pinned
+      # third_party submodule with builder/patches applied to a scratch copy.
+      - name: lez_indexer_module (LEZ v0.2.4 + builder/patches/lez-indexer-module)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:indexer-module
+      - name: lez_core, the LEZ wallet (LEZ v0.2.4 + builder/patches/logos-execution-zone-module)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:wallet-module
+      - name: Collect payloads
+        run: |
+          set -euo pipefail
+          mkdir -p _out
+          cp "$LEZ_WORKSPACE"/provision/data/lez_indexer_module/lez_indexer_module.lgx "$LEZ_WORKSPACE"/provision/data/lez_core/lez_core.lgx _out/
+          sha256sum _out/*.lgx
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lez-module-payloads
+          path: _out
+          retention-days: 7
+          if-no-files-found: error
+
   escrow-guest:
     name: escrow guest ELF (pinned amd64 builder, x86-64)
     runs-on: ubuntu-24.04
@@ -285,7 +319,7 @@ jobs:
 
   images:
     name: Stage payloads, build and push the stack images
-    needs: [plan, rust, lez-services, escrow]
+    needs: [plan, rust, lez-services, lez-modules, escrow]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     permissions:
@@ -307,12 +341,18 @@ jobs:
         with:
           name: escrow-payloads
           path: _in/escrow
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lez-module-payloads
+          path: _in/lez-modules
       - name: Lay the payloads out the way from-scratch.sh leaves them
         run: |
           set -euo pipefail
           p="$LEZ_WORKSPACE/provision/data"
-          mkdir -p "$p/lez-services" "$p/tools-arm/bin" "$p/sidecar" "$p/escrow-artifact/debug"
-          install -m 0755 _in/lez-services/sequencer_service _in/lez-services/indexer_service "$p/lez-services/"
+          mkdir -p "$p/lez-services" "$p/tools-arm/bin" "$p/sidecar" "$p/escrow-artifact/debug" "$p/lez_indexer_module" "$p/lez_core"
+          install -m 0755 _in/lez-services/sequencer_service "$p/lez-services/"
+          install -m 0644 _in/lez-modules/lez_indexer_module.lgx "$p/lez_indexer_module/"
+          install -m 0644 _in/lez-modules/lez_core.lgx "$p/lez_core/"
           install -m 0755 _in/escrow/r0vm "$p/tools-arm/bin/"
           install -m 0755 _in/escrow/lez-zec-escrow-v02-deployer "$p/escrow-artifact/debug/"
           install -m 0755 _in/node/sidecar/lez-v02-* "$p/sidecar/"
@@ -321,7 +361,7 @@ jobs:
             install -m 0755 _in/node/images/$role/lez-* "deploy/images/$role/"
             [[ ! -f _in/node/images/$role/build-source.txt ]] || cp _in/node/images/$role/build-source.txt "deploy/images/$role/"
           done
-      - name: Stage image contexts (Bitcoin Core, LEZ services, sidecars, tools)
+      - name: Stage image contexts (Bitcoin Core, LEZ sequencer, LEZ modules, sidecars, tools)
         env:
           LEZ_STAGE_SKIP_BASECAMP_UI: "1"
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only stage
@@ -335,8 +375,8 @@ jobs:
         run: |
           set -euo pipefail
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-          docker compose --profile tools build bitcoin-core btc-miner btc-explorer sequencer lez-explorer maker-node taker-init tools
-          for image in bitcoin-core btc-miner btc-explorer services explorer maker-node taker-node tools; do
+          docker compose --profile tools build bitcoin-core btc-miner btc-explorer bedrock sequencer indexer lez-explorer maker-node taker-init tools
+          for image in bitcoin-core btc-miner btc-explorer network-module services indexer-module explorer maker-node taker-node wallet-module; do
             docker push "${LEZ_IMAGE_PREFIX}-${image}:${LEZ_IMAGE_TAG}"
           done
 

@@ -376,15 +376,16 @@ build_rapidsnark() {
     fail "rapidsnark library digest mismatch"
 }
 
-# LEZ v0.2 services, native release build with rust 1.94.0
+# LEZ v0.2 sequencer, native release build with rust 1.94.0 (the indexer runs as
+# the Logos lez_indexer_module, build:indexer-module)
 build_lez_services() {
   local stamp; stamp="$(source_patch_stamp "$DEPLOY_ROOT/builder/patches/lez-$LEZ_SOURCE_TAG")"
-  if [[ ! -x "$PROVISION/lez-services/sequencer_service" || ! -x "$PROVISION/lez-services/indexer_service" \
+  if [[ ! -x "$PROVISION/lez-services/sequencer_service" \
      || "$(cat "$PROVISION/lez-services/source-patches.stamp" 2>/dev/null)" != "$stamp" ]]; then
-    log "building LEZ v0.2 services (rust 1.94.0, release, locked; ~40 min cold)"
+    log "building the LEZ v0.2 sequencer (rust 1.94.0, release, locked; ~40 min cold)"
     builder_run -- "cd /lez-source; CARGO_TARGET_DIR=/cache/target/lez cargo +1.94.0 build --locked --release \
-      --package sequencer_service --package indexer_service 2>&1 | tail -2;
-      mkdir -p /provision/lez-services; install -m 0755 /cache/target/lez/release/sequencer_service /cache/target/lez/release/indexer_service /provision/lez-services/"
+      --package sequencer_service 2>&1 | tail -2;
+      mkdir -p /provision/lez-services; install -m 0755 /cache/target/lez/release/sequencer_service /provision/lez-services/"
     # Written from inside the builder like the binaries: on a CI runner the
     # provision tree the container creates belongs to root and a host-side
     # write into it is refused (seen on the v0.2.2 release run).
@@ -502,11 +503,11 @@ sidecar_tree_stamp() {
 }
 
 build_sidecar() {
-  log "building the LEZ sidecar and its tools"
+  log "building the LEZ sidecar and the identity tool"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --bin lez-v02-vault-claim-poc --bin lez-v02-heartbeat --example lez-v02-local-actor-identity 2>&1 | tail -2;
-    mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc /cache/target/sidecar/debug/lez-v02-vault-claim-poc \
-      /cache/target/sidecar/debug/lez-v02-heartbeat /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
+      --bin lez-v02-bridge-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+    mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
+      /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
   sidecar_tree_stamp > "$PROVISION/sidecar/source-tree.txt"
@@ -552,7 +553,7 @@ phase_build() {
 # ---- stage ---------------------------------------------------------------------
 phase_stage() {
   PHASE=stage
-  install -m 0755 "$PROVISION/lez-services/sequencer_service" "$PROVISION/lez-services/indexer_service" \
+  install -m 0755 "$PROVISION/lez-services/sequencer_service" \
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
   # the LEZ indexer as a Logos module, with the r0vm it executes programs with
   install -m 0644 "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$DEPLOY_ROOT/images/lez-indexer-module/"
@@ -573,11 +574,10 @@ phase_stage() {
     cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"
     echo "$expected" > "$DEPLOY_ROOT/images/$role-node/sidecar-expected.txt"
   done
-  # the market bootstrap tools (deploy/images/lez-tools, profile "tools")
+  # the market bootstrap and identity tools, in the wallet-module image (the
+  # compose `tools` service)
   install -m 0755 "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" \
-    "$PROVISION/sidecar/lez-v02-vault-claim-poc" "$PROVISION/sidecar/lez-v02-local-actor-identity" \
-    "$PROVISION/sidecar/lez-v02-heartbeat" \
-    "$DEPLOY_ROOT/images/lez-tools/"
+    "$PROVISION/sidecar/lez-v02-local-actor-identity" "$DEPLOY_ROOT/images/lez-wallet-module/"
   (cd "$DEPLOY_ROOT" && bash scripts/stage-assets.sh)
 }
 

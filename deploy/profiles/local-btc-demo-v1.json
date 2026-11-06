@@ -340,7 +340,7 @@
     {
       "id": "tools",
       "lifecycle": "one_shot_tool",
-      "executable": "lez-zec-escrow-v02-deployer + lez-v02-vault-claim-poc + lez-v02-local-actor-identity",
+      "executable": "lez-zec-escrow-v02-deployer + lez-wallet-vault-claim + lez-v02-local-actor-identity",
       "role": "shared",
       "pair": "all",
       "sockets": [],

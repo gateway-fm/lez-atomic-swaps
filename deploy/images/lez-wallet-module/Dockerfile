@@ -4,7 +4,8 @@
 # from-scratch.sh --only stage), in the same headless logoscore as the network
 # node and the indexer. lez-wallet-vault-claim does the market bootstrap's vault
 # claims and lez-wallet-heartbeat the finality heartbeat's transfers through it,
-# each with a throwaway wallet holding one imported account.
+# each with a throwaway wallet holding one imported account; lez-wallet-signer
+# signs the roles' swap transactions.
 
 FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS fetch
 ARG TARGETARCH
@@ -37,8 +38,10 @@ RUN set -eu; \
 
 FROM debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
 LABEL org.logos-co.atomic-swaps.purpose="lez-v0.2-wallet-module"
-# The market bootstrap runs in this image too (market-bootstrap.sh: bash, jq,
-# curl, socat for the loopback-only official tools).
+# The market bootstrap and the identity minting run in this image too (it is the
+# compose `tools` service): market-bootstrap.sh (bash, jq, curl, socat for the
+# loopback-only official tools), the escrow deployer and the identity tool,
+# staged here by from-scratch.sh --only stage.
 # hadolint ignore=DL3008
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl jq socat >/dev/null && rm -rf /var/lib/apt/lists/*
 COPY --from=fetch /opt/logoscore /opt/logoscore
@@ -47,6 +50,8 @@ COPY --chmod=0444 wallet-lib.sh /usr/local/lib/lez-wallet-lib.sh
 COPY --chmod=0555 vault-claim.sh /usr/local/bin/lez-wallet-vault-claim
 COPY --chmod=0555 heartbeat.sh /usr/local/bin/lez-wallet-heartbeat
 COPY --chmod=0555 signer.sh /usr/local/bin/lez-wallet-signer
+COPY --chmod=0555 lez-zec-escrow-v02-deployer /usr/local/bin/lez-zec-escrow-v02-deployer
+COPY --chmod=0555 lez-v02-local-actor-identity /usr/local/bin/lez-v02-local-actor-identity
 ENV HOME=/tmp QT_QPA_PLATFORM=offscreen LANG=C.UTF-8
 USER 65532:65532
 WORKDIR /tmp

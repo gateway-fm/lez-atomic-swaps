@@ -598,14 +598,16 @@ services:
 
   # ─── one-shot tools (profile "tools", never a running service) ──────────
   # `docker compose --profile tools run --rm tools '<command>'`: the escrow
-  # deployer and vault-claim tool for the one-time market bootstrap, and the
-  # identity tool that mints the wallet identities. Runs as the host user so
-  # the market root stays the user's; loopback forwarders inside the
+  # deployer and the vault claims of the one-time market bootstrap (through the
+  # LEZ wallet module, lez-wallet-vault-claim), and the identity tool that mints
+  # the wallet identities, all in the wallet-module image. Runs as the host user
+  # so the market root stays the user's; loopback forwarders inside the
   # container reach sequencer/indexer, whose tools accept only 127.0.0.1.
   tools:
-    build: ./images/lez-tools
-    image: ${LEZ_IMAGE_PREFIX:-lez}-tools:${LEZ_IMAGE_TAG:-local}
+    build: ./images/lez-wallet-module
+    image: ${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}
     profiles: [tools]
+    entrypoint: ["/bin/bash", "-c"]
     user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
     environment:
       MARKET_ROOT: /market
@@ -613,7 +615,7 @@ services:
       INDEXER_URL: http://127.0.0.1:8779
       ESCROW_PROGRAM_ID: ${LEZ_ESCROW_PROGRAM_ID:-}
       DEPLOYER: /usr/local/bin/lez-zec-escrow-v02-deployer
-      VAULT_CLAIM_BIN: /usr/local/bin/lez-v02-vault-claim-poc
+      VAULT_CLAIM_BIN: /usr/local/bin/lez-wallet-vault-claim
       # The genesis allocations, from runtime.env (gen-config.sh); the bootstrap
       # refuses to claim without them.
       LEZ_WALLET_MAKER_ALLOCATION: ${LEZ_WALLET_MAKER_ALLOCATION:-}

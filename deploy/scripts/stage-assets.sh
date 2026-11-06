@@ -36,11 +36,10 @@ if [[ ! -x images/lez-services/sequencer_service ]]; then
     cat >&2 <<'MISSING'
 Build LEZ v0.2 services natively first (see deploy/README "Native-arm64 notes"):
   git clone --branch v0.2.0 https://github.com/logos-blockchain/logos-execution-zone.git
-  cargo +1.94.0 build --locked --release -p sequencer_service -p indexer_service
+  cargo +1.94.0 build --locked --release -p sequencer_service
   cargo install --path risc0/r0vm --locked   # from the risc0 v3.0.5 tag
 Then copy:
   <target>/release/sequencer_service  -> images/lez-services/
-  <target>/release/indexer_service    -> images/lez-services/
   <r0vm>                              -> images/lez-services/
 MISSING
     exit 1
@@ -80,17 +79,17 @@ MISSING
     exit 1
 fi
 
-# ---- lez-tools: escrow deployer + sidecar-family tools ----------------------
+# ---- lez-wallet-module: the LEZ wallet module + market bootstrap tools -------
 # Staged by from-scratch.sh's stage phase from provision/data; the release
 # workflow's images job stages them from its build artifacts the same way.
-if [[ ! -x images/lez-tools/lez-zec-escrow-v02-deployer \
-   || ! -x images/lez-tools/lez-v02-vault-claim-poc \
-   || ! -x images/lez-tools/lez-v02-local-actor-identity ]]; then
+if [[ ! -f images/lez-wallet-module/lez_core.lgx \
+   || ! -x images/lez-wallet-module/lez-zec-escrow-v02-deployer \
+   || ! -x images/lez-wallet-module/lez-v02-local-actor-identity ]]; then
     cat >&2 <<'MISSING'
-Stage the market bootstrap tools (scripts/from-scratch.sh --only stage):
-  provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer -> images/lez-tools/
-  provision/data/sidecar/lez-v02-vault-claim-poc                  -> images/lez-tools/
-  provision/data/sidecar/lez-v02-local-actor-identity             -> images/lez-tools/
+Stage the LEZ wallet module and the market bootstrap tools (scripts/from-scratch.sh --only stage):
+  provision/data/lez_core/lez_core.lgx                             -> images/lez-wallet-module/
+  provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer -> images/lez-wallet-module/
+  provision/data/sidecar/lez-v02-local-actor-identity             -> images/lez-wallet-module/
 MISSING
     exit 1
 fi
