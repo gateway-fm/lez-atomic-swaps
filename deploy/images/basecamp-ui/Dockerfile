@@ -16,6 +16,8 @@ COPY assets/maker-user /var/lez-assets/maker-user
 COPY assets/taker-user /var/lez-assets/taker-user
 COPY assets/qt-mcp /opt/qt-mcp
 COPY entrypoint.sh /entrypoint.sh
+COPY open-desks.mjs /opt/lez-open-desks.mjs
+COPY signer-health.sh /usr/local/bin/lez-signer-health
 
 RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp \
     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui \
@@ -40,6 +42,6 @@ ENV DISPLAY=:0 \
 
 EXPOSE 5900
 HEALTHCHECK --interval=30s --timeout=10s --retries=10 --start-period=40s \
-    CMD pgrep -f LogosBasecamp >/dev/null || exit 1
+    CMD pgrep -f LogosBasecamp >/dev/null && /usr/local/bin/lez-signer-health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

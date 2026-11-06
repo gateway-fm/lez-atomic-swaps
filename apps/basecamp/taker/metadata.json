@@ -9,12 +9,21 @@
   "main": "lez_atomic_swap_taker_plugin",
   "view": "qml/Main.qml",
   "icon": "icons/taker-route.svg",
-  "dependencies": ["chat_module", "delivery_module"],
+  "dependencies": [
+    "chat_module",
+    "delivery_module",
+    "lez_core"
+  ],
   "dependency_overrides": {
     "delivery_module": {
       "input": "chat_module",
       "file": "rust-lib/deps/delivery_module.lidl"
+    },
+    "lez_core": {
+      "file": "deps/lez_core.lidl"
     }
   },
-  "codegen": { "rep": "src/lez_atomic_swap_taker.rep" }
+  "codegen": {
+    "rep": "src/lez_atomic_swap_taker.rep"
+  }
 }

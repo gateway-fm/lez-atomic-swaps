@@ -17,6 +17,7 @@
         cp ${commonSource}/logos_chat_bridge.cpp src/logos_chat_bridge.cpp
         cp ${commonSource}/node_market.h src/node_market.h
         cp ${commonSource}/node_market.cpp src/node_market.cpp
+        cp ${commonSource}/lez_role_signer.h src/lez_role_signer.h
       '';
       nixpkgsFor = system: logos-module-builder.inputs.nixpkgs.legacyPackages.${system};
       withKit = system: role: import ./common/package-source.nix {

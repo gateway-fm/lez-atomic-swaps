@@ -561,6 +561,11 @@ phase_stage() {
   # the LEZ wallet as a Logos module (lez_core), for the market bootstrap's vault
   # claims and the finality heartbeat
   install -m 0644 "$PROVISION/lez_core/lez_core.lgx" "$DEPLOY_ROOT/images/lez-wallet-module/"
+  # ... and a runtime module of the Basecamp bundle: each desk hosts its role's
+  # LEZ signer in it (skipped where the bundle is staged elsewhere)
+  if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_core/lez_core.lgx" module
+  fi
   # Fail closed on a sidecar built from another sidecar tree (or one with no
   # tree stamp at all): rebuild it from this checkout first.
   local expected staged

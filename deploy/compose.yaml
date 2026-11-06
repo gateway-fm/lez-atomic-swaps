@@ -343,45 +343,6 @@ services:
     restart: "no"
     logging: *default-logging
 
-  # The Maker's LEZ signer: the LEZ wallet as the Logos lez_core module
-  # (lez-wallet-signer) holding the Maker identity's key, answering the Maker
-  # sidecars' signing requests on an owner-only socket in maker_wallet. The
-  # Maker Node mounts that socket and its identity's public half only.
-  maker-wallet:
-    build: ./images/lez-wallet-module
-    image: ${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-maker-wallet
-    depends_on:
-      maker-init:
-        condition: service_completed_successfully
-      sequencer:
-        condition: service_healthy
-    # An owner-only copy of the mounted key in tmpfs, as the Nodes made before.
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        install -m 0600 /run-lez-identity/lez-signer.key /tmp/lez-signer.key
-        exec lez-wallet-signer --socket /run/lez-wallet/maker/signer.sock --private-key-file /tmp/lez-signer.key \
-          --sequencer-url http://sequencer:3040
-    volumes:
-      - maker_wallet:/run/lez-wallet/maker
-      - ./runtime/lez/maker:/run-lez-identity:ro
-    tmpfs:
-      - /tmp:rw,nosuid,size=64m,mode=1777
-    networks: [chains]
-    user: "4713:4713"
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    pids_limit: 128
-    healthcheck:
-      test: ["CMD-SHELL", "test -S /run/lez-wallet/maker/signer.sock"]
-      interval: 5s
-      timeout: 3s
-      retries: 60
-    restart: unless-stopped
-    logging: *default-logging
-
   maker-node:
     build: ./images/maker-node
     image: ${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}
@@ -389,7 +350,7 @@ services:
     depends_on:
       maker-init:
         condition: service_completed_successfully
-      maker-wallet:
+      basecamp-ui:
         condition: service_healthy
       bitcoin-core:
         condition: service_healthy
@@ -397,7 +358,8 @@ services:
         condition: service_healthy
     command: ["/usr/local/bin/node-entrypoint.sh", "maker"]
     environment:
-      # The LEZ wallet module signs this role's LEZ transactions (lez-wallet-signer).
+      # The LEZ wallet module signs this role's LEZ transactions: Basecamp's
+      # lez_core, through the role's desk (basecamp-ui).
       LEZ_WALLET_SIGNER_SOCKET: /run/lez-wallet/maker/signer.sock
       LEZ_SIDECAR_PORT_BASE: "19000"
       LEZ_SEQUENCER_URL: http://127.0.0.1:3040
@@ -428,7 +390,7 @@ services:
       # The Maker half of the prepared ZEC corridor (scripts/zec-provision.sh).
       - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
-      # The identity's public half; the key stays with maker-wallet.
+      # The identity's public half; the key stays with Basecamp's wallet.
       - ./runtime/lez/maker/identity.json:/run-lez-identity/identity.json:ro
       - maker_wallet:/run/lez-wallet/maker
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
@@ -463,45 +425,6 @@ services:
     restart: "no"
     logging: *default-logging
 
-  # The Taker's LEZ signer: the LEZ wallet as the Logos lez_core module
-  # (lez-wallet-signer) holding the Taker identity's key, answering the Taker
-  # sidecars' signing requests on an owner-only socket in taker_wallet. The
-  # Taker Node mounts that socket and its identity's public half only.
-  taker-wallet:
-    build: ./images/lez-wallet-module
-    image: ${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-taker-wallet
-    depends_on:
-      taker-init:
-        condition: service_completed_successfully
-      sequencer:
-        condition: service_healthy
-    # An owner-only copy of the mounted key in tmpfs, as the Nodes made before.
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        install -m 0600 /run-lez-identity/lez-signer.key /tmp/lez-signer.key
-        exec lez-wallet-signer --socket /run/lez-wallet/taker/signer.sock --private-key-file /tmp/lez-signer.key \
-          --sequencer-url http://sequencer:3040
-    volumes:
-      - taker_wallet:/run/lez-wallet/taker
-      - ./runtime/lez/taker:/run-lez-identity:ro
-    tmpfs:
-      - /tmp:rw,nosuid,size=64m,mode=1777
-    networks: [chains]
-    user: "4713:4713"
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    pids_limit: 128
-    healthcheck:
-      test: ["CMD-SHELL", "test -S /run/lez-wallet/taker/signer.sock"]
-      interval: 5s
-      timeout: 3s
-      retries: 60
-    restart: unless-stopped
-    logging: *default-logging
-
   taker-node:
     build: ./images/taker-node
     image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
@@ -509,13 +432,14 @@ services:
     depends_on:
       taker-init:
         condition: service_completed_successfully
-      taker-wallet:
+      basecamp-ui:
         condition: service_healthy
       maker-node:
         condition: service_healthy
     command: ["/usr/local/bin/node-entrypoint.sh", "taker"]
     environment:
-      # The LEZ wallet module signs this role's LEZ transactions (lez-wallet-signer).
+      # The LEZ wallet module signs this role's LEZ transactions: Basecamp's
+      # lez_core, through the role's desk (basecamp-ui).
       LEZ_WALLET_SIGNER_SOCKET: /run/lez-wallet/taker/signer.sock
       LEZ_SIDECAR_PORT_BASE: "19500"
       LEZ_SEQUENCER_URL: http://127.0.0.1:3040
@@ -548,7 +472,7 @@ services:
       - zec_taker:/var/lib/lez/zec
       - delivery_dir:/delivery:ro
       - maker_socket:/run/lez/maker
-      # The identity's public half; the key stays with taker-wallet.
+      # The identity's public half; the key stays with Basecamp's wallet.
       - ./runtime/lez/taker/identity.json:/run-lez-identity/identity.json:ro
       - taker_wallet:/run/lez-wallet/taker
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
@@ -572,10 +496,15 @@ services:
     build: ./images/basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-basecamp-ui:${LEZ_IMAGE_TAG:-local}
     container_name: lez-basecamp-ui
+    # Basecamp hosts both roles' LEZ signers (each desk starts its own in
+    # Basecamp's lez_core) and starts before the Nodes, which wait for them; the
+    # desks reconnect to a Node that is not up yet.
     depends_on:
-      maker-node:
-        condition: service_healthy
-      taker-node:
+      maker-init:
+        condition: service_completed_successfully
+      taker-init:
+        condition: service_completed_successfully
+      sequencer:
         condition: service_healthy
     environment:
       BASECAMP_ROLE: ${BASECAMP_ROLE:-both}
@@ -583,10 +512,20 @@ services:
       LEZ_MAKER_RPC_SOCKET: /run/lez/maker/node.sock
       LEZ_TAKER_RPC_SOCKET: /run/lez/taker/node.sock
       M3_UI_DIRECTION: ${M3_UI_DIRECTION:-TakerSellsForeign}
+      LEZ_WALLET_DIR: /tmp/lez-wallet
+      LEZ_WALLET_SEQUENCER_URL: http://sequencer:3040
+      LEZ_MAKER_SIGNER_SOCKET: /run/lez-wallet/maker/signer.sock
+      LEZ_MAKER_SIGNER_IDENTITY: /run-lez-identity/maker
+      LEZ_TAKER_SIGNER_SOCKET: /run/lez-wallet/taker/signer.sock
+      LEZ_TAKER_SIGNER_IDENTITY: /run-lez-identity/taker
     volumes:
       - maker_socket:/run/lez/maker:ro
       - taker_socket:/run/lez/taker:ro
       - ./ui-tests:/ui-tests:ro
+      - ./runtime/lez/maker:/run-lez-identity/maker:ro
+      - ./runtime/lez/taker:/run-lez-identity/taker:ro
+      - maker_wallet:/run/lez-wallet/maker
+      - taker_wallet:/run/lez-wallet/taker
     ports:
       - "127.0.0.1:5901:5900"
     networks: [chains]

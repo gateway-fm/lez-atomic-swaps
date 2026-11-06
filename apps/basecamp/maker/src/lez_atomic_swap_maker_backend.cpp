@@ -1,6 +1,7 @@
 #include "lez_atomic_swap_maker_backend.h"
 #include "logos_sdk.h"
 #include "node_market.h"
+#include "lez_role_signer.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -65,6 +66,8 @@ LezAtomicSwapMakerBackend::~LezAtomicSwapMakerBackend() = default;
 
 void LezAtomicSwapMakerBackend::onContextReady()
 {
+    // The Maker's LEZ signer, in Basecamp's lez_core (lez_role_signer.h).
+    lez_role_signer::start(modules().lez_core, QStringLiteral("maker"));
     chat_->initialise(modules().chat_module, modules().delivery_module);
 }
 

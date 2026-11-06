@@ -27,6 +27,7 @@
         cp ${commonSource}/logos_chat_bridge.cpp src/logos_chat_bridge.cpp
         cp ${commonSource}/node_market.h src/node_market.h
         cp ${commonSource}/node_market.cpp src/node_market.cpp
+        cp ${commonSource}/lez_role_signer.h src/lez_role_signer.h
       '';
       # The package is built from a derived source that carries the shared
       # UI kit next to Main.qml (see ../common/package-source.nix); the

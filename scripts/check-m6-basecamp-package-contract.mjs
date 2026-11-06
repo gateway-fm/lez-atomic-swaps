@@ -360,10 +360,18 @@ for (const pkg of packages) {
     for (const [key, value] of Object.entries(expected)) {
       if (metadata[key] !== value) report(metadataFile, `${key} must equal ${JSON.stringify(value)}`);
     }
+    // Chat, its Delivery runtime, and the LEZ wallet (lez_core), in which the
+    // desk hosts its role's LEZ signer (common/lez_role_signer.h) — nothing else.
     if (
-      JSON.stringify(metadata.dependencies) !== JSON.stringify(["chat_module", "delivery_module"])
+      JSON.stringify(metadata.dependencies) !== JSON.stringify(["chat_module", "delivery_module", "lez_core"])
     ) {
-      report(metadataFile, "must grant only the pinned Chat module and its Delivery runtime");
+      report(metadataFile, "must grant only the pinned Chat module, its Delivery runtime and the LEZ wallet module");
+    }
+    if (
+      metadata.dependency_overrides?.lez_core?.file !== "deps/lez_core.lidl" ||
+      metadata.dependency_overrides?.lez_core?.input !== undefined
+    ) {
+      report(metadataFile, "must take the LEZ wallet's API from the committed common/deps/lez_core.lidl");
     }
     if (
       metadata.dependency_overrides?.delivery_module?.input !== "chat_module" ||
