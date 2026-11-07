@@ -48,9 +48,10 @@ docker stop lez-indexer >/dev/null
 backup="runtime/indexer-broken-$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$backup"
 # On Linux these directories belong to the service uid, not the host user.
-# The indexer module keeps its database under logoscore's persistence path.
+# The indexer module keeps its database under its host's persistence path: the
+# Basecamp user directory's module_data (logoscore's persistence path before).
 # Move the derived databases through a short-lived root helper on that mount.
-docker run --rm -v "$PWD/runtime:/runtime" debian:bookworm-slim   bash -c 'shopt -s nullglob; paths=(/runtime/indexer/rocksdb-* /runtime/indexer/logoscore/lez_indexer_module/*/rocksdb-*); (( ${#paths[@]} )) || exit 1; mv -- "${paths[@]}" "$1"'   _ "/runtime/${backup#runtime/}"
+docker run --rm -v "$PWD/runtime:/runtime" debian:bookworm-slim   bash -c 'shopt -s nullglob; paths=(/runtime/indexer/rocksdb-* /runtime/indexer/logoscore/lez_indexer_module/*/rocksdb-* /runtime/indexer/basecamp/module_data/lez_indexer_module/*/rocksdb-*); (( ${#paths[@]} )) || exit 1; mv -- "${paths[@]}" "$1"'   _ "/runtime/${backup#runtime/}"
 docker start lez-indexer >/dev/null
 previous=0
 for _ in $(seq 1 360); do

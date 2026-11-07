@@ -316,11 +316,21 @@ jobs:
       # The LEZ wallet (lez_core) and lez_swap_node are runtime modules of the
       # bundle: each desk hosts its role's LEZ signer in the one and has the
       # other launch and supervise its role's Node.
-      - name: Stage lez_core and lez_swap_node into the Basecamp bundle
+      # ... and so are the LEZ network node (the released blockchain_module,
+      # checked against its pin) and the LEZ indexer: the bedrock and indexer
+      # images are Basecamps whose LEZ Network desk starts them.
+      - name: Stage lez_core, lez_swap_node, blockchain_module and lez_indexer_module into the Basecamp bundle
         run: |
           set -euo pipefail
           deploy/scripts/stage-basecamp-package.sh "$GITHUB_WORKSPACE/_in/lez-modules/lez_core.lgx" module
           deploy/scripts/stage-basecamp-package.sh "$GITHUB_WORKSPACE/_in/lez-modules/lez_swap_node.lgx" module
+          deploy/scripts/stage-basecamp-package.sh "$GITHUB_WORKSPACE/_in/lez-modules/lez_indexer_module.lgx" module
+          version="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_VERSION=//p' deploy/scripts/from-scratch.sh)"
+          sum="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_SHA256=//p' deploy/scripts/from-scratch.sh)"
+          curl -fsSL -o "$RUNNER_TEMP/blockchain_module.lgx" \
+            "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$version/blockchain_module-$version.lgx"
+          echo "$sum  $RUNNER_TEMP/blockchain_module.lgx" | sha256sum -c -
+          deploy/scripts/stage-basecamp-package.sh "$RUNNER_TEMP/blockchain_module.lgx" module
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: node-contexts
@@ -335,8 +345,8 @@ jobs:
         run: |
           set -euo pipefail
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-          docker compose build basecamp-ui maker-node taker-node
-          for image in basecamp-ui maker-node taker-node; do
+          docker compose build basecamp-ui maker-node taker-node bedrock indexer
+          for image in basecamp-ui maker-node taker-node network-module indexer-module; do
             docker push "${LEZ_IMAGE_PREFIX}-${image}:${LEZ_IMAGE_TAG}"
           done
 
@@ -398,18 +408,20 @@ jobs:
         run: |
           set -euo pipefail
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-          docker compose --profile tools build bitcoin-core btc-miner btc-explorer bedrock sequencer indexer lez-explorer tools
-          for image in bitcoin-core btc-miner btc-explorer network-module services indexer-module explorer wallet-module; do
+          docker compose --profile tools build bitcoin-core btc-miner btc-explorer sequencer lez-explorer tools
+          for image in bitcoin-core btc-miner btc-explorer services explorer wallet-module; do
             docker push "${LEZ_IMAGE_PREFIX}-${image}:${LEZ_IMAGE_TAG}"
           done
       # Each role's image is that party's Basecamp (the basecamp-ui image plus
-      # the role's Node): the basecamp-ui job builds them from these contexts.
+      # the role's Node), and the indexer's is a Basecamp with its r0vm: the
+      # basecamp-ui job builds them from these contexts.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: node-contexts
           path: |
             deploy/images/maker-node
             deploy/images/taker-node
+            deploy/images/lez-indexer-module
           retention-days: 7
           if-no-files-found: error
 

@@ -2,7 +2,7 @@
 # stage-basecamp-package.sh — put one Nix-built Basecamp package into the
 # basecamp-ui image context and pin its variant tag.
 #
-#   scripts/stage-basecamp-package.sh <nix-install-output> <maker|taker> [variant]
+#   scripts/stage-basecamp-package.sh <nix-install-output> <maker|taker|network> [variant]
 #   scripts/stage-basecamp-package.sh <package.lgx> module [variant]
 #
 # Role packages come from the `*-ui-install` trees and land in the role user
@@ -32,8 +32,9 @@ variant="${3:-$host_variant}"
 command -v jq >/dev/null || { echo "jq is required" >&2; exit 66; }
 
 case "$kind" in
-  maker|taker)
+  maker|taker|network)
     plugin="lez_atomic_swap_${kind}"
+    [[ "$kind" == network ]] && plugin=lez_network
     [[ -d "$source/plugins/$plugin" ]] || { echo "$source has no plugins/$plugin" >&2; exit 65; }
     dest="images/basecamp-ui/assets/${kind}-user"
     rm -rf "$dest"
@@ -46,7 +47,9 @@ case "$kind" in
     trap 'rm -rf "$unpacked"' EXIT
     tar -xzf "$source" -C "$unpacked"
     name="$(jq -r .name "$unpacked/manifest.json")"
-    built="$(jq -r '.main | keys[0]' "$unpacked/manifest.json")"
+    # The package's own build of this host's variant (or its -dev tag); a
+    # release package (blockchain_module) carries several platforms.
+    built="$(jq -r --arg v "$variant" '.main | if has($v) then $v elif has($v + "-dev") then $v + "-dev" else keys[0] end' "$unpacked/manifest.json")"
     package="images/basecamp-ui/assets/bundle/modules/$name"
     dest="$package"
     rm -rf "$package"
@@ -55,7 +58,7 @@ case "$kind" in
     cp "$unpacked/manifest.json" "$package/"
     printf '%s\n' "$built" > "$package/variant"
     ;;
-  *) echo "kind must be maker, taker or module" >&2; exit 64 ;;
+  *) echo "kind must be maker, taker, network or module" >&2; exit 64 ;;
 esac
 chmod -R u+w "$dest"
 

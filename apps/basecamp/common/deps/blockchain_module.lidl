@@ -1,0 +1,11 @@
+; blockchain_module contract — the subset the LEZ Network desk calls to host the
+; LEZ network node in Basecamp (blockchain_module 0.2.4, logos-modules-release,
+; the module the lez-network-module image hosted headless). Supplied as a
+; dependency_override (network/metadata.json). Hand-maintained from the
+; module's own description (logoscore module-info blockchain_module).
+module blockchain_module {
+  version "0.2.4"
+
+  method start(config_path: tstr, deployment: tstr) -> result
+  method stop() -> result
+}

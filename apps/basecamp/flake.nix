@@ -19,6 +19,7 @@
         cp ${commonSource}/node_market.cpp src/node_market.cpp
         cp ${commonSource}/lez_role_signer.h src/lez_role_signer.h
         cp ${commonSource}/lez_role_node.h src/lez_role_node.h
+        cp ${commonSource}/lez_network_host.h src/lez_network_host.h
       '';
       nixpkgsFor = system: logos-module-builder.inputs.nixpkgs.legacyPackages.${system};
       withKit = system: role: import ./common/package-source.nix {
@@ -40,6 +41,9 @@
       };
       makerFor = system: packageFor system "maker";
       takerFor = system: packageFor system "taker";
+      # The LEZ Network desk: hosts the LEZ network node and/or indexer in a
+      # Basecamp (deploy: the bedrock and indexer services).
+      networkFor = system: packageFor system "network";
       # Qt Remote Objects creates local sockets below TMPDIR. Nix's default
       # per-build directory can exceed Linux's AF_UNIX path limit before the
       # module-specific socket name is appended, so keep the official test
@@ -55,7 +59,7 @@
       });
       systems = builtins.attrNames probe.packages;
     in {
-      packages = builtins.listToAttrs (map (system: let maker = makerFor system; taker = takerFor system; in {
+      packages = builtins.listToAttrs (map (system: let maker = makerFor system; taker = takerFor system; network = networkFor system; in {
         name = system;
         value = {
           lez-maker-ui = maker.packages.${system}.default;
@@ -66,6 +70,9 @@
           lez-taker-ui-lgx = taker.packages.${system}.lgx;
           lez-taker-ui-install = taker.packages.${system}.install;
           lez-taker-ui-integration-test = withShortRuntimePath taker.packages.${system}.integration-test;
+          lez-network-ui = network.packages.${system}.default;
+          lez-network-ui-lgx = network.packages.${system}.lgx;
+          lez-network-ui-install = network.packages.${system}.install;
           default = maker.packages.${system}.default;
         };
       }) systems);

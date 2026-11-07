@@ -123,7 +123,7 @@
     {
       "id": "bedrock",
       "lifecycle": "service",
-      "executable": "lez-network-module",
+      "executable": "LogosBasecamp + blockchain_module (LEZ Network desk)",
       "role": "shared",
       "pair": "lez",
       "sockets": [],
@@ -163,7 +163,7 @@
     {
       "id": "indexer",
       "lifecycle": "service",
-      "executable": "lez-indexer-module",
+      "executable": "LogosBasecamp + lez_indexer_module (LEZ Network desk)",
       "role": "shared",
       "pair": "lez",
       "sockets": [],

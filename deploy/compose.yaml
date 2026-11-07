@@ -167,24 +167,27 @@ services:
     restart: "no"
     logging: *default-logging
 
-  # The LEZ v0.2 network node, run as the Logos (Basecamp) module a Basecamp
-  # user installs: blockchain_module 0.2.4 (node 0.2.4) hosted by a headless
-  # logoscore (images/lez-network-module). It keeps the bedrock contract: the
-  # same config and deployment files, the node HTTP API on bedrock:18080.
+  # The LEZ v0.2 network node, run as the Logos module a Basecamp user
+  # installs (blockchain_module 0.2.4, node 0.2.4) inside a Basecamp
+  # (images/lez-network-module): its LEZ Network desk starts the node with the
+  # config and deployment settings below. It keeps the bedrock contract: the
+  # same config and deployment files, the node HTTP API on bedrock:18080, the
+  # state under runtime/bedrock (the Basecamp user directory with it).
   bedrock:
-    build: ./images/lez-network-module
+    build:
+      context: ./images/lez-network-module
+      additional_contexts:
+        basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-network-module:${LEZ_IMAGE_TAG:-local}
     container_name: lez-bedrock
     depends_on:
       lez-init:
         condition: service_completed_successfully
-    command:
-      - "/opt/lez-v0.2-source/bedrock/node-config.yaml"
-      - "--deployment"
-      - "/run-config/deployment-settings.yaml"
     environment:
       HOME: /tmp
       POL_PROOF_DEV_MODE: "true"
+      LEZ_NETWORK_NODE_CONFIG: /opt/lez-v0.2-source/bedrock/node-config.yaml
+      LEZ_NETWORK_NODE_DEPLOYMENT: /run-config/deployment-settings.yaml
     labels:
       org.logos-co.atomic-swaps.run: market-lez-0001
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
@@ -260,19 +263,21 @@ services:
     logging: *default-logging
 
   # The LEZ v0.2 indexer as a Logos module: lez_indexer_module (1.1.1 source on
-  # LEZ v0.2.4, plus serve_rpc in builder/patches/lez-indexer-module) in a
-  # headless logoscore; the module serves indexer_service's own JSON-RPC on
-  # :8779, so the Nodes, the sidecar and the probes read it as before.
+  # LEZ v0.2.4, plus serve_rpc in builder/patches/lez-indexer-module) inside a
+  # Basecamp (images/lez-indexer-module): its LEZ Network desk starts it, and
+  # the module serves indexer_service's own JSON-RPC on :8779, so the Nodes,
+  # the sidecar and the probes read it as before.
   indexer:
-    build: ./images/lez-indexer-module
+    build:
+      context: ./images/lez-indexer-module
+      additional_contexts:
+        basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-indexer-module:${LEZ_IMAGE_TAG:-local}
     container_name: lez-indexer
-    command:
-      - "/run-config/indexer_config.json"
-      - "--port"
-      - "8779"
     environment:
       HOME: /tmp
+      LEZ_INDEXER_CONFIG: /run-config/indexer_config.json
+      LEZ_INDEXER_RPC_PORT: "8779"
     labels:
       org.logos-co.atomic-swaps.run: market-lez-0001
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet

@@ -247,8 +247,12 @@ phase_nix() {
   # variant too: otherwise a bundle staged on one architecture is kept on
   # another and Basecamp silently drops the role modules.
   sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)-$(uname -m)"
-  for role in maker taker; do
-    if [[ ! -f "$ASSETS/$role-user/plugins/lez_atomic_swap_$role/manifest.json" \
+  # maker and taker: the role desks; network: the LEZ Network desk, which hosts
+  # the LEZ network node and indexer in their Basecamps.
+  local plugin
+  for role in maker taker network; do
+    plugin="lez_atomic_swap_$role"; [[ "$role" == network ]] && plugin=lez_network
+    if [[ ! -f "$ASSETS/$role-user/plugins/$plugin/manifest.json" \
        || "$(cat "$ASSETS/$role-user/.sources" 2>/dev/null)" != "$sources" ]]; then
       log "building the $role package"
       nix_build "$role-install" "path:/workspace/apps/basecamp#lez-$role-ui-install"
@@ -408,6 +412,10 @@ build_lez_services() {
 readonly LEZ_MODULES_LEZ_COMMIT=9edf4a622fe966199beed71685c6f0b855db0784
 readonly LEZ_INDEXER_MODULE_COMMIT=5033da442a7fde56121639859c96ebb347b75ba7
 readonly LEZ_WALLET_MODULE_COMMIT=acf0cd501b262c4c15969e3735e85318297b85bf
+# The LEZ network node as a Logos module: the released blockchain_module a
+# Basecamp user installs (logos-modules-release), a runtime module of the bundle.
+readonly BLOCKCHAIN_MODULE_VERSION=0.2.4
+readonly BLOCKCHAIN_MODULE_SHA256=31819f06aa0639874fa0257f58c24e1add6fce2b489c843b64905e28f59f0c84
 readonly LEZ_NIX_IMAGE="nixos/nix:2.24.10@sha256:a09d508c2e46d3a4c7205ff3fa0d506d626a5a966c31e879df7efe737e22f003"
 submodule_at() { # submodule_at <path> <commit>: fail closed on a missing or moved submodule
   local got; got="$(git -C "$REPO_ROOT/$1" rev-parse HEAD 2>/dev/null || true)"
@@ -572,8 +580,8 @@ phase_stage() {
   PHASE=stage
   install -m 0755 "$PROVISION/lez-services/sequencer_service" \
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
-  # the LEZ indexer as a Logos module, with the r0vm it executes programs with
-  install -m 0644 "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$DEPLOY_ROOT/images/lez-indexer-module/"
+  # the r0vm the LEZ indexer executes programs with (the module itself is a
+  # runtime module of the Basecamp bundle, below)
   install -m 0755 "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-indexer-module/"
   # the LEZ wallet as a Logos module (lez_core), for the market bootstrap's vault
   # claims and the finality heartbeat
@@ -584,6 +592,22 @@ phase_stage() {
   if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_core/lez_core.lgx" module
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_swap_node/lez_swap_node.lgx" module
+    # The LEZ network node and the LEZ indexer run in Basecamps too (bedrock,
+    # indexer: the LEZ Network desk starts them), so both modules are runtime
+    # modules of the bundle. The node module is the released package, fetched
+    # once and checked against its pin; it is unpacked, never executed here.
+    local chain_lgx="$PROVISION/blockchain_module/blockchain_module-$BLOCKCHAIN_MODULE_VERSION.lgx"
+    if [[ "$(shasum -a 256 "$chain_lgx" 2>/dev/null | cut -c1-64)" != "$BLOCKCHAIN_MODULE_SHA256" ]]; then
+      # The provision tree may belong to root (a builder container made it).
+      docker run --rm -v "$PROVISION:/provision" debian:bookworm-slim \
+        sh -c 'mkdir -p /provision/blockchain_module && chown "$1" /provision/blockchain_module' _ "$(id -u):$(id -g)"
+      curl -fsSL -o "$chain_lgx.part" \
+        "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$BLOCKCHAIN_MODULE_VERSION/blockchain_module-$BLOCKCHAIN_MODULE_VERSION.lgx"
+      [[ "$(shasum -a 256 "$chain_lgx.part" | cut -c1-64)" == "$BLOCKCHAIN_MODULE_SHA256" ]] || fail "blockchain_module $BLOCKCHAIN_MODULE_VERSION does not match its pinned sha256"
+      mv "$chain_lgx.part" "$chain_lgx"
+    fi
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$chain_lgx" module
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" module
   fi
   # Fail closed on a sidecar built from another sidecar tree (or one with no
   # tree stamp at all): rebuild it from this checkout first.

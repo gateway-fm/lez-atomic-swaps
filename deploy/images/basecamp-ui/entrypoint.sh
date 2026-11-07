@@ -21,7 +21,16 @@ case "$role" in
   maker) user_dir=/var/lez/basecamp-maker-user ;;
   taker) user_dir=/var/lez/basecamp-taker-user ;;
   both) user_dir="${BASECAMP_USER_DIR:-/var/lez/basecamp-user}" ;;
-  *) echo "BASECAMP_ROLE must be maker, taker, or both" >&2; exit 2 ;;
+  # The LEZ network node or indexer's Basecamp (compose.yaml bedrock, indexer):
+  # its user directory, where the modules keep their state, lives on the
+  # service's state volume; the LEZ Network desk comes from the image.
+  network)
+    user_dir="${BASECAMP_USER_DIR:-/var/lez/basecamp-network-user}"
+    mkdir -p "$user_dir/plugins"
+    rm -rf "$user_dir/plugins/lez_network"
+    cp -a /var/lez-assets/network-user/plugins/lez_network "$user_dir/plugins/"
+    ;;
+  *) echo "BASECAMP_ROLE must be maker, taker, both or network" >&2; exit 2 ;;
 esac
 
 if ! pgrep -x Xvfb >/dev/null; then
@@ -46,7 +55,8 @@ fi
 # its desk hosts the role's LEZ signer in Basecamp's lez_core and has
 # Basecamp's lez_swap_node launch the role's Node, both when the desk opens. With
 # either configured, open this Basecamp's desks once the launcher shows them.
-if [[ -n "${LEZ_MAKER_SIGNER_SOCKET:-}${LEZ_TAKER_SIGNER_SOCKET:-}${LEZ_MAKER_NODE_LAUNCHER:-}${LEZ_TAKER_NODE_LAUNCHER:-}" ]]; then
+# The LEZ network node or indexer's Basecamp opens its LEZ Network desk the same way.
+if [[ -n "${LEZ_MAKER_SIGNER_SOCKET:-}${LEZ_TAKER_SIGNER_SOCKET:-}${LEZ_MAKER_NODE_LAUNCHER:-}${LEZ_TAKER_NODE_LAUNCHER:-}${LEZ_NETWORK_NODE_CONFIG:-}${LEZ_INDEXER_CONFIG:-}" ]]; then
   (sleep 5; node /opt/lez-open-desks.mjs >/tmp/open-desks.log 2>&1) &
 fi
 

@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY assets/bundle /opt/basecamp
 COPY assets/maker-user /var/lez-assets/maker-user
 COPY assets/taker-user /var/lez-assets/taker-user
+COPY assets/network-user /var/lez-assets/network-user
 COPY assets/qt-mcp /opt/qt-mcp
 COPY entrypoint.sh /entrypoint.sh
 COPY open-desks.mjs /opt/lez-open-desks.mjs
