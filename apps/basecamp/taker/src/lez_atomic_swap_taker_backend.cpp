@@ -1,6 +1,7 @@
 #include "lez_atomic_swap_taker_backend.h"
 #include "logos_sdk.h"
 #include "node_market.h"
+#include "lez_role_node.h"
 #include "lez_role_signer.h"
 
 #include <QJsonArray>
@@ -60,7 +61,13 @@ void LezAtomicSwapTakerBackend::onContextReady()
 {
     // The Taker's LEZ signer, in Basecamp's lez_core (lez_role_signer.h).
     lez_role_signer::start(modules().lez_core, QStringLiteral("taker"));
-    chat_->initialise(modules().chat_module, modules().delivery_module);
+    // The Taker Node, launched and supervised by Basecamp's lez_swap_node (lez_role_node.h).
+    lez_role_node::start(modules().lez_swap_node, QStringLiteral("taker"));
+    // LEZ_DESK_CHAT=0: another desk of this role runs its Chat (the devnet's
+    // role Basecamps, whose desks host only the signer and the Node, beside
+    // the UI Basecamp that shows both desks).
+    if (qEnvironmentVariable("LEZ_DESK_CHAT") != QLatin1String("0"))
+        chat_->initialise(modules().chat_module, modules().delivery_module);
 }
 
 QString LezAtomicSwapTakerBackend::health()

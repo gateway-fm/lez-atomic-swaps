@@ -18,9 +18,11 @@ pkgs.runCommand "lez-${role}-ui-source" {
   cp -r ${roleSource} $out
   chmod -R u+w $out
   cp ${commonSource}/qml/*.qml $out/src/qml/
-  # the lez_core interface the desk's signer calls (dependency_overrides)
+  # the interfaces the desk calls in Basecamp (dependency_overrides): lez_core
+  # for the role's signer, lez_swap_node for the role's Node
   mkdir -p $out/deps
   cp ${commonSource}/deps/lez_core.lidl $out/deps/
+  cp ${commonSource}/deps/lez_swap_node.lidl $out/deps/
   qmllint --bare \
     --qmldirs ${pkgs.qt6.qtdeclarative}/lib/qt-6/qml \
     --qmldirs $out/src/qml \

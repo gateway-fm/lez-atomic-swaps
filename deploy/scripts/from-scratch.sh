@@ -8,7 +8,8 @@
 #
 # PHASE is one of the phases below, or one build step on its own
 # (`--only build:rapidsnark`, `build:lez-services`, `build:r0vm`,
-# `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:wallet-module`, `build:identities`); that is how the
+# `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:wallet-module`, `build:swap-node-module`,
+# `build:identities`); that is how the
 # release workflow spreads the cold build over several runners.
 #
 # Every phase is idempotent: it checks what already exists and does only the
@@ -442,6 +443,21 @@ build_indexer_module() {
 build_wallet_module() {
   build_logos_module lez_core third_party/logos-execution-zone-module "$LEZ_WALLET_MODULE_COMMIT" logos-execution-zone-module
 }
+# lez_swap_node, the module that launches and supervises a role's Node inside
+# Basecamp: an in-repo module (modules/lez-swap-node), no LEZ sources.
+build_swap_node_module() {
+  local out="$PROVISION/lez_swap_node" stamp
+  stamp="$(cd "$REPO_ROOT/modules/lez-swap-node" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
+  [[ -f "$out/lez_swap_node.lgx" && "$(cat "$out/source.stamp" 2>/dev/null)" == "$stamp" ]] && return 0
+  log "building lez_swap_node (modules/lez-swap-node) as a portable lgx in nix"
+  docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+    -v "$REPO_ROOT/modules/lez-swap-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
+      echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
+      rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -
+      nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx 2>&1 | tail -3
+      mkdir -p /provision/lez_swap_node; cp -L /tmp/lgx/*.lgx /provision/lez_swap_node/lez_swap_node.lgx
+      printf '%s\\n' '$stamp' > /provision/lez_swap_node/source.stamp"
+}
 
 # r0vm from the risc0 tag (no arm64 release asset exists)
 build_r0vm() {
@@ -545,6 +561,7 @@ phase_build() {
   build_step_wanted sidecar && build_sidecar
   build_step_wanted indexer-module && build_indexer_module
   build_step_wanted wallet-module && build_wallet_module
+  build_step_wanted swap-node-module && build_swap_node_module
   own_provision
   build_step_wanted identities && build_identities
   log "artifacts built into $PROVISION"
@@ -562,9 +579,11 @@ phase_stage() {
   # claims and the finality heartbeat
   install -m 0644 "$PROVISION/lez_core/lez_core.lgx" "$DEPLOY_ROOT/images/lez-wallet-module/"
   # ... and a runtime module of the Basecamp bundle: each desk hosts its role's
-  # LEZ signer in it (skipped where the bundle is staged elsewhere)
+  # LEZ signer in it; lez_swap_node beside it runs the role's Node (both skipped
+  # where the bundle is staged elsewhere)
   if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_core/lez_core.lgx" module
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_swap_node/lez_swap_node.lgx" module
   fi
   # Fail closed on a sidecar built from another sidecar tree (or one with no
   # tree stamp at all): rebuild it from this checkout first.
@@ -644,7 +663,7 @@ phase_swap() {
 
 case "$ONLY" in
   ""|host|sources|nix|rust|build|stage|stack|swap) ;;
-  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module) ;;
+  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module|build:swap-node-module) ;;
   *) echo "unknown phase: $ONLY" >&2; exit 64 ;;
 esac
 for p in host sources nix rust build stage stack; do

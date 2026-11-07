@@ -215,7 +215,8 @@
       "role": "maker",
       "pair": "all",
       "sockets": [
-        "/run/lez/maker/node.sock"
+        "/run/lez/maker/node.sock",
+        "/run/lez-wallet/maker/signer.sock"
       ],
       "state": [
         {
@@ -225,10 +226,15 @@
         {
           "path": "volume:lez-zec-maker",
           "backup": "critical"
+        },
+        {
+          "path": "volume:lez-maker-wallet",
+          "backup": "recreatable"
         }
       ],
       "credentials": [
-        "Maker-owned Delivery signing key"
+        "Maker-owned Delivery signing key",
+        "The Maker identity's LEZ signer key, imported into the lez_core wallet of the Maker's own Basecamp, which this service is (the Node it launches holds no LEZ key)"
       ],
       "public_identities": [
         "/delivery/maker-delivery-identity.pub"
@@ -236,7 +242,7 @@
       "health": "maker_health",
       "depends_on": [
         "maker-init",
-        "basecamp-ui",
+        "sequencer",
         "bitcoin-core",
         "indexer"
       ]
@@ -263,7 +269,8 @@
       "role": "taker",
       "pair": "all",
       "sockets": [
-        "/run/lez/taker/node.sock"
+        "/run/lez/taker/node.sock",
+        "/run/lez-wallet/taker/signer.sock"
       ],
       "state": [
         {
@@ -273,10 +280,15 @@
         {
           "path": "volume:lez-zec-taker",
           "backup": "critical"
+        },
+        {
+          "path": "volume:lez-taker-wallet",
+          "backup": "recreatable"
         }
       ],
       "credentials": [
-        "No private key in discovery-only profile"
+        "No private key in discovery-only profile",
+        "The Taker identity's LEZ signer key, imported into the lez_core wallet of the Taker's own Basecamp, which this service is (the Node it launches holds no LEZ key)"
       ],
       "public_identities": [
         "Read-only Maker Delivery public identity"
@@ -284,7 +296,8 @@
       "health": "taker_health",
       "depends_on": [
         "taker-init",
-        "basecamp-ui"
+        "sequencer",
+        "maker-node"
       ]
     },
     {
@@ -339,30 +352,16 @@
       "executable": "lez-maker-ui + lez-taker-ui",
       "role": "both",
       "pair": "all",
-      "sockets": [
-        "/run/lez-wallet/maker/signer.sock",
-        "/run/lez-wallet/taker/signer.sock"
-      ],
-      "state": [
-        {
-          "path": "volume:lez-maker-wallet",
-          "backup": "recreatable"
-        },
-        {
-          "path": "volume:lez-taker-wallet",
-          "backup": "recreatable"
-        }
-      ],
+      "sockets": [],
+      "state": [],
       "credentials": [
-        "Role-local Chat/Delivery identities",
-        "Both role identities' LEZ signer keys, imported into Basecamp's lez_core wallet (the role Nodes hold no LEZ key)"
+        "Role-local Chat/Delivery identities"
       ],
       "public_identities": [],
       "health": "role package smoke tests",
       "depends_on": [
-        "maker-init",
-        "taker-init",
-        "sequencer"
+        "maker-node",
+        "taker-node"
       ]
     }
   ],

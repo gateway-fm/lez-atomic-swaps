@@ -42,10 +42,11 @@ if ! pgrep -x x11vnc >/dev/null; then
   sleep 1
 fi
 
-# Each desk hosts its role's LEZ signer in Basecamp's lez_core and starts it
-# when it opens; with a signer configured, open both desks once the launcher
-# shows them (the Nodes wait for the signer sockets).
-if [[ -n "${LEZ_MAKER_SIGNER_SOCKET:-}${LEZ_TAKER_SIGNER_SOCKET:-}" ]]; then
+# A role's party runs its own Basecamp (compose.yaml maker-node, taker-node):
+# its desk hosts the role's LEZ signer in Basecamp's lez_core and has
+# Basecamp's lez_swap_node launch the role's Node, both when the desk opens. With
+# either configured, open this Basecamp's desks once the launcher shows them.
+if [[ -n "${LEZ_MAKER_SIGNER_SOCKET:-}${LEZ_TAKER_SIGNER_SOCKET:-}${LEZ_MAKER_NODE_LAUNCHER:-}${LEZ_TAKER_NODE_LAUNCHER:-}" ]]; then
   (sleep 5; node /opt/lez-open-desks.mjs >/tmp/open-desks.log 2>&1) &
 fi
 

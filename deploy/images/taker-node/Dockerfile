@@ -1,3 +1,9 @@
+# The Taker's Basecamp: the basecamp-ui image (build context "basecamp",
+# compose.yaml) plus the Taker Node. Its desk starts the Taker's LEZ signer
+# in Basecamp's lez_core and has Basecamp's lez_swap_node launch and supervise
+# the Taker Node (node-entrypoint.sh) — the swap engine runs inside the party's
+# Basecamp. Only the Taker's executables are here (deploy/role-symmetry.json).
+#
 # The staged payloads are debug builds; their debug sections are most of the
 # bytes. Strip them here so the image ships only what runs.
 FROM debian:bookworm-slim AS strip
@@ -21,13 +27,15 @@ COPY zec-local-poc-chat-draft /payload/zec-local-poc-chat-draft
 COPY zec-local-poc-chat-finalize /payload/zec-local-poc-chat-finalize
 RUN strip /payload/*
 
-FROM python:3.12-slim-bookworm
+# "basecamp" is a build context (compose.yaml: service:basecamp-ui), not a registry image.
+# hadolint ignore=DL3006
+FROM basecamp
 
 LABEL org.logos-co.atomic-swaps.purpose="local-taker-node"
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl jq libpcsclite1 procps socat tini \
+        ca-certificates curl jq libpcsclite1 procps socat python3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=strip --chmod=0555 /payload/lez-taker-node /usr/local/bin/lez-taker-node
@@ -59,4 +67,6 @@ RUN chmod 0755 /usr/local/share/lez \
 
 USER lez
 WORKDIR /var/lib/lez
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# Basecamp's entrypoint (the base image's): Xvfb, the role's desk opened, then
+# the desk starts the signer and the Node.
+ENTRYPOINT ["/entrypoint.sh"]

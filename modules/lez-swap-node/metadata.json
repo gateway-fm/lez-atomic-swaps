@@ -1,0 +1,15 @@
+{
+  "name": "lez_swap_node",
+  "display_name": "LEZ Swap Node",
+  "version": "0.1.0",
+  "description": "Launches and supervises a swap role's Node (the swap engine) inside Basecamp",
+  "type": "core",
+  "interface": "universal",
+  "category": "blockchain",
+  "main": "lez_swap_node_plugin",
+  "dependencies": [],
+  "nix": {
+    "external_libraries": [],
+    "cmake": {}
+  }
+}
