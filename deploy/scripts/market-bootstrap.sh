@@ -24,13 +24,19 @@ readonly LEZ_ATTACH_RUN="market-lez-0001"
 
 fail() { echo "market bootstrap failed: $*" >&2; exit 2; }
 
+# Bounded: a historical read takes ~16 s on a long chain, and an indexer stuck
+# on a frozen chain otherwise holds the bootstrap (and up.sh) forever.
 indexer() {
-  curl -sf -H 'content-type: application/json' \
+  curl -sf -m 60 -H 'content-type: application/json' \
     -d "$(jq -cn --arg m "$1" --argjson p "$2" '{jsonrpc:"2.0",id:1,method:$m,params:$p}')" \
     "$INDEXER_URL"
 }
 
-account_balance() { indexer getAccount "[\"$1\"]" | jq -r '.result.balance // empty'; }
+account_balance() {
+  local out
+  out="$(indexer getAccount "[\"$1\"]")" || fail "the indexer at $INDEXER_URL did not answer getAccount for $1"
+  jq -r '.result.balance // empty' <<<"$out"
+}
 
 # Wallet roster: name role owner_account vault_account allocation, read from
 # the identities the genesis funded (deploy/scripts/gen-config.sh reads the
@@ -115,17 +121,21 @@ for entry in "${WALLETS[@]}"; do
   [[ -f "$key" ]] || fail "$wallet signing key missing"
   state_dir="$MARKET_ROOT/bootstrap/$wallet"
   rm -rf "$state_dir"; mkdir -m 0700 "$state_dir"
-  "$VAULT_CLAIM_BIN" --role "$role" --run-id "$LEZ_ATTACH_RUN-$wallet" \
+  # Bounded like the sweep wait below: on a frozen chain the claim never lands,
+  # and failing here lets up.sh retry on a fresh chain.
+  timeout -k 10 600 "$VAULT_CLAIM_BIN" --role "$role" --run-id "$LEZ_ATTACH_RUN-$wallet" \
     --request-id "${role}-vault-claim-0001" --state-directory "$state_dir" \
     --private-key-file "$key" --sequencer-url "$SEQUENCER_URL" \
     --chain-id "$CHANNEL_ID" --escrow-program-id "$ESCROW_PROGRAM_ID" \
-    --allocation "$allocation" >"$MARKET_ROOT/bootstrap/$wallet-claim.json"
+    --allocation "$allocation" >"$MARKET_ROOT/bootstrap/$wallet-claim.json" ||
+    fail "$wallet vault claim failed or timed out"
   jq -e --argjson allocation "$allocation" '
     .submission.decision == "admitted" and .allocation == $allocation
     and (.transaction_id | test("^[0-9a-f]{64}$"))
   ' "$MARKET_ROOT/bootstrap/$wallet-claim.json" >/dev/null || fail "$wallet claim evidence invalid"
-  for _ in $(seq 1 900); do
-    [[ "$(account_balance "$vault")" == 0 ]] && break
+  sweep_deadline=$((SECONDS + 900))
+  while (( SECONDS < sweep_deadline )); do
+    [[ "$(account_balance "$vault" 2>/dev/null)" == 0 ]] && break
     sleep 1
   done
   [[ "$(account_balance "$vault")" == 0 ]] || fail "$wallet vault not swept after claim"
