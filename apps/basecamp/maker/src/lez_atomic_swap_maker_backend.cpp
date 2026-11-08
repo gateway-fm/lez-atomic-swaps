@@ -96,6 +96,11 @@ QString LezAtomicSwapMakerBackend::resetChat()
 QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
 {
     if (!makerWallet(walletId)) return invalidMarket(QStringLiteral("This desk settles as the Node's own identity"));
+    // LEZ_DESK_VIEW=0: nobody looks at this desk (a devnet role Basecamp, whose
+    // desk only hosts the signer and the Node); its two-second market refresh
+    // would double the Node's snapshot load, LEZ balance reads included.
+    if (qEnvironmentVariable("LEZ_DESK_VIEW") == QLatin1String("0"))
+        return invalidMarket(QStringLiteral("Another desk shows this Maker (LEZ_DESK_VIEW=0)"));
     return node_market::makerSnapshot(snapshotRpc_, kMakerWallet);
 }
 

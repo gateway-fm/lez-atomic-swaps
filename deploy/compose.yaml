@@ -367,8 +367,10 @@ services:
         condition: service_healthy
     environment:
       BASECAMP_ROLE: maker
-      # The UI Basecamp's maker desk runs this role's Chat.
+      # The UI Basecamp's maker desk runs this role's Chat and is the one people
+      # look at: this desk neither chats nor refreshes the market.
       LEZ_DESK_CHAT: "0"
+      LEZ_DESK_VIEW: "0"
       # The desk's signer (lez_role_signer.h) and Node (lez_role_node.h).
       LEZ_WALLET_DIR: /tmp/lez-wallet
       LEZ_WALLET_SEQUENCER_URL: http://sequencer:3040
@@ -466,8 +468,10 @@ services:
         condition: service_healthy
     environment:
       BASECAMP_ROLE: taker
-      # The UI Basecamp's taker desk runs this role's Chat.
+      # The UI Basecamp's taker desk runs this role's Chat and is the one people
+      # look at: this desk neither chats nor refreshes the market.
       LEZ_DESK_CHAT: "0"
+      LEZ_DESK_VIEW: "0"
       # The desk's signer (lez_role_signer.h) and Node (lez_role_node.h).
       LEZ_WALLET_DIR: /tmp/lez-wallet
       LEZ_WALLET_SEQUENCER_URL: http://sequencer:3040

@@ -101,6 +101,13 @@ QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("This desk settles as the Node's own identity"));
     }
+    // LEZ_DESK_VIEW=0: nobody looks at this desk (a devnet role Basecamp, whose
+    // desk only hosts the signer and the Node); its two-second market refresh
+    // would double the Node's snapshot load, LEZ balance reads included.
+    if (qEnvironmentVariable("LEZ_DESK_VIEW") == QLatin1String("0")) {
+        return evidenceFailure(QStringLiteral("desk_view_off"),
+            QStringLiteral("Another desk shows this Taker (LEZ_DESK_VIEW=0)"));
+    }
     return node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_);
 }
 
