@@ -193,7 +193,7 @@ if [[ "$FRESH_LEZ" == 1 ]]; then
       http://127.0.0.1:8779/ 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
   }
   first="$(lez_finalized)"; moved=0
-  for _ in $(seq 1 $(( ${LEZ_FRESH_FINALITY_SECONDS:-150} / 10 ))); do
+  for _ in $(seq 1 $(( ${LEZ_FRESH_FINALITY_SECONDS:-60} / 10 ))); do
     sleep 10; now="$(lez_finalized)"
     if [[ -n "$now" && -n "$first" && "$now" -gt "$first" ]]; then moved=1; break; fi
     [[ -n "$first" ]] || first="$now"

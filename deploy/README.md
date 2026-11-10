@@ -101,19 +101,53 @@ real funds locked. The per-swap keys of an open swap, the Bitcoin refund key amo
 them, are kept under `.reset-archive/` in the Node's state volume (see
 `reset-swaps.sh` below).
 
-The same command is the remedy for a frozen devnet. With LEZ v0.2.4 the local chain
-stops finalizing after anything from a minute to a few hours: when the sequencer's inscription is in
-flight at the second a Bedrock epoch turns (every 100 s on upstream's devnet), Bedrock
-drops it and every one after it (`0 transactions (N removed)` in its log, N growing),
-the indexer's finalized height stands still and every swap waits. It happens without
-any stop or restart and restarting the sequencer does not clear it; it is upstream
-behaviour, not ours, and the epoch cannot be stretched (Bedrock's one leader then runs
-out of notes and stops making blocks). A new chain can die the same way within its
-first minute, so `up.sh --fresh-lez` watches the new chain's finalized height for
-150 s once it is healthy (`LEZ_FRESH_FINALITY_SECONDS`) and starts another chain at
-once when it stands still, or when the market bootstrap cannot finish; six chains at
-most (`LEZ_FRESH_ATTEMPTS`). `node-e2e.py` checks that finality advances before
-each scenario for the same reason.
+The local LEZ devnet runs faster than upstream's: a LEZ block every second
+(sequencer `block_create_timeout`, upstream 10 s) and finality depth 2 (Bedrock
+`security_param`, upstream 5, so an epoch lasts 40 s instead of 100 s). Bedrock
+includes about one inscription every 2.2 s at this pace, and a transaction is
+finalized in the indexer ~5 s after it is sent (~9 s on upstream's timing).
+gen-config.sh renders both settings from the upstream files in `assets/lez-source`.
+
+The same command is the remedy for a frozen devnet (logos-blockchain#3643). The
+mechanism:
+
+- The sequencer pays for each inscription from Bedrock's wallet: the exact fee at the
+  tip it funds against, plus a tip (`priority_fee`, upstream 200).
+- Bedrock re-prices storage at every epoch turn, by up to an eighth and by at least
+  one unit.
+- An inscription in flight across a turn that raised the price no longer pays enough.
+  Bedrock drops it (`InsufficientBalance`), and every later inscription with it,
+  because each names the dropped one as its parent (`InvalidParent`).
+- Bedrock's log shows `0 transactions (N removed)` with N growing. The indexer's
+  finalized height stands still and every swap waits.
+- The sequencer resubmits the same underpaid transactions forever, so restarting it
+  does not help.
+
+On upstream's settings, isolated chains froze 3 to 8 minutes after they started, and
+at 1 s blocks within 4 minutes.
+
+gen-config.sh removes the cause with configuration only:
+
+- The sequencer's tip is 10^7 (`LEZ_SEQUENCER_PRIORITY_FEE`), enough to absorb one
+  price step for a 9 KB LEZ block until the storage price passes ~8000.
+- The price only drifts up (~+45 an hour), so the tip costs ~10^7 per LEZ block.
+  Upstream's 48 x 10^6 of genesis funding would run dry within an hour (it did, in
+  46 minutes, at 1 s blocks). The devnet's genesis gives those 48 notes 10^12 each.
+  That lasts ~45 days; the genesis block root and the SDP declaration's locked note id
+  were recomputed for it (`builder/regenesis`).
+
+`regress.sh` treats a chain whose storage price has reached 6000 (about five days of
+chain time) as worn and starts the next test on a new one.
+
+The epoch cannot be stretched instead: Bedrock's one leader proves with the same notes
+the sequencer spends, and it stops making blocks once every note it may use has been
+spent. If a chain still freezes, the fix is the same: start a new one.
+`up.sh --fresh-lez` watches the new chain's finalized height for 60 s once it is
+healthy (`LEZ_FRESH_FINALITY_SECONDS`). It starts another chain at once when the height
+stands still, or when the market bootstrap cannot finish; six chains at most
+(`LEZ_FRESH_ATTEMPTS`). `regress.sh` calls a chain frozen after 60 s of flat finality
+(`LEZ_REGRESS_FLAT_SECONDS`), the heartbeat after 60 s, and `node-e2e.py` checks that
+finality advances before each scenario.
 
 `up.sh` ends with the repo-style UI verification (real Basecamp driven through
 its QML inspector against the live Maker and Taker Nodes). Skip with `SKIP_UI_VERIFY=1`.
@@ -252,13 +286,13 @@ self-hosted `lez-stack` runner).
 The refund scenarios need the `fast` timing profile:
 
 ```sh
-LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # a block every 20 s; 42 and 24 CSV blocks; 240/420/840 s deadlines, 60 s margin; 30-block LEZ window
+LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # a block every 20 s; 42 and 24 CSV blocks; 240/420/840 s deadlines, 60 s margin; 300-block LEZ window
 docker compose --env-file runtime/runtime.env up -d --no-deps --force-recreate maker-node taker-node
 ./scripts/node-e2e.py taker-refund
 ```
 
 `local` (the default) keeps network-like deadlines: a 30-minute Maker cutoff,
-60- and 120-minute refund bounds, a 360-block LEZ discovery window. The profile
+60- and 120-minute refund bounds, a 3600-block LEZ discovery window. The profile
 is configuration only (`LEZ_BTC_*` and `LEZ_LEZ_DISCOVERY_MAX_BLOCKS` in
 `runtime.env`, rendered into each Node's `btc-role.json`).
 
@@ -284,9 +318,10 @@ past a delay on demand.
 
 The LEZ discovery window sets how soon a refund can start when the Maker never
 locks: the Taker asserts the Maker lock's absence only once every block of the
-window is finalized, so the fast profile's 30 blocks at the devnet's 10-second slots
-mean the refund becomes eligible about 5 minutes after the take. The window
-must cover the Maker cutoff (24 blocks on the fast profile, 30 kept) with room to spare.
+window is finalized. The window must cover the Maker cutoff at the fastest pace the
+devnet can make LEZ blocks (one a second: 240 blocks on the fast profile, 300 kept).
+At the measured ~2.2 s per block, the fast profile's 300 blocks mean the refund becomes
+eligible about 11 minutes after the take.
 
 ## Settlement chains
 

@@ -632,7 +632,7 @@ services:
     user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
     environment:
       LEZ_HEARTBEAT_SECONDS: ${LEZ_HEARTBEAT_SECONDS:-20}
-      LEZ_HEARTBEAT_STALL_SECONDS: ${LEZ_HEARTBEAT_STALL_SECONDS:-120}
+      LEZ_HEARTBEAT_STALL_SECONDS: ${LEZ_HEARTBEAT_STALL_SECONDS:-60}
     volumes:
       - ${LEZ_MARKET_ROOT}/identities:/market/identities:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro

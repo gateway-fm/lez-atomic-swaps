@@ -50,7 +50,7 @@ heartbeat_allocation=0
 if [[ -n "$heartbeat_pulse_account_id" && -n "$heartbeat_echo_account_id" ]]; then heartbeat_allocation=100000; fi
 readonly heartbeat_pulse_account_id heartbeat_echo_account_id heartbeat_allocation
 heartbeat_seconds="${LEZ_HEARTBEAT_SECONDS:-20}"
-heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-120}"
+heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-60}"
 [[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_stall_seconds" =~ ^[0-9]+$ ]] || { echo "LEZ_HEARTBEAT_SECONDS and LEZ_HEARTBEAT_STALL_SECONDS must be integers" >&2; exit 1; }
 
 # Preserve the selected volume namespace on ordinary restarts too.
@@ -97,9 +97,40 @@ if [[ -s "$RUNTIME/runtime.env" ]]; then
   previous_actor_trace="$(sed -n 's/^LEZ_BTC_ACTOR_TRACE=//p' "$RUNTIME/runtime.env" | head -1)"
 fi
 
-# Bedrock 0.2.1 starts from upstream's genesis as it is, however old; the
-# genesis block commits to its time, so it is no longer ours to rewrite.
-cp "$LEZ_SOURCE/bedrock/deployment-settings.yaml" "$RUNTIME/config/deployment-settings.yaml"
+# Bedrock starts from upstream's genesis, however old, with two devnet changes.
+# - Finality depth 2 (security_param, upstream 5). Bedrock's LIB trails its
+#   tip by ~2 slots instead of ~5, and an epoch is 40 s instead of 100 s. 1 is
+#   too low: Cryptarchia's s_gen (k / 4f) is then 0, which its bootstrap fork
+#   choice refuses with a panic.
+# - The 48 genesis notes the sequencer pays its inscriptions from (they are the
+#   leader's too) hold 10^12 each instead of 10^6. Bedrock re-prices storage at
+#   every epoch turn and the price only drifts up (~+0.5 per turn: +45 an hour
+#   with 40 s epochs). Upstream's 48 x 10^6 ran dry in 46 minutes at 1 s
+#   blocks. The total, 4.8 x 10^13, lasts ~45 days at the tip set below.
+# The notes' values are part of the genesis transaction, so the genesis block
+# root and the SDP declaration's locked note id change with them. Both were
+# computed once with builder/regenesis (README there) and are checked here
+# against the upstream file they were computed from.
+readonly upstream_genesis_root=cb5951ac1ffa1aa5d0e585fb54e784bd9c025b28d752324e98b3837f34648692
+readonly upstream_locked_note=7e449a14172fc90679f6fca7b49a2d58c305ebf7ac42ef20202e533c31115222
+readonly devnet_genesis_root=f7ed22fe3444ca110450cecd713da2ebf9b0f38fa9313ab94f6aa7ec811ef3f0
+readonly devnet_locked_note=fbab1103400066761fb9616770e73982dea30dbc40c4da8c33054d554c422f16
+readonly devnet_note_value=1000000000000
+readonly devnet_security_param=2
+awk -v up_root="$upstream_genesis_root" -v root="$devnet_genesis_root" \
+    -v up_locked="$upstream_locked_note" -v locked="$devnet_locked_note" \
+    -v value="$devnet_note_value" -v k="$devnet_security_param" '
+  # a note line is followed by its owner: hold it until the owner is known
+  held != "" { if ($0 ~ /pk: .2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26/) { sub(/value: 1000000$/, "value: " value, held); notes++ }
+               print held; held = "" }
+  /^ *- value: 1000000$/ { held = $0; next }
+  /^  security_param: 5$/ { sub(/5$/, k); params++ }
+  $0 ~ "block_root: " up_root "$" { sub(up_root, root); roots++ }
+  $0 ~ "locked_note_id: .?" up_locked { sub(up_locked, locked); lockeds++ }
+  { print }
+  END { if (notes != 48 || params != 1 || roots != 1 || lockeds != 1) {
+          printf "deployment-settings.yaml is not the upstream file the devnet genesis was computed from (%d notes, %d security_param, %d roots, %d locked notes)\n", notes, params, roots, lockeds > "/dev/stderr"; exit 1 } }
+' "$LEZ_SOURCE/bedrock/deployment-settings.yaml" >"$RUNTIME/config/deployment-settings.yaml"
 
 jq --arg channel "$channel_id" \
   '.bedrock_config.addr = "http://bedrock:18080" | .channel_id = $channel' \
@@ -110,8 +141,24 @@ jq --arg channel "$channel_id" \
 # by their public key: the genesis is the one place that names it.
 funding_key="$(sed -n "s/^ *pk: '\{0,1\}\([0-9a-f]\{64\}\)'\{0,1\} *$/\1/p" "$LEZ_SOURCE/bedrock/deployment-settings.yaml" | head -1)"
 [[ "$funding_key" =~ ^[0-9a-f]{64}$ ]] || { echo "no genesis funding key in deployment-settings.yaml" >&2; exit 1; }
+# The sequencer makes a LEZ block every second (block_create_timeout, upstream
+# 10 s) and retries a pending one after 2 s (upstream 7 s). Bedrock includes one
+# inscription about every 2 s at this pace, so a transaction is finalized in the
+# indexer ~5 s after it is sent (~9 s with upstream's timing).
+# Bedrock funds each inscription at the storage price of the tip it is funded
+# against, plus this tip (priority_fee, upstream 200). It re-prices storage at
+# every epoch turn: by up to an eighth, and by at least one unit. An inscription
+# in flight across a turn that raised the price no longer pays enough. Bedrock
+# drops it (InsufficientBalance), and every later inscription with it, because
+# each names the dropped one as its parent (InvalidParent). That is the finality
+# freeze, logos-blockchain#3643. The tip has to absorb one price step:
+# storage gas is about the inscription's bytes + 370, so 10^7 covers a 9 KB LEZ
+# block until the price passes ~8000 (a week of drift at +45 an hour), and a
+# 2 KB one for a month. It costs ~10^7 per LEZ block, ~1.7 x 10^10 an hour.
+sequencer_priority_fee="${LEZ_SEQUENCER_PRIORITY_FEE:-10000000}"
+[[ "$sequencer_priority_fee" =~ ^[0-9]+$ ]] || { echo "LEZ_SEQUENCER_PRIORITY_FEE must be a number" >&2; exit 1; }
 
-jq --arg channel "$channel_id" --arg funding "$funding_key" \
+jq --arg channel "$channel_id" --arg funding "$funding_key" --argjson priority_fee "$sequencer_priority_fee" \
   --arg maker "$maker_account_id" --argjson maker_amount "$maker_genesis_allocation" \
   --arg taker "$taker_account_id" --argjson taker_amount "$taker_genesis_allocation" \
   --arg munich "$wallet_munich_account_id" --arg basel "$wallet_basel_account_id" \
@@ -124,6 +171,9 @@ jq --arg channel "$channel_id" --arg funding "$funding_key" \
    | .bedrock_config.node_url = "http://bedrock:18080"
    | .bedrock_config.channel_id = $channel
    | .bedrock_config.funding_key = $funding
+   | .bedrock_config.priority_fee = $priority_fee
+   | .block_create_timeout = "1s"
+   | .retry_pending_blocks_timeout = "2s"
    | del(.bedrock_config.backoff)
    | .genesis = [
        {"supply_account": {"account_id": $maker, "balance": $maker_amount}},
@@ -309,14 +359,16 @@ rm -f "$RUNTIME/runtime.env"
 # stay unconfirmed stops the miner).
 # The last value is the LEZ discovery window in blocks: a Maker lock can only
 # appear before the cutoff, and a refund asserts its absence only once that
-# whole window is finalized, so the window must cover the cutoff (10 s slots on
-# the local devnet: the fast 240 s = 24 blocks) and nothing more than needed.
+# whole window is finalized, so the window must cover the cutoff at the fastest
+# pace the devnet can make LEZ blocks (one a second: the fast 240 s = 240 blocks)
+# and nothing more than needed. Bedrock includes one about every 2.2 s, so the
+# fast window's 300 blocks are ~11 minutes of wall clock.
 timing_profile="${LEZ_TIMING_PROFILE:-$previous_timing_profile}"
 [[ -n "${LEZ_TIMING_PROFILE:-}" || -z "$timing_profile" ]] || echo "reusing existing timing profile ${timing_profile}"
 timing_profile="${timing_profile:-local}"
 case "$timing_profile" in
-  local) timing=(60 1800 3600 7200 300 360 33 120 120) ;;
-  fast)  timing=(42 240 420 840 60 30 24 20 20) ;;
+  local) timing=(60 1800 3600 7200 300 3600 33 120 120) ;;
+  fast)  timing=(42 240 420 840 60 300 24 20 20) ;;
   *) echo "LEZ_TIMING_PROFILE must be local or fast" >&2; exit 1 ;;
 esac
 printf '%s\n' \

@@ -927,8 +927,9 @@ def scenario_maker_refund(stamp: str) -> dict:
     # The Maker asserts the absent lock only once its whole LEZ discovery window
     # is finalized, so a flat 15-minute wait raced the chain and failed a refund
     # the Node went on to complete. Size it from the profile's own window
-    # (devnet slots are 10 s) so the two cannot drift apart again.
-    deadline = time.time() + 10 * int(profile["LEZ_LEZ_DISCOVERY_MAX_BLOCKS"]) + 600
+    # (a LEZ block about every 2.2 s on the devnet, 3 s allowed) so the two
+    # cannot drift apart again.
+    deadline = time.time() + 3 * int(profile["LEZ_LEZ_DISCOVERY_MAX_BLOCKS"]) + 600
     while time.time() < deadline:
         phase = maker_phase(swap_id)
         log(f"  maker {swap_id[:12]}: {phase}")
@@ -2005,7 +2006,7 @@ def scenario_zec_claim_collision(stamp: str) -> dict:
     blocks are mined for it, so A keeps its Zcash window) and taken. The Taker
     Node submits C's LEZ first lock on its own; the moment its log says so the
     harness presses A's claim, which is planned from the account's live nonce
-    while C's lock is not yet in a block (blocks every 10 s): both carry one
+    while C's lock is not yet in a block (one about every 2 s): both carry one
     nonce, C's arrived first. A must then show its claim superseded and
     re-planned (both nonces, both ids, the margin to its LEZ refund time) and
     complete. When C's lock was already in a block by then, nothing collided:
