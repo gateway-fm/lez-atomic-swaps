@@ -97,6 +97,13 @@ struct ProvisionSpec {
     /// it yet when the second is provisioned; the second names 1.
     #[serde(default)]
     zcash_funding_skip: u32,
+    /// Lowest Zebra height the funder-output search reads; absent, height 1.
+    /// The search reads every block from there to 100 below the tip, ~3 min
+    /// for a devnet zebra 23 000 blocks tall: the devnet provisioner names the
+    /// height of the payments it just made to a Taker's key, below which that
+    /// key holds nothing it means to spend.
+    #[serde(default)]
+    zcash_funding_scan_from_height: u32,
 }
 
 /// Owner-private LEZ signer files provisioned before a fresh local genesis.
@@ -292,7 +299,7 @@ pub async fn transfer_local_v0_2_regtest(
     )
     .context("failed to connect bounded local Zebra RPC")?;
     let (candidate, tip_height, _) =
-        select_mature_regtest_candidate(&rpc, &from_public, skip).await?;
+        select_mature_regtest_candidate(&rpc, &from_public, skip, 1).await?;
     let value = Zatoshis::from_u64(value_zatoshis).context("invalid transfer value")?;
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
@@ -613,9 +620,13 @@ pub async fn provision_local_v0_2_corridor_with_material(
     let funding_zcash_public =
         PublicKey::from_secret_key(&Secp256k1::signing_only(), &funding_zcash_secret);
     funding_zcash_secret.non_secure_erase();
-    let (candidate, tip_height, genesis_hash) =
-        select_mature_regtest_candidate(&rpc, &funding_zcash_public, spec.zcash_funding_skip)
-            .await?;
+    let (candidate, tip_height, genesis_hash) = select_mature_regtest_candidate(
+        &rpc,
+        &funding_zcash_public,
+        spec.zcash_funding_skip,
+        spec.zcash_funding_scan_from_height,
+    )
+    .await?;
 
     let swap_id = SwapId::new(spec.swap_id.clone()).context("invalid swap ID")?;
     let fixture = build_agreement(
@@ -1287,6 +1298,7 @@ async fn select_mature_regtest_candidate(
     rpc: &HttpZebraRpc,
     funding_key: &PublicKey,
     skip: u32,
+    scan_from_height: u32,
 ) -> Result<(SelectedCandidate, u32, BlockHash)> {
     let identity = ZebraChainIdentity::deterministic_regtest_nu6_2();
     let before = rpc
@@ -1314,7 +1326,7 @@ async fn select_mature_regtest_candidate(
     let tip_height = u32::from(before.tip_height());
     let mut selected = None;
     let mut passed_over = 0u32;
-    for height in 1..=tip_height {
+    for height in scan_from_height.max(1)..=tip_height {
         if tip_height.saturating_sub(height).saturating_add(1) < COINBASE_MATURITY_CONFIRMATIONS {
             break;
         }

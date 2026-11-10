@@ -276,6 +276,12 @@ while (( zebra_height < target )); do
   zebra_height="$(zebra getblockcount)"
 done
 log "  zebra height $zebra_height (>= $target: at least $MIN_MATURE_OUTPUTS mature coinbase outputs)"
+# Selling ZEC, the Taker funds from the payments step 3 makes to its key, all
+# above this height: the provisioner's search for a mature funder output
+# starts there instead of reading every block from 1 (~3 min on a zebra
+# 23 000 blocks tall). Selling LEZ the Maker's coinbase is searched from 1.
+scan_from=0
+[[ "$DIRECTION" != TakerSellsForeign ]] || scan_from=$(( zebra_height + 1 ))
 
 # ---- 2. spec ------------------------------------------------------------------
 log "2/8 spec"
@@ -298,9 +304,9 @@ finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" "$scan_from" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile, scan_from) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
@@ -323,6 +329,7 @@ spec = {
     # Swap k funds from the (k+1)-th mature funder output: side-by-side
     # corridors must not spend the same coinbase.
     "zcash_funding_skip": int(skip),
+    "zcash_funding_scan_from_height": int(scan_from),
 }
 json.dump(spec, open(out, "w"), indent=2)
 print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}")
