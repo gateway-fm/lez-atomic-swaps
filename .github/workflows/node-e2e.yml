@@ -75,7 +75,7 @@ jobs:
           set -a; source runtime/runtime.env; set +a
           export BTC_RPC_PASSWORD
           docker compose up -d --no-deps --force-recreate maker-node taker-node
-          bash scripts/reset-swaps.sh
+          bash scripts/reset-swaps.sh --abandon-open
       - name: Run the scenario through the Node APIs
         working-directory: deploy
         run: python3 scripts/node-e2e.py "${{ matrix.scenario }}"

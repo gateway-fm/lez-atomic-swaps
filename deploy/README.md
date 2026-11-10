@@ -96,6 +96,10 @@ A stop is safe for the LEZ chain: Bedrock, the sequencer and the indexer shut do
 cleanly on SIGINT only, so compose stops them with it; `up.sh` then resumes the same
 chain. If one of them was killed anyway (a crash, `docker rm -f`) and does not come
 back, `up.sh --fresh-lez` recreates the LEZ chain and keeps Bitcoin and the wallets.
+It abandons every open swap (their LEZ legs go with the chain): never run it with
+real funds locked. The per-swap keys of an open swap, the Bitcoin refund key among
+them, are kept under `.reset-archive/` in the Node's state volume (see
+`reset-swaps.sh` below).
 
 The same command is the remedy for a frozen devnet. With LEZ v0.2.4 the local chain
 stops finalizing after anything from a minute to a few hours: when the sequencer's inscription is in
@@ -168,7 +172,7 @@ btc() { docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf 
 1. **Stack.** `docker compose --env-file runtime/runtime.env ps` shows every
    service healthy. `maker maker_health` and `taker taker_health` answer.
    `./scripts/reset-swaps.sh` gives you an empty swap history when you want a
-   clean run.
+   clean run (`--abandon-open` when a swap is still open).
 2. **Publish.** Connect VNC to `127.0.0.1:5901` (password `lezswap`), open
    **LEZ Maker** and click **Publish offer**. Check it from outside:
    `maker maker_offer_list` lists it `active` at revision 1, and
@@ -505,7 +509,14 @@ sidecar. Persisted swaps pin the actor program's hash, so after the actor
 binaries are rebuilt they list as `attention_required`; `scripts/reset-swaps.sh`
 forgets every persisted swap on both Nodes (directories, registry and store
 rows, reserved and consumed offers, exported evidence) and leaves chains,
-wallets, identities and the stored route terms alone.
+wallets, identities and the stored route terms alone. It refuses while a swap
+may still have funds locked (a Taker swap not `completed` or `refunded`, a Maker
+actor not `terminal`, or a Taker it cannot ask) unless `--abandon-open` is given;
+then the Nodes no longer drive those swaps, and their per-swap directories (the
+only copy of a Bitcoin refund key) and store databases are moved to
+`/var/lib/lez/<role>/.reset-archive/<time>/` in the role's state volume instead
+of being deleted. The test runners (`regress.sh`, `ui-e2e.sh`, `up.sh
+--fresh-lez`) pass the flag.
 
 ## Demo boundary
 

@@ -1,9 +1,9 @@
-"""Chain lifecycle contracts of the harness scripts (#113).
+"""Chain lifecycle contracts of the harness scripts (#113, #103 item 5).
 
-down.sh --wipe retires the wiped chain's escrow deployment, and
-market-bootstrap.sh reuses a deployment only on the chain it was made on.
-Docker, curl and the deployer are replaced by fakes on PATH; nothing here
-needs a stack.
+down.sh --wipe retires the wiped chain's escrow deployment, market-bootstrap.sh
+reuses a deployment only on the chain it was made on, and reset-swaps.sh will
+not forget an open swap unless told to. Docker, curl and the deployer are
+replaced by fakes on PATH; nothing here needs a stack.
 """
 import json
 import os
@@ -155,6 +155,76 @@ class MarketBootstrapGenesis(Workspace):
         self.assertIn('deployment evidence invalid', run.stderr)
         self.assertFalse((self.market / 'bootstrap' / 'deployment.json').exists())
         self.assertFalse((self.market / 'market-bootstrap.env').exists())
+
+
+# docker: both role containers run; the Taker's owner call answers FAKE_TAKER_LIST
+# (empty: no answer), the Maker's store read prints FAKE_MAKER_OPEN. Every other
+# call is logged and succeeds.
+FAKE_DOCKER = '''#!/bin/sh
+case "$1 $2" in
+  "inspect -f") echo "${FAKE_RUNNING:-true}"; exit 0 ;;
+  "exec lez-taker-node") case "$3" in curl) [ -n "$FAKE_TAKER_LIST" ] || exit 7; echo "$FAKE_TAKER_LIST"; exit 0 ;; esac ;;
+  "exec lez-maker-node") case "$3" in python3) printf '%s' "$FAKE_MAKER_OPEN"; exit 0 ;; esac ;;
+esac
+echo "docker $*" >>"$CALLS"
+'''
+
+
+def taker_list(*states):
+    return json.dumps({'result': {'swaps': [{'swap_id': f'swap-{i}', 'state': s} for i, s in enumerate(states)]}})
+
+
+class ResetSwapsRefusesOpenSwaps(Workspace):
+    def setUp(self):
+        super().setUp()
+        shutil.copy(SCRIPTS / 'reset-swaps.sh', self.deploy / 'scripts')
+        executable(self.bin / 'docker', FAKE_DOCKER)
+        (self.deploy / 'runtime').mkdir()
+        (self.deploy / 'runtime' / 'runtime.env').write_text('BTC_RPC_PASSWORD=test\n')
+
+    def reset(self, *args, **fake):
+        return subprocess.run(['bash', str(self.deploy / 'scripts' / 'reset-swaps.sh'), *args],
+                              env=self.env(**fake), capture_output=True, text=True)
+
+    def assert_untouched(self):
+        # neither a hold, a stop nor a store write: only the reads above ran
+        self.assertEqual(self.logged(), '')
+
+    def test_an_open_taker_swap_is_refused(self):
+        run = self.reset(FAKE_TAKER_LIST=taker_list('completed', 'claim_in_progress'), FAKE_MAKER_OPEN='')
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('taker swap-1 claim_in_progress', run.stderr)
+        self.assertNotIn('swap-0', run.stderr)
+        self.assertIn('--abandon-open', run.stderr)
+        self.assert_untouched()
+
+    def test_an_open_maker_actor_is_refused(self):
+        run = self.reset(FAKE_TAKER_LIST=taker_list('refunded'), FAKE_MAKER_OPEN='maker swap-9 backoff\n')
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('maker swap-9 backoff', run.stderr)
+        self.assert_untouched()
+
+    def test_a_taker_that_cannot_be_asked_is_refused(self):
+        run = self.reset(FAKE_TAKER_LIST='', FAKE_MAKER_OPEN='')
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('taker - unknown', run.stderr)
+        self.assert_untouched()
+
+    def test_abandon_open_proceeds_and_archives(self):
+        run = self.reset('--abandon-open', FAKE_TAKER_LIST=taker_list('claim_in_progress'), FAKE_MAKER_OPEN='')
+        self.assertIn('abandoning the open swaps below', run.stdout)
+        # the role steps receive the archive stamp
+        self.assertRegex(self.logged(), r'_ /var/lib/lez/taker \d{8}T\d{6}Z')
+        self.assertRegex(self.logged(), r'_ /var/lib/lez/maker \d{8}T\d{6}Z')
+
+    def test_settled_swaps_are_forgotten_without_an_archive(self):
+        self.reset(FAKE_TAKER_LIST=taker_list('completed', 'refunded'), FAKE_MAKER_OPEN='')
+        self.assertIn('_ /var/lib/lez/taker \n', self.logged() + '\n')
+        self.assertNotRegex(self.logged(), r'\d{8}T\d{6}Z')
+
+    def test_unknown_argument(self):
+        self.assertEqual(self.reset('--bogus').returncode, 64)
+        self.assert_untouched()
 
 
 if __name__ == '__main__':

@@ -408,7 +408,7 @@ scenario_zec_happy() {
   local swap maker_pid taker_pid
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
-    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    bash scripts/reset-swaps.sh --abandon-open >/dev/null 2>&1 || fail "reset-swaps.sh"
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
   zec_provision; take swap
@@ -444,7 +444,7 @@ scenario_zec_concurrent() {
   local swap_a swap_b offers maker_a maker_b taker_a
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
-    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    bash scripts/reset-swaps.sh --abandon-open >/dev/null 2>&1 || fail "reset-swaps.sh"
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
   zec_provision 2
@@ -486,7 +486,7 @@ scenario_zec_concurrent_staggered() {
   local swap_a swap_b offers maker_a maker_b taker_a
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
-    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    bash scripts/reset-swaps.sh --abandon-open >/dev/null 2>&1 || fail "reset-swaps.sh"
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
   zec_provision
@@ -531,7 +531,7 @@ scenario_zec_maker_refund() {
   if [[ "$direction" != TakerSellsLez ]]; then scenario_zec_maker_refund_foreign; return; fi
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
-    bash scripts/reset-swaps.sh >/dev/null 2>&1 || fail "reset-swaps.sh"
+    bash scripts/reset-swaps.sh --abandon-open >/dev/null 2>&1 || fail "reset-swaps.sh"
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
   zec_provision; take swap

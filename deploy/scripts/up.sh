@@ -8,6 +8,8 @@
 #                                 restart after long uptime); Bitcoin, wallets
 #                                 and identities are kept, persisted swaps are
 #                                 reset because they reference the old chain
+#                                 (open swaps are abandoned, their keys kept
+#                                 aside: never with real funds locked)
 #   ./scripts/up.sh --fresh       wipe runtime state and volumes first, then start
 #                                 under a new volume prefix (LEZ_VOLUME_PREFIX to pick one)
 #
@@ -45,7 +47,7 @@ while [[ $# -gt 0 ]]; do
       # records it in runtime.env; the next down.sh --wipe removes exactly it.
       export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez-$(date +%Y%m%d%H%M%S)}"
       shift ;;
-    -h|--help) sed -n 2,15p "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n 2,17p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -116,9 +118,11 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   done
   # The Nodes are down: forget the swaps that referenced the old chain now, so
   # they start once on the new chain instead of starting, stopping and starting.
+  # Their LEZ legs went with the chain; reset-swaps.sh keeps the per-swap keys
+  # of any swap that was still open (its Bitcoin leg may still need a refund).
   if docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
     echo "  forgetting swaps that referenced the old chain"
-    bash scripts/reset-swaps.sh --offline 2>&1 | tail -1
+    bash scripts/reset-swaps.sh --offline --abandon-open 2>&1 | tail -1
   fi
 fi
 

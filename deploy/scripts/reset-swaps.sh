@@ -11,10 +11,20 @@
 # Use it after rebuilding the actor programs: persisted swaps pin the program
 # hash and stop loading (they list as attention_required) once it changes.
 #
-#   reset-swaps.sh            stop both Nodes, forget the swaps, start them again
-#   reset-swaps.sh --offline  the same, but leave the Nodes stopped (up.sh
-#                             --fresh-lez forgets the old chain's swaps this way
-#                             before it starts the Nodes on the new one)
+#   reset-swaps.sh                 stop both Nodes, forget the swaps, start them again
+#   reset-swaps.sh --offline       the same, but leave the Nodes stopped (up.sh
+#                                  --fresh-lez forgets the old chain's swaps this way
+#                                  before it starts the Nodes on the new one)
+#   reset-swaps.sh --abandon-open  also when a swap is still open (below)
+#
+# A swap that is still open may have funds locked, and its per-swap directory
+# holds the only copy of its Bitcoin refund key (the Core wallet never sees
+# it). The reset refuses while a Taker swap is not completed or refunded, a
+# Maker actor is not terminal, or the Taker cannot be asked (its Node down).
+# --abandon-open forgets them anyway, for test runs and a recreated chain: the
+# Nodes no longer drive those swaps, and their per-swap directories and store
+# databases are moved to /var/lib/lez/<role>/.reset-archive/<time>/ in the
+# role's state volume instead of being deleted.
 #
 # Each Node runs inside its party's Basecamp, supervised by lez_swap_node. When
 # both Basecamps are up only the Nodes stop: each is held down (the supervisor's
@@ -23,8 +33,14 @@
 # With a Basecamp down (or LEZ_RESET_IN_PLACE=0) the containers are stopped and
 # started instead.
 set -euo pipefail
-offline=0
-[[ "${1:-}" != --offline ]] || offline=1
+offline=0; abandon_open=0
+for arg in "$@"; do
+  case "$arg" in
+    --offline) offline=1 ;;
+    --abandon-open) abandon_open=1 ;;
+    *) echo "unknown argument: $arg" >&2; exit 64 ;;
+  esac
+done
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a
 # shellcheck source=/dev/null
@@ -36,6 +52,11 @@ log() { printf '[reset %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 running() { [[ "$(docker inspect -f '{{.State.Running}}' "lez-$1-node" 2>/dev/null)" == true ]]; }
 in_place=0
 if [[ "$offline" == 0 && "${LEZ_RESET_IN_PLACE:-1}" == 1 ]] && running maker && running taker; then in_place=1; fi
+owner_call() { # owner_call <role> <method> <params>
+  docker exec "lez-$1-node" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
+    -H 'content-type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null
+}
 # Runs a command with the role's state volume, as the Node uid, while the Node
 # itself is stopped: inside the role's running Basecamp, or else in a fresh
 # container of the role image. stdin stays connected: two calls below feed
@@ -59,6 +80,46 @@ hold_node() { # hold_node <role> <ROLE>
 }
 release_node() { docker exec "lez-$1-node" sh -c 'rm -f "$LEZ_'"$2"'_NODE_HOLD"' 2>/dev/null || true; }
 
+# Swaps that may still have funds locked, one "<role> <swap id> <state>" each.
+# The Taker's own list says where each of its swaps stands; the Maker's actor
+# schedule (read from its store, as the Node is not needed for it) says which
+# of its actors have not reached an absorbing outcome.
+open_swaps=()
+if running taker && list="$(owner_call taker taker_swap_list_v1 '{"schema_version":1}')" &&
+   jq -e '.result.swaps | type == "array"' <<<"$list" >/dev/null 2>&1; then
+  mapfile -t -O "${#open_swaps[@]}" open_swaps < <(jq -r '.result.swaps[]
+    | select(.state != "completed" and .state != "refunded") | "taker \(.swap_id) \(.state)"' <<<"$list")
+else
+  open_swaps+=("taker - unknown (its Node does not answer taker_swap_list_v1)")
+fi
+maker_store_read=(python3 -c '
+import os, sqlite3
+path = "/var/lib/lez/maker/maker.sqlite3"
+if os.path.exists(path):
+    try:
+        store = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        for swap, state in store.execute(
+                "select swap_id, schedule_state from maker_actor_processes where schedule_state != '"'terminal'"'"):
+            print("maker", swap, state)
+    except sqlite3.Error as error:
+        print("maker - unknown (store unreadable:", error, ")")
+')
+if running maker; then maker_open="$(docker exec lez-maker-node "${maker_store_read[@]}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"
+else maker_open="$("${compose[@]}" run --rm -T --no-deps --entrypoint python3 maker-node "${maker_store_read[@]:1}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"; fi
+[[ -z "$maker_open" ]] || mapfile -t -O "${#open_swaps[@]}" open_swaps <<<"$maker_open"
+archive=""
+if (( ${#open_swaps[@]} )); then
+  if [[ "$abandon_open" != 1 ]]; then
+    log "refusing: these swaps may still have funds locked, and their per-swap directories hold the only copy of their refund keys:" >&2
+    printf '  %s\n' "${open_swaps[@]}" >&2
+    log "let them complete or refund, or pass --abandon-open to forget them anyway (their directories are then archived, not deleted)" >&2
+    exit 1
+  fi
+  archive="$(date -u +%Y%m%dT%H%M%SZ)"
+  log "abandoning the open swaps below; their per-swap directories and stores go to /var/lib/lez/<role>/.reset-archive/$archive"
+  printf '  %s\n' "${open_swaps[@]}"
+fi
+
 if [[ "$in_place" == 1 ]]; then
   log "holding both Nodes down inside their Basecamps (their per-swap sidecars stop with them)"
   # a reset that fails must not leave a Node held down
@@ -70,14 +131,32 @@ else
 fi
 
 log "Taker: swap directories and registry rows"
-in_role taker bash -c 'for pair in /var/lib/lez/taker/*/; do
+# keep_swaps <role root> <archive stamp>: with a stamp, moves every pair's
+# per-swap directories and sidecar state into the archive (mode 0700, keys).
+keep_swaps='keep="${2:+$1/.reset-archive/$2}"
+[ -z "$keep" ] || install -d -m 0700 "$1/.reset-archive" "$keep"
+for pair in "$1"/*/; do
+  [ -n "$keep" ] && [ -d "$pair" ] || continue
+  dest="$keep/$(basename "$pair")"
+  install -d -m 0700 "$dest/swaps"
+  [ ! -d "$pair"swaps ] || find "$pair"swaps -mindepth 1 -maxdepth 1 -exec mv -t "$dest/swaps" {} +
+  [ ! -e "$pair"sidecar-state ] || mv "$pair"sidecar-state "$dest/"
+done'
+in_role taker bash -c "$keep_swaps"'
+for pair in /var/lib/lez/taker/*/; do
   rm -rf "$pair"swaps/* "$pair"sidecar-state "$pair"sidecar.log
 done
 # the Zcash actors'"'"' supervision schedule (one row per taken swap) goes with the swaps
-rm -f /var/lib/lez/taker/taker-actor-schedule.sqlite3 /var/lib/lez/taker/taker-actor-schedule.sqlite3-wal /var/lib/lez/taker/taker-actor-schedule.sqlite3-shm'
-in_role taker python3 - <<'PY'
-import sqlite3
+for f in taker-actor-schedule.sqlite3 taker-actor-schedule.sqlite3-wal taker-actor-schedule.sqlite3-shm; do
+  if [ -n "$keep" ] && [ -e "/var/lib/lez/taker/$f" ]; then mv "/var/lib/lez/taker/$f" "$keep/"; fi
+  rm -f "/var/lib/lez/taker/$f"
+done' _ /var/lib/lez/taker "$archive"
+in_role taker python3 - "$archive" <<'PY'
+import sqlite3, sys
 store = sqlite3.connect("/var/lib/lez/taker/registry.sqlite3")
+if sys.argv[1]:
+    with sqlite3.connect(f"/var/lib/lez/taker/.reset-archive/{sys.argv[1]}/registry.sqlite3") as kept:
+        store.backup(kept)
 for table in ("taker_facade_requests", "taker_facade_authorities", "taker_facade_swaps"):
     store.execute(f'delete from "{table}"')
 store.commit()
@@ -86,12 +165,16 @@ print("  registry: swaps, authorities and requests cleared")
 PY
 
 log "Maker: swap directories, actor registrations, negotiations, consumed offers"
-in_role maker bash -c 'for pair in /var/lib/lez/maker/*/; do
+in_role maker bash -c "$keep_swaps"'
+for pair in /var/lib/lez/maker/*/; do
   rm -rf "$pair"swaps/* "$pair"sidecar-state "$pair"sidecar.log "$pair"lez-*-maker-actor-trace
-done'
-in_role maker python3 - <<'PY'
-import sqlite3
+done' _ /var/lib/lez/maker "$archive"
+in_role maker python3 - "$archive" <<'PY'
+import sqlite3, sys
 store = sqlite3.connect("/var/lib/lez/maker/maker.sqlite3")
+if sys.argv[1]:
+    with sqlite3.connect(f"/var/lib/lez/maker/.reset-archive/{sys.argv[1]}/maker.sqlite3") as kept:
+        store.backup(kept)
 store.execute("pragma foreign_keys = on")
 counts = {}
 # Negotiations and reserved/consumed lots reference their swap with RESTRICT;
@@ -130,7 +213,7 @@ cat runtime/m3-btc-ui-evidence.json.tmp >runtime/m3-btc-ui-evidence.json  # in p
 rm -f runtime/m3-btc-ui-evidence.json.tmp
 
 if [[ "$offline" == 1 ]]; then
-  log "done: swaps forgotten; the Nodes stay stopped"
+  log "done: swaps forgotten${archive:+ (open ones archived as .reset-archive/$archive)}; the Nodes stay stopped"
   exit 0
 fi
 if [[ "$in_place" == 1 ]]; then

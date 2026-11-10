@@ -149,7 +149,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
       log "    finality is not moving before $1"; fresh_chain || return 2
     fi
     # a new chain's Nodes start without swaps (up.sh); otherwise forget the last test's
-    [[ "$fresh" == 1 ]] || bash scripts/reset-swaps.sh >"$out/logs/reset.log" 2>&1 || log "    reset-swaps.sh failed before $1 (logs/reset.log)"
+    [[ "$fresh" == 1 ]] || bash scripts/reset-swaps.sh --abandon-open >"$out/logs/reset.log" 2>&1 || log "    reset-swaps.sh failed before $1 (logs/reset.log)"
     logfile="$out/logs/$kind-$pair-$scenario-$direction-$try.log"; started="$(date +%s)"
     # shellcheck disable=SC2046  # the command is a word list
     watched "$logfile" timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
