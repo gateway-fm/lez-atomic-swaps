@@ -166,6 +166,29 @@ esac
 echo "[3/6] starting chains…"
 docker compose up -d bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
 wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
+# A new LEZ chain can stop finalizing within its first minute (README, "a
+# frozen devnet"); everything after this point would then wait on it in vain
+# (the indexer repair, the vault claims). A healthy new chain finalizes within
+# seconds, so watch it briefly and start another one at once if it does not.
+if [[ "$FRESH_LEZ" == 1 ]]; then
+  lez_finalized() {
+    curl -s --max-time 10 -H 'content-type: application/json' \
+      --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
+      http://127.0.0.1:8779/ 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
+  }
+  first="$(lez_finalized)"; moved=0
+  for _ in $(seq 1 $(( ${LEZ_FRESH_FINALITY_SECONDS:-150} / 10 ))); do
+    sleep 10; now="$(lez_finalized)"
+    if [[ -n "$now" && -n "$first" && "$now" -gt "$first" ]]; then moved=1; break; fi
+    [[ -n "$first" ]] || first="$now"
+  done
+  if (( ! moved )); then
+    [[ "${LEZ_FRESH_ATTEMPT:-1}" -lt "${LEZ_FRESH_ATTEMPTS:-6}" ]] || { echo "the new LEZ chain does not finalize (attempt ${LEZ_FRESH_ATTEMPT:-1})" >&2; exit 1; }
+    echo "  the new LEZ chain does not finalize (finalized ${first:-none}); starting another one"
+    LEZ_FRESH_ATTEMPT=$(( ${LEZ_FRESH_ATTEMPT:-1} + 1 )) exec bash "$0" --fresh-lez
+  fi
+  echo "  the new LEZ chain finalizes (${first} -> ${now})"
+fi
 bash scripts/repair-indexer.sh >/dev/null 2>&1 || true
 # The Nodes' Core wallets (lez-maker, lez-taker) and the Taker's regtest
 # balance; idempotent, and after a wipe nothing else creates them.
@@ -180,7 +203,7 @@ else
     # A new chain can stop finalizing within its first minute (README, "a frozen
     # devnet"); the bootstrap then waits for its claims in vain and only another
     # chain helps.
-    [[ "$FRESH_LEZ" == 1 && "${LEZ_FRESH_ATTEMPT:-1}" -lt 3 ]] || exit 1
+    [[ "$FRESH_LEZ" == 1 && "${LEZ_FRESH_ATTEMPT:-1}" -lt "${LEZ_FRESH_ATTEMPTS:-6}" ]] || exit 1
     echo "  the new chain does not finalize; recreating it once more"
     LEZ_FRESH_ATTEMPT=$(( ${LEZ_FRESH_ATTEMPT:-1} + 1 )) exec bash "$0" --fresh-lez
   fi

@@ -101,8 +101,10 @@ the indexer's finalized height stands still and every swap waits. It happens wit
 any stop or restart and restarting the sequencer does not clear it; it is upstream
 behaviour, not ours, and the epoch cannot be stretched (Bedrock's one leader then runs
 out of notes and stops making blocks). A new chain can die the same way within its
-first minute, so `up.sh --fresh-lez` recreates it again, three times at most, when the
-market bootstrap cannot finish. `node-e2e.py` checks that finality advances before
+first minute, so `up.sh --fresh-lez` watches the new chain's finalized height for
+150 s once it is healthy (`LEZ_FRESH_FINALITY_SECONDS`) and starts another chain at
+once when it stands still, or when the market bootstrap cannot finish; six chains at
+most (`LEZ_FRESH_ATTEMPTS`). `node-e2e.py` checks that finality advances before
 each scenario for the same reason.
 
 `up.sh` ends with the repo-style UI verification (real Basecamp driven through
@@ -242,7 +244,7 @@ self-hosted `lez-stack` runner).
 The refund scenarios need the `fast` timing profile:
 
 ```sh
-LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # 15 and 8 CSV blocks; 600/900/1800 s deadlines, 60 s margin; 120-block LEZ window
+LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # 10 and 6 CSV blocks; 360/600/1200 s deadlines, 60 s margin; 60-block LEZ window
 docker compose --env-file runtime/runtime.env up -d --no-deps --force-recreate maker-node taker-node
 ./scripts/node-e2e.py taker-refund
 ```
@@ -268,14 +270,14 @@ Node **refuses to start** on a profile that breaks any of three rules:
   the Taker's LEZ refund opens, after which the Taker could refund its LEZ and
   still claim the Bitcoin.
 
-`local` uses 60 and 33 blocks, `fast` 15 and 8, both at the regtest miner's
+`local` uses 60 and 33 blocks, `fast` 10 and 6, both at the regtest miner's
 120 s; regtest still mines past a delay on demand.
 
 The LEZ discovery window sets how soon a refund can start when the Maker never
 locks: the Taker asserts the Maker lock's absence only once every block of the
-window is finalized, so a window of 120 blocks at the devnet's 10-second slots
-means the refund becomes eligible about 20 minutes after the take. The window
-must cover the Maker cutoff (60 blocks on the fast profile) with room to spare.
+window is finalized, so the fast profile's 60 blocks at the devnet's 10-second slots
+mean the refund becomes eligible about 10 minutes after the take. The window
+must cover the Maker cutoff (36 blocks on the fast profile, 60 kept) with room to spare.
 
 ## Settlement chains
 

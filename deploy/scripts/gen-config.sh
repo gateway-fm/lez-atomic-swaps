@@ -301,13 +301,13 @@ rm -f "$RUNTIME/runtime.env"
 # The last value is the LEZ discovery window in blocks: a Maker lock can only
 # appear before the cutoff, and a refund asserts its absence only once that
 # whole window is finalized, so the window must cover the cutoff (10 s slots on
-# the local devnet: 600 s = 60 blocks) and nothing more than needed.
+# the local devnet: the fast 360 s = 36 blocks) and nothing more than needed.
 timing_profile="${LEZ_TIMING_PROFILE:-$previous_timing_profile}"
 [[ -n "${LEZ_TIMING_PROFILE:-}" || -z "$timing_profile" ]] || echo "reusing existing timing profile ${timing_profile}"
 timing_profile="${timing_profile:-local}"
 case "$timing_profile" in
   local) timing=(60 1800 3600 7200 300 360 33 120 120) ;;
-  fast)  timing=(15 600 900 1800 60 120 8 120 120) ;;
+  fast)  timing=(10 360 600 1200 60 60 6 120 120) ;;
   *) echo "LEZ_TIMING_PROFILE must be local or fast" >&2; exit 1 ;;
 esac
 printf '%s\n' \
