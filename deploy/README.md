@@ -290,14 +290,14 @@ only slower); `regress.sh` switches to it by itself and back to `fast` for the
 other Bitcoin tests:
 
 ```sh
-LEZ_TIMING_PROFILE=refund ./scripts/up.sh     # a block every 2 s; 113 and 60 CSV blocks; 90/105/225 s deadlines, 15 s margin; 120-block LEZ window
+LEZ_TIMING_PROFILE=refund ./scripts/up.sh     # a block every 2 s; 123 and 65 CSV blocks; 100/115/245 s deadlines, 15 s margin; 130-block LEZ window
 ./scripts/node-e2e.py taker-refund
 ```
 
 `refund` follows from the LEZ chain's step latency instead of fixed numbers
 (`gen-config.sh`): the cutoff is two LEZ steps (`LEZ_LEZ_STEP_SECONDS`, 20 s
 on the 1 s devnet: ~5 s to finality plus the Nodes' polling) plus 20 s of desk
-and a finality stall (`LEZ_LEZ_STALL_SECONDS`, 30 s); earlier = cutoff +
+and a finality stall (`LEZ_LEZ_STALL_SECONDS`, 40 s); earlier = cutoff +
 margin; the later refund is the least the refund order below allows; the LEZ
 window is the cutoff plus 30 s in blocks of the fastest LEZ pace
 (`LEZ_LEZ_BLOCK_SECONDS`, 1). On the old 10 s chain the same rule with
@@ -327,7 +327,7 @@ Node **refuses to start** on a profile that breaks any of three rules:
 
 `local` uses 60 and 33 blocks at the regtest miner's 120 s; `fast` and `refund`
 use the fewest blocks the rules allow at `LEZ_BTC_BLOCK_SECONDS` (2 s: 420 and
-240 on `fast`, 113 and 60 on `refund`; at 20 s `fast` is the old 42 and 24) (the profile sets the miner's pace,
+240 on `fast`, 123 and 65 on `refund`; at 20 s `fast` is the old 42 and 24) (the profile sets the miner's pace,
 `MINE_INTERVAL`); regtest still mines past a delay on demand.
 
 The LEZ discovery window sets how soon a refund can start when the Maker never

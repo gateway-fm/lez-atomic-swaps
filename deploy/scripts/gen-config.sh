@@ -395,7 +395,7 @@ timing_profile="${LEZ_TIMING_PROFILE:-$previous_timing_profile}"
 timing_profile="${timing_profile:-local}"
 lez_block_seconds="${LEZ_LEZ_BLOCK_SECONDS:-${previous_lez_timing[0]:-1}}"
 lez_step_seconds="${LEZ_LEZ_STEP_SECONDS:-${previous_lez_timing[1]:-20}}"
-lez_stall_seconds="${LEZ_LEZ_STALL_SECONDS:-${previous_lez_timing[2]:-30}}"
+lez_stall_seconds="${LEZ_LEZ_STALL_SECONDS:-${previous_lez_timing[2]:-40}}"
 btc_block_seconds="${LEZ_BTC_BLOCK_SECONDS:-${previous_lez_timing[3]:-2}}"
 for v in "$lez_block_seconds" "$lez_step_seconds" "$lez_stall_seconds" "$btc_block_seconds"; do
   [[ "$v" =~ ^[1-9][0-9]*$ ]] || { echo "LEZ_LEZ_BLOCK_SECONDS, LEZ_LEZ_STEP_SECONDS, LEZ_LEZ_STALL_SECONDS and LEZ_BTC_BLOCK_SECONDS must be positive integers" >&2; exit 1; }
