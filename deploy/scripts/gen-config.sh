@@ -96,7 +96,7 @@ previous_lez_timing=()
 if [[ -s "$RUNTIME/runtime.env" ]]; then
   previous_timing_profile="$(sed -n 's/^LEZ_TIMING_PROFILE=//p' "$RUNTIME/runtime.env" | head -1)"
   previous_actor_trace="$(sed -n 's/^LEZ_BTC_ACTOR_TRACE=//p' "$RUNTIME/runtime.env" | head -1)"
-  for key in LEZ_LEZ_BLOCK_SECONDS LEZ_LEZ_STEP_SECONDS LEZ_LEZ_STALL_SECONDS; do
+  for key in LEZ_LEZ_BLOCK_SECONDS LEZ_LEZ_STEP_SECONDS LEZ_LEZ_STALL_SECONDS LEZ_BTC_BLOCK_SECONDS; do
     previous_lez_timing+=("$(sed -n "s/^$key=//p" "$RUNTIME/runtime.env" | head -1)")
   done
 fi
@@ -358,7 +358,7 @@ rm -f "$RUNTIME/runtime.env"
 # times promise. The first value is the delay when Bitcoin is the first lock,
 # the seventh when it is the second; the last two are seconds per block at the
 # fastest and slowest pace: the regtest miner's own pace (MINE_INTERVAL below),
-# two minutes on `local`; `fast` mines every 20 s, since every confirmation a
+# two minutes on `local`; `fast` mines every LEZ_BTC_BLOCK_SECONDS, since every confirmation a
 # swap waits for is one miner interval (a scenario that needs a transaction to
 # stay unconfirmed stops the miner).
 # The sixth value is the LEZ discovery window, in seconds here and in blocks
@@ -380,29 +380,36 @@ rm -f "$RUNTIME/runtime.env"
 # the finality stall a step must survive. Nobody claims, so:
 #   cutoff  = 2 steps (the Taker's lock, then the Maker's) + 20 s of desk + stall
 #   earlier = cutoff + margin       (the least the agreement accepts)
-#   second-lock CSV = earlier + margin, in 5 s regtest blocks
+#   second-lock CSV = earlier + margin, in regtest blocks
 #   later   = cutoff + second-lock CSV + margin   (the least the order allows)
 #   first-lock CSV  = later, in blocks; discovery window = cutoff + 30 s
-# A block every 5 s keeps Bitcoin's median time, the clock a Bitcoin cutoff is
-# read on, within ~30 s of the wall clock.
+# The regtest pace, LEZ_BTC_BLOCK_SECONDS (2 s), is the miner's interval and
+# both block_seconds bounds on `fast` and `refund`; their CSV delays are the
+# fewest blocks of that pace the refund order allows, so every confirmation a
+# swap waits for is one short interval. Bitcoin's median time, the clock a
+# Bitcoin cutoff is read on, then trails the wall clock by ~6 blocks (12 s),
+# and a scenario's `mine(csv + 1)` (~420 blocks on `fast`) runs it ahead by
+# about one second per six blocks, after the Maker's lock is in.
 timing_profile="${LEZ_TIMING_PROFILE:-$previous_timing_profile}"
 [[ -n "${LEZ_TIMING_PROFILE:-}" || -z "$timing_profile" ]] || echo "reusing existing timing profile ${timing_profile}"
 timing_profile="${timing_profile:-local}"
 lez_block_seconds="${LEZ_LEZ_BLOCK_SECONDS:-${previous_lez_timing[0]:-1}}"
 lez_step_seconds="${LEZ_LEZ_STEP_SECONDS:-${previous_lez_timing[1]:-20}}"
 lez_stall_seconds="${LEZ_LEZ_STALL_SECONDS:-${previous_lez_timing[2]:-30}}"
-for v in "$lez_block_seconds" "$lez_step_seconds" "$lez_stall_seconds"; do
-  [[ "$v" =~ ^[1-9][0-9]*$ ]] || { echo "LEZ_LEZ_BLOCK_SECONDS, LEZ_LEZ_STEP_SECONDS and LEZ_LEZ_STALL_SECONDS must be positive integers" >&2; exit 1; }
+btc_block_seconds="${LEZ_BTC_BLOCK_SECONDS:-${previous_lez_timing[3]:-2}}"
+for v in "$lez_block_seconds" "$lez_step_seconds" "$lez_stall_seconds" "$btc_block_seconds"; do
+  [[ "$v" =~ ^[1-9][0-9]*$ ]] || { echo "LEZ_LEZ_BLOCK_SECONDS, LEZ_LEZ_STEP_SECONDS, LEZ_LEZ_STALL_SECONDS and LEZ_BTC_BLOCK_SECONDS must be positive integers" >&2; exit 1; }
 done
+csv() { echo $(( ($1 + btc_block_seconds - 1) / btc_block_seconds )); } # csv <seconds>: blocks at the regtest pace
 case "$timing_profile" in
   local)  timing=(60 1800 3600 7200 300 3600 33 120 120) ;;
-  fast)   timing=(42 240 420 840 60 300 24 20 20) ;;
+  fast)   timing=("$(csv 840)" 240 420 840 60 300 "$(csv 480)" "$btc_block_seconds" "$btc_block_seconds") ;;
   refund)
-    cutoff=$(( 2 * lez_step_seconds + 20 + lez_stall_seconds )); margin=15; block=5
+    cutoff=$(( 2 * lez_step_seconds + 20 + lez_stall_seconds )); margin=15
     earlier=$(( cutoff + margin ))
-    second=$(( (earlier + margin + block - 1) / block ))
-    later=$(( cutoff + second * block + margin ))
-    timing=($(( (later + block - 1) / block )) "$cutoff" "$earlier" "$later" "$margin" $(( cutoff + 30 )) "$second" "$block" "$block")
+    second="$(csv $(( earlier + margin )))"
+    later=$(( cutoff + second * btc_block_seconds + margin ))
+    timing=("$(csv "$later")" "$cutoff" "$earlier" "$later" "$margin" $(( cutoff + 30 )) "$second" "$btc_block_seconds" "$btc_block_seconds")
     echo "refund timing: cutoff ${cutoff} s, refunds at ${earlier} and ${later} s (LEZ step ${lez_step_seconds} s, stall ${lez_stall_seconds} s)" ;;
   *) echo "LEZ_TIMING_PROFILE must be local, fast or refund" >&2; exit 1 ;;
 esac
@@ -424,6 +431,7 @@ printf '%s\n' \
   "LEZ_LEZ_BLOCK_SECONDS=$lez_block_seconds" \
   "LEZ_LEZ_STEP_SECONDS=$lez_step_seconds" \
   "LEZ_LEZ_STALL_SECONDS=$lez_stall_seconds" \
+  "LEZ_BTC_BLOCK_SECONDS=$btc_block_seconds" \
   "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \
