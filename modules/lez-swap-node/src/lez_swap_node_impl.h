@@ -6,8 +6,8 @@
 #include "logos_module_context.h"
 
 /**
- * @brief The swap engine inside Basecamp: launches each swap role's Node and
- * keeps it running.
+ * @brief The swap engine inside Basecamp: launches each swap role's Node,
+ * keeps it running, and relays its LEZ signing requests to Basecamp's wallet.
  *
  * Universal authoring model: this impl class is the whole module; its public
  * methods are the API (the desks call them through Basecamp). The Qt plugin
@@ -19,8 +19,9 @@
  * exists: then it stays down until the file is removed. That is how a test
  * takes a Node offline without stopping Basecamp.
  *
- * Module code is Qt-free. The supervisor state is opaque here (the universal
- * codegen parses this header) and lives in the .cpp.
+ * The header is Qt-free (the universal codegen parses it); the supervisor
+ * state is opaque here and lives in the .cpp, which uses QtCore only to run
+ * the signer's calls to lez_core on the module's main thread.
  */
 class LezSwapNodeImpl : public LogosModuleContext {
 public:
@@ -43,6 +44,15 @@ public:
     /// restarting, stopped), pid, starts, last_exit}; empty when the role was
     /// never started.
     std::string node_status(const std::string& role);
+
+    /// Serve `account_id_hex`'s LEZ signatures to the role's Node on the
+    /// owner-only Unix socket `socket_path`: one JSON line per connection,
+    /// {"account_id", "message_hash"} in, the wallet's {"signature",
+    /// "public_key"} (or {"error"}) out. Every signature is made by Basecamp's
+    /// LEZ wallet (lez_core, sign_public_message_hash); the key never reaches
+    /// this module or the Node. Only that one account is served, and a socket
+    /// already served is left as it is. Returns 0 when serving, else non-zero.
+    int64_t serve_signer(const std::string& socket_path, const std::string& account_id_hex);
 
 private:
     // Supervisor* — see the .cpp.

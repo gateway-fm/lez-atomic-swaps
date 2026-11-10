@@ -1,0 +1,9 @@
+; lez_core contract — the one call this module makes: a signature of Basecamp's
+; LEZ wallet (the LEZ wallet as a Logos module, built with
+; deploy/builder/patches/logos-execution-zone-module) for a public account it
+; holds. Hand-maintained: keep it in sync with that patch.
+module lez_core {
+  version "0.4.1-sign.4"
+
+  method sign_public_message_hash(account_id_hex: tstr, message_hash_hex: tstr) -> tstr
+}

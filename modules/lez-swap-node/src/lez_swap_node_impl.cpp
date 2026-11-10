@@ -1,12 +1,21 @@
 #include "lez_swap_node_impl.h"
 
+#include "logos_sdk.h"
+
+#include <QCoreApplication>
+#include <QMetaObject>
+
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -15,7 +24,10 @@
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -32,6 +44,7 @@ namespace {
     constexpr auto RESTART_DELAY = std::chrono::seconds(2);
     constexpr auto HOLD_POLL = std::chrono::seconds(1);
     constexpr auto STOP_GRACE = std::chrono::seconds(10);
+    constexpr auto SIGN_TIMEOUT = std::chrono::seconds(30);
 
     bool exists(const std::string& path) {
         struct stat st {};
@@ -126,9 +139,101 @@ namespace {
         }
     };
 
+    bool hex64(const std::string& s) {
+        return s.size() == 64 && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
+    }
+
+    // The string value of `"key":"…"` in a flat JSON object of hex strings (the
+    // whole signer protocol); empty when absent.
+    std::string field(const std::string& json, const std::string& key) {
+        const auto at = json.find('"' + key + '"');
+        if (at == std::string::npos) return {};
+        const auto colon = json.find(':', at + key.size() + 2);
+        const auto open = colon == std::string::npos ? colon : json.find('"', colon);
+        const auto close = open == std::string::npos ? open : json.find('"', open + 1);
+        return close == std::string::npos ? std::string() : json.substr(open + 1, close - open - 1);
+    }
+
+    // One signer socket: `account`'s signatures for whoever may open the
+    // owner-only socket (the role's Node, same user). `sign` asks the wallet.
+    // The thread shares ownership, so a thread stop() leaves behind (below)
+    // never outlives the state it reads.
+    struct Signer : std::enable_shared_from_this<Signer> {
+        std::string socket_path, account;
+        std::function<std::string(const std::string&)> sign;
+        int listener = -1;
+        std::atomic<bool> stopping{false};
+        std::thread thread;
+        std::mutex mutex;
+        std::condition_variable ended;
+        bool running = false;
+
+        ~Signer() {
+            if (listener >= 0) ::close(listener);
+        }
+
+        // One signing request per connection: read one line, answer one line, close.
+        void answer(int connection) const {
+            timeval timeout{10, 0};
+            ::setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+            ::setsockopt(connection, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+            std::string line;
+            char byte = 0;
+            while (line.size() < 1024 && ::read(connection, &byte, 1) == 1 && byte != '\n') line.push_back(byte);
+            std::string requested = field(line, "account_id");
+            std::transform(requested.begin(), requested.end(), requested.begin(), [](unsigned char c) { return std::tolower(c); });
+            const std::string hash = field(line, "message_hash");
+            std::string reply;
+            if (!hex64(requested) || !hex64(hash)) {
+                reply = R"({"error":"the request must be {\"account_id\", \"message_hash\"}, 64 hex characters each"})";
+            } else if (requested != account) {
+                reply = R"({"error":"this signer holds another account"})";
+            } else if (stopping) {
+                reply = R"({"error":"the signer is stopping"})";
+            } else {
+                reply = sign(hash);
+                if (reply.empty() || reply.front() != '{') reply = R"({"error":"the wallet did not sign"})";
+            }
+            reply.push_back('\n');
+            (void)!::write(connection, reply.data(), reply.size());
+            ::close(connection);
+        }
+
+        void start() {
+            running = true;
+            thread = std::thread([self = shared_from_this()] {
+                while (!self->stopping) {
+                    const int connection = ::accept4(self->listener, nullptr, nullptr, SOCK_CLOEXEC);
+                    if (connection >= 0) self->answer(connection);
+                    else if (errno != EINTR && errno != ECONNABORTED) break;
+                }
+                std::lock_guard lock(self->mutex);
+                self->running = false;
+                self->ended.notify_all();
+            });
+        }
+
+        // A signature in flight waits for this module's main thread, which
+        // may be the thread stopping this signer: wait a little for the
+        // thread, then leave it (it ends by itself within SIGN_TIMEOUT).
+        void stop() {
+            stopping = true;
+            if (listener >= 0) ::shutdown(listener, SHUT_RDWR);
+            ::unlink(socket_path.c_str());
+            std::unique_lock lock(mutex);
+            const bool ended_in_time = ended.wait_for(lock, std::chrono::seconds(2), [this] { return !running; });
+            lock.unlock();
+            if (ended_in_time) thread.join();
+            else thread.detach();
+        }
+    };
+
     struct Supervisor {
         std::mutex mutex;
         std::map<std::string, std::shared_ptr<Role>> roles;
+        std::map<std::string, std::shared_ptr<Signer>> signers;
+        // False once the module is going away; read and written on the main thread only.
+        std::shared_ptr<bool> alive = std::make_shared<bool>(true);
     };
 
     inline Supervisor& supervisor_of(void*& p) {
@@ -158,8 +263,61 @@ namespace {
 LezSwapNodeImpl::~LezSwapNodeImpl() {
     if (supervisor == nullptr) return;
     auto* s = static_cast<Supervisor*>(supervisor);
+    *s->alive = false;
     for (auto& [name, role] : s->roles) role->stop();
+    for (auto& [path, signer] : s->signers) signer->stop();
     delete s;
+}
+
+int64_t LezSwapNodeImpl::serve_signer(const std::string& socket_path, const std::string& account_id_hex) {
+    std::string account = account_id_hex;
+    std::transform(account.begin(), account.end(), account.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (!hex64(account) || socket_path.empty() || socket_path[0] != '/' || socket_path.size() >= sizeof(sockaddr_un::sun_path)) {
+        warn("signer", "serve_signer: an invalid account id or an unusable socket path");
+        return 1;
+    }
+    auto& s = supervisor_of(supervisor);
+    std::lock_guard lock(s.mutex);
+    if (s.signers.count(socket_path) != 0) return s.signers[socket_path]->account == account ? 0 : 1;
+    auto signer = std::make_shared<Signer>();
+    signer->socket_path = socket_path;
+    signer->account = account;
+    // The wallet is another module of this Basecamp, and a call to another
+    // module works only from this module's own (main) thread: from the signer
+    // thread, synchronous or through the generated async client, it found no
+    // lez_core (object_unavailable after 40 s on the devnet). So the signer
+    // thread posts each call to the main thread and waits for its answer; a
+    // call still queued when the module goes away is answered empty.
+    signer->sign = [this, account, alive = s.alive](const std::string& hash) {
+        auto answer = std::make_shared<std::promise<std::string>>();
+        auto signature = answer->get_future();
+        const bool posted = QMetaObject::invokeMethod(
+            QCoreApplication::instance(),
+            [this, account, hash, alive, answer] {
+                answer->set_value(*alive ? modules().lez_core.sign_public_message_hash(account, hash) : std::string());
+            },
+            Qt::QueuedConnection);
+        if (!posted || signature.wait_for(SIGN_TIMEOUT) != std::future_status::ready) return std::string();
+        return signature.get();
+    };
+    signer->listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (signer->listener < 0) return 1;
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, socket_path.c_str(), socket_path.size());
+    ::unlink(socket_path.c_str());
+    const mode_t previous = ::umask(077);
+    const bool bound = ::bind(signer->listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+                       ::listen(signer->listener, 16) == 0;
+    ::umask(previous);
+    if (!bound) {
+        warn("signer", "serve_signer: cannot listen on " + socket_path);
+        return 1;
+    }
+    signer->start();
+    s.signers.emplace(socket_path, std::move(signer));
+    info("signer", "signing for " + account + " on " + socket_path);
+    return 0;
 }
 
 int64_t LezSwapNodeImpl::start_node(const std::string& role, const std::string& launcher, const std::string& log_file, const std::string& hold_file) {

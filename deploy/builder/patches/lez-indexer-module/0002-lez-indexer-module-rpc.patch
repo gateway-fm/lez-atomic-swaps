@@ -1,18 +1,5 @@
-diff --git a/flake.nix b/flake.nix
-index fc64c0c..39546a0 100644
---- a/flake.nix
-+++ b/flake.nix
-@@ -3,7 +3,7 @@
- 
-   inputs = {
-     logos-module-builder.url = "github:logos-co/logos-module-builder";
--    logos-execution-zone.url = "github:logos-blockchain/logos-execution-zone?ref=v0.2.2";
-+    logos-execution-zone.url = "github:logos-blockchain/logos-execution-zone?ref=v0.2.4";
-   };
- 
-   outputs =
 diff --git a/metadata.json b/metadata.json
-index c2e3d57..2125e27 100644
+index c2e3d57..72f1f90 100644
 --- a/metadata.json
 +++ b/metadata.json
 @@ -1,7 +1,7 @@
@@ -20,44 +7,18 @@ index c2e3d57..2125e27 100644
    "name": "lez_indexer_module",
    "display_name": "LEZ Indexer Module",
 -  "version": "1.1.1",
-+  "version": "1.1.1-rpc.3",
++  "version": "1.1.1-rpc.4",
    "description": "Logos Execution Zone Indexer Module for Logos Core",
    "type": "core",
    "interface": "universal",
-@@ -15,7 +15,9 @@
-       }
-     ],
-     "cmake": {
--      "extra_include_dirs": ["lib"]
-+      "extra_include_dirs": [
-+        "lib"
-+      ]
-     }
-   }
- }
 diff --git a/src/lez_indexer_module_impl.cpp b/src/lez_indexer_module_impl.cpp
-index 1314837..d2af9a1 100644
+index 1314837..aa0d7b7 100644
 --- a/src/lez_indexer_module_impl.cpp
 +++ b/src/lez_indexer_module_impl.cpp
-@@ -372,3 +372,34 @@ std::string LezIndexerModuleImpl::getTransactionsByAccount(
+@@ -372,3 +372,19 @@ std::string LezIndexerModuleImpl::getTransactionsByAccount(
      ::free_ffi_transaction_vec(res.value);
      return jsonToCompactString(arr);
  }
-+
-+std::string LezIndexerModuleImpl::rpc(const std::string& method, const std::string& params_json) {
-+    if (!indexer_service_ffi) {
-+        warn("rpc", "indexer not started");
-+        return R"({"error":{"code":-32603,"message":"indexer not started"}})";
-+    }
-+    char* json = ::indexer_rpc_call(handle(indexer_service_ffi), method.c_str(), params_json.c_str());
-+    if (!json) {
-+        warn("rpc", "indexer FFI error");
-+        return R"({"error":{"code":-32603,"message":"indexer FFI error"}})";
-+    }
-+    const std::string out(json);
-+    ::free_cstring(json);
-+    return out;
-+}
 +
 +int64_t LezIndexerModuleImpl::serve_rpc(int64_t port) {
 +    if (!indexer_service_ffi) {
@@ -75,18 +36,13 @@ index 1314837..d2af9a1 100644
 +    return static_cast<int64_t>(status);
 +}
 diff --git a/src/lez_indexer_module_impl.h b/src/lez_indexer_module_impl.h
-index 2a57083..7a83d4d 100644
+index 2a57083..4c135ac 100644
 --- a/src/lez_indexer_module_impl.h
 +++ b/src/lez_indexer_module_impl.h
-@@ -80,6 +80,15 @@ public:
+@@ -80,6 +80,10 @@ public:
      // re-wrapping this long line.
      // clang-format off
      std::string getTransactionsByAccount(const std::string& account_id, const std::string& offset, const std::string& limit);
-+    // The indexer's JSON-RPC surface: `method` is an indexer_service JSON-RPC
-+    // method name, `params_json` its params (positional array or named object).
-+    // Returns the jsonrpsee response body ({"result": ...} or {"error": ...}),
-+    // byte-for-byte what indexer_service answers at this LEZ version.
-+    std::string rpc(const std::string& method, const std::string& params_json);
 +    // Serve the indexer's JSON-RPC (indexer_service's own implementation, over
 +    // this running indexer) on 0.0.0.0:port from the module process. Returns 0
 +    // on success, the FFI OperationStatus otherwise.

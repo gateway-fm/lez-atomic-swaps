@@ -60,7 +60,7 @@ LezAtomicSwapTakerBackend::~LezAtomicSwapTakerBackend() = default;
 void LezAtomicSwapTakerBackend::onContextReady()
 {
     // The Taker's LEZ signer, in Basecamp's lez_core (lez_role_signer.h).
-    lez_role_signer::start(modules().lez_core, QStringLiteral("taker"));
+    lez_role_signer::start(modules().lez_core, modules().lez_swap_node, QStringLiteral("taker"));
     // The Taker Node, launched and supervised by Basecamp's lez_swap_node (lez_role_node.h).
     lez_role_node::start(modules().lez_swap_node, QStringLiteral("taker"));
     // LEZ_DESK_CHAT=0: another desk of this role runs its Chat (the devnet's

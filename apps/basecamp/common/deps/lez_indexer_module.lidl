@@ -4,7 +4,7 @@
 ; Supplied as a dependency_override (network/metadata.json). Hand-maintained:
 ; keep it in sync with those patches.
 module lez_indexer_module {
-  version "1.1.1-rpc.3"
+  version "1.1.1-rpc.4"
 
   method start_indexer(config_path: tstr) -> int
   method serve_rpc(port: int) -> int

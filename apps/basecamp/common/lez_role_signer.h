@@ -1,11 +1,12 @@
 #ifndef LEZ_ROLE_SIGNER_H
 #define LEZ_ROLE_SIGNER_H
 
-// The role's LEZ signer, hosted by Basecamp: the desk asks Basecamp's lez_core
-// (the LEZ wallet as a Logos module) to open the shared wallet, import this
-// role's key and serve the role's signer socket, which the role Node's
-// sidecars ask for the witness of every LEZ transaction they plan. A desk
-// without the configuration below starts no signer.
+// The role's LEZ signer, hosted by Basecamp: the desk has Basecamp's lez_core
+// (the LEZ wallet as a Logos module) open the wallet and import this role's
+// key, and has lez_swap_node serve the role's signer socket, which the role
+// Node's sidecars ask for the witness of every LEZ transaction they plan;
+// lez_swap_node asks the wallet for each signature. A desk without the
+// configuration below starts no signer.
 //
 //   LEZ_WALLET_DIR                 the wallet's storage directory (shared by both desks)
 //   LEZ_WALLET_SEQUENCER_URL       the LEZ sequencer the wallet talks to
@@ -23,10 +24,15 @@
 #include <QRandomGenerator>
 #include <QString>
 
+#include <string>
+
 namespace lez_role_signer {
 
-template <typename LezCore>
-void start(LezCore& wallet, const QString& role)
+inline bool blank(const QString& text) { return text.isEmpty(); }
+inline bool blank(const std::string& text) { return text.empty(); }
+
+template <typename LezCore, typename LezSwapNode>
+void start(LezCore& wallet, LezSwapNode& node, const QString& role)
 {
     const QString prefix = QStringLiteral("LEZ_") + role.toUpper() + QStringLiteral("_SIGNER_");
     const QString socket = qEnvironmentVariable((prefix + QStringLiteral("SOCKET")).toUtf8().constData());
@@ -70,13 +76,22 @@ void start(LezCore& wallet, const QString& role)
             {QStringLiteral("seq_block_poll_max_amount"), 100}}).toJson(QJsonDocument::Compact));
         configFile.close();
     }
-    const QString password = QString::number(QRandomGenerator::system()->generate64(), 16);
-    const int opened = wallet.ensure_wallet(config, directory + QStringLiteral("/storage.json"),
-                                            directory + QStringLiteral("/statistics.json"), password);
-    const int imported = opened == 0 ? wallet.import_public_account(keyHex) : -1;
-    const int serving = imported == 0 ? wallet.serve_signer(socket, account) : -1;
+    // Open the wallet, or create it on first use. A wallet this Basecamp has
+    // open already (the desk was opened again) refuses both, and the import
+    // below then succeeds on it; with no wallet at all the import fails.
+    const QString storage = directory + QStringLiteral("/storage.json");
+    const QString statistics = directory + QStringLiteral("/statistics.json");
+    int opened = 0;
+    if (QFile::exists(storage)) {
+        opened = wallet.open(config, storage, statistics);
+    } else {
+        const QString password = QString::number(QRandomGenerator::system()->generate64(), 16);
+        opened = blank(wallet.create_new(config, storage, statistics, password)) ? 1 : 0;
+    }
+    const int imported = wallet.import_public_account(keyHex);
+    const int serving = imported == 0 ? node.serve_signer(socket, account) : -1;
     report(serving == 0 ? QStringLiteral("serving ") + account
-                        : QStringLiteral("not started: ensure_wallet %1, import %2, serve %3")
+                        : QStringLiteral("not started: wallet %1, import %2, serve %3")
                               .arg(opened).arg(imported).arg(serving));
 }
 

@@ -1,8 +1,8 @@
 # The LEZ v0.2 indexer in a Basecamp: the basecamp-ui image's Basecamp (build
 # context "basecamp", compose.yaml), whose bundle carries lez_indexer_module
 # built from its 1.1.1 source on LEZ v0.2.4 (+ the nix risc0 fetch fix) with one
-# addition on each side, the indexer FFI's indexer_rpc_call and
-# indexer_rpc_serve, and the module's serve_rpc(port) (patches under
+# addition on each side, the indexer FFI's indexer_rpc_serve and the module's
+# serve_rpc(port) (patches under
 # deploy/builder/patches/lez-indexer-module, staged by from-scratch.sh). Its LEZ
 # Network desk starts the indexer (LEZ_INDEXER_CONFIG) and serve_rpc runs
 # indexer_service's own JSON-RPC on :8779 inside the module process
