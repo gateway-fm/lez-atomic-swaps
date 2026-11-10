@@ -191,23 +191,34 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   else
     zec_signer_args=(--private-key-file "$zec_candidate_role/lez-signer.key")
   fi
-  /usr/local/bin/lez-v02-bridge-poc --listen-address "$zec_listen" --node-profile local \
-    --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
-    --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
-    "${zec_signer_args[@]}" --state-directory "$zec_sidecar_state" \
-    --authenticated-transfer-program-id "$auth_transfer_program_id" \
-    </dev/null >>"$zec_state/sidecar.log" 2>&1 &
+  # A sidecar that exits before it listens (its start-up reads can race the
+  # chain, or the chain can be briefly unavailable) is started again, at most
+  # three times; one that runs but does not listen within 90 s is left alone.
   zec_candidate_ready=0
-  for _ in $(seq 1 90); do
-    if (exec 3<>"/dev/tcp/127.0.0.1/${zec_listen##*:}") 2>/dev/null; then zec_candidate_ready=1; break; fi
-    sleep 1
+  for zec_start in 1 2 3; do
+    /usr/local/bin/lez-v02-bridge-poc --listen-address "$zec_listen" --node-profile local \
+      --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
+      --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
+      "${zec_signer_args[@]}" --state-directory "$zec_sidecar_state" \
+      --authenticated-transfer-program-id "$auth_transfer_program_id" \
+      </dev/null >>"$zec_state/sidecar.log" 2>&1 &
+    zec_sidecar_pid=$!
+    for _ in $(seq 1 90); do
+      if (exec 3<>"/dev/tcp/127.0.0.1/${zec_listen##*:}") 2>/dev/null; then zec_candidate_ready=1; break; fi
+      kill -0 "$zec_sidecar_pid" 2>/dev/null || break
+      sleep 1
+    done
+    [[ "$zec_candidate_ready" == 1 ]] && break
+    kill -0 "$zec_sidecar_pid" 2>/dev/null && break
+    echo "$role ZEC corridor $zec_run_id: sidecar exited before listening (start $zec_start of 3, see $zec_state/sidecar.log)" >&2
+    sleep 2
   done
   if [[ "$zec_candidate_ready" == 1 ]]; then
     echo "$role ZEC corridor $zec_run_id: sidecar listening on $zec_listen"
     zec_configs+=("$zec_candidate")
     [[ "$zec_candidate" == "$zec_config" ]] && zec_ready=1
   else
-    echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen within 90 s; ZEC stays off for it (see $zec_state/sidecar.log)" >&2
+    echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen; ZEC stays off for it (see $zec_state/sidecar.log)" >&2
   fi
 done
 if [[ "$zec_ready" == 1 ]]; then
