@@ -946,23 +946,38 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
                     }
                 }
                 InitializationObservation::Found(initialization) => {
-                    validate_found_initialization(
-                        agreement,
-                        &terms,
-                        &response,
-                        initialization,
-                        initialize,
-                    )?;
-                    if let FundingObservation::Found(funding) = &response.funding {
-                        validate_found_pair(
+                    if let FundingObservation::Found(funding) = &response.funding
+                        && escrow_settled(funding)
+                    {
+                        validate_settled_own_pair(
                             agreement,
                             &terms,
                             &target,
                             &response,
                             initialization,
                             funding,
+                            initialize,
+                            fund,
                         )?;
-                        validate_prepared_pair(initialization, funding, initialize, fund)?;
+                    } else {
+                        validate_found_initialization(
+                            agreement,
+                            &terms,
+                            &response,
+                            initialization,
+                            initialize,
+                        )?;
+                        if let FundingObservation::Found(funding) = &response.funding {
+                            validate_found_pair(
+                                agreement,
+                                &terms,
+                                &target,
+                                &response,
+                                initialization,
+                                funding,
+                            )?;
+                            validate_prepared_pair(initialization, funding, initialize, fund)?;
+                        }
                     }
                     confirmed_first_lock_observation(
                         submission,
@@ -984,6 +999,26 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
                         initialize,
                     )?;
                     Ok(FirstLockObservation::Absent)
+                }
+                (
+                    InitializationObservation::Found(initialization),
+                    FundingObservation::Found(funding),
+                ) if escrow_settled(funding) => {
+                    validate_settled_own_pair(
+                        agreement,
+                        &terms,
+                        &target,
+                        &response,
+                        initialization,
+                        funding,
+                        initialize,
+                        fund,
+                    )?;
+                    confirmed_first_lock_observation(
+                        submission,
+                        &funding.transaction,
+                        response.tip_after.height,
+                    )
                 }
                 (
                     InitializationObservation::Found(initialization),
@@ -2038,6 +2073,82 @@ fn validate_found_initialization<E: std::error::Error + 'static>(
         || initialization.metadata != expected_metadata
         || transaction.position.height > response.tip_after.height
         || same_height_wrong_hash
+    {
+        return Err(ObserveNativeEscrowError::InconsistentFacts);
+    }
+    Ok(())
+}
+
+/// The escrow has moved past `Funded`: the claimant claimed (or the depositor
+/// refunded) before the depositor's own first-lock observation ran. On a fast
+/// chain the claimant can observe a finalized lock and claim it within seconds,
+/// so the depositor's next drive finds a drained custody. Its own exact pair is
+/// still proven by the prepared transaction bytes at final positions; the live
+/// escrow state no longer is, and the claim or refund is observed in its own
+/// step.
+fn escrow_settled(funding: &FundingFoundFacts) -> bool {
+    matches!(
+        funding.metadata.status,
+        EscrowState::Claimed | EscrowState::Refunded
+    )
+}
+
+/// Validates the depositor's own exact pair once the escrow has settled
+/// ([`escrow_settled`]): the prepared transactions at ordered positions under
+/// the observed tip, the agreed program and terms, and one settled metadata
+/// state shared by both facts.
+#[allow(clippy::too_many_arguments)]
+fn validate_settled_own_pair<E: std::error::Error + 'static>(
+    agreement: &ZecAgreementV1,
+    terms: &NativeEscrowTerms,
+    target: &EscrowObservationTarget,
+    response: &ObserveEscrowResult,
+    initialization: &InitializationFoundFacts,
+    funding: &FundingFoundFacts,
+    prepared_initialize: &PreparedFirstLockSubmissionV1,
+    prepared_fund: &PreparedFirstLockSubmissionV1,
+) -> Result<(), ObserveNativeEscrowError<E>> {
+    let EscrowObservationTarget::Exact {
+        initialization_transaction_id,
+        funding_transaction_id,
+    } = target
+    else {
+        return Err(ObserveNativeEscrowError::InconsistentFacts);
+    };
+    validate_prepared_pair(initialization, funding, prepared_initialize, prepared_fund)?;
+    let init = &initialization.transaction;
+    let fund = &funding.transaction;
+    let depositor = Hex32::from_bytes(*agreement.lez_account(agreement.lez_depositor()));
+    let expected_signers = AccountIds::new(vec![depositor]).expect("one signer is bounded");
+    let escrow_program =
+        Hex32::from_bytes(program_id_bytes(agreement.lez_terms().escrow_program_id()));
+    let expected_metadata = native_metadata_facts_for_agreement(
+        agreement,
+        Hex32::from_bytes(*agreement.lez_terms().metadata_account()),
+        escrow_program,
+        Hex32::from_bytes(*agreement.lez_terms().custody_account()),
+        terms,
+        funding.metadata.status,
+    );
+    let same_height_different_blocks = init.position.height == fund.position.height
+        && init.position.block_hash != fund.position.block_hash;
+    if init.transaction_id != *initialization_transaction_id
+        || fund.transaction_id != *funding_transaction_id
+        || !escrow_settled(funding)
+        || !init.is_public
+        || !fund.is_public
+        || init.signer_account_ids != expected_signers
+        || fund.signer_account_ids != expected_signers
+        || initialization.instruction.program_id != escrow_program
+        || initialization.instruction.terms != *terms
+        || funding.instruction.program_id != escrow_program
+        || funding.instruction.swap_id != terms.swap_id()
+        || initialization.metadata != expected_metadata
+        || funding.metadata != expected_metadata
+        || (init.position.height, init.position.transaction_index)
+            >= (fund.position.height, fund.position.transaction_index)
+        || fund.position.height > response.tip_after.height
+        || same_height_different_blocks
     {
         return Err(ObserveNativeEscrowError::InconsistentFacts);
     }
