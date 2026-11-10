@@ -41,11 +41,15 @@
 # and runtime/zec/current names the run id. Every corridor is pinned to the
 # chain it was provisioned on: after `up.sh --fresh-lez`, run this again.
 #
-#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add] [--direction TakerSellsLez|TakerSellsForeign]
+#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add] [--direction TakerSellsLez|TakerSellsForeign] [--profile ID]
 #     --no-restart        steps 1-7 only (the Nodes keep running; the material
 #                         is picked up on their next recreate)
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
 #                         chain); the caller vouches for finality
+#     --profile ID        the agreement's ZEC refund profile (zec-swap-sdk
+#                         profile.rs): deterministic-local-devnet-v3 (12 min
+#                         LEZ refund delay) by default, -v4 (4 min) for the
+#                         refund journeys, which never claim
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a
@@ -59,6 +63,7 @@ CHAIN_CHECK=1
 SWAPS=1
 ADD=0   # --add: a second corridor ("-b") beside the live one, with its own Zcash anchor; the catalog lists both
 DIRECTION=TakerSellsLez   # --direction: who sells what; TakerSellsForeign funds the Taker's Zcash key first
+PROFILE=deterministic-local-devnet-v3   # --profile: the LEZ escrow's validity window ends at its refund time
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
@@ -66,7 +71,8 @@ while [[ $# -gt 0 ]]; do
     --swaps) SWAPS="$2"; shift 2 ;;
     --add) ADD=1; shift ;;
     --direction) DIRECTION="$2"; shift 2 ;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    --profile) PROFILE="$2"; shift 2 ;;
+    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -95,6 +101,12 @@ case "$DIRECTION" in
   TakerSellsLez) SPEC_DIRECTION=taker_sells_lez ;;
   TakerSellsForeign) SPEC_DIRECTION=taker_sells_foreign ;;
   *) echo "zec-provision failed: --direction must be TakerSellsLez or TakerSellsForeign" >&2; exit 64 ;;
+esac
+# The devnet profiles a corridor may name (local_poc.rs LocalPocProfile); the
+# test lane's 60 s LEZ refund delay cannot be met on a chain that finalizes.
+case "$PROFILE" in
+  deterministic-local-devnet-v3|deterministic-local-devnet-v4) ;;
+  *) echo "zec-provision failed: --profile must be deterministic-local-devnet-v3 or -v4" >&2; exit 64 ;;
 esac
 # Each role's Zcash key is minted beside its LEZ identity (gen-config.sh); the
 # Maker's is also its Delivery signing key and zebra's miner address.
@@ -279,14 +291,16 @@ done
 finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' "$INDEXER_URL" |
   python3 -c 'import json,sys; print(int(json.load(sys.stdin)["result"]))')" || fail "indexer unavailable"
-# The actors scan LEZ from start_height for max_blocks (<= 4096, ~90 min
-# here): the lock they look for happens after this provisioning.
+# The actors scan LEZ from start_height for max_blocks (<= 4096: 11 h of
+# 10 s blocks, 68 min of 1 s ones, so a swap's LEZ steps must fall inside
+# that from provisioning): the lock they look for happens after this
+# provisioning. The 32 blocks back cover the finality lag at provisioning.
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
@@ -297,7 +311,7 @@ spec = {
     "schema_version": 1, "run_id": run_id, "swap_id": swap_id, "direction": direction,
     # The LEZ escrow's validity window ends at the agreement's LEZ refund time;
     # the test-lane profile's 60 s cannot be met here (zec-swap-sdk profile.rs).
-    "profile": "deterministic-local-devnet-v3",
+    "profile": profile,
     "lez_runtime": {
         "chain_id": channel, "channel_id": channel, "genesis_block_hash": genesis,
         "escrow_program_id": escrow,

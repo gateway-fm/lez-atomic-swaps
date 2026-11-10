@@ -92,9 +92,13 @@ jq -e '
 # Nodes back to `local`.
 previous_timing_profile=""
 previous_actor_trace=""
+previous_lez_timing=()
 if [[ -s "$RUNTIME/runtime.env" ]]; then
   previous_timing_profile="$(sed -n 's/^LEZ_TIMING_PROFILE=//p' "$RUNTIME/runtime.env" | head -1)"
   previous_actor_trace="$(sed -n 's/^LEZ_BTC_ACTOR_TRACE=//p' "$RUNTIME/runtime.env" | head -1)"
+  for key in LEZ_LEZ_BLOCK_SECONDS LEZ_LEZ_STEP_SECONDS LEZ_LEZ_STALL_SECONDS; do
+    previous_lez_timing+=("$(sed -n "s/^$key=//p" "$RUNTIME/runtime.env" | head -1)")
+  done
 fi
 
 # Bedrock starts from upstream's genesis, however old, with two devnet changes.
@@ -357,20 +361,52 @@ rm -f "$RUNTIME/runtime.env"
 # two minutes on `local`; `fast` mines every 20 s, since every confirmation a
 # swap waits for is one miner interval (a scenario that needs a transaction to
 # stay unconfirmed stops the miner).
-# The last value is the LEZ discovery window in blocks: a Maker lock can only
-# appear before the cutoff, and a refund asserts its absence only once that
-# whole window is finalized, so the window must cover the cutoff at the fastest
-# pace the devnet can make LEZ blocks (one a second: the fast 240 s = 240 blocks)
-# and nothing more than needed. Bedrock includes one about every 2.2 s, so the
-# fast window's 300 blocks are ~11 minutes of wall clock.
+# The sixth value is the LEZ discovery window, in seconds here and in blocks
+# in runtime.env: a Maker lock can only appear before the cutoff, and a
+# refund asserts its absence only once that whole window is finalized, so the
+# window must cover the cutoff at the fastest pace the devnet can make LEZ
+# blocks, LEZ_LEZ_BLOCK_SECONDS (the sequencer's block_create_timeout, 1 s:
+# the fast 240 s = 240 blocks), and nothing more than needed. Bedrock includes
+# one about every 2.2 s, so the fast window's 300 blocks are ~11 minutes of
+# wall clock. A faster pace than observed cannot make a window too short: the
+# sequencer never makes blocks faster than its timeout, and the window is
+# counted at that pace; a slower one only makes it longer in wall clock.
+#
+# `refund` is the devnet's refund scenarios' profile (regress.sh switches to it
+# for them), derived from the LEZ chain's measured step latency rather than
+# fixed: LEZ_LEZ_STEP_SECONDS is one LEZ step as the counterpart Node sees it
+# (submit, inclusion, finality, the Nodes' polling: the Taker's observer sweeps
+# every 15 s, the Maker's actor is requeued every 5 s), LEZ_LEZ_STALL_SECONDS
+# the finality stall a step must survive. Nobody claims, so:
+#   cutoff  = 2 steps (the Taker's lock, then the Maker's) + 20 s of desk + stall
+#   earlier = cutoff + margin       (the least the agreement accepts)
+#   second-lock CSV = earlier + margin, in 5 s regtest blocks
+#   later   = cutoff + second-lock CSV + margin   (the least the order allows)
+#   first-lock CSV  = later, in blocks; discovery window = cutoff + 30 s
+# A block every 5 s keeps Bitcoin's median time, the clock a Bitcoin cutoff is
+# read on, within ~30 s of the wall clock.
 timing_profile="${LEZ_TIMING_PROFILE:-$previous_timing_profile}"
 [[ -n "${LEZ_TIMING_PROFILE:-}" || -z "$timing_profile" ]] || echo "reusing existing timing profile ${timing_profile}"
 timing_profile="${timing_profile:-local}"
+lez_block_seconds="${LEZ_LEZ_BLOCK_SECONDS:-${previous_lez_timing[0]:-1}}"
+lez_step_seconds="${LEZ_LEZ_STEP_SECONDS:-${previous_lez_timing[1]:-20}}"
+lez_stall_seconds="${LEZ_LEZ_STALL_SECONDS:-${previous_lez_timing[2]:-30}}"
+for v in "$lez_block_seconds" "$lez_step_seconds" "$lez_stall_seconds"; do
+  [[ "$v" =~ ^[1-9][0-9]*$ ]] || { echo "LEZ_LEZ_BLOCK_SECONDS, LEZ_LEZ_STEP_SECONDS and LEZ_LEZ_STALL_SECONDS must be positive integers" >&2; exit 1; }
+done
 case "$timing_profile" in
-  local) timing=(60 1800 3600 7200 300 3600 33 120 120) ;;
-  fast)  timing=(42 240 420 840 60 300 24 20 20) ;;
-  *) echo "LEZ_TIMING_PROFILE must be local or fast" >&2; exit 1 ;;
+  local)  timing=(60 1800 3600 7200 300 3600 33 120 120) ;;
+  fast)   timing=(42 240 420 840 60 300 24 20 20) ;;
+  refund)
+    cutoff=$(( 2 * lez_step_seconds + 20 + lez_stall_seconds )); margin=15; block=5
+    earlier=$(( cutoff + margin ))
+    second=$(( (earlier + margin + block - 1) / block ))
+    later=$(( cutoff + second * block + margin ))
+    timing=($(( (later + block - 1) / block )) "$cutoff" "$earlier" "$later" "$margin" $(( cutoff + 30 )) "$second" "$block" "$block")
+    echo "refund timing: cutoff ${cutoff} s, refunds at ${earlier} and ${later} s (LEZ step ${lez_step_seconds} s, stall ${lez_stall_seconds} s)" ;;
+  *) echo "LEZ_TIMING_PROFILE must be local, fast or refund" >&2; exit 1 ;;
 esac
+timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
 printf '%s\n' \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
   "LEZ_HOST_GID=$(id -g)" \
@@ -385,6 +421,9 @@ printf '%s\n' \
   "LEZ_BTC_LATER_REFUND_SECONDS=${timing[3]}" \
   "LEZ_BTC_REFUND_MARGIN_SECONDS=${timing[4]}" \
   "LEZ_LEZ_DISCOVERY_MAX_BLOCKS=${timing[5]}" \
+  "LEZ_LEZ_BLOCK_SECONDS=$lez_block_seconds" \
+  "LEZ_LEZ_STEP_SECONDS=$lez_step_seconds" \
+  "LEZ_LEZ_STALL_SECONDS=$lez_stall_seconds" \
   "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \

@@ -22,8 +22,12 @@
 # line per try), logs/ (each try's output), e2e/ and zec/ (the evidence the
 # scenarios export). Exit status 0 when every test has a passing try.
 #
-# Needs the stack up on the fast timing profile (LEZ_TIMING_PROFILE=fast
-# scripts/up.sh), as the refund scenarios do.
+# Needs the stack up on the fast or the refund timing profile
+# (LEZ_TIMING_PROFILE=fast scripts/up.sh). The Bitcoin refund scenarios run on
+# `refund`, every other Bitcoin test on `fast` (gen-config.sh); before a test
+# that wants the other one, up.sh switches the profile (runtime.env, both Nodes
+# and the miner recreated, the chain kept). A ZEC test runs on either: its
+# windows come from the corridor's agreement.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
@@ -72,7 +76,7 @@ case "$mode" in
   smoke|refunds|full) mapfile -t tests < <(tier_tests "$mode") ;;
   list) tier_tests "${1:-full}"; exit ;;
   run) tests=("$@"); [[ ${#tests[@]} -gt 0 ]] || { echo "run needs at least one test" >&2; exit 64; } ;;
-  *) sed -n 2,23p "${BASH_SOURCE[0]}"; exit 64 ;;
+  *) sed -n 2,28p "${BASH_SOURCE[0]}"; exit 64 ;;
 esac
 
 out="${LEZ_REGRESS_OUT:-runtime/regress/$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -138,6 +142,25 @@ watched() {
   done
   wait "$pid"
 }
+profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile the test needs, empty for either
+  local kind pair scenario direction
+  IFS=: read -r kind pair scenario direction <<<"$1"
+  [[ "$pair" == btc ]] || return 0
+  case "$scenario" in taker-refund|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
+}
+switches=0
+use_profile() { # use_profile <profile>: switch the standing stack to it unless it runs on it already
+  [[ -n "$1" && "$1" != "$LEZ_TIMING_PROFILE" ]] || return 0
+  switches=$((switches + 1))
+  log "    timing profile $LEZ_TIMING_PROFILE -> $1 (logs/profile-$switches.log)"
+  if ! LEZ_TIMING_PROFILE="$1" SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh >"$out/logs/profile-$switches.log" 2>&1 </dev/null; then
+    # up.sh on a frozen chain cannot finish; a new chain takes the profile too
+    log "    up.sh did not switch the profile; a new chain on $1"
+    fresh_chain LEZ_TIMING_PROFILE="$1" || return 1
+  fi
+  load_env
+  [[ "$LEZ_TIMING_PROFILE" == "$1" ]] || { log "    runtime.env still names profile $LEZ_TIMING_PROFILE"; return 1; }
+}
 command_of() { # command_of <kind> <pair> <scenario> <direction>
   local pair=(); [[ "$2" == zec ]] && pair=(--pair Zcash)
   if [[ "$1" == node ]]; then echo python3 scripts/node-e2e.py "${pair[@]}" --direction "$4" "$3"
@@ -150,6 +173,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
   IFS=: read -r kind pair scenario direction <<<"$1"
   [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
     { log "=== $1: not a test (<node|ui>:<btc|zec>:<scenario>:<direction>)"; return 64; }
+  use_profile "$(profile_of "$1")" || return 2
   for (( try = 1; try <= tries; try++ )); do
     fresh=0
     if [[ "$scenario" == zec-balance-refusal ]]; then
@@ -190,16 +214,16 @@ run_test() { # run_test <kind:pair:scenario:direction>
 }
 
 load_env
-[[ "${LEZ_TIMING_PROFILE:-local}" == fast ]] || { echo "the regression needs the fast timing profile: LEZ_TIMING_PROFILE=fast scripts/up.sh" >&2; exit 1; }
+[[ "${LEZ_TIMING_PROFILE:-local}" =~ ^(fast|refund)$ ]] || { echo "the regression needs the fast or the refund timing profile: LEZ_TIMING_PROFILE=fast scripts/up.sh" >&2; exit 1; }
 began="$(date +%s)"; failed=()
 log "regression ${mode}: ${#tests[@]} tests at $(git rev-parse --short HEAD 2>/dev/null || echo '?') (tree dirty: $(git status --short 2>/dev/null | wc -l)), results in $out"
-log "profile: a Bitcoin block every ${MINE_INTERVAL:-?} s; Maker cutoff ${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS} s, refunds at ${LEZ_BTC_EARLIER_REFUND_SECONDS} and ${LEZ_BTC_LATER_REFUND_SECONDS} s"
+log "profile $LEZ_TIMING_PROFILE: a Bitcoin block every ${MINE_INTERVAL:-?} s; Maker cutoff ${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS} s, refunds at ${LEZ_BTC_EARLIER_REFUND_SECONDS} and ${LEZ_BTC_LATER_REFUND_SECONDS} s"
 for t in "${tests[@]}"; do
   run_test "$t"; rc=$?
   if (( rc == 2 )); then log "no LEZ chain could be started; stopping"; failed+=("$t"); break; fi
   (( rc == 0 )) || failed+=("$t")
 done
 passed=$(( ${#tests[@]} - ${#failed[@]} ))
-log "regression ${mode}: $passed of ${#tests[@]} passed in $(( ($(date +%s) - began) / 60 )) min, $chains new chains, $(awk -F'\t' '$3 == "FROZEN"' "$out/results.tsv" 2>/dev/null | wc -l) frozen tries"
+log "regression ${mode}: $passed of ${#tests[@]} passed in $(( ($(date +%s) - began) / 60 )) min, $chains new chains, $switches profile switches, $(awk -F'\t' '$3 == "FROZEN"' "$out/results.tsv" 2>/dev/null | wc -l) frozen tries"
 for t in "${failed[@]}"; do log "  not passed: $t"; done
 [[ ${#failed[@]} -eq 0 ]]

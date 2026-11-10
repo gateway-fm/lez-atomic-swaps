@@ -285,13 +285,24 @@ self-hosted `lez-stack` runner).
 | `taker-refund` | the Maker never funds; after the cutoff and CSV maturity the Taker refunds its Bitcoin; the Maker reconciles |
 | `maker-refund` | the Taker never claims; the Maker refunds LEZ after `refund_at`, then the Taker refunds Bitcoin |
 
-The refund scenarios need the `fast` timing profile:
+The refund scenarios need the `refund` timing profile (they also run on `fast`,
+only slower); `regress.sh` switches to it by itself and back to `fast` for the
+other Bitcoin tests:
 
 ```sh
-LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # a block every 20 s; 42 and 24 CSV blocks; 240/420/840 s deadlines, 60 s margin; 300-block LEZ window
-docker compose --env-file runtime/runtime.env up -d --no-deps --force-recreate maker-node taker-node
+LEZ_TIMING_PROFILE=refund ./scripts/up.sh     # a block every 5 s; 45 and 24 CSV blocks; 90/105/225 s deadlines, 15 s margin; 120-block LEZ window
 ./scripts/node-e2e.py taker-refund
 ```
+
+`refund` follows from the LEZ chain's step latency instead of fixed numbers
+(`gen-config.sh`): the cutoff is two LEZ steps (`LEZ_LEZ_STEP_SECONDS`, 20 s
+on the 1 s devnet: ~5 s to finality plus the Nodes' polling) plus 20 s of desk
+and a finality stall (`LEZ_LEZ_STALL_SECONDS`, 30 s); earlier = cutoff +
+margin; the later refund is the least the refund order below allows; the LEZ
+window is the cutoff plus 30 s in blocks of the fastest LEZ pace
+(`LEZ_LEZ_BLOCK_SECONDS`, 1). On the old 10 s chain the same rule with
+`LEZ_LEZ_BLOCK_SECONDS=10 LEZ_LEZ_STEP_SECONDS=45 LEZ_LEZ_STALL_SECONDS=70`
+gives a 180 s cutoff, refunds at 195 and 405 s and a 21-block window. The values are kept across reruns like the profile.
 
 `local` (the default) keeps network-like deadlines: a 30-minute Maker cutoff,
 60- and 120-minute refund bounds, a 3600-block LEZ discovery window. The profile
@@ -315,8 +326,8 @@ Node **refuses to start** on a profile that breaks any of three rules:
   still claim the Bitcoin.
 
 `local` uses 60 and 33 blocks at the regtest miner's 120 s, `fast` 42 and 24 at
-20 s (the profile sets the miner's pace, `MINE_INTERVAL`); regtest still mines
-past a delay on demand.
+20 s, `refund` 45 and 24 at 5 s (the profile sets the miner's pace,
+`MINE_INTERVAL`); regtest still mines past a delay on demand.
 
 The LEZ discovery window sets how soon a refund can start when the Maker never
 locks: the Taker asserts the Maker lock's absence only once every block of the
@@ -422,7 +433,7 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 |---|---|---|
 | `bitcoin-core` | `images/bitcoin-core` | official Core 31.1 binaries (from the checksum/Guix-verified archive used by the repo's e2e flow), digest-pinned Chainguard `glibc-dynamic`, `txindex=1` + `txospenderindex=1` (the actors' lock observation needs the spender index), healthchecked, settlement-chain labels |
 | `bitcoin-init` | debian | one-shot datadir chown to the nonroot runtime uid |
-| `btc-miner` | `images/btc-miner` | regtest coinbase miner over JSON-RPC, `MINE_INTERVAL` from the timing profile (120 s on `local`, 20 s on `fast`); a scenario that needs a transaction unconfirmed stops it |
+| `btc-miner` | `images/btc-miner` | regtest coinbase miner over JSON-RPC, `MINE_INTERVAL` from the timing profile (120 s on `local`, 20 s on `fast`, 5 s on `refund`); a scenario that needs a transaction unconfirmed stops it |
 | `btc-explorer` | `images/btc-explorer` | btc-rpc-explorer 3.4.0, patched for an exhausted regtest halving schedule (post-era subsidy is 0; upstream returns `undefined` and 500s the homepage) |
 | `bedrock` | pinned multi-arch digest `91d6c5…` | LEZ v0.2 consensus node (exact pin from the repo's compose) |
 | `sequencer` / `indexer` | `images/lez-services` | built from pinned `logos-execution-zone` v0.2.0 (a58fbce), native rebuild + arm64 r0vm |

@@ -193,7 +193,7 @@ ensure_coins() { # ensure_coins <wallet> <count>: two concurrent swaps need two 
   btc generatetoaddress 1 bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6 >/dev/null
   sleep 3
 }
-require_fast() { [[ "${LEZ_TIMING_PROFILE:-local}" == fast ]] || fail "this scenario needs LEZ_TIMING_PROFILE=fast (scripts/up.sh)"; }
+require_fast() { [[ "${LEZ_TIMING_PROFILE:-local}" =~ ^(refund|fast)$ ]] || fail "this scenario needs LEZ_TIMING_PROFILE=refund or fast (scripts/up.sh)"; }
 
 # ---- desk steps -----------------------------------------------------------------
 publish() { step "Maker desk publishes $direction offers until two are pending" maker; }
@@ -264,9 +264,12 @@ export_evidence() { # export_evidence <swap_id>
   fi
 }
 # ---- ZEC host-side steps (the Node offers only claim/refund for ZEC) ----------------
-zec_provision() { # zec_provision [swaps]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
-  log "provisioning a ZEC corridor with ${1:-1} prepared swap(s) (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" 2>&1 | tail -4 | sed 's/^/   /'
+# The refund journeys' ZEC profile (zec-swap-sdk profile.rs, node-e2e.py
+# ZEC_REFUND_PROFILE): a 4-minute LEZ refund delay, as nobody claims there.
+zec_refund_profile=deterministic-local-devnet-v4
+zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
+  log "provisioning a ZEC corridor with ${1:-1} prepared swap(s)${2:+ under $2} (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
+  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" ${2:+--profile "$2"} 2>&1 | tail -4 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh"
   wait_healthy lez-maker-node; wait_healthy lez-taker-node
   # The desk shows the corridor's lot; verify.mjs asserts the amounts it is given.
@@ -330,7 +333,7 @@ wait_until_unix() { # wait_until_unix <unix seconds> <what for>
   local now; now="$(date -u +%s)"
   (( now >= $1 )) && return 0
   log "waiting $(( $1 - now ))s $2"
-  while (( $(date -u +%s) < $1 )); do sleep 15; done
+  while (( $(date -u +%s) < $1 )); do sleep 2; done
 }
 # ---- scenarios ------------------------------------------------------------------
 scenario_happy() {
@@ -523,7 +526,7 @@ scenario_zec_concurrent_staggered() {
 scenario_zec_maker_refund() {
   # Both legs locked, the Maker's Zcash funding kept at one confirmation (below
   # the pre-reveal gate), the Taker refunds LEZ from its desk at the agreement's
-  # refund time (the profile's delay after provisioning: 12 min on the devnet V3), the Maker
+  # refund time (the profile's delay after provisioning: 4 min on the devnet V4), the Maker
   # Node refunds its Zcash at the refund height, the Taker Node's supervisor runs the
   # admitted refund on its own until it has observed that; both desks show the
   # swap refunded. One press of Refund; no Retry.
@@ -534,7 +537,7 @@ scenario_zec_maker_refund() {
     bash scripts/reset-swaps.sh --abandon-open >/dev/null 2>&1 || fail "reset-swaps.sh"
     wait_healthy lez-maker-node; wait_healthy lez-taker-node
   fi
-  zec_provision; take swap
+  zec_provision 1 "$zec_refund_profile"; take swap
   note "The Taker Node drives the LEZ lock on its own; the Maker Node funds Zcash, and zebra is mined only for what waits in the mempool, so the funding stays one block deep and the Maker cannot claim yet"
   python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to both_legs_locked"
@@ -578,7 +581,7 @@ scenario_zec_survivor() {
   export_evidence "$swap"
 }
 scenario_zec_taker_refund() {
-  local swap; zec_provision; take swap
+  local swap; zec_provision 1 "$zec_refund_profile"; take swap
   note "The Maker Node observes the Taker's first lock and is stopped before it can lock its own leg; the Taker must recover its funds"
   zec_step "$swap" maker-down-after-first-lock 1500; stopped_node=lez-maker-node
   zec_step "$swap" refund-point
@@ -595,7 +598,7 @@ scenario_zec_maker_refund_foreign() {
   # Selling ZEC: both legs locked, the Taker never presses its LEZ claim; at the
   # LEZ refund time the Maker refunds its LEZ escrow, then the Taker presses
   # Refund in the claim window and its Zcash comes back at the refund height.
-  local swap maker_pid; zec_provision; take swap
+  local swap maker_pid; zec_provision 1 "$zec_refund_profile"; take swap
   maker_wait_bg maker_pid awaiting_taker_claim "$swap"
   desk_head_start
   zec_wait "$swap" claim_available
@@ -617,7 +620,7 @@ scenario_zec_stale_window() {
   # escrow and the Taker's Zcash refund lands at the refund height.
   local swap maker_pid
   [[ "$direction" == TakerSellsForeign ]] || fail "zec-stale-window is the selling-ZEC journey (--direction TakerSellsForeign)"
-  zec_provision; take swap
+  zec_provision 1 "$zec_refund_profile"; take swap
   maker_wait_bg maker_pid awaiting_taker_claim "$swap"
   desk_head_start
   zec_wait "$swap" claim_available
