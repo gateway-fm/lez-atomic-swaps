@@ -49,6 +49,19 @@ heartbeat_echo_account_id="$(wallet_account_id heartbeat-echo-02 "")"
 heartbeat_allocation=0
 if [[ -n "$heartbeat_pulse_account_id" && -n "$heartbeat_echo_account_id" ]]; then heartbeat_allocation=100000; fi
 readonly heartbeat_pulse_account_id heartbeat_echo_account_id heartbeat_allocation
+# Regression lanes 3..9 (scripts/lane.sh) settle as wallets of their own,
+# maker-laneNN and taker-laneNN, funded like the market wallets once their
+# identities exist (scripts/lanes.sh mint); lane 2 uses basel/limmat above.
+lane_genesis="[]"
+for lane in 3 4 5 6 7 8 9; do
+  for wallet in "$(printf 'maker-lane%02d' "$lane")" "$(printf 'taker-lane%02d' "$lane")"; do
+    account="$(wallet_account_id "$wallet" "")"
+    [[ -n "$account" ]] || continue
+    lane_genesis="$(jq -c --arg account "$account" --argjson amount "$wallet_maker_allocation" \
+      '. + [{"supply_account": {"account_id": $account, "balance": $amount}}]' <<<"$lane_genesis")"
+  done
+done
+readonly lane_genesis
 heartbeat_seconds="${LEZ_HEARTBEAT_SECONDS:-20}"
 heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-60}"
 [[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_stall_seconds" =~ ^[0-9]+$ ]] || { echo "LEZ_HEARTBEAT_SECONDS and LEZ_HEARTBEAT_STALL_SECONDS must be integers" >&2; exit 1; }
@@ -272,6 +285,7 @@ jq --arg channel "$channel_id" --arg funding "$funding_key" --argjson priority_f
   --argjson wallet_taker_amount "$wallet_taker_allocation" \
   --arg pulse "$heartbeat_pulse_account_id" --arg echo "$heartbeat_echo_account_id" \
   --argjson heartbeat_amount "$heartbeat_allocation" \
+  --argjson lanes "$lane_genesis" \
   '.home = "/var/lib/sequencer_service"
    | .bedrock_config.node_url = "http://bedrock:18080"
    | .bedrock_config.channel_id = $channel
@@ -290,13 +304,14 @@ jq --arg channel "$channel_id" --arg funding "$funding_key" --argjson priority_f
      ] + (if $heartbeat_amount > 0 then [
        {"supply_account": {"account_id": $pulse, "balance": $heartbeat_amount}},
        {"supply_account": {"account_id": $echo, "balance": $heartbeat_amount}}
-     ] else [] end)' \
+     ] else [] end) + $lanes' \
   "$LEZ_SOURCE/sequencer-config/sequencer_config.json" \
   >"$RUNTIME/config/sequencer_config.json"
 
 jq -e --arg channel "$channel_id" '.channel_id == $channel' "$RUNTIME/config/indexer_config.json" >/dev/null
 jq -e --arg channel "$channel_id" '.bedrock_config.channel_id == $channel' "$RUNTIME/config/sequencer_config.json" >/dev/null
 expected_genesis_accounts=6; (( heartbeat_allocation > 0 )) && expected_genesis_accounts=8
+expected_genesis_accounts=$(( expected_genesis_accounts + $(jq length <<<"$lane_genesis") ))
 [[ "$(jq -r '.genesis | length' "$RUNTIME/config/sequencer_config.json")" == "$expected_genesis_accounts" ]]
 [[ "$(jq -r '[.genesis[].supply_account.account_id] | unique | length' \
   "$RUNTIME/config/sequencer_config.json")" == "$expected_genesis_accounts" ]]

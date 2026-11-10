@@ -16,6 +16,10 @@
 #                                  lanes 2..N removed; --wipe also their volumes
 #                                  and runtime/lanes/<k>
 #   scripts/lanes.sh status <N>
+#   scripts/lanes.sh mint <N>      the market wallets of lanes 3..N, minted into the
+#                                  market root when missing (the tools image); the
+#                                  next LEZ chain funds them (gen-config.sh,
+#                                  market-bootstrap.sh): up.sh --fresh-lez
 #
 # up.sh calls stop and up around a new LEZ chain when LEZ_LANES > 1, so one
 # chain serves every lane. Lanes come up side by side; each logs to
@@ -23,8 +27,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 command="${1:-}"; count="${2:-}"
-[[ "$command" =~ ^(up|stop|down|status)$ && "$count" =~ ^[1-9]$ ]] ||
-  { sed -n 2,22p "${BASH_SOURCE[0]}"; exit 64; }
+[[ "$command" =~ ^(up|stop|down|status|mint)$ && "$count" =~ ^[1-9]$ ]] ||
+  { sed -n 2,26p "${BASH_SOURCE[0]}"; exit 64; }
 wipe=0; [[ "${3:-}" != --wipe ]] || wipe=1
 set -a
 # shellcheck source=/dev/null
@@ -51,11 +55,15 @@ owner_ready() { # owner_ready <role> <method> <params>: the Node's own owner cal
 # One lane, in a subshell with its names (lane.sh: lane_compose and the LEZ_* names).
 # shellcheck disable=SC2154
 lane_up() {
-  local market_root identity wallet
+  local market_root identity wallet balance
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
   for wallet in "$LEZ_LANE_MAKER_WALLET" "$LEZ_LANE_TAKER_WALLET"; do
     identity="$market_root/identities/$wallet/identity.json"
-    [[ -s "$identity" ]] || { log "lane $LEZ_LANE: no $wallet identity in the market root (from-scratch.sh build:identities, then a new chain funds it)"; return 1; }
+    [[ -s "$identity" ]] || { log "lane $LEZ_LANE: no $wallet identity in the market root (scripts/lanes.sh mint $LEZ_LANE, then up.sh --fresh-lez funds it)"; return 1; }
+    balance="$(curl -s --max-time 60 -H 'content-type: application/json' \
+      --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":[\"$(jq -r .account_id "$identity")\"]}" \
+      http://127.0.0.1:8779/ | jq -r '.result.balance // 0')"
+    [[ "${balance:-0}" != 0 ]] || { log "lane $LEZ_LANE: $wallet holds no LEZ on this chain (a chain made before its identity: up.sh --fresh-lez)"; return 1; }
   done
   bash scripts/gen-config.sh runtime || return 1
   # (with their init containers, which own the new volumes to the chains' uid)
@@ -90,6 +98,18 @@ lane_down() {
   (( wipe == 0 )) || rm -rf "$LEZ_LANE_RUNTIME"
   if (( wipe )); then log "lane $LEZ_LANE down, volumes and files wiped"; else log "lane $LEZ_LANE down"; fi
 }
+lane_mint() {
+  local market_root wallet
+  market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
+  for wallet in "$LEZ_LANE_MAKER_WALLET" "$LEZ_LANE_TAKER_WALLET"; do
+    [[ ! -f "$market_root/identities/$wallet/identity.json" ]] || continue
+    log "minting the $wallet identity"
+    rm -rf "${market_root:?}/identities/$wallet"
+    docker compose --env-file runtime/runtime.env --profile tools run --rm --no-deps tools \
+      "lez-v02-local-actor-identity --output-directory /market/identities/$wallet" >/dev/null || return 1
+    cp "$market_root/identities/$wallet/identity.json" "$market_root/identities/$wallet.json"
+  done
+}
 lane_status() {
   local c
   for c in maker-node taker-node bitcoin-core btc-miner zebra; do
@@ -120,5 +140,6 @@ case "$command" in
   stop) for (( k = 2; k <= count; k++ )); do in_lane "$k" lane_stop || status=1; done ;;
   down) for (( k = 2; k <= count; k++ )); do in_lane "$k" lane_down || status=1; done ;;
   status) for (( k = 2; k <= count; k++ )); do in_lane "$k" lane_status; done ;;
+  mint) for (( k = 3; k <= count; k++ )); do in_lane "$k" lane_mint || status=1; done ;;
 esac
 exit "$status"

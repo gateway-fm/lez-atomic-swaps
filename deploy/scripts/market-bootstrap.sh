@@ -48,11 +48,16 @@ account_balance() {
 : "${LEZ_WALLET_MAKER_ALLOCATION:?LEZ_WALLET_MAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 : "${LEZ_WALLET_TAKER_ALLOCATION:?LEZ_WALLET_TAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 WALLETS=()
+# Regression lanes 3..9 (scripts/lane.sh) settle as wallets of their own; each
+# is claimed like the market wallets when its identity exists (lanes.sh mint).
+lane_wallets=()
+for lane in 3 4 5 6 7 8 9; do lane_wallets+=("$(printf 'maker-lane%02d' "$lane")" "$(printf 'taker-lane%02d' "$lane")"); done
 # The heartbeat's two accounts are claimed like the wallets (the claim tool's
 # --role is a journal label; the heartbeat uses `taker`), with their own
 # allocation, when the identities exist (an older market root has none).
-for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
+for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02 "${lane_wallets[@]}"; do
   identity="$MARKET_ROOT/identities/$wallet/identity.json"
+  [[ "$wallet" != *-lane[0-9][0-9] || -f "$identity" ]] || continue
   if [[ "$wallet" == heartbeat-* && ! -f "$identity" ]]; then echo "$wallet: no identity in this market root; the heartbeat has no account on this chain"; continue; fi
   [[ -f "$identity" ]] || fail "$wallet identity missing: $identity"
   role="${wallet%%-*}"
