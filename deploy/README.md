@@ -523,5 +523,8 @@ external wallets, public networks, or production signing; each Node settles as
 one configured identity. Both Nodes listen only on owner-only Unix sockets; no
 component on the stack holds the host Docker socket. Devnet-only caveat: the
 role keys under `runtime/lez/<role>/` (`lez-signer.key`, `zcash.key`) are
-host copies at mode 0644 so the Nodes' uid can read them through the bind
-mount; each entrypoint re-installs them owner-private in its state volume.
+host copies the Node reads through the bind mount: on Linux at mode 0640 in a
+0750 directory, with the role container carrying the host user's group
+(`group_add`, `LEZ_HOST_GID`); on macOS, where Docker Desktop shares files under
+its own rules, at 0644. Each entrypoint re-installs them owner-private in its
+state volume.

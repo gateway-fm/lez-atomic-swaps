@@ -218,18 +218,24 @@ else
 fi
 chmod 0644 "$RUNTIME/market-bootstrap.env"
 identities_root="${LEZ_WALLET_IDENTITIES:-$market_root/identities}"
+# The role keys reach the Nodes (uid 4713) through a bind mount, which keeps host
+# ownership. On Linux the role container also carries the host user's group
+# (compose.yaml group_add, LEZ_HOST_GID), so the copies are group-readable only;
+# Docker Desktop on macOS shares files under its own access rules, so there they
+# stay world-readable (README, devnet caveat).
+if [[ "$(uname -s)" == Linux ]]; then key_mode=0640 key_dir_mode=0750; else key_mode=0644 key_dir_mode=0755; fi
 for pair in maker:maker-munich-01 taker:taker-zurich-01; do
   role="${pair%%:*}"; wallet="${pair##*:}"
   mkdir -p "$RUNTIME/lez/$role"
-  chmod 0755 "$RUNTIME/lez/$role"
+  chmod "$key_dir_mode" "$RUNTIME/lez/$role"
   if [[ -n "$identities_root" && -f "$identities_root/$wallet/lez-signer.key" ]]; then
     cp "$identities_root/$wallet/lez-signer.key" "$RUNTIME/lez/$role/lez-signer.key"
     cp "$identities_root/$wallet/identity.json" "$RUNTIME/lez/$role/identity.json"
   else
     echo "warning: $wallet identity unavailable; $role Node runs without the Bitcoin lifecycle" >&2
   fi
-  # Bind mounts keep host ownership; the entrypoint copies these owner-private.
-  chmod 0644 "$RUNTIME/lez/$role"/* 2>/dev/null || true
+  # The entrypoint copies these owner-private into the Node's state volume.
+  chmod "$key_mode" "$RUNTIME/lez/$role"/* 2>/dev/null || true
 done
 # Each role's Zcash key, minted once beside its LEZ identity and kept across
 # reruns: the Maker's is also its Delivery signing key (the entrypoint installs
@@ -257,9 +263,9 @@ for role in maker taker; do
     echo "minted the $role Zcash key: runtime/lez/$role/zcash.key"
   fi
 done
-# The identity tool reads owner-private files only; the mounted copy is 0644
-# like lez-signer.key (the entrypoint re-installs it 0600), so derive from a
-# private copy under runtime/secrets.
+# The identity tool reads owner-private files only; the mounted copy is
+# readable by the Node like lez-signer.key (the entrypoint re-installs it 0600),
+# so derive from a private copy under runtime/secrets.
 # (an absolute path: the identity tool refuses a relative key path, and up.sh
 # passes the runtime directory as a relative one)
 # Without the tool (neither staged nor in a built Taker image, e.g. a checkout
@@ -271,7 +277,7 @@ zec_identity_tool_available() {
   command -v docker >/dev/null 2>&1 &&
     docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1
 }
-chmod 0644 "$RUNTIME/lez/maker/zcash.key" "$RUNTIME/lez/taker/zcash.key"
+chmod "$key_mode" "$RUNTIME/lez/maker/zcash.key" "$RUNTIME/lez/taker/zcash.key"
 mkdir -p "$RUNTIME/zebra"
 if zec_identity_tool_available; then
   maker_zcash_private="$(mktemp "$(cd "$RUNTIME" && pwd -P)/secrets/zcash-key.XXXXXX")"
@@ -312,6 +318,7 @@ case "$timing_profile" in
 esac
 printf '%s\n' \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
+  "LEZ_HOST_GID=$(id -g)" \
   "LEZ_TIMING_PROFILE=$timing_profile" \
   "LEZ_BTC_REFUND_CSV_BLOCKS=${timing[0]}" \
   "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS=${timing[6]}" \

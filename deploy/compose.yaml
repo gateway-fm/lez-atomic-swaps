@@ -426,6 +426,8 @@ services:
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     networks: [chains]
     user: "4713:4713"
+    # the host user's group: reads the role keys under runtime/lez (gen-config.sh)
+    group_add: ["${LEZ_HOST_GID:-1000}"]
     init: true
     security_opt: ["no-new-privileges:true"]
     healthcheck:
@@ -529,6 +531,8 @@ services:
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
     networks: [chains]
     user: "4713:4713"
+    # the host user's group: reads the role keys under runtime/lez (gen-config.sh)
+    group_add: ["${LEZ_HOST_GID:-1000}"]
     init: true
     security_opt: ["no-new-privileges:true"]
     healthcheck:
