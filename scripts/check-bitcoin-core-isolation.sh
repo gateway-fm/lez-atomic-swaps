@@ -98,7 +98,7 @@ required_dockerfile_terms=(
   'ARG BITCOIN_CORE_ARCHIVE_SHA256'
   'org.logos-co.atomic-swaps.release-archive-sha256="${BITCOIN_CORE_ARCHIVE_SHA256}"'
   'org.opencontainers.image.licenses="MIT"'
-  'org.logos-co.atomic-swaps.guix-sigs-commit="d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa"'
+  'org.logos-co.atomic-swaps.guix-sigs-commit="f432c43b5fbd6b8355daf36127acb7a73d0308b7"'
   'COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind'
   'COPY --chmod=0555 bin/bitcoin-cli /usr/local/bin/bitcoin-cli'
   'USER 65532:65532'
@@ -122,7 +122,7 @@ required_provenance_terms=(
   'BITCOIN_CORE_ARCHIVE_SHA256=b80d9c3e04da78fb6f0569685673418cf686fadba9042d926d13fb87ff503f9e'
   'BITCOIN_CORE_ARCHIVE_SIZE=90293352'
   'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
-  'BITCOIN_CORE_GUIX_SIGS_COMMIT=d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa'
+  'BITCOIN_CORE_GUIX_SIGS_COMMIT=f432c43b5fbd6b8355daf36127acb7a73d0308b7'
   'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
   'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
 )
@@ -144,7 +144,7 @@ required_aarch64_provenance_terms=(
   'BITCOIN_CORE_ARCHIVE_SHA256=dcf1873f2208ba4f962f3398d47e154c39c0084be8f4553e05c940d0ace3d004'
   'BITCOIN_CORE_ARCHIVE_SIZE=85851107'
   'BITCOIN_CORE_GUIX_SIGS_URL=https://github.com/bitcoin-core/guix.sigs.git'
-  'BITCOIN_CORE_GUIX_SIGS_COMMIT=d9ce4a51f2e72e3bdb59cf39d1de400d60ac05fa'
+  'BITCOIN_CORE_GUIX_SIGS_COMMIT=f432c43b5fbd6b8355daf36127acb7a73d0308b7'
   'BITCOIN_CORE_GUIX_SIGS_RELEASE=31.1'
   'BITCOIN_CORE_RUNTIME_BASE=cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88'
 )
