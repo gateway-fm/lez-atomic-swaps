@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -101,8 +102,11 @@ class ConfigTests(unittest.TestCase):
             subprocess.run(command, env=env, check=True, capture_output=True)
             self.assertEqual(public.read_text(), manifest)
             self.assertEqual(public.stat().st_mode & 0o777, 0o644)
+            # the role keys: group-readable only on Linux (the role container
+            # carries the host user's group), world-readable under Docker Desktop
+            role_mode = 0o750 if sys.platform == 'linux' else 0o755
             for role in ('maker', 'taker'):
-                self.assertEqual((root/'runtime/lez'/role).stat().st_mode & 0o777, 0o755)
+                self.assertEqual((root/'runtime/lez'/role).stat().st_mode & 0o777, role_mode)
             for config in (root/'runtime/config').iterdir():
                 self.assertEqual(config.stat().st_mode & 0o777, 0o644)
 
