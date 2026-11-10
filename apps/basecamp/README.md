@@ -66,7 +66,7 @@ npm run test:m6:basecamp
 
 | Component | Version | Where it is used |
 |---|---|---|
-| Logos Basecamp | `0.2.0` (commit `48b26c0`) | CI integration harness and the Compose `basecamp-ui` desk image |
+| Logos Basecamp | `0.2.0` (commit `48b26c0`) | CI integration harness and the Compose Basecamp image (`basecamp-ui`, the base of each party's Basecamp) |
 | Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from the catalog, below |
 | Logos Chat module | `0.2.2` | pinned by `flake.lock`; the catalog installs the same release |
 | Logos Delivery module | `0.2.0` as pinned by Chat `0.2.2`; `0.2.1` as resolved from the official catalog | Chat's transport dependency |
@@ -85,60 +85,38 @@ flakes carry no lock file; their inputs follow the pinned Chat release's own
 lock. `scripts/check-basecamp-lgx-kit.sh <package.lgx>` confirms a built or
 downloaded archive carries the kit in every variant.
 
-## Native Basecamp on macOS
+## Each party's desk in its own Basecamp
 
-The desks' backends accept one thing: the absolute path of a Unix socket owned
-by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
-`LEZ_TAKER_RPC_SOCKET`. With the Nodes running in the Compose stack, their
-owner sockets live inside the Node containers, and Docker Desktop cannot share
-a container's socket with macOS. `deploy/scripts/desk-sockets.py` bridges them:
-it creates `~/.lez/desks/maker.sock` and `~/.lez/desks/taker.sock` (directory
-`0700`, sockets `0600`, owned by you) and relays each connection into the
-Node's socket with `docker exec lez-<role>-node socat`. It grants no new
-authority: whoever can run `docker exec` can already reach the Nodes.
+In the Compose stack (`deploy/`) each party runs one Basecamp, and that
+Basecamp is where its desk is used: `lez-maker-node` holds the **LEZ Maker**
+desk, `lez-taker-node` the **LEZ Taker** desk. The desk opens when the
+container starts; it hosts the role's LEZ signer in Basecamp's `lez_core`, has
+Basecamp's `lez_swap_node` launch and supervise the role's Node, and talks to
+that Node over its owner socket inside the same container. Nothing else has to
+be started, and no socket leaves the container.
 
 1. Start the stack (`deploy/scripts/up.sh`, or `start.sh` from the release
    bundle) and wait until both Nodes report healthy.
-2. In one terminal, start the bridge and leave it running:
+2. Open each party's Basecamp over VNC (password `lezswap`, or `VNC_PASSWORD`
+   when the stack was started with it):
 
    ```sh
-   deploy/scripts/desk-sockets.py
+   open vnc://127.0.0.1:5901   # the Maker's Basecamp: LEZ Maker
+   open vnc://127.0.0.1:5902   # the Taker's Basecamp: LEZ Taker
    ```
 
-   With no arguments it serves both roles and addresses the containers
-   `lez-maker-node` and `lez-taker-node`. A stack brought up under another
-   Compose project name has another container prefix, so pass it — for a stack
-   whose containers are `r22-lez-maker-node` and `r22-lez-taker-node`:
+   Any VNC client works; both ports listen on the loopback interface only.
+3. On each desk press **Check Node**; it shows **Node ready**. A swap then
+   follows the role-owned action order below, or the per-scenario guides in
+   `docs/evidence/review-2026-09-12/REPRODUCE.md`. `deploy/scripts/ui-e2e.sh`
+   drives the same two desks for the scenario tests.
 
-   ```sh
-   deploy/scripts/desk-sockets.py --prefix r22-lez
-   ```
-
-   `docker ps --format '{{.Names}}'` shows the names to match; `LEZ_CONTAINER_PREFIX`
-   sets the same thing. One role can be served alone by naming it, for example
-   `deploy/scripts/desk-sockets.py maker`.
-
-3. In a second terminal, start Basecamp from its executable so the desks'
-   backends inherit the variables (`open -a` starts the app from launchd, which
-   does not pass them):
-
-   ```sh
-   export LEZ_MAKER_RPC_SOCKET="$HOME/.lez/desks/maker.sock"
-   export LEZ_TAKER_RPC_SOCKET="$HOME/.lez/desks/taker.sock"
-   /Applications/LogosBasecamp.app/Contents/MacOS/LogosBasecamp
-   ```
-
-4. In **Settings → Package Repositories**, add
-   `https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
-   and install **LEZ Maker** and **LEZ Taker**; Chat and Delivery
-   install with them.
-5. Open **LEZ Maker** and press **Check Node**; the desk shows
-   **Node ready**. Do the same on **LEZ Taker**. A swap then follows the
-   role-owned action order below, or the per-scenario guides in
-   `docs/evidence/review-2026-09-12/REPRODUCE.md`.
-
-Running the Node binaries natively on macOS is not supported: the Nodes'
-process hardening is Linux-only.
+The desks' backends accept one thing: the absolute path of a Unix socket owned
+by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
+`LEZ_TAKER_RPC_SOCKET`, so a desk installed into another Basecamp (from the
+catalog, below) needs a Node of its own on the same host. Running the Node
+binaries natively on macOS is not supported: the Nodes' process hardening is
+Linux-only.
 
 ## Install into isolated Basecamp user directories
 

@@ -35,9 +35,9 @@ bool isOwnerSocket(const QByteArray& encodedPath)
 // Dock; neither passes a shell environment, so requiring an exported variable
 // made an ordinary launch fail with "endpoint unavailable" no matter how
 // healthy the Node was. Resolution is therefore environment, then the user's
-// config file, then the conventional path that deploy/scripts/desk-sockets.py
-// already creates. The environment still wins so the Compose desk image keeps
-// pointing at its in-container socket without a config file.
+// config file, then the conventional path ~/.lez/desks/<role>.sock. The
+// environment still wins so each party's Basecamp in the Compose stack keeps
+// pointing at its Node's in-container socket without a config file.
 QByteArray resolveSocketPath(const QString& environmentVariable)
 {
     const QString exported = qEnvironmentVariable(environmentVariable.toUtf8().constData());
