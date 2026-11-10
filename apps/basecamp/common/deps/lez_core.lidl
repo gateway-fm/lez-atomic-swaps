@@ -1,0 +1,13 @@
+; lez_core contract — the subset the desks use to host their role's LEZ signer in
+; Basecamp's lez_core (the LEZ wallet as a Logos module, built with
+; deploy/builder/patches/logos-execution-zone-module). Supplied as a
+; dependency_override (see the role metadata.json). Hand-maintained: keep it in
+; sync with those patches (0002: ensure_wallet, import_public_account,
+; serve_signer).
+module lez_core {
+  version "0.4.1-import.3"
+
+  method ensure_wallet(config_path: tstr, storage_path: tstr, statistics_path: tstr, password: tstr) -> int
+  method import_public_account(private_key_hex: tstr) -> int
+  method serve_signer(socket_path: tstr, account_id_hex: tstr) -> int
+}

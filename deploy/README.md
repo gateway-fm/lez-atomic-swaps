@@ -19,7 +19,7 @@ tar -xzf lez-swap-stack-v0.2.5-arm64.tar.gz && cd lez-swap-stack-v0.2.5-arm64
 ```
 
 `start.sh` mints the four wallet identities into `market/` with the
-`lez-tools` image, brings the stack up through `up.sh` in pull mode
+`lez-wallet-module` image (the `tools` service), brings the stack up through `up.sh` in pull mode
 (`LEZ_IMAGES=pull`), runs the idempotent market bootstrap in one throwaway
 tools container, restarts both Nodes on the recorded escrow deployment and
 runs the Basecamp suites. Rerunning it resumes; `./scripts/down.sh` stops the
@@ -101,8 +101,10 @@ the indexer's finalized height stands still and every swap waits. It happens wit
 any stop or restart and restarting the sequencer does not clear it; it is upstream
 behaviour, not ours, and the epoch cannot be stretched (Bedrock's one leader then runs
 out of notes and stops making blocks). A new chain can die the same way within its
-first minute, so `up.sh --fresh-lez` recreates it again, three times at most, when the
-market bootstrap cannot finish. `node-e2e.py` checks that finality advances before
+first minute, so `up.sh --fresh-lez` watches the new chain's finalized height for
+150 s once it is healthy (`LEZ_FRESH_FINALITY_SECONDS`) and starts another chain at
+once when it stands still, or when the market bootstrap cannot finish; six chains at
+most (`LEZ_FRESH_ATTEMPTS`). `node-e2e.py` checks that finality advances before
 each scenario for the same reason.
 
 `up.sh` ends with the repo-style UI verification (real Basecamp driven through
@@ -242,7 +244,7 @@ self-hosted `lez-stack` runner).
 The refund scenarios need the `fast` timing profile:
 
 ```sh
-LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # 15 and 8 CSV blocks; 600/900/1800 s deadlines, 60 s margin; 120-block LEZ window
+LEZ_TIMING_PROFILE=fast ./scripts/gen-config.sh runtime     # 10 and 6 CSV blocks; 360/600/1200 s deadlines, 60 s margin; 60-block LEZ window
 docker compose --env-file runtime/runtime.env up -d --no-deps --force-recreate maker-node taker-node
 ./scripts/node-e2e.py taker-refund
 ```
@@ -268,14 +270,14 @@ Node **refuses to start** on a profile that breaks any of three rules:
   the Taker's LEZ refund opens, after which the Taker could refund its LEZ and
   still claim the Bitcoin.
 
-`local` uses 60 and 33 blocks, `fast` 15 and 8, both at the regtest miner's
+`local` uses 60 and 33 blocks, `fast` 10 and 6, both at the regtest miner's
 120 s; regtest still mines past a delay on demand.
 
 The LEZ discovery window sets how soon a refund can start when the Maker never
 locks: the Taker asserts the Maker lock's absence only once every block of the
-window is finalized, so a window of 120 blocks at the devnet's 10-second slots
-means the refund becomes eligible about 20 minutes after the take. The window
-must cover the Maker cutoff (60 blocks on the fast profile) with room to spare.
+window is finalized, so the fast profile's 60 blocks at the devnet's 10-second slots
+mean the refund becomes eligible about 10 minutes after the take. The window
+must cover the Maker cutoff (36 blocks on the fast profile, 60 kept) with room to spare.
 
 ## Settlement chains
 
@@ -297,8 +299,9 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
   funds four persistent wallets (Munich, Basel, Zurich, Limmat). Balances
   accumulate across swaps; the UI's wallet ledger shows true opening → closing
   values, not per-run genesis allocations.
-* **Finality heartbeat** (`heartbeat` service, `lez-v02-heartbeat` from the
-  tools image): the pinned Bedrock's finalized height freezes while the
+* **Finality heartbeat** (`heartbeat` service, `lez-wallet-heartbeat` from the
+  lez-wallet-module image: its transfers go through the LEZ wallet as the Logos
+  lez_core module): the pinned Bedrock's finalized height freezes while the
   sequencer keeps publishing (logos-blockchain#3643). The service is the
   **liveness detector**, not a keep-alive: measured on 2026-10-29, chains with
   the heartbeat from genesis froze after 36–56 minutes (controls without it
@@ -328,8 +331,9 @@ The bootstrap runs `scripts/market-bootstrap.sh` in one throwaway container on
 the stack's network with the escrow deployer and the vault-claim tool: the
 `lez-builder:local` image (pulled by the digest in `builder/image.lock`, or
 built locally; see `builder/README.md`) with the tools from `provision/data`
-on a developer host (`from-scratch.sh`), or the published `lez-tools` image
-(compose profile `tools`, `start.sh`). Both tools accept only literal-loopback URLs, so the
+on a developer host (`from-scratch.sh`), or the published `lez-wallet-module` image
+(compose profile `tools`, `start.sh`); the vault claims go through the LEZ wallet
+module (`lez-wallet-vault-claim`) either way. Both tools accept only literal-loopback URLs, so the
 container forwards `127.0.0.1:3040/8779` to `sequencer`/`indexer` for the run.
 
 Chains are never torn down between swaps. Wallet identities and the bootstrap
@@ -380,7 +384,7 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 | `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
 | `maker-node` | `images/maker-node` | Maker-only image (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; the entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints |
 | `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
-| `tools` (profile `tools`) | `images/lez-tools` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault-claim tool and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
+| `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
 | `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass. Both desks read their market from the Nodes (`apps/basecamp/common/node_market.cpp`): offers, takes, the Taker's lock and claim, and the Maker's automatic progress |
 
 The UI reaches the role Nodes through shared named socket volumes mounted
@@ -423,7 +427,8 @@ scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets)
 scripts/btc-miner.sh       regtest mining loop
 images/                    one dir per image (Dockerfile + payloads)
   basecamp-ui/assets/      portable Basecamp bundle, role trees, qt-mcp framework
-  lez-tools/               escrow deployer, vault-claim and identity tools (profile "tools")
+  lez-wallet-module/       the LEZ wallet as the Logos lez_core module: vault claims, heartbeat,
+                           the roles' swap signers; also the escrow deployer and identity tool (profile "tools")
 assets/lez-source/         pinned v0.2.0 config templates (bedrock, sequencer, indexer)
 assets/certified-evidence-m5arm-08180005-ui.json  explorer evidence seed until the first Node swap
 builder/Dockerfile         the ephemeral builder image (docker run --rm only; not on the stack)

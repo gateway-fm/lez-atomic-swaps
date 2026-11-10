@@ -169,13 +169,25 @@ impl SwapSidecar {
                 &runtime_file.to_string_lossy(),
                 "--capability-file",
                 &self.record.capability_file.to_string_lossy(),
-                "--private-key-file",
-                &lez.signer_key_file.to_string_lossy(),
                 "--state-directory",
                 &self.record.state_directory.to_string_lossy(),
                 "--authenticated-transfer-program-id",
                 &lez.authenticated_transfer_program_id,
             ])
+            // The role's signer: its key file, or the LEZ wallet module holding it.
+            .args(match (&lez.signer_key_file, &lez.wallet_signer) {
+                (Some(key), _) => vec![
+                    "--private-key-file".to_owned(),
+                    key.to_string_lossy().into_owned(),
+                ],
+                (None, Some(wallet)) => vec![
+                    "--wallet-signer-socket".to_owned(),
+                    wallet.socket.to_string_lossy().into_owned(),
+                    "--signer-account-id".to_owned(),
+                    wallet.account_id.to_ascii_lowercase(),
+                ],
+                (None, None) => Vec::new(),
+            })
             .stdin(Stdio::null())
             .stdout(Stdio::from(log.try_clone()?))
             .stderr(Stdio::from(log))

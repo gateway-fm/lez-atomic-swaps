@@ -370,3 +370,70 @@ fn the_network_is_configuration_and_mainnet_pairs_only_with_mainnet() {
         assert!(refusal.contains("genesis"), "{bitcoin}: {refusal}");
     }
 }
+
+#[test]
+fn the_lez_signer_is_the_key_file_or_the_wallet_module_holding_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = fs::canonicalize(directory.path()).unwrap().join("role");
+    private_dir(&home);
+    let path = role_config(&home, None);
+    let key_file_owner = BtcRoleRuntime::load(Participant::Taker, &path)
+        .unwrap()
+        .lez_owner_account();
+    let original: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let load = |edit: &dyn Fn(&mut serde_json::Value)| {
+        let mut config = original.clone();
+        edit(&mut config);
+        fs::write(&path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        BtcRoleRuntime::load(Participant::Taker, &path).map_err(|error| format!("{error:#}"))
+    };
+
+    // The wallet module signs for the account it holds: the same owner account
+    // the key file gives, with no key file in the configuration.
+    let wallet = load(&|config| {
+        config["lez"]
+            .as_object_mut()
+            .unwrap()
+            .remove("signer_key_file");
+        config["lez"]["wallet_signer"] = serde_json::json!({
+            "socket": "/run/lez-wallet/taker/signer.sock",
+            "account_id": hex::encode(key_file_owner),
+        });
+    })
+    .expect("a wallet-module signer");
+    assert_eq!(wallet.lez_owner_account(), key_file_owner);
+    assert!(
+        wallet.lez_signer_key().is_err(),
+        "a wallet-module role holds no key"
+    );
+
+    // Exactly one signer.
+    let both = load(&|config| {
+        config["lez"]["wallet_signer"] = serde_json::json!({
+            "socket": "/run/lez-wallet/taker/signer.sock",
+            "account_id": hex::encode(key_file_owner),
+        });
+    })
+    .expect_err("two signers");
+    assert!(both.contains("exactly one"), "{both}");
+    let neither = load(&|config| {
+        config["lez"]
+            .as_object_mut()
+            .unwrap()
+            .remove("signer_key_file");
+    })
+    .expect_err("no signer");
+    assert!(neither.contains("exactly one"), "{neither}");
+    let relative = load(&|config| {
+        config["lez"]
+            .as_object_mut()
+            .unwrap()
+            .remove("signer_key_file");
+        config["lez"]["wallet_signer"] = serde_json::json!({
+            "socket": "run/signer.sock",
+            "account_id": hex::encode(key_file_owner),
+        });
+    })
+    .expect_err("a relative socket");
+    assert!(relative.contains("absolute"), "{relative}");
+}

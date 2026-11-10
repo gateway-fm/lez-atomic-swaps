@@ -1,0 +1,120 @@
+diff --git a/lez/wallet-ffi/src/account.rs b/lez/wallet-ffi/src/account.rs
+index fdbfabc..4f1fb1f 100644
+--- a/lez/wallet-ffi/src/account.rs
++++ b/lez/wallet-ffi/src/account.rs
+@@ -547,6 +547,72 @@ pub unsafe extern "C" fn wallet_ffi_import_public_account(
+     }
+ }
+ 
++/// Sign a 32-byte message hash with the key of a public account this wallet holds.
++///
++/// Writes the account's signature over `message_hash` (the same
++/// `lee::Signature::new` a public transaction's witness carries) and its public
++/// key. It builds, submits and records nothing: for a caller that plans its
++/// own public transaction and needs the witness over that exact message,
++/// `WitnessSet::from_raw_parts(vec![(signature, public_key)])`.
++///
++/// # Parameters
++/// - `handle`: Valid wallet handle
++/// - `account_id`: The public account whose key signs
++/// - `message_hash`: The message hash to sign (`Message::hash`)
++/// - `out_signature`: Output for the 64-byte signature
++/// - `out_public_key`: Output for the account's 32-byte public key
++///
++/// # Returns
++/// - `Success` on successful signing
++/// - `AccountNotFound` when the wallet holds no key for the account
++/// - Error code on failure
++///
++/// # Safety
++/// - `handle` must be a valid wallet handle from `wallet_ffi_create_new` or `wallet_ffi_open`
++/// - `account_id` and `message_hash` must be valid pointers to `FfiBytes32`
++/// - `out_signature` must point to 64 writable bytes and `out_public_key` to a writable `FfiBytes32`
++#[no_mangle]
++pub unsafe extern "C" fn wallet_ffi_sign_public_message_hash(
++    handle: *mut WalletHandle,
++    account_id: *const FfiBytes32,
++    message_hash: *const FfiBytes32,
++    out_signature: *mut [u8; 64],
++    out_public_key: *mut FfiBytes32,
++) -> WalletFfiError {
++    let wrapper = match get_wallet(handle) {
++        Ok(w) => w,
++        Err(e) => return e,
++    };
++
++    if account_id.is_null() || message_hash.is_null() || out_signature.is_null() || out_public_key.is_null() {
++        print_error("Null pointer argument");
++        return WalletFfiError::NullPointer;
++    }
++
++    let wallet = match wrapper.core.lock() {
++        Ok(w) => w,
++        Err(e) => {
++            print_error(format!("Failed to lock wallet: {e}"));
++            return WalletFfiError::InternalError;
++        }
++    };
++
++    let account_id = AccountId::new(unsafe { (*account_id).data });
++    let Some(key) = wallet.get_account_public_signing_key(account_id) else {
++        print_error("No public account key for this account in the wallet");
++        return WalletFfiError::AccountNotFound;
++    };
++    let hash = unsafe { (*message_hash).data };
++    let signature = lee::Signature::new(key, &hash);
++    let public_key = lee::PublicKey::new_from_private_key(key);
++
++    unsafe {
++        *out_signature = signature.value;
++        (*out_public_key).data = *public_key.value();
++    }
++    WalletFfiError::Success
++}
++
+ /// Import a private account keychain and account state into wallet storage.
+ ///
+ /// # Parameters
+diff --git a/lez/wallet-ffi/wallet_ffi.h b/lez/wallet-ffi/wallet_ffi.h
+index bbd7da1..5bb1cd2 100644
+--- a/lez/wallet-ffi/wallet_ffi.h
++++ b/lez/wallet-ffi/wallet_ffi.h
+@@ -539,6 +539,38 @@ void wallet_ffi_free_account_data(struct FfiAccount *account);
+ enum WalletFfiError wallet_ffi_import_public_account(struct WalletHandle *handle,
+                                                      const char *private_key_hex);
+ 
++/**
++ * Sign a 32-byte message hash with the key of a public account this wallet holds.
++ *
++ * Writes the account's signature over `message_hash` (the same
++ * `lee::Signature::new` a public transaction's witness carries) and its public
++ * key. It builds, submits and records nothing: for a caller that plans its
++ * own public transaction and needs the witness over that exact message,
++ * `WitnessSet::from_raw_parts(vec![(signature, public_key)])`.
++ *
++ * # Parameters
++ * - `handle`: Valid wallet handle
++ * - `account_id`: The public account whose key signs
++ * - `message_hash`: The message hash to sign (`Message::hash`)
++ * - `out_signature`: Output for the 64-byte signature
++ * - `out_public_key`: Output for the account's 32-byte public key
++ *
++ * # Returns
++ * - `Success` on successful signing
++ * - `AccountNotFound` when the wallet holds no key for the account
++ * - Error code on failure
++ *
++ * # Safety
++ * - `handle` must be a valid wallet handle from `wallet_ffi_create_new` or `wallet_ffi_open`
++ * - `account_id` and `message_hash` must be valid pointers to `FfiBytes32`
++ * - `out_signature` must point to 64 writable bytes and `out_public_key` to a writable `FfiBytes32`
++ */
++enum WalletFfiError wallet_ffi_sign_public_message_hash(struct WalletHandle *handle,
++                                                        const struct FfiBytes32 *account_id,
++                                                        const struct FfiBytes32 *message_hash,
++                                                        uint8_t (*out_signature)[64],
++                                                        struct FfiBytes32 *out_public_key);
++
+ /**
+  * Import a private account keychain and account state into wallet storage.
+  *

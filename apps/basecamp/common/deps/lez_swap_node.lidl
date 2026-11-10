@@ -1,0 +1,11 @@
+; lez_swap_node contract — the module that launches and supervises the role's
+; Node (the swap engine) inside Basecamp (modules/lez-swap-node). Supplied as a
+; dependency_override (see the role metadata.json). Hand-maintained: keep it in
+; sync with modules/lez-swap-node/src/lez_swap_node_impl.h.
+module lez_swap_node {
+  version "0.1.0"
+
+  method start_node(role: tstr, launcher: tstr, log_file: tstr, hold_file: tstr) -> int
+  method stop_node(role: tstr) -> int
+  method node_status(role: tstr) -> tstr
+}

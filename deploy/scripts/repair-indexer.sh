@@ -14,12 +14,16 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 indexer_url="http://127.0.0.1:8779"
-rpc() { curl -sf -m 10 -H 'content-type: application/json' -d "$1" "$indexer_url"; }
+# A historical read replays from the last breakpoint, so its cost grows with the
+# distance to it: on LEZ v0.2.4 a read 99 blocks past a breakpoint takes ~16 s
+# (indexer_service and the indexer module alike). A shorter limit would call a
+# slow read a broken indexer and re-index a healthy chain.
+rpc() { curl -sf -m "${2:-10}" -H 'content-type: application/json' -d "$1" "$indexer_url"; }
 tip() { rpc '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' | jq -r '.result // empty'; }
 historical_read_ok() {
   local height="$1" account
   account="$(sed -n 's/^LEZ_V02_MAKER_ACCOUNT_ID=//p' runtime/runtime.env)"
-  rpc "$(jq -cn --arg a "$account" --argjson h "$height" '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$a,$h]}')" |
+  rpc "$(jq -cn --arg a "$account" --argjson h "$height" '{jsonrpc:"2.0",id:1,method:"getAccountAtBlock",params:[$a,$h]}')" 60 |
     jq -e '.error == null' >/dev/null 2>&1
 }
 
@@ -44,8 +48,10 @@ docker stop lez-indexer >/dev/null
 backup="runtime/indexer-broken-$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$backup"
 # On Linux these directories belong to the service uid, not the host user.
+# The indexer module keeps its database under its host's persistence path: the
+# Basecamp user directory's module_data (logoscore's persistence path before).
 # Move the derived databases through a short-lived root helper on that mount.
-docker run --rm -v "$PWD/runtime:/runtime" debian:bookworm-slim   bash -c 'shopt -s nullglob; paths=(/runtime/indexer/rocksdb-*); (( ${#paths[@]} )) || exit 1; mv -- "${paths[@]}" "$1"'   _ "/runtime/${backup#runtime/}"
+docker run --rm -v "$PWD/runtime:/runtime" debian:bookworm-slim   bash -c 'shopt -s nullglob; paths=(/runtime/indexer/rocksdb-* /runtime/indexer/logoscore/lez_indexer_module/*/rocksdb-* /runtime/indexer/basecamp/module_data/lez_indexer_module/*/rocksdb-*); (( ${#paths[@]} )) || exit 1; mv -- "${paths[@]}" "$1"'   _ "/runtime/${backup#runtime/}"
 docker start lez-indexer >/dev/null
 previous=0
 for _ in $(seq 1 360); do

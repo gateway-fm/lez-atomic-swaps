@@ -33,6 +33,10 @@ const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
 // both plugins in one app: the product shape (maker + taker in the sidebar)
 cpSync(`/var/lez-assets/both-user`, freshUserDir, { recursive: true });
 process.env.BASECAMP_USER_DIR = freshUserDir;
+// The stack's own Basecamp hosts the roles' LEZ signers; a test-spawned app
+// must not start a second one on the same sockets.
+delete process.env.LEZ_MAKER_SIGNER_SOCKET;
+delete process.env.LEZ_TAKER_SIGNER_SOCKET;
 const appBin = `/usr/local/bin/lez-${role}-ui`;
 
 // spawn the app ourselves (the framework's --ci mode waits only 15s; cold

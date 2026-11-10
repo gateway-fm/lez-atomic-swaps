@@ -1,0 +1,12 @@
+[submodule "third_party/logos-execution-zone"]
+	path = third_party/logos-execution-zone
+	url = https://github.com/logos-blockchain/logos-execution-zone.git
+	shallow = true
+[submodule "third_party/lez-indexer-module"]
+	path = third_party/lez-indexer-module
+	url = https://github.com/logos-blockchain/lez-indexer-module.git
+	shallow = true
+[submodule "third_party/logos-execution-zone-module"]
+	path = third_party/logos-execution-zone-module
+	url = https://github.com/logos-blockchain/logos-execution-zone-module.git
+	shallow = true

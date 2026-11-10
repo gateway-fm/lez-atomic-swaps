@@ -123,7 +123,7 @@
     {
       "id": "bedrock",
       "lifecycle": "service",
-      "executable": "logos-blockchain-node",
+      "executable": "LogosBasecamp + blockchain_module (LEZ Network desk)",
       "role": "shared",
       "pair": "lez",
       "sockets": [],
@@ -163,7 +163,7 @@
     {
       "id": "indexer",
       "lifecycle": "service",
-      "executable": "indexer_service",
+      "executable": "LogosBasecamp + lez_indexer_module (LEZ Network desk)",
       "role": "shared",
       "pair": "lez",
       "sockets": [],
@@ -215,7 +215,8 @@
       "role": "maker",
       "pair": "all",
       "sockets": [
-        "/run/lez/maker/node.sock"
+        "/run/lez/maker/node.sock",
+        "/run/lez-wallet/maker/signer.sock"
       ],
       "state": [
         {
@@ -225,10 +226,15 @@
         {
           "path": "volume:lez-zec-maker",
           "backup": "critical"
+        },
+        {
+          "path": "volume:lez-maker-wallet",
+          "backup": "recreatable"
         }
       ],
       "credentials": [
-        "Maker-owned Delivery signing key"
+        "Maker-owned Delivery signing key",
+        "The Maker identity's LEZ signer key, imported into the lez_core wallet of the Maker's own Basecamp, which this service is (the Node it launches holds no LEZ key)"
       ],
       "public_identities": [
         "/delivery/maker-delivery-identity.pub"
@@ -236,6 +242,7 @@
       "health": "maker_health",
       "depends_on": [
         "maker-init",
+        "sequencer",
         "bitcoin-core",
         "indexer"
       ]
@@ -262,7 +269,8 @@
       "role": "taker",
       "pair": "all",
       "sockets": [
-        "/run/lez/taker/node.sock"
+        "/run/lez/taker/node.sock",
+        "/run/lez-wallet/taker/signer.sock"
       ],
       "state": [
         {
@@ -272,23 +280,30 @@
         {
           "path": "volume:lez-zec-taker",
           "backup": "critical"
+        },
+        {
+          "path": "volume:lez-taker-wallet",
+          "backup": "recreatable"
         }
       ],
       "credentials": [
-        "No private key in discovery-only profile"
+        "No private key in discovery-only profile",
+        "The Taker identity's LEZ signer key, imported into the lez_core wallet of the Taker's own Basecamp, which this service is (the Node it launches holds no LEZ key)"
       ],
       "public_identities": [
         "Read-only Maker Delivery public identity"
       ],
       "health": "taker_health",
       "depends_on": [
-        "taker-init"
+        "taker-init",
+        "sequencer",
+        "maker-node"
       ]
     },
     {
       "id": "tools",
       "lifecycle": "one_shot_tool",
-      "executable": "lez-zec-escrow-v02-deployer + lez-v02-vault-claim-poc + lez-v02-local-actor-identity",
+      "executable": "lez-zec-escrow-v02-deployer + lez-wallet-vault-claim + lez-v02-local-actor-identity",
       "role": "shared",
       "pair": "all",
       "sockets": [],
@@ -311,7 +326,7 @@
     {
       "id": "heartbeat",
       "lifecycle": "service",
-      "executable": "lez-v02-heartbeat",
+      "executable": "lez-wallet-heartbeat",
       "role": "shared",
       "pair": "all",
       "sockets": [],

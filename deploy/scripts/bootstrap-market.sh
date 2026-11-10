@@ -28,15 +28,21 @@ wallet_taker_allocation="$(sed -n 's/^LEZ_WALLET_TAKER_ALLOCATION=//p' runtime/r
 escrow_pin="$(sed -n 's/^ *expected_image_id="\([0-9a-f]\{64\}\)".*/\1/p' "$REPO_ROOT/scripts/verify-lez-v02-provisional.sh" | head -1)"
 [[ "$escrow_pin" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot read the escrow pin" >&2; exit 65; }
 
+# The bootstrap runs in the LEZ wallet module's image: the vault claims go
+# through lez_core (lez-wallet-vault-claim, the proof-of-concept tool's flags
+# and evidence fields); the escrow deployment is a program deployment, not a
+# wallet operation, and keeps its deployer.
+docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1 ||
+  docker compose build heartbeat >/dev/null
 docker run --rm --network lez-swap-chains --user "$(id -u):$(id -g)" \
   -v "$PROVISION:/provision:ro" -v "$market_root:/market" -v "$DEPLOY_ROOT/scripts:/scripts:ro" \
   -e MARKET_ROOT=/market -e ESCROW_PROGRAM_ID="$escrow_pin" \
   -e DEPLOYER=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer \
-  -e VAULT_CLAIM_BIN=/provision/sidecar/lez-v02-vault-claim-poc \
+  -e VAULT_CLAIM_BIN=/usr/local/bin/lez-wallet-vault-claim \
   -e LEZ_BOOTSTRAP_DEFER_CLAIM="${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" \
   -e LEZ_WALLET_MAKER_ALLOCATION="$wallet_maker_allocation" -e LEZ_WALLET_TAKER_ALLOCATION="$wallet_taker_allocation" \
   -e LEZ_HEARTBEAT_ALLOCATION="$(sed -n 's/^LEZ_HEARTBEAT_ALLOCATION=//p' runtime/runtime.env | head -1)" \
-  lez-builder:local bash -c 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
+  --entrypoint bash "${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}" -c 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
     socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
     sleep 1; bash /scripts/market-bootstrap.sh'
 

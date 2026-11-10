@@ -19,6 +19,8 @@ x-testnet-node-env: &testnet-node-env
   LEZ_BITCOIN_CORE_HOST: lez-btc-testnet4
   LEZ_SEQUENCER_HOST: lez-testnet-sequencer
   LEZ_INDEXER_HOST: lez-testnet-indexer
+  # The role's Basecamp hosts the role's signer (lez_core) beside its Node.
+  LEZ_WALLET_SEQUENCER_URL: http://lez-testnet-sequencer:3040
   LEZ_V02_CHANNEL_ID: "0101010101010101010101010101010101010101010101010101010101010101"
 
 services:

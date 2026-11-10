@@ -1,0 +1,214 @@
+diff --git a/metadata.json b/metadata.json
+index 7908a08..a365330 100644
+--- a/metadata.json
++++ b/metadata.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "lez_core",
+   "display_name": "LEZ Core Module",
+-  "version": "0.4.1",
++  "version": "0.4.1-import.3",
+   "description": "Logos Execution Zone Core Module for Logos Core",
+   "author": "Logos Blockchain Team",
+   "type": "core",
+diff --git a/src/lez_core_module.cpp b/src/lez_core_module.cpp
+index 8ce0cab..2146f71 100644
+--- a/src/lez_core_module.cpp
++++ b/src/lez_core_module.cpp
+@@ -6,6 +6,12 @@
+ #include <cstring>
+ #include <random>
+ #include <vector>
++#include <thread>
++
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++#include <unistd.h>
+ 
+ #include <nlohmann/json.hpp>
+ 
+@@ -305,6 +311,118 @@ std::string LEZCoreModule::create_account_private() {
+     return bytes32ToHex(id);
+ }
+ 
++int64_t LEZCoreModule::import_public_account(const std::string& private_key_hex) {
++    const WalletFfiError error = wallet_ffi_import_public_account(walletHandle, private_key_hex.c_str());
++    if (error != SUCCESS) {
++        fprintf(stderr, "import_public_account: wallet FFI error %d\n", error);
++    }
++    return static_cast<int64_t>(error);
++}
++
++std::string LEZCoreModule::sign_public_message_hash(const std::string& account_id_hex, const std::string& message_hash_hex) {
++    nlohmann::json obj = nlohmann::json::object();
++    FfiBytes32 id{}, hash{};
++    if (!hexToBytes32(account_id_hex, &id) || !hexToBytes32(message_hash_hex, &hash)) {
++        fprintf(stderr, "sign_public_message_hash: invalid hex\n");
++        obj["error"] = "sign_public_message_hash: account_id_hex and message_hash_hex must be 64 hex characters";
++        return obj.dump();
++    }
++    uint8_t signature[64]{};
++    FfiBytes32 publicKey{};
++    const WalletFfiError error = wallet_ffi_sign_public_message_hash(walletHandle, &id, &hash, &signature, &publicKey);
++    if (error != SUCCESS) {
++        fprintf(stderr, "sign_public_message_hash: wallet FFI error %d\n", error);
++        obj["error"] = "sign_public_message_hash: wallet FFI error " + std::to_string(error);
++        return obj.dump();
++    }
++    obj["signature"] = bytesToHex(signature, sizeof(signature));
++    obj["public_key"] = bytes32ToHex(publicKey);
++    return obj.dump();
++}
++
++int64_t LEZCoreModule::ensure_wallet(const std::string& config_path, const std::string& storage_path, const std::string& statistics_path, const std::string& password) {
++    if (walletHandle) {
++        return SUCCESS;
++    }
++    struct stat existing{};
++    if (stat(storage_path.c_str(), &existing) == 0) {
++        return open(config_path, storage_path, statistics_path);
++    }
++    return create_new(config_path, storage_path, statistics_path, password).empty() ? INTERNAL_ERROR : SUCCESS;
++}
++
++namespace {
++
++// One signing request per connection: read one line, answer one line, close.
++void answerSignerConnection(LEZCoreModule* module, int connection, const std::string& account) {
++    timeval timeout{10, 0};
++    setsockopt(connection, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
++    setsockopt(connection, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
++    std::string line;
++    char byte = 0;
++    while (line.size() < 1024 && read(connection, &byte, 1) == 1 && byte != '\n') {
++        line.push_back(byte);
++    }
++    nlohmann::json answer = nlohmann::json::object();
++    const nlohmann::json request = nlohmann::json::parse(line, nullptr, false);
++    if (!request.is_object() || !request.contains("account_id") || !request.contains("message_hash")
++        || !request["account_id"].is_string() || !request["message_hash"].is_string()) {
++        answer["error"] = "the request must be {\"account_id\", \"message_hash\"}";
++    } else {
++        std::string requested = request["account_id"].get<std::string>();
++        std::transform(requested.begin(), requested.end(), requested.begin(), ::tolower);
++        if (requested != account) {
++            answer["error"] = "this signer holds another account";
++        } else {
++            answer = nlohmann::json::parse(module->sign_public_message_hash(account, request["message_hash"].get<std::string>()), nullptr, false);
++            if (!answer.is_object()) {
++                answer = nlohmann::json::object({{"error", "the wallet did not sign"}});
++            }
++        }
++    }
++    const std::string reply = answer.dump() + "\n";
++    (void)write(connection, reply.data(), reply.size());
++    close(connection);
++}
++
++} // namespace
++
++int64_t LEZCoreModule::serve_signer(const std::string& socket_path, const std::string& account_id_hex) {
++    FfiBytes32 id{};
++    if (!walletHandle || !hexToBytes32(account_id_hex, &id) || socket_path.empty() || socket_path.size() >= sizeof(sockaddr_un::sun_path)) {
++        fprintf(stderr, "serve_signer: no wallet, an invalid account id, or an unusable socket path\n");
++        return INTERNAL_ERROR;
++    }
++    std::string account = account_id_hex;
++    std::transform(account.begin(), account.end(), account.begin(), ::tolower);
++    const int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
++    if (listener < 0) {
++        return INTERNAL_ERROR;
++    }
++    sockaddr_un address{};
++    address.sun_family = AF_UNIX;
++    std::memcpy(address.sun_path, socket_path.c_str(), socket_path.size());
++    unlink(socket_path.c_str());
++    const mode_t previous = umask(077);
++    const bool bound = bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 && listen(listener, 16) == 0;
++    umask(previous);
++    if (!bound) {
++        fprintf(stderr, "serve_signer: cannot listen on %s\n", socket_path.c_str());
++        close(listener);
++        return INTERNAL_ERROR;
++    }
++    std::thread([this, listener, account] {
++        for (;;) {
++            const int connection = accept4(listener, nullptr, nullptr, SOCK_CLOEXEC);
++            if (connection >= 0) {
++                answerSignerConnection(this, connection, account);
++            }
++        }
++    }).detach();
++    fprintf(stderr, "serve_signer: signing for %s on %s\n", account.c_str(), socket_path.c_str());
++    return SUCCESS;
++}
++
+ LogosList LEZCoreModule::list_accounts() {
+     LogosList result = nlohmann::json::array();
+     FfiAccountList list{};
+diff --git a/src/lez_core_module.h b/src/lez_core_module.h
+index 863250f..b8c4033 100644
+--- a/src/lez_core_module.h
++++ b/src/lez_core_module.h
+@@ -39,6 +39,21 @@ public:
+     // === Account Management ===
+     std::string create_account_public();
+     std::string create_account_private();
++    // Import an existing public account by its private key (hex), so the module
++    // wallet holds accounts whose keys exist outside it (wallet_ffi_import_public_account).
++    // Returns 0 on success, the wallet FFI error code otherwise.
++    int64_t import_public_account(const std::string& private_key_hex);
++    // Sign a 32-byte message hash (hex) with a held public account's key; builds and
++    // submits nothing (wallet_ffi_sign_public_message_hash). Returns
++    // {"signature": 128 hex, "public_key": 64 hex}, or {"error": ...}.
++    std::string sign_public_message_hash(const std::string& account_id_hex, const std::string& message_hash_hex);
++    // Open the wallet at storage_path, or create it there; a no-op when this module already holds a wallet (several
++    // callers in one Basecamp share one lez_core). Returns 0 on success, an error code otherwise.
++    int64_t ensure_wallet(const std::string& config_path, const std::string& storage_path, const std::string& statistics_path, const std::string& password);
++    // Serve signatures for one held public account on an owner-only unix socket, from a thread of this module: one
++    // JSON line {"account_id", "message_hash"} per connection, answered {"signature", "public_key"} or {"error"};
++    // other accounts are refused. Builds and submits nothing. Returns 0 when serving, an error code otherwise.
++    int64_t serve_signer(const std::string& socket_path, const std::string& account_id_hex);
+     LogosList list_accounts();
+ 
+     // === Account Queries ===
+diff --git a/tests/mocks/mock_wallet_ffi.cpp b/tests/mocks/mock_wallet_ffi.cpp
+index 7fe13a4..34ba10a 100644
+--- a/tests/mocks/mock_wallet_ffi.cpp
++++ b/tests/mocks/mock_wallet_ffi.cpp
+@@ -88,6 +88,21 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle*, const char*, const char*,
+ 
+ // === Account management ===
+ 
++WalletFfiError wallet_ffi_import_public_account(WalletHandle*, const char*) {
++    LOGOS_CMOCK_RECORD("wallet_ffi_import_public_account");
++    return static_cast<WalletFfiError>(LOGOS_CMOCK_RETURN(int, "wallet_ffi_import_public_account"));
++}
++
++WalletFfiError wallet_ffi_sign_public_message_hash(WalletHandle*, const FfiBytes32*, const FfiBytes32*, uint8_t (*out_signature)[64], FfiBytes32* out_public_key) {
++    LOGOS_CMOCK_RECORD("wallet_ffi_sign_public_message_hash");
++    const int err = LOGOS_CMOCK_RETURN(int, "wallet_ffi_sign_public_message_hash");
++    if (err == 0 && out_signature && out_public_key) {
++        memset(*out_signature, 0xCD, sizeof(*out_signature));
++        memset(out_public_key->data, 0xEF, sizeof(out_public_key->data));
++    }
++    return static_cast<WalletFfiError>(err);
++}
++
+ WalletFfiError wallet_ffi_create_account_public(WalletHandle*, FfiBytes32* out_id) {
+     LOGOS_CMOCK_RECORD("wallet_ffi_create_account_public");
+     const int err = LOGOS_CMOCK_RETURN(int, "wallet_ffi_create_account_public");
+diff --git a/tests/stubs/wallet_ffi.h b/tests/stubs/wallet_ffi.h
+index 03d126d..0df989a 100644
+--- a/tests/stubs/wallet_ffi.h
++++ b/tests/stubs/wallet_ffi.h
+@@ -202,6 +202,8 @@ WalletFfiError wallet_ffi_restore_data(WalletHandle *handle, const char *mnemoni
+ 
+ WalletFfiError wallet_ffi_create_account_public(WalletHandle* handle, FfiBytes32* out_id);
+ WalletFfiError wallet_ffi_create_account_private(WalletHandle* handle, FfiBytes32* out_id);
++WalletFfiError wallet_ffi_import_public_account(WalletHandle* handle, const char* private_key_hex);
++WalletFfiError wallet_ffi_sign_public_message_hash(WalletHandle* handle, const FfiBytes32* account_id, const FfiBytes32* message_hash, uint8_t (*out_signature)[64], FfiBytes32* out_public_key);
+ WalletFfiError wallet_ffi_list_accounts(WalletHandle* handle, FfiAccountList* out_list);
+ void wallet_ffi_free_account_list(FfiAccountList* list);
+ 

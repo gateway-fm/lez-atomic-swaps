@@ -14,7 +14,7 @@
 #   LEZ_IMAGE_PREFIX   registry path prefix, e.g. ghcr.io/gateway-fm/lez-atomic-swaps/lez
 #   LEZ_IMAGE_TAG      release tag, e.g. v0.2.1
 #   LEZ_ESCROW_PROGRAM_ID  the pinned escrow program the deployer in the tools
-#                      image carries (the bundle records it; a checkout reads
+#                      service (wallet-module image) carries (the bundle records it; a checkout reads
 #                      it from scripts/verify-lez-v02-provisional.sh)
 # State lives next to this file: runtime/ (chains, configs, secrets) and
 # market/ (wallet identities, the escrow deployment manifest). Keep both;
@@ -75,13 +75,13 @@ export LEZ_HOST_UID LEZ_HOST_GID
 # compose interpolation needs a password before gen-config.sh has minted one
 export BTC_RPC_PASSWORD="${BTC_RPC_PASSWORD:-pending}"
 
-# one throwaway container of the tools image on the stack network
+# one throwaway container of the tools service (the wallet-module image) on the stack network
 tools() { docker compose --profile tools run --rm --no-deps --quiet-pull tools "$*"; }
 
 if [[ "$LEZ_IMAGES" == present ]]; then
-  docker image inspect "${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG}" >/dev/null 2>&1 || fail "${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG} is not present locally"
+  docker image inspect "${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG}" >/dev/null 2>&1 || fail "${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG} is not present locally"
 else
-  log "pulling ${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG}"
+  log "pulling ${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG}"
   docker compose --profile tools pull --quiet tools
 fi
 for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do

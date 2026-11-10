@@ -15,6 +15,10 @@ const role = process.argv[2] === "taker" ? "taker" : "maker";
 const dir = mkdtempSync(join(tmpdir(), `lez-status-${role}-`));
 cpSync("/var/lez-assets/both-user", dir, { recursive: true });
 process.env.BASECAMP_USER_DIR = dir;
+// The stack's own Basecamp hosts the roles' LEZ signers; a test-spawned app
+// must not start a second one on the same sockets.
+delete process.env.LEZ_MAKER_SIGNER_SOCKET;
+delete process.env.LEZ_TAKER_SIGNER_SOCKET;
 spawn(`/usr/local/bin/lez-${role}-ui`, ["-platform", "offscreen"],
   { stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, QT_QPA_PLATFORM: "offscreen" } });
 const port = Number(process.env.QML_INSPECTOR_PORT || 3768);
