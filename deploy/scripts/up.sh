@@ -106,6 +106,14 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
         --entrypoint /bin/sh "${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}" \
         -c "mv '/runtime/$d' '/runtime/lez-broken-$stamp/'"
   done
+  # A snapshot is 1 to 8 GB and root-owned on Linux; a day of recreations fills
+  # the disk. Keep the newest LEZ_KEEP_BROKEN_CHAINS (1: the one just made).
+  mapfile -t old_chains < <(find runtime -maxdepth 1 -name 'lez-broken-*' -printf '%f\n' | sort -t- -k3 -n | head -n "-${LEZ_KEEP_BROKEN_CHAINS:-1}")
+  for d in "${old_chains[@]}"; do
+    rm -rf "runtime/$d" 2>/dev/null ||
+      docker run --rm --user 0 --volume "$PWD/runtime:/runtime" \
+        --entrypoint /bin/sh "${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}" -c "rm -rf '/runtime/$d'"
+  done
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
   [[ -f "$market_root/bootstrap/deployment.json" ]] && mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$stamp.bak"
   # The Nodes are down: forget the swaps that referenced the old chain now, so
