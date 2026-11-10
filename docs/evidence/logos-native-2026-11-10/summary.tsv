@@ -1,0 +1,95 @@
+S01	PASS	logosctl version
+S02	PASS	lm version (v0.2-era, from the module builder's nix store)
+S03	PASS	lgx version (v0.2-era, from the module builder's nix store)
+S04	PASS	lgpm version (v0.2-era, from the module builder's nix store)
+S05	PASS	logoscore version (the v0.2-era runtime in our images)
+S06	PASS	start a clean session daemon
+S07	PASS	package show lez_atomic_swap_maker
+S08	FAIL	lez_atomic_swap_maker is signed by a signer that can be pinned
+S09	PASS	package show lez_core
+S10	FAIL	lez_core is signed by a signer that can be pinned
+S11	PASS	package show lez_swap_node
+S12	FAIL	lez_swap_node is signed by a signer that can be pinned
+S13	PASS	package show chat_module
+S14	FAIL	chat_module is signed by a signer that can be pinned
+S15	PASS	package show delivery_module
+S16	FAIL	delivery_module is signed by a signer that can be pinned
+S17	PASS	package show lez_indexer_module
+S18	FAIL	lez_indexer_module is signed by a signer that can be pinned
+S19	PASS	package show blockchain_module
+S20	FAIL	blockchain_module is signed by a signer that can be pinned
+S21	PASS	lgx verify lez_atomic_swap_maker (structure, Merkle root)
+S22	PASS	lgx verify lez_core (structure, Merkle root)
+S23	PASS	lgx verify lez_swap_node (structure, Merkle root)
+S24	PASS	lgx verify chat_module (structure, Merkle root)
+S25	PASS	lgx verify delivery_module (structure, Merkle root)
+S26	PASS	lgx verify lez_indexer_module (structure, Merkle root)
+S27	PASS	lgx verify blockchain_module (structure, Merkle root)
+S28	PASS	lm metadata lez_atomic_swap_maker
+S29	PASS	lm methods lez_atomic_swap_maker
+S30	PASS	lm events lez_atomic_swap_maker
+S31	PASS	lm metadata lez_core
+S32	PASS	lm methods lez_core
+S33	PASS	lm events lez_core
+S34	PASS	lm metadata lez_swap_node
+S35	PASS	lm methods lez_swap_node
+S36	PASS	lm events lez_swap_node
+S37	PASS	lm metadata chat_module
+S38	PASS	lm methods chat_module
+S39	PASS	lm events chat_module
+S40	PASS	lm metadata delivery_module
+S41	PASS	lm methods delivery_module
+S42	PASS	lm events delivery_module
+S43	PASS	lm metadata lez_indexer_module
+S44	PASS	lm methods lez_indexer_module
+S45	PASS	lm events lez_indexer_module
+S46	PASS	lm metadata blockchain_module
+S47	PASS	lm methods blockchain_module
+S48	PASS	lm events blockchain_module
+S49	NOT RUN	lm verify <installed dir> --did <pinned signer>
+S50	FAIL	install lez_atomic_swap_maker as built
+S51	INFO	DERIVED: lez_atomic_swap_maker with variant linux-amd64-dev renamed linux-amd64 (lgx extract/add/remove)
+S52	PASS	package show (derived)
+S53	PASS	install lez_atomic_swap_maker (derived) with its root hash
+S54	FAIL	installing the role package pulled in its dependencies
+S55	FAIL	the role package declares its LEZ network requirement
+S56	PASS	install lez_core with its root hash
+S57	PASS	install lez_swap_node with its root hash
+S58	FAIL	install chat_module with its root hash
+S59	FAIL	install delivery_module with its root hash
+S60	PASS	install lez_indexer_module with its root hash
+S61	PASS	install blockchain_module with its root hash
+S62	FAIL	a wrong --root-hash is refused
+S63	FAIL	every dependency of lez_atomic_swap_maker is installed
+S64	PASS	package ls
+S65	FAIL	module load lez_atomic_swap_maker
+S66	PASS	module load lez_swap_node (with its declared dependencies)
+S67	PASS	module show lez_swap_node
+S68	PASS	call lez_swap_node node_status maker
+S69	FAIL	the installed package graph carries the maker Node and its launcher
+S70	FAIL	start_node with the launcher Compose provides
+S71	FAIL	the maker Node is running
+S72	INFO	STUB: a stand-in launcher (sleeps; not a Node)
+S73	PASS	STUB: start_node with the stand-in launcher
+S74	PASS	STUB: node_status reports the supervised child
+S75	PASS	module stats
+S76	FAIL	module stats shows the maker Node (pid 299) itself
+S77	PASS	module reload lez_swap_node
+S78	FAIL	the maker Node is supervised again after the reload
+S79	INFO	processes after the reload
+S80	INFO	kill -9 the lez_swap_node host process
+S81	FAIL	the runtime reports lez_swap_node as crashed
+S82	FAIL	no orphaned maker Node after the host crash
+S83	INFO	load lez_swap_node again and start the role again (what a desk does)
+S84	FAIL	exactly one maker Node after recovery
+S85	PASS	package remove lez_atomic_swap_maker
+S86	PASS	package remove lez_core (takes its dependents)
+S87	PASS	nothing of ours is left installed
+S88	INFO	what remove leaves in the session
+S89	PASS	daemon stop
+S90	PASS	logosctl 0.3.0: install, load lez_swap_node, call node_status
+S91	FAIL	logosctl 0.3.0: install lez_atomic_swap_maker as built
+S92	PASS	logoscore 0.2.3: modules laid out as the images do (no installer in this release)
+S93	PASS	logoscore 0.2.3: load-module lez_swap_node, call node_status
+S94	FAIL	lgpm (v0.2-era, the desks' installer): install lez_swap_node
+S95	PASS	lgpm (v0.2-era, the desks' installer): install lez_atomic_swap_maker
