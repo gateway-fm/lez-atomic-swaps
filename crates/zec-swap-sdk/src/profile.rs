@@ -33,6 +33,15 @@ pub enum ZecProfileId {
     /// longest measured take→claim (≈7 min) a window. Devnet only; a
     /// production profile is unaffected.
     DeterministicLocalDevnetV3,
+    /// [`Self::DeterministicLocalDevnetV3`] with a 4-minute LEZ refund delay,
+    /// for the devnet's refund journeys alone: they never claim, so the delay
+    /// only has to outlast provisioning (~45 s), the take and both first
+    /// locks (~2 min to the Taker's claim offer once the indexer serves
+    /// historical reads in milliseconds, 2026-11-10). V3's 12 minutes were
+    /// sized for a take→claim of ≈7 min, which slow indexer reads caused, and
+    /// spent ~8 of them waiting in every refund journey. Swaps that claim
+    /// keep V3. Devnet only.
+    DeterministicLocalDevnetV4,
     /// LEZ 0.2 and Zcash public-testnet acceptance profile.
     PublicTestnetV1,
 }
@@ -46,6 +55,7 @@ impl ZecProfileId {
             Self::DeterministicLocalDevnetV1 => "deterministic-local-devnet-v1",
             Self::DeterministicLocalDevnetV2 => "deterministic-local-devnet-v2",
             Self::DeterministicLocalDevnetV3 => "deterministic-local-devnet-v3",
+            Self::DeterministicLocalDevnetV4 => "deterministic-local-devnet-v4",
             Self::PublicTestnetV1 => "public-testnet-v1",
         }
     }
@@ -142,6 +152,17 @@ impl ZecRefundProfile {
                 lez_confirmations: 1,
                 zcash_confirmations: 1,
                 lez_refund_delay: UnixSeconds::new(720),
+                zcash_refund_blocks: 8,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+            },
+            ZecProfileId::DeterministicLocalDevnetV4 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu6_2,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(240),
                 zcash_refund_blocks: 8,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,

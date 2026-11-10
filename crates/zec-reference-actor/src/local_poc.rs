@@ -367,6 +367,9 @@ enum LocalPocProfile {
     /// `deterministic-local-devnet-v3`: V2 with a 12 min LEZ refund delay, so
     /// a refund fits the devnet chain's ~27 min of finality.
     DeterministicLocalDevnetV3,
+    /// `deterministic-local-devnet-v4`: V3 with a 4 min LEZ refund delay, for
+    /// the devnet's refund journeys (they never claim).
+    DeterministicLocalDevnetV4,
 }
 
 impl LocalPocProfile {
@@ -376,6 +379,7 @@ impl LocalPocProfile {
             Self::DeterministicLocalDevnetV1 => ZecProfileId::DeterministicLocalDevnetV1,
             Self::DeterministicLocalDevnetV2 => ZecProfileId::DeterministicLocalDevnetV2,
             Self::DeterministicLocalDevnetV3 => ZecProfileId::DeterministicLocalDevnetV3,
+            Self::DeterministicLocalDevnetV4 => ZecProfileId::DeterministicLocalDevnetV4,
         }
     }
 }

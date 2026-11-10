@@ -183,3 +183,21 @@ fn devnet_v3_shortens_the_lez_refund_delay_and_keeps_every_other_v2_parameter() 
     assert_eq!(v2.zcash_confirmations(), v3.zcash_confirmations());
     assert_eq!(v2.zcash_network(), v3.zcash_network());
 }
+
+/// V4 is V3 with a 4-minute LEZ refund delay, for the devnet's refund journeys
+/// (they never claim); V3 keeps its 12 minutes for every swap that claims.
+#[test]
+fn devnet_v4_shortens_the_lez_refund_delay_and_keeps_every_other_v3_parameter() {
+    let v3 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV3);
+    let v4 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV4);
+    assert_eq!(v4.id().as_str(), "deterministic-local-devnet-v4");
+    assert_eq!(v3.lez_refund_delay().value(), 720);
+    assert_eq!(v4.lez_refund_delay().value(), 240);
+    assert_eq!(v3.zcash_refund_blocks(), v4.zcash_refund_blocks());
+    assert_eq!(v3.required_margin(), v4.required_margin());
+    assert_eq!(v3.lez_confirmations(), v4.lez_confirmations());
+    assert_eq!(v3.zcash_confirmations(), v4.zcash_confirmations());
+    assert_eq!(v3.zcash_network(), v4.zcash_network());
+    assert_eq!(v3.consensus_branch_id(), v4.consensus_branch_id());
+    assert_eq!(v3.expiry_delta_blocks(), v4.expiry_delta_blocks());
+}

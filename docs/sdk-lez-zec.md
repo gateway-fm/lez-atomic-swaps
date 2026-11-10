@@ -118,7 +118,7 @@ only, and the evidence set says so.
 the public networks, and `deterministic-local-devnet-v3` (eight-block Zcash
 refund window and a 12-minute LEZ refund delay; `-v2` is its 30-minute
 predecessor and `-v1` the four-block one, both kept for the agreements signed
-under them) for a local devnet
+under them; `-v4`, its 4-minute twin, serves the devnet's refund journeys) for a local devnet
 whose LEZ chain finalises in minutes rather than instantly. The LEZ escrow
 program emits a timestamp validity window that ends at the agreement's LEZ
 refund time, so a profile's `lez_refund_delay` is also the longest a lock may

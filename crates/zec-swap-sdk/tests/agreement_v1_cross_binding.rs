@@ -201,7 +201,8 @@ impl Fixture {
             ZecProfileId::DeterministicLocalV1
             | ZecProfileId::DeterministicLocalDevnetV1
             | ZecProfileId::DeterministicLocalDevnetV2
-            | ZecProfileId::DeterministicLocalDevnetV3 => (NetworkType::Regtest, BranchId::Nu6_2),
+            | ZecProfileId::DeterministicLocalDevnetV3
+            | ZecProfileId::DeterministicLocalDevnetV4 => (NetworkType::Regtest, BranchId::Nu6_2),
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
         };
         let output = ExpectedBip199Output::new(
@@ -400,6 +401,45 @@ fn devnet_profile_round_trips_on_the_wire_and_an_unknown_tag_is_rejected() {
     assert!(
         ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
         "an unknown profile tag must not decode"
+    );
+}
+
+#[test]
+fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
+    let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+    fixture.body_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    fixture.binding_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    // 240 s after the LEZ anchor (100), eight blocks after the Zcash one (116).
+    fixture.earlier_latest_ms = 340_000;
+    fixture.later_earliest = 370;
+    fixture.zcash_refund_lock = 124;
+    let agreement = fixture.validate().expect("v4 agreement validates");
+    let wire = agreement.encode_wire().expect("bounded wire");
+    let decoded = ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+        .expect("the v4 profile decodes from its own wire");
+    assert_eq!(decoded.record(), agreement.record());
+    assert_eq!(
+        ZecRefundProfile::for_id(decoded.binding().profile_id()).lez_refund_delay(),
+        UnixSeconds::new(240)
+    );
+    let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+    assert_eq!(wire[profile_offset], 5, "the v4 profile is wire tag 5");
+    let mut unknown = wire.clone();
+    unknown[profile_offset] = 6;
+    assert!(
+        ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
+        "a tag past the last profile must not decode"
+    );
+    // Only the profile's own Zcash window validates under its id.
+    let mut stale = Fixture::new(SwapDirection::TakerSellsLez);
+    stale.body_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    stale.binding_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    stale.earlier_latest_ms = 340_000;
+    stale.later_earliest = 370;
+    stale.zcash_refund_lock = 120;
+    assert!(
+        stale.validate().is_err(),
+        "a four-block Zcash window under v4 must not validate"
     );
 }
 

@@ -140,6 +140,16 @@ principal outputs never absorb an unnegotiated fee.
   take-to-claim (about 7 minutes) a window. A held revealing claim needs
   attention a third of the delay before the refund time (4 minutes here).
   Devnet only; the devnet provisioner asks for v3 since 2026-10-31.
+- `deterministic-local-devnet-v4`: `deterministic-local-devnet-v3` with a
+  4-minute LEZ refund delay, for the devnet's refund journeys only (they
+  never claim). V3's 12 minutes left room for a take-to-claim of about 7
+  minutes, which slow historical reads of the devnet indexer caused (its
+  state snapshots were 100 blocks apart); with 10-block snapshots a first
+  lock is observed in about one LEZ step (~45 s) and the claim is offered
+  about two minutes after provisioning. Four minutes still hold provisioning
+  (~45 s), the take, both first locks and the selling-ZEC claim window
+  (refund time minus the 30 s margin) with a finality stall to spare. Every
+  swap that claims keeps v3. Devnet only.
 - `deterministic-local-devnet-v1`: `deterministic-local-v1` with a 30-minute
   LEZ refund delay instead of 60 seconds, for a local devnet whose LEZ chain
   finalises in minutes (the LEZ escrow's validity window ends at the
