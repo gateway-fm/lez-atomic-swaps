@@ -10,7 +10,14 @@
 #
 # Use it after rebuilding the actor programs: persisted swaps pin the program
 # hash and stop loading (they list as attention_required) once it changes.
+#
+#   reset-swaps.sh            stop both Nodes, forget the swaps, start them again
+#   reset-swaps.sh --offline  the same, but leave the Nodes stopped (up.sh
+#                             --fresh-lez forgets the old chain's swaps this way
+#                             before it starts the Nodes on the new one)
 set -euo pipefail
+offline=0
+[[ "${1:-}" != --offline ]] || offline=1
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a
 # shellcheck source=/dev/null
@@ -87,6 +94,10 @@ cp assets/certified-evidence-m5arm-08180005-ui.json runtime/m3-btc-ui-evidence.j
 cat runtime/m3-btc-ui-evidence.json.tmp >runtime/m3-btc-ui-evidence.json  # in place: the mount pins the inode
 rm -f runtime/m3-btc-ui-evidence.json.tmp
 
+if [[ "$offline" == 1 ]]; then
+  log "done: swaps forgotten; the Nodes stay stopped"
+  exit 0
+fi
 log "starting both Nodes"
 "${compose[@]}" up -d --no-deps maker-node taker-node >/dev/null
 until [[ "$("${compose[@]}" ps --format '{{.Service}} {{.Status}}' | grep -E '^(maker|taker)-node ' | grep -c healthy)" == 2 ]]; do sleep 3; done

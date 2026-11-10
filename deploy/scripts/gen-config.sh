@@ -303,17 +303,20 @@ rm -f "$RUNTIME/runtime.env"
 # a Node refuses a profile whose refund delays, in blocks, break the order its
 # times promise. The first value is the delay when Bitcoin is the first lock,
 # the seventh when it is the second; the last two are seconds per block at the
-# fastest and slowest pace (the regtest miner keeps 120).
+# fastest and slowest pace: the regtest miner's own pace (MINE_INTERVAL below),
+# two minutes on `local`; `fast` mines every 20 s, since every confirmation a
+# swap waits for is one miner interval (a scenario that needs a transaction to
+# stay unconfirmed stops the miner).
 # The last value is the LEZ discovery window in blocks: a Maker lock can only
 # appear before the cutoff, and a refund asserts its absence only once that
 # whole window is finalized, so the window must cover the cutoff (10 s slots on
-# the local devnet: the fast 360 s = 36 blocks) and nothing more than needed.
+# the local devnet: the fast 240 s = 24 blocks) and nothing more than needed.
 timing_profile="${LEZ_TIMING_PROFILE:-$previous_timing_profile}"
 [[ -n "${LEZ_TIMING_PROFILE:-}" || -z "$timing_profile" ]] || echo "reusing existing timing profile ${timing_profile}"
 timing_profile="${timing_profile:-local}"
 case "$timing_profile" in
   local) timing=(60 1800 3600 7200 300 360 33 120 120) ;;
-  fast)  timing=(10 360 600 1200 60 60 6 120 120) ;;
+  fast)  timing=(42 240 420 840 60 30 24 20 20) ;;
   *) echo "LEZ_TIMING_PROFILE must be local or fast" >&2; exit 1 ;;
 esac
 printf '%s\n' \
@@ -322,6 +325,7 @@ printf '%s\n' \
   "LEZ_TIMING_PROFILE=$timing_profile" \
   "LEZ_BTC_REFUND_CSV_BLOCKS=${timing[0]}" \
   "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS=${timing[6]}" \
+  "MINE_INTERVAL=${timing[7]}" \
   "LEZ_BTC_BLOCK_SECONDS_FASTEST=${timing[7]}" \
   "LEZ_BTC_BLOCK_SECONDS_SLOWEST=${timing[8]}" \
   "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS=${timing[1]}" \

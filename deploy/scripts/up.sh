@@ -108,6 +108,12 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   done
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
   [[ -f "$market_root/bootstrap/deployment.json" ]] && mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$stamp.bak"
+  # The Nodes are down: forget the swaps that referenced the old chain now, so
+  # they start once on the new chain instead of starting, stopping and starting.
+  if docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
+    echo "  forgetting swaps that referenced the old chain"
+    bash scripts/reset-swaps.sh --offline 2>&1 | tail -1
+  fi
 fi
 
 echo "[1/6] generating runtime config…"
@@ -221,10 +227,6 @@ else
 fi
 wait_healthy 1200 lez-maker-node lez-taker-node
 wait_owner_health 120
-if [[ "$FRESH_LEZ" == 1 ]]; then
-  echo "  forgetting swaps that referenced the old chain"
-  bash scripts/reset-swaps.sh 2>&1 | tail -1
-fi
 [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]] || python3 scripts/verify-market.py 2>&1 | tail -1
 
 # The finality heartbeat (Part C): on unless runtime.env says LEZ_HEARTBEAT_SECONDS=0
@@ -263,7 +265,7 @@ cat <<BANNER
 ──────────────────────────────────────────────────────────────────
  LEZ swap stack is up (volumes: ${LEZ_VOLUME_PREFIX:-lez}-*)
 
-   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / 120 s)
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / ${MINE_INTERVAL:-120} s)
    BTC explorer          http://127.0.0.1:3002
    LEZ explorer          http://127.0.0.1:3003
    Basecamp UI (VNC)     vnc://127.0.0.1:5901     (password: ${VNC_PASSWORD:-lezswap}; role: ${BASECAMP_ROLE:-both})
