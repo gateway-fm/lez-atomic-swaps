@@ -11,9 +11,12 @@
 # A test is <node|ui>:<btc|zec>:<scenario>:<direction>. Each one runs on a chain
 # that is finalizing (a new one is made when it is not), after reset-swaps.sh.
 # While it runs, the finalized height is read every 30 s; when it has stood
-# still for LEZ_REGRESS_FLAT_SECONDS (300) the chain is frozen, the test is
+# still for LEZ_REGRESS_FLAT_SECONDS (60; it moves every ~2 s) the chain is frozen, the test is
 # stopped at once, and it runs again on a new chain, LEZ_REGRESS_TRIES (4) times
 # at most. A test that fails while finality moves has failed: it is not retried.
+# A chain whose storage gas price has drifted to LEZ_REGRESS_MAX_STORAGE_PRICE
+# (6000, about five days of chain time) is worn: the next test starts on a new
+# chain before it can freeze.
 #
 # Results go to LEZ_REGRESS_OUT (runtime/regress/<UTC stamp>): results.tsv (one
 # line per try), logs/ (each try's output), e2e/ and zec/ (the evidence the
@@ -74,7 +77,7 @@ esac
 
 out="${LEZ_REGRESS_OUT:-runtime/regress/$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$out/logs" "$out/e2e" "$out/zec"
-flat_limit="${LEZ_REGRESS_FLAT_SECONDS:-300}"
+flat_limit="${LEZ_REGRESS_FLAT_SECONDS:-60}"
 tries="${LEZ_REGRESS_TRIES:-4}"
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$out/regress.log"; }
 finalized() {
@@ -93,6 +96,18 @@ moving() {
     [[ -n "$first" ]] || first="$now"
   done
   return 1
+}
+# Bedrock's storage gas price drifts up at every epoch turn (~+45 an hour). Once
+# one price step (an eighth of it) outgrows the sequencer's tip (gen-config.sh,
+# priority_fee 10^7), an inscription in flight across a turn is dropped and the
+# chain freezes. At 6000 a step still fits a 9 KB LEZ block, so a chain whose
+# price has reached LEZ_REGRESS_MAX_STORAGE_PRICE is worn: the next test starts
+# on a new chain instead.
+max_storage_price="${LEZ_REGRESS_MAX_STORAGE_PRICE:-6000}"
+storage_price() {
+  docker exec lez-bedrock bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080 || exit 1
+    printf "GET /mantle/gas-prices HTTP/1.1\r\nHost: bedrock\r\nConnection: close\r\n\r\n" >&3
+    timeout 5 cat <&3' 2>/dev/null | sed -n 's/.*"storage_gas_price":\([0-9][0-9]*\).*/\1/p'
 }
 chains=0; deferred_chain=0
 fresh_chain() { # fresh_chain [ENV=VALUE...]: up.sh --fresh-lez checks the new chain finalizes itself
@@ -131,7 +146,7 @@ command_of() { # command_of <kind> <pair> <scenario> <direction>
 keep() { cp runtime/e2e/*.json "$out/e2e/" 2>/dev/null; cp runtime/evidence/zec/*.json "$out/zec/" 2>/dev/null; true; }
 
 run_test() { # run_test <kind:pair:scenario:direction>
-  local kind pair scenario direction try rc started logfile verdict
+  local kind pair scenario direction try rc started logfile verdict price
   IFS=: read -r kind pair scenario direction <<<"$1"
   [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
     { log "=== $1: not a test (<node|ui>:<btc|zec>:<scenario>:<direction>)"; return 64; }
@@ -145,8 +160,13 @@ run_test() { # run_test <kind:pair:scenario:direction>
     elif [[ "$deferred_chain" == 1 ]]; then
       # the last test's chain left one wallet unfunded
       fresh_chain || return 2; deferred_chain=0
-    elif ! moving 90; then
+    elif ! moving 30; then
       log "    finality is not moving before $1"; fresh_chain || return 2
+    else
+      price="$(storage_price)"
+      if [[ -n "$price" ]] && (( price >= max_storage_price )); then
+        log "    the chain is worn (storage gas price $price) before $1"; fresh_chain || return 2
+      fi
     fi
     # a new chain's Nodes start without swaps (up.sh); otherwise forget the last test's
     [[ "$fresh" == 1 ]] || bash scripts/reset-swaps.sh --abandon-open >"$out/logs/reset.log" 2>&1 || log "    reset-swaps.sh failed before $1 (logs/reset.log)"
@@ -154,7 +174,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
     # shellcheck disable=SC2046  # the command is a word list
     watched "$logfile" timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
     case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
-    if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 90; then verdict=FROZEN; fi
+    if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 30; then verdict=FROZEN; fi
     log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s"
     printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$try" "$verdict" "$(( $(date +%s) - started ))" "$(date -u +%FT%TZ)" >>"$out/results.tsv"
     keep
