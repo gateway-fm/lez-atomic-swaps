@@ -178,6 +178,15 @@ async fn read_stable_finalized_prefix(
     Ok((stable, scanned_window, prefix_end == authorized_end))
 }
 
+/// Complete finalized-clock samples taken before a moving finalized tip is
+/// reported. The devnet finalizes a block about every two seconds while one
+/// sample is six indexer reads, so a sample can straddle one advance; a fresh
+/// sample right after it almost always sees a still tip.
+const FINALIZED_CLOCK_SAMPLE_ATTEMPTS: u32 = 5;
+
+/// Pause before a fresh sample, so an indexer catching up in a burst settles.
+const FINALIZED_CLOCK_SAMPLE_PAUSE: Duration = Duration::from_millis(200);
+
 /// Reads one fail-closed finalized clock whose indexer chain is bound to the
 /// runtime descriptor's exact genesis hash.
 ///
@@ -186,11 +195,33 @@ async fn read_stable_finalized_prefix(
 /// remains the definitive deadline enforcement. The tip may advance after
 /// return, so callers must not claim an atomic clock-and-send snapshot.
 ///
+/// A sample whose finalized tip moved is discarded whole and taken again, a
+/// bounded number of times; nothing read under one tip is combined with a
+/// read under another.
+///
 /// # Errors
 ///
 /// Returns a typed bridge error when the indexer is unavailable, the expected
-/// genesis or finalized block facts are invalid, or the finalized sample moves.
+/// genesis or finalized block facts are invalid, or the finalized tip moved
+/// during every sample.
 pub async fn read_genesis_bound_finalized_clock(
+    indexer: &dyn FinalizedIndexerApi,
+    expected_genesis_hash: Hex32,
+) -> Result<ChainClock, BridgeRuntimeError> {
+    let mut attempt = 1;
+    loop {
+        match sample_genesis_bound_finalized_clock(indexer, expected_genesis_hash).await {
+            Err(BridgeRuntimeError::MovingTip) if attempt < FINALIZED_CLOCK_SAMPLE_ATTEMPTS => {
+                attempt += 1;
+                tokio::time::sleep(FINALIZED_CLOCK_SAMPLE_PAUSE).await;
+            }
+            sampled => return sampled,
+        }
+    }
+}
+
+/// One complete sample of [`read_genesis_bound_finalized_clock`].
+async fn sample_genesis_bound_finalized_clock(
     indexer: &dyn FinalizedIndexerApi,
     expected_genesis_hash: Hex32,
 ) -> Result<ChainClock, BridgeRuntimeError> {

@@ -36,7 +36,11 @@ const CURRENT_TIMESTAMP_MS: u64 = 1_850_000_000_071;
 #[derive(Clone, Copy, Debug)]
 enum NodeBehavior {
     Stable,
+    /// The tip advances once, during the first bracket only.
+    HeightMovesOnce,
+    /// The tip advances on every height read.
     HeightMovement,
+    /// The current block is replaced between every two reads of it.
     SameHeightReplacement,
     ZeroTimestamp,
     ZeroHash,
@@ -159,10 +163,10 @@ async fn node(
     module
         .register_method("getLastBlockId", |_, state, _| {
             let read = state.last_block_reads.fetch_add(1, Ordering::SeqCst);
-            let height = if matches!(state.behavior, NodeBehavior::HeightMovement) && read > 0 {
-                CURRENT_HEIGHT + 1
-            } else {
-                CURRENT_HEIGHT
+            let height = match state.behavior {
+                NodeBehavior::HeightMovesOnce if read > 0 => CURRENT_HEIGHT + 1,
+                NodeBehavior::HeightMovement => CURRENT_HEIGHT + u64::try_from(read).unwrap(),
+                _ => CURRENT_HEIGHT,
             };
             Ok::<_, ErrorObjectOwned>(height)
         })
@@ -181,7 +185,8 @@ async fn node(
                 let read = state.current_block_reads.fetch_add(1, Ordering::SeqCst);
                 let hash = if matches!(state.behavior, NodeBehavior::ZeroHash) {
                     [0; 32]
-                } else if matches!(state.behavior, NodeBehavior::SameHeightReplacement) && read > 0
+                } else if matches!(state.behavior, NodeBehavior::SameHeightReplacement)
+                    && read % 2 == 1
                 {
                     [72; 32]
                 } else {
@@ -292,6 +297,33 @@ async fn authenticated_current_clock_is_repeatable_current_and_never_submits() {
     assert_eq!(indexer.calls.load(Ordering::SeqCst), 0);
 
     bridge.stop().await.unwrap();
+    node_handle.stop().unwrap();
+    node_handle.stopped().await;
+}
+
+#[tokio::test]
+async fn current_clock_reads_a_fresh_bracket_after_the_tip_moved_once() {
+    let private_key = PrivateKey::try_new([6; 32]).unwrap();
+    let descriptor = runtime(&private_key);
+    let run_id = RunId::new("current-clock-run-0000000000000000000000000001").unwrap();
+    let (node_state, node, node_handle) = node(NodeBehavior::HeightMovesOnce).await;
+    let indexer = Arc::new(NeverIndexer {
+        calls: AtomicUsize::new(0),
+    });
+    let runtime = bridge_runtime(descriptor.clone(), private_key, node, Arc::clone(&indexer));
+
+    let observed = runtime
+        .observe_current_clock(&request(&run_id, &descriptor))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        observed.clock,
+        ChainClock::new(h(71), CURRENT_HEIGHT + 1, CURRENT_TIMESTAMP_MS)
+    );
+    // The first bracket stops at its second height read; the second is whole.
+    assert_eq!(node_state.last_block_reads.load(Ordering::SeqCst), 5);
+    assert_eq!(node_state.submission_calls.load(Ordering::SeqCst), 0);
     node_handle.stop().unwrap();
     node_handle.stopped().await;
 }

@@ -14,6 +14,12 @@ const MAX_NODE_REQUEST_BYTES: u32 = 2_800_000;
 const MAX_NODE_RESPONSE_BYTES: u32 = 8 * 1024 * 1024;
 const NODE_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const TRANSACTION_INCLUSION_TIMEOUT: Duration = Duration::from_secs(30);
+/// Complete same-tip sequencer samples taken before an inconsistent snapshot
+/// is reported. The devnet sequencer makes a block every second, so a sample
+/// of several reads can straddle one; a fresh sample almost always does not.
+const SAME_TIP_SAMPLE_ATTEMPTS: u32 = 5;
+/// Pause before a fresh same-tip sample.
+const SAME_TIP_SAMPLE_PAUSE: Duration = Duration::from_millis(25);
 const OFFICIAL_PUBLIC_NODE_ENDPOINT: &str = "https://testnet.lez.logos.co/";
 
 /// Fail-closed errors at the official LEZ v0.2 runtime boundary.
@@ -465,13 +471,20 @@ impl OfficialNodeRpc {
     ///
     /// The current block is read twice between three height reads. This rejects
     /// both ordinary height movement and same-height block replacement instead
-    /// of presenting either race as an authoritative clock.
+    /// of presenting either race as an authoritative clock. A bracket that saw
+    /// either is discarded whole and read again, a bounded number of times.
     ///
     /// # Errors
     ///
     /// Fails closed when health, runtime identity, genesis, or current block is
-    /// unavailable, or when height/block identity changes across the bracket.
+    /// unavailable, or when height/block identity changes across every bracket.
     pub(crate) async fn stable_current_clock(
+        &self,
+    ) -> Result<OfficialCurrentClockFacts, RuntimeBoundaryError> {
+        resample_on_moved_tip(|| self.sample_current_clock()).await
+    }
+
+    async fn sample_current_clock(
         &self,
     ) -> Result<OfficialCurrentClockFacts, RuntimeBoundaryError> {
         self.client
@@ -574,13 +587,32 @@ impl OfficialNodeRpc {
     }
 
     /// Reads runtime identity, consensus clock, and four native escrow accounts
-    /// under one unchanged sequencer tip.
+    /// under one unchanged sequencer tip. A snapshot during which the tip
+    /// advanced is discarded whole and read again, a bounded number of times.
     ///
     /// # Errors
     ///
     /// Fails closed when any official RPC is unavailable, genesis/tip blocks
-    /// are absent, or the tip advances during the account snapshot.
+    /// are absent, or the tip advances during every account snapshot.
     pub async fn native_escrow_facts(
+        &self,
+        metadata_account_id: AccountId,
+        custody_account_id: AccountId,
+        depositor_account_id: AccountId,
+        claimant_account_id: AccountId,
+    ) -> Result<OfficialNativeEscrowFacts, RuntimeBoundaryError> {
+        resample_on_moved_tip(|| {
+            self.sample_native_escrow_facts(
+                metadata_account_id,
+                custody_account_id,
+                depositor_account_id,
+                claimant_account_id,
+            )
+        })
+        .await
+    }
+
+    async fn sample_native_escrow_facts(
         &self,
         metadata_account_id: AccountId,
         custody_account_id: AccountId,
@@ -780,6 +812,30 @@ impl OfficialNodeRpc {
     }
 }
 
+/// Takes a complete same-tip sample again while the tip moved during it.
+///
+/// Each attempt is one whole sample: reads taken under one tip are never
+/// combined with reads under another. After the last attempt the moving tip
+/// is reported unchanged, as one sample would have reported it.
+async fn resample_on_moved_tip<T, F, Fut>(mut sample: F) -> Result<T, RuntimeBoundaryError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, RuntimeBoundaryError>>,
+{
+    let mut attempt = 1;
+    loop {
+        match sample().await {
+            Err(RuntimeBoundaryError::InconsistentSnapshot)
+                if attempt < SAME_TIP_SAMPLE_ATTEMPTS =>
+            {
+                attempt += 1;
+                tokio::time::sleep(SAME_TIP_SAMPLE_PAUSE).await;
+            }
+            sampled => return sampled,
+        }
+    }
+}
+
 #[async_trait]
 impl HealthProbe for OfficialNodeRpc {
     async fn check_health(&self) -> Result<RuntimeHealth, RuntimeBoundaryError> {
@@ -890,4 +946,59 @@ fn validate_local_node_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryErr
 /// any query, fragment, or non-root path.
 pub fn validate_loopback_http_endpoint(endpoint: &str) -> Result<(), RuntimeBoundaryError> {
     validate_local_node_endpoint(endpoint)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use super::{RuntimeBoundaryError, SAME_TIP_SAMPLE_ATTEMPTS, resample_on_moved_tip};
+
+    async fn sampled(
+        moving_samples: u32,
+        other: Option<RuntimeBoundaryError>,
+    ) -> (Result<u32, RuntimeBoundaryError>, u32) {
+        let samples = AtomicU32::new(0);
+        let result = resample_on_moved_tip(|| async {
+            let sample = samples.fetch_add(1, Ordering::SeqCst);
+            if let Some(error) = other {
+                Err(error)
+            } else if sample < moving_samples {
+                Err(RuntimeBoundaryError::InconsistentSnapshot)
+            } else {
+                Ok(sample)
+            }
+        })
+        .await;
+        (result, samples.load(Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn a_still_tip_is_sampled_once() {
+        assert_eq!(sampled(0, None).await, (Ok(0), 1));
+    }
+
+    #[tokio::test]
+    async fn a_moved_tip_is_sampled_again_whole() {
+        assert_eq!(sampled(2, None).await, (Ok(2), 3));
+    }
+
+    #[tokio::test]
+    async fn a_tip_moving_during_every_sample_is_still_reported() {
+        assert_eq!(
+            sampled(u32::MAX, None).await,
+            (
+                Err(RuntimeBoundaryError::InconsistentSnapshot),
+                SAME_TIP_SAMPLE_ATTEMPTS
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn other_failures_are_not_sampled_again() {
+        assert_eq!(
+            sampled(0, Some(RuntimeBoundaryError::NodeUnavailable)).await,
+            (Err(RuntimeBoundaryError::NodeUnavailable), 1)
+        );
+    }
 }
