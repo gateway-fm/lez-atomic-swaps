@@ -142,9 +142,11 @@ chain time) as worn and starts the next test on a new one.
 The epoch cannot be stretched instead: Bedrock's one leader proves with the same notes
 the sequencer spends, and it stops making blocks once every note it may use has been
 spent. If a chain still freezes, the fix is the same: start a new one.
-`up.sh --fresh-lez` watches the new chain's finalized height for 60 s once it is
-healthy (`LEZ_FRESH_FINALITY_SECONDS`). It starts another chain at once when the height
-stands still, or when the market bootstrap cannot finish; six chains at most
+`up.sh --fresh-lez` waits for the new chain's first finalized height, which a healthy
+chain's indexer serves ~100 s after the sequencer's first block, for up to 300 s
+(`LEZ_FRESH_FIRST_FINALITY_SECONDS`). It then waits 60 s for the height to move
+(`LEZ_FRESH_FINALITY_SECONDS`). It starts another chain at once when either never
+comes, or when the market bootstrap cannot finish; six chains at most
 (`LEZ_FRESH_ATTEMPTS`). `regress.sh` calls a chain frozen after 60 s of flat finality
 (`LEZ_REGRESS_FLAT_SECONDS`), the heartbeat after 60 s, and `node-e2e.py` checks that
 finality advances before each scenario.

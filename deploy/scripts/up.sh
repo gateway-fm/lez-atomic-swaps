@@ -184,20 +184,29 @@ docker compose up -d bitcoin-core btc-miner btc-explorer zebra bedrock sequencer
 wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
 # A new LEZ chain can stop finalizing within its first minute (README, "a
 # frozen devnet"); everything after this point would then wait on it in vain
-# (the indexer repair, the vault claims). A healthy new chain finalizes within
-# seconds, so watch it briefly and start another one at once if it does not.
+# (the indexer repair, the vault claims). A healthy new chain's indexer serves
+# no finalized height (null) for ~100 s after the sequencer's first block, then
+# moves every ~2 s (1 s blocks). So wait for the first height
+# (LEZ_FRESH_FIRST_FINALITY_SECONDS, 300) and then for it to move
+# (LEZ_FRESH_FINALITY_SECONDS, 60), and start another chain if either never comes.
 if [[ "$FRESH_LEZ" == 1 ]]; then
   lez_finalized() {
     curl -s --max-time 10 -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
       http://127.0.0.1:8779/ 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
   }
-  first="$(lez_finalized)"; moved=0
-  for _ in $(seq 1 $(( ${LEZ_FRESH_FINALITY_SECONDS:-60} / 10 ))); do
-    sleep 10; now="$(lez_finalized)"
-    if [[ -n "$now" && -n "$first" && "$now" -gt "$first" ]]; then moved=1; break; fi
-    [[ -n "$first" ]] || first="$now"
+  first=""; moved=0; now=""
+  first_deadline=$(( SECONDS + ${LEZ_FRESH_FIRST_FINALITY_SECONDS:-300} ))
+  while (( SECONDS < first_deadline )); do
+    first="$(lez_finalized)"; [[ -z "$first" ]] || break
+    sleep 5
   done
+  if [[ -n "$first" ]]; then
+    for _ in $(seq 1 $(( ${LEZ_FRESH_FINALITY_SECONDS:-60} / 5 ))); do
+      sleep 5; now="$(lez_finalized)"
+      if [[ -n "$now" && "$now" -gt "$first" ]]; then moved=1; break; fi
+    done
+  fi
   if (( ! moved )); then
     [[ "${LEZ_FRESH_ATTEMPT:-1}" -lt "${LEZ_FRESH_ATTEMPTS:-6}" ]] || { echo "the new LEZ chain does not finalize (attempt ${LEZ_FRESH_ATTEMPT:-1})" >&2; exit 1; }
     echo "  the new LEZ chain does not finalize (finalized ${first:-none}); starting another one"
