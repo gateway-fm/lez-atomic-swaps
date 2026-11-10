@@ -169,13 +169,13 @@ command_of() { # command_of <kind> <pair> <scenario> <direction>
 keep() { cp runtime/e2e/*.json "$out/e2e/" 2>/dev/null; cp runtime/evidence/zec/*.json "$out/zec/" 2>/dev/null; true; }
 
 run_test() { # run_test <kind:pair:scenario:direction>
-  local kind pair scenario direction try rc started logfile verdict price
+  local kind pair scenario direction try rc prepared started logfile verdict price
   IFS=: read -r kind pair scenario direction <<<"$1"
   [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
     { log "=== $1: not a test (<node|ui>:<btc|zec>:<scenario>:<direction>)"; return 64; }
   use_profile "$(profile_of "$1")" || return 2
   for (( try = 1; try <= tries; try++ )); do
-    fresh=0
+    fresh=0; prepared="$(date +%s)"
     if [[ "$scenario" == zec-balance-refusal ]]; then
       # needs a chain on which one wallet's vault claim was deferred: the wallet that would pay LEZ
       if [[ "$direction" == TakerSellsLez ]]; then fresh_chain LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01 || return 2
@@ -199,7 +199,9 @@ run_test() { # run_test <kind:pair:scenario:direction>
     watched "$logfile" timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
     case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
     if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 30; then verdict=FROZEN; fi
-    log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s"
+    # what the harness spent before the scenario started (finality probe, a new
+    # chain, reset-swaps.sh) apart from the scenario itself (its preflights included)
+    log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s (+$(( started - prepared )) s before it$([[ "$fresh" == 0 ]] || echo ', a new chain among them'))"
     printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$try" "$verdict" "$(( $(date +%s) - started ))" "$(date -u +%FT%TZ)" >>"$out/results.tsv"
     keep
     [[ "$verdict" == PASSED ]] && return 0

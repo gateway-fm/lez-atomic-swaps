@@ -57,6 +57,15 @@ for tool in docker jq openssl xxd; do
 done
 mkdir -p runtime
 load_env() { set -a; source runtime/runtime.env; set +a; export BTC_RPC_PASSWORD; }
+# Every stage's wall time, in this script's own output, so each bring-up (and
+# each regress.sh chain log) says where its time went.
+stage_name=""; stage_began=$SECONDS
+stage() { # stage <name>: closes the running stage, opens the next (none: just close)
+  [[ -z "$stage_name" ]] || printf '  [time %s] %s: %d s (%d s since up.sh started)\n' \
+    "$(date -u +%H:%M:%S)" "$stage_name" $((SECONDS - stage_began)) "$SECONDS"
+  stage_name="${1:-}"; stage_began=$SECONDS
+}
+trap 'stage' EXIT
 
 # The container health check answers before the Node serves its owner socket
 # on a busy start (a Node with history reloads every swap first); the desk
@@ -89,7 +98,9 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   load_env
   stamp="$(date +%s)"
   echo "[lez] recreating the LEZ chain; old state → runtime/lez-broken-$stamp"
+  stage "stop the old chain and the Nodes"
   docker compose stop maker-node taker-node lez-explorer indexer sequencer bedrock >/dev/null 2>&1 || true
+  stage "move the old chain's state aside"
   mkdir -p "runtime/lez-broken-$stamp"
   # Bedrock writes its state as the image's own user (65532, mode 0700), which
   # the host user cannot move on Linux. Docker Desktop maps every bind mount to
@@ -121,11 +132,13 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   # Their LEZ legs went with the chain; reset-swaps.sh keeps the per-swap keys
   # of any swap that was still open (its Bitcoin leg may still need a refund).
   if docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
+    stage "forget the old chain's swaps (reset-swaps.sh --offline)"
     echo "  forgetting swaps that referenced the old chain"
     bash scripts/reset-swaps.sh --offline --abandon-open 2>&1 | tail -1
   fi
 fi
 
+stage "runtime config"
 echo "[1/6] generating runtime config…"
 env_before="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 # The genesis must fund the identities the Nodes settle as, on a rerun too:
@@ -138,6 +151,7 @@ bash scripts/gen-config.sh runtime
 env_after="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 load_env
 
+stage "images"
 echo "[2/6] images…"
 case "${LEZ_IMAGES:-build}" in
   build)
@@ -179,8 +193,10 @@ case "${LEZ_IMAGES:-build}" in
   *) echo "LEZ_IMAGES must be build, pull or present" >&2; exit 64 ;;
 esac
 
+stage "start the chains (compose up)"
 echo "[3/6] starting chains…"
 docker compose up -d bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
+stage "chains healthy"
 wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
 # A new LEZ chain can stop finalizing within its first minute (README, "a
 # frozen devnet"); everything after this point would then wait on it in vain
@@ -190,6 +206,7 @@ wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
 # (LEZ_FRESH_FIRST_FINALITY_SECONDS, 300) and then for it to move
 # (LEZ_FRESH_FINALITY_SECONDS, 60), and start another chain if either never comes.
 if [[ "$FRESH_LEZ" == 1 ]]; then
+  stage "the new chain finalizes"
   lez_finalized() {
     curl -s --max-time 10 -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
@@ -210,11 +227,13 @@ if [[ "$FRESH_LEZ" == 1 ]]; then
   if (( ! moved )); then
     [[ "${LEZ_FRESH_ATTEMPT:-1}" -lt "${LEZ_FRESH_ATTEMPTS:-6}" ]] || { echo "the new LEZ chain does not finalize (attempt ${LEZ_FRESH_ATTEMPT:-1})" >&2; exit 1; }
     echo "  the new LEZ chain does not finalize (finalized ${first:-none}); starting another one"
-    LEZ_FRESH_ATTEMPT=$(( ${LEZ_FRESH_ATTEMPT:-1} + 1 )) exec bash "$0" --fresh-lez
+    stage; LEZ_FRESH_ATTEMPT=$(( ${LEZ_FRESH_ATTEMPT:-1} + 1 )) exec bash "$0" --fresh-lez
   fi
   echo "  the new LEZ chain finalizes (${first} -> ${now})"
 fi
+stage "indexer check (repair-indexer.sh)"
 bash scripts/repair-indexer.sh >/dev/null 2>&1 || true
+stage "Bitcoin Core wallets (seed-btc-wallets.py)"
 # The Nodes' Core wallets (lez-maker, lez-taker) and the Taker's regtest
 # balance; idempotent, and after a wipe nothing else creates them.
 python3 scripts/seed-btc-wallets.py
@@ -223,6 +242,7 @@ before="$(sha256sum runtime/market-bootstrap.env 2>/dev/null | cut -c1-64 || tru
 if [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]]; then
   echo "[4/6] market: bootstrapped by start.sh from the tools image after this"
 else
+  stage "market bootstrap"
   echo "[4/6] market (escrow program, vault claims, bootstrap manifest)…"
   if ! bash scripts/bootstrap-market.sh 2>&1 | tail -3; then
     # A new chain can stop finalizing within its first minute (README, "a frozen
@@ -230,11 +250,12 @@ else
     # chain helps.
     [[ "$FRESH_LEZ" == 1 && "${LEZ_FRESH_ATTEMPT:-1}" -lt "${LEZ_FRESH_ATTEMPTS:-6}" ]] || exit 1
     echo "  the new chain does not finalize; recreating it once more"
-    LEZ_FRESH_ATTEMPT=$(( ${LEZ_FRESH_ATTEMPT:-1} + 1 )) exec bash "$0" --fresh-lez
+    stage; LEZ_FRESH_ATTEMPT=$(( ${LEZ_FRESH_ATTEMPT:-1} + 1 )) exec bash "$0" --fresh-lez
   fi
 fi
 after="$(sha256sum runtime/market-bootstrap.env 2>/dev/null | cut -c1-64 || true)"
 
+stage "start the Nodes (compose up)"
 echo "[5/6] Nodes…"
 # A changed runtime.env (a timing profile switch, say) reaches the Nodes only
 # through a recreate; entrypoints read it once.
@@ -244,13 +265,17 @@ if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 
 else
   docker compose up -d maker-node taker-node
 fi
+stage "Nodes healthy"
 wait_healthy 1200 lez-maker-node lez-taker-node
+stage "Nodes answer owner health"
 wait_owner_health 120
+stage "market check (verify-market.py)"
 [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]] || python3 scripts/verify-market.py 2>&1 | tail -1
 
 # The finality heartbeat (Part C): on unless runtime.env says LEZ_HEARTBEAT_SECONDS=0
 # or the market root has no heartbeat identities (an older root; gen-config
 # then funds no heartbeat account and the bootstrap claims none).
+stage "finality heartbeat"
 heartbeat_seconds="$(sed -n 's/^LEZ_HEARTBEAT_SECONDS=//p' runtime/runtime.env | head -1)"
 heartbeat_allocation="$(sed -n 's/^LEZ_HEARTBEAT_ALLOCATION=//p' runtime/runtime.env | head -1)"
 if [[ "${heartbeat_seconds:-0}" != 0 && "${heartbeat_allocation:-0}" != 0 ]]; then
@@ -265,9 +290,11 @@ if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
   echo "API stack ready; run python3 scripts/record-evidence.py after market bootstrap."
   exit 0
 fi
+stage "Basecamp UI"
 echo "[6/6] Basecamp UI…"
 docker compose up -d basecamp-ui
 wait_healthy 600 lez-basecamp-ui
+stage "UI suites"
 ui_failed=0
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
   for role in maker taker; do
