@@ -91,11 +91,12 @@ finalized() {
 }
 load_env() { set -a; source runtime/runtime.env; set +a; }
 # moving <seconds>: true as soon as the finalized height advances within that time
+# (read every 2 s: a healthy chain finalizes a block every second or two)
 moving() {
   local first now deadline=$(( $(date +%s) + $1 ))
   first="$(finalized)"
   while (( $(date +%s) < deadline )); do
-    sleep 10; now="$(finalized)"
+    sleep 2; now="$(finalized)"
     [[ -n "$now" && -n "$first" && "$now" -gt "$first" ]] && return 0
     [[ -n "$first" ]] || first="$now"
   done
@@ -130,7 +131,8 @@ watched() {
   local pid=$! last flat_since now
   last="$(finalized)"; flat_since="$(date +%s)"
   while kill -0 "$pid" 2>/dev/null; do
-    for _ in 1 2 3 4 5 6; do sleep 5; kill -0 "$pid" 2>/dev/null || break 2; done
+    # a second's granularity: the next test starts as soon as this one ends
+    for _ in $(seq 30); do sleep 1; kill -0 "$pid" 2>/dev/null || break 2; done
     now="$(finalized)"
     if [[ -n "$now" && "$now" != "$last" ]]; then last="$now"; flat_since="$(date +%s)"; fi
     if (( $(date +%s) - flat_since >= flat_limit )); then
@@ -195,8 +197,11 @@ run_test() { # run_test <kind:pair:scenario:direction>
     # a new chain's Nodes start without swaps (up.sh); otherwise forget the last test's
     [[ "$fresh" == 1 ]] || bash scripts/reset-swaps.sh --abandon-open >"$out/logs/reset.log" 2>&1 || log "    reset-swaps.sh failed before $1 (logs/reset.log)"
     logfile="$out/logs/$kind-$pair-$scenario-$direction-$try.log"; started="$(date +%s)"
+    # The finality probe above and the watch below cover node-e2e.py's own
+    # finality preflight (a 10 s sample when the heartbeat's status is stale).
     # shellcheck disable=SC2046  # the command is a word list
-    watched "$logfile" timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
+    watched "$logfile" env LEZ_E2E_SKIP_FINALITY_PREFLIGHT=1 timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" \
+      $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
     case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
     if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 30; then verdict=FROZEN; fi
     # what the harness spent before the scenario started (finality probe, a new
