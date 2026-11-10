@@ -405,7 +405,8 @@ build_lez_services() {
 # Each module's own flake builds the portable .lgx in a pinned nix container; the
 # nix store lives in the lez-build-nix volume.
 #   lez-indexer-module: 1.1.1 on LEZ v0.2.4 (+ the upstream nix risc0 fetch fix),
-#     plus the indexer FFI's indexer_rpc_serve and the module's serve_rpc(port)
+#     plus a state snapshot every 10 blocks, the indexer FFI's indexer_rpc_serve and
+#     the module's serve_rpc(port)
 #   logos-execution-zone-module (lez_core, the LEZ wallet): 0.4.1 on LEZ v0.2.4,
 #     plus import_public_account(private key hex) over wallet_ffi's own call
 #     and sign_public_message_hash

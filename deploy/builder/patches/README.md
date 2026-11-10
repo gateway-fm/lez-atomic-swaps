@@ -18,6 +18,18 @@ Why: the module answers queries only as Logos calls, and it has no historical
 account read; the swap Nodes, their sidecars and the explorer read the indexer
 as `indexer_service` JSON-RPC (`getAccountAtBlock` among it).
 
+- `0001-lez-v0.2.4-indexer-breakpoint-interval.patch` — upstream
+  logos-execution-zone, `lez/storage`: a state snapshot every 10 blocks
+  instead of every 100 (`BREAKPOINT_INTERVAL`, used only by the indexer's
+  store). A historical read (`getAccountAtBlock`) replays every transaction
+  since the last snapshot, ~0.3 s each: 10–18 s late in a 100-block window,
+  past the ~30 s attempts of the swap actors that make these reads
+  (`actor_timeout`). Snapshot ids are block / interval, so an index written
+  with the other interval must be rebuilt (a fresh chain, or
+  `scripts/repair-indexer.sh`). Upstream: make it configurable. Their
+  `indexer_core` test `accept_block_snapshots_state_at_breakpoint_interval`
+  is written for 100 and fails with this value; the storage tests follow
+  the constant.
 - `0001-lez-v0.2.4-indexer-ffi-rpc-serve.patch` — upstream
   logos-execution-zone, `lez/indexer/ffi` and `lez/indexer/service`:
   `indexer_rpc_serve(indexer, port)` serves `indexer_service`'s own JSON-RPC
@@ -52,7 +64,8 @@ inside Basecamp and serves that role's signer socket) is not an upstream patch.
 
 | patch | lines | applies to | upstream state |
 |---|---|---|---|
-| lez-indexer-module/0001 | 176 | logos-execution-zone `9edf4a622fe9` | not yet offered |
+| lez-indexer-module/0001 breakpoint-interval | 13 | logos-execution-zone `9edf4a622fe9` | not offered (upstream: make the interval configurable) |
+| lez-indexer-module/0001 ffi-rpc-serve | 176 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0002 | 52 | lez-indexer-module `5033da442a7f` | not yet offered |
 | logos-execution-zone-module/0001 | 120 | logos-execution-zone `9edf4a622fe9` | not yet offered (related: logos-execution-zone-module#73, message signing) |
 | logos-execution-zone-module/0002 | 111 | logos-execution-zone-module `acf0cd501b26` | not yet offered |
