@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # down.sh — stop the whole stack, chains, Nodes and UI. --wipe also removes
 # runtime state and this stack's named volumes (Bitcoin data, Node stores,
-# sockets), so the next up.sh --fresh starts from nothing.
+# sockets), so the next up.sh --fresh starts from nothing. The market root
+# keeps its wallet identities (they outlive any chain), but its escrow
+# deployment and bootstrap manifest belong to the chain being wiped: --wipe
+# retires them, and the next bootstrap deploys again on the new chain.
 set -euo pipefail
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DEPLOY_ROOT"
@@ -14,8 +17,14 @@ docker rm -f lez-basecamp-ui >/dev/null 2>&1 || true
 
 if [[ "${1:-}" == "--wipe" ]]; then
   docker compose down -v --remove-orphans
+  # start.sh uses market/ next to this file when runtime.env names no root.
+  market_root="${LEZ_MARKET_ROOT:-$DEPLOY_ROOT/market}"
+  stamp="$(date +%s)"
+  for f in bootstrap/deployment.json market-bootstrap.env; do
+    [[ ! -f "$market_root/$f" ]] || mv "$market_root/$f" "$market_root/$f.chain-$stamp.bak"
+  done
   rm -rf runtime
-  echo "stack down; runtime state and ${LEZ_VOLUME_PREFIX:-lez}-* volumes wiped"
+  echo "stack down; runtime state and ${LEZ_VOLUME_PREFIX:-lez}-* volumes wiped; the escrow deployment in $market_root retired (identities kept)"
 else
   docker compose down --remove-orphans
   echo "stack down (state retained; use --wipe to remove)"

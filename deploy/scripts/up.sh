@@ -34,15 +34,9 @@ while [[ $# -gt 0 ]]; do
     --build) BUILD=1; shift ;;
     --fresh-lez) FRESH_LEZ=1; shift ;;
     --fresh)
-      # A wipe recreates both chains, so the previous chain's escrow deployment
-      # in the market root is retired too, as --fresh-lez does; the market
-      # bootstrap then deploys again on the new chain.
-      if [[ -f runtime/runtime.env ]]; then
-        market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
-        if [[ -n "$market_root" && -f "$market_root/bootstrap/deployment.json" ]]; then
-          mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$(date +%s).bak"
-        fi
-      fi
+      # A wipe recreates both chains; down.sh --wipe also retires the previous
+      # chain's escrow deployment and bootstrap manifest in the market root, so
+      # the market bootstrap deploys again on the new chain.
       echo "wiping runtime state and volumes…"
       bash scripts/down.sh --wipe >/dev/null 2>&1 || true
       # A fresh stack gets its own volume namespace, so it can never adopt
@@ -114,8 +108,12 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
       docker run --rm --user 0 --volume "$PWD/runtime:/runtime" \
         --entrypoint /bin/sh "${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}" -c "rm -rf '/runtime/$d'"
   done
+  # The escrow deployment and the manifest the Nodes render belong to the old
+  # chain; gen-config.sh would otherwise copy that manifest into the runtime.
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
-  [[ -f "$market_root/bootstrap/deployment.json" ]] && mv "$market_root/bootstrap/deployment.json" "$market_root/bootstrap/deployment.json.chain-$stamp.bak"
+  for f in bootstrap/deployment.json market-bootstrap.env; do
+    [[ ! -f "$market_root/$f" ]] || mv "$market_root/$f" "$market_root/$f.chain-$stamp.bak"
+  done
   # The Nodes are down: forget the swaps that referenced the old chain now, so
   # they start once on the new chain instead of starting, stopping and starting.
   if docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then

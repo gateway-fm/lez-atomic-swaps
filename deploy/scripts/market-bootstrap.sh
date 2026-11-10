@@ -68,8 +68,27 @@ chmod 0700 "$MARKET_ROOT" "$MARKET_ROOT/bootstrap"
 
 # ── 1. escrow program deployment (once per chain) ──────────────────────────
 deployment_evidence="$MARKET_ROOT/bootstrap/deployment.json"
-# Evidence for another program (a chain recreated since, or another pinned
-# guest) does not count: deploy again and record the new transaction.
+# The genesis of the chain this bootstrap talks to (the deployer records the
+# same block, LEZ's genesis id 1, in its preflight). A new chain's indexer can
+# take a moment to serve it.
+live_genesis=""
+for _ in $(seq 1 30); do
+  live_genesis="$(indexer getBlockById '[1]' 2>/dev/null | jq -r '.result.header.hash // empty' 2>/dev/null || true)"
+  [[ ! "$live_genesis" =~ ^[0-9a-f]{64}$ ]] || break
+  sleep 2
+done
+[[ "$live_genesis" =~ ^[0-9a-f]{64}$ ]] || fail "the indexer at $INDEXER_URL does not serve the LEZ genesis block (getBlockById 1)"
+# Evidence for another program or another chain (one recreated since, by
+# down.sh --wipe or up.sh --fresh-lez, or a market root carried to another
+# stack) does not count: retire it with the manifest written from it, deploy
+# again and record the new transaction.
+if [[ -s "$deployment_evidence" ]] \
+   && ! jq -e --arg genesis "$live_genesis" '.preflight.genesis_block_hash == $genesis' "$deployment_evidence" >/dev/null 2>&1; then
+  stamp="$(date +%s)"
+  echo "escrow deployment in $deployment_evidence is for another chain (genesis $(jq -r '.preflight.genesis_block_hash' "$deployment_evidence" 2>/dev/null), live $live_genesis); retiring it"
+  mv "$deployment_evidence" "$deployment_evidence.chain-$stamp.bak"
+  [[ ! -f "$MARKET_ROOT/market-bootstrap.env" ]] || mv "$MARKET_ROOT/market-bootstrap.env" "$MARKET_ROOT/market-bootstrap.env.chain-$stamp.bak"
+fi
 if [[ -s "$deployment_evidence" ]] \
    && jq -e --arg program "$ESCROW_PROGRAM_ID" '.preflight.image_id == $program
         and (.transaction_hash | test("^[0-9a-f]{64}$"))' "$deployment_evidence" >/dev/null 2>&1; then
@@ -78,8 +97,8 @@ else
   [[ -x "$DEPLOYER" ]] || fail "deployer missing: $DEPLOYER"
   "$DEPLOYER" deploy-m4-local --rpc-url "$SEQUENCER_URL" \
     --channel-id "$CHANNEL_ID" --timeout-seconds 3600 >"$deployment_evidence.partial"
-  jq -e --arg program "$ESCROW_PROGRAM_ID" '
-    .preflight.image_id == $program
+  jq -e --arg program "$ESCROW_PROGRAM_ID" --arg genesis "$live_genesis" '
+    .preflight.image_id == $program and .preflight.genesis_block_hash == $genesis
     and (.transaction_hash | test("^[0-9a-f]{64}$"))
     and .inclusion_block_id > .preflight.last_block_id
   ' "$deployment_evidence.partial" >/dev/null || fail "deployment evidence invalid"

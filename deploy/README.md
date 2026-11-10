@@ -23,8 +23,12 @@ tar -xzf lez-swap-stack-v0.2.5-arm64.tar.gz && cd lez-swap-stack-v0.2.5-arm64
 (`LEZ_IMAGES=pull`), runs the idempotent market bootstrap in one throwaway
 tools container, restarts both Nodes on the recorded escrow deployment and
 runs the Basecamp suites. Rerunning it resumes; `./scripts/down.sh` stops the
-stack and `--wipe` removes chains and Node state (keep `market/`, it holds the
-funded wallets). The same script works from a checkout of the tagged commit
+stack and `--wipe` removes chains and Node state. `market/identities` holds the
+funded wallets and survives a wipe; `market/bootstrap` and
+`market/market-bootstrap.env` belong to one LEZ chain, so `--wipe` retires them
+(renamed `*.chain-<time>.bak`) and the next `start.sh` deploys the escrow again.
+The bootstrap also refuses a deployment recorded for another genesis, and when it
+fails `start.sh` prints its whole output, stops both Nodes and exits 2. The same script works from a checkout of the tagged commit
 when `LEZ_IMAGE_PREFIX` and `LEZ_IMAGE_TAG` are exported.
 
 The images are built by `.github/workflows/release-images.yml` when a GitHub

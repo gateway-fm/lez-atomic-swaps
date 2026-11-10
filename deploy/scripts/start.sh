@@ -17,8 +17,10 @@
 #                      service (wallet-module image) carries (the bundle records it; a checkout reads
 #                      it from scripts/verify-lez-v02-provisional.sh)
 # State lives next to this file: runtime/ (chains, configs, secrets) and
-# market/ (wallet identities, the escrow deployment manifest). Keep both;
-# ./scripts/down.sh --wipe removes runtime/ and the named volumes.
+# market/ (wallet identities, the escrow deployment manifest). Keep
+# market/identities, the funded wallets, across wipes; market/bootstrap and
+# market/market-bootstrap.env belong to one LEZ chain: ./scripts/down.sh --wipe
+# removes runtime/ and the named volumes and retires those two.
 set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,7 +32,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --quick) QUICK=1; shift ;;
     --swap) RUN_SWAP=1; shift ;;
-    -h|--help) sed -n 2,22p "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n 2,23p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -105,9 +107,20 @@ bash scripts/repair-indexer.sh
 # The deployer and the vault-claim tool accept only literal-loopback URLs, so
 # the container forwards 127.0.0.1:3040/8779 to sequencer/indexer for the run.
 log "market bootstrap (idempotent)"
-tools 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
+# up.sh started the Nodes before the market existed; a Node without the
+# bootstrap manifest reports itself ready with no routes, so a failed bootstrap
+# stops them rather than leave a stack that looks healthy and cannot trade.
+if ! tools 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
   socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
-  sleep 1; bash /scripts/market-bootstrap.sh' | tail -4
+  sleep 1; bash /scripts/market-bootstrap.sh' >runtime/market-bootstrap.log 2>&1; then
+  cat runtime/market-bootstrap.log >&2
+  reason="$(grep -m1 '^market bootstrap failed:' runtime/market-bootstrap.log || true)"
+  docker compose stop maker-node taker-node >/dev/null 2>&1 || true
+  echo "start.sh failed: ${reason:-the market bootstrap failed (output above, also in runtime/market-bootstrap.log)}" >&2
+  echo "  both Nodes are stopped: no escrow deployment on this chain, so no offer can be made or taken" >&2
+  exit 2
+fi
+tail -4 runtime/market-bootstrap.log
 # The first start precedes the deployment; entrypoints read the manifest once,
 # so both roles restart with its public fields in the runtime.
 cat "$LEZ_MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
@@ -133,6 +146,14 @@ wait_nodes_ready() { # wait_nodes_ready <seconds>
 }
 log "waiting for both Nodes to report ready"
 wait_nodes_ready 300
+# A Maker without the market's routes is ready and not degraded, and can make
+# no offer: the routes come from the bootstrap manifest it just rendered.
+maker_routes="$(docker exec lez-maker-node curl -sS --max-time 120 --unix-socket /run/lez/maker/node.sock \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"maker_health","params":[{}]}' http://localhost/ 2>/dev/null |
+  jq -r '.result.routes // [] | length' 2>/dev/null || echo 0)"
+[[ "$maker_routes" =~ ^[1-9][0-9]*$ ]] ||
+  fail "the Maker lists no routes after the market bootstrap (maker_health.routes is empty): check runtime/market-bootstrap.log and runtime/market-bootstrap.env"
 
 # ---- verification --------------------------------------------------------------------
 if [[ "$QUICK" != 1 ]]; then
