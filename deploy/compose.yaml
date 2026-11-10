@@ -336,27 +336,19 @@ services:
     logging: *default-logging
 
   # ─── swap application ───────────────────────────────────────────────────
-  maker-init:
-    image: debian:bookworm-slim
-    container_name: lez-maker-init
-    volumes:
-      - maker_state:/var/lib/lez/maker
-      - maker_socket:/run/lez/maker
-      - zec_maker:/var/lib/lez/zec
-      - delivery_dir:/delivery
-      - maker_wallet:/run/lez-wallet/maker
-    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/maker /run/lez/maker /var/lib/lez/zec /delivery /run/lez-wallet/maker && chmod 0700 /run/lez/maker /var/lib/lez/zec /delivery /run/lez-wallet/maker"]
-    networks: [chains]
-    restart: "no"
-    logging: *default-logging
-
   maker-node:
-    # The Maker's own Basecamp (headless; images/maker-node: the basecamp-ui
-    # image plus the Maker Node): its desk starts the Maker's LEZ signer in
+    # The Maker's own Basecamp (images/maker-node: the basecamp-ui image plus
+    # the Maker Node), on VNC at 127.0.0.1:5901. Its Maker desk, opened when
+    # the container starts, is the one the Maker uses and the UI tests drive
+    # (ui-tests/, mounted for them). The desk starts the Maker's LEZ signer in
     # Basecamp's lez_core and has Basecamp's lez_swap_node launch and supervise
     # the Maker Node, the swap engine (node-entrypoint.sh, restarted when it
     # exits; its output is this container's log). `docker restart|stop|logs
-    # lez-maker-node` act on the Maker's Basecamp and so on its Node.
+    # lez-maker-node` act on the Maker's whole Basecamp: desk, signer and Node;
+    # the Node alone is held down by the supervisor's hold file
+    # (LEZ_MAKER_NODE_HOLD, scripts/node-hold.sh).
+    # The image owns the state directories: a named volume takes the owner and
+    # mode of the image directory it is first mounted on.
     build:
       context: ./images/maker-node
       additional_contexts:
@@ -364,8 +356,6 @@ services:
     image: ${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}
     container_name: lez-maker-node
     depends_on:
-      maker-init:
-        condition: service_completed_successfully
       sequencer:
         condition: service_healthy
       bitcoin-core:
@@ -374,10 +364,7 @@ services:
         condition: service_healthy
     environment:
       BASECAMP_ROLE: maker
-      # The UI Basecamp's maker desk runs this role's Chat and is the one people
-      # look at: this desk neither chats nor refreshes the market.
-      LEZ_DESK_CHAT: "0"
-      LEZ_DESK_VIEW: "0"
+      VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
       # The desk's signer (lez_role_signer.h) and Node (lez_role_node.h).
       LEZ_WALLET_DIR: /tmp/lez-wallet
       LEZ_WALLET_SEQUENCER_URL: http://sequencer:3040
@@ -415,6 +402,7 @@ services:
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
     volumes:
       - maker_state:/var/lib/lez/maker
+      # The Node's sockets; the Taker Node reaches the Maker's Chat socket here.
       - maker_socket:/run/lez/maker
       # The Maker half of the prepared ZEC corridor (scripts/zec-provision.sh).
       - zec_maker:/var/lib/lez/zec
@@ -426,6 +414,9 @@ services:
       - maker_wallet:/run/lez-wallet/maker
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
+      - ./ui-tests:/ui-tests:ro
+    ports:
+      - "127.0.0.1:5901:5900"
     networks: [chains]
     user: "4713:4713"
     # the host user's group: reads the role keys under runtime/lez (gen-config.sh)
@@ -442,27 +433,9 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  taker-init:
-    image: debian:bookworm-slim
-    container_name: lez-taker-init
-    user: "0:0"
-    volumes:
-      - taker_state:/var/lib/lez/taker
-      - taker_socket:/run/lez/taker
-      - zec_taker:/var/lib/lez/zec
-      - taker_wallet:/run/lez-wallet/taker
-    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/taker /run/lez/taker /var/lib/lez/zec /run/lez-wallet/taker && chmod 0700 /var/lib/lez/taker /run/lez/taker /var/lib/lez/zec /run/lez-wallet/taker"]
-    networks: [chains]
-    restart: "no"
-    logging: *default-logging
-
   taker-node:
-    # The Taker's own Basecamp (headless; images/taker-node: the basecamp-ui
-    # image plus the Taker Node): its desk starts the Taker's LEZ signer in
-    # Basecamp's lez_core and has Basecamp's lez_swap_node launch and supervise
-    # the Taker Node, the swap engine (node-entrypoint.sh, restarted when it
-    # exits; its output is this container's log). `docker restart|stop|logs
-    # lez-taker-node` act on the Taker's Basecamp and so on its Node.
+    # The Taker's own Basecamp (images/taker-node: the basecamp-ui image plus
+    # the Taker Node), on VNC at 127.0.0.1:5902: as maker-node, for the Taker.
     build:
       context: ./images/taker-node
       additional_contexts:
@@ -470,18 +443,13 @@ services:
     image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
     container_name: lez-taker-node
     depends_on:
-      taker-init:
-        condition: service_completed_successfully
       sequencer:
         condition: service_healthy
       maker-node:
         condition: service_healthy
     environment:
       BASECAMP_ROLE: taker
-      # The UI Basecamp's taker desk runs this role's Chat and is the one people
-      # look at: this desk neither chats nor refreshes the market.
-      LEZ_DESK_CHAT: "0"
-      LEZ_DESK_VIEW: "0"
+      VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
       # The desk's signer (lez_role_signer.h) and Node (lez_role_node.h).
       LEZ_WALLET_DIR: /tmp/lez-wallet
       LEZ_WALLET_SEQUENCER_URL: http://sequencer:3040
@@ -520,10 +488,10 @@ services:
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
     volumes:
       - taker_state:/var/lib/lez/taker
-      - taker_socket:/run/lez/taker
       # The Taker half of the prepared ZEC corridor plus its catalog.
       - zec_taker:/var/lib/lez/zec
       - delivery_dir:/delivery:ro
+      # the Maker's Chat socket (the Node's own sockets stay in the image's /run/lez/taker)
       - maker_socket:/run/lez/maker
       # The identity's public half; the key stays with Basecamp's wallet.
       - ./runtime/lez/taker/identity.json:/run-lez-identity/identity.json:ro
@@ -532,6 +500,9 @@ services:
       - taker_wallet:/run/lez-wallet/taker
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
+      - ./ui-tests:/ui-tests:ro
+    ports:
+      - "127.0.0.1:5902:5900"
     networks: [chains]
     user: "4713:4713"
     # the host user's group: reads the role keys under runtime/lez (gen-config.sh)
@@ -549,34 +520,14 @@ services:
     logging: *default-logging
 
   basecamp-ui:
+    # Build only: the Basecamp image (Xvfb, VNC, the portable Basecamp, both
+    # role packages, qt-mcp) the parties' Basecamps (maker-node, taker-node)
+    # and the LEZ network's (bedrock, indexer) are built on, through their
+    # `basecamp` build context. It runs no container (scale 0): each party's
+    # desk lives in that party's own Basecamp.
     build: ./images/basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-basecamp-ui:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-basecamp-ui
-    # The desks people use (VNC, the UI tests): both roles' desks in one
-    # Basecamp, talking to the Nodes that the roles' own Basecamps run.
-    depends_on:
-      maker-node:
-        condition: service_healthy
-      taker-node:
-        condition: service_healthy
-    environment:
-      BASECAMP_ROLE: ${BASECAMP_ROLE:-both}
-      VNC_PASSWORD: ${VNC_PASSWORD:-lezswap}
-      LEZ_MAKER_RPC_SOCKET: /run/lez/maker/node.sock
-      LEZ_TAKER_RPC_SOCKET: /run/lez/taker/node.sock
-      M3_UI_DIRECTION: ${M3_UI_DIRECTION:-TakerSellsForeign}
-    volumes:
-      - maker_socket:/run/lez/maker:ro
-      - taker_socket:/run/lez/taker:ro
-      - ./ui-tests:/ui-tests:ro
-    ports:
-      - "127.0.0.1:5901:5900"
-    networks: [chains]
-    user: "4713:4713"
-    init: true
-    security_opt: ["no-new-privileges:true"]
-    restart: unless-stopped
-    logging: *default-logging
+    scale: 0
 
   # ─── one-shot tools (profile "tools", never a running service) ──────────
   # `docker compose --profile tools run --rm tools '<command>'`: the escrow
@@ -679,8 +630,6 @@ volumes:
     name: ${LEZ_VOLUME_PREFIX:-lez}-maker-socket
   taker_state:
     name: ${LEZ_VOLUME_PREFIX:-lez}-taker-state
-  taker_socket:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-taker-socket
   zec_maker:
     name: ${LEZ_VOLUME_PREFIX:-lez}-zec-maker
   zec_taker:

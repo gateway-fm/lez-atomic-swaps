@@ -1,6 +1,6 @@
 # Running the swap stack on public testnets
 
-This guide runs the Maker and Taker Nodes, and both Basecamp desks, against
+This guide runs the Maker's and the Taker's Basecamps (each party's desk and Node) against
 the **official LEZ v0.2 testnet** (`https://testnet.lez.logos.co`, channel
 `0101…01`, LEZ v0.2.4) and **Bitcoin testnet4**. Nothing here is a local
 chain: four local services join the public networks, and the Nodes reach
@@ -220,6 +220,10 @@ export INTERACTIVE_TIMEOUT_MS=5400000
 scripts/ui-e2e.sh happy --direction TakerSellsForeign --record   # the Taker pays BTC
 scripts/ui-e2e.sh happy --direction TakerSellsLez --record       # the Maker pays BTC
 ```
+
+Each party's desk is the one its own Basecamp has open: the Maker's on VNC at
+`127.0.0.1:5903`, the Taker's at `127.0.0.1:5904` (`compose.testnet.yaml`; a local
+stack keeps 5901 and 5902), and `ui-e2e.sh` drives those same desks.
 
 Four things differ from a local run, and each of them will fail a run if missed.
 

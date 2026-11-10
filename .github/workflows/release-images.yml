@@ -16,7 +16,8 @@ name: release-images
 # prover toolchain is baked in), and the escrow and LEZ-services jobs restore
 # their outputs from the Actions cache when nothing they depend on changed;
 # the digest checks in from-scratch.sh still run on a restored artifact.
-#   basecamp-ui   the Nix-built Basecamp bundle and both role packages
+#   basecamp-ui   the Nix-built Basecamp bundle and both role packages, and the
+#                 Basecamp images on it (each party's, the LEZ network's)
 #   images        stages the payloads, builds and pushes the remaining images
 #   smoke         pulls the published images and runs the bundle's start.sh
 #   publish       attaches the bundle to the release (release event only)
@@ -335,6 +336,10 @@ jobs:
         with:
           name: node-contexts
           path: deploy/images
+      # basecamp-ui is build-only in compose.yaml (scale 0, no container): the
+      # base of the parties' and the LEZ network's Basecamps. It is pushed all
+      # the same so `docker compose pull` resolves every service; its layers are
+      # the role images' own.
       - name: Build and push the basecamp-ui image
         working-directory: deploy
         env:

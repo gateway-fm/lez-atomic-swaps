@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# up.sh — bring the whole local LEZ ↔ BTC swap stack up: chains, market,
-# both Nodes and the Basecamp UI. Idempotent on a standing stack.
+# up.sh — bring the whole local LEZ ↔ BTC swap stack up: chains, market and
+# each party's Basecamp (its desk and Node). Idempotent on a standing stack.
 #
 #   ./scripts/up.sh               start or resume everything
 #   ./scripts/up.sh --build       also rebuild the images from the staged payloads
@@ -22,7 +22,7 @@
 #                            bootstraps the market itself afterwards and
 #                            prints its own banner: LEZ_NO_BANNER=1)
 #   LEZ_API_ONLY=1           chains, market and Nodes only, wallets seeded
-#                            for the evidence run; no Basecamp UI
+#                            for the evidence run; no desk suites
 #
 # Requires the payloads staged by from-scratch.sh (images/*/ contexts, the
 # provision directory, the market root). SKIP_UI_VERIFY=1 skips the UI suites.
@@ -269,6 +269,10 @@ after="$(sha256sum runtime/market-bootstrap.env 2>/dev/null | cut -c1-64 || true
 
 stage "start the Nodes (compose up)"
 echo "[5/6] Nodes…"
+# The containers of services this file no longer has: the third Basecamp that
+# held both desks (it publishes 5901, the Maker's Basecamp's VNC port now) and
+# the init containers the role images' own state directories replaced.
+docker rm -f lez-basecamp-ui lez-maker-init lez-taker-init >/dev/null 2>&1 || true
 # A changed runtime.env (a timing profile switch, say) reaches the Nodes only
 # through a recreate; entrypoints read it once.
 if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 1 ]]; then
@@ -277,8 +281,8 @@ if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 
     # identity when it starts, which is why taker-node waits for a healthy
     # maker-node (compose.yaml); with the identity the last Maker published
     # removed first, the Taker's Node waits for the one the new Maker publishes
-    # (node-entrypoint.sh) instead. Both containers existing means their init
-    # containers have run, so --no-deps skips nothing else.
+    # (node-entrypoint.sh) instead. Both containers existing means their
+    # volumes exist, so --no-deps skips nothing else.
     docker run --rm --network none --user 4713:4713 --volumes-from lez-maker-node --entrypoint rm \
       "$(docker inspect -f '{{.Config.Image}}' lez-maker-node)" -f /delivery/maker-delivery-identity.pub
     docker compose up -d --no-build --force-recreate maker-node
@@ -315,15 +319,13 @@ if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
   echo "API stack ready; run python3 scripts/record-evidence.py after market bootstrap."
   exit 0
 fi
-stage "Basecamp UI"
-echo "[6/6] Basecamp UI…"
-docker compose up -d --no-build basecamp-ui
-wait_healthy 600 lez-basecamp-ui
-stage "UI suites"
+# Each party's desk is the one its own Basecamp opened (maker-node, taker-node).
+stage "desk suites"
+echo "[6/6] the parties' desks…"
 ui_failed=0
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
   for role in maker taker; do
-    if ! docker exec lez-basecamp-ui node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|failed|^    [A-Za-z]'; then
+    if ! docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|failed|^    [A-Za-z]'; then
       ui_failed=1
     fi
   done
@@ -339,11 +341,12 @@ cat <<BANNER
    Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / ${MINE_INTERVAL:-120} s)
    BTC explorer          http://127.0.0.1:3002
    LEZ explorer          http://127.0.0.1:3003
-   Basecamp UI (VNC)     vnc://127.0.0.1:5901     (password: ${VNC_PASSWORD:-lezswap}; role: ${BASECAMP_ROLE:-both})
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: ${VNC_PASSWORD:-lezswap}; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: ${VNC_PASSWORD:-lezswap}; the Taker desk)
    Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
 
  logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
  a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
 ──────────────────────────────────────────────────────────────────
 BANNER
-[[ "$ui_failed" == 0 ]] || { echo "a Basecamp UI suite failed; see above" >&2; exit 1; }
+[[ "$ui_failed" == 0 ]] || { echo "a desk suite failed; see above" >&2; exit 1; }

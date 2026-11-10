@@ -196,19 +196,6 @@
       ]
     },
     {
-      "id": "maker-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "maker",
-      "pair": "all",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": []
-    },
-    {
       "id": "maker-node",
       "lifecycle": "service",
       "executable": "lez-maker-node",
@@ -234,32 +221,17 @@
       ],
       "credentials": [
         "Maker-owned Delivery signing key",
-        "The Maker identity's LEZ signer key, imported into the lez_core wallet of the Maker's own Basecamp, which this service is (the Node it launches holds no LEZ key)"
+        "The Maker identity's LEZ signer key, imported into the lez_core wallet of the Maker's own Basecamp, which this service is (the Node it launches holds no LEZ key)",
+        "The Maker desk's role-local Chat/Delivery identity (the desk runs in this Basecamp)"
       ],
       "public_identities": [
         "/delivery/maker-delivery-identity.pub"
       ],
       "health": "maker_health",
       "depends_on": [
-        "maker-init",
         "sequencer",
         "bitcoin-core",
         "indexer"
-      ]
-    },
-    {
-      "id": "taker-init",
-      "lifecycle": "one_shot_init",
-      "executable": "bash",
-      "role": "taker",
-      "pair": "all",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": [
-        "maker-node"
       ]
     },
     {
@@ -288,14 +260,14 @@
       ],
       "credentials": [
         "No private key in discovery-only profile",
-        "The Taker identity's LEZ signer key, imported into the lez_core wallet of the Taker's own Basecamp, which this service is (the Node it launches holds no LEZ key)"
+        "The Taker identity's LEZ signer key, imported into the lez_core wallet of the Taker's own Basecamp, which this service is (the Node it launches holds no LEZ key)",
+        "The Taker desk's role-local Chat/Delivery identity (the desk runs in this Basecamp)"
       ],
       "public_identities": [
         "Read-only Maker Delivery public identity"
       ],
       "health": "taker_health",
       "depends_on": [
-        "taker-init",
         "sequencer",
         "maker-node"
       ]
@@ -348,21 +320,16 @@
     },
     {
       "id": "basecamp-ui",
-      "lifecycle": "service",
-      "executable": "lez-maker-ui + lez-taker-ui",
+      "lifecycle": "build_only",
+      "executable": "none (base image of the role and LEZ network Basecamps)",
       "role": "both",
       "pair": "all",
       "sockets": [],
       "state": [],
-      "credentials": [
-        "Role-local Chat/Delivery identities"
-      ],
+      "credentials": [],
       "public_identities": [],
-      "health": "role package smoke tests",
-      "depends_on": [
-        "maker-node",
-        "taker-node"
-      ]
+      "health": "none: runs no container",
+      "depends_on": []
     }
   ],
   "verification_commands": [

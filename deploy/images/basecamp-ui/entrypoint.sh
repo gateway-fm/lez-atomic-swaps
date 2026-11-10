@@ -1,5 +1,5 @@
 #!/bin/bash
-# Basecamp UI entrypoint: Xvfb + fluxbox + x11vnc + LogosBasecamp (role-selected)
+# Basecamp entrypoint: Xvfb + fluxbox + x11vnc + LogosBasecamp (role-selected)
 set -euo pipefail
 
 export HOME=/tmp
@@ -14,13 +14,12 @@ if ! pgrep -x Xvfb >/dev/null; then
   rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 2>/dev/null || true
 fi
 
-# one app, both consoles: the default user dir carries both role plugins.
-# Set BASECAMP_ROLE=maker|taker to start from a role-isolated dir instead.
-role="${BASECAMP_ROLE:-both}"
+# The role's Basecamp starts from its role-isolated user dir (one desk:
+# compose.yaml maker-node, taker-node).
+role="${BASECAMP_ROLE:-}"
 case "$role" in
   maker) user_dir=/var/lez/basecamp-maker-user ;;
   taker) user_dir=/var/lez/basecamp-taker-user ;;
-  both) user_dir="${BASECAMP_USER_DIR:-/var/lez/basecamp-user}" ;;
   # The LEZ network node or indexer's Basecamp (compose.yaml bedrock, indexer):
   # its user directory, where the modules keep their state, lives on the
   # service's state volume; the LEZ Network desk comes from the image.
@@ -30,7 +29,7 @@ case "$role" in
     rm -rf "$user_dir/plugins/lez_network"
     cp -a /var/lez-assets/network-user/plugins/lez_network "$user_dir/plugins/"
     ;;
-  *) echo "BASECAMP_ROLE must be maker, taker, both or network" >&2; exit 2 ;;
+  *) echo "BASECAMP_ROLE must be maker, taker or network" >&2; exit 2 ;;
 esac
 
 if ! pgrep -x Xvfb >/dev/null; then
@@ -52,10 +51,13 @@ fi
 
 # A role's party runs its own Basecamp (compose.yaml maker-node, taker-node):
 # its desk hosts the role's LEZ signer in Basecamp's lez_core and has
-# Basecamp's lez_swap_node launch the role's Node, both when the desk opens. With
-# either configured, open this Basecamp's desks once the launcher shows them.
+# Basecamp's lez_swap_node launch the role's Node, both when the desk opens;
+# the same desk is the one the party uses over VNC and the UI tests drive.
+# With either configured, open this Basecamp's desk once the launcher shows it.
 # The LEZ network node or indexer's Basecamp opens its LEZ Network desk the same way.
+# open-desks.mjs logs to /tmp/open-desks.log; "1 passed" there means the desk is open.
 if [[ -n "${LEZ_MAKER_SIGNER_SOCKET:-}${LEZ_TAKER_SIGNER_SOCKET:-}${LEZ_MAKER_NODE_LAUNCHER:-}${LEZ_TAKER_NODE_LAUNCHER:-}${LEZ_NETWORK_NODE_CONFIG:-}${LEZ_INDEXER_CONFIG:-}" ]]; then
+  rm -f /tmp/open-desks.log
   # open-desks.mjs connects to Basecamp's QML inspector once and gives up when
   # nothing listens yet: start it as soon as the inspector does.
   (for _ in $(seq 600); do (exec 3<>"/dev/tcp/localhost/${QML_INSPECTOR_PORT:-3768}") 2>/dev/null && break; sleep 0.2; done

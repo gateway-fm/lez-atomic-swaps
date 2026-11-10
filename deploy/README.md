@@ -1,9 +1,9 @@
 # lez-swap-stack — fully dockerized local LEZ ↔ BTC swap environment
 
 One compose project: LEZ v0.2 devnet + Bitcoin Core regtest + explorers for
-both chains + the canonical Maker/Taker Nodes + the real Basecamp UI
-(drivable over VNC and by automated end-to-end tests). All native arm64,
-started with one command.
+both chains + each party's own Basecamp, holding that party's desk and its
+canonical Node (drivable over VNC and by automated end-to-end tests). All
+native arm64, started with one command.
 
 ## Prebuilt images (no build)
 
@@ -14,15 +14,15 @@ On an arm64 host with Docker (Apple silicon, or arm64 Linux):
 
 ```sh
 tar -xzf lez-swap-stack-v0.2.5-arm64.tar.gz && cd lez-swap-stack-v0.2.5-arm64
-./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → UI suites
-./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two Basecamp apps
+./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → desk suites
+./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two desks
 ```
 
 `start.sh` mints the four wallet identities into `market/` with the
 `lez-wallet-module` image (the `tools` service), brings the stack up through `up.sh` in pull mode
 (`LEZ_IMAGES=pull`), runs the idempotent market bootstrap in one throwaway
 tools container, restarts both Nodes on the recorded escrow deployment and
-runs the Basecamp suites. Rerunning it resumes; `./scripts/down.sh` stops the
+runs the desk suites in both parties' Basecamps. Rerunning it resumes; `./scripts/down.sh` stops the
 stack and `--wipe` removes chains and Node state. `market/identities` holds the
 funded wallets and survives a wipe; `market/bootstrap` and
 `market/market-bootstrap.env` belong to one LEZ chain, so `--wipe` retires them
@@ -42,11 +42,11 @@ locally from a committed tree.
 ## From scratch
 
 One command takes an arm64 host (macOS with Docker Desktop, or Linux with
-Docker) from nothing to the running stack with the Basecamp UI verified:
+Docker) from nothing to the running stack with both desks verified:
 
 ```sh
-./scripts/from-scratch.sh          # prerequisites → pinned sources → payloads (ephemeral builders) → stack → UI suites
-./scripts/from-scratch.sh --swap   # …and one full BTC → LEZ swap through the two Basecamp apps
+./scripts/from-scratch.sh          # prerequisites → pinned sources → payloads (ephemeral builders) → stack → desk suites
+./scripts/from-scratch.sh --swap   # …and one full BTC → LEZ swap through the two desks
 ```
 
 It installs the host tools (Homebrew on macOS), clones the pinned
@@ -59,7 +59,7 @@ sidecar and the four wallet identities in throwaway containers of the builder
 refuse a sidecar built from another `compat/lez-v0_2-sidecar` tree)
 image (`builder/`, caches in `lez-build-*` volumes, outputs in
 `provision/data`), stages every image payload, then runs `up.sh`, the market
-bootstrap (one throwaway container on the stack network), both UI suites and
+bootstrap (one throwaway container on the stack network), both desk suites and
 `verify-all.sh`. No long-lived build container remains, and only the
 reproducible Risc0 guest build sees the host Docker socket, for that one run. Every phase is idempotent and resumable (`--only <phase>`).
 The cold path builds several Rust toolchains' worth of code and takes a few
@@ -87,7 +87,7 @@ The portable recorder produces an offline replay page and public chain checks.
 ./scripts/up.sh                    # start or resume everything: chains, market, both Nodes, UI
 ./scripts/up.sh --fresh-lez        # recreate the LEZ chain only (Bedrock cannot restart after long uptime)
 ./scripts/up.sh --build            # also rebuild the images from the staged payloads
-./scripts/swap-through-ui.sh       # one BTC → LEZ swap through the two Basecamp apps
+./scripts/swap-through-ui.sh       # one BTC → LEZ swap through the two desks
 ./scripts/export-node-evidence.py  # publish a completed swap's public evidence (explorer + proof view)
 ./scripts/down.sh                  # stop everything (--wipe also removes state and volumes)
 ```
@@ -151,28 +151,30 @@ comes, or when the market bootstrap cannot finish; six chains at most
 (`LEZ_REGRESS_FLAT_SECONDS`), the heartbeat after 60 s, and `node-e2e.py` checks that
 finality advances before each scenario.
 
-`up.sh` ends with the repo-style UI verification (real Basecamp driven through
-its QML inspector against the live Maker and Taker Nodes). Skip with `SKIP_UI_VERIFY=1`.
+`up.sh` ends with the repo-style desk verification: each party's desk, in that
+party's own Basecamp, driven through its QML inspector against the party's live
+Node. Skip with `SKIP_UI_VERIFY=1`.
 
 | What | Where |
 |---|---|
 | Bitcoin regtest RPC | `http://127.0.0.1:18443` (user `lezrpc`, password in `runtime/runtime.env`), auto-mining every 120 s |
 | BTC explorer | http://127.0.0.1:3002 |
 | LEZ explorer + M3 evidence | http://127.0.0.1:3003/#/evidence |
-| **Basecamp UI (VNC)** | **`vnc://127.0.0.1:5901`** (password `lezswap`; override with `VNC_PASSWORD`) |
+| **Maker's Basecamp (VNC)** | **`vnc://127.0.0.1:5901`**: the Maker desk (password `lezswap`; override with `VNC_PASSWORD`) |
+| **Taker's Basecamp (VNC)** | **`vnc://127.0.0.1:5902`**: the Taker desk (same password) |
 | Maker Node | `docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health` |
-| UI verify | `docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs [maker\|taker]` |
-| Switch UI role | `BASECAMP_ROLE=taker docker compose --env-file runtime/runtime.env up -d basecamp-ui` |
+| Desk verify | `docker exec lez-maker-node node /ui-tests/verify.mjs maker`, `docker exec lez-taker-node node /ui-tests/verify.mjs taker` |
+| Hold a Node down (its Basecamp and desk stay up) | `scripts/node-hold.sh hold\|release maker\|taker` |
 | Logs | `docker compose --env-file runtime/runtime.env logs -f <service>` |
 
-Open the VNC URL; the two Basecamp microapps are the control surface and the
-two Nodes settle the swap:
+Open the two VNC URLs; each party's desk is the control surface of its own
+Basecamp, and the two Nodes settle the swap:
 
-1. Open **LEZ Maker** (wallet **Munich Vault 01**, the Maker Node's
+1. In the Maker's Basecamp, **LEZ Maker** (wallet **Munich Vault 01**, the Maker Node's
    identity) and click **Publish offer**. Each click publishes one 0.01 BTC →
    1,000 LEZ offer through the Maker Node; withdrawn and consumed offers leave
    the Taker's order book.
-2. Open **LEZ Taker** (wallet **Zurich Wallet 01**, the Taker Node's
+2. In the Taker's Basecamp, **LEZ Taker** (wallet **Zurich Wallet 01**, the Taker Node's
    identity) and click **Take offer** on an order-book row. The Taker Node
    reserves the lot with the Maker, plans its Bitcoin funding, prepares its LEZ
    claim, runs the signing ceremony and activates its actor; the row then
@@ -209,11 +211,12 @@ btc() { docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf 
    service healthy. `maker maker_health` and `taker taker_health` answer.
    `./scripts/reset-swaps.sh` gives you an empty swap history when you want a
    clean run (`--abandon-open` when a swap is still open).
-2. **Publish.** Connect VNC to `127.0.0.1:5901` (password `lezswap`), open
-   **LEZ Maker** and click **Publish offer**. Check it from outside:
+2. **Publish.** Connect VNC to the Maker's Basecamp at `127.0.0.1:5901`
+   (password `lezswap`); on **LEZ Maker** click **Publish offer**. Check it from outside:
    `maker maker_offer_list` lists it `active` at revision 1, and
    `docker exec lez-taker-node ls /delivery` shows its signed file.
-3. **Discover and take.** Open **LEZ Taker**; the order book shows the
+3. **Discover and take.** Connect VNC to the Taker's Basecamp at
+   `127.0.0.1:5902`; on **LEZ Taker** the order book shows the
    offer as **Munich Vault 01 · 1,000 LEZ**. `taker taker_offer_list_v1` shows
    the same. Click **Take offer**. Within about ten seconds the row offers
    **Lock 0.01000000 BTC**. Meanwhile: `taker taker_swap_list_v1` lists the
@@ -243,7 +246,7 @@ btc() { docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf 
    any of the five hashes into the explorer's search.
 8. **Verify without another swap.** `./scripts/verify-all.sh`: containers,
    both chains, explorer display of every exported swap, the Node market
-   (15 checks) and both UI suites.
+   (15 checks) and both desk suites.
 
 Things worth trying deliberately: withdraw an offer on the Maker desk and
 watch it leave the Taker order book; `docker restart lez-taker-node` between
@@ -411,21 +414,20 @@ them would strand the funded accounts.
 | settlement chains | both chains are advancing and the Bitcoin spender index is present |
 | `verify-explorers.py` | each exported swap's transactions are *displayed* — Bitcoin ones in a real block on the Bitcoin explorer (rendered content, hidden markup excluded), LEZ ones as live transactions with program and accounts. The certified sample predates the settlement chains and is checked against the proof endpoint, since its chains no longer exist |
 | `verify-market.py` | the Node market: route terms, publication, idempotent replay, request-identity reuse, discovery through Delivery, stale-revision rejection, withdrawal |
-| UI regressions | the two Basecamp suites against the live Maker and Taker Nodes |
+| desk regressions | each party's desk suite, in that party's Basecamp, against its live Node |
 
-The BTC view can be driven automatically:
+The BTC view can be driven automatically, on the desk the Taker's Basecamp has
+open:
 
 ```sh
-docker compose --env-file runtime/runtime.env run --rm --no-deps --entrypoint node \
-  basecamp-ui /ui-tests/verify.mjs taker
+docker exec lez-taker-node node /ui-tests/verify.mjs taker
 ```
 
 For a completed reverse-flow evidence file, select its exact UI contract while
 running either role suite:
 
 ```sh
-M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
-  run --rm --no-deps --entrypoint node basecamp-ui /ui-tests/verify.mjs taker
+docker exec -e M3_UI_DIRECTION=TakerSellsLez lez-taker-node node /ui-tests/verify.mjs taker
 ```
 
 ## Services
@@ -439,15 +441,18 @@ M3_UI_DIRECTION=TakerSellsLez docker compose --env-file runtime/runtime.env \
 | `bedrock` | pinned multi-arch digest `91d6c5…` | LEZ v0.2 consensus node (exact pin from the repo's compose) |
 | `sequencer` / `indexer` | `images/lez-services` | built from pinned `logos-execution-zone` v0.2.0 (a58fbce), native rebuild + arm64 r0vm |
 | `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
-| `maker-init` / `taker-init` | debian | one-shot volume chowns; Taker reads only `maker-delivery-identity.pub`, never Maker private state |
-| `maker-node` | `images/maker-node` | Maker-only image (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`; the entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints |
-| `taker-node` | `images/taker-node` | Taker-only image: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
+| `maker-node` | `images/maker-node` | the Maker's own Basecamp (the `basecamp-ui` image) on VNC `127.0.0.1:5901`, plus Maker-only executables (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`. Its LEZ Maker desk opens at start, hosts the Maker's LEZ signer (`lez_core`) and has `lez_swap_node` launch and supervise the Node; the UI tests drive the same desk (`ui-tests/`, mounted). The entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints. The image owns its state directories (a new named volume takes the image directory's owner and mode), so no init container runs |
+| `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, plus Taker-only executables: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
 | `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
-| `basecamp-ui` | `images/basecamp-ui` | portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc; runs as the Node uid (4713) so the owner-only socket checks pass. Both desks read their market from the Nodes (`apps/basecamp/common/node_market.cpp`): offers, takes, the Taker's lock and claim, and the Maker's automatic progress |
+| `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `bedrock`, `indexer`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc |
 
-The UI reaches the role Nodes through shared named socket volumes mounted
-read-only in Basecamp. The C++ backends enforce
-`uid == socket owner && mode 0600`, hence the shared uid.
+Each desk reaches its own Node over the Node's owner socket inside the same
+container; the desks read their market from the Nodes
+(`apps/basecamp/common/node_market.cpp`): offers, takes, the Taker's lock and
+claim, and the Maker's automatic progress. The C++ backends enforce
+`uid == socket owner && mode 0600`; Basecamp and the Node share the uid 4713.
+The only socket two containers share is the Maker's Chat socket
+(`maker_socket`, mounted in the Taker's Basecamp for its Node).
 
 All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 `cap_drop: ALL` + `no-new-privileges`; ports published on loopback only. No
@@ -470,16 +475,17 @@ service holds the host Docker socket.
 
 ```
 compose.yaml               the stack (image names: ${LEZ_IMAGE_PREFIX}-<service>:${LEZ_IMAGE_TAG})
-scripts/start.sh           prebuilt path: pull the release images, identities, stack, bootstrap, UI suites
+scripts/start.sh           prebuilt path: pull the release images, identities, stack, bootstrap, desk suites
 scripts/package-dist.sh    assemble the release bundle (deploy/ from git archive + release.env)
 scripts/from-scratch.sh    everything from an empty host (prerequisites, sources, payloads, runner, stack)
-scripts/up.sh              one-command bring-up (+ UI verification); LEZ_IMAGES=pull skips the build
-scripts/swap-through-ui.sh one complete swap driven through the two Basecamp apps
+scripts/up.sh              one-command bring-up (+ desk verification); LEZ_IMAGES=pull skips the build
+scripts/swap-through-ui.sh one complete swap driven through the two desks
+scripts/node-hold.sh       hold a Node down inside its running Basecamp, or release it
 scripts/market-bootstrap.sh one-time settlement-chain bootstrap (one throwaway builder container)
-scripts/stage-basecamp-package.sh stage one Nix-built package or module into the UI image
+scripts/stage-basecamp-package.sh stage one Nix-built package or module into the Basecamp image
 scripts/export-node-evidence.py publish a completed swap's public evidence from the Nodes
 scripts/reset-swaps.sh     forget every persisted swap on both Nodes (after an actor rebuild)
-scripts/verify-all.sh      containers, chains, explorers, Node market, UI suites
+scripts/verify-all.sh      containers, chains, explorers, Node market, desk suites
 scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
 scripts/btc-miner.sh       regtest mining loop

@@ -2,12 +2,12 @@
 # start.sh — bring the prebuilt LEZ ↔ BTC swap stack up from a release bundle
 # (or from a checkout) without building anything: pull the release images,
 # mint the four wallet identities, generate the runtime, start the stack,
-# bootstrap the settlement market and verify the Basecamp UI against both
-# Nodes. Rerunning it is safe: every step skips what already exists.
+# bootstrap the settlement market and verify each party's desk against its
+# Node. Rerunning it is safe: every step skips what already exists.
 #
-#   ./scripts/start.sh           pull → identities → config → stack → bootstrap → UI suites
-#   ./scripts/start.sh --quick   the same without the Basecamp UI suites
-#   ./scripts/start.sh --swap    … then one full BTC → LEZ swap through the two apps
+#   ./scripts/start.sh           pull → identities → config → stack → bootstrap → desk suites
+#   ./scripts/start.sh --quick   the same without the desk suites
+#   ./scripts/start.sh --swap    … then one full BTC → LEZ swap through the two desks
 #
 # The image names come from release.env next to compose.yaml (written into
 # the bundle by scripts/package-dist.sh) or from the environment:
@@ -157,14 +157,14 @@ maker_routes="$(docker exec lez-maker-node curl -sS --max-time 120 --unix-socket
 
 # ---- verification --------------------------------------------------------------------
 if [[ "$QUICK" != 1 ]]; then
-  log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"
+  log "desk suites in each party's Basecamp (the Maker suite also seeds the order book)"
   for role in maker taker; do
-    docker exec lez-basecamp-ui node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]' || fail "$role UI suite failed"
+    docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]' || fail "$role desk suite failed"
   done
   bash scripts/verify-all.sh 2>&1 | grep -E 'OK|FAIL|checks|failed|✓|✗|^    [A-Za-z]' || fail "verify-all.sh reported a failed stage"
 fi
 if [[ "$RUN_SWAP" == 1 ]]; then
-  log "one full BTC → LEZ swap through the two Basecamp apps"
+  log "one full BTC → LEZ swap through the two desks"
   bash scripts/swap-through-ui.sh
 fi
 
@@ -174,7 +174,8 @@ cat <<BANNER
 ──────────────────────────────────────────────────────────────────
  LEZ swap stack is up from ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}
 
-   Basecamp UI (VNC)     vnc://127.0.0.1:5901     (password: ${vnc_password})
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: ${vnc_password}; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: ${vnc_password}; the Taker desk)
    Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining)
    BTC explorer          http://127.0.0.1:3002
    LEZ explorer + proof  http://127.0.0.1:3003/#/evidence

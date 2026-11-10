@@ -4,7 +4,7 @@
 #   2. settlement-chain state (both chains + the four persistent wallets)
 #   3. block explorers actually display every certified swap transaction
 #   4. Node market behaviour (publication, discovery, replay, withdrawal)
-#   5. Basecamp UI regression suites (maker and taker)
+#   5. desk regression suites, each in its party's own Basecamp (maker and taker)
 #
 # It starts no swaps and submits no chain effects. The market check publishes
 # and withdraws one uniquely named offer; the Maker Node keeps it in its history.
@@ -52,11 +52,10 @@ section "Node market"
 python3 scripts/verify-market.py
 report "$?" "Node market behaviour"
 
-section "Basecamp UI regressions"
+section "desk regressions (each party's own Basecamp)"
 for role in maker taker; do
-  "${compose[@]}" run --rm -T --no-deps --entrypoint node basecamp-ui \
-    /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]'
-  report "${PIPESTATUS[0]}" "UI suite: $role"
+  docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" </dev/null 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]'
+  report "${PIPESTATUS[0]}" "desk suite: $role"
 done
 
 printf '\n'

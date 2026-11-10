@@ -161,11 +161,11 @@ def validate_repository_contract(
             f"missing={sorted(compose_service_ids - local_component_ids)} "
             f"stale={sorted(local_component_ids - compose_service_ids)}"
         )
-    taker_init = compose.split("  taker-init:\n", 1)[1].split("  taker-node:\n", 1)[0]
+    taker_service = re.split(r"\n  (?=\S)", compose.split("  taker-node:\n", 1)[1], maxsplit=1)[0]
     if "/var/run/docker.sock" in compose:
         fail("no Compose service may hold the host Docker socket")
     taker_entrypoint = (ROOT / "deploy/images/taker-node/node-entrypoint.sh").read_text()
-    if "maker_state" in taker_init or "delivery_dir" in taker_init \
+    if "maker_state" in taker_service or "delivery_dir:/delivery:ro" not in taker_service \
             or "maker-delivery-identity.pub" not in taker_entrypoint:
         fail("the Taker setup must learn the Maker only from its public Delivery identity")
     maker_entrypoint = (ROOT / "deploy/images/maker-node/node-entrypoint.sh").read_text()
@@ -326,8 +326,8 @@ def validate_role_symmetry(compose: str) -> None:
                 fail(f"role symmetry {role}: public component {public_name} is absent")
     if len(contract["intentional_asymmetries"]) < 4:
         fail("role symmetry contract must explain intentional key and protocol asymmetries")
-    taker_sections = compose.split("  taker-init:\n", 1)[1].split("  basecamp-ui:\n", 1)[0]
-    if "delivery-signing.key" in taker_sections or "maker_state:" in taker_sections:
+    taker_service = re.split(r"\n  (?=\S)", compose.split("  taker-node:\n", 1)[1], maxsplit=1)[0]
+    if "delivery-signing.key" in taker_service or "maker_state:" in taker_service:
         fail("Taker setup must not receive Maker private key or state authority")
 
 

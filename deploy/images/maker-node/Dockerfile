@@ -38,10 +38,13 @@ COPY --from=strip --chmod=0555 /payload/lez-btc-maker-actor /usr/local/bin/lez-b
 COPY --from=strip --chmod=0555 /payload/lez-zec-maker-actor /usr/local/bin/lez-zec-maker-actor
 COPY --from=strip --chmod=0555 /payload/lez-v02-bridge-poc /usr/local/bin/lez-v02-bridge-poc
 COPY --chmod=0555 node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
+# The state directories the Compose volumes mount here (maker_state, zec_maker,
+# delivery_dir, ...): a new named volume takes the owner and mode of the image
+# directory it is first mounted on, so no init container prepares them.
 RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez \
-    && mkdir -p /var/lib/lez/maker /run/lez/maker \
-    && chown -R lez:lez /var/lib/lez /run/lez \
-    && chmod 0700 /var/lib/lez/maker /run/lez/maker
+    && mkdir -p /var/lib/lez/maker /var/lib/lez/zec /run/lez/maker /run/lez-wallet/maker /delivery \
+    && chown -R lez:lez /var/lib/lez /run/lez /run/lez-wallet /delivery \
+    && chmod 0700 /var/lib/lez/maker /var/lib/lez/zec /run/lez/maker /run/lez-wallet/maker /delivery
 
 COPY --chmod=0444 build-source.txt sidecar-source.txt sidecar-tree.txt sidecar-expected.txt /usr/local/share/lez/
 # The staged sidecar must come from the same compat/lez-v0_2-sidecar tree the
@@ -53,6 +56,6 @@ RUN chmod 0755 /usr/local/share/lez \
 
 USER lez
 WORKDIR /var/lib/lez
-# Basecamp's entrypoint (the base image's): Xvfb, the role's desk opened, then
+# Basecamp's entrypoint (the base image's): Xvfb and VNC, the role's desk opened, then
 # the desk starts the signer and the Node.
 ENTRYPOINT ["/entrypoint.sh"]

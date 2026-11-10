@@ -1,3 +1,7 @@
+# The Basecamp every Basecamp container of the stack is built on (compose.yaml
+# basecamp-ui, a build-only service): the parties' (maker-node, taker-node:
+# one role's desk each, on VNC) and the LEZ network's (bedrock, indexer: the
+# LEZ Network desk). Nothing runs this image on its own.
 FROM debian:trixie-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -27,10 +31,6 @@ RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp \
     && mkdir -p /var/lez \
     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user \
     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user \
-    && mkdir -p /var/lez-assets/both-user/plugins /var/lez/basecamp-user/plugins \
-    && cp -a /var/lez-assets/maker-user/plugins/lez_atomic_swap_maker /var/lez-assets/both-user/plugins/ \
-    && cp -a /var/lez-assets/taker-user/plugins/lez_atomic_swap_taker /var/lez-assets/both-user/plugins/ \
-    && cp -a /var/lez-assets/both-user/plugins/. /var/lez/basecamp-user/plugins/ \
     && chown -R 4713:4713 /var/lez /var/lez-assets \
     && chmod -R u+rwX /var/lez /var/lez-assets
 

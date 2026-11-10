@@ -7,7 +7,8 @@ transaction.
 
 ## Running product stack
 
-The two Basecamp desks drive the two Nodes, and the Nodes settle the swap
+Each party runs one Basecamp holding its desk and its Node (the desk starts the
+Node through Basecamp's `lez_swap_node`); the desk drives that Node, and the Nodes settle the swap
 themselves (ADR 0213): the Taker Node reserves the lot with the Maker Node over
 its owner-local Chat socket, plans its Bitcoin funding from its own Core
 wallet, prepares its LEZ claim through a per-swap sidecar, runs the adaptor
@@ -17,13 +18,17 @@ authority; no service holds the host Docker socket.
 
 ```mermaid
 flowchart LR
-    subgraph UI["Logos Basecamp (basecamp-ui, VNC :5901)"]
+    subgraph MAKER_BC["Maker's Basecamp (maker-node, VNC :5901)"]
         MAKER_UI["LEZ Maker desk\nMunich Vault 01"]
+        MAKER["lez-maker-node\noffers · Chat server · actor supervisor"]
+    end
+    subgraph TAKER_BC["Taker's Basecamp (taker-node, VNC :5902)"]
         TAKER_UI["LEZ Taker desk\nZurich Wallet 01"]
+        TAKER["lez-taker-node\ndiscovery · take · lock · claim · observer"]
     end
 
-    MAKER_UI -->|"owner-only Unix socket"| MAKER["lez-maker-node\noffers · Chat server · actor supervisor"]
-    TAKER_UI -->|"owner-only Unix socket"| TAKER["lez-taker-node\ndiscovery · take · lock · claim · observer"]
+    MAKER_UI -->|"owner-only Unix socket"| MAKER
+    TAKER_UI -->|"owner-only Unix socket"| TAKER
 
     MAKER -->|"signed offer files"| DELIVERY["Delivery directory"]
     DELIVERY --> TAKER

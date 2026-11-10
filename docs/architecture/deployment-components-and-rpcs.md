@@ -14,21 +14,19 @@ deployment, transaction, balance, and run facts are retained in the
 
 ## Current local product stack (ADR 0213, 2026-09-04)
 
-Everything below runs from `deploy/compose.yaml` on one arm64 host. The two
-Basecamp desks talk only to their own Node's owner-only Unix socket; the two
+Everything below runs from `deploy/compose.yaml` on one arm64 host. Each party
+runs one Basecamp container (maker-node, taker-node; VNC on 127.0.0.1:5901 and
+:5902) whose desk starts that party's Node through Basecamp's `lez_swap_node`
+and talks only to that Node's owner-only Unix socket in the same container; the two
 Nodes meet only at the Maker's Chat socket and the Delivery directory; each Node
 reaches the chains through loopback forwarders inside its own container.
 
 ```mermaid
 flowchart TB
-    subgraph UI["basecamp-ui (uid 4713, VNC :5901)"]
+    subgraph MakerNode["maker-node: the Maker's Basecamp (uid 4713, VNC :5901)"]
         MakerDesk["LEZ Maker desk (lez-maker-ui.lgx)"]
-        TakerDesk["LEZ Taker desk (lez-taker-ui.lgx)"]
-        Adapter["node_market.cpp: view model + actions"]
-        Inspector["qt-mcp inspector ← ui-tests/verify.mjs"]
-    end
-
-    subgraph MakerNode["maker-node"]
+        MakerAdapter["node_market.cpp: view model + actions"]
+        MakerInspector["qt-mcp inspector ← ui-tests/verify.mjs"]
         MakerBin["lez-maker-node"]
         MakerStore[("maker.sqlite3: offers, negotiations, swaps, actor registrations")]
         MakerActor["lez-btc-maker-actor (child process per drive)"]
@@ -36,7 +34,10 @@ flowchart TB
         MakerSwapDir[("swaps/&lt;reservation&gt;/: role root, actor store, journals")]
     end
 
-    subgraph TakerNode["taker-node"]
+    subgraph TakerNode["taker-node: the Taker's Basecamp (uid 4713, VNC :5902)"]
+        TakerDesk["LEZ Taker desk (lez-taker-ui.lgx)"]
+        TakerAdapter["node_market.cpp: view model + actions"]
+        TakerInspector["qt-mcp inspector ← ui-tests/verify.mjs"]
         TakerBin["lez-taker-node"]
         TakerRegistry[("registry.sqlite3: swaps, authorities, requests")]
         TakerActor["lez-btc-taker-actor (library, program hash pinned)"]
@@ -57,12 +58,12 @@ flowchart TB
         LezExplorer["lez-explorer :3003 (+ runtime/evidence index)"]
     end
 
-    MakerDesk --> Adapter
-    TakerDesk --> Adapter
-    Adapter -->|"maker_offer_publish/withdraw, maker_offer_list, swap_history, maker_actor_monitor_v1"| MakerBin
-    Adapter -->|"taker_offer_list_v1, taker_swap_initiate/lock/claim/refund_v1, taker_swap_list_v1"| TakerBin
-    Inspector -.-> MakerDesk
-    Inspector -.-> TakerDesk
+    MakerDesk --> MakerAdapter
+    TakerDesk --> TakerAdapter
+    MakerAdapter -->|"maker_offer_publish/withdraw, maker_offer_list, swap_history, maker_actor_monitor_v1"| MakerBin
+    TakerAdapter -->|"taker_offer_list_v1, taker_swap_initiate/lock/claim/refund_v1, taker_swap_list_v1"| TakerBin
+    MakerInspector -.-> MakerDesk
+    TakerInspector -.-> TakerDesk
 
     MakerBin --> MakerStore
     MakerBin -->|"publish / withdraw"| Delivery
@@ -115,7 +116,7 @@ methods between the Nodes: `btc_reserve_v1`, `btc_ceremony_reserve_v1`,
 `btc_ceremony_nonce_v1`, `btc_ceremony_partial_v1`, `btc_chat_propose_v2`,
 `btc_chat_complete_v2`. Host-side tooling: `up.sh`, `gen-config.sh`,
 `swap-through-ui.sh`, `export-node-evidence.py`, `verify-all.sh`
-(`verify-explorers.py`, `verify-market.py`, both UI suites), `reset-swaps.sh`;
+(`verify-explorers.py`, `verify-market.py`, both desk suites, each in its party's Basecamp), `reset-swaps.sh`;
 `market-bootstrap.sh` runs once in a throwaway container of the builder image (`deploy/builder`), which also builds the arm64 artifacts the stack cannot pull; no long-lived build container exists.
 
 ## Keys and signing in the local product stack

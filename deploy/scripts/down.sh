@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# down.sh — stop the whole stack, chains, Nodes and UI. --wipe also removes
+# down.sh — stop the whole stack: chains, and each party's Basecamp and Node. --wipe also removes
 # runtime state and this stack's named volumes (Bitcoin data, Node stores,
 # sockets), so the next up.sh --fresh starts from nothing. The market root
 # keeps its wallet identities (they outlive any chain), but its escrow
@@ -13,6 +13,7 @@ cd "$DEPLOY_ROOT"
 # the volume prefix in particular selects which volumes --wipe removes.
 if [[ -f runtime/runtime.env ]]; then set -a; source runtime/runtime.env; set +a; fi
 export BTC_RPC_PASSWORD="${BTC_RPC_PASSWORD:-teardown}"
+# A stack from before the parties' Basecamps took the desks also ran this one.
 docker rm -f lez-basecamp-ui >/dev/null 2>&1 || true
 
 if [[ "${1:-}" == "--wipe" ]]; then

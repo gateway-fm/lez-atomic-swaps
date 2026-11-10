@@ -2,7 +2,7 @@
 # from-scratch.sh — bring the whole local LEZ ↔ BTC swap environment up from
 # nothing, reproducibly, on an arm64 host (macOS with Docker Desktop, or Linux
 # with Docker): prerequisites, pinned sources, every image payload built in
-# throwaway containers, the settlement market, the stack, and the Basecamp UI.
+# throwaway containers, the settlement market, the stack, and each party's desk.
 #
 #   deploy/scripts/from-scratch.sh [--workspace DIR] [--swap] [--evidence] [--only PHASE]
 #
@@ -672,17 +672,17 @@ phase_stack() {
   # so restart both roles after bootstrap-market.sh published it into the runtime.
   docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
   [[ "$EVIDENCE_MODE" != 1 ]] || return 0
-  log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"
+  log "desk suites in each party's Basecamp (the Maker suite also seeds the order book)"
   local role
   for role in maker taker; do
-    docker exec lez-basecamp-ui node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed' || fail "$role UI suite failed"
+    docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed' || fail "$role desk suite failed"
   done
   bash scripts/verify-all.sh 2>&1 | grep -E 'OK|FAIL|checks|failed' || fail "verify-all.sh reported a failed stage"
 }
 
 phase_swap() {
   PHASE=swap
-  log "one full BTC → LEZ swap through the two Basecamp apps"
+  log "one full BTC → LEZ swap through the two desks"
   bash "$DEPLOY_ROOT/scripts/swap-through-ui.sh"
 }
 

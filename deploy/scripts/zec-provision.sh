@@ -442,9 +442,11 @@ done
 
 # ---- 4. distribute ------------------------------------------------------------
 log "4/8 distribute into $MAKER_VOLUME / $TAKER_VOLUME"
-# The init services create the volumes with Compose's labels and own them to
-# the Node uid; they are one-shots and harmless to rerun.
-"${compose[@]}" up -d --no-deps maker-init taker-init >/dev/null 2>&1
+# The role Basecamps (maker-node, taker-node) created the volumes, with
+# Compose's labels; the copy below owns what it writes to the Node uid.
+for volume in "$MAKER_VOLUME" "$TAKER_VOLUME"; do
+  docker volume inspect "$volume" >/dev/null 2>&1 || fail "volume $volume is missing: start the stack first (scripts/up.sh)"
+done
 helper 0:0 -v "$STAGING:/stage:ro" -v "$MAKER_VOLUME:/maker" -v "$TAKER_VOLUME:/taker" -- "
   set -e; umask 077
   for role in maker taker; do

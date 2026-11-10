@@ -72,19 +72,11 @@ in_role() {
       "$(docker inspect -f '{{.Config.Image}}' "lez-$role-node")" "${@:2}"
   else "${compose[@]}" run --rm -T --no-deps --entrypoint "$1" "$role-node" "${@:2}"; fi
 }
-# Holds a role's Node down inside its Basecamp: the hold file keeps the
-# supervisor from restarting it, then the Node's process group (the Node, its
-# loopback forwarders and sidecars) is ended.
-hold_node() { # hold_node <role> <ROLE>
-  docker exec "lez-$1-node" sh -c '
-    touch "$LEZ_'"$2"'_NODE_HOLD"
-    group="$(pgrep -o -x "lez-'"$1"'-node" || pgrep -o -f node-entrypoint.sh || true)"
-    [ -n "$group" ] || exit 0
-    pkill -TERM -g "$group"
-    for _ in $(seq 75); do pgrep -g "$group" >/dev/null || exit 0; sleep 0.2; done
-    pkill -KILL -g "$group"; sleep 1; ! pgrep -g "$group" >/dev/null'
-}
-release_node() { docker exec "lez-$1-node" sh -c 'rm -f "$LEZ_'"$2"'_NODE_HOLD"' 2>/dev/null || true; }
+# Holds a role's Node down inside its Basecamp (scripts/node-hold.sh: the
+# hold file keeps the supervisor from restarting it, and the Node's process
+# group, its loopback forwarders and sidecars included, is ended).
+hold_node() { bash scripts/node-hold.sh hold "$1"; }
+release_node() { bash scripts/node-hold.sh release "$1" 2>/dev/null || true; }
 
 # Swaps that may still have funds locked, one "<role> <swap id> <state>" each.
 # The Taker's own list says where each of its swaps stands; the Maker's actor
@@ -129,8 +121,8 @@ fi
 if [[ "$in_place" == 1 ]]; then
   log "holding both Nodes down inside their Basecamps (their per-swap sidecars stop with them)"
   # a reset that fails must not leave a Node held down
-  trap 'release_node maker MAKER; release_node taker TAKER' EXIT
-  hold_node maker MAKER; hold_node taker TAKER
+  trap 'release_node maker; release_node taker' EXIT
+  hold_node maker; hold_node taker
 else
   log "stopping both Nodes (their per-swap sidecars stop with them)"
   "${compose[@]}" stop maker-node taker-node >/dev/null
@@ -224,7 +216,7 @@ if [[ "$offline" == 1 ]]; then
 fi
 if [[ "$in_place" == 1 ]]; then
   log "releasing both Nodes"
-  release_node maker MAKER; release_node taker TAKER
+  release_node maker; release_node taker
 else
   log "starting both Nodes"
   "${compose[@]}" up -d --no-build --no-deps maker-node taker-node >/dev/null

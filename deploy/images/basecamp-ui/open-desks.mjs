@@ -4,11 +4,10 @@
 // launch its role's Node (lez_role_node.h); the LEZ Network desk starts the LEZ
 // network node and/or indexer (lez_network_host.h). Run once by entrypoint.sh,
 // in the background, when any of them is configured. A role Basecamp
-// (BASECAMP_ROLE=maker|taker) has the one desk, "network" the LEZ Network desk,
-// "both" the two role desks.
+// (BASECAMP_ROLE=maker|taker) has the one desk, "network" the LEZ Network desk.
 const { test, run } = await import("/opt/qt-mcp/test-framework/framework.mjs");
-const desks = { maker: ["LEZ Maker"], taker: ["LEZ Taker"], network: ["LEZ Network"] }[process.env.BASECAMP_ROLE] ??
-  ["LEZ Maker", "LEZ Taker"];
+const desks = { maker: ["LEZ Maker"], taker: ["LEZ Taker"], network: ["LEZ Network"] }[process.env.BASECAMP_ROLE];
+if (!desks) throw new Error("BASECAMP_ROLE must be maker, taker or network");
 test(`open ${desks.join(" and ")} for their signers and Nodes`, async (app) => {
   await app.waitFor(async () => app.expectTexts(desks), { timeout: 180000 });
   for (const [index, desk] of desks.entries()) {

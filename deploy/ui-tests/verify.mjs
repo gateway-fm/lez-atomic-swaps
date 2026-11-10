@@ -1,20 +1,23 @@
 // End-to-end UI verification against the real Maker Node / Taker Node pair.
 // Mirrors apps/basecamp/tests/basecamp-role-product.mjs from the repo, but
-// self-contained: spawns Basecamp offscreen with a fresh copy of the role
-// user dir, drives it through the QML inspector, and asserts live RPC results.
+// drives the party's own desk: the one its Basecamp (compose.yaml maker-node,
+// taker-node) opened at start and its party uses over VNC. It attaches to that
+// Basecamp's QML inspector, presses the desk's buttons and asserts live RPC
+// results; the desk stays open afterwards, so every step reads the state the
+// one before it left (the last reply, the selected wallet, the offer form).
 //
-// Run inside the basecamp-ui container:
-//   docker exec lez-basecamp-ui node /ui-tests/verify.mjs [maker|taker]
-import { spawn } from "node:child_process";
+// Run inside the role's Basecamp:
+//   docker exec lez-maker-node node /ui-tests/verify.mjs maker
+//   docker exec lez-taker-node node /ui-tests/verify.mjs taker
 import net from "node:net";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 const framework = "/opt/qt-mcp/test-framework/framework.mjs";
 const { test, run } = await import(framework);
 
 const role = process.argv[2] === "taker" ? "taker" : "maker";
+if (process.env.BASECAMP_ROLE !== role) {
+  throw new Error(`this is the ${process.env.BASECAMP_ROLE ?? "unknown"} Basecamp; run the ${role} suite in lez-${role}-node`);
+}
 const uiDirection = process.env.M3_UI_DIRECTION || "TakerSellsForeign";
 if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
   throw new Error("M3_UI_DIRECTION must be TakerSellsForeign or TakerSellsLez");
@@ -28,28 +31,6 @@ const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_fore
 const uiPair = process.env.M3_UI_PAIR || "Bitcoin";
 if (!["Bitcoin", "Zcash"].includes(uiPair)) throw new Error("M3_UI_PAIR must be Bitcoin or Zcash");
 const zcash = uiPair === "Zcash";
-
-const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
-// both plugins in one app: the product shape (maker + taker in the sidebar)
-cpSync(`/var/lez-assets/both-user`, freshUserDir, { recursive: true });
-process.env.BASECAMP_USER_DIR = freshUserDir;
-// The stack's own Basecamp hosts the roles' LEZ signers; a test-spawned app
-// must not start a second one on the same sockets.
-delete process.env.LEZ_MAKER_SIGNER_SOCKET;
-delete process.env.LEZ_TAKER_SIGNER_SOCKET;
-const appBin = `/usr/local/bin/lez-${role}-ui`;
-
-// spawn the app ourselves (the framework's --ci mode waits only 15s; cold
-// module loading needs longer), then attach in normal mode
-// Offscreen by default; UI_PLATFORM=xcb renders on DISPLAY (a recording run
-// grabs that display) at UI_GEOMETRY.
-const platform = process.env.UI_PLATFORM === "xcb" ? "xcb" : "offscreen";
-const appArgs = ["-platform", platform];
-if (platform === "xcb" && process.env.UI_GEOMETRY) appArgs.push("-geometry", process.env.UI_GEOMETRY);
-const appProcess = spawn(appBin, appArgs, {
-  stdio: ["ignore", "ignore", "inherit"],
-  env: { ...process.env, QT_QPA_PLATFORM: platform, QT_FORCE_STDERR_LOGGING: "1" },
-});
 
 // Narration for a recording: one line per moment worth a subtitle, written
 // with the time since the recording started (NARRATION_T0, ms since epoch).
@@ -79,8 +60,8 @@ async function waitInspector(ms) {
   throw new Error(`inspector did not appear on :${inspectorPort} within ${ms}ms`);
 }
 
-await waitInspector(90000);
-await new Promise((r) => setTimeout(r, 2000));
+// A Basecamp that was just restarted brings its inspector up with the app.
+await waitInspector(180000);
 
 // The swap belongs to whichever Maker wallet published the offer the Taker
 // took, so select the wallet whose market snapshot carries the Maker's action.
@@ -122,6 +103,33 @@ async function property(app, objectName, propertyName) {
 
 async function evaluateIn(app, objectId, expression) {
   return app.inspector.send("evaluate", { objectId, expression });
+}
+
+// A value of the desk's root object, read through its wallet selector.
+async function deskValue(app, expression) {
+  const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
+  if (wallet.matches?.length !== 1) throw new Error(`${role} wallet selector is unavailable`);
+  const reply = await evaluateIn(app, wallet.matches[0].id, expression);
+  if (reply.ok !== true) throw new Error(`desk value unavailable: ${JSON.stringify(reply).slice(0, 200)}`);
+  return reply.result;
+}
+
+// The desk is open already: open-desks.mjs opened it when the container
+// started (again after a restart). Its launcher entry is pressed only when the
+// desk view is not on screen. The desk must prove the Node, not its own
+// readiness (#91): its channel state turns "up" only on a genuine Node reply.
+async function openDesk(app, launcher, title) {
+  await app.waitFor(async () => app.expectTexts([launcher]), {
+    timeout: 180000, interval: 1000, description: "package discovery",
+  });
+  try { await app.expectTexts([title]); } catch { await app.click(launcher); }
+  await app.waitFor(async () => app.expectTexts([title]), {
+    timeout: 60000, interval: 500, description: `${title} view`,
+  });
+  await app.waitFor(async () => {
+    const link = await deskValue(app, "String(root.nodeLink)");
+    if (link !== "up") throw new Error(`the desk's Node channel is ${link}`);
+  }, { timeout: 180000, interval: 1000, description: "live Node behind the desk" });
 }
 
 async function setText(app, objectName, value, property = "text") {
@@ -382,18 +390,9 @@ function makerNarration(state) {
 }
 
 if (role === "maker") {
-  test("maker: launcher discoverable and app opens", async (app) => {
-    await app.waitFor(async () => app.expectTexts(["LEZ Maker"]), {
-      timeout: 25000, interval: 500, description: "package discovery",
-    });
-    await app.click("LEZ Maker");
-    // "Node replied over the owner-local channel" is written when a reply
-    // arrives, not when the view loads: the desk must prove the Node, not
-    // its own readiness (#91).
-    await app.waitFor(async () => app.expectTexts(["LEZ — Maker Desk", "Node replied over the owner-local channel"]), {
-      timeout: 25000, interval: 500, description: "maker view + live backend",
-    });
-    narrate("Maker desk opened from the Basecamp launcher; it talks to the real Maker Node over its owner-only socket");
+  test("maker: the Maker's Basecamp shows its desk with a live Node", async (app) => {
+    await openDesk(app, "LEZ Maker", "LEZ — Maker Desk");
+    narrate("The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket");
   });
 
   test("maker: real Node health", async (app) => {
@@ -416,12 +415,13 @@ if (role === "maker") {
   });
 
   test("maker: Node-indexed BTC offer inventory", async (app) => {
-    if (reverseDirection) {
+    // The form keeps the side an earlier step chose: set it both ways.
+    {
       const sellLeg = await app.findByProperty("objectName", "makerSellAmount");
       if (sellLeg.error || sellLeg.matches?.length !== 1) {
         throw new Error("Maker offer form was not found");
       }
-      await evaluateIn(app, sellLeg.matches[0].id, 'root.sellSide = "btc"');
+      await evaluateIn(app, sellLeg.matches[0].id, `root.sellSide = "${reverseDirection ? "btc" : "lez"}"`);
     }
     const wallet = await app.findByProperty("objectName", "makerBtcWallet");
     if (wallet.matches?.length !== 1) {
@@ -488,18 +488,9 @@ if (role === "maker") {
     });
   }
 } else {
-  test("taker: launcher discoverable and app opens", async (app) => {
-    await app.waitFor(async () => app.expectTexts(["LEZ Taker"]), {
-      timeout: 25000, interval: 500, description: "package discovery",
-    });
-    await app.click("LEZ Taker");
-    // "Node replied over the owner-local channel" is written when a reply
-    // arrives, not when the view loads: the desk must prove the Node, not
-    // its own readiness (#91).
-    await app.waitFor(async () => app.expectTexts(["LEZ — Taker Desk", "Node replied over the owner-local channel"]), {
-      timeout: 25000, interval: 500, description: "taker view + live Node",
-    });
-    narrate("Taker desk opened from the Basecamp launcher; it talks to the real Taker Node over its owner-only socket");
+  test("taker: the Taker's Basecamp shows its desk with a live Node", async (app) => {
+    await openDesk(app, "LEZ Taker", "LEZ — Taker Desk");
+    narrate("The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket");
   });
 
   // Open offers are a precondition of a take only; an action or a wait on an
@@ -567,6 +558,8 @@ if (role === "maker") {
         }
         throw new Error(`no takeable ${wantedDirection} ${uiPair}${wantedOffer ? ` ${wantedOffer}` : ""} order-book row yet (rows: ${seen.join(", ") || "none"})`);
       }, { timeout: 180000, interval: 5000, description: `${wantedDirection} ${uiPair} order-book row` });
+      // The output still shows the previous step's reply: only a new one counts.
+      const before = await property(app, "takerOutput", "text");
       narrate(zcash
         ? "Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor"
         : reverseDirection
@@ -590,7 +583,8 @@ if (role === "maker") {
       let taken;
       for (;;) {
         let envelope = null;
-        try { envelope = JSON.parse(await property(app, "takerOutput", "text")); } catch { /* not yet a reply */ }
+        const text = await property(app, "takerOutput", "text");
+        try { if (text !== before) envelope = JSON.parse(text); } catch { /* not yet a reply */ }
         if (envelope?.ok === false) {
           throw new Error(`take rejected by the Taker Node: ${JSON.stringify(envelope.error ?? envelope)}`);
         }
@@ -684,16 +678,11 @@ if (role === "maker") {
   }
 }
 
-process.on("exit", () => {
-  try { appProcess.kill("SIGTERM"); } catch {}
-  try { rmSync(freshUserDir, { recursive: true, force: true }); } catch {}
-});
-
 // A recording keeps the desk on screen after its last step (RECORD_MIN_DWELL
 // seconds, set by record-step.sh): a step that finishes a second after the
 // desk's first paint would otherwise be a black segment, and the last caption
 // needs frames to sit on. The framework ends a passed run with process.exit,
-// so the exit itself is deferred by the dwell; the app is closed on exit.
+// so the exit itself is deferred by the dwell; the desk stays open.
 if (process.env.RECORD_MIN_DWELL) {
   const exitNow = process.exit.bind(process);
   process.exit = (code) => {

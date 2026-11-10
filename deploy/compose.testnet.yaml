@@ -1,8 +1,10 @@
-# compose.testnet.yaml — the Maker and Taker Nodes and the desks on public
-# networks: the official LEZ v0.2 testnet and Bitcoin testnet4.
+# compose.testnet.yaml — the Maker's and the Taker's Basecamps (each party's
+# desk and Node) on public networks: the official LEZ v0.2 testnet and Bitcoin
+# testnet4. Their desks are on VNC at 127.0.0.1:5903 (Maker) and :5904 (Taker),
+# beside a local stack's 5901/5902.
 #
 #   docker compose -p lez-testnet -f compose.yaml -f compose.testnet.yaml \
-#     up -d maker-node taker-node basecamp-ui
+#     up -d maker-node taker-node
 #
 # Nothing here is a chain: the Nodes reach services on the external Docker
 # network `lez-testnet`, each run next to this stack (docs/testnet-run.md):
@@ -24,33 +26,21 @@ x-testnet-node-env: &testnet-node-env
   LEZ_V02_CHANNEL_ID: "0101010101010101010101010101010101010101010101010101010101010101"
 
 services:
-  maker-init:
-    container_name: lez-testnet-maker-init
-    networks: !override [testnet]
-
   maker-node:
     container_name: lez-testnet-maker-node
-    depends_on: !override
-      maker-init:
-        condition: service_completed_successfully
+    depends_on: !reset {}
     environment:
       <<: *testnet-node-env
-    networks: !override [testnet]
-
-  taker-init:
-    container_name: lez-testnet-taker-init
+    ports: !override
+      - "127.0.0.1:5903:5900"
     networks: !override [testnet]
 
   taker-node:
     container_name: lez-testnet-taker-node
     environment:
       <<: *testnet-node-env
-    networks: !override [testnet]
-
-  basecamp-ui:
-    container_name: lez-testnet-basecamp-ui
     ports: !override
-      - "127.0.0.1:5902:5900"
+      - "127.0.0.1:5904:5900"
     networks: !override [testnet]
 
 networks:
