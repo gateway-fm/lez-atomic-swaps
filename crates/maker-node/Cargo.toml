@@ -57,6 +57,7 @@ base64 = "0.22.1"
 async-trait = "0.1.89"
 bytes = "1.12.1"
 btc-reference-actor = { version = "0.1.0", path = "../btc-reference-actor" }
+lez-actor-supervision = { version = "0.1.0", path = "../actor-supervision" }
 btc-role-preflight = { version = "0.1.0", path = "../btc-role-preflight" }
 lez-btc-role-lifecycle = { version = "0.1.0", path = "../btc-role-lifecycle" }
 lez-bridge-client = { version = "0.1.0", path = "../lez-bridge-client" }

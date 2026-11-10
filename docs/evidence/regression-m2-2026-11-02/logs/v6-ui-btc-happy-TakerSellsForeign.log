@@ -1,0 +1,51 @@
+
+[16:11:53] === happy (TakerSellsForeign)
+
+[16:12:00] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[16:12:08] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   47549ba9812d2aa7ab8eaae21ce0c9c3e532335b7b86b17c837d3f5bf811134e awaiting_first_lock 0 -
+
+[16:12:18] Taker desk: lock_btc on 47549ba9812d
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[16:12:31] Maker desk shows 47549ba9812d at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[16:25:32] Taker desk: claim_lez on 47549ba9812d
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_lez
+2 passed, 0 failed
+
+[16:25:45] Maker desk shows 47549ba9812d at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[16:27:45] Taker desk shows 47549ba9812d at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 47549ba9812d: runtime/evidence/47549ba9812d2aa7ab8eaae21ce0c9c3e532335b7b86b17c837d3f5bf811134e.json (5 effects, completed 2026-11-01T16:27:40Z)
+
+[16:27:53] === happy (TakerSellsForeign): passed in 960s

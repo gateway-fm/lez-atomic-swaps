@@ -1,0 +1,61 @@
+
+[20:27:13] === maker-refund (TakerSellsForeign)
+
+[20:27:18] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[20:27:26] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   07c2e4e6591574203b3c30609b57fae94a338b28b69316748c56dba348df49c9 awaiting_first_lock 0 -
+
+[20:27:35] Taker desk: lock_btc on 07c2e4e65915
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[20:27:47] Maker desk shows 07c2e4e65915 at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[20:30:47] The Taker never claims; after its refund deadline (900 s after the take) the Maker Node refunds its own lock
+
+[20:30:47] Maker desk shows 07c2e4e65915 at refunding
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunding (refunding)
+  ✓ maker: wait refunding reached by the Node
+4 passed, 0 failed
+
+[20:43:47] Taker desk: refund_btc on 07c2e4e65915
+  ✓ taker: launcher discoverable and app opens
+  » The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures
+  ✓ taker: perform refund_btc
+2 passed, 0 failed
+
+[20:43:58] Taker desk shows 07c2e4e65915 at refunded
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches refunded
+2 passed, 0 failed
+
+[20:58:07] Maker desk shows 07c2e4e65915 at refunded
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunded (refunded)
+  ✓ maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[20:58:15] === maker-refund (TakerSellsForeign): passed in 1862s

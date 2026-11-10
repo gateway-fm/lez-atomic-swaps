@@ -22,6 +22,30 @@ Upstream: [logos-co/rfp#121](https://github.com/logos-co/rfp/issues/121)
 Review entry: [`docs/milestone-1/README.md`](../docs/milestone-1/README.md).
 Imported checkpoint: `m1-complete.1` / `96b7b229557e5084857e05bc0c34c03f40c73b66`.
 
+## M2 — ZEC/LEZ leg
+
+Upstream: [logos-co/rfp#122](https://github.com/logos-co/rfp/issues/122)
+
+| Official deliverable | Submission artifact | Status |
+|---|---|---|
+| LEZ escrow program v1 on testnet 0.2: SHA-256 preimage path, block/timestamp validity windows for the refund | The deployed LEZ v0.2 escrow (ImageID `c22d61fc…`, the program the BTC leg settles on); the ZEC agreement binds `secret_digest`, the revealing LEZ claim reveals it, `ZecRefundPlanV1` carries both windows; settled and refunded on the Docker devnet in [the M2 evidence set](../docs/evidence/regression-m2-2026-11-02/RESULTS.txt) | Devnet evidence included; a public testnet-0.2 smoke transaction is not (S1) |
+| BIP-199 HTLC scripts and Zcash integration tests in CI | `lez-zec-swap-sdk` (`bip199_contract`, `bip199_interpreter`, `zcash_transactions`, `zcash_funding`), `lez-zebra-node-adapter`, `zebra_regtest.rs` (fund → claim → refund through Zebra consensus) | Included: the `zebra-regtest` CI job funds, claims and refunds a real HTLC through Zebra on every push and gates the Zebra image on a HIGH/CRITICAL scan; the ZEC crates and the `pair-zec` Node tests run in the workspace jobs (from PR #116, `ff958ec8`, `6574eeea`, `055bb204`, base pin `b7251402`) |
+| LEZ/ZEC SDK with full lifecycle coverage | [`lez-zec-swap-sdk` with `lez-swap-sdk-core`](../docs/sdk-lez-zec.md): each stage mapped to its public API and the test that drives it; [crate README](../crates/zec-swap-sdk/README.md); [`examples/full-lifecycle.rs`](../crates/zec-swap-sdk/examples/full-lifecycle.rs) runs offline | Included |
+| Zcash node setup documentation | [`docs/zcash-testnet-setup.md`](../docs/zcash-testnet-setup.md): self-hosted Zebra and the public Zebrad provider, wallet creation, funding, the directions each route serves; the Docker devnet route in [`deploy/README.md`](../deploy/README.md) | Included; no fresh-machine run recorded |
+| Privacy posture | [`docs/sdk-lez-zec.md#privacy-posture`](../docs/sdk-lez-zec.md#privacy-posture); the Taker desk shows the Node's shield-after-swap guidance on a completed ZEC row | Included |
+| ZEC demo set per D1 | `zec-happy`, `zec-maker-refund`, `zec-concurrent` in both directions and `zec-stale-window` selling ZEC, in [`videos/`](../docs/evidence/regression-m2-2026-11-02/videos/); each a by-product of a desk journey that passed while being recorded | Included |
+
+Additional functional cases in this pack, all on one set of images
+([`PROVENANCE.md`](../docs/evidence/regression-m2-2026-11-02/PROVENANCE.md)): the ZEC Node matrix and BTC/ZEC parity
+scenarios in both directions (28), the ZEC desk journeys in both directions (15),
+`zec-balance-refusal` both ways, `zec-claim-collision` (a revealing LEZ claim
+superseded by the same account's other LEZ transaction is re-planned and lands),
+the revealing-claim protections (no refund once a revealing claim was submitted;
+one revealing claim in flight per Node until final; no revealing claim after its
+window), and the BTC regression on the same binaries (Node 14 + 14, desks 8 + 8).
+Every failure in the first pass is listed with its cause and its rerun in
+[`RESULTS.txt`](../docs/evidence/regression-m2-2026-11-02/RESULTS.txt).
+
 ## M3 — BTC/LEZ leg
 
 Upstream: [logos-co/rfp#123](https://github.com/logos-co/rfp/issues/123)

@@ -32,6 +32,7 @@ use lez_bridge_protocol::{
     METHOD_PREPARE_NATIVE_REFUND, METHOD_PREPARE_REVEALING_CLAIM,
     METHOD_PREPARE_WITNESSED_ASSET_ESCROW_V2, METHOD_PREPARE_WITNESSED_CLAIM,
     METHOD_PREPARE_WITNESSED_ESCROW, METHOD_SUBMIT_TRANSACTION,
+    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE, METHOD_SUPERSEDE_REVEALING_CLAIM,
     METHOD_VERIFY_CURRENT_PROFILE_CLOCK, MessageContext, ObserveCurrentClockRequest,
     ObserveEscrowRequest, ObserveFinalizedClockRequest, ObserveFinalizedWitnessedClaimRequest,
     ObserveFinalizedWitnessedFundingRequest, ObserveNativeRefundRequest,
@@ -40,7 +41,8 @@ use lez_bridge_protocol::{
     PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
     PrepareRevealingClaimResult, PrepareWitnessedClaimRequest, PrepareWitnessedClaimResult,
     PrepareWitnessedEscrowRequest, PrepareWitnessedEscrowResult, ProtocolErrorReply, RUN_ID_HEADER,
-    RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest, VerifyCurrentProfileClockRequest,
+    RunId, SIDECAR_ROLE_HEADER, SubmitTransactionRequest, SupersedeNativeEscrowPrepareRequest,
+    SupersedeNativeEscrowPrepareResult, VerifyCurrentProfileClockRequest,
 };
 use lez_bridge_protocol::{
     METHOD_CLASSIFY_FINALIZED_WITNESSED_ASSET_CLAIM_V2,
@@ -238,6 +240,12 @@ struct PersistedEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     replay_request: Option<Value>,
     outcome: PersistedOutcome,
+    /// Earlier decisions of the same request, oldest first: a submission that
+    /// is decided on the chain again keeps its first acceptance here, so the
+    /// journal is history, never an overwrite, and a crash between a decision
+    /// and its record replays deterministically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    earlier_outcomes: Vec<PersistedOutcome>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -314,6 +322,10 @@ type RestoredRequests = (
         lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
         lez_bridge_protocol::PrepareNativeXmrPunishV3Result,
     )>,
+    Vec<(
+        SupersedeNativeEscrowPrepareRequest,
+        SupersedeNativeEscrowPrepareResult,
+    )>,
 );
 
 impl DurableStore {
@@ -365,6 +377,8 @@ impl DurableStore {
                             entry.method.as_str(),
                             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
                                 | METHOD_PREPARE_NATIVE_ESCROW
+                                | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+                                | METHOD_SUPERSEDE_REVEALING_CLAIM
                                 | METHOD_PREPARE_WITNESSED_ESCROW
                                 | METHOD_PREPARE_REVEALING_CLAIM
                                 | METHOD_PREPARE_WITNESSED_CLAIM
@@ -457,7 +471,17 @@ impl DurableStore {
         context: &MessageContext,
         request_sha256: &str,
     ) -> Result<(), OperationFailure> {
-        self.ensure_capacity()?;
+        // A submission decided again keeps every earlier decision of its
+        // request id behind the new in-flight marker.
+        let earlier_outcomes =
+            if let Some(previous) = self.persisted.entries.get(context.request_id.as_str()) {
+                let mut earlier = previous.earlier_outcomes.clone();
+                earlier.push(previous.outcome.clone());
+                earlier
+            } else {
+                self.ensure_capacity()?;
+                Vec::new()
+            };
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -471,6 +495,7 @@ impl DurableStore {
                         message: "official node submission outcome is unknown",
                     },
                 )),
+                earlier_outcomes,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())
@@ -491,6 +516,20 @@ impl DurableStore {
         {
             self.ensure_capacity()?;
         }
+        // The in-flight marker a submission reserved carries the earlier
+        // decisions; the final outcome replaces the marker and keeps them.
+        let earlier_outcomes = self
+            .persisted
+            .entries
+            .get(context.request_id.as_str())
+            .map(|previous| {
+                let mut earlier = previous.earlier_outcomes.clone();
+                if !matches!(previous.outcome, PersistedOutcome::SubmissionInFlight(_)) {
+                    earlier.push(previous.outcome.clone());
+                }
+                earlier
+            })
+            .unwrap_or_default();
         self.persisted.entries.insert(
             context.request_id.as_str().to_owned(),
             PersistedEntry {
@@ -498,6 +537,7 @@ impl DurableStore {
                 request_sha256,
                 replay_request,
                 outcome,
+                earlier_outcomes,
             },
         );
         self.persist().map_err(|_| OperationFailure::internal())
@@ -533,6 +573,7 @@ impl DurableStore {
         let mut xmr_refund_v3 = None;
         let mut completed_xmr_refund_v3 = None;
         let mut xmr_punish_v3 = None;
+        let mut supersessions = Vec::new();
         for entry in self.persisted.entries.values() {
             let PersistedOutcome::Success(value) = &entry.outcome else {
                 continue;
@@ -547,6 +588,16 @@ impl DurableStore {
                 return Err(BridgeServerError::InvalidDurableState);
             }
             match entry.method.as_str() {
+                // Every supersession replays (idempotent by the superseded
+                // identities), so the journal's key order does not matter.
+                METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE => {
+                    supersessions.push((
+                        serde_json::from_value(request)
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                        serde_json::from_value(value.clone())
+                            .map_err(|_| BridgeServerError::InvalidDurableState)?,
+                    ));
+                }
                 METHOD_PREPARE_NATIVE_ESCROW if prepare.is_none() => {
                     prepare = Some((
                         serde_json::from_value(request)
@@ -725,6 +776,7 @@ impl DurableStore {
             xmr_refund_v3,
             completed_xmr_refund_v3,
             xmr_punish_v3,
+            supersessions,
         ))
     }
 }
@@ -786,6 +838,17 @@ impl From<BridgeRuntimeError> for OperationFailure {
                 code: ErrorCode::UnknownSubmissionOutcome,
                 message: "official node submission outcome is unknown",
             },
+            BridgeRuntimeError::DepositorBalanceInsufficient => Self {
+                code: ErrorCode::DepositorBalanceInsufficient,
+                message: "LEZ depositor balance is below the native escrow amount",
+            },
+            BridgeRuntimeError::ReplanExhausted => Self {
+                code: ErrorCode::ReplanExhausted,
+                message: "the native escrow pair was re-planned the maximum number of times",
+            },
+            BridgeRuntimeError::SupersessionInclusionMismatch => Self::invalid_request(
+                "native escrow initialization inclusion does not match the superseded step",
+            ),
         }
     }
 }
@@ -894,10 +957,20 @@ async fn restore_runtime_requests(
         restored_xmr_refund_v3,
         restored_xmr_refund_completion_v3,
         restored_xmr_punish_v3,
+        restored_supersessions,
     ) = restored;
     if let Some((request, expected)) = restored_prepare {
         let observed = runtime
             .prepare_native_escrow(request)
+            .await
+            .map_err(|_| BridgeServerError::InvalidDurableState)?;
+        if observed != expected {
+            return Err(BridgeServerError::InvalidDurableState);
+        }
+    }
+    for (request, expected) in restored_supersessions {
+        let observed = runtime
+            .supersede_native_escrow_prepare(request)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
         if observed != expected {
@@ -1175,6 +1248,52 @@ fn register_methods(
                     || async move {
                         runtime
                             .prepare_native_escrow(operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
+        METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE,
+        |params, state, _| async move {
+            let request: SupersedeNativeEscrowPrepareRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .supersede_native_escrow_prepare(operation)
+                            .await
+                            .map_err(Into::into)
+                            .and_then(to_value)
+                    },
+                )
+                .await
+        },
+    )?;
+    module.register_async_method(
+        METHOD_SUPERSEDE_REVEALING_CLAIM,
+        |params, state, _| async move {
+            let request: lez_bridge_protocol::SupersedeRevealingClaimRequest = params.one()?;
+            state.validate_runtime(&request.context, &request.runtime)?;
+            let operation = request.clone();
+            let runtime = Arc::clone(&state.runtime);
+            state
+                .execute(
+                    METHOD_SUPERSEDE_REVEALING_CLAIM,
+                    &request.context,
+                    &request,
+                    || async move {
+                        runtime
+                            .supersede_revealing_claim(operation)
                             .await
                             .map_err(Into::into)
                             .and_then(to_value)
@@ -1486,11 +1605,25 @@ fn register_methods(
         state.validate_runtime(&request.context, &request.runtime)?;
         let operation = request.clone();
         let runtime = Arc::clone(&state.runtime);
+        // A native escrow pair transaction is asked for again only after the
+        // caller observed it absent, so its journaled acceptance is decided on
+        // the chain again: landed (already known), nonce taken (superseded,
+        // D1) or sent again. A replayed "accepted" never reached the node
+        // (chain 35, 2026-10-29). Other submissions keep their one attempt.
+        // The same for an owned revealing claim (FINDINGS 24): a claim whose
+        // nonce another claim of this signer took is named Superseded.
+        let decide_again = runtime
+            .native_escrow_lineage_member(&request.transaction)
+            .await
+            || runtime
+                .revealing_claim_lineage_member(&request.transaction)
+                .await;
         state
-            .execute(
+            .execute_with_policy(
                 METHOD_SUBMIT_TRANSACTION,
                 &request.context,
                 &request,
+                decide_again,
                 || async move {
                     runtime
                         .submit_transaction(&operation)
@@ -1971,6 +2104,34 @@ impl ServerState {
         Operation: FnOnce() -> Fut,
         Fut: Future<Output = Result<Value, OperationFailure>>,
     {
+        // The XMR claim authorization's node facts move: its journaled
+        // success is decided again. Everything else replays.
+        self.execute_with_policy(
+            method,
+            context,
+            request,
+            method == METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+            operation,
+        )
+        .await
+    }
+
+    /// As [`Self::execute`]; `decide_success_again` re-runs the operation for
+    /// a journaled success instead of replaying it (errors and in-flight
+    /// markers stay single-attempt either way).
+    async fn execute_with_policy<Request, Operation, Fut>(
+        &self,
+        method: &'static str,
+        context: &MessageContext,
+        request: &Request,
+        decide_success_again: bool,
+        operation: Operation,
+    ) -> Result<Value, ErrorObjectOwned>
+    where
+        Request: Serialize,
+        Operation: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Value, OperationFailure>>,
+    {
         self.validate_context(context)?;
         let (request_sha256, replay_request) =
             encode_request(method, request).map_err(|failure| protocol_error(context, failure))?;
@@ -1979,8 +2140,7 @@ impl ServerState {
             if let Some(outcome) = store
                 .replay(context.request_id.as_str(), method, &request_sha256)
                 .map_err(|failure| protocol_error(context, failure))?
-                && (method != METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
-                    || !matches!(&outcome, PersistedOutcome::Success(_)))
+                && !(decide_success_again && matches!(outcome, PersistedOutcome::Success(_)))
             {
                 return outcome.into_rpc_result();
             }
@@ -2001,6 +2161,8 @@ impl ServerState {
             method,
             METHOD_PREPARE_CURRENT_PROFILE_CLOCK
                 | METHOD_PREPARE_NATIVE_ESCROW
+                | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+                | METHOD_SUPERSEDE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_ESCROW
                 | METHOD_PREPARE_REVEALING_CLAIM
                 | METHOD_PREPARE_WITNESSED_CLAIM
@@ -2085,6 +2247,8 @@ fn encode_request<Request: Serialize>(
     let replay_request = matches!(
         method,
         METHOD_PREPARE_NATIVE_ESCROW
+            | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+            | METHOD_SUPERSEDE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_PREPARE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_CLAIM
@@ -2131,6 +2295,8 @@ fn valid_method(method: &str) -> bool {
             | METHOD_VERIFY_CURRENT_PROFILE_CLOCK
             | METHOD_PREPARE_CURRENT_PROFILE_CLOCK
             | METHOD_PREPARE_NATIVE_ESCROW
+            | METHOD_SUPERSEDE_NATIVE_ESCROW_PREPARE
+            | METHOD_SUPERSEDE_REVEALING_CLAIM
             | METHOD_PREPARE_WITNESSED_ESCROW
             | METHOD_OBSERVE_ESCROW
             | METHOD_OBSERVE_WITNESSED_ESCROW

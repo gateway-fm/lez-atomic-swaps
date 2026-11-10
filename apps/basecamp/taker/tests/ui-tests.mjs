@@ -4,7 +4,7 @@ const framework = process.env.LOGOS_QT_MCP || new URL("../result-mcp", import.me
 const { test, run } = await import(resolve(framework, "test-framework/framework.mjs"));
 
 test("taker: role route loads", async (app) => {
-  await app.waitFor(async () => app.expectTexts(["LEZ / BTC — Taker Desk"]), {
+  await app.waitFor(async () => app.expectTexts(["LEZ — Taker Desk"]), {
     timeout: 15000,
     interval: 500,
     description: "Taker UI to load",

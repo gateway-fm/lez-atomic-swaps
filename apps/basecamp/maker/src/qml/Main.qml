@@ -471,7 +471,7 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true; spacing: 16
                     Label {
-                        text: "LEZ / BTC — Maker Desk"
+                        text: "LEZ — Maker Desk"
                         color: "#F7F8FA"; font.pixelSize: 24; font.weight: Font.Bold; font.letterSpacing: -0.5
                         Layout.fillWidth: true
                     }
@@ -601,7 +601,7 @@ Item {
                                         anchors.fill: parent; anchors.margins: 12; spacing: 12
                                         ColumnLayout {
                                             Layout.fillWidth: true; spacing: 2
-                                            Label { text: makerOfferRow.sellsLez ? "You sell LEZ" : "You sell BTC"; color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
+                                            Label { text: makerOfferRow.sellsLez ? "You sell LEZ" : "You sell " + String(makerOfferRow.modelData.pair_symbol ?? "BTC"); color: "#F1F3F6"; font.pixelSize: 12; font.weight: Font.DemiBold }
                                             Label { text: String(makerOfferRow.modelData.offer_id); color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"; elide: Text.ElideMiddle; Layout.fillWidth: true }
                                         }
                                         Label { text: String(makerOfferRow.sellsLez ? makerOfferRow.modelData.lez_display : makerOfferRow.modelData.bitcoin_display); color: makerOfferRow.sellsLez ? "#7EE100" : "#B997FF"; font.pixelSize: 12; font.weight: Font.DemiBold }

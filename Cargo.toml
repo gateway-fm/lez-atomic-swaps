@@ -2,6 +2,7 @@
 members = [
     "crates/adaptor-signature",
     "crates/adaptor-role-runner",
+    "crates/actor-supervision",
     "crates/btc-core-adapter",
     "crates/btc-role-lifecycle",
     "crates/btc-role-preflight",

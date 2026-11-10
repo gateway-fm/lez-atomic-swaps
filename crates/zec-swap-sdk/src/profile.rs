@@ -11,6 +11,28 @@ use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 pub enum ZecProfileId {
     /// Controlled standalone/Regtest profile used only by deterministic tests.
     DeterministicLocalV1,
+    /// The deterministic Regtest profile with a LEZ refund delay a devnet can
+    /// meet: the LEZ escrow program emits a timestamp validity window that
+    /// ends at the agreement's LEZ refund time, and sixty seconds after the
+    /// agreement's anchor is less than a Node recreate plus a take on a chain
+    /// that finalises in minutes. Same confirmations, Zcash refund height and
+    /// margin as [`Self::DeterministicLocalV1`].
+    DeterministicLocalDevnetV1,
+    /// [`Self::DeterministicLocalDevnetV1`] with an eight-block Zcash refund
+    /// window. Profiles are immutable per id: two swaps of one signer taken
+    /// together at one Zcash anchor need the first swap's four blocks (funding,
+    /// two pre-reveal confirmations, claim) plus the second swap's own, and
+    /// changing V1's four under its id would have invalidated every agreement
+    /// and export made under it (2026-10-29).
+    DeterministicLocalDevnetV2,
+    /// [`Self::DeterministicLocalDevnetV2`] with a 12-minute LEZ refund delay.
+    /// The pinned devnet chain freezes finality (upstream #3643) 17–56 min after
+    /// it is created, ~27 min on the review host; a refund under V2's 30 min
+    /// needs ~34 min of finality and never completed there (2026-10-30). Twelve
+    /// minutes keep a refund inside ~17 min of finality and still leave the
+    /// longest measured take→claim (≈7 min) a window. Devnet only; a
+    /// production profile is unaffected.
+    DeterministicLocalDevnetV3,
     /// LEZ 0.2 and Zcash public-testnet acceptance profile.
     PublicTestnetV1,
 }
@@ -21,6 +43,9 @@ impl ZecProfileId {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::DeterministicLocalV1 => "deterministic-local-v1",
+            Self::DeterministicLocalDevnetV1 => "deterministic-local-devnet-v1",
+            Self::DeterministicLocalDevnetV2 => "deterministic-local-devnet-v2",
+            Self::DeterministicLocalDevnetV3 => "deterministic-local-devnet-v3",
             Self::PublicTestnetV1 => "public-testnet-v1",
         }
     }
@@ -79,6 +104,45 @@ impl ZecRefundProfile {
                 zcash_confirmations: 1,
                 lez_refund_delay: UnixSeconds::new(60),
                 zcash_refund_blocks: 4,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+            },
+            ZecProfileId::DeterministicLocalDevnetV1 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu6_2,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(1_800),
+                zcash_refund_blocks: 4,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+            },
+            ZecProfileId::DeterministicLocalDevnetV2 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu6_2,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(1_800),
+                // Two swaps of one signer taken together (zec-concurrent, the
+                // BTC shape) share one Zcash anchor: the first swap's funding,
+                // its two pre-reveal confirmations and its claim take four
+                // blocks, and the second swap's lock re-plans behind them (D1,
+                // 2026-10-29). Four blocks held one swap; eight hold both,
+                // with the harness mining one block per reason.
+                zcash_refund_blocks: 8,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+            },
+            ZecProfileId::DeterministicLocalDevnetV3 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu6_2,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(720),
+                zcash_refund_blocks: 8,
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
             },

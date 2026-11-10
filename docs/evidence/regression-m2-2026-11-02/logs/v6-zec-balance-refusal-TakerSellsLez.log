@@ -1,0 +1,40 @@
+[20:50:49] === zec-balance-refusal (stamp 1793479849)
+[20:50:49] preflight: indexer historical reads
+[20:50:58]   indexer serves historical reads at the tip (53)
+[20:50:58] preflight: the finality heartbeat saw finality move 0 s ago (finalized 53)
+[20:50:58]   Taker LEZ account holds 0, below the 50000 lot
+[20:50:58]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[20:51:20]       taker: taker ZEC corridor zec-devnet-1793479858: sidecar listening on 127.0.0.1:19902
+[20:51:20]       taker: taker: 1 prepared ZEC entries configured
+[20:51:20]     [zec-provision 20:51:19]   maker sidecar answers on 127.0.0.1:19901
+[20:51:20]     [zec-provision 20:51:20]   taker sidecar answers on 127.0.0.1:19902
+[20:51:20]       maker_health: ready=True degraded=False
+[20:51:20]     [zec-provision 20:51:20]   Taker lists zec-devnet-offer-1793479858 ; corridor zec-devnet-1793479858 is live
+[20:51:20]   corridor zec-devnet-1793479858 entry 0 (deterministic-local-devnet-v3): offer zec-devnet-offer-1793479858, zebra tip 7649, Zcash refund height 7658
+[20:51:20]   Taker took zec-devnet-offer-1793479858: swap zec-devnet-s (not_activated)
+[20:51:20]   receipt: swap zec-devnet-swap-1793479858, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1793479858/actor/taker/actor-config.json
+[20:51:21]   taker zec-devnet-swap-1793479858: not_activated (reason None, class None) | maker: leased
+[20:51:26]   taker zec-devnet-swap-1793479858: awaiting_first_lock (reason None, class None) | maker: leased
+[20:51:31]   taker zec-devnet-swap-1793479858: attention_required (reason lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient) | maker: offered
+[20:51:31]   taker zec-devnet-swap-1793479858: attention_required (lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient), no action offered | maker: offered
+[20:52:16]   45 s later the row still reads the refusal (the supervisor backs off, nothing locked)
+[20:52:16]   funding the account: scripts/bootstrap-market.sh claims the deferred vault
+[20:52:31]   Taker LEZ account holds 2000000 (vault claim 4a3ff6485c8da822…)
+[20:52:31]   taker zec-devnet-swap-1793479858: awaiting_first_lock (reason None, class None) | maker: offered
+[20:52:31]   taker zec-devnet-swap-1793479858: awaiting_first_lock 0 s after funding, no attention_reason (the supervisor's retry; no hand drive)
+[20:52:31]   taker zec-devnet-swap-1793479858: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 7649
+[20:52:52]   taker zec-devnet-swap-1793479858: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 7649
+[20:52:52]   zebra at 7649: not mining, the Maker's Zcash funding is not out yet
+[20:53:03]   zebra: mined 1 block(s) → height 7650 (mempool had ['bd07af379779'])
+[20:53:13]   taker zec-devnet-swap-1793479858: refund_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 7650
+[20:53:14]   zebra: mined 1 block(s) → height 7651 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[20:53:25]   zebra: mined 1 block(s) → height 7652 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[20:53:35]   zebra: mined 1 block(s) → height 7653 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[20:53:46]   taker zec-devnet-swap-1793479858: claim_available (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 7653
+[20:53:46]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[20:53:47]   taker zec-devnet-swap-1793479858: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 7653
+[20:53:47]   zebra: mined 1 block(s) → height 7654 (mempool had ['cde6db0502f9'])
+[20:53:58]   taker zec-devnet-swap-1793479858: completed (gen 4) | actor at completed | maker: completed | zebra 7654
+[20:53:58]   taker zec-devnet-s: completed (gen 4) | maker: completed
+[20:53:58]   both Nodes report zec-devnet-s completed
+[20:53:58] === zec-balance-refusal: passed in 189s

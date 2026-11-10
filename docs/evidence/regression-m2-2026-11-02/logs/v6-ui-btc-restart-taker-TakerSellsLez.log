@@ -1,0 +1,47 @@
+
+[19:42:26] === restart-taker (TakerSellsLez)
+
+[19:48:10] Maker desk publishes TakerSellsLez offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[19:48:18] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   df382102b3d5a87e697d44364a60c0b732477d50788d06cfc5387e3ef72cda67 awaiting_first_lock 0 -
+
+[19:48:28] Taker desk: lock_lez on df382102b3d5
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[19:48:41] The taker Node is restarted now, between the Taker's lock and its claim; swaps survive a Node restart
+
+[19:48:48] Maker desk shows df382102b3d5 at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[19:49:59] Taker desk: claim_btc on df382102b3d5
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_btc
+2 passed, 0 failed
+
+[19:50:11] Maker desk shows df382102b3d5 at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  ✗ maker: wait completed reached by the Node
+    no maker swap df382102b3d5 has reached completed; desk shows claiming_lez (LEZ claim sent)
+3 passed, 1 failed
+
+[20:20:22] FAILED: step failed

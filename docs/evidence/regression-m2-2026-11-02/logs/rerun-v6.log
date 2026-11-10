@@ -1,0 +1,70 @@
+[09:58:20] === V6 RERUNS at b1dd0af8 (tree dirty: 0)
+[09:58:20] lez-maker-node:local build-source b1dd0af871ee id 129b81dbf912
+[09:58:21] lez-taker-node:local build-source b1dd0af871ee id 09d147a3cb99
+[09:58:21] === recreating the chain (recreation 440) free 159G
+[10:03:10] chain ok: [10:03:10] attempt 1: finalized moved 21 -> 24
+[10:27:21] === btc taker-refund (TakerSellsForeign, rerun try 1): PASSED in 1432s
+      [10:27:21] === taker-refund: passed in 1432s
+[10:27:21] === recreating the chain (recreation 441) free 157G
+[10:31:59] chain ok: [10:31:59] attempt 1: finalized moved 20 -> 23
+[11:07:20] === btc taker-refund (TakerSellsLez, rerun try 1): PASSED in 2103s
+      [11:07:20] === taker-refund: passed in 2103s
+[11:07:20] === recreating the chain (recreation 442) free 153G
+[11:11:32] chain ok: [11:11:32] attempt 1: finalized moved 18 -> 21
+[11:46:05] === btc maker-refund (TakerSellsLez, rerun try 1): PASSED in 2056s
+      [11:46:05] === maker-refund: passed in 2056s
+[11:46:05] === recreating the chain (recreation 443) free 152G
+[11:50:42] chain ok: [11:50:42] attempt 1: finalized moved 20 -> 23
+[12:22:45] === ui taker-refund (TakerSellsForeign, rerun try 1): PASSED in 1905s
+      4 passed, 0 failed
+      [12:22:45] === taker-refund (TakerSellsForeign): passed in 1905s
+[12:22:45] === recreating the chain (recreation 444) free 153G
+[12:27:38] chain ok: [12:27:38] attempt 1: finalized moved 21 -> 24
+[13:08:58] === ui taker-refund (TakerSellsLez, rerun try 1): FAILED in 2461s
+      1 passed, 1 failed
+      [13:08:58] FAILED: step failed
+[13:10:05]       finality flat after the failure: one more try on a fresh chain
+[13:10:05] === recreating the chain (recreation 445) free 153G
+[13:14:21] chain ok: [13:14:21] attempt 1: finalized moved 18 -> 21
+[13:48:36] === ui taker-refund (TakerSellsLez, rerun try 2): PASSED in 2038s
+      4 passed, 0 failed
+      [13:48:36] === taker-refund (TakerSellsLez): passed in 2038s
+[13:48:36] === recreating the chain (recreation 446) free 153G
+[14:06:50] chain ok: [14:06:50] attempt 1: finalized moved 17 -> 20
+[14:12:41] === btc restart-maker (TakerSellsForeign, rerun try 1): PASSED in 333s
+      [14:12:41] === restart-maker: passed in 333s
+[14:12:41] === recreating the chain (recreation 447) free 159G
+[14:25:33] chain ok: [14:25:33] attempt 1: finalized moved 23 -> 25
+[14:30:47] === btc offline-after-lock (TakerSellsForeign, rerun try 1): PASSED in 291s
+      [14:30:47] === offline-after-lock: passed in 291s
+[14:30:47] === recreating the chain (recreation 448) free 159G
+[14:35:34] chain ok: [14:35:34] attempt 1: finalized moved 21 -> 24
+[14:40:49] === btc regenerated-config (TakerSellsForeign, rerun try 1): PASSED in 297s
+      [14:40:49] === regenerated-config: passed in 298s
+[14:40:49] === recreating the chain (recreation 449) free 158G
+[14:45:48] chain ok: [14:45:48] attempt 1: finalized moved 22 -> 25
+[14:51:47] === btc early-lock (TakerSellsLez, rerun try 1): PASSED in 341s
+      [14:51:47] === early-lock: passed in 341s
+[14:51:47] === recreating the chain (recreation 450) free 158G
+[14:56:27] chain ok: [14:56:27] attempt 1: finalized moved 20 -> 23
+[15:07:49] === ui survivor (TakerSellsForeign, rerun try 1): PASSED in 664s
+      2 passed, 0 failed
+      [15:07:49] === survivor (TakerSellsForeign): passed in 664s
+[15:07:49] === recreating the chain (recreation 451) free 157G
+[15:17:55] chain ok: [15:17:55] attempt 1: finalized moved 16 -> 19
+[15:23:40] === ui restart-taker (TakerSellsLez, rerun try 1): PASSED in 322s
+      2 passed, 0 failed
+      [15:23:40] === restart-taker (TakerSellsLez): passed in 322s
+[15:23:40] === recreating the chain (recreation 452) free 159G
+[15:28:20] chain ok: [15:28:20] attempt 1: finalized moved 20 -> 23
+[15:28:25]       lez-zebra restarted
+[15:33:07] === ui zec-restart-taker (TakerSellsForeign, rerun try 1): PASSED in 264s
+      4 passed, 0 failed
+      [15:33:07] === zec-restart-taker (TakerSellsForeign): passed in 264s
+[15:33:07] === recreating the chain (recreation 453) free 158G
+[15:37:49] chain ok: [15:37:49] attempt 1: finalized moved 20 -> 23
+[15:37:54]       lez-zebra restarted
+[15:43:01] === ui zec-restart-maker (TakerSellsForeign, rerun try 1): PASSED in 288s
+      4 passed, 0 failed
+      [15:43:01] === zec-restart-maker (TakerSellsForeign): passed in 288s
+[15:43:01] V6_RERUNS_DONE

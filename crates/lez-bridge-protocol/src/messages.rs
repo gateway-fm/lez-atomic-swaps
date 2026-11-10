@@ -266,6 +266,197 @@ impl PrepareNativeEscrowResult {
     }
 }
 
+/// Upper bound on re-plans of one native escrow pair; the sixth supersession is
+/// refused with [`ErrorCode::ReplanExhausted`].
+pub const MAX_NATIVE_ESCROW_REPLANS: u32 = 5;
+
+/// Upper bound on re-plans of one owned revealing claim; the sixth
+/// supersession is refused with [`ErrorCode::ReplanExhausted`].
+pub const MAX_REVEALING_CLAIM_REPLANS: u32 = 5;
+
+/// The native escrow transaction whose nonce was taken.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[must_use]
+pub enum NativeEscrowStep {
+    /// The initialization was superseded: both transactions are re-planned.
+    Initialize,
+    /// The funding was superseded: the included initialization stays, the
+    /// funding is re-planned at the live nonce.
+    Fund,
+}
+
+/// Re-plans a native escrow pair after [`SubmissionOutcome::Superseded`].
+///
+/// The sidecar checks that the named pair is the current one of its lineage
+/// (or the one most recently superseded, for an idempotent replay), that the
+/// kept initialization is included when the step is `Fund`, and that the
+/// re-plan bound is not exceeded. The superseded pair stays on disk as lineage.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SupersedeNativeEscrowPrepareRequest {
+    /// Version, isolation, correlation, and role fields.
+    pub context: MessageContext,
+    /// Expected runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// Initialization transaction of the superseded pair.
+    pub superseded_initialization_transaction_id: TransactionId,
+    /// Funding transaction of the superseded pair.
+    pub superseded_funding_transaction_id: TransactionId,
+    /// The transaction whose nonce was taken.
+    pub step: NativeEscrowStep,
+}
+
+impl SupersedeNativeEscrowPrepareRequest {
+    /// Creates a supersession request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        superseded_initialization_transaction_id: TransactionId,
+        superseded_funding_transaction_id: TransactionId,
+        step: NativeEscrowStep,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            superseded_initialization_transaction_id,
+            superseded_funding_transaction_id,
+            step,
+        }
+    }
+}
+
+/// The re-planned pair, with the supersession it answers.
+///
+/// Replaying the request with the same superseded identities returns the same
+/// pair; the nonces and identities of both generations are reported so the
+/// caller's journal can carry them.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SupersedeNativeEscrowPrepareResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Echoed superseded initialization identity.
+    pub superseded_initialization_transaction_id: TransactionId,
+    /// Echoed superseded funding identity.
+    pub superseded_funding_transaction_id: TransactionId,
+    /// Signer nonce the superseded step was planned at.
+    pub superseded_nonce: u128,
+    /// Signer nonce the step is planned at now.
+    pub replanned_nonce: u128,
+    /// One-based count of re-plans of this pair, at most
+    /// [`MAX_NATIVE_ESCROW_REPLANS`].
+    pub replan_index: u32,
+    /// Exact initialization transaction (the kept one when the step is `Fund`).
+    pub initialization: PreparedTransaction,
+    /// Exact funding transaction.
+    pub funding: PreparedTransaction,
+}
+
+impl SupersedeNativeEscrowPrepareResult {
+    /// Creates a supersession result.
+    #[allow(clippy::too_many_arguments, reason = "one record per protocol field")]
+    pub const fn new(
+        context: MessageContext,
+        superseded_initialization_transaction_id: TransactionId,
+        superseded_funding_transaction_id: TransactionId,
+        superseded_nonce: u128,
+        replanned_nonce: u128,
+        replan_index: u32,
+        initialization: PreparedTransaction,
+        funding: PreparedTransaction,
+    ) -> Self {
+        Self {
+            context,
+            superseded_initialization_transaction_id,
+            superseded_funding_transaction_id,
+            superseded_nonce,
+            replanned_nonce,
+            replan_index,
+            initialization,
+            funding,
+        }
+    }
+}
+
+/// Re-plans an owned revealing claim after [`SubmissionOutcome::Superseded`]
+/// (or an observation that found its nonce taken): the same claim message at
+/// the signer's live nonce.
+///
+/// The sidecar checks that the named claim is the current one of its lineage
+/// (or the one most recently superseded, for an idempotent replay), that it is
+/// not included, and that the re-plan bound is not exceeded. The superseded
+/// claim stays on disk as lineage.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SupersedeRevealingClaimRequest {
+    /// Version, isolation, correlation, and role fields.
+    pub context: MessageContext,
+    /// Expected runtime identity.
+    pub runtime: RuntimeDescriptor,
+    /// The superseded claim transaction.
+    pub superseded_claim_transaction_id: TransactionId,
+}
+
+impl SupersedeRevealingClaimRequest {
+    /// Creates a claim supersession request.
+    pub const fn new(
+        context: MessageContext,
+        runtime: RuntimeDescriptor,
+        superseded_claim_transaction_id: TransactionId,
+    ) -> Self {
+        Self {
+            context,
+            runtime,
+            superseded_claim_transaction_id,
+        }
+    }
+}
+
+/// The re-planned revealing claim, with the supersession it answers.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+#[must_use]
+pub struct SupersedeRevealingClaimResult {
+    /// Echoed request context.
+    pub context: MessageContext,
+    /// Echoed superseded claim identity.
+    pub superseded_claim_transaction_id: TransactionId,
+    /// Signer nonce the superseded claim was planned at.
+    pub superseded_nonce: u128,
+    /// Signer nonce the claim is planned at now.
+    pub replanned_nonce: u128,
+    /// One-based count of re-plans of this claim, at most
+    /// [`MAX_REVEALING_CLAIM_REPLANS`].
+    pub replan_index: u32,
+    /// Exact re-planned claim transaction.
+    pub claim: PreparedTransaction,
+}
+
+impl SupersedeRevealingClaimResult {
+    /// Creates a claim supersession result.
+    pub const fn new(
+        context: MessageContext,
+        superseded_claim_transaction_id: TransactionId,
+        superseded_nonce: u128,
+        replanned_nonce: u128,
+        replan_index: u32,
+        claim: PreparedTransaction,
+    ) -> Self {
+        Self {
+            context,
+            superseded_claim_transaction_id,
+            superseded_nonce,
+            replanned_nonce,
+            replan_index,
+            claim,
+        }
+    }
+}
+
 /// Requests consecutive aggregate-witness escrow initialization and funding transactions.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -3117,6 +3308,17 @@ pub enum SubmissionOutcome {
     Accepted,
     /// The node already knew the exact transaction ID.
     AlreadyKnown,
+    /// Nothing was submitted: the exact bytes carry a signer nonce the account
+    /// has already passed (another transaction of the same signer took it
+    /// first, as concurrent swaps do) and the transaction is not included. The
+    /// plan is remade at the live nonce through
+    /// [`SupersedeNativeEscrowPrepareRequest`]; the bytes are never rebroadcast.
+    Superseded {
+        /// Signer nonce decoded from the exact bytes.
+        planned_nonce: u128,
+        /// Signer nonce the account reports now.
+        live_nonce: u128,
+    },
 }
 
 /// Successful byte-exact submission result.

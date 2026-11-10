@@ -2099,6 +2099,9 @@ async fn submit_live_lez_maker_step(
         SubmissionOutcome::Accepted | SubmissionOutcome::AlreadyKnown => {
             BtcMakerLockSubmissionResult::Accepted(step.expected_public_id().as_str().into())
         }
+        // The BTC actor plans its LEZ nonce just in time; a superseded plan is
+        // an observation-only recovery, never a rebroadcast.
+        SubmissionOutcome::Superseded { .. } => BtcMakerLockSubmissionResult::Unknown,
     })
 }
 

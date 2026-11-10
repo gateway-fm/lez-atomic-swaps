@@ -1,0 +1,41 @@
+
+[17:53:28] === taker-refund (TakerSellsForeign)
+
+[17:53:31] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[17:53:39] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   6e43c6c453e4d81cf8c534297a9dd8f66d2d9bb04fce9c74f68ec640224fd099 awaiting_first_lock 0 -
+
+[17:53:50] The Maker Node is stopped before it can lock; the Taker locks anyway and must recover its funds later
+
+[17:53:50] Taker desk: lock_btc on 6e43c6c453e4
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[17:54:03] The Maker's lock cutoff (600 s after the take) passes with no Maker lock; the desk then offers Refund
+
+[17:54:03] Taker desk: refund_btc on 6e43c6c453e4
+  ✓ taker: launcher discoverable and app opens
+  » The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures
+  ✓ taker: perform refund_btc
+2 passed, 0 failed
+
+[18:03:57] The Maker Node is started again and reconciles the refunded swap
+
+[18:04:10] Taker desk shows 6e43c6c453e4 at refunded
+  ✓ taker: launcher discoverable and app opens
+  ✗ taker: swap reaches refunded
+    no taker swap 6e43c6c453e4 has reached refunded; desk shows refunding (Refund submitted)
+1 passed, 1 failed
+
+[18:34:20] FAILED: step failed

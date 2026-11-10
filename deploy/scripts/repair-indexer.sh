@@ -28,6 +28,14 @@ if [[ -n "$current" && "$current" -gt 1 ]] && historical_read_ok "$((current - 1
   echo "indexer serves historical reads at the tip ($current)"
   exit 0
 fi
+# A chain provisioned from scratch sits at the genesis block until something
+# writes to the zone, and the first writer is the market bootstrap in the next
+# phase. There is no history to repair yet, and re-indexing cannot create any,
+# so waiting here would deadlock the bring-up against a step that runs later.
+if [[ "$current" == 1 ]]; then
+  echo "indexer is at the genesis block; nothing to repair on a fresh chain"
+  exit 0
+fi
 echo "indexer cannot serve a historical read at its tip (${current:-unreachable})"
 [[ "${1:-}" != "--check" ]] || exit 1
 

@@ -68,11 +68,24 @@ pub enum BridgeRuntimeError {
     /// Submission could have reached the sequencer but no acknowledgement is known.
     #[error("official v0.2 transaction submission outcome is unknown")]
     UnknownSubmissionOutcome,
+    /// The depositor's native balance cannot cover the escrow amount.
+    #[error("LEZ depositor balance is below the native escrow amount")]
+    DepositorBalanceInsufficient,
+    /// The native escrow pair was re-planned the maximum number of times.
+    #[error("the native escrow pair was re-planned the maximum number of times")]
+    ReplanExhausted,
+    /// The kept initialization is not included (step `Fund`) or the superseded
+    /// initialization is already included (step `Initialize`).
+    #[error("native escrow initialization inclusion does not match the superseded step")]
+    SupersessionInclusionMismatch,
 }
 
 impl From<NativePrepareError> for BridgeRuntimeError {
-    fn from(_value: NativePrepareError) -> Self {
-        Self::Planner
+    fn from(value: NativePrepareError) -> Self {
+        match value {
+            NativePrepareError::ReplanExhausted => Self::ReplanExhausted,
+            _ => Self::Planner,
+        }
     }
 }
 
@@ -464,7 +477,93 @@ impl BridgeRuntime {
         &self,
         request: lez_bridge_protocol::PrepareNativeEscrowRequest,
     ) -> Result<lez_bridge_protocol::PrepareNativeEscrowResult, BridgeRuntimeError> {
+        // A depositor that cannot fund the escrow gets a named refusal here,
+        // before any plan is reserved: the escrow program would only report
+        // its generic account-binding error at the funding step, after the
+        // initialization had been submitted.
+        let depositor = self
+            .node
+            .native_account(AccountId::new(
+                *request.terms.depositor_account_id().as_bytes(),
+            ))
+            .await?;
+        if depositor.balance < request.terms.amount().as_u128() {
+            return Err(BridgeRuntimeError::DepositorBalanceInsufficient);
+        }
         self.planner.prepare(request).await.map_err(Into::into)
+    }
+
+    /// Re-plans the native escrow pair after [`SubmissionOutcome::Superseded`].
+    ///
+    /// A request naming an already superseded pair with the same step is
+    /// answered from the durable lineage without a node call (idempotent
+    /// replay). A fresh supersession first checks the kept initialization is
+    /// included (step `Fund`) or the superseded one is not (step `Initialize`),
+    /// then the planner re-plans at the live nonce and reserves the slot.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the planner's drift, bound and reservation failures; adds
+    /// `SupersessionInclusionMismatch` and `Unavailable` for node facts.
+    pub async fn supersede_native_escrow_prepare(
+        &self,
+        request: lez_bridge_protocol::SupersedeNativeEscrowPrepareRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeNativeEscrowPrepareResult, BridgeRuntimeError> {
+        if let Some(replayed) = self.planner.replayed_supersession(&request).await? {
+            return Ok(replayed);
+        }
+        let (initialization, _funding) =
+            self.planner.current_pair_for_supersession(&request).await?;
+        let included = self
+            .node
+            .prepared_transaction_is_included(&initialization)
+            .await?;
+        let keeps_initialization =
+            matches!(request.step, lez_bridge_protocol::NativeEscrowStep::Fund);
+        if included != keeps_initialization {
+            return Err(BridgeRuntimeError::SupersessionInclusionMismatch);
+        }
+        self.planner
+            .supersede(request)
+            .await
+            .map_err(|error| match error {
+                NativePrepareError::NonceUnavailable => BridgeRuntimeError::Unavailable,
+                other => other.into(),
+            })
+    }
+
+    /// Re-plans the owned revealing claim after [`SubmissionOutcome::Superseded`]
+    /// (FINDINGS 24). A request naming an already superseded claim is answered
+    /// from the durable lineage without a node call; a fresh supersession first
+    /// checks the named claim is not included (an included claim is never
+    /// re-planned), then the planner re-plans at the live nonce.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the planner's drift, bound and reservation failures; adds
+    /// `SupersessionInclusionMismatch` for an included claim and `Unavailable`
+    /// for node facts.
+    pub async fn supersede_revealing_claim(
+        &self,
+        request: lez_bridge_protocol::SupersedeRevealingClaimRequest,
+    ) -> Result<lez_bridge_protocol::SupersedeRevealingClaimResult, BridgeRuntimeError> {
+        if let Some(replayed) = self.planner.replayed_claim_supersession(&request).await? {
+            return Ok(replayed);
+        }
+        let current = self
+            .planner
+            .current_claim_for_supersession(&request)
+            .await?;
+        if self.node.prepared_transaction_is_included(&current).await? {
+            return Err(BridgeRuntimeError::SupersessionInclusionMismatch);
+        }
+        self.planner
+            .supersede_revealing_claim(request)
+            .await
+            .map_err(|error| match error {
+                NativePrepareError::NonceUnavailable => BridgeRuntimeError::Unavailable,
+                other => other.into(),
+            })
     }
 
     /// Prepares one exact XMR-native initialization/funding pair without submission.
@@ -1337,6 +1436,24 @@ impl BridgeRuntime {
         )
     }
 
+    /// Whether these exact bytes are one of the native escrow pair's
+    /// transactions this sidecar planned (the original pair or a re-plan).
+    pub async fn native_escrow_lineage_member(&self, prepared: &PreparedTransaction) -> bool {
+        matches!(
+            self.planner.native_escrow_planned_nonce(prepared).await,
+            Ok(Some(_))
+        )
+    }
+
+    /// Whether these exact bytes are one of the owned revealing claims this
+    /// sidecar planned (the original claim or a re-plan).
+    pub async fn revealing_claim_lineage_member(&self, prepared: &PreparedTransaction) -> bool {
+        matches!(
+            self.planner.revealing_claim_planned_nonce(prepared).await,
+            Ok(Some(_))
+        )
+    }
+
     /// Submits only exact bytes owned by this actor's active durable planner.
     ///
     /// An exact canonical lookup is performed before submission. A found byte-
@@ -1352,10 +1469,10 @@ impl BridgeRuntime {
         request: &SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, BridgeRuntimeError> {
         let ownership = self.planner.validate_submission_request(request).await?;
-        if let OwnedSubmission::XmrFunding { initialization } = ownership
+        if let OwnedSubmission::XmrFunding { initialization } = &ownership
             && !self
                 .node
-                .prepared_transaction_is_included(&initialization)
+                .prepared_transaction_is_included(initialization)
                 .await?
         {
             return Err(BridgeRuntimeError::Planner);
@@ -1370,6 +1487,56 @@ impl BridgeRuntime {
                 request.transaction.transaction_id,
                 SubmissionOutcome::AlreadyKnown,
             ));
+        }
+        // A native escrow transaction whose signer nonce the account has
+        // already passed (another transaction of this signer took it first,
+        // as concurrent swaps do) can never be included: name it instead of
+        // broadcasting it, so the caller re-plans at the live nonce (D1).
+        if matches!(ownership, OwnedSubmission::Legacy)
+            && let Some(planned_nonce) = self
+                .planner
+                .native_escrow_planned_nonce(&request.transaction)
+                .await?
+        {
+            let live_nonce = self
+                .planner
+                .live_signer_nonce()
+                .await
+                .map_err(|_| BridgeRuntimeError::Unavailable)?;
+            if live_nonce > planned_nonce {
+                return Ok(SubmitTransactionResult::new(
+                    request.context.clone(),
+                    request.transaction.transaction_id,
+                    SubmissionOutcome::Superseded {
+                        planned_nonce,
+                        live_nonce,
+                    },
+                ));
+            }
+        }
+        // An owned revealing claim whose nonce another transaction of this
+        // signer took can never land either: named, never rebroadcast; the
+        // caller re-plans the same claim at the live nonce (FINDINGS 24).
+        if let Some(planned_nonce) = self
+            .planner
+            .revealing_claim_planned_nonce(&request.transaction)
+            .await?
+        {
+            let live_nonce = self
+                .planner
+                .live_signer_nonce()
+                .await
+                .map_err(|_| BridgeRuntimeError::Unavailable)?;
+            if live_nonce > planned_nonce {
+                return Ok(SubmitTransactionResult::new(
+                    request.context.clone(),
+                    request.transaction.transaction_id,
+                    SubmissionOutcome::Superseded {
+                        planned_nonce,
+                        live_nonce,
+                    },
+                ));
+            }
         }
         self.node
             .submit_prepared_transaction(&request.transaction)

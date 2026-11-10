@@ -154,6 +154,14 @@ where
     ) -> Result<(), Self::Error> {
         self.funding.submit_first_lock(agreement, submission).await
     }
+
+    async fn first_lock_lapsed(
+        &self,
+        agreement: &ZecAgreementV1,
+        submission: &PreparedFirstLockSubmissionV1,
+    ) -> Result<bool, Self::Error> {
+        self.funding.first_lock_lapsed(agreement, submission).await
+    }
 }
 
 #[async_trait]

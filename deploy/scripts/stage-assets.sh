@@ -7,12 +7,20 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 log() { printf '[stage %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 
-# ---- bitcoin-core/bin: official Core 31.1 aarch64 release archive ----------
-if [[ ! -x images/bitcoin-core/bin/bitcoind ]]; then
-    log "fetching Bitcoin Core 31.1 aarch64"
+# ---- bitcoin-core/bin: official Core 31.1 release archive for this host -----
+# Core publishes per-architecture archives; stage the one matching the images
+# this host builds, or bitcoind lands as a foreign binary and never starts.
+case "$(uname -m)" in
+    x86_64 | amd64) btc_arch=x86_64 ;;
+    *) btc_arch=aarch64 ;;
+esac
+if [[ ! -x images/bitcoin-core/bin/bitcoind ]] \
+   || ! file -b images/bitcoin-core/bin/bitcoind | grep -qiE "$([[ $btc_arch == x86_64 ]] && echo x86-64 || echo aarch64)"; then
+    log "fetching Bitcoin Core 31.1 $btc_arch"
+    rm -f images/bitcoin-core/bin/bitcoind images/bitcoin-core/bin/bitcoin-cli
     tmp="$(mktemp -d /tmp/lez-stage-btc.XXXXXX)"
     curl -fsSL -o "$tmp/btc.tar.gz" \
-        https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-aarch64-linux-gnu.tar.gz
+        "https://bitcoincore.org/bin/bitcoin-core-31.1/bitcoin-31.1-${btc_arch}-linux-gnu.tar.gz"
     mkdir -p images/bitcoin-core/bin
     tar -xzf "$tmp/btc.tar.gz" -C "$tmp" \
         bitcoin-31.1/bin/bitcoind bitcoin-31.1/bin/bitcoin-cli

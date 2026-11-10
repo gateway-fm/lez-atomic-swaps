@@ -189,7 +189,11 @@ impl From<NativePrepareError> for VaultClaimPrepareError {
             | NativePrepareError::ActiveWitnessedAssetEscrowPrepare
             | NativePrepareError::ActiveWitnessedAssetClaimPrepare
             | NativePrepareError::ActiveWitnessedAssetClaimCompletion
-            | NativePrepareError::ActiveWitnessedAssetRefundPrepare => Self::ActivePrepare,
+            | NativePrepareError::ActiveWitnessedAssetRefundPrepare
+            | NativePrepareError::MissingPrepare
+            | NativePrepareError::SupersededPairMismatch
+            | NativePrepareError::SupersededNonceStillLive
+            | NativePrepareError::ReplanExhausted => Self::ActivePrepare,
             NativePrepareError::NonceUnavailable => Self::NonceUnavailable,
             NativePrepareError::ProtocolEncoding => Self::ProtocolEncoding,
             NativePrepareError::InvalidTransactionBytes

@@ -1,0 +1,76 @@
+{
+  "corridor": "zec-devnet-1793478477",
+  "direction": "TakerSellsLez",
+  "exported_at_unix_seconds": 1793478834,
+  "maker": {
+    "error": null,
+    "node_view": {
+      "actor_kind": "zcash",
+      "attempt_count": 24,
+      "lease_generation": 24,
+      "manual_action": null,
+      "progress": {
+        "observation": {
+          "next_action": "complete",
+          "phase": "completed",
+          "revision": 8,
+          "state": "active"
+        },
+        "observed_at": 1793478773,
+        "source_generation": 24
+      },
+      "schedule_state": "terminal",
+      "schema_version": 1,
+      "swap_id": "zec-devnet-swap-1793478477"
+    }
+  },
+  "offer_id": "zec-devnet-offer-1793478477",
+  "pair": "Zcash",
+  "profile": "deterministic-local-devnet-v3",
+  "schema_version": 1,
+  "swap_id": "zec-devnet-swap-1793478477",
+  "taker": {
+    "actor_status": {
+      "lez_refund_at_ms": 1793479200000,
+      "next_action": "complete",
+      "phase": "completed",
+      "revealing_claim_hold_attention_ms": 240000,
+      "revision": 4,
+      "role": "taker",
+      "schema_version": 1,
+      "state": "active"
+    },
+    "node_view": {
+      "actor_phase": "completed",
+      "available_action": null,
+      "foreign_units": 100000000,
+      "lez_units": 50000,
+      "offer_id": "zec-devnet-offer-1793478477",
+      "privacy_guidance": "shield_received_transparent_zec_separately",
+      "progress_generation": 4,
+      "route": {
+        "direction": "TakerSellsLez",
+        "pair": "Zcash"
+      },
+      "schema_version": 1,
+      "state": "completed",
+      "swap_id": "zec-devnet-swap-1793478477"
+    }
+  },
+  "zcash_refund_height": 7649,
+  "zebra": {
+    "funding_output_spend": {
+      "height": 7649,
+      "transaction_id": "d60876a637c85e6d9e1744a0cdc95b37c3ccd4c66abc2df4d45523f707a7a373"
+    },
+    "maker_funding": {
+      "height": 7641,
+      "transaction_id": "d2ecc0f3ef0c351b5ed66bacada5b7cf70205aeb0ab68799f3084246c28e50e4"
+    },
+    "provisioned_outpoint": {
+      "output_index": 0,
+      "transaction_id": "eea17d9e2298245a0f7eb94a3571160e669fab2f6bb5dc7fa3c4840a540e4af1"
+    },
+    "tip_height": 7649
+  }
+}

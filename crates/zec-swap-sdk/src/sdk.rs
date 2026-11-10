@@ -1,18 +1,18 @@
 //! Pre-lock and post-lock LEZ/ZEC SDK facades.
 
-use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapId, UnixSeconds};
+use lez_swap_core::{Participant, Phase, SwapCoordinator, SwapDirection, SwapId, UnixSeconds};
 
 use crate::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimIntentV1, ClaimPreimage, ClaimRecoveryStore,
     ClaimStepV1, CreateAgreementOutcome, CreateFirstLockOutcome, FirstLockConfirmedEvidenceV1,
     FirstLockDriveOutcome, FirstLockIntentV1, FirstLockObservation, FirstLockPlanV1,
-    FirstLockProjectionCommit, FirstLockTransitionV1, FollowupClaimObservationV1,
-    FollowupClaimTransitionRecordV1, FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort,
-    LezMakerLockObservationPort, LezObservationEventV1, LezObservationReconciliationV1,
-    LezObservationTrackerV1, LezRefundPort, LezTakerFirstLockObservationPort,
-    MakerFundingEligibilityOutcome, MakerLockDriveOutcome, MakerLockIntentV1,
-    MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel, ObserveMakerLockOutcome,
-    ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
+    FirstLockProjectionCommit, FirstLockSubmitOutcome, FirstLockSupersessionV1,
+    FirstLockTransitionV1, FollowupClaimObservationV1, FollowupClaimTransitionRecordV1,
+    FollowupClaimTransitionV1, LezClaimPort, LezFirstLockPort, LezMakerLockObservationPort,
+    LezObservationEventV1, LezObservationReconciliationV1, LezObservationTrackerV1, LezRefundPort,
+    LezTakerFirstLockObservationPort, MakerFundingEligibilityOutcome, MakerLockDriveOutcome,
+    MakerLockIntentV1, MakerLockObservationV1, MakerLockTransitionV1, NegotiationChannel,
+    ObserveMakerLockOutcome, ObserveTakerFirstLockOutcome, ObservedFollowupClaimTransitionRecordV1,
     ObservedFollowupClaimTransitionV1, ObservedMakerLockTransitionV1,
     ObservedRevealingClaimTransitionRecordV1, ObservedRevealingClaimTransitionV1,
     ObservedTakerFirstLockTransitionV1, OfferDiscovery, PreparedFirstLockSubmissionV1,
@@ -465,6 +465,28 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store> {
             .map_err(ZecSdkError::from)
     }
 
+    /// When the revealing LEZ claim window closes, Unix milliseconds: the
+    /// agreement's LEZ refund time minus the profile's required margin. A
+    /// claim must be on LEZ before it; after it the claimant's settlement is
+    /// its refund (the LEZ claimant is always the Zcash funder).
+    #[must_use]
+    pub fn claim_window_closes_at_ms(&self) -> u64 {
+        let margin_ms = crate::ZecRefundProfile::for_id(self.agreement().binding().profile_id())
+            .required_margin()
+            .value()
+            .saturating_mul(1000);
+        self.agreement()
+            .lez_refund_at_ms()
+            .saturating_sub(margin_ms)
+    }
+
+    /// Whether the revealing LEZ claim window is closed at `now` (the
+    /// caller's trusted clock).
+    #[must_use]
+    pub fn claim_window_closed(&self, now: crate::LezUnixMilliseconds) -> bool {
+        now.value() >= self.claim_window_closes_at_ms()
+    }
+
     /// Next construction-specific role action, if one is currently safe.
     ///
     /// A maker-local first-lock observation is deliberately non-authorizing
@@ -486,6 +508,20 @@ impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
     Store: RecoveryStore,
 {
+    /// Every recorded re-plan of this swap's LEZ lock, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns the structured store error.
+    pub async fn first_lock_supersessions(
+        &self,
+    ) -> Result<Vec<FirstLockSupersessionV1>, ZecSdkError> {
+        self.store
+            .load_first_lock_supersessions(self.agreement().coordinator().id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
     /// Atomically projects confirmed final first-lock evidence, probing an exact
     /// predecessor slot after an unknown store outcome.
     ///
@@ -815,6 +851,61 @@ where
             CreateFirstLockOutcome::Conflict => Err(ZecSdkError::FirstLockConflict),
         }
     }
+
+    /// Replaces the open first-lock plan with its re-plan after
+    /// [`FirstLockDriveOutcome::Superseded`], keeping the superseded plan as
+    /// lineage. The record must retire exactly the open plan and install
+    /// exactly `plan`; replaying the same re-plan is idempotent.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the wrong role or phase, a missing open plan, a record that
+    /// does not link the two plans, or a conflicting durable re-plan.
+    pub async fn restage_first_lock(
+        &self,
+        plan: FirstLockPlanV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Taker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Taker,
+                actual: self.local_participant(),
+            });
+        }
+        if self.status() != Phase::Offered {
+            return Err(ZecSdkError::FirstLockNotOffered(self.status()));
+        }
+        let swap_id = self.agreement().coordinator().id();
+        let Some(open) = self
+            .store
+            .load_first_lock_intent(swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Err(ZecSdkError::MissingFirstLockIntent);
+        };
+        open.validate_for_active(self.agreement(), self.local_participant(), self.revision())?;
+        // A replay finds the re-plan already open; the store then checks the
+        // recorded supersession is the same one (`ExistingSame`).
+        if open.plan() != &plan && !supersession.links(open.plan(), &plan) {
+            return Err(ZecSdkError::FirstLockSupersessionMismatch);
+        }
+        let intent = FirstLockIntentV1::from_active(
+            self.agreement(),
+            self.local_participant(),
+            self.revision(),
+            plan,
+        )?;
+        let outcome = self
+            .store
+            .restage_first_lock_intent(&intent, supersession)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
+            CreateFirstLockOutcome::Conflict => Err(ZecSdkError::FirstLockConflict),
+        }
+    }
 }
 
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
@@ -1044,28 +1135,62 @@ where
             });
         }
         let direction = self.agreement().direction();
-        match self.observe_taker_first_lock().await? {
-            ObserveTakerFirstLockOutcome::Unchanged(_) => Ok(match direction {
-                lez_swap_core::SwapDirection::TakerSellsForeign => {
-                    classify_unchanged_maker_eligibility(self.status(), self.revision)
+        // The lock the tracker knew before this observation, by its inclusion
+        // (transaction, block). A head that moves only in tip and confirmations
+        // is the same lock, deeper: that progress is projected durably like any
+        // event, but it must not send the Maker back to "poll again" — on a
+        // chain that anything else moves (a second swap, the devnet heartbeat)
+        // the Maker would otherwise re-project on every attempt and never fund.
+        let lez_head_before = self.lez_taker_lock_tracker.current().cloned();
+        let zcash_head_before = self.zcash_taker_lock_tracker.current().cloned();
+        let observed = self.observe_taker_first_lock().await?;
+        let same_lock_deeper = match (&observed, direction) {
+            (ObserveTakerFirstLockOutcome::Projected(_), SwapDirection::TakerSellsLez) => {
+                match (&lez_head_before, self.lez_taker_lock_tracker.current()) {
+                    (Some(before), Some(after)) => {
+                        crate::lez_observation::same_lez_inclusion(before, after)
+                    }
+                    _ => false,
                 }
-                lez_swap_core::SwapDirection::TakerSellsLez => {
-                    classify_unchanged_lez_maker_eligibility(
-                        self.status(),
-                        self.revision,
-                        self.coordinator.required_confirmations(Participant::Taker),
-                        self.agreement().lez_terms().chain().environment(),
-                        self.lez_taker_lock_tracker.current().map(|current| {
-                            (current.confirmations().get(), current.inclusion_status())
-                        }),
-                    )
+            }
+            (ObserveTakerFirstLockOutcome::Projected(_), SwapDirection::TakerSellsForeign) => {
+                match (&zcash_head_before, self.zcash_taker_lock_tracker.current()) {
+                    (Some(before), Some(after)) => {
+                        crate::observation::same_canonical_inclusion(before, after)
+                    }
+                    _ => false,
                 }
-            }),
+            }
+            _ => false,
+        };
+        match observed {
+            ObserveTakerFirstLockOutcome::Unchanged(_) => Ok(self.classify_maker_eligibility()),
+            ObserveTakerFirstLockOutcome::Projected(_) if same_lock_deeper => {
+                Ok(self.classify_maker_eligibility())
+            }
             ObserveTakerFirstLockOutcome::AwaitingStableObservation(step) => Ok(
                 MakerFundingEligibilityOutcome::AwaitingStableObservation(step),
             ),
             ObserveTakerFirstLockOutcome::Projected(commit) => Ok(
                 MakerFundingEligibilityOutcome::CanonicalStateChanged(commit),
+            ),
+        }
+    }
+
+    /// The Maker's funding eligibility from the tracker head as it stands.
+    fn classify_maker_eligibility(&self) -> MakerFundingEligibilityOutcome {
+        match self.agreement().direction() {
+            SwapDirection::TakerSellsForeign => {
+                classify_unchanged_maker_eligibility(self.status(), self.revision)
+            }
+            SwapDirection::TakerSellsLez => classify_unchanged_lez_maker_eligibility(
+                self.status(),
+                self.revision,
+                self.coordinator.required_confirmations(Participant::Taker),
+                self.agreement().lez_terms().chain().environment(),
+                self.lez_taker_lock_tracker
+                    .current()
+                    .map(|current| (current.confirmations().get(), current.inclusion_status())),
             ),
         }
     }
@@ -1176,20 +1301,14 @@ where
             FirstLockPlanV1::Zcash { funding } => self.drive_zcash_step(funding).await,
             FirstLockPlanV1::Lez { initialize, fund } => {
                 match self.observe_lez_step(initialize).await? {
-                    FirstLockObservation::Absent => {
-                        self.submit_lez_step(initialize).await?;
-                        Ok(FirstLockDriveOutcome::Submitted(initialize.step()))
-                    }
+                    FirstLockObservation::Absent => Ok(self.submit_lez_step(initialize).await?),
                     FirstLockObservation::Unstable => Ok(
                         FirstLockDriveOutcome::AwaitingStableObservation(initialize.step()),
                     ),
                     FirstLockObservation::Confirmed(evidence) => {
                         self.validate_first_lock_observation(initialize, &evidence)?;
                         match self.observe_lez_step(fund).await? {
-                            FirstLockObservation::Absent => {
-                                self.submit_lez_step(fund).await?;
-                                Ok(FirstLockDriveOutcome::Submitted(fund.step()))
-                            }
+                            FirstLockObservation::Absent => Ok(self.submit_lez_step(fund).await?),
                             FirstLockObservation::Unstable => Ok(
                                 FirstLockDriveOutcome::AwaitingStableObservation(fund.step()),
                             ),
@@ -1257,11 +1376,23 @@ where
     async fn submit_lez_step(
         &self,
         submission: &PreparedFirstLockSubmissionV1,
-    ) -> Result<(), ZecSdkError> {
-        self.lez
+    ) -> Result<FirstLockDriveOutcome, ZecSdkError> {
+        let outcome = self
+            .lez
             .submit_first_lock(self.agreement(), submission)
             .await
-            .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))
+            .map_err(|error| ZecSdkError::LezFirstLock(Box::new(error)))?;
+        Ok(match outcome {
+            FirstLockSubmitOutcome::Accepted => FirstLockDriveOutcome::Submitted(submission.step()),
+            FirstLockSubmitOutcome::Superseded {
+                planned_nonce,
+                live_nonce,
+            } => FirstLockDriveOutcome::Superseded {
+                step: submission.step(),
+                planned_nonce,
+                live_nonce,
+            },
+        })
     }
 }
 
@@ -1337,6 +1468,54 @@ where
         Ok(MakerLockDriveOutcome::Lock(
             self.drive_lock_plan(intent.plan()).await?,
         ))
+    }
+
+    /// The maker's counterpart of `restage_first_lock`: replaces the open
+    /// opposite-chain plan with its re-plan at the same staged revision.
+    ///
+    /// # Errors
+    ///
+    /// Rejects the wrong role, a missing open plan, a record that does not
+    /// link the two plans, or a conflicting durable re-plan.
+    pub async fn restage_maker_lock(
+        &self,
+        plan: FirstLockPlanV1,
+        supersession: &FirstLockSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, ZecSdkError> {
+        if self.local_participant() != Participant::Maker {
+            return Err(ZecSdkError::WrongRole {
+                expected: Participant::Maker,
+                actual: self.local_participant(),
+            });
+        }
+        let swap_id = self.coordinator.id().clone();
+        let Some(open) = self
+            .store
+            .load_maker_lock_intent(&swap_id)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Err(ZecSdkError::MissingMakerLockIntent);
+        };
+        open.validate_for_active(self.agreement(), self.revision)?;
+        if open.plan() != &plan && !supersession.links(open.plan(), &plan) {
+            return Err(ZecSdkError::FirstLockSupersessionMismatch);
+        }
+        let intent = MakerLockIntentV1::from_active(
+            self.agreement(),
+            self.local_participant(),
+            open.staged_revision(),
+            plan,
+        )?;
+        let outcome = self
+            .store
+            .restage_maker_lock_intent(&intent, supersession)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
+            CreateFirstLockOutcome::Conflict => Err(ZecSdkError::MakerLockConflict),
+        }
     }
 }
 
@@ -1452,17 +1631,26 @@ where
     /// and commits canonical evidence before changing memory. Counterparties use observation-only
     /// ports and distinct durable transition slots.
     ///
+    /// `now` is the caller's trusted clock: the SDK keeps none, and the revealing LEZ claim is
+    /// refused once `now` reaches the claim window's close (the agreement's LEZ refund time minus
+    /// the profile's required margin; FINDINGS 26). A caller that passes a wrong clock — `0`, a
+    /// stale or attacker-set one — switches that guard off; pass the host's wall clock.
+    ///
     /// # Errors
     ///
     /// Rejects an invalid phase, missing protected material, conflicting durable intent, invalid
-    /// evidence/revision, or a structured store/chain adapter failure.
-    pub async fn drive_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
+    /// evidence/revision, a revealing claim after its window ([`ZecSdkError::ClaimWindowClosed`]),
+    /// or a structured store/chain adapter failure.
+    pub async fn drive_claim(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
         self.replay_claim_transitions().await?;
         match self.status() {
             Phase::BothLegsLocked
                 if self.local_participant() == self.agreement().lez_claimant() =>
             {
-                self.drive_owned_revealing_claim().await
+                self.drive_owned_revealing_claim(now).await
             }
             Phase::BothLegsLocked => self.observe_revealing_claim().await,
             Phase::ClaimEvidenceAvailable
@@ -1478,8 +1666,117 @@ where
         }
     }
 
-    async fn drive_owned_revealing_claim(&mut self) -> Result<ClaimDriveOutcome, ZecSdkError> {
-        let (intent, protected) = self.revealing_claim_intent().await?;
+    /// The open owned revealing claim, reopened from protected storage: what a
+    /// re-plan names as superseded (FINDINGS 24).
+    ///
+    /// # Errors
+    ///
+    /// Rejects a role that is not the LEZ claimant, a phase other than both
+    /// legs locked, a missing intent and storage failures.
+    pub async fn open_revealing_claim_submission(
+        &self,
+    ) -> Result<crate::PreparedClaimSubmissionV1, ZecSdkError> {
+        if self.local_participant() != self.agreement().lez_claimant() {
+            return Err(ZecSdkError::WrongRole {
+                expected: self.agreement().lez_claimant(),
+                actual: self.local_participant(),
+            });
+        }
+        if self.status() != Phase::BothLegsLocked {
+            return Err(ZecSdkError::ClaimNotReady(self.status()));
+        }
+        let (intent, protected) = self
+            .load_claim_intent()
+            .await?
+            .ok_or(ZecSdkError::MissingClaimIntent)?;
+        self.store
+            .open_claim_submission(self.agreement(), &intent, &protected)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
+    /// Every recorded re-plan of this swap's revealing claim, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// Storage failures.
+    pub async fn claim_supersessions(
+        &self,
+    ) -> Result<Vec<crate::ClaimSupersessionV1>, ZecSdkError> {
+        self.store
+            .load_claim_supersessions(self.coordinator.id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))
+    }
+
+    /// Replaces the open revealing-claim intent with its re-plan (the same
+    /// claim at the live nonce) and keeps the superseded one as lineage. A
+    /// replay finds the re-plan already open and is `ExistingSame`.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a role that is not the LEZ claimant, a phase other than both
+    /// legs locked, a missing intent, a re-plan that does not link the open
+    /// claim to the new one, and storage conflicts.
+    pub async fn restage_revealing_claim(
+        &self,
+        replanned: &crate::PreparedClaimSubmissionV1,
+        supersession: &crate::ClaimSupersessionV1,
+    ) -> Result<CreateFirstLockOutcome, ZecSdkError> {
+        let open = self.open_revealing_claim_submission().await?;
+        if open.expected_submission_id() != replanned.expected_submission_id()
+            && !supersession.links(&open, replanned)
+        {
+            return Err(ZecSdkError::ClaimSupersessionMismatch);
+        }
+        let protected = self
+            .store
+            .protect_claim_submission(
+                self.agreement(),
+                self.local_participant(),
+                self.revision,
+                replanned,
+            )
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        let intent = ClaimIntentV1::from_active(
+            self.agreement(),
+            &self.coordinator,
+            self.local_participant(),
+            self.revision,
+            replanned,
+            *protected.fingerprint(),
+        )?;
+        let outcome = self
+            .store
+            .restage_claim_intent(&intent, &protected, supersession)
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?;
+        match outcome {
+            CreateFirstLockOutcome::Created | CreateFirstLockOutcome::ExistingSame => Ok(outcome),
+            CreateFirstLockOutcome::Conflict => Err(ZecSdkError::ClaimIntentConflict),
+        }
+    }
+
+    async fn drive_owned_revealing_claim(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<ClaimDriveOutcome, ZecSdkError> {
+        let now_ms = now.value();
+        // After the claim window only a claim already on LEZ is followed;
+        // nothing is staged, observed on Zcash or sent (FINDINGS 26).
+        let closed = self
+            .claim_window_closed(now)
+            .then(|| ZecSdkError::ClaimWindowClosed {
+                closes_at_ms: self.claim_window_closes_at_ms(),
+                now_ms,
+            });
+        let (intent, protected) = match (self.load_claim_intent().await?, closed) {
+            (Some(retained), _) => retained,
+            (None, Some(refused)) => return Err(refused),
+            (None, None) => self.revealing_claim_intent().await?,
+        };
+        let closed = self.claim_window_closed(now);
         let prepared = self
             .store
             .open_claim_submission(self.agreement(), &intent, &protected)
@@ -1491,6 +1788,10 @@ where
             .await
             .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
         match observation {
+            RevealingClaimObservationV1::Absent if closed => Err(ZecSdkError::ClaimWindowClosed {
+                closes_at_ms: self.claim_window_closes_at_ms(),
+                now_ms,
+            }),
             RevealingClaimObservationV1::Absent => {
                 let context = self.zcash_funding_context()?;
                 let funding = self
@@ -1524,11 +1825,24 @@ where
                         )?;
                     }
                 }
-                self.lez
+                let outcome = self
+                    .lez
                     .submit_revealing_claim(self.agreement(), &prepared)
                     .await
                     .map_err(|error| ZecSdkError::LezClaim(Box::new(error)))?;
-                Ok(ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez))
+                Ok(match outcome {
+                    crate::RevealingClaimSubmitOutcomeV1::Accepted => {
+                        ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingLez)
+                    }
+                    crate::RevealingClaimSubmitOutcomeV1::Superseded {
+                        planned_nonce,
+                        live_nonce,
+                    } => ClaimDriveOutcome::Superseded {
+                        step: ClaimStepV1::RevealingLez,
+                        planned_nonce,
+                        live_nonce,
+                    },
+                })
             }
             RevealingClaimObservationV1::Unstable => Ok(
                 ClaimDriveOutcome::AwaitingStableObservation(ClaimStepV1::RevealingLez),
@@ -1925,8 +2239,8 @@ const fn next_refund_step(
 
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
-    Lez: LezRefundPort,
-    Zcash: ZcashRefundPort,
+    Lez: LezRefundPort + LezFirstLockPort,
+    Zcash: ZcashRefundPort + ZcashFirstLockPort,
     Store: RefundRecoveryStore,
 {
     /// Advances the agreement-fixed LEZ-then-Zcash timeout recovery without peer input.
@@ -1941,8 +2255,21 @@ where
     /// Returns a structured validation, adapter, or persistence error. Claim and completed phases,
     /// wrong refund order, wrong roles, early deadlines, reorged funding, substituted identities,
     /// and revision drift all fail closed.
-    pub async fn drive_refund(&mut self) -> Result<RefundDriveOutcome, ZecSdkError> {
+    ///
+    /// `now` is the caller's trusted clock. Before any refund step, this party's own submitted
+    /// lock that the swap's record does not yet show (the Maker's opposite-chain lock at
+    /// `TakerLockConfirmed`) is settled: observed only — never submitted — and projected as its
+    /// locked leg when it confirmed, so the recovery refunds it; while it is neither confirmed nor
+    /// lapsed the recovery waits ([`RefundDriveOutcome::AwaitingOwnLockSettlement`]) and never
+    /// ends with it outstanding (FINDINGS 27).
+    pub async fn drive_refund(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
         self.replay_refund_transitions().await?;
+        if let Some(wait) = self.settle_own_lock(now).await? {
+            return Ok(wait);
+        }
         let step = match self.status() {
             Phase::Refunded => {
                 return Ok(RefundDriveOutcome::Refunded {
@@ -1958,6 +2285,86 @@ where
             self.drive_owned_refund(step).await
         } else {
             self.observe_counterparty_refund(step).await
+        }
+    }
+
+    /// Settles the Maker's own submitted opposite-chain lock before the
+    /// recovery may run on (FINDINGS 27). `None`: nothing to settle, or it was
+    /// projected (the swap now has both legs locked), or it lapsed and can
+    /// never land; `Some(wait)`: it is pending, or absent but not lapsed.
+    async fn settle_own_lock(
+        &mut self,
+        now: crate::LezUnixMilliseconds,
+    ) -> Result<Option<RefundDriveOutcome>, ZecSdkError> {
+        if self.local_participant() != Participant::Maker
+            || self.status() != Phase::TakerLockConfirmed
+        {
+            return Ok(None);
+        }
+        let Some(intent) = self
+            .store
+            .load_maker_lock_intent(self.coordinator.id())
+            .await
+            .map_err(|error| ZecSdkError::Persistence(Box::new(error)))?
+        else {
+            return Ok(None);
+        };
+        intent.validate_for_active(self.agreement(), self.revision)?;
+        let lez_lapsed = || {
+            let margin_ms =
+                crate::ZecRefundProfile::for_id(self.agreement().binding().profile_id())
+                    .required_margin()
+                    .value()
+                    .saturating_mul(1000);
+            now.value()
+                >= self
+                    .agreement()
+                    .lez_refund_at_ms()
+                    .saturating_add(margin_ms)
+        };
+        let (step, observation) = match intent.plan() {
+            FirstLockPlanV1::Zcash { funding } => {
+                let observation = self
+                    .zcash
+                    .observe_first_lock(self.agreement(), funding)
+                    .await
+                    .map_err(|error| ZecSdkError::ZcashFirstLock(Box::new(error)))?;
+                if matches!(observation, FirstLockObservation::Absent)
+                    && self
+                        .zcash
+                        .first_lock_lapsed(self.agreement(), funding)
+                        .await
+                        .map_err(|error| ZecSdkError::ZcashFirstLock(Box::new(error)))?
+                {
+                    return Ok(None);
+                }
+                (funding.step(), (funding, observation))
+            }
+            FirstLockPlanV1::Lez { initialize, fund } => {
+                match self.observe_lez_step(initialize).await? {
+                    FirstLockObservation::Absent if lez_lapsed() => return Ok(None),
+                    FirstLockObservation::Confirmed(evidence) => {
+                        self.validate_first_lock_observation(initialize, &evidence)?;
+                        let observation = self.observe_lez_step(fund).await?;
+                        if matches!(observation, FirstLockObservation::Absent) && lez_lapsed() {
+                            return Ok(None);
+                        }
+                        (fund.step(), (fund, observation))
+                    }
+                    other => (initialize.step(), (initialize, other)),
+                }
+            }
+        };
+        let (submission, observation) = observation;
+        match observation {
+            FirstLockObservation::Confirmed(evidence) => {
+                self.validate_first_lock_observation(submission, &evidence)?;
+                self.project_maker_lock(evidence).await?;
+                Ok(None)
+            }
+            FirstLockObservation::Absent | FirstLockObservation::Unstable => {
+                Ok(Some(RefundDriveOutcome::AwaitingOwnLockSettlement(step)))
+            }
         }
     }
 

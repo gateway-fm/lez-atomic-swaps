@@ -106,7 +106,7 @@ require_fixed 'ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz' "$ripgrep_instal
 require_fixed '4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e' "$ripgrep_installer"
 require_fixed 'npm audit --audit-level=moderate' "$ci_workflow"
 require_fixed 'npm run audit:licenses' "$ci_workflow"
-require_fixed 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020' "$ci_workflow"
+require_fixed 'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1' "$ci_workflow"
 require_fixed 'node-version: 24.18.0' "$ci_workflow"
 require_fixed 'gitleaks_8.30.1_linux_x64.tar.gz' "$public_workflow"
 require_fixed '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' "$public_workflow"
@@ -180,13 +180,16 @@ fi
 require_fixed 'Verify M3 official cryptographic vectors' "$ci_workflow"
 require_fixed 'cargo test --locked -p lez-btc-swap-sdk --test bip340_vectors --test bip327_vectors --test adaptor_vectors' "$ci_workflow"
 require_fixed 'Verify Bitcoin Testnet4 route contract' "$ci_workflow"
+require_fixed 'Fund, claim, and refund a real HTLC through Zebra consensus' "$ci_workflow"
+require_fixed './scripts/run-zebra-e2e.sh' "$ci_workflow"
 require_fixed 'k256 = { version = "=0.13.4", default-features = false, features = ["schnorr"] }' "$btc_sdk_manifest"
 require_fixed 'jsonrpsee-http-client = { version = "=0.26.0", default-features = false, features = ["tls"] }' "$core_adapter_manifest"
 
+# M2 is the ZEC leg, so the Zebra regtest gate is in scope and is required
+# below rather than forbidden here. Monero and the M4/M5/M7 gates stay out.
 for forbidden in \
   'm4-monero' \
   'monero-regtest' \
-  'zebra-regtest' \
   'lez-v02-xmr-release-worker' \
   'coordinator-fuzz' \
   'test-m7-' \
@@ -207,7 +210,7 @@ rg -F './scripts/check-lez-v02-docker-isolation.sh' "$ci_workflow" >/dev/null \
 
 assert_trivy_step \
   'Scan repository-owned runtime base for high and critical vulnerabilities' \
-  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b' 1
+  'cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88' 1
 assert_trivy_step \
   'Report pinned Risc0 guest builder high and critical vulnerabilities' \
   'risczero/risc0-guest-builder:r0.1.94.1@sha256:c2f63fdd720337c0727e05c5e1733083baba04c00a864a89b0e3f4f8d92617be' 0
@@ -217,9 +220,12 @@ assert_trivy_step \
 assert_trivy_step \
   'Scan exact Bitcoin Core image for high and critical vulnerabilities' \
   'lez-atomic-swaps-bitcoin-core:github-btc-${{ github.run_id }}-${{ github.run_attempt }}' 1
+assert_trivy_step \
+  'Report exact Zebra image high and critical vulnerabilities' \
+  'lez-atomic-swaps-zebra:github-zec-${{ github.run_id }}-${{ github.run_attempt }}' 0
 report_only_scans="$(rg -Fc -- 'exit-code: "0"' "$ci_workflow")"
-[[ "$report_only_scans" == 2 ]] \
-  || fail "exactly two classified upstream scans may report without failing"
+[[ "$report_only_scans" == 3 ]] \
+  || fail "exactly three classified upstream scans may report without failing"
 
 require_fixed 'isolated Bitcoin Core 31.1 Regtest MuSig2 adaptor P2TR spend' "$ci_workflow"
 require_fixed 'BITCOIN_CORE_E2E_KEEP_RUNNING: "1"' "$ci_workflow"

@@ -220,6 +220,11 @@ impl<C: FinalizedLezClockSource> XmrAuthorizationPublicationTransport
         let status = match result.outcome {
             SubmissionOutcome::Accepted => PublicationAdmissionStatus::Accepted,
             SubmissionOutcome::AlreadyKnown => PublicationAdmissionStatus::AlreadyKnown,
+            // A superseded nonce is a native-escrow outcome; a publication
+            // never plans against one, so this answer is an invalid response.
+            SubmissionOutcome::Superseded { .. } => {
+                return Err(PublicationTransportError::InvalidResponse);
+            }
         };
         Ok(PublicationAdmission {
             status,

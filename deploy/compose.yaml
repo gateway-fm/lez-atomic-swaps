@@ -52,8 +52,8 @@ services:
       test: ["CMD", "/usr/local/bin/bitcoin-cli", "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin", "-rpcwait", "getblockchaininfo"]
       interval: 15s
       timeout: 10s
-      retries: 20
-      start_period: 30s
+      retries: 120
+      start_period: 180s
     networks: [chains]
     user: "65532:65532"
     read_only: true
@@ -63,6 +63,58 @@ services:
     mem_limit: 2g
     restart: unless-stopped
     logging: *default-logging
+
+  zebra-init:
+    image: debian:bookworm-slim
+    container_name: lez-zebra-init
+    volumes:
+      - zebra_data:/var/lib/zebra
+    command: ["chown", "-R", "65532:65532", "/var/lib/zebra"]
+    networks: [chains]
+    restart: "no"
+    logging: *default-logging
+
+  # Zcash Regtest for the LEZ <-> ZEC pair, alongside bitcoin-core for BTC.
+  # Same digest-pinned upstream build as the isolated lane in tests/e2e/zebra.
+  zebra:
+    build: ./images/zebra
+    image: ${LEZ_IMAGE_PREFIX:-lez}-zebra:${LEZ_IMAGE_TAG:-local}
+    container_name: lez-zebra
+    depends_on:
+      zebra-init:
+        condition: service_completed_successfully
+    command:
+      - "--config"
+      - "/run-config/zebrad.toml"
+      - "start"
+    environment:
+      HOME: /tmp
+      ZEBRA_RPC__COOKIE_DIR: /tmp
+    labels:
+      org.logos-co.atomic-swaps.run: market-zec-0001
+      org.logos-co.atomic-swaps.scope: zebra-regtest-e2e
+      org.logos-co.atomic-swaps.component: zebra
+    ports:
+      - "127.0.0.1:18232:18232"
+    volumes:
+      # Rendered by scripts/gen-config.sh from assets/zebra/zebrad.toml: the
+      # miner_address is the Maker's minted Zcash key (runtime/lez/maker/zcash.key).
+      - ./runtime/zebra/zebrad.toml:/run-config/zebrad.toml:ro
+      - zebra_data:/var/lib/zebra
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]
+      interval: 15s
+      timeout: 10s
+      retries: 120
+      start_period: 180s
+    networks: [chains]
+    user: "65532:65532"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 15s
 
   btc-miner:
     build: ./images/btc-miner
@@ -116,7 +168,7 @@ services:
     logging: *default-logging
 
   bedrock:
-    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:70539769f3a2a014b36e608f76264e5d2297f14ee3f7fabf4715f071c7bbf8e7"
+    image: "ghcr.io/logos-blockchain/logos-blockchain@sha256:9b316adee185fda52759422e378921a036dcfc9f4422c07bc0a81293e9c2ef35"
     container_name: lez-bedrock
     depends_on:
       lez-init:
@@ -190,8 +242,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:3040", "getBlock", "[1]"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 30s
+      retries: 180
+      start_period: 180s
     stop_signal: SIGINT
     stop_grace_period: 30s
     restart: unless-stopped
@@ -237,8 +289,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "tcp", "127.0.0.1:8779", "getLastFinalizedBlockId", "[]"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 30s
+      retries: 180
+      start_period: 180s
     stop_signal: SIGINT
     stop_grace_period: 20s
     restart: unless-stopped
@@ -273,8 +325,9 @@ services:
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
+      - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
-    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/maker /run/lez/maker /delivery && chmod 0700 /run/lez/maker /delivery"]
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/maker /run/lez/maker /var/lib/lez/zec /delivery && chmod 0700 /run/lez/maker /var/lib/lez/zec /delivery"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
@@ -318,6 +371,8 @@ services:
     volumes:
       - maker_state:/var/lib/lez/maker
       - maker_socket:/run/lez/maker
+      # The Maker half of the prepared ZEC corridor (scripts/zec-provision.sh).
+      - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
       - ./runtime/lez/maker:/run-lez-identity:ro
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
@@ -332,8 +387,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "uds", "/run/lez/maker/node.sock", "maker_health", "[{}]"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 15s
+      retries: 120
+      start_period: 90s
     restart: unless-stopped
     logging: *default-logging
 
@@ -345,12 +400,14 @@ services:
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
-    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/taker /run/lez/taker && chmod 0700 /var/lib/lez/taker /run/lez/taker"]
+      - zec_taker:/var/lib/lez/zec
+    command: ["bash", "-c", "chown 4713:4713 /var/lib/lez/taker /run/lez/taker /var/lib/lez/zec && chmod 0700 /var/lib/lez/taker /run/lez/taker /var/lib/lez/zec"]
     networks: [chains]
     restart: "no"
     logging: *default-logging
 
   taker-node:
+    build: ./images/taker-node
     image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
     container_name: lez-taker-node
     depends_on:
@@ -387,6 +444,8 @@ services:
     volumes:
       - taker_state:/var/lib/lez/taker
       - taker_socket:/run/lez/taker
+      # The Taker half of the prepared ZEC corridor plus its catalog.
+      - zec_taker:/var/lib/lez/zec
       - delivery_dir:/delivery:ro
       - maker_socket:/run/lez/maker
       - ./runtime/lez/taker:/run-lez-identity:ro
@@ -402,8 +461,8 @@ services:
       test: ["CMD", "/usr/local/bin/lez-runtime-healthcheck", "uds", "/run/lez/taker/node.sock", "taker_health", "[{\"schema_version\":1}]"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 15s
+      retries: 120
+      start_period: 90s
     restart: unless-stopped
     logging: *default-logging
 
@@ -453,6 +512,11 @@ services:
       ESCROW_PROGRAM_ID: ${LEZ_ESCROW_PROGRAM_ID:-}
       DEPLOYER: /usr/local/bin/lez-zec-escrow-v02-deployer
       VAULT_CLAIM_BIN: /usr/local/bin/lez-v02-vault-claim-poc
+      # The genesis allocations, from runtime.env (gen-config.sh); the bootstrap
+      # refuses to claim without them.
+      LEZ_WALLET_MAKER_ALLOCATION: ${LEZ_WALLET_MAKER_ALLOCATION:-}
+      LEZ_WALLET_TAKER_ALLOCATION: ${LEZ_WALLET_TAKER_ALLOCATION:-}
+      LEZ_HEARTBEAT_ALLOCATION: ${LEZ_HEARTBEAT_ALLOCATION:-0}
     volumes:
       - ${LEZ_MARKET_ROOT}:/market
       - ./scripts:/scripts:ro
@@ -466,6 +530,54 @@ services:
     restart: "no"
     logging: *default-logging
 
+  # The LEZ finality heartbeat (Part C): one authenticated transfer of one unit
+  # from heartbeat-pulse-01 to heartbeat-echo-02 every LEZ_HEARTBEAT_SECONDS,
+  # the sequencer tip and the finalized height on every tick, and a stall
+  # declared (one loud line + runtime/heartbeat/status.json) when finality is
+  # flat for LEZ_HEARTBEAT_STALL_SECONDS while the tip moves. up.sh starts it
+  # when LEZ_HEARTBEAT_SECONDS is not 0. The tools image carries the binary; the
+  # market root is mounted read-only for the sender's key; the official tools
+  # accept only literal-loopback endpoints, so socat forwards them.
+  heartbeat:
+    image: ${LEZ_IMAGE_PREFIX:-lez}-tools:${LEZ_IMAGE_TAG:-local}
+    container_name: lez-heartbeat
+    profiles: [heartbeat]
+    user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
+    environment:
+      LEZ_HEARTBEAT_SECONDS: ${LEZ_HEARTBEAT_SECONDS:-20}
+      LEZ_HEARTBEAT_STALL_SECONDS: ${LEZ_HEARTBEAT_STALL_SECONDS:-120}
+    volumes:
+      - ${LEZ_MARKET_ROOT}/identities:/market/identities:ro
+      - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
+      - ./runtime/heartbeat:/heartbeat
+    tmpfs:
+      - /tmp:rw,nosuid,size=64m,mode=1777
+    networks: [chains]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      sequencer:
+        condition: service_healthy
+      indexer:
+        condition: service_healthy
+    logging: *default-logging
+    command:
+      - |
+        set -eu
+        socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
+        socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
+        sleep 1
+        program="$(sed -n 's/^M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID=//p' /run-market/market-bootstrap.env | head -1)"
+        recipient="$(jq -r '.account_id_hex' /market/identities/heartbeat-echo-02/identity.json | tr 'A-F' 'a-f')"
+        exec lez-v02-heartbeat --sequencer-url http://127.0.0.1:3040 --indexer-url http://127.0.0.1:8779 \
+          --private-key-file /market/identities/heartbeat-pulse-01/lez-signer.key \
+          --recipient-account-id "$$recipient" --authenticated-transfer-program-id "$$program" \
+          --interval-seconds "$$LEZ_HEARTBEAT_SECONDS" --stall-seconds "$$LEZ_HEARTBEAT_STALL_SECONDS" \
+          --status-file /heartbeat/status.json
+
 networks:
   chains:
     name: lez-swap-chains
@@ -474,6 +586,8 @@ networks:
 volumes:
   bitcoin_core_data:
     name: ${LEZ_VOLUME_PREFIX:-lez}-bitcoin-core-data
+  zebra_data:
+    name: ${LEZ_VOLUME_PREFIX:-lez}-zebra-data
   maker_state:
     name: ${LEZ_VOLUME_PREFIX:-lez}-maker-state
   maker_socket:
@@ -482,5 +596,9 @@ volumes:
     name: ${LEZ_VOLUME_PREFIX:-lez}-taker-state
   taker_socket:
     name: ${LEZ_VOLUME_PREFIX:-lez}-taker-socket
+  zec_maker:
+    name: ${LEZ_VOLUME_PREFIX:-lez}-zec-maker
+  zec_taker:
+    name: ${LEZ_VOLUME_PREFIX:-lez}-zec-taker
   delivery_dir:
     name: ${LEZ_VOLUME_PREFIX:-lez}-delivery-dir

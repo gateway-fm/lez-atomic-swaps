@@ -9,6 +9,7 @@ COPY lez-maker-cli /payload/lez-maker-cli
 COPY lez-maker-chat-gateway /payload/lez-maker-chat-gateway
 COPY lez-runtime-healthcheck /payload/lez-runtime-healthcheck
 COPY lez-btc-maker-actor /payload/lez-btc-maker-actor
+COPY lez-zec-maker-actor /payload/lez-zec-maker-actor
 COPY lez-v02-bridge-poc /payload/lez-v02-bridge-poc
 RUN strip /payload/*
 
@@ -26,6 +27,7 @@ COPY --from=strip --chmod=0555 /payload/lez-maker-cli /usr/local/bin/lez-maker-c
 COPY --from=strip --chmod=0555 /payload/lez-maker-chat-gateway /usr/local/bin/lez-maker-chat-gateway
 COPY --from=strip --chmod=0555 /payload/lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
 COPY --from=strip --chmod=0555 /payload/lez-btc-maker-actor /usr/local/bin/lez-btc-maker-actor
+COPY --from=strip --chmod=0555 /payload/lez-zec-maker-actor /usr/local/bin/lez-zec-maker-actor
 COPY --from=strip --chmod=0555 /payload/lez-v02-bridge-poc /usr/local/bin/lez-v02-bridge-poc
 COPY --chmod=0555 node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
 RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez \
@@ -33,8 +35,13 @@ RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr
     && chown -R lez:lez /var/lib/lez /run/lez \
     && chmod 0700 /var/lib/lez/maker /run/lez/maker
 
-COPY --chmod=0444 build-source.txt sidecar-source.txt /usr/local/share/lez/
-RUN chmod 0755 /usr/local/share/lez
+COPY --chmod=0444 build-source.txt sidecar-source.txt sidecar-tree.txt sidecar-expected.txt /usr/local/share/lez/
+# The staged sidecar must come from the same compat/lez-v0_2-sidecar tree the
+# Node binaries were built beside (from-scratch.sh writes both stamps); a
+# binary left over from an older checkout fails the build here.
+RUN chmod 0755 /usr/local/share/lez \
+    && [ "$(cat /usr/local/share/lez/sidecar-tree.txt)" = "$(cat /usr/local/share/lez/sidecar-expected.txt)" ] \
+    || { echo "staged sidecar (tree $(cat /usr/local/share/lez/sidecar-tree.txt)) does not match the sidecar sources these Node binaries expect ($(cat /usr/local/share/lez/sidecar-expected.txt)); run from-scratch.sh --only build:sidecar and --only stage" >&2; exit 1; }
 
 USER lez
 WORKDIR /var/lib/lez

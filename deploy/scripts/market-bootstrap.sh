@@ -35,12 +35,25 @@ account_balance() { indexer getAccount "[\"$1\"]" | jq -r '.result.balance // em
 # Wallet roster: name role owner_account vault_account allocation, read from
 # the identities the genesis funded (deploy/scripts/gen-config.sh reads the
 # same files), so a fresh workspace with fresh identities stays consistent.
+# The allocation is the one gen-config.sh wrote to runtime.env for the genesis
+# (LEZ_WALLET_{MAKER,TAKER}_ALLOCATION, passed in by the callers): the one-time
+# claim moves exactly the genesis vault balance to the owner account, and a
+# second copy of the number here once refused a fresh chain for an hour.
+: "${LEZ_WALLET_MAKER_ALLOCATION:?LEZ_WALLET_MAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
+: "${LEZ_WALLET_TAKER_ALLOCATION:?LEZ_WALLET_TAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 WALLETS=()
-for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02; do
+# The heartbeat's two accounts are claimed like the wallets (the claim tool's
+# --role is a journal label; the heartbeat uses `taker`), with their own
+# allocation, when the identities exist (an older market root has none).
+for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   identity="$MARKET_ROOT/identities/$wallet/identity.json"
+  if [[ "$wallet" == heartbeat-* && ! -f "$identity" ]]; then echo "$wallet: no identity in this market root; the heartbeat has no account on this chain"; continue; fi
   [[ -f "$identity" ]] || fail "$wallet identity missing: $identity"
   role="${wallet%%-*}"
-  allocation=100000; [[ "$role" == taker ]] && allocation=200000
+  allocation="$LEZ_WALLET_MAKER_ALLOCATION"; [[ "$role" == taker ]] && allocation="$LEZ_WALLET_TAKER_ALLOCATION"
+  if [[ "$role" == heartbeat ]]; then allocation="${LEZ_HEARTBEAT_ALLOCATION:-0}"; role=taker; fi
+  [[ "$allocation" != 0 ]] || { echo "$wallet: no allocation on this chain; skipped"; continue; }
+  [[ "$allocation" =~ ^[0-9]+$ ]] || fail "$role wallet allocation is not a number: $allocation"
   WALLETS+=("$wallet $role $(jq -er '.account_id' "$identity") $(jq -er '.vault_account_id' "$identity") $allocation")
 done
 
@@ -58,7 +71,7 @@ if [[ -s "$deployment_evidence" ]] \
 else
   [[ -x "$DEPLOYER" ]] || fail "deployer missing: $DEPLOYER"
   "$DEPLOYER" deploy-m4-local --rpc-url "$SEQUENCER_URL" \
-    --channel-id "$CHANNEL_ID" --timeout-seconds 300 >"$deployment_evidence.partial"
+    --channel-id "$CHANNEL_ID" --timeout-seconds 3600 >"$deployment_evidence.partial"
   jq -e --arg program "$ESCROW_PROGRAM_ID" '
     .preflight.image_id == $program
     and (.transaction_hash | test("^[0-9a-f]{64}$"))
@@ -88,6 +101,14 @@ for entry in "${WALLETS[@]}"; do
   fi
   [[ "$vault_balance" == "$allocation" ]] ||
     fail "$wallet vault balance unexpected: $vault_balance"
+  # A wallet named here keeps its allocation in the vault: its owner account
+  # holds nothing, which is how the LEZ depositor's balance refusal is shown
+  # on a devnet. Running this script again without the variable claims it,
+  # and a swap refused for the balance then funds its lock on the next drive.
+  if [[ "$wallet" == "${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" ]]; then
+    echo "$wallet: vault claim deferred (LEZ_BOOTSTRAP_DEFER_CLAIM); its owner account holds nothing until the bootstrap runs again"
+    continue
+  fi
   balance="$(account_balance "$owner")"
   [[ "$balance" == 0 || -z "$balance" ]] || fail "$wallet owner balance unexpected: $balance"
   key="$MARKET_ROOT/identities/$wallet/lez-signer.key"
@@ -103,7 +124,7 @@ for entry in "${WALLETS[@]}"; do
     .submission.decision == "admitted" and .allocation == $allocation
     and (.transaction_id | test("^[0-9a-f]{64}$"))
   ' "$MARKET_ROOT/bootstrap/$wallet-claim.json" >/dev/null || fail "$wallet claim evidence invalid"
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 900); do
     [[ "$(account_balance "$vault")" == 0 ]] && break
     sleep 1
   done

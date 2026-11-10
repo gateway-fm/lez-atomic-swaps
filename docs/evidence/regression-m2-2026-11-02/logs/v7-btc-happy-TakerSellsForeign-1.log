@@ -1,0 +1,51 @@
+
+[21:13:36] === happy (TakerSellsForeign)
+
+[21:13:42] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[21:13:50] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   20069e1b2fea1cc109b78eb831b7b2949e0044aedfd883c9b451d692bdbb35dd awaiting_first_lock 0 -
+
+[21:14:00] Taker desk: lock_btc on 20069e1b2fea
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[21:14:11] Maker desk shows 20069e1b2fea at awaiting_taker_claim
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[21:27:33] Taker desk: claim_lez on 20069e1b2fea
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: perform claim_lez
+2 passed, 0 failed
+
+[21:27:45] Maker desk shows 20069e1b2fea at completed
+  ✓ maker: launcher discoverable and app opens
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[21:30:13] Taker desk shows 20069e1b2fea at completed
+  ✓ taker: launcher discoverable and app opens
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 20069e1b2fea: runtime/evidence/20069e1b2fea1cc109b78eb831b7b2949e0044aedfd883c9b451d692bdbb35dd.json (5 effects, completed 2026-11-03T21:29:57Z)
+
+[21:30:23] === happy (TakerSellsForeign): passed in 1007s
