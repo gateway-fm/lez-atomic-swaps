@@ -103,8 +103,9 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   # open has its per-swap keys archived (its LEZ leg goes with the chain, its
   # Bitcoin or Zcash leg may still need a refund). reset-swaps.sh --offline
   # stops both Nodes and leaves them stopped, so they start once on the new
-  # chain instead of starting, stopping and starting.
-  if docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
+  # chain instead of starting, stopping and starting. A retry (a new chain that
+  # did not finalize) has nothing left to forget: the first attempt did it.
+  if [[ "${LEZ_FRESH_ATTEMPT:-1}" == 1 ]] && docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
     stage "forget the old chain's swaps (reset-swaps.sh --offline)"
     echo "  forgetting swaps that referenced the old chain"
     bash scripts/reset-swaps.sh --offline --abandon-open 2>&1 | tail -1
