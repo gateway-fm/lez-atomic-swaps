@@ -1,0 +1,125 @@
+Step 4c regression — the LEZ network node and indexer in Basecamps (with 4a signers and 4b role Nodes)
+Branch feat/lez-basecamp-modules; times UTC. Each line: test (direction, try): verdict, duration.
+
+== Full run at 4626f8af, 2026-11-08 22:35Z – 2026-11-10 07:19Z (stopped at 87 passed to speed up the harness)
+22:56:02  ui zec-maker-refund (TakerSellsLez, try 1): PASSED in 810s
+23:00:01  ui zec-happy (TakerSellsLez, try 1): PASSED in 154s
+23:05:29  ui zec-concurrent (TakerSellsLez, try 1): PASSED in 241s
+23:39:21  zec-balance-refusal (TakerSellsLez, try 1): PASSED in 220s
+00:29:59  zec-balance-refusal (TakerSellsForeign, try 1): PASSED in 347s
+00:50:52  zec-taker-refund (TakerSellsLez, try 1): PASSED in 795s
+01:48:37  zec-maker-refund (TakerSellsLez, try 1): PASSED in 855s
+02:28:39  zec-refund-then-maker-lock (TakerSellsLez, try 1): PASSED in 848s
+02:33:09  zec-happy (TakerSellsLez, try 1): PASSED in 183s
+02:36:46  zec-replay (TakerSellsLez, try 1): PASSED in 131s
+02:41:04  zec-wrong-inputs (TakerSellsLez, try 1): PASSED in 172s
+02:45:28  zec-restart-taker (TakerSellsLez, try 1): PASSED in 177s
+02:49:16  zec-restart-maker (TakerSellsLez, try 1): PASSED in 142s
+02:54:21  zec-survivor (TakerSellsLez, try 1): PASSED in 159s
+03:07:03  zec-concurrent (TakerSellsLez, try 1): PASSED in 207s
+03:10:59  zec-regenerated-catalog (TakerSellsLez, try 1): PASSED in 146s
+03:13:52  zec-tampered-catalog (TakerSellsLez, try 1): PASSED in 82s
+03:19:50  zec-early-lock (TakerSellsLez, try 1): PASSED in 267s
+03:23:43  zec-offline-after-lock (TakerSellsLez, try 1): PASSED in 142s
+03:46:29  zec-taker-refund (TakerSellsForeign, try 1): PASSED in 928s
+04:10:36  zec-maker-refund (TakerSellsForeign, try 1): PASSED in 1017s
+05:41:26  zec-refund-then-maker-lock (TakerSellsForeign, try 1): PASSED in 980s
+05:48:10  zec-happy (TakerSellsForeign, try 1): PASSED in 317s
+06:21:28  zec-replay (TakerSellsForeign, try 1): PASSED in 315s
+06:28:09  zec-wrong-inputs (TakerSellsForeign, try 1): PASSED in 315s
+06:35:19  zec-restart-taker (TakerSellsForeign, try 1): PASSED in 344s
+06:41:55  zec-restart-maker (TakerSellsForeign, try 1): PASSED in 311s
+06:49:19  zec-survivor (TakerSellsForeign, try 1): PASSED in 356s
+06:59:01  zec-concurrent (TakerSellsForeign, try 1): PASSED in 492s
+07:32:52  zec-regenerated-catalog (TakerSellsForeign, try 1): PASSED in 346s
+07:38:32  zec-tampered-catalog (TakerSellsForeign, try 1): PASSED in 255s
+07:46:52  zec-early-lock (TakerSellsForeign, try 1): PASSED in 414s
+07:53:12  zec-offline-after-lock (TakerSellsForeign, try 1): PASSED in 292s
+08:01:07  zec-claim-collision (TakerSellsForeign, try 1): PASSED in 390s
+08:22:37  ui zec-taker-refund (TakerSellsLez, try 1): PASSED in 829s
+08:30:14  ui zec-concurrent-staggered (TakerSellsLez, try 1): PASSED in 371s
+08:35:16  ui zec-restart-taker (TakerSellsLez, try 1): PASSED in 212s
+08:40:17  ui zec-restart-maker (TakerSellsLez, try 1): PASSED in 215s
+08:45:55  ui zec-survivor (TakerSellsLez, try 1): PASSED in 252s
+09:01:27  ui zec-node-offline (TakerSellsLez, try 1): PASSED in 397s
+09:25:22  ui zec-taker-refund (TakerSellsForeign, try 1): PASSED in 964s
+09:49:41  ui zec-maker-refund (TakerSellsForeign, try 1): PASSED in 1028s
+10:13:57  ui zec-stale-window (TakerSellsForeign, try 1): PASSED in 1005s
+11:14:41  ui zec-happy (TakerSellsForeign, try 1): FAILED in 25s
+11:25:04  ui zec-concurrent (TakerSellsForeign, try 1): PASSED in 536s
+11:32:25  ui zec-restart-taker (TakerSellsForeign, try 1): PASSED in 351s
+11:39:53  ui zec-restart-maker (TakerSellsForeign, try 1): PASSED in 363s
+11:47:41  ui zec-survivor (TakerSellsForeign, try 1): PASSED in 380s
+11:58:13  ui zec-node-offline (TakerSellsForeign, try 1): PASSED in 544s
+12:49:18  node btc happy (TakerSellsForeign, try 1): PASSED in 355s
+12:57:19  node btc replay (TakerSellsForeign, try 1): PASSED in 393s
+13:03:16  node btc wrong-inputs (TakerSellsForeign, try 1): PASSED in 272s
+13:09:26  node btc restart-taker (TakerSellsForeign, try 1): PASSED in 282s
+13:15:16  node btc restart-maker (TakerSellsForeign, try 1): PASSED in 173s
+13:20:10  node btc survivor (TakerSellsForeign, try 1): PASSED in 202s
+13:37:15  node btc concurrent (TakerSellsForeign, try 1): PASSED in 939s
+13:47:50  node btc early-lock (TakerSellsForeign, try 1): PASSED in 550s
+13:51:50  node btc offline-after-lock (TakerSellsForeign, try 1): PASSED in 154s
+14:29:15  node btc taker-refund (TakerSellsForeign, try 1): FAILED in 2158s
+15:03:36  node btc taker-refund (TakerSellsForeign, try 2): PASSED in 1458s
+15:37:05  node btc maker-refund (TakerSellsForeign, try 1): PASSED in 1921s
+16:08:48  node btc refund-then-maker-lock (TakerSellsForeign, try 1): PASSED in 1813s
+16:16:01  node btc regenerated-config (TakerSellsForeign, try 1): PASSED in 340s
+16:17:58  node btc tampered-config (TakerSellsForeign, try 1): PASSED in 25s
+16:32:54  node btc happy (TakerSellsLez, try 1): PASSED in 363s
+16:40:37  node btc replay (TakerSellsLez, try 1): PASSED in 376s
+17:14:12  node btc wrong-inputs (TakerSellsLez, try 1): FAILED in 1922s
+17:29:09  node btc wrong-inputs (TakerSellsLez, try 2): PASSED in 304s
+17:36:48  node btc restart-taker (TakerSellsLez, try 1): PASSED in 366s
+17:42:52  node btc restart-maker (TakerSellsLez, try 1): PASSED in 273s
+17:52:01  node btc survivor (TakerSellsLez, try 1): PASSED in 455s
+17:59:20  node btc concurrent (TakerSellsLez, try 1): PASSED in 355s
+18:06:57  node btc early-lock (TakerSellsLez, try 1): PASSED in 364s
+18:31:26  node btc offline-after-lock (TakerSellsLez, try 1): FAILED in 1384s
+18:47:07  node btc offline-after-lock (TakerSellsLez, try 2): PASSED in 348s
+19:31:22  node btc taker-refund (TakerSellsLez, try 1): FAILED in 2562s
+20:14:28  node btc taker-refund (TakerSellsLez, try 2): PASSED in 2000s
+21:01:32  node btc maker-refund (TakerSellsLez, try 1): FAILED in 2734s
+22:01:33  node btc maker-refund (TakerSellsLez, try 2): FAILED in 2999s
+23:02:14  node btc maker-refund (TakerSellsLez, try 3): PASSED in 1911s
+23:31:58  node btc refund-then-maker-lock (TakerSellsLez, try 1): FAILED in 1692s
+00:08:25  node btc refund-then-maker-lock (TakerSellsLez, try 2): FAILED in 1649s
+00:48:37  node btc refund-then-maker-lock (TakerSellsLez, try 3): PASSED in 1873s
+00:53:24  node btc regenerated-config (TakerSellsLez, try 1): PASSED in 200s
+00:55:18  node btc tampered-config (TakerSellsLez, try 1): PASSED in 26s
+01:35:01  ui btc happy (TakerSellsForeign, try 1): PASSED in 760s
+01:42:59  ui btc restart-taker (TakerSellsForeign, try 1): PASSED in 392s
+02:00:30  ui btc restart-maker (TakerSellsForeign, try 1): FAILED in 965s
+02:24:56  ui btc restart-maker (TakerSellsForeign, try 2): PASSED in 885s
+02:41:57  ui btc survivor (TakerSellsForeign, try 1): FAILED in 932s
+03:23:52  ui btc survivor (TakerSellsForeign, try 2): PASSED in 837s
+03:40:26  ui btc concurrent (TakerSellsForeign, try 1): FAILED in 907s
+04:07:29  ui btc concurrent (TakerSellsForeign, try 2): PASSED in 1055s
+04:31:28  ui btc taker-refund (TakerSellsForeign, try 1): FAILED in 1353s
+05:13:22  ui btc taker-refund (TakerSellsForeign, try 2): PASSED in 1956s
+05:47:30  ui btc maker-refund (TakerSellsForeign, try 1): PASSED in 1961s
+05:52:07  ui btc node-offline (TakerSellsForeign, try 1): PASSED in 186s
+06:06:27  ui btc happy (TakerSellsLez, try 1): PASSED in 356s
+06:13:50  ui btc restart-taker (TakerSellsLez, try 1): PASSED in 355s
+06:22:05  ui btc restart-maker (TakerSellsLez, try 1): PASSED in 406s
+06:38:32  ui btc survivor (TakerSellsLez, try 1): FAILED in 897s
+
+== Remaining tests at 0f8228d8 (faster harness), 2026-11-10 07:24Z – 10:19Z
+07:41:11  ui-btc-survivor-TSL (try 1): PASSED in 486s
+08:13:51  ui-btc-concurrent-TSL (try 1): FAILED in 1918s
+08:44:36  ui-btc-taker-refund-TSL (try 1): STOPPED (freeze) in 1737s
+09:20:19  ui-btc-taker-refund-TSL (try 2): PASSED in 1616s
+09:30:32  ui-btc-maker-refund-TSL (try 1): STOPPED (freeze) in 571s
+10:09:29  ui-btc-maker-refund-TSL (try 2): PASSED in 1812s
+10:13:20  ui-btc-node-offline-TSL (try 1): PASSED in 191s
+10:19:41  ui-zec-happy-TSF (try 1): PASSED in 341s
+
+== ui btc concurrent TakerSellsLez rerun with LEZ_BTC_ACTOR_TRACE=1, 2026-11-10 10:37Z
+10:45:47  ui-btc-concurrent-TSL-trace (try 1): PASSED in 483s
+
+Every failed or stopped try but two was the upstream LEZ finality freeze (#3643; finality flat, retried on a fresh chain):
+- ui zec-happy TakerSellsForeign try 1 (2026-11-09 11:15Z): Zebra stuck ('no available capacity'), Zebra restarted, passed on retry.
+- ui btc concurrent TakerSellsLez try 1 (2026-11-10 08:13Z): finality moving; the Maker actor's chain observation
+  failed repeatedly ('actor chain observation is unavailable', actor_timeout) and the second swap missed its lock window.
+  Not reproduced: the traced rerun passed with no observation error.
+Every test of the step-4c set has a passing try.

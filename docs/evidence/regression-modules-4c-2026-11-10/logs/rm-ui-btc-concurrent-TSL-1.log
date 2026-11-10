@@ -1,0 +1,44 @@
+
+[07:41:53] === concurrent (TakerSellsLez)
+
+[07:42:08] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[07:42:17] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   bd4dde5758580fdf2f2d6619c9bee392163cb6fb461f016097aff6a1048c176c awaiting_first_lock 0 -
+
+[07:42:28] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   3926775f55a0c0fbc0fe571b300b5f89d25a013459e111f6a78afccf364e7678 awaiting_first_lock 0 -
+
+[07:42:38] Taker desk: lock_lez on bd4dde575858
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[07:42:51] Taker desk: lock_lez on 3926775f55a0
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[07:43:04] Maker desk shows bd4dde575858 at awaiting_taker_claim
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  [31m✗[0m maker: wait awaiting_taker_claim reached by the Node
+    no maker swap bd4dde575858 has reached awaiting_taker_claim; desk shows recovering (Lock window missed)
+3 passed, 1 failed
+
+[08:13:43] FAILED: step failed

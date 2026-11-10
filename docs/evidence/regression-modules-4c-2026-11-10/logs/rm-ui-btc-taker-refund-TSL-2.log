@@ -1,0 +1,48 @@
+
+[08:53:23] === taker-refund (TakerSellsLez)
+
+[08:53:30] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[08:53:42] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   9729f8bbbfe86c21ebed1e288c5004b1d893b0918bf6f0a326e38ffc416e7d85 awaiting_first_lock 0 -
+
+[08:53:53] The Maker Node is stopped before it can lock; the Taker locks anyway and must recover its funds later
+
+[08:53:53] Taker desk: lock_lez on 9729f8bbbfe8
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[08:54:04] The Maker's lock cutoff (360 s after the take) passes with no Maker lock; the desk then offers Refund
+
+[08:54:04] Taker desk: refund_lez on 9729f8bbbfe8
+  [32m✓[0m taker: launcher discoverable and app opens
+  » The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached
+  [32m✓[0m taker: perform refund_lez
+2 passed, 0 failed
+
+[08:59:58] The Maker Node is started again and reconciles the refunded swap
+
+[09:00:25] Taker desk shows 9729f8bbbfe8 at refunded
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: swap reaches refunded
+2 passed, 0 failed
+
+[09:17:25] Maker desk shows 9729f8bbbfe8 at refunded
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunded (refunded)
+  [32m✓[0m maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[09:20:10] === taker-refund (TakerSellsLez): passed in 1607s

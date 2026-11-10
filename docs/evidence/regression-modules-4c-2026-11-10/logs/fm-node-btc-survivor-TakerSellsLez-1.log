@@ -1,0 +1,26 @@
+[17:44:26] === survivor (stamp 1794246266)
+[17:44:26] preflight: indexer historical reads
+[17:44:34]   indexer serves historical reads at the tip (151)
+[17:44:34] preflight: the finality heartbeat saw finality move 0 s ago (finalized 149)
+[17:44:35]   Maker published offer-e2e-1794246266
+[17:44:37]   Taker took offer-e2e-1794246266: swap 6cc696ef6daa (not_activated)
+[17:44:37]   Taker locked lez: c749f18cbf3d (replay=False)
+[17:44:38]   taker 6cc696ef6daa: awaiting_first_lock (gen 0) | maker: leased
+[17:45:13]   taker 6cc696ef6daa: awaiting_second_lock (gen 1) | maker: offered
+[17:48:08]   taker 6cc696ef6daa: claim_available (gen 2) | maker: taker_lock_confirmed
+[17:48:08]   Taker claimed Bitcoin (replay=False)
+[17:48:09]   taker 6cc696ef6daa: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[17:48:09]   stopping the Taker Node right after its revealing claim
+[17:48:10]   maker 6cc696ef6daa: taker_lock_confirmed
+[17:48:30]   maker 6cc696ef6daa: both_legs_locked
+[17:48:50]   maker 6cc696ef6daa: both_legs_locked
+[17:49:11]   maker 6cc696ef6daa: both_legs_locked
+[17:49:31]   maker 6cc696ef6daa: both_legs_locked
+[17:49:51]   maker 6cc696ef6daa: both_legs_locked
+[17:50:11]   maker 6cc696ef6daa: claim_evidence_available
+[17:50:31]   maker 6cc696ef6daa: claim_evidence_available
+[17:50:51]   maker 6cc696ef6daa: completed
+[17:51:04]   taker 6cc696ef6daa: claim_in_progress (gen 2) | maker: completed
+[17:52:00]   taker 6cc696ef6daa: completed (gen 4) | maker: completed
+[17:52:01]   both Nodes report 6cc696ef6daa completed
+[17:52:01] === survivor: passed in 454s

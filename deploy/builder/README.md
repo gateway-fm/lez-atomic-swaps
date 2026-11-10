@@ -30,15 +30,7 @@ build, for the duration of that one run. It takes part in no swap.
 
 ## Source patches
 
-`patches/<pin>/*.patch` are fixes this repository carries on top of a pinned
-upstream checkout (`lez-v0.2.0` for the LEZ sequencer and indexer).
-`from-scratch.sh --only sources` applies them to the working tree in order
-(HEAD stays the pinned commit; an applied patch is skipped), and the
-`build:lez-services` step rebuilds when the patch set changed. The release
-workflow's cache key covers the directory.
-
-- `lez-v0.2.0/0001-indexer-keep-breakpoints-across-reopen.patch`: the v0.2.0
-  indexer rewrote breakpoint 0 and reset its last-breakpoint id on every
-  database open, so after any restart the next 100-block boundary wrote
-  breakpoint 1 instead of N + 1 and every historical read (`getAccountAtBlock`)
-  past it failed; a swap's Maker then never observed its own LEZ escrow.
+`patches/<module>/*.patch` are what this repository adds to the pinned upstream
+Logos/LEZ module sources (clean submodules under `third_party/`); the build
+applies them to a scratch copy and the module's own flake builds the lgx. They
+are kept ready to offer upstream: `patches/README.md` says what each one does.

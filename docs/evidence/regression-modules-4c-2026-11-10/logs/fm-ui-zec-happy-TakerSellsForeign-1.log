@@ -1,0 +1,10 @@
+
+[11:14:16] === zec-happy (TakerSellsForeign)
+
+[11:14:23] provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh: offer, draft, catalog, Nodes recreated)
+   [zec-provision 11:14:25]   TakerSellsForeign: paying the Taker's key 200000000 zatoshis from the Maker's, 1 time(s), then 100 blocks
+   [zec-provision 11:14:29]   transfer 89bbb7cb684936b1… to tmP6anZNgbtJuEUPHX7sUVA2Tf3S9u7eZjR
+   {"code": -1, "message": "ErrorObject { code: ServerError(0), message: \"failed to send mined block to gossip task: no available capacity\", data: None }"}
+   zec-provision failed: zebra generate failed
+
+[11:14:41] FAILED: zec-provision.sh

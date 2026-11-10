@@ -1,0 +1,55 @@
+
+[07:33:05] === survivor (TakerSellsLez)
+
+[07:33:13] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[07:33:25] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   691a3abbcc5bb7a75dae53cb9f9a2cbbc2a4bc966e353d53f9ec7c844f701a92 awaiting_first_lock 0 -
+
+[07:33:35] Taker desk: lock_lez on 691a3abbcc5b
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[07:33:48] Maker desk shows 691a3abbcc5b at awaiting_taker_claim
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[07:37:29] Taker desk: claim_btc on 691a3abbcc5b
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform claim_btc
+2 passed, 0 failed
+
+[07:37:42] The Taker Node is stopped right after its revealing claim; the Maker Node completes the swap on its own
+
+[07:37:42] Maker desk shows 691a3abbcc5b at completed
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[07:40:05] The Taker Node is started again; its desk catches up with the completed swap
+
+[07:40:17] Taker desk shows 691a3abbcc5b at completed
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 691a3abbcc5b: runtime/evidence/691a3abbcc5bb7a75dae53cb9f9a2cbbc2a4bc966e353d53f9ec7c844f701a92.json (5 effects, completed 2026-11-10T07:39:10Z)
+
+[07:41:06] === survivor (TakerSellsLez): passed in 481s

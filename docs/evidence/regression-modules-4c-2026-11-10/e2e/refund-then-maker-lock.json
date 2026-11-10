@@ -1,0 +1,32 @@
+{
+  "scenario": "refund-then-maker-lock",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "1794238716",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "15",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "8",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "120",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "120",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "600",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "900",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "1800",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "120",
+    "LEZ_BTC_ACTOR_TRACE": ""
+  },
+  "swap_id": "ac74eb08e13e51d666662f3d4764e95291a12425f6c482589f6df8cd842ae477",
+  "taker_lock_txid": "2b1671ad4f52ebc775faeac10b9cb66f2b221244fd590c8d25b5c3d1f46a2773",
+  "cutoff": 1794239323,
+  "taker_balance_before": {
+    "btc_trusted_sat": 524974495075,
+    "lez_units": 2000000
+  },
+  "taker_balance_after": {
+    "btc_trusted_sat": 524974490975,
+    "lez_units": 2000000
+  },
+  "result": "passed",
+  "seconds": 1812
+}

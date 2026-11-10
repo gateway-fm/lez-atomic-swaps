@@ -1,0 +1,23 @@
+
+[09:21:01] === maker-refund (TakerSellsLez)
+
+[09:21:10] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[09:21:18] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   cfdea5f94f781dc5a215392bdca2077b6d149fb79d59417adc2edce88299ca15 awaiting_first_lock 0 -
+
+[09:21:28] Taker desk: lock_lez on cfdea5f94f78
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[09:21:41] Maker desk shows cfdea5f94f78 at awaiting_taker_claim

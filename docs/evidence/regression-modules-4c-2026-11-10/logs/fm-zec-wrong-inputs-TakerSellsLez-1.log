@@ -1,0 +1,41 @@
+[02:38:13] === zec-wrong-inputs (stamp 1794191893)
+[02:38:13] preflight: indexer historical reads
+[02:38:22]   indexer serves historical reads at the tip (163)
+[02:38:22] preflight: the finality heartbeat saw finality move 0 s ago (finalized 162)
+[02:38:22]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[02:39:11]       taker: taker ZEC corridor zec-devnet-1794191902: sidecar listening on 127.0.0.1:19902
+[02:39:11]       taker: taker: 1 prepared ZEC entries configured
+[02:39:11]     [zec-provision 02:39:10]   maker sidecar answers on 127.0.0.1:19901
+[02:39:11]     [zec-provision 02:39:10]   taker sidecar answers on 127.0.0.1:19902
+[02:39:11]       maker_health: ready=True degraded=False
+[02:39:11]     [zec-provision 02:39:11]   Taker lists zec-devnet-offer-1794191902 ; corridor zec-devnet-1794191902 is live
+[02:39:11]   corridor zec-devnet-1794191902 entry 0 (deterministic-local-devnet-v3): offer zec-devnet-offer-1794191902, zebra tip 19811, Zcash refund height 19820
+[02:39:11]   rejected as expected: reusing a publish request id for another offer (maker offer request ID conflicts with its durable mutation)
+[02:39:11]   rejected as expected: withdrawing with a stale revision (stale maker offer revision: expected 6, actual 1)
+[02:39:12]   rejected as expected: taking with a mismatched envelope hash (initiation_selection_mismatch)
+[02:39:12]   rejected as expected: taking an off-preset amount (initiation_selection_mismatch)
+[02:39:12]   rejected as expected: taking with a wrong LEZ quote (initiation_selection_mismatch)
+[02:39:12]   rejected as expected: claiming an unknown swap (swap_not_found)
+[02:39:12]   rejected as expected: refunding an unknown swap (swap_not_found)
+[02:39:12]   Taker took zec-devnet-offer-1794191902: swap zec-devnet-s (not_activated)
+[02:39:13]   rejected as expected: claiming before the Maker funded (taker_action_unavailable)
+[02:39:24]   rejected as expected: taking the consumed lot again (initiation_selection_mismatch)
+[02:39:24]   consumed lot left Delivery and cannot be taken again
+[02:39:24]   receipt: swap zec-devnet-swap-1794191902, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794191902/actor/taker/actor-config.json
+[02:39:24]   taker zec-devnet-swap-1794191902: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 19811
+[02:39:45]   taker zec-devnet-swap-1794191902: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 19811
+[02:39:45]   zebra at 19811: not mining, the Maker's Zcash funding is not out yet
+[02:39:56]   zebra: mined 1 block(s) → height 19812 (mempool had ['a5b68849b53b'])
+[02:40:06]   taker zec-devnet-swap-1794191902: refund_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 19812
+[02:40:07]   zebra: mined 1 block(s) → height 19813 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[02:40:18]   zebra: mined 1 block(s) → height 19814 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[02:40:29]   zebra: mined 1 block(s) → height 19815 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[02:40:40]   zebra: mined 1 block(s) → height 19816 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[02:40:51]   taker zec-devnet-swap-1794191902: claim_available (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 19816
+[02:40:51]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[02:40:52]   taker zec-devnet-swap-1794191902: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 19816
+[02:40:52]   zebra: mined 1 block(s) → height 19817 (mempool had ['267bf7dabc40'])
+[02:41:03]   taker zec-devnet-swap-1794191902: completed (gen 4) | actor at completed | maker: completed | zebra 19817
+[02:41:03]   taker zec-devnet-s: completed (gen 4) | maker: completed
+[02:41:04]   both Nodes report zec-devnet-s completed
+[02:41:04] === zec-wrong-inputs: passed in 171s

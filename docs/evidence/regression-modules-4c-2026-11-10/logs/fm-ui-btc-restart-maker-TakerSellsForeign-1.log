@@ -1,0 +1,25 @@
+
+[01:44:25] === restart-maker (TakerSellsForeign)
+
+[01:44:33] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[01:44:42] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   16c221e4029adcfeac45a5a4f6a327a52f98d4cfe546d18586c2fb69bbabaf79 awaiting_first_lock 0 -
+
+[01:44:52] Taker desk: lock_btc on 16c221e4029a
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[01:45:05] The maker Node is restarted now, between the Taker's lock and its claim; swaps survive a Node restart
+
+[01:45:26] Maker desk shows 16c221e4029a at awaiting_taker_claim

@@ -1,0 +1,34 @@
+{
+  "scenario": "zec-taker-refund",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1794195061",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "15",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "8",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "120",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "120",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "600",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "900",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "1800",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "120",
+    "LEZ_BTC_ACTOR_TRACE": ""
+  },
+  "swap_id": "zec-devnet-swap-1794195068",
+  "corridor": "zec-devnet-1794195068",
+  "profile": "deterministic-local-devnet-v3",
+  "maker_terminal_phase": "refunded",
+  "zcash_funding": {
+    "transaction_id": "451d86bd4117a85ccee8d852de8e5b8e0cf52eb01332f2067112d75f8fd41198",
+    "height": 19950
+  },
+  "zcash_refund": {
+    "transaction_id": "b59838f2e56d70249393a803351f4d8bebc701bb40e9854c61176a776536a853",
+    "height": 19959
+  },
+  "zcash_refund_height": 19958,
+  "result": "passed",
+  "seconds": 928
+}

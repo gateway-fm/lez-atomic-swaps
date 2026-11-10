@@ -1,0 +1,33 @@
+[03:31:01] === zec-taker-refund (stamp 1794195061)
+[03:31:01] preflight: indexer historical reads
+[03:31:08]   indexer serves historical reads at the tip (33)
+[03:31:08] preflight: the finality heartbeat saw finality move 0 s ago (finalized 32)
+[03:31:08]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[03:34:30]       taker: taker ZEC corridor zec-devnet-1794195068: sidecar listening on 127.0.0.1:19902
+[03:34:30]       taker: taker: 1 prepared ZEC entries configured
+[03:34:30]     [zec-provision 03:34:30]   maker sidecar answers on 127.0.0.1:19901
+[03:34:30]     [zec-provision 03:34:30]   taker sidecar answers on 127.0.0.1:19902
+[03:34:30]       maker_health: ready=True degraded=False
+[03:34:30]     [zec-provision 03:34:30]   Taker lists zec-devnet-offer-1794195068 ; corridor zec-devnet-1794195068 is live
+[03:34:30]   corridor zec-devnet-1794195068 entry 0 (deterministic-local-devnet-v3): offer zec-devnet-offer-1794195068, zebra tip 19949, Zcash refund height 19958
+[03:34:31]   Taker took zec-devnet-offer-1794195068: swap zec-devnet-s (not_activated)
+[03:34:31]   receipt: swap zec-devnet-swap-1794195068, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794195068/actor/taker/actor-config.json
+[03:34:31]   cutting the Maker Node's sequencer route: it will observe the Taker's Zcash funding but cannot lock LEZ
+[03:34:31]   taker zec-devnet-s: not_activated | actor at - | maker: leased | zebra 19949
+[03:34:42]   taker zec-devnet-s: awaiting_first_lock | actor at offered | maker: offered | zebra 19949
+[03:34:43]   zebra: mined 1 block(s) → height 19950 (mempool had ['451d86bd4117'])
+[03:34:53]   taker zec-devnet-s: refund_available | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 19950
+[03:34:53]   maker zec-devnet-s: taker_lock_confirmed (schedule backoff)
+[03:34:53]   Taker's Zcash funding 451d86bd4117a85ccee8d852de8e5b8e0cf52eb01332f2067112d75f8fd41198 is in zebra block 19950; the Maker observed it; stopping the Maker Node so it never locks LEZ
+[03:34:59]   zebra: mined 8 block(s) → height 19958 (the agreement's Zcash refund height)
+[03:34:59]   the Taker's Zcash funding is confirmed, the Maker is down and the refund height is reached
+[03:34:59]   taker zec-devnet-s: refund_available (generation 1)
+[03:34:59]   refund request admitted (attempt 1, taker refund_available | maker: unreachable)
+[03:35:00]   zebra: mined 1 block(s) → height 19959 (mempool had ['b59838f2e56d'])
+[03:35:15]   taker zec-devnet-s: refunded (generation 2)
+[03:35:15]   Taker refunded its Zcash HTLC
+[03:35:34]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-devnet-swap-1794195068", "action": "refund", "requested_after_generation": 4, "was_replay": false}
+[03:35:34]   maker zec-devnet-s: taker_lock_confirmed (schedule leased)
+[03:46:29]   maker zec-devnet-s: refunded (schedule terminal)
+[03:46:29]   Taker's Zcash refund b59838f2e56d70249393a803351f4d8bebc701bb40e9854c61176a776536a853 is in zebra block 19959; Maker ended refunded
+[03:46:29] === zec-taker-refund: passed in 928s

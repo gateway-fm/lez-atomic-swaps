@@ -1,0 +1,39 @@
+[23:35:41] === zec-balance-refusal (stamp 1794180941)
+[23:35:41] preflight: indexer historical reads
+[23:35:50]   indexer serves historical reads at the tip (59)
+[23:35:50] preflight: the finality heartbeat saw finality move 0 s ago (finalized 57)
+[23:35:50]   Taker LEZ account holds 0, below the 50000 lot
+[23:35:50]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[23:36:35]       taker: taker ZEC corridor zec-devnet-1794180950: sidecar listening on 127.0.0.1:19902
+[23:36:35]       taker: taker: 1 prepared ZEC entries configured
+[23:36:35]     [zec-provision 23:36:35]   maker sidecar answers on 127.0.0.1:19901
+[23:36:35]     [zec-provision 23:36:35]   taker sidecar answers on 127.0.0.1:19902
+[23:36:35]       maker_health: ready=True degraded=False
+[23:36:35]     [zec-provision 23:36:35]   Taker lists zec-devnet-offer-1794180950 ; corridor zec-devnet-1794180950 is live
+[23:36:35]   corridor zec-devnet-1794180950 entry 0 (deterministic-local-devnet-v3): offer zec-devnet-offer-1794180950, zebra tip 19675, Zcash refund height 19684
+[23:36:36]   Taker took zec-devnet-offer-1794180950: swap zec-devnet-s (not_activated)
+[23:36:36]   receipt: swap zec-devnet-swap-1794180950, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794180950/actor/taker/actor-config.json
+[23:36:36]   taker zec-devnet-swap-1794180950: not_activated (reason None, class None) | maker: leased
+[23:36:41]   taker zec-devnet-swap-1794180950: awaiting_first_lock (reason None, class None) | maker: leased
+[23:36:47]   taker zec-devnet-swap-1794180950: attention_required (reason lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient) | maker: offered
+[23:36:47]   taker zec-devnet-swap-1794180950: attention_required (lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient), no action offered | maker: offered
+[23:37:32]   45 s later the row still reads the refusal (the supervisor backs off, nothing locked)
+[23:37:32]   funding the account: scripts/bootstrap-market.sh claims the deferred vault
+[23:37:53]   Taker LEZ account holds 2000000 (vault claim 086b04d65f97060d…)
+[23:37:53]   taker zec-devnet-swap-1794180950: attention_required (reason lez_depositor_balance_insufficient, class lez_depositor_balance_insufficient) | maker: offered
+[23:38:14]   taker zec-devnet-swap-1794180950: awaiting_first_lock (reason None, class None) | maker: offered
+[23:38:14]   taker zec-devnet-swap-1794180950: awaiting_first_lock 20 s after funding, no attention_reason (the supervisor's retry; no hand drive)
+[23:38:14]   taker zec-devnet-swap-1794180950: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 19675
+[23:38:36]   taker zec-devnet-swap-1794180950: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 19675
+[23:38:36]   zebra at 19675: not mining, the Maker's Zcash funding is not out yet
+[23:38:46]   zebra: mined 1 block(s) → height 19676 (mempool had ['a2eec72be506'])
+[23:38:57]   taker zec-devnet-swap-1794180950: refund_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 19676
+[23:38:58]   zebra: mined 1 block(s) → height 19677 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[23:39:08]   taker zec-devnet-swap-1794180950: claim_available (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 19677
+[23:39:08]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[23:39:09]   taker zec-devnet-swap-1794180950: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 19677
+[23:39:09]   zebra: mined 1 block(s) → height 19678 (mempool had ['ab2bab25c558'])
+[23:39:20]   taker zec-devnet-swap-1794180950: completed (gen 4) | actor at completed | maker: completed | zebra 19678
+[23:39:20]   taker zec-devnet-s: completed (gen 4) | maker: completed
+[23:39:20]   both Nodes report zec-devnet-s completed
+[23:39:20] === zec-balance-refusal: passed in 220s
