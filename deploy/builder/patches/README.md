@@ -35,7 +35,9 @@ as `indexer_service` JSON-RPC (`getAccountAtBlock` among it).
   `indexer_rpc_serve(indexer, port)` serves `indexer_service`'s own JSON-RPC
   implementation over the indexer core the FFI already runs
   (`IndexerService::from_core`, no second ingestion; the finalized-block
-  subscription is refused). No method is reimplemented.
+  subscription is refused). No method is reimplemented. Serving again
+  (an indexer restarted with `stop_indexer`/`start_indexer`) replaces the
+  previous server.
 - `0002-lez-indexer-module-rpc.patch` — the module: `serve_rpc(port)` over
   that call (version `1.1.1-rpc.4`). The module's flake still names LEZ
   v0.2.2; the build supplies the patched v0.2.4 source in its place
@@ -65,7 +67,7 @@ inside Basecamp and serves that role's signer socket) is not an upstream patch.
 | patch | lines | applies to | upstream state |
 |---|---|---|---|
 | lez-indexer-module/0001 breakpoint-interval | 13 | logos-execution-zone `9edf4a622fe9` | not offered (upstream: make the interval configurable) |
-| lez-indexer-module/0001 ffi-rpc-serve | 176 | logos-execution-zone `9edf4a622fe9` | not yet offered |
+| lez-indexer-module/0001 ffi-rpc-serve | 177 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0002 | 52 | lez-indexer-module `5033da442a7f` | not yet offered |
 | logos-execution-zone-module/0001 | 120 | logos-execution-zone `9edf4a622fe9` | not yet offered (related: logos-execution-zone-module#73, message signing) |
 | logos-execution-zone-module/0002 | 111 | logos-execution-zone-module `acf0cd501b26` | not yet offered |

@@ -40,10 +40,10 @@ index 2e4be79..29665a4 100644
  pub mod types;
 diff --git a/lez/indexer/ffi/src/api/rpc.rs b/lez/indexer/ffi/src/api/rpc.rs
 new file mode 100644
-index 0000000..964654b
+index 0000000..ddebdc9
 --- /dev/null
 +++ b/lez/indexer/ffi/src/api/rpc.rs
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,68 @@
 +//! The indexer's JSON-RPC, served from the process that hosts this FFI (the
 +//! Logos `lez_indexer_module`), so its clients read it exactly as they read
 +//! `indexer_service`.
@@ -55,8 +55,8 @@ index 0000000..964654b
 +
 +use crate::IndexerServiceFFI;
 +
-+/// The running JSON-RPC server of [`indexer_rpc_serve`], kept for the life of
-+/// the process (dropping a jsonrpsee handle stops its server).
++/// The running JSON-RPC server of [`indexer_rpc_serve`], kept until the next
++/// serve (dropping a jsonrpsee handle stops its server).
 +static RPC_SERVER: OnceLock<Mutex<Option<jsonrpsee::server::ServerHandle>>> = OnceLock::new();
 +
 +/// Serve the indexer's JSON-RPC on `0.0.0.0:port` from this process: the
@@ -66,7 +66,9 @@ index 0000000..964654b
 +///
 +/// # Returns
 +///
-+/// `Ok`, or `ClientError` when the server cannot bind or one already runs.
++/// `Ok`, or `ClientError` when the server cannot bind. A server already
++/// running (an indexer restarted with stop_indexer and start_indexer) stops
++/// first: it answered for the indexer before.
 +///
 +/// # Safety
 +///
@@ -87,9 +89,8 @@ index 0000000..964654b
 +    let Ok(mut slot) = slot.lock() else {
 +        return OperationStatus::ClientError;
 +    };
-+    if slot.is_some() {
-+        log::error!("indexer_rpc_serve: a JSON-RPC server already runs");
-+        return OperationStatus::ClientError;
++    if let Some(previous) = slot.take() {
++        let _ = previous.stop();
 +    }
 +    let core = indexer.core().clone();
 +    let started = indexer.runtime().block_on(async move {
