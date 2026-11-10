@@ -13,10 +13,6 @@
 # would resolve to two nodes. The Nodes join both networks and name the lane's
 # chains by container name (node-entrypoint.sh's LEZ_*_HOST).
 services:
-  bitcoin-init:
-    networks: !override [lane]
-  zebra-init:
-    networks: !override [lane]
   bitcoin-core:
     networks: !override [lane]
     ports: !reset []
@@ -44,18 +40,14 @@ services:
     networks: !override [lane, chains]
   # The LEZ chain and everything around it belong to lane 1: a lane project
   # must never start them (a second chain on the same state directories).
-  lez-init:
-    profiles: [never-in-a-lane]
-  bedrock:
+  network:
     profiles: [never-in-a-lane]
   sequencer:
     profiles: [never-in-a-lane]
-  indexer:
-    profiles: [never-in-a-lane]
   btc-explorer:
-    profiles: [never-in-a-lane]
+    profiles: !override [never-in-a-lane]
   lez-explorer:
-    profiles: [never-in-a-lane]
+    profiles: !override [never-in-a-lane]
   heartbeat:
     profiles: !override [never-in-a-lane]
   tools:

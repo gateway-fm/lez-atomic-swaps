@@ -581,9 +581,9 @@ phase_stage() {
   PHASE=stage
   install -m 0755 "$PROVISION/lez-services/sequencer_service" \
     "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-services/"
-  # the r0vm the LEZ indexer executes programs with (the module itself is a
-  # runtime module of the Basecamp bundle, below)
-  install -m 0755 "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-indexer-module/"
+  # the r0vm the LEZ indexer executes programs with in the LEZ network's
+  # Basecamp (the module itself is a runtime module of the bundle, below)
+  install -m 0755 "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-network-module/"
   # the LEZ wallet as a Logos module (lez_core), for the market bootstrap's vault
   # claims and the finality heartbeat
   install -m 0644 "$PROVISION/lez_core/lez_core.lgx" "$DEPLOY_ROOT/images/lez-wallet-module/"
@@ -593,8 +593,8 @@ phase_stage() {
   if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_core/lez_core.lgx" module
     bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_swap_node/lez_swap_node.lgx" module
-    # The LEZ network node and the LEZ indexer run in Basecamps too (bedrock,
-    # indexer: the LEZ Network desk starts them), so both modules are runtime
+    # The LEZ network node and the LEZ indexer run in a Basecamp too (the
+    # network service: its LEZ Network desk starts them), so both are runtime
     # modules of the bundle. The node module is the released package, fetched
     # once and checked against its pin; it is unpacked, never executed here.
     local chain_lgx="$PROVISION/blockchain_module/blockchain_module-$BLOCKCHAIN_MODULE_VERSION.lgx"

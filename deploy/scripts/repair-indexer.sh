@@ -7,7 +7,10 @@
 # chain it occasionally fails to write one; from then on every historical
 # read past the gap fails, a restart refuses to start, and a swap's Maker
 # actor cannot observe its own LEZ initialization. The index is derived from
-# bedrock, so wiping it and re-indexing restores it (~2-3 min per 1000 blocks).
+# the node, so wiping it and re-indexing restores it (~2-3 min per 1000 blocks).
+# The indexer and the node share the LEZ network's Basecamp (lez-network): its
+# LEZ Network desk's Re-index has the indexer module delete its database and
+# start again while the node keeps producing blocks.
 #
 #   scripts/repair-indexer.sh [--check]    --check only reports, exit 1 when broken
 set -euo pipefail
@@ -43,23 +46,16 @@ fi
 echo "indexer cannot serve a historical read at its tip (${current:-unreachable})"
 [[ "${1:-}" != "--check" ]] || exit 1
 
-echo "re-indexing from bedrock…"
-docker stop lez-indexer >/dev/null
-backup="runtime/indexer-broken-$(date -u +%Y%m%d-%H%M%S)"
-mkdir -p "$backup"
-# On Linux these directories belong to the service uid, not the host user.
-# The indexer module keeps its database under its host's persistence path: the
-# Basecamp user directory's module_data (logoscore's persistence path before).
-# Move the derived databases through a short-lived root helper on that mount.
-docker run --rm -v "$PWD/runtime:/runtime" debian:bookworm-slim   bash -c 'shopt -s nullglob; paths=(/runtime/indexer/rocksdb-* /runtime/indexer/logoscore/lez_indexer_module/*/rocksdb-* /runtime/indexer/basecamp/module_data/lez_indexer_module/*/rocksdb-*); (( ${#paths[@]} )) || exit 1; mv -- "${paths[@]}" "$1"'   _ "/runtime/${backup#runtime/}"
-docker start lez-indexer >/dev/null
+echo "re-indexing from the node…"
+docker exec lez-network node /opt/lez-network-reindex.mjs >/dev/null ||
+  { echo "the LEZ Network desk did not take the Re-index" >&2; exit 1; }
 previous=0
 for _ in $(seq 1 360); do
   sleep 10
   current="$(tip || true)"
   [[ -n "$current" ]] || continue
   if [[ "$current" -gt 1 && $((current - previous)) -lt 5 ]] && historical_read_ok "$((current - 1))"; then
-    echo "re-indexed to $current; historical reads restored (old database kept in $backup)"
+    echo "re-indexed to $current; historical reads restored"
     exit 0
   fi
   previous="$current"

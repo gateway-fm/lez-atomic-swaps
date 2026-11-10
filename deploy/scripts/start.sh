@@ -177,8 +177,8 @@ cat <<BANNER
    Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: ${vnc_password}; the Maker desk)
    Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: ${vnc_password}; the Taker desk)
    Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining)
-   BTC explorer          http://127.0.0.1:3002
-   LEZ explorer + proof  http://127.0.0.1:3003/#/evidence
+   explorers             BTC http://127.0.0.1:3002, LEZ + proof http://127.0.0.1:3003/#/evidence
+                         (off unless verify-all.sh ran; docker compose --env-file runtime/runtime.env --profile explorers up -d)
    swap                  ./scripts/swap-through-ui.sh   (or click through the two desks)
    verify                ./scripts/verify-all.sh
    logs                  docker compose --env-file runtime/runtime.env logs -f <service>

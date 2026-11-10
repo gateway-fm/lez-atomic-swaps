@@ -151,6 +151,11 @@ comes, or when the market bootstrap cannot finish; six chains at most
 (`LEZ_REGRESS_FLAT_SECONDS`), the heartbeat after 60 s, and `node-e2e.py` checks that
 finality advances before each scenario.
 
+The block explorers are off by default (Compose profile `explorers`):
+`LEZ_EXPLORERS=1 ./scripts/up.sh` starts them with the stack, `verify-all.sh`
+starts them for its explorer checks, and
+`docker compose --env-file runtime/runtime.env --profile explorers up -d` at any time.
+
 `up.sh` ends with the repo-style desk verification: each party's desk, in that
 party's own Basecamp, driven through its QML inspector against the party's live
 Node. Skip with `SKIP_UI_VERIFY=1`.
@@ -158,8 +163,9 @@ Node. Skip with `SKIP_UI_VERIFY=1`.
 | What | Where |
 |---|---|
 | Bitcoin regtest RPC | `http://127.0.0.1:18443` (user `lezrpc`, password in `runtime/runtime.env`), auto-mining every 120 s |
-| BTC explorer | http://127.0.0.1:3002 |
-| LEZ explorer + M3 evidence | http://127.0.0.1:3003/#/evidence |
+| LEZ indexer JSON-RPC | `http://127.0.0.1:8779` (`getLastFinalizedBlockId` and the rest of `indexer_service`'s methods) |
+| BTC explorer (profile `explorers`) | http://127.0.0.1:3002 |
+| LEZ explorer + M3 evidence (profile `explorers`) | http://127.0.0.1:3003/#/evidence |
 | **Maker's Basecamp (VNC)** | **`vnc://127.0.0.1:5901`**: the Maker desk (password `lezswap`; override with `VNC_PASSWORD`) |
 | **Taker's Basecamp (VNC)** | **`vnc://127.0.0.1:5902`**: the Taker desk (same password) |
 | Maker Node | `docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health` |
@@ -451,16 +457,16 @@ when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 | Service | Image | Notes |
 |---|---|---|
 | `bitcoin-core` | `images/bitcoin-core` | official Core 31.1 binaries (from the checksum/Guix-verified archive used by the repo's e2e flow), digest-pinned Chainguard `glibc-dynamic`, `txindex=1` + `txospenderindex=1` (the actors' lock observation needs the spender index), healthchecked, settlement-chain labels |
-| `bitcoin-init` | debian | one-shot datadir chown to the nonroot runtime uid |
 | `btc-miner` | `images/btc-miner` | regtest coinbase miner over JSON-RPC, `MINE_INTERVAL` from the timing profile (120 s on `local`, `LEZ_BTC_BLOCK_SECONDS` (2 s) on `fast` and `refund`); a scenario that needs a transaction unconfirmed stops it |
-| `btc-explorer` | `images/btc-explorer` | btc-rpc-explorer 3.4.0, patched for an exhausted regtest halving schedule (post-era subsidy is 0; upstream returns `undefined` and 500s the homepage) |
-| `bedrock` | pinned multi-arch digest `91d6c5…` | LEZ v0.2 consensus node (exact pin from the repo's compose) |
-| `sequencer` / `indexer` | `images/lez-services` | built from pinned `logos-execution-zone` v0.2.0 (a58fbce), native rebuild + arm64 r0vm |
-| `lez-explorer` | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
+| `btc-explorer` (profile `explorers`) | `images/btc-explorer` | btc-rpc-explorer 3.4.0, patched for an exhausted regtest halving schedule (post-era subsidy is 0; upstream returns `undefined` and 500s the homepage) |
+| `network` | `images/lez-network-module` | the LEZ v0.2 network in one headless Basecamp (the `basecamp-ui` image plus the indexer's r0vm): its LEZ Network desk starts `blockchain_module` 0.2.4 (the devnet's block producer; HTTP API on `:18080`, alias `bedrock`, state in `runtime/bedrock`) and `lez_indexer_module` (`indexer_service`'s JSON-RPC on `:8779`, alias `indexer`, published on loopback; the Basecamp user directory with its database in `runtime/indexer`). The desk's Re-index rebuilds the indexer's database while the node keeps running (`repair-indexer.sh`). Runs as the host user |
+| `sequencer` | `images/lez-services` | `sequencer_service` from the pinned `logos-execution-zone` v0.2.4, native rebuild + arm64 r0vm; a plain service (there is no sequencer module); runs as the host user, state in `runtime/sequencer` |
+| `zebra` | `images/zebra` | Zebra 5.2.0 on Regtest (digest-pinned upstream build in a distroless runtime), the ZEC pair's chain |
+| `lez-explorer` (profile `explorers`) | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
 | `maker-node` | `images/maker-node` | the Maker's own Basecamp (the `basecamp-ui` image) on VNC `127.0.0.1:5901`, plus Maker-only executables (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`. Its LEZ Maker desk opens at start, hosts the Maker's LEZ signer (`lez_core`) and has `lez_swap_node` launch and supervise the Node; the UI tests drive the same desk (`ui-tests/`, mounted). The entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints. The image owns its state directories (a new named volume takes the image directory's owner and mode), so no init container runs |
 | `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, plus Taker-only executables: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
 | `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
-| `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `bedrock`, `indexer`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc |
+| `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc |
 
 Each desk reaches its own Node over the Node's owner socket inside the same
 container; the desks read their market from the Nodes
@@ -469,6 +475,11 @@ claim, and the Maker's automatic progress. The C++ backends enforce
 `uid == socket owner && mode 0600`; Basecamp and the Node share the uid 4713.
 The only socket two containers share is the Maker's Chat socket
 (`maker_socket`, mounted in the Taker's Basecamp for its Node).
+
+The Bitcoin Core and Zebra data volumes take their owner (the images' nonroot
+uid) from the images' own data directories on their first mount, and the LEZ
+services' bind-mounted state belongs to the host user they run as, so no init
+container chowns either.
 
 All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 `cap_drop: ALL` + `no-new-privileges`; ports published on loopback only. No
@@ -480,7 +491,8 @@ service holds the host Docker socket.
   aarch64 — rebuilt from the exact upstream pins (the repo's evidence pins are
   x86_64; the Logos rapidsnark fork's `rapidsnark-linux-aarch64-pic-v0.0.8`
   release provides the arm64 prover libs).
-- The bedrock image digest is upstream multi-arch and resolves to arm64 here.
+- `blockchain_module` is the released multi-arch lgx (sha256-pinned in
+  `from-scratch.sh`); its `linux-arm64` variant runs here.
 - Basecamp + role packages were built with the module-builder flake for
   aarch64-linux; the `bin-bundle-dir-inspector` output is self-contained.
 - The `linux-arm64-dev` variant tags in the locally built role packages were
@@ -600,7 +612,7 @@ The checked component inventory and exact support claims live in
 | `lez-maker-state` | Maker Node | Critical: DB and Delivery signing identity |
 | `lez-taker-state` | Taker Node | Critical after admission |
 | `lez-bitcoin-core-data` | Bitcoin Core | Critical for retained local chain evidence |
-| `runtime/{bedrock,indexer,sequencer}` | LEZ devnet | Recreatable before funding; preserve with retained chain evidence |
+| `runtime/{bedrock,indexer,sequencer}` | LEZ devnet (`network`: node and Basecamp user directory with the indexer's database; `sequencer`) | Recreatable before funding; preserve with retained chain evidence |
 | market root (`LEZ_MARKET_ROOT`) | Market bootstrap | Critical: wallet identities and the escrow deployment manifest |
 | `runtime/evidence` | `export-node-evidence.py` | Recreatable from the Nodes' swap directories |
 

@@ -178,6 +178,8 @@ if [[ "${LEZ_LANE:-1}" != 1 ]]; then
 fi
 
 echo "runtime root: $RUNTIME"
+# The LEZ network and the sequencer run as the host user (compose.yaml), so
+# their state directories are the host user's own.
 mkdir -p "$RUNTIME"/{config,bedrock,indexer,sequencer,sockets,btc,secrets}
 
 # The proof view and the explorer's evidence index start from the certified
@@ -456,6 +458,7 @@ esac
 timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
 printf '%s\n' \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
+  "LEZ_HOST_UID=$(id -u)" \
   "LEZ_HOST_GID=$(id -g)" \
   "LEZ_TIMING_PROFILE=$timing_profile" \
   "LEZ_BTC_REFUND_CSV_BLOCKS=${timing[0]}" \

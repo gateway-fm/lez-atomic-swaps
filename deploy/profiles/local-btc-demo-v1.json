@@ -6,19 +6,6 @@
   "artifact_identity_policy": "Pinned upstream image digests plus SHA-256-verified staged Rust and LEZ service binaries; scripts/stage-assets.sh is the profile gate.",
   "components": [
     {
-      "id": "bitcoin-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "shared",
-      "pair": "bitcoin",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": []
-    },
-    {
       "id": "bitcoin-core",
       "lifecycle": "service",
       "executable": "bitcoind",
@@ -36,9 +23,7 @@
       ],
       "public_identities": [],
       "health": "bitcoin-cli getblockchaininfo",
-      "depends_on": [
-        "bitcoin-init"
-      ]
+      "depends_on": []
     },
     {
       "id": "btc-miner",
@@ -69,23 +54,10 @@
         "read-only BTC RPC password"
       ],
       "public_identities": [],
-      "health": "HTTP UI",
+      "health": "HTTP UI (compose profile explorers; off by default)",
       "depends_on": [
         "bitcoin-core"
       ]
-    },
-    {
-      "id": "zebra-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "shared",
-      "pair": "zcash",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": []
     },
     {
       "id": "zebra",
@@ -103,27 +75,12 @@
       "credentials": [],
       "public_identities": [],
       "health": "zebrad getblockchaininfo",
-      "depends_on": [
-        "zebra-init"
-      ]
-    },
-    {
-      "id": "lez-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "shared",
-      "pair": "lez",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
       "depends_on": []
     },
     {
-      "id": "bedrock",
+      "id": "network",
       "lifecycle": "service",
-      "executable": "LogosBasecamp + blockchain_module (LEZ Network desk)",
+      "executable": "LogosBasecamp + blockchain_module + lez_indexer_module (LEZ Network desk)",
       "role": "shared",
       "pair": "lez",
       "sockets": [],
@@ -131,14 +88,16 @@
         {
           "path": "deploy/runtime/bedrock",
           "backup": "recreatable"
+        },
+        {
+          "path": "deploy/runtime/indexer",
+          "backup": "recreatable"
         }
       ],
       "credentials": [],
       "public_identities": [],
-      "health": "sequencer/indexer observation",
-      "depends_on": [
-        "lez-init"
-      ]
+      "health": "node API connect + getLastFinalizedBlockId",
+      "depends_on": []
     },
     {
       "id": "sequencer",
@@ -157,27 +116,7 @@
       "public_identities": [],
       "health": "getBlock(1)",
       "depends_on": [
-        "bedrock"
-      ]
-    },
-    {
-      "id": "indexer",
-      "lifecycle": "service",
-      "executable": "LogosBasecamp + lez_indexer_module (LEZ Network desk)",
-      "role": "shared",
-      "pair": "lez",
-      "sockets": [],
-      "state": [
-        {
-          "path": "deploy/runtime/indexer",
-          "backup": "recreatable"
-        }
-      ],
-      "credentials": [],
-      "public_identities": [],
-      "health": "getLastFinalizedBlockId",
-      "depends_on": [
-        "sequencer"
+        "network"
       ]
     },
     {
@@ -190,9 +129,9 @@
       "state": [],
       "credentials": [],
       "public_identities": [],
-      "health": "HTTP UI",
+      "health": "HTTP UI (compose profile explorers; off by default)",
       "depends_on": [
-        "indexer"
+        "network"
       ]
     },
     {
@@ -231,7 +170,7 @@
       "depends_on": [
         "sequencer",
         "bitcoin-core",
-        "indexer"
+        "network"
       ]
     },
     {
@@ -292,7 +231,7 @@
       "health": "successful exit (compose profile tools; never a running service)",
       "depends_on": [
         "sequencer",
-        "indexer"
+        "network"
       ]
     },
     {
@@ -315,7 +254,7 @@
       "health": "status.json rewritten every tick (compose profile heartbeat; off with LEZ_HEARTBEAT_SECONDS=0)",
       "depends_on": [
         "sequencer",
-        "indexer"
+        "network"
       ]
     },
     {

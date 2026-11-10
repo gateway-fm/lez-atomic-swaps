@@ -8,6 +8,7 @@ class LezNetworkBackend : public LezNetworkSimpleSource,
 {
 public:
     QString status() override;
+    QString reindex() override;
     void onContextReady() override;
 
 private:

@@ -128,7 +128,7 @@ moving() {
 # on a new chain instead.
 max_storage_price="${LEZ_REGRESS_MAX_STORAGE_PRICE:-6000}"
 storage_price() {
-  docker exec lez-bedrock bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080 || exit 1
+  docker exec lez-network bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080 || exit 1
     printf "GET /mantle/gas-prices HTTP/1.1\r\nHost: bedrock\r\nConnection: close\r\n\r\n" >&3
     timeout 5 cat <&3' 2>/dev/null | sed -n 's/.*"storage_gas_price":\([0-9][0-9]*\).*/\1/p'
 }

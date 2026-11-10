@@ -40,11 +40,14 @@ indexes="$(docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.co
   -datadir=/var/lib/bitcoin getindexinfo 2>/dev/null)"
 grep -q txospenderindex <<<"$indexes"
 report "$?" "Bitcoin spender index present (actor lock observation)"
-lez_head="$(curl -sf http://127.0.0.1:3003/api/overview |
-  python3 -c 'import json,sys; print(json.load(sys.stdin)["health"]["latest_block"])' 2>/dev/null)"
-report "$([[ -n "${lez_head:-}" ]] && echo 0 || echo 1)" "LEZ chain at block ${lez_head:-unknown}"
+lez_head="$(curl -sf -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' http://127.0.0.1:8779/ |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null)"
+report "$([[ "${lez_head:-None}" != None ]] && echo 0 || echo 1)" "LEZ chain finalized at block ${lez_head:-unknown}"
 
 section "block explorers"
+# Off by default (Compose profile "explorers"): started here for their checks.
+"${compose[@]}" --profile explorers up -d --wait --wait-timeout 180 btc-explorer lez-explorer >/dev/null 2>&1
 python3 scripts/verify-explorers.py --evidence-dir runtime/evidence
 report "$?" "explorer transaction display"
 

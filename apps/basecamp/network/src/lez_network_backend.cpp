@@ -14,3 +14,11 @@ QString LezNetworkBackend::status()
 {
     return status_;
 }
+
+QString LezNetworkBackend::reindex()
+{
+    // The indexer's database rebuilt from the node, which keeps running
+    // (deploy/scripts/repair-indexer.sh presses this desk's Re-index).
+    status_ = lez_network_host::reindex(modules().lez_indexer_module);
+    return status_;
+}

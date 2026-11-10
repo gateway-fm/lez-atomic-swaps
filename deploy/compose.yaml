@@ -19,23 +19,12 @@ x-logging: &default-logging
 
 services:
   # ─── Bitcoin regtest ────────────────────────────────────────────────────
-  bitcoin-init:
-    image: debian:bookworm-slim
-    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-bitcoin-init
-    volumes:
-      - bitcoin_core_data:/var/lib/bitcoin
-    command: ["chown", "-R", "65532:65532", "/var/lib/bitcoin"]
-    networks: [chains]
-    restart: "no"
-    logging: *default-logging
-
+  # The data volume takes its owner (65532) from the image's /var/lib/bitcoin
+  # the first time it is mounted, so no init container chowns it.
   bitcoin-core:
     build: ./images/bitcoin-core
     image: ${LEZ_IMAGE_PREFIX:-lez}-bitcoin-core:${LEZ_IMAGE_TAG:-local}
     container_name: ${LEZ_CONTAINER_PREFIX:-lez}-bitcoin-core
-    depends_on:
-      bitcoin-init:
-        condition: service_completed_successfully
     command:
       - "-conf=/run-config/bitcoin.conf"
       - "-datadir=/var/lib/bitcoin"
@@ -69,25 +58,13 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  zebra-init:
-    image: debian:bookworm-slim
-    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-zebra-init
-    volumes:
-      - zebra_data:/var/lib/zebra
-    command: ["chown", "-R", "65532:65532", "/var/lib/zebra"]
-    networks: [chains]
-    restart: "no"
-    logging: *default-logging
-
   # Zcash Regtest for the LEZ <-> ZEC pair, alongside bitcoin-core for BTC.
   # Same digest-pinned upstream build as the isolated lane in tests/e2e/zebra.
+  # Its data volume takes its owner (65532) from the image's /var/lib/zebra.
   zebra:
     build: ./images/zebra
     image: ${LEZ_IMAGE_PREFIX:-lez}-zebra:${LEZ_IMAGE_TAG:-local}
     container_name: ${LEZ_CONTAINER_PREFIX:-lez}-zebra
-    depends_on:
-      zebra-init:
-        condition: service_completed_successfully
     command:
       - "--config"
       - "/run-config/zebrad.toml"
@@ -141,10 +118,13 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # The block explorers (profile "explorers", off by default): up.sh starts
+  # them with LEZ_EXPLORERS=1, verify-all.sh for its explorer checks.
   btc-explorer:
     build: ./images/btc-explorer
     image: ${LEZ_IMAGE_PREFIX:-lez}-btc-explorer:${LEZ_IMAGE_TAG:-local}
     container_name: lez-btc-explorer
+    profiles: [explorers]
     depends_on:
       bitcoin-core:
         condition: service_healthy
@@ -160,69 +140,72 @@ services:
     logging: *default-logging
 
   # ─── LEZ v0.2 devnet ────────────────────────────────────────────────────
-  lez-init:
-    image: debian:bookworm-slim
-    container_name: lez-state-init
-    volumes:
-      - ./runtime/bedrock:/state/bedrock
-      - ./runtime/sequencer:/state/sequencer
-      - ./runtime/indexer:/state/indexer
-    command: ["chown", "-R", "65532:65532", "/state/bedrock", "/state/sequencer", "/state/indexer"]
-    networks: [chains]
-    restart: "no"
-    logging: *default-logging
-
-  # The LEZ v0.2 network node, run as the Logos module a Basecamp user
-  # installs (blockchain_module 0.2.4, node 0.2.4) inside a Basecamp
-  # (images/lez-network-module): its LEZ Network desk starts the node with the
-  # config and deployment settings below. It keeps the bedrock contract: the
-  # same config and deployment files, the node HTTP API on bedrock:18080, the
-  # state under runtime/bedrock (the Basecamp user directory with it).
-  bedrock:
+  # The LEZ v0.2 network in one Basecamp (images/lez-network-module): its LEZ
+  # Network desk starts the two Logos modules a Basecamp user installs.
+  # - blockchain_module 0.2.4 (node 0.2.4), the devnet's block producer, with
+  #   the bedrock config and deployment files: its HTTP API on :18080 (alias
+  #   bedrock, the sequencer's and the indexer's node), its state under
+  #   runtime/bedrock;
+  # - lez_indexer_module (1.1.1 source on LEZ v0.2.4, plus serve_rpc in
+  #   builder/patches/lez-indexer-module), serving indexer_service's own
+  #   JSON-RPC on :8779 (alias indexer), so the Nodes, the sidecars and the
+  #   probes read it as before. The Basecamp user directory, the indexer's
+  #   database in it, is runtime/indexer.
+  # The desk's Re-index rebuilds the indexer's database while the node keeps
+  # running (scripts/repair-indexer.sh). The services run as the host user, so
+  # their state under runtime/ is the host user's (no init container chowns it).
+  network:
     build:
       context: ./images/lez-network-module
       additional_contexts:
         basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-network-module:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-bedrock
-    depends_on:
-      lez-init:
-        condition: service_completed_successfully
+    container_name: lez-network
     environment:
       HOME: /tmp
       POL_PROOF_DEV_MODE: "true"
       LEZ_NETWORK_NODE_CONFIG: /opt/lez-v0.2-source/bedrock/node-config.yaml
       LEZ_NETWORK_NODE_DEPLOYMENT: /run-config/deployment-settings.yaml
+      LEZ_INDEXER_CONFIG: /run-config/indexer_config.json
+      LEZ_INDEXER_RPC_PORT: "8779"
     labels:
       org.logos-co.atomic-swaps.run: market-lez-0001
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
-      org.logos-co.atomic-swaps.component: bedrock
+      org.logos-co.atomic-swaps.component: lez-network
+    ports:
+      - "127.0.0.1:8779:8779"
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/18080"]
-      interval: 5s
-      timeout: 3s
-      retries: 60
-      start_period: 20s
+      test: ["CMD", "/usr/local/bin/lez-network-health", "18080", "8779"]
+      interval: 10s
+      timeout: 5s
+      retries: 180
+      start_period: 180s
+      start_interval: 2s
     working_dir: /work
     volumes:
       - ./assets/lez-source/bedrock:/opt/lez-v0.2-source/bedrock:ro
       - ./assets/lez-source/bedrock/kzgrs_test_params:/kzgrs_test_params:ro
       - ./runtime/config/deployment-settings.yaml:/run-config/deployment-settings.yaml:ro
+      - ./runtime/config/indexer_config.json:/run-config/indexer_config.json:ro
       - ./runtime/bedrock:/work/state
+      - ./runtime/indexer:/work/basecamp
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m,mode=1777
-    networks: [chains]
-    user: "65532:65532"
+    networks:
+      chains:
+        aliases: [bedrock, indexer]
+    user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
-    pids_limit: 512
-    cpus: 2.0
-    mem_limit: 4g
+    pids_limit: 1024
+    # the node's 2 CPUs / 4 GB and the indexer's 2 CPUs / 2 GB
+    cpus: 4.0
+    mem_limit: 6g
     # The LEZ processes shut down cleanly on Ctrl-C only and ignore SIGTERM, so
     # a default stop waits out the grace period and kills them mid-write.
     stop_signal: SIGINT
-    stop_grace_period: 20s
+    stop_grace_period: 30s
     restart: unless-stopped
     logging: *default-logging
 
@@ -242,14 +225,16 @@ services:
       org.logos-co.atomic-swaps.component: sequencer
     ports:
       - "127.0.0.1:3040:3040"
-    depends_on: [bedrock]
+    depends_on:
+      network:
+        condition: service_healthy
     volumes:
       - ./runtime/config/sequencer_config.json:/run-config/sequencer_config.json:ro
       - ./runtime/sequencer:/var/lib/sequencer_service
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=2g,mode=1777
     networks: [chains]
-    user: "65532:65532"
+    user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
     read_only: true
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
@@ -268,62 +253,13 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  # The LEZ v0.2 indexer as a Logos module: lez_indexer_module (1.1.1 source on
-  # LEZ v0.2.4, plus serve_rpc in builder/patches/lez-indexer-module) inside a
-  # Basecamp (images/lez-indexer-module): its LEZ Network desk starts it, and
-  # the module serves indexer_service's own JSON-RPC on :8779, so the Nodes,
-  # the sidecar and the probes read it as before.
-  indexer:
-    build:
-      context: ./images/lez-indexer-module
-      additional_contexts:
-        basecamp: service:basecamp-ui
-    image: ${LEZ_IMAGE_PREFIX:-lez}-indexer-module:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-indexer
-    environment:
-      HOME: /tmp
-      LEZ_INDEXER_CONFIG: /run-config/indexer_config.json
-      LEZ_INDEXER_RPC_PORT: "8779"
-    labels:
-      org.logos-co.atomic-swaps.run: market-lez-0001
-      org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
-      org.logos-co.atomic-swaps.component: indexer
-    ports:
-      - "127.0.0.1:8779:8779"
-    depends_on:
-      sequencer:
-        condition: service_healthy
-    volumes:
-      - ./runtime/config/indexer_config.json:/run-config/indexer_config.json:ro
-      - ./runtime/indexer:/work/state
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
-    networks: [chains]
-    user: "65532:65532"
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    pids_limit: 512
-    cpus: 2.0
-    mem_limit: 2g
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/lez-indexer-module-health", "8779"]
-      interval: 10s
-      timeout: 5s
-      retries: 180
-      start_period: 180s
-      start_interval: 2s
-    stop_signal: SIGINT
-    stop_grace_period: 20s
-    restart: unless-stopped
-    logging: *default-logging
-
   lez-explorer:
     build: ./images/lez-explorer
     image: ${LEZ_IMAGE_PREFIX:-lez}-explorer:${LEZ_IMAGE_TAG:-local}
     container_name: lez-lez-explorer
+    profiles: [explorers]
     depends_on:
-      indexer:
+      network:
         condition: service_healthy
     environment:
       LEZ_INDEXER_URL: http://indexer:8779
@@ -365,7 +301,7 @@ services:
         condition: service_healthy
       bitcoin-core:
         condition: service_healthy
-      indexer:
+      network:
         condition: service_healthy
     environment:
       BASECAMP_ROLE: maker
@@ -530,7 +466,7 @@ services:
   basecamp-ui:
     # Build only: the Basecamp image (Xvfb, VNC, the portable Basecamp, both
     # role packages, qt-mcp) the parties' Basecamps (maker-node, taker-node)
-    # and the LEZ network's (bedrock, indexer) are built on, through their
+    # and the LEZ network's (network) are built on, through their
     # `basecamp` build context. It runs no container (scale 0): each party's
     # desk lives in that party's own Basecamp.
     build: ./images/basecamp-ui
@@ -607,7 +543,7 @@ services:
     depends_on:
       sequencer:
         condition: service_healthy
-      indexer:
+      network:
         condition: service_healthy
     logging: *default-logging
     entrypoint: ["/bin/bash", "-c"]

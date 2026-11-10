@@ -66,7 +66,7 @@ lane_up() {
     [[ "${balance:-0}" != 0 ]] || { log "lane $LEZ_LANE: $wallet holds no LEZ on this chain (a chain made before its identity: up.sh --fresh-lez)"; return 1; }
   done
   bash scripts/gen-config.sh runtime || return 1
-  # (with their init containers, which own the new volumes to the chains' uid)
+  # (their new volumes take the chains' uid, 65532, from the images)
   docker compose "${lane_compose[@]}" up -d --no-build bitcoin-core zebra || return 1
   wait_healthy 600 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-zebra" || return 1
   docker compose "${lane_compose[@]}" up -d --no-build --no-deps btc-miner || return 1

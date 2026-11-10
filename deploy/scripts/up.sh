@@ -25,6 +25,8 @@
 #                            with lane 1 before a new LEZ chain, started on it
 #   LEZ_API_ONLY=1           chains, market and Nodes only, wallets seeded
 #                            for the evidence run; no desk suites
+#   LEZ_EXPLORERS=1          also start the block explorers (Compose profile
+#                            "explorers", off by default)
 #
 # Requires the payloads staged by from-scratch.sh (images/*/ contexts, the
 # provision directory, the market root). SKIP_UI_VERIFY=1 skips the UI suites.
@@ -123,15 +125,14 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   # Nodes stop and forget their swaps too, and start again on the new chain.
   [[ "${LEZ_LANES:-1}" -le 1 ]] || bash scripts/lanes.sh stop "$LEZ_LANES"
   # The old chain is thrown away, so its services get no clean shutdown: they
-  # stop on SIGINT only and the Basecamp-hosted ones wait out their grace
-  # period, one after another (compose stops in dependency order).
-  docker compose stop -t 2 lez-explorer indexer sequencer bedrock >/dev/null 2>&1 || true
+  # stop on SIGINT only and the Basecamp-hosted one waits out its grace period.
+  docker compose --profile explorers stop -t 2 lez-explorer sequencer network >/dev/null 2>&1 || true
   stage "move the old chain's state aside"
   mkdir -p "runtime/lez-broken-$stamp"
-  # Bedrock writes its state as the image's own user (65532, mode 0700), which
-  # the host user cannot move on Linux. Docker Desktop maps every bind mount to
-  # the host user and hides that, so the plain mv only fails on a Linux host;
-  # fall back to a root shell in a container that is already present.
+  # The LEZ services write their state as the host user. A chain from before
+  # that belongs to the images' own user (65532, mode 0700), which the host
+  # user cannot move on Linux (Docker Desktop maps every bind mount to the host
+  # user); fall back to a root shell in a container that is already present.
   for d in bedrock sequencer indexer; do
     [[ -d "runtime/$d" ]] || continue
     mv "runtime/$d" "runtime/lez-broken-$stamp/" 2>/dev/null ||
@@ -216,9 +217,19 @@ esac
 # every call, cached but seconds long; --no-build starts what is there.
 stage "start the chains (compose up)"
 echo "[3/6] starting chains…"
-docker compose up -d --no-build bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
+# The LEZ services run as the host user; state an older stack left as the
+# images' own user is not theirs to open.
+for d in bedrock sequencer indexer; do
+  [[ -O "runtime/$d" ]] || { echo "runtime/$d belongs to another user (a chain from an older stack): ./scripts/up.sh --fresh-lez" >&2; exit 1; }
+done
+# The containers of services this file no longer has: the bedrock and indexer
+# Basecamps (now the one network Basecamp, whose aliases they would shadow) and
+# the init containers the images' own data directories replaced.
+docker rm -f lez-bedrock lez-indexer lez-state-init lez-bitcoin-init lez-zebra-init >/dev/null 2>&1 || true
+docker compose up -d --no-build bitcoin-core btc-miner zebra network sequencer
+[[ "${LEZ_EXPLORERS:-0}" != 1 ]] || docker compose --profile explorers up -d --no-build btc-explorer lez-explorer
 stage "chains healthy"
-wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
+wait_healthy 2400 lez-bitcoin-core lez-zebra lez-network lez-sequencer
 # A new LEZ chain can stop finalizing within its first minute (README, "a
 # frozen devnet"); everything after this point would then wait on it in vain
 # (the indexer repair, the vault claims). A healthy new chain's indexer serves
@@ -347,14 +358,19 @@ fi
 
 # start.sh prints its own banner once the market is bootstrapped.
 [[ "${LEZ_NO_BANNER:-0}" != 1 ]] || exit "$ui_failed"
+if [[ "${LEZ_EXPLORERS:-0}" == 1 ]]; then
+  explorers="BTC http://127.0.0.1:3002, LEZ http://127.0.0.1:3003"
+else
+  explorers="off (LEZ_EXPLORERS=1 ./scripts/up.sh starts them)"
+fi
 cat <<BANNER
 
 ──────────────────────────────────────────────────────────────────
  LEZ swap stack is up (volumes: ${LEZ_VOLUME_PREFIX:-lez}-*)
 
    Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / ${MINE_INTERVAL:-120} s)
-   BTC explorer          http://127.0.0.1:3002
-   LEZ explorer          http://127.0.0.1:3003
+   LEZ indexer RPC       http://127.0.0.1:8779
+   explorers             ${explorers}
    Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: ${VNC_PASSWORD:-lezswap}; the Maker desk)
    Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: ${VNC_PASSWORD:-lezswap}; the Taker desk)
    Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health

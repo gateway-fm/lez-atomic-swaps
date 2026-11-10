@@ -203,7 +203,7 @@ def provenance(commit):
             if built != commit:
                 raise RuntimeError(f'{role}/{receipt}: rebuild this checkout and recreate the Nodes')
     containers = {}
-    for name in ('lez-bitcoin-core', 'lez-bedrock', 'lez-sequencer', 'lez-indexer', 'lez-maker-node', 'lez-taker-node'):
+    for name in ('lez-bitcoin-core', 'lez-network', 'lez-sequencer', 'lez-maker-node', 'lez-taker-node'):
         containers[name] = command('docker', 'inspect', name, '--format', '{{.Image}}')
     return {'repository_commit': commit, 'timing': E.timing_profile(), 'binary_sha256': binaries,
             'container_images': containers, 'bitcoin_genesis': E.bitcoin('getblockhash', '0'),
