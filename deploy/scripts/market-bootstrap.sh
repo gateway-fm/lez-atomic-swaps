@@ -108,6 +108,9 @@ fi
 deployment_tx="$(jq -r '.transaction_hash' "$deployment_evidence")"
 
 # ── 2. vault claims (once per wallet) ──────────────────────────────────────
+# Every claim is submitted first and the sweeps are awaited together after: each
+# wallet claims its own vault, so no claim waits on another's finality.
+claimed=()
 for entry in "${WALLETS[@]}"; do
   read -r wallet role owner vault allocation <<<"$entry"
   # The vault, not the owner, says whether the one-time claim already ran:
@@ -152,7 +155,11 @@ for entry in "${WALLETS[@]}"; do
     .submission.decision == "admitted" and .allocation == $allocation
     and (.transaction_id | test("^[0-9a-f]{64}$"))
   ' "$MARKET_ROOT/bootstrap/$wallet-claim.json" >/dev/null || fail "$wallet claim evidence invalid"
-  sweep_deadline=$((SECONDS + 900))
+  claimed+=("$entry")
+done
+sweep_deadline=$((SECONDS + 900))
+for entry in "${claimed[@]}"; do
+  read -r wallet role owner vault allocation <<<"$entry"
   while (( SECONDS < sweep_deadline )); do
     [[ "$(account_balance "$vault" 2>/dev/null)" == 0 ]] && break
     sleep 1

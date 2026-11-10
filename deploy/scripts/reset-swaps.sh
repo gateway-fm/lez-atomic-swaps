@@ -13,8 +13,9 @@
 #
 #   reset-swaps.sh                 stop both Nodes, forget the swaps, start them again
 #   reset-swaps.sh --offline       the same, but leave the Nodes stopped (up.sh
-#                                  --fresh-lez forgets the old chain's swaps this way
-#                                  before it starts the Nodes on the new one)
+#                                  --fresh-lez forgets the old chain's swaps this way,
+#                                  while the Nodes still run, before it starts them
+#                                  on the new chain)
 #   reset-swaps.sh --abandon-open  also when a swap is still open (below)
 #
 # A swap that is still open may have funds locked, and its per-swap directory
@@ -60,10 +61,15 @@ owner_call() { # owner_call <role> <method> <params>
 # Runs a command with the role's state volume, as the Node uid, while the Node
 # itself is stopped: inside the role's running Basecamp, or else in a fresh
 # container of the role image. stdin stays connected: two calls below feed
-# python3 a heredoc.
+# python3 a heredoc. The fresh container takes the stopped Basecamp's image and
+# mounts as they are (`compose run` would first re-check the role image's
+# build, a few seconds a call, as it is built on the basecamp-ui service).
 in_role() {
   local role="$1"; shift
   if [[ "$in_place" == 1 ]]; then docker exec -i "lez-$role-node" "$@"
+  elif docker container inspect "lez-$role-node" >/dev/null 2>&1; then
+    docker run --rm -i --network none --user 4713:4713 --volumes-from "lez-$role-node" --entrypoint "$1" \
+      "$(docker inspect -f '{{.Config.Image}}' "lez-$role-node")" "${@:2}"
   else "${compose[@]}" run --rm -T --no-deps --entrypoint "$1" "$role-node" "${@:2}"; fi
 }
 # Holds a role's Node down inside its Basecamp: the hold file keeps the
@@ -105,7 +111,7 @@ if os.path.exists(path):
         print("maker - unknown (store unreadable:", error, ")")
 ')
 if running maker; then maker_open="$(docker exec lez-maker-node "${maker_store_read[@]}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"
-else maker_open="$("${compose[@]}" run --rm -T --no-deps --entrypoint python3 maker-node "${maker_store_read[@]:1}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"; fi
+else maker_open="$(in_role maker python3 "${maker_store_read[@]:1}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"; fi
 [[ -z "$maker_open" ]] || mapfile -t -O "${#open_swaps[@]}" open_swaps <<<"$maker_open"
 archive=""
 if (( ${#open_swaps[@]} )); then
@@ -221,7 +227,7 @@ if [[ "$in_place" == 1 ]]; then
   release_node maker MAKER; release_node taker TAKER
 else
   log "starting both Nodes"
-  "${compose[@]}" up -d --no-deps maker-node taker-node >/dev/null
+  "${compose[@]}" up -d --no-build --no-deps maker-node taker-node >/dev/null
 fi
 # The Node's own owner call, not the container's health status: that one is
 # read on an interval and still shows the Node that was just stopped.

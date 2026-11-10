@@ -222,6 +222,21 @@ class ResetSwapsRefusesOpenSwaps(Workspace):
         self.assertIn('_ /var/lib/lez/taker \n', self.logged() + '\n')
         self.assertNotRegex(self.logged(), r'\d{8}T\d{6}Z')
 
+    def test_offline_asks_the_running_nodes_and_needs_no_compose_run(self):
+        # up.sh --fresh-lez: the Taker still answers, so settled swaps leave no
+        # archive; the role steps run in containers with the stopped Basecamps' mounts
+        (self.deploy / 'runtime' / 'evidence').mkdir()
+        (self.deploy / 'assets').mkdir()
+        (self.deploy / 'assets' / 'certified-evidence-m5arm-08180005-ui.json').write_text('{}')
+        run = self.reset('--offline', '--abandon-open', FAKE_TAKER_LIST=taker_list('completed'), FAKE_MAKER_OPEN='')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertNotIn('abandoning', run.stdout)
+        self.assertIn('stop maker-node taker-node', self.logged())
+        self.assertIn('run --rm -i --network none --user 4713:4713 --volumes-from lez-taker-node', self.logged())
+        self.assertIn('--volumes-from lez-maker-node', self.logged())
+        self.assertNotIn(' run --rm -T', self.logged())
+        self.assertNotRegex(self.logged(), r'\d{8}T\d{6}Z')
+
     def test_unknown_argument(self):
         self.assertEqual(self.reset('--bogus').returncode, 64)
         self.assert_untouched()

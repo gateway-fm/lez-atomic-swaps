@@ -98,8 +98,23 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   load_env
   stamp="$(date +%s)"
   echo "[lez] recreating the LEZ chain; old state → runtime/lez-broken-$stamp"
-  stage "stop the old chain and the Nodes"
-  docker compose stop maker-node taker-node lez-explorer indexer sequencer bedrock >/dev/null 2>&1 || true
+  # Forget the swaps that referenced the old chain first, while the Nodes still
+  # run: the Taker then answers for its own swaps, so only a swap that is really
+  # open has its per-swap keys archived (its LEZ leg goes with the chain, its
+  # Bitcoin or Zcash leg may still need a refund). reset-swaps.sh --offline
+  # stops both Nodes and leaves them stopped, so they start once on the new
+  # chain instead of starting, stopping and starting.
+  if docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
+    stage "forget the old chain's swaps (reset-swaps.sh --offline)"
+    echo "  forgetting swaps that referenced the old chain"
+    bash scripts/reset-swaps.sh --offline --abandon-open 2>&1 | tail -1
+  fi
+  stage "stop the old chain"
+  docker compose stop maker-node taker-node >/dev/null 2>&1 || true
+  # The old chain is thrown away, so its services get no clean shutdown: they
+  # stop on SIGINT only and the Basecamp-hosted ones wait out their grace
+  # period, one after another (compose stops in dependency order).
+  docker compose stop -t 2 lez-explorer indexer sequencer bedrock >/dev/null 2>&1 || true
   stage "move the old chain's state aside"
   mkdir -p "runtime/lez-broken-$stamp"
   # Bedrock writes its state as the image's own user (65532, mode 0700), which
@@ -127,15 +142,6 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   for f in bootstrap/deployment.json market-bootstrap.env; do
     [[ ! -f "$market_root/$f" ]] || mv "$market_root/$f" "$market_root/$f.chain-$stamp.bak"
   done
-  # The Nodes are down: forget the swaps that referenced the old chain now, so
-  # they start once on the new chain instead of starting, stopping and starting.
-  # Their LEZ legs went with the chain; reset-swaps.sh keeps the per-swap keys
-  # of any swap that was still open (its Bitcoin leg may still need a refund).
-  if docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
-    stage "forget the old chain's swaps (reset-swaps.sh --offline)"
-    echo "  forgetting swaps that referenced the old chain"
-    bash scripts/reset-swaps.sh --offline --abandon-open 2>&1 | tail -1
-  fi
 fi
 
 stage "runtime config"
@@ -193,9 +199,13 @@ case "${LEZ_IMAGES:-build}" in
   *) echo "LEZ_IMAGES must be build, pull or present" >&2; exit 64 ;;
 esac
 
+# The images exist from here on (built above, pulled, or present). The role and
+# LEZ Basecamp images are built on the basecamp-ui service (additional_contexts
+# service:basecamp-ui), and for those `compose up` runs the whole build again on
+# every call, cached but seconds long; --no-build starts what is there.
 stage "start the chains (compose up)"
 echo "[3/6] starting chains…"
-docker compose up -d bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
+docker compose up -d --no-build bitcoin-core btc-miner btc-explorer zebra bedrock sequencer indexer lez-explorer
 stage "chains healthy"
 wait_healthy 2400 lez-bitcoin-core lez-zebra lez-sequencer lez-indexer
 # A new LEZ chain can stop finalizing within its first minute (README, "a
@@ -212,15 +222,16 @@ if [[ "$FRESH_LEZ" == 1 ]]; then
       --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
       http://127.0.0.1:8779/ 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
   }
+  # read every 2 s: once it serves a height, a healthy chain finalizes every second or two
   first=""; moved=0; now=""
   first_deadline=$(( SECONDS + ${LEZ_FRESH_FIRST_FINALITY_SECONDS:-300} ))
   while (( SECONDS < first_deadline )); do
     first="$(lez_finalized)"; [[ -z "$first" ]] || break
-    sleep 5
+    sleep 2
   done
   if [[ -n "$first" ]]; then
-    for _ in $(seq 1 $(( ${LEZ_FRESH_FINALITY_SECONDS:-60} / 5 ))); do
-      sleep 5; now="$(lez_finalized)"
+    for _ in $(seq 1 $(( ${LEZ_FRESH_FINALITY_SECONDS:-60} / 2 ))); do
+      sleep 2; now="$(lez_finalized)"
       if [[ -n "$now" && "$now" -gt "$first" ]]; then moved=1; break; fi
     done
   fi
@@ -260,10 +271,23 @@ echo "[5/6] Nodes…"
 # A changed runtime.env (a timing profile switch, say) reaches the Nodes only
 # through a recreate; entrypoints read it once.
 if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 1 ]]; then
-  # Basecamp, which hosts the roles' LEZ signers, starts first (depends_on).
-  docker compose up -d --force-recreate maker-node taker-node
+  if docker container inspect lez-maker-node lez-taker-node >/dev/null 2>&1; then
+    # Both Basecamps start together. The Taker's Node pins the Maker's Delivery
+    # identity when it starts, which is why taker-node waits for a healthy
+    # maker-node (compose.yaml); with the identity the last Maker published
+    # removed first, the Taker's Node waits for the one the new Maker publishes
+    # (node-entrypoint.sh) instead. Both containers existing means their init
+    # containers have run, so --no-deps skips nothing else.
+    docker run --rm --network none --user 4713:4713 --volumes-from lez-maker-node --entrypoint rm \
+      "$(docker inspect -f '{{.Config.Image}}' lez-maker-node)" -f /delivery/maker-delivery-identity.pub
+    docker compose up -d --no-build --force-recreate maker-node
+    docker compose up -d --no-build --force-recreate --no-deps taker-node
+  else
+    # Basecamp, which hosts the roles' LEZ signers, starts first (depends_on).
+    docker compose up -d --no-build --force-recreate maker-node taker-node
+  fi
 else
-  docker compose up -d maker-node taker-node
+  docker compose up -d --no-build maker-node taker-node
 fi
 stage "Nodes healthy"
 wait_healthy 1200 lez-maker-node lez-taker-node
@@ -281,7 +305,7 @@ heartbeat_allocation="$(sed -n 's/^LEZ_HEARTBEAT_ALLOCATION=//p' runtime/runtime
 if [[ "${heartbeat_seconds:-0}" != 0 && "${heartbeat_allocation:-0}" != 0 ]]; then
   echo "[5/6] finality heartbeat (one unit every ${heartbeat_seconds} s)…"
   mkdir -p runtime/heartbeat
-  docker compose --profile heartbeat up -d heartbeat
+  docker compose --profile heartbeat up -d --no-build heartbeat
 else
   echo "[5/6] finality heartbeat off (LEZ_HEARTBEAT_SECONDS=${heartbeat_seconds:-0}, allocation ${heartbeat_allocation:-0})"
 fi
@@ -292,7 +316,7 @@ if [[ "${LEZ_API_ONLY:-0}" == 1 ]]; then
 fi
 stage "Basecamp UI"
 echo "[6/6] Basecamp UI…"
-docker compose up -d basecamp-ui
+docker compose up -d --no-build basecamp-ui
 wait_healthy 600 lez-basecamp-ui
 stage "UI suites"
 ui_failed=0
