@@ -20,7 +20,7 @@ lez-bridge-protocol = { path = "../lez-bridge-protocol", version = "=0.1.0" }
 lez-swap-core = { path = "../swap-core", version = "=0.1.0" }
 lez-xmr-monero-adapter = { path = "../xmr-monero-adapter", version = "=0.1.0" }
 lez-xmr-swap-sdk = { path = "../xmr-swap-sdk", version = "=0.1.0" }
-rusqlite = { version = "=0.40.1", features = ["bundled"] }
+rusqlite = { version = "=0.41.0", features = ["bundled"] }
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 sha2 = "=0.10.9"
 thiserror = "=2.0.18"
