@@ -276,12 +276,42 @@ while (( zebra_height < target )); do
   zebra_height="$(zebra getblockcount)"
 done
 log "  zebra height $zebra_height (>= $target: at least $MIN_MATURE_OUTPUTS mature coinbase outputs)"
-# Selling ZEC, the Taker funds from the payments step 3 makes to its key, all
-# above this height: the provisioner's search for a mature funder output
-# starts there instead of reading every block from 1 (~3 min on a zebra
-# 23 000 blocks tall). Selling LEZ the Maker's coinbase is searched from 1.
-scan_from=0
-[[ "$DIRECTION" != TakerSellsForeign ]] || scan_from=$(( zebra_height + 1 ))
+# Selling ZEC, the Taker funds from payments the Maker made to its key, 100
+# blocks deep (step 3). They are paid TAKER_POOL_AHEAD at a time beyond what
+# this run needs and listed in runtime/zec/taker-funding-pool ("txid vout
+# height"), so most runs find enough of them unspent and mature and skip the
+# payments and the 100 blocks (~75 s of zebra mining). The provisioner's
+# search for a mature funder output starts at the lowest listed height, or
+# above the tip when step 3 pays, instead of reading every block from 1 (~3
+# min on a zebra 23 000 blocks tall); any mature output of the Taker's key
+# there is a candidate, as it always was. Selling LEZ the Maker's coinbase is
+# searched from 1.
+TAKER_POOL=runtime/zec/taker-funding-pool
+TAKER_POOL_AHEAD=4
+scan_from=0; pay_taker=0
+if [[ "$DIRECTION" == TakerSellsForeign ]]; then
+  payments="$SWAPS"; (( ADD == 1 )) && payments=2
+  scan_from="$(python3 - "$TAKER_POOL" "$ZEBRA_URL" "$payments" <<'PY'
+import json, pathlib, sys, urllib.request
+pool, url, needed = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+def zebra(method, params):
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+    with urllib.request.urlopen(urllib.request.Request(url, body, {"content-type": "application/json"}), timeout=30) as r:
+        return json.load(r).get("result")
+kept = []
+for line in (pool.read_text().splitlines() if pool.exists() else []):
+    txid, vout, height = line.split()
+    out = zebra("gettxout", [txid, int(vout)])
+    if out is not None:
+        kept.append((txid, vout, int(height), int(out.get("confirmations") or 0)))
+pool.parent.mkdir(parents=True, exist_ok=True)
+pool.write_text("".join(f"{t} {v} {h}\n" for t, v, h, _ in kept))
+mature = [k for k in kept if k[3] >= 100]
+print(min(k[2] for k in mature) if len(mature) >= needed else "")
+PY
+)" || fail "reading $TAKER_POOL from zebra failed"
+  if [[ -z "$scan_from" ]]; then pay_taker=1; scan_from=$(( zebra_height + 1 )); fi
+fi
 
 # ---- 2. spec ------------------------------------------------------------------
 log "2/8 spec"
@@ -362,7 +392,10 @@ if [[ "$DIRECTION" == TakerSellsForeign ]]; then
   # (k+1)-th mature output, so a two-swap run gets two payments, in two
   # blocks so their order is their height; --add pays two as well, so the
   # second slot finds its output whether or not the live corridor spent its own.
-  payments="$SWAPS"; (( ADD == 1 )) && payments=2
+  if [[ "$pay_taker" == 0 ]]; then
+    log "  TakerSellsForeign: the Taker's key holds $payments or more mature payments from height $scan_from ($TAKER_POOL)"
+  else
+  payments=$(( payments + TAKER_POOL_AHEAD ))
   log "  TakerSellsForeign: paying the Taker's key $TAKER_FUNDING_ZATOSHIS zatoshis from the Maker's, $payments time(s), then 100 blocks"
   for (( p = 0; p < payments; p++ )); do
     docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
@@ -372,9 +405,20 @@ if [[ "$DIRECTION" == TakerSellsForeign ]]; then
       fail "zec-local-poc-transfer failed (see above)"
     log "  transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"][:16] + "… to " + s["to_address"])' "$out/taker-funding-$p.json")"
     zebra generate "[1]" >/dev/null || fail "zebra generate failed"
+    # the pool line: the payment's output to the Taker and its height
+    python3 - "$out/taker-funding-$p.json" "$ZEBRA_URL" >>"$TAKER_POOL" <<'PY' || fail "recording the Taker's payment failed"
+import json, sys, urllib.request
+paid = json.load(open(sys.argv[1]))
+body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getrawtransaction", "params": [paid["transaction_id"], 1]}).encode()
+with urllib.request.urlopen(urllib.request.Request(sys.argv[2], body, {"content-type": "application/json"}), timeout=30) as r:
+    tx = json.load(r)["result"]
+vout = next(o["n"] for o in tx["vout"] if paid["to_address"] in (o.get("scriptPubKey") or {}).get("addresses", []))
+print(paid["transaction_id"], vout, tx["height"])
+PY
   done
   for _ in $(seq 1 10); do zebra generate "[10]" >/dev/null || fail "zebra generate failed"; done
   log "  zebra height $(zebra getblockcount): the Taker's outputs are mature"
+  fi
 fi
 # --network host: the provisioner only accepts a loopback zebra endpoint, and
 # Compose publishes zebra on 127.0.0.1:18232.
