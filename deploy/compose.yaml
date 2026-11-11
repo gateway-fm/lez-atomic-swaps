@@ -12,6 +12,16 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# A role's Basecamp also carries Logos Delivery's log, which prints every offer
+# it relays as a byte array: ~12 MB a minute with three lanes publishing. The
+# tests read the Node's own lines from this log (node-e2e.py), so it must reach
+# back over a whole swap; 30 MB did not (two minutes).
+x-role-logging: &role-logging
+  driver: json-file
+  options:
+    max-size: "200m"
+    max-file: "3"
+
 # A lane (scripts/lane.sh, compose.lane.yaml) is one more Maker/Taker pair with
 # its own Bitcoin Core, miner and Zebra beside the one LEZ network: the
 # LEZ_CONTAINER_PREFIX, LEZ_LANE_RUNTIME, LEZ_ZEBRA_PORT and VNC port variables
@@ -379,7 +389,7 @@ services:
       start_period: 180s
       start_interval: 2s
     restart: unless-stopped
-    logging: *default-logging
+    logging: *role-logging
 
   taker-node:
     # The Taker's own Basecamp (images/taker-node: the basecamp-ui image plus
@@ -465,7 +475,7 @@ services:
       start_period: 180s
       start_interval: 2s
     restart: unless-stopped
-    logging: *default-logging
+    logging: *role-logging
 
   basecamp-ui:
     # Build only: the Basecamp image (Xvfb, VNC, the portable Basecamp, both
