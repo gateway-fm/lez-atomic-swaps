@@ -11,8 +11,19 @@ inscription too). Both depend on the genesis transfer, so a node refuses a
 genesis whose note values were edited without them. It starts no node and logs
 nothing.
 
-It is built against logos-blockchain 0.2.4 (the node `blockchain_module` 0.2.4
-wraps) as a member of that workspace, in a container:
+`scripts/from-scratch.sh --only build:regenesis` builds it against
+logos-blockchain 0.2.4 (the node `blockchain_module` 0.2.4 wraps) as a member of
+that workspace, in the builder image, and `--only stage` puts it into the LEZ
+network's image (`/usr/local/bin/regenesis`). From there `gen-config.sh` runs
+it for every new chain (an empty `runtime/bedrock`) with `time=` set to the
+moment the chain is made, and keeps that time in `runtime.env`
+(`LEZ_GENESIS_TIME`) so a restart renders the same genesis. Bedrock counts
+slots from the genesis time and the LEZ indexer's cold start reads every slot
+from 0, so upstream's 2026-07-31 left a new chain without a finalized LEZ block
+for ~100 s, and every re-index with it. An image without the tool keeps that
+time and the values below.
+
+By hand, in a container:
 
 ```sh
 git clone --depth 1 --branch 0.2.4 https://github.com/logos-blockchain/logos-blockchain.git lb

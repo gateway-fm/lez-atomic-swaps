@@ -9,7 +9,7 @@
 # PHASE is one of the phases below, or one build step on its own
 # (`--only build:rapidsnark`, `build:lez-services`, `build:r0vm`,
 # `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:wallet-module`, `build:swap-node-module`,
-# `build:identities`); that is how the
+# `build:regenesis`, `build:identities`); that is how the
 # release workflow spreads the cold build over several runners.
 #
 # Every phase is idempotent: it checks what already exists and does only the
@@ -333,7 +333,7 @@ builder_run() { # builder_run [docker run flags...] -- <bash script>
 # the host user and leave anything else in the provision root alone.
 own_provision() {
   docker run --rm -v "$PROVISION:/provision" "$BUILDER_IMAGE" bash -c \
-    'for d in rapidsnark-arm lez-services tools-arm escrow-artifact sidecar risc0; do [[ -e /provision/$d ]] && chown -R "$1" "/provision/$d" 2>/dev/null; done; true' _ "$(id -u):$(id -g)"
+    'for d in rapidsnark-arm lez-services tools-arm escrow-artifact sidecar risc0 logos-blockchain regenesis; do [[ -e /provision/$d ]] && chown -R "$1" "/provision/$d" 2>/dev/null; done; true' _ "$(id -u):$(id -g)"
 }
 
 # The builder image is published by digest (deploy/builder/image.lock, written
@@ -552,6 +552,25 @@ build_identities() {
     fi
   done
 }
+# builder/regenesis, against logos-blockchain 0.2.4 (the node blockchain_module
+# 0.2.4 wraps): gen-config.sh computes each new chain's genesis with it, in the
+# LEZ network's image (stage). A debug build, stripped: it hashes one block.
+readonly LOGOS_BLOCKCHAIN_TAG=0.2.4
+readonly LOGOS_BLOCKCHAIN_COMMIT=adc72a456011795710b8bced1a21d05715f96c1d
+build_regenesis() {
+  local stamp
+  stamp="$( { echo "$LOGOS_BLOCKCHAIN_COMMIT"; cat "$DEPLOY_ROOT/builder/regenesis/main.rs"; } | sha256sum | cut -c1-16)"
+  [[ -x "$PROVISION/regenesis/regenesis" && "$(cat "$PROVISION/regenesis/source.stamp" 2>/dev/null)" == "$stamp" ]] && return 0
+  log "building builder/regenesis against logos-blockchain $LOGOS_BLOCKCHAIN_TAG (~4 min cold)"
+  builder_run -- "[[ -d /provision/logos-blockchain/.git ]] || git clone --quiet --depth 1 --branch $LOGOS_BLOCKCHAIN_TAG https://github.com/logos-blockchain/logos-blockchain.git /provision/logos-blockchain;
+    cd /provision/logos-blockchain; [[ \$(git rev-parse HEAD) == $LOGOS_BLOCKCHAIN_COMMIT ]] || { echo 'logos-blockchain $LOGOS_BLOCKCHAIN_TAG is not $LOGOS_BLOCKCHAIN_COMMIT' >&2; exit 1; }
+    mkdir -p tools/regenesis/src; cp /workspace/deploy/builder/regenesis/main.rs tools/regenesis/src/main.rs
+    printf '[package]\nname = \"regenesis\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\nlb-core = { workspace = true }\nserde_yml = { workspace = true }\n' >tools/regenesis/Cargo.toml
+    grep -q '\"tools/regenesis\"' Cargo.toml || sed -i 's|^members = \[|members = [\n  \"tools/regenesis\",|' Cargo.toml
+    CARGO_TARGET_DIR=/cache/target/regenesis cargo +1.96.0 build -p regenesis 2>&1 | tail -2
+    mkdir -p /provision/regenesis; install -s -m 0755 /cache/target/regenesis/debug/regenesis /provision/regenesis/
+    printf '%s\\n' '$stamp' > /provision/regenesis/source.stamp"
+}
 
 phase_build() {
   PHASE=build
@@ -571,6 +590,7 @@ phase_build() {
   build_step_wanted indexer-module && build_indexer_module
   build_step_wanted wallet-module && build_wallet_module
   build_step_wanted swap-node-module && build_swap_node_module
+  build_step_wanted regenesis && build_regenesis
   own_provision
   build_step_wanted identities && build_identities
   log "artifacts built into $PROVISION"
@@ -584,6 +604,13 @@ phase_stage() {
   # the r0vm the LEZ indexer executes programs with in the LEZ network's
   # Basecamp (the module itself is a runtime module of the bundle, below)
   install -m 0755 "$PROVISION/tools-arm/bin/r0vm" "$DEPLOY_ROOT/images/lez-network-module/"
+  # and builder/regenesis, which gen-config.sh runs from that image for each
+  # new chain's genesis time; without it a new chain keeps the fixed genesis
+  if [[ -x "$PROVISION/regenesis/regenesis" ]]; then
+    install -m 0755 "$PROVISION/regenesis/regenesis" "$DEPLOY_ROOT/images/lez-network-module/"
+  else
+    rm -f "$DEPLOY_ROOT/images/lez-network-module/regenesis"
+  fi
   # the LEZ wallet as a Logos module (lez_core), for the market bootstrap's vault
   # claims and the finality heartbeat
   install -m 0644 "$PROVISION/lez_core/lez_core.lgx" "$DEPLOY_ROOT/images/lez-wallet-module/"
@@ -688,7 +715,7 @@ phase_swap() {
 
 case "$ONLY" in
   ""|host|sources|nix|rust|build|stage|stack|swap) ;;
-  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module|build:swap-node-module) ;;
+  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module|build:swap-node-module|build:regenesis) ;;
   *) echo "unknown phase: $ONLY" >&2; exit 64 ;;
 esac
 for p in host sources nix rust build stage stack; do

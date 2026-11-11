@@ -217,7 +217,7 @@ if [[ -s "$RUNTIME/runtime.env" ]]; then
   done
 fi
 
-# Bedrock starts from upstream's genesis, however old, with two devnet changes.
+# Bedrock starts from upstream's genesis with three devnet changes.
 # - Finality depth 2 (security_param, upstream 5). Bedrock's LIB trails its
 #   tip by ~2 slots instead of ~5, and an epoch is 40 s instead of 100 s. 1 is
 #   too low: Cryptarchia's s_gen (k / 4f) is then 0, which its bootstrap fork
@@ -238,22 +238,70 @@ fi
 #   (~+0.5 per turn: +45 an hour with 40 s epochs). Upstream's 48 x 10^6 ran
 #   dry in 46 minutes at 1 s blocks. The sequencer's 4 x 10^13 lasts ~40 days at
 #   the tip set below.
-# The notes' values and owners are part of the genesis transaction, so the
-# genesis block root and the SDP declaration's locked note id change with them.
-# Both were computed once with builder/regenesis (README there) and are checked
-# here against the upstream file they were computed from.
+# - The chain's genesis time (in the genesis inscription) is when the chain is
+#   made, not upstream's (2026-07-31). Bedrock counts slots (one a second) from
+#   it, and the LEZ indexer's cold start reads every slot from 0 to the last
+#   irreversible one in 100-slot batches before it stores the first LEZ block:
+#   with upstream's time, ~9 million slots, ~100 s of a new chain's first
+#   finality and of every re-index (scripts/repair-indexer.sh).
+# The notes' values and owners are part of the genesis transaction and the time
+# is part of the inscription, so the genesis block root and the SDP
+# declaration's locked note id change with them. builder/regenesis computes
+# both (README there), in the LEZ network's image, for a new chain: one whose
+# Bedrock state is empty. Its time is kept in runtime.env (LEZ_GENESIS_TIME),
+# and a restart of the same chain renders the same genesis from it. The values
+# for upstream's time were computed once and are checked here against the
+# upstream file they were computed from; a chain made before LEZ_GENESIS_TIME
+# was recorded, or by an image without regenesis, keeps them.
 readonly upstream_genesis_root=cb5951ac1ffa1aa5d0e585fb54e784bd9c025b28d752324e98b3837f34648692
 readonly upstream_locked_note=7e449a14172fc90679f6fca7b49a2d58c305ebf7ac42ef20202e533c31115222
-readonly devnet_genesis_root=d0d73d3b253006bdb8086dc867442dac1a81e8fdbcdfceb74f0c7a9761db0192
-readonly devnet_locked_note=a4c6c9828735678bf91667e26ab47e26b8196b6c1be137b7a9e686be22fd6205
+readonly upstream_inscription=05302e322e3123766c6a2d2ddf918544bca603c5a291c7dd1b902d6769ff4b00021506780e075c06051a
+readonly upstream_genesis_time=1785493027
+readonly fixed_genesis_root=d0d73d3b253006bdb8086dc867442dac1a81e8fdbcdfceb74f0c7a9761db0192
+readonly fixed_locked_note=a4c6c9828735678bf91667e26ab47e26b8196b6c1be137b7a9e686be22fd6205
 readonly devnet_note_value=1000000000000
 readonly devnet_leader_notes=8
 # Both are public keys (note owners in upstream's public devnet genesis), not secrets.
 readonly leader_note_owner=2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26
 readonly sequencer_note_owner=ed266e6e887b9b97059dc1aa1b7b2e19b934291753c6336a163fe4ebaa28e717
 readonly devnet_security_param=2
+network_image="${LEZ_IMAGE_PREFIX:-lez}-network-module:${LEZ_IMAGE_TAG:-local}"
+previous_genesis_time=""
+[[ ! -s "$RUNTIME/runtime.env" ]] || previous_genesis_time="$(sed -n 's/^LEZ_GENESIS_TIME=//p' "$RUNTIME/runtime.env" | head -1)"
+has_regenesis() { docker image inspect "$network_image" >/dev/null 2>&1 &&
+  docker run --rm --network none --entrypoint /bin/sh "$network_image" -c 'test -x /usr/local/bin/regenesis' 2>/dev/null; }
+regenesis_present=0
+if [[ -n "$(ls -A "$RUNTIME/bedrock" 2>/dev/null)" ]]; then
+  genesis_time="${previous_genesis_time:-$upstream_genesis_time}"
+  [[ "$genesis_time" == "$upstream_genesis_time" ]] || ! has_regenesis || regenesis_present=1
+elif has_regenesis; then
+  genesis_time="$(date +%s)"; regenesis_present=1
+else
+  genesis_time="$upstream_genesis_time"
+  echo "$network_image has no regenesis (from-scratch.sh --only build:regenesis, --only stage, then build it): the new chain keeps upstream's genesis time" >&2
+fi
+[[ "$genesis_time" =~ ^[1-9][0-9]{9}$ ]] || { echo "runtime.env's LEZ_GENESIS_TIME is not a unix time in seconds: '$genesis_time'" >&2; exit 1; }
+if [[ "$genesis_time" == "$upstream_genesis_time" ]]; then
+  devnet_genesis_root="$fixed_genesis_root"; devnet_locked_note="$fixed_locked_note"; devnet_inscription="$upstream_inscription"
+else
+  (( regenesis_present )) || { echo "this chain's genesis time $genesis_time needs regenesis in $network_image (from-scratch.sh --only build:regenesis), or a new chain: scripts/up.sh --fresh-lez" >&2; exit 1; }
+  # It prints the root and the locked note as YAML byte lists, the inscription in hex.
+  regenesis_out="$(docker run --rm --network none --entrypoint /usr/local/bin/regenesis \
+    -v "$LEZ_SOURCE/bedrock/deployment-settings.yaml:/upstream.yaml:ro" "$network_image" /upstream.yaml \
+    "$leader_note_owner" "$devnet_note_value" $(( 48 - devnet_leader_notes )) "$sequencer_note_owner" "time=$genesis_time")"
+  regenesis_bytes() { awk -v key="$1" '$1 ~ /^[a-z_]+$/ { on = ($1 == key) }
+    on { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) printf "%02x", $i }' <<<"$regenesis_out"; }
+  devnet_genesis_root="$(regenesis_bytes block_root)"
+  devnet_locked_note="$(regenesis_bytes locked_note_id)"
+  devnet_inscription="$(sed -n 's/^inscription //p' <<<"$regenesis_out")"
+  [[ "$devnet_genesis_root" =~ ^[0-9a-f]{64}$ && "$devnet_locked_note" =~ ^[0-9a-f]{64}$ && "$devnet_inscription" =~ ^[0-9a-f]{${#upstream_inscription}}$ ]] ||
+    { echo "regenesis printed no genesis for time $genesis_time:" >&2; echo "$regenesis_out" >&2; exit 1; }
+  echo "LEZ genesis time $genesis_time ($(date -u -d "@$genesis_time" +%FT%TZ 2>/dev/null || date -u -r "$genesis_time" +%FT%TZ)), root $devnet_genesis_root"
+fi
+readonly genesis_time devnet_genesis_root devnet_locked_note devnet_inscription
 awk -v up_root="$upstream_genesis_root" -v root="$devnet_genesis_root" \
     -v up_locked="$upstream_locked_note" -v locked="$devnet_locked_note" \
+    -v up_inscription="$upstream_inscription" -v inscription="$devnet_inscription" \
     -v value="$devnet_note_value" -v k="$devnet_security_param" \
     -v leader="$leader_note_owner" -v leader_notes="$devnet_leader_notes" -v sequencer="$sequencer_note_owner" '
   # a note line is followed by its owner: hold it until the owner is known
@@ -264,9 +312,10 @@ awk -v up_root="$upstream_genesis_root" -v root="$devnet_genesis_root" \
   /^  security_param: 5$/ { sub(/5$/, k); params++ }
   $0 ~ "block_root: " up_root "$" { sub(up_root, root); roots++ }
   $0 ~ "locked_note_id: .?" up_locked { sub(up_locked, locked); lockeds++ }
+  $0 ~ "inscription: .?" up_inscription { sub(up_inscription, inscription); inscriptions++ }
   { print }
-  END { if (notes != 48 || moved != 48 - leader_notes || params != 1 || roots != 1 || lockeds != 1) {
-          printf "deployment-settings.yaml is not the upstream file the devnet genesis was computed from (%d notes, %d security_param, %d roots, %d locked notes)\n", notes, params, roots, lockeds > "/dev/stderr"; exit 1 } }
+  END { if (notes != 48 || moved != 48 - leader_notes || params != 1 || roots != 1 || lockeds != 1 || inscriptions != 1) {
+          printf "deployment-settings.yaml is not the upstream file the devnet genesis was computed from (%d notes, %d security_param, %d roots, %d locked notes, %d inscriptions)\n", notes, params, roots, lockeds, inscriptions > "/dev/stderr"; exit 1 } }
 ' "$LEZ_SOURCE/bedrock/deployment-settings.yaml" >"$RUNTIME/config/deployment-settings.yaml"
 
 jq --arg channel "$channel_id" \
@@ -491,6 +540,7 @@ printf '%s\n' \
   "LEZ_LEZ_STALL_SECONDS=$lez_stall_seconds" \
   "LEZ_BTC_BLOCK_SECONDS=$btc_block_seconds" \
   "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
+  "LEZ_GENESIS_TIME=$genesis_time" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \
   "LEZ_V02_TAKER_ACCOUNT_ID=$taker_account_id" \

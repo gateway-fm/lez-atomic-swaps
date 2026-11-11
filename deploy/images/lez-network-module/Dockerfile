@@ -13,13 +13,15 @@
 #   (LEZ_INDEXER_RPC_PORT), executing programs with r0vm, its database in the
 #   Basecamp user directory.
 # Its LEZ Network desk starts both and re-indexes on request (reindex.mjs).
+# builder/regenesis rides along when from-scratch.sh staged it: gen-config.sh
+# runs it from this image to give each new chain its own genesis time.
 # "basecamp" is a build context (compose.yaml: service:basecamp-ui), not a registry image.
 # hadolint ignore=DL3006
 FROM basecamp
 LABEL org.opencontainers.image.source="https://github.com/logos-co/logos-modules-release/releases/tag/blockchain_module-v0.2.4"
 LABEL org.opencontainers.image.version="0.2.4"
 LABEL org.logos-co.atomic-swaps.purpose="lez-v0.2-network-module"
-COPY --chmod=0555 r0vm /usr/local/bin/r0vm
+COPY --chmod=0555 r0vm regenesi[s] /usr/local/bin/
 COPY --chmod=0555 health.sh /usr/local/bin/lez-network-health
 COPY --chmod=0444 reindex.mjs /opt/lez-network-reindex.mjs
 ENV BASECAMP_ROLE=network BASECAMP_USER_DIR=/work/basecamp LANG=C.UTF-8 RISC0_SERVER_PATH=/usr/local/bin/r0vm
