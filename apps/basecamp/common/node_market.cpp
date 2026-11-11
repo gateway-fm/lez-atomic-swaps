@@ -7,6 +7,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocale>
+#include <QMutex>
+#include <QPair>
 
 namespace node_market {
 namespace {
@@ -136,6 +138,40 @@ QJsonObject offerRow(const QJsonObject& offer, const QString& state, const QStri
     };
 }
 
+// An admitted claim or refund is followed by the Node, which re-drives it by
+// itself; while it lands normally the row offers nothing, so a claim that is
+// landing never reads as one that failed (#112: a lone "Retry claim" was the
+// only thing on the row and an owner pressed it). Once the row has stood in
+// the same in-flight state this long, or the Node names why it last backed
+// off, the row offers to send the same request again: the Node replays it by
+// request id, so it is safe. A claim lands in about two minutes on the devnet
+// and in several LEZ blocks on the public testnet; a refund that waits for
+// its timelock stays longer and is told so.
+constexpr qint64 kResubmitAfterSeconds = 15 * 60;
+
+// How long this desk has seen a swap in its current Node state, in seconds.
+// The desk's own memory: a restarted desk starts counting again, which only
+// postpones the offer to resubmit.
+qint64 secondsInState(const QString& role, const QString& swapId, const QString& state)
+{
+    static QMutex mutex;
+    static QHash<QString, QPair<QString, qint64>> seen;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    QMutexLocker lock(&mutex);
+    const QString key = role + QLatin1Char(':') + swapId;
+    const auto found = seen.constFind(key);
+    if (found == seen.cend() || found->first != state) {
+        seen.insert(key, {state, now});
+        return 0;
+    }
+    return now - found->second;
+}
+
+QString minutesDisplay(qint64 seconds)
+{
+    return QString::number(seconds / 60) + " min";
+}
+
 struct SwapRow {
     QString state;
     QString label;
@@ -155,7 +191,8 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
                  const QString& direction, const QString& pair, const QString& bitcoin, const QString& lez,
                  qint64 lockFeeSat, const QString& attentionReason = QString(),
                  const QString& heldBy = QString(), bool claimWindowClosed = false,
-                 const QString& actorPhase = QString())
+                 const QString& actorPhase = QString(), qint64 secondsInFlight = 0,
+                 const QString& failureClass = QString(), qint64 refundOpensAt = 0)
 {
     const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");  // sells the foreign coin
     const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
@@ -166,6 +203,23 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     const QString theirChain = sellsBitcoin ? "LEZ" : foreignChain;
     const QString refundAction = sellsBitcoin ? "refund_" + foreignTag : "refund_lez";
     const QString claimAction = sellsBitcoin ? "claim_lez" : "claim_" + foreignTag;
+    // An in-flight claim or refund offers "Resubmit" only once it looks stuck
+    // (kResubmitAfterSeconds, or a failure class from the Node); until then
+    // the row says it is being followed.
+    // A refund cannot land before the agreement's refund time, so its clock
+    // starts there when the terms name it.
+    const qint64 refundSeconds = refundOpensAt > 0
+        ? qMin(secondsInFlight, QDateTime::currentSecsSinceEpoch() - refundOpensAt) : secondsInFlight;
+    const auto inFlight = [&](const QString& state, const QString& label, int percent, const QString& following,
+                              const QString& action, const QString& verb) -> SwapRow {
+        const qint64 seconds = action == refundAction ? refundSeconds : secondsInFlight;
+        if (seconds < kResubmitAfterSeconds && failureClass.isEmpty()) return {state, label, percent, following, "", ""};
+        const QString stuck = !failureClass.isEmpty() ? "Your Node last backed off (" + failureClass + ")"
+                                                      : "No change for " + minutesDisplay(seconds);
+        return {state, label, percent,
+                stuck + "; " + verb + " is safe to repeat: your Node replays the same request and re-drives it",
+                action, verb};
+    };
     // The Node named why the row needs its owner: the account holds less LEZ
     // than the lot, so the actor refused the lock instead of submitting it.
     // No button: the Node's re-driver submits the lock by itself once the
@@ -229,17 +283,17 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
         // the other leg follows at its deadline and the Node observes it. The
         // Maker missed nothing: both legs were locked and the Taker refunded by choice.
         if (sellsBitcoin && nodeState == "refund_in_progress" && actorPhase == QStringLiteral("maker_leg_refunded"))
-            return {"refunding", "Refunding Zcash · the Maker's LEZ is already back", 75,
-                    "Your Zcash refund is admitted; the Node broadcasts it at the refund height and follows it to a block, Retry re-drives it if it stalls",
-                    refundAction, "Retry refund"};
+            return inFlight("refunding", "Refunding Zcash · the Maker's LEZ is already back", 75,
+                            "Your Zcash refund is admitted; your Node broadcasts it at the refund height and follows it to a block",
+                            refundAction, "Resubmit refund");
         if (sellsBitcoin && nodeState == "refund_in_progress")
-            return {"refunding", "Refunding Zcash", 70,
-                    "Your Zcash refund is admitted; the Node broadcasts it at the refund height and follows it to a block, Retry re-drives it if it stalls",
-                    refundAction, "Retry refund"};
+            return inFlight("refunding", "Refunding Zcash", 70,
+                            "Your Zcash refund is admitted; your Node broadcasts it at the refund height and follows it to a block",
+                            refundAction, "Resubmit refund");
         if (nodeState == "refund_in_progress")
-            return {"refunding", "Refunding " + myChain + " · waiting for the Maker's " + theirChain + " refund", 70,
-                    "Your " + myChain + " refund is admitted; the Node follows it and the Maker's " + theirChain
-                        + " refund, Retry re-drives it if it stalls", refundAction, "Retry refund"};
+            return inFlight("refunding", "Refunding " + myChain + " · waiting for the Maker's " + theirChain + " refund", 70,
+                            "Your " + myChain + " refund is admitted; your Node follows it and the Maker's " + theirChain + " refund",
+                            refundAction, "Resubmit refund");
         // ZEC is a hashlock, not an adaptor signature: selling LEZ, the Maker's
         // LEZ claim revealed the secret and the Taker's Zcash claim completes
         // the swap; selling ZEC, the Taker's LEZ claim reveals it and the
@@ -257,13 +311,14 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
             return {"claiming_lez", "LEZ claim submitted", 85,
                     "Your Node follows the claim to finality; the Maker's follow-up Zcash claim completes the swap", "", ""};
         if (nodeState == "claim_in_progress")
-            return {"claiming_zec", theirChain + " claim submitted", 85,
-                    "Your Node submitted the Zcash claim; the swap completes when it is final",
-                    claimAction, "Retry claim"};
+            return inFlight("claiming_zec", theirChain + " claim submitted", 85,
+                            "Your Node submitted the Zcash claim and follows it to a block; the swap completes when it is final",
+                            claimAction, "Resubmit claim");
     }
-    // A refund already submitted keeps Refund offered as "Retry refund" (the
-    // ZEC projection does this through the refunded-leg phases); that row is
-    // "Refund submitted" below, never a missed lock window.
+    // A refund already submitted keeps its refund action (offered as "Resubmit
+    // refund" once it looks stuck; the ZEC projection does this through the
+    // refunded-leg phases); that row is "Refund submitted" below, never a
+    // missed lock window.
     if (availableAction == QStringLiteral("refund") && nodeState != "refund_available"
         && nodeState != "refund_in_progress")
         return {"refund_ready", "The Maker missed its lock window", 60,
@@ -297,19 +352,22 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
                 claimAction, "Claim " + theirs};
     // An admitted action stays retryable: the Node replays it by request id
     // and re-drives the actor, so a stalled claim or refund has a way back
-    // other than the CLI. The desk used to show only a progress bar here.
+    // other than the CLI. It is offered only once the row looks stuck: a lone
+    // "Retry claim" on a claim that was landing read as a failed claim (#112).
     if (nodeState == "claim_in_progress")
-        return {sellsBitcoin ? "claiming_lez" : "claiming_" + foreignTag, theirChain + " claim submitted", 85,
-                "Your Node observes the claim; the Maker's follow-up " + myChain + " claim completes the swap",
-                claimAction, "Retry claim"};
+        return inFlight(sellsBitcoin ? "claiming_lez" : "claiming_" + foreignTag, theirChain + " claim submitted", 85,
+                        "Your Node submitted the claim and follows it; the Maker's follow-up " + myChain
+                            + " claim completes the swap",
+                        claimAction, "Resubmit claim");
     if (nodeState == "completed")
         return {"completed", "Completed", 100, "Both legs settled on chain", "", ""};
     if (nodeState == "refund_available")
         return {"refund_ready", "Refund available", 60,
                 "The Maker did not lock in time; you may recover your " + myChain, refundAction, "Refund " + mine};
     if (nodeState == "refund_in_progress")
-        return {"refunding", "Refund submitted", 80, "Your Node observes the refund; Retry re-drives it if it stalls",
-                refundAction, "Retry refund"};
+        return inFlight("refunding", "Refund submitted", 80,
+                        "Your Node follows the refund; it lands once its timelock allows",
+                        refundAction, "Resubmit refund");
     if (nodeState == "refunded")
         return {"refunded", "Refunded", 100, "Your " + myChain + " came back", "", ""};
     return {"attention_required", "Needs attention", 0,
@@ -624,7 +682,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             if (!nodePair(pair)) continue;
             const QString swapId = swap.value("swap_id").toString();
             const QString direction = directionName(swap.value("route").toObject().value("direction").toString());
-            const SwapRow row = takerRow(swap.value("state").toString(), swap.value("available_action").toString(),
+            const QString nodeState = swap.value("state").toString();
+            const SwapRow row = takerRow(nodeState, swap.value("available_action").toString(),
                                          lockedSwaps.contains(swapId), direction, pair,
                                          formatForeign(pair, integerField(swap, "foreign_units")),
                                          formatLez(integerField(swap, "lez_units")),
@@ -632,7 +691,10 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                          swap.value("attention_reason").toString(),
                                          swap.value("revealing_claim_held_by").toString(),
                                          swap.value("claim_window_closed").toBool(),
-                                         swap.value("actor_phase").toString());
+                                         swap.value("actor_phase").toString(),
+                                         secondsInState(QStringLiteral("taker"), swapId, nodeState),
+                                         swap.value("last_failure_class").toString(),
+                                         integerField(swap.value("terms").toObject(), "later_refund_earliest_unix_seconds"));
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction, pair,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),

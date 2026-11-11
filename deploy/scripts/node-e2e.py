@@ -2558,7 +2558,8 @@ def zec_refund_tail_tool(swap_id: str) -> bool:
     zebra to the agreement's refund height, queues the Maker's refund (the
     operator action the Maker desk has no button for), and waits for the
     Maker's Zcash refund in a block; the Taker's own observation of that refund
-    is the desk's "Retry refund", so it is left to the desk."""
+    is its Node's re-drive of the admitted refund (or the desk's "Resubmit
+    refund" once the row looks stuck), so it is left to the Taker."""
     os.environ["LEZ_ZEC_REUSE_CORRIDOR"] = "1"
     corridor = zec_provision(swap_id=swap_id)
     config = zec_taker_actor_config(corridor["receipt_output"])

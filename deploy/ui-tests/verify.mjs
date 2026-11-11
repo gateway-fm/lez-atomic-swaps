@@ -672,7 +672,7 @@ if (role === "maker") {
                   "Bitcoin claim broadcast; the Maker Node uses the revealed secret to claim the LEZ escrow"],
       refund_btc: ["The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures",
                    "Refund admitted; the Taker Node broadcasts it when the timelock allows and follows it to confirmation"],
-      retry_refund_lez: ["Retry refund replays the admitted refund request; the Node re-drives the recovery on its own as well",
+      retry_refund_lez: ["Resubmit refund replays the admitted refund request; the Node re-drives the recovery on its own as well",
                          "The Taker observed the Maker's Zcash refund; both legs are back and the swap is refunded"],
       refund_lez: ["The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached",
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
@@ -704,10 +704,12 @@ if (role === "maker") {
     : zcash
     ? { claim_zec: [`Claim ${zecText}`, ["claiming_zec", "claim_ready", "completed"], 45000],
         refund_lez: [`Refund ${zecLezText}`, ["refunding", "refunded"], waitTimeoutMs],
-        // The admitted refund keeps its button as "Retry refund": the same
+        // The admitted refund keeps its action as "Resubmit refund": the same
         // request replayed, for an owner who does not want to wait for the
-        // Node's own re-drive (every 30 s until the row reads refunded).
-        retry_refund_lez: ["Retry refund", ["refunding", "refund_ready", "refunded"], waitTimeoutMs] }
+        // Node's own re-drive (every 30 s until the row reads refunded). The
+        // desk offers it only once the row has stood 15 min past the refund
+        // time, or the Node named a failure class (node_market.cpp).
+        retry_refund_lez: ["Resubmit refund", ["refunding", "refund_ready", "refunded"], waitTimeoutMs] }
     : reverseDirection
     ? { lock_lez: [`Lock ${lezText}`, ["locking_lez", ...afterTakerLock("claiming_btc")], 45000],
         claim_btc: [`Claim ${btcText}`, ["claiming_btc", "completed"], 45000],
