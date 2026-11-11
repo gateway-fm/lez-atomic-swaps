@@ -33,6 +33,11 @@ git -C "$REPO_ROOT" archive --format=tar HEAD:deploy | tar -x -C "$stage/$name"
 rm -rf "$stage/$name/builder" "$stage/$name/images" "$stage/$name/tests" \
   "$stage/$name/scripts/from-scratch.sh" "$stage/$name/scripts/stage-assets.sh" \
   "$stage/$name/scripts/stage-basecamp-package.sh" "$stage/$name/scripts/package-dist.sh"
+# The bundle holds deploy/ alone: a document's link into the rest of the
+# repository (../docs/...) points at the release commit on GitHub instead.
+repo_url="https://github.com/${GITHUB_REPOSITORY:-gateway-fm/lez-atomic-swaps}/blob/$commit"
+find "$stage/$name" -name '*.md' -exec sed -i.orig "s#](\.\./#](${repo_url}/#g" {} +
+find "$stage/$name" -name '*.md.orig' -delete
 cat >"$stage/$name/release.env" <<ENV
 # written by scripts/package-dist.sh; read by scripts/start.sh
 LEZ_IMAGE_PREFIX=${prefix}
@@ -47,4 +52,4 @@ tar -C "$stage" -czf "$archive" "$name"
 (cd "$out" && shasum -a 256 "$name.tar.gz" >"$name.tar.gz.sha256")
 echo "bundle: $archive"
 echo "  $(cat "$out/$name.tar.gz.sha256")"
-echo "  images: ${prefix}-{bitcoin-core,btc-miner,btc-explorer,services,explorer,maker-node,taker-node,basecamp-ui,tools}:${tag}"
+echo "  images: ${prefix}-{bitcoin-core,zebra,btc-miner,btc-explorer,services,explorer,maker-node,taker-node,basecamp-ui,network-module,wallet-module}:${tag}"

@@ -6,6 +6,12 @@ use lez_swap_core::{
 };
 use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 
+/// The fastest Zcash Testnet pace a public profile's refund window is sized
+/// for, milliseconds a block: 1,000 blocks in 3,922 s under Testnet's
+/// min-difficulty rule, measured just before NU7 (2026-11-11). A Testnet
+/// provisioner states the Zcash refund's earliest wall time with it.
+pub const PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS: u64 = 3_900;
+
 /// A reviewed immutable ZEC parameter profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ZecProfileId {
@@ -33,8 +39,38 @@ pub enum ZecProfileId {
     /// longest measured take→claim (≈7 min) a window. Devnet only; a
     /// production profile is unaffected.
     DeterministicLocalDevnetV3,
+    /// [`Self::DeterministicLocalDevnetV3`] with a 4-minute LEZ refund delay,
+    /// for the devnet's refund journeys alone: they never claim, so the delay
+    /// only has to outlast provisioning (~45 s), the take and both first
+    /// locks (~2 min to the Taker's claim offer once the indexer serves
+    /// historical reads in milliseconds, 2026-11-10). V3's 12 minutes were
+    /// sized for a take→claim of ≈7 min, which slow indexer reads caused, and
+    /// spent ~8 of them waiting in every refund journey. Swaps that claim
+    /// keep V3. Devnet only.
+    DeterministicLocalDevnetV4,
     /// LEZ 0.2 and Zcash public-testnet acceptance profile.
     PublicTestnetV1,
+    /// [`Self::PublicTestnetV1`] on Zcash Testnet's NU7 (branch `77190ad9`,
+    /// active since height 4,465,026), with the Zcash refund window sized for
+    /// Testnet's measured pace. V1 signs for NU6.2, which Testnet left at
+    /// 4,134,000, and its 192 blocks last ~73 min at the 22.7 s a block
+    /// Testnet averaged after NU7, far less than the four hours its own
+    /// schedule asks for (2026-11-11). Same LEZ parameters and confirmations.
+    PublicTestnetV2,
+    /// [`Self::DeterministicLocalV1`] on Regtest's NU7 (branch `77190ad9`,
+    /// active from height 1 on the pinned Zebra 7 fixture). The Regtest
+    /// fixtures moved from Zebra 5.2 (NU6.2) to Zebra 7 so that they sign
+    /// for the branch public Testnet runs; V1 keeps NU6.2 under its id.
+    /// Every other parameter is V1's: Regtest mines on demand, so NU7's
+    /// 25 s target changes no window (2026-11-11).
+    DeterministicLocalV2,
+    /// [`Self::DeterministicLocalDevnetV3`] on Regtest's NU7: the devnet's
+    /// profile for swaps that claim, once its Zebra runs NU7. V3's 12-minute
+    /// LEZ refund delay, eight-block Zcash refund window and 40-block expiry.
+    DeterministicLocalDevnetV5,
+    /// [`Self::DeterministicLocalDevnetV4`] on Regtest's NU7: the devnet's
+    /// refund journeys' profile (4-minute LEZ refund delay), as V5 is V3's.
+    DeterministicLocalDevnetV6,
 }
 
 impl ZecProfileId {
@@ -46,7 +82,12 @@ impl ZecProfileId {
             Self::DeterministicLocalDevnetV1 => "deterministic-local-devnet-v1",
             Self::DeterministicLocalDevnetV2 => "deterministic-local-devnet-v2",
             Self::DeterministicLocalDevnetV3 => "deterministic-local-devnet-v3",
+            Self::DeterministicLocalDevnetV4 => "deterministic-local-devnet-v4",
             Self::PublicTestnetV1 => "public-testnet-v1",
+            Self::PublicTestnetV2 => "public-testnet-v2",
+            Self::DeterministicLocalV2 => "deterministic-local-v2",
+            Self::DeterministicLocalDevnetV5 => "deterministic-local-devnet-v5",
+            Self::DeterministicLocalDevnetV6 => "deterministic-local-devnet-v6",
         }
     }
 }
@@ -146,6 +187,17 @@ impl ZecRefundProfile {
                 required_margin: UnixSeconds::new(30),
                 expiry_delta_blocks: 40,
             },
+            ZecProfileId::DeterministicLocalDevnetV4 => Self {
+                id,
+                zcash_network: NetworkType::Regtest,
+                consensus_branch_id: BranchId::Nu6_2,
+                lez_confirmations: 1,
+                zcash_confirmations: 1,
+                lez_refund_delay: UnixSeconds::new(240),
+                zcash_refund_blocks: 8,
+                required_margin: UnixSeconds::new(30),
+                expiry_delta_blocks: 40,
+            },
             ZecProfileId::PublicTestnetV1 => Self {
                 id,
                 zcash_network: NetworkType::Test,
@@ -157,6 +209,49 @@ impl ZecRefundProfile {
                 required_margin: UnixSeconds::new(7_200),
                 expiry_delta_blocks: 40,
             },
+            ZecProfileId::PublicTestnetV2 => Self {
+                id,
+                zcash_network: NetworkType::Test,
+                consensus_branch_id: BranchId::Nu7,
+                lez_confirmations: 2,
+                zcash_confirmations: 10,
+                lez_refund_delay: UnixSeconds::new(7_200),
+                // The Zcash refund (the later one) must not open before the
+                // LEZ refund delay plus the margin, 4 h after funding, even
+                // at the fastest pace Testnet has run: refund blocks times
+                // PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS >= LEZ refund delay +
+                // required margin. Testnet's min-difficulty rule lets runs of
+                // cheap blocks through: 1,000 blocks in 3,922 s just before
+                // NU7 (3.9 s a block). 3,700 blocks x 3.9 s = 14,430 s >=
+                // 14,400 s. At the 22.7 s a block Testnet averaged from NU7
+                // to 2026-11-11 the window is ~23 h.
+                zcash_refund_blocks: 3_700,
+                required_margin: UnixSeconds::new(7_200),
+                // NU7's 25 s target keeps librustzcash's 120-block default
+                // expiry at the 50 min that 40 blocks of 75 s were.
+                expiry_delta_blocks: 120,
+            },
+            // The NU7 Regtest profiles: their NU6.2 namesakes' parameters,
+            // NU7's branch. Expiry stays 40 blocks: on Regtest blocks come
+            // when the harness mines them, not every 25 s.
+            ZecProfileId::DeterministicLocalV2 => {
+                Self::for_id(ZecProfileId::DeterministicLocalV1).on_regtest_nu7(id)
+            }
+            ZecProfileId::DeterministicLocalDevnetV5 => {
+                Self::for_id(ZecProfileId::DeterministicLocalDevnetV3).on_regtest_nu7(id)
+            }
+            ZecProfileId::DeterministicLocalDevnetV6 => {
+                Self::for_id(ZecProfileId::DeterministicLocalDevnetV4).on_regtest_nu7(id)
+            }
+        }
+    }
+
+    /// A Regtest NU6.2 profile's parameters under `id` on Regtest's NU7.
+    const fn on_regtest_nu7(self, id: ZecProfileId) -> Self {
+        Self {
+            id,
+            consensus_branch_id: BranchId::Nu7,
+            ..self
         }
     }
 

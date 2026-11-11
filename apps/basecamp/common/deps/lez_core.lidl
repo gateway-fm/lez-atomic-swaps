@@ -1,0 +1,13 @@
+; lez_core contract — the subset the desks use to give Basecamp's lez_core (the
+; LEZ wallet as a Logos module) their role's account: the wallet's own open and
+; create_new, and import_public_account from
+; deploy/builder/patches/logos-execution-zone-module (0002). Supplied as a
+; dependency_override (see the role metadata.json). Hand-maintained: keep it in
+; sync with that module.
+module lez_core {
+  version "0.4.1-sign.4"
+
+  method create_new(config_path: tstr, storage_path: tstr, statistics_path: tstr, password: tstr) -> tstr
+  method open(config_path: tstr, storage_path: tstr, statistics_path: tstr) -> int
+  method import_public_account(private_key_hex: tstr) -> int
+}

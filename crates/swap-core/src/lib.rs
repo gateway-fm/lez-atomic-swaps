@@ -973,15 +973,25 @@ impl SwapCoordinator {
     ///
     /// Before maker funding, this clears the observation so an explicit replacement can be
     /// accepted. After maker funding, the committed transaction ID is retained and claims are
-    /// suspended; a different transaction can never be substituted silently.
+    /// suspended; a different transaction can never be substituted silently. A `Completed` or
+    /// `Refunded` swap is settled: the removal is refused and changes nothing.
     ///
     /// # Errors
     ///
     /// Returns [`Error::ConflictingTakerLock`] when the removed transaction is not the committed
-    /// taker transaction.
+    /// taker transaction, and [`Error::InvalidPhase`] once the swap is settled.
     pub fn observe_taker_lock_removed(&mut self, transaction_id: &str) -> Result<(), Error> {
         if self.taker_lock_transaction_id.as_deref() != Some(transaction_id) {
             return Err(Error::ConflictingTakerLock);
+        }
+        // A settled swap is never changed again. The removal is refused rather than absorbed:
+        // accepting it while keeping the funding flag would leave the coordinator answering a
+        // replayed claim as if the leg were still on the chain.
+        if matches!(self.phase, Phase::Completed | Phase::Refunded) {
+            return Err(Error::InvalidPhase {
+                expected: Phase::BothLegsLocked,
+                actual: self.phase,
+            });
         }
         // Recorded before the phase dispatch: the leg is gone whatever the phase already
         // says about the other one. The `_` arm below drops the transition when the maker
@@ -1015,15 +1025,23 @@ impl SwapCoordinator {
     /// Records that the committed maker-funded transaction left the canonical chain.
     ///
     /// The transaction ID remains pinned. Claims are suspended until the exact
-    /// transaction reappears, while independent refunds remain available.
+    /// transaction reappears, while independent refunds remain available. A `Completed` or
+    /// `Refunded` swap is settled: the removal is refused and changes nothing.
     ///
     /// # Errors
     ///
     /// Returns [`Error::ConflictingMakerLock`] when the removed transaction does not
-    /// match the committed maker funding ID.
+    /// match the committed maker funding ID, and [`Error::InvalidPhase`] once the swap is
+    /// settled.
     pub fn observe_maker_lock_removed(&mut self, transaction_id: &str) -> Result<(), Error> {
         if self.maker_lock_transaction_id.as_deref() != Some(transaction_id) {
             return Err(Error::ConflictingMakerLock);
+        }
+        if matches!(self.phase, Phase::Completed | Phase::Refunded) {
+            return Err(Error::InvalidPhase {
+                expected: Phase::BothLegsLocked,
+                actual: self.phase,
+            });
         }
         // As above, and for the same reason: a maker removal while the taker leg is already
         // the reason for the phase used to be dropped entirely.
@@ -1097,10 +1115,15 @@ impl SwapCoordinator {
     /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
     fn observe_maker_lock_impl(&mut self, proof: ChainProof) -> Result<(), Error> {
         let confirmed = proof.confirmations >= self.maker_confirmation_policy.required();
+        // `TakerLockReorged` is here so the maker leg's depth is still recorded while the
+        // taker leg is the reason for the phase; the table below leaves that phase alone.
+        // It used to fall through to the early return further down, which kept a stale
+        // `maker_funding_confirmed` and let a claim through once the taker leg came back.
         if matches!(
             self.phase,
             Phase::AwaitingMakerConfirmations
                 | Phase::BothLegsLocked
+                | Phase::TakerLockReorged
                 | Phase::MakerLockReorged
                 | Phase::ClaimEvidenceAvailable
         ) {
@@ -1245,10 +1268,25 @@ impl SwapCoordinator {
 
     /// Refunds the maker-funded leg at its typed chain position.
     ///
+    /// After a revealing claim is recorded no refund is admitted while that evidence stands.
+    /// The phase alone cannot say this: the lock-removal observers move a swap that holds
+    /// claim evidence into `TakerLockReorged` or `MakerLockReorged`, which admit refunds, and
+    /// keep the evidence, so the refund asks [`Self::claim_evidence`] first. The model has no
+    /// observation of the revealing claim itself leaving the chain, so the evidence is never
+    /// withdrawn and the refusal is final: the revealing claim has spent one leg and given the
+    /// counterparty what it needs to claim the other, so neither leg is the refunder's to take.
+    ///
     /// # Errors
     ///
-    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable.
+    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable;
+    /// always the invalid-phase error once claim evidence is recorded.
     pub fn refund_maker_leg(&mut self, observed: ChainPosition) -> Result<(), Error> {
+        if self.claim_evidence.is_some() {
+            return Err(Error::InvalidPhase {
+                expected: Phase::BothLegsLocked,
+                actual: self.phase,
+            });
+        }
         if !matches!(
             self.phase,
             Phase::BothLegsLocked
@@ -1359,10 +1397,20 @@ impl SwapCoordinator {
 
     /// Refunds the taker-funded leg at its typed deadline.
     ///
+    /// After a revealing claim is recorded no refund is admitted while that evidence stands;
+    /// [`Self::refund_maker_leg`] says why the phase alone cannot enforce this.
+    ///
     /// # Errors
     ///
-    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable.
+    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable;
+    /// always the invalid-phase error once claim evidence is recorded.
     pub fn refund_taker_leg(&mut self, observed: ChainPosition) -> Result<(), Error> {
+        if self.claim_evidence.is_some() {
+            return Err(Error::InvalidPhase {
+                expected: Phase::TakerLockConfirmed,
+                actual: self.phase,
+            });
+        }
         if !matches!(
             self.phase,
             Phase::AwaitingTakerConfirmations

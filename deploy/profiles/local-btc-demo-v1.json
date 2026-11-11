@@ -6,19 +6,6 @@
   "artifact_identity_policy": "Pinned upstream image digests plus SHA-256-verified staged Rust and LEZ service binaries; scripts/stage-assets.sh is the profile gate.",
   "components": [
     {
-      "id": "bitcoin-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "shared",
-      "pair": "bitcoin",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": []
-    },
-    {
       "id": "bitcoin-core",
       "lifecycle": "service",
       "executable": "bitcoind",
@@ -36,9 +23,7 @@
       ],
       "public_identities": [],
       "health": "bitcoin-cli getblockchaininfo",
-      "depends_on": [
-        "bitcoin-init"
-      ]
+      "depends_on": []
     },
     {
       "id": "btc-miner",
@@ -69,23 +54,10 @@
         "read-only BTC RPC password"
       ],
       "public_identities": [],
-      "health": "HTTP UI",
+      "health": "HTTP UI (compose profile explorers; off by default)",
       "depends_on": [
         "bitcoin-core"
       ]
-    },
-    {
-      "id": "zebra-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "shared",
-      "pair": "zcash",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": []
     },
     {
       "id": "zebra",
@@ -103,27 +75,12 @@
       "credentials": [],
       "public_identities": [],
       "health": "zebrad getblockchaininfo",
-      "depends_on": [
-        "zebra-init"
-      ]
-    },
-    {
-      "id": "lez-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "shared",
-      "pair": "lez",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
       "depends_on": []
     },
     {
-      "id": "bedrock",
+      "id": "network",
       "lifecycle": "service",
-      "executable": "logos-blockchain-node",
+      "executable": "LogosBasecamp + blockchain_module + lez_indexer_module (LEZ Network desk)",
       "role": "shared",
       "pair": "lez",
       "sockets": [],
@@ -131,14 +88,16 @@
         {
           "path": "deploy/runtime/bedrock",
           "backup": "recreatable"
+        },
+        {
+          "path": "deploy/runtime/indexer",
+          "backup": "recreatable"
         }
       ],
       "credentials": [],
       "public_identities": [],
-      "health": "sequencer/indexer observation",
-      "depends_on": [
-        "lez-init"
-      ]
+      "health": "node API connect + getLastFinalizedBlockId",
+      "depends_on": []
     },
     {
       "id": "sequencer",
@@ -157,27 +116,7 @@
       "public_identities": [],
       "health": "getBlock(1)",
       "depends_on": [
-        "bedrock"
-      ]
-    },
-    {
-      "id": "indexer",
-      "lifecycle": "service",
-      "executable": "indexer_service",
-      "role": "shared",
-      "pair": "lez",
-      "sockets": [],
-      "state": [
-        {
-          "path": "deploy/runtime/indexer",
-          "backup": "recreatable"
-        }
-      ],
-      "credentials": [],
-      "public_identities": [],
-      "health": "getLastFinalizedBlockId",
-      "depends_on": [
-        "sequencer"
+        "network"
       ]
     },
     {
@@ -190,23 +129,10 @@
       "state": [],
       "credentials": [],
       "public_identities": [],
-      "health": "HTTP UI",
+      "health": "HTTP UI (compose profile explorers; off by default)",
       "depends_on": [
-        "indexer"
+        "network"
       ]
-    },
-    {
-      "id": "maker-init",
-      "lifecycle": "one_shot_init",
-      "executable": "chown",
-      "role": "maker",
-      "pair": "all",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": []
     },
     {
       "id": "maker-node",
@@ -215,7 +141,8 @@
       "role": "maker",
       "pair": "all",
       "sockets": [
-        "/run/lez/maker/node.sock"
+        "/run/lez/maker/node.sock",
+        "/run/lez-wallet/maker/signer.sock"
       ],
       "state": [
         {
@@ -225,34 +152,25 @@
         {
           "path": "volume:lez-zec-maker",
           "backup": "critical"
+        },
+        {
+          "path": "volume:lez-maker-wallet",
+          "backup": "recreatable"
         }
       ],
       "credentials": [
-        "Maker-owned Delivery signing key"
+        "Maker-owned Delivery signing key",
+        "The Maker identity's LEZ signer key, imported into the lez_core wallet of the Maker's own Basecamp, which this service is (the Node it launches holds no LEZ key)",
+        "The Maker desk's role-local Chat/Delivery identity (the desk runs in this Basecamp)"
       ],
       "public_identities": [
         "/delivery/maker-delivery-identity.pub"
       ],
       "health": "maker_health",
       "depends_on": [
-        "maker-init",
+        "sequencer",
         "bitcoin-core",
-        "indexer"
-      ]
-    },
-    {
-      "id": "taker-init",
-      "lifecycle": "one_shot_init",
-      "executable": "bash",
-      "role": "taker",
-      "pair": "all",
-      "sockets": [],
-      "state": [],
-      "credentials": [],
-      "public_identities": [],
-      "health": "successful exit",
-      "depends_on": [
-        "maker-node"
+        "network"
       ]
     },
     {
@@ -262,7 +180,8 @@
       "role": "taker",
       "pair": "all",
       "sockets": [
-        "/run/lez/taker/node.sock"
+        "/run/lez/taker/node.sock",
+        "/run/lez-wallet/taker/signer.sock"
       ],
       "state": [
         {
@@ -272,23 +191,30 @@
         {
           "path": "volume:lez-zec-taker",
           "backup": "critical"
+        },
+        {
+          "path": "volume:lez-taker-wallet",
+          "backup": "recreatable"
         }
       ],
       "credentials": [
-        "No private key in discovery-only profile"
+        "No private key in discovery-only profile",
+        "The Taker identity's LEZ signer key, imported into the lez_core wallet of the Taker's own Basecamp, which this service is (the Node it launches holds no LEZ key)",
+        "The Taker desk's role-local Chat/Delivery identity (the desk runs in this Basecamp)"
       ],
       "public_identities": [
         "Read-only Maker Delivery public identity"
       ],
       "health": "taker_health",
       "depends_on": [
-        "taker-init"
+        "sequencer",
+        "maker-node"
       ]
     },
     {
       "id": "tools",
       "lifecycle": "one_shot_tool",
-      "executable": "lez-zec-escrow-v02-deployer + lez-v02-vault-claim-poc + lez-v02-local-actor-identity",
+      "executable": "lez-zec-escrow-v02-deployer + lez-wallet-vault-claim + lez-v02-local-actor-identity",
       "role": "shared",
       "pair": "all",
       "sockets": [],
@@ -305,13 +231,13 @@
       "health": "successful exit (compose profile tools; never a running service)",
       "depends_on": [
         "sequencer",
-        "indexer"
+        "network"
       ]
     },
     {
       "id": "heartbeat",
       "lifecycle": "service",
-      "executable": "lez-v02-heartbeat",
+      "executable": "lez-wallet-heartbeat",
       "role": "shared",
       "pair": "all",
       "sockets": [],
@@ -328,26 +254,21 @@
       "health": "status.json rewritten every tick (compose profile heartbeat; off with LEZ_HEARTBEAT_SECONDS=0)",
       "depends_on": [
         "sequencer",
-        "indexer"
+        "network"
       ]
     },
     {
       "id": "basecamp-ui",
-      "lifecycle": "service",
-      "executable": "lez-maker-ui + lez-taker-ui",
+      "lifecycle": "build_only",
+      "executable": "none (base image of the role and LEZ network Basecamps)",
       "role": "both",
       "pair": "all",
       "sockets": [],
       "state": [],
-      "credentials": [
-        "Role-local Chat/Delivery identities"
-      ],
+      "credentials": [],
       "public_identities": [],
-      "health": "role package smoke tests",
-      "depends_on": [
-        "maker-node",
-        "taker-node"
-      ]
+      "health": "none: runs no container",
+      "depends_on": []
     }
   ],
   "verification_commands": [

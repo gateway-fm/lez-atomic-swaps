@@ -1,5 +1,12 @@
 # M3+ submission scope and provenance
 
+> The issue #115 work on PR #120 (the LEZ network, signers and Node
+> supervisor as Logos modules in Basecamp) has its own submission page:
+> [submission-115.md](submission-115.md), with requirement traceability, the
+> Basecamp-versus-Compose split, the upstream patch register, limitations,
+> pending gates and the open-issue ledger. The rest of this page describes
+> the earlier M1 + M3 + M6 package.
+
 This branch is a focused proposal package for the LEZ/BTC vertical slice. It
 combines the accepted design foundation, the Bitcoin implementation evidence,
 and the Basecamp product surface without presenting unrelated milestone work as

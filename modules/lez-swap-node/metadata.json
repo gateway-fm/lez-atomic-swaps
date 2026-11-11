@@ -1,0 +1,22 @@
+{
+  "name": "lez_swap_node",
+  "display_name": "LEZ Swap Node",
+  "version": "0.3.1",
+  "description": "Launches and supervises a swap role's Node (the swap engine) inside Basecamp and relays its LEZ signing requests to Basecamp's wallet",
+  "type": "core",
+  "interface": "universal",
+  "category": "blockchain",
+  "main": "lez_swap_node_plugin",
+  "dependencies": [
+    "lez_core"
+  ],
+  "nix": {
+    "external_libraries": [],
+    "cmake": {}
+  },
+  "dependency_overrides": {
+    "lez_core": {
+      "file": "deps/lez_core.lidl"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "lez_maker_node",
+  "display_name": "LEZ Maker Node",
+  "version": "0.1.0",
+  "description": "The Maker's Node (the swap engine) and everything it runs: the Maker Node, its CLI, its Bitcoin and Zcash actors and the LEZ v0.2 sidecar, with the launcher lez_swap_node starts it from. Linux only (linux-amd64, linux-arm64)",
+  "type": "core",
+  "interface": "universal",
+  "category": "blockchain",
+  "main": "lez_maker_node_plugin",
+  "dependencies": [
+    "lez_swap_node"
+  ],
+  "nix": {
+    "external_libraries": [],
+    "cmake": {}
+  },
+  "dependency_overrides": {
+    "lez_swap_node": {
+      "file": "deps/lez_swap_node.lidl"
+    }
+  }
+}

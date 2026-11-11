@@ -11,8 +11,7 @@ use zcash_primitives::{
     transaction::{
         Authorization as TransactionAuthorization, Authorized as TransactionAuthorized,
         Transaction, TransactionData, TxVersion,
-        sighash::{SignableInput as TransactionSignableInput, signature_hash},
-        txid::TxIdDigester,
+        sighash::{PrecomputedSighashData, SignableInput as TransactionSignableInput},
     },
 };
 use zcash_protocol::{
@@ -43,7 +42,7 @@ fn key(byte: u8) -> SecretKey {
 
 fn pubkey_hash(secret_key: &SecretKey) -> [u8; 20] {
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), secret_key);
-    match TransparentAddress::from_pubkey(&public_key) {
+    match lez_zec_swap_sdk::p2pkh_address(&public_key) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!(),
     }
@@ -58,7 +57,7 @@ fn fixture() -> (
     let refund_key = key(1);
     let claimant_key = key(2);
     let destination_key = key(3);
-    let destination = TransparentAddress::from_pubkey(&PublicKey::from_secret_key(
+    let destination = lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_secret_key(
         &Secp256k1::new(),
         &destination_key,
     ));
@@ -179,8 +178,8 @@ fn signed_claim_with(
         None,
         None,
     );
-    let txid_parts = unsigned.digest(TxIdDigester);
-    let bundle = unsigned.transparent_bundle().unwrap();
+    let precomputed = PrecomputedSighashData::new_zip244(unsigned).unwrap();
+    let bundle = precomputed.tx().transparent_bundle().unwrap();
     let redeem_script = Script(Code(contract.redeem_script().to_vec()));
     let signable = TransparentSignableInput::from_parts(
         bundle,
@@ -191,11 +190,7 @@ fn signed_claim_with(
         request.funding_output().value(),
     )
     .unwrap();
-    let digest = signature_hash(
-        &unsigned,
-        &TransactionSignableInput::Transparent(signable),
-        &txid_parts,
-    );
+    let digest = precomputed.signature_hash(&TransactionSignableInput::Transparent(signable));
     let secp = Secp256k1::signing_only();
     let mut signature = secp
         .sign_ecdsa(&Message::from_digest(*digest.as_ref()), secret_key)
@@ -526,7 +521,7 @@ fn consensus_observation_preserves_effects_while_policy_reports_mismatches() {
     let (contract, request, _, _) = fixture();
     let expected = expected(contract.clone(), &request);
     let wrong_destination =
-        TransparentAddress::from_pubkey(&PublicKey::from_secret_key(&Secp256k1::new(), &key(4)));
+        lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_secret_key(&Secp256k1::new(), &key(4)));
     let wrong_output = TxOut::new(
         Zatoshis::from_u64(80_000).unwrap(),
         wrong_destination.script().into(),

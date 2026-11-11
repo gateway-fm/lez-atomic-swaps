@@ -193,6 +193,11 @@ struct Arguments {
         value_parser = clap::value_parser!(u64).range(100..=60_000)
     )]
     route_health_poll_milliseconds: Option<u64>,
+    /// Seconds the finalized LEZ block id may stand still, while the
+    /// sequencer's tip moves, before `maker_health` reports
+    /// `lez_finality_stalled` (Node-owned lifecycle only); 600 when not given.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(10..=86_400))]
+    lez_finality_stall_seconds: Option<u64>,
     /// Runs the persistent pair-neutral actor coordinator on a dedicated store connection.
     #[arg(long, action = clap::ArgAction::SetTrue)]
     actor_supervisor: bool,
@@ -1012,7 +1017,11 @@ fn configured_btc_chat_authority(
         .as_ref()
         .map(|path| BtcMakerLifecycle::load(path))
         .transpose()
-        .context("validate BTC Maker lifecycle configuration")?;
+        .context("validate BTC Maker lifecycle configuration")?
+        .map(|lifecycle| match arguments.lez_finality_stall_seconds {
+            Some(seconds) => lifecycle.with_lez_finality_stall_seconds(seconds),
+            None => lifecycle,
+        });
     ensure!(
         actor_provisioner.is_some() || role_authority.is_some() || lifecycle.is_some(),
         "BTC signing key requires actor templates, a role-agreement root, or a role configuration"

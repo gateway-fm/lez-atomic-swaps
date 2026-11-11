@@ -201,8 +201,13 @@ impl Fixture {
             ZecProfileId::DeterministicLocalV1
             | ZecProfileId::DeterministicLocalDevnetV1
             | ZecProfileId::DeterministicLocalDevnetV2
-            | ZecProfileId::DeterministicLocalDevnetV3 => (NetworkType::Regtest, BranchId::Nu6_2),
+            | ZecProfileId::DeterministicLocalDevnetV3
+            | ZecProfileId::DeterministicLocalDevnetV4 => (NetworkType::Regtest, BranchId::Nu6_2),
+            ZecProfileId::DeterministicLocalV2
+            | ZecProfileId::DeterministicLocalDevnetV5
+            | ZecProfileId::DeterministicLocalDevnetV6 => (NetworkType::Regtest, BranchId::Nu7),
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
+            ZecProfileId::PublicTestnetV2 => (NetworkType::Test, BranchId::Nu7),
         };
         let output = ExpectedBip199Output::new(
             network,
@@ -401,6 +406,135 @@ fn devnet_profile_round_trips_on_the_wire_and_an_unknown_tag_is_rejected() {
         ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
         "an unknown profile tag must not decode"
     );
+}
+
+#[test]
+fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
+    let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+    fixture.body_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    fixture.binding_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    // 240 s after the LEZ anchor (100), eight blocks after the Zcash one (116).
+    fixture.earlier_latest_ms = 340_000;
+    fixture.later_earliest = 370;
+    fixture.zcash_refund_lock = 124;
+    let agreement = fixture.validate().expect("v4 agreement validates");
+    let wire = agreement.encode_wire().expect("bounded wire");
+    let decoded = ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+        .expect("the v4 profile decodes from its own wire");
+    assert_eq!(decoded.record(), agreement.record());
+    assert_eq!(
+        ZecRefundProfile::for_id(decoded.binding().profile_id()).lez_refund_delay(),
+        UnixSeconds::new(240)
+    );
+    let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+    assert_eq!(wire[profile_offset], 5, "the v4 profile is wire tag 5");
+    let mut unknown = wire.clone();
+    unknown[profile_offset] = 10;
+    assert!(
+        ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
+        "a tag past the last profile must not decode"
+    );
+    // Only the profile's own Zcash window validates under its id.
+    let mut stale = Fixture::new(SwapDirection::TakerSellsLez);
+    stale.body_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    stale.binding_profile = ZecProfileId::DeterministicLocalDevnetV4;
+    stale.earlier_latest_ms = 340_000;
+    stale.later_earliest = 370;
+    stale.zcash_refund_lock = 120;
+    assert!(
+        stale.validate().is_err(),
+        "a four-block Zcash window under v4 must not validate"
+    );
+}
+
+#[test]
+fn public_testnet_v2_is_wire_tag_six_on_nu7_with_its_own_window() {
+    let mut fixture = Fixture::public(SwapDirection::TakerSellsLez);
+    fixture.body_profile = ZecProfileId::PublicTestnetV2;
+    fixture.binding_profile = ZecProfileId::PublicTestnetV2;
+    // 3,700 blocks after the Zcash anchor (100); the LEZ side is V1's.
+    fixture.zcash_refund_lock = 3_800;
+    fixture.expiry_delta = 120;
+    let agreement = fixture.validate().expect("v2 agreement validates");
+    assert_eq!(
+        agreement.binding().expected_output().consensus_branch_id(),
+        BranchId::Nu7
+    );
+    let wire = agreement.encode_wire().expect("bounded wire");
+    let decoded = ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+        .expect("the v2 profile decodes from its own wire");
+    assert_eq!(decoded.record(), agreement.record());
+    let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+    assert_eq!(wire[profile_offset], 6, "public-testnet-v2 is wire tag 6");
+    let mut unknown = wire.clone();
+    unknown[profile_offset] = 10;
+    assert!(
+        ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
+        "a tag past the last profile must not decode"
+    );
+
+    // V1's 192-block window, or a deterministic LEZ environment, does not
+    // validate under V2.
+    let mut v1_window = Fixture::public(SwapDirection::TakerSellsLez);
+    v1_window.body_profile = ZecProfileId::PublicTestnetV2;
+    v1_window.binding_profile = ZecProfileId::PublicTestnetV2;
+    v1_window.expiry_delta = 120;
+    assert!(v1_window.validate().is_err());
+    let mut local_lez = Fixture::public(SwapDirection::TakerSellsLez);
+    local_lez.body_profile = ZecProfileId::PublicTestnetV2;
+    local_lez.binding_profile = ZecProfileId::PublicTestnetV2;
+    local_lez.zcash_refund_lock = 3_800;
+    local_lez.expiry_delta = 120;
+    local_lez.environment = LezEnvironmentV1::DeterministicLocalV0_2;
+    assert!(local_lez.validate().is_err());
+}
+
+#[test]
+fn nu7_regtest_profiles_are_wire_tags_seven_to_nine_and_sign_for_nu7() {
+    // (profile, tag, LEZ refund delay): deadlines from the LEZ anchor (100 s)
+    // and the Zcash one (116) as in the NU6.2 namesakes' fixtures.
+    for (profile, tag, delay, refund_blocks) in [
+        (ZecProfileId::DeterministicLocalV2, 7_u8, 60_u64, 4_u32),
+        (ZecProfileId::DeterministicLocalDevnetV5, 8, 720, 8),
+        (ZecProfileId::DeterministicLocalDevnetV6, 9, 240, 8),
+    ] {
+        let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+        fixture.body_profile = profile;
+        fixture.binding_profile = profile;
+        fixture.earlier_latest_ms = (100 + delay) * 1_000;
+        fixture.later_earliest = 100 + delay + 30;
+        fixture.zcash_refund_lock = 116 + refund_blocks;
+        let agreement = fixture.validate().expect("NU7 Regtest agreement validates");
+        assert_eq!(
+            agreement.binding().expected_output().consensus_branch_id(),
+            BranchId::Nu7
+        );
+        assert_eq!(
+            agreement.binding().expected_output().network(),
+            NetworkType::Regtest
+        );
+        let wire = agreement.encode_wire().expect("bounded wire");
+        let decoded = ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+            .expect("the NU7 profile decodes from its own wire");
+        assert_eq!(decoded.record(), agreement.record());
+        let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+        assert_eq!(wire[profile_offset], tag, "{} wire tag", profile.as_str());
+        // The same bytes under the NU6.2 namesake's tag do not validate: the
+        // binding names NU7.
+        let mut namesake = wire.clone();
+        namesake[profile_offset] = match tag {
+            7 => 0,
+            8 => 4,
+            _ => 5,
+        };
+        assert!(ZecAgreementV1::from_wire_at(&namesake, UnixSeconds::new(NOW)).is_err());
+        let mut unknown = wire.clone();
+        unknown[profile_offset] = 10;
+        assert!(
+            ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
+            "a tag past the last profile must not decode"
+        );
+    }
 }
 
 #[test]
@@ -805,7 +939,7 @@ fn agreement_derives_and_validates_canonical_funding_claim_and_refund_requests()
         OutPoint::new([0x31; 32], 2),
         TxOut::new(
             Zatoshis::from_u64(150_000_000).expect("value"),
-            TransparentAddress::from_pubkey(&funder_key).script().into(),
+            lez_zec_swap_sdk::p2pkh_address(&funder_key).script().into(),
         ),
     );
     fixture.funding_input_set_commitment =
@@ -1190,7 +1324,7 @@ fn public_key(secret_key: &SecretKey) -> PublicKey {
 }
 
 fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
+    match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }

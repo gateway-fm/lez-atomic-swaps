@@ -1,7 +1,7 @@
 //! Validation and classification of BIP-199 Zcash spends.
 //!
-//! Consensus recognition intentionally uses pinned Zebra 5.2.0 script flags, while SDK wallet
-//! conventions are reported separately. This one-shot observer does not provide durable reorg
+//! Consensus recognition intentionally uses pinned Zebra 7.0.0 script flags (5.2.0's, unchanged),
+//! while SDK wallet conventions are reported separately. This one-shot observer does not provide durable reorg
 //! removal/persistence. The SDK orchestration layer must derive [`ExpectedBip199Spend`] from a
 //! validated agreement and canonical funding observation, and a future multi-input non-ACP
 //! adapter must supply every prevout amount/script required by ZIP-244.
@@ -16,8 +16,7 @@ use zcash_primitives::{
     block::BlockHash,
     transaction::{
         Authorization as TransactionAuthorization, Transaction,
-        sighash::{SignableInput as TransactionSignableInput, signature_hash},
-        txid::TxIdDigester,
+        sighash::{PrecomputedSighashData, SignableInput as TransactionSignableInput},
     },
 };
 use zcash_protocol::{
@@ -33,7 +32,7 @@ use zcash_script::{
     signature::{HashType, SignedOutputs},
 };
 use zcash_transparent::{
-    address::{Script, TransparentAddress},
+    address::Script,
     bundle::{Authorization as TransparentAuthorization, Bundle, OutPoint, TxIn, TxOut},
     sighash::{
         SighashType, SignableInput as TransparentSignableInput, TransparentAuthorizingContext,
@@ -42,7 +41,7 @@ use zcash_transparent::{
 
 use crate::{Bip199Contract, ObservationError, TransparentSpendRequest, ZcashStableTip};
 
-/// Pinned Zebra 5.2.0 maximum serialized block/transaction byte budget.
+/// Pinned Zebra 7.0.0 (as 5.2.0) maximum serialized block/transaction byte budget.
 pub const ZEBRA_MAX_BLOCK_BYTES: usize = 2_000_000;
 
 /// Pinned `zcash_script` consensus maximum for one script.
@@ -893,10 +892,7 @@ fn validated_role_key(
     if encoded != compressed {
         return Err(SpendObservationError::WrongSpendingRole);
     }
-    let actual_hash = match TransparentAddress::from_pubkey(&public_key) {
-        TransparentAddress::PublicKeyHash(hash) => hash,
-        TransparentAddress::ScriptHash(_) => unreachable!("public keys always yield P2PKH"),
-    };
+    let actual_hash = crate::zcash_keys::p2pkh_hash(&public_key);
     if actual_hash != expected_hash {
         return Err(SpendObservationError::WrongSpendingRole);
     }
@@ -992,8 +988,8 @@ fn is_low_s(signature_with_hash_type: &[u8]) -> bool {
 }
 
 fn script_flags() -> Flags {
-    // Exact pinned Zebra 5.2.0 consensus flags. Canonical wallet policy belongs in
-    // `SdkCanonicalSpendPolicy` and must never alter spend recognition.
+    // Exact pinned Zebra 7.0.0 consensus flags (zebra-script, as in 5.2.0). Canonical wallet
+    // policy belongs in `SdkCanonicalSpendPolicy` and must never alter spend recognition.
     Flags::P2SH | Flags::CHECKLOCKTIMEVERIFY
 }
 
@@ -1031,8 +1027,10 @@ fn executes_contract(
             |bundle| bundle,
             |bundle| bundle,
         );
-    let txid_parts = data.digest(TxIdDigester);
-    let Some(bundle) = data.transparent_bundle() else {
+    let Ok(precomputed) = PrecomputedSighashData::new_zip244(data) else {
+        return false;
+    };
+    let Some(bundle) = precomputed.tx().transparent_bundle() else {
         return false;
     };
     let sighash = |script_code: &Code, hash_type: &HashType| {
@@ -1075,12 +1073,9 @@ fn executes_contract(
         )
         .ok()?;
         Some(
-            *signature_hash(
-                &data,
-                &TransactionSignableInput::Transparent(signable),
-                &txid_parts,
-            )
-            .as_ref(),
+            *precomputed
+                .signature_hash(&TransactionSignableInput::Transparent(signable))
+                .as_ref(),
         )
     };
     let input = &transaction

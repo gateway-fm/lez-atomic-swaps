@@ -18,6 +18,9 @@
 #   scripts/ensure-chain.sh [check_window_seconds] [recheck_window_seconds]
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# The stack's Taker (scripts/lane.sh: lane 1 of the stack this directory runs).
+# shellcheck source=lane.sh
+source scripts/lane.sh || exit 1
 
 check_window="${1:-60}"
 recheck_window="${2:-180}"
@@ -26,7 +29,7 @@ recheck_window="${2:-180}"
 indexer_url="${LEZ_INDEXER_URL:-http://127.0.0.1:8779/}"
 
 finalized() {
-  docker exec lez-taker-node curl -sf -m 10 -H 'content-type: application/json' \
+  docker exec "$LEZ_CONTAINER_PREFIX-taker-node" curl -sf -m 10 -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
     "$indexer_url" 2>/dev/null |
     python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null

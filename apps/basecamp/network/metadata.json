@@ -1,0 +1,27 @@
+{
+  "name": "lez_network",
+  "display_name": "LEZ Network",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "category": "blockchain",
+  "description": "Hosts the LEZ network node and the LEZ indexer in this Basecamp.",
+  "interface": "universal",
+  "main": "lez_network_plugin",
+  "view": "qml/Main.qml",
+  "icon": "icons/network.svg",
+  "dependencies": [
+    "blockchain_module",
+    "lez_indexer_module"
+  ],
+  "dependency_overrides": {
+    "blockchain_module": {
+      "file": "deps/blockchain_module.lidl"
+    },
+    "lez_indexer_module": {
+      "file": "deps/lez_indexer_module.lidl"
+    }
+  },
+  "codegen": {
+    "rep": "src/lez_network.rep"
+  }
+}

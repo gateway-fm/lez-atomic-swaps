@@ -1,0 +1,53 @@
+
+[01:36:26] === restart-taker (TakerSellsForeign)
+
+[01:36:28] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[01:36:36] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   57a79d121e9d28d44069f608066389238ab2bc652abd2ace9351033cb539871c awaiting_first_lock 0 -
+
+[01:36:45] Taker desk: lock_btc on 57a79d121e9d
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[01:36:57] The taker Node is restarted now, between the Taker's lock and its claim; swaps survive a Node restart
+
+[01:37:09] Maker desk shows 57a79d121e9d at awaiting_taker_claim
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[01:40:29] Taker desk: claim_lez on 57a79d121e9d
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[01:40:41] Maker desk shows 57a79d121e9d at completed
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[01:42:50] Taker desk shows 57a79d121e9d at completed
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 57a79d121e9d: runtime/evidence/57a79d121e9d28d44069f608066389238ab2bc652abd2ace9351033cb539871c.json (5 effects, completed 2026-11-10T01:42:39Z)
+
+[01:42:58] === restart-taker (TakerSellsForeign): passed in 392s

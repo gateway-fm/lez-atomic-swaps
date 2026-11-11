@@ -1,0 +1,51 @@
+
+[01:22:21] === happy (TakerSellsForeign)
+
+[01:22:28] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[01:22:35] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   4ab2d1b9fca4939cde1f8114b42fca4e1abba34aa05f9d25dcfcb456ea4d5573 awaiting_first_lock 0 -
+
+[01:22:46] Taker desk: lock_btc on 4ab2d1b9fca4
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[01:22:58] Maker desk shows 4ab2d1b9fca4 at awaiting_taker_claim
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[01:33:59] Taker desk: claim_lez on 4ab2d1b9fca4
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[01:34:14] Maker desk shows 4ab2d1b9fca4 at completed
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[01:34:52] Taker desk shows 4ab2d1b9fca4 at completed
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 4ab2d1b9fca4: runtime/evidence/4ab2d1b9fca4939cde1f8114b42fca4e1abba34aa05f9d25dcfcb456ea4d5573.json (5 effects, completed 2026-11-10T01:34:39Z)
+
+[01:35:01] === happy (TakerSellsForeign): passed in 760s

@@ -60,6 +60,17 @@ fuzz_target!(|data: &[u8]| {
                 "completed coordinator lost public claim evidence"
             );
         }
+        // No reachable state is refunded while claim evidence stands: the model has no
+        // observation of the revealing claim leaving the chain (issue #103 item 16).
+        if matches!(
+            swap.phase(),
+            Phase::Refunded | Phase::MakerLegRefunded | Phase::TakerLegRefunded
+        ) {
+            assert!(
+                swap.claim_evidence().is_none(),
+                "refunded coordinator holds revealing claim evidence"
+            );
+        }
 
         assert_eq!(swap.id().as_str(), immutable_id);
         assert_eq!(swap.pair(), pair);

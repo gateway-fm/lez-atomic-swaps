@@ -1,0 +1,13 @@
+[18:06:26] regression run: 1 tests at d0a626c5 (tree dirty: 0), results in runtime/regress/20261111T180625Z
+[18:06:26] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[18:06:26] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[18:07:06]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 1)
+[18:10:28] === node:zec:zec-claim-collision:TakerSellsForeign (try 1, lane 1): NOT-EXERCISED in 190 s
+[18:10:28]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 2)
+[18:13:53] === node:zec:zec-claim-collision:TakerSellsForeign (try 2, lane 1): NOT-EXERCISED in 194 s
+[18:13:53]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 3)
+[18:18:36] === node:zec:zec-claim-collision:TakerSellsForeign (try 3, lane 1): NOT-EXERCISED in 267 s
+[18:18:36]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 4)
+[18:22:15] === node:zec:zec-claim-collision:TakerSellsForeign (try 4, lane 1): NOT-EXERCISED in 202 s
+[18:22:16] regression run: 0 of 1 passed in 15 min, 0 new chains, 0 profile switches, 0 frozen tries
+[18:22:16]   not passed: node:zec:zec-claim-collision:TakerSellsForeign

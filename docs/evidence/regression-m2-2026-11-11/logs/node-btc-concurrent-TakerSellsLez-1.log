@@ -1,0 +1,23 @@
+[17:26:53] === concurrent (stamp 1794418013)
+[17:26:53] preflight: indexer historical reads
+[17:26:55]   indexer serves historical reads at the tip (3491)
+[17:26:55] preflight: LEZ finality check waived by request
+[17:26:55]   Maker published offer-e2e-1794418013-a
+[17:26:59]   Taker took offer-e2e-1794418013-a: swap e31244815b01 (not_activated)
+[17:27:00]   Maker published offer-e2e-1794418013-b
+[17:27:03]   Taker took offer-e2e-1794418013-b: swap bb2c54c5e074 (not_activated)
+[17:27:03]   Taker locked lez: 394dd403d66f (replay=False)
+[17:27:13]   Taker locked lez: 362269a70f65 (replay=False)
+[17:27:20]   taker e31244815b01: awaiting_second_lock (gen 1) | maker: offered
+[17:28:00]   taker e31244815b01: claim_available (gen 2) | maker: taker_lock_confirmed
+[17:28:01]   Taker claimed Bitcoin (replay=False)
+[17:28:02]   taker bb2c54c5e074: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[17:28:19]   taker bb2c54c5e074: claim_available (gen 2) | maker: taker_lock_confirmed
+[17:28:20]   Taker claimed Bitcoin (replay=False)
+[17:28:20]   taker e31244815b01: claim_in_progress (gen 3) | maker: taker_lock_confirmed
+[17:29:36]   taker e31244815b01: completed (gen 4) | maker: claim_evidence_available
+[17:29:50]   both Nodes report e31244815b01 completed
+[17:29:50]   taker bb2c54c5e074: claim_in_progress (gen 3) | maker: claim_evidence_available
+[17:30:00]   taker bb2c54c5e074: completed (gen 4) | maker: claim_evidence_available
+[17:30:07]   both Nodes report bb2c54c5e074 completed
+[17:30:07] === concurrent: passed in 194s

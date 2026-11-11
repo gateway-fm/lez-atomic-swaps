@@ -1,0 +1,16 @@
+[17:30:41] === restart-taker (stamp 1794245441)
+[17:30:42] preflight: indexer historical reads
+[17:30:55]   indexer serves historical reads at the tip (77)
+[17:30:55] preflight: the finality heartbeat saw finality move 32 s ago (finalized 0)
+[17:30:55]   Maker published offer-e2e-1794245441
+[17:30:57]   Taker took offer-e2e-1794245441: swap a4789fd656cf (not_activated)
+[17:30:57]   Taker locked lez: 5689b4d0fe19 (replay=False)
+[17:30:57]   restarting lez-taker-node
+[17:31:17]   taker a4789fd656cf: awaiting_first_lock (gen 0) | maker: offered
+[17:32:50]   taker a4789fd656cf: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[17:34:12]   taker a4789fd656cf: claim_available (gen 2) | maker: taker_lock_confirmed
+[17:34:12]   Taker claimed Bitcoin (replay=False)
+[17:34:13]   taker a4789fd656cf: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[17:36:47]   taker a4789fd656cf: completed (gen 4) | maker: completed
+[17:36:47]   both Nodes report a4789fd656cf completed
+[17:36:47] === restart-taker: passed in 366s

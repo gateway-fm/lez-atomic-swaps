@@ -1,0 +1,48 @@
+
+[04:40:46] === taker-refund (TakerSellsForeign)
+
+[04:40:54] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[04:41:02] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   5e7e76a42ed3d6927b0379c08b1f7152aaa3ceba966f522dea0bbb815bbe0ff0 awaiting_first_lock 0 -
+
+[04:41:13] The Maker Node is stopped before it can lock; the Taker locks anyway and must recover its funds later
+
+[04:41:13] Taker desk: lock_btc on 5e7e76a42ed3
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[04:41:26] The Maker's lock cutoff (600 s after the take) passes with no Maker lock; the desk then offers Refund
+
+[04:41:26] Taker desk: refund_btc on 5e7e76a42ed3
+  [32m✓[0m taker: launcher discoverable and app opens
+  » The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures
+  [32m✓[0m taker: perform refund_btc
+2 passed, 0 failed
+
+[04:51:20] The Maker Node is started again and reconciles the refunded swap
+
+[04:51:41] Taker desk shows 5e7e76a42ed3 at refunded
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: swap reaches refunded
+2 passed, 0 failed
+
+[05:13:11] Maker desk shows 5e7e76a42ed3 at refunded
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached refunded (refunded)
+  [32m✓[0m maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[05:13:22] === taker-refund (TakerSellsForeign): passed in 1956s

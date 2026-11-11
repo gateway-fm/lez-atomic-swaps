@@ -24,13 +24,19 @@ readonly LEZ_ATTACH_RUN="market-lez-0001"
 
 fail() { echo "market bootstrap failed: $*" >&2; exit 2; }
 
+# Bounded: a historical read takes ~16 s on a long chain, and an indexer stuck
+# on a frozen chain otherwise holds the bootstrap (and up.sh) forever.
 indexer() {
-  curl -sf -H 'content-type: application/json' \
+  curl -sf -m 60 -H 'content-type: application/json' \
     -d "$(jq -cn --arg m "$1" --argjson p "$2" '{jsonrpc:"2.0",id:1,method:$m,params:$p}')" \
     "$INDEXER_URL"
 }
 
-account_balance() { indexer getAccount "[\"$1\"]" | jq -r '.result.balance // empty'; }
+account_balance() {
+  local out
+  out="$(indexer getAccount "[\"$1\"]")" || fail "the indexer at $INDEXER_URL did not answer getAccount for $1"
+  jq -r '.result.balance // empty' <<<"$out"
+}
 
 # Wallet roster: name role owner_account vault_account allocation, read from
 # the identities the genesis funded (deploy/scripts/gen-config.sh reads the
@@ -42,11 +48,16 @@ account_balance() { indexer getAccount "[\"$1\"]" | jq -r '.result.balance // em
 : "${LEZ_WALLET_MAKER_ALLOCATION:?LEZ_WALLET_MAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 : "${LEZ_WALLET_TAKER_ALLOCATION:?LEZ_WALLET_TAKER_ALLOCATION must come from runtime.env (gen-config.sh)}"
 WALLETS=()
+# Regression lanes 3..9 (scripts/lane.sh) settle as wallets of their own; each
+# is claimed like the market wallets when its identity exists (lanes.sh mint).
+lane_wallets=()
+for lane in 3 4 5 6 7 8 9; do lane_wallets+=("$(printf 'maker-lane%02d' "$lane")" "$(printf 'taker-lane%02d' "$lane")"); done
 # The heartbeat's two accounts are claimed like the wallets (the claim tool's
 # --role is a journal label; the heartbeat uses `taker`), with their own
 # allocation, when the identities exist (an older market root has none).
-for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
+for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02 "${lane_wallets[@]}"; do
   identity="$MARKET_ROOT/identities/$wallet/identity.json"
+  [[ "$wallet" != *-lane[0-9][0-9] || -f "$identity" ]] || continue
   if [[ "$wallet" == heartbeat-* && ! -f "$identity" ]]; then echo "$wallet: no identity in this market root; the heartbeat has no account on this chain"; continue; fi
   [[ -f "$identity" ]] || fail "$wallet identity missing: $identity"
   role="${wallet%%-*}"
@@ -62,8 +73,27 @@ chmod 0700 "$MARKET_ROOT" "$MARKET_ROOT/bootstrap"
 
 # ── 1. escrow program deployment (once per chain) ──────────────────────────
 deployment_evidence="$MARKET_ROOT/bootstrap/deployment.json"
-# Evidence for another program (a chain recreated since, or another pinned
-# guest) does not count: deploy again and record the new transaction.
+# The genesis of the chain this bootstrap talks to (the deployer records the
+# same block, LEZ's genesis id 1, in its preflight). A new chain's indexer can
+# take a moment to serve it.
+live_genesis=""
+for _ in $(seq 1 30); do
+  live_genesis="$(indexer getBlockById '[1]' 2>/dev/null | jq -r '.result.header.hash // empty' 2>/dev/null || true)"
+  [[ ! "$live_genesis" =~ ^[0-9a-f]{64}$ ]] || break
+  sleep 2
+done
+[[ "$live_genesis" =~ ^[0-9a-f]{64}$ ]] || fail "the indexer at $INDEXER_URL does not serve the LEZ genesis block (getBlockById 1)"
+# Evidence for another program or another chain (one recreated since, by
+# down.sh --wipe or up.sh --fresh-lez, or a market root carried to another
+# stack) does not count: retire it with the manifest written from it, deploy
+# again and record the new transaction.
+if [[ -s "$deployment_evidence" ]] \
+   && ! jq -e --arg genesis "$live_genesis" '.preflight.genesis_block_hash == $genesis' "$deployment_evidence" >/dev/null 2>&1; then
+  stamp="$(date +%s)"
+  echo "escrow deployment in $deployment_evidence is for another chain (genesis $(jq -r '.preflight.genesis_block_hash' "$deployment_evidence" 2>/dev/null), live $live_genesis); retiring it"
+  mv "$deployment_evidence" "$deployment_evidence.chain-$stamp.bak"
+  [[ ! -f "$MARKET_ROOT/market-bootstrap.env" ]] || mv "$MARKET_ROOT/market-bootstrap.env" "$MARKET_ROOT/market-bootstrap.env.chain-$stamp.bak"
+fi
 if [[ -s "$deployment_evidence" ]] \
    && jq -e --arg program "$ESCROW_PROGRAM_ID" '.preflight.image_id == $program
         and (.transaction_hash | test("^[0-9a-f]{64}$"))' "$deployment_evidence" >/dev/null 2>&1; then
@@ -72,8 +102,8 @@ else
   [[ -x "$DEPLOYER" ]] || fail "deployer missing: $DEPLOYER"
   "$DEPLOYER" deploy-m4-local --rpc-url "$SEQUENCER_URL" \
     --channel-id "$CHANNEL_ID" --timeout-seconds 3600 >"$deployment_evidence.partial"
-  jq -e --arg program "$ESCROW_PROGRAM_ID" '
-    .preflight.image_id == $program
+  jq -e --arg program "$ESCROW_PROGRAM_ID" --arg genesis "$live_genesis" '
+    .preflight.image_id == $program and .preflight.genesis_block_hash == $genesis
     and (.transaction_hash | test("^[0-9a-f]{64}$"))
     and .inclusion_block_id > .preflight.last_block_id
   ' "$deployment_evidence.partial" >/dev/null || fail "deployment evidence invalid"
@@ -83,6 +113,9 @@ fi
 deployment_tx="$(jq -r '.transaction_hash' "$deployment_evidence")"
 
 # ── 2. vault claims (once per wallet) ──────────────────────────────────────
+# Every claim is submitted first and the sweeps are awaited together after: each
+# wallet claims its own vault, so no claim waits on another's finality.
+claimed=()
 for entry in "${WALLETS[@]}"; do
   read -r wallet role owner vault allocation <<<"$entry"
   # The vault, not the owner, says whether the one-time claim already ran:
@@ -115,17 +148,25 @@ for entry in "${WALLETS[@]}"; do
   [[ -f "$key" ]] || fail "$wallet signing key missing"
   state_dir="$MARKET_ROOT/bootstrap/$wallet"
   rm -rf "$state_dir"; mkdir -m 0700 "$state_dir"
-  "$VAULT_CLAIM_BIN" --role "$role" --run-id "$LEZ_ATTACH_RUN-$wallet" \
+  # Bounded like the sweep wait below: on a frozen chain the claim never lands,
+  # and failing here lets up.sh retry on a fresh chain.
+  timeout -k 10 600 "$VAULT_CLAIM_BIN" --role "$role" --run-id "$LEZ_ATTACH_RUN-$wallet" \
     --request-id "${role}-vault-claim-0001" --state-directory "$state_dir" \
     --private-key-file "$key" --sequencer-url "$SEQUENCER_URL" \
     --chain-id "$CHANNEL_ID" --escrow-program-id "$ESCROW_PROGRAM_ID" \
-    --allocation "$allocation" >"$MARKET_ROOT/bootstrap/$wallet-claim.json"
+    --allocation "$allocation" >"$MARKET_ROOT/bootstrap/$wallet-claim.json" ||
+    fail "$wallet vault claim failed or timed out"
   jq -e --argjson allocation "$allocation" '
     .submission.decision == "admitted" and .allocation == $allocation
     and (.transaction_id | test("^[0-9a-f]{64}$"))
   ' "$MARKET_ROOT/bootstrap/$wallet-claim.json" >/dev/null || fail "$wallet claim evidence invalid"
-  for _ in $(seq 1 900); do
-    [[ "$(account_balance "$vault")" == 0 ]] && break
+  claimed+=("$entry")
+done
+sweep_deadline=$((SECONDS + 900))
+for entry in "${claimed[@]}"; do
+  read -r wallet role owner vault allocation <<<"$entry"
+  while (( SECONDS < sweep_deadline )); do
+    [[ "$(account_balance "$vault" 2>/dev/null)" == 0 ]] && break
     sleep 1
   done
   [[ "$(account_balance "$vault")" == 0 ]] || fail "$wallet vault not swept after claim"

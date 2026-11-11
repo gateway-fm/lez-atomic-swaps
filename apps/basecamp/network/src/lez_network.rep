@@ -1,0 +1,5 @@
+class LezNetwork
+{
+    SLOT(QString status())
+    SLOT(QString reindex())
+}

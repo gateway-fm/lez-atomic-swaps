@@ -1,0 +1,91 @@
+
+[17:07:26] === restart-maker (TakerSellsLez)
+
+[17:07:26] Maker desk publishes TakerSellsLez offers until two are pending
+  » Maker desk publishes TakerSellsLez offers until two are pending
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » New offer: the Maker sells 0.01 BTC for 1,000 LEZ; Publish sends it to the Maker Node, which signs and announces it over Delivery
+  » New offer: the Maker sells 0.01 BTC for 1,000 LEZ; Publish sends it to the Maker Node, which signs and announces it over Delivery
+  » Inventory: 2 open sell-BTC offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[17:07:42] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Available orders: the Maker's offers arrived over Delivery and are listed for this Taker
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  » Take offer on a sell-BTC row: the Taker Node reserves the lot, runs the signing ceremony with the Maker and activates the swap
+  » Swap 8f2391ece205 is in "My orders" and needs the Taker: its LEZ lock
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   8f2391ece205b1c85f0f0c8321348dc903ec7847af14023d2b26e8a70e3d07c4 awaiting_first_lock 0 -
+
+[17:07:57] Taker desk: lock_lez on 8f2391ece205
+  » Taker desk: lock_lez on 8f2391ece205
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Lock 1,000 LEZ: the Taker Node submits the escrow initialization and funding its sidecar prepared
+  » LEZ lock submitted; the Maker Node locks Bitcoin on its own once this lock is final
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[17:08:12] The maker's Basecamp, with its Node, is restarted now, between the Taker's lock and its claim; swaps survive a restart
+
+[17:08:35] Maker desk shows 8f2391ece205 at awaiting_taker_claim
+  » The maker's Basecamp, with its Node, is restarted now, between the Taker's lock and its claim; swaps survive a restart · Maker desk shows 8f2391ece205 at awaiting_taker_claim
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » New offer: the Maker sells 0.01 BTC for 1,000 LEZ; Publish sends it to the Maker Node, which signs and announces it over Delivery
+  » Inventory: 2 open sell-BTC offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+  » Nothing to click here: the Maker Node locks Bitcoin on its own once the Taker's LEZ lock is final; the desk waits for "awaiting the Taker's claim"
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  » Maker desk now shows the swap as: awaiting taker claim
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[17:09:58] Taker desk: claim_btc on 8f2391ece205
+  » Taker desk: claim_btc on 8f2391ece205
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Claim 0.01 BTC: the revealing claim spends the Maker's Bitcoin lock and discloses the adaptor secret
+  » Bitcoin claim broadcast; the Maker Node uses the revealed secret to claim the LEZ escrow
+  ✓ taker: perform claim_btc
+2 passed, 0 failed
+
+[17:10:11] Maker desk shows 8f2391ece205 at completed
+  » Maker desk shows 8f2391ece205 at completed
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory: 2 open sell-BTC offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+  » The Maker Node claims LEZ with the secret the Taker revealed; the desk waits for "completed"
+  Node-owned swap: Maker reached completed (completed)
+  » Maker desk now shows the swap as: completed
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[17:10:56] Taker desk shows 8f2391ece205 at completed
+  » Taker desk shows 8f2391ece205 at completed
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » The Taker desk waits for the swap to show "completed"
+  » Taker desk now shows the swap as: completed
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 8f2391ece205: runtime/lanes/3/evidence/8f2391ece205b1c85f0f0c8321348dc903ec7847af14023d2b26e8a70e3d07c4.json (5 effects, completed 2026-11-11T17:10:22Z)
+
+[17:11:23] video: runtime/lanes/3/evidence/videos/TakerSellsLez-restart-maker.mp4
+
+[17:11:23] === restart-maker (TakerSellsLez): passed in 237s

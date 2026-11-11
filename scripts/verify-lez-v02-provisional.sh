@@ -353,7 +353,11 @@ expected_root_advisories="$(printf '%s\n' \
   RUSTSEC-2026-0387 \
   RUSTSEC-2026-0391 \
   RUSTSEC-2026-0398 \
-  RUSTSEC-2026-0403)"
+  RUSTSEC-2026-0403 \
+  RUSTSEC-2026-0487 \
+  RUSTSEC-2026-0489 \
+  RUSTSEC-2026-0490 \
+  RUSTSEC-2026-0491)"
 actual_root_advisories="$(rg -o 'RUSTSEC-[0-9]{4}-[0-9]{4}' compat/lez-v0.2-provisional/deny.toml | sort -u)"
 if [[ "$actual_root_advisories" != "$expected_root_advisories" ]]; then
   echo "provisional root advisory exceptions changed; review scope and reachability" >&2
@@ -390,7 +394,6 @@ check_policy_advisories \
   RUSTSEC-2026-0348 \
   RUSTSEC-2026-0349 \
   RUSTSEC-2026-0381 \
-  RUSTSEC-2026-0382 \
   RUSTSEC-2026-0385
 check_policy_advisories \
   "deployer" \
@@ -399,7 +402,11 @@ check_policy_advisories \
   RUSTSEC-2025-0055 \
   RUSTSEC-2026-0118 \
   RUSTSEC-2026-0119 \
-  RUSTSEC-2026-0387
+  RUSTSEC-2026-0387 \
+  RUSTSEC-2026-0487 \
+  RUSTSEC-2026-0489 \
+  RUSTSEC-2026-0490 \
+  RUSTSEC-2026-0491
 
 rsa_tree="$(cargo tree --locked --manifest-path "$root_manifest" -e features -i rsa@0.9.10)"
 for dependency in "rzup v0.5.1" "risc0-zkvm v3.0.5" "lee_core v0.1.0"; do

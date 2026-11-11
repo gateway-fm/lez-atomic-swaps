@@ -1,0 +1,14 @@
+; lez_indexer_module contract — the subset the LEZ Network desk calls to host
+; the LEZ indexer in Basecamp (built with deploy/builder/patches/lez-indexer-module:
+; serve_rpc serves indexer_service's own JSON-RPC from inside the module) and to
+; re-index it (the module's own reset_storage, then start_indexer again).
+; Supplied as a dependency_override (network/metadata.json). Hand-maintained:
+; keep it in sync with those patches.
+module lez_indexer_module {
+  version "1.1.1-rpc.4"
+
+  method start_indexer(config_path: tstr) -> int
+  method serve_rpc(port: int) -> int
+  method stop_indexer() -> int
+  method reset_storage(config_path: tstr) -> int
+}

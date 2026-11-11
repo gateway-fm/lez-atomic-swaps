@@ -1,0 +1,18 @@
+[14:39:18] === taker-refund (stamp 1794235158)
+[14:39:18] preflight: indexer historical reads
+[14:39:27]   indexer serves historical reads at the tip (42)
+[14:39:27] preflight: the finality heartbeat saw finality move 0 s ago (finalized 40)
+[14:39:27]   Maker published offer-e2e-1794235158
+[14:39:29]   Taker took offer-e2e-1794235158: swap 7588f00f6814 (not_activated)
+[14:39:29]   stopping the Maker Node so it never funds
+[14:39:29]   Taker locked bitcoin: 5ec08157991d (replay=False)
+[14:39:30]   mined 16 blocks past the lock; the Maker cutoff is 600s after the take, the Taker's refund opens 600s after it
+[14:39:30]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[14:44:33]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[14:49:36]   refund request admitted (attempt 11, state awaiting_second_lock)
+[14:54:40]   refund request replayed (attempt 16, state refund_in_progress)
+[14:59:44]   refund request replayed (attempt 21, state refund_in_progress)
+[15:02:47]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524974503275, 'lez_units': 2000000} → {'btc_trusted_sat': 524974499175, 'lez_units': 2000000}
+[15:03:36]   Maker reconciled to refunded
+[15:03:36]   the Bitcoin refund 8268fefab2e8 is a script-path spend: three witness items
+[15:03:36] === taker-refund: passed in 1458s

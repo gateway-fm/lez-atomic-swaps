@@ -42,6 +42,9 @@ From this directory, with Nix flakes enabled:
 ```sh
 nix build --no-update-lock-file .#lez-maker-ui -o result-lez-maker-ui
 nix build --no-update-lock-file .#lez-taker-ui -o result-lez-taker-ui
+nix build --no-update-lock-file .#lez-maker-ui-lgx-portable -o result-lez-maker-ui-lgx-portable
+nix build --no-update-lock-file .#lez-taker-ui-lgx-portable -o result-lez-taker-ui-lgx-portable
+nix build --no-update-lock-file .#lez-network-ui-lgx-portable -o result-lez-network-ui-lgx-portable
 nix build --no-update-lock-file .#lez-maker-ui-lgx -o result-lez-maker-ui-lgx
 nix build --no-update-lock-file .#lez-taker-ui-lgx -o result-lez-taker-ui-lgx
 nix build --no-update-lock-file .#lez-maker-ui-install -o result-lez-maker-ui-install
@@ -50,8 +53,16 @@ nix build --no-update-lock-file .#lez-maker-ui-integration-test
 nix build --no-update-lock-file .#lez-taker-ui-integration-test
 ```
 
-The `*-lgx` outputs are the distributable package archives. The `*-install`
-outputs are developer-install trees for an isolated Basecamp `--user-dir`.
+The `*-lgx-portable` outputs are the release packages (variant
+`linux-amd64`/`linux-arm64`, the libraries they need beside the plugin): what
+`logosctl package install` takes and what the devnet images install, after
+`deploy/scripts/pin-package-dependencies.sh` has given their dependencies
+version ranges. The `*-lgx` outputs and the `*-install` developer-install
+trees (for an isolated Basecamp `--user-dir`) are the module builder's
+development builds: variant `<platform>-dev`, libraries from `/nix/store`;
+logosctl refuses them. `lez-network-ui-lgx-portable` is the LEZ network's
+operator package (the LEZ Network desk, depending on `blockchain_module` and
+`lez_indexer_module`); a trader on the public testnet does not need it.
 Do not put both roles into one evidence directory: separate user directories
 make role discovery, socket authority, and cleanup auditable.
 
@@ -66,8 +77,8 @@ npm run test:m6:basecamp
 
 | Component | Version | Where it is used |
 |---|---|---|
-| Logos Basecamp | `0.2.0` (commit `48b26c0`) | CI integration harness and the Compose `basecamp-ui` desk image |
-| Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from the catalog, below |
+| Logos Basecamp | `0.2.0` (commit `48b26c0`) | CI integration harness and the Compose Basecamp image (`basecamp-ui`, the base of each party's Basecamp) |
+| Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from the organization's module catalog (`gateway-fm/logos-modules-release-base`; its URL is in the top-level `README.md`) |
 | Logos Chat module | `0.2.2` | pinned by `flake.lock`; the catalog installs the same release |
 | Logos Delivery module | `0.2.0` as pinned by Chat `0.2.2`; `0.2.1` as resolved from the official catalog | Chat's transport dependency |
 
@@ -85,60 +96,50 @@ flakes carry no lock file; their inputs follow the pinned Chat release's own
 lock. `scripts/check-basecamp-lgx-kit.sh <package.lgx>` confirms a built or
 downloaded archive carries the kit in every variant.
 
-## Native Basecamp on macOS
+## Each party's desk in its own Basecamp
 
-The desks' backends accept one thing: the absolute path of a Unix socket owned
-by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
-`LEZ_TAKER_RPC_SOCKET`. With the Nodes running in the Compose stack, their
-owner sockets live inside the Node containers, and Docker Desktop cannot share
-a container's socket with macOS. `deploy/scripts/desk-sockets.py` bridges them:
-it creates `~/.lez/desks/maker.sock` and `~/.lez/desks/taker.sock` (directory
-`0700`, sockets `0600`, owned by you) and relays each connection into the
-Node's socket with `docker exec lez-<role>-node socat`. It grants no new
-authority: whoever can run `docker exec` can already reach the Nodes.
+In the Compose stack (`deploy/`) each party runs one Basecamp, and that
+Basecamp is where its desk is used: `lez-maker-node` holds the **LEZ Maker**
+desk, `lez-taker-node` the **LEZ Taker** desk. The desk opens when the
+container starts; it hosts the role's LEZ signer in Basecamp's `lez_core`, has
+Basecamp's `lez_swap_node` launch and supervise the role's Node from the role's
+Node package (`lez_maker_node` / `lez_taker_node`, a dependency of the desk:
+the Node, its actors, the LEZ sidecar and the launcher; `modules/lez-<role>-node`),
+and talks to that Node over its owner socket inside the same container. Nothing
+else has to be started, and no socket leaves the container. The Node's
+configuration (chains, identity) still comes from the container's environment
+and mounts (`deploy/compose.yaml`).
 
 1. Start the stack (`deploy/scripts/up.sh`, or `start.sh` from the release
    bundle) and wait until both Nodes report healthy.
-2. In one terminal, start the bridge and leave it running:
+2. Open each party's Basecamp over VNC (password `lezswap`, or `VNC_PASSWORD`
+   when the stack was started with it):
 
    ```sh
-   deploy/scripts/desk-sockets.py
+   open vnc://127.0.0.1:5901   # the Maker's Basecamp: LEZ Maker
+   open vnc://127.0.0.1:5902   # the Taker's Basecamp: LEZ Taker
    ```
 
-   With no arguments it serves both roles and addresses the containers
-   `lez-maker-node` and `lez-taker-node`. A stack brought up under another
-   Compose project name has another container prefix, so pass it — for a stack
-   whose containers are `r22-lez-maker-node` and `r22-lez-taker-node`:
+   Any VNC client works; both ports listen on the loopback interface only.
+3. On each desk press **Check Node**; it shows **Node ready**. A swap then
+   follows the role-owned action order below, or the per-scenario guides in
+   `docs/evidence/review-2026-09-12/REPRODUCE.md`. `deploy/scripts/ui-e2e.sh`
+   drives the same two desks for the scenario tests.
 
-   ```sh
-   deploy/scripts/desk-sockets.py --prefix r22-lez
-   ```
+The desks' backends accept one thing: the absolute path of a Unix socket owned
+by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
+`LEZ_TAKER_RPC_SOCKET`, so a desk installed into another Basecamp (from the
+catalog) needs a Node of its own on the same host. Running the Node
+binaries natively on macOS is not supported: the Nodes' process hardening is
+Linux-only.
 
-   `docker ps --format '{{.Names}}'` shows the names to match; `LEZ_CONTAINER_PREFIX`
-   sets the same thing. One role can be served alone by naming it, for example
-   `deploy/scripts/desk-sockets.py maker`.
-
-3. In a second terminal, start Basecamp from its executable so the desks'
-   backends inherit the variables (`open -a` starts the app from launchd, which
-   does not pass them):
-
-   ```sh
-   export LEZ_MAKER_RPC_SOCKET="$HOME/.lez/desks/maker.sock"
-   export LEZ_TAKER_RPC_SOCKET="$HOME/.lez/desks/taker.sock"
-   /Applications/LogosBasecamp.app/Contents/MacOS/LogosBasecamp
-   ```
-
-4. In **Settings → Package Repositories**, add
-   `https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
-   and install **LEZ Maker** and **LEZ Taker**; Chat and Delivery
-   install with them.
-5. Open **LEZ Maker** and press **Check Node**; the desk shows
-   **Node ready**. Do the same on **LEZ Taker**. A swap then follows the
-   role-owned action order below, or the per-scenario guides in
-   `docs/evidence/review-2026-09-12/REPRODUCE.md`.
-
-Running the Node binaries natively on macOS is not supported: the Nodes'
-process hardening is Linux-only.
+The LEZ network itself runs in a third Basecamp, `lez-network`
+(`deploy/images/lez-network-module`). Its **LEZ Network** desk (`network/`,
+package `lez_network`) asks Basecamp's `blockchain_module` and
+`lez_indexer_module` to start, each only when the stack sets its config path
+(`common/lez_network_host.h`), and rebuilds the indexer's database on
+**Re-index** (`deploy/scripts/repair-indexer.sh`). It is not a role package:
+a Maker or a Taker does not install it.
 
 ## Install into isolated Basecamp user directories
 
@@ -219,7 +220,7 @@ control and does not change durable offer or agreement state.
 
 ## Run the Maker package as a real user
 
-Build and start the real Maker Node the way `deploy/images/maker-node/node-entrypoint.sh`
+Build and start the real Maker Node the way `modules/lez-role-node/node-entrypoint.sh`
 does (see the manual test walkthrough in [`deploy/README.md`](../../deploy/README.md)). Its owner RPC defaults
 to `/run/lez/maker/node.sock`; a run-private absolute socket is safer for
 parallel local work. Verify its directory is mode 0700, its socket is mode 0600,
@@ -251,7 +252,7 @@ without manufacturing another mutation.
 ## Run the Taker package as a real user
 
 Create the strict owner-private Taker Node role configuration the way
-`deploy/images/taker-node/node-entrypoint.sh` renders it, start
+`modules/lez-role-node/node-entrypoint.sh` renders it, start
 `lez-taker-node` as the current user, and select its mode-0600 socket; the
 wallet market, offers and actor-owned actions all come from that Node:
 
@@ -338,7 +339,7 @@ After stopping only the processes started for this run:
 
 ```sh
 rm -rf "$M6_ROOT"
-rm -f result-lez-maker-ui result-lez-taker-ui result-lez-maker-ui-lgx result-lez-taker-ui-lgx
+rm -f result-lez-maker-ui result-lez-taker-ui result-lez-maker-ui-lgx result-lez-taker-ui-lgx result-lez-*-ui-lgx-portable
 rm -f result-lez-maker-ui-install result-lez-taker-ui-install
 ```
 

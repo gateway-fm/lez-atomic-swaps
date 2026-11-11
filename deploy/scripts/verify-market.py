@@ -12,14 +12,17 @@ Usage (from deploy/): python3 scripts/verify-market.py
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
 
 FAILURES: list[str] = []
 CHECKS = 0
-SOCKETS = {"maker": ("lez-maker-node", "/run/lez/maker/node.sock"),
-           "taker": ("lez-taker-node", "/run/lez/taker/node.sock")}
+# The stack's pair (scripts/lane.sh; lez-* in the default stack).
+PREFIX = os.environ.get("LEZ_CONTAINER_PREFIX", "lez")
+SOCKETS = {"maker": (f"{PREFIX}-maker-node", "/run/lez/maker/node.sock"),
+           "taker": (f"{PREFIX}-taker-node", "/run/lez/taker/node.sock")}
 ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}
 
 

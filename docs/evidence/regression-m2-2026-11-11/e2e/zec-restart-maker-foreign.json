@@ -1,0 +1,25 @@
+{
+  "scenario": "zec-restart-maker",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1794324756",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "42",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "24",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "20",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "20",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "30",
+    "LEZ_BTC_ACTOR_TRACE": ""
+  },
+  "swap_id": "zec-devnet-swap-1794324758",
+  "corridor": "zec-devnet-1794324758",
+  "restarted": "lez-maker-node",
+  "taker_schedule_after_restart": [],
+  "result": "passed",
+  "seconds": 399
+}

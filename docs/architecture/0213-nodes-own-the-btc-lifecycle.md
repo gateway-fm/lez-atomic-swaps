@@ -221,6 +221,11 @@ S1.6 Compose: per-swap LEZ sidecars, loopback routes to Core and the LEZ
 
 ## Component view after stage 1
 
+This is the topology when stage 1 landed (2026-09-04). Since PR #120 each
+party's desk runs in that party's own Basecamp, which also hosts the role's
+LEZ signer and launches the Node; the current view is in
+[deployment-components-and-rpcs.md](deployment-components-and-rpcs.md).
+
 ```mermaid
 flowchart LR
     subgraph UI["Basecamp (basecamp-ui)"]

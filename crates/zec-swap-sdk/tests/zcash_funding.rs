@@ -9,7 +9,7 @@ use zcash_protocol::{
     value::{BalanceError, Zatoshis},
 };
 use zcash_transparent::{
-    address::{Script, TransparentAddress},
+    address::Script,
     bundle::{OutPoint, TxOut},
 };
 
@@ -26,7 +26,7 @@ fn pubkey(secret_key: &SecretKey) -> PublicKey {
 }
 
 fn owner_script(public_key: &PublicKey) -> Script {
-    TransparentAddress::from_pubkey(public_key).script().into()
+    lez_zec_swap_sdk::p2pkh_address(public_key).script().into()
 }
 
 fn utxo(id: u8, index: u32, value: u64, public_key: &PublicKey) -> TransparentUtxo {

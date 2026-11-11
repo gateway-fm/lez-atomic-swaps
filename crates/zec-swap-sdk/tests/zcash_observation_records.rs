@@ -13,7 +13,7 @@ use zcash_protocol::{
     value::Zatoshis,
 };
 use zcash_transparent::{
-    address::{Script, TransparentAddress},
+    address::Script,
     bundle::{OutPoint, TxOut},
 };
 
@@ -28,7 +28,7 @@ fn observation() -> CanonicalZcashOutputObservation {
 fn observation_at(block_byte: u8, tip_height: u32) -> CanonicalZcashOutputObservation {
     let key = SecretKey::from_slice(&[7; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
-    let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&public_key).script().into();
     let contract = Bip199Contract::new(500_000, [0x11; 20], [0x22; 32], [0x33; 20]);
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(

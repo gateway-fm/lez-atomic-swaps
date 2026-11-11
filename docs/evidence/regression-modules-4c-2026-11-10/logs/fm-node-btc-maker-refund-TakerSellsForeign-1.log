@@ -1,0 +1,39 @@
+[15:05:04] === maker-refund (stamp 1794236704)
+[15:05:04] preflight: indexer historical reads
+[15:05:13]   indexer serves historical reads at the tip (181)
+[15:05:13] preflight: the finality heartbeat saw finality move 0 s ago (finalized 181)
+[15:05:14]   Maker published offer-e2e-1794236704
+[15:05:15]   Taker took offer-e2e-1794236704: swap 6a4ccf34d91f (not_activated)
+[15:05:15]   Taker locked bitcoin: c7e8ba2c5db0 (replay=False)
+[15:05:16]   taker 6a4ccf34d91f: awaiting_first_lock (gen 0) | maker: leased
+[15:05:46]   taker 6a4ccf34d91f: awaiting_second_lock (gen 1) | maker: offered
+[15:07:58]   taker 6a4ccf34d91f: claim_available (gen 2) | maker: taker_lock_confirmed
+[15:07:58]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (900s after the take)
+[15:20:58]   Maker refund queued: {"schema_version": 1, "swap_id": "6a4ccf34d91f226a1ba9bad5c87662fa08caa557cb9f129260d1e43bef770901", "action": "refund", "requested_after_generation": 95, "was_
+[15:20:59]   maker 6a4ccf34d91f: both_legs_locked
+[15:21:19]   maker 6a4ccf34d91f: both_legs_locked
+[15:21:39]   maker 6a4ccf34d91f: both_legs_locked
+[15:21:59]   maker 6a4ccf34d91f: both_legs_locked
+[15:22:19]   maker 6a4ccf34d91f: both_legs_locked
+[15:22:40]   maker 6a4ccf34d91f: both_legs_locked
+[15:23:00]   maker 6a4ccf34d91f: both_legs_locked
+[15:23:20]   maker 6a4ccf34d91f: both_legs_locked
+[15:23:40]   maker 6a4ccf34d91f: both_legs_locked
+[15:24:00]   maker 6a4ccf34d91f: both_legs_locked
+[15:24:21]   maker 6a4ccf34d91f: both_legs_locked
+[15:24:41]   maker 6a4ccf34d91f: both_legs_locked
+[15:25:01]   maker 6a4ccf34d91f: both_legs_locked
+[15:25:21]   maker 6a4ccf34d91f: both_legs_locked
+[15:25:41]   maker 6a4ccf34d91f: both_legs_locked
+[15:26:02]   maker 6a4ccf34d91f: both_legs_locked
+[15:26:22]   maker 6a4ccf34d91f: both_legs_locked
+[15:26:42]   maker 6a4ccf34d91f: both_legs_locked
+[15:27:02]   maker 6a4ccf34d91f: both_legs_locked
+[15:27:23]   maker 6a4ccf34d91f: both_legs_locked
+[15:27:43]   maker 6a4ccf34d91f: both_legs_locked
+[15:28:03]   maker 6a4ccf34d91f: both_legs_locked
+[15:28:23]   maker 6a4ccf34d91f: maker_leg_refunded
+[15:36:04]   refund request admitted (attempt 1, state refund_available)
+[15:37:04]   both legs refunded
+[15:37:05]   the Bitcoin refund 2bae06642162 is a script-path spend: three witness items
+[15:37:05] === maker-refund: passed in 1920s

@@ -1,0 +1,16 @@
+[20:15:58] === maker-refund (stamp 1794255358)
+[20:15:58] preflight: indexer historical reads
+[20:16:01]   indexer serves historical reads at the tip (229)
+[20:16:01] preflight: the finality heartbeat saw finality move 0 s ago (finalized 227)
+[20:16:02]   Maker published offer-e2e-1794255358
+[20:16:03]   Taker took offer-e2e-1794255358: swap a3730a859e7d (not_activated)
+[20:16:03]   Taker locked lez: edab80a0bd71 (replay=False)
+[20:16:04]   taker a3730a859e7d: awaiting_first_lock (gen 0) | maker: leased
+[20:16:32]   taker a3730a859e7d: awaiting_second_lock (gen 1) | maker: offered
+[20:18:04]   taker a3730a859e7d: claim_available (gen 2) | maker: taker_lock_confirmed
+[20:18:05]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (900s after the take)
+[20:31:45]   Maker refund queued: {"schema_version": 1, "swap_id": "a3730a859e7da043fb032d903539ad07cfc2ce79b653d66038cb122d565cc664", "action": "refund", "requested_after_generation": 126, "was
+[20:31:45]   maker a3730a859e7d: both_legs_locked
+[20:32:05]   maker a3730a859e7d: maker_leg_refunded
+[20:47:01]   refund request admitted (attempt 1, state refund_available)
+[20:54:30]   refund request replayed (attempt 6, state refund_in_progress)

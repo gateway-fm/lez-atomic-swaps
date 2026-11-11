@@ -9,7 +9,9 @@ whose chain is down stays published. This file is what turns that on.
 A route is a pair **and** a direction — `{"pair": "Zcash", "direction": "TakerSellsLez"}`. The
 pair names the **foreign** chain: Bitcoin, Monero or Zcash. **LEZ is never a route**; it is
 always the other side of the pair, and a LEZ outage surfaces through Delivery, Chat and sidecar
-health instead.
+health instead, and through `maker_health.lez_chain`: a Maker with the Node-owned lifecycle reads
+the LEZ indexer itself and turns degraded with `lez_finality_stalled` when finality stops
+(`--lez-finality-stall-seconds`, 600 by default; docs/api/README.md).
 
 Monero exists only as `TakerSellsLez`, so there are five routes in total.
 
@@ -18,6 +20,12 @@ Monero exists only as `TakerSellsLez`, so there are five routes in total.
 1. Write a probe for each foreign chain your Maker trades. It is an ordinary executable that
    exits `0` when the chain node is usable and non-zero when it is not. It runs with no shell,
    no inherited environment, no stdin and no output, from `/`, under the daemon's timeout:
+
+   ```sh
+   #!/bin/sh
+   # /usr/local/lib/lez/route-health-bitcoin
+   bitcoin-cli getblockchaininfo >/dev/null 2>&1
+   ```
 
    ```sh
    #!/bin/sh
@@ -45,8 +53,11 @@ Monero exists only as `TakerSellsLez`, so there are five routes in total.
    `program_sha256` with its digest:
 
    ```sh
-   sha256sum /usr/local/lib/lez/route-health-zcash
+   sha256sum /usr/local/lib/lez/route-health-bitcoin /usr/local/lib/lez/route-health-zcash
    ```
+
+   The example lists all four Bitcoin and Zcash routes; delete the rows of a pair your Maker does
+   not trade only together with that pair's route configuration (see below).
 
    The digest is re-checked before and after **every** observation, so replacing the probe
    without updating it makes that route unavailable.

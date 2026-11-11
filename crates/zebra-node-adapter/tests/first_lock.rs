@@ -1383,7 +1383,10 @@ async fn submission_is_byte_exact_and_fails_closed_on_id_tip_or_genesis_drift() 
 
 fn identity_for(agreement: &ZecAgreementV1) -> ZebraChainIdentity {
     match agreement.binding().expected_output().network() {
-        NetworkType::Regtest => ZebraChainIdentity::deterministic_regtest_nu6_2(),
+        NetworkType::Regtest => match agreement.binding().expected_output().consensus_branch_id() {
+            BranchId::Nu7 => ZebraChainIdentity::deterministic_regtest_nu7(),
+            _ => ZebraChainIdentity::deterministic_regtest_nu6_2(),
+        },
         NetworkType::Test => ZebraChainIdentity::new(
             NetworkType::Test,
             ZebraRpcChain::Test,
@@ -1470,7 +1473,7 @@ fn funding_transaction_with_input(
 ) -> Transaction {
     let key = SecretKey::from_slice(&[7; 32]).expect("fixed funding key");
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
-    let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&public_key).script().into();
     let input_value = Zatoshis::from_u64(u64::from(value) + 20_000).expect("input value");
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
@@ -1558,7 +1561,11 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
             ZecProfileId::DeterministicLocalV1
             | ZecProfileId::DeterministicLocalDevnetV1
             | ZecProfileId::DeterministicLocalDevnetV2
-            | ZecProfileId::DeterministicLocalDevnetV3 => (
+            | ZecProfileId::DeterministicLocalDevnetV3
+            | ZecProfileId::DeterministicLocalDevnetV4
+            | ZecProfileId::DeterministicLocalV2
+            | ZecProfileId::DeterministicLocalDevnetV5
+            | ZecProfileId::DeterministicLocalDevnetV6 => (
                 NetworkType::Regtest,
                 LezEnvironmentV1::DeterministicLocalV0_2,
                 116,
@@ -1566,11 +1573,11 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
                 160_000,
                 200,
             ),
-            ZecProfileId::PublicTestnetV1 => (
+            ZecProfileId::PublicTestnetV1 | ZecProfileId::PublicTestnetV2 => (
                 NetworkType::Test,
                 LezEnvironmentV1::PublicTestnetV0_2,
                 100,
-                292,
+                100 + ZecRefundProfile::for_id(profile).zcash_refund_blocks(),
                 7_300_000,
                 14_500,
             ),
@@ -1580,7 +1587,7 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
         profile,
         lez_zec_swap_sdk::ExpectedBip199Output::new(
             network,
-            BranchId::Nu6_2,
+            ZecRefundProfile::for_id(profile).consensus_branch_id(),
             Zatoshis::from_u64(100_000_000).expect("principal"),
             contract,
         ),
@@ -1641,7 +1648,7 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
 }
 
 fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("public key")) {
+    match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("public key")) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }

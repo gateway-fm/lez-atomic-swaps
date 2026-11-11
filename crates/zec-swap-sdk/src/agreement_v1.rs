@@ -1854,6 +1854,11 @@ fn decode_profile(value: u8) -> Result<ZecProfileRecordV1, ZecAgreementV1Error> 
         2 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV1),
         3 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV2),
         4 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV3),
+        5 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV4),
+        6 => Ok(ZecProfileRecordV1::PublicTestnetV2),
+        7 => Ok(ZecProfileRecordV1::DeterministicLocalV2),
+        8 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV5),
+        9 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV6),
         _ => Err(ZecAgreementV1Error::MalformedWireRecord),
     }
 }
@@ -2324,12 +2329,16 @@ fn validate_lez_chain_profile(
         ZecProfileRecordV1::DeterministicLocalV1
         | ZecProfileRecordV1::DeterministicLocalDevnetV1
         | ZecProfileRecordV1::DeterministicLocalDevnetV2
-        | ZecProfileRecordV1::DeterministicLocalDevnetV3 => matches!(
+        | ZecProfileRecordV1::DeterministicLocalDevnetV3
+        | ZecProfileRecordV1::DeterministicLocalDevnetV4
+        | ZecProfileRecordV1::DeterministicLocalV2
+        | ZecProfileRecordV1::DeterministicLocalDevnetV5
+        | ZecProfileRecordV1::DeterministicLocalDevnetV6 => matches!(
             terms.chain.environment,
             LezEnvironmentV1::DeterministicLocalV0_2
                 | LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility
         ),
-        ZecProfileRecordV1::PublicTestnetV1 => {
+        ZecProfileRecordV1::PublicTestnetV1 | ZecProfileRecordV1::PublicTestnetV2 => {
             terms.chain.environment == LezEnvironmentV1::PublicTestnetV0_2
         }
     };
@@ -2480,10 +2489,7 @@ fn verify_role_signature(
 }
 
 fn pubkey_hash(public_key: &PublicKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(public_key) {
-        TransparentAddress::PublicKeyHash(hash) => hash,
-        TransparentAddress::ScriptHash(_) => unreachable!("public keys always yield P2PKH"),
-    }
+    crate::zcash_keys::p2pkh_hash(public_key)
 }
 
 const fn role_mapping(

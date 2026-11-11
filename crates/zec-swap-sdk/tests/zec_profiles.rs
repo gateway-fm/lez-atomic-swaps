@@ -1,5 +1,7 @@
 use lez_swap_core::{Chain, ChainPosition, LezUnixMilliseconds, SwapDirection, UnixSeconds};
-use lez_zec_swap_sdk::{ProfileError, ZecProfileId, ZecRefundProfile};
+use lez_zec_swap_sdk::{
+    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, ProfileError, ZecProfileId, ZecRefundProfile,
+};
 use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 
 #[test]
@@ -182,4 +184,127 @@ fn devnet_v3_shortens_the_lez_refund_delay_and_keeps_every_other_v2_parameter() 
     assert_eq!(v2.lez_confirmations(), v3.lez_confirmations());
     assert_eq!(v2.zcash_confirmations(), v3.zcash_confirmations());
     assert_eq!(v2.zcash_network(), v3.zcash_network());
+}
+
+/// V4 is V3 with a 4-minute LEZ refund delay, for the devnet's refund journeys
+/// (they never claim); V3 keeps its 12 minutes for every swap that claims.
+#[test]
+fn devnet_v4_shortens_the_lez_refund_delay_and_keeps_every_other_v3_parameter() {
+    let v3 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV3);
+    let v4 = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV4);
+    assert_eq!(v4.id().as_str(), "deterministic-local-devnet-v4");
+    assert_eq!(v3.lez_refund_delay().value(), 720);
+    assert_eq!(v4.lez_refund_delay().value(), 240);
+    assert_eq!(v3.zcash_refund_blocks(), v4.zcash_refund_blocks());
+    assert_eq!(v3.required_margin(), v4.required_margin());
+    assert_eq!(v3.lez_confirmations(), v4.lez_confirmations());
+    assert_eq!(v3.zcash_confirmations(), v4.zcash_confirmations());
+    assert_eq!(v3.zcash_network(), v4.zcash_network());
+    assert_eq!(v3.consensus_branch_id(), v4.consensus_branch_id());
+    assert_eq!(v3.expiry_delta_blocks(), v4.expiry_delta_blocks());
+}
+
+/// V2 is V1 on NU7 with a Zcash refund window that still opens no earlier than
+/// the LEZ refund delay plus the margin at Testnet's fastest measured pace.
+#[test]
+fn public_testnet_v2_signs_for_nu7_and_sizes_its_window_for_the_fastest_pace() {
+    let v1 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV1);
+    let v2 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV2);
+    assert_eq!(v2.id().as_str(), "public-testnet-v2");
+    assert_eq!(v2.zcash_network(), NetworkType::Test);
+    assert_eq!(v2.consensus_branch_id(), BranchId::Nu7);
+    assert_eq!(u32::from(v2.consensus_branch_id()), 0x7719_0ad9);
+    assert_eq!(v2.lez_confirmations(), 2);
+    assert_eq!(v2.zcash_confirmations(), 10);
+    assert_eq!(v2.lez_refund_delay(), UnixSeconds::new(7_200));
+    assert_eq!(v2.zcash_refund_blocks(), 3_700);
+    assert_eq!(v2.required_margin(), UnixSeconds::new(7_200));
+    assert_eq!(v2.expiry_delta_blocks(), 120);
+    assert_eq!(v1.lez_refund_delay(), v2.lez_refund_delay());
+    assert_eq!(v1.required_margin(), v2.required_margin());
+    // V1 is unchanged: NU6.2, 192 blocks.
+    assert_eq!(v1.consensus_branch_id(), BranchId::Nu6_2);
+    assert_eq!(v1.zcash_refund_blocks(), 192);
+
+    let needed_millis = (v2.lez_refund_delay().value() + v2.required_margin().value()) * 1_000;
+    let fastest_window_millis =
+        u64::from(v2.zcash_refund_blocks()) * PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS;
+    assert!(fastest_window_millis >= needed_millis);
+    assert!(
+        u64::from(v1.zcash_refund_blocks()) * PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS < needed_millis
+    );
+    assert!(
+        v2.validate_consensus(NetworkType::Test, BranchId::Nu7)
+            .is_ok()
+    );
+    assert_eq!(
+        v2.validate_consensus(NetworkType::Test, BranchId::Nu6_2),
+        Err(ProfileError::ConsensusBranchMismatch)
+    );
+    assert_eq!(
+        v2.validate_consensus(NetworkType::Test, BranchId::Nu6_3),
+        Err(ProfileError::ConsensusBranchMismatch)
+    );
+}
+
+/// The NU7 Regtest profiles are their NU6.2 namesakes on NU7, parameter for
+/// parameter: local-v2 is local-v1's, devnet-v5 is v3's, devnet-v6 is v4's.
+/// The NU6.2 ones keep their meaning under their ids.
+#[test]
+fn nu7_regtest_profiles_are_their_nu6_2_namesakes_on_nu7() {
+    for (old, new, spelling) in [
+        (
+            ZecProfileId::DeterministicLocalV1,
+            ZecProfileId::DeterministicLocalV2,
+            "deterministic-local-v2",
+        ),
+        (
+            ZecProfileId::DeterministicLocalDevnetV3,
+            ZecProfileId::DeterministicLocalDevnetV5,
+            "deterministic-local-devnet-v5",
+        ),
+        (
+            ZecProfileId::DeterministicLocalDevnetV4,
+            ZecProfileId::DeterministicLocalDevnetV6,
+            "deterministic-local-devnet-v6",
+        ),
+    ] {
+        let old = ZecRefundProfile::for_id(old);
+        let new = ZecRefundProfile::for_id(new);
+        assert_eq!(new.id().as_str(), spelling);
+        assert_eq!(old.consensus_branch_id(), BranchId::Nu6_2);
+        assert_eq!(new.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(new.zcash_network(), NetworkType::Regtest);
+        assert_eq!(old.zcash_network(), new.zcash_network());
+        assert_eq!(old.lez_confirmations(), new.lez_confirmations());
+        assert_eq!(old.zcash_confirmations(), new.zcash_confirmations());
+        assert_eq!(old.lez_refund_delay(), new.lez_refund_delay());
+        assert_eq!(old.zcash_refund_blocks(), new.zcash_refund_blocks());
+        assert_eq!(old.required_margin(), new.required_margin());
+        assert_eq!(old.expiry_delta_blocks(), new.expiry_delta_blocks());
+        assert!(
+            new.validate_consensus(NetworkType::Regtest, BranchId::Nu7)
+                .is_ok()
+        );
+        assert_eq!(
+            new.validate_consensus(NetworkType::Regtest, BranchId::Nu6_2),
+            Err(ProfileError::ConsensusBranchMismatch)
+        );
+        assert_eq!(
+            old.validate_consensus(NetworkType::Regtest, BranchId::Nu7),
+            Err(ProfileError::ConsensusBranchMismatch)
+        );
+    }
+    assert_eq!(
+        ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV5)
+            .lez_refund_delay()
+            .value(),
+        720
+    );
+    assert_eq!(
+        ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV6)
+            .lez_refund_delay()
+            .value(),
+        240
+    );
 }

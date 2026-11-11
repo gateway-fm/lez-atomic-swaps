@@ -30,8 +30,11 @@ __pycache__/
 /deploy/images/*/lez-*
 /deploy/images/taker-node/zec-local-poc-*
 /deploy/images/lez-services/sequencer_service
-/deploy/images/lez-services/indexer_service
 /deploy/images/lez-services/r0vm
+/deploy/images/lez-network-module/r0vm
+/deploy/images/lez-network-module/regenesis
+/deploy/images/lez-wallet-module/*.lgx
+/deploy/images/*-node/lez_*_node.lgx
 /deploy/images/bitcoin-core/bin/
 /deploy/images/basecamp-ui/assets/
 

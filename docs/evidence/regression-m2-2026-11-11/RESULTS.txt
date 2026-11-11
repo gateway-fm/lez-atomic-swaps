@@ -1,0 +1,253 @@
+M2 release-candidate regression on the modules stack (PR #120), 2026-11-11 15:34Z -> 17:49Z,
+and the rerun of its one failure (17:49Z -> 17:56Z), UTC
+
+One run of every test of `deploy/scripts/regress.sh full` on one set of images (source
+023c929e, see PROVENANCE.md), three lanes at a time (LEZ_LANES=3), every desk test
+recorded (LEZ_REGRESS_RECORD=1). Result: 93 tests, 92 passed in the run; the one failure,
+node:zec:zec-claim-collision:TakerSellsForeign, failed again on its first rerun and passed
+on its second, same images and chain, no code change between (see the note below).
+0 frozen tries; 2 new LEZ chains (the two zec-balance-refusal tests make their own);
+2 timing-profile switches (fast -> refund at the start, refund -> fast at 17:06Z).
+
+By kind: node:btc 28, node:zec 31, ui:btc 16, ui:zec 18. Test time summed over lanes: 20742 s; wall time 134 min.
+ZEC profiles deterministic-local-devnet-v5 / -v6 (NU7, Zebra 7.0.0 regtest); BTC profiles fast and refund.
+Each row's log is logs/<kind>-<pair>-<scenario>-<direction>-<try>.log; logs/regress.log is the
+runner's own log; rerun1-* and rerun2-* are the two reruns. results.tsv is the runner's table
+(test, try, verdict, seconds, finished at, lane, new chain).
+
+The failure. zec-claim-collision makes two LEZ transactions of one account compete for a
+nonce: the Taker's revealing claim of swap A and its lock of swap C, and expects the CLAIM to be
+superseded, re-planned at the live nonce and to land. In the run and in rerun 1 the race went
+the other way: C's lock lost the nonce and was re-planned, A's claim landed first, both swaps
+completed, and the test reports NO-COLLISION ("try again"): the case it exists for did not occur.
+In rerun 2 the claim was the superseded one, was re-planned and landed: PASSED. No swap
+ended in a wrong state in any of the three tries.
+
+##### E2E node zec TakerSellsLez zec-maker-refund attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsLez zec-maker-refund attempt 1 PASSED in 297 s at 2026-11-11T15:41:44Z
+##### E2E node zec TakerSellsLez zec-refund-then-maker-lock attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsLez zec-refund-then-maker-lock attempt 1 PASSED in 306 s at 2026-11-11T15:41:53Z
+##### E2E node zec TakerSellsLez zec-taker-refund attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsLez zec-taker-refund attempt 1 PASSED in 342 s at 2026-11-11T15:42:29Z
+##### E2E ui zec TakerSellsLez zec-taker-refund attempt 1 lane 2
+##### E2E-RESULT ui zec TakerSellsLez zec-taker-refund attempt 1 PASSED in 345 s at 2026-11-11T15:47:39Z
+##### E2E node btc TakerSellsLez maker-refund attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsLez maker-refund attempt 1 PASSED in 301 s at 2026-11-11T15:47:42Z
+##### E2E node btc TakerSellsLez taker-refund attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsLez taker-refund attempt 1 PASSED in 345 s at 2026-11-11T15:47:50Z
+##### E2E node btc TakerSellsLez refund-then-maker-lock attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsLez refund-then-maker-lock attempt 1 PASSED in 285 s at 2026-11-11T15:52:37Z
+##### E2E ui btc TakerSellsLez maker-refund attempt 1 lane 3
+##### E2E-RESULT ui btc TakerSellsLez maker-refund attempt 1 PASSED in 383 s at 2026-11-11T15:54:23Z
+##### E2E ui btc TakerSellsLez taker-refund attempt 1 lane 1
+##### E2E-RESULT ui btc TakerSellsLez taker-refund attempt 1 PASSED in 404 s at 2026-11-11T15:54:37Z
+##### E2E node zec TakerSellsForeign zec-taker-refund attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsForeign zec-taker-refund attempt 1 PASSED in 299 s at 2026-11-11T15:57:53Z
+##### E2E node zec TakerSellsForeign zec-maker-refund attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsForeign zec-maker-refund attempt 1 PASSED in 312 s at 2026-11-11T15:59:53Z
+##### E2E node zec TakerSellsForeign zec-refund-then-maker-lock attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsForeign zec-refund-then-maker-lock attempt 1 PASSED in 309 s at 2026-11-11T16:00:04Z
+##### E2E node btc TakerSellsForeign maker-refund attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsForeign maker-refund attempt 1 PASSED in 186 s at 2026-11-11T16:03:25Z
+##### E2E ui zec TakerSellsForeign zec-taker-refund attempt 1 lane 2
+##### E2E-RESULT ui zec TakerSellsForeign zec-taker-refund attempt 1 PASSED in 334 s at 2026-11-11T16:03:39Z
+##### E2E node btc TakerSellsForeign taker-refund attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsForeign taker-refund attempt 1 PASSED in 310 s at 2026-11-11T16:05:15Z
+##### E2E node btc TakerSellsForeign refund-then-maker-lock attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsForeign refund-then-maker-lock attempt 1 PASSED in 171 s at 2026-11-11T16:06:31Z
+##### E2E ui btc TakerSellsForeign taker-refund attempt 1 lane 2
+##### E2E-RESULT ui btc TakerSellsForeign taker-refund attempt 1 PASSED in 378 s at 2026-11-11T16:10:07Z
+##### E2E ui btc TakerSellsForeign maker-refund attempt 1 lane 3
+##### E2E-RESULT ui btc TakerSellsForeign maker-refund attempt 1 PASSED in 383 s at 2026-11-11T16:11:53Z
+##### E2E ui zec TakerSellsLez zec-maker-refund attempt 1 lane 1
+##### E2E-RESULT ui zec TakerSellsLez zec-maker-refund attempt 1 PASSED in 408 s at 2026-11-11T16:13:31Z
+##### E2E ui zec TakerSellsForeign zec-maker-refund attempt 1 lane 2
+##### E2E-RESULT ui zec TakerSellsForeign zec-maker-refund attempt 1 PASSED in 379 s at 2026-11-11T16:16:38Z
+##### E2E ui zec TakerSellsForeign zec-stale-window attempt 1 lane 3
+##### E2E-RESULT ui zec TakerSellsForeign zec-stale-window attempt 1 PASSED in 360 s at 2026-11-11T16:18:05Z
+##### E2E ui zec TakerSellsLez zec-happy attempt 1 lane 1
+##### E2E-RESULT ui zec TakerSellsLez zec-happy attempt 1 PASSED in 276 s at 2026-11-11T16:18:17Z
+##### E2E ui zec TakerSellsLez zec-restart-taker attempt 1 lane 3
+##### E2E-RESULT ui zec TakerSellsLez zec-restart-taker attempt 1 PASSED in 302 s at 2026-11-11T16:23:23Z
+##### E2E ui zec TakerSellsLez zec-restart-maker attempt 1 lane 1
+##### E2E-RESULT ui zec TakerSellsLez zec-restart-maker attempt 1 PASSED in 316 s at 2026-11-11T16:23:46Z
+##### E2E ui zec TakerSellsLez zec-concurrent attempt 1 lane 2
+##### E2E-RESULT ui zec TakerSellsLez zec-concurrent attempt 1 PASSED in 440 s at 2026-11-11T16:24:10Z
+##### E2E ui zec TakerSellsLez zec-survivor attempt 1 lane 3
+##### E2E-RESULT ui zec TakerSellsLez zec-survivor attempt 1 PASSED in 251 s at 2026-11-11T16:27:49Z
+##### E2E ui zec TakerSellsForeign zec-happy attempt 1 lane 2
+##### E2E-RESULT ui zec TakerSellsForeign zec-happy attempt 1 PASSED in 269 s at 2026-11-11T16:28:51Z
+##### E2E ui zec TakerSellsLez zec-node-offline attempt 1 lane 1
+##### E2E-RESULT ui zec TakerSellsLez zec-node-offline attempt 1 PASSED in 401 s at 2026-11-11T16:30:40Z
+##### E2E ui zec TakerSellsForeign zec-restart-taker attempt 1 lane 2
+##### E2E-RESULT ui zec TakerSellsForeign zec-restart-taker attempt 1 PASSED in 305 s at 2026-11-11T16:34:07Z
+##### E2E ui zec TakerSellsForeign zec-concurrent attempt 1 lane 3
+##### E2E-RESULT ui zec TakerSellsForeign zec-concurrent attempt 1 PASSED in 474 s at 2026-11-11T16:35:52Z
+##### E2E ui zec TakerSellsForeign zec-restart-maker attempt 1 lane 1
+##### E2E-RESULT ui zec TakerSellsForeign zec-restart-maker attempt 1 PASSED in 307 s at 2026-11-11T16:35:59Z
+##### E2E ui zec TakerSellsForeign zec-survivor attempt 1 lane 2
+##### E2E-RESULT ui zec TakerSellsForeign zec-survivor attempt 1 PASSED in 280 s at 2026-11-11T16:39:00Z
+##### E2E node zec TakerSellsLez zec-happy attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsLez zec-happy attempt 1 PASSED in 169 s at 2026-11-11T16:42:01Z
+##### E2E ui zec TakerSellsForeign zec-node-offline attempt 1 lane 3
+##### E2E-RESULT ui zec TakerSellsForeign zec-node-offline attempt 1 PASSED in 412 s at 2026-11-11T16:42:59Z
+##### E2E node zec TakerSellsLez zec-replay attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsLez zec-replay attempt 1 PASSED in 165 s at 2026-11-11T16:44:58Z
+##### E2E node zec TakerSellsLez zec-wrong-inputs attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsLez zec-wrong-inputs attempt 1 PASSED in 139 s at 2026-11-11T16:45:31Z
+##### E2E ui zec TakerSellsLez zec-concurrent-staggered attempt 1 lane 1
+##### E2E-RESULT ui zec TakerSellsLez zec-concurrent-staggered attempt 1 PASSED in 600 s at 2026-11-11T16:46:13Z
+##### E2E node zec TakerSellsLez zec-restart-taker attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsLez zec-restart-taker attempt 1 PASSED in 161 s at 2026-11-11T16:47:52Z
+##### E2E node zec TakerSellsLez zec-restart-maker attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsLez zec-restart-maker attempt 1 PASSED in 166 s at 2026-11-11T16:48:28Z
+##### E2E node zec TakerSellsLez zec-survivor attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsLez zec-survivor attempt 1 PASSED in 158 s at 2026-11-11T16:49:03Z
+##### E2E node zec TakerSellsLez zec-tampered-catalog attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsLez zec-tampered-catalog attempt 1 PASSED in 72 s at 2026-11-11T16:50:26Z
+##### E2E node zec TakerSellsLez zec-regenerated-catalog attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsLez zec-regenerated-catalog attempt 1 PASSED in 133 s at 2026-11-11T16:50:51Z
+##### E2E node zec TakerSellsLez zec-concurrent attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsLez zec-concurrent attempt 1 PASSED in 245 s at 2026-11-11T16:52:08Z
+##### E2E node zec TakerSellsLez zec-offline-after-lock attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsLez zec-offline-after-lock attempt 1 PASSED in 124 s at 2026-11-11T16:53:06Z
+##### E2E node zec TakerSellsLez zec-early-lock attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsLez zec-early-lock attempt 1 PASSED in 230 s at 2026-11-11T16:54:31Z
+##### E2E node zec TakerSellsForeign zec-happy attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsForeign zec-happy attempt 1 PASSED in 143 s at 2026-11-11T16:54:42Z
+##### E2E node zec TakerSellsForeign zec-replay attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsForeign zec-replay attempt 1 PASSED in 117 s at 2026-11-11T16:55:15Z
+##### E2E node zec TakerSellsForeign zec-restart-taker attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsForeign zec-restart-taker attempt 1 PASSED in 126 s at 2026-11-11T16:57:00Z
+##### E2E node zec TakerSellsForeign zec-wrong-inputs attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsForeign zec-wrong-inputs attempt 1 PASSED in 168 s at 2026-11-11T16:57:30Z
+##### E2E node zec TakerSellsForeign zec-restart-maker attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsForeign zec-restart-maker attempt 1 PASSED in 142 s at 2026-11-11T16:57:48Z
+##### E2E node zec TakerSellsForeign zec-survivor attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsForeign zec-survivor attempt 1 PASSED in 151 s at 2026-11-11T16:59:40Z
+##### E2E node zec TakerSellsForeign zec-regenerated-catalog attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsForeign zec-regenerated-catalog attempt 1 PASSED in 128 s at 2026-11-11T17:00:06Z
+##### E2E node zec TakerSellsForeign zec-tampered-catalog attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsForeign zec-tampered-catalog attempt 1 PASSED in 59 s at 2026-11-11T17:00:49Z
+##### E2E node zec TakerSellsForeign zec-concurrent attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsForeign zec-concurrent attempt 1 PASSED in 219 s at 2026-11-11T17:01:18Z
+##### E2E node zec TakerSellsForeign zec-offline-after-lock attempt 1 lane 2
+##### E2E-RESULT node zec TakerSellsForeign zec-offline-after-lock attempt 1 PASSED in 150 s at 2026-11-11T17:03:31Z
+##### E2E node zec TakerSellsForeign zec-early-lock attempt 1 lane 3
+##### E2E-RESULT node zec TakerSellsForeign zec-early-lock attempt 1 PASSED in 229 s at 2026-11-11T17:04:07Z
+##### E2E node zec TakerSellsForeign zec-claim-collision attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 FAILED in 270 s at 2026-11-11T17:06:01Z
+##### E2E ui btc TakerSellsLez happy attempt 1 lane 1
+##### E2E-RESULT ui btc TakerSellsLez happy attempt 1 PASSED in 203 s at 2026-11-11T17:10:49Z
+##### E2E ui btc TakerSellsLez restart-taker attempt 1 lane 2
+##### E2E-RESULT ui btc TakerSellsLez restart-taker attempt 1 PASSED in 219 s at 2026-11-11T17:11:04Z
+##### E2E ui btc TakerSellsLez restart-maker attempt 1 lane 3
+##### E2E-RESULT ui btc TakerSellsLez restart-maker attempt 1 PASSED in 237 s at 2026-11-11T17:11:23Z
+##### E2E ui btc TakerSellsLez node-offline attempt 1 lane 3
+##### E2E-RESULT ui btc TakerSellsLez node-offline attempt 1 PASSED in 57 s at 2026-11-11T17:12:32Z
+##### E2E ui btc TakerSellsLez survivor attempt 1 lane 1
+##### E2E-RESULT ui btc TakerSellsLez survivor attempt 1 PASSED in 213 s at 2026-11-11T17:14:35Z
+##### E2E ui btc TakerSellsForeign happy attempt 1 lane 3
+##### E2E-RESULT ui btc TakerSellsForeign happy attempt 1 PASSED in 207 s at 2026-11-11T17:16:12Z
+##### E2E ui btc TakerSellsLez concurrent attempt 1 lane 2
+##### E2E-RESULT ui btc TakerSellsLez concurrent attempt 1 PASSED in 324 s at 2026-11-11T17:16:41Z
+##### E2E ui btc TakerSellsForeign restart-taker attempt 1 lane 1
+##### E2E-RESULT ui btc TakerSellsForeign restart-taker attempt 1 PASSED in 231 s at 2026-11-11T17:18:43Z
+##### E2E ui btc TakerSellsForeign restart-maker attempt 1 lane 3
+##### E2E-RESULT ui btc TakerSellsForeign restart-maker attempt 1 PASSED in 251 s at 2026-11-11T17:20:38Z
+##### E2E ui btc TakerSellsForeign survivor attempt 1 lane 2
+##### E2E-RESULT ui btc TakerSellsForeign survivor attempt 1 PASSED in 276 s at 2026-11-11T17:21:30Z
+##### E2E ui btc TakerSellsForeign node-offline attempt 1 lane 3
+##### E2E-RESULT ui btc TakerSellsForeign node-offline attempt 1 PASSED in 58 s at 2026-11-11T17:21:49Z
+##### E2E node btc TakerSellsLez happy attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsLez happy attempt 1 PASSED in 72 s at 2026-11-11T17:22:52Z
+##### E2E node btc TakerSellsLez replay attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsLez replay attempt 1 PASSED in 90 s at 2026-11-11T17:23:30Z
+##### E2E node btc TakerSellsLez wrong-inputs attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsLez wrong-inputs attempt 1 PASSED in 98 s at 2026-11-11T17:24:41Z
+##### E2E node btc TakerSellsLez restart-taker attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsLez restart-taker attempt 1 PASSED in 93 s at 2026-11-11T17:25:14Z
+##### E2E ui btc TakerSellsForeign concurrent attempt 1 lane 1
+##### E2E-RESULT ui btc TakerSellsForeign concurrent attempt 1 PASSED in 466 s at 2026-11-11T17:26:40Z
+##### E2E node btc TakerSellsLez restart-maker attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsLez restart-maker attempt 1 PASSED in 114 s at 2026-11-11T17:26:47Z
+##### E2E node btc TakerSellsLez survivor attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsLez survivor attempt 1 PASSED in 98 s at 2026-11-11T17:27:05Z
+##### E2E node btc TakerSellsLez offline-after-lock attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsLez offline-after-lock attempt 1 PASSED in 115 s at 2026-11-11T17:29:16Z
+##### E2E node btc TakerSellsLez concurrent attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsLez concurrent attempt 1 PASSED in 194 s at 2026-11-11T17:30:07Z
+##### E2E node btc TakerSellsLez early-lock attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsLez early-lock attempt 1 PASSED in 191 s at 2026-11-11T17:30:08Z
+##### E2E node btc TakerSellsLez tampered-config attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsLez tampered-config attempt 1 PASSED in 18 s at 2026-11-11T17:30:40Z
+##### E2E node btc TakerSellsLez regenerated-config attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsLez regenerated-config attempt 1 PASSED in 115 s at 2026-11-11T17:31:27Z
+##### E2E node btc TakerSellsForeign happy attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsForeign happy attempt 1 PASSED in 118 s at 2026-11-11T17:32:18Z
+##### E2E node btc TakerSellsForeign replay attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsForeign replay attempt 1 PASSED in 108 s at 2026-11-11T17:32:44Z
+##### E2E node btc TakerSellsForeign wrong-inputs attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsForeign wrong-inputs attempt 1 PASSED in 102 s at 2026-11-11T17:33:21Z
+##### E2E node btc TakerSellsForeign restart-taker attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsForeign restart-taker attempt 1 PASSED in 115 s at 2026-11-11T17:34:24Z
+##### E2E node btc TakerSellsForeign restart-maker attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsForeign restart-maker attempt 1 PASSED in 113 s at 2026-11-11T17:34:48Z
+##### E2E node btc TakerSellsForeign survivor attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsForeign survivor attempt 1 PASSED in 108 s at 2026-11-11T17:35:20Z
+##### E2E node btc TakerSellsForeign offline-after-lock attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsForeign offline-after-lock attempt 1 PASSED in 108 s at 2026-11-11T17:37:19Z
+##### E2E node btc TakerSellsForeign concurrent attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsForeign concurrent attempt 1 PASSED in 228 s at 2026-11-11T17:38:20Z
+##### E2E node btc TakerSellsForeign tampered-config attempt 1 lane 2
+##### E2E-RESULT node btc TakerSellsForeign tampered-config attempt 1 PASSED in 14 s at 2026-11-11T17:38:46Z
+##### E2E node btc TakerSellsForeign early-lock attempt 1 lane 1
+##### E2E-RESULT node btc TakerSellsForeign early-lock attempt 1 PASSED in 227 s at 2026-11-11T17:38:46Z
+##### E2E node btc TakerSellsForeign regenerated-config attempt 1 lane 3
+##### E2E-RESULT node btc TakerSellsForeign regenerated-config attempt 1 PASSED in 113 s at 2026-11-11T17:39:24Z
+##### E2E node zec TakerSellsLez zec-balance-refusal attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsLez zec-balance-refusal attempt 1 PASSED in 159 s at 2026-11-11T17:44:19Z
+##### E2E node zec TakerSellsForeign zec-balance-refusal attempt 1 lane 1
+##### E2E-RESULT node zec TakerSellsForeign zec-balance-refusal attempt 1 PASSED in 155 s at 2026-11-11T17:48:59Z
+
+Reruns
+##### E2E node zec TakerSellsForeign zec-claim-collision rerun 1 (20261111T174920Z)
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision rerun 1 FAILED in 180 s at 2026-11-11T17:52:31Z
+##### E2E node zec TakerSellsForeign zec-claim-collision rerun 2 (20261111T175231Z)
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision rerun 2 PASSED in 191 s at 2026-11-11T17:55:56Z
+
+Addendum: zec-claim-collision after the harness fixes (2026-11-11 18:02Z -> 18:44Z)
+
+After the run above the test's failure was traced to the harness: it noticed the lock's submission by
+polling `docker logs`, slower than a 1 s LEZ block, so the claim was planned one nonce late and raced the
+lock's second transaction instead, which it beat. Three harness commits followed (no engine or image
+change; same images and chain as the run): d0a626c5 (regress.sh runs a NOT-EXERCISED test again),
+2adef99b (the scenario follows the Node's log as a stream), 34b8a169 (NOT-EXERCISED gets its own try
+limit, 8). The trials below are every run of the test through regress.sh (LEZ_LANES=3) after d0a626c5,
+in order; logs are logs/collision-<run>-*.
+
+20261111T180217Z at d0a626c5 (runner retry only):
+##### E2E-RESULT node zec TakerSellsLez zec-happy attempt 1 PASSED in 118 s at 2026-11-11T18:05:00Z
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 PASSED in 183 s at 2026-11-11T18:06:10Z; claim admitted 2.2 s after the lock's submission
+
+20261111T180625Z at d0a626c5 (runner retry only (4 tries)):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 NOT-EXERCISED in 190 s at 2026-11-11T18:10:28Z; claim admitted 1.1 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 2 NOT-EXERCISED in 194 s at 2026-11-11T18:13:53Z; claim admitted 1.0 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 3 NOT-EXERCISED in 267 s at 2026-11-11T18:18:36Z; claim admitted 3.0 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 4 NOT-EXERCISED in 202 s at 2026-11-11T18:22:15Z; claim admitted 2.0 s after the lock's submission
+
+20261111T182237Z at 2adef99b (retry + log following):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 NOT-EXERCISED in 209 s at 2026-11-11T18:26:58Z; claim admitted 1.8 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 2 PASSED in 224 s at 2026-11-11T18:30:57Z; claim admitted 0.9 s after the lock's submission
+
+20261111T183059Z at 2adef99b (retry + log following):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 NOT-EXERCISED in 230 s at 2026-11-11T18:35:57Z; claim admitted 2.7 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 2 PASSED in 229 s at 2026-11-11T18:39:58Z; claim admitted 1.0 s after the lock's submission
+
+20261111T184000Z at 2adef99b (retry + log following):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 PASSED in 205 s at 2026-11-11T18:44:32Z; claim admitted 0.5 s after the lock's submission
+
+With the runner's retry alone the test lost its race four tries out of four. With the log followed as a
+stream it passed in every trial: on its second try twice (claim admitted 0.9 and 1.0 s after the lock) and
+on its first once (0.5 s). The race is still close against a 1 s block, which is what the separate try
+limit is for; 34b8a169 itself changes only that limit and was not run on the stack.

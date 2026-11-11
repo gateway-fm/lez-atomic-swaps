@@ -2,27 +2,32 @@
 # start.sh — bring the prebuilt LEZ ↔ BTC swap stack up from a release bundle
 # (or from a checkout) without building anything: pull the release images,
 # mint the four wallet identities, generate the runtime, start the stack,
-# bootstrap the settlement market and verify the Basecamp UI against both
-# Nodes. Rerunning it is safe: every step skips what already exists.
+# bootstrap the settlement market and verify each party's desk against its
+# Node. Rerunning it is safe: every step skips what already exists.
 #
-#   ./scripts/start.sh           pull → identities → config → stack → bootstrap → UI suites
-#   ./scripts/start.sh --quick   the same without the Basecamp UI suites
-#   ./scripts/start.sh --swap    … then one full BTC → LEZ swap through the two apps
+#   ./scripts/start.sh           pull → identities → config → stack → bootstrap → desk suites
+#   ./scripts/start.sh --quick   the same without the desk suites
+#   ./scripts/start.sh --swap    … then one full BTC → LEZ swap through the two desks
 #
 # The image names come from release.env next to compose.yaml (written into
 # the bundle by scripts/package-dist.sh) or from the environment:
 #   LEZ_IMAGE_PREFIX   registry path prefix, e.g. ghcr.io/gateway-fm/lez-atomic-swaps/lez
 #   LEZ_IMAGE_TAG      release tag, e.g. v0.2.1
 #   LEZ_ESCROW_PROGRAM_ID  the pinned escrow program the deployer in the tools
-#                      image carries (the bundle records it; a checkout reads
+#                      service (wallet-module image) carries (the bundle records it; a checkout reads
 #                      it from scripts/verify-lez-v02-provisional.sh)
 # State lives next to this file: runtime/ (chains, configs, secrets) and
-# market/ (wallet identities, the escrow deployment manifest). Keep both;
-# ./scripts/down.sh --wipe removes runtime/ and the named volumes.
+# market/ (wallet identities, the escrow deployment manifest). Keep
+# market/identities, the funded wallets, across wipes; market/bootstrap and
+# market/market-bootstrap.env belong to one LEZ chain: ./scripts/down.sh --wipe
+# removes runtime/ and the named volumes and retires those two.
 set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DEPLOY_ROOT"
+# The stack's names and ports (scripts/lane.sh; lez-* and the usual ports by default).
+# shellcheck source=lane.sh
+source scripts/lane.sh
 
 QUICK=0
 RUN_SWAP=0
@@ -30,7 +35,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --quick) QUICK=1; shift ;;
     --swap) RUN_SWAP=1; shift ;;
-    -h|--help) sed -n 2,22p "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n 2,23p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -39,7 +44,8 @@ log() { printf '\n[%s start] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { echo "start.sh failed: $*" >&2; exit 1; }
 
 # ---- host --------------------------------------------------------------------
-if [[ "$(uname -m)" != "arm64" && "$(uname -m)" != "aarch64" ]]; then
+# (images already present, LEZ_IMAGES=present, are the host's own build)
+if [[ "${LEZ_IMAGES:-}" != present && "$(uname -m)" != "arm64" && "$(uname -m)" != "aarch64" ]]; then
   fail "the prebuilt images are linux/arm64 (Apple silicon or an arm64 Linux host)"
 fi
 for tool in docker jq openssl xxd python3; do
@@ -62,8 +68,13 @@ if [[ -z "${LEZ_ESCROW_PROGRAM_ID:-}" && -f ../scripts/verify-lez-v02-provisiona
 fi
 [[ "${LEZ_ESCROW_PROGRAM_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "LEZ_ESCROW_PROGRAM_ID must name the pinned escrow program"
 export LEZ_IMAGE_PREFIX LEZ_IMAGE_TAG LEZ_ESCROW_PROGRAM_ID
-# Images tagged `local` are a developer's own build: use them as they are.
-if [[ "$LEZ_IMAGE_TAG" == local ]]; then export LEZ_IMAGES=present; else export LEZ_IMAGES=pull; fi
+# Images tagged `local` are a developer's own build: use them as they are
+# (LEZ_IMAGES=present does the same for another tag).
+if [[ -z "${LEZ_IMAGES:-}" ]]; then
+  if [[ "$LEZ_IMAGE_TAG" == local ]]; then LEZ_IMAGES=present; else LEZ_IMAGES=pull; fi
+fi
+[[ "$LEZ_IMAGES" == present || "$LEZ_IMAGES" == pull ]] || fail "LEZ_IMAGES must be present or pull for a release's images"
+export LEZ_IMAGES
 
 # ---- market root: wallet identities + the escrow deployment manifest -------------
 export LEZ_MARKET_ROOT="${LEZ_MARKET_ROOT:-$DEPLOY_ROOT/market}"
@@ -75,14 +86,18 @@ export LEZ_HOST_UID LEZ_HOST_GID
 # compose interpolation needs a password before gen-config.sh has minted one
 export BTC_RPC_PASSWORD="${BTC_RPC_PASSWORD:-pending}"
 
-# one throwaway container of the tools image on the stack network
+# one throwaway container of the tools service (the wallet-module image) on the stack network
 tools() { docker compose --profile tools run --rm --no-deps --quiet-pull tools "$*"; }
 
 if [[ "$LEZ_IMAGES" == present ]]; then
-  docker image inspect "${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG}" >/dev/null 2>&1 || fail "${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG} is not present locally"
+  docker image inspect "${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG}" >/dev/null 2>&1 || fail "${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG} is not present locally"
 else
-  log "pulling ${LEZ_IMAGE_PREFIX}-tools:${LEZ_IMAGE_TAG}"
-  docker compose --profile tools pull --quiet tools
+  # Every image, before up.sh: its gen-config.sh reads the Taker image (the
+  # Maker's Zcash address zebra mines to) and the LEZ network image (regenesis,
+  # each new chain's genesis time) and, with neither present yet, would give
+  # the first chain upstream's fixed genesis and zebra the template miner.
+  log "pulling ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}"
+  docker compose --profile tools pull --quiet
 fi
 for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   [[ -f "$LEZ_WALLET_IDENTITIES/$wallet/identity.json" ]] && continue
@@ -105,9 +120,20 @@ bash scripts/repair-indexer.sh
 # The deployer and the vault-claim tool accept only literal-loopback URLs, so
 # the container forwards 127.0.0.1:3040/8779 to sequencer/indexer for the run.
 log "market bootstrap (idempotent)"
-tools 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
+# up.sh started the Nodes before the market existed; a Node without the
+# bootstrap manifest reports itself ready with no routes, so a failed bootstrap
+# stops them rather than leave a stack that looks healthy and cannot trade.
+if ! tools 'socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040 &
   socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779 &
-  sleep 1; bash /scripts/market-bootstrap.sh' | tail -4
+  sleep 1; bash /scripts/market-bootstrap.sh' >runtime/market-bootstrap.log 2>&1; then
+  cat runtime/market-bootstrap.log >&2
+  reason="$(grep -m1 '^market bootstrap failed:' runtime/market-bootstrap.log || true)"
+  docker compose stop maker-node taker-node >/dev/null 2>&1 || true
+  echo "start.sh failed: ${reason:-the market bootstrap failed (output above, also in runtime/market-bootstrap.log)}" >&2
+  echo "  both Nodes are stopped: no escrow deployment on this chain, so no offer can be made or taken" >&2
+  exit 2
+fi
+tail -4 runtime/market-bootstrap.log
 # The first start precedes the deployment; entrypoints read the manifest once,
 # so both roles restart with its public fields in the runtime.
 cat "$LEZ_MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
@@ -121,7 +147,7 @@ docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-
 wait_nodes_ready() { # wait_nodes_ready <seconds>
   local deadline=$(( $(date +%s) + $1 ))
   node_ready() { # node_ready <role> <method> <params>
-    docker exec "lez-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
+    docker exec "$LEZ_CONTAINER_PREFIX-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
       -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null |
       python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",{}); sys.exit(0 if r.get("ready") is True and r.get("degraded") is not True else 1)' 2>/dev/null
@@ -133,17 +159,25 @@ wait_nodes_ready() { # wait_nodes_ready <seconds>
 }
 log "waiting for both Nodes to report ready"
 wait_nodes_ready 300
+# A Maker without the market's routes is ready and not degraded, and can make
+# no offer: the routes come from the bootstrap manifest it just rendered.
+maker_routes="$(docker exec "$LEZ_CONTAINER_PREFIX-maker-node" curl -sS --max-time 120 --unix-socket /run/lez/maker/node.sock \
+  -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"maker_health","params":[{}]}' http://localhost/ 2>/dev/null |
+  jq -r '.result.routes // [] | length' 2>/dev/null || echo 0)"
+[[ "$maker_routes" =~ ^[1-9][0-9]*$ ]] ||
+  fail "the Maker lists no routes after the market bootstrap (maker_health.routes is empty): check runtime/market-bootstrap.log and runtime/market-bootstrap.env"
 
 # ---- verification --------------------------------------------------------------------
 if [[ "$QUICK" != 1 ]]; then
-  log "Basecamp suites against both Nodes (the Maker suite also seeds the order book)"
+  log "desk suites in each party's Basecamp (the Maker suite also seeds the order book)"
   for role in maker taker; do
-    docker exec lez-basecamp-ui node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]' || fail "$role UI suite failed"
+    docker exec "$LEZ_CONTAINER_PREFIX-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]' || fail "$role desk suite failed"
   done
   bash scripts/verify-all.sh 2>&1 | grep -E 'OK|FAIL|checks|failed|✓|✗|^    [A-Za-z]' || fail "verify-all.sh reported a failed stage"
 fi
 if [[ "$RUN_SWAP" == 1 ]]; then
-  log "one full BTC → LEZ swap through the two Basecamp apps"
+  log "one full BTC → LEZ swap through the two desks"
   bash scripts/swap-through-ui.sh
 fi
 
@@ -153,10 +187,11 @@ cat <<BANNER
 ──────────────────────────────────────────────────────────────────
  LEZ swap stack is up from ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}
 
-   Basecamp UI (VNC)     vnc://127.0.0.1:5901     (password: ${vnc_password})
-   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining)
-   BTC explorer          http://127.0.0.1:3002
-   LEZ explorer + proof  http://127.0.0.1:3003/#/evidence
+   Maker's Basecamp      vnc://127.0.0.1:$LEZ_MAKER_VNC_PORT     (VNC password: ${vnc_password}; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:$LEZ_TAKER_VNC_PORT     (VNC password: ${vnc_password}; the Taker desk)
+   Bitcoin regtest RPC   http://127.0.0.1:$LEZ_BTC_RPC_PORT   (auto-mining)
+   explorers             BTC http://127.0.0.1:$LEZ_BTC_EXPLORER_PORT, LEZ + proof http://127.0.0.1:$LEZ_LEZ_EXPLORER_PORT/#/evidence
+                         (off unless verify-all.sh ran; docker compose --env-file runtime/runtime.env --profile explorers up -d)
    swap                  ./scripts/swap-through-ui.sh   (or click through the two desks)
    verify                ./scripts/verify-all.sh
    logs                  docker compose --env-file runtime/runtime.env logs -f <service>

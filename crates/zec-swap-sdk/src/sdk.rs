@@ -2214,6 +2214,23 @@ where
     }
 }
 
+// The refund step the active coordinator admits now. None once a revealing claim is recorded:
+// after a revealing claim no refund is admitted while that evidence stands (the coordinator's
+// rule), and the reorg phases, which otherwise offer the LEZ step, can hold that evidence.
+// `lez_refunded` is the agreement's phase after the earlier LEZ refund, which offers the Zcash step.
+fn admitted_refund_step(
+    coordinator: &SwapCoordinator,
+    lez_refunded: Phase,
+) -> Option<RefundStepV1> {
+    if coordinator.claim_evidence().is_some() {
+        return None;
+    }
+    if coordinator.phase() == lez_refunded {
+        return Some(RefundStepV1::Zcash);
+    }
+    next_refund_step(coordinator.phase(), coordinator.direction())
+}
+
 // Selects the agreement-ordered refund without weakening LEZ-before-Zcash ordering.
 // During Maker confirmation only the earlier LEZ leg in the reverse corridor is Taker-owned and live.
 const fn next_refund_step(
@@ -2276,8 +2293,7 @@ where
                     revision: self.revision,
                 });
             }
-            phase if phase == lez_refunded_phase(self.agreement()) => RefundStepV1::Zcash,
-            phase => next_refund_step(phase, self.agreement().direction())
+            phase => admitted_refund_step(&self.coordinator, lez_refunded_phase(self.agreement()))
                 .ok_or(ZecSdkError::RefundNotReady(phase))?,
         };
 
@@ -2639,6 +2655,121 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Both legs locked in one direction, the LEZ deposit by the agreement's depositor.
+    fn locked_coordinator(direction: SwapDirection) -> SwapCoordinator {
+        use lez_swap_core::{
+            Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, RecoverySchedule,
+            TimelockSafety,
+        };
+        let (maker_chain, taker_chain) = match direction {
+            SwapDirection::TakerSellsForeign => (Chain::Lez, Chain::Zcash),
+            SwapDirection::TakerSellsLez => (Chain::Zcash, Chain::Lez),
+        };
+        let mut swap = SwapCoordinator::new_with_direction(
+            SwapId::new("sdk-refund-step").expect("swap ID"),
+            Pair::Zcash,
+            direction,
+            ConfirmationPolicy::new(1).expect("policy"),
+            RecoverySchedule::new(
+                Pair::Zcash,
+                direction,
+                ChainPosition::block_height(maker_chain, 100),
+                ChainPosition::block_height(taker_chain, 120),
+                TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100)
+                    .expect("safety"),
+            )
+            .expect("schedule"),
+        );
+        swap.observe_taker_lock(ChainProof::new("taker-lock", 1).expect("proof"))
+            .expect("taker lock");
+        swap.observe_maker_lock(ChainProof::new("maker-lock", 1).expect("proof"))
+            .expect("maker lock");
+        assert_eq!(swap.phase(), Phase::BothLegsLocked);
+        swap
+    }
+
+    fn reveal(swap: &mut SwapCoordinator) {
+        swap.observe_revealing_claim(
+            swap.first_claimant(),
+            lez_swap_core::ChainProof::new("revealing-claim", 1).expect("proof"),
+            lez_swap_core::ClaimEvidence::new([7; 32]),
+        )
+        .expect("revealing claim");
+    }
+
+    fn lez_refunded(direction: SwapDirection) -> Phase {
+        // The LEZ depositor is the taker in the reverse corridor, the maker in the forward one.
+        match direction {
+            SwapDirection::TakerSellsForeign => Phase::MakerLegRefunded,
+            SwapDirection::TakerSellsLez => Phase::TakerLegRefunded,
+        }
+    }
+
+    #[test]
+    fn no_refund_step_is_offered_in_a_reorg_phase_holding_claim_evidence() {
+        for direction in [
+            SwapDirection::TakerSellsForeign,
+            SwapDirection::TakerSellsLez,
+        ] {
+            let mut taker_reorged = locked_coordinator(direction);
+            reveal(&mut taker_reorged);
+            taker_reorged
+                .observe_taker_lock_removed("taker-lock")
+                .expect("taker removal");
+            assert_eq!(taker_reorged.phase(), Phase::TakerLockReorged);
+            assert_eq!(
+                admitted_refund_step(&taker_reorged, lez_refunded(direction)),
+                None
+            );
+
+            let mut maker_reorged = locked_coordinator(direction);
+            reveal(&mut maker_reorged);
+            maker_reorged
+                .observe_maker_lock_removed("maker-lock")
+                .expect("maker removal");
+            assert_eq!(maker_reorged.phase(), Phase::MakerLockReorged);
+            assert_eq!(
+                admitted_refund_step(&maker_reorged, lez_refunded(direction)),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn the_lez_refund_step_is_still_offered_in_a_reorg_phase_without_claim_evidence() {
+        for direction in [
+            SwapDirection::TakerSellsForeign,
+            SwapDirection::TakerSellsLez,
+        ] {
+            let mut taker_reorged = locked_coordinator(direction);
+            taker_reorged
+                .observe_taker_lock_removed("taker-lock")
+                .expect("taker removal");
+            assert_eq!(taker_reorged.phase(), Phase::TakerLockReorged);
+            assert_eq!(
+                admitted_refund_step(&taker_reorged, lez_refunded(direction)),
+                Some(RefundStepV1::Lez)
+            );
+
+            let mut maker_reorged = locked_coordinator(direction);
+            maker_reorged
+                .observe_maker_lock_removed("maker-lock")
+                .expect("maker removal");
+            assert_eq!(maker_reorged.phase(), Phase::MakerLockReorged);
+            assert_eq!(
+                admitted_refund_step(&maker_reorged, lez_refunded(direction)),
+                Some(RefundStepV1::Lez)
+            );
+
+            // And the agreement order is unchanged around it.
+            let locked = locked_coordinator(direction);
+            assert_eq!(
+                admitted_refund_step(&locked, lez_refunded(direction)),
+                Some(RefundStepV1::Lez)
+            );
+        }
+    }
 
     #[test]
     fn taker_owned_lez_refund_remains_live_while_maker_lock_confirms() {

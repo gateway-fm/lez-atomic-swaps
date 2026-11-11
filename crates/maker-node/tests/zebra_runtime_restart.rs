@@ -106,7 +106,7 @@ fn public_key(secret_key: &SecretKey) -> PublicKey {
 }
 
 fn pubkey_hash(secret_key: &SecretKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&public_key(secret_key)) {
+    match lez_zec_swap_sdk::p2pkh_address(&public_key(secret_key)) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("a public key yields P2PKH"),
     }
@@ -151,9 +151,9 @@ async fn actor_utxo(client: &HttpClient) -> TransparentUtxo {
         hex::decode(raw)
             .expect("transaction hex decodes")
             .as_slice(),
-        BranchId::Nu6_2,
+        BranchId::Nu7,
     )
-    .expect("NU6.2 coinbase transaction decodes");
+    .expect("NU7 (v6) coinbase transaction decodes");
     assert_eq!(transaction.txid().to_string(), transaction_id);
     let output = transaction
         .transparent_bundle()
@@ -179,7 +179,7 @@ fn funding_transaction(
         zatoshis(10_000),
         zatoshis(10_000),
         BlockHeight::from_u32(tip + 40),
-        BranchId::Nu6_2,
+        BranchId::Nu7,
     )
     .expect("the actor owns the selected mature output");
     build_funding_transaction(contract, &request, actor_key)
@@ -226,7 +226,7 @@ async fn chain_info(client: &HttpClient) -> Value {
         .await
         .expect("Zebra returns chain context");
     assert_eq!(info["chain"], "test");
-    assert_eq!(info["consensus"]["chaintip"], "5437f330");
+    assert_eq!(info["consensus"]["chaintip"], "77190ad9");
     info
 }
 
@@ -254,7 +254,7 @@ async fn canonical_observation(
     let after = chain_info(client).await;
     let snapshot = ZcashNodeSnapshot::new(
         NetworkType::Regtest,
-        BranchId::Nu6_2,
+        BranchId::Nu7,
         observed["in_active_chain"]
             .as_bool()
             .expect("verbose response has active-chain membership"),
@@ -300,7 +300,7 @@ async fn removal_observation(
         previous,
         &ZcashNodeRemovalSnapshot::new(
             NetworkType::Regtest,
-            BranchId::Nu6_2,
+            BranchId::Nu7,
             block_hash_from_rpc(&replacement_hash),
             stable_tip(&before, &after),
         ),
@@ -385,12 +385,12 @@ async fn fund_on_primary_from_shared_prefix(
     );
     let expected = ExpectedBip199Output::new(
         NetworkType::Regtest,
-        BranchId::Nu6_2,
+        BranchId::Nu7,
         zatoshis(CONTRACT_VALUE),
         contract.clone(),
     );
-    let binding = ZecSwapBinding::new(ZecProfileId::DeterministicLocalV1, expected.clone())
-        .expect("deterministic profile matches Regtest NU6.2");
+    let binding = ZecSwapBinding::new(ZecProfileId::DeterministicLocalV2, expected.clone())
+        .expect("deterministic profile matches Regtest NU7");
     let transaction =
         funding_transaction(&contract, actor_utxo(primary).await, &funder, common_height);
     let transaction_id = broadcast(primary, &transaction).await;

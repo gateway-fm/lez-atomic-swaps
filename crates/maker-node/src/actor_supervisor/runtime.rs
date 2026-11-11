@@ -960,6 +960,14 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         Some(zec_reference_actor::LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE) => {
             ChildRunError::Fail("lez_revealing_claim_replan_exhausted")
         }
+        // The Zcash actor's LEZ escrow initialization was refused because its
+        // escrow account already exists without it (another swap with the same
+        // swap id), the bounded number of times over the bounded span: it can
+        // never execute, so it is not submitted again; the swap stops by name.
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE) => {
+            ChildRunError::Fail("lez_escrow_already_initialized")
+        }
         _ => ChildRunError::Retry("actor_exit_failed"),
     }
 }
@@ -2045,6 +2053,13 @@ mod exit_classification_tests {
         assert!(matches!(
             classify_exit(window_closed),
             ChildRunError::Retry("lez_claim_window_closed")
+        ));
+        let escrow_taken = ExitStatus::from_raw(
+            zec_reference_actor::LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE << 8,
+        );
+        assert!(matches!(
+            classify_exit(escrow_taken),
+            ChildRunError::Fail("lez_escrow_already_initialized")
         ));
     }
 }

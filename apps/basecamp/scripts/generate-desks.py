@@ -56,6 +56,10 @@ Item {
     property real now: Date.now() / 1000
     // The swap whose on-chain details are open, or null.
     property var detailSwap: null
+    // The LEZ chain's progress as the Node reports it (health's lez_chain),
+    // read in the background every 10 s; null until the Node reports it.
+    property var lezChain: null
+    property bool lezChainBusy: false
     // ---- The activity log: what the desk asked and what the Node answered,
     // plus every change the background poll notices. Newest last.
     property var activity: []
@@ -266,11 +270,47 @@ FOREIGN_FORMAT    function formatLez(value) {
     }
     function health() {
         root.run(root.backend.health(), "Check Node", function(result) {
+            root.lezChain = result.lez_chain ?? null
             var ok = result.ready === true && result.degraded !== true
             root.statusMode = ok ? "success" : "error"
             root.statusTitle = ok ? "Node ready" : "Node needs attention"
-            root.statusDetail = HEALTH_DETAIL
+            root.statusDetail = root.lezChainLine() !== "" ? root.lezChainLine() : HEALTH_DETAIL
         })
+    }
+    // One line for a LEZ chain the Node reports as degraded, or "" while it
+    // moves: a stalled finality holds every swap, and a row alone only says
+    // it waits for finalized chain evidence (#112).
+    function lezChainLine() {
+        var chain = root.lezChain
+        if (!chain || chain.degraded !== true) return ""
+        if (chain.reason === "lez_finality_stalled") {
+            var flat = Number(chain.finalized_flat_seconds ?? 0)
+            var span = flat < 120 ? Math.floor(flat) + " s" : Math.floor(flat / 60) + " min"
+            return "LEZ finality has not advanced for " + span + " (finalized block "
+                + String(chain.finalized_block_id ?? "?") + ") — swaps wait until it does"
+        }
+        if (chain.reason === "lez_indexer_unreachable")
+            return "Your Node cannot read the LEZ indexer — swaps wait until it answers"
+        return "The LEZ chain needs attention (" + String(chain.reason ?? "unknown") + ") — swaps wait until it recovers"
+    }
+    // The background read behind lezChainLine(): the health call, silent
+    // (it leaves the status strip, the raw reply and the log alone).
+    function refreshLezChain() {
+        if (!root.ready || root.lezChainBusy) return
+        root.lezChainBusy = true
+        logos.watch(root.backend.health(),
+            function(value) {
+                root.lezChainBusy = false
+                var before = root.lezChainLine()
+                try {
+                    var envelope = JSON.parse(String(value))
+                    if (envelope.ok === true) root.lezChain = (envelope.result ?? {}).lez_chain ?? null
+                } catch (error) { return }
+                var after = root.lezChainLine()
+                if (after !== "" && before === "") root.note("error", after)
+                else if (after === "" && before !== "") root.note("node", "LEZ finality moves again")
+            },
+            function(error) { root.lezChainBusy = false })
     }
     function chatStatus() {
         root.run(root.backend.chatStatus(), "Chat status", function(result) {
@@ -319,6 +359,13 @@ ROLE_FUNCTIONS
         repeat: true
         running: true
         onTriggered: root.now = Date.now() / 1000
+    }
+    Timer {
+        interval: 10000
+        repeat: true
+        running: root.ready
+        triggeredOnStart: true
+        onTriggered: root.refreshLezChain()
     }
 
     // The view module is loaded and the backend object exists. That says
@@ -407,6 +454,27 @@ ROLE_FUNCTIONS
                                 font.pixelSize: 11; font.weight: Font.DemiBold
                             }
                         }
+                    }
+                }
+
+                // The LEZ chain as the Node reports it: shown only while it is
+                // degraded, above every swap that waits on it.
+                Rectangle {
+                    objectName: "ROLELezChainBanner"
+                    visible: root.lezChainLine() !== ""
+                    Layout.fillWidth: true
+                    implicitHeight: lezChainLabel.implicitHeight + 20
+                    radius: 10
+                    color: "#2A1A12"; border.width: 1; border.color: "#8A5A2B"
+                    Label {
+                        id: lezChainLabel
+                        objectName: "ROLELezChain"
+                        anchors.left: parent.left; anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 14; anchors.rightMargin: 14
+                        text: root.lezChainLine()
+                        color: "#FFC58A"; font.pixelSize: 12; font.weight: Font.DemiBold
+                        wrapMode: Text.WordWrap
                     }
                 }
 
@@ -687,7 +755,8 @@ MAKER_FUNCTIONS = r'''
                 root.applyBtcMarket(result)
                 root.statusMode = "working"
                 root.statusTitle = "Action submitted"
-                root.statusDetail = "Waiting for finalized chain evidence before the next actor turn"
+                root.statusDetail = root.lezChainLine() !== "" ? root.lezChainLine()
+                    : "Waiting for finalized chain evidence before the next actor turn"
             })
     }
 '''
@@ -987,7 +1056,8 @@ TAKER_FUNCTIONS = r'''
                 root.applyBtcMarket(result)
                 root.statusMode = "working"
                 root.statusTitle = "Action submitted"
-                root.statusDetail = "Waiting for finalized chain evidence before the next actor turn"
+                root.statusDetail = root.lezChainLine() !== "" ? root.lezChainLine()
+                    : "Waiting for finalized chain evidence before the next actor turn"
             })
     }
     function connectChat() {

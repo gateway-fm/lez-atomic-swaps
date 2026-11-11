@@ -1,0 +1,13 @@
+diff --git a/lez/storage/src/lib.rs b/lez/storage/src/lib.rs
+index 8ce473f..0dbc1bd 100644
+--- a/lez/storage/src/lib.rs
++++ b/lez/storage/src/lib.rs
+@@ -33,7 +33,7 @@ pub const DB_META_LAST_BLOCK_IN_DB_KEY: &str = "last_block_in_db";
+ pub const BLOCK_CELL_NAME: &str = "block";
+ 
+ /// Interval between state breakpoints.
+-pub const BREAKPOINT_INTERVAL: u8 = 100;
++pub const BREAKPOINT_INTERVAL: u8 = 10;
+ 
+ /// Name of block column family.
+ pub const CF_BLOCK_NAME: &str = "cf_block";

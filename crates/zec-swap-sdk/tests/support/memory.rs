@@ -2985,7 +2985,7 @@ pub(crate) fn mutated_unspent_funding(
             let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
             TxOut::new(
                 canonical.output().value(),
-                TransparentAddress::from_pubkey(&public_key).script().into(),
+                lez_zec_swap_sdk::p2pkh_address(&public_key).script().into(),
             )
         }
         _ => canonical.output().clone(),
@@ -3085,7 +3085,7 @@ pub(crate) fn canonical_zcash_taker_lock_fixture_for_expected(
 ) -> CanonicalZcashOutputObservation {
     let key = SecretKey::from_slice(&[7; 32]).expect("canonical observation owner key");
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
-    let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&public_key).script().into();
     let input_value = u64::from(expected.value())
         .checked_add(20_000)
         .expect("fixture input value");
@@ -3487,7 +3487,7 @@ pub(crate) fn fixture_binding(
 }
 
 pub(crate) fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
+    match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }

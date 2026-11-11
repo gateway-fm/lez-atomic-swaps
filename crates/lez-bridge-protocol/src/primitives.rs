@@ -1575,6 +1575,10 @@ pub enum ErrorCode {
     /// The native escrow pair was re-planned `MAX_NATIVE_ESCROW_REPLANS` times
     /// already; the swap fails by name instead of chasing the nonce forever.
     ReplanExhausted,
+    /// A native escrow initialization was not sent: its escrow account already
+    /// exists on the chain, initialized by a transaction that is not this
+    /// swap's (another swap with the same swap id). It can never execute.
+    EscrowAlreadyInitialized,
     /// An internal bounded sidecar operation failed.
     Internal,
 }

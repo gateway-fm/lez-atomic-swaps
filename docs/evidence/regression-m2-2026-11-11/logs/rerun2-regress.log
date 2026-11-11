@@ -1,0 +1,4 @@
+[17:52:31] regression run: 1 tests at 023c929e (tree dirty: 0), results in runtime/regress/20261111T175231Z
+[17:52:31] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[17:55:56] === node:zec:zec-claim-collision:TakerSellsForeign (try 1): PASSED in 191 s (+14 s before it)
+[17:55:56] regression run: 1 of 1 passed in 3 min, 0 new chains, 0 profile switches, 0 frozen tries

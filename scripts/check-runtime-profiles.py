@@ -161,15 +161,17 @@ def validate_repository_contract(
             f"missing={sorted(compose_service_ids - local_component_ids)} "
             f"stale={sorted(local_component_ids - compose_service_ids)}"
         )
-    taker_init = compose.split("  taker-init:\n", 1)[1].split("  taker-node:\n", 1)[0]
+    taker_service = re.split(r"\n  (?=\S)", compose.split("  taker-node:\n", 1)[1], maxsplit=1)[0]
     if "/var/run/docker.sock" in compose:
         fail("no Compose service may hold the host Docker socket")
-    taker_entrypoint = (ROOT / "deploy/images/taker-node/node-entrypoint.sh").read_text()
-    if "maker_state" in taker_init or "delivery_dir" in taker_init \
+    # The role Nodes' launcher travels in each role's payload package.
+    role_launcher = (ROOT / "modules/lez-role-node/node-entrypoint.sh").read_text()
+    taker_entrypoint = role_launcher
+    if "maker_state" in taker_service or "delivery_dir:/delivery:ro" not in taker_service \
             or "maker-delivery-identity.pub" not in taker_entrypoint:
         fail("the Taker setup must learn the Maker only from its public Delivery identity")
-    maker_entrypoint = (ROOT / "deploy/images/maker-node/node-entrypoint.sh").read_text()
-    if "daemon-args.sh" in compose or "exec /usr/local/bin/lez-maker-node" not in maker_entrypoint:
+    maker_entrypoint = role_launcher
+    if "daemon-args.sh" in compose or 'exec "$bin/lez-maker-node"' not in maker_entrypoint:
         fail("the Maker image must exec the Rust Node with its rendered arguments")
     for name in [
         "lez-maker-node", "lez-taker-node", "lez-maker-cli", "lez-taker-cli",
@@ -266,12 +268,21 @@ def validate_role_symmetry(compose: str) -> None:
             if catalog_packages.get(executable) != f"lez-{role}-node":
                 fail(f"role symmetry {role}: {executable} is not owned by its role package")
         dockerfile = (ROOT / f"deploy/images/{role}-node/Dockerfile").read_text()
-        for executable in (details["node"], details["cli"], details["chat_gateway"]):
-            # Payloads are staged into the image stripped, through a build stage.
-            copy = f"COPY --from=strip --chmod=0555 /payload/{executable} /usr/local/bin/{executable}"
-            if copy not in dockerfile:
-                fail(f"role symmetry {role}: image omits {executable}")
-        if f"lez-{opposite}-" in dockerfile:
+        # The role's executables travel in its payload package
+        # (scripts/package-role-node.sh), which the role's image installs.
+        packager = (ROOT / "deploy/scripts/package-role-node.sh").read_text()
+        payload = re.search(rf"^  {role}\) bins=\(([^)]*)\) ;;$", packager, re.M)
+        if payload is None:
+            fail(f"role symmetry {role}: package-role-node.sh lists no {role} payload")
+        payload_names = payload.group(1).split()
+        for executable in (details["node"], details["cli"]):
+            if executable not in payload_names:
+                fail(f"role symmetry {role}: the {role} Node package omits {executable}")
+        if any(name.startswith(f"lez-{opposite}-") for name in payload_names):
+            fail(f"role symmetry {role}: the {role} Node package contains {opposite} executable")
+        if f"COPY --chmod=0444 lez_{role}_node.lgx " not in dockerfile:
+            fail(f"role symmetry {role}: image does not install the lez_{role}_node package")
+        if f"lez-{opposite}-" in dockerfile or f"lez_{opposite}_node" in dockerfile:
             fail(f"role symmetry {role}: image contains {opposite} executable")
         if details["runtime_directory"] not in dockerfile \
                 or details["state_directory"] not in dockerfile:
@@ -326,8 +337,8 @@ def validate_role_symmetry(compose: str) -> None:
                 fail(f"role symmetry {role}: public component {public_name} is absent")
     if len(contract["intentional_asymmetries"]) < 4:
         fail("role symmetry contract must explain intentional key and protocol asymmetries")
-    taker_sections = compose.split("  taker-init:\n", 1)[1].split("  basecamp-ui:\n", 1)[0]
-    if "delivery-signing.key" in taker_sections or "maker_state:" in taker_sections:
+    taker_service = re.split(r"\n  (?=\S)", compose.split("  taker-node:\n", 1)[1], maxsplit=1)[0]
+    if "delivery-signing.key" in taker_service or "maker_state:" in taker_service:
         fail("Taker setup must not receive Maker private key or state authority")
 
 

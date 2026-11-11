@@ -7,6 +7,7 @@
 
 use btc_reference_actor::ActorEffectV1;
 use lez_bridge_protocol::RequestId;
+use lez_btc_role_lifecycle::LezChainProgressV1;
 use lez_btc_swap_sdk::BtcAgreementTermsV1;
 use lez_node_common::TakerMakerIdentityV1;
 use lez_swap_core::{Pair, SwapDirection, SwapId};
@@ -319,6 +320,14 @@ pub struct TakerSwapViewV1 {
     /// it is final) while this swap's own LEZ refund time is near.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revealing_claim_held_by: Option<String>,
+    /// One human-readable sentence on what holds a Zcash swap's LEZ lock
+    /// back, when the Node knows: its escrow initialization can never execute
+    /// because the escrow account already exists without it (with
+    /// `lez_escrow_already_initialized`: submitting stopped), or a LEZ lock
+    /// step was submitted many times over a long time and is not included yet
+    /// (submitting continues).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_detail: Option<String>,
     /// A Zcash swap's Taker actor phase (`both_legs_locked`, …), so a desk
     /// can say which part of the swap a state stands for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -707,6 +716,13 @@ pub struct TakerHealthV1 {
     chat: TakerDependencyStateV1,
     pair_capabilities: [TakerPairCapabilityV1; 5],
     registered_methods: TakerRegisteredMethodsV1,
+    /// The LEZ chain's progress as this Node reads it (#112): the last
+    /// finalized block id, when it advanced, and a named reason once it
+    /// stalls, which also sets `degraded`. Absent on a Node without the
+    /// Node-owned lifecycle (it has no indexer to read) and on Nodes that
+    /// predate it. Additive like every optional field of schema 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lez_chain: Option<LezChainProgressV1>,
 }
 
 impl TakerHealthV1 {
@@ -726,7 +742,22 @@ impl TakerHealthV1 {
             chat,
             pair_capabilities: taker_pair_capabilities_v1(),
             registered_methods: TakerRegisteredMethodsV1::read_only(),
+            lez_chain: None,
         }
+    }
+
+    /// Adds the LEZ chain's progress; a degraded chain degrades the Node.
+    #[must_use]
+    pub fn with_lez_chain(mut self, lez_chain: Option<LezChainProgressV1>) -> Self {
+        self.degraded |= lez_chain.as_ref().is_some_and(|chain| chain.degraded);
+        self.lez_chain = lez_chain;
+        self
+    }
+
+    /// Returns the LEZ chain's progress, when this Node reads the chain.
+    #[must_use]
+    pub const fn lez_chain(&self) -> Option<&LezChainProgressV1> {
+        self.lez_chain.as_ref()
     }
 
     /// Reports that the service registered the complete receipt-bound ZEC lifecycle.

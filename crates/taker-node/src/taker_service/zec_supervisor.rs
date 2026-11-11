@@ -509,6 +509,13 @@ pub(super) fn failure_of(error: ActorCommandError) -> AttemptFailure {
         ActorCommandError::FirstLockReplanExhausted => {
             AttemptFailure::Fail("lez_first_lock_replan_exhausted")
         }
+        // The escrow initialization can never execute: its escrow account
+        // already exists without it (another swap with the same swap id). The
+        // actor stopped submitting it; the swap stops by name and the row
+        // says why (the actor's attempts record).
+        ActorCommandError::LezEscrowAlreadyInitialized => {
+            AttemptFailure::Fail("lez_escrow_already_initialized")
+        }
         ActorCommandError::NotActivated => AttemptFailure::Retry("actor_not_activated"),
         // Material is read from files the corridor and the sidecar write (the
         // capability file, the keys): a file not there yet, or rotated, is
@@ -1002,6 +1009,7 @@ pub(super) fn view_from_snapshot(
         privacy_guidance,
         attention_reason: None,
         revealing_claim_held_by: None,
+        status_detail: None,
         actor_phase: None,
         claim_window_closed: None,
         last_failure_class: None,
@@ -1347,6 +1355,12 @@ mod tests {
         assert_eq!(
             failure_of(ActorCommandError::DriveStoreUnavailable),
             AttemptFailure::Retry("actor_store_unavailable")
+        );
+        // An escrow initialization that can never execute stops the swap by
+        // name; nothing retries it.
+        assert_eq!(
+            failure_of(ActorCommandError::LezEscrowAlreadyInitialized),
+            AttemptFailure::Fail("lez_escrow_already_initialized")
         );
     }
 

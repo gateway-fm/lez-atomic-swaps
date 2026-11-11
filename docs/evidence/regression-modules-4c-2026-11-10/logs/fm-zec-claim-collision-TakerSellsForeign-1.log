@@ -1,0 +1,40 @@
+[07:54:37] === zec-claim-collision (stamp 1794210877)
+[07:54:37] preflight: indexer historical reads
+[07:54:47]   indexer serves historical reads at the tip (184)
+[07:54:47] preflight: the finality heartbeat saw finality move 0 s ago (finalized 183)
+[07:54:47]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[07:58:10]       taker: taker ZEC corridor zec-devnet-1794210887: sidecar listening on 127.0.0.1:19902
+[07:58:10]       taker: taker: 1 prepared ZEC entries configured
+[07:58:10]     [zec-provision 07:58:10]   maker sidecar answers on 127.0.0.1:19901
+[07:58:10]     [zec-provision 07:58:10]   taker sidecar answers on 127.0.0.1:19902
+[07:58:10]       maker_health: ready=True degraded=False
+[07:58:10]     [zec-provision 07:58:10]   Taker lists zec-devnet-offer-1794210887 ; corridor zec-devnet-1794210887 is live
+[07:58:11]   corridor zec-devnet-1794210887 entry 0 (deterministic-local-devnet-v3): offer zec-devnet-offer-1794210887, zebra tip 21425, Zcash refund height 21434
+[07:58:11]   Taker took zec-devnet-offer-1794210887: swap zec-devnet-s (not_activated)
+[07:58:11]   receipt: swap zec-devnet-swap-1794210887, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794210887/actor/taker/actor-config.json
+[07:58:11]   taker zec-devnet-swap-1794210887: not_activated (gen 0) | actor at - | maker: leased | zebra 21425
+[07:58:22]   taker zec-devnet-swap-1794210887: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 21425
+[07:58:23]   zebra: mined 1 block(s) → height 21426 (mempool had ['1ccc4c13fb40'])
+[07:58:34]   taker zec-devnet-swap-1794210887: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 21426
+[07:58:34]   zebra: mined 1 block(s) → height 21427 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[07:58:55]   taker zec-devnet-swap-1794210887: claim_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 21427
+[07:58:55]   provisioning a ZEC corridor beside the live one (zec-provision.sh; this recreates both Nodes)
+[07:59:50]     [zec-provision 07:59:50]   maker sidecar answers on 127.0.0.1:19903
+[07:59:50]     [zec-provision 07:59:50]   taker sidecar answers on 127.0.0.1:19904
+[07:59:50]     [zec-provision 07:59:50]   maker sidecar answers on 127.0.0.1:19901
+[07:59:50]     [zec-provision 07:59:50]   taker sidecar answers on 127.0.0.1:19902
+[07:59:50]       maker_health: ready=True degraded=False
+[07:59:50]     [zec-provision 07:59:50]   Taker lists zec-devnet-offer-1794211135-b ; corridor zec-devnet-1794211135 is live
+[07:59:50]   corridor zec-devnet-1794211135 entry 0 (deterministic-local-devnet-v3): offer zec-devnet-offer-1794210887, zebra tip 21425, Zcash refund height 21434
+[07:59:50]   corridor zec-devnet-1794211135 entry 1 (deterministic-local-devnet-v3): offer zec-devnet-offer-1794211135-b, zebra tip 21427, Zcash refund height 21436
+[07:59:51]   Taker took zec-devnet-offer-1794211135-b: swap zec-devnet-s (not_activated)
+[08:00:02]   zec-devnet-s's LEZ first lock submitted; A's claim admitted 0.6 s later (replay=False)
+[08:00:03]   taker zec-devnet-swap-1794210887: claim_in_progress (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 21427
+[08:00:24]   taker zec-devnet-swap-1794210887: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: both_legs_locked | zebra 21427
+[08:00:45]   zebra: mined 1 block(s) → height 21428 (mempool had ['6e209bf9a5b4'])
+[08:00:56]   taker zec-devnet-swap-1794210887: completed (gen 4) | actor at completed | maker: claim_evidence_available | zebra 21428
+[08:00:56]   taker zec-devnet-s: completed (gen 4) | maker: claim_evidence_available
+[08:01:07]   both Nodes report zec-devnet-s completed
+[08:01:07]   node: actor claim: revealing LEZ claim superseded (planned nonce 4, live 5); re-plan 1 at nonce 5: ad0df7950ae53653542a7fbafeb743dbd95ffab3919c341f1fc5594a53189db5 -> 42c174149fe00a422336b2c7245325aa2ad289299e9c06f75ce367d30eef26bc; 565 s left before the LEZ refund 
+[08:01:07]   node: taker actor zec-devnet-swap-1794211135-b: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez) re-planned [1 lez_fund nonce 5→6 tx 052197faee362358c9889009b8effc24c87b99efcf6e2440035fe870fa13ed31→0cc5e9b8e2082890e696f585b5aeeca9586a
+[08:01:07] === zec-claim-collision: passed in 389s

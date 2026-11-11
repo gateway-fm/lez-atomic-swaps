@@ -1,20 +1,23 @@
 // End-to-end UI verification against the real Maker Node / Taker Node pair.
 // Mirrors apps/basecamp/tests/basecamp-role-product.mjs from the repo, but
-// self-contained: spawns Basecamp offscreen with a fresh copy of the role
-// user dir, drives it through the QML inspector, and asserts live RPC results.
+// drives the party's own desk: the one its Basecamp (compose.yaml maker-node,
+// taker-node) opened at start and its party uses over VNC. It attaches to that
+// Basecamp's QML inspector, presses the desk's buttons and asserts live RPC
+// results; the desk stays open afterwards, so every step reads the state the
+// one before it left (the last reply, the selected wallet, the offer form).
 //
-// Run inside the basecamp-ui container:
-//   docker exec lez-basecamp-ui node /ui-tests/verify.mjs [maker|taker]
-import { spawn } from "node:child_process";
+// Run inside the role's Basecamp:
+//   docker exec lez-maker-node node /ui-tests/verify.mjs maker
+//   docker exec lez-taker-node node /ui-tests/verify.mjs taker
 import net from "node:net";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 const framework = "/opt/qt-mcp/test-framework/framework.mjs";
 const { test, run } = await import(framework);
 
 const role = process.argv[2] === "taker" ? "taker" : "maker";
+if (process.env.BASECAMP_ROLE !== role) {
+  throw new Error(`this is the ${process.env.BASECAMP_ROLE ?? "unknown"} Basecamp; run the ${role} suite in lez-${role}-node`);
+}
 const uiDirection = process.env.M3_UI_DIRECTION || "TakerSellsForeign";
 if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
   throw new Error("M3_UI_DIRECTION must be TakerSellsForeign or TakerSellsLez");
@@ -28,24 +31,6 @@ const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_fore
 const uiPair = process.env.M3_UI_PAIR || "Bitcoin";
 if (!["Bitcoin", "Zcash"].includes(uiPair)) throw new Error("M3_UI_PAIR must be Bitcoin or Zcash");
 const zcash = uiPair === "Zcash";
-
-const freshUserDir = mkdtempSync(join(tmpdir(), `lez-verify-${role}-`));
-// both plugins in one app: the product shape (maker + taker in the sidebar)
-cpSync(`/var/lez-assets/both-user`, freshUserDir, { recursive: true });
-process.env.BASECAMP_USER_DIR = freshUserDir;
-const appBin = `/usr/local/bin/lez-${role}-ui`;
-
-// spawn the app ourselves (the framework's --ci mode waits only 15s; cold
-// module loading needs longer), then attach in normal mode
-// Offscreen by default; UI_PLATFORM=xcb renders on DISPLAY (a recording run
-// grabs that display) at UI_GEOMETRY.
-const platform = process.env.UI_PLATFORM === "xcb" ? "xcb" : "offscreen";
-const appArgs = ["-platform", platform];
-if (platform === "xcb" && process.env.UI_GEOMETRY) appArgs.push("-geometry", process.env.UI_GEOMETRY);
-const appProcess = spawn(appBin, appArgs, {
-  stdio: ["ignore", "ignore", "inherit"],
-  env: { ...process.env, QT_QPA_PLATFORM: platform, QT_FORCE_STDERR_LOGGING: "1" },
-});
 
 // Narration for a recording: one line per moment worth a subtitle, written
 // with the time since the recording started (NARRATION_T0, ms since epoch).
@@ -75,8 +60,8 @@ async function waitInspector(ms) {
   throw new Error(`inspector did not appear on :${inspectorPort} within ${ms}ms`);
 }
 
-await waitInspector(90000);
-await new Promise((r) => setTimeout(r, 2000));
+// A Basecamp that was just restarted brings its inspector up with the app.
+await waitInspector(180000);
 
 // The swap belongs to whichever Maker wallet published the offer the Taker
 // took, so select the wallet whose market snapshot carries the Maker's action.
@@ -118,6 +103,33 @@ async function property(app, objectName, propertyName) {
 
 async function evaluateIn(app, objectId, expression) {
   return app.inspector.send("evaluate", { objectId, expression });
+}
+
+// A value of the desk's root object, read through its wallet selector.
+async function deskValue(app, expression) {
+  const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
+  if (wallet.matches?.length !== 1) throw new Error(`${role} wallet selector is unavailable`);
+  const reply = await evaluateIn(app, wallet.matches[0].id, expression);
+  if (reply.ok !== true) throw new Error(`desk value unavailable: ${JSON.stringify(reply).slice(0, 200)}`);
+  return reply.result;
+}
+
+// The desk is open already: open-desks.mjs opened it when the container
+// started (again after a restart). Its launcher entry is pressed only when the
+// desk view is not on screen. The desk must prove the Node, not its own
+// readiness (#91): its channel state turns "up" only on a genuine Node reply.
+async function openDesk(app, launcher, title) {
+  await app.waitFor(async () => app.expectTexts([launcher]), {
+    timeout: 180000, interval: 1000, description: "package discovery",
+  });
+  try { await app.expectTexts([title]); } catch { await app.click(launcher); }
+  await app.waitFor(async () => app.expectTexts([title]), {
+    timeout: 60000, interval: 500, description: `${title} view`,
+  });
+  await app.waitFor(async () => {
+    const link = await deskValue(app, "String(root.nodeLink)");
+    if (link !== "up") throw new Error(`the desk's Node channel is ${link}`);
+  }, { timeout: 180000, interval: 1000, description: "live Node behind the desk" });
 }
 
 async function setText(app, objectName, value, property = "text") {
@@ -225,7 +237,37 @@ function rowsFor(swaps, wanted) {
 
 const waitTimeoutMs = Number(process.env.INTERACTIVE_TIMEOUT_MS || 1800000);
 
-async function triggerVisibleAction(app, objectName, expectedText, outputName, workingStates, wanted, settleMs) {
+// The framework's waitFor treats every throw as "not yet" and gives up only at
+// its timeout, so a step that was already lost (the Node refused the press, the
+// swap ended elsewhere) used to report minutes later. A condition throws
+// StepFailed for what no amount of waiting can change; waitUntil ends the
+// step with it at once.
+class StepFailed extends Error {}
+async function waitUntil(condition, { timeout, interval, description }) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    try {
+      return await condition();
+    } catch (error) {
+      if (error instanceof StepFailed || Date.now() > deadline) {
+        throw new Error(error instanceof StepFailed ? error.message : `${description}: ${error.message}`);
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+}
+
+// The desk's own account of its last request, for a failure message: what
+// the operator would read on the status strip.
+async function deskStatus(app) {
+  try {
+    return await deskValue(app, "String(root.statusTitle) + ': ' + String(root.statusDetail)");
+  } catch {
+    return "status unavailable";
+  }
+}
+
+async function triggerVisibleAction(app, objectName, expectedText, outputName, reachedStates, wanted, settleMs) {
   let target = null;
   await app.waitFor(async () => {
     const found = await app.findByProperty("objectName", objectName);
@@ -243,8 +285,14 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     }
     throw new Error(`${expectedText} is not ready${wanted ? ` on ${wanted.slice(0, 12)}` : ""}`);
   }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
-  // A press counts once the desk shows a reply to it: the output text changes.
-  // A press that produced none (the desk was still busy loading, so its
+  // A press counts once the desk shows the Node's reply to it (the output
+  // text changes to an envelope carrying the action's result) and the row has
+  // moved on: into the action's working state or past it. The working state
+  // alone is not enough: a lock's "confirming" row lasts only until the Taker
+  // Node's next observer sweep (every 15 s) sees the confirmed lock, and a
+  // step that read the row a moment later found "Waiting for the Maker's
+  // lock", which it never accepted, and gave up after two minutes.
+  // A press that produced no reply (the desk was still busy loading, so its
   // handler returned without a request) is pressed again; a row that merely
   // stays in an accepted state is not proof that anything was sent.
   const before = await property(app, outputName, "text");
@@ -253,9 +301,9 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
   let unanswered = 0;
   // A refusal the Node reports as a dependency being unavailable is what the
   // owner retries by pressing again (the API run retries the same way); any
-  // other refusal fails the step.
+  // other refusal fails the step at once, in the desk's own words.
   let retries = 0;
-  await app.waitFor(async () => {
+  await waitUntil(async () => {
     const text = await property(app, outputName, "text");
     // The desk's own placeholder while a request is in flight is not a reply:
     // the step waits for the Node's answer, so the app is never closed under
@@ -272,7 +320,10 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     if (text === before || declined || inFlight) {
       if (inFlight) {
         pressedAt = Date.now();
-      } else if ((declined || Date.now() - pressedAt > 20000) && unanswered < 4) {
+      } else if (declined || Date.now() - pressedAt > 20000) {
+        if (unanswered >= 4) {
+          throw new StepFailed(`${expectedText} was pressed ${unanswered + 1} times and ${declined ? `declined by the desk (${text})` : "never answered"}; desk: ${await deskStatus(app)}`);
+        }
         unanswered += 1;
         console.log(`  RETRIED-PRESS ${expectedText} ${declined ? `declined by the desk (${text})` : "produced no reply"}; pressing again (${unanswered}/4)`);
         await evaluateIn(app, target, "clicked()");
@@ -281,8 +332,14 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
       throw new Error(`${expectedText} has no reply yet`);
     }
     let envelope = null;
-    try { envelope = JSON.parse(text); } catch { /* not a reply */ }
-    if (envelope?.ok === false) {
+    try { envelope = JSON.parse(text); } catch { /* not an envelope */ }
+    if (envelope === null) {
+      // The desk wrote something other than a Node envelope ("Backend
+      // failure: …", "Node backend is not ready"): the press did not reach
+      // the Node, and the desk says why.
+      throw new StepFailed(`${expectedText} was not sent: ${text.slice(0, 300)}; desk: ${await deskStatus(app)}`);
+    }
+    if (envelope.ok === false) {
       const code = String(envelope.error?.code ?? envelope.code ?? "");
       if (/unavailable/.test(code) && retries < 4) {
         retries += 1;
@@ -291,17 +348,18 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
         await evaluateIn(app, target, "clicked()");
         throw new Error(`${expectedText} pressed again after ${code}`);
       }
-      throw new Error(`${expectedText} refused: ${JSON.stringify(envelope.error ?? envelope)}`);
+      throw new StepFailed(`${expectedText} refused by the Node: ${JSON.stringify(envelope.error ?? envelope).slice(0, 400)}`);
     }
-    if (!rowsFor(await deskSwaps(app), wanted).some((swap) => workingStates.includes(swap.state))) {
-      throw new Error(`${expectedText} has not entered ${workingStates.join("|")}`);
-    }
-  }, { timeout: settleMs + 90000, interval: 5000, description: `${expectedText} submission` });
+    const rows = rowsFor(await deskSwaps(app), wanted);
+    if (rows.some((swap) => reachedStates.includes(swap.state))) return;
+    const seen = rows.map((swap) => `${swap.state} (${swap.state_label})`).join(", ") || "no row";
+    throw new Error(`${expectedText} has not reached ${reachedStates.join("|")}; desk shows ${seen}`);
+  }, { timeout: settleMs + 90000, interval: 1000, description: `${expectedText} submission` });
 }
 
 // Watching one swap reach a desk state; the Node acts, the desk shows it.
 async function waitDeskState(app, outputName, wanted, states, label) {
-  await app.waitFor(async () => {
+  await waitUntil(async () => {
     const rows = rowsFor(await deskSwaps(app), wanted);
     if (process.env.DESK_DEBUG === "1") {
       const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
@@ -310,7 +368,13 @@ async function waitDeskState(app, outputName, wanted, states, label) {
     }
     if (!rows.some((swap) => states.includes(swap.state))) {
       const seen = rows.map((swap) => `${swap.state}${swap.state_label ? " (" + swap.state_label + ")" : ""}`).join(", ") || "no row";
-      throw new Error(`no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}; desk shows ${seen}`);
+      const message = `no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}; desk shows ${seen}`;
+      // A named swap that already ended otherwise (completed where a refund
+      // was awaited, or the reverse) can never get there: say so now.
+      if (wanted && rows.length > 0 && rows.every((swap) => ["completed", "refunded"].includes(swap.state))) {
+        throw new StepFailed(`${message}, which is final`);
+      }
+      throw new Error(message);
     }
     // The label the desk shows for the reached state, when the step names one
     // (the asset in it depends on the direction: the Maker waits for the
@@ -378,18 +442,9 @@ function makerNarration(state) {
 }
 
 if (role === "maker") {
-  test("maker: launcher discoverable and app opens", async (app) => {
-    await app.waitFor(async () => app.expectTexts(["LEZ Maker"]), {
-      timeout: 25000, interval: 500, description: "package discovery",
-    });
-    await app.click("LEZ Maker");
-    // "Node replied over the owner-local channel" is written when a reply
-    // arrives, not when the view loads: the desk must prove the Node, not
-    // its own readiness (#91).
-    await app.waitFor(async () => app.expectTexts(["LEZ — Maker Desk", "Node replied over the owner-local channel"]), {
-      timeout: 25000, interval: 500, description: "maker view + live backend",
-    });
-    narrate("Maker desk opened from the Basecamp launcher; it talks to the real Maker Node over its owner-only socket");
+  test("maker: the Maker's Basecamp shows its desk with a live Node", async (app) => {
+    await openDesk(app, "LEZ Maker", "LEZ — Maker Desk");
+    narrate("The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket");
   });
 
   test("maker: real Node health", async (app) => {
@@ -412,12 +467,13 @@ if (role === "maker") {
   });
 
   test("maker: Node-indexed BTC offer inventory", async (app) => {
-    if (reverseDirection) {
+    // The form keeps the side an earlier step chose: set it both ways.
+    {
       const sellLeg = await app.findByProperty("objectName", "makerSellAmount");
       if (sellLeg.error || sellLeg.matches?.length !== 1) {
         throw new Error("Maker offer form was not found");
       }
-      await evaluateIn(app, sellLeg.matches[0].id, 'root.sellSide = "btc"');
+      await evaluateIn(app, sellLeg.matches[0].id, `root.sellSide = "${reverseDirection ? "btc" : "lez"}"`);
     }
     const wallet = await app.findByProperty("objectName", "makerBtcWallet");
     if (wallet.matches?.length !== 1) {
@@ -484,18 +540,9 @@ if (role === "maker") {
     });
   }
 } else {
-  test("taker: launcher discoverable and app opens", async (app) => {
-    await app.waitFor(async () => app.expectTexts(["LEZ Taker"]), {
-      timeout: 25000, interval: 500, description: "package discovery",
-    });
-    await app.click("LEZ Taker");
-    // "Node replied over the owner-local channel" is written when a reply
-    // arrives, not when the view loads: the desk must prove the Node, not
-    // its own readiness (#91).
-    await app.waitFor(async () => app.expectTexts(["LEZ — Taker Desk", "Node replied over the owner-local channel"]), {
-      timeout: 25000, interval: 500, description: "taker view + live Node",
-    });
-    narrate("Taker desk opened from the Basecamp launcher; it talks to the real Taker Node over its owner-only socket");
+  test("taker: the Taker's Basecamp shows its desk with a live Node", async (app) => {
+    await openDesk(app, "LEZ Taker", "LEZ — Taker Desk");
+    narrate("The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket");
   });
 
   // Open offers are a precondition of a take only; an action or a wait on an
@@ -563,6 +610,8 @@ if (role === "maker") {
         }
         throw new Error(`no takeable ${wantedDirection} ${uiPair}${wantedOffer ? ` ${wantedOffer}` : ""} order-book row yet (rows: ${seen.join(", ") || "none"})`);
       }, { timeout: 180000, interval: 5000, description: `${wantedDirection} ${uiPair} order-book row` });
+      // The output still shows the previous step's reply: only a new one counts.
+      const before = await property(app, "takerOutput", "text");
       narrate(zcash
         ? "Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor"
         : reverseDirection
@@ -586,7 +635,8 @@ if (role === "maker") {
       let taken;
       for (;;) {
         let envelope = null;
-        try { envelope = JSON.parse(await property(app, "takerOutput", "text")); } catch { /* not yet a reply */ }
+        const text = await property(app, "takerOutput", "text");
+        try { if (text !== before) envelope = JSON.parse(text); } catch { /* not yet a reply */ }
         if (envelope?.ok === false) {
           throw new Error(`take rejected by the Taker Node: ${JSON.stringify(envelope.error ?? envelope)}`);
         }
@@ -622,7 +672,7 @@ if (role === "maker") {
                   "Bitcoin claim broadcast; the Maker Node uses the revealed secret to claim the LEZ escrow"],
       refund_btc: ["The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures",
                    "Refund admitted; the Taker Node broadcasts it when the timelock allows and follows it to confirmation"],
-      retry_refund_lez: ["Retry refund replays the admitted refund request; the Node re-drives the recovery on its own as well",
+      retry_refund_lez: ["Resubmit refund replays the admitted refund request; the Node re-drives the recovery on its own as well",
                          "The Taker observed the Maker's Zcash refund; both legs are back and the swap is refunded"],
       refund_lez: ["The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached",
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
@@ -641,22 +691,31 @@ if (role === "maker") {
 
   // A refund is admitted at once and driven by the Node until the chain
   // clocks allow it, so its row settles into refunding/refunded much later.
+  // Each action names the states its press leads to, the working state and
+  // every one after it: a lock's or a claim's working state can be over
+  // before the step reads the row (the next observer sweep moves a confirmed
+  // lock on to "Waiting for the Maker's lock", and the Maker's follow-up claim
+  // completes the swap), and passing through it is what the press proves.
+  const afterTakerLock = (claiming) => ["awaiting_maker_lock", "claim_window_closed", "claim_ready", claiming,
+                                        "completed", "refund_ready", "refunding", "refunded"];
   const takerActions = zcash && !reverseDirection
     ? { claim_lez: [`Claim ${zecLezText}`, ["claiming_lez", "claim_ready", "completed"], 45000],
         refund_zec: [`Refund ${zecText}`, ["refunding", "refunded"], waitTimeoutMs] }
     : zcash
     ? { claim_zec: [`Claim ${zecText}`, ["claiming_zec", "claim_ready", "completed"], 45000],
         refund_lez: [`Refund ${zecLezText}`, ["refunding", "refunded"], waitTimeoutMs],
-        // The admitted refund keeps its button as "Retry refund": the same
+        // The admitted refund keeps its action as "Resubmit refund": the same
         // request replayed, for an owner who does not want to wait for the
-        // Node's own re-drive (every 30 s until the row reads refunded).
-        retry_refund_lez: ["Retry refund", ["refunding", "refund_ready", "refunded"], waitTimeoutMs] }
+        // Node's own re-drive (every 30 s until the row reads refunded). The
+        // desk offers it only once the row has stood 15 min past the refund
+        // time, or the Node named a failure class (node_market.cpp).
+        retry_refund_lez: ["Resubmit refund", ["refunding", "refund_ready", "refunded"], waitTimeoutMs] }
     : reverseDirection
-    ? { lock_lez: [`Lock ${lezText}`, ["locking_lez"], 45000],
-        claim_btc: [`Claim ${btcText}`, ["claiming_btc"], 45000],
+    ? { lock_lez: [`Lock ${lezText}`, ["locking_lez", ...afterTakerLock("claiming_btc")], 45000],
+        claim_btc: [`Claim ${btcText}`, ["claiming_btc", "completed"], 45000],
         refund_lez: [`Refund ${lezText}`, ["refunding", "refunded"], waitTimeoutMs] }
-    : { lock_btc: [`Lock ${btcText}`, ["locking_btc"], 45000],
-        claim_lez: [`Claim ${lezText}`, ["claiming_lez"], 45000],
+    : { lock_btc: [`Lock ${btcText}`, ["locking_btc", ...afterTakerLock("claiming_lez")], 45000],
+        claim_lez: [`Claim ${lezText}`, ["claiming_lez", "completed"], 45000],
         refund_btc: [`Refund ${btcText}`, ["refunding", "refunded"], waitTimeoutMs] };
   if (Object.hasOwn(takerActions, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
@@ -680,16 +739,11 @@ if (role === "maker") {
   }
 }
 
-process.on("exit", () => {
-  try { appProcess.kill("SIGTERM"); } catch {}
-  try { rmSync(freshUserDir, { recursive: true, force: true }); } catch {}
-});
-
 // A recording keeps the desk on screen after its last step (RECORD_MIN_DWELL
 // seconds, set by record-step.sh): a step that finishes a second after the
 // desk's first paint would otherwise be a black segment, and the last caption
 // needs frames to sit on. The framework ends a passed run with process.exit,
-// so the exit itself is deferred by the dwell; the app is closed on exit.
+// so the exit itself is deferred by the dwell; the desk stays open.
 if (process.env.RECORD_MIN_DWELL) {
   const exitNow = process.exit.bind(process);
   process.exit = (code) => {

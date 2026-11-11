@@ -9,12 +9,29 @@
   "main": "lez_atomic_swap_maker_plugin",
   "view": "qml/Main.qml",
   "icon": "icons/maker-console.svg",
-  "dependencies": ["chat_module", "delivery_module"],
+  "dependencies": [
+    "chat_module",
+    "delivery_module",
+    "lez_core",
+    "lez_swap_node",
+    "lez_maker_node"
+  ],
   "dependency_overrides": {
     "delivery_module": {
       "input": "chat_module",
       "file": "rust-lib/deps/delivery_module.lidl"
+    },
+    "lez_core": {
+      "file": "deps/lez_core.lidl"
+    },
+    "lez_swap_node": {
+      "file": "deps/lez_swap_node.lidl"
+    },
+    "lez_maker_node": {
+      "file": "deps/lez_maker_node.lidl"
     }
   },
-  "codegen": { "rep": "src/lez_atomic_swap_maker.rep" }
+  "codegen": {
+    "rep": "src/lez_atomic_swap_maker.rep"
+  }
 }

@@ -49,7 +49,7 @@ Linux, and requires Docker with Compose.
 
 ```sh
 tar -xzf lez-swap-stack-v0.2.5-arm64.tar.gz && cd lez-swap-stack-v0.2.5-arm64
-./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → UI suites
+./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → desk suites
 ```
 
 **From source (hours):** the first build compiles every pinned dependency
@@ -58,34 +58,44 @@ natively.
 ```sh
 git clone https://github.com/gateway-fm/lez-atomic-swaps.git
 cd lez-atomic-swaps/deploy
-./scripts/from-scratch.sh        # first time: sources, payloads, chains, market bootstrap, UI suites
-./scripts/up.sh                  # afterwards: config → images → stack → UI verification
+./scripts/from-scratch.sh        # first time: sources, payloads, chains, market bootstrap, desk suites
+./scripts/up.sh                  # afterwards: config → images → stack → desk verification
 ```
 
-The two Basecamp apps are also published as Logos modules; add the catalog
-`https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
-in Basecamp's package manager to install **LEZ Maker** and
-**LEZ Taker** at the release version. A native Basecamp on macOS reaches
-the Compose Nodes through `deploy/scripts/desk-sockets.py`; the steps are in
-[`apps/basecamp/README.md`](apps/basecamp/README.md#native-basecamp-on-macos).
-
-Open the Basecamp desktop on macOS:
+Each party runs its own Basecamp: the Maker's holds the **LEZ Maker** desk,
+the Taker's the **LEZ Taker** desk, and each desk starts its party's signer
+and Node, so there is nothing else to start. Open them over VNC:
 
 ```sh
-open vnc://127.0.0.1:5901
+open vnc://127.0.0.1:5901   # the Maker's Basecamp
+open vnc://127.0.0.1:5902   # the Taker's Basecamp
 ```
 
-Or connect any VNC client to `127.0.0.1:5901`. The default password is
-`lezswap`; override it with `VNC_PASSWORD` before starting the stack.
+Or connect any VNC client to those ports. The default password is
+`lezswap`; override it with `VNC_PASSWORD` before starting the stack. The
+steps are in
+[`apps/basecamp/README.md`](apps/basecamp/README.md#each-partys-desk-in-its-own-basecamp).
+
+The module catalog that carries the two Basecamp apps belongs to the
+organization:
+`https://raw.githubusercontent.com/gateway-fm/logos-modules-release-base/main/logos-repo.json`.
+Releases up to v0.2.5 named the same catalog under a personal account
+([`docs/evidence/review-2026-09-12/README.md`](docs/evidence/review-2026-09-12/README.md));
+that address keeps serving until the next release (issue #106). Nothing here
+checks that the catalog carries this branch's packages. A
+desk installed from a catalog also needs a Node of its own on the same host
+([`apps/basecamp/README.md`](apps/basecamp/README.md)): the role packages do
+not carry one yet ([`docs/submission-115.md`](docs/submission-115.md)).
 
 The local product also exposes:
 
 | Surface | Address |
 |---|---|
-| Bitcoin explorer | <http://127.0.0.1:3002> |
-| LEZ explorer and evidence | <http://127.0.0.1:3003/#/evidence> |
-| Maker owner RPC | `/run/lez/maker.sock` inside the stack |
-| Taker owner service | owner-only Unix socket inside the stack |
+| Bitcoin explorer (profile `explorers`: `LEZ_EXPLORERS=1 ./scripts/up.sh`) | <http://127.0.0.1:3002> |
+| LEZ explorer and evidence (profile `explorers`) | <http://127.0.0.1:3003/#/evidence> |
+| LEZ indexer JSON-RPC | <http://127.0.0.1:8779> |
+| Maker owner RPC | `/run/lez/maker/node.sock` inside `lez-maker-node` |
+| Taker owner RPC | `/run/lez/taker/node.sock` inside `lez-taker-node` |
 
 ### Complete a swap
 

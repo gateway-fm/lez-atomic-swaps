@@ -2849,6 +2849,80 @@ async fn owner_step_observation_requires_the_complete_durable_lez_plan() {
 }
 
 #[tokio::test]
+async fn own_lock_is_confirmed_after_the_counterparty_already_settled_it() {
+    // On a fast chain the claimant can claim a finalized lock before the
+    // depositor's next drive observes its own funding: the custody is drained
+    // and the metadata says Claimed. The prepared pair at final positions still
+    // proves the depositor's lock, for both steps; a Funded-looking pair that
+    // is not the prepared one still fails.
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { initialize, fund } = &plan else {
+        panic!("native LEZ plan")
+    };
+    for status in [EscrowState::Claimed, EscrowState::Refunded] {
+        for (step, request) in [
+            (initialize, "observe-settled-init"),
+            (fund, "observe-settled-fund"),
+        ] {
+            let response = escrow_observation(
+                &agreement,
+                observation_context(Participant::Taker, request),
+                status,
+                0,
+            );
+            let adapter = observation_adapter(
+                ObservationTransport::new(response),
+                &agreement,
+                Participant::Taker,
+            );
+            let observed = adapter
+                .observe_native_first_lock_step(
+                    &agreement,
+                    RequestId::new(request).expect("request id"),
+                    &plan,
+                    step,
+                )
+                .await
+                .expect("a settled escrow still confirms the own exact pair");
+            assert!(
+                matches!(&observed, FirstLockObservation::Confirmed(evidence) if evidence.step() == step.step()),
+                "{status:?} {request}: {observed:?}"
+            );
+        }
+    }
+
+    let mut foreign = escrow_observation(
+        &agreement,
+        observation_context(Participant::Taker, "observe-settled-foreign"),
+        EscrowState::Claimed,
+        0,
+    );
+    let FundingObservation::Found(funding) = &foreign.funding else {
+        panic!("funding found")
+    };
+    let mut funding = (**funding).clone();
+    funding.transaction.transaction_id = TransactionId::from_bytes([0x33; 32]);
+    foreign.funding = FundingObservation::found(funding);
+    let adapter = observation_adapter(
+        ObservationTransport::new(foreign),
+        &agreement,
+        Participant::Taker,
+    );
+    assert!(matches!(
+        adapter
+            .observe_native_first_lock_step(
+                &agreement,
+                RequestId::new("observe-settled-foreign").expect("request id"),
+                &plan,
+                fund,
+            )
+            .await,
+        Err(ObserveNativeEscrowError::InconsistentFacts)
+    ));
+}
+
+#[tokio::test]
 async fn initialization_confirmation_precedes_a_stably_absent_funding_step() {
     let agreement = agreement();
     let plan = native_first_lock_plan();
@@ -3083,6 +3157,81 @@ async fn first_lock_submit_selects_exact_step_and_keeps_ambiguity_unknown() {
             .expect("ambiguous submit is an outcome"),
         NativeFirstLockSubmitOutcome::Unknown
     );
+}
+
+/// A bridge that refuses every submission by name: the escrow account the
+/// initialization would create already exists without it.
+#[derive(Clone)]
+struct EscrowTakenTransport {
+    submits: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Copy, Debug, Error)]
+#[error("escrow account already initialized")]
+struct EscrowTaken;
+
+#[async_trait]
+impl LezBridgeFirstLockTransport for EscrowTakenTransport {
+    type Error = EscrowTaken;
+
+    async fn observe_escrow(
+        &self,
+        _request: ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, Self::Error> {
+        Err(EscrowTaken)
+    }
+
+    async fn submit_transaction(
+        &self,
+        _request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        self.submits.fetch_add(1, Ordering::SeqCst);
+        Err(EscrowTaken)
+    }
+
+    fn is_escrow_already_initialized(_error: &Self::Error) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn first_lock_submit_passes_a_named_escrow_refusal_on_instead_of_unknown() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { initialize, .. } = &plan else {
+        panic!("native LEZ plan")
+    };
+    let submits = Arc::new(AtomicUsize::new(0));
+    let mut descriptor = runtime(&agreement);
+    descriptor.sidecar_role = BridgeParticipant::Taker;
+    descriptor.signer_account_id = Hex32::from_bytes(*agreement.lez_account(Participant::Taker));
+    let adapter = LezBridgeAdapter::new(
+        EscrowTakenTransport {
+            submits: Arc::clone(&submits),
+        },
+        RunId::new("native-run-0001").expect("run id"),
+        descriptor,
+        Participant::Taker,
+    )
+    .expect("matching actor sidecar");
+    // A known refusal is an error the caller can name, not an ambiguous
+    // outcome that would be resubmitted after a fresh observation.
+    let refused = adapter
+        .submit_native_first_lock_step(
+            &agreement,
+            RequestId::new("submit-init-refused").expect("request id"),
+            &plan,
+            initialize,
+        )
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(PrepareNativeFirstLockError::Transport(EscrowTaken))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -4343,6 +4492,20 @@ fn canonical_observation(
     agreement: &ZecAgreementV1,
     context: MessageContext,
 ) -> ObserveEscrowResult {
+    escrow_observation(
+        agreement,
+        context,
+        EscrowState::Funded,
+        native_terms(agreement).amount().as_u128(),
+    )
+}
+
+fn escrow_observation(
+    agreement: &ZecAgreementV1,
+    context: MessageContext,
+    status: EscrowState,
+    custody_balance: u128,
+) -> ObserveEscrowResult {
     let terms = native_terms(agreement);
     let escrow_program =
         Hex32::from_bytes(program_bytes(agreement.lez_terms().escrow_program_id()));
@@ -4351,7 +4514,7 @@ fn canonical_observation(
     let depositor = Hex32::from_bytes(*agreement.lez_account(agreement.lez_depositor()));
     let claimant = Hex32::from_bytes(*agreement.lez_account(agreement.lez_claimant()));
     let signers = AccountIds::new(vec![depositor]).expect("signer list");
-    let metadata = metadata_facts_for_agreement(agreement, &terms, EscrowState::Funded);
+    let metadata = metadata_facts_for_agreement(agreement, &terms, status);
     let initialization = InitializationFoundFacts::new(
         ObservedTransactionFacts::new(
             TransactionId::from_bytes([0x11; 32]),
@@ -4386,7 +4549,7 @@ fn canonical_observation(
         NativeCustodyFacts::new(
             custody_account,
             terms.authenticated_transfer_program_id(),
-            terms.amount().as_u128(),
+            custody_balance,
         ),
     );
     let tip = ChainTip::new(Hex32::from_bytes([0x90; 32]), 12);
@@ -4589,7 +4752,7 @@ fn prepared_response(context: lez_bridge_protocol::MessageContext) -> PrepareNat
 }
 
 fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("public key")) {
+    match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("public key")) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }

@@ -17,6 +17,42 @@ M2 is [rfp#122](https://github.com/logos-co/rfp/issues/122). Its six official
 deliverables, each mapped to the artefact that answers it, the proof the
 reviewer can run, and where it stands on `feat/m2-zec-on-docker` today.
 
+## State on 2026-11-11 (PR #120)
+
+Read this first; the tables below were written on 2026-11-03 for the Docker
+stack and are kept as the record of that submission shape.
+
+- **The stack moved.** PR #120 runs the stack as Logos modules (issue #115):
+  one network Basecamp, each role's Node in a Logos package inside the role's
+  Basecamp. `docs/submission-115.md` is the traceability and the limitations.
+  The sequencing decision of 2026-10-28 below ("M2 on the Docker stack first")
+  is superseded: M2's evidence is produced on the modules stack.
+- **Zcash is on NU7.** Public Zcash Testnet activated NU7; the engine signs
+  for it (checked against mined Testnet transactions) and the regtest devnet
+  runs Zebra 7.0.0 with NU7 from height 1, so the regression exercises the
+  same consensus branch (deliverable 2).
+- **Public testnet (deliverable 1's public half, and any public corridor).**
+  Not applicable to this release. The public LEZ testnet has moved to LEZ 0.3, which this LEZ v0.2.4 stack cannot talk to.
+  Public-network evidence is postponed to the release that ports to LEZ 0.4 (#107). The devnet evidence stands for
+  the escrow: deployed, funded, claimed and refunded in both directions on
+  every recreated chain. (A legacy v0.2 endpoint still answers; exploratory
+  work against it is on a follow-up branch and is not part of this
+  submission.)
+- **Deliverable 6, recordings.** `regress.sh` records every desk test of a
+  full run (`LEZ_REGRESS_RECORD=1`); the release candidate's run is the source
+  of the demo set.
+- **Review findings due with the ZEC submission** (issue #103 items 1 and 16,
+  #112, #113): fixed in PR #120; `docs/issue-closing-notes-2026-11-11.md`.
+- **The evidence set** is `docs/evidence/regression-m2-2026-11-11/`: all 93
+  tests in one run on three lanes (92 passed; the one failure and its reruns
+  are explained in its `RESULTS.txt`), with provenance and the ZEC demo
+  recordings.
+- **The module catalog** is under the organisation (#106):
+  `gateway-fm/logos-modules-release-base`. The address under a personal
+  account keeps serving until the next release.
+- **Still open for the submission:** the tag and release (0.3.0), the
+  rfp#122 comment, the fresh-machine walk of the Zcash guide (U10).
+
 ## The six deliverables
 
 | # | Official deliverable (rfp#122) | Artefact | Proof | Today |

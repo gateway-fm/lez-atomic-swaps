@@ -1,0 +1,78 @@
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1794418776
+  forgetting swaps that referenced the old chain
+[reset 17:39:40] done: swaps forgotten; the Nodes stay stopped
+  [time 17:39:40] forget the old chain's swaps (reset-swaps.sh --offline): 4 s (4 s since up.sh started)
+  [time 17:39:43] stop the old chain: 3 s (7 s since up.sh started)
+  [time 17:39:43] move the old chain's state aside: 0 s (7 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1794418784 (2026-11-11T17:39:44Z), root 83041b5224334bcbc5d2776b7f2726bbc6fb106d0e2ca7a62bd8cc7f7f4be6a3
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmBUhTzJv8DGDmRujwaixYJomeLaDKoNNh9): runtime/zebra/zebrad.toml
+runtime generated at runtime
+  [time 17:39:45] runtime config: 2 s (9 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 17:39:46] images: 1 s (10 s since up.sh started)
+[3/6] starting chains…
+ Container lez-zebra  Running
+ Container lez-bitcoin-core  Running
+ Container lez-btc-miner  Running
+ Container lez-network  Starting
+ Container lez-bitcoin-core  Waiting
+ Container lez-network  Started
+ Container lez-network  Waiting
+ Container lez-bitcoin-core  Healthy
+ Container lez-network  Healthy
+ Container lez-sequencer  Starting
+ Container lez-sequencer  Started
+  [time 17:39:51] start the chains (compose up): 5 s (15 s since up.sh started)
+  [time 17:40:00] chains healthy: 9 s (24 s since up.sh started)
+  the new LEZ chain finalizes (4 -> 5)
+  [time 17:40:14] the new chain finalizes: 14 s (38 s since up.sh started)
+  [time 17:40:18] indexer check (repair-indexer.sh): 4 s (42 s since up.sh started)
+Regtest wallets ready; Maker 3674.65159594 BTC, Taker 5249.7008405 BTC spendable.
+  [time 17:40:19] Bitcoin Core wallets (seed-btc-wallets.py): 1 s (43 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+taker-lane03: claimed 2000000 into HqUDwSJWjn7e6J5fry8ztBQeZjbX1THMzec5YEYhLs3k (48150f6391fca0722f06ce424d1c0bd35647cc696e2e183f293859ddcc97cd59)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 17:41:15] market bootstrap: 56 s (99 s since up.sh started)
+[5/6] Nodes…
+ Container lez-bitcoin-core  Running
+ Container lez-network  Running
+ Container lez-sequencer  Running
+ Container lez-maker-node  Recreate
+ Container lez-maker-node  Recreated
+ Container lez-network  Waiting
+ Container lez-network  Healthy
+ Container lez-network  Waiting
+ Container lez-sequencer  Waiting
+ Container lez-bitcoin-core  Waiting
+ Container lez-network  Healthy
+ Container lez-bitcoin-core  Healthy
+ Container lez-sequencer  Healthy
+ Container lez-maker-node  Starting
+ Container lez-maker-node  Started
+ Container lez-taker-node  Recreate
+ Container lez-taker-node  Recreated
+ Container lez-taker-node  Starting
+ Container lez-taker-node  Started
+  [time 17:41:20] start the Nodes (compose up): 5 s (104 s since up.sh started)
+  [time 17:41:36] Nodes healthy: 16 s (120 s since up.sh started)
+  [time 17:41:36] Nodes answer owner health: 0 s (120 s since up.sh started)
+15/15 market checks passed
+  [time 17:41:39] market check (verify-market.py): 3 s (123 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-network  Running
+ Container lez-sequencer  Running
+ Container lez-heartbeat  Running
+ Container lez-network  Waiting
+ Container lez-network  Healthy
+ Container lez-network  Waiting
+ Container lez-sequencer  Waiting
+ Container lez-network  Healthy
+ Container lez-sequencer  Healthy
+  [time 17:41:40] finality heartbeat: 1 s (124 s since up.sh started)
+[6/6] the parties' desks…
+  [time 17:41:40] desk suites: 0 s (124 s since up.sh started)

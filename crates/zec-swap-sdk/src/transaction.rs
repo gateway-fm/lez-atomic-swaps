@@ -7,8 +7,7 @@ use sha2::{Digest, Sha256};
 use zcash_primitives::transaction::{
     Authorization as TransactionAuthorization, Authorized as TransactionAuthorized, Transaction,
     TransactionData, TxVersion,
-    sighash::{SignableInput as TransactionSignableInput, signature_hash},
-    txid::TxIdDigester,
+    sighash::{PrecomputedSighashData, SignableInput as TransactionSignableInput},
 };
 use zcash_protocol::{
     consensus::{BlockHeight, BranchId},
@@ -290,8 +289,10 @@ where
         None,
         None,
     );
-    let txid_parts = unsigned.digest(TxIdDigester);
-    let bundle = unsigned
+    let precomputed = PrecomputedSighashData::new_zip244(unsigned)
+        .map_err(|error| TransactionBuildError::Serialization(error.to_string()))?;
+    let bundle = precomputed
+        .tx()
         .transparent_bundle()
         .expect("constructed with transparent bundle");
     let signable = TransparentSignableInput::from_parts(
@@ -303,11 +304,7 @@ where
         request.funding_output.value(),
     )
     .expect("single input is present");
-    let digest = signature_hash(
-        &unsigned,
-        &TransactionSignableInput::Transparent(signable),
-        &txid_parts,
-    );
+    let digest = precomputed.signature_hash(&TransactionSignableInput::Transparent(signable));
     let signature = secp.sign_ecdsa(&Message::from_digest(*digest.as_ref()), secret_key);
     let mut signature_bytes = signature.serialize_der().to_vec();
     signature_bytes.push(SIGHASH_ALL);
@@ -344,8 +341,5 @@ where
 }
 
 fn pubkey_hash(public_key: &PublicKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(public_key) {
-        TransparentAddress::PublicKeyHash(hash) => hash,
-        TransparentAddress::ScriptHash(_) => unreachable!("public keys always yield P2PKH"),
-    }
+    crate::zcash_keys::p2pkh_hash(public_key)
 }

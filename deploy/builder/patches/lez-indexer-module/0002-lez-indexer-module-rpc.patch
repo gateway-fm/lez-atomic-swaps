@@ -1,0 +1,52 @@
+diff --git a/metadata.json b/metadata.json
+index c2e3d57..72f1f90 100644
+--- a/metadata.json
++++ b/metadata.json
+@@ -1,7 +1,7 @@
+ {
+   "name": "lez_indexer_module",
+   "display_name": "LEZ Indexer Module",
+-  "version": "1.1.1",
++  "version": "1.1.1-rpc.4",
+   "description": "Logos Execution Zone Indexer Module for Logos Core",
+   "type": "core",
+   "interface": "universal",
+diff --git a/src/lez_indexer_module_impl.cpp b/src/lez_indexer_module_impl.cpp
+index 1314837..aa0d7b7 100644
+--- a/src/lez_indexer_module_impl.cpp
++++ b/src/lez_indexer_module_impl.cpp
+@@ -372,3 +372,19 @@ std::string LezIndexerModuleImpl::getTransactionsByAccount(
+     ::free_ffi_transaction_vec(res.value);
+     return jsonToCompactString(arr);
+ }
++
++int64_t LezIndexerModuleImpl::serve_rpc(int64_t port) {
++    if (!indexer_service_ffi) {
++        warn("serve_rpc", "indexer not started");
++        return 1;  // OperationStatus NullPointer
++    }
++    if (port <= 0 || port > 65535) {
++        warn("serve_rpc", "port out of range");
++        return 3;  // OperationStatus ClientError
++    }
++    const auto status = ::indexer_rpc_serve(handle(indexer_service_ffi), static_cast<uint16_t>(port));
++    if (is_error(&status)) {
++        warn("serve_rpc", "indexer FFI could not serve the JSON-RPC");
++    }
++    return static_cast<int64_t>(status);
++}
+diff --git a/src/lez_indexer_module_impl.h b/src/lez_indexer_module_impl.h
+index 2a57083..4c135ac 100644
+--- a/src/lez_indexer_module_impl.h
++++ b/src/lez_indexer_module_impl.h
+@@ -80,6 +80,10 @@ public:
+     // re-wrapping this long line.
+     // clang-format off
+     std::string getTransactionsByAccount(const std::string& account_id, const std::string& offset, const std::string& limit);
++    // Serve the indexer's JSON-RPC (indexer_service's own implementation, over
++    // this running indexer) on 0.0.0.0:port from the module process. Returns 0
++    // on success, the FFI OperationStatus otherwise.
++    int64_t serve_rpc(int64_t port);
+     // clang-format on
+ 
+ private:

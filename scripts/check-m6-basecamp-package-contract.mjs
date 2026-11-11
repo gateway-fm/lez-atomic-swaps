@@ -181,7 +181,10 @@ for (const value of ["maker", "taker"]) {
     new RegExp(`lez-${value}-ui-install\\s*=.*\\.install`),
     `must expose the official ${value} developer-install tree`,
   );
-  for (const suffix of ["", "-lgx", "-install", "-integration-test"]) {
+  // -lgx-portable is the release package (linux-amd64/linux-arm64) that
+  // logosctl installs and from-scratch.sh stages; -lgx and -install are the
+  // builder's development builds (`<platform>-dev`).
+  for (const suffix of ["", "-lgx", "-lgx-portable", "-install", "-integration-test"]) {
     requirePattern(
       rootFlake,
       flakeSource,
@@ -190,6 +193,12 @@ for (const value of ["maker", "taker"]) {
     );
   }
 }
+requirePattern(
+  rootFlake,
+  flakeSource,
+  /lez-network-ui-lgx-portable\s*=\s*network\.packages\.\$\{system\}\.lgx-portable/,
+  "must expose the LEZ Network desk's release package (the operator package)",
+);
 requirePattern(
   rootFlake,
   flakeSource,
@@ -360,10 +369,29 @@ for (const pkg of packages) {
     for (const [key, value] of Object.entries(expected)) {
       if (metadata[key] !== value) report(metadataFile, `${key} must equal ${JSON.stringify(value)}`);
     }
+    // Chat, its Delivery runtime, the LEZ wallet (lez_core), in which the desk
+    // hosts its role's LEZ signer (common/lez_role_signer.h), lez_swap_node,
+    // which runs the role's Node (common/lez_role_node.h), and the role's own
+    // Node package (lez_<role>_node), which carries that Node — nothing else,
+    // and never the other role's Node package.
+    const nodePackage = `lez_${pkg.directory}_node`;
     if (
-      JSON.stringify(metadata.dependencies) !== JSON.stringify(["chat_module", "delivery_module"])
+      JSON.stringify(metadata.dependencies) !==
+      JSON.stringify(["chat_module", "delivery_module", "lez_core", "lez_swap_node", nodePackage])
     ) {
-      report(metadataFile, "must grant only the pinned Chat module and its Delivery runtime");
+      report(metadataFile, `must grant only the pinned Chat module, its Delivery runtime, the LEZ wallet module, the swap node module and ${nodePackage}`);
+    }
+    for (const [module, what] of [
+      ["lez_core", "the LEZ wallet's"],
+      ["lez_swap_node", "the swap node module's"],
+      [nodePackage, "the role Node package's"],
+    ]) {
+      if (
+        metadata.dependency_overrides?.[module]?.file !== `deps/${module}.lidl` ||
+        metadata.dependency_overrides?.[module]?.input !== undefined
+      ) {
+        report(metadataFile, `must take ${what} API from the committed common/deps/${module}.lidl`);
+      }
     }
     if (
       metadata.dependency_overrides?.delivery_module?.input !== "chat_module" ||
@@ -595,6 +623,30 @@ requirePattern(
   "must bound direct gateway calls made by the product harness",
 );
 
+// The LEZ Network desk (network/): not a swap desk; it only hosts the LEZ
+// network node and the LEZ indexer in a Basecamp, so it may call those two
+// modules — through the committed interface files — and nothing else.
+{
+  const metadataFile = resolve(basecampRoot, "network/metadata.json");
+  const metadata = parseJson(metadataFile, "LEZ Network desk metadata");
+  if (metadata !== null) {
+    if (metadata.name !== "lez_network" || metadata.type !== "ui_qml" || metadata.interface !== "universal") {
+      report(metadataFile, "must be the universal ui_qml package lez_network");
+    }
+    if (JSON.stringify(metadata.dependencies) !== JSON.stringify(["blockchain_module", "lez_indexer_module"])) {
+      report(metadataFile, "must grant only the LEZ network node and LEZ indexer modules");
+    }
+    for (const module of ["blockchain_module", "lez_indexer_module"]) {
+      if (
+        metadata.dependency_overrides?.[module]?.file !== `deps/${module}.lidl` ||
+        metadata.dependency_overrides?.[module]?.input !== undefined
+      ) {
+        report(metadataFile, `must take ${module}'s API from the committed common/deps/${module}.lidl`);
+      }
+    }
+  }
+}
+
 if (errors.length > 0) {
   process.stderr.write(
     `M6 Basecamp package contract: RED (${errors.length} defect${errors.length === 1 ? "" : "s"})\n`,
@@ -603,6 +655,6 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   process.stdout.write(
-    "M6 Basecamp package contract: GREEN (2 ui_qml packages, 19 typed slots, pinned E2EE Chat plus signed Delivery discovery)\n",
+    "M6 Basecamp package contract: GREEN (2 ui_qml swap packages and the LEZ Network desk, 19 typed slots, pinned E2EE Chat plus signed Delivery discovery)\n",
   );
 }

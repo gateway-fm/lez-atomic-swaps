@@ -1,0 +1,131 @@
+name: zcash-public-testnet
+
+# The public Zcash Testnet acceptance lane (docs/zcash-testnet-setup.md,
+# deploy/scripts/public-zec-testnet.sh): ZEC<->LEZ corridors against Zcash
+# Testnet and the official LEZ v0.2 testnet, with an evidence bundle of public
+# data kept as an artifact. It is manual and weekly, never a pull-request
+# gate: faucets, providers and public peers are outside this repository.
+#
+# - `preflight` (GitHub-hosted) checks the provider route: Zebra version,
+#   chain, genesis, tip, sync and whether the agreement profile can sign for
+#   the next block's consensus branch. It fails visibly when the route is
+#   blocked, and the corridors then do not start.
+# - `corridors` runs the happy and refund corridors on a self-hosted runner
+#   labelled `lez-zec-testnet`: the Nodes on the public networks
+#   (docs/testnet-run.md), a synced Testnet Zebra on loopback, an owner-funded
+#   transparent key. A refund corridor waits for real timelocks, so the job
+#   may take most of a day.
+#
+# Credentials by name only: the secret ZCASH_TESTNET_TATUM_API_KEY (optional:
+# without it the provider admits five requests a minute) and the repository
+# variable LEZ_ZEC_SELF_HOSTED_COOKIE_FILE (the path of Zebra's cookie on the
+# runner). The bundle never holds either (zec-public-evidence.py checks).
+
+on:
+  workflow_dispatch:
+    inputs:
+      routes:
+        description: Zcash routes for the corridors (comma-separated; self-hosted, provider)
+        type: string
+        default: self-hosted,provider
+      scenarios:
+        description: node-e2e.py ZEC scenarios (comma-separated)
+        type: string
+        default: zec-happy,zec-maker-refund
+      directions:
+        description: directions (comma-separated; TakerSellsLez, TakerSellsForeign)
+        type: string
+        default: TakerSellsLez
+      preflight_only:
+        description: check the routes only; run no corridor
+        type: boolean
+        default: false
+  schedule:
+    - cron: "23 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcash-public-testnet
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: provider route preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Write the provider key to an owner-only file
+        env:
+          TATUM_KEY: ${{ secrets.ZCASH_TESTNET_TATUM_API_KEY }}
+        run: |
+          if [[ -n "$TATUM_KEY" ]]; then
+            umask 077
+            printf '%s' "$TATUM_KEY" > "$RUNNER_TEMP/tatum.key"
+            echo "LEZ_ZEC_PROVIDER_API_KEY_FILE=$RUNNER_TEMP/tatum.key" >> "$GITHUB_ENV"
+            echo "LEZ_ZEC_PROVIDER_MIN_INTERVAL_SECONDS=1" >> "$GITHUB_ENV"
+          fi
+      - name: Preflight the provider route
+        working-directory: deploy
+        run: bash scripts/public-zec-testnet.sh --routes provider --preflight-only --out "$RUNNER_TEMP/bundle"
+      - name: Bundle summary
+        if: always()
+        run: cat "$RUNNER_TEMP/bundle/SUMMARY.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: zcash-public-testnet-preflight-${{ github.run_id }}
+          path: ${{ runner.temp }}/bundle
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Remove the key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tatum.key"
+
+  corridors:
+    name: happy and refund corridors
+    needs: preflight
+    if: ${{ !inputs.preflight_only }}
+    runs-on: [self-hosted, lez-zec-testnet]
+    timeout-minutes: 1200
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Write the provider key to an owner-only file
+        env:
+          TATUM_KEY: ${{ secrets.ZCASH_TESTNET_TATUM_API_KEY }}
+        run: |
+          if [[ -n "$TATUM_KEY" ]]; then
+            umask 077
+            printf '%s' "$TATUM_KEY" > "$RUNNER_TEMP/tatum.key"
+            echo "LEZ_ZEC_PROVIDER_API_KEY_FILE=$RUNNER_TEMP/tatum.key" >> "$GITHUB_ENV"
+            echo "LEZ_ZEC_PROVIDER_MIN_INTERVAL_SECONDS=1" >> "$GITHUB_ENV"
+          fi
+      - name: Run the corridors
+        working-directory: deploy
+        env:
+          LEZ_ZEC_SELF_HOSTED_COOKIE_FILE: ${{ vars.LEZ_ZEC_SELF_HOSTED_COOKIE_FILE }}
+          ROUTES: ${{ inputs.routes || 'self-hosted,provider' }}
+          SCENARIOS: ${{ inputs.scenarios || 'zec-happy,zec-maker-refund' }}
+          DIRECTIONS: ${{ inputs.directions || 'TakerSellsLez' }}
+        run: >-
+          bash scripts/public-zec-testnet.sh --routes "$ROUTES" --scenarios "$SCENARIOS"
+          --directions "$DIRECTIONS" --out "$RUNNER_TEMP/bundle"
+      - name: Bundle summary
+        if: always()
+        run: cat "$RUNNER_TEMP/bundle/SUMMARY.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: zcash-public-testnet-${{ github.run_id }}
+          path: ${{ runner.temp }}/bundle
+          if-no-files-found: error
+          retention-days: 90
+      - name: Remove the key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tatum.key"

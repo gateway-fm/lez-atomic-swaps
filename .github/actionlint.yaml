@@ -1,3 +1,5 @@
 self-hosted-runner:
-  # arm64 host provisioned by deploy/scripts/from-scratch.sh (node-e2e.yml)
-  labels: [lez-stack]
+  # lez-stack: arm64 host provisioned by deploy/scripts/from-scratch.sh (node-e2e.yml)
+  # lez-zec-testnet: the Nodes on the public networks with a synced Testnet
+  # Zebra (zcash-public-testnet.yml, docs/zcash-testnet-setup.md)
+  labels: [lez-stack, lez-zec-testnet]

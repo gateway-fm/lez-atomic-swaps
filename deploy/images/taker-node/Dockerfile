@@ -1,62 +1,71 @@
-# The staged payloads are debug builds; their debug sections are most of the
-# bytes. Strip them here so the image ships only what runs.
+# The Taker's Basecamp: the basecamp-ui image (build context "basecamp",
+# compose.yaml) with the Taker's Node payload package installed. Its desk
+# starts the Taker's LEZ signer in Basecamp's lez_core and has Basecamp's
+# lez_swap_node launch and supervise the Taker Node from the installed
+# package — the swap engine runs inside the party's Basecamp. Nothing of the
+# Node is copied into this image on its own: the package
+# (lez_taker_node.lgx, scripts/package-role-node.sh) carries the Node, its
+# CLI, its actors, the LEZ sidecar and the launcher; this image installs it,
+# and compose.yaml configures it. Only the Taker's executables are here
+# (deploy/role-symmetry.json). The ZEC corridor provisioners are not part of
+# the package: scripts/zec-provision.sh runs them from this image to build a
+# prepared ZEC swap from live chain facts.
+#
+# The staged provisioners are debug builds; their debug sections are most of
+# the bytes. Strip them here so the image ships only what runs.
 FROM debian:bookworm-slim AS strip
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends binutils \
     && rm -rf /var/lib/apt/lists/*
-COPY lez-taker-node /payload/lez-taker-node
-COPY lez-taker-cli /payload/lez-taker-cli
-COPY lez-taker-chat-gateway /payload/lez-taker-chat-gateway
-COPY lez-taker-registry-init /payload/lez-taker-registry-init
-COPY lez-runtime-healthcheck /payload/lez-runtime-healthcheck
-COPY lez-btc-taker-actor /payload/lez-btc-taker-actor
-COPY lez-zec-taker-actor /payload/lez-zec-taker-actor
-COPY lez-v02-bridge-poc /payload/lez-v02-bridge-poc
-# The ZEC corridor provisioners: a prepared ZEC swap is built from live
-# chain facts (scripts/zec-provision.sh), not composed at take time.
-COPY zec-local-poc-provision /payload/zec-local-poc-provision
-COPY zec-local-poc-identity /payload/zec-local-poc-identity
-COPY zec-local-poc-transfer /payload/zec-local-poc-transfer
-COPY zec-local-poc-chat-draft /payload/zec-local-poc-chat-draft
-COPY zec-local-poc-chat-finalize /payload/zec-local-poc-chat-finalize
+COPY zec-local-poc-provision zec-local-poc-identity zec-local-poc-transfer \
+     zec-local-poc-chat-draft zec-local-poc-chat-finalize /payload/
 RUN strip /payload/*
 
-FROM python:3.12-slim-bookworm
+# "basecamp" is a build context (compose.yaml: service:basecamp-ui), not a registry image.
+# hadolint ignore=DL3006
+FROM basecamp
 
 LABEL org.logos-co.atomic-swaps.purpose="local-taker-node"
 
+# What the package's launcher runs besides the package's own executables.
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl jq libpcsclite1 procps socat tini \
+        ca-certificates curl jq libpcsclite1 procps socat python3 util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=strip --chmod=0555 /payload/lez-taker-node /usr/local/bin/lez-taker-node
-COPY --from=strip --chmod=0555 /payload/lez-taker-cli /usr/local/bin/lez-taker-cli
-COPY --from=strip --chmod=0555 /payload/lez-taker-chat-gateway /usr/local/bin/lez-taker-chat-gateway
-COPY --from=strip --chmod=0555 /payload/lez-taker-registry-init /usr/local/bin/lez-taker-registry-init
-COPY --from=strip --chmod=0555 /payload/lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
-COPY --from=strip --chmod=0555 /payload/lez-btc-taker-actor /usr/local/bin/lez-btc-taker-actor
-COPY --from=strip --chmod=0555 /payload/lez-zec-taker-actor /usr/local/bin/lez-zec-taker-actor
-COPY --from=strip --chmod=0555 /payload/lez-v02-bridge-poc /usr/local/bin/lez-v02-bridge-poc
-COPY --from=strip --chmod=0555 /payload/zec-local-poc-provision /usr/local/bin/zec-local-poc-provision
-COPY --from=strip --chmod=0555 /payload/zec-local-poc-identity /usr/local/bin/zec-local-poc-identity
-COPY --from=strip --chmod=0555 /payload/zec-local-poc-transfer /usr/local/bin/zec-local-poc-transfer
-COPY --from=strip --chmod=0555 /payload/zec-local-poc-chat-draft /usr/local/bin/zec-local-poc-chat-draft
-COPY --from=strip --chmod=0555 /payload/zec-local-poc-chat-finalize /usr/local/bin/zec-local-poc-chat-finalize
-COPY --chmod=0555 node-entrypoint.sh /usr/local/bin/node-entrypoint.sh
+# The state directories the Compose volumes mount here (taker_state, zec_taker,
+# delivery_dir, ...): a new named volume takes the owner and mode of the image
+# directory it is first mounted on, so no init container prepares them.
 RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez \
-    && mkdir -p /var/lib/lez/taker /run/lez/taker \
-    && chown -R lez:lez /var/lib/lez /run/lez \
-    && chmod 0700 /var/lib/lez/taker /run/lez/taker
+    && mkdir -p /var/lib/lez/taker /var/lib/lez/zec /run/lez/taker /run/lez-wallet/taker /delivery \
+    && chown -R lez:lez /var/lib/lez /run/lez /run/lez-wallet /delivery \
+    && chmod 0700 /var/lib/lez/taker /var/lib/lez/zec /run/lez/taker /run/lez-wallet/taker /delivery
 
-COPY --chmod=0444 build-source.txt sidecar-source.txt sidecar-tree.txt sidecar-expected.txt /usr/local/share/lez/
-# The staged sidecar must come from the same compat/lez-v0_2-sidecar tree the
-# Node binaries were built beside (from-scratch.sh writes both stamps); a
-# binary left over from an older checkout fails the build here.
-RUN chmod 0755 /usr/local/share/lez \
-    && [ "$(cat /usr/local/share/lez/sidecar-tree.txt)" = "$(cat /usr/local/share/lez/sidecar-expected.txt)" ] \
-    || { echo "staged sidecar (tree $(cat /usr/local/share/lez/sidecar-tree.txt)) does not match the sidecar sources these Node binaries expect ($(cat /usr/local/share/lez/sidecar-expected.txt)); run from-scratch.sh --only build:sidecar and --only stage" >&2; exit 1; }
+# The package, installed where Basecamp installs a user's modules (<user
+# dir>/modules, which Basecamp scans beside its own): the package's one
+# platform variant, its manifest and the variant's name, as Basecamp's package
+# manager lays a module out. The tools the stack calls by their usual names
+# (the health check, the CLI, scripts/record-evidence.py, ...) link to the
+# installed files.
+COPY --chmod=0444 lez_taker_node.lgx /tmp/lez_taker_node.lgx
+RUN set -eu; module=/var/lez/basecamp-taker-user/modules/lez_taker_node; unpacked="$(mktemp -d)"; \
+    tar -xzf /tmp/lez_taker_node.lgx -C "$unpacked"; \
+    variant="$(jq -r '.main | keys[0]' "$unpacked/manifest.json")"; \
+    mkdir -p "$module"; cp -R "$unpacked/variants/$variant/." "$module/"; \
+    cp "$unpacked/manifest.json" "$module/"; printf '%s\n' "$variant" > "$module/variant"; \
+    rm -rf "$unpacked" /tmp/lez_taker_node.lgx; \
+    test -x "$module/bin/node-entrypoint.sh"; test -x "$module/bin/lez-taker-node"; \
+    for tool in "$module"/bin/*; do \
+      case "${tool##*/}" in payload.json|node-entrypoint.sh) ;; *) ln -s "$tool" "/usr/local/bin/${tool##*/}" ;; esac; \
+    done; \
+    chown -R 4713:4713 /var/lez/basecamp-taker-user/modules
+
+COPY --from=strip --chmod=0555 /payload/ /usr/local/bin/
+COPY --chmod=0444 build-source.txt sidecar-source.txt /usr/local/share/lez/
+RUN chmod 0755 /usr/local/share/lez
 
 USER lez
 WORKDIR /var/lib/lez
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# Basecamp's entrypoint (the base image's): Xvfb and VNC, the role's desk opened, then
+# the desk starts the signer and the Node.
+ENTRYPOINT ["/entrypoint.sh"]

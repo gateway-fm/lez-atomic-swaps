@@ -115,6 +115,16 @@ impl ZebraChainIdentity {
         }
     }
 
+    /// Exact identity of the pinned deterministic Zebra 7 Regtest fixture,
+    /// NU7 active from height 1: the same Regtest genesis, NU7's branch.
+    #[must_use]
+    pub const fn deterministic_regtest_nu7() -> Self {
+        Self {
+            consensus_branch_id: BranchId::Nu7,
+            ..Self::deterministic_regtest_nu6_2()
+        }
+    }
+
     /// Configured Zcash network.
     #[must_use]
     pub const fn network(self) -> NetworkType {
@@ -1521,6 +1531,12 @@ mod tests {
             deterministic.genesis_hash().0,
             ReverseHex::decode(HASH).expect("fixed exact hash")
         );
+        // Zebra 7's Regtest keeps the genesis; only the branch differs.
+        let nu7 = ZebraChainIdentity::deterministic_regtest_nu7();
+        assert_eq!(nu7.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(nu7.network(), NetworkType::Regtest);
+        assert_eq!(nu7.rpc_chain(), ZebraRpcChain::Test);
+        assert_eq!(nu7.genesis_hash(), deterministic.genesis_hash());
     }
 
     #[test]

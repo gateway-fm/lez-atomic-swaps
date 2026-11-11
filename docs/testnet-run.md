@@ -1,6 +1,6 @@
 # Running the swap stack on public testnets
 
-This guide runs the Maker and Taker Nodes, and both Basecamp desks, against
+This guide runs the Maker's and the Taker's Basecamps (each party's desk and Node) against
 the **official LEZ v0.2 testnet** (`https://testnet.lez.logos.co`, channel
 `0101…01`, LEZ v0.2.4) and **Bitcoin testnet4**. Nothing here is a local
 chain: four local services join the public networks, and the Nodes reach
@@ -11,10 +11,37 @@ them over a Docker network.
 | `lez-btc-testnet4` | Bitcoin Core 31.1 on testnet4, unpruned, `txindex` + `txospenderindex` | the Nodes fund their locks from a wallet per role. Observation alone needs only `txindex` on any Core from 24.0: without `txospenderindex` the adapter finds a spender from the mempool, the UTXO set and a scan back from the tip |
 | `lez-testnet-node` | Logos Blockchain node on the public testnet | feeds the indexer |
 | `lez-testnet-indexer` | LEZ v0.2.4 indexer following the public channel | the public endpoint serves no indexer (`getLastFinalizedBlockId`) |
-| `lez-testnet-sequencer` | nginx: plain HTTP on the Docker network to `https://testnet.lez.logos.co` | the Nodes accept only literal-loopback HTTP endpoints |
+| `lez-testnet-sequencer` | nginx: plain HTTP on the Docker network to `https://testnet.lez.logos.co` | only for the one-time escrow deployment (section 7): the deployer accepts only a literal-loopback HTTP endpoint. The Nodes and the role signers do not use it |
 
 Host requirements: arm64 with Docker, about 40 GB for testnet4 and room for
 the Logos Blockchain node's state.
+
+How this route differs from the local devnet (`deploy/compose.yaml`):
+
+- Only the two role Basecamps come from `compose.yaml`. Each one hosts its
+  party's desk, its LEZ signer (Basecamp's `lez_core`) and its Node (launched
+  by Basecamp's `lez_swap_node`), exactly as on the devnet. The devnet's
+  `network` Basecamp (LEZ node and indexer as Logos modules), its `sequencer`,
+  `bitcoin-core` and `zebra` are not used.
+- The public chain is read by upstream's `indexer_service` and Logos
+  Blockchain node as plain containers (sections 3 and 5), not by the
+  `blockchain_module` / `lez_indexer_module` pair.
+- The Nodes, their sidecars and the role's signer reach the official
+  sequencer `https://testnet.lez.logos.co/` directly over HTTPS:
+  `compose.testnet.yaml` sets `LEZ_LEZ_SEQUENCER_ROUTE=official_public` and
+  `LEZ_SEQUENCER_URL`, the launcher (`modules/lez-role-node/node-entrypoint.sh`)
+  renders `sequencer_route: official_public` into the Node's configuration
+  (`crates/btc-role-lifecycle/src/config.rs`, commit `64782d4a`) and starts
+  the ZEC sidecars with the same profile, and the signer's wallet
+  (`LEZ_WALLET_SEQUENCER_URL`) speaks HTTPS itself (its sequencer client is
+  jsonrpsee's HTTP client with its default rustls TLS). The proxy (section 4)
+  is left only for the escrow deployment (section 7). This route has not been
+  run since the change: verified are the rendered configuration and
+  `docker compose -f compose.yaml -f compose.testnet.yaml config`.
+- This guide has not been run again since the role Nodes moved into their
+  Basecamps (PR #120). The last recorded runs are
+  [`docs/evidence/testnet-20260918/`](evidence/testnet-20260918/) and
+  [`docs/evidence/testnet3-provider-20260918/`](evidence/testnet3-provider-20260918/README.md).
 
 ## Which networks
 
@@ -125,6 +152,11 @@ The bootstrap peers are those in the Logos Blockchain Node 0.2.4 release notes.
 
 ## 4. The sequencer proxy
 
+The escrow deployer accepts only literal-loopback HTTP for the sequencer
+(section 7), so a plain-HTTP proxy on the Docker network speaks TLS to the
+official sequencer for it. The Nodes and the role signers do not need it
+(they use the `official_public` route, above).
+
 ```sh
 mkdir -p ~/lez-testnet/proxy
 # nginx.conf: listen 3040; proxy_pass https://testnet.lez.logos.co with
@@ -210,9 +242,12 @@ before it submits anything.
 ## 8. Running the swaps on the desks
 
 Both directions run from `deploy/`, against the public stack rather than the local
-defaults:
+defaults. `compose.testnet.yaml` drops the Basecamps' dependencies on the local
+chain, so starting them starts nothing else:
 
 ```sh
+docker compose -p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml \
+  up -d maker-node taker-node
 export LEZ_STACK_COMPOSE_ARGS="-p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml"
 export LEZ_CONTAINER_PREFIX=lez-testnet LEZ_REPAIR_INDEXER=0 LEZ_EXPORT_EVIDENCE=0
 export LEZ_UI_LEZ_AMOUNT=100 LEZ_UI_BTC_AMOUNT=0.0001
@@ -220,6 +255,10 @@ export INTERACTIVE_TIMEOUT_MS=5400000
 scripts/ui-e2e.sh happy --direction TakerSellsForeign --record   # the Taker pays BTC
 scripts/ui-e2e.sh happy --direction TakerSellsLez --record       # the Maker pays BTC
 ```
+
+Each party's desk is the one its own Basecamp has open: the Maker's on VNC at
+`127.0.0.1:5903`, the Taker's at `127.0.0.1:5904` (`compose.testnet.yaml`; a local
+stack keeps 5901 and 5902), and `ui-e2e.sh` drives those same desks.
 
 Four things differ from a local run, and each of them will fail a run if missed.
 
@@ -292,7 +331,7 @@ docker run -d --name lez-t3-provider --restart unless-stopped --network lez-test
 export LEZ_MAKER_BTC_CLAIM_DESTINATION=<an address of the Maker owner's wallet>
 export LEZ_TAKER_BTC_CLAIM_DESTINATION=<an address of the Taker owner's wallet>
 docker compose -p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml \
-  -f compose.testnet3-provider.yaml up -d --no-deps maker-node taker-node
+  -f compose.testnet3-provider.yaml up -d maker-node taker-node
 ```
 
 The two claim addresses must differ: an agreement refuses a Maker and a Taker paid at

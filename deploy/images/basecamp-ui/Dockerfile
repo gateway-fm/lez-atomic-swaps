@@ -1,3 +1,7 @@
+# The Basecamp every Basecamp container of the stack is built on (compose.yaml
+# basecamp-ui, a build-only service): the parties' (maker-node, taker-node:
+# one role's desk each, on VNC) and the LEZ network's (bedrock, indexer: the
+# LEZ Network desk). Nothing runs this image on its own.
 FROM debian:trixie-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -14,8 +18,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY assets/bundle /opt/basecamp
 COPY assets/maker-user /var/lez-assets/maker-user
 COPY assets/taker-user /var/lez-assets/taker-user
+COPY assets/network-user /var/lez-assets/network-user
 COPY assets/qt-mcp /opt/qt-mcp
 COPY entrypoint.sh /entrypoint.sh
+COPY open-desks.mjs /opt/lez-open-desks.mjs
+COPY signer-health.sh /usr/local/bin/lez-signer-health
 
 RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp \
     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui \
@@ -24,10 +31,6 @@ RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp \
     && mkdir -p /var/lez \
     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user \
     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user \
-    && mkdir -p /var/lez-assets/both-user/plugins /var/lez/basecamp-user/plugins \
-    && cp -a /var/lez-assets/maker-user/plugins/lez_atomic_swap_maker /var/lez-assets/both-user/plugins/ \
-    && cp -a /var/lez-assets/taker-user/plugins/lez_atomic_swap_taker /var/lez-assets/both-user/plugins/ \
-    && cp -a /var/lez-assets/both-user/plugins/. /var/lez/basecamp-user/plugins/ \
     && chown -R 4713:4713 /var/lez /var/lez-assets \
     && chmod -R u+rwX /var/lez /var/lez-assets
 
@@ -40,6 +43,6 @@ ENV DISPLAY=:0 \
 
 EXPOSE 5900
 HEALTHCHECK --interval=30s --timeout=10s --retries=10 --start-period=40s \
-    CMD pgrep -f LogosBasecamp >/dev/null || exit 1
+    CMD pgrep -f LogosBasecamp >/dev/null && /usr/local/bin/lez-signer-health || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

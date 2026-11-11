@@ -245,6 +245,7 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
         privacy_guidance: Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
         attention_reason: None,
         revealing_claim_held_by: None,
+        status_detail: None,
         actor_phase: None,
         claim_window_closed: None,
         last_failure_class: None,
@@ -480,4 +481,55 @@ fn assert_secret_and_authority_free(value: &Value) {
         }
         _ => {}
     }
+}
+
+#[test]
+fn lez_chain_progress_is_additive_and_a_stalled_finality_degrades_health() {
+    use lez_btc_role_lifecycle::{LezChainDegradedReasonV1, LezFinalityRule};
+
+    let healthy = TakerHealthV1::new(
+        true,
+        TakerDependencyStateV1::Available,
+        TakerDependencyStateV1::Available,
+    )
+    .with_btc_lifecycle_registered();
+    // Without the chain the reply is exactly what it was: no `lez_chain` key.
+    let before = serde_json::to_value(&healthy).unwrap();
+    assert!(before.get("lez_chain").is_none(), "{before}");
+    assert_eq!(
+        serde_json::from_value::<TakerHealthV1>(before).unwrap(),
+        healthy
+    );
+
+    let mut rule = LezFinalityRule::new(60);
+    let moving = rule.observe(1_000, Some(84), Some(100));
+    let still_healthy = healthy.clone().with_lez_chain(Some(moving));
+    assert!(still_healthy.is_ready() && !still_healthy.is_degraded());
+
+    let stalled = rule.observe(1_120, Some(84), Some(220));
+    assert_eq!(
+        stalled.reason,
+        Some(LezChainDegradedReasonV1::LezFinalityStalled)
+    );
+    let degraded = healthy.with_lez_chain(Some(stalled.clone()));
+    assert!(degraded.is_ready() && degraded.is_degraded());
+    assert_eq!(degraded.lez_chain(), Some(&stalled));
+    let value = serde_json::to_value(&degraded).unwrap();
+    assert_eq!(value["degraded"], true);
+    assert_eq!(value["lez_chain"]["degraded"], true);
+    assert_eq!(value["lez_chain"]["reason"], "lez_finality_stalled");
+    assert_eq!(value["lez_chain"]["finalized_block_id"], 84);
+    assert_eq!(
+        value["lez_chain"]["finalized_advanced_at_unix_seconds"],
+        1_000
+    );
+    assert_eq!(value["lez_chain"]["finalized_flat_seconds"], 120);
+    assert_eq!(value["lez_chain"]["tip_block_id"], 220);
+    assert_eq!(value["lez_chain"]["stall_threshold_seconds"], 60);
+    // The schema stays 1 and the reply round-trips through the strict decoder.
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(
+        serde_json::from_value::<TakerHealthV1>(value).unwrap(),
+        degraded
+    );
 }

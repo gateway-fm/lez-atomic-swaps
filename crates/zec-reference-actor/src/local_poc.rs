@@ -19,12 +19,12 @@ use lez_zebra_node_adapter::{
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
     LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationTranscriptV1,
-    TransparentFundingRequest, TransparentUtxo, ZEC_CONCRETE_AGREEMENT_SCHEMA_V2,
-    ZcashFundingInputSetV1, ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1,
-    ZecAgreementDraftV1, ZecAgreementRecordV1, ZecAgreementV1, ZecLezTermsV1,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1,
-    build_transparent_transfer_transaction, derive_lez_metadata_account_v1,
+    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, TransparentFundingRequest, TransparentUtxo,
+    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1, ZcashFundingInputV1,
+    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementDraftV1, ZecAgreementRecordV1,
+    ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
+    ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, build_transparent_transfer_transaction, derive_lez_metadata_account_v1,
     derive_lez_native_custody_account_v1, derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -44,8 +44,8 @@ use zcash_transparent::{
 use zeroize::Zeroizing;
 
 use crate::config::{
-    DeterministicLocalV0_2ActorConfigInput, encode_deterministic_local_v0_2_actor_config,
-    encode_rebound_local_v0_2_actor_config,
+    DeterministicLocalV0_2ActorConfigInput, ProvisionedZebraRoute,
+    encode_deterministic_local_v0_2_actor_config, encode_rebound_local_v0_2_actor_config,
 };
 use crate::secure_file::{FilePrivacy, read_bounded_identified};
 use crate::{ActorConfig, ActorRole, CandidateOutpoint, validate_actor_pair};
@@ -75,6 +75,14 @@ const REFUND_FEE_ZATOSHIS: u64 = 10_000;
 const COINBASE_MATURITY_CONFIRMATIONS: u32 = 100;
 const AGREEMENT_LIFETIME_SECONDS: u64 = 3_600;
 const COUNTERPARTY_SCAN_BLOCKS: u32 = 1_024;
+/// Zcash Testnet's genesis block hash as `getblockhash 0` prints it.
+const TESTNET_GENESIS_HASH_HEX: &str =
+    "05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38";
+/// Blocks a Testnet funder-output search may read: ~18 h of Testnet at its
+/// 22.7 s average. Each costs a hash, a block and its transactions over a
+/// remote or rate-limited route; a search wider than this names a later
+/// `zcash_funding_scan_from_height`.
+const MAX_TESTNET_FUNDING_SCAN_BLOCKS: u32 = 2_880;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,6 +105,160 @@ struct ProvisionSpec {
     /// it yet when the second is provisioned; the second names 1.
     #[serde(default)]
     zcash_funding_skip: u32,
+    /// Lowest Zebra height the funder-output search reads; absent, height 1.
+    /// The search reads every block from there to 100 below the tip, ~3 min
+    /// for a devnet zebra 23 000 blocks tall: the devnet provisioner names the
+    /// height of the payments it just made to a Taker's key, below which that
+    /// key holds nothing it means to spend.
+    #[serde(default)]
+    zcash_funding_scan_from_height: u32,
+    /// How the provisioner and both actors reach `zebra_endpoint`; absent,
+    /// the deterministic Regtest fixture on loopback.
+    #[serde(default)]
+    zebra_route: LocalPocZebraRoute,
+    /// The swap's Zcash principal, zatoshis; absent, 1 ZEC (the devnet's).
+    #[serde(default)]
+    zcash_principal_zatoshis: Option<u64>,
+}
+
+impl ProvisionSpec {
+    fn zcash_principal(&self) -> u64 {
+        self.zcash_principal_zatoshis
+            .unwrap_or(ZCASH_PRINCIPAL_ZATOSHIS)
+    }
+}
+
+/// The Zebra a corridor is provisioned against, and its credential.
+#[derive(Clone, Default, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum LocalPocZebraRoute {
+    /// The deterministic Regtest fixture: loopback, no credential.
+    #[default]
+    DeterministicLocal,
+    /// A self-hosted Zcash Testnet Zebra on loopback; `cookie_file` is its
+    /// owner-private `.cookie` (`__cookie__:<password>`).
+    SelfHostedCookie { cookie_file: PathBuf },
+    /// Tatum's Testnet Zebrad gateway; `api_key_file` holds the owner-private
+    /// key sent as `x-api-key`.
+    TatumTestnetXApiKey { api_key_file: PathBuf },
+}
+
+impl LocalPocZebraRoute {
+    const fn credential_file(&self) -> Option<&PathBuf> {
+        match self {
+            Self::DeterministicLocal => None,
+            Self::SelfHostedCookie { cookie_file } => Some(cookie_file),
+            Self::TatumTestnetXApiKey { api_key_file } => Some(api_key_file),
+        }
+    }
+
+    const fn network(&self) -> NetworkType {
+        match self {
+            Self::DeterministicLocal => NetworkType::Regtest,
+            Self::SelfHostedCookie { .. } | Self::TatumTestnetXApiKey { .. } => NetworkType::Test,
+        }
+    }
+}
+
+/// Reads a route credential once: owner-private, one line of visible ASCII.
+fn read_zebra_credential(route: &LocalPocZebraRoute) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    let Some(path) = route.credential_file() else {
+        return Ok(None);
+    };
+    ensure!(path.is_absolute(), "Zebra credential path must be absolute");
+    let (bytes, _) = read_bounded_identified(path, 1_026, FilePrivacy::OwnerPrivate)
+        .map_err(|_| anyhow::anyhow!("Zebra credential file is unavailable or unsafe"))?;
+    let mut bytes = bytes;
+    while bytes
+        .last()
+        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
+    {
+        bytes.pop();
+    }
+    ensure!(
+        !bytes.is_empty() && bytes.iter().all(u8::is_ascii_graphic),
+        "Zebra credential file must hold one line of visible ASCII"
+    );
+    Ok(Some(bytes))
+}
+
+/// A bounded Zebra client on `endpoint` over `route`, with its credential.
+fn connect_zebra(
+    endpoint: &Url,
+    route: &LocalPocZebraRoute,
+    credential: Option<&[u8]>,
+) -> Result<HttpZebraRpc> {
+    let config = match (route, credential) {
+        (LocalPocZebraRoute::DeterministicLocal, None) => {
+            HttpZebraRpcConfig::new(endpoint.as_str())
+        }
+        (LocalPocZebraRoute::SelfHostedCookie { .. }, Some(cookie)) => {
+            HttpZebraRpcConfig::new(endpoint.as_str())
+                .with_cookie_credentials(cookie)
+                .context("invalid self-hosted Zebra cookie")?
+        }
+        (LocalPocZebraRoute::TatumTestnetXApiKey { .. }, Some(api_key)) => {
+            HttpZebraRpcConfig::public_https(endpoint.as_str())
+                .context("the provider route accepts only Tatum's Testnet Zebrad origin")?
+                .with_public_api_key(api_key)
+                .context("invalid Tatum API key")?
+        }
+        _ => bail!("Zebra route and credential do not match"),
+    };
+    HttpZebraRpc::connect(
+        &config
+            .with_request_timeout(Duration::from_secs(30))
+            .with_max_concurrent_requests(1),
+    )
+    .context("failed to connect bounded Zebra RPC")
+}
+
+/// What proves a Zebra is the chain a corridor is provisioned on, and when one
+/// of the funder's outputs may fund it.
+struct FundingChain {
+    identity: ZebraChainIdentity,
+    /// Depth a funder output needs: coinbase maturity on the Regtest fixture
+    /// (every candidate waits it out, coinbase or not), the profile's Zcash
+    /// confirmations on Testnet.
+    min_confirmations: u32,
+    /// Testnet makes its own blocks: the tip may move during the search.
+    tip_may_advance: bool,
+}
+
+impl FundingChain {
+    fn for_profile(profile: ZecRefundProfile) -> Result<Self> {
+        match profile.zcash_network() {
+            // The Regtest fixture's branch is its profile's: NU6.2 on the
+            // Zebra 5.2 profiles, NU7 on the Zebra 7 ones (same genesis).
+            NetworkType::Regtest => Ok(Self {
+                identity: match profile.consensus_branch_id() {
+                    BranchId::Nu6_2 => ZebraChainIdentity::deterministic_regtest_nu6_2(),
+                    BranchId::Nu7 => ZebraChainIdentity::deterministic_regtest_nu7(),
+                    _ => bail!("no Regtest fixture runs the profile's consensus branch"),
+                },
+                min_confirmations: COINBASE_MATURITY_CONFIRMATIONS,
+                tip_may_advance: false,
+            }),
+            NetworkType::Test => {
+                let mut genesis = [0_u8; 32];
+                hex::decode_to_slice(TESTNET_GENESIS_HASH_HEX, &mut genesis)
+                    .expect("the Testnet genesis constant is hex");
+                genesis.reverse();
+                Ok(Self {
+                    identity: ZebraChainIdentity::new(
+                        NetworkType::Test,
+                        ZebraRpcChain::Test,
+                        profile.consensus_branch_id(),
+                        BlockHash(genesis),
+                    )
+                    .map_err(|_| anyhow::anyhow!("invalid Testnet chain identity"))?,
+                    min_confirmations: profile.zcash_confirmations(),
+                    tip_may_advance: true,
+                })
+            }
+            NetworkType::Main => bail!("no corridor is provisioned on Zcash mainnet"),
+        }
+    }
 }
 
 /// Owner-private LEZ signer files provisioned before a fresh local genesis.
@@ -206,6 +368,7 @@ pub struct LocalPocZcashIdentity {
     /// HASH160 of the public key, hex: the BIP-199 participant hash.
     pub public_key_hash: String,
     /// The key's Regtest P2PKH address (`tm…`), zebra's `miner_address` form.
+    /// Zcash Testnet uses the same prefix: it is also the key's Testnet address.
     pub transparent_address: String,
 }
 
@@ -213,7 +376,7 @@ pub struct LocalPocZcashIdentity {
 const REGTEST_P2PKH_PREFIX: [u8; 2] = [0x1D, 0x25];
 
 fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
-    let TransparentAddress::PublicKeyHash(hash) = TransparentAddress::from_pubkey(public_key)
+    let TransparentAddress::PublicKeyHash(hash) = lez_zec_swap_sdk::p2pkh_address(public_key)
     else {
         bail!("public key did not derive a P2PKH address");
     };
@@ -276,6 +439,117 @@ pub async fn transfer_local_v0_2_regtest(
     value_zatoshis: u64,
     skip: u32,
 ) -> Result<LocalPocTransferSummary> {
+    let rpc = connect_zebra(
+        zebra_endpoint,
+        &LocalPocZebraRoute::DeterministicLocal,
+        None,
+    )?;
+    transfer_between_keys(
+        &rpc,
+        // The Regtest fixtures run Zebra 7 with NU7 from height 1.
+        &FundingChain::for_profile(ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV2))?,
+        from_key_file,
+        to_key_file,
+        value_zatoshis,
+        skip,
+        1,
+        // Any mature output of the devnet's (1 ZEC + fees) shape pays a transfer.
+        ZCASH_PRINCIPAL_ZATOSHIS
+            .saturating_add(FUNDING_FEE_ZATOSHIS)
+            .saturating_add(MINIMUM_CHANGE_ZATOSHIS),
+        100,
+    )
+    .await
+}
+
+/// The credential of a Zcash Testnet route (the self-hosted Zebra's cookie
+/// file or the Tatum API key file), owner-private.
+#[derive(Clone)]
+pub enum TestnetZebraCredential {
+    /// A self-hosted Testnet Zebra on loopback and its `.cookie` file.
+    SelfHostedCookie(PathBuf),
+    /// Tatum's Testnet Zebrad gateway and the API key file.
+    TatumApiKey(PathBuf),
+}
+
+impl std::fmt::Debug for TestnetZebraCredential {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::SelfHostedCookie(_) => "SelfHostedCookie(<redacted>)",
+            Self::TatumApiKey(_) => "TatumApiKey(<redacted>)",
+        })
+    }
+}
+
+impl TestnetZebraCredential {
+    fn route(&self) -> LocalPocZebraRoute {
+        match self {
+            Self::SelfHostedCookie(cookie_file) => LocalPocZebraRoute::SelfHostedCookie {
+                cookie_file: cookie_file.clone(),
+            },
+            Self::TatumApiKey(api_key_file) => LocalPocZebraRoute::TatumTestnetXApiKey {
+                api_key_file: api_key_file.clone(),
+            },
+        }
+    }
+}
+
+/// [`transfer_local_v0_2_regtest`] on Zcash Testnet under `public-testnet-v2`
+/// (NU7): spends an unspent output of the sender at least the value plus fee
+/// and change, the profile's Zcash confirmations deep, found from
+/// `scan_from_height` (within 2,880 blocks of the tip). The payment becomes
+/// the recipient's funder candidate once it is as deep. Broadcasts; it is the
+/// one real spend of the owner's TAZ before a Taker-funded corridor.
+///
+/// # Errors
+///
+/// As [`transfer_local_v0_2_regtest`], for a Zebra that is not Testnet on NU7,
+/// an unsafe credential, or no such output.
+pub async fn transfer_v0_2_testnet(
+    zebra_endpoint: &Url,
+    credential: &TestnetZebraCredential,
+    from_key_file: &Path,
+    to_key_file: &Path,
+    value_zatoshis: u64,
+    skip: u32,
+    scan_from_height: u32,
+) -> Result<LocalPocTransferSummary> {
+    let route = credential.route();
+    let secret = read_zebra_credential(&route)?;
+    let rpc = connect_zebra(
+        zebra_endpoint,
+        &route,
+        secret.as_ref().map(|s| s.as_slice()),
+    )?;
+    let profile = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV2);
+    transfer_between_keys(
+        &rpc,
+        &FundingChain::for_profile(profile)?,
+        from_key_file,
+        to_key_file,
+        value_zatoshis,
+        skip,
+        scan_from_height,
+        value_zatoshis
+            .saturating_add(FUNDING_FEE_ZATOSHIS)
+            .saturating_add(MINIMUM_CHANGE_ZATOSHIS),
+        profile.expiry_delta_blocks(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn transfer_between_keys(
+    rpc: &HttpZebraRpc,
+    chain: &FundingChain,
+    from_key_file: &Path,
+    to_key_file: &Path,
+    value_zatoshis: u64,
+    skip: u32,
+    scan_from_height: u32,
+    min_value: u64,
+    expiry_delta: u32,
+) -> Result<LocalPocTransferSummary> {
     let from = read_zcash_key_file(from_key_file, "sender")?;
     let to = read_zcash_key_file(to_key_file, "recipient")?;
     ensure!(*from != *to, "sender and recipient Zcash keys must differ");
@@ -285,14 +559,9 @@ pub async fn transfer_local_v0_2_regtest(
     let from_public = PublicKey::from_secret_key(&secp, &from_secret);
     let to_public = PublicKey::from_secret_key(&secp, &to_secret);
     to_secret.non_secure_erase();
-    let rpc = HttpZebraRpc::connect(
-        &HttpZebraRpcConfig::new(zebra_endpoint.as_str())
-            .with_request_timeout(Duration::from_secs(30))
-            .with_max_concurrent_requests(1),
-    )
-    .context("failed to connect bounded local Zebra RPC")?;
     let (candidate, tip_height, _) =
-        select_mature_regtest_candidate(&rpc, &from_public, skip).await?;
+        select_funding_candidate(rpc, chain, &from_public, skip, scan_from_height, min_value)
+            .await?;
     let value = Zatoshis::from_u64(value_zatoshis).context("invalid transfer value")?;
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
@@ -303,8 +572,8 @@ pub async fn transfer_local_v0_2_regtest(
         value,
         Zatoshis::from_u64(FUNDING_FEE_ZATOSHIS)?,
         Zatoshis::from_u64(MINIMUM_CHANGE_ZATOSHIS)?,
-        BlockHeight::from_u32(tip_height.saturating_add(100)),
-        BranchId::Nu6_2,
+        BlockHeight::from_u32(tip_height.saturating_add(expiry_delta)),
+        chain.identity.consensus_branch_id(),
     )?;
     let transaction = build_transparent_transfer_transaction(&request, &to_public, &from_secret)?;
     from_secret.non_secure_erase();
@@ -367,6 +636,21 @@ enum LocalPocProfile {
     /// `deterministic-local-devnet-v3`: V2 with a 12 min LEZ refund delay, so
     /// a refund fits the devnet chain's ~27 min of finality.
     DeterministicLocalDevnetV3,
+    /// `deterministic-local-devnet-v4`: V3 with a 4 min LEZ refund delay, for
+    /// the devnet's refund journeys (they never claim).
+    DeterministicLocalDevnetV4,
+    /// `deterministic-local-v2`: the isolated test lane on Zebra 7's NU7.
+    DeterministicLocalV2,
+    /// `deterministic-local-devnet-v5`: V3 on NU7, the devnet's profile for
+    /// swaps that claim once its Zebra runs Zebra 7.
+    DeterministicLocalDevnetV5,
+    /// `deterministic-local-devnet-v6`: V4 on NU7, the devnet's refund
+    /// journeys' profile.
+    DeterministicLocalDevnetV6,
+    /// `public-testnet-v2`: Zcash Testnet on NU7 and the official LEZ v0.2
+    /// testnet, funded from an ordinary transparent output of the funder's
+    /// key (scripts/public-zec-testnet.sh).
+    PublicTestnetV2,
 }
 
 impl LocalPocProfile {
@@ -376,6 +660,11 @@ impl LocalPocProfile {
             Self::DeterministicLocalDevnetV1 => ZecProfileId::DeterministicLocalDevnetV1,
             Self::DeterministicLocalDevnetV2 => ZecProfileId::DeterministicLocalDevnetV2,
             Self::DeterministicLocalDevnetV3 => ZecProfileId::DeterministicLocalDevnetV3,
+            Self::DeterministicLocalDevnetV4 => ZecProfileId::DeterministicLocalDevnetV4,
+            Self::DeterministicLocalV2 => ZecProfileId::DeterministicLocalV2,
+            Self::DeterministicLocalDevnetV5 => ZecProfileId::DeterministicLocalDevnetV5,
+            Self::DeterministicLocalDevnetV6 => ZecProfileId::DeterministicLocalDevnetV6,
+            Self::PublicTestnetV2 => ZecProfileId::PublicTestnetV2,
         }
     }
 }
@@ -456,6 +745,10 @@ pub struct LocalPocProvisionSummary {
     taker: RolePaths,
     zebra_tip_height: u32,
     zcash_refund_height: u32,
+    /// Height of the funder output's block, on Testnet: the next corridor's
+    /// funder search starts there (its change lands later).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zcash_candidate_height: Option<u32>,
     zcash_candidate_owner: &'static str,
     lez_native_amount: u128,
     lez_depositor_role: &'static str,
@@ -507,6 +800,8 @@ struct SelectedCandidate {
     outpoint: OutPoint,
     output: TxOut,
     rpc_transaction_id: Hex32,
+    /// Height of the block that holds it.
+    height: u32,
 }
 
 struct AgreementFixture {
@@ -598,20 +893,28 @@ pub async fn provision_local_v0_2_corridor_with_material(
         decode_base58_32(&spec.lez_runtime.authenticated_transfer_program_id_base58)
             .context("invalid authenticated-transfer program")?;
 
-    let rpc = HttpZebraRpc::connect(
-        &HttpZebraRpcConfig::new(spec.zebra_endpoint.as_str())
-            .with_request_timeout(Duration::from_secs(30))
-            .with_max_concurrent_requests(1),
-    )
-    .context("failed to connect bounded local Zebra RPC")?;
+    let zebra_credential = read_zebra_credential(&spec.zebra_route)?;
+    let rpc = connect_zebra(
+        &spec.zebra_endpoint,
+        &spec.zebra_route,
+        zebra_credential.as_ref().map(|secret| secret.as_slice()),
+    )?;
     let mut funding_zcash_secret = SecretKey::from_slice(&zcash_keys.funder(spec.direction)[..])
         .context("invalid Zcash funder key")?;
     let funding_zcash_public =
         PublicKey::from_secret_key(&Secp256k1::signing_only(), &funding_zcash_secret);
     funding_zcash_secret.non_secure_erase();
-    let (candidate, tip_height, genesis_hash) =
-        select_mature_regtest_candidate(&rpc, &funding_zcash_public, spec.zcash_funding_skip)
-            .await?;
+    let (candidate, tip_height, genesis_hash) = select_funding_candidate(
+        &rpc,
+        &FundingChain::for_profile(ZecRefundProfile::for_id(spec.profile.id()))?,
+        &funding_zcash_public,
+        spec.zcash_funding_skip,
+        spec.zcash_funding_scan_from_height,
+        spec.zcash_principal()
+            .saturating_add(FUNDING_FEE_ZATOSHIS)
+            .saturating_add(MINIMUM_CHANGE_ZATOSHIS),
+    )
+    .await?;
 
     let swap_id = SwapId::new(spec.swap_id.clone()).context("invalid swap ID")?;
     let fixture = build_agreement(
@@ -677,6 +980,12 @@ pub async fn provision_local_v0_2_corridor_with_material(
     }
     write_private_new(&maker_paths.capability, maker_capability.as_slice())?;
     write_private_new(&taker_paths.capability, taker_capability.as_slice())?;
+    // Each actor reads its own copy of a Testnet route's credential, beside
+    // its keys; the Regtest fixture has none.
+    if let Some(secret) = &zebra_credential {
+        write_private_new(&maker_paths.zebra_credential, secret.as_slice())?;
+        write_private_new(&taker_paths.zebra_credential, secret.as_slice())?;
+    }
 
     let discovery = DiscoveryWindow::new(
         spec.lez_discovery_start_height,
@@ -775,6 +1084,8 @@ pub async fn provision_local_v0_2_corridor_with_material(
         taker: role_summary(&taker_paths),
         zebra_tip_height: tip_height,
         zcash_refund_height: fixture.zcash_refund_height,
+        zcash_candidate_height: (spec.zebra_route.network() == NetworkType::Test)
+            .then_some(candidate.height),
         zcash_candidate_owner: match spec.direction.zcash_funder() {
             ActorRole::Maker => "maker",
             ActorRole::Taker => "taker",
@@ -1060,6 +1371,7 @@ struct MaterialPaths {
     lez_signer_key: PathBuf,
     bridge_journal_db: PathBuf,
     capability: PathBuf,
+    zebra_credential: PathBuf,
 }
 
 fn material_paths(root: &Path, state_root: &Path) -> MaterialPaths {
@@ -1074,6 +1386,7 @@ fn material_paths(root: &Path, state_root: &Path) -> MaterialPaths {
         lez_signer_key: root.join("lez-signer.key"),
         bridge_journal_db: state_root.join("bridge.sqlite3"),
         capability: root.join("sidecar.capability"),
+        zebra_credential: root.join("zebra.credential"),
     }
 }
 
@@ -1095,6 +1408,7 @@ fn actor_config_input(
         ActorRole::Maker => (spec.bridge.maker_endpoint.clone(), "maker"),
         ActorRole::Taker => (spec.bridge.taker_endpoint.clone(), "taker"),
     };
+    let profile = ZecRefundProfile::for_id(spec.profile.id());
     DeterministicLocalV0_2ActorConfigInput {
         role,
         run_id: spec.run_id.clone(),
@@ -1111,8 +1425,25 @@ fn actor_config_input(
         bridge_capability_file: paths.capability.clone(),
         bridge_runtime: runtime,
         zebra_endpoint: spec.zebra_endpoint.clone(),
+        zebra_route: match spec.zebra_route {
+            LocalPocZebraRoute::DeterministicLocal => ProvisionedZebraRoute::DeterministicLocal,
+            LocalPocZebraRoute::SelfHostedCookie { .. } => {
+                ProvisionedZebraRoute::SelfHostedTestnetCookie {
+                    cookie_file: paths.zebra_credential.clone(),
+                }
+            }
+            LocalPocZebraRoute::TatumTestnetXApiKey { .. } => {
+                ProvisionedZebraRoute::TatumTestnetXApiKey {
+                    api_key_file: paths.zebra_credential.clone(),
+                }
+            }
+        },
+        zebra_consensus_branch_id: profile.consensus_branch_id(),
         zebra_genesis_hash,
-        counterparty_scan_blocks: COUNTERPARTY_SCAN_BLOCKS,
+        // Remote-funding discovery reads the profile's whole refund window
+        // (zebra-node-adapter first_lock.rs); the devnet's 1,024 cover it.
+        counterparty_scan_blocks: COUNTERPARTY_SCAN_BLOCKS
+            .max(profile.zcash_refund_blocks().saturating_add(1)),
         lez_discovery_window: discovery,
         zcash_funding_outpoints: candidates,
     }
@@ -1275,43 +1606,71 @@ fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
             && spec.bridge.taker_endpoint != spec.zebra_endpoint,
         "maker, taker, and Zebra endpoints must be distinct"
     );
+    ensure!(
+        ZecRefundProfile::for_id(spec.profile.id()).zcash_network() == spec.zebra_route.network(),
+        "the profile's Zcash network is not the Zebra route's"
+    );
+    ensure!(
+        spec.zcash_principal() > 0,
+        "the Zcash principal must be positive"
+    );
     Ok(())
 }
 
+/// Finds the funder's spendable output: the first (after `skip`) output paying
+/// `funding_key` at least `min_value`, `chain.min_confirmations` deep and
+/// unspent, reading blocks from `scan_from_height` up. Returns it with the tip
+/// height it was selected at and the chain's genesis.
 #[allow(clippy::too_many_lines)]
-async fn select_mature_regtest_candidate(
-    rpc: &HttpZebraRpc,
+async fn select_funding_candidate<R>(
+    rpc: &R,
+    chain: &FundingChain,
     funding_key: &PublicKey,
     skip: u32,
-) -> Result<(SelectedCandidate, u32, BlockHash)> {
-    let identity = ZebraChainIdentity::deterministic_regtest_nu6_2();
+    scan_from_height: u32,
+    min_value: u64,
+) -> Result<(SelectedCandidate, u32, BlockHash)>
+where
+    R: ZebraRpc,
+    R::Error: std::error::Error + Send + Sync + 'static,
+{
+    let identity = chain.identity;
     let before = rpc
         .chain_info()
         .await
         .context("Zebra identity unavailable")?;
+    let network_name = match identity.network() {
+        NetworkType::Regtest => "the deterministic Regtest fixture on the profile's branch",
+        NetworkType::Test | NetworkType::Main => "Zcash Testnet on the profile's branch",
+    };
     ensure!(
-        before.rpc_chain() == ZebraRpcChain::Test
-            && before.consensus_branch_id() == BranchId::Nu6_2,
-        "Zebra is not the deterministic Regtest NU6.2 fixture"
+        before.rpc_chain() == identity.rpc_chain()
+            && before.consensus_branch_id() == identity.consensus_branch_id(),
+        "Zebra is not {network_name}"
     );
     let genesis = rpc
         .block_hash(BlockHeight::from_u32(0))
         .await
         .context("Zebra genesis unavailable")?;
     ensure!(
-        identity.network() == NetworkType::Regtest
-            && identity.rpc_chain() == before.rpc_chain()
-            && identity.consensus_branch_id() == before.consensus_branch_id()
-            && identity.genesis_hash() == genesis,
-        "Zebra genesis does not match the deterministic Regtest fixture"
+        identity.genesis_hash() == genesis,
+        "Zebra genesis does not match {network_name}"
     );
 
-    let owner_script: Script = TransparentAddress::from_pubkey(funding_key).script().into();
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(funding_key).script().into();
     let tip_height = u32::from(before.tip_height());
+    if chain.tip_may_advance {
+        ensure!(
+            scan_from_height >= 1
+                && tip_height.saturating_sub(scan_from_height) < MAX_TESTNET_FUNDING_SCAN_BLOCKS,
+            "a Testnet funder search names zcash_funding_scan_from_height within \
+             {MAX_TESTNET_FUNDING_SCAN_BLOCKS} blocks of the tip ({tip_height})"
+        );
+    }
     let mut selected = None;
     let mut passed_over = 0u32;
-    for height in 1..=tip_height {
-        if tip_height.saturating_sub(height).saturating_add(1) < COINBASE_MATURITY_CONFIRMATIONS {
+    for height in scan_from_height.max(1)..=tip_height {
+        if tip_height.saturating_sub(height).saturating_add(1) < chain.min_confirmations {
             break;
         }
         let block_hash = rpc
@@ -1335,8 +1694,10 @@ async fn select_mature_regtest_candidate(
                 bail!("Zebra omitted a transaction named by its canonical block");
             };
             let mut cursor = Cursor::new(raw.as_slice());
-            let transaction = Transaction::read(&mut cursor, BranchId::Nu6_2)
-                .context("Zebra returned a malformed NU6.2 transaction")?;
+            // A v5 or later transaction names its own branch; the argument
+            // only decides how a v4 or older one is read.
+            let transaction = Transaction::read(&mut cursor, identity.consensus_branch_id())
+                .context("Zebra returned a malformed transaction")?;
             ensure!(
                 usize::try_from(cursor.position()).ok() == Some(raw.len())
                     && transaction.txid() == *transaction_id,
@@ -1346,15 +1707,12 @@ async fn select_mature_regtest_candidate(
                 continue;
             };
             // Any transparent output paying the funder's key is a candidate:
-            // the coinbase zebra mines to the Maker's key, or the plain payment
+            // the coinbase zebra mines to the Maker's key, the plain payment
             // the devnet provisioner makes to the Taker's key when the Taker
-            // funds Zcash. Both wait out the same depth below.
+            // funds Zcash, or the owner's payment on Testnet. All wait out
+            // the chain's depth below.
             for (index, output) in bundle.vout.iter().enumerate() {
-                if output.script_pubkey() != &owner_script
-                    || u64::from(output.value())
-                        < ZCASH_PRINCIPAL_ZATOSHIS
-                            .saturating_add(FUNDING_FEE_ZATOSHIS)
-                            .saturating_add(MINIMUM_CHANGE_ZATOSHIS)
+                if output.script_pubkey() != &owner_script || u64::from(output.value()) < min_value
                 {
                     continue;
                 }
@@ -1368,10 +1726,10 @@ async fn select_mature_regtest_candidate(
                     continue;
                 };
                 ensure!(
-                    unspent.best_block() == before.tip_hash(),
+                    chain.tip_may_advance || unspent.best_block() == before.tip_hash(),
                     "Zebra answered the UTXO query against another tip"
                 );
-                if unspent.confirmations() < COINBASE_MATURITY_CONFIRMATIONS {
+                if unspent.confirmations() < chain.min_confirmations {
                     continue;
                 }
                 ensure!(
@@ -1386,6 +1744,7 @@ async fn select_mature_regtest_candidate(
                     outpoint,
                     output: output.clone(),
                     rpc_transaction_id: txid_display_hex(*transaction_id),
+                    height,
                 });
                 break;
             }
@@ -1401,14 +1760,29 @@ async fn select_mature_regtest_candidate(
         .chain_info()
         .await
         .context("Zebra closing identity sample unavailable")?;
-    ensure!(
-        before == after,
-        "Zebra tip changed during candidate selection"
-    );
-    let candidate = selected.with_context(|| {
-        format!(
+    if chain.tip_may_advance {
+        // Testnet moved on meanwhile; it must still be the same chain and branch.
+        ensure!(
+            after.rpc_chain() == before.rpc_chain()
+                && after.consensus_branch_id() == before.consensus_branch_id()
+                && after.tip_height() >= before.tip_height(),
+            "Zebra changed chain, branch or rewound during candidate selection"
+        );
+    } else {
+        ensure!(
+            before == after,
+            "Zebra tip changed during candidate selection"
+        );
+    }
+    let candidate = selected.with_context(|| match identity.network() {
+        NetworkType::Regtest => format!(
             "no mature deterministic Zebra funder output is available after passing over {skip}"
-        )
+        ),
+        NetworkType::Test | NetworkType::Main => format!(
+            "no unspent funder output of at least {min_value} zatoshis, {} blocks deep, \
+             from height {scan_from_height} after passing over {skip}",
+            chain.min_confirmations
+        ),
     })?;
     Ok((candidate, tip_height, genesis))
 }
@@ -1441,9 +1815,29 @@ fn build_agreement(
     let earlier_refund_latest_ms = lez_refund_seconds
         .checked_mul(1_000)
         .context("LEZ refund millisecond overflow")?;
-    let later_refund_earliest = lez_refund_seconds
-        .checked_add(profile.required_margin().value())
-        .context("calibrated later refund time overflow")?;
+    let later_refund_earliest = match profile.zcash_network() {
+        // The fixture's harness mines every block: the bound is the schedule's own.
+        NetworkType::Regtest => lez_refund_seconds
+            .checked_add(profile.required_margin().value())
+            .context("calibrated later refund time overflow")?,
+        // Testnet makes its blocks: the refund height arrives no sooner than
+        // its blocks at the fastest pace the profile is sized for.
+        NetworkType::Test | NetworkType::Main => {
+            let earliest = now
+                .checked_add(
+                    u64::from(profile.zcash_refund_blocks())
+                        .saturating_mul(PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS)
+                        / 1_000,
+                )
+                .context("Testnet later refund time overflow")?;
+            ensure!(
+                earliest >= lez_refund_seconds.saturating_add(profile.required_margin().value()),
+                "the profile's Zcash refund window is shorter than its LEZ refund delay \
+                 plus margin at Testnet's fastest pace"
+            );
+            earliest
+        }
+    };
     let expires_at = now
         .checked_add(AGREEMENT_LIFETIME_SECONDS)
         .context("agreement expiry overflow")?;
@@ -1475,9 +1869,9 @@ fn build_agreement(
         zcash_claimant_hash,
     );
     let expected_output = ExpectedBip199Output::new(
-        NetworkType::Regtest,
-        BranchId::Nu6_2,
-        Zatoshis::from_u64(ZCASH_PRINCIPAL_ZATOSHIS)?,
+        profile.zcash_network(),
+        profile.consensus_branch_id(),
+        Zatoshis::from_u64(spec.zcash_principal())?,
         contract,
     );
     let binding = ZecSwapBinding::new(spec.profile.id(), expected_output)?;
@@ -1505,7 +1899,12 @@ fn build_agreement(
         secret_digest,
         ZecLezTermsV1::new(
             LezChainIdentityV1::new(
-                LezEnvironmentV1::DeterministicLocalV0_2,
+                match profile.zcash_network() {
+                    NetworkType::Regtest => LezEnvironmentV1::DeterministicLocalV0_2,
+                    // A public profile pairs Zcash Testnet with the official
+                    // LEZ v0.2 testnet (zec-swap-sdk agreement_v1.rs).
+                    NetworkType::Test | NetworkType::Main => LezEnvironmentV1::PublicTestnetV0_2,
+                },
                 *spec.lez_runtime.channel_id.as_bytes(),
                 *spec.lez_runtime.genesis_block_hash.as_bytes(),
             ),
@@ -1573,7 +1972,7 @@ fn build_agreement(
 }
 
 fn public_key_hash(key: &PublicKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(key) {
+    match lez_zec_swap_sdk::p2pkh_address(key) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("a public key always maps to P2PKH"),
     }
@@ -1817,5 +2216,505 @@ mod claim_preimage_tests {
         };
         assert_ne!(digest(&first), digest(&second));
         assert_ne!(contract(&first), contract(&second));
+    }
+}
+
+#[cfg(test)]
+mod testnet_provision_tests {
+    use std::collections::HashMap;
+
+    use lez_zebra_node_adapter::{
+        ZebraCanonicalBlock, ZebraChainInfo, ZebraTransactionState, ZebraUnspentOutput,
+    };
+
+    use super::*;
+
+    /// Mined at Testnet height 4,465,026, the NU7 activation block, by the
+    /// key below (zec-swap-sdk `tests/zcash_testnet_vectors.rs`): output 2
+    /// pays 712,420,000 zatoshis back to it.
+    const NU7_TX: &str = concat!(
+        "050000800a27a726d90a197700000000fa21440001b87b4df4d035a31b018abd33efbed35c0e66163d25b3d8",
+        "8979c75f0329e659d7020000006a473044022043c971e06555e2413276314bfc5d881487e4eaa749148f87f3",
+        "ac55b2b8fe07f1022061d53ac6c9d6e053cca4ce5b072c34eb252683a4cbd14da6a5b0be1cc8e549e8012102",
+        "bc0a8bf008166b8a99a1bcf27086172fd709467ea55b429449a3fe6a92f03738ffffffff0300000000000000",
+        "001d6a1b535601bd8a560dfb415d4babb99662dc157267d166b7c90000000010270000000000001976a91400",
+        "0000000000000000000000000000000000000088aca0aa762a000000001976a9141aded9db78a48344f8541f",
+        "fa7d4300ada64fc68088ac000000",
+    );
+    const NU7_TX_HEIGHT: u32 = 4_465_026;
+    /// The coinbase of height 1 on the pinned Zebra 7 Regtest fixture, NU7
+    /// active from height 1 (tests/e2e/zebra/zebrad.toml, 2026-11-11): a v6
+    /// transaction (version group d884b698, branch 77190ad9) paying
+    /// 208,333,333 zatoshis to the fixture's miner key, `[4; 32]`.
+    const REGTEST_NU7_COINBASE: &str = concat!(
+        "0600008098b684d8d90a19770000000001000000010000000000000000000000000000000000000000000000",
+        "000000000000000000ffffffff285126f09fa6933a2039601c2a397699d2de9efe8dbc1c15ea18b323e3bd7f",
+        "9ae732933ca8eb11e3f4ffffffff0115ea6a0c000000001976a914888dbbd7998f9f80d4f82b4f9ce6d5882f",
+        "310aec88ac00000000",
+    );
+    const SPENDER: &str = "02bc0a8bf008166b8a99a1bcf27086172fd709467ea55b429449a3fe6a92f03738";
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("not served by the fake")]
+    struct Unserved;
+
+    /// A Testnet Zebra serving one real block at `NU7_TX_HEIGHT` (and empty
+    /// blocks elsewhere) and the UTXO set it is told; with `regtest_nu7`, the
+    /// Zebra 7 Regtest fixture's block 1 instead.
+    struct FakeTestnet {
+        tip: u32,
+        tx_height: u32,
+        branch: BranchId,
+        genesis: BlockHash,
+        transaction: Vec<u8>,
+        unspent: HashMap<(TxId, u32), u32>,
+    }
+
+    impl FakeTestnet {
+        fn new() -> Self {
+            Self {
+                tip: NU7_TX_HEIGHT + 11,
+                tx_height: NU7_TX_HEIGHT,
+                branch: BranchId::Nu7,
+                genesis: FundingChain::for_profile(ZecRefundProfile::for_id(
+                    ZecProfileId::PublicTestnetV2,
+                ))
+                .unwrap()
+                .identity
+                .genesis_hash(),
+                transaction: hex::decode(NU7_TX).unwrap(),
+                unspent: HashMap::new(),
+            }
+        }
+
+        fn regtest_nu7() -> Self {
+            Self {
+                tip: 1 + COINBASE_MATURITY_CONFIRMATIONS,
+                tx_height: 1,
+                branch: BranchId::Nu7,
+                genesis: ZebraChainIdentity::deterministic_regtest_nu7().genesis_hash(),
+                transaction: hex::decode(REGTEST_NU7_COINBASE).unwrap(),
+                unspent: HashMap::new(),
+            }
+        }
+
+        fn txid(&self) -> TxId {
+            Transaction::read(self.transaction.as_slice(), BranchId::Nu7)
+                .unwrap()
+                .txid()
+        }
+
+        fn hash_at(height: u32) -> BlockHash {
+            let mut hash = [0_u8; 32];
+            hash[..4].copy_from_slice(&height.to_le_bytes());
+            hash[31] = 1;
+            BlockHash(hash)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ZebraRpc for FakeTestnet {
+        type Error = Unserved;
+
+        async fn chain_info(&self) -> Result<ZebraChainInfo, Unserved> {
+            Ok(ZebraChainInfo::new(
+                ZebraRpcChain::Test,
+                BlockHeight::from_u32(self.tip),
+                Self::hash_at(self.tip),
+                self.branch,
+            ))
+        }
+
+        async fn block_hash(&self, height: BlockHeight) -> Result<BlockHash, Unserved> {
+            Ok(if u32::from(height) == 0 {
+                self.genesis
+            } else {
+                Self::hash_at(u32::from(height))
+            })
+        }
+
+        async fn canonical_block(&self, hash: BlockHash) -> Result<ZebraCanonicalBlock, Unserved> {
+            let height = u32::from_le_bytes(hash.0[..4].try_into().unwrap());
+            let transactions = if height == self.tx_height {
+                vec![self.txid()]
+            } else {
+                Vec::new()
+            };
+            Ok(ZebraCanonicalBlock::new(
+                hash,
+                BlockHeight::from_u32(height),
+                transactions,
+            ))
+        }
+
+        async fn block_transaction(
+            &self,
+            transaction_id: TxId,
+            _: BlockHash,
+        ) -> Result<Option<Vec<u8>>, Unserved> {
+            Ok((transaction_id == self.txid()).then(|| self.transaction.clone()))
+        }
+
+        async fn mempool_transaction_ids(&self) -> Result<Vec<TxId>, Unserved> {
+            Err(Unserved)
+        }
+
+        async fn raw_transaction(&self, _: TxId) -> Result<Option<Vec<u8>>, Unserved> {
+            Err(Unserved)
+        }
+
+        async fn transaction_state(
+            &self,
+            _: TxId,
+        ) -> Result<Option<ZebraTransactionState>, Unserved> {
+            Err(Unserved)
+        }
+
+        async fn unspent_output(
+            &self,
+            outpoint: &OutPoint,
+        ) -> Result<Option<ZebraUnspentOutput>, Unserved> {
+            let transaction =
+                Transaction::read(self.transaction.as_slice(), BranchId::Nu7).unwrap();
+            Ok(self
+                .unspent
+                .get(&(TxId::from_bytes(*outpoint.hash()), outpoint.n()))
+                .map(|confirmations| {
+                    ZebraUnspentOutput::new(
+                        Self::hash_at(self.tip),
+                        *confirmations,
+                        transaction.transparent_bundle().unwrap().vout
+                            [usize::try_from(outpoint.n()).unwrap()]
+                        .clone(),
+                    )
+                }))
+        }
+
+        async fn send_raw_transaction(&self, _: &[u8]) -> Result<TxId, Unserved> {
+            Err(Unserved)
+        }
+    }
+
+    fn testnet() -> FundingChain {
+        FundingChain::for_profile(ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV2)).unwrap()
+    }
+
+    fn spender() -> PublicKey {
+        PublicKey::from_slice(&hex::decode(SPENDER).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn the_testnet_chain_is_named_by_its_genesis_and_nu7() {
+        let chain = testnet();
+        assert_eq!(chain.identity.network(), NetworkType::Test);
+        assert_eq!(chain.identity.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(
+            chain.identity.genesis_hash().to_string(),
+            TESTNET_GENESIS_HASH_HEX
+        );
+        assert_eq!(chain.min_confirmations, 10);
+        assert!(chain.tip_may_advance);
+        let regtest = FundingChain::for_profile(ZecRefundProfile::for_id(
+            ZecProfileId::DeterministicLocalDevnetV3,
+        ))
+        .unwrap();
+        assert_eq!(
+            regtest.identity,
+            ZebraChainIdentity::deterministic_regtest_nu6_2()
+        );
+        assert_eq!(regtest.min_confirmations, COINBASE_MATURITY_CONFIRMATIONS);
+        assert!(!regtest.tip_may_advance);
+    }
+
+    #[test]
+    fn the_regtest_chain_follows_the_profile_branch() {
+        for (profile, identity) in [
+            (
+                ZecProfileId::DeterministicLocalDevnetV4,
+                ZebraChainIdentity::deterministic_regtest_nu6_2(),
+            ),
+            (
+                ZecProfileId::DeterministicLocalDevnetV5,
+                ZebraChainIdentity::deterministic_regtest_nu7(),
+            ),
+            (
+                ZecProfileId::DeterministicLocalDevnetV6,
+                ZebraChainIdentity::deterministic_regtest_nu7(),
+            ),
+            (
+                ZecProfileId::DeterministicLocalV2,
+                ZebraChainIdentity::deterministic_regtest_nu7(),
+            ),
+        ] {
+            let chain = FundingChain::for_profile(ZecRefundProfile::for_id(profile)).unwrap();
+            assert_eq!(chain.identity, identity, "{}", profile.as_str());
+            assert_eq!(chain.min_confirmations, COINBASE_MATURITY_CONFIRMATIONS);
+            assert!(!chain.tip_may_advance);
+        }
+        for spelling in [
+            "deterministic-local-v2",
+            "deterministic-local-devnet-v5",
+            "deterministic-local-devnet-v6",
+        ] {
+            let profile: LocalPocProfile =
+                serde_json::from_value(serde_json::json!(spelling)).unwrap();
+            assert_eq!(profile.id().as_str(), spelling);
+        }
+    }
+
+    /// Zebra 7's NU7 coinbase is a v6 transaction; the Regtest funder search
+    /// reads it and takes its output once it is mature, and not before.
+    #[tokio::test]
+    async fn a_regtest_nu7_funder_output_is_a_mature_v6_coinbase() {
+        let chain = FundingChain::for_profile(ZecRefundProfile::for_id(
+            ZecProfileId::DeterministicLocalDevnetV5,
+        ))
+        .unwrap();
+        let miner = PublicKey::from_secret_key(
+            &Secp256k1::new(),
+            &SecretKey::from_slice(&[4; 32]).unwrap(),
+        );
+        let mut zebra = FakeTestnet::regtest_nu7();
+        let transaction = Transaction::read(zebra.transaction.as_slice(), BranchId::Nu7).unwrap();
+        assert_eq!(transaction.version().header() & 0x7fff_ffff, 6);
+        assert_eq!(transaction.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(
+            transaction.txid().to_string(),
+            "7df23a26010cd4aa7e6174bf146dc9d0ab7ec3197d6aaa8d8cfee439c1b59c98"
+        );
+        let txid = zebra.txid();
+        zebra
+            .unspent
+            .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS + 1);
+        let (candidate, tip, genesis) =
+            select_funding_candidate(&zebra, &chain, &miner, 0, 1, 100_000_000)
+                .await
+                .unwrap();
+        assert_eq!(candidate.outpoint, OutPoint::new(*txid.as_ref(), 0));
+        assert_eq!(u64::from(candidate.output.value()), 208_333_333);
+        assert_eq!(candidate.height, 1);
+        assert_eq!(tip, 1 + COINBASE_MATURITY_CONFIRMATIONS);
+        assert_eq!(genesis, chain.identity.genesis_hash());
+
+        // One block short of maturity there is nothing to take; nor on a
+        // Zebra that still runs NU6.2.
+        let mut young = FakeTestnet::regtest_nu7();
+        young.tip = COINBASE_MATURITY_CONFIRMATIONS - 1;
+        young
+            .unspent
+            .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS - 1);
+        assert!(
+            select_funding_candidate(&young, &chain, &miner, 0, 1, 100_000_000)
+                .await
+                .is_err()
+        );
+        let mut old_branch = FakeTestnet::regtest_nu7();
+        old_branch.branch = BranchId::Nu6_2;
+        old_branch
+            .unspent
+            .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS + 1);
+        assert!(
+            select_funding_candidate(&old_branch, &chain, &miner, 0, 1, 100_000_000)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_testnet_funder_output_is_an_ordinary_deep_unspent_payment() {
+        let mut zebra = FakeTestnet::new();
+        let txid = zebra.txid();
+        zebra.unspent.insert((txid, 2), 12);
+        let (candidate, tip, genesis) = select_funding_candidate(
+            &zebra,
+            &testnet(),
+            &spender(),
+            0,
+            NU7_TX_HEIGHT - 5,
+            100_000_000 + FUNDING_FEE_ZATOSHIS + MINIMUM_CHANGE_ZATOSHIS,
+        )
+        .await
+        .unwrap();
+        assert_eq!(candidate.outpoint, OutPoint::new(*txid.as_ref(), 2));
+        assert_eq!(u64::from(candidate.output.value()), 712_420_000);
+        assert_eq!(candidate.height, NU7_TX_HEIGHT);
+        assert_eq!(
+            hex::encode(candidate.rpc_transaction_id.as_bytes()),
+            "a85b0f6a352b9699d4221a93eeadbab457862c4dec2a3ac7ccd0d2f034fc89ea"
+        );
+        assert_eq!(tip, NU7_TX_HEIGHT + 11);
+        assert_eq!(genesis, testnet().identity.genesis_hash());
+    }
+
+    #[tokio::test]
+    async fn a_testnet_funder_search_refuses_what_it_cannot_spend() {
+        let wanted = 100_000_000 + FUNDING_FEE_ZATOSHIS + MINIMUM_CHANGE_ZATOSHIS;
+        let select = |zebra: FakeTestnet, from: u32, min_value: u64| async move {
+            select_funding_candidate(&zebra, &testnet(), &spender(), 0, from, min_value)
+                .await
+                .map(|(candidate, _, _)| candidate.outpoint)
+        };
+        let unspent = |confirmations: u32| {
+            let mut zebra = FakeTestnet::new();
+            let txid = zebra.txid();
+            zebra.unspent.insert((txid, 2), confirmations);
+            zebra
+        };
+        // Too shallow for the profile's ten confirmations, spent, or too small.
+        assert!(select(unspent(9), NU7_TX_HEIGHT - 5, wanted).await.is_err());
+        assert!(
+            select(FakeTestnet::new(), NU7_TX_HEIGHT - 5, wanted)
+                .await
+                .is_err()
+        );
+        assert!(
+            select(unspent(12), NU7_TX_HEIGHT - 5, 712_420_001)
+                .await
+                .is_err()
+        );
+        // The search needs a start within its bound of the tip.
+        assert!(select(unspent(12), 0, wanted).await.is_err());
+        assert!(
+            select(
+                unspent(12),
+                NU7_TX_HEIGHT + 11 - MAX_TESTNET_FUNDING_SCAN_BLOCKS,
+                wanted
+            )
+            .await
+            .is_err()
+        );
+        // Another branch (NU6.2, the old profile's) or another genesis is not Testnet on NU7.
+        let mut old_branch = unspent(12);
+        old_branch.branch = BranchId::Nu6_2;
+        assert!(select(old_branch, NU7_TX_HEIGHT - 5, wanted).await.is_err());
+        let mut regtest = unspent(12);
+        regtest.genesis = ZebraChainIdentity::deterministic_regtest_nu6_2().genesis_hash();
+        assert!(select(regtest, NU7_TX_HEIGHT - 5, wanted).await.is_err());
+    }
+
+    fn spec(profile: &str, route: &serde_json::Value) -> ProvisionSpec {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": 1, "run_id": "zec-testnet-1", "swap_id": "zec-testnet-swap-1",
+            "direction": "taker_sells_lez", "profile": profile,
+            "lez_runtime": {
+                "chain_id": "01".repeat(32), "channel_id": "01".repeat(32),
+                "genesis_block_hash": "02".repeat(32), "escrow_program_id": "03".repeat(32),
+                "authenticated_transfer_program_id_base58": "FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg",
+                "maker_signer_account_id_base58": "B1UN3hPgxacgHKBRoThcAmsPajGcUf6YXUhgB36x4DAd",
+                "taker_signer_account_id_base58": "34Kqgek6R7N1zU5FSJz8ziXwSPEPCuWGcn1T7GCVrfib"},
+            "bridge": {"maker_endpoint": "http://127.0.0.1:19901", "taker_endpoint": "http://127.0.0.1:19902"},
+            "zebra_endpoint": "https://zcash-testnet-zebrad.gateway.tatum.io",
+            "lez_discovery_start_height": 1, "lez_discovery_max_blocks": 4096,
+            "zcash_funding_scan_from_height": 4_600_000,
+            "zebra_route": route,
+            "zcash_principal_zatoshis": 1_000_000,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_testnet_spec_names_its_route_and_the_profile_must_agree() {
+        let tatum = serde_json::json!({"kind": "tatum_testnet_x_api_key", "api_key_file": "/run/secrets/tatum.key"});
+        let testnet = spec("public-testnet-v2", &tatum);
+        validate_spec(&testnet).unwrap();
+        assert_eq!(testnet.zcash_principal(), 1_000_000);
+        // A devnet profile on a Testnet route, or the Testnet profile on the fixture, is refused.
+        assert!(validate_spec(&spec("deterministic-local-devnet-v3", &tatum)).is_err());
+        assert!(
+            validate_spec(&spec(
+                "public-testnet-v2",
+                &serde_json::json!({"kind": "deterministic_local"})
+            ))
+            .is_err()
+        );
+        // Only V2 is a Testnet profile a corridor may be provisioned under.
+        assert!(
+            serde_json::from_value::<LocalPocProfile>(serde_json::json!("public-testnet-v1"))
+                .is_err()
+        );
+    }
+
+    fn tatum() -> serde_json::Value {
+        serde_json::json!({"kind": "tatum_testnet_x_api_key", "api_key_file": "/run/secrets/tatum.key"})
+    }
+
+    #[test]
+    fn a_testnet_corridor_agrees_on_nu7_the_lez_testnet_and_v2_deadlines() {
+        let spec = spec("public-testnet-v2", &tatum());
+        let keys = ZcashKeyMaterial::deterministic(spec.direction);
+        let swap_id = SwapId::new(spec.swap_id.clone()).unwrap();
+        let mut zebra = FakeTestnet::new();
+        zebra.unspent.insert((zebra.txid(), 2), 12);
+        let candidate = SelectedCandidate {
+            outpoint: OutPoint::new(*zebra.txid().as_ref(), 2),
+            output: TxOut::new(
+                Zatoshis::from_u64(712_420_000).unwrap(),
+                lez_zec_swap_sdk::p2pkh_address(&spender()).script().into(),
+            ),
+            rpc_transaction_id: txid_display_hex(zebra.txid()),
+            height: NU7_TX_HEIGHT,
+        };
+        let tip = 4_607_100;
+        let fixture = build_agreement(
+            &spec, &keys, &swap_id, [7; 32], [8; 32], [9; 32], &candidate, tip,
+        )
+        .unwrap();
+        assert_eq!(fixture.zcash_refund_height, tip + 1 + 3_700);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let agreement = ZecAgreementV1::from_wire_at(&fixture.wire, UnixSeconds::new(now)).unwrap();
+        let output = agreement.binding().expected_output();
+        assert_eq!(
+            agreement.binding().profile_id(),
+            ZecProfileId::PublicTestnetV2
+        );
+        assert_eq!(output.network(), NetworkType::Test);
+        assert_eq!(
+            output.consensus_branch_id(),
+            zcash_protocol::consensus::BranchId::Nu7
+        );
+        assert_eq!(u64::from(output.value()), 1_000_000);
+        assert_eq!(output.contract().refund_lock_time(), tip + 1 + 3_700);
+        // Validation under V2 accepted the official LEZ testnet environment
+        // (agreement_v1.rs validate_lez_chain_profile) and a Zcash refund no
+        // earlier than the LEZ refund delay plus margin.
+    }
+
+    #[test]
+    fn a_testnet_actor_config_names_the_route_nu7_and_the_whole_refund_window() {
+        let spec = spec("public-testnet-v2", &tatum());
+        let root = PathBuf::from("/var/lib/lez/zec/corridor/maker");
+        let paths = material_paths(&root, &root.join("state"));
+        let runtime =
+            runtime_descriptor(&spec, BridgeParticipant::Maker, Hex32::from_bytes([7; 32]));
+        let config = encode_deterministic_local_v0_2_actor_config(actor_config_input(
+            &spec,
+            &SwapId::new(spec.swap_id.clone()).unwrap(),
+            ActorRole::Maker,
+            Path::new("/var/lib/lez/zec/corridor/shared/agreement-v2.borsh"),
+            Hex32::from_bytes([5; 32]),
+            &paths,
+            None,
+            runtime,
+            Hex32::from_bytes([6; 32]),
+            DiscoveryWindow::new(1, 4096).unwrap(),
+            Vec::new(),
+        ))
+        .unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&config).unwrap();
+        assert_eq!(raw["zebra"]["route"]["kind"], "tatum_testnet_x_api_key");
+        assert_eq!(
+            raw["zebra"]["route"]["endpoint"],
+            "https://zcash-testnet-zebrad.gateway.tatum.io/"
+        );
+        assert_eq!(
+            raw["zebra"]["route"]["api_key_file"],
+            "/var/lib/lez/zec/corridor/maker/zebra.credential"
+        );
+        assert_eq!(raw["zebra"]["identity"]["network"], "test");
+        assert_eq!(raw["zebra"]["identity"]["consensus_branch_id"], "77190ad9");
+        assert_eq!(raw["zebra"]["counterparty_scan_blocks"], 3_701);
     }
 }

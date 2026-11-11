@@ -15,8 +15,8 @@ use btc_role_preflight::{
 use lez_bridge_client::validate_prepared_witnessed_claim;
 use lez_bridge_protocol::PrepareWitnessedClaimResult;
 use lez_btc_role_lifecycle::{
-    BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, MakerCeremony,
-    PreparedEscrow, SwapLayout, SwapSidecar, WalletBalancesV1,
+    BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezFinalityWatch, LezSidecar,
+    MakerCeremony, PreparedEscrow, SwapLayout, SwapSidecar, WalletBalancesV1,
     actor::{ActorSynthesis, MakerLockMaterial, activate, synthesize},
     balances::role_wallet_balances,
     layout::{read_private, write_private_exact},
@@ -49,6 +49,8 @@ const PLAN_LATE_SLACK_SECONDS: u64 = 900;
 pub struct BtcMakerLifecycle {
     runtime: BtcRoleRuntime,
     rounds: tokio::sync::Mutex<()>,
+    /// How long LEZ finality may stand still before `maker_health` says so.
+    lez_finality_stall_seconds: u64,
 }
 
 impl std::fmt::Debug for BtcMakerLifecycle {
@@ -70,7 +72,23 @@ impl BtcMakerLifecycle {
         Ok(Self {
             runtime: BtcRoleRuntime::load(Participant::Maker, config_file)?,
             rounds: tokio::sync::Mutex::new(()),
+            lez_finality_stall_seconds: lez_btc_role_lifecycle::DEFAULT_LEZ_FINALITY_STALL_SECONDS,
         })
+    }
+
+    /// Sets how long the finalized LEZ block id may stand still, while the
+    /// sequencer's tip moves, before `maker_health` reports
+    /// `lez_finality_stalled` (`--lez-finality-stall-seconds`).
+    #[must_use]
+    pub const fn with_lez_finality_stall_seconds(mut self, seconds: u64) -> Self {
+        self.lez_finality_stall_seconds = seconds;
+        self
+    }
+
+    /// The LEZ chain watch `maker_health` samples: this role's indexer and
+    /// sequencer, the endpoints its sidecars use.
+    pub(super) fn lez_finality_watch(&self) -> LezFinalityWatch {
+        LezFinalityWatch::for_runtime(&self.runtime, self.lez_finality_stall_seconds)
     }
 
     /// Keeps every activated swap's sidecar running (respawning after a Node

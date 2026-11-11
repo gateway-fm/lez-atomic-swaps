@@ -11,7 +11,7 @@ use std::{
     path::Path,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -31,8 +31,8 @@ use lez_bridge_protocol::{
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
     FinalizedIndexerApi, HistoricalAccount, NativeEscrowPlanner, NativePrepareError, NonceSource,
-    OfficialNodeRpc, decode_official_public_transaction, decode_prepared_for_signer,
-    program_id_to_hex, start_bridge_server,
+    OfficialNodeRpc, compute_custody_pda, compute_metadata_pda, decode_official_public_transaction,
+    decode_prepared_for_signer, program_id_from_hex, program_id_to_hex, start_bridge_server,
 };
 use nssa::{Account, AccountId, PrivateKey, PublicKey};
 use tempfile::TempDir;
@@ -45,13 +45,15 @@ const FIRST_NONCE: u128 = 41;
 
 /// The chain as the sidecar sees it: the signer's live nonce (served to the
 /// planner's nonce source and `getAccount`), the included transactions, and
-/// counters for sends and lookups.
+/// counters for sends and lookups. The swap's escrow accounts are empty until
+/// `occupy_escrow` (another swap with the same id initialized them).
 #[derive(Clone)]
 struct Chain {
     live_nonce: Arc<Mutex<u128>>,
     nonce_calls: Arc<AtomicUsize>,
     sends: Arc<AtomicUsize>,
     included: Arc<Mutex<Vec<LeeTransaction>>>,
+    escrow_occupied: Arc<AtomicBool>,
 }
 
 impl Chain {
@@ -61,7 +63,22 @@ impl Chain {
             nonce_calls: Arc::new(AtomicUsize::new(0)),
             sends: Arc::new(AtomicUsize::new(0)),
             included: Arc::new(Mutex::new(Vec::new())),
+            escrow_occupied: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn occupy_escrow(&self) {
+        self.escrow_occupied.store(true, Ordering::SeqCst);
+    }
+
+    /// The metadata and custody accounts an initialization of swap `h(4)` creates.
+    fn escrow_accounts() -> [AccountId; 2] {
+        let program = program_id_from_hex(program_id_to_hex(ESCROW_PROGRAM));
+        let swap_id = h(4);
+        [
+            compute_metadata_pda(&program, swap_id.as_bytes()),
+            compute_custody_pda(&program, swap_id.as_bytes()),
+        ]
     }
 
     fn set_live_nonce(&self, nonce: u128) {
@@ -136,7 +153,19 @@ async fn start_sequencer(chain: Chain) -> (String, jsonrpsee::server::ServerHand
         Ok::<_, ErrorObjectOwned>(hex::encode([41_u8; 32]))
     })
     .expect("channel method");
-    rpc.register_method("getAccount", |_params, chain, _| {
+    rpc.register_method("getAccount", |params, chain, _| {
+        let requested: AccountId = params.one()?;
+        if Chain::escrow_accounts().contains(&requested) {
+            let account = if chain.escrow_occupied.load(Ordering::SeqCst) {
+                Account {
+                    balance: 1,
+                    ..Default::default()
+                }
+            } else {
+                Account::default()
+            };
+            return Ok::<_, ErrorObjectOwned>(account);
+        }
         let account = Account {
             balance: u128::MAX / 2,
             nonce: (*chain.live_nonce.lock().expect("nonce lock")).into(),
@@ -615,6 +644,7 @@ async fn fund_supersession_keeps_the_initialization_and_replays_identically() {
         nonce_calls: Arc::new(AtomicUsize::new(0)),
         sends: Arc::clone(&chain.sends),
         included: Arc::clone(&chain.included),
+        escrow_occupied: Arc::clone(&chain.escrow_occupied),
     };
     let (_, key) = account(31);
     let restarted = start_sidecar(signer, key, &endpoint, directory.path(), &restarted_chain).await;
@@ -871,4 +901,69 @@ async fn a_resubmission_after_a_journaled_acceptance_is_decided_on_the_chain_aga
     sidecar.server.stop().await.expect("stop");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
+}
+
+/// lanehang (2026-11-11): two swaps with one swap id. The second's escrow
+/// initialization names accounts the first already initialized; the official
+/// sequencer admits it and drops it at block building without a word. The
+/// sidecar reads the accounts and names it instead of broadcasting it.
+#[tokio::test]
+async fn an_initialization_whose_escrow_account_exists_is_named_and_never_sent() {
+    let chain = Chain::new();
+    let (endpoint, _sequencer) = start_sequencer(chain.clone()).await;
+    let directory = secure_directory();
+    let (signer, signer_key) = account(7);
+    let (claimant, _) = account(8);
+    let sidecar = start_sidecar(signer, signer_key, &endpoint, directory.path(), &chain).await;
+    let pair = prepare(&sidecar, signer, claimant).await;
+    chain.occupy_escrow();
+
+    for _ in 0..3 {
+        assert_remote_code(
+            sidecar
+                .client()
+                .submit_transaction(submit_request(signer, &pair.initialization))
+                .await,
+            ErrorCode::EscrowAlreadyInitialized,
+        );
+    }
+    assert_eq!(
+        chain.send_count(),
+        0,
+        "a doomed initialization is never sent"
+    );
+}
+
+/// An initialization that is merely slow to be included (its escrow accounts
+/// still empty) is sent again on every submission: no false refusal.
+#[tokio::test]
+async fn a_slow_initialization_with_empty_escrow_accounts_is_resubmitted() {
+    let chain = Chain::new();
+    let (endpoint, _sequencer) = start_sequencer(chain.clone()).await;
+    let directory = secure_directory();
+    let (signer, signer_key) = account(7);
+    let (claimant, _) = account(8);
+    let sidecar = start_sidecar(signer, signer_key, &endpoint, directory.path(), &chain).await;
+    let pair = prepare(&sidecar, signer, claimant).await;
+
+    for sent in 1..=3 {
+        let accepted = sidecar
+            .client()
+            .submit_transaction(submit_request(signer, &pair.initialization))
+            .await
+            .expect("submitted");
+        assert_eq!(accepted.outcome, SubmissionOutcome::Accepted);
+        assert_eq!(chain.send_count(), sent);
+    }
+    // Included at last: the escrow accounts now hold it, and the exact
+    // inclusion answers before any account is read.
+    chain.include_exact(&pair.initialization);
+    chain.occupy_escrow();
+    let known = sidecar
+        .client()
+        .submit_transaction(submit_request(signer, &pair.initialization))
+        .await
+        .expect("known");
+    assert_eq!(known.outcome, SubmissionOutcome::AlreadyKnown);
+    assert_eq!(chain.send_count(), 3);
 }

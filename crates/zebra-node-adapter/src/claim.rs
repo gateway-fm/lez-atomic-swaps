@@ -1253,7 +1253,7 @@ where
         expected_id: TxId,
         raw_transaction: &[u8],
     ) -> Result<bool, ZebraRefundError<R::Error, S::Error>> {
-        let transaction = decode_transaction::<R::Error, S::Error>(
+        let transaction = decode_canonical_transaction::<R::Error, S::Error>(
             raw_transaction,
             self.identity.consensus_branch_id(),
         )?;
@@ -1586,7 +1586,7 @@ where
         expected_id: TxId,
         raw_transaction: &[u8],
     ) -> Result<bool, ZebraClaimError<R::Error, S::Error>> {
-        let transaction = decode_transaction::<R::Error, S::Error>(
+        let transaction = decode_canonical_transaction::<R::Error, S::Error>(
             raw_transaction,
             self.identity.consensus_branch_id(),
         )?;
@@ -2006,6 +2006,26 @@ where
     RE: std::error::Error + Send + Sync + 'static,
     SE: std::error::Error + Send + Sync + 'static,
 {
+    let transaction = decode_canonical_transaction::<RE, SE>(raw, branch)?;
+    if transaction.version() != TxVersion::V5 {
+        return Err(ZebraClaimError::WrongTransactionVersion);
+    }
+    Ok(transaction)
+}
+
+/// [`decode_transaction`] without the version-5 rule, for the spender search:
+/// it reads every transaction of a block, and from NU7 on each block's
+/// coinbase is a version-6 transaction. A spend of the contract output in
+/// any other version is still found here and then refused by the v5-only
+/// policy validation.
+fn decode_canonical_transaction<RE, SE>(
+    raw: &[u8],
+    branch: zcash_protocol::consensus::BranchId,
+) -> Result<Transaction, ZebraClaimError<RE, SE>>
+where
+    RE: std::error::Error + Send + Sync + 'static,
+    SE: std::error::Error + Send + Sync + 'static,
+{
     let mut cursor = Cursor::new(raw);
     let transaction =
         Transaction::read(&mut cursor, branch).map_err(ZebraClaimError::MalformedSubmission)?;
@@ -2013,9 +2033,6 @@ where
         u64::try_from(raw.len()).map_err(|_| ZebraClaimError::TrailingSubmissionBytes)?;
     if cursor.position() != exact_length {
         return Err(ZebraClaimError::TrailingSubmissionBytes);
-    }
-    if transaction.version() != TxVersion::V5 {
-        return Err(ZebraClaimError::WrongTransactionVersion);
     }
     Ok(transaction)
 }
@@ -2227,6 +2244,8 @@ mod tests {
         funding_transaction_id: TxId,
         funding_transaction: ZebraTransactionState,
         discovery_enabled: bool,
+        /// A transaction served first in every scanned block (the NU7 coinbase).
+        coinbase: Option<Vec<u8>>,
         transaction: Option<ZebraTransactionState>,
         unspent: Option<ZebraUnspentOutput>,
         submissions: VecDeque<Result<TxId, FakeError>>,
@@ -2283,6 +2302,7 @@ mod tests {
                             in_active_chain: true,
                         },
                         discovery_enabled: false,
+                        coinbase: None,
                         transaction: Some(ZebraTransactionState::Confirmed {
                             raw_transaction: {
                                 let mut exact = Vec::new();
@@ -2380,7 +2400,12 @@ mod tests {
             } else {
                 u32::from(block_hash.0[0])
             };
-            let transaction_ids = match state.transaction.as_ref() {
+            let mut transaction_ids: Vec<TxId> = state
+                .coinbase
+                .iter()
+                .map(|raw| fake_coinbase_id(raw))
+                .collect();
+            transaction_ids.extend(match state.transaction.as_ref() {
                 Some(
                     transaction @ ZebraTransactionState::Confirmed {
                         block_hash: transaction_block,
@@ -2393,7 +2418,7 @@ mod tests {
                     ZebraTransactionState::Confirmed { .. } | ZebraTransactionState::Mempool { .. },
                 )
                 | None => Vec::new(),
-            };
+            });
             Ok(ZebraCanonicalBlock::new(
                 block_hash,
                 BlockHeight::from_u32(height),
@@ -2410,6 +2435,13 @@ mod tests {
             state.calls.push("block_transaction".to_owned());
             if let Some(override_result) = state.block_transaction_overrides.pop_front() {
                 return override_result;
+            }
+            if let Some(coinbase) = state
+                .coinbase
+                .as_ref()
+                .filter(|raw| fake_coinbase_id(raw) == transaction_id)
+            {
+                return Ok(Some(coinbase.clone()));
             }
             Ok(state.transaction.as_ref().and_then(|transaction| {
                 (fake_state_transaction_id(transaction) == Some(transaction_id))
@@ -4097,6 +4129,51 @@ mod tests {
         .expect("well-formed policy mutation")
     }
 
+    /// The height-1 coinbase of the Zebra 7 Regtest fixture with NU7 from
+    /// height 1: a v6 transaction (version group d884b698, branch 77190ad9).
+    const REGTEST_NU7_COINBASE: &str = concat!(
+        "0600008098b684d8d90a19770000000001000000010000000000000000000000000000000000000000000000",
+        "000000000000000000ffffffff285126f09fa6933a2039601c2a397699d2de9efe8dbc1c15ea18b323e3bd7f",
+        "9ae732933ca8eb11e3f4ffffffff0115ea6a0c000000001976a914888dbbd7998f9f80d4f82b4f9ce6d5882f",
+        "310aec88ac00000000",
+    );
+
+    fn fake_coinbase_id(raw: &[u8]) -> TxId {
+        Transaction::read(raw, BranchId::Nu7)
+            .expect("the fixture coinbase decodes")
+            .txid()
+    }
+
+    #[tokio::test]
+    async fn counterparty_discovery_reads_past_a_version_6_coinbase() {
+        // Every NU7 block opens with a v6 coinbase; the spender search reads
+        // it like any other transaction and still finds the exact claim. A
+        // claim in another version than 5 is still refused by name.
+        let (fixture, rpc, port, prepared) = prepared_claim_fixture().await;
+        set_confirmed_claim(&rpc, &prepared);
+        rpc.edit(|state| {
+            state.coinbase = Some(hex::decode(REGTEST_NU7_COINBASE).expect("coinbase hex"));
+        });
+        let observed = port
+            .observe_counterparty_followup_claim(&fixture.agreement, &fixture.context)
+            .await
+            .expect("a v6 coinbase in the scanned block is not an error");
+        let FollowupClaimObservationV1::Confirmed(evidence) = observed else {
+            panic!("canonical counterparty spend must be confirmed")
+        };
+        assert_eq!(
+            evidence.observed_submission_id(),
+            prepared.expected_submission_id()
+        );
+        assert!(matches!(
+            decode_transaction::<FakeError, FakeError>(
+                &hex::decode(REGTEST_NU7_COINBASE).expect("coinbase hex"),
+                BranchId::Nu7,
+            ),
+            Err(ZebraClaimError::WrongTransactionVersion)
+        ));
+    }
+
     fn set_confirmed_claim(rpc: &FakeRpc, prepared: &PreparedClaimSubmissionV1) {
         rpc.edit(|state| {
             state.calls.clear();
@@ -4143,7 +4220,7 @@ mod tests {
         let expected = agreement.binding().expected_output();
         let key = SecretKey::from_slice(&[7; 32]).expect("fixed funding key");
         let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
-        let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+        let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&public_key).script().into();
         let input_value =
             Zatoshis::from_u64(u64::from(expected.value()) + 20_000).expect("input value");
         let request = TransparentFundingRequest::new(
@@ -4256,7 +4333,7 @@ mod tests {
     }
 
     fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-        match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("public key")) {
+        match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("public key")) {
             TransparentAddress::PublicKeyHash(hash) => hash,
             TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
         }

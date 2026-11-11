@@ -43,7 +43,7 @@ use zcash_protocol::{
     value::Zatoshis,
 };
 use zcash_transparent::{
-    address::{Script, TransparentAddress},
+    address::Script,
     bundle::{OutPoint, TxOut},
 };
 use zec_reference_actor::ActorConfig;
@@ -1049,7 +1049,7 @@ fn canonical_observation(
 ) -> CanonicalZcashOutputObservation {
     let key = SecretKey::from_slice(&[seed; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
-    let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&public_key).script().into();
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
             OutPoint::new([seed.wrapping_add(2); 32], 0),

@@ -4922,3 +4922,199 @@ fn a_supersession_record_names_a_lez_step_an_advanced_nonce_and_changed_identiti
         Err(FirstLockSupersessionError::IdentitiesDoNotMatchStep)
     );
 }
+
+// The owner's and the observer's locked coordinator with the taker leg or the maker leg
+// removed, and optionally the revealing claim recorded before the removal.
+fn reorged_refund_coordinators(
+    fixture: &ClaimActorFixture,
+    swap_id: &SwapId,
+    remove: Participant,
+    revealed: bool,
+) -> Vec<(
+    Participant,
+    AcceptedZecAgreementV1,
+    lez_swap_core::SwapCoordinator,
+)> {
+    let owner = fixture.maker.agreement().lez_depositor();
+    [owner, owner.other()]
+        .into_iter()
+        .map(|participant| {
+            let store = refund_store(fixture, participant);
+            let accepted = store.accepted(swap_id).expect("accepted terms");
+            let mut coordinator = store
+                .coordinator_at(&accepted, 2)
+                .expect("locked coordinator");
+            assert_eq!(coordinator.phase(), Phase::BothLegsLocked);
+            if revealed {
+                coordinator
+                    .observe_revealing_claim(
+                        coordinator.first_claimant(),
+                        lez_swap_core::ChainProof::new("reorg-revealing-claim", 1)
+                            .expect("claim proof"),
+                        lez_swap_core::ClaimEvidence::new([0xc5; 32]),
+                    )
+                    .expect("revealing claim");
+            }
+            let removed = coordinator
+                .funding_transaction_id(remove)
+                .expect("committed funding")
+                .to_owned();
+            coordinator
+                .observe_funding_removed(remove, &removed)
+                .expect("lock removal");
+            (participant, accepted, coordinator)
+        })
+        .collect()
+}
+
+fn reorg_refund_evidence(accepted: &AcceptedZecAgreementV1) -> RefundEvidenceV1 {
+    RefundEvidenceV1::new(
+        accepted.agreement(),
+        RefundStepV1::Lez,
+        refund_submission_id(RefundStepV1::Lez),
+        "reorg-lez-refund",
+        ChainPosition::lez_timestamp_from_milliseconds_floor(LezUnixMilliseconds::new(
+            accepted.agreement().lez_refund_at_ms(),
+        )),
+        3,
+    )
+    .expect("canonical refund evidence")
+}
+
+fn reorg_prepared_lez_refund() -> PreparedRefundSubmissionV1 {
+    PreparedRefundSubmissionV1::new(
+        RefundStepV1::Lez,
+        refund_submission_id(RefundStepV1::Lez),
+        refund_submission_bytes(RefundStepV1::Lez).to_vec(),
+    )
+    .expect("prepared LEZ refund")
+}
+
+#[tokio::test]
+async fn refund_validation_refuses_a_reorg_phase_holding_claim_evidence() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-refund-reorg-reveal-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xc1; 32],
+        ),
+        (
+            "sdk-refund-reorg-reveal-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xc2; 32],
+        ),
+    ] {
+        let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+        lock_claim_actor_fixture(direction, &mut fixture).await;
+        let swap_id = SwapId::new(id).expect("swap ID");
+        let owner = fixture.maker.agreement().lez_depositor();
+        for (remove, phase) in [
+            (Participant::Taker, Phase::TakerLockReorged),
+            (Participant::Maker, Phase::MakerLockReorged),
+        ] {
+            for (participant, accepted, coordinator) in
+                reorged_refund_coordinators(&fixture, &swap_id, remove, true)
+            {
+                assert_eq!(coordinator.phase(), phase);
+                assert!(coordinator.claim_evidence().is_some());
+                let refused = lez_zec_swap_sdk::RefundError::ClaimEvidenceRecorded {
+                    step: RefundStepV1::Lez,
+                    phase,
+                };
+                if participant == owner {
+                    assert_eq!(
+                        RefundIntentV1::from_active(
+                            accepted.agreement(),
+                            &coordinator,
+                            participant,
+                            2,
+                            reorg_prepared_lez_refund(),
+                        ),
+                        Err(refused),
+                        "{direction:?}: the owner stages no refund after a reveal"
+                    );
+                } else {
+                    assert_eq!(
+                        RefundTransitionV1::from_observed(
+                            accepted.agreement(),
+                            &coordinator,
+                            participant,
+                            2,
+                            reorg_refund_evidence(&accepted),
+                        ),
+                        Err(refused),
+                        "{direction:?}: the observer projects no refund after a reveal"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn refund_validation_still_admits_a_reorg_phase_without_claim_evidence() {
+    for (id, direction, first_claimant, secret) in [
+        (
+            "sdk-refund-reorg-forward",
+            SwapDirection::TakerSellsForeign,
+            Participant::Taker,
+            [0xc3; 32],
+        ),
+        (
+            "sdk-refund-reorg-reverse",
+            SwapDirection::TakerSellsLez,
+            Participant::Maker,
+            [0xc4; 32],
+        ),
+    ] {
+        let mut fixture = activate_claim_actor_fixture(id, direction, first_claimant, secret).await;
+        lock_claim_actor_fixture(direction, &mut fixture).await;
+        let swap_id = SwapId::new(id).expect("swap ID");
+        let owner = fixture.maker.agreement().lez_depositor();
+        for (remove, phase) in [
+            (Participant::Taker, Phase::TakerLockReorged),
+            (Participant::Maker, Phase::MakerLockReorged),
+        ] {
+            for (participant, accepted, coordinator) in
+                reorged_refund_coordinators(&fixture, &swap_id, remove, false)
+            {
+                assert_eq!(coordinator.phase(), phase);
+                assert!(coordinator.claim_evidence().is_none());
+                if participant == owner {
+                    let intent = RefundIntentV1::from_active(
+                        accepted.agreement(),
+                        &coordinator,
+                        participant,
+                        2,
+                        reorg_prepared_lez_refund(),
+                    )
+                    .expect("the owner may still stage the LEZ refund");
+                    let transition = RefundTransitionV1::from_owned(
+                        accepted.agreement(),
+                        &coordinator,
+                        &intent,
+                        2,
+                        reorg_refund_evidence(&accepted),
+                    )
+                    .expect("owner transition");
+                    transition
+                        .apply_to(accepted.agreement(), &coordinator, 2)
+                        .expect("the coordinator projects the LEZ refund");
+                } else {
+                    RefundTransitionV1::from_observed(
+                        accepted.agreement(),
+                        &coordinator,
+                        participant,
+                        2,
+                        reorg_refund_evidence(&accepted),
+                    )
+                    .expect("the observer may still project the LEZ refund")
+                    .apply_to(accepted.agreement(), &coordinator, 2)
+                    .expect("the coordinator projects the LEZ refund");
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,92 @@
+
+[10:37:43] === concurrent (TakerSellsLez)
+
+[10:37:51] Maker desk publishes TakerSellsLez offers until two are pending
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[10:38:01] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   1b9dad96877f2d478c3711a0aa594427a855d8a9bb78e4d6fdc89981b24280ec awaiting_first_lock 0 -
+
+[10:38:10] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   4e71ca645d877d63915187b3b41d6ec2a3070c185bfd60e9fd6c956ccc4b3919 awaiting_first_lock 0 -
+
+[10:38:21] Taker desk: lock_lez on 1b9dad96877f
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[10:38:33] Taker desk: lock_lez on 4e71ca645d87
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform lock_lez
+2 passed, 0 failed
+
+[10:38:45] Maker desk shows 1b9dad96877f at awaiting_taker_claim
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[10:41:31] Maker desk shows 4e71ca645d87 at awaiting_taker_claim
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[10:42:01] Taker desk: claim_btc on 1b9dad96877f
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform claim_btc
+2 passed, 0 failed
+
+[10:42:15] Taker desk: claim_btc on 4e71ca645d87
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: perform claim_btc
+2 passed, 0 failed
+
+[10:42:27] Maker desk shows 1b9dad96877f at completed
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[10:44:06] Taker desk shows 1b9dad96877f at completed
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 1b9dad96877f: runtime/evidence/1b9dad96877f2d478c3711a0aa594427a855d8a9bb78e4d6fdc89981b24280ec.json (5 effects, completed 2026-11-10T10:43:24Z)
+
+[10:45:22] Maker desk shows 4e71ca645d87 at completed
+  [32m✓[0m maker: launcher discoverable and app opens
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[10:45:30] Taker desk shows 4e71ca645d87 at completed
+  [32m✓[0m taker: launcher discoverable and app opens
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+exported swap 4e71ca645d87: runtime/evidence/4e71ca645d877d63915187b3b41d6ec2a3070c185bfd60e9fd6c956ccc4b3919.json (5 effects, completed 2026-11-10T10:43:35Z)
+
+[10:45:39] === concurrent (TakerSellsLez): passed in 476s

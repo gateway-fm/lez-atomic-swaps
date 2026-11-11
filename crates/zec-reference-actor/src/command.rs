@@ -33,7 +33,13 @@ use zcash_primitives::block::BlockHash;
 use zcash_protocol::consensus::{BranchId, NetworkType};
 use zcash_transparent::bundle::OutPoint;
 
-use crate::{ActorCommand, ActorConfig, ActorRole, ZcashNetworkConfig, ZebraRpcChainConfig};
+use crate::{
+    ActorCommand, ActorConfig, ActorRole, ZcashNetworkConfig, ZebraRpcChainConfig,
+    first_lock_attempts::{
+        ESCROW_REFUSAL_STOP_ATTEMPTS, ESCROW_REFUSAL_STOP_SECONDS, LezFirstLockAttemptOutcomeV1,
+        clear_lez_first_lock_attempts, lez_first_lock_attempts, record_lez_first_lock_attempt,
+    },
+};
 
 const STATUS_SCHEMA_VERSION: u16 = 1;
 
@@ -469,6 +475,15 @@ pub enum ActorCommandError {
         "LEZ first lock was re-planned {MAX_FIRST_LOCK_REPLANS} times; its nonce keeps being taken"
     )]
     FirstLockReplanExhausted,
+    /// The LEZ escrow account of this swap already exists, initialized by a
+    /// transaction that is not this swap's (another swap with the same swap
+    /// id): the escrow initialization can never execute. The bridge refused
+    /// it the bounded number of times over the bounded span and it is no
+    /// longer submitted; the swap stops by name.
+    #[error(
+        "LEZ escrow account already exists, initialized by a transaction that is not this swap's; the escrow initialization can never execute and is no longer submitted"
+    )]
+    LezEscrowAlreadyInitialized,
     /// The owned revealing LEZ claim was re-planned the bounded number of
     /// times and its nonce was taken again; the claim was never abandoned and
     /// the swap needs attention by name (FINDINGS 24).
@@ -762,19 +777,40 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             // the re-plans per swap, the swap fails by name past the bound.
             let mut replans = Vec::new();
             loop {
-                match active.drive_first_lock().await.map_err(unavailable_drive)? {
+                let driven = match active.drive_first_lock().await {
+                    Ok(driven) => driven,
+                    Err(error) if is_escrow_already_initialized(&error) => {
+                        let open = store
+                            .load_first_lock_intent(active.agreement().coordinator().id())
+                            .await
+                            .map_err(unavailable_drive)?
+                            .ok_or(ActorCommandError::DriveUnavailable)?;
+                        break escrow_initialization_refused(config, open.plan())?;
+                    }
+                    Err(error) => return Err(unavailable_drive(error)),
+                };
+                match driven {
                     FirstLockDriveOutcome::Submitted(step) => {
+                        if let Some(open) = store
+                            .load_first_lock_intent(active.agreement().coordinator().id())
+                            .await
+                            .map_err(unavailable_drive)?
+                        {
+                            count_lez_submission(config, open.plan(), step);
+                        }
                         break ActorEffectOutcomeV1::Submitted {
                             operation: first_lock_operation(step),
                             replans,
                         };
                     }
                     FirstLockDriveOutcome::AwaitingStableObservation(step) => {
+                        clear_lez_first_lock_attempts(config.role_state_db());
                         break ActorEffectOutcomeV1::AwaitingObservation {
                             operation: first_lock_operation(step),
                         };
                     }
                     FirstLockDriveOutcome::ReadyForFundingProjection(evidence) => {
+                        clear_lez_first_lock_attempts(config.role_state_db());
                         active
                             .project_first_lock(evidence)
                             .await
@@ -852,11 +888,23 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
             let mut plan = plan;
             let mut replans = Vec::new();
             loop {
-                match active
-                    .drive_maker_lock(plan.clone())
-                    .await
-                    .map_err(unavailable_drive)?
-                {
+                let driven = match active.drive_maker_lock(plan.clone()).await {
+                    Ok(driven) => driven,
+                    Err(error) if is_escrow_already_initialized(&error) => {
+                        break escrow_initialization_refused(config, &plan)?;
+                    }
+                    Err(error) => return Err(unavailable_drive(error)),
+                };
+                if !matches!(
+                    driven,
+                    MakerLockDriveOutcome::Lock(
+                        FirstLockDriveOutcome::Submitted(_)
+                            | FirstLockDriveOutcome::Superseded { .. }
+                    )
+                ) {
+                    clear_lez_first_lock_attempts(config.role_state_db());
+                }
+                match driven {
                     MakerLockDriveOutcome::AlreadyLocked { .. } => {
                         break ActorEffectOutcomeV1::Unchanged {
                             operation: ActorOperationV1::MakerLock,
@@ -875,6 +923,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                         };
                     }
                     MakerLockDriveOutcome::Lock(FirstLockDriveOutcome::Submitted(step)) => {
+                        count_lez_submission(config, &plan, step);
                         break ActorEffectOutcomeV1::Submitted {
                             operation: first_lock_operation(step),
                             replans,
@@ -1098,6 +1147,110 @@ fn lez_first_lock_or_refusal<Plan>(
         }
         Err(error) => Err(unavailable_drive(error)),
     }
+}
+
+/// Whether a first-lock drive failed because the bridge did not send the
+/// escrow initialization: its escrow account already exists, initialized by a
+/// transaction that is not this swap's (`ErrorCode::EscrowAlreadyInitialized`),
+/// reached through the SDK, port, adapter and transport error layers.
+fn is_escrow_already_initialized(error: &lez_zec_swap_sdk::ZecSdkError) -> bool {
+    let lez_zec_swap_sdk::ZecSdkError::LezFirstLock(source) = error else {
+        return false;
+    };
+    let Some(ContextOwningLezPortError::Adapter(adapter)) =
+        source.downcast_ref::<ContextOwningLezPortError>()
+    else {
+        return false;
+    };
+    let Some(PrepareNativeFirstLockError::Transport(BridgeClientError::Remote(remote))) =
+        adapter.downcast_ref::<PrepareNativeFirstLockError<BridgeClientError>>()
+    else {
+        return false;
+    };
+    remote.code() == ErrorCode::EscrowAlreadyInitialized
+}
+
+/// The actor's spelling of a LEZ first-lock step and its transaction id in
+/// `plan`, hex; `None` for the Zcash step.
+fn lez_step_identity(
+    plan: &FirstLockPlanV1,
+    step: FirstLockStepV1,
+) -> Option<(&'static str, String)> {
+    let FirstLockPlanV1::Lez { initialize, fund } = plan else {
+        return None;
+    };
+    match step {
+        FirstLockStepV1::LezInitialize => Some((
+            "lez_initialize",
+            hex::encode(initialize.expected_submission_id()),
+        )),
+        FirstLockStepV1::LezFund => Some(("lez_fund", hex::encode(fund.expected_submission_id()))),
+        FirstLockStepV1::ZcashFund => None,
+    }
+}
+
+fn wall_clock_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// Counts one submission of a LEZ first-lock step that was not seen on the
+/// chain before it; the Node names the step in the swap's status once it was
+/// submitted many times over a long time ([`crate::first_lock_attempts`]).
+/// Nothing is decided here: the next drive submits again.
+fn count_lez_submission(config: &ActorConfig, plan: &FirstLockPlanV1, step: FirstLockStepV1) {
+    let Some((name, transaction_id)) = lez_step_identity(plan, step) else {
+        return;
+    };
+    let named_before = lez_first_lock_attempts(config.role_state_db())
+        .is_some_and(|record| record.unincluded_named());
+    let record = record_lez_first_lock_attempt(
+        config.role_state_db(),
+        name,
+        &transaction_id,
+        LezFirstLockAttemptOutcomeV1::Submitted,
+        wall_clock_unix_ms(),
+    );
+    if !named_before && let Some(detail) = record.status_detail() {
+        eprintln!("actor drive: {detail}");
+    }
+}
+
+/// The bridge did not send the escrow initialization because its escrow
+/// account already exists without it. Below the bound (attempts and span,
+/// [`crate::first_lock_attempts`]) the drive reports the initialization as
+/// awaiting observation and the next drive looks again; at the bound the swap
+/// stops by name ([`ActorCommandError::LezEscrowAlreadyInitialized`]).
+fn escrow_initialization_refused(
+    config: &ActorConfig,
+    plan: &FirstLockPlanV1,
+) -> Result<ActorEffectOutcomeV1, ActorCommandError> {
+    let (name, transaction_id) = lez_step_identity(plan, FirstLockStepV1::LezInitialize)
+        .ok_or(ActorCommandError::DriveUnavailable)?;
+    let record = record_lez_first_lock_attempt(
+        config.role_state_db(),
+        name,
+        &transaction_id,
+        LezFirstLockAttemptOutcomeV1::EscrowAlreadyInitialized,
+        wall_clock_unix_ms(),
+    );
+    if record.stops() {
+        eprintln!(
+            "actor drive refused: {}",
+            record.status_detail().unwrap_or_default()
+        );
+        return Err(ActorCommandError::LezEscrowAlreadyInitialized);
+    }
+    eprintln!(
+        "actor drive: LEZ escrow initialization {transaction_id} not sent: its escrow account already exists without any of this swap's initializations (attempt {}; the swap stops after {ESCROW_REFUSAL_STOP_ATTEMPTS} over at least {ESCROW_REFUSAL_STOP_SECONDS} s)",
+        record.attempts
+    );
+    Ok(ActorEffectOutcomeV1::AwaitingObservation {
+        operation: ActorOperationV1::LezInitialize,
+    })
 }
 
 /// Re-plans the LEZ first lock whose `step` the sidecar reported superseded,

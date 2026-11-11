@@ -7,8 +7,7 @@ use lez_zec_swap_sdk::{
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use zcash_primitives::transaction::{
     Authorization as TransactionAuthorization, Transaction, TxVersion,
-    sighash::{SignableInput as TransactionSignableInput, signature_hash},
-    txid::TxIdDigester,
+    sighash::{PrecomputedSighashData, SignableInput as TransactionSignableInput},
 };
 use zcash_protocol::{
     consensus::{BlockHeight, BranchId},
@@ -79,7 +78,7 @@ fn key(byte: u8) -> SecretKey {
 
 fn pubkey_hash(secret_key: &SecretKey) -> [u8; 20] {
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), secret_key);
-    match TransparentAddress::from_pubkey(&public_key) {
+    match lez_zec_swap_sdk::p2pkh_address(&public_key) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!(),
     }
@@ -91,10 +90,21 @@ fn fixture() -> (
     SecretKey,
     SecretKey,
 ) {
+    fixture_for(BranchId::Nu6_2)
+}
+
+fn fixture_for(
+    branch: BranchId,
+) -> (
+    Bip199Contract,
+    TransparentSpendRequest,
+    SecretKey,
+    SecretKey,
+) {
     let refund_key = key(1);
     let claimant_key = key(2);
     let destination_key = key(3);
-    let destination = TransparentAddress::from_pubkey(&PublicKey::from_secret_key(
+    let destination = lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_secret_key(
         &Secp256k1::new(),
         &destination_key,
     ));
@@ -115,7 +125,7 @@ fn fixture() -> (
         destination,
         Zatoshis::from_u64(10_000).unwrap(),
         BlockHeight::from_u32(4_100_000),
-        BranchId::Nu6_2,
+        branch,
     )
     .unwrap();
 
@@ -171,8 +181,8 @@ fn execute_script(
             |bundle| bundle,
             |bundle| bundle,
         );
-    let txid_parts = data.digest(TxIdDigester);
-    let bundle = data.transparent_bundle().unwrap();
+    let precomputed = PrecomputedSighashData::new_zip244(data).unwrap();
+    let bundle = precomputed.tx().transparent_bundle().unwrap();
     let sighash = |script_code: &Code, hash_type: &HashType| {
         if hash_type.signed_outputs() != SignedOutputs::All || hash_type.anyone_can_pay() {
             return None;
@@ -188,12 +198,9 @@ fn execute_script(
         )
         .ok()?;
         Some(
-            *signature_hash(
-                &data,
-                &TransactionSignableInput::Transparent(signable),
-                &txid_parts,
-            )
-            .as_ref(),
+            *precomputed
+                .signature_hash(&TransactionSignableInput::Transparent(signable))
+                .as_ref(),
         )
     };
     let input = &transaction.transparent_bundle().unwrap().vin[0];
@@ -310,6 +317,39 @@ fn produced_claim_and_refund_signatures_execute_and_mutations_fail() {
         mutated[12] ^= 1;
         assert!(!execute_script(transaction, &request, mutated));
     }
+}
+
+#[test]
+fn nu7_spends_commit_to_the_nu7_branch_and_execute() {
+    let (contract, request, refund_key, claimant_key) = fixture_for(BranchId::Nu7);
+    let (_, nu6_2_request, _, _) = fixture();
+    let claim = build_claim_transaction(&contract, &request, &claimant_key, &PREIMAGE).unwrap();
+    let refund = build_refund_transaction(&contract, &request, &refund_key).unwrap();
+
+    for transaction in [&claim, &refund] {
+        let bytes = serialize(transaction);
+        // v5 header: version, version group id, then the consensus branch id (LE).
+        assert_eq!(bytes[8..12], 0x7719_0ad9_u32.to_le_bytes());
+        assert_eq!(transaction.consensus_branch_id(), BranchId::Nu7);
+        let decoded = Transaction::read(bytes.as_slice(), BranchId::Nu7).unwrap();
+        assert_eq!(decoded.txid(), transaction.txid());
+
+        let script_sig = transaction.transparent_bundle().unwrap().vin[0]
+            .script_sig()
+            .0
+            .0
+            .clone();
+        assert!(execute_script(transaction, &request, script_sig.clone()));
+
+        // Relabelled as NU6.2, the NU7 signature no longer verifies.
+        let mut relabelled = bytes.clone();
+        relabelled[8..12].copy_from_slice(&u32::from(BranchId::Nu6_2).to_le_bytes());
+        let relabelled = Transaction::read(relabelled.as_slice(), BranchId::Nu6_2).unwrap();
+        assert!(!execute_script(&relabelled, &nu6_2_request, script_sig));
+    }
+    // Same keys, same spend, different branch: different bytes and txid.
+    assert_ne!(hex(&serialize(&claim)), EXPECTED_CLAIM_BYTES);
+    assert_ne!(claim.txid().to_string(), EXPECTED_CLAIM_TXID);
 }
 
 #[test]

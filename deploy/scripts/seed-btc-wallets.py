@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Idempotently prepare the local regtest wallets of both roles (never other chains)."""
 import json
+import os
 import subprocess
 
-CLI = ["docker", "exec", "lez-bitcoin-core", "bitcoin-cli",
+# A regression lane seeds its own Bitcoin Core (scripts/lane.sh).
+CLI = ["docker", "exec", f"{os.environ.get('LEZ_CONTAINER_PREFIX', 'lez')}-bitcoin-core", "bitcoin-cli",
        "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin"]
 
 

@@ -18,10 +18,11 @@ use lez_bridge_protocol::{
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeServerCapability, BridgeServerConfig, NativeEscrowPlanner,
     OfficialIndexerRpc, OfficialNodeRpc, StateDirectoryLease, m4_tag13_state_present,
+    message_signer::{KeyFileSigner, MessageSigner, WalletModuleSigner},
     program_id_from_hex, read_genesis_bound_finalized_clock, start_bridge_server,
     validate_loopback_http_endpoint, verify_m4_tag13_bridge_handoff,
 };
-use nssa::{AccountId, PrivateKey, PublicKey};
+use nssa::{AccountId, PrivateKey};
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use zeroize::{Zeroize as _, Zeroizing};
@@ -85,9 +86,16 @@ struct Arguments {
     /// Outbound indexer URL accepted by the selected node profile.
     #[arg(long)]
     indexer_url: String,
-    /// Complete outbound node route; the actor-facing listener stays loopback-only.
+    /// Outbound sequencer route; the actor-facing listener stays loopback-only.
     #[arg(long, value_enum, default_value_t = NodeRouteProfile::Local)]
     node_profile: NodeRouteProfile,
+    /// Outbound indexer route, when it differs from the sequencer's.
+    ///
+    /// The official public origin serves no indexer, so an HTTPS sequencer has
+    /// to be paired with a locally reachable indexer. Omitted, the indexer
+    /// follows `--node-profile`, which is the historical single-route shape.
+    #[arg(long, value_enum)]
+    indexer_profile: Option<NodeRouteProfile>,
     /// Composed run identity shared with this actor's bridge client.
     #[arg(long)]
     run_id: String,
@@ -101,8 +109,19 @@ struct Arguments {
     #[arg(long)]
     capability_file: PathBuf,
     /// Owner-only file containing one lowercase-hex 32-byte LEZ private key.
-    #[arg(long)]
-    private_key_file: PathBuf,
+    #[arg(
+        long,
+        required_unless_present = "wallet_signer_socket",
+        conflicts_with = "wallet_signer_socket"
+    )]
+    private_key_file: Option<PathBuf>,
+    /// The LEZ wallet module's signer socket (lez-wallet-signer), which holds
+    /// the key and signs this sidecar's planned transactions instead.
+    #[arg(long, requires = "signer_account_id")]
+    wallet_signer_socket: Option<PathBuf>,
+    /// The account the wallet signs for (64 lowercase hex), with --wallet-signer-socket.
+    #[arg(long, requires = "wallet_signer_socket")]
+    signer_account_id: Option<String>,
     /// Existing owner-only 0700 directory dedicated to this actor and run.
     #[arg(long)]
     state_directory: PathBuf,
@@ -117,6 +136,16 @@ struct Arguments {
     shutdown_on_stdin: bool,
 }
 
+impl Arguments {
+    /// The indexer's route, defaulting to the sequencer's when unset.
+    const fn indexer_route(&self) -> NodeRouteProfile {
+        match self.indexer_profile {
+            Some(profile) => profile,
+            None => self.node_profile,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Readiness<'a> {
@@ -125,6 +154,7 @@ struct Readiness<'a> {
     run_id: &'a str,
     runtime: &'a RuntimeDescriptor,
     node_profile: &'static str,
+    indexer_profile: &'static str,
     sequencer_observation: &'static str,
     indexer_health: &'static str,
     finality: &'static str,
@@ -161,8 +191,23 @@ async fn execute(arguments: Arguments) -> Result<()> {
     let mut capability = read_secret_text(&arguments.capability_file)?;
     let capability = BridgeServerCapability::new(std::mem::take(&mut *capability))
         .context("invalid bridge capability")?;
-    let signer_key = read_private_key(&arguments.private_key_file)?;
-    let signer_account_id = AccountId::from(&PublicKey::new_from_private_key(&signer_key));
+    let signer: Arc<dyn MessageSigner> =
+        match (&arguments.private_key_file, &arguments.wallet_signer_socket) {
+            (Some(key_file), None) => Arc::new(KeyFileSigner::new(read_private_key(key_file)?)),
+            (None, Some(socket)) => {
+                let account =
+                    Hex32::from_hex(arguments.signer_account_id.as_deref().unwrap_or_default())
+                        .context("invalid signer account id")?;
+                Arc::new(
+                    WalletModuleSigner::new(socket, AccountId::new(*account.as_bytes()))
+                        .context("the LEZ wallet signer socket is unavailable")?,
+                )
+            }
+            _ => anyhow::bail!(
+                "exactly one of --private-key-file and --wallet-signer-socket is required"
+            ),
+        };
+    let signer_account_id = signer.account_id();
     ensure!(
         runtime.signer_account_id == Hex32::from_bytes(signer_account_id.into_value()),
         "runtime signer does not match the isolated private key"
@@ -179,7 +224,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
     );
     let indexer = Arc::new(
         arguments
-            .node_profile
+            .indexer_route()
             .connect_indexer(&arguments.indexer_url)
             .context("connect official indexer")?,
     );
@@ -191,9 +236,9 @@ async fn execute(arguments: Arguments) -> Result<()> {
         finalized_clock.height >= 2,
         "official indexer has not finalized a non-genesis block"
     );
-    let planner = Arc::new(NativeEscrowPlanner::new_durable(
+    let planner = Arc::new(NativeEscrowPlanner::new_durable_with_signer(
         runtime.sidecar_role,
-        signer_key,
+        signer,
         program_id_from_hex(runtime.escrow_program_id),
         program_id_from_hex(authenticated_transfer_program),
         runtime.clone(),
@@ -222,6 +267,7 @@ async fn execute(arguments: Arguments) -> Result<()> {
             run_id: run_id.as_str(),
             runtime: &runtime,
             node_profile: arguments.node_profile.as_str(),
+            indexer_profile: arguments.indexer_route().as_str(),
             sequencer_observation: "bounded_canonical_inclusion_and_same_tip_accounts",
             indexer_health: "stable_finalized_tip_bound_to_runtime_genesis",
             finality: "exact_genesis_bound_finalized_indexer_clock_available",
@@ -322,26 +368,12 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
     );
     validate_node_routes(
         arguments.node_profile,
+        arguments.indexer_route(),
         &arguments.sequencer_url,
         &arguments.indexer_url,
     )?;
     ensure!(
-        arguments.capability_file != arguments.private_key_file
-            && arguments.terms_file.as_ref().is_none_or(|terms| {
-                terms != &arguments.runtime_file
-                    && terms != &arguments.capability_file
-                    && terms != &arguments.private_key_file
-            })
-            && arguments.runtime_file != arguments.capability_file
-            && arguments.runtime_file != arguments.private_key_file
-            && arguments
-                .tag13_handoff_receipt
-                .as_ref()
-                .is_none_or(|receipt| {
-                    receipt != &arguments.runtime_file
-                        && receipt != &arguments.capability_file
-                        && receipt != &arguments.private_key_file
-                }),
+        secret_files_distinct(arguments),
         "configuration and secret files must be distinct"
     );
     let state = fs::symlink_metadata(&arguments.state_directory)
@@ -354,14 +386,15 @@ fn validate_arguments(arguments: &Arguments) -> Result<()> {
 }
 
 fn validate_node_routes(
-    profile: NodeRouteProfile,
+    sequencer_profile: NodeRouteProfile,
+    indexer_profile: NodeRouteProfile,
     sequencer_url: &str,
     indexer_url: &str,
 ) -> Result<()> {
-    profile
+    sequencer_profile
         .validate_endpoint(sequencer_url)
         .context("invalid sequencer URL")?;
-    profile
+    indexer_profile
         .validate_endpoint(indexer_url)
         .context("invalid indexer URL")?;
     Ok(())
@@ -401,6 +434,19 @@ fn read_secret_text(path: &Path) -> Result<Zeroizing<String>> {
     Ok(Zeroizing::new(value))
 }
 
+/// The runtime, capability, terms, receipt and key files (whichever exist) are
+/// five different files.
+fn secret_files_distinct(arguments: &Arguments) -> bool {
+    let mut files = vec![&arguments.runtime_file, &arguments.capability_file];
+    files.extend(arguments.private_key_file.iter());
+    files.extend(arguments.terms_file.iter());
+    files.extend(arguments.tag13_handoff_receipt.iter());
+    files
+        .iter()
+        .enumerate()
+        .all(|(index, file)| files[index + 1..].iter().all(|other| other != file))
+}
+
 fn read_private_key(path: &Path) -> Result<PrivateKey> {
     let encoded = read_secret_text(path)?;
     ensure!(
@@ -438,10 +484,17 @@ mod tests {
     #[test]
     fn typed_node_profile_accepts_only_complete_local_or_official_public_routes() {
         assert!(
-            validate_node_routes(NodeRouteProfile::Local, LOCAL_SEQUENCER, LOCAL_INDEXER).is_ok()
+            validate_node_routes(
+                NodeRouteProfile::Local,
+                NodeRouteProfile::Local,
+                LOCAL_SEQUENCER,
+                LOCAL_INDEXER,
+            )
+            .is_ok()
         );
         assert!(
             validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
                 NodeRouteProfile::OfficialPublic,
                 OFFICIAL_PUBLIC,
                 OFFICIAL_PUBLIC,
@@ -449,26 +502,73 @@ mod tests {
             .is_ok()
         );
 
-        for (profile, sequencer, indexer) in [
-            (NodeRouteProfile::Local, LOCAL_SEQUENCER, OFFICIAL_PUBLIC),
+        for (sequencer_profile, indexer_profile, sequencer, indexer) in [
             (
+                NodeRouteProfile::Local,
+                NodeRouteProfile::Local,
+                LOCAL_SEQUENCER,
+                OFFICIAL_PUBLIC,
+            ),
+            (
+                NodeRouteProfile::OfficialPublic,
                 NodeRouteProfile::OfficialPublic,
                 OFFICIAL_PUBLIC,
                 LOCAL_INDEXER,
             ),
             (
                 NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::OfficialPublic,
                 "https://example.com/",
                 OFFICIAL_PUBLIC,
             ),
             (
                 NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::OfficialPublic,
                 OFFICIAL_PUBLIC,
                 "https://testnet.lez.logos.co/path",
             ),
         ] {
-            assert!(validate_node_routes(profile, sequencer, indexer).is_err());
+            assert!(
+                validate_node_routes(sequencer_profile, indexer_profile, sequencer, indexer)
+                    .is_err()
+            );
         }
+    }
+
+    /// The official public origin serves no indexer, so the only route that can
+    /// retire the sequencer TLS proxy is an HTTPS sequencer paired with a
+    /// locally reachable indexer. A single profile cannot express it.
+    #[test]
+    fn split_route_pairs_an_official_sequencer_with_a_loopback_indexer() {
+        assert!(
+            validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::Local,
+                OFFICIAL_PUBLIC,
+                LOCAL_INDEXER,
+            )
+            .is_ok()
+        );
+
+        // The split is not a way around either profile's own endpoint rules.
+        assert!(
+            validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::Local,
+                "https://example.com/",
+                LOCAL_INDEXER,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_node_routes(
+                NodeRouteProfile::OfficialPublic,
+                NodeRouteProfile::Local,
+                OFFICIAL_PUBLIC,
+                OFFICIAL_PUBLIC,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -506,11 +606,14 @@ mod tests {
             sequencer_url: LOCAL_SEQUENCER.to_owned(),
             indexer_url: LOCAL_INDEXER.to_owned(),
             node_profile: NodeRouteProfile::Local,
+            indexer_profile: None,
             run_id: "m4-tag13-direct-cli-test".to_owned(),
             runtime_file: directory.path().join("does-not-exist-runtime.json"),
             terms_file: None,
             capability_file: directory.path().join("does-not-exist-capability"),
-            private_key_file: directory.path().join("does-not-exist-key"),
+            private_key_file: Some(directory.path().join("does-not-exist-key")),
+            wallet_signer_socket: None,
+            signer_account_id: None,
             state_directory: directory.path().to_path_buf(),
             tag13_handoff_receipt: None,
             authenticated_transfer_program_id:

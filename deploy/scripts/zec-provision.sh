@@ -41,11 +41,30 @@
 # and runtime/zec/current names the run id. Every corridor is pinned to the
 # chain it was provisioned on: after `up.sh --fresh-lez`, run this again.
 #
-#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add] [--direction TakerSellsLez|TakerSellsForeign]
+#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add] [--direction TakerSellsLez|TakerSellsForeign] [--profile ID]
 #     --no-restart        steps 1-7 only (the Nodes keep running; the material
 #                         is picked up on their next recreate)
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
 #                         chain); the caller vouches for finality
+#     --profile ID        the agreement's ZEC refund profile (zec-swap-sdk
+#                         profile.rs): deterministic-local-devnet-v5 (NU7,
+#                         12 min LEZ refund delay) by default, -v6 (NU7,
+#                         4 min) for the refund journeys, which never claim
+#     --zcash-network NET regtest (the default) or test: public Zcash Testnet
+#                         on NU7 (scripts/public-zec-testnet.sh), profile
+#                         public-testnet-v2. Nothing is mined: the Zcash funder
+#                         spends an ordinary output of its key that the owner
+#                         paid (TAZ), 10 blocks deep. Reads LEZ_ZEBRA_URL and
+#                         exactly one of LEZ_ZEBRA_COOKIE_FILE (self-hosted
+#                         Zebra on loopback) or LEZ_ZEBRA_API_KEY_FILE (Tatum);
+#                         the role keys maker-zcash.key/taker-zcash.key from
+#                         LEZ_ZEC_TESTNET_KEY_DIR (0700, outside the repo; the
+#                         Maker's is also its Delivery identity); the funder
+#                         search starts at LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT
+#                         or where the last Testnet corridor's did
+#                         (runtime/zec/testnet-funding-from); the principal is
+#                         LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS (0.01 TAZ). Exits
+#                         3 (blocked) when one of these is missing
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a
@@ -53,12 +72,19 @@ set -a
 source runtime/runtime.env
 set +a
 export BTC_RPC_PASSWORD
+# The pair of regression lane LEZ_LANE (lane 1, the stack itself, when unset):
+# its Nodes, volumes, Zebra and files under LEZ_LANE_RUNTIME.
+# shellcheck source=lane.sh
+source scripts/lane.sh
+LANE="$LEZ_LANE_RUNTIME"
 
 RESTART=1
 CHAIN_CHECK=1
 SWAPS=1
 ADD=0   # --add: a second corridor ("-b") beside the live one, with its own Zcash anchor; the catalog lists both
 DIRECTION=TakerSellsLez   # --direction: who sells what; TakerSellsForeign funds the Taker's Zcash key first
+PROFILE=""   # --profile: the LEZ escrow's validity window ends at its refund time; per network below
+ZCASH_NETWORK=regtest   # --zcash-network: the chain the corridor is provisioned on
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
@@ -66,14 +92,52 @@ while [[ $# -gt 0 ]]; do
     --swaps) SWAPS="$2"; shift 2 ;;
     --add) ADD=1; shift ;;
     --direction) DIRECTION="$2"; shift 2 ;;
-    -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
+    --profile) PROFILE="$2"; shift 2 ;;
+    --zcash-network) ZCASH_NETWORK="$2"; shift 2 ;;
+    -h|--help) sed -n '2,56p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
 
-compose=(docker compose --env-file runtime/runtime.env)
+blocked() { echo "zec-provision.sh: blocked: $*" >&2; exit 3; }
+case "$ZCASH_NETWORK" in
+  regtest) PROFILE="${PROFILE:-deterministic-local-devnet-v5}" ;;
+  test)
+    # A public Zcash Testnet corridor (local_poc.rs, profile public-testnet-v2):
+    # the route, its credential and the owner's keys come from outside the
+    # repository; without them there is nothing to try.
+    PROFILE="${PROFILE:-public-testnet-v2}"
+    CHAIN_CHECK=0   # ensure-chain.sh recreates the local devnet chain; the LEZ side here is the public testnet
+    [[ -n "${LEZ_ZEBRA_URL:-}" ]] || blocked "LEZ_ZEBRA_URL names no Zcash Testnet route"
+    if [[ -n "${LEZ_ZEBRA_COOKIE_FILE:-}" && -z "${LEZ_ZEBRA_API_KEY_FILE:-}" ]]; then
+      ZEBRA_CREDENTIAL="$LEZ_ZEBRA_COOKIE_FILE"; ZEBRA_ROUTE_KIND=self_hosted_cookie; ZEBRA_CREDENTIAL_FIELD=cookie_file
+      ZEBRA_TRANSFER_CREDENTIAL=--zebra-cookie-file
+    elif [[ -n "${LEZ_ZEBRA_API_KEY_FILE:-}" && -z "${LEZ_ZEBRA_COOKIE_FILE:-}" ]]; then
+      ZEBRA_CREDENTIAL="$LEZ_ZEBRA_API_KEY_FILE"; ZEBRA_ROUTE_KIND=tatum_testnet_x_api_key; ZEBRA_CREDENTIAL_FIELD=api_key_file
+      ZEBRA_TRANSFER_CREDENTIAL=--zebra-api-key-file
+    else
+      blocked "a Testnet route needs exactly one of LEZ_ZEBRA_COOKIE_FILE or LEZ_ZEBRA_API_KEY_FILE"
+    fi
+    [[ -s "$ZEBRA_CREDENTIAL" ]] || blocked "the Zebra credential file $ZEBRA_CREDENTIAL is missing"
+    KEY_DIR="${LEZ_ZEC_TESTNET_KEY_DIR:-}"
+    [[ -n "$KEY_DIR" && -d "$KEY_DIR" ]] || blocked "LEZ_ZEC_TESTNET_KEY_DIR names no key directory"
+    KEY_DIR="$(realpath "$KEY_DIR")"
+    case "$KEY_DIR/" in "$(realpath ..)/"*) blocked "LEZ_ZEC_TESTNET_KEY_DIR is inside the repository" ;; esac
+    [[ "$(stat -c %a "$KEY_DIR")" == 700 ]] || blocked "LEZ_ZEC_TESTNET_KEY_DIR must be mode 0700"
+    ;;
+  *) echo "--zcash-network must be regtest or test" >&2; exit 64 ;;
+esac
+
+compose=(docker compose "${lane_compose[@]}")
+MAKER_NODE="$LEZ_CONTAINER_PREFIX-maker-node"
+TAKER_NODE="$LEZ_CONTAINER_PREFIX-taker-node"
+# The provisioner and the transfer tool accept only a loopback Zebra endpoint:
+# lane 1's Zebra is published on the host's 127.0.0.1:18232; a lane's, and
+# that of a stack with a port offset (scripts/lane.sh), is 127.0.0.1:18232
+# inside its Taker's container (the Node's forwarder).
+if [[ "$LEZ_LANE" == 1 && "$LEZ_STACK_PORT_OFFSET" == 0 ]]; then zebra_net=(--network host); else zebra_net=(--network "container:$TAKER_NODE"); fi
 TAKER_IMAGE="${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}"
-VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez}"
+VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-$LEZ_STACK_PREFIX}"
 STAGING="$VOLUME_PREFIX-zec-staging"
 MAKER_VOLUME="$VOLUME_PREFIX-zec-maker"
 TAKER_VOLUME="$VOLUME_PREFIX-zec-taker"
@@ -82,13 +146,15 @@ NODE_UID=4713
 ZEC_ROOT=/var/lib/lez/zec            # the volume, as the Node containers see it
 CORRIDOR="$ZEC_ROOT/corridor"        # the provisioner's output root
 ZEBRA_URL="${LEZ_ZEBRA_URL:-http://127.0.0.1:18232/}"
-INDEXER_URL="${LEZ_INDEXER_URL:-http://127.0.0.1:8779/}"
+INDEXER_URL="${LEZ_INDEXER_URL:-$LEZ_STACK_INDEXER_URL}"
 # Loopback ports for the role sidecars inside the Node containers; outside
 # both BTC per-swap ranges (maker 19000+400, taker 19500+400).
 MAKER_BRIDGE_PORT="${LEZ_ZEC_MAKER_BRIDGE_PORT:-19901}"
 TAKER_BRIDGE_PORT="${LEZ_ZEC_TAKER_BRIDGE_PORT:-19902}"
-# The provisioner's template: 1 ZEC against 50 000 LEZ units (local_poc.rs).
+# The provisioner's template: 1 ZEC against 50 000 LEZ units (local_poc.rs);
+# on Testnet the principal is the lane's (0.01 TAZ by default), against the same LEZ.
 FOREIGN_UNITS=100000000
+[[ "$ZCASH_NETWORK" != test ]] || FOREIGN_UNITS="${LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS:-1000000}"
 LEZ_UNITS=50000
 ROUTE="{\"pair\":\"Zcash\",\"direction\":\"$DIRECTION\"}"
 case "$DIRECTION" in
@@ -96,10 +162,27 @@ case "$DIRECTION" in
   TakerSellsForeign) SPEC_DIRECTION=taker_sells_foreign ;;
   *) echo "zec-provision failed: --direction must be TakerSellsLez or TakerSellsForeign" >&2; exit 64 ;;
 esac
+# The devnet profiles a corridor may name (local_poc.rs LocalPocProfile); the
+# test lane's 60 s LEZ refund delay cannot be met on a chain that finalizes.
+# The devnet's Zebra runs NU7: -v5 and -v6 are -v3 and -v4 on NU7; the NU6.2
+# ones (-v3, -v4) keep their meaning but no longer match its chain.
+case "$ZCASH_NETWORK:$PROFILE" in
+  regtest:deterministic-local-devnet-v5|regtest:deterministic-local-devnet-v6) ;;
+  test:public-testnet-v2) ;;
+  regtest:*) echo "zec-provision failed: --profile must be deterministic-local-devnet-v5 or -v6 (NU7)" >&2; exit 64 ;;
+  test:*) echo "zec-provision failed: a Testnet corridor's --profile is public-testnet-v2" >&2; exit 64 ;;
+esac
 # Each role's Zcash key is minted beside its LEZ identity (gen-config.sh); the
 # Maker's is also its Delivery signing key and zebra's miner address.
-MAKER_ZCASH_KEY_FILE=runtime/lez/maker/zcash.key
-TAKER_ZCASH_KEY_FILE=runtime/lez/taker/zcash.key
+MAKER_ZCASH_KEY_FILE="$LANE/lez/maker/zcash.key"
+TAKER_ZCASH_KEY_FILE="$LANE/lez/taker/zcash.key"
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  # The owner's Testnet keys; the Maker's must also be the testnet stack's
+  # Maker key (its Delivery identity), checked in step 0.
+  MAKER_ZCASH_KEY_FILE="$KEY_DIR/maker-zcash.key"
+  TAKER_ZCASH_KEY_FILE="$KEY_DIR/taker-zcash.key"
+fi
+TESTNET_FUNDING_FROM="$LANE/zec/testnet-funding-from"   # the next Testnet funder search's first height
 TAKER_FUNDING_ZATOSHIS=200000000   # 2 ZEC moved to the Taker's key before a TakerSellsForeign corridor
 # The offer's validity bounds the catalog's: the draft copies the offer expiry
 # into the transcript and the take checks it. The store's maximum, so one
@@ -118,7 +201,7 @@ fail() { echo "zec-provision failed: $*" >&2; exit 1; }
 # curl never reads stdin and an attached stream hangs a detached runner.
 rpc() { # rpc <maker|taker> <method> <params-json>
   local role="$1" method="$2" params="$3"
-  docker exec "lez-$role-node" curl -sS --max-time 120 --unix-socket "/run/lez/$role/node.sock" \
+  docker exec "$LEZ_CONTAINER_PREFIX-$role-node" curl -sS --max-time 120 --unix-socket "/run/lez/$role/node.sock" \
     -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":[$params]}" http://localhost/ </dev/null
 }
@@ -138,6 +221,31 @@ zebra() { # zebra <method> <params-json>
 reply=json.load(sys.stdin)
 if reply.get("error"): sys.stderr.write(json.dumps(reply["error"])+"\n"); sys.exit(1)
 json.dump(reply["result"], sys.stdout)'
+}
+# Zcash Regtest's genesis (getblockhash 0), the same on Zebra 5.2 and 7, and
+# NU7's branch id (zebra-node-adapter ZebraChainIdentity::deterministic_regtest_nu7).
+REGTEST_GENESIS=029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327
+NU7_BRANCH=77190ad9
+# Zcash Testnet's genesis (getblockhash 0); local_poc.rs pins the same.
+TESTNET_GENESIS=05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38
+zebra_testnet() { # zebra_testnet <method> <params-json>: one read on the Testnet route
+  # The credential is read from its file here, never put on a command line.
+  python3 - "$LEZ_ZEBRA_URL" "$ZEBRA_ROUTE_KIND" "$ZEBRA_CREDENTIAL" "$1" "${2:-[]}" <<'PY'
+import base64, json, pathlib, sys, urllib.request
+url, kind, credential, method, params = sys.argv[1:]
+secret = pathlib.Path(credential).read_text().strip()
+headers = {"content-type": "application/json"}
+if kind == "tatum_testnet_x_api_key":
+    headers["x-api-key"] = secret
+else:
+    headers["authorization"] = "Basic " + base64.b64encode(secret.encode()).decode()
+body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": json.loads(params)}).encode()
+with urllib.request.urlopen(urllib.request.Request(url, body, headers), timeout=60) as response:
+    reply = json.load(response)
+if reply.get("error"):
+    sys.stderr.write(json.dumps(reply["error"]) + "\n"); sys.exit(1)
+json.dump(reply["result"], sys.stdout)
+PY
 }
 # A throwaway container of the Taker image on the staging/role volumes.
 # Root for file plumbing; the Node uid for anything that reads private files.
@@ -163,12 +271,15 @@ wait_healthy() { # wait_healthy <container> <seconds>
 # must be up (and have republished its identity) before the Taker is recreated.
 recreate_nodes() {
   "${compose[@]}" up -d --no-deps --force-recreate maker-node >/dev/null 2>&1
-  wait_healthy lez-maker-node
+  wait_healthy "$MAKER_NODE"
   "${compose[@]}" up -d --no-deps --force-recreate taker-node >/dev/null 2>&1
-  wait_healthy lez-taker-node
+  wait_healthy "$TAKER_NODE"
 }
 
 [[ "$SWAPS" =~ ^[12]$ ]] || fail "--swaps takes 1 or 2"
+# Two corridors at once (the concurrent fixture) are a devnet shape; a Testnet
+# run provisions one corridor and spends one owner-funded output.
+[[ "$ZCASH_NETWORK" != test || ( "$SWAPS" == 1 && "$ADD" == 0 ) ]] || fail "a Testnet run provisions one corridor (no --swaps 2, no --add)"
 # Two swaps provisioned at once share one Zcash anchor and so one four-block
 # refund window (the agreement's BIP-199 deadline is profile-derived, it cannot
 # be widened): two fundings, their pre-reveal depth and two claims do not fit.
@@ -176,14 +287,19 @@ recreate_nodes() {
 # the first swap's blocks are mined, so it gets an anchor and a window of its own.
 if [[ "$ADD" == 1 ]]; then
   [[ "$SWAPS" == 1 ]] || fail "--add provisions one corridor beside the live one"
-  previous_run="$(cat runtime/zec/current 2>/dev/null)" || fail "--add needs a live corridor (runtime/zec/current)"
-  [[ -s "runtime/zec/$previous_run/prepared.json" ]] || fail "--add: runtime/zec/$previous_run/prepared.json is missing"
+  previous_run="$(cat "$LANE/zec/current" 2>/dev/null)" || fail "--add needs a live corridor ($LANE/zec/current)"
+  [[ -s "$LANE/zec/$previous_run/prepared.json" ]] || fail "--add: $LANE/zec/$previous_run/prepared.json is missing"
 fi
+# The swap, offer and reservation ids come from this stamp, and the swap id
+# names the swap's LEZ escrow account on the one chain every lane shares: two
+# lanes provisioning in the same second took the same id, and the second
+# Taker's lez_initialize was refused for good (AccountAlreadyInitialized).
 stamp="$(date +%s)"
+[[ "$LEZ_LANE" == 1 ]] || stamp="$stamp$(printf '%02d' "$LEZ_LANE")"
 run_id="zec-devnet-$stamp"
-out="runtime/zec/$run_id"
+out="$LANE/zec/$run_id"
 mkdir -p "$out"
-chmod 0700 runtime/zec "$out"
+chmod 0700 "$LANE/zec" "$out"
 # Swap k of the run: the first keeps the single-swap names (corridor/, no
 # suffix); a second — the concurrent fixture — is "-b" throughout: its own
 # corridor root, agreement, offer, draft, sidecar ports and funder output, the
@@ -205,14 +321,16 @@ for (( k = 0; k < SWAPS; k++ )); do mkdir -p "$(out_of $k)"; chmod 0700 "$(out_o
 if [[ "$ADD" == 1 ]]; then
   # The harness reads entry 0's files at the run root: carry the live corridor's over.
   for f in spec.json provision-summary.json draft-summary.json; do
-    [[ -s "runtime/zec/$previous_run/$f" ]] && install -m 0600 "runtime/zec/$previous_run/$f" "$out/$f"
+    [[ -s "$LANE/zec/$previous_run/$f" ]] && install -m 0600 "$LANE/zec/$previous_run/$f" "$out/$f"
   done
 fi
 swap_id="$(swap_id_of 0)"; offer_id="$(offer_id_of 0)"; reservation_id="$(reservation_id_of 0)"
 
 # ---- 0. the Maker's Delivery identity ------------------------------------------
 log "0/8 Maker Delivery identity"
-for c in lez-maker-node lez-taker-node lez-zebra; do
+required_containers=("$MAKER_NODE" "$TAKER_NODE")
+[[ "$ZCASH_NETWORK" == test ]] || required_containers+=("$LEZ_CONTAINER_PREFIX-zebra")   # Testnet: the route is remote or self-hosted
+for c in "${required_containers[@]}"; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
 done
 for f in "$MAKER_ZCASH_KEY_FILE" "$TAKER_ZCASH_KEY_FILE"; do
@@ -226,6 +344,10 @@ expected_identity="$(docker run --rm --user 0:0 -v "$PWD/$MAKER_ZCASH_KEY_FILE:/
 current_identity="$(docker run --rm -v "$DELIVERY_VOLUME:/d:ro" --entrypoint cat "$TAKER_IMAGE" /d/maker-delivery-identity.pub </dev/null 2>/dev/null | tr -d ' \n')"
 if [[ "$current_identity" == "$expected_identity" ]]; then
   log "  Maker Delivery identity is its minted Zcash key ($expected_identity)"
+elif [[ "$ZCASH_NETWORK" == test ]]; then
+  # The entrypoint installs $LANE/lez/maker/zcash.key; on Testnet that must be
+  # the owner's funded Maker key, and only the operator puts it there.
+  fail "the Maker's Delivery identity ($current_identity) is not the Testnet Maker key's ($expected_identity): install $MAKER_ZCASH_KEY_FILE as $LANE/lez/maker/zcash.key (0600) and recreate the Nodes"
 else
   [[ "$RESTART" == 1 ]] || fail "the Maker's Delivery identity ($current_identity) is not the corridor key ($expected_identity); rerun without --no-restart to pin it"
   log "  pinning the Maker Delivery identity $current_identity → $expected_identity (both Nodes recreated)"
@@ -256,6 +378,52 @@ if [[ "$CHAIN_CHECK" == 1 ]]; then
 else
   log "  LEZ chain check skipped by the caller"
 fi
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  # Zcash Testnet: identified by chain, genesis and NU7, never mined. The
+  # funder search starts at the operator's height or where the last Testnet
+  # corridor's funder output was (its change lands at or after it).
+  testnet_tip="$(zebra_testnet getblockchaininfo | python3 -c 'import json,sys
+info=json.load(sys.stdin)
+assert info["chain"]=="test", "not a test chain"
+assert info["consensus"]["chaintip"]=="77190ad9", "the chain tip is not on NU7 (77190ad9): " + info["consensus"]["chaintip"]
+print(info["blocks"])')" || blocked "the Zebra at $LEZ_ZEBRA_URL is not Zcash Testnet on NU7"
+  [[ "$(zebra_testnet getblockhash '[0]' | tr -d '"')" == "$TESTNET_GENESIS" ]] ||
+    blocked "the Zebra at $LEZ_ZEBRA_URL does not serve Zcash Testnet's genesis"
+  scan_from="${LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT:-$(cat "$TESTNET_FUNDING_FROM" 2>/dev/null || true)}"
+  [[ "$scan_from" =~ ^[0-9]+$ ]] ||
+    blocked "no Testnet funder search start: set LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT to the height of the owner's TAZ payment"
+  log "  Zcash Testnet tip $testnet_tip (NU7); the Maker's funder outputs from height $scan_from"
+  maker_scan_from="$scan_from"; pay_taker=0; payments=1
+  # Selling ZEC, the Taker funds from a payment the Maker makes in step 3,
+  # after this tip.
+  if [[ "$DIRECTION" == TakerSellsForeign ]]; then pay_taker=1; scan_from="$testnet_tip"; fi
+else
+# The devnet's Zebra is Zebra 7 on Regtest with NU7 from height 1, the branch
+# the -v5/-v6 profiles sign for. One from before (the 5.2.0 image, or a config
+# rendered from the NU6.2 template) says NU6.2 (5437f330) for its next block;
+# its chain cannot carry an NU7 corridor and Zebra 7 cannot read its state
+# (it starts an empty chain beside it). Such a Zebra is recreated here with a
+# new data volume, once, rather than failing in the provisioner's branch
+# check; only a Zebra serving the Regtest genesis is ever touched.
+zebra_next_branch() {
+  zebra getblockchaininfo | python3 -c 'import json,sys; print(json.load(sys.stdin)["consensus"]["nextblock"])'
+}
+[[ "$(zebra getblockhash '[0]' | tr -d '"')" == "$REGTEST_GENESIS" ]] ||
+  fail "the Zebra at $ZEBRA_URL does not serve the Regtest genesis"
+next_branch="$(zebra_next_branch)" || fail "zebra RPC unavailable at $ZEBRA_URL"
+if [[ "$next_branch" != "$NU7_BRANCH" ]]; then
+  log "  zebra's next block is on branch $next_branch, not NU7 ($NU7_BRANCH): recreating it on Zebra 7 with a new data volume"
+  # The rendered config keeps its miner address; only the activation changes.
+  sed -i 's/^"NU6\.2" = 1$/"NU7" = 1/' "$LANE/zebra/zebrad.toml"
+  grep -qx '"NU7" = 1' "$LANE/zebra/zebrad.toml" ||
+    fail "$LANE/zebra/zebrad.toml does not activate NU7: rerun scripts/gen-config.sh"
+  "${compose[@]}" rm -sf zebra >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME_PREFIX-zebra-data" >/dev/null 2>&1 || true
+  "${compose[@]}" up -d --no-deps zebra >/dev/null 2>&1 || fail "zebra did not start"
+  for _ in $(seq 1 30); do next_branch="$(zebra_next_branch 2>/dev/null)" && break; sleep 2; done
+  [[ "$next_branch" == "$NU7_BRANCH" ]] ||
+    fail "the recreated zebra is on branch ${next_branch:-unknown}, not NU7: rebuild its image (docker compose build zebra)"
+fi
 zebra_height="$(zebra getblockcount)" || fail "zebra RPC unavailable at $ZEBRA_URL"
 target=$(( MATURITY + MIN_MATURE_OUTPUTS ))
 while (( zebra_height < target )); do
@@ -264,6 +432,43 @@ while (( zebra_height < target )); do
   zebra_height="$(zebra getblockcount)"
 done
 log "  zebra height $zebra_height (>= $target: at least $MIN_MATURE_OUTPUTS mature coinbase outputs)"
+# Selling ZEC, the Taker funds from payments the Maker made to its key, 100
+# blocks deep (step 3). They are paid TAKER_POOL_AHEAD at a time beyond what
+# this run needs and listed in runtime/zec/taker-funding-pool ("txid vout
+# height"), so most runs find enough of them unspent and mature and skip the
+# payments and the 100 blocks (~75 s of zebra mining). The provisioner's
+# search for a mature funder output starts at the lowest listed height, or
+# above the tip when step 3 pays, instead of reading every block from 1 (~3
+# min on a zebra 23 000 blocks tall); any mature output of the Taker's key
+# there is a candidate, as it always was. Selling LEZ the Maker's coinbase is
+# searched from 1.
+TAKER_POOL="$LANE/zec/taker-funding-pool"   # the lane's own Zebra's
+TAKER_POOL_AHEAD=4
+scan_from=0; pay_taker=0
+if [[ "$DIRECTION" == TakerSellsForeign ]]; then
+  payments="$SWAPS"; (( ADD == 1 )) && payments=2
+  scan_from="$(python3 - "$TAKER_POOL" "$ZEBRA_URL" "$payments" <<'PY'
+import json, pathlib, sys, urllib.request
+pool, url, needed = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+def zebra(method, params):
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+    with urllib.request.urlopen(urllib.request.Request(url, body, {"content-type": "application/json"}), timeout=30) as r:
+        return json.load(r).get("result")
+kept = []
+for line in (pool.read_text().splitlines() if pool.exists() else []):
+    txid, vout, height = line.split()
+    out = zebra("gettxout", [txid, int(vout)])
+    if out is not None:
+        kept.append((txid, vout, int(height), int(out.get("confirmations") or 0)))
+pool.parent.mkdir(parents=True, exist_ok=True)
+pool.write_text("".join(f"{t} {v} {h}\n" for t, v, h, _ in kept))
+mature = [k for k in kept if k[3] >= 100]
+print(min(k[2] for k in mature) if len(mature) >= needed else "")
+PY
+)" || fail "reading $TAKER_POOL from zebra failed"
+  if [[ -z "$scan_from" ]]; then pay_taker=1; scan_from=$(( zebra_height + 1 )); fi
+fi
+fi
 
 # ---- 2. spec ------------------------------------------------------------------
 log "2/8 spec"
@@ -279,25 +484,37 @@ done
 finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' "$INDEXER_URL" |
   python3 -c 'import json,sys; print(int(json.load(sys.stdin)["result"]))')" || fail "indexer unavailable"
-# The actors scan LEZ from start_height for max_blocks (<= 4096, ~90 min
-# here): the lock they look for happens after this provisioning.
+# The actors scan LEZ from start_height for max_blocks (<= 4096: 11 h of
+# 10 s blocks, 68 min of 1 s ones, so a swap's LEZ steps must fall inside
+# that from provisioning): the lock they look for happens after this
+# provisioning. The 32 blocks back cover the finality lag at provisioning.
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
+# Testnet: the route (its credential as the provisioner and the actors see it,
+# copied into the staging volume in step 3) and the lane's principal.
+spec_extra='{}'
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  spec_extra="$(python3 -c 'import json,sys
+url,kind,field,path,principal=sys.argv[1:]
+print(json.dumps({"zebra_endpoint": url, "zebra_route": {"kind": kind, field: path},
+                  "zcash_principal_zatoshis": int(principal)}))' \
+    "$LEZ_ZEBRA_URL" "$ZEBRA_ROUTE_KIND" "$ZEBRA_CREDENTIAL_FIELD" "$ZEC_ROOT/signers/zebra.credential" "$FOREIGN_UNITS")"
+fi
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" "$scan_from" "$LANE" "$spec_extra" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile, scan_from, lane, extra) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
     while n: n, r = divmod(n, 58); text = ALPHABET[r] + text
     return "1" * (len(raw) - len(raw.lstrip(b"\0"))) + text
-ids = {r: json.load(open(f"runtime/lez/{r}/identity.json"))["account_id"] for r in ("maker", "taker")}
+ids = {r: json.load(open(f"{lane}/lez/{r}/identity.json"))["account_id"] for r in ("maker", "taker")}
 spec = {
     "schema_version": 1, "run_id": run_id, "swap_id": swap_id, "direction": direction,
     # The LEZ escrow's validity window ends at the agreement's LEZ refund time;
     # the test-lane profile's 60 s cannot be met here (zec-swap-sdk profile.rs).
-    "profile": "deterministic-local-devnet-v3",
+    "profile": profile,
     "lez_runtime": {
         "chain_id": channel, "channel_id": channel, "genesis_block_hash": genesis,
         "escrow_program_id": escrow,
@@ -309,7 +526,9 @@ spec = {
     # Swap k funds from the (k+1)-th mature funder output: side-by-side
     # corridors must not spend the same coinbase.
     "zcash_funding_skip": int(skip),
+    "zcash_funding_scan_from_height": int(scan_from),
 }
+spec.update(json.loads(extra))
 json.dump(spec, open(out, "w"), indent=2)
 print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}")
 PY
@@ -322,9 +541,15 @@ docker volume rm -f "$STAGING" >/dev/null 2>&1 || true
 docker volume create "$STAGING" >/dev/null
 spec_mounts=()
 for (( k = 0; k < SWAPS; k++ )); do spec_mounts+=(-v "$PWD/$(out_of $k)/spec.json:/in/spec${SUFFIX[$(slot_of $k)]}.json:ro"); done
-helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
-  -v "$PWD/runtime/lez/maker/lez-signer.key:/in/maker.key:ro" -v "$PWD/runtime/lez/taker/lez-signer.key:/in/taker.key:ro" \
-  -v "$PWD/$MAKER_ZCASH_KEY_FILE:/in/maker-zcash.key:ro" -v "$PWD/$TAKER_ZCASH_KEY_FILE:/in/taker-zcash.key:ro" -- "
+abs() { if [[ "$1" == /* ]]; then echo "$1"; else echo "$PWD/$1"; fi; }
+credential_mount=(); credential_install=""
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  credential_mount=(-v "$(abs "$ZEBRA_CREDENTIAL"):/in/zebra.credential:ro")
+  credential_install="install -m 0600 /in/zebra.credential $ZEC_ROOT/signers/zebra.credential"
+fi
+helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" "${credential_mount[@]}" \
+  -v "$PWD/$LANE/lez/maker/lez-signer.key:/in/maker.key:ro" -v "$PWD/$LANE/lez/taker/lez-signer.key:/in/taker.key:ro" \
+  -v "$(abs "$MAKER_ZCASH_KEY_FILE"):/in/maker-zcash.key:ro" -v "$(abs "$TAKER_ZCASH_KEY_FILE"):/in/taker-zcash.key:ro" -- "
   set -e; umask 077
   mkdir -p $ZEC_ROOT/signers
   for f in /in/spec*.json; do install -m 0600 \$f $ZEC_ROOT/\$(basename \$f); done
@@ -332,8 +557,36 @@ helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
   install -m 0600 /in/taker.key $ZEC_ROOT/signers/taker.key
   install -m 0600 /in/maker-zcash.key $ZEC_ROOT/signers/maker-zcash.key
   install -m 0600 /in/taker-zcash.key $ZEC_ROOT/signers/taker-zcash.key
+  $credential_install
   chown -R $NODE_UID:$NODE_UID $ZEC_ROOT && chmod 0700 $ZEC_ROOT $ZEC_ROOT/signers"
-if [[ "$DIRECTION" == TakerSellsForeign ]]; then
+if [[ "$ZCASH_NETWORK" == test && "$pay_taker" == 1 ]]; then
+  # The Taker funds Zcash on Testnet: the Maker's owner-funded key pays the
+  # Taker's once per swap, and the provisioner waits for Testnet to bury the
+  # payment ten blocks deep (public-testnet-v2's Zcash confirmations).
+  taker_value=$(( FOREIGN_UNITS + 20000 ))   # principal + funding fee + change margin
+  for (( p = 0; p < payments; p++ )); do
+    docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
+      --entrypoint zec-local-poc-transfer "$TAKER_IMAGE" \
+      --zebra-endpoint "$LEZ_ZEBRA_URL" --zcash-network test "$ZEBRA_TRANSFER_CREDENTIAL" "$ZEC_ROOT/signers/zebra.credential" \
+      --scan-from-height "$maker_scan_from" --skip "$p" \
+      --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" \
+      --value-zatoshis "$taker_value" </dev/null >"$out/taker-funding-$p.json" ||
+      fail "zec-local-poc-transfer failed on Testnet (see above)"
+    log "  Testnet transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"] + " to " + s["to_address"])' "$out/taker-funding-$p.json")"
+  done
+  # Wait for the last payment to be ten blocks deep; the Taker's funder
+  # search starts at the tip seen before the payments (step 1).
+  last="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["transaction_id"])' "$out/taker-funding-$(( payments - 1 )).json")"
+  depth=0
+  for _ in $(seq 1 "${LEZ_ZEC_TESTNET_PAYMENT_WAIT_MINUTES:-120}"); do
+    depth="$(zebra_testnet getrawtransaction "[\"$last\", 1]" 2>/dev/null |
+      python3 -c 'import json,sys; print(json.load(sys.stdin).get("confirmations") or 0)' 2>/dev/null || echo 0)"
+    (( depth >= 10 )) && break
+    sleep 60
+  done
+  (( depth >= 10 )) || fail "the Taker's Testnet payment $last is not ten blocks deep after ${LEZ_ZEC_TESTNET_PAYMENT_WAIT_MINUTES:-120} min"
+  log "  the Taker's Testnet payment is $depth blocks deep; its funder search starts at $scan_from"
+elif [[ "$DIRECTION" == TakerSellsForeign ]]; then
   # The Taker funds Zcash: it needs mature outputs under its own key. Zebra
   # mines to the Maker's key only, so the Maker pays the Taker, and 100 blocks
   # make those outputs funder candidates (the provisioner's maturity rule
@@ -341,24 +594,38 @@ if [[ "$DIRECTION" == TakerSellsForeign ]]; then
   # (k+1)-th mature output, so a two-swap run gets two payments, in two
   # blocks so their order is their height; --add pays two as well, so the
   # second slot finds its output whether or not the live corridor spent its own.
-  payments="$SWAPS"; (( ADD == 1 )) && payments=2
+  if [[ "$pay_taker" == 0 ]]; then
+    log "  TakerSellsForeign: the Taker's key holds $payments or more mature payments from height $scan_from ($TAKER_POOL)"
+  else
+  payments=$(( payments + TAKER_POOL_AHEAD ))
   log "  TakerSellsForeign: paying the Taker's key $TAKER_FUNDING_ZATOSHIS zatoshis from the Maker's, $payments time(s), then 100 blocks"
   for (( p = 0; p < payments; p++ )); do
-    docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
+    docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
       --entrypoint zec-local-poc-transfer "$TAKER_IMAGE" \
       --zebra-endpoint http://127.0.0.1:18232 --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
       --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" --value-zatoshis "$TAKER_FUNDING_ZATOSHIS" </dev/null >"$out/taker-funding-$p.json" ||
       fail "zec-local-poc-transfer failed (see above)"
     log "  transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"][:16] + "… to " + s["to_address"])' "$out/taker-funding-$p.json")"
     zebra generate "[1]" >/dev/null || fail "zebra generate failed"
+    # the pool line: the payment's output to the Taker and its height
+    python3 - "$out/taker-funding-$p.json" "$ZEBRA_URL" >>"$TAKER_POOL" <<'PY' || fail "recording the Taker's payment failed"
+import json, sys, urllib.request
+paid = json.load(open(sys.argv[1]))
+body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getrawtransaction", "params": [paid["transaction_id"], 1]}).encode()
+with urllib.request.urlopen(urllib.request.Request(sys.argv[2], body, {"content-type": "application/json"}), timeout=30) as r:
+    tx = json.load(r)["result"]
+vout = next(o["n"] for o in tx["vout"] if paid["to_address"] in (o.get("scriptPubKey") or {}).get("addresses", []))
+print(paid["transaction_id"], vout, tx["height"])
+PY
   done
   for _ in $(seq 1 10); do zebra generate "[10]" >/dev/null || fail "zebra generate failed"; done
   log "  zebra height $(zebra getblockcount): the Taker's outputs are mature"
+  fi
 fi
 # --network host: the provisioner only accepts a loopback zebra endpoint, and
-# Compose publishes zebra on 127.0.0.1:18232.
+# Compose publishes zebra on 127.0.0.1:18232 (a lane: its Taker's, zebra_net).
 for (( k = 0; k < SWAPS; k++ )); do
-docker run --rm --network host --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
+docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
   --entrypoint zec-local-poc-provision "$TAKER_IMAGE" \
   --spec-file "$ZEC_ROOT/spec${SUFFIX[$(slot_of $k)]}.json" --output-root "$(corridor_of $k)" \
   --maker-lez-signer-key-file "$ZEC_ROOT/signers/maker.key" \
@@ -374,12 +641,19 @@ print(f"  provisioned run {s['run_id']}: agreement sha256 {s['signed_agreement_s
       f"private_material_disclosed={s['private_material_disclosed']}")
 PY
 done
+if [[ "$ZCASH_NETWORK" == test && "$DIRECTION" == TakerSellsLez ]]; then
+  # The Maker's next Testnet funder output is this one's change: search from here next time.
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zcash_candidate_height"])' "$out/provision-summary.json" \
+    > "$TESTNET_FUNDING_FROM" || fail "the provision summary names no Testnet funder height"
+fi
 
 # ---- 4. distribute ------------------------------------------------------------
 log "4/8 distribute into $MAKER_VOLUME / $TAKER_VOLUME"
-# The init services create the volumes with Compose's labels and own them to
-# the Node uid; they are one-shots and harmless to rerun.
-"${compose[@]}" up -d --no-deps maker-init taker-init >/dev/null 2>&1
+# The role Basecamps (maker-node, taker-node) created the volumes, with
+# Compose's labels; the copy below owns what it writes to the Node uid.
+for volume in "$MAKER_VOLUME" "$TAKER_VOLUME"; do
+  docker volume inspect "$volume" >/dev/null 2>&1 || fail "volume $volume is missing: start the stack first (scripts/up.sh)"
+done
 helper 0:0 -v "$STAGING:/stage:ro" -v "$MAKER_VOLUME:/maker" -v "$TAKER_VOLUME:/taker" -- "
   set -e; umask 077
   for role in maker taker; do
@@ -500,7 +774,7 @@ log "7/8 prepared.json"
 # publish writes `encoded`, authenticate hashes the file bytes), so its sha256
 # must be the commitment the Taker listed.
 rm -f "$out/prepared.json"
-if [[ "$ADD" == 1 ]]; then install -m 0600 "runtime/zec/$previous_run/prepared.json" "$out/prepared.json"; fi
+if [[ "$ADD" == 1 ]]; then install -m 0600 "$LANE/zec/$previous_run/prepared.json" "$out/prepared.json"; fi
 for (( k = 0; k < SWAPS; k++ )); do
 this_corridor="$(corridor_of $k)"
 sums="$(helper 0:0 -v "$DELIVERY_VOLUME:/delivery:ro" -v "$TAKER_VOLUME:$ZEC_ROOT" -- "
@@ -535,7 +809,7 @@ done
 chmod 0600 "$out/prepared.json"
 docker run --rm -i --user 0:0 -v "$TAKER_VOLUME:$ZEC_ROOT" --entrypoint bash "$TAKER_IMAGE" -c \
   "umask 077; cat >$ZEC_ROOT/prepared.json && chown $NODE_UID:$NODE_UID $ZEC_ROOT/prepared.json" <"$out/prepared.json"
-echo "$run_id" >runtime/zec/current
+echo "$run_id" >"$LANE/zec/current"
 log "  catalog: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$out/prepared.json") entries; this run: $(for (( k = 0; k < SWAPS; k++ )); do echo -n "$(swap_id_of $k) / $(offer_id_of $k); "; done) swap files under $ZEC_ROOT/taker-swaps/<run id>"
 
 if [[ "$RESTART" == 0 ]]; then
@@ -546,14 +820,14 @@ fi
 # ---- 8. recreate the Nodes -----------------------------------------------------
 log "8/8 recreating maker-node, then taker-node"
 recreate_nodes
-docker logs lez-maker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  maker: /'
-docker logs lez-taker-node 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  taker: /'
+docker logs "$MAKER_NODE" 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  maker: /'
+docker logs "$TAKER_NODE" 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  taker: /'
 for (( s = 1; s < SWAPS + ADD; s++ )); do
-  docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( MAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  maker sidecar answers on 127.0.0.1:$(( MAKER_BRIDGE_PORT + 2 * s ))" || fail "maker sidecar for slot $s does not answer"
-  docker exec lez-taker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( TAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  taker sidecar answers on 127.0.0.1:$(( TAKER_BRIDGE_PORT + 2 * s ))" || fail "taker sidecar for slot $s does not answer"
+  docker exec "$MAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( MAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  maker sidecar answers on 127.0.0.1:$(( MAKER_BRIDGE_PORT + 2 * s ))" || fail "maker sidecar for slot $s does not answer"
+  docker exec "$TAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( TAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  taker sidecar answers on 127.0.0.1:$(( TAKER_BRIDGE_PORT + 2 * s ))" || fail "taker sidecar for slot $s does not answer"
 done
-docker exec lez-maker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$MAKER_BRIDGE_PORT)" </dev/null && log "  maker sidecar answers on 127.0.0.1:$MAKER_BRIDGE_PORT" || fail "maker sidecar not listening"
-docker exec lez-taker-node bash -c "(exec 3<>/dev/tcp/127.0.0.1/$TAKER_BRIDGE_PORT)" </dev/null && log "  taker sidecar answers on 127.0.0.1:$TAKER_BRIDGE_PORT" || fail "taker sidecar not listening"
+docker exec "$MAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$MAKER_BRIDGE_PORT)" </dev/null && log "  maker sidecar answers on 127.0.0.1:$MAKER_BRIDGE_PORT" || fail "maker sidecar not listening"
+docker exec "$TAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$TAKER_BRIDGE_PORT)" </dev/null && log "  taker sidecar answers on 127.0.0.1:$TAKER_BRIDGE_PORT" || fail "taker sidecar not listening"
 rpc_result maker maker_health '{"schema_version":1}' | python3 -c 'import json,sys; h=json.load(sys.stdin); print("  maker_health: ready=%s degraded=%s" % (h.get("ready"), h.get("degraded")))'
 listed="$(rpc_result taker taker_offer_list_v1 "{\"schema_version\":1,\"route\":$ROUTE}" | python3 -c 'import json,sys; print(" ".join(e["offer"]["id"] for e in json.load(sys.stdin)["offers"]))')"
 for (( k = 0; k < SWAPS; k++ )); do

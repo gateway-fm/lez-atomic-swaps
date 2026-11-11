@@ -12,10 +12,7 @@ use lez_zec_swap_sdk::{
 use secp256k1::PublicKey;
 use zcash_primitives::transaction::{Transaction, TxVersion};
 use zcash_protocol::consensus::BlockHeight;
-use zcash_transparent::{
-    address::{Script, TransparentAddress},
-    bundle::OutPoint,
-};
+use zcash_transparent::{address::Script, bundle::OutPoint};
 
 use crate::{ZebraChainIdentity, ZebraChainInfo, ZebraRpc};
 
@@ -388,7 +385,7 @@ where
             return Err(ExactOutpointZcashFundingPlannerError::SignedTransactionPolicyMismatch);
         }
         if let Some(change) = selection.change() {
-            let change_script: Script = TransparentAddress::from_pubkey(request.funding_pubkey())
+            let change_script: Script = lez_zec_swap_sdk::p2pkh_address(request.funding_pubkey())
                 .script()
                 .into();
             if bundle.vout[1].value() != change || bundle.vout[1].script_pubkey() != &change_script

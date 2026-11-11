@@ -1,0 +1,14 @@
+[16:03:40] === refund-then-maker-lock (stamp 1794413020)
+[16:03:40] preflight: indexer historical reads
+[16:03:41]   indexer serves historical reads at the tip (948)
+[16:03:41] preflight: LEZ finality check waived by request
+[16:03:41]   Maker published offer-e2e-1794413020
+[16:03:43]   Taker took offer-e2e-1794413020: swap 5a19032c60aa (not_activated)
+[16:03:44]   Taker locked bitcoin: 5f9549cce450 (replay=False)
+[16:03:44]   Taker's Bitcoin lock 5f9549cce450 is in; cutting the Taker's view of LEZ
+[16:04:53]   the Maker's LEZ lock 2527aa519af7 is in, 29s before the cutoff, and the Taker cannot see it
+[16:04:53]   waiting 58s for the cutoff to pass with the Taker still blind to LEZ
+[16:05:54]   refund admitted at rev 1 (maker lock unobserved)
+[16:05:55]   the Taker's view of LEZ is back; the maker lock is now canonical and unprojected
+[16:06:31]   observer recovered the swap unaided; Taker balances {'btc_trusted_sat': 524972111890, 'lez_units': 2000000} → {'btc_trusted_sat': 524972107790, 'lez_units': 2000000}
+[16:06:31] === refund-then-maker-lock: passed in 171s

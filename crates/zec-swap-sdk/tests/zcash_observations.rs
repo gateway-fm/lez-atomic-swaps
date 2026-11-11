@@ -11,7 +11,7 @@ use zcash_protocol::{
     value::Zatoshis,
 };
 use zcash_transparent::{
-    address::{Script, TransparentAddress},
+    address::Script,
     bundle::{OutPoint, TxOut},
 };
 
@@ -22,7 +22,7 @@ fn zatoshis(value: u64) -> Zatoshis {
 fn transaction_fixture() -> (Bip199Contract, Transaction, Vec<u8>) {
     let key = SecretKey::from_slice(&[7; 32]).unwrap();
     let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
-    let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&public_key).script().into();
     let request = TransparentFundingRequest::new(
         vec![TransparentUtxo::new(
             OutPoint::new([9; 32], 0),

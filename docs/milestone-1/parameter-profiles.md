@@ -140,6 +140,27 @@ principal outputs never absorb an unnegotiated fee.
   take-to-claim (about 7 minutes) a window. A held revealing claim needs
   attention a third of the delay before the refund time (4 minutes here).
   Devnet only; the devnet provisioner asks for v3 since 2026-10-31.
+- `deterministic-local-devnet-v4`: `deterministic-local-devnet-v3` with a
+  4-minute LEZ refund delay, for the devnet's refund journeys only (they
+  never claim). V3's 12 minutes left room for a take-to-claim of about 7
+  minutes, which slow historical reads of the devnet indexer caused (its
+  state snapshots were 100 blocks apart); with 10-block snapshots a first
+  lock is observed in about one LEZ step (~45 s) and the claim is offered
+  about two minutes after provisioning. Four minutes still hold provisioning
+  (~45 s), the take, both first locks and the selling-ZEC claim window
+  (refund time minus the 30 s margin) with a finality stall to spare. Every
+  swap that claims keeps v3. Devnet only.
+- `deterministic-local-v2`, `deterministic-local-devnet-v5`,
+  `deterministic-local-devnet-v6`: `deterministic-local-v1`,
+  `deterministic-local-devnet-v3` and `deterministic-local-devnet-v4` on
+  Regtest's NU7 (branch `77190ad9`) instead of NU6.2, every other parameter
+  equal. The Regtest fixtures (tests/e2e/zebra and the devnet's zebra) moved
+  from Zebra 5.2.0 to Zebra 7.0.0 with NU7 active from height 1 on
+  2026-11-11, so the matrix signs for the branch public Testnet runs
+  (`public-testnet-v2`). Expiry stays 40 blocks: Regtest blocks come when the
+  harness mines them. The devnet provisioner asks for v5 (v6 in the refund
+  journeys) since then; the NU6.2 ids keep their meaning (wire tags 0, 4, 5;
+  the NU7 ones are 7, 8, 9).
 - `deterministic-local-devnet-v1`: `deterministic-local-v1` with a 30-minute
   LEZ refund delay instead of 60 seconds, for a local devnet whose LEZ chain
   finalises in minutes (the LEZ escrow's validity window ends at the

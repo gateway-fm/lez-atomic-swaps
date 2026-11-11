@@ -36,11 +36,10 @@ if [[ ! -x images/lez-services/sequencer_service ]]; then
     cat >&2 <<'MISSING'
 Build LEZ v0.2 services natively first (see deploy/README "Native-arm64 notes"):
   git clone --branch v0.2.0 https://github.com/logos-blockchain/logos-execution-zone.git
-  cargo +1.94.0 build --locked --release -p sequencer_service -p indexer_service
+  cargo +1.94.0 build --locked --release -p sequencer_service
   cargo install --path risc0/r0vm --locked   # from the risc0 v3.0.5 tag
 Then copy:
   <target>/release/sequencer_service  -> images/lez-services/
-  <target>/release/indexer_service    -> images/lez-services/
   <r0vm>                              -> images/lez-services/
 MISSING
     exit 1
@@ -49,11 +48,9 @@ fi
 # ---- role Nodes: separate native-arm64 image payloads ---------------------
 if [[ ! -x images/maker-node/lez-maker-node \
    || ! -x images/maker-node/lez-maker-cli \
-   || ! -x images/maker-node/lez-maker-chat-gateway \
    || ! -x images/maker-node/lez-runtime-healthcheck \
    || ! -x images/taker-node/lez-taker-node \
    || ! -x images/taker-node/lez-taker-cli \
-   || ! -x images/taker-node/lez-taker-chat-gateway \
    || ! -x images/taker-node/lez-taker-registry-init \
    || ! -x images/taker-node/lez-runtime-healthcheck \
    || ! -x images/maker-node/lez-btc-maker-actor \
@@ -65,9 +62,9 @@ if [[ ! -x images/maker-node/lez-maker-node \
 Build the workspace binaries natively (repo root):
   cargo build --locked --bins -p lez-maker-node -p lez-taker-node \
     -p lez-runtime-healthcheck
-Then copy target/debug/{lez-maker-cli,lez-maker-node,lez-maker-chat-gateway,
+Then copy target/debug/{lez-maker-cli,lez-maker-node,
 lez-runtime-healthcheck} -> images/maker-node/ and
-target/debug/{lez-taker-cli,lez-taker-node,lez-taker-chat-gateway,
+target/debug/{lez-taker-cli,lez-taker-node,
 lez-taker-registry-init,lez-runtime-healthcheck} -> images/taker-node/.
 Also copy target/debug/lez-runtime-healthcheck -> images/lez-services/.
 The Node-owned Bitcoin lifecycle (ADR 0213) also needs the actor programs
@@ -80,17 +77,32 @@ MISSING
     exit 1
 fi
 
-# ---- lez-tools: escrow deployer + sidecar-family tools ----------------------
+# ---- role Node payload packages: what each role's image installs -----------
+# The executables above, packaged with the role's plugin (lez_maker_node,
+# lez_taker_node) by scripts/package-role-node.sh (from-scratch.sh --only stage).
+if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
+    for role in maker taker; do
+        if [[ ! -f "images/$role-node/lez_${role}_node.lgx" ]]; then
+            cat >&2 <<MISSING
+Package the $role Node (the plugin from from-scratch.sh --only build:role-node-modules):
+  scripts/package-role-node.sh $role <provision>/lez_${role}_node/lez_${role}_node-plugin.lgx images/$role-node/lez_${role}_node.lgx
+MISSING
+            exit 1
+        fi
+    done
+fi
+
+# ---- lez-wallet-module: the LEZ wallet module + market bootstrap tools -------
 # Staged by from-scratch.sh's stage phase from provision/data; the release
 # workflow's images job stages them from its build artifacts the same way.
-if [[ ! -x images/lez-tools/lez-zec-escrow-v02-deployer \
-   || ! -x images/lez-tools/lez-v02-vault-claim-poc \
-   || ! -x images/lez-tools/lez-v02-local-actor-identity ]]; then
+if [[ ! -f images/lez-wallet-module/lez_core.lgx \
+   || ! -x images/lez-wallet-module/lez-zec-escrow-v02-deployer \
+   || ! -x images/lez-wallet-module/lez-v02-local-actor-identity ]]; then
     cat >&2 <<'MISSING'
-Stage the market bootstrap tools (scripts/from-scratch.sh --only stage):
-  provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer -> images/lez-tools/
-  provision/data/sidecar/lez-v02-vault-claim-poc                  -> images/lez-tools/
-  provision/data/sidecar/lez-v02-local-actor-identity             -> images/lez-tools/
+Stage the LEZ wallet module and the market bootstrap tools (scripts/from-scratch.sh --only stage):
+  provision/data/lez_core/lez_core.lgx                             -> images/lez-wallet-module/
+  provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer -> images/lez-wallet-module/
+  provision/data/sidecar/lez-v02-local-actor-identity             -> images/lez-wallet-module/
 MISSING
     exit 1
 fi
@@ -102,22 +114,26 @@ if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" == 1 ]]; then
     log "skipping basecamp-ui assets (LEZ_STAGE_SKIP_BASECAMP_UI=1)"
 elif [[ "${LEZ_API_ONLY:-0}" != 1 && ! -d images/basecamp-ui/assets/bundle ]]; then
     cat >&2 <<'MISSING'
-Build with the pinned flakes (nix, experimental-features enabled):
+Build with the pinned flakes (nix, experimental-features enabled), or run
+scripts/from-scratch.sh --only nix and --only stage, which do all of this:
   nix build path:../basecamp#bin-bundle-dir-inspector -o bundle
-  nix build path:apps/basecamp#lez-maker-ui-install -o maker-user
-  nix build path:apps/basecamp#lez-taker-ui-install -o taker-user
   nix build path:../basecamp#logos-qt-mcp -o qt-mcp
-  nix build github:logos-co/logos-chat-module/v0.2.2#lgx -o chat-lgx
-  nix build github:logos-co/logos-chat-module/v0.2.2#delivery_module-lgx -o delivery-lgx
+  nix build path:apps/basecamp#lez-maker-ui-lgx-portable -o maker-lgx
+  nix build path:apps/basecamp#lez-taker-ui-lgx-portable -o taker-lgx
+  nix build path:apps/basecamp#lez-network-ui-lgx-portable -o network-lgx
+  nix build github:logos-co/logos-chat-module/<rev in apps/basecamp/flake.lock>#lgx-portable -o chat-lgx
+  nix build github:logos-co/logos-delivery-module/<rev in apps/basecamp/flake.lock>#lgx-portable -o delivery-lgx
 Then copy:
   bundle/     -> images/basecamp-ui/assets/bundle
   qt-mcp/     -> images/basecamp-ui/assets/qt-mcp
-and stage the role packages plus the modules they depend on (this pins the
-variant tag):
-  scripts/stage-basecamp-package.sh maker-user maker
-  scripts/stage-basecamp-package.sh taker-user taker
-  scripts/stage-basecamp-package.sh chat-lgx/*.lgx module
-  scripts/stage-basecamp-package.sh delivery-lgx/*.lgx module
+pin the release set's dependencies and install it (the desks, Chat, Delivery,
+lez_core, lez_swap_node, lez_indexer_module, blockchain_module and both
+lez_<role>_node packages):
+  scripts/pin-package-dependencies.sh --out images/basecamp-ui/assets/packages <every .lgx>
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/<module>.lgx module
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/lez_atomic_swap_maker.lgx maker
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/lez_atomic_swap_taker.lgx taker
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/lez_network.lgx network
 MISSING
     exit 1
 fi
