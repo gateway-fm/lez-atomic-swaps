@@ -1,0 +1,59 @@
+Release-gate checks of main on an Apple-silicon Mac (macOS 26.7.3, Docker Desktop, linux/arm64 images built from main), 2026-11-11; times UTC.
+Every check that ran, in order, with what failed before each fix. Logs: start-path/, gates/, smoke/.
+
+== 1. Resume and Node restart, main af3ac978 + 2ab39a39 (gates/summary.log)
+Before 2ab39a39: up.sh on a running stack re-installed runtime/market-bootstrap.env; the file was gone from both Node
+containers, and at the next Node start both Nodes exited 2 every 2 s ("sed: can't read /run-market/market-bootstrap.env").
+21:21:26  up.sh on the running stack: rc 0; the manifest is still readable in both Node containers (392 bytes each)
+21:22:15  both Nodes held and released (scripts/node-hold.sh): both running again
+
+== 2. Smoke tier, scripts/regress.sh smoke, at 2ab39a39 (tree clean), `fast` profile
+21:22:16 – 21:28:30  run started 1 s after the forced restart above: 3 of 6 (smoke/regress-smoke-after-forced-node-restart.log)
+    node:btc:happy:TakerSellsLez FAILED in 11 s; node:zec:zec-happy:TakerSellsLez FAILED in 7 s; node:btc:happy:TakerSellsForeign FAILED in 55 s:
+    the Taker's owner socket stopped answering in mid-test. The Taker container was recreated by a later test and its log is lost,
+    so the cause is not established; it did not recur in the run below.
+    node:zec:zec-happy:TakerSellsForeign PASSED in 77 s; ui:btc:happy:TakerSellsLez PASSED in 58 s; ui:zec:zec-happy:TakerSellsForeign PASSED in 104 s
+21:43:11 – 21:50:05  run on a stack left alone: 6 of 6, each on its first try (smoke/regress-smoke-clean-run.log)
+    node:btc:happy:TakerSellsLez PASSED in 47 s
+    node:zec:zec-happy:TakerSellsLez PASSED in 73 s
+    node:btc:happy:TakerSellsForeign PASSED in 58 s
+    node:zec:zec-happy:TakerSellsForeign PASSED in 61 s
+    ui:btc:happy:TakerSellsLez PASSED in 55 s
+    ui:zec:zec-happy:TakerSellsForeign PASSED in 62 s
+
+== 3. LEZ finality stall (#112), at 2ab39a39 (gates/05-finality-stall.log)
+21:38:03  scripts/ui-e2e.sh lez-finality-stall: passed in 572 s. With the sequencer stopped both desks show the stall; after it
+          is started again both Nodes and both desks recover.
+
+== 4. Wipe, then up.sh, then trade, at 2ab39a39 (gates/06 – 09)
+21:38:43  down.sh --wipe: rc 0
+21:40:26  up.sh (fast profile): rc 0
+21:41:32  ui happy (Bitcoin, TakerSellsLez): passed in 66 s
+21:42:51  ui zec-happy (Zcash, TakerSellsForeign): passed in 79 s
+
+== 5. The start.sh path (#113's steps), with local images (LEZ_IMAGE_PREFIX=lez LEZ_IMAGE_TAG=local)
+Before cbeba3a2, each attempt of `down.sh --wipe` then `start.sh` on main stopped at the next of these:
+21:51:05  start.sh --quick rc 127: lez-v02-local-actor-identity: error while loading shared libraries: libpcsclite.so.1
+21:53:55  start.sh --quick rc 1: "the Maker lists no routes after the market bootstrap"; maker_health.routes stayed [] for the two
+          minutes it was then given, and held one entry per pair once an offer had been published on it
+22:16:07  start.sh rc 1: verify-all.sh, "explorer transaction display" (Remote end closed connection without response)
+22:26:57  start.sh rc 1: verify-all.sh, "all services up" (the heartbeat had been restarted 9 times)
+With cbeba3a2's four fixes (start-path/summary-start.log):
+22:37:12  down.sh --wipe: rc 0; market/ moved away, so no identity, deployment or manifest exists
+22:38:37  start.sh: rc 0. Desk suite maker 3 passed, taker 1 passed; verify-all.sh: all services up, Bitcoin chain at height 211,
+          spender index present, LEZ finalized at block 38, 15/15 checks, explorer transaction display, 15/15 market checks,
+          Node market behaviour, desk suites again. 6 containers healthy, heartbeat restarts 0, maker_health ready, routes 1.
+22:39:11  down.sh --wipe: rc 0, market/ left in place: identities kept, bootstrap/ and the manifest of the wiped chain retired
+          (market-bootstrap.env.chain-<time>.bak)
+22:40:46  start.sh: rc 0, no failed stage. 6 containers healthy, heartbeat restarts 0, maker_health ready, routes 1.
+22:45:53  ui happy (Bitcoin, TakerSellsLez): passed in 307 s (the `local` timing profile start.sh uses)
+22:47:33  ui zec-happy (Zcash, TakerSellsForeign): passed in 100 s; maker_health routes 3
+
+== Static checks at cbeba3a2
+deploy/tests from a `git archive`: 78 of 79 (test_a_checkout_still_reports_its_git_commit needs a git checkout)
+shellcheck 0.11.0 --severity=warning deploy/scripts/*.sh: the 8 findings main has, all in zec-provision.sh
+hadolint on deploy/images/lez-wallet-module/Dockerfile: no finding
+
+== Not run here
+Linux; a release bundle with published images (this is start.sh on local images); the full regression (it follows, on the commit
+this set is committed with); the 15-minute "Resubmit" path and the lez_indexer_unreachable reason of #112.

@@ -1,0 +1,26 @@
+[22:37:12] code 2ab39a39 +  M compose.yaml  M images/lez-wallet-module/Dockerfile  M scripts/start.sh  M scripts/verify-all.sh ?? market/ 
+[22:37:12] down.sh --wipe rc=0
+[22:37:12] market/ moved aside: a first start on a host with nothing
+[22:38:37] start.sh rc=0
+3 passed, 0 failed
+1 passed, 0 failed
+  OK   all services up
+  OK   Bitcoin chain at height 211
+  OK   Bitcoin spender index present (actor lock observation)
+  OK   LEZ chain finalized at block 38
+15/15 checks passed
+  OK   explorer transaction display
+15/15 market checks passed
+  OK   Node market behaviour
+3 passed, 0 failed
+  OK   desk suite: maker
+1 passed, 0 failed
+  OK   desk suite: taker
+[22:38:37] containers healthy: 6; heartbeat restarts: 0; maker_health: {"ready":true,"degraded":false,"routes":1,"lez_degraded":false}
+[22:39:11] down.sh --wipe rc=0 with market/ left in place (#113's case); market/: bootstrap identities market-bootstrap.env.chain-1794436751.bak 
+[22:40:46] start.sh rc=0
+[22:40:46] containers healthy: 6; heartbeat restarts: 0; maker_health: {"ready":true,"degraded":false,"routes":1,"lez_degraded":false}
+[22:45:53] BTC desk trade rc=0: [22:45:53] === happy (TakerSellsLez): passed in 307s
+[22:47:33] ZEC desk trade rc=0: [22:47:33] === zec-happy (TakerSellsForeign): passed in 100s
+[22:47:33] containers healthy: 6; heartbeat restarts: 0; maker_health: {"ready":true,"degraded":false,"routes":3,"lez_degraded":false}
+[22:47:33] DONE

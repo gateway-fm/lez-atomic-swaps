@@ -50,8 +50,12 @@ stack and are kept as the record of that submission shape.
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
-- **Still open for the submission:** the tag and release (0.3.0), the
-  rfp#122 comment, the fresh-machine walk of the Zcash guide (U10).
+- **Still open for the submission:** the release workflow green on the commit
+  to be tagged (on `main` at `af3ac978`, `start.sh` could not finish; the
+  fixes and the runs that show them are in
+  `docs/evidence/macos-arm64-release-gates-2026-11-11/`), then the tag and
+  release (0.3.0), the rfp#122 comment, the fresh-machine walk of the Zcash
+  guide (U10).
 
 ## The six deliverables
 
