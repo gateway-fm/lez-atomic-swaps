@@ -1,0 +1,106 @@
+S01	PASS	logosctl version
+S02	PASS	lm version (v0.2-era, from the module builder's nix store)
+S03	PASS	lgx version (v0.2-era, from the module builder's nix store)
+S04	PASS	lgpm version (v0.2-era, from the module builder's nix store)
+S05	PASS	logoscore version (the v0.2-era runtime in our images)
+S06	PASS	start a clean session daemon
+S07	PASS	package show lez_atomic_swap_taker
+S08	FAIL	lez_atomic_swap_taker is signed by a signer that can be pinned
+S09	PASS	package show lez_core
+S10	FAIL	lez_core is signed by a signer that can be pinned
+S11	PASS	package show lez_swap_node
+S12	FAIL	lez_swap_node is signed by a signer that can be pinned
+S13	PASS	package show lez_taker_node
+S14	FAIL	lez_taker_node is signed by a signer that can be pinned
+S15	PASS	package show chat_module
+S16	FAIL	chat_module is signed by a signer that can be pinned
+S17	PASS	package show delivery_module
+S18	FAIL	delivery_module is signed by a signer that can be pinned
+S19	PASS	package show lez_indexer_module
+S20	FAIL	lez_indexer_module is signed by a signer that can be pinned
+S21	PASS	package show blockchain_module
+S22	FAIL	blockchain_module is signed by a signer that can be pinned
+S23	PASS	lgx verify lez_atomic_swap_taker (structure, Merkle root)
+S24	PASS	lgx verify lez_core (structure, Merkle root)
+S25	PASS	lgx verify lez_swap_node (structure, Merkle root)
+S26	PASS	lgx verify lez_taker_node (structure, Merkle root)
+S27	PASS	lgx verify chat_module (structure, Merkle root)
+S28	PASS	lgx verify delivery_module (structure, Merkle root)
+S29	PASS	lgx verify lez_indexer_module (structure, Merkle root)
+S30	PASS	lgx verify blockchain_module (structure, Merkle root)
+S31	PASS	lm metadata lez_atomic_swap_taker
+S32	PASS	lm methods lez_atomic_swap_taker
+S33	PASS	lm events lez_atomic_swap_taker
+S34	PASS	lm metadata lez_core
+S35	PASS	lm methods lez_core
+S36	PASS	lm events lez_core
+S37	PASS	lm metadata lez_swap_node
+S38	PASS	lm methods lez_swap_node
+S39	PASS	lm events lez_swap_node
+S40	PASS	lm metadata lez_taker_node
+S41	PASS	lm methods lez_taker_node
+S42	PASS	lm events lez_taker_node
+S43	PASS	lm metadata chat_module
+S44	PASS	lm methods chat_module
+S45	PASS	lm events chat_module
+S46	PASS	lm metadata delivery_module
+S47	PASS	lm methods delivery_module
+S48	PASS	lm events delivery_module
+S49	PASS	lm metadata lez_indexer_module
+S50	PASS	lm methods lez_indexer_module
+S51	PASS	lm events lez_indexer_module
+S52	PASS	lm metadata blockchain_module
+S53	PASS	lm methods blockchain_module
+S54	PASS	lm events blockchain_module
+S55	NOT RUN	lm verify <installed dir> --did <pinned signer>
+S56	FAIL	install lez_atomic_swap_taker as built
+S57	INFO	DERIVED: lez_atomic_swap_taker with variant linux-amd64-dev renamed linux-amd64 (lgx extract/add/remove)
+S58	PASS	package show (derived)
+S59	PASS	install lez_atomic_swap_taker (derived) with its root hash
+S60	FAIL	installing the role package pulled in its dependencies
+S61	FAIL	the role package declares its LEZ network requirement
+S62	PASS	install lez_core with its root hash
+S63	PASS	install lez_swap_node with its root hash
+S64	PASS	install lez_taker_node with its root hash
+S65	FAIL	install chat_module with its root hash
+S66	FAIL	install delivery_module with its root hash
+S67	PASS	install lez_indexer_module with its root hash
+S68	PASS	install blockchain_module with its root hash
+S69	FAIL	a wrong --root-hash is refused
+S70	FAIL	every dependency of lez_atomic_swap_taker is installed
+S71	PASS	package ls
+S72	FAIL	module load lez_atomic_swap_taker
+S73	PASS	module load lez_swap_node (with its declared dependencies)
+S74	PASS	module show lez_swap_node
+S75	PASS	call lez_swap_node node_status taker
+S76	PASS	the installed package graph carries the taker Node and its launcher
+S77	PASS	module load lez_taker_node (the taker Node package, with its declared dependencies)
+S78	PASS	call lez_taker_node launcher: the installed launcher
+S79	PASS	call lez_taker_node payload: the installed files and their sha256
+S80	PASS	start_node with the package's launcher
+S81	PASS	lez_swap_node launched the taker Node from the package
+S82	INFO	the taker Node's output (without the role's configuration, which Compose provides, it stops at once)
+S83	INFO	STUB: a stand-in launcher (sleeps; not a Node)
+S84	PASS	STUB: start_node with the stand-in launcher
+S85	PASS	STUB: node_status reports the supervised child
+S86	PASS	module stats
+S87	FAIL	module stats shows the taker Node (pid 353) itself
+S88	PASS	module reload lez_swap_node
+S89	PASS	the taker Node is supervised again after the reload
+S90	INFO	processes after the reload
+S91	INFO	kill -9 the lez_swap_node host process
+S92	FAIL	the runtime reports lez_swap_node as crashed
+S93	PASS	no orphaned taker Node after the host crash
+S94	INFO	load lez_swap_node again and start the role again (what a desk does)
+S95	PASS	exactly one taker Node after recovery
+S96	PASS	package remove lez_atomic_swap_taker
+S97	PASS	package remove lez_core (takes its dependents)
+S98	PASS	nothing of ours is left installed
+S99	INFO	what remove leaves in the session
+S100	PASS	daemon stop
+S101	PASS	logosctl 0.3.0: install, load lez_swap_node, call node_status
+S102	FAIL	logosctl 0.3.0: install lez_atomic_swap_taker as built
+S103	PASS	logoscore 0.2.3: modules laid out as the images do (no installer in this release)
+S104	PASS	logoscore 0.2.3: load-module lez_swap_node, call node_status
+S105	FAIL	lgpm (v0.2-era, the desks' installer): install lez_swap_node
+S106	PASS	lgpm (v0.2-era, the desks' installer): install lez_atomic_swap_taker

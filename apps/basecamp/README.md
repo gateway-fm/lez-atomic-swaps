@@ -91,9 +91,13 @@ In the Compose stack (`deploy/`) each party runs one Basecamp, and that
 Basecamp is where its desk is used: `lez-maker-node` holds the **LEZ Maker**
 desk, `lez-taker-node` the **LEZ Taker** desk. The desk opens when the
 container starts; it hosts the role's LEZ signer in Basecamp's `lez_core`, has
-Basecamp's `lez_swap_node` launch and supervise the role's Node, and talks to
-that Node over its owner socket inside the same container. Nothing else has to
-be started, and no socket leaves the container.
+Basecamp's `lez_swap_node` launch and supervise the role's Node from the role's
+Node package (`lez_maker_node` / `lez_taker_node`, a dependency of the desk:
+the Node, its actors, the LEZ sidecar and the launcher; `modules/lez-<role>-node`),
+and talks to that Node over its owner socket inside the same container. Nothing
+else has to be started, and no socket leaves the container. The Node's
+configuration (chains, identity) still comes from the container's environment
+and mounts (`deploy/compose.yaml`).
 
 1. Start the stack (`deploy/scripts/up.sh`, or `start.sh` from the release
    bundle) and wait until both Nodes report healthy.
@@ -205,7 +209,7 @@ control and does not change durable offer or agreement state.
 
 ## Run the Maker package as a real user
 
-Build and start the real Maker Node the way `deploy/images/maker-node/node-entrypoint.sh`
+Build and start the real Maker Node the way `modules/lez-role-node/node-entrypoint.sh`
 does (see the manual test walkthrough in [`deploy/README.md`](../../deploy/README.md)). Its owner RPC defaults
 to `/run/lez/maker/node.sock`; a run-private absolute socket is safer for
 parallel local work. Verify its directory is mode 0700, its socket is mode 0600,
@@ -237,7 +241,7 @@ without manufacturing another mutation.
 ## Run the Taker package as a real user
 
 Create the strict owner-private Taker Node role configuration the way
-`deploy/images/taker-node/node-entrypoint.sh` renders it, start
+`modules/lez-role-node/node-entrypoint.sh` renders it, start
 `lez-taker-node` as the current user, and select its mode-0600 socket; the
 wallet market, offers and actor-owned actions all come from that Node:
 

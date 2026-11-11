@@ -1,0 +1,58 @@
+== [09:52:25Z] before
+    125       7     125      24 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_nod
+    136     125     136      24 /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/lez-maker-node --socket /run/lez/maker/node.sock --database /var/lib/lez/maker/mak
+    141     136     136      24 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+    142     136     136      24 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    143     136     136      24 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    144     136     136      24 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+    206     136     136      24 /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19901 --node-profile local --sequenc
+    218     143     136      24 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    219     142     136      24 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    220     142     136      24 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+Nodes: 1; healthy
+lrwxrwxrwx 1 lez lez 0 Nov 11 09:52 /proc/136/exe -> /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/lez-maker-node
+
+== [09:52:26Z] 1. kill -9 the maker Node
+Node pid 136; its group: 
+[09:52:27Z] 1.5 s later, members of the old group still alive:
+[09:52:33Z] healthy again
+    125       7     125      32 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_nod
+    384     125     384       5 /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/lez-maker-node --socket /run/lez/maker/node.sock --database /var/lib/lez/maker/mak
+    388     384     384       5 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+    389     384     384       5 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    390     384     384       5 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    391     384     384       5 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+    429     384     384       5 /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19901 --node-profile local --sequenc
+    441     390     384       4 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    442     389     384       4 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+Nodes: 1
+
+== [09:52:33Z] 2. the lez_swap_node host is stopped as liblogos stops a module host (SIGTERM)
+host pid(s): 125
+[09:52:37Z] 3 s later:
+Nodes: 0; unhealthy
+node-maker.group
+node-maker.lock
+node-maker.start
+signers
+
+== [09:52:37Z] 3. restart Basecamp (docker restart lez-maker-node)
+[09:52:45Z] healthy
+    136       7     136      10 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_nod
+    144     136     144      10 /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/lez-maker-node --socket /run/lez/maker/node.sock --database /var/lib/lez/maker/mak
+    148     144     144      10 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+    149     144     144      10 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    150     144     144      10 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    151     144     144      10 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+    220     144     144      10 /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19901 --node-profile local --sequenc
+    232     150     144      10 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    233     149     144      10 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+Nodes: 1
+[2026-11-11 09:52:00.922] [info] [logos] [lez_swap_node] lez_swap_node: maker: resuming the Node a previous host of this module supervised
+[2026-11-11 09:52:00.923] [info] [logos] [lez_swap_node] lez_swap_node: maker: supervising /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/node-entrypoint.sh (log /proc/1/fd/1, hold file /tmp/
+[2026-11-11 09:52:00.926] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 136, start 1)
+[2026-11-11 09:52:28.520] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 384, start 2)
+[2026-11-11 09:52:40.059] [info] [logos] [lez_swap_node] lez_swap_node: signer: resuming the signer on /run/lez-wallet/maker/signer.sock
+[2026-11-11 09:52:40.059] [info] [logos] [lez_swap_node] lez_swap_node: maker: resuming the Node a previous host of this module supervised
+[2026-11-11 09:52:40.059] [info] [logos] [lez_swap_node] lez_swap_node: maker: supervising /var/lez/basecamp-maker-user/modules/lez_maker_node/bin/node-entrypoint.sh (log /proc/1/fd/1, hold file /tmp/
+[2026-11-11 09:52:40.059] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 144, start 1)

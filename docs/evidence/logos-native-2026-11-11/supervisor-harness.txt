@@ -1,0 +1,79 @@
+# lez_swap_node supervisor, host-side harness (modules/lez-swap-node/src/lez_swap_node_impl.cpp at 9f0c1dfa, Logos SDK stubbed)
+# stand-in Node: a launcher that starts a helper (sleep 601) and execs a copy of sleep from its payload dir
+== case 1: kill -9 the Node
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+lez_swap_node: maker: Node started (pid 3406139, start 1)
+3406139 3406135 3406139 <scratch>/pay/bin/ut-node 300
+3406141 3406139 3406139 sleep 601
+kill -9 3406139
+lez_swap_node: maker: Node ended (signal 9)
+after kill (group cleaned):
+lez_swap_node: maker: Node started (pid 3406556, start 2)
+after restart:
+3406556 3406135 3406556 <scratch>/pay/bin/ut-node 300
+3406563 3406556 3406556 sleep 601
+records: node-maker.group node-maker.lock node-maker.start  group=3406556
+lez_swap_node: maker: Node ended (signal 15)
+start=0
+{"role":"maker","state":"restarting","pid":0,"starts":1,"last_exit":"signal 9"}
+{"role":"maker","state":"running","pid":3406556,"starts":2,"last_exit":"signal 9"}
+after harness exit (destructor):
+records: node-maker.lock node-maker.start 
+
+== case 2: the module host is killed (-9), then loaded again
+3407079 3407075 3407079 <scratch>/pay/bin/ut-node 300
+3407080 3407079 3407079 sleep 601
+kill -9 host 3407075
+case2.sh: line 5: 3407075 Killed                  H serve start sleep60 > "$S/out2a.txt" 2>&1
+after the host died (Node gone by PDEATHSIG; its helper left):
+3407080       1 3407079 sleep 601
+records: node-maker.group node-maker.lock node-maker.start signers 
+<signer.sock> aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+-- load again (records resumed; no start call)
+after the reload:
+3407281 3407274 3407281 <scratch>/pay/bin/ut-node 300
+3407282 3407281 3407281 sleep 601
+lez_swap_node: signer: resuming the signer on <signer.sock>
+lez_swap_node: signer: signing for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa on <signer.sock>
+lez_swap_node: maker: resuming the Node a previous host of this module supervised
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+lez_swap_node: Warning: maker: ending the Node group 3407079 a previous host left running
+lez_swap_node: maker: Node started (pid 3407281, start 1)
+{"role":"maker","state":"running","pid":3407281,"starts":1,"last_exit":""}
+lez_swap_node: maker: Node ended (signal 15)
+-- stop_node forgets the role
+lez_swap_node: maker: Node ended (signal 15)
+stop=0
+{"role":"maker","state":"stopped","pid":0,"starts":1,"last_exit":"signal 15"}
+records: node-maker.lock signers 
+-- load again: nothing resumed
+lez_swap_node: signer: resuming the signer on <signer.sock>
+lez_swap_node: signer: signing for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa on <signer.sock>
+
+
+== case 3: an old host outlives its Basecamp; a new host of the same instance starts
+old host 3408096:
+3408099 3408096 3408099 <scratch>/pay/bin/ut-node 300
+3408100 3408099 3408099 sleep 601
+with both hosts (one Node):
+3408099 3408096 3408099 <scratch>/pay/bin/ut-node 300
+3408100 3408099 3408099 sleep 601
+lez_swap_node: maker: resuming the Node a previous host of this module supervised
+lez_swap_node: Warning: maker: another host of this module supervises the Node; waiting for it to go
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+start=0
+{"role":"maker","state":"waiting","pid":0,"starts":0,"last_exit":""}
+kill -9 old host 3408096
+case3.sh: line 9: 3408096 Killed                  ( H start sleep20 ) > "$S/out3a.txt" 2>&1
+after the old host died (the waiting host took over):
+3408527 3408472 3408527 <scratch>/pay/bin/ut-node 300
+3408528 3408527 3408527 sleep 601
+lez_swap_node: maker: resuming the Node a previous host of this module supervised
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+start=0
+lez_swap_node: Warning: maker: another host of this module supervises the Node; waiting for it to go
+lez_swap_node: Warning: maker: ending the Node group 3408099 a previous host left running
+lez_swap_node: maker: Node started (pid 3408527, start 1)
+{"role":"maker","state":"running","pid":3408527,"starts":1,"last_exit":""}
+lez_swap_node: maker: Node ended (signal 15)
+

@@ -1,10 +1,11 @@
 # Logos-native packaging: what the official tools say about PR #120, and how to close the gaps
 
-Status: Proposed — 2026-11-10
+Status: Proposed — 2026-11-10; (a) and (c) implemented 2026-11-11 (below,
+"What was built")
 
 ```mermaid
 flowchart LR
-    subgraph today["Today: what logosctl installs"]
+    subgraph today["2026-11-10: what logosctl installed"]
         Desk["lez_atomic_swap_maker (ui_qml, -dev variant)"] --> Sup["lez_swap_node: start_node(role, launcher, log, hold)"]
         Desk --> Core["lez_core (patched)"]
         Sup --> Core
@@ -232,11 +233,68 @@ protocol off v0.2.4:
    0.3) is a protocol change and its own milestone; the upstream patches would
    have to be rebased onto it.
 
+## What was built (2026-11-11)
+
+Option A1 with lez_swap_node kept as the one lifecycle owner, and the parts of
+(c) that need no runtime change. Evidence:
+[docs/evidence/logos-native-2026-11-11](../evidence/logos-native-2026-11-11/README.md)
+(both roles) and the landing checks recorded there.
+
+- **Payload packages.** `lez_maker_node` and `lez_taker_node`
+  (`modules/lez-<role>-node`, `type: core`, version 0.1.0): a small plugin
+  (`launcher()` → `<modulePath>/bin/node-entrypoint.sh`, `payload()` →
+  `bin/payload.json`) and, under `bin/`, the launcher
+  (`modules/lez-role-node/node-entrypoint.sh`), the role's Node and CLI (the
+  Taker's registry initialiser), its Bitcoin and Zcash actors, the LEZ v0.2
+  sidecar and the health probe, stripped. `bin/payload.json` names each file's
+  sha256 and the build and sidecar sources. Nix builds the plugin
+  (`from-scratch.sh --only build:role-node-modules`, same pins as
+  lez_swap_node); `deploy/scripts/package-role-node.sh` adds `bin/` with the
+  module builder's lgx 0.1.0 (`lgx add`, `lgx verify`) and refuses a package
+  whose executables lost their execute bit (lgx 0.1.0 keeps file modes;
+  observation 9). One variant per build host; Linux only (swap-store). The
+  Maker package names no Taker executable and vice versa
+  (`scripts/check-runtime-profiles.py`). The ZEC proof-of-concept provisioners
+  are not in the package; they stay in the Taker image for
+  `scripts/zec-provision.sh`.
+- **Graph.** desk → `chat_module`, `delivery_module`, `lez_core`,
+  `lez_swap_node`, `lez_<role>_node`; `lez_<role>_node` → `lez_swap_node`;
+  `lez_swap_node` → `lez_core`. Still bare names (observation 3).
+- **Start.** The desk, with `LEZ_<ROLE>_NODE_LAUNCHER=package`, asks
+  `lez_<role>_node` for its launcher and calls
+  `lez_swap_node.start_node(role, launcher, log, hold)`. The payload plugin
+  starts nothing itself: one owner. Headless, `logosctl call lez_<role>_node
+  launcher` then `call lez_swap_node start_node` does the same.
+- **Lifecycle (c).** The Node gets `PR_SET_PDEATHSIG` (SIGTERM): liblogos stops
+  a module host with SIGTERM and the host has no handler, so the module's
+  destructor never runs; the kernel now ends the Node with its host. The
+  launcher's own helpers (loopback forwards, ZEC sidecars) get the same through
+  `setpriv --pdeathsig`. The Node's process group is recorded in the module's
+  instance directory; before each start a recorded group that still holds one
+  of this role's processes (an environment marker every descendant inherits,
+  or an executable from the package) is ended (TERM, 10 s, KILL), and after the
+  Node exits the rest of its group is ended before the restart. A per-role
+  `flock` held by the supervising host makes a second host of the same
+  instance wait instead of starting a second Node. `start_node` and
+  `serve_signer` requests are recorded and resumed in `onContextReady()`, so
+  `module reload lez_swap_node` restarts signer and Node; `stop_node` forgets
+  the role. S78/S82/S84 of the 2026-11-10 run are PASS in the 2026-11-11 run.
+- **Images.** `deploy/images/<role>-node` are Basecamp with the role package
+  unpacked into `<user dir>/modules/lez_<role>_node` (Basecamp scans it beside
+  its bundled modules); `/usr/local/bin/<tool>` are links into the package for
+  the harness. No Node binary is copied into an image on its own.
+
+Not built: configuration in `data/` (`configure(json)`) — the launcher still
+reads Compose environment and mounts; events (`node_exited`) and readiness in
+`status()`; manifest ≥ 0.6, versioned or signed dependencies; B2/B3; portable
+desks (d1). Basecamp 0.2.0 does not reload a crashed module host, so after a
+host crash the Node stays down (no orphan) until the module is loaded again.
+
 ## Recommended order
 
 1. Portable, signed packages for the role desks and our modules (d1); the
    acceptance script against them.
-2. `lez_maker_node` / `lez_taker_node` payload modules with the single
-   lifecycle owner (a + c), config in `data/`, identity onboarding.
+2. Done: `lez_maker_node` / `lez_taker_node` payload modules with the single
+   lifecycle owner (a + c). Open: config in `data/`, identity onboarding.
 3. Role network requirement as B3, with versioned, signer-pinned dependencies.
 4. Builder and runtime pins (d2–d3).

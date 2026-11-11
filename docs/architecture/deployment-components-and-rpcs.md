@@ -29,7 +29,9 @@ containers run by default and none of them is an init container:
   127.0.0.1:5901 and :5902). The role's desk starts the role's LEZ signer in
   Basecamp's `lez_core` (patched, `deploy/builder/patches/logos-execution-zone-module`)
   and has Basecamp's `lez_swap_node` serve the signer socket and launch and
-  supervise the Node (`node-entrypoint.sh`). The desk talks only to that
+  supervise the Node from the role's installed Node package
+  (`lez_maker_node` / `lez_taker_node`: the Node, actors, sidecar and the
+  launcher `node-entrypoint.sh`). The desk talks only to that
   Node's owner-only Unix socket in the same container.
 - `bitcoin-core`, `btc-miner`, `zebra`: plain containers.
 
@@ -124,9 +126,10 @@ and the ZEC actors, which reach Zebra on a fourth loopback forwarder
 
 | Binary or module | Image | Responsibility | Lifecycle |
 |---|---|---|---|
-| `lez-maker-node` | maker-node | offers, routes and prices; Delivery publishing and withdrawal; Chat server for reservation, the three ceremony rounds and propose/complete; actor supervisor; per-swap sidecar keep-alive; owner RPC | launched by `lez_swap_node` (`start_node`), restarted 2 s after it exits, held down while the hold file exists (`scripts/node-hold.sh`) |
+| `lez-maker-node` | maker-node | offers, routes and prices; Delivery publishing and withdrawal; Chat server for reservation, the three ceremony rounds and propose/complete; actor supervisor; per-swap sidecar keep-alive; owner RPC | shipped in `lez_maker_node`; launched by `lez_swap_node` (`start_node`) from the package's launcher, restarted 2 s after it exits, held down while the hold file exists (`scripts/node-hold.sh`), ended with the module's host |
 | `lez-taker-node` | taker-node | offer discovery; take (reservation, Bitcoin funding plan from wallet `lez-taker`, LEZ claim preparation, draft, ceremony, actor activation); lock, claim, refund; observer that drives its actor's chain observations; swap list and monitor; owner RPC | as the Maker Node |
-| `lez_swap_node` (our module, `modules/lez-swap-node`) | maker-node, taker-node | `start_node`, `stop_node`, `node_status`, `serve_signer` | loaded by the role's desk in that party's Basecamp |
+| `lez_swap_node` (our module, `modules/lez-swap-node`) | maker-node, taker-node | `start_node`, `stop_node`, `node_status`, `serve_signer`; the Node's one lifecycle owner (the Node dies with its host; a group a dead host left is ended before the next start; requests resumed on reload) | loaded by the role's desk in that party's Basecamp |
+| `lez_maker_node` / `lez_taker_node` (our payload packages, `modules/lez-<role>-node`) | maker-node / taker-node | carry the role's Node and everything it runs under `bin/`; `launcher()`, `payload()` | installed with the role's desk; loaded as its dependency |
 | `lez_core` (patched) | maker-node, taker-node | the role's LEZ wallet: imports the role key, signs a 32-byte message hash for the one account | loaded by the role's desk |
 | LEZ Network desk (`apps/basecamp/network`), `blockchain_module`, `lez_indexer_module` (patched) | network | the LEZ devnet's block producer and its indexer; Re-index rebuilds the indexer's database | the container's Basecamp; the desk starts both modules when the container starts |
 | `lez-btc-maker-actor` / `lez-btc-taker-actor` | node images | the role's durable swap state machine: observes both chains, projects transitions, signs and broadcasts effects, answers `status` | Maker: child process per drive; Taker: linked in-process with the program hash pinned in every persisted swap |
