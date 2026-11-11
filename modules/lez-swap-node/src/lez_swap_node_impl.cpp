@@ -14,22 +14,30 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <sstream>
 #include <thread>
+#include <vector>
 
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/file.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 
 namespace {
     // Module diagnostics go to stderr; logos_host routes each line through its
@@ -57,10 +65,63 @@ namespace {
         return "status " + std::to_string(status);
     }
 
+    // The members of process group `group`: every process whose stat names it.
+    std::vector<pid_t> members_of(pid_t group) {
+        std::vector<pid_t> members;
+        DIR* proc = ::opendir("/proc");
+        if (proc == nullptr) return members;
+        while (const dirent* entry = ::readdir(proc)) {
+            const pid_t pid = static_cast<pid_t>(std::atoi(entry->d_name));
+            if (pid <= 0) continue;
+            std::ifstream stat("/proc/" + std::string(entry->d_name) + "/stat");
+            std::string line;
+            std::getline(stat, line);
+            // pid (comm) state ppid pgrp ...: comm may hold spaces and parentheses.
+            const auto close = line.rfind(')');
+            if (close == std::string::npos) continue;
+            std::istringstream fields(line.substr(close + 1));
+            std::string state;
+            long ppid = 0, pgrp = 0;
+            if (fields >> state >> ppid >> pgrp && pgrp == group) members.push_back(pid);
+        }
+        ::closedir(proc);
+        return members;
+    }
+
+    // Whether process `pid` belongs to a Node this module started: it carries
+    // the role's `marker` in its environment (every descendant of the Node
+    // inherits it), or its executable lies in the payload `directory`.
+    bool started_by_us(pid_t pid, const std::string& marker, const std::string& directory) {
+        std::ifstream environment("/proc/" + std::to_string(pid) + "/environ");
+        std::string entry;
+        while (std::getline(environment, entry, '\0')) {
+            if (entry == marker) return true;
+        }
+        char exe[4096];
+        const ssize_t length = ::readlink(("/proc/" + std::to_string(pid) + "/exe").c_str(), exe, sizeof(exe) - 1);
+        return !directory.empty() && length > 0 && std::string(exe, static_cast<size_t>(length)).rfind(directory + "/", 0) == 0;
+    }
+
+    // End process group `group`: SIGTERM, SIGKILL to whatever is left after
+    // STOP_GRACE. Returns once the group is empty or after the SIGKILL.
+    void end_group(pid_t group) {
+        if (group <= 0 || ::kill(-group, SIGTERM) != 0) return;
+        const auto deadline = std::chrono::steady_clock::now() + STOP_GRACE;
+        while (::kill(-group, 0) == 0 && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (::kill(-group, SIGKILL) == 0) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+
     // One supervised role. `pid` is the running Node's process (group leader),
     // 0 while none runs; everything else is guarded by `mutex`.
     struct Role {
-        std::string name, launcher, log_file, hold_file;
+        // group_file: where the running Node's process group is recorded (in
+        // the module's instance directory; empty outside a Logos host).
+        // marker: the environment entry every process of this role's Node
+        // carries (LEZ_SWAP_NODE=<instance directory>:<role>).
+        std::string name, launcher, log_file, hold_file, group_file, marker;
+        int lock_fd = -1;
         std::atomic<pid_t> pid{0};
         std::mutex mutex;
         std::condition_variable wake;
@@ -74,25 +135,94 @@ namespace {
         // string the child needs is prepared before the fork.
         pid_t spawn() {
             const char* argv[] = {launcher.c_str(), name.c_str(), nullptr};
+            std::vector<const char*> envp;
+            for (char** entry = environ; *entry != nullptr; ++entry) {
+                if (std::strncmp(*entry, "LEZ_SWAP_NODE=", 14) != 0) envp.push_back(*entry);
+            }
+            envp.push_back(marker.c_str());
+            envp.push_back(nullptr);
+            const pid_t parent = ::getpid();
             const pid_t child = ::fork();
             if (child != 0) return child;
             ::setpgid(0, 0);
+            // The Node dies with this module's host: the kernel sends SIGTERM
+            // when the forking thread (this role's, alive exactly as long as
+            // the role is supervised) or its process goes. A host that went
+            // before this line leaves the child to init: do not start then.
+            ::prctl(PR_SET_PDEATHSIG, SIGTERM);
+            if (::getppid() != parent) ::_exit(1);
             const int out = ::open(log_file.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0640);
             const int in = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
             if (out >= 0) { ::dup2(out, STDOUT_FILENO); ::dup2(out, STDERR_FILENO); }
             if (in >= 0) ::dup2(in, STDIN_FILENO);
-            ::execv(argv[0], const_cast<char* const*>(argv));
+            ::execve(argv[0], const_cast<char* const*>(argv), const_cast<char* const*>(envp.data()));
             ::_exit(127);
+        }
+
+        std::string payload_directory() const {
+            const auto slash = launcher.rfind('/');
+            return slash == std::string::npos ? std::string() : launcher.substr(0, slash);
+        }
+
+        // A Node group a previous host of this module left behind (the host
+        // crashed or was killed, and its Node or the Node's sidecars outlived
+        // it): ended before a new Node starts. Only a recorded group with a
+        // process of this role's Node in it is touched (a group number can be
+        // reused once the group is gone).
+        void end_recorded_group() {
+            if (group_file.empty()) return;
+            std::ifstream recorded(group_file);
+            long group = 0;
+            if (!(recorded >> group) || group <= 0) return;
+            const std::string directory = payload_directory();
+            bool ours = false;
+            for (const pid_t member : members_of(static_cast<pid_t>(group))) {
+                if (started_by_us(member, marker, directory)) { ours = true; break; }
+            }
+            if (ours) {
+                warn(name, "ending the Node group " + std::to_string(group) + " a previous host left running");
+                end_group(static_cast<pid_t>(group));
+            }
+            ::unlink(group_file.c_str());
+        }
+
+        void record_group(pid_t group) const {
+            if (group_file.empty()) return;
+            std::ofstream(group_file, std::ios::trunc) << group << "\n";
+        }
+
+        // The role's lock (node-<role>.lock beside the group record), held by
+        // this module's host for as long as it supervises the role: a host
+        // that outlived its Basecamp (and still runs its Node) keeps it, and
+        // this one waits instead of starting a second Node. The kernel drops
+        // it with the host. Not inherited by the Node (close-on-exec).
+        void hold_role_lock(std::unique_lock<std::mutex>& lock) {
+            if (group_file.empty()) return;
+            const std::string lock_file = group_file.substr(0, group_file.size() - 6) + ".lock";
+            if (lock_fd < 0) lock_fd = ::open(lock_file.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+            if (lock_fd < 0) return;
+            bool told = false;
+            while (!stopping && ::flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+                if (!told) warn(name, "another host of this module supervises the Node; waiting for it to go");
+                told = true;
+                state = "waiting";
+                wake.wait_for(lock, HOLD_POLL);
+            }
         }
 
         void run() {
             std::unique_lock lock(mutex);
+            hold_role_lock(lock);
             while (!stopping) {
                 if (exists(hold_file)) {
                     state = "held";
                     wake.wait_for(lock, HOLD_POLL);
                     continue;
                 }
+                lock.unlock();
+                end_recorded_group();
+                lock.lock();
+                if (stopping) break;
                 const pid_t child = spawn();
                 if (child < 0) {
                     last_exit = std::string("fork failed: ") + std::strerror(errno);
@@ -101,6 +231,7 @@ namespace {
                     // The parent sets the group too, so a kill(-pid) right after
                     // the fork cannot miss a child that has not run setpgid yet.
                     ::setpgid(child, child);
+                    record_group(child);
                     pid = child;
                     ++starts;
                     state = "running";
@@ -108,6 +239,11 @@ namespace {
                     lock.unlock();
                     int status = 0;
                     while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+                    // What the Node leaves in its group (the launcher's
+                    // forwards, sidecars it does not wait for) goes with it,
+                    // so the next start finds its ports and sockets free.
+                    end_group(child);
+                    if (!group_file.empty()) ::unlink(group_file.c_str());
                     lock.lock();
                     pid = 0;
                     last_exit = describe(status);
@@ -118,6 +254,8 @@ namespace {
                 wake.wait_for(lock, RESTART_DELAY, [this] { return stopping; });
             }
             state = "stopped";
+            if (lock_fd >= 0) ::close(lock_fd);
+            lock_fd = -1;
         }
 
         void stop() {
@@ -234,7 +372,43 @@ namespace {
         std::map<std::string, std::shared_ptr<Signer>> signers;
         // False once the module is going away; read and written on the main thread only.
         std::shared_ptr<bool> alive = std::make_shared<bool>(true);
+        // The module's instance directory (empty outside a Logos host): what
+        // the desks asked for is recorded here and resumed on the next load.
+        std::string records;
     };
+
+    // Recorded requests: node-<role>.start holds the launcher, log and hold
+    // file of a supervised role (one per line), node-<role>.group its running
+    // Node's process group, signers one "<socket> <account>" line per signer.
+    std::string start_record(const Supervisor& s, const std::string& role) {
+        return s.records.empty() ? std::string() : s.records + "/node-" + role + ".start";
+    }
+    std::string group_record(const Supervisor& s, const std::string& role) {
+        return s.records.empty() ? std::string() : s.records + "/node-" + role + ".group";
+    }
+    std::string signer_record(const Supervisor& s) {
+        return s.records.empty() ? std::string() : s.records + "/signers";
+    }
+
+    // Written whole to a temporary file and renamed, so a host that dies
+    // mid-write leaves the previous record.
+    void write_record(const std::string& path, const std::string& content) {
+        if (path.empty()) return;
+        const std::string temporary = path + ".tmp";
+        {
+            std::ofstream out(temporary, std::ios::trunc);
+            out << content;
+            if (!out) return;
+        }
+        ::rename(temporary.c_str(), path.c_str());
+    }
+
+    std::vector<std::string> read_lines(const std::string& path) {
+        std::vector<std::string> lines;
+        std::ifstream in(path);
+        for (std::string line; std::getline(in, line);) lines.push_back(line);
+        return lines;
+    }
 
     inline Supervisor& supervisor_of(void*& p) {
         if (p == nullptr) p = new Supervisor();
@@ -259,6 +433,40 @@ namespace {
         return out + "\"";
     }
 } // namespace
+
+void LezSwapNodeImpl::onContextReady() {
+    auto& s = supervisor_of(supervisor);
+    {
+        std::lock_guard lock(s.mutex);
+        s.records = instancePersistencePath();
+    }
+    if (s.records.empty()) return;
+    // The signers first: a resumed Node waits for its signer's socket.
+    for (const auto& line : read_lines(signer_record(s))) {
+        const auto space = line.find(' ');
+        if (space == std::string::npos) continue;
+        info("signer", "resuming the signer on " + line.substr(0, space));
+        serve_signer(line.substr(0, space), line.substr(space + 1));
+    }
+    DIR* directory = ::opendir(s.records.c_str());
+    if (directory == nullptr) return;
+    std::vector<std::string> roles;
+    while (const dirent* entry = ::readdir(directory)) {
+        const std::string file = entry->d_name;
+        const std::string prefix = "node-", suffix = ".start";
+        if (file.size() > prefix.size() + suffix.size() && file.rfind(prefix, 0) == 0 &&
+            file.compare(file.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            roles.push_back(file.substr(prefix.size(), file.size() - prefix.size() - suffix.size()));
+        }
+    }
+    ::closedir(directory);
+    for (const auto& role : roles) {
+        const auto request = read_lines(start_record(s, role));
+        if (request.size() != 3) continue;
+        info(role, "resuming the Node a previous host of this module supervised");
+        start_node(role, request[0], request[1], request[2]);
+    }
+}
 
 LezSwapNodeImpl::~LezSwapNodeImpl() {
     if (supervisor == nullptr) return;
@@ -316,6 +524,9 @@ int64_t LezSwapNodeImpl::serve_signer(const std::string& socket_path, const std:
     }
     signer->start();
     s.signers.emplace(socket_path, std::move(signer));
+    std::string served;
+    for (const auto& [path, each] : s.signers) served += path + " " + each->account + "\n";
+    write_record(signer_record(s), served);
     info("signer", "signing for " + account + " on " + socket_path);
     return 0;
 }
@@ -337,6 +548,9 @@ int64_t LezSwapNodeImpl::start_node(const std::string& role, const std::string& 
     supervised->launcher = launcher;
     supervised->log_file = log_file;
     supervised->hold_file = hold_file;
+    supervised->group_file = group_record(s, role);
+    supervised->marker = "LEZ_SWAP_NODE=" + s.records + ":" + role;
+    write_record(start_record(s, role), launcher + "\n" + log_file + "\n" + hold_file + "\n");
     supervised->thread = std::thread([r = supervised.get()] { r->run(); });
     if (auto old = s.roles.find(role); old != s.roles.end() && old->second->thread.joinable()) old->second->thread.join();
     s.roles[role] = supervised;
@@ -350,6 +564,7 @@ int64_t LezSwapNodeImpl::stop_node(const std::string& role) {
         auto& s = supervisor_of(supervisor);
         std::lock_guard lock(s.mutex);
         if (auto it = s.roles.find(role); it != s.roles.end()) supervised = it->second;
+        if (const auto record = start_record(s, role); valid_role(role) && !record.empty()) ::unlink(record.c_str());
     }
     if (supervised) supervised->stop();
     return 0;
