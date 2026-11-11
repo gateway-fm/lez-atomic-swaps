@@ -769,6 +769,91 @@ def node_balances(role: str) -> dict:
             "lez_units": (view.get("lez") or {}).get("balance_atomic_units")}
 
 
+# ---- balances on both chains (#103 items 10 and 14) ---------------------------------
+# What each party holds, read from the chains rather than from the Nodes: its Node's
+# Core wallet (getbalances, trusted + pending + immature, so that a coinbase maturing
+# during the test moves nothing) and its LEZ account's finalized balance at the
+# indexer. Fees are Bitcoin's alone: LEZ v0.2 charges no transaction fee (the
+# sequencer pays Bedrock), and a Taker's LEZ lock and refund came back to the unit
+# (regression-m2-2026-11-11, refund-then-maker-lock-lez.json). A party that sends
+# Bitcoin pays at most two transactions' fees in one swap (a lock and its refund,
+# or a claim): BTC_FEE_TOLERANCE_SAT is two transactions of at most 400 vB at the
+# lock fee cap of 25 sat/vB (LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB); a lock and its refund
+# cost 4,100 sat in that run.
+BTC_FEE_TOLERANCE_SAT = 20_000
+
+
+def wallet_total_sat(wallet: str) -> int:
+    mine = bitcoin(f"-rpcwallet={wallet}", "getbalances")["mine"]
+    return sum(round(float(mine.get(kind, 0)) * 100_000_000) for kind in ("trusted", "untrusted_pending", "immature"))
+
+
+def party_balances() -> dict:
+    """{role: {"btc_sat", "lez_units"}} for both parties, from the chains."""
+    return {role: {"btc_sat": wallet_total_sat(node_bitcoin_wallet(role)),
+                   "lez_units": lez_account_balance(lez_owner_account(role))}
+            for role in ("maker", "taker")}
+
+
+def settlement_deltas(before: dict, after: dict) -> dict:
+    return {role: {asset: after[role][asset] - before[role][asset] for asset in before[role]} for role in before}
+
+
+def expected_settlement(outcome: str, reverse: bool, foreign_units: int, lez_units: int) -> dict:
+    """The nominal deltas of a swap that ended `completed` or `refunded`, fees
+    aside: completed, each party has the other's lot; refunded, its own back."""
+    if outcome == "refunded":
+        return {role: {"btc_sat": 0, "lez_units": 0} for role in ("maker", "taker")}
+    if outcome != "completed":
+        raise ValueError(outcome)
+    seller = -1 if not reverse else 1  # the Taker's Bitcoin: it sells it forward, buys it reversed
+    return {"taker": {"btc_sat": seller * foreign_units, "lez_units": -seller * lez_units},
+            "maker": {"btc_sat": -seller * foreign_units, "lez_units": seller * lez_units}}
+
+
+def settlement_problems(deltas: dict, outcome: str, reverse: bool, foreign_units: int | None = None,
+                        lez_units: int | None = None, btc_tolerance: int = BTC_FEE_TOLERANCE_SAT) -> list[str]:
+    """What in `deltas` does not fit `outcome`: LEZ to the unit; Bitcoin up to
+    the nominal and at most btc_tolerance below it for a party that sent a
+    Bitcoin transaction (the one that locked Bitcoin, and in a completed swap
+    the one that claimed it), to the satoshi for the other."""
+    expected = expected_settlement(outcome, reverse, FOREIGN_UNITS if foreign_units is None else foreign_units,
+                                   LEZ_UNITS if lez_units is None else lez_units)
+    locker = "maker" if reverse else "taker"
+    problems = []
+    for role in ("maker", "taker"):
+        got, want = deltas[role], expected[role]
+        if got["lez_units"] != want["lez_units"]:
+            problems.append(f"{role} LEZ {got['lez_units']:+d}, expected {want['lez_units']:+d}")
+        sent_bitcoin = role == locker or outcome == "completed"
+        low = want["btc_sat"] - (btc_tolerance if sent_bitcoin else 0)
+        if not low <= got["btc_sat"] <= want["btc_sat"]:
+            problems.append(f"{role} BTC {got['btc_sat']:+d} sat, expected {want['btc_sat']:+d}"
+                            + (f" less at most {btc_tolerance} sat of fees" if sent_bitcoin else " exactly"))
+    return problems
+
+
+def classify_settlement(deltas: dict, reverse: bool, **amounts) -> str | None:
+    """`completed` or `refunded` when the deltas fit that outcome, else None:
+    a party holding both lots or neither."""
+    for outcome in ("completed", "refunded"):
+        if not settlement_problems(deltas, outcome, reverse, **amounts):
+            return outcome
+    return None
+
+
+def assert_settlement(before: dict, outcome: str, label: str) -> dict:
+    """Reads the balances again and fails unless they moved as `outcome` says."""
+    after = party_balances()
+    deltas = settlement_deltas(before, after)
+    problems = settlement_problems(deltas, outcome, REVERSE)
+    log(f"  balances {label}: " + "; ".join(f"{role} BTC {d['btc_sat']:+d} sat, LEZ {d['lez_units']:+d}"
+                                             for role, d in deltas.items()))
+    if problems:
+        raise Failure(f"the balances do not fit a {outcome} swap ({label}): {'; '.join(problems)}")
+    return {"balances_before": before, "balances_after": after, "deltas": deltas, "outcome": outcome}
+
+
 def lez_transaction_block(role: str, transaction_id: str) -> int | None:
     """The block that role's own sequencer route (its loopback forwarder to
     3040) has a LEZ transaction in, None while the sequencer has not included it.
@@ -1507,6 +1592,88 @@ def wait_lez_view(role: str, restored: bool, timeout: int = 120) -> None:
                   f"{'unreadable' if restored else 'readable'} after {timeout}s")
 
 
+# Taker states that can only follow an observed maker lock.
+TAKER_SAW_MAKER_LOCK = {"both_legs_locked", "claim_available", "claim_in_progress", "completed"}
+# A refund request the Node may answer this way for a moment: its observer moved
+# the swap between the view and the request, or its recovery checks wait for the
+# next sweep.
+REFUND_NOT_YET = {"progress_generation_conflict", "taker_action_conflict", "taker_action_execution_unavailable"}
+
+
+def assert_maker_lock_unobserved(view: dict, when: str, required_confirmations: int | None) -> None:
+    """The Taker's view lists no maker lock it could rely on, and its state is
+    one that comes before the second lock. A LEZ lock has no confirmations to
+    count (they stay 0), so with `required_confirmations` None any maker_lock
+    effect fails; a Bitcoin one fails once it has the agreement's depth."""
+    if view["state"] in TAKER_SAW_MAKER_LOCK:
+        raise Failure(f"the Taker was at {view['state']} {when}: it had observed the Maker's lock")
+    for effect in view.get("effects") or []:
+        if effect.get("kind") != "maker_lock":
+            continue
+        confirmations = int(effect.get("confirmations") or 0)
+        if required_confirmations is None or confirmations >= required_confirmations:
+            raise Failure(f"the Taker's view records the Maker's lock {str(effect.get('transaction_id'))[:12]} "
+                          f"({confirmations} confirmations) {when}")
+
+
+def admit_refund_unobserved(swap_id: str, stamp: str, required_confirmations: int | None) -> dict:
+    """Asks for the Taker's refund until the Node admits it, asserting the
+    Taker had not observed the Maker's lock when it asked and right after the
+    admission. Bounded by ten of the Taker observer's sweeps, at least 60 s."""
+    sweep = profile_seconds(timing_profile(), "LEZ_TAKER_OBSERVER_SWEEP_SECONDS", 15)
+    wait = Wait(f"the Taker to admit the refund of {swap_id[:12]} with the Maker's lock unobserved",
+                max(60, 10 * sweep))
+    while wait.running():
+        view = taker_view(swap_id)
+        assert_maker_lock_unobserved(view, "when the refund was asked for", required_confirmations)
+        reply = rpc("taker", "taker_swap_refund_v1", {
+            "schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+            "swap_id": swap_id, "expected_generation": view["progress_generation"]})
+        if "result" in reply:
+            admitted = taker_view(swap_id)
+            assert_maker_lock_unobserved(admitted, "right after the refund was admitted", required_confirmations)
+            log(f"  refund admitted at generation {view['progress_generation']} ({view['state']} → "
+                f"{admitted['state']}); the Taker's view lists no maker lock it could rely on")
+            return {"asked_in_state": view["state"], "admitted_state": admitted["state"],
+                    "generation": view["progress_generation"]}
+        category = (reply["error"].get("data") or {}).get("category")
+        if category not in REFUND_NOT_YET:
+            raise Failure(f"the Taker did not admit the refund with the Maker's lock unobserved: "
+                          f"{json.dumps(reply['error'])[:200]}")
+        wait.note(category, f"refund not yet admitted ({category}); taker {view['state']}")
+        time.sleep(3)
+    raise wait.failure()
+
+
+def refund_maker_leg(swap_id: str, stamp: str, mine_every: int = 0) -> str:
+    """The Maker's own leg, refunded as its operator does once the agreement's
+    earlier refund time has passed (maker-refund): queued, then followed to a
+    refunded phase. Its LEZ refund asserts the claim's absence over the whole
+    discovery window, so the wait is the profile's window in blocks at 3 s each
+    plus ten minutes, as in maker-refund."""
+    profile = timing_profile()
+    terms = maker_view(swap_id).get("terms") or taker_view(swap_id)["terms"]
+    wait_until(int(terms["earlier_refund_latest_unix_seconds"]) + 30, "for the Maker's refund time")
+    if maker_view(swap_id).get("schedule_state") != "terminal":
+        try:
+            result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-maker-refund-{stamp}")
+            log(f"  Maker refund queued: {json.dumps(result)[:160]}")
+        except Failure as error:
+            if "conflicts with durable state" not in str(error):
+                raise
+            log("  the Maker's refund request is already recorded; continuing")
+    wait = Wait("the Maker to refund its own leg", 3 * int(profile["LEZ_LEZ_DISCOVERY_MAX_BLOCKS"]) + 600)
+    while wait.running():
+        phase = maker_phase(swap_id)
+        if phase in {"maker_leg_refunded", "refunded"}:
+            return phase
+        wait.note(phase, f"maker {phase}")
+        if mine_every:
+            mine(1)
+        time.sleep(mine_every or 5)
+    raise wait.failure()
+
+
 def scenario_refund_admitted_forward(stamp: str) -> dict:
     """The forward mirror of scenario_refund_admitted_then_maker_lock: here the
     Taker locks Bitcoin first and the second lock, the one the observer has to
@@ -1514,16 +1681,21 @@ def scenario_refund_admitted_forward(stamp: str) -> dict:
 
     The Maker locks on time and its lock finalizes on time; only the Taker's view
     of LEZ is cut, so the Taker reaches its cutoff having observed no maker lock,
-    routes to recovery and admits a refund. Restoring the view then presents the
-    observer with exactly the reported condition — an admitted refund and a
-    canonical, timely, unprojected maker lock — and it must finish the swap on
-    its own."""
+    routes to recovery and admits a refund. That it had not observed the lock is
+    asserted on its view when the refund is asked for and right after it is
+    admitted (admit_refund_unobserved: no maker_lock effect, a state before the
+    second lock); a Node that will not admit the refund without LEZ fails the
+    scenario. Restoring the view then presents the observer with exactly the
+    reported condition — an admitted refund and a canonical, timely, unprojected
+    maker lock — and it must finish the swap on its own. The Maker then refunds
+    its LEZ, and both parties' balances on both chains must be what they were
+    before the take, less the Taker's two Bitcoin fees (assert_settlement)."""
     require_fast_profile()
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     terms = taker_view(swap_id)["terms"]
     cutoff = int(terms["maker_second_lock_cutoff_unix_seconds"])
-    before = node_balances("taker")
+    before = party_balances()
     # Lock first, then blind: the Taker's own Bitcoin lock is planned through its
     # sidecar, which reads LEZ.
     taker_lock = lock(swap_id)
@@ -1536,22 +1708,9 @@ def scenario_refund_admitted_forward(stamp: str) -> dict:
         maker_lock = wait_maker_past_lock(swap_id, timeout=max(120, cutoff - int(time.time()) - 60))
         log(f"  the Maker's LEZ lock {maker_lock[:12]} is in, {cutoff - int(time.time())}s before "
             "the cutoff, and the Taker cannot see it")
-        wait_until(cutoff + 30, "for the cutoff to pass with the Taker still blind to LEZ")
-        if taker_view(swap_id)["state"] == "completed":
-            raise Failure("the Taker completed the swap; its LEZ view was not cut")
-        reply = rpc("taker", "taker_swap_refund_v1", {
-            "schema_version": 1, "request_id": f"e2e-refund-{stamp}",
-            "swap_id": swap_id, "expected_generation": taker_view(swap_id)["progress_generation"]})
-        if "result" not in reply:
-            # The expected way for this scenario to be impossible rather than failing: the
-            # Taker's cutoff is a LEZ clock comparison, so a Taker that cannot read LEZ may
-            # be unable to conclude the cutoff has passed and will refuse the refund. That is
-            # an answer about the mechanism, not a defect in the Node — record it and drop
-            # this scenario rather than trying to force the admission.
-            raise Failure(
-                f"refund admission failed while the Taker was blind to LEZ: "
-                f"{json.dumps(reply.get('error'))[:200]}")
-        log(f"  refund admitted at rev {taker_view(swap_id)['progress_generation']} (maker lock unobserved)")
+        wait_until(cutoff + 30, "for the cutoff to pass with the Taker still blind to LEZ",
+                   lambda: f"taker {taker_view(swap_id)['state']} | maker {maker_phase(swap_id)}")
+        admission = admit_refund_unobserved(swap_id, stamp, required_confirmations=None)
     finally:
         restore_lez_view("taker")
     wait_lez_view("taker", restored=True)
@@ -1573,10 +1732,11 @@ def scenario_refund_admitted_forward(stamp: str) -> dict:
         time.sleep(5)
     else:
         raise wait.failure()
-    after = node_balances("taker")
-    log(f"  observer recovered the swap unaided; Taker balances {before} → {after}")
-    return {"swap_id": swap_id, "taker_lock_txid": taker_lock, "cutoff": cutoff,
-            "taker_balance_before": before, "taker_balance_after": after}
+    log("  observer recovered the swap unaided; the Maker refunds its LEZ lock")
+    maker_phase_end = refund_maker_leg(swap_id, stamp)
+    settlement = assert_settlement(before, "refunded", "both legs refunded")
+    return {"swap_id": swap_id, "taker_lock_txid": taker_lock, "maker_lock": maker_lock, "cutoff": cutoff,
+            "refund_admission": admission, "maker_terminal_phase": maker_phase_end, **settlement}
 
 
 def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
@@ -1595,16 +1755,22 @@ def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
     Taker's own view of LEZ is cut instead (see scenario_refund_admitted_forward).
     The recovery is left entirely to the Node observer — the harness never drives
     the actor by hand — so a pass is proof the patched observer completes it
-    unaided."""
+    unaided. Reversed, the Taker may see the held lock in the mempool, so what is
+    asserted at the admission is that it holds no maker lock with the agreement's
+    confirmations and is before the second lock; a lock whose block's median time
+    is past the cutoff (the miner was stopped too late for the case) is not the
+    case this scenario is about and ends the try as NotExercised. Both parties'
+    balances on both chains are compared once the Maker has refunded too."""
     if not REVERSE:
         return scenario_refund_admitted_forward(stamp)
-    require_fast_profile()
+    profile = require_fast_profile()
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     terms = taker_view(swap_id)["terms"]
     cutoff = int(terms["maker_second_lock_cutoff_unix_seconds"])
     opens = int(terms["later_refund_earliest_unix_seconds"])
-    before = node_balances("taker")
+    required = int(terms.get("required_bitcoin_confirmations") or 1)
+    before = party_balances()
     # Stop the miner, not the Maker: the Maker broadcasts its Bitcoin lock on
     # time (once the Taker's LEZ lock finalizes), but held out of a block it
     # stays unconfirmed, so the Taker never observes a maker lock and routes to
@@ -1618,23 +1784,22 @@ def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
         lock(swap_id)
         maker_lock = wait_mempool_transaction(timeout=max(60, cutoff - int(time.time()) - 30))
         log(f"  Maker's Bitcoin lock {maker_lock[:12]} is broadcast (in mempool), unconfirmed")
-        wait_until(cutoff + 30, "for the cutoff to pass with the maker lock still unconfirmed")
-        reply = rpc("taker", "taker_swap_refund_v1", {
-            "schema_version": 1, "request_id": f"e2e-refund-{stamp}",
-            "swap_id": swap_id, "expected_generation": taker_view(swap_id)["progress_generation"]})
-        if "result" not in reply:
-            raise Failure(f"refund admission failed: {json.dumps(reply.get('error'))[:200]}")
-        log(f"  refund admitted at rev {taker_view(swap_id)['progress_generation']} (maker lock still unconfirmed)")
+        wait_until(cutoff + 30, "for the cutoff to pass with the maker lock still unconfirmed",
+                   lambda: f"taker {taker_view(swap_id)['state']} | maker {maker_phase(swap_id)}")
+        admission = admit_refund_unobserved(swap_id, stamp, required_confirmations=required)
         [block_hash] = bitcoin("generatetoaddress", "1", MINER_ADDRESS)
         blk = bitcoin("getblock", block_hash, "1")
         if maker_lock not in blk["tx"]:
             raise Failure(f"block {block_hash[:12]} did not include the maker lock {maker_lock[:12]}")
-        by_median = "timely" if int(blk["mediantime"]) <= cutoff else "late"
-        log(f"  maker lock confirmed; block median {blk['mediantime']} vs cutoff {cutoff} ({by_median} by median)")
-        mine(int(require_fast_profile()["LEZ_BTC_REFUND_CSV_BLOCKS"]) + 1)
+        if int(blk["mediantime"]) > cutoff:
+            raise NotExercised(f"the maker lock confirmed with block median {blk['mediantime']}, past the cutoff "
+                               f"{cutoff}: late by median time, not the timely-but-unobserved lock this tests")
+        log(f"  maker lock confirmed; block median {blk['mediantime']} vs cutoff {cutoff} (timely by median)")
+        mine(int(profile["LEZ_BTC_REFUND_CSV_BLOCKS"]) + 1)
         # Hand off to the Node observer alone. Do NOT drive the actor from here;
         # only wait (mining to advance regtest finality) for it to reach refunded.
-        wait_until(opens + 5, "for the Taker's LEZ refund window to open")
+        wait_until(opens + 5, "for the Taker's LEZ refund window to open",
+                   lambda: f"taker {taker_view(swap_id)['state']} | maker {maker_phase(swap_id)}")
         wait = Wait(f"the Taker's observer to carry the admitted refund of {swap_id[:12]} to refunded", 1800)
         while wait.running():
             st = taker_view(swap_id)["state"]
@@ -1647,13 +1812,14 @@ def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
             time.sleep(5)
         else:
             raise wait.failure()
-        after = node_balances("taker")
-        log(f"  observer recovered the swap unaided; Taker balances {before} → {after}")
+        log("  observer recovered the swap unaided; the Maker refunds its Bitcoin lock")
     finally:
         if miner_down:
             docker("start", MINER)
-    return {"swap_id": swap_id, "maker_lock_txid": maker_lock, "cutoff": cutoff,
-            "taker_balance_before": before, "taker_balance_after": after}
+    maker_phase_end = refund_maker_leg(swap_id, stamp, mine_every=5)
+    settlement = assert_settlement(before, "refunded", "both legs refunded")
+    return {"swap_id": swap_id, "maker_lock_txid": maker_lock, "cutoff": cutoff, "median_time": int(blk["mediantime"]),
+            "refund_admission": admission, "maker_terminal_phase": maker_phase_end, **settlement}
 
 
 def taker_swap_directory(swap_id: str) -> str:
@@ -3577,9 +3743,12 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
     refund time, the Taker's refund is admitted, then the funding is mined; the
     Taker refunds LEZ and the Maker its Zcash at the height. Selling ZEC: the
     Taker's LEZ view is cut before the Maker locks LEZ; at the refund time the
-    refund is asked for blind (`blind_admission` says whether the Node admitted
-    it without seeing LEZ), the view comes back, the Maker refunds LEZ and the
-    Taker its Zcash."""
+    refund is asked for blind and must be admitted (admit_refund_unobserved: the
+    Taker's view holds no maker lock and is before the second lock when it asks
+    and right after; a Node that will not admit it without LEZ fails the
+    scenario, where it used to pass with blind_admission false; every recorded
+    run admitted it), the view comes back, the Maker refunds LEZ and the Taker
+    its Zcash; both parties' LEZ accounts end where they started, to the unit."""
     corridor = zec_provision(profile=ZEC_REFUND_PROFILE)
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -3606,9 +3775,11 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
         result = zec_maker_refund_tail(swap_id, stamp, config, corridor, funding)
         return {**result, "refund_admitted_before_maker_lock": True}
     log("  the Taker Node funds Zcash; the Taker's view of LEZ is cut before the Maker locks")
+    lez_accounts = {role: lez_owner_account(role) for role in ("maker", "taker")}
+    lez_before = {role: lez_account_balance(account) for role, account in lez_accounts.items()}
     zec_poll_until("the Taker's Zcash funding in zebra's mempool", 900, lambda: bool(zec_mempool()))
     zec_cut_routes("taker", "indexer", "sequencer")
-    blind_admission = False
+    admission = None
     try:
         wait_lez_view("taker", restored=False)
         zebra_mine(2, "the Taker's funding to the pre-reveal depth")
@@ -3620,14 +3791,13 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
         log(f"  the Maker locked LEZ ({maker}); the Taker actor is at {zec_actor_phase(config)}, blind to it")
         if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
             raise Failure(f"the Taker actor reached {zec_actor_phase(config)} although its LEZ view was cut")
-        wait_until(opens + 15, "for the agreement's LEZ refund time with the Taker blind to the Maker's lock")
-        reply = rpc("taker", "taker_swap_refund_v1", {
-            "schema_version": 1, "request_id": f"e2e-refund-{stamp}",
-            "swap_id": swap_id, "expected_generation": taker_view(swap_id)["progress_generation"]})
-        blind_admission = "result" in reply
-        log("  refund admitted while blind" if blind_admission else
-            f"  BLIND-REFUND-UNAVAILABLE: the Node did not admit the refund without LEZ: "
-            f"{json.dumps(reply.get('error'))[:200]}")
+        wait_until(opens + 15, "for the agreement's LEZ refund time with the Taker blind to the Maker's lock",
+                   lambda: f"taker actor {zec_actor_phase(config)} | maker {maker_phase(swap_id)}")
+        if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
+            raise Failure(f"the Taker actor reached {zec_actor_phase(config)} although its LEZ view was cut")
+        admission = admit_refund_unobserved(swap_id, stamp, required_confirmations=None)
+        # Its replays carry the generation it was admitted at (zec_refund_until_terminal).
+        ZEC_REFUND_REQUESTS[(swap_id, f"e2e-refund-{stamp}")] = admission["generation"]
     finally:
         zec_restore_routes("taker", "indexer", "sequencer")
     wait_lez_view("taker", restored=True)
@@ -3652,8 +3822,13 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
     log(f"  Taker's Zcash refund {refund_tx[0][:12]} in zebra block {refund_tx[1]}; Taker {taker['state']}, Maker {maker_terminal}")
     if maker_terminal not in {"refunded", "maker_leg_refunded", "taker_leg_refunded"}:
         raise Failure(f"the Maker ended in {maker_terminal}, not a refunded phase")
+    lez_after = {role: lez_account_balance(account) for role, account in lez_accounts.items()}
+    log(f"  LEZ accounts {lez_before} → {lez_after}")
+    if lez_after != lez_before:
+        raise Failure(f"the LEZ accounts did not end where they started after both refunds: {lez_before} → {lez_after}")
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
-            "blind_admission": blind_admission, "maker_terminal_phase": maker_terminal,
+            "blind_admission": True, "refund_admission": admission, "lez_balances_before": lez_before,
+            "lez_balances_after": lez_after, "maker_terminal_phase": maker_terminal,
             "taker_terminal_state": taker["state"],
             "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]}}
 

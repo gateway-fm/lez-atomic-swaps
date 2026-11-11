@@ -222,5 +222,96 @@ class OffchainCut(unittest.TestCase):
             self.assertEqual((after['chat'], after['delivery'], after['delivery_fds']), ('EACCES', 'EACCES', 0))
 
 
+def deltas(maker_btc, maker_lez, taker_btc, taker_lez):
+    return {'maker': {'btc_sat': maker_btc, 'lez_units': maker_lez},
+            'taker': {'btc_sat': taker_btc, 'lez_units': taker_lez}}
+
+
+class Settlement(unittest.TestCase):
+    """#103 items 10 and 14: both parties on both chains, against the outcome."""
+    LOT = {'foreign_units': 1_000_000, 'lez_units': 1_000}
+
+    def problems(self, d, outcome, reverse):
+        return e2e.settlement_problems(d, outcome, reverse, **self.LOT)
+
+    def test_a_refund_returns_the_lock_less_the_lockers_fees_only(self):
+        # forward the Taker locks Bitcoin: a lock and its refund cost it 4,100 sat (regression-m2-2026-11-11)
+        self.assertEqual(self.problems(deltas(0, 0, -4_100, 0), 'refunded', False), [])
+        self.assertEqual(self.problems(deltas(-4_100, 0, 0, 0), 'refunded', True), [])
+
+    def test_a_refund_that_did_not_come_back_is_a_loss(self):
+        problems = self.problems(deltas(0, 0, -1_004_100, 0), 'refunded', False)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('taker BTC -1004100 sat, expected +0 less at most 20000 sat of fees', problems[0])
+
+    def test_the_party_that_sent_no_bitcoin_must_not_move_a_satoshi(self):
+        self.assertTrue(self.problems(deltas(-1, 0, -4_100, 0), 'refunded', False))
+
+    def test_lez_moves_to_the_unit(self):
+        self.assertTrue(self.problems(deltas(0, -1, -4_100, 0), 'refunded', False))
+
+    def test_a_completed_swap_trades_the_lots(self):
+        # forward: the Taker pays Bitcoin and receives LEZ; the Maker claims the Bitcoin less its claim fee
+        self.assertEqual(self.problems(deltas(1_000_000 - 1_500, -1_000, -1_000_000 - 2_000, 1_000),
+                                       'completed', False), [])
+        # reversed: the Taker pays LEZ and claims the Maker's Bitcoin
+        self.assertEqual(self.problems(deltas(-1_000_000 - 2_000, 1_000, 1_000_000 - 1_500, -1_000),
+                                       'completed', True), [])
+
+    def test_no_party_gains_more_than_the_lot(self):
+        self.assertTrue(self.problems(deltas(1_000_001, -1_000, -1_000_002, 1_000), 'completed', False))
+
+    def test_a_party_holding_both_lots_fits_no_outcome(self):
+        # reversed: the Maker refunded its Bitcoin and also took the Taker's LEZ
+        doubly = deltas(-4_000, 1_000, 0, -1_000)
+        self.assertIsNone(e2e.classify_settlement(doubly, True, **self.LOT))
+        self.assertEqual(e2e.classify_settlement(deltas(-4_000, 0, 0, 0), True, **self.LOT), 'refunded')
+        self.assertEqual(e2e.classify_settlement(deltas(-1_002_000, 1_000, 998_500, -1_000), True, **self.LOT),
+                         'completed')
+
+    def test_deltas_are_after_minus_before(self):
+        before = {'maker': {'btc_sat': 10, 'lez_units': 5}, 'taker': {'btc_sat': 7, 'lez_units': 1}}
+        after = {'maker': {'btc_sat': 4, 'lez_units': 5}, 'taker': {'btc_sat': 7, 'lez_units': 3}}
+        self.assertEqual(e2e.settlement_deltas(before, after), deltas(-6, 0, 0, 2))
+
+    def test_a_wallet_counts_pending_and_immature_coins_too(self):
+        balances = {'mine': {'trusted': 1.5, 'untrusted_pending': 0.00000123, 'immature': 0.25}}
+        with patch.object(e2e, 'bitcoin', lambda *args: balances):
+            self.assertEqual(e2e.wallet_total_sat('lez-maker'), 175_000_123)
+
+
+class RefundAdmission(unittest.TestCase):
+    """#103 item 10: what the Taker had seen when its refund was admitted."""
+    def test_a_lez_maker_lock_in_the_view_is_observed(self):
+        view = {'state': 'awaiting_second_lock', 'effects': [{'kind': 'taker_lock', 'chain': 'Bitcoin'},
+                                                             {'kind': 'maker_lock', 'chain': 'Lez',
+                                                              'transaction_id': 'ab' * 32, 'confirmations': 0}]}
+        with self.assertRaises(e2e.Failure):
+            e2e.assert_maker_lock_unobserved(view, 'now', None)
+
+    def test_an_unconfirmed_bitcoin_maker_lock_is_not_yet_a_lock_to_rely_on(self):
+        view = {'state': 'awaiting_second_lock', 'effects': [{'kind': 'maker_lock', 'chain': 'Bitcoin',
+                                                              'transaction_id': 'ab' * 32, 'confirmations': 0}]}
+        e2e.assert_maker_lock_unobserved(view, 'now', 1)
+        view['effects'][0]['confirmations'] = 1
+        with self.assertRaises(e2e.Failure):
+            e2e.assert_maker_lock_unobserved(view, 'now', 1)
+
+    def test_a_state_after_the_second_lock_is_observed(self):
+        for state in ('both_legs_locked', 'claim_available'):
+            with self.assertRaises(e2e.Failure):
+                e2e.assert_maker_lock_unobserved({'state': state}, 'now', None)
+        e2e.assert_maker_lock_unobserved({'state': 'awaiting_second_lock'}, 'now', None)
+
+    def test_a_refund_the_node_will_not_admit_blind_fails(self):
+        views = iter([{'state': 'awaiting_second_lock', 'progress_generation': 4}] * 3)
+        reply = {'error': {'code': -32010, 'data': {'category': 'lez_unavailable'}}}
+        with patch.object(e2e, 'taker_view', lambda swap: next(views)), \
+                patch.object(e2e, 'rpc', lambda *a, **k: reply), patch.object(e2e, 'timing_profile', dict):
+            with self.assertRaises(e2e.Failure) as refused:
+                e2e.admit_refund_unobserved('ab' * 32, '1', None)
+        self.assertIn('did not admit the refund', str(refused.exception))
+
+
 if __name__ == '__main__':
     unittest.main()
