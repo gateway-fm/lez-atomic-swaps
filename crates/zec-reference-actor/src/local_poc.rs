@@ -446,7 +446,8 @@ pub async fn transfer_local_v0_2_regtest(
     )?;
     transfer_between_keys(
         &rpc,
-        &FundingChain::for_profile(ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1))?,
+        // The Regtest fixtures run Zebra 7 with NU7 from height 1.
+        &FundingChain::for_profile(ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV2))?,
         from_key_file,
         to_key_file,
         value_zatoshis,
@@ -1639,7 +1640,7 @@ where
         .await
         .context("Zebra identity unavailable")?;
     let network_name = match identity.network() {
-        NetworkType::Regtest => "the deterministic Regtest NU6.2 fixture",
+        NetworkType::Regtest => "the deterministic Regtest fixture on the profile's branch",
         NetworkType::Test | NetworkType::Main => "Zcash Testnet on the profile's branch",
     };
     ensure!(
