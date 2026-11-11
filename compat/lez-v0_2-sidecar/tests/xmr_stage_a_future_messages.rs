@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{fs, os::unix::fs::PermissionsExt as _};
 
 use async_trait::async_trait;
@@ -18,14 +18,14 @@ use lez_v0_2_sidecar::{
     plan_m4_stage_a_future_messages, program_id_to_hex,
 };
 use nssa::{AccountId, PrivateKey, PublicKey, Signature, program::Program};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use tempfile::TempDir;
 
 const PROGRAM: [u32; 8] = [0x1020_3040; 8];
 const TRANSFER_PROGRAM: [u32; 8] = [0x5060_7080; 8];
 const SWAP_ID: [u8; 32] = [0x51; 32];
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn private_directory() -> TempDir {
     let directory = TempDir::new().expect("temporary directory");
     fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
@@ -209,9 +209,9 @@ async fn existing_tag15_prepare_and_complete_accept_the_planned_claim_hash_and_m
         authority: claim_authority,
         nonce: plan.nonces().claim(),
     });
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let state_directory = private_directory();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let planner = NativeEscrowPlanner::new_durable(
         Participant::Maker,
         maker_private,
@@ -222,7 +222,7 @@ async fn existing_tag15_prepare_and_complete_accept_the_planned_claim_hash_and_m
         state_directory.path(),
     )
     .expect("Maker planner");
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let planner = NativeEscrowPlanner::new(
         Participant::Maker,
         maker_private,
@@ -276,7 +276,7 @@ async fn existing_tag15_prepare_and_complete_accept_the_planned_claim_hash_and_m
         .expect("canonical completed transaction");
     assert_eq!(transaction.message(), plan.claim_message());
     assert_eq!(transaction.message().hash(), plan.claim_hash());
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         planner
             .validate_owned_submission(&completed.claim)

@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex as SyncMutex},
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -60,7 +60,7 @@ pub(crate) fn xmr_claim_partial_matches_terms(
     commitment == *terms.claim_partial_commitment.as_bytes()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::durable_reservation::{
     DurableReservationError, DurableReservationStore, ReservationKind,
 };
@@ -80,7 +80,7 @@ pub use generated_escrow_client::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum NativePrepareError {
     /// Owner-only durable reservation validation or persistence failed closed.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[error("durable native reservation failed: {0}")]
     DurableReservation(#[from] DurableReservationError),
     /// The request or runtime targets a different actor process.
@@ -426,7 +426,7 @@ pub struct NativeEscrowPlanner {
     authenticated_transfer_program_id: [u32; 8],
     expected_runtime: RuntimeDescriptor,
     nonce_source: Arc<dyn NonceSource>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     durable_store: Option<DurableReservationStore>,
     clock_reservation_lock: SyncMutex<()>,
     state: Mutex<PlannerState>,
@@ -450,7 +450,7 @@ impl fmt::Debug for NativeEscrowPlanner {
             .field("expected_runtime", &self.expected_runtime)
             .field(
                 "durable_store",
-                &if cfg!(target_os = "linux") {
+                &if cfg!(any(target_os = "linux", target_os = "macos")) {
                     "[REDACTED]"
                 } else {
                     "unavailable"
@@ -535,7 +535,7 @@ impl NativeEscrowPlanner {
             authenticated_transfer_program_id,
             expected_runtime,
             nonce_source,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             durable_store: None,
             state: Mutex::new(PlannerState::default()),
             clock_reservation_lock: SyncMutex::new(()),
@@ -552,7 +552,7 @@ impl NativeEscrowPlanner {
     ///
     /// Returns the same configuration errors as [`Self::new`] and rejects a
     /// symlinked, non-directory, foreign-owned, or non-`0700` state directory.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn new_durable<N, P>(
         role: Participant,
         signer_key: PrivateKey,
@@ -582,7 +582,7 @@ impl NativeEscrowPlanner {
     /// # Errors
     ///
     /// Returns the same errors as [`Self::new_durable`].
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn new_durable_with_signer<N, P>(
         role: Participant,
         signer: Arc<dyn MessageSigner>,
@@ -629,7 +629,7 @@ impl NativeEscrowPlanner {
         custody_account_sha256_before: Hex32,
     ) -> Result<PrepareCurrentProfileClockResult, NativePrepareError> {
         self.validate_current_profile_clock_request(request)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let _reservation_guard = self
                 .clock_reservation_lock
@@ -683,7 +683,7 @@ impl NativeEscrowPlanner {
                 Err(error) => Err(error.into()),
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = nonce;
             Err(NativePrepareError::InvalidTransactionBytes)
@@ -780,7 +780,7 @@ impl NativeEscrowPlanner {
     /// # Errors
     ///
     /// Rejects missing, changed, malformed, or cross-run durable state.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn validate_durable_current_profile_clock(
         &self,
         result: &PrepareCurrentProfileClockResult,
@@ -839,7 +839,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable(&request)? {
             state.supersessions = self.recover_supersessions(&request, &recovered)?;
             state.active = Some(ActivePrepare {
@@ -857,7 +857,7 @@ impl NativeEscrowPlanner {
             .checked_add(1)
             .ok_or(NativePrepareError::NonceOverflow)?;
         let result = self.plan_pair(&request, initialization_nonce, funding_nonce)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::NativeEscrow, &request, &result)
         {
@@ -948,7 +948,7 @@ impl NativeEscrowPlanner {
             &request,
             &result,
         )?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref() {
             let kind = ReservationKind::native_escrow_supersession(replan_index)
                 .ok_or(NativePrepareError::ReplanExhausted)?;
@@ -1019,7 +1019,7 @@ impl NativeEscrowPlanner {
 
     /// Adopts a lineage slot another process reserved first, when it answers
     /// the same supersession; the caller's context is echoed in the answer.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn adopt_reserved_supersession(
         &self,
         store: &DurableReservationStore,
@@ -1330,7 +1330,7 @@ impl NativeEscrowPlanner {
 
     /// Loads the durable lineage slots 1..k in order after the original pair
     /// was recovered; a slot present after an absent one is corrupt state.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_supersessions(
         &self,
         request: &PrepareNativeEscrowRequest,
@@ -1408,7 +1408,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_escrow_v3(request)? {
             state.active_xmr_escrow_v3 = Some(ActiveXmrEscrowPrepareV3 {
                 request: request.clone(),
@@ -1425,7 +1425,7 @@ impl NativeEscrowPlanner {
             .checked_add(1)
             .ok_or(NativePrepareError::NonceOverflow)?;
         let result = self.plan_xmr_escrow_v3_pair(request, initialization_nonce, funding_nonce)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::XmrNativeEscrowV3, request, &result)
         {
@@ -1471,7 +1471,7 @@ impl NativeEscrowPlanner {
                     &active.request,
                     &active.result,
                 )?;
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 if self.durable_store.is_some() {
                     let recovered = self
                         .recover_durable_xmr_claim_authorization_v3(request)?
@@ -1486,7 +1486,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_claim_authorization_v3(request)? {
             state.active_xmr_claim_authorization_v3 = Some(ActiveXmrClaimAuthorizationPrepareV3 {
                 request: request.clone(),
@@ -1497,7 +1497,7 @@ impl NativeEscrowPlanner {
 
         let authorization_nonce = self.xmr_claim_authorization_nonce(request)?;
         let result = self.plan_xmr_claim_authorization_v3(request, authorization_nonce)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(
                 ReservationKind::XmrNativeClaimAuthorizationV3,
@@ -1549,7 +1549,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_claim_v3(request)? {
             state.active_xmr_claim_v3 = Some(ActiveXmrClaimPrepareV3 {
                 request: request.clone(),
@@ -1566,7 +1566,7 @@ impl NativeEscrowPlanner {
             prepared_witnessed_from_message(request.context.request_id.clone(), &message)?,
         )?;
         self.validate_prepared_native_xmr_claim_v3(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::XmrNativeClaimV3, request, &result)
         {
@@ -1604,7 +1604,7 @@ impl NativeEscrowPlanner {
         request: &CompleteNativeXmrClaimV3Request,
     ) -> Result<CompleteNativeXmrClaimV3Result, NativePrepareError> {
         let mut state = self.state.lock().await;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if state.active_xmr_claim_v3.is_none()
             && let Some(recovered) = self.load_durable_xmr_claim_v3_for_completion(request)?
         {
@@ -1624,7 +1624,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_claim_v3_completion(&active, request)? {
             state.completed_xmr_claim_v3 = Some(ActiveXmrClaimCompletionV3 {
                 request: request.clone(),
@@ -1654,7 +1654,7 @@ impl NativeEscrowPlanner {
         let result =
             CompleteNativeXmrClaimV3Result::new(request.context.clone(), request.terms, prepared);
         self.validate_completed_native_xmr_claim_v3(&active, request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(
                 ReservationKind::XmrNativeClaimCompletionV3,
@@ -1707,10 +1707,10 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(NativePrepareError::InvalidTransactionBytes);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let recovered = self
                 .recover_durable_xmr_claim_v3(request)?
@@ -1760,10 +1760,10 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(NativePrepareError::InvalidTransactionBytes);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let recovered = self
                 .recover_durable_xmr_claim_v3_completion(&active, request)?
@@ -1804,7 +1804,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_refund_v3(request)? {
             state.active_xmr_refund_v3 = Some(ActiveXmrRefundPrepareV3 {
                 request: request.clone(),
@@ -1821,7 +1821,7 @@ impl NativeEscrowPlanner {
             prepared_witnessed_from_message(request.context.request_id.clone(), &message)?,
         )?;
         self.validate_prepared_native_xmr_refund_v3(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::XmrNativeRefundV3, request, &result)
         {
@@ -1859,7 +1859,7 @@ impl NativeEscrowPlanner {
         request: &CompleteNativeXmrRefundV3Request,
     ) -> Result<CompleteNativeXmrRefundV3Result, NativePrepareError> {
         let mut state = self.state.lock().await;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if state.active_xmr_refund_v3.is_none()
             && let Some(recovered) = self.load_durable_xmr_refund_v3_for_completion(request)?
         {
@@ -1879,7 +1879,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_refund_v3_completion(&active, request)? {
             state.completed_xmr_refund_v3 = Some(ActiveXmrRefundCompletionV3 {
                 request: request.clone(),
@@ -1909,7 +1909,7 @@ impl NativeEscrowPlanner {
         let result =
             CompleteNativeXmrRefundV3Result::new(request.context.clone(), request.terms, prepared);
         self.validate_completed_native_xmr_refund_v3(&active, request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(
                 ReservationKind::XmrNativeRefundCompletionV3,
@@ -1961,10 +1961,10 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(NativePrepareError::InvalidTransactionBytes);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let recovered = self
                 .recover_durable_xmr_refund_v3(request)?
@@ -2013,10 +2013,10 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         return Err(NativePrepareError::InvalidTransactionBytes);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let recovered = self
                 .recover_durable_xmr_refund_v3_completion(&active, request)?
@@ -2057,7 +2057,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_punish_v3(request)? {
             state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
                 request: request.clone(),
@@ -2076,7 +2076,7 @@ impl NativeEscrowPlanner {
             self.prepare_message(self.xmr_punish_v3_message(request, nonce)?)?,
         );
         self.validate_prepared_native_xmr_punish_v3(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::XmrNativePunishV3, request, &result)
         {
@@ -2129,7 +2129,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_witnessed_escrow(request)? {
             state.active_witnessed_escrow = Some(ActiveWitnessedEscrowPrepare {
                 request: request.clone(),
@@ -2146,7 +2146,7 @@ impl NativeEscrowPlanner {
             .checked_add(1)
             .ok_or(NativePrepareError::NonceOverflow)?;
         let result = self.plan_witnessed_pair(request, initialization_nonce, funding_nonce)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::WitnessedEscrow, request, &result)
         {
@@ -2195,7 +2195,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_witnessed_asset_escrow_v2(request)? {
             state.active_witnessed_asset_escrow_v2 = Some(ActiveWitnessedAssetEscrowV2 {
                 request: request.clone(),
@@ -2214,7 +2214,7 @@ impl NativeEscrowPlanner {
         let result =
             self.plan_witnessed_token_escrow_v2(request, initialization_nonce, funding_nonce)?;
         self.validate_prepared_witnessed_asset_escrow_v2(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) =
                 store.create(ReservationKind::WitnessedAssetEscrowV2, request, &result)
@@ -2259,7 +2259,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_witnessed_asset_claim_v2(request)? {
             state.active_witnessed_asset_claim_v2 = Some(ActiveWitnessedAssetClaimV2 {
                 request: request.clone(),
@@ -2276,7 +2276,7 @@ impl NativeEscrowPlanner {
             prepared_witnessed_from_message(request.context.request_id.clone(), &message)?,
         );
         self.validate_prepared_witnessed_asset_claim_v2(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) =
                 store.create(ReservationKind::WitnessedAssetClaimV2, request, &result)
@@ -2321,7 +2321,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_witnessed_asset_refund_v2(request)? {
             state.active_witnessed_asset_refund_v2 = Some(ActiveWitnessedAssetRefundV2 {
                 request: request.clone(),
@@ -2338,7 +2338,7 @@ impl NativeEscrowPlanner {
             prepared_from_transaction(&transaction)?,
         );
         self.validate_prepared_witnessed_asset_refund_v2(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) =
                 store.create(ReservationKind::WitnessedAssetRefundV2, request, &result)
@@ -2387,7 +2387,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_refund(request)? {
             state.active_refund = Some(ActiveRefundPrepare {
                 request: request.clone(),
@@ -2405,7 +2405,7 @@ impl NativeEscrowPlanner {
             prepared_from_transaction(&transaction)?,
         );
         self.validate_prepared_refund(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::NativeRefund, request, &result)
         {
@@ -2453,7 +2453,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_claim(request)? {
             state.claim_supersessions = self.recover_claim_supersessions(request, &recovered)?;
             state.active_claim = Some(ActiveClaimPrepare {
@@ -2475,7 +2475,7 @@ impl NativeEscrowPlanner {
             request.context.clone(),
             self.prepare_message(message)?,
         );
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::NativeClaim, request, &result)
         {
@@ -2531,7 +2531,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_witnessed_claim(request)? {
             state.active_witnessed_claim = Some(ActiveWitnessedClaimPrepare {
                 request: request.clone(),
@@ -2547,7 +2547,7 @@ impl NativeEscrowPlanner {
             prepared_witnessed_from_message(request.context.request_id.clone(), &message)?,
         );
         self.validate_prepared_witnessed_claim(request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(ReservationKind::WitnessedClaim, request, &result)
         {
@@ -2587,7 +2587,7 @@ impl NativeEscrowPlanner {
         request: &CompleteWitnessedClaimRequest,
     ) -> Result<CompleteWitnessedClaimResult, NativePrepareError> {
         let mut state = self.state.lock().await;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if state.active_witnessed_claim.is_none()
             && let Some(recovered) = self.load_durable_witnessed_claim_for_completion(request)?
         {
@@ -2607,7 +2607,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_witnessed_completion(&active, request)? {
             state.completed_witnessed_claim = Some(ActiveWitnessedClaimCompletion {
                 request: request.clone(),
@@ -2635,7 +2635,7 @@ impl NativeEscrowPlanner {
         let prepared = prepared_from_transaction(&PublicTransaction::new(message, witness))?;
         let result = CompleteWitnessedClaimResult::new(request.context.clone(), prepared);
         self.validate_completed_witnessed_claim(&active, request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) =
                 store.create(ReservationKind::WitnessedClaimCompletion, request, &result)
@@ -2670,7 +2670,7 @@ impl NativeEscrowPlanner {
         request: &CompleteWitnessedAssetClaimV2Request,
     ) -> Result<CompleteWitnessedAssetClaimV2Result, NativePrepareError> {
         let mut state = self.state.lock().await;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if state.active_witnessed_asset_claim_v2.is_none()
             && let Some(recovered) =
                 self.load_durable_witnessed_asset_claim_v2_for_completion(request)?
@@ -2695,7 +2695,7 @@ impl NativeEscrowPlanner {
             };
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) =
             self.recover_durable_witnessed_asset_claim_completion_v2(&active, request)?
         {
@@ -2730,7 +2730,7 @@ impl NativeEscrowPlanner {
             prepared,
         );
         self.validate_completed_witnessed_asset_claim_v2(&active, request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
             && let Err(error) = store.create(
                 ReservationKind::WitnessedAssetClaimCompletionV2,
@@ -3072,7 +3072,7 @@ impl NativeEscrowPlanner {
             claim,
         );
         self.validate_claim_supersession(&source, &current, &request, &result)?;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref() {
             let kind = ReservationKind::native_claim_supersession(replan_index)
                 .ok_or(NativePrepareError::ReplanExhausted)?;
@@ -3110,7 +3110,7 @@ impl NativeEscrowPlanner {
 
     /// Loads the durable claim lineage slots 1..k in order after the original
     /// claim was recovered; a slot after an absent one is corrupt state.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_claim_supersessions(
         &self,
         source: &PrepareRevealingClaimRequest,
@@ -3201,7 +3201,7 @@ impl NativeEscrowPlanner {
             .active_xmr_claim_authorization_v3
             .clone();
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let active = {
             let store = self
                 .durable_store
@@ -3224,7 +3224,7 @@ impl NativeEscrowPlanner {
             }
         };
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let Some(active) = active else {
             return Err(NativePrepareError::InvalidTransactionBytes);
         };
@@ -3275,7 +3275,7 @@ impl NativeEscrowPlanner {
                 return Err(NativePrepareError::InvalidTransactionBytes);
             }
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 let store = self
                     .durable_store
@@ -3306,7 +3306,7 @@ impl NativeEscrowPlanner {
                 return Err(NativePrepareError::InvalidTransactionBytes);
             }
 
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
         if let (Some(active), Some(completed)) = (
@@ -3329,7 +3329,7 @@ impl NativeEscrowPlanner {
             {
                 return Err(NativePrepareError::InvalidTransactionBytes);
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 self.validate_durable_owned_completed_native_xmr_refund_v3(
                     active,
@@ -3338,7 +3338,7 @@ impl NativeEscrowPlanner {
                 )?;
                 return Ok(OwnedSubmission::XmrRefund);
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
 
@@ -3356,7 +3356,7 @@ impl NativeEscrowPlanner {
             {
                 return Err(NativePrepareError::InvalidTransactionBytes);
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             {
                 let store = self
                     .durable_store
@@ -3379,12 +3379,12 @@ impl NativeEscrowPlanner {
                 self.validate_prepared_native_xmr_punish_v3(&stored_request, &stored_result)?;
                 return Ok(OwnedSubmission::XmrPunish);
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
         drop(state);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let store = self
                 .durable_store
@@ -3540,9 +3540,9 @@ impl NativeEscrowPlanner {
                 &completed.request,
                 &completed.result,
             )?;
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             self.validate_durable_owned_completed_native_xmr_claim_v3(active, completed, prepared)?;
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             return Err(NativePrepareError::InvalidTransactionBytes);
             return Ok(true);
         }
@@ -3556,18 +3556,18 @@ impl NativeEscrowPlanner {
                 &completed.request,
                 &completed.result,
             )?;
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             self.validate_durable_owned_completed_native_xmr_refund_v3(
                 active, completed, prepared,
             )?;
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             return Err(NativePrepareError::InvalidTransactionBytes);
             return Ok(true);
         }
         Ok(false)
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable(
         &self,
         request: &PrepareNativeEscrowRequest,
@@ -3606,7 +3606,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_escrow_v3(
         &self,
         request: &PrepareNativeXmrEscrowV3Request,
@@ -3641,7 +3641,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_claim_authorization_v3(
         &self,
         request: &PrepareNativeXmrClaimAuthorizationV3Request,
@@ -3663,7 +3663,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_claim_v3(
         &self,
         request: &PrepareNativeXmrClaimV3Request,
@@ -3685,7 +3685,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn load_durable_xmr_claim_v3_for_completion(
         &self,
         completion: &CompleteNativeXmrClaimV3Request,
@@ -3716,7 +3716,7 @@ impl NativeEscrowPlanner {
         }))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_claim_v3_completion(
         &self,
         active: &ActiveXmrClaimPrepareV3,
@@ -3740,7 +3740,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_refund_v3(
         &self,
         request: &PrepareNativeXmrRefundV3Request,
@@ -3762,7 +3762,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn load_durable_xmr_refund_v3_for_completion(
         &self,
         completion: &CompleteNativeXmrRefundV3Request,
@@ -3793,7 +3793,7 @@ impl NativeEscrowPlanner {
         }))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_refund_v3_completion(
         &self,
         active: &ActiveXmrRefundPrepareV3,
@@ -3817,7 +3817,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_punish_v3(
         &self,
         request: &PrepareNativeXmrPunishV3Request,
@@ -3839,7 +3839,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_witnessed_escrow(
         &self,
         request: &PrepareWitnessedEscrowRequest,
@@ -3877,7 +3877,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_witnessed_asset_escrow_v2(
         &self,
         request: &PrepareWitnessedAssetEscrowV2Request,
@@ -3899,7 +3899,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_witnessed_asset_claim_v2(
         &self,
         request: &PrepareWitnessedAssetClaimV2Request,
@@ -3921,7 +3921,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn load_durable_witnessed_asset_claim_v2_for_completion(
         &self,
         completion: &CompleteWitnessedAssetClaimV2Request,
@@ -3952,7 +3952,7 @@ impl NativeEscrowPlanner {
         }))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_witnessed_asset_claim_completion_v2(
         &self,
         active: &ActiveWitnessedAssetClaimV2,
@@ -3976,7 +3976,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_witnessed_asset_refund_v2(
         &self,
         request: &PrepareWitnessedAssetRefundV2Request,
@@ -3998,7 +3998,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_refund(
         &self,
         request: &PrepareNativeRefundRequest,
@@ -4020,7 +4020,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_claim(
         &self,
         request: &PrepareRevealingClaimRequest,
@@ -4043,7 +4043,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_witnessed_claim(
         &self,
         request: &PrepareWitnessedClaimRequest,
@@ -4065,7 +4065,7 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn load_durable_witnessed_claim_for_completion(
         &self,
         completion: &CompleteWitnessedClaimRequest,
@@ -4095,7 +4095,7 @@ impl NativeEscrowPlanner {
         }))
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_witnessed_completion(
         &self,
         active: &ActiveWitnessedClaimPrepare,
@@ -4318,7 +4318,7 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn validate_durable_owned_completed_native_xmr_claim_v3(
         &self,
         active: &ActiveXmrClaimPrepareV3,
@@ -4436,7 +4436,7 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn validate_durable_owned_completed_native_xmr_refund_v3(
         &self,
         active: &ActiveXmrRefundPrepareV3,
@@ -4974,7 +4974,7 @@ impl NativeEscrowPlanner {
         &self,
         request: &PrepareNativeXmrClaimAuthorizationV3Request,
     ) -> Result<u128, NativePrepareError> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let store = self
                 .durable_store
@@ -5003,7 +5003,7 @@ impl NativeEscrowPlanner {
                 .ok_or(NativePrepareError::NonceOverflow)
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = request;
             Err(NativePrepareError::InvalidTransactionBytes)
@@ -5099,13 +5099,13 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::WrongRole);
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = target;
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let store = self
                 .durable_store
@@ -5180,7 +5180,7 @@ impl NativeEscrowPlanner {
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn validate_owned_xmr_claim_v3(
         &self,
         store: &DurableReservationStore,
@@ -5219,7 +5219,7 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn validate_owned_xmr_refund_v3(
         &self,
         store: &DurableReservationStore,

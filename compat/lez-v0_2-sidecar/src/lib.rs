@@ -2,13 +2,13 @@
 
 #![forbid(unsafe_code)]
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub mod actor_identity;
 mod bridge_runtime;
 mod bridge_server;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod durable_reservation;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod effect_submission;
 mod finalized_asset_observation;
 mod finalized_claim_observation;
@@ -18,7 +18,7 @@ pub mod heartbeat;
 mod m4_finalized_facts;
 #[cfg(target_os = "linux")]
 mod m4_stage_a_composer;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod m4_tag13_handoff;
 pub mod message_signer;
 mod native_prepare;
@@ -27,11 +27,11 @@ mod server;
 mod vault_claim_prepare;
 mod xmr_stage_a_future_messages;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use durable_reservation::{
     DurableReservationError, StateDirectoryLease, StateDirectoryLeaseError,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use effect_submission::{
     JournaledVaultClaimEffect, PreparedVaultClaimEffect, SequencerSendFailure, SequencerSubmitApi,
     VaultClaimActorBinding, VaultClaimBeforeState, VaultClaimEffectIdentity,
@@ -62,7 +62,7 @@ pub use m4_stage_a_composer::{
     ActualLocalM4StageAConfig, M4_STAGE_A_DEPLOYMENT_RESIDUAL, M4StageAComposeReceipt,
     M4StageAParameters, compose_m4_stage_a_actual_local,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use m4_tag13_handoff::{
     M4_TAG13_MAKER_RUNTIME_FILE, M4_TAG13_RECEIPT_FILE, M4_TAG13_TAKER_RUNTIME_FILE,
     M4_TAG13_TERMS_FILE, M4Tag13BridgeInputs, M4Tag13Expectation, M4Tag13HandoffError,
