@@ -114,10 +114,13 @@ the earlier build, 0.1.0, declared `dependencies: []`.)
     released binary: the builder's lm 0.1.0 has `metadata|methods|events` but
     no `verify`, so `lm verify --did` was not run (S49), and there is no DID to
     pin anyway. Our core packages carry only the build host's variant; only
-    blockchain_module 0.2.4 is multi-platform. Nothing was run on arm64 for
-    this note; the Compose stack has since been built and smoke-tested on an
-    Apple-silicon Mac, with `linux-arm64` packages in Docker Desktop
-    (`docs/evidence/macos-arm64-smoke-2026-11-11/`).
+    blockchain_module 0.2.4 is multi-platform. Every
+    observation in this note was made on a linux-amd64 host; none of them was
+    repeated on arm64. A different thing has run on arm64 since: the Compose
+    stack, built and smoke-tested on an Apple-silicon Mac, where Docker
+    Desktop runs the `linux-arm64` variant of the packages
+    (`docs/evidence/macos-arm64-smoke-2026-11-11/`). That run installed
+    nothing with `logosctl` and repeats none of the steps above.
 
 ## Proposal
 
