@@ -1,8 +1,9 @@
 # Notes for the open issues, 2026-11-11
 
 What PR #120 changed for each open issue Logos filed, with the commits and how
-each was checked. These are drafts for the issues; nothing here has been
-posted. Commit ids are those of `feat/split-lez-node-route`.
+each was checked. These were drafts for the issues. On 2026-11-11 each
+issue got a comment that says what was run since (#103, #112, #113, #114,
+#115); #106 is closed. Commit ids are those of `feat/split-lez-node-route`.
 
 ## #103, items 1 and 16: latent paths in `swap-core`
 
@@ -99,12 +100,13 @@ proxy for the Nodes, the chat gateway and `desk-sockets.py` are gone.
 where the result differs from it.
 
 1. **Bitcoin as a module (`logos-bitcoind-module`).** Not in PR #120 and not
-   planned for M2. Bitcoin Core stays bring-your-own, as this issue first
-   scoped it; the assessment is in `docs/submission-115.md` (source reading
-   only, no spike was run).
+   planned for M2. Built and run on 2026-11-11: the module as built cannot
+   serve the Nodes (no wallet, no `txindex` setting, an RPC port that refuses
+   four of the adapter's methods); issue #129 and the reply posted on #115.
 2. **Zebra as a module (`logos-zebrad-module`).** Not in PR #120 and not
-   planned for M2: there is no released package of it, and the stack's Zebra
-   is a plain container (Zebra 7.0.0, NU7).
+   planned for M2. Built and run on 2026-11-11: the node fits (Zebra 7.0.0,
+   NU7 regtest, every method we call); there is no released package and no
+   Linux arm64 build; issue #128 and the reply posted on #115.
 3. **macOS.** The role packages are Linux only today: `lez-swap-store` keeps
    its Linux-only hardening. On a Mac the stack runs in Docker, with each
    desk inside its role's Basecamp container and reached over VNC; native
