@@ -55,6 +55,34 @@ lane_wallets() {
   esac
 }
 
+# A release bundle (scripts/package-dist.sh) carries release.env beside
+# compose.yaml, naming the published images, and no images/ build contexts.
+# Every script that runs the stack sources this file, so the bundle's names are
+# taken here wherever the environment does not give them: only start.sh read
+# release.env, and a standalone up.sh --fresh-lez or ui-e2e.sh looked for
+# lez-*:local and tried to build (#103 item 4). A bundle never builds: unless
+# LEZ_IMAGES says otherwise it is start.sh's choice, `present` for a
+# developer's own `local` images and `pull` for a release's. A checkout has no
+# release.env and is unchanged.
+lane_deploy_dir="$(dirname "${BASH_SOURCE[0]}")/.."
+if [[ -f "$lane_deploy_dir/release.env" && -f "$lane_deploy_dir/compose.yaml" ]]; then
+  for lane_release_key in LEZ_IMAGE_PREFIX LEZ_IMAGE_TAG LEZ_ESCROW_PROGRAM_ID LEZ_RELEASE_COMMIT; do
+    if [[ -z "${!lane_release_key:-}" ]]; then
+      lane_release_value="$(sed -n "s/^$lane_release_key=//p" "$lane_deploy_dir/release.env" | head -1)"
+      if [[ -n "$lane_release_value" ]]; then
+        printf -v "$lane_release_key" '%s' "$lane_release_value"
+        export "${lane_release_key?}"
+      fi
+    fi
+  done
+  if [[ -z "${LEZ_IMAGES:-}" && -n "${LEZ_IMAGE_TAG:-}" ]]; then
+    if [[ "$LEZ_IMAGE_TAG" == local ]]; then LEZ_IMAGES=present; else LEZ_IMAGES=pull; fi
+    export LEZ_IMAGES
+  fi
+  unset lane_release_key lane_release_value
+fi
+unset lane_deploy_dir
+
 # The stack this deploy directory runs: its runtime.env records a prefix and an
 # offset other than the default (gen-config.sh); none recorded is the default.
 lane_stack_env="$(dirname "${BASH_SOURCE[0]}")/../runtime/runtime.env"
