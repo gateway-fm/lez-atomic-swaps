@@ -162,7 +162,7 @@ uses public PDAs, and its eventual deployment path must bind the program ID to
 the checked ELF and immutable deployment manifest rather than free-form input.
 
 The exact official LEZ graph also forces `hickory-proto 0.25.0-alpha.5`
-(`RUSTSEC-2026-0118` and `RUSTSEC-2026-0119`) through Logos-owned common/libp2p
+(`RUSTSEC-2026-0118`, `RUSTSEC-2026-0119` and, since 2026-11-11, `RUSTSEC-2026-0487`, `-0489`, `-0490` and `-0491`) through Logos-owned common/libp2p
 dependencies. Graph-local `cargo-deny` policy permits only those exact
 advisories, while tests bind the upstream revisions, exclude the generated
 wallet graph, and keep the sequencer future unpolled with DNSSEC features
