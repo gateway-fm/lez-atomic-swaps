@@ -44,7 +44,8 @@ log() { printf '\n[%s start] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 fail() { echo "start.sh failed: $*" >&2; exit 1; }
 
 # ---- host --------------------------------------------------------------------
-if [[ "$(uname -m)" != "arm64" && "$(uname -m)" != "aarch64" ]]; then
+# (images already present, LEZ_IMAGES=present, are the host's own build)
+if [[ "${LEZ_IMAGES:-}" != present && "$(uname -m)" != "arm64" && "$(uname -m)" != "aarch64" ]]; then
   fail "the prebuilt images are linux/arm64 (Apple silicon or an arm64 Linux host)"
 fi
 for tool in docker jq openssl xxd python3; do
@@ -67,8 +68,13 @@ if [[ -z "${LEZ_ESCROW_PROGRAM_ID:-}" && -f ../scripts/verify-lez-v02-provisiona
 fi
 [[ "${LEZ_ESCROW_PROGRAM_ID:-}" =~ ^[0-9a-f]{64}$ ]] || fail "LEZ_ESCROW_PROGRAM_ID must name the pinned escrow program"
 export LEZ_IMAGE_PREFIX LEZ_IMAGE_TAG LEZ_ESCROW_PROGRAM_ID
-# Images tagged `local` are a developer's own build: use them as they are.
-if [[ "$LEZ_IMAGE_TAG" == local ]]; then export LEZ_IMAGES=present; else export LEZ_IMAGES=pull; fi
+# Images tagged `local` are a developer's own build: use them as they are
+# (LEZ_IMAGES=present does the same for another tag).
+if [[ -z "${LEZ_IMAGES:-}" ]]; then
+  if [[ "$LEZ_IMAGE_TAG" == local ]]; then LEZ_IMAGES=present; else LEZ_IMAGES=pull; fi
+fi
+[[ "$LEZ_IMAGES" == present || "$LEZ_IMAGES" == pull ]] || fail "LEZ_IMAGES must be present or pull for a release's images"
+export LEZ_IMAGES
 
 # ---- market root: wallet identities + the escrow deployment manifest -------------
 export LEZ_MARKET_ROOT="${LEZ_MARKET_ROOT:-$DEPLOY_ROOT/market}"
@@ -86,8 +92,12 @@ tools() { docker compose --profile tools run --rm --no-deps --quiet-pull tools "
 if [[ "$LEZ_IMAGES" == present ]]; then
   docker image inspect "${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG}" >/dev/null 2>&1 || fail "${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG} is not present locally"
 else
-  log "pulling ${LEZ_IMAGE_PREFIX}-wallet-module:${LEZ_IMAGE_TAG}"
-  docker compose --profile tools pull --quiet tools
+  # Every image, before up.sh: its gen-config.sh reads the Taker image (the
+  # Maker's Zcash address zebra mines to) and the LEZ network image (regenesis,
+  # each new chain's genesis time) and, with neither present yet, would give
+  # the first chain upstream's fixed genesis and zebra the template miner.
+  log "pulling ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}"
+  docker compose --profile tools pull --quiet
 fi
 for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   [[ -f "$LEZ_WALLET_IDENTITIES/$wallet/identity.json" ]] && continue
