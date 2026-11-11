@@ -41,7 +41,7 @@ contains the public transaction and block identities shown in the walkthrough.
 ## Run the product locally
 
 The packaged stack currently targets arm64, including Apple Silicon and arm64
-Linux, and requires Docker with Compose. The scripts need bash 5.1 or newer
+Linux, and requires Docker with Compose. The scripts need bash 4.4 or newer (5.1 for `regress.sh`)
 and GNU `timeout`; macOS ships bash 3.2, so on a Mac run
 `brew install bash coreutils` once (the scripts say so when it is missing).
 

@@ -23,7 +23,7 @@ Every release attaches `lez-swap-stack-<tag>-arm64.tar.gz`: the compose
 file, these scripts and `release.env` naming the linux/arm64 images the
 release workflow pushed to `ghcr.io/gateway-fm/lez-atomic-swaps/lez-*`.
 On an arm64 host with Docker (Apple silicon, or arm64 Linux), with `jq`,
-`openssl`, `xxd`, `python3` and bash 5.1 or newer. macOS ships bash 3.2 as
+`openssl`, `xxd`, `python3` and bash 4.4 or newer (5.1 for `regress.sh`). macOS ships bash 3.2 as
 `/bin/bash`: `brew install bash coreutils` once (coreutils brings the `timeout`
 that `regress.sh` uses); `scripts/host.sh` refuses an older bash at the start
 of every script and names that command.

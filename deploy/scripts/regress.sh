@@ -52,7 +52,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 # shellcheck source=host.sh
 source scripts/host.sh
-host_require_timeout || exit
+host_require_bash51 && host_require_timeout || exit
 # The stack this directory runs (scripts/lane.sh): its LEZ network's container
 # and its indexer on the host. The scripts each test runs take the rest of its
 # names from lane.sh themselves.
