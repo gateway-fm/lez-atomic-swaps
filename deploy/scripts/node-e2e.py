@@ -1620,6 +1620,13 @@ def zec_log_replans(swap_id: str, config: str) -> list[dict]:
     return replans
 
 
+def stamp_time(stamp_or_run_id: str) -> int:
+    """The second a stamp was made in. A stamp is that second in ten digits,
+    followed on lanes other than the first by the two-digit lane number that
+    keeps ids apart on the shared LEZ chain; a run id ends in its stamp."""
+    return int(stamp_or_run_id.rsplit("-", 1)[-1][:10])
+
+
 def maker_effect_lines(swap_id: str, since: str) -> list[str]:
     """The Maker Node's effect lines for one swap, in order:
     `<command> → <outcome> <operation> (phase …, revision …, next …)`. Read
@@ -2798,7 +2805,7 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
         # refund journeys' profile). The provisioning summary does not carry it, so it is
         # taken from the corridor's run id stamp, which the script sets to the
         # provisioning second.
-        opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+        opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
         wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
         log("  the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed")
         zec_refund_until_terminal(swap_id, stamp, timeout=1800)
@@ -2900,7 +2907,7 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
     if funding is None:
         raise Failure("the Taker observed the Maker's lock, but no zebra block spends the provisioned outpoint")
     log(f"  Maker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker refunds LEZ instead of waiting")
-    opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+    opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
     zec_refund_until_terminal(swap_id, stamp, timeout=1800, until=frozenset({"refund_in_progress", "refunded"}))
     log("  the Taker's LEZ refund is admitted and in progress on the Node; the Maker's Zcash refund is owed next")
@@ -2924,7 +2931,7 @@ def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
     if funding is None:
         raise Failure("the Taker's claim is offered, but no zebra block spends the provisioned outpoint")
     log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker never claims")
-    opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+    opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
     if maker_view(swap_id).get("schedule_state") != "terminal":
         try:
@@ -3112,7 +3119,7 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
-    opens = int(corridor["run_id"].rsplit("-", 1)[1]) + corridor["lez_refund_delay_seconds"]
+    opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     if zec_taker_sells_lez():
         log("  the Taker Node locks LEZ; the Maker's Zcash funding will be held in zebra's mempool")
         zec_poll_until("the Taker's LEZ lock confirmed and the Maker's funding in the mempool", 1500,
@@ -3218,13 +3225,13 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
         wait_healthy("maker")
     if step == "refund-point" and zec_taker_sells_lez():
         run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
-        wait_until(int(run_id.rsplit("-", 1)[1]) + zec_current_refund_delay() + 15,
+        wait_until(stamp_time(run_id) + zec_current_refund_delay() + 15,
                    "for the agreement's LEZ refund time (the profile's delay after provisioning)")
         log("  the Taker's refund is due")
         return True
     corridor = zec_provision(swap_id=swap_id)
     stamp = corridor["run_id"].rsplit("-", 1)[1]
-    opens = int(stamp) + corridor["lez_refund_delay_seconds"]
+    opens = stamp_time(stamp) + corridor["lez_refund_delay_seconds"]
     try:
         if step == "maker-down-after-first-lock":
             config = zec_taker_actor_config(corridor["receipt_output"])
