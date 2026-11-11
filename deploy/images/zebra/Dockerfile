@@ -2,7 +2,7 @@
 # lane in tests/e2e/zebra: the same digest-pinned upstream build, copied into a
 # distroless runtime so the stack ships no shell. The healthcheck binary is the
 # one the Nodes use, staged beside zebrad because distroless has no CLI.
-FROM docker.io/zfnd/zebra:5.2.0@sha256:477e65add4dacf52074ba04da8d763c89c26cc57f911dba2127401f8e1da597d AS zebra
+FROM docker.io/zfnd/zebra:7.0.0@sha256:a70d2be8ffef3a4b6e37355724e36a0e6c1838e46baa28bfb216739f00cf2d34 AS zebra
 
 # The data directory, owned by the runtime user: a new data volume takes its
 # owner from here on its first mount (compose.yaml), so nothing chowns it.
@@ -11,8 +11,8 @@ RUN mkdir /datadir
 
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
 LABEL org.opencontainers.image.source="https://github.com/ZcashFoundation/zebra"
-LABEL org.opencontainers.image.version="5.2.0"
-LABEL org.opencontainers.image.revision="62e4a43879c9c86d23ecfcf5a02335eec8a1517d"
+LABEL org.opencontainers.image.version="7.0.0"
+LABEL org.opencontainers.image.revision="e8db87eb69254e0d4eedd058eadd48bdfa09065a"
 LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
 LABEL org.logos-co.atomic-swaps.purpose="local-zebra-regtest"
 COPY --from=zebra /usr/local/bin/zebrad /usr/local/bin/zebrad

@@ -50,11 +50,11 @@ flowchart LR
   stops at NU6.3.
 - Zebra is the consensus oracle and broadcaster. librustzcash construction or
   parser success alone is not consensus evidence.
-- The isolated regtest harness (`tests/e2e/zebra/Dockerfile`) deliberately pins
-  a different, digest-pinned Zebra than the public-testnet guidance above: it
-  copies `zebrad` out of `zfnd/zebra:5.2.0` at a fixed digest. Regtest consensus
-  is what that harness tests, so it moves on its own schedule. Public-testnet
-  work follows the ≥ 7.0.0 guidance.
+- The isolated regtest harness (`tests/e2e/zebra/Dockerfile`) and the devnet's
+  zebra (`deploy/images/zebra`) copy `zebrad` out of `zfnd/zebra:7.0.0` at a
+  fixed digest and activate every upgrade through NU7 at height 1, so the
+  Regtest matrix signs for the same branch (`77190ad9`) as public Testnet
+  (profiles `deterministic-local-v2`, `deterministic-local-devnet-v5`/`-v6`).
 - Tatum documents a dedicated Zebrad JSON-RPC endpoint at
   `https://zcash-testnet-zebrad.gateway.tatum.io`, API-key authentication, a
   free Testnet key, and a separately monitored Testnet Zebrad status component.

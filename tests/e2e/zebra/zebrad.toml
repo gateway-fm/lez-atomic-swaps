@@ -9,8 +9,10 @@ listen_addr = "127.0.0.1:0"
 cache_dir = false
 initial_testnet_peers = []
 
+# Zebra 7: every upgrade up to NU7 (branch 77190ad9, the one public Testnet
+# runs) activates at height 1; NU7 coinbases are v6 transactions.
 [network.testnet_parameters.activation_heights]
-"NU6.2" = 1
+"NU7" = 1
 
 [state]
 ephemeral = true

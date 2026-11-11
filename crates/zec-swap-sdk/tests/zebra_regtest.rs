@@ -179,8 +179,8 @@ async fn fetched_utxo(client: &HttpClient, entry: &Value) -> TransparentUtxo {
         .await
         .expect("coinbase transaction is available by id");
     let bytes = hex::decode(raw).expect("Zebra returns transaction hex");
-    let transaction = Transaction::read(bytes.as_slice(), BranchId::Nu6_2)
-        .expect("NU6.2 coinbase transaction decodes canonically");
+    let transaction = Transaction::read(bytes.as_slice(), BranchId::Nu7)
+        .expect("NU7 (v6) coinbase transaction decodes canonically");
     assert_eq!(transaction.txid().to_string(), txid);
     let output = transaction
         .transparent_bundle()
@@ -236,7 +236,7 @@ async fn canonical_funding_observation(
         .await
         .expect("Zebra returns its network, branch, and canonical tip");
     assert_eq!(before["chain"], "test");
-    assert_eq!(before["consensus"]["chaintip"], "5437f330");
+    assert_eq!(before["consensus"]["chaintip"], "77190ad9");
     let genesis_hash: String = client
         .request("getblockhash", rpc_params![0])
         .await
@@ -267,7 +267,7 @@ async fn canonical_funding_observation(
 
     let snapshot = ZcashNodeSnapshot::new(
         NetworkType::Regtest,
-        BranchId::Nu6_2,
+        BranchId::Nu7,
         observed["in_active_chain"]
             .as_bool()
             .expect("verbose transaction reports active-chain membership"),
@@ -296,14 +296,14 @@ async fn canonical_funding_observation(
         )
         .expect("confirmation depth fits u32"),
     );
-    let profile = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV1);
+    let profile = ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalV2);
     profile
-        .validate_consensus(NetworkType::Regtest, BranchId::Nu6_2)
-        .expect("actual node context matches deterministic-local-v1");
+        .validate_consensus(NetworkType::Regtest, BranchId::Nu7)
+        .expect("actual node context matches deterministic-local-v2");
     CanonicalZcashOutputObservation::validate(
         &ExpectedBip199Output::new(
             NetworkType::Regtest,
-            BranchId::Nu6_2,
+            BranchId::Nu7,
             zatoshis(100_000_000),
             contract.clone(),
         ),
@@ -381,7 +381,7 @@ fn funding_transaction(
         zatoshis(10_000),
         zatoshis(10_000),
         BlockHeight::from_u32(tip + 40),
-        BranchId::Nu6_2,
+        BranchId::Nu7,
     )
     .expect("actor owns a mature funding output");
     build_funding_transaction(contract, &request, actor_key)
@@ -489,7 +489,7 @@ async fn prove_accepted_competing_fork(
         .await;
     assert!(
         detached_header.is_err(),
-        "Zebra 5.2.0 must not report the evicted old tip as canonical"
+        "Zebra must not report the evicted old tip as canonical"
     );
 
     let canonical_replacement: Value = client
@@ -675,7 +675,7 @@ async fn prove_concurrent_claim_refund_and_tip_reorg(
         lez_zec_swap_sdk::p2pkh_address(&public_key(&key(8))),
         zatoshis(10_000),
         BlockHeight::from_u32(refund_at + 40),
-        BranchId::Nu6_2,
+        BranchId::Nu7,
     )
     .expect("concurrent claim output is spendable");
     let claim = build_claim_transaction(
@@ -692,7 +692,7 @@ async fn prove_concurrent_claim_refund_and_tip_reorg(
         lez_zec_swap_sdk::p2pkh_address(&public_key(&key(9))),
         zatoshis(10_000),
         BlockHeight::from_u32(refund_at + 40),
-        BranchId::Nu6_2,
+        BranchId::Nu7,
     )
     .expect("concurrent refund output is spendable");
     let refund = build_refund_transaction(&refund_contract, &refund_request, funder_key)
@@ -756,7 +756,7 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
         claim_destination,
         zatoshis(10_000),
         BlockHeight::from_u32(block_count(&client).await + 40),
-        BranchId::Nu6_2,
+        BranchId::Nu7,
     )
     .expect("confirmed contract output is spendable");
     let claim = build_claim_transaction(&claim_contract, &claim_request, &claimant_key, &PREIMAGE)
@@ -795,7 +795,7 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
         refund_destination,
         zatoshis(10_000),
         BlockHeight::from_u32(refund_at + 40),
-        BranchId::Nu6_2,
+        BranchId::Nu7,
     )
     .expect("confirmed contract output is refundable");
     let refund = build_refund_transaction(&refund_contract, &refund_request, &funder_key)

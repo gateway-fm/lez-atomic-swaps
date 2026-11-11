@@ -1,7 +1,7 @@
 //! Validation and classification of BIP-199 Zcash spends.
 //!
-//! Consensus recognition intentionally uses pinned Zebra 5.2.0 script flags, while SDK wallet
-//! conventions are reported separately. This one-shot observer does not provide durable reorg
+//! Consensus recognition intentionally uses pinned Zebra 7.0.0 script flags (5.2.0's, unchanged),
+//! while SDK wallet conventions are reported separately. This one-shot observer does not provide durable reorg
 //! removal/persistence. The SDK orchestration layer must derive [`ExpectedBip199Spend`] from a
 //! validated agreement and canonical funding observation, and a future multi-input non-ACP
 //! adapter must supply every prevout amount/script required by ZIP-244.
@@ -41,7 +41,7 @@ use zcash_transparent::{
 
 use crate::{Bip199Contract, ObservationError, TransparentSpendRequest, ZcashStableTip};
 
-/// Pinned Zebra 5.2.0 maximum serialized block/transaction byte budget.
+/// Pinned Zebra 7.0.0 (as 5.2.0) maximum serialized block/transaction byte budget.
 pub const ZEBRA_MAX_BLOCK_BYTES: usize = 2_000_000;
 
 /// Pinned `zcash_script` consensus maximum for one script.
@@ -988,8 +988,8 @@ fn is_low_s(signature_with_hash_type: &[u8]) -> bool {
 }
 
 fn script_flags() -> Flags {
-    // Exact pinned Zebra 5.2.0 consensus flags. Canonical wallet policy belongs in
-    // `SdkCanonicalSpendPolicy` and must never alter spend recognition.
+    // Exact pinned Zebra 7.0.0 consensus flags (zebra-script, as in 5.2.0). Canonical wallet
+    // policy belongs in `SdkCanonicalSpendPolicy` and must never alter spend recognition.
     Flags::P2SH | Flags::CHECKLOCKTIMEVERIFY
 }
 
