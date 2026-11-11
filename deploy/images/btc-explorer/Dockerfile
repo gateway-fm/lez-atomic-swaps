@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:24.22.3-bookworm-slim
 
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
