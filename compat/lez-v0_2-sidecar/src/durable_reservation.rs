@@ -7,10 +7,20 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(target_os = "linux")]
 use rustix::{
     fs::{
         AtFlags, CWD, Dir, FlockOperation, Mode, OFlags, RenameFlags, ResolveFlags, flock, openat,
         openat2, renameat_with, unlinkat,
+    },
+    io::Errno,
+    process::geteuid,
+};
+#[cfg(target_os = "macos")]
+use rustix::{
+    fs::{
+        AtFlags, CWD, Dir, FlockOperation, Mode, OFlags, RenameFlags, flock, openat, renameat_with,
+        unlinkat,
     },
     io::Errno,
     process::geteuid,
@@ -360,6 +370,7 @@ fn validate_trusted_parent_chain(path: &Path) -> Result<(), DurableReservationEr
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn open_secure_directory(path: &Path) -> Result<File, DurableReservationError> {
     openat2(
         CWD,
@@ -367,6 +378,22 @@ fn open_secure_directory(path: &Path) -> Result<File, DurableReservationError> {
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
         ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|_| DurableReservationError::InsecureDirectory)
+}
+
+/// macOS has no `openat2`; `O_NOFOLLOW_ANY` (macOS 11+) is the equivalent of
+/// `RESOLVE_NO_SYMLINKS`: the open fails with `ELOOP` if any path component,
+/// the last one included, is a symlink. It is not combined with `O_NOFOLLOW`:
+/// the kernel rejects the pair with `EINVAL`.
+#[cfg(target_os = "macos")]
+fn open_secure_directory(path: &Path) -> Result<File, DurableReservationError> {
+    openat(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW_ANY | OFlags::CLOEXEC,
+        Mode::empty(),
     )
     .map(File::from)
     .map_err(|_| DurableReservationError::InsecureDirectory)
