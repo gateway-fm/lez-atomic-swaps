@@ -191,11 +191,13 @@ Stated plainly; each one is open unless it says otherwise.
     `f0c88084`), and the
     sequencer paying from 40 notes of its own instead of the block producer's
     (commit `88fcabbf`), both in `gen-config.sh`. `regress.sh` and the
-    `heartbeat` detect a freeze and the harness moves to a new chain. Node
-    health (`MakerHealthV1` in `crates/maker-node/src/rpc_contracts.rs`)
-    reports dependency state, not the finalized height, and the desks do not
-    show finality. How often the current code freezes is **not verified** by
-    any committed evidence.
+    `heartbeat` detect a freeze and the harness moves to a new chain. Since
+    commit `6df0fece` both Nodes' health reports the LEZ chain's progress
+    (`lez_chain`: last finalized block, when it advanced, the tip) and turns
+    degraded with `lez_finality_stalled` after a threshold (600 s by default,
+    60 s on the devnet, the heartbeat's rule), and both desks show a line for
+    it (commit `1775049b`; issue #112). How often the current code freezes is
+    **not verified** by any committed evidence.
 11. **A second stack needs its own checkout.** Every stack-wide name (the
     Compose project, the Docker network, `<prefix>-network`, `-sequencer`,
     `-heartbeat`, the explorers, the lanes' projects and containers) derives
@@ -252,7 +254,7 @@ claims them.
 | Gate | What closes it | State |
 |---|---|---|
 | Full regression on the release candidate | `deploy/scripts/regress.sh full` (93 tests: `regress.sh list full`) on one frozen commit, results committed under `docs/evidence/` | pending |
-| Zcash public-Testnet lane (logos-co/rfp#122) | happy paths and a real refund on public Zcash Testnet and LEZ testnet 0.2 with the released artifacts, transaction ids and heights retained | pending |
+| Zcash public-Testnet lane (logos-co/rfp#122) | happy paths and a real refund on public Zcash Testnet and LEZ testnet 0.2 with the released artifacts, transaction ids and heights retained | not done, and paused (2026-11-11). Done outside this PR, on the follow-up branch `followup/public-testnet`: the escrow deployed and exercised (initialize, fund, revealing claim) on the public LEZ v0.2 testnet, which now lives at `testnet-legacy.lez.logos.co`; testnet ZEC obtained; the Zcash route preflight passed. No corridor ran: our LEZ v0.2.4 indexer cannot read the public Logos node (0.3.x; upstream's legacy indexer exists as source only), and that chain's irreversible block trails its tip by about 8.5 hours, longer than `public-testnet-v2`'s LEZ refund window |
 | CI and release workflow on the final commit | all required PR checks green (DCO needs item 12), then `.github/workflows/release-images.yml` dispatched on the same commit | not verified here (no CI state is recorded in the repository) |
 | Native install proof | `deploy/scripts/logos-native-acceptance.sh` on the final packages, or an accepted waiver | run on the combined landing's release set (`docs/evidence/logos-native-2026-11-11-b/`): every remaining FAIL is unsigned packages (out of scope) or upstream logosctl/runtime behaviour, classified there; not yet on the release candidate |
 | Topology decision in #115 | Logos agrees R2, R5, R7, R11, R13, R14 and the network-package question | open |
@@ -266,13 +268,13 @@ re-checked for this document.
 |---|---|---|
 | gateway-fm #115: run the stack as Logos modules | Open. This document is the traceability for it; closing needs the decisions under Pending gates | this file |
 | gateway-fm #106: organization-owned catalog | Open. The README now says the catalog it names is personal and links this issue | `README.md` |
-| gateway-fm #112: finality and claim visibility | Open. Detection exists in the harness (`regress.sh`) and the `heartbeat` (`runtime/heartbeat/status.json`); Node health and the desks do not report finality | limitation 10 |
-| gateway-fm #113: wipe, then start, cannot trade | Partly addressed in code: `down.sh --wipe` retires the chain's escrow deployment (commit `18c49392`), the bootstrap refuses a deployment recorded for another genesis, `reset-swaps.sh` refuses open swaps and archives their keys (commit `90dd2e21`); tests in `deploy/tests/test_chain_lifecycle.py`. Wipe, re-bootstrap and a trade on the final artifacts: open. Fixed container names: limitation 11 | `deploy/tests/test_chain_lifecycle.py` |
+| gateway-fm #112: finality and claim visibility | Both findings fixed in this PR: Node health reports LEZ finality and turns degraded when it stalls, both desks show it (commits `6df0fece`, `1775049b`); a claim or refund that is landing shows "submitted" and no Retry button, with "Resubmit" only after 15 minutes without progress or a reported failure (commit `1433d7b1`). Checked on the devnet by stopping the sequencer (`ui-e2e.sh lez-finality-stall`). The issue's further asks (chain events in the Activity pane, `btc_height`) are not done | `docs/issue-closing-notes-2026-11-11.md` |
+| gateway-fm #113: wipe, then start, cannot trade | Partly addressed in code: `down.sh --wipe` retires the chain's escrow deployment (commit `18c49392`), the bootstrap refuses a deployment recorded for another genesis, `reset-swaps.sh` refuses open swaps and archives their keys (commit `90dd2e21`); tests in `deploy/tests/test_chain_lifecycle.py`. Wipe, re-bootstrap and a trade on the final artifacts: open. A second stack on one host: limitation 11 | `deploy/tests/test_chain_lifecycle.py` |
 | gateway-fm #114: Bedrock pin and finality stall | The pin half: the node is the released `blockchain_module` 0.2.4, sha256-pinned. The stall half: open upstream (logos-blockchain#3643), reduced by configuration (limitation 10) | `deploy/scripts/from-scratch.sh`, `deploy/scripts/gen-config.sh` |
-| gateway-fm #103: Logos v0.2.5 review notes | Open. No item-by-item reconciliation has been written | open |
+| gateway-fm #103: Logos v0.2.5 review notes | Items 1 and 16 (the latent `swap-core` paths) fixed with tests (commits `f6443ec2`, `c75576ab`); item 3 (route-health example, `8725b06a`), item 4 (`release.env` on a bundle, `5a0301a8`) and item 5 (reset keeps keys, `90dd2e21`) fixed. Items 2 and 6 to 15 were not re-checked for this PR | `docs/issue-closing-notes-2026-11-11.md` |
 | gateway-fm #52: offer history | Open. Nothing in PR #120 changes or proves it | open |
 | gateway-fm #107: LEZ 0.4 port | Out of scope; the stack stays on LEZ v0.2.4 | R12 |
-| logos-co/rfp#122: M2 ZEC/LEZ | Open. The public-Testnet lane is pending; the committed ZEC evidence is local Zebra regtest on the private LEZ devnet | Pending gates; limitation 15 |
+| logos-co/rfp#122: M2 ZEC/LEZ | Open. The committed ZEC evidence in this PR is Zebra 7 regtest (NU7) on the private LEZ devnet; the public-network work is on a follow-up branch and has no corridor yet | Pending gates; limitation 15 |
 | logos-co/rfp#126: M6 mini-app GUIs, public indexer hosting | Open. PR #120 runs the indexer only inside the devnet's Compose-hosted Basecamp; no hosting decision is recorded | R12 |
 | logos-co/rfp#123: M3 BTC/LEZ | Accepted at v0.2.6; PR #120 does not reopen it and uses it as the regression baseline | — |
 | gateway-fm PR #116 | Closed without merge, superseded by #119 and #120 | — |
