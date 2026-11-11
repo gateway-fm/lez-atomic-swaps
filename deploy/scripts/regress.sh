@@ -32,7 +32,7 @@
 # A test that exits 98 could not produce the situation it tests (node-e2e.py,
 # NotExercised: zec-claim-collision's provoked nonce race went the other way).
 # Its try is recorded as NOT-EXERCISED and it runs again on the same chain, up
-# to LEZ_REGRESS_TRIES times in all; it passes only when a try passes.
+# to LEZ_REGRESS_RACE_TRIES (8) times in all; it passes only when a try passes.
 #
 # LEZ_REGRESS_RECORD=1 records every desk test (ui-e2e.sh --record) and keeps
 # the recordings in the run's videos/ directory.
@@ -108,6 +108,8 @@ out="${LEZ_REGRESS_OUT:-runtime/regress/$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$out/logs" "$out/e2e" "$out/zec"
 flat_limit="${LEZ_REGRESS_FLAT_SECONDS:-60}"
 tries="${LEZ_REGRESS_TRIES:-4}"
+# a test that could not produce its situation (exit 98) may need more goes than a frozen chain
+race_tries="${LEZ_REGRESS_RACE_TRIES:-8}"
 lane_count="${LEZ_LANES:-1}"
 [[ "$lane_count" =~ ^[1-9]$ ]] || { echo "LEZ_LANES must be 1 to 9" >&2; exit 64; }
 poll="${LEZ_REGRESS_POLL_SECONDS:-5}"
@@ -219,7 +221,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
   [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
     { log "=== $1: not a test (<node|ui>:<btc|zec>:<scenario>:<direction>)"; return 64; }
   use_profile "$(profile_of "$1")" || return 2
-  for (( try = 1; try <= tries; try++ )); do
+  for (( try = 1; try <= (tries > race_tries ? tries : race_tries); try++ )); do
     fresh=0; prepared="$(date +%s)"
     if [[ "$scenario" == zec-balance-refusal ]]; then
       # needs a chain on which one wallet's vault claim was deferred: the wallet that would pay LEZ
@@ -255,11 +257,12 @@ run_test() { # run_test <kind:pair:scenario:direction>
     [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
     [[ "$verdict" == PASSED ]] && return 0
     # the scenario's provoked race went the other way: the same chain, again
-    [[ "$verdict" != NOT-EXERCISED ]] || continue
+    if [[ "$verdict" == NOT-EXERCISED ]]; then (( try < race_tries )) && continue; return 1; fi
     if [[ "$verdict" != FROZEN ]]; then
       sed 's/\x1b\[[0-9;]*m//g' "$logfile" | grep -E '✗|FAILED|Failure|Traceback|rror' | tail -3 | cut -c1-220 | sed 's/^/      /' | tee -a "$out/regress.log"
       return 1
     fi
+    (( try < tries )) || return 1
     # a frozen chain never recovers: the next try starts on a new one (the refusal makes its own)
     [[ "$scenario" == zec-balance-refusal ]] || fresh_chain || return 2
   done
@@ -378,8 +381,10 @@ lanes_main() {
     unset 'busy[$k]' 'busy_test[$k]' 'busy_try[$k]'
     case "$verdict" in
       PASSED) ;;
-      FROZEN | NOT-EXERCISED)
+      FROZEN)
         if (( try < tries )); then requeue+=("$t"); else failed+=("$t"); fi ;;
+      NOT-EXERCISED)
+        if (( try < race_tries )); then requeue+=("$t"); else failed+=("$t"); fi ;;
       *)
         IFS=: read -r kind pair scenario direction <<<"$t"
         logfile="$out/logs/$kind-$pair-$scenario-$direction-$try.log"
