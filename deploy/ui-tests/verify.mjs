@@ -237,7 +237,37 @@ function rowsFor(swaps, wanted) {
 
 const waitTimeoutMs = Number(process.env.INTERACTIVE_TIMEOUT_MS || 1800000);
 
-async function triggerVisibleAction(app, objectName, expectedText, outputName, workingStates, wanted, settleMs) {
+// The framework's waitFor treats every throw as "not yet" and gives up only at
+// its timeout, so a step that was already lost (the Node refused the press, the
+// swap ended elsewhere) used to report minutes later. A condition throws
+// StepFailed for what no amount of waiting can change; waitUntil ends the
+// step with it at once.
+class StepFailed extends Error {}
+async function waitUntil(condition, { timeout, interval, description }) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    try {
+      return await condition();
+    } catch (error) {
+      if (error instanceof StepFailed || Date.now() > deadline) {
+        throw new Error(error instanceof StepFailed ? error.message : `${description}: ${error.message}`);
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, interval));
+  }
+}
+
+// The desk's own account of its last request, for a failure message: what
+// the operator would read on the status strip.
+async function deskStatus(app) {
+  try {
+    return await deskValue(app, "String(root.statusTitle) + ': ' + String(root.statusDetail)");
+  } catch {
+    return "status unavailable";
+  }
+}
+
+async function triggerVisibleAction(app, objectName, expectedText, outputName, reachedStates, wanted, settleMs) {
   let target = null;
   await app.waitFor(async () => {
     const found = await app.findByProperty("objectName", objectName);
@@ -255,8 +285,14 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     }
     throw new Error(`${expectedText} is not ready${wanted ? ` on ${wanted.slice(0, 12)}` : ""}`);
   }, { timeout: waitTimeoutMs, interval: 5000, description: `${expectedText} readiness` });
-  // A press counts once the desk shows a reply to it: the output text changes.
-  // A press that produced none (the desk was still busy loading, so its
+  // A press counts once the desk shows the Node's reply to it (the output
+  // text changes to an envelope carrying the action's result) and the row has
+  // moved on: into the action's working state or past it. The working state
+  // alone is not enough: a lock's "confirming" row lasts only until the Taker
+  // Node's next observer sweep (every 15 s) sees the confirmed lock, and a
+  // step that read the row a moment later found "Waiting for the Maker's
+  // lock", which it never accepted, and gave up after two minutes.
+  // A press that produced no reply (the desk was still busy loading, so its
   // handler returned without a request) is pressed again; a row that merely
   // stays in an accepted state is not proof that anything was sent.
   const before = await property(app, outputName, "text");
@@ -265,9 +301,9 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
   let unanswered = 0;
   // A refusal the Node reports as a dependency being unavailable is what the
   // owner retries by pressing again (the API run retries the same way); any
-  // other refusal fails the step.
+  // other refusal fails the step at once, in the desk's own words.
   let retries = 0;
-  await app.waitFor(async () => {
+  await waitUntil(async () => {
     const text = await property(app, outputName, "text");
     // The desk's own placeholder while a request is in flight is not a reply:
     // the step waits for the Node's answer, so the app is never closed under
@@ -284,7 +320,10 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
     if (text === before || declined || inFlight) {
       if (inFlight) {
         pressedAt = Date.now();
-      } else if ((declined || Date.now() - pressedAt > 20000) && unanswered < 4) {
+      } else if (declined || Date.now() - pressedAt > 20000) {
+        if (unanswered >= 4) {
+          throw new StepFailed(`${expectedText} was pressed ${unanswered + 1} times and ${declined ? `declined by the desk (${text})` : "never answered"}; desk: ${await deskStatus(app)}`);
+        }
         unanswered += 1;
         console.log(`  RETRIED-PRESS ${expectedText} ${declined ? `declined by the desk (${text})` : "produced no reply"}; pressing again (${unanswered}/4)`);
         await evaluateIn(app, target, "clicked()");
@@ -293,8 +332,14 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
       throw new Error(`${expectedText} has no reply yet`);
     }
     let envelope = null;
-    try { envelope = JSON.parse(text); } catch { /* not a reply */ }
-    if (envelope?.ok === false) {
+    try { envelope = JSON.parse(text); } catch { /* not an envelope */ }
+    if (envelope === null) {
+      // The desk wrote something other than a Node envelope ("Backend
+      // failure: …", "Node backend is not ready"): the press did not reach
+      // the Node, and the desk says why.
+      throw new StepFailed(`${expectedText} was not sent: ${text.slice(0, 300)}; desk: ${await deskStatus(app)}`);
+    }
+    if (envelope.ok === false) {
       const code = String(envelope.error?.code ?? envelope.code ?? "");
       if (/unavailable/.test(code) && retries < 4) {
         retries += 1;
@@ -303,17 +348,18 @@ async function triggerVisibleAction(app, objectName, expectedText, outputName, w
         await evaluateIn(app, target, "clicked()");
         throw new Error(`${expectedText} pressed again after ${code}`);
       }
-      throw new Error(`${expectedText} refused: ${JSON.stringify(envelope.error ?? envelope)}`);
+      throw new StepFailed(`${expectedText} refused by the Node: ${JSON.stringify(envelope.error ?? envelope).slice(0, 400)}`);
     }
-    if (!rowsFor(await deskSwaps(app), wanted).some((swap) => workingStates.includes(swap.state))) {
-      throw new Error(`${expectedText} has not entered ${workingStates.join("|")}`);
-    }
-  }, { timeout: settleMs + 90000, interval: 5000, description: `${expectedText} submission` });
+    const rows = rowsFor(await deskSwaps(app), wanted);
+    if (rows.some((swap) => reachedStates.includes(swap.state))) return;
+    const seen = rows.map((swap) => `${swap.state} (${swap.state_label})`).join(", ") || "no row";
+    throw new Error(`${expectedText} has not reached ${reachedStates.join("|")}; desk shows ${seen}`);
+  }, { timeout: settleMs + 90000, interval: 1000, description: `${expectedText} submission` });
 }
 
 // Watching one swap reach a desk state; the Node acts, the desk shows it.
 async function waitDeskState(app, outputName, wanted, states, label) {
-  await app.waitFor(async () => {
+  await waitUntil(async () => {
     const rows = rowsFor(await deskSwaps(app), wanted);
     if (process.env.DESK_DEBUG === "1") {
       const wallet = await app.findByProperty("objectName", `${role}BtcWallet`);
@@ -322,7 +368,13 @@ async function waitDeskState(app, outputName, wanted, states, label) {
     }
     if (!rows.some((swap) => states.includes(swap.state))) {
       const seen = rows.map((swap) => `${swap.state}${swap.state_label ? " (" + swap.state_label + ")" : ""}`).join(", ") || "no row";
-      throw new Error(`no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}; desk shows ${seen}`);
+      const message = `no ${role} swap ${wanted ? wanted.slice(0, 12) + " " : ""}has reached ${states.join("|")}; desk shows ${seen}`;
+      // A named swap that already ended otherwise (completed where a refund
+      // was awaited, or the reverse) can never get there: say so now.
+      if (wanted && rows.length > 0 && rows.every((swap) => ["completed", "refunded"].includes(swap.state))) {
+        throw new StepFailed(`${message}, which is final`);
+      }
+      throw new Error(message);
     }
     // The label the desk shows for the reached state, when the step names one
     // (the asset in it depends on the direction: the Maker waits for the
@@ -639,6 +691,13 @@ if (role === "maker") {
 
   // A refund is admitted at once and driven by the Node until the chain
   // clocks allow it, so its row settles into refunding/refunded much later.
+  // Each action names the states its press leads to, the working state and
+  // every one after it: a lock's or a claim's working state can be over
+  // before the step reads the row (the next observer sweep moves a confirmed
+  // lock on to "Waiting for the Maker's lock", and the Maker's follow-up claim
+  // completes the swap), and passing through it is what the press proves.
+  const afterTakerLock = (claiming) => ["awaiting_maker_lock", "claim_window_closed", "claim_ready", claiming,
+                                        "completed", "refund_ready", "refunding", "refunded"];
   const takerActions = zcash && !reverseDirection
     ? { claim_lez: [`Claim ${zecLezText}`, ["claiming_lez", "claim_ready", "completed"], 45000],
         refund_zec: [`Refund ${zecText}`, ["refunding", "refunded"], waitTimeoutMs] }
@@ -650,11 +709,11 @@ if (role === "maker") {
         // Node's own re-drive (every 30 s until the row reads refunded).
         retry_refund_lez: ["Retry refund", ["refunding", "refund_ready", "refunded"], waitTimeoutMs] }
     : reverseDirection
-    ? { lock_lez: [`Lock ${lezText}`, ["locking_lez"], 45000],
-        claim_btc: [`Claim ${btcText}`, ["claiming_btc"], 45000],
+    ? { lock_lez: [`Lock ${lezText}`, ["locking_lez", ...afterTakerLock("claiming_btc")], 45000],
+        claim_btc: [`Claim ${btcText}`, ["claiming_btc", "completed"], 45000],
         refund_lez: [`Refund ${lezText}`, ["refunding", "refunded"], waitTimeoutMs] }
-    : { lock_btc: [`Lock ${btcText}`, ["locking_btc"], 45000],
-        claim_lez: [`Claim ${lezText}`, ["claiming_lez"], 45000],
+    : { lock_btc: [`Lock ${btcText}`, ["locking_btc", ...afterTakerLock("claiming_lez")], 45000],
+        claim_lez: [`Claim ${lezText}`, ["claiming_lez", "completed"], 45000],
         refund_btc: [`Refund ${btcText}`, ["refunding", "refunded"], waitTimeoutMs] };
   if (Object.hasOwn(takerActions, process.env.INTERACTIVE_ACTION)) {
     const action = process.env.INTERACTIVE_ACTION;
