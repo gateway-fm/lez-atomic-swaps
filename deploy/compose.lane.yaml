@@ -1,0 +1,70 @@
+# compose.lane.yaml — lane k (>= 2) of the regression: one more Maker/Taker
+# pair, each party's own Basecamp as in compose.yaml, with its own Bitcoin Core,
+# miner and Zebra, beside the one LEZ network of lane 1 (scripts/lane.sh).
+#
+#   docker compose -p lez-lane-<k> --env-file runtime/runtime.env \
+#     -f compose.yaml -f compose.lane.yaml up -d --no-deps <lane services>
+#
+# with scripts/lane.sh's variables exported (LEZ_CONTAINER_PREFIX=lez-l<k>,
+# LEZ_VOLUME_PREFIX, LEZ_LANE_RUNTIME=runtime/lanes/<k>, LEZ_ZEBRA_PORT and the
+# VNC ports); scripts/lanes.sh does this. The lane's Bitcoin Core, miner and
+# Zebra stay on the lane's own network: on lez-swap-chains Compose would give
+# them the aliases bitcoin-core and zebra a second time, and lane 1's names
+# would resolve to two nodes. The Nodes join both networks and name the lane's
+# chains by container name (node-entrypoint.sh's LEZ_*_HOST).
+services:
+  bitcoin-init:
+    networks: !override [lane]
+  zebra-init:
+    networks: !override [lane]
+  bitcoin-core:
+    networks: !override [lane]
+    ports: !reset []
+  btc-miner:
+    networks: !override [lane]
+    environment:
+      BTC_RPC_HOST: "${LEZ_CONTAINER_PREFIX:?export the lane variables (scripts/lane.sh)}-bitcoin-core"
+  zebra:
+    networks: !override [lane]
+  maker-node:
+    depends_on: !override
+      bitcoin-core:
+        condition: service_healthy
+    environment:
+      LEZ_BITCOIN_CORE_HOST: ${LEZ_CONTAINER_PREFIX}-bitcoin-core
+      LEZ_ZEBRA_HOST: ${LEZ_CONTAINER_PREFIX}-zebra
+    networks: !override [lane, chains]
+  taker-node:
+    depends_on: !override
+      maker-node:
+        condition: service_healthy
+    environment:
+      LEZ_BITCOIN_CORE_HOST: ${LEZ_CONTAINER_PREFIX}-bitcoin-core
+      LEZ_ZEBRA_HOST: ${LEZ_CONTAINER_PREFIX}-zebra
+    networks: !override [lane, chains]
+  # The LEZ chain and everything around it belong to lane 1: a lane project
+  # must never start them (a second chain on the same state directories).
+  lez-init:
+    profiles: [never-in-a-lane]
+  bedrock:
+    profiles: [never-in-a-lane]
+  sequencer:
+    profiles: [never-in-a-lane]
+  indexer:
+    profiles: [never-in-a-lane]
+  btc-explorer:
+    profiles: [never-in-a-lane]
+  lez-explorer:
+    profiles: [never-in-a-lane]
+  heartbeat:
+    profiles: !override [never-in-a-lane]
+  tools:
+    profiles: !override [never-in-a-lane]
+
+networks:
+  chains:
+    name: lez-swap-chains
+    external: true
+  lane:
+    name: ${LEZ_CONTAINER_PREFIX}-net
+    driver: bridge

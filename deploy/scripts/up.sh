@@ -21,6 +21,8 @@
 #                            prebuilt-release path; scripts/start.sh sets it,
 #                            bootstraps the market itself afterwards and
 #                            prints its own banner: LEZ_NO_BANNER=1)
+#   LEZ_LANES=N              also regression lanes 2..N (scripts/lanes.sh): stopped
+#                            with lane 1 before a new LEZ chain, started on it
 #   LEZ_API_ONLY=1           chains, market and Nodes only, wallets seeded
 #                            for the evidence run; no desk suites
 #
@@ -56,6 +58,11 @@ for tool in docker jq openssl xxd; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
 mkdir -p runtime
+# This stack is regression lane 1 (scripts/lane.sh): its Basecamps' names.
+export LEZ_LANE=1
+# shellcheck source=lane.sh
+source scripts/lane.sh
+maker_node="$LEZ_CONTAINER_PREFIX-maker-node"; taker_node="$LEZ_CONTAINER_PREFIX-taker-node"
 load_env() { set -a; source runtime/runtime.env; set +a; export BTC_RPC_PASSWORD; }
 # Every stage's wall time, in this script's own output, so each bring-up (and
 # each regress.sh chain log) says where its time went.
@@ -74,7 +81,7 @@ trap 'stage' EXIT
 wait_owner_health() { # wait_owner_health <seconds>
   local deadline=$(( $(date +%s) + $1 ))
   owner_ok() { # owner_ok <role> <method> <params>
-    docker exec "lez-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
+    docker exec "$LEZ_CONTAINER_PREFIX-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
       -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null | grep -q '"result"'
   }
@@ -112,6 +119,9 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   fi
   stage "stop the old chain"
   docker compose stop maker-node taker-node >/dev/null 2>&1 || true
+  # Regression lanes 2..N (LEZ_LANES, scripts/lanes.sh) share this chain: their
+  # Nodes stop and forget their swaps too, and start again on the new chain.
+  [[ "${LEZ_LANES:-1}" -le 1 ]] || bash scripts/lanes.sh stop "$LEZ_LANES"
   # The old chain is thrown away, so its services get no clean shutdown: they
   # stop on SIGINT only and the Basecamp-hosted ones wait out their grace
   # period, one after another (compose stops in dependency order).
@@ -276,15 +286,15 @@ docker rm -f lez-basecamp-ui lez-maker-init lez-taker-init >/dev/null 2>&1 || tr
 # A changed runtime.env (a timing profile switch, say) reaches the Nodes only
 # through a recreate; entrypoints read it once.
 if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 1 ]]; then
-  if docker container inspect lez-maker-node lez-taker-node >/dev/null 2>&1; then
+  if docker container inspect "$maker_node" "$taker_node" >/dev/null 2>&1; then
     # Both Basecamps start together. The Taker's Node pins the Maker's Delivery
     # identity when it starts, which is why taker-node waits for a healthy
     # maker-node (compose.yaml); with the identity the last Maker published
     # removed first, the Taker's Node waits for the one the new Maker publishes
     # (node-entrypoint.sh) instead. Both containers existing means their
     # volumes exist, so --no-deps skips nothing else.
-    docker run --rm --network none --user 4713:4713 --volumes-from lez-maker-node --entrypoint rm \
-      "$(docker inspect -f '{{.Config.Image}}' lez-maker-node)" -f /delivery/maker-delivery-identity.pub
+    docker run --rm --network none --user 4713:4713 --volumes-from "$maker_node" --entrypoint rm \
+      "$(docker inspect -f '{{.Config.Image}}' "$maker_node")" -f /delivery/maker-delivery-identity.pub
     docker compose up -d --no-build --force-recreate maker-node
     docker compose up -d --no-build --force-recreate --no-deps taker-node
   else
@@ -295,9 +305,13 @@ else
   docker compose up -d --no-build maker-node taker-node
 fi
 stage "Nodes healthy"
-wait_healthy 1200 lez-maker-node lez-taker-node
+wait_healthy 1200 "$maker_node" "$taker_node"
 stage "Nodes answer owner health"
 wait_owner_health 120
+if [[ "${LEZ_LANES:-1}" -gt 1 ]]; then
+  stage "lanes 2..$LEZ_LANES (lanes.sh up)"
+  bash scripts/lanes.sh up "$LEZ_LANES"
+fi
 stage "market check (verify-market.py)"
 [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]] || python3 scripts/verify-market.py 2>&1 | tail -1
 
@@ -325,7 +339,7 @@ echo "[6/6] the parties' desks…"
 ui_failed=0
 if [[ "${SKIP_UI_VERIFY:-0}" != "1" ]]; then
   for role in maker taker; do
-    if ! docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|failed|^    [A-Za-z]'; then
+    if ! docker exec "$LEZ_CONTAINER_PREFIX-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|failed|^    [A-Za-z]'; then
       ui_failed=1
     fi
   done

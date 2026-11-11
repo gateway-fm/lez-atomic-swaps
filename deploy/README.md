@@ -430,6 +430,22 @@ running either role suite:
 docker exec -e M3_UI_DIRECTION=TakerSellsLez lez-taker-node node /ui-tests/verify.mjs taker
 ```
 
+### Regression lanes
+
+`scripts/regress.sh` runs the devnet regression one test at a time by default.
+`LEZ_LANES=N scripts/regress.sh <tier>` runs N at a time, one per lane: lane 1
+is this stack, and lanes 2..N (`scripts/lanes.sh up N`, Compose projects
+`lez-lane-<k>` with `compose.lane.yaml`) are each one more Maker/Taker pair,
+each party's own Basecamp, with its own Bitcoin Core, miner and Zebra, on the
+same LEZ network (`scripts/lane.sh` names a lane's containers `lez-l<k>-*`, its
+files `runtime/lanes/<k>/`, its Zebra `127.0.0.1:18232+10(k-1)` and its VNC
+`5901+10(k-1)`/`5902+10(k-1)`). Lane 2 settles as `maker-basel-02` /
+`taker-limmat-02`, which every genesis funds. One watcher follows LEZ finality
+for all lanes: a frozen chain voids every lane's test, and one new chain
+(`up.sh --fresh-lez` with `LEZ_LANES`, which stops and restarts the lanes) serves
+them all. The scenarios, `reset-swaps.sh` and `zec-provision.sh` act on one lane
+when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
+
 ## Services
 
 | Service | Image | Notes |
