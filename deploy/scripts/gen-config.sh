@@ -222,33 +222,49 @@ fi
 #   tip by ~2 slots instead of ~5, and an epoch is 40 s instead of 100 s. 1 is
 #   too low: Cryptarchia's s_gen (k / 4f) is then 0, which its bootstrap fork
 #   choice refuses with a panic.
-# - The 48 genesis notes the sequencer pays its inscriptions from (they are the
-#   leader's too) hold 10^12 each instead of 10^6. Bedrock re-prices storage at
-#   every epoch turn and the price only drifts up (~+0.5 per turn: +45 an hour
-#   with 40 s epochs). Upstream's 48 x 10^6 ran dry in 46 minutes at 1 s
-#   blocks. The total, 4.8 x 10^13, lasts ~45 days at the tip set below.
-# The notes' values are part of the genesis transaction, so the genesis block
-# root and the SDP declaration's locked note id change with them. Both were
-# computed once with builder/regenesis (README there) and are checked here
-# against the upstream file they were computed from.
+# - The 48 genesis notes of key 2e03.. hold 10^12 each instead of 10^6, and 40
+#   of them belong to the node's own SDP key ed26.. (in its KMS and wallet)
+#   instead: those pay for the sequencer's inscriptions, and the other 8 are the
+#   block producer's alone. Bedrock's leader can only win a slot with a note
+#   that is in its epoch's aged snapshot and still unspent, and the sequencer
+#   spends one note per LEZ block, oldest first. Paid from the leader's own
+#   notes (upstream), it went through all 48 in ~100 s at ~2 s a block, so the
+#   leader ran on one or two eligible notes at the end of each epoch; a little
+#   faster (a LEZ block every 1.5 s, the merged LEZ network's pace) and no note
+#   was left: Bedrock stopped at an epoch turn, the wallet's reservations no
+#   longer expired, and the sequencer stopped on "Wallet does not have enough
+#   funds, available=0" (FREEZE-INVESTIGATION.md §3.3).
+#   Bedrock re-prices storage at every epoch turn and the price only drifts up
+#   (~+0.5 per turn: +45 an hour with 40 s epochs). Upstream's 48 x 10^6 ran
+#   dry in 46 minutes at 1 s blocks. The sequencer's 4 x 10^13 lasts ~40 days at
+#   the tip set below.
+# The notes' values and owners are part of the genesis transaction, so the
+# genesis block root and the SDP declaration's locked note id change with them.
+# Both were computed once with builder/regenesis (README there) and are checked
+# here against the upstream file they were computed from.
 readonly upstream_genesis_root=cb5951ac1ffa1aa5d0e585fb54e784bd9c025b28d752324e98b3837f34648692
 readonly upstream_locked_note=7e449a14172fc90679f6fca7b49a2d58c305ebf7ac42ef20202e533c31115222
-readonly devnet_genesis_root=f7ed22fe3444ca110450cecd713da2ebf9b0f38fa9313ab94f6aa7ec811ef3f0
-readonly devnet_locked_note=fbab1103400066761fb9616770e73982dea30dbc40c4da8c33054d554c422f16
+readonly devnet_genesis_root=d0d73d3b253006bdb8086dc867442dac1a81e8fdbcdfceb74f0c7a9761db0192
+readonly devnet_locked_note=a4c6c9828735678bf91667e26ab47e26b8196b6c1be137b7a9e686be22fd6205
 readonly devnet_note_value=1000000000000
+readonly devnet_leader_notes=8
+readonly leader_key=2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26
+readonly sequencer_funding_key=ed266e6e887b9b97059dc1aa1b7b2e19b934291753c6336a163fe4ebaa28e717
 readonly devnet_security_param=2
 awk -v up_root="$upstream_genesis_root" -v root="$devnet_genesis_root" \
     -v up_locked="$upstream_locked_note" -v locked="$devnet_locked_note" \
-    -v value="$devnet_note_value" -v k="$devnet_security_param" '
+    -v value="$devnet_note_value" -v k="$devnet_security_param" \
+    -v leader="$leader_key" -v leader_notes="$devnet_leader_notes" -v sequencer="$sequencer_funding_key" '
   # a note line is followed by its owner: hold it until the owner is known
-  held != "" { if ($0 ~ /pk: .2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26/) { sub(/value: 1000000$/, "value: " value, held); notes++ }
+  held != "" { if (index($0, "pk: '\''" leader "'\''")) { sub(/value: 1000000$/, "value: " value, held); notes++
+                 if (notes > leader_notes) { sub(leader, sequencer); moved++ } }
                print held; held = "" }
   /^ *- value: 1000000$/ { held = $0; next }
   /^  security_param: 5$/ { sub(/5$/, k); params++ }
   $0 ~ "block_root: " up_root "$" { sub(up_root, root); roots++ }
   $0 ~ "locked_note_id: .?" up_locked { sub(up_locked, locked); lockeds++ }
   { print }
-  END { if (notes != 48 || params != 1 || roots != 1 || lockeds != 1) {
+  END { if (notes != 48 || moved != 48 - leader_notes || params != 1 || roots != 1 || lockeds != 1) {
           printf "deployment-settings.yaml is not the upstream file the devnet genesis was computed from (%d notes, %d security_param, %d roots, %d locked notes)\n", notes, params, roots, lockeds > "/dev/stderr"; exit 1 } }
 ' "$LEZ_SOURCE/bedrock/deployment-settings.yaml" >"$RUNTIME/config/deployment-settings.yaml"
 
@@ -257,10 +273,8 @@ jq --arg channel "$channel_id" \
   "$LEZ_SOURCE/indexer-config/indexer_config.json" \
   >"$RUNTIME/config/indexer_config.json"
 
-# The sequencer pays for its inscriptions from the genesis notes, which it finds
-# by their public key: the genesis is the one place that names it.
-funding_key="$(sed -n "s/^ *pk: '\{0,1\}\([0-9a-f]\{64\}\)'\{0,1\} *$/\1/p" "$LEZ_SOURCE/bedrock/deployment-settings.yaml" | head -1)"
-[[ "$funding_key" =~ ^[0-9a-f]{64}$ ]] || { echo "no genesis funding key in deployment-settings.yaml" >&2; exit 1; }
+# The sequencer pays for its inscriptions from its own genesis notes (above).
+funding_key="$sequencer_funding_key"
 # The sequencer makes a LEZ block every second (block_create_timeout, upstream
 # 10 s) and retries a pending one after 2 s (upstream 7 s). Bedrock includes one
 # inscription about every 2 s at this pace, so a transaction is finalized in the

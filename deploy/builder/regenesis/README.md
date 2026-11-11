@@ -3,7 +3,11 @@
 `regenesis` computes the genesis values that `scripts/gen-config.sh` writes into the
 devnet's Bedrock deployment settings: the genesis block root and the SDP
 declaration's locked note id. It recomputes them after setting every genesis note of
-one key to a new value. Both depend on the genesis transfer, so a node refuses a
+one key to a new value and, optionally, handing the last n of them to a second key
+(the devnet's sequencer pays from 40 notes of the node's SDP key, so that it never
+spends the block producer's 8) or setting the chain's genesis time (`time=<unix>`,
+in the genesis inscription's Cryptarchia parameters; it then prints the new
+inscription too). Both depend on the genesis transfer, so a node refuses a
 genesis whose note values were edited without them. It starts no node and logs
 nothing.
 
@@ -19,12 +23,14 @@ sed -i 's|^members = \[|members = [\n  "tools/regenesis",|' lb/Cargo.toml
 cp deploy/assets/lez-source/bedrock/deployment-settings.yaml lb/upstream.yaml
 docker run --rm -v "$PWD/lb:/src" -w /src rust:1.96.0-bookworm \
   sh -c 'cargo build -p regenesis && ./target/debug/regenesis upstream.yaml \
-    2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26 1000000000000'
+    2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26 1000000000000 \
+    40 ed266e6e887b9b97059dc1aa1b7b2e19b934291753c6336a163fe4ebaa28e717'
 ```
 
 It prints the block root and the locked note id as byte lists (`- 247`, …); in hex
 they are the `devnet_genesis_root` and `devnet_locked_note` constants in
 gen-config.sh. Given the upstream values, it reproduces upstream's root
-(`cb5951ac…`) and locked note (`7e449a14…`).
+(`cb5951ac…`) and locked note (`7e449a14…`); with 10^12 and no second key, the
+previous devnet's `f7ed22fe…` and `fbab1103…`.
 
-Build time: about 4 minutes on 2 CPUs.
+Build time: about 4 minutes on 2 CPUs (1 minute once the dependencies are built).
