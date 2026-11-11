@@ -78,7 +78,7 @@ npm run test:m6:basecamp
 | Component | Version | Where it is used |
 |---|---|---|
 | Logos Basecamp | `0.2.0` (commit `48b26c0`) | CI integration harness and the Compose Basecamp image (`basecamp-ui`, the base of each party's Basecamp) |
-| Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from a module catalog (an organization-owned one is issue #106) |
+| Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from the organization's module catalog (`gateway-fm/logos-modules-release-base`; its URL is in the top-level `README.md`) |
 | Logos Chat module | `0.2.2` | pinned by `flake.lock`; the catalog installs the same release |
 | Logos Delivery module | `0.2.0` as pinned by Chat `0.2.2`; `0.2.1` as resolved from the official catalog | Chat's transport dependency |
 

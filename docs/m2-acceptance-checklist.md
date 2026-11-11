@@ -47,9 +47,11 @@ stack and are kept as the record of that submission shape.
   tests in one run on three lanes (92 passed; the one failure and its reruns
   are explained in its `RESULTS.txt`), with provenance and the ZEC demo
   recordings.
+- **The module catalog** is under the organisation (#106):
+  `gateway-fm/logos-modules-release-base`. The address under a personal
+  account keeps serving until the next release.
 - **Still open for the submission:** the tag and release (0.3.0), the
-  rfp#122 comment, the fresh-machine walk of the Zcash guide (U10), the
-  catalog under the organisation (#106).
+  rfp#122 comment, the fresh-machine walk of the Zcash guide (U10).
 
 ## The six deliverables
 
