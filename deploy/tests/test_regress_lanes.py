@@ -258,6 +258,27 @@ class ChainEvidence(Runner):
         self.assertTrue(rows and all(len(row) == 4 and row[1] == 'lanes' for row in rows), rows)
 
 
+class Tiers(unittest.TestCase):
+    """#103 item 14: the late-claim scenarios run in `full`, both directions;
+    `smoke` is the six happy swaps it was."""
+    def tier(self, name):
+        return subprocess.run(['bash', str(SCRIPTS / 'regress.sh'), 'list', name], capture_output=True, text=True,
+                              check=True).stdout.split()
+
+    def test_full_has_both_late_claim_cases_in_both_directions(self):
+        full = self.tier('full')
+        for scenario in ('late-claim-confirms', 'late-claim-unmined'):
+            for direction in ('TakerSellsLez', 'TakerSellsForeign'):
+                self.assertIn(f'node:btc:{scenario}:{direction}', full)
+        self.assertEqual(len(full), len(set(full)))
+
+    def test_smoke_is_unchanged(self):
+        self.assertEqual(self.tier('smoke'), [
+            'node:btc:happy:TakerSellsLez', 'node:zec:zec-happy:TakerSellsLez',
+            'node:btc:happy:TakerSellsForeign', 'node:zec:zec-happy:TakerSellsForeign',
+            'ui:btc:happy:TakerSellsLez', 'ui:zec:zec-happy:TakerSellsForeign'])
+
+
 class LaneNames(unittest.TestCase):
     def names(self, lane, **env):
         script = ('source "$1"; echo "$LEZ_CONTAINER_PREFIX $LEZ_LANE_RUNTIME $LEZ_ZEBRA_URL $LEZ_ZEBRA_HOST '

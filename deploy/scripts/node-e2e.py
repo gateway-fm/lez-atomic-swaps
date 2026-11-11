@@ -13,6 +13,8 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py restart-taker    Taker Node restarted between lock and claim
     node-e2e.py restart-maker    Maker Node restarted between lock and its funding
     node-e2e.py survivor         Taker Node stopped after its LEZ claim; Maker completes alone
+    node-e2e.py late-claim-confirms  the revealing claim sent, the Taker stopped, the claim confirms while it is down
+    node-e2e.py late-claim-unmined   the revealing claim sent but never mined until the refund path is open
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
@@ -742,6 +744,321 @@ def scenario_survivor(stamp: str) -> dict:
         wait_healthy("taker")
     wait_completed(swap_id, timeout=900)
     return {"swap_id": swap_id}
+
+
+# ---- late claims (#103 item 14) ------------------------------------------------------
+# A revealing claim that has been sent but is not yet on chain, with the Taker Node
+# stopped across it: (a) late-claim-confirms, the claim confirms while the Taker is
+# down; (b) late-claim-unmined, it is never mined until the refund path is open.
+# Selling LEZ the claim is the Taker's Bitcoin spend of the Maker's lock, held in the
+# mempool by stopping the lane's regtest miner (the harness mines what it needs); the
+# refund path is opened in (b) by mining empty blocks (generateblock with no
+# transactions) at the profile's own pace (MINE_INTERVAL), so the Maker's refund
+# matures no faster than the agreement's block-time bound allows. Selling Bitcoin the
+# claim is the Taker's LEZ claim, and LEZ has no mempool: (a) cuts the Taker's
+# indexer forwarder the moment its claim is submitted, so the Taker cannot see it
+# finalize, and stops it; (b) cuts its sequencer forwarder before the claim, so the
+# claim the Node admits is never included.
+TAKER_CLAIM_PENDING = {"claim_in_progress"}
+
+
+def taker_claim_effect(view: dict) -> dict | None:
+    for effect in view.get("effects") or []:
+        if effect.get("kind") == "revealing_claim":
+            return effect
+    return None
+
+
+def wait_bitcoin_claim_in_mempool(swap_id: str, timeout: int = 120) -> str:
+    """The Taker's revealing Bitcoin claim, broadcast and waiting in the mempool
+    (the miner is stopped): the mempool transaction that spends the Maker's
+    lock, as Core decodes it, which is also the claim the Taker's view records
+    when it lists one."""
+    maker_lock = maker_lock_recorded(swap_id)
+    if maker_lock is None:
+        raise Failure(f"the Maker has no Bitcoin lock on record for {swap_id[:12]}")
+    wait = Wait(f"the Taker's Bitcoin claim of {swap_id[:12]} (a spend of {maker_lock[:12]}) in the mempool", timeout)
+    while wait.running():
+        pool = bitcoin("getrawmempool")
+        for txid in pool:
+            spent = {vin.get("txid") for vin in bitcoin("getrawtransaction", txid, "1").get("vin", [])}
+            if maker_lock in spent:
+                effect = taker_claim_effect(taker_view(swap_id))
+                if effect and effect.get("transaction_id") not in (None, txid):
+                    raise Failure(f"the mempool spends the Maker's lock with {txid[:12]}, but the Taker records "
+                                  f"its claim as {effect['transaction_id'][:12]}")
+                return txid
+        wait.note(len(pool), f"mempool {[t[:12] for t in pool]}, none spends {maker_lock[:12]}")
+        time.sleep(2)
+    raise wait.failure()
+
+
+def mine_empty_block() -> str:
+    """A regtest block with no transaction in it: the mempool stays as it is."""
+    return bitcoin("generateblock", MINER_ADDRESS, "[]")["hash"]
+
+
+def drive_to_settlement(swap_id: str, stamp: str, timeout: int) -> tuple[dict, str]:
+    """Lets both Nodes finish on their own, mining one block per round and
+    doing only what each party's operator is offered: the Taker's refund when
+    its row offers it (with its Bitcoin refund script matured first, once), the
+    Maker's being queued already. Returns the Taker's last view and the Maker's
+    phase once both are terminal."""
+    profile = timing_profile()
+    wait = Wait(f"both Nodes to settle {swap_id[:12]}", timeout)
+    matured = False
+    while wait.running():
+        view = taker_view(swap_id)
+        maker = maker_view(swap_id)
+        phase = maker_phase(swap_id)
+        if view["state"] == "attention_required":
+            raise Failure(f"the Taker needs attention on {swap_id[:12]}: {view.get('attention_reason')}")
+        if view["state"] in {"completed", "refunded"} and maker.get("schedule_state") == "terminal":
+            return view, phase
+        wait.note((view["state"], view.get("available_action"), phase),
+                  f"taker {view['state']} offering {view.get('available_action')} | maker {phase} "
+                  f"(schedule {maker.get('schedule_state')})")
+        if view.get("available_action") == "refund":
+            if not REVERSE and not matured:
+                mine(int(profile["LEZ_BTC_REFUND_CSV_BLOCKS"]) + 1)
+                matured = True
+            rpc("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+                                                 "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                timeout=300)
+        mine(1)
+        time.sleep(5)
+    raise wait.failure()
+
+
+def assert_settled_consistently(before: dict, taker_state: str, maker_phase_end: str) -> dict:
+    """No funds lost or doubly taken: the balances fit a completed or a refunded
+    swap, and the one the Taker's Node reports."""
+    after = party_balances()
+    deltas = settlement_deltas(before, after)
+    outcome = classify_settlement(deltas, REVERSE)
+    log("  balances: " + "; ".join(f"{role} BTC {d['btc_sat']:+d} sat, LEZ {d['lez_units']:+d}"
+                                   for role, d in deltas.items()))
+    if outcome is None:
+        raise Failure("the balances fit neither a completed nor a refunded swap (funds lost or taken twice): "
+                      f"completed: {'; '.join(settlement_problems(deltas, 'completed', REVERSE))} / "
+                      f"refunded: {'; '.join(settlement_problems(deltas, 'refunded', REVERSE))}")
+    if outcome != taker_state:
+        raise Failure(f"the balances say {outcome} but the Taker's Node reports {taker_state}")
+    expected_maker = {"completed"} if outcome == "completed" else {"refunded", "maker_leg_refunded", "taker_leg_refunded"}
+    if maker_phase_end not in expected_maker:
+        raise Failure(f"the balances say {outcome} but the Maker's Node ended at {maker_phase_end}")
+    log(f"  settled {outcome}: both Nodes and both chains agree")
+    return {"balances_before": before, "balances_after": after, "deltas": deltas, "outcome": outcome}
+
+
+def stop_taker() -> None:
+    log("  stopping the Taker Node")
+    docker("stop", NODES["taker"][0])
+
+
+def start_taker() -> None:
+    subprocess.run(["docker", "start", NODES["taker"][0]], check=False, capture_output=True)
+    wait_healthy("taker")
+
+
+def late_claim_setup(stamp: str) -> tuple[str, dict]:
+    """Take, lock and wait until the Taker may claim; the balances before the take."""
+    before = party_balances()
+    offer_id = publish_offer(stamp)
+    swap_id, _ = take(offer_id, stamp)
+    lock(swap_id)
+    wait_taker(swap_id, {"claim_available"}, timeout=1500, describe="(Maker funding)")
+    return swap_id, before
+
+
+def send_claim(swap_id: str, stamp: str) -> dict:
+    view = taker_view(swap_id)
+    return rpc("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                               "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+               timeout=300)
+
+
+def scenario_late_claim_confirms(stamp: str) -> dict:
+    """#103 item 14 (a): the Taker's revealing claim is sent, the Taker Node is
+    stopped before it has seen the claim confirmed, and the claim confirms
+    while it is down. The Maker must complete alone from the claim on chain,
+    the Taker on its restart, and both chains must show the lots traded."""
+    swap_id, before = late_claim_setup(stamp)
+    evidence: dict = {}
+    miner_stopped = False
+    try:
+        if REVERSE:
+            log("  stopping the miner so the Taker's Bitcoin claim waits in the mempool")
+            docker("stop", MINER)
+            miner_stopped = True
+            reply = send_claim(swap_id, stamp)
+            if "error" in reply:
+                raise Failure(f"taker_swap_claim_v1 failed: {json.dumps(reply['error'])[:300]}")
+            claim_txid = wait_bitcoin_claim_in_mempool(swap_id)
+            stop_taker()
+            if claim_txid not in bitcoin("getrawmempool"):
+                raise Failure(f"the claim {claim_txid[:12]} left the mempool before the Taker was down")
+            [block] = bitcoin("generatetoaddress", "1", MINER_ADDRESS)
+            if claim_txid not in bitcoin("getblock", block, "1")["tx"]:
+                raise Failure(f"block {block[:12]} did not include the claim {claim_txid[:12]}")
+            log(f"  the claim {claim_txid[:12]} confirmed in {block[:12]} with the Taker Node down")
+            docker("start", MINER)
+            miner_stopped = False
+            evidence = {"claim": claim_txid, "claim_block": block}
+        else:
+            reply = send_claim(swap_id, stamp)
+            # Blind the Taker to LEZ finality the moment the claim is out, then stop it.
+            cut_lez_view("taker")
+            if "error" in reply:
+                raise Failure(f"taker_swap_claim_v1 failed: {json.dumps(reply['error'])[:300]}")
+            view = taker_view(swap_id)
+            effect = taker_claim_effect(view)
+            if view["state"] not in TAKER_CLAIM_PENDING or not effect or not effect.get("pending"):
+                raise NotExercised(f"the Taker had already seen its LEZ claim final ({view['state']}, "
+                                   f"{json.dumps(effect)[:120]}) before it could be cut off")
+            claim_txid = effect["transaction_id"]
+            stop_taker()
+            wait = Wait(f"the Taker's LEZ claim {claim_txid[:12]} included", 120)
+            while wait.running():
+                included = lez_transaction_block("maker", claim_txid)
+                if included is not None:
+                    break
+                wait.note(None, "not included yet")
+                time.sleep(2)
+            else:
+                raise wait.failure()
+            wait_lez_final_through(included, timing_profile(), "the Taker's claim")
+            log(f"  the claim {claim_txid[:12]} is final in LEZ block {included} with the Taker Node down")
+            evidence = {"claim": claim_txid, "claim_block": included}
+        wait = Wait("the Maker to complete with the Taker down", 900)
+        while wait.running():
+            phase = maker_phase(swap_id)
+            if phase == "completed":
+                break
+            wait.note(phase, f"maker {phase}, the Taker Node stopped")
+            time.sleep(5)
+        else:
+            raise wait.failure()
+        log("  the Maker completed alone from the claim on chain")
+    finally:
+        if miner_stopped:
+            subprocess.run(["docker", "start", MINER], check=False, capture_output=True)
+        if not REVERSE:
+            restore_lez_view("taker")  # a no-op on a stopped container; its start brings its own forwarders
+        start_taker()
+    wait_completed(swap_id, timeout=900)
+    settlement = assert_settlement(before, "completed", "after the late claim")
+    return {"swap_id": swap_id, **evidence, **settlement}
+
+
+def scenario_late_claim_unmined(stamp: str) -> dict:
+    """#103 item 14 (b): the Taker's revealing claim is sent but never mined, the
+    Taker Node is stopped across the claim window, and nothing includes the
+    claim until the refund path is open: the claim window closed (the
+    agreement's earlier refund time) and, selling LEZ, the Maker's Bitcoin
+    refund script matured, reached by empty blocks at the profile's pace with
+    the claim still in the mempool. What each side does meanwhile is logged
+    and, selling Bitcoin, the Maker is asserted not to claim (the secret never
+    left the Taker). Then the Taker starts again with its route back or the
+    miner resumes, the Maker's operator asks for its refund as the desk offers
+    it, and both Nodes are left to settle (the Taker's refund asked for if its
+    row offers one). The swap may end either way, but the balances must fit a
+    completed or a refunded swap and agree with both Nodes: no party ends with
+    both lots or without its own."""
+    profile = timing_profile()
+    pace = profile_seconds(profile, "MINE_INTERVAL", 2)
+    swap_id, before = late_claim_setup(stamp)
+    terms = taker_view(swap_id)["terms"]
+    window_closes = int(terms["earlier_refund_latest_unix_seconds"])
+    evidence: dict = {}
+    if REVERSE:
+        log("  stopping the miner so the Taker's Bitcoin claim waits in the mempool")
+        docker("stop", MINER)
+        try:
+            reply = send_claim(swap_id, stamp)
+            if "error" in reply:
+                raise Failure(f"taker_swap_claim_v1 failed: {json.dumps(reply['error'])[:300]}")
+            claim_txid = wait_bitcoin_claim_in_mempool(swap_id)
+            stop_taker()
+            maker_lock = maker_lock_recorded(swap_id)
+            lock_height = int(bitcoin("getblockheader", str(bitcoin("getrawtransaction", maker_lock, "1")["blockhash"]))
+                              ["height"]) if maker_lock else None
+            refund_height = int(terms.get("bitcoin_refund_height") or 0) or (
+                lock_height + int(profile["LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS"]) if lock_height else None)
+            if refund_height is None:
+                raise Failure("neither the terms nor the Maker's lock give the Maker's Bitcoin refund height")
+            log(f"  the claim {claim_txid[:12]} waits in the mempool with the Taker down; mining empty blocks every "
+                f"{pace}s until the window closes ({window_closes}) and the Maker's refund opens at height {refund_height}")
+            bound = max(0, window_closes - time.time()) + (refund_height - int(bitcoin("getblockcount"))) * pace + 600
+            wait = Wait("the refund path to open with the claim unmined", bound)
+            while wait.running():
+                height = int(bitcoin("getblockcount"))
+                if time.time() >= window_closes + 30 and height >= refund_height:
+                    break
+                if claim_txid not in bitcoin("getrawmempool"):
+                    raise Failure(f"the claim {claim_txid[:12]} left the mempool although no block took it")
+                wait.note(maker_phase(swap_id), lambda: f"maker {maker_phase(swap_id)}, height {height}, "
+                                                        f"claim {claim_txid[:12]} in the mempool")
+                mine_empty_block()
+                time.sleep(pace)
+            else:
+                raise wait.failure()
+            log(f"  the refund path is open at height {bitcoin('getblockcount')}; the claim was never mined; "
+                f"the Maker is at {maker_phase(swap_id)}")
+            evidence = {"claim": claim_txid, "maker_refund_height": refund_height}
+            queue_maker_refund(swap_id, stamp, evidence)
+        finally:
+            docker("start", MINER)
+            start_taker()
+    else:
+        log("  cutting the Taker's sequencer forwarder so the claim it sends is never included")
+        zec_cut_routes("taker", "sequencer")
+        try:
+            reply = send_claim(swap_id, stamp)
+            view = taker_view(swap_id)
+            effect = taker_claim_effect(view)
+            admitted = "result" in reply or view["state"] in TAKER_CLAIM_PENDING or bool(effect)
+            log(f"  claim request {'admitted' if admitted else 'refused'}: "
+                f"{json.dumps(reply.get('result') or reply.get('error'))[:160]}; taker {view['state']}, "
+                f"claim effect {json.dumps(effect)[:120]}")
+            if not admitted:
+                raise Failure("the Taker Node did not admit a claim it could not submit, so no claim was sent; "
+                              "this mechanism cannot hold a LEZ claim unincluded")
+            claim_txid = (effect or {}).get("transaction_id")
+            stop_taker()
+            wait_until(window_closes + 30, "for the claim window to close with the claim never included",
+                       lambda: f"maker {maker_phase(swap_id)}"
+                               + (f", claim {claim_txid[:12]} included: {lez_transaction_block('maker', claim_txid)}"
+                                  if claim_txid else ""))
+            if claim_txid and lez_transaction_block("maker", claim_txid) is not None:
+                raise Failure(f"the claim {claim_txid[:12]} was included although the Taker's sequencer route was cut")
+            phase = maker_phase(swap_id)
+            if phase in {"claim_evidence_available", "completed"}:
+                raise Failure(f"the Maker reached {phase} although the claim never reached the chain")
+            log(f"  the claim window closed with the claim never included; the Maker is at {phase}")
+            evidence = {"claim": claim_txid}
+            queue_maker_refund(swap_id, stamp, evidence)
+        finally:
+            zec_restore_routes("taker", "sequencer")  # a no-op on a stopped container; its start brings its own
+            start_taker()
+    taker_view_end, maker_phase_end = drive_to_settlement(
+        swap_id, stamp, timeout=3 * int(profile["LEZ_LEZ_DISCOVERY_MAX_BLOCKS"])
+        + int(profile["LEZ_BTC_LATER_REFUND_SECONDS"]) + 900)
+    settlement = assert_settled_consistently(before, taker_view_end["state"], maker_phase_end)
+    return {"swap_id": swap_id, **evidence, "taker_terminal_state": taker_view_end["state"],
+            "maker_terminal_phase": maker_phase_end, **settlement}
+
+
+def queue_maker_refund(swap_id: str, stamp: str, evidence: dict) -> None:
+    """The Maker's operator asks for its refund once the window has closed; the
+    Node may refuse (a claim it can still see, say), which is recorded."""
+    if maker_view(swap_id).get("schedule_state") == "terminal":
+        evidence["maker_refund_request"] = "not needed: terminal"
+        return
+    reply = rpc("maker", "maker_actor_refund_v1", {"request_id": f"e2e-maker-refund-{stamp}", "id": swap_id,
+                                                   "expected_generation": maker_view(swap_id)["lease_generation"]})
+    evidence["maker_refund_request"] = reply.get("result") or reply.get("error")
+    log(f"  the Maker's refund asked for: {json.dumps(evidence['maker_refund_request'])[:200]}")
 
 
 def ensure_coins(wallet: str, count: int) -> None:
@@ -3044,7 +3361,13 @@ def scenario_zec_survivor(stamp: str) -> dict:
     """ZEC analogue of `survivor`: the Taker Node stopped right after its Zcash
     claim was broadcast; the Maker completes alone (its follow-up observes the
     claim once zebra includes it — zebra is mined from here, as always); the
-    Taker Node restarted and its supervisor carrying the actor to completed."""
+    Taker Node restarted and its supervisor carrying the actor to completed.
+
+    Selling LEZ the claim is a Zcash transaction, and nothing but this harness
+    mines zebra, so a claim in zebra's mempool at the stop confirms while the
+    Taker is down: #103 item 14's case (a) for the ZEC pair. The claim is looked
+    for in the mempool before the stop, and when it is there its confirmation
+    is asserted before the Taker comes back (`claim_confirmed_while_stopped`)."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -3053,8 +3376,17 @@ def scenario_zec_survivor(stamp: str) -> dict:
     call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
                                           "swap_id": swap_id, "expected_generation": view["progress_generation"]},
          timeout=300)
+    held = []
+    if zec_taker_sells_lez() and not ZEC_PUBLIC:
+        try:
+            zec_poll_until("the Taker's Zcash claim in zebra's mempool", 120, lambda: bool(zec_mempool()))
+            held = list(zec_mempool())
+            log(f"  the Taker's Zcash claim {held[0][:12]} waits in zebra's mempool, unconfirmed")
+        except Failure as failure:
+            log(f"  no Zcash claim in zebra's mempool before the stop ({failure}); the late-claim case is not held")
     log(f"  stopping the Taker Node right after its {zec_taker_claims()} claim")
     docker("stop", NODES["taker"][0])
+    confirmed_while_stopped = False
     try:
         wait = Wait("the Maker to complete without the Taker", 1800)
         while wait.running():
@@ -3068,12 +3400,18 @@ def scenario_zec_survivor(stamp: str) -> dict:
             time.sleep(20)
         else:
             raise wait.failure()
+        if held:
+            confirmations = int((zebra("getrawtransaction", [held[0], 1]) or {}).get("confirmations") or 0)
+            if confirmations < 1:
+                raise Failure(f"the Maker completed but the Taker's claim {held[0][:12]} is still unconfirmed")
+            confirmed_while_stopped = True
+            log(f"  the Taker's claim {held[0][:12]} confirmed ({confirmations}) while the Taker Node was down")
     finally:
         docker("start", NODES["taker"][0])
         wait_healthy("taker")
     zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(Taker back)")
     wait_completed(swap_id, timeout=600)
-    return {"swap_id": swap_id, "corridor": corridor["run_id"]}
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "claim_confirmed_while_stopped": confirmed_while_stopped}
 
 
 def scenario_zec_regenerated_catalog(stamp: str) -> dict:
@@ -4043,6 +4381,8 @@ SCENARIOS = {
     "restart-taker": lambda stamp: scenario_restart(stamp, "taker"),
     "restart-maker": lambda stamp: scenario_restart(stamp, "maker"),
     "survivor": scenario_survivor,
+    "late-claim-confirms": scenario_late_claim_confirms,
+    "late-claim-unmined": scenario_late_claim_unmined,
     "concurrent": scenario_concurrent,
     "early-lock": scenario_early_lock,
     "offline-after-lock": scenario_offline_after_lock,

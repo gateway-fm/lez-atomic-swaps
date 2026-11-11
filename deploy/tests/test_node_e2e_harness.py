@@ -313,5 +313,38 @@ class RefundAdmission(unittest.TestCase):
         self.assertIn('did not admit the refund', str(refused.exception))
 
 
+class LateClaimSettlement(unittest.TestCase):
+    """#103 item 14 (b): whichever way the swap ends, the chains must agree with it."""
+    BEFORE = {'maker': {'btc_sat': 10_000_000, 'lez_units': 5_000},
+              'taker': {'btc_sat': 10_000_000, 'lez_units': 5_000}}
+
+    def settle(self, after, taker_state, maker_phase, reverse=True):
+        with patch.object(e2e, 'party_balances', lambda: after), patch.object(e2e, 'REVERSE', reverse), \
+                patch.object(e2e, 'log', lambda line: None):
+            return e2e.assert_settled_consistently(self.BEFORE, taker_state, maker_phase)
+
+    def after(self, maker_btc, maker_lez, taker_btc, taker_lez):
+        return {role: {asset: self.BEFORE[role][asset] + delta for asset, delta in values.items()}
+                for role, values in deltas(maker_btc, maker_lez, taker_btc, taker_lez).items()}
+
+    def test_a_refund_both_nodes_report_passes(self):
+        self.assertEqual(self.settle(self.after(-4_000, 0, 0, 0), 'refunded', 'refunded')['outcome'], 'refunded')
+
+    def test_a_completion_both_nodes_report_passes(self):
+        result = self.settle(self.after(-1_002_000, 1_000, 998_000, -1_000), 'completed', 'completed')
+        self.assertEqual(result['outcome'], 'completed')
+
+    def test_a_maker_with_both_lots_fails(self):
+        with self.assertRaises(e2e.Failure) as failed:
+            self.settle(self.after(-4_000, 1_000, 0, -1_000), 'refunded', 'refunded')
+        self.assertIn('funds lost or taken twice', str(failed.exception))
+
+    def test_balances_that_disagree_with_the_nodes_fail(self):
+        with self.assertRaises(e2e.Failure):
+            self.settle(self.after(-4_000, 0, 0, 0), 'completed', 'completed')
+        with self.assertRaises(e2e.Failure):
+            self.settle(self.after(-4_000, 0, 0, 0), 'refunded', 'completed')
+
+
 if __name__ == '__main__':
     unittest.main()

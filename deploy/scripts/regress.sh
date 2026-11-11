@@ -88,8 +88,8 @@ tier_tests() { # tier_tests <tier>
         for s in zec-happy zec-concurrent zec-restart-taker zec-restart-maker zec-survivor zec-node-offline; do
           echo "ui:zec:$s:$d"
         done
-        for s in happy replay wrong-inputs restart-taker restart-maker survivor concurrent early-lock \
-          offline-after-lock regenerated-config tampered-config; do
+        for s in happy replay wrong-inputs restart-taker restart-maker survivor late-claim-confirms \
+          late-claim-unmined concurrent early-lock offline-after-lock regenerated-config tampered-config; do
           echo "node:btc:$s:$d"
         done
         for s in happy restart-taker restart-maker survivor concurrent node-offline; do echo "ui:btc:$s:$d"; done
@@ -303,6 +303,7 @@ expected_seconds() { # expected_seconds <test>
   fi
   if [[ -z "$seconds" ]]; then
     case "$1" in
+      *late-claim-unmined*) seconds=1800 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;
       *) seconds=250 ;;
