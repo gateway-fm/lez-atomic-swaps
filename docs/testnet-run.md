@@ -16,6 +16,29 @@ them over a Docker network.
 Host requirements: arm64 with Docker, about 40 GB for testnet4 and room for
 the Logos Blockchain node's state.
 
+How this route differs from the local devnet (`deploy/compose.yaml`):
+
+- Only the two role Basecamps come from `compose.yaml`. Each one hosts its
+  party's desk, its LEZ signer (Basecamp's `lez_core`) and its Node (launched
+  by Basecamp's `lez_swap_node`), exactly as on the devnet. The devnet's
+  `network` Basecamp (LEZ node and indexer as Logos modules), its `sequencer`,
+  `bitcoin-core` and `zebra` are not used.
+- The public chain is read by upstream's `indexer_service` and Logos
+  Blockchain node as plain containers (sections 3 and 5), not by the
+  `blockchain_module` / `lez_indexer_module` pair.
+- The sequencer proxy (section 4) is still needed on this route. The Nodes'
+  LEZ client and sidecar can reach the official HTTPS origin directly (the
+  `official_public` value of `sequencer_route`,
+  `crates/btc-role-lifecycle/src/config.rs`, commit `64782d4a`), but
+  `node-entrypoint.sh` does not render that field, so a Compose-run Node uses
+  the default `local` route: a literal-loopback HTTP port forwarded to
+  `lez-testnet-sequencer`. The role's signer is pointed at the same proxy
+  (`LEZ_WALLET_SEQUENCER_URL`, `compose.testnet.yaml`).
+- This guide has not been run again since the role Nodes moved into their
+  Basecamps (PR #120). The last recorded runs are
+  [`docs/evidence/testnet-20260918/`](evidence/testnet-20260918/) and
+  [`docs/evidence/testnet3-provider-20260918/`](evidence/testnet3-provider-20260918/README.md).
+
 ## Which networks
 
 The networks are configuration, nothing else: `LEZ_BTC_NETWORK` (`bitcoin.network` in
@@ -125,6 +148,10 @@ The bootstrap peers are those in the Logos Blockchain Node 0.2.4 release notes.
 
 ## 4. The sequencer proxy
 
+The Nodes on this route accept only literal-loopback HTTP for the sequencer
+(see the list above), so a plain-HTTP proxy on the Docker network speaks TLS
+to the official sequencer for them.
+
 ```sh
 mkdir -p ~/lez-testnet/proxy
 # nginx.conf: listen 3040; proxy_pass https://testnet.lez.logos.co with
@@ -210,9 +237,13 @@ before it submits anything.
 ## 8. Running the swaps on the desks
 
 Both directions run from `deploy/`, against the public stack rather than the local
-defaults:
+defaults. Start the two Basecamps with `--no-deps`: in `compose.testnet.yaml`
+the Taker's Basecamp still names the local `sequencer` among its dependencies,
+and without the flag Compose would start the local devnet beside them:
 
 ```sh
+docker compose -p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml \
+  up -d --no-deps maker-node taker-node
 export LEZ_STACK_COMPOSE_ARGS="-p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml"
 export LEZ_CONTAINER_PREFIX=lez-testnet LEZ_REPAIR_INDEXER=0 LEZ_EXPORT_EVIDENCE=0
 export LEZ_UI_LEZ_AMOUNT=100 LEZ_UI_BTC_AMOUNT=0.0001

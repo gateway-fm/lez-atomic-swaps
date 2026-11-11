@@ -67,7 +67,7 @@ npm run test:m6:basecamp
 | Component | Version | Where it is used |
 |---|---|---|
 | Logos Basecamp | `0.2.0` (commit `48b26c0`) | CI integration harness and the Compose Basecamp image (`basecamp-ui`, the base of each party's Basecamp) |
-| Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from the catalog, below |
+| Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from a module catalog (an organization-owned one is issue #106) |
 | Logos Chat module | `0.2.2` | pinned by `flake.lock`; the catalog installs the same release |
 | Logos Delivery module | `0.2.0` as pinned by Chat `0.2.2`; `0.2.1` as resolved from the official catalog | Chat's transport dependency |
 
@@ -114,9 +114,17 @@ be started, and no socket leaves the container.
 The desks' backends accept one thing: the absolute path of a Unix socket owned
 by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
 `LEZ_TAKER_RPC_SOCKET`, so a desk installed into another Basecamp (from the
-catalog, below) needs a Node of its own on the same host. Running the Node
+catalog) needs a Node of its own on the same host. Running the Node
 binaries natively on macOS is not supported: the Nodes' process hardening is
 Linux-only.
+
+The LEZ network itself runs in a third Basecamp, `lez-network`
+(`deploy/images/lez-network-module`). Its **LEZ Network** desk (`network/`,
+package `lez_network`) asks Basecamp's `blockchain_module` and
+`lez_indexer_module` to start, each only when the stack sets its config path
+(`common/lez_network_host.h`), and rebuilds the indexer's database on
+**Re-index** (`deploy/scripts/repair-indexer.sh`). It is not a role package:
+a Maker or a Taker does not install it.
 
 ## Install into isolated Basecamp user directories
 

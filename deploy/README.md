@@ -1,9 +1,18 @@
-# lez-swap-stack — fully dockerized local LEZ ↔ BTC swap environment
+# lez-swap-stack — fully dockerized local LEZ ↔ BTC / ZEC swap environment
 
-One compose project: LEZ v0.2 devnet + Bitcoin Core regtest + explorers for
-both chains + each party's own Basecamp, holding that party's desk and its
-canonical Node (drivable over VNC and by automated end-to-end tests). All
-native arm64, started with one command.
+One compose project: the LEZ v0.2 devnet (one Basecamp hosting the LEZ node and
+the indexer as Logos modules, plus the sequencer) + Bitcoin Core regtest +
+Zebra regtest + each party's own Basecamp, holding that party's desk, its LEZ
+signer and its canonical Node (drivable over VNC and by automated end-to-end
+tests). Block explorers for both chains are an optional profile. All native
+arm64, started with one command.
+
+Seven containers run by default: `bitcoin-core`, `btc-miner`, `zebra`,
+`network`, `sequencer`, `maker-node` and `taker-node`. No init container runs.
+`basecamp-ui` is built but never started; `btc-explorer` and `lez-explorer`
+(profile `explorers`), `heartbeat` (profile `heartbeat`) and `tools` (profile
+`tools`, one-shot) start only on request. [docs/submission-115.md](../docs/submission-115.md)
+says which of these run in Basecamp and why the rest stay in Compose.
 
 ## Prebuilt images (no build)
 
@@ -92,8 +101,9 @@ The portable recorder produces an offline replay page and public chain checks.
 ./scripts/down.sh                  # stop everything (--wipe also removes state and volumes)
 ```
 
-A stop is safe for the LEZ chain: Bedrock, the sequencer and the indexer shut down
-cleanly on SIGINT only, so compose stops them with it; `up.sh` then resumes the same
+A stop is safe for the LEZ chain: the LEZ node and the indexer (both in the
+`network` Basecamp) and the sequencer shut down cleanly on SIGINT only, so
+compose stops them with it; `up.sh` then resumes the same
 chain. If one of them was killed anyway (a crash, `docker rm -f`) and does not come
 back, `up.sh --fresh-lez` recreates the LEZ chain and keeps Bitcoin and the wallets.
 It abandons every open swap (their LEZ legs go with the chain): never run it with
@@ -111,8 +121,8 @@ gen-config.sh renders both settings from the upstream files in `assets/lez-sourc
 The same command is the remedy for a frozen devnet (logos-blockchain#3643). The
 mechanism:
 
-- The sequencer pays for each inscription from Bedrock's wallet: the exact fee at the
-  tip it funds against, plus a tip (`priority_fee`, upstream 200).
+- The sequencer pays for each inscription from a Bedrock wallet key: the exact fee at
+  the tip it funds against, plus a tip (`priority_fee`, upstream 200).
 - Bedrock re-prices storage at every epoch turn, by up to an eighth and by at least
   one unit.
 - An inscription in flight across a turn that raised the price no longer pays enough.
@@ -133,15 +143,22 @@ gen-config.sh removes the cause with configuration only:
 - The price only drifts up (~+45 an hour), so the tip costs ~10^7 per LEZ block.
   Upstream's 48 x 10^6 of genesis funding would run dry within an hour (it did, in
   46 minutes, at 1 s blocks). The devnet's genesis gives those 48 notes 10^12 each.
-  That lasts ~45 days; the genesis block root and the SDP declaration's locked note id
-  were recomputed for it (`builder/regenesis`).
+- The sequencer no longer pays from the block producer's notes. Upstream's sequencer
+  funds from the leader's own genesis key, and Bedrock's leader can only win a slot
+  with a note that is in its epoch's aged snapshot and still unspent. The sequencer
+  spends one note per LEZ block, so at ~1.5 s a block it left the leader no eligible
+  note at an epoch turn: Bedrock stopped proposing and the sequencer exited on
+  `Wallet does not have enough funds, available=0`. In the devnet's genesis 40 of the
+  48 notes belong to the node's SDP key (`ed26..`), which is the sequencer's
+  `funding_key`; the leader keeps 8 notes nobody spends (commit `88fcabbf`).
+- The notes' values and owners are part of the genesis transaction, so the genesis
+  block root and the SDP declaration's locked note id were recomputed for them
+  (`builder/regenesis`); `gen-config.sh` checks both against the upstream file.
 
 `regress.sh` treats a chain whose storage price has reached 6000 (about five days of
 chain time) as worn and starts the next test on a new one.
 
-The epoch cannot be stretched instead: Bedrock's one leader proves with the same notes
-the sequencer spends, and it stops making blocks once every note it may use has been
-spent. If a chain still freezes, the fix is the same: start a new one.
+If a chain still freezes, the fix is the same: start a new one.
 `up.sh --fresh-lez` waits for the new chain's first finalized height, which a healthy
 chain's indexer serves ~100 s after the sequencer's first block, for up to 300 s
 (`LEZ_FRESH_FIRST_FINALITY_SECONDS`). It then waits 60 s for the height to move
@@ -354,7 +371,8 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
 * **Bitcoin**: the standing `bitcoin-core` regtest chain (`txindex`,
   `txospenderindex`), continuously mined by `btc-miner`. Swap transactions are
   native chain transactions, visible in the Bitcoin explorer.
-* **LEZ**: the standing `bedrock` / `sequencer` / `indexer` chain (genesis allocations
+* **LEZ**: the standing chain of the `network` Basecamp (LEZ node and indexer) and the
+  `sequencer` (genesis allocations
   of 2 000 000 LEZ to each role's signer and settlement wallet, `gen-config.sh`, which
   writes them to `runtime/runtime.env` as `LEZ_WALLET_{MAKER,TAKER}_ALLOCATION` for the
   market bootstrap's vault claims, the one place the number lives: a
@@ -381,7 +399,7 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
   20; `0` in `runtime/runtime.env` disables it, `gen-config.sh` writes it), with
   one log line per tick (`heartbeat: tick n tx … tip T finalized F (flat s)`).
   When the finalized height is flat for `LEZ_HEARTBEAT_STALL_SECONDS` (default
-  120) while the tip advances it prints `heartbeat: STALL …` (again every five
+  60) while the tip advances it prints `heartbeat: STALL …` (again every five
   minutes while it lasts, once when it clears) and writes
   `runtime/heartbeat/status.json` with `stalled: true`, which the runners read
   instead of waiting out a vault sweep on a dead chain.
@@ -446,7 +464,9 @@ each party's own Basecamp, with its own Bitcoin Core, miner and Zebra, on the
 same LEZ network (`scripts/lane.sh` names a lane's containers `lez-l<k>-*`, its
 files `runtime/lanes/<k>/`, its Zebra `127.0.0.1:18232+10(k-1)` and its VNC
 `5901+10(k-1)`/`5902+10(k-1)`). Lane 2 settles as `maker-basel-02` /
-`taker-limmat-02`, which every genesis funds. One watcher follows LEZ finality
+`taker-limmat-02`, which every genesis funds. Lanes 3 and up settle as market
+wallets of their own: `scripts/lanes.sh mint N` mints them into the market
+root, and the next LEZ chain (`up.sh --fresh-lez`) funds them. One watcher follows LEZ finality
 for all lanes: a frozen chain voids every lane's test, and one new chain
 (`up.sh --fresh-lez` with `LEZ_LANES`, which stops and restarts the lanes) serves
 them all. The scenarios, `reset-swaps.sh` and `zec-provision.sh` act on one lane
@@ -465,6 +485,7 @@ when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 | `lez-explorer` (profile `explorers`) | `images/lez-explorer` | zero-dependency Node proxy + UI over the indexer RPC (`getBlocks/…/getAccount`); search resolves every exported swap's transaction hashes (`runtime/evidence/`) |
 | `maker-node` | `images/maker-node` | the Maker's own Basecamp (the `basecamp-ui` image) on VNC `127.0.0.1:5901`, plus Maker-only executables (payloads stripped at build): canonical Node, CLI, Chat gateway, `lez-btc-maker-actor`, the LEZ v0.2 role sidecar program (spawned per swap) and `node-entrypoint.sh`. Its LEZ Maker desk opens at start, hosts the Maker's LEZ signer (`lez_core`) and has `lez_swap_node` launch and supervise the Node; the UI tests drive the same desk (`ui-tests/`, mounted). The entrypoint forwards loopback 18443/3040/8779 to Core, sequencer and indexer because the actor, wallet client and sidecars accept only literal-loopback endpoints. The image owns its state directories (a new named volume takes the image directory's owner and mode), so no init container runs |
 | `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, plus Taker-only executables: canonical Node, CLI, Chat gateway, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar and `node-entrypoint.sh`; same loopback forwarders as the Maker |
+| `heartbeat` (profile `heartbeat`) | `images/lez-wallet-module` | the LEZ finality heartbeat (above); `up.sh` starts it when `LEZ_HEARTBEAT_SECONDS` is not `0` |
 | `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
 | `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc |
 
@@ -517,7 +538,15 @@ scripts/verify-all.sh      containers, chains, explorers, Node market, desk suit
 scripts/down.sh            stop / --wipe
 scripts/gen-config.sh      renders runtime/ (LEZ configs, bitcoin.conf, secrets) — idempotent
 scripts/btc-miner.sh       regtest mining loop
+scripts/regress.sh         the devnet regression (smoke, refunds, full) that survives finality freezes
+scripts/lane.sh, lanes.sh  regression lanes 2..N beside the stack (compose.lane.yaml)
+scripts/repair-indexer.sh  rebuild the indexer's database while the LEZ node keeps running
+scripts/logos-native-acceptance.sh  the packages through logosctl, outside Compose (docs/evidence/logos-native-2026-11-10)
+compose.lane.yaml          overlay for one regression lane
+compose.testnet.yaml       overlay for the public testnets (docs/testnet-run.md)
 images/                    one dir per image (Dockerfile + payloads)
+  basecamp-ui/             the Basecamp every role and the network run in (build only)
+  lez-network-module/      the network Basecamp: blockchain_module + lez_indexer_module
   basecamp-ui/assets/      portable Basecamp bundle, role trees, qt-mcp framework
   lez-wallet-module/       the LEZ wallet as the Logos lez_core module: vault claims, heartbeat,
                            the roles' swap signers; also the escrow deployer and identity tool (profile "tools")

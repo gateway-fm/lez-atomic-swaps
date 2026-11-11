@@ -76,19 +76,25 @@ Or connect any VNC client to those ports. The default password is
 steps are in
 [`apps/basecamp/README.md`](apps/basecamp/README.md#each-partys-desk-in-its-own-basecamp).
 
-The two Basecamp apps are also published as Logos modules; add the catalog
+Earlier releases published the two Basecamp apps to a personal module
+catalog,
 `https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
-in Basecamp's package manager to install **LEZ Maker** and
-**LEZ Taker** at the release version.
+([`docs/evidence/review-2026-09-12/README.md`](docs/evidence/review-2026-09-12/README.md)).
+It is not organization-owned, and nothing here checks that it carries this
+branch's packages; an organization-owned catalog is issue #106, still open. A
+desk installed from a catalog also needs a Node of its own on the same host
+([`apps/basecamp/README.md`](apps/basecamp/README.md)): the role packages do
+not carry one yet ([`docs/submission-115.md`](docs/submission-115.md)).
 
 The local product also exposes:
 
 | Surface | Address |
 |---|---|
-| Bitcoin explorer | <http://127.0.0.1:3002> |
-| LEZ explorer and evidence | <http://127.0.0.1:3003/#/evidence> |
-| Maker owner RPC | `/run/lez/maker.sock` inside the stack |
-| Taker owner service | owner-only Unix socket inside the stack |
+| Bitcoin explorer (profile `explorers`: `LEZ_EXPLORERS=1 ./scripts/up.sh`) | <http://127.0.0.1:3002> |
+| LEZ explorer and evidence (profile `explorers`) | <http://127.0.0.1:3003/#/evidence> |
+| LEZ indexer JSON-RPC | <http://127.0.0.1:8779> |
+| Maker owner RPC | `/run/lez/maker/node.sock` inside `lez-maker-node` |
+| Taker owner RPC | `/run/lez/taker/node.sock` inside `lez-taker-node` |
 
 ### Complete a swap
 
