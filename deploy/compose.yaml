@@ -416,6 +416,9 @@ services:
       - ./${LEZ_LANE_RUNTIME:-runtime}/lez/maker/identity.json:/run-lez-identity/identity.json:ro
       # The whole identity for the desk's signer only (the key stays in Basecamp).
       - ./${LEZ_LANE_RUNTIME:-runtime}/lez/maker:/run-lez-identity/maker:ro
+      # The minted Zcash key, which is also the Maker's Delivery signing key
+      # (node-entrypoint.sh installs it from here; zebra mines to it).
+      - ./${LEZ_LANE_RUNTIME:-runtime}/lez/maker/zcash.key:/run-lez-identity/zcash.key:ro
       - maker_wallet:/run/lez-wallet/maker
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
