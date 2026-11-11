@@ -334,6 +334,7 @@ step '(( rc == 0 )) && ! grep -Eq "blockchain_module|lez_indexer_module|lez_netw
 
 section "Install the modules"
 for name in "${names[@]:1}"; do
+  [[ "$name" == "$network_pkg" ]] && continue
   step "$ok" "install $name with its root hash" "$RUN" "$L package install ${file_of[$name]} --root-hash ${root_of[$name]:-none} -y"
 done
 if [[ -n "${file_of[lez_swap_node]:-}" ]]; then
