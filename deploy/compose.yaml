@@ -12,11 +12,16 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+# A lane (scripts/lane.sh, compose.lane.yaml) is one more Maker/Taker pair with
+# its own Bitcoin Core, miner and Zebra beside the one LEZ network: the
+# LEZ_CONTAINER_PREFIX, LEZ_LANE_RUNTIME, LEZ_ZEBRA_PORT and VNC port variables
+# below name its containers, files and ports. Unset, they are lane 1: this stack.
+
 services:
   # ─── Bitcoin regtest ────────────────────────────────────────────────────
   bitcoin-init:
     image: debian:bookworm-slim
-    container_name: lez-bitcoin-init
+    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-bitcoin-init
     volumes:
       - bitcoin_core_data:/var/lib/bitcoin
     command: ["chown", "-R", "65532:65532", "/var/lib/bitcoin"]
@@ -27,7 +32,7 @@ services:
   bitcoin-core:
     build: ./images/bitcoin-core
     image: ${LEZ_IMAGE_PREFIX:-lez}-bitcoin-core:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-bitcoin-core
+    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-bitcoin-core
     depends_on:
       bitcoin-init:
         condition: service_completed_successfully
@@ -66,7 +71,7 @@ services:
 
   zebra-init:
     image: debian:bookworm-slim
-    container_name: lez-zebra-init
+    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-zebra-init
     volumes:
       - zebra_data:/var/lib/zebra
     command: ["chown", "-R", "65532:65532", "/var/lib/zebra"]
@@ -79,7 +84,7 @@ services:
   zebra:
     build: ./images/zebra
     image: ${LEZ_IMAGE_PREFIX:-lez}-zebra:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-zebra
+    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-zebra
     depends_on:
       zebra-init:
         condition: service_completed_successfully
@@ -95,11 +100,11 @@ services:
       org.logos-co.atomic-swaps.scope: zebra-regtest-e2e
       org.logos-co.atomic-swaps.component: zebra
     ports:
-      - "127.0.0.1:18232:18232"
+      - "127.0.0.1:${LEZ_ZEBRA_PORT:-18232}:18232"
     volumes:
       # Rendered by scripts/gen-config.sh from assets/zebra/zebrad.toml: the
       # miner_address is the Maker's minted Zcash key (runtime/lez/maker/zcash.key).
-      - ./runtime/zebra/zebrad.toml:/run-config/zebrad.toml:ro
+      - ./${LEZ_LANE_RUNTIME:-runtime}/zebra/zebrad.toml:/run-config/zebrad.toml:ro
       - zebra_data:/var/lib/zebra
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=128m,mode=1777
@@ -119,7 +124,7 @@ services:
   btc-miner:
     build: ./images/btc-miner
     image: ${LEZ_IMAGE_PREFIX:-lez}-btc-miner:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-btc-miner
+    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-btc-miner
     depends_on:
       bitcoin-core:
         condition: service_healthy
@@ -354,7 +359,7 @@ services:
       additional_contexts:
         basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-maker-node
+    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-maker-node
     depends_on:
       sequencer:
         condition: service_healthy
@@ -408,15 +413,15 @@ services:
       - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
       # The identity's public half; the key stays with Basecamp's wallet.
-      - ./runtime/lez/maker/identity.json:/run-lez-identity/identity.json:ro
+      - ./${LEZ_LANE_RUNTIME:-runtime}/lez/maker/identity.json:/run-lez-identity/identity.json:ro
       # The whole identity for the desk's signer only (the key stays in Basecamp).
-      - ./runtime/lez/maker:/run-lez-identity/maker:ro
+      - ./${LEZ_LANE_RUNTIME:-runtime}/lez/maker:/run-lez-identity/maker:ro
       - maker_wallet:/run/lez-wallet/maker
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
       - ./ui-tests:/ui-tests:ro
     ports:
-      - "127.0.0.1:5901:5900"
+      - "127.0.0.1:${LEZ_MAKER_VNC_PORT:-5901}:5900"
     networks: [chains]
     user: "4713:4713"
     # the host user's group: reads the role keys under runtime/lez (gen-config.sh)
@@ -441,7 +446,7 @@ services:
       additional_contexts:
         basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-taker-node
+    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-taker-node
     depends_on:
       sequencer:
         condition: service_healthy
@@ -494,15 +499,15 @@ services:
       # the Maker's Chat socket (the Node's own sockets stay in the image's /run/lez/taker)
       - maker_socket:/run/lez/maker
       # The identity's public half; the key stays with Basecamp's wallet.
-      - ./runtime/lez/taker/identity.json:/run-lez-identity/identity.json:ro
+      - ./${LEZ_LANE_RUNTIME:-runtime}/lez/taker/identity.json:/run-lez-identity/identity.json:ro
       # The whole identity for the desk's signer only (the key stays in Basecamp).
-      - ./runtime/lez/taker:/run-lez-identity/taker:ro
+      - ./${LEZ_LANE_RUNTIME:-runtime}/lez/taker:/run-lez-identity/taker:ro
       - taker_wallet:/run/lez-wallet/taker
       - ./runtime/secrets/btc-rpc-cookie:/run-config/btc-rpc-cookie:ro
       - ./runtime/market-bootstrap.env:/run-market/market-bootstrap.env:ro
       - ./ui-tests:/ui-tests:ro
     ports:
-      - "127.0.0.1:5902:5900"
+      - "127.0.0.1:${LEZ_TAKER_VNC_PORT:-5902}:5900"
     networks: [chains]
     user: "4713:4713"
     # the host user's group: reads the role keys under runtime/lez (gen-config.sh)

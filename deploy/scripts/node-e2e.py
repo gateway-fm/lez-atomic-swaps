@@ -84,6 +84,22 @@ import urllib.request
 
 DEPLOY_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNTIME = DEPLOY_ROOT / "runtime"
+# A regression lane (scripts/lane.sh) is one Maker/Taker pair with its own
+# Bitcoin Core, miner and Zebra on the shared LEZ network. Unset, these name
+# lane 1, the stack itself: lez-* containers, runtime/, zebra on :18232.
+if os.environ.get("LEZ_LANE", "1") != "1" and "LEZ_LANE_RUNTIME" not in os.environ:
+    # Run by hand with only LEZ_LANE set: take the lane's names from lane.sh.
+    names = subprocess.run(["bash", "-c", "set -a; source runtime/runtime.env; set +a; source scripts/lane.sh; env -0"],
+                           cwd=DEPLOY_ROOT, capture_output=True, check=True).stdout
+    for pair in names.split(b"\0"):
+        key, _, value = pair.decode().partition("=")
+        if key.startswith("LEZ_"):
+            os.environ[key] = value
+PREFIX = os.environ.get("LEZ_CONTAINER_PREFIX", "lez")
+# The lane's own files: role identities and keys (lez/), corridors (zec/),
+# summaries (e2e/) and exported evidence (evidence/). runtime.env and the
+# heartbeat's status stay in RUNTIME.
+LANE_RUNTIME = DEPLOY_ROOT / os.environ.get("LEZ_LANE_RUNTIME", "runtime")
 ROUTE = {"pair": "Bitcoin", "direction": "TakerSellsForeign"}  # --direction / --pair replace it
 REVERSE = False  # True when the Taker sells LEZ (locks LEZ first, claims the foreign coin)
 FOREIGN_UNITS = 1_000_000
@@ -91,10 +107,14 @@ LEZ_UNITS = 1_000
 # The ZEC corridor's template (zec-reference-actor local_poc.rs): 1 ZEC for 50 000 LEZ units.
 ZEC_FOREIGN_UNITS = 100_000_000
 ZEC_LEZ_UNITS = 50_000
-ZEBRA_URL = "http://127.0.0.1:18232/"  # Compose publishes zebra's RPC on the host loopback
-NODES = {"maker": ("lez-maker-node", "/run/lez/maker/node.sock"),
-         "taker": ("lez-taker-node", "/run/lez/taker/node.sock")}
-BTC_CLI = ["docker", "exec", "lez-bitcoin-core", "bitcoin-cli",
+ZEBRA_URL = os.environ.get("LEZ_ZEBRA_URL", "http://127.0.0.1:18232/")  # Compose publishes zebra's RPC on the host loopback
+NODES = {"maker": (f"{PREFIX}-maker-node", "/run/lez/maker/node.sock"),
+         "taker": (f"{PREFIX}-taker-node", "/run/lez/taker/node.sock")}
+MINER = f"{PREFIX}-btc-miner"
+# The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
+MAKER_WALLET = os.environ.get("LEZ_LANE_MAKER_WALLET", "maker-munich-01")
+TAKER_WALLET = os.environ.get("LEZ_LANE_TAKER_WALLET", "taker-zurich-01")
+BTC_CLI = ["docker", "exec", f"{PREFIX}-bitcoin-core", "bitcoin-cli",
            "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin"]
 MINER_ADDRESS = "bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6"
 TERMINAL = {"completed", "refunded", "attention_required"}
@@ -666,7 +686,7 @@ def scenario_early_lock(stamp: str) -> dict:
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     log("  stopping the miner so the Taker's lock stays unconfirmed")
-    docker("stop", "lez-btc-miner")
+    docker("stop", MINER)
     try:
         txid = lock(swap_id)
         confirmations = (bitcoin("getrawtransaction", txid, "1") or {}).get("confirmations", 0)
@@ -689,7 +709,7 @@ def scenario_early_lock(stamp: str) -> dict:
         log("  the Taker's lock is confirmed; the Maker may now lock")
         wait_maker_past_lock(swap_id, timeout=900)
     finally:
-        docker("start", "lez-btc-miner")
+        docker("start", MINER)
         wait_healthy("maker")
     claim(swap_id, stamp)
     wait_completed(swap_id)
@@ -709,14 +729,14 @@ def maker_health() -> dict:
 
 
 def cut_delivery_and_chat() -> None:
-    docker("exec", "lez-maker-node", "mv", CHAT_SOCKET, CHAT_SOCKET_OFFLINE)
-    docker("exec", "lez-maker-node", "chmod", "0755", "/delivery")
+    docker("exec", NODES["maker"][0], "mv", CHAT_SOCKET, CHAT_SOCKET_OFFLINE)
+    docker("exec", NODES["maker"][0], "chmod", "0755", "/delivery")
 
 
 def restore_delivery_and_chat() -> None:
-    subprocess.run(["docker", "exec", "lez-maker-node", "mv", CHAT_SOCKET_OFFLINE, CHAT_SOCKET],
+    subprocess.run(["docker", "exec", NODES["maker"][0], "mv", CHAT_SOCKET_OFFLINE, CHAT_SOCKET],
                    check=False, capture_output=True)
-    subprocess.run(["docker", "exec", "lez-maker-node", "chmod", "0700", "/delivery"],
+    subprocess.run(["docker", "exec", NODES["maker"][0], "chmod", "0700", "/delivery"],
                    check=False, capture_output=True)
 
 
@@ -1131,7 +1151,7 @@ def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
     # timely-by-median — exactly the wild condition (a slow inclusion), which a
     # Maker held down past its own cutoff cannot reproduce (it refuses to lock).
     log("  stopping the miner so the Maker's lock is broadcast on time but not yet confirmed")
-    docker("stop", "lez-btc-miner")
+    docker("stop", MINER)
     miner_down = True
     try:
         lock(swap_id)
@@ -1170,7 +1190,7 @@ def scenario_refund_admitted_then_maker_lock(stamp: str) -> dict:
         log(f"  observer recovered the swap unaided; Taker balances {before} → {after}")
     finally:
         if miner_down:
-            docker("start", "lez-btc-miner")
+            docker("start", MINER)
     return {"swap_id": swap_id, "maker_lock_txid": maker_lock, "cutoff": cutoff,
             "taker_balance_before": before, "taker_balance_after": after}
 
@@ -1195,6 +1215,7 @@ def regenerate_runtime_config() -> None:
     """Renders the runtime configuration again (same chain, same identities), as a
     maintenance run of gen-config.sh does; the live btc-role.json is rendered from
     it on the Node's next start."""
+    # A lane re-renders its own files only (gen-config.sh with LEZ_LANE set).
     result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "gen-config.sh"), "runtime"],
                             capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT)
     if result.returncode != 0:
@@ -1298,8 +1319,8 @@ ZEC_REFUND_PROFILE = "deterministic-local-devnet-v4"
 
 def zec_current_refund_delay() -> int:
     """The LEZ refund delay of the corridor the Nodes run with (runtime/zec/current)."""
-    run_id = (RUNTIME / "zec" / "current").read_text().strip()
-    spec = json.loads((RUNTIME / "zec" / run_id / "spec.json").read_text())
+    run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
+    spec = json.loads((LANE_RUNTIME / "zec" / run_id / "spec.json").read_text())
     return zec_profile_refund_delay(spec.get("profile", "deterministic-local-v1"))
 
 
@@ -1328,8 +1349,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
             log(f"    {line}")
         if result.returncode != 0:
             raise Failure(f"zec-provision.sh failed: {result.stderr.strip()[-300:] or result.stdout.strip()[-300:]}")
-    run_id = (RUNTIME / "zec" / "current").read_text().strip()
-    out = RUNTIME / "zec" / run_id
+    run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
+    out = LANE_RUNTIME / "zec" / run_id
     entries = json.loads((out / "prepared.json").read_text())
     corridors = []
     for index, entry in enumerate(entries):
@@ -1892,7 +1913,7 @@ def scenario_zec_balance_refusal_foreign(stamp: str) -> dict:
     nothing locked); after the account is funded (bootstrap-market.sh claims
     the vault) the supervisor's next attempt locks LEZ with no owner action and
     the swap completes."""
-    identity = json.loads((RUNTIME / "lez" / "maker" / "identity.json").read_text())
+    identity = json.loads((LANE_RUNTIME / "lez" / "maker" / "identity.json").read_text())
     account = identity["account_id"]
     before = lez_account_balance(account)
     if before >= ZEC_LEZ_UNITS:
@@ -1938,7 +1959,7 @@ def scenario_zec_balance_refusal_foreign(stamp: str) -> dict:
         raise Failure(f"after the claim the Maker's LEZ account holds {after}, still below the lot")
     market_root = pathlib.Path(next(line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
                                     if line.startswith("LEZ_MARKET_ROOT=")))
-    claim = json.loads((market_root / "bootstrap" / "maker-munich-01-claim.json").read_text())
+    claim = json.loads((market_root / "bootstrap" / f"{MAKER_WALLET}-claim.json").read_text())
     log(f"  Maker LEZ account holds {after} (vault claim {claim['transaction_id'][:16]}…)")
     zec_finish(swap_id, config, corridor, stamp)
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "offer_id": corridor["offer_id"],
@@ -1963,7 +1984,7 @@ def scenario_zec_balance_refusal(stamp: str) -> dict:
     harness does), so the recovery is the next drive, not a self-re-drive."""
     if not zec_taker_sells_lez():
         return scenario_zec_balance_refusal_foreign(stamp)
-    identity = json.loads((RUNTIME / "lez" / "taker" / "identity.json").read_text())
+    identity = json.loads((LANE_RUNTIME / "lez" / "taker" / "identity.json").read_text())
     account = identity["account_id"]
     before = lez_account_balance(account)
     if before >= ZEC_LEZ_UNITS:
@@ -2002,7 +2023,7 @@ def scenario_zec_balance_refusal(stamp: str) -> dict:
         raise Failure(f"after the claim the Taker's LEZ account holds {after}, still below the lot")
     market_root = pathlib.Path(next(line.split("=", 1)[1] for line in (RUNTIME / "runtime.env").read_text().splitlines()
                                     if line.startswith("LEZ_MARKET_ROOT=")))
-    claim = json.loads((market_root / "bootstrap" / "taker-zurich-01-claim.json").read_text())
+    claim = json.loads((market_root / "bootstrap" / f"{TAKER_WALLET}-claim.json").read_text())
     log(f"  Taker LEZ account holds {after} (vault claim {claim['transaction_id'][:16]}…)")
     # Recovery with no owner action: the supervisor's next attempt (its 30 s
     # backoff) prepares the lock, the marker goes, the row leaves
@@ -2418,7 +2439,7 @@ def zec_export_tool(swap_id: str) -> bool:
         },
         "exported_at_unix_seconds": int(time.time()),
     }
-    out = DEPLOY_ROOT / "runtime" / "evidence" / "zec"; out.mkdir(parents=True, exist_ok=True)
+    out = LANE_RUNTIME / "evidence" / "zec"; out.mkdir(parents=True, exist_ok=True)
     path = out / f"{swap_id}.json"
     path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n")
     log(f"  ZEC evidence written to {path} (taker {evidence['taker']['node_view'].get('state')}, "
@@ -2840,7 +2861,9 @@ def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
 
 # A Node's loopback forwarders (node-entrypoint.sh): the ZEC sidecars read LEZ
 # through both the indexer and the sequencer one, and zebra through its own.
-ZEC_ROUTES = {"indexer": (8779, "indexer"), "sequencer": (3040, "sequencer"), "zebra": (18232, "zebra")}
+# indexer and sequencer are the shared LEZ network's; zebra is the lane's own.
+ZEC_ROUTES = {"indexer": (8779, "indexer"), "sequencer": (3040, "sequencer"),
+              "zebra": (18232, os.environ.get("LEZ_ZEBRA_HOST", "zebra"))}
 # The Taker actor's phases once its own first lock is confirmed (and no further).
 ZEC_FIRST_LOCK_CONFIRMED = {"taker_lock_confirmed"}
 ZEC_PAST_FIRST_LOCK = {"taker_lock_confirmed", "awaiting_maker_confirmations", "both_legs_locked"}
@@ -3096,7 +3119,7 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
         docker("start", NODES["maker"][0])
         wait_healthy("maker")
     if step == "refund-point" and zec_taker_sells_lez():
-        run_id = (RUNTIME / "zec" / "current").read_text().strip()
+        run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
         wait_until(int(run_id.rsplit("-", 1)[1]) + zec_current_refund_delay() + 15,
                    "for the agreement's LEZ refund time (the profile's delay after provisioning)")
         log("  the Taker's refund is due")
@@ -3390,7 +3413,7 @@ def run(name: str) -> bool:
         summary["error"] = str(failure)
         log(f"FAILED: {failure}")
     summary["seconds"] = round(time.time() - started)
-    out = RUNTIME / "e2e"
+    out = LANE_RUNTIME / "e2e"
     out.mkdir(parents=True, exist_ok=True)
     suffix = ("" if REVERSE else "-foreign") if ROUTE["pair"] == "Zcash" else ("-lez" if REVERSE else "")
     (out / f"{name}{suffix}.json").write_text(json.dumps(summary, indent=2) + "\n")

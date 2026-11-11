@@ -179,6 +179,7 @@ class ResetSwapsRefusesOpenSwaps(Workspace):
         super().setUp()
         shutil.copy(SCRIPTS / 'reset-swaps.sh', self.deploy / 'scripts')
         shutil.copy(SCRIPTS / 'node-hold.sh', self.deploy / 'scripts')
+        shutil.copy(SCRIPTS / 'lane.sh', self.deploy / 'scripts')
         executable(self.bin / 'docker', FAKE_DOCKER)
         (self.deploy / 'runtime').mkdir()
         (self.deploy / 'runtime' / 'runtime.env').write_text('BTC_RPC_PASSWORD=test\n')

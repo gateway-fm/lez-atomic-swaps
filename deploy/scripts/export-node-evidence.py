@@ -18,18 +18,22 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import urllib.request
 
 DEPLOY_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# A regression lane's pair and files (scripts/lane.sh); unset, the stack's own.
+PREFIX = os.environ.get("LEZ_CONTAINER_PREFIX", "lez")
+LANE_RUNTIME = DEPLOY_ROOT / os.environ.get("LEZ_LANE_RUNTIME", "runtime")
 TAKER_SOCKET = "/run/lez/taker/node.sock"
 TAKER_SWAPS = "/var/lib/lez/taker/btc/swaps"
 MAKER_SWAPS = "/var/lib/lez/maker/btc/swaps"
 INDEXER = "http://127.0.0.1:8779"
 LEZ_EXPLORER = "http://127.0.0.1:3003"
-BTC_CLI = ["docker", "exec", "lez-bitcoin-core", "bitcoin-cli",
+BTC_CLI = ["docker", "exec", f"{PREFIX}-bitcoin-core", "bitcoin-cli",
            "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin"]
 
 
@@ -53,7 +57,7 @@ def docker(container: str, *command: str, stdin: str | None = None) -> str:
 
 def taker_rpc(method: str, params: dict) -> dict:
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": [params]})
-    raw = docker("lez-taker-node", "curl", "-sS", "--max-time", "30", "--unix-socket", TAKER_SOCKET,
+    raw = docker(f"{PREFIX}-taker-node", "curl", "-sS", "--max-time", "30", "--unix-socket", TAKER_SOCKET,
                  "-H", "content-type: application/json", "--data", body, "http://localhost/")
     reply = json.loads(raw)
     if "error" in reply:
@@ -106,7 +110,7 @@ else:
 
 
 def taker_aggregate(swap_id: str) -> dict:
-    raw = docker("lez-taker-node", "python3", "-c", TAKER_READER, swap_id, TAKER_SWAPS)
+    raw = docker(f"{PREFIX}-taker-node", "python3", "-c", TAKER_READER, swap_id, TAKER_SWAPS)
     found = json.loads(raw or "{}")
     if not found:
         fail(f"the Taker Node has no swap directory for {swap_id[:12]}")
@@ -114,14 +118,14 @@ def taker_aggregate(swap_id: str) -> dict:
 
 
 def maker_initialization(directory: str) -> str:
-    raw = docker("lez-maker-node", "cat", f"{MAKER_SWAPS}/{directory}/lez/prepared-escrow.json")
+    raw = docker(f"{PREFIX}-maker-node", "cat", f"{MAKER_SWAPS}/{directory}/lez/prepared-escrow.json")
     prepared = json.loads(raw)
     return prepared["initialization"]["transaction_id"]
 
 
 def taker_initialization(directory: str) -> str:
     """The Taker's own escrow initialization when it is the LEZ depositor."""
-    raw = docker("lez-taker-node", "cat", f"{TAKER_SWAPS}/{directory}/lez/prepared-escrow.json")
+    raw = docker(f"{PREFIX}-taker-node", "cat", f"{TAKER_SWAPS}/{directory}/lez/prepared-escrow.json")
     prepared = json.loads(raw)
     return prepared["initialization"]["transaction_id"]
 
@@ -327,9 +331,9 @@ def main() -> int:
         fail("the Taker Node lists no completed swap")
     commit = source_commit()
 
-    evidence_dir = DEPLOY_ROOT / "runtime" / "evidence"
+    evidence_dir = LANE_RUNTIME / "evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    proof_view = DEPLOY_ROOT / "runtime" / "m3-btc-ui-evidence.json"
+    proof_view = LANE_RUNTIME / "m3-btc-ui-evidence.json"
     for view in chosen:
         evidence = build_evidence(view, commit)
         target = evidence_dir / f"{view['swap_id']}.json"

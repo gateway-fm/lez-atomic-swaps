@@ -48,13 +48,17 @@ set -a
 source runtime/runtime.env
 set +a
 export BTC_RPC_PASSWORD
-compose=(docker compose --env-file runtime/runtime.env)
+# The pair of regression lane LEZ_LANE (lane 1, the stack itself, when unset).
+# shellcheck source=lane.sh
+source scripts/lane.sh
+node_of() { echo "$LEZ_CONTAINER_PREFIX-$1-node"; }
+compose=(docker compose "${lane_compose[@]}")
 log() { printf '[reset %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
-running() { [[ "$(docker inspect -f '{{.State.Running}}' "lez-$1-node" 2>/dev/null)" == true ]]; }
+running() { [[ "$(docker inspect -f '{{.State.Running}}' "$(node_of "$1")" 2>/dev/null)" == true ]]; }
 in_place=0
 if [[ "$offline" == 0 && "${LEZ_RESET_IN_PLACE:-1}" == 1 ]] && running maker && running taker; then in_place=1; fi
 owner_call() { # owner_call <role> <method> <params>
-  docker exec "lez-$1-node" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
+  docker exec "$(node_of "$1")" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
     -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null
 }
@@ -66,10 +70,10 @@ owner_call() { # owner_call <role> <method> <params>
 # build, a few seconds a call, as it is built on the basecamp-ui service).
 in_role() {
   local role="$1"; shift
-  if [[ "$in_place" == 1 ]]; then docker exec -i "lez-$role-node" "$@"
-  elif docker container inspect "lez-$role-node" >/dev/null 2>&1; then
-    docker run --rm -i --network none --user 4713:4713 --volumes-from "lez-$role-node" --entrypoint "$1" \
-      "$(docker inspect -f '{{.Config.Image}}' "lez-$role-node")" "${@:2}"
+  if [[ "$in_place" == 1 ]]; then docker exec -i "$(node_of "$role")" "$@"
+  elif docker container inspect "$(node_of "$role")" >/dev/null 2>&1; then
+    docker run --rm -i --network none --user 4713:4713 --volumes-from "$(node_of "$role")" --entrypoint "$1" \
+      "$(docker inspect -f '{{.Config.Image}}' "$(node_of "$role")")" "${@:2}"
   else "${compose[@]}" run --rm -T --no-deps --entrypoint "$1" "$role-node" "${@:2}"; fi
 }
 # Holds a role's Node down inside its Basecamp (scripts/node-hold.sh: the
@@ -102,7 +106,7 @@ if os.path.exists(path):
     except sqlite3.Error as error:
         print("maker - unknown (store unreadable:", error, ")")
 ')
-if running maker; then maker_open="$(docker exec lez-maker-node "${maker_store_read[@]}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"
+if running maker; then maker_open="$(docker exec "$(node_of maker)" "${maker_store_read[@]}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"
 else maker_open="$(in_role maker python3 "${maker_store_read[@]:1}" 2>/dev/null)" || maker_open="maker - unknown (store unreadable)"; fi
 [[ -z "$maker_open" ]] || mapfile -t -O "${#open_swaps[@]}" open_swaps <<<"$maker_open"
 archive=""
@@ -200,15 +204,17 @@ PY
 
 log "Bitcoin wallets: release coins reserved by plans that never broadcast"
 for wallet in lez-taker lez-maker; do
-  docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin \
+  docker exec "$LEZ_CONTAINER_PREFIX-bitcoin-core" bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin \
     -rpcwallet="$wallet" lockunspent true >/dev/null 2>&1 || true
 done
 
 log "exported evidence: back to the certified sample"
-find runtime/evidence -name '*.json' ! -name 'certified-*.json' -delete
-cp assets/certified-evidence-m5arm-08180005-ui.json runtime/m3-btc-ui-evidence.json.tmp
-cat runtime/m3-btc-ui-evidence.json.tmp >runtime/m3-btc-ui-evidence.json  # in place: the mount pins the inode
-rm -f runtime/m3-btc-ui-evidence.json.tmp
+evidence="$LEZ_LANE_RUNTIME"  # a lane's own; lane 1's is the explorer's
+mkdir -p "$evidence/evidence"
+find "$evidence/evidence" -name '*.json' ! -name 'certified-*.json' -delete
+cp assets/certified-evidence-m5arm-08180005-ui.json "$evidence/m3-btc-ui-evidence.json.tmp"
+cat "$evidence/m3-btc-ui-evidence.json.tmp" >"$evidence/m3-btc-ui-evidence.json"  # in place: the mount pins the inode
+rm -f "$evidence/m3-btc-ui-evidence.json.tmp"
 
 if [[ "$offline" == 1 ]]; then
   log "done: swaps forgotten${archive:+ (open ones archived as .reset-archive/$archive)}; the Nodes stay stopped"
@@ -224,7 +230,7 @@ fi
 # The Node's own owner call, not the container's health status: that one is
 # read on an interval and still shows the Node that was just stopped.
 owner_ready() { # owner_ready <role> <method> <params>
-  docker exec "lez-$1-node" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
+  docker exec "$(node_of "$1")" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
     -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null | grep -q '"result"'
 }
@@ -233,11 +239,11 @@ until owner_ready maker maker_health '{}' && owner_ready taker taker_health '{"s
   (( $(date +%s) < deadline )) || { log "the Nodes did not answer their owner health calls within 600 s"; exit 1; }
   sleep 1
 done
-taker_swaps="$(docker exec lez-taker-node curl -sS --unix-socket /run/lez/taker/node.sock \
+taker_swaps="$(docker exec "$(node_of taker)" curl -sS --unix-socket /run/lez/taker/node.sock \
   -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"taker_swap_list_v1","params":[{"schema_version":1}]}' http://localhost/ |
   python3 -c 'import json,sys; print(len(json.load(sys.stdin)["result"]["swaps"]))')"
-maker_swaps="$(docker exec lez-maker-node curl -sS --unix-socket /run/lez/maker/node.sock \
+maker_swaps="$(docker exec "$(node_of maker)" curl -sS --unix-socket /run/lez/maker/node.sock \
   -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"swap_history","params":[{}]}' http://localhost/ |
   python3 -c 'import json,sys; print(len(json.load(sys.stdin)["result"]))')"

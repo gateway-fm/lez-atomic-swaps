@@ -83,6 +83,9 @@ out="${LEZ_REGRESS_OUT:-runtime/regress/$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$out/logs" "$out/e2e" "$out/zec"
 flat_limit="${LEZ_REGRESS_FLAT_SECONDS:-60}"
 tries="${LEZ_REGRESS_TRIES:-4}"
+# The runner owns the chain: a ZEC desk test's zec-provision.sh must not
+# recreate it from inside a test (ensure-chain.sh) behind the runner's back.
+export LEZ_ZEC_SKIP_CHAIN_CHECK=1
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$out/regress.log"; }
 finalized() {
   curl -s --max-time 10 -H 'content-type: application/json' \

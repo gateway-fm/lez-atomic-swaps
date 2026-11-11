@@ -63,6 +63,107 @@ volume_prefix="${volume_prefix:-lez}"
 
 umask 077
 
+# --- maker/taker runtime ----------------------------------------------------
+# role_files <dir> <maker wallet> <taker wallet> <label>: the two Nodes' identities and
+# keys under <dir>/lez/<role> and their Zebra's config under <dir>/zebra: the
+# stack's own in runtime/, a regression lane's in runtime/lanes/<k>
+# (scripts/lane.sh).
+role_files() {
+  local dir="$1" label="$4" pair role wallet
+  identities_root="${LEZ_WALLET_IDENTITIES:-$market_root/identities}"
+  # The role keys reach the Nodes (uid 4713) through a bind mount, which keeps host
+  # ownership. On Linux the role container also carries the host user's group
+  # (compose.yaml group_add, LEZ_HOST_GID), so the copies are group-readable only;
+  # Docker Desktop on macOS shares files under its own access rules, so there they
+  # stay world-readable (README, devnet caveat).
+  if [[ "$(uname -s)" == Linux ]]; then key_mode=0640 key_dir_mode=0750; else key_mode=0644 key_dir_mode=0755; fi
+  for pair in "maker:$2" "taker:$3"; do
+    role="${pair%%:*}"; wallet="${pair##*:}"
+    mkdir -p "$dir/lez/$role"
+    chmod "$key_dir_mode" "$dir/lez/$role"
+    if [[ -n "$identities_root" && -f "$identities_root/$wallet/lez-signer.key" ]]; then
+      cp "$identities_root/$wallet/lez-signer.key" "$dir/lez/$role/lez-signer.key"
+      cp "$identities_root/$wallet/identity.json" "$dir/lez/$role/identity.json"
+    else
+      echo "warning: $wallet identity unavailable; $role Node runs without the Bitcoin lifecycle" >&2
+    fi
+    # The entrypoint copies these owner-private into the Node's state volume.
+    chmod "$key_mode" "$dir/lez/$role"/* 2>/dev/null || true
+  done
+  # Each role's Zcash key, minted once beside its LEZ identity and kept across
+  # reruns: the Maker's is also its Delivery signing key (the entrypoint installs
+  # it; the ZEC ceremony binds Delivery identity, Chat key and Zcash key into one
+  # key) and zebra mines to its transparent address, so the Maker owns the
+  # coinbase the ZEC provisioner spends; the Taker's key funds Zcash in
+  # TakerSellsForeign (scripts/zec-provision.sh pays it once from the Maker's).
+  # Nothing here is a constant: a fresh runtime mints fresh keys. The address
+  # comes from zec-local-poc-identity, staged on the host by from-scratch.sh
+  # --only rust or, once the stage is gone, run from the Taker image.
+  zcash_transparent_address() { # zcash_transparent_address <owner-private key file>
+    local key="$1" tool="$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" identity
+    if [[ -x "$tool" ]]; then
+      identity="$("$tool" --zcash-key-file "$key")"
+    else
+      identity="$(docker run --rm --user "$(id -u):$(id -g)" -v "$key:/in/zcash.key:ro" \
+        --entrypoint zec-local-poc-identity "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" \
+        --zcash-key-file /in/zcash.key </dev/null)"
+    fi || { echo "zec-local-poc-identity failed: stage it (from-scratch.sh --only rust) or build the Taker image first" >&2; return 1; }
+    python3 -c 'import json, sys; print(json.load(sys.stdin)["transparent_address"])' <<<"$identity"
+  }
+  for role in maker taker; do
+    if [[ ! -s "$dir/lez/$role/zcash.key" ]]; then
+      (umask 077; openssl rand -hex 32 >"$dir/lez/$role/zcash.key")
+      echo "minted the $role Zcash key: $label/lez/$role/zcash.key"
+    fi
+  done
+  # The identity tool reads owner-private files only; the mounted copy is
+  # readable by the Node like lez-signer.key (the entrypoint re-installs it 0600),
+  # so derive from a private copy under runtime/secrets.
+  # (an absolute path: the identity tool refuses a relative key path, and up.sh
+  # passes the runtime directory as a relative one)
+  # Without the tool (neither staged nor in a built Taker image, e.g. a checkout
+  # that has not built anything yet) the ZEC lane cannot run, like a missing LEZ
+  # identity above: zebra keeps the template's miner address and says so. A tool
+  # that is present but fails stops the script.
+  zec_identity_tool_available() {
+    [[ -x "$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" ]] && return 0
+    command -v docker >/dev/null 2>&1 &&
+      docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1
+  }
+  chmod "$key_mode" "$dir/lez/maker/zcash.key" "$dir/lez/taker/zcash.key"
+  mkdir -p "$dir/zebra"
+  if zec_identity_tool_available; then
+    maker_zcash_private="$(mktemp "$(cd "$RUNTIME" && pwd -P)/secrets/zcash-key.XXXXXX")"
+    trap 'rm -f "$maker_zcash_private"' EXIT
+    install -m 0600 "$dir/lez/maker/zcash.key" "$maker_zcash_private"
+    zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
+    rm -f "$maker_zcash_private"
+    trap - EXIT
+    sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$dir/zebra/zebrad.toml"
+    echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): $label/zebra/zebrad.toml"
+  else
+    cp "$DEPLOY_ROOT/assets/zebra/zebrad.toml" "$dir/zebra/zebrad.toml"
+    echo "warning: zec-local-poc-identity unavailable (stage it with from-scratch.sh --only rust or build the Taker image); zebra keeps the template miner address and the ZEC lane cannot run" >&2
+  fi
+  chmod 0644 "$dir/zebra/zebrad.toml"
+}
+
+# A regression lane (LEZ_LANE >= 2, scripts/lane.sh) renders its own role files
+# only: its wallets' identities, its Zcash keys and its Zebra's miner address,
+# under runtime/lanes/<k>. Everything else stays lane 1's.
+if [[ "${LEZ_LANE:-1}" != 1 ]]; then
+  # shellcheck source=lane.sh
+  source "$DEPLOY_ROOT/scripts/lane.sh"
+  [[ -s "$RUNTIME/runtime.env" ]] || { echo "lane $LEZ_LANE needs lane 1's runtime first (gen-config.sh runtime)" >&2; exit 1; }
+  market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' "$RUNTIME/runtime.env" | head -1)"
+  [[ -n "$market_root" && -d "$market_root" ]] || { echo "lane $LEZ_LANE: runtime.env names no market root" >&2; exit 1; }
+  lane_dir="$RUNTIME/lanes/$LEZ_LANE"
+  mkdir -p "$lane_dir"
+  role_files "$lane_dir" "$LEZ_LANE_MAKER_WALLET" "$LEZ_LANE_TAKER_WALLET" "runtime/lanes/$LEZ_LANE"
+  echo "lane $LEZ_LANE generated at $lane_dir ($LEZ_LANE_MAKER_WALLET, $LEZ_LANE_TAKER_WALLET)"
+  exit 0
+fi
+
 echo "runtime root: $RUNTIME"
 mkdir -p "$RUNTIME"/{config,bedrock,indexer,sequencer,sockets,btc,secrets}
 
@@ -247,10 +348,10 @@ chmod 0600 "$RUNTIME/secrets/mining.key" || exit 1
 printf 'lezrpc:%s\n' "$btc_rpc_password" >"$RUNTIME/secrets/btc-rpc-cookie"
 chmod 0644 "$RUNTIME/secrets/btc-rpc-cookie"
 
-# --- maker/taker runtime ----------------------------------------------------
 # Per-role LEZ identities for the Node-owned Bitcoin lifecycle (ADR 0213): the
 # Maker settles as maker-munich-01 and the Taker as taker-zurich-01, the two
-# funded market wallets, so their balances move on the standing chain.
+# funded market wallets, so their balances move on the standing chain (a
+# regression lane as its own pair, lane.sh).
 # The market root holds the wallet identities and market-bootstrap.env (the
 # escrow deployment the Nodes read); market-bootstrap.sh writes it once.
 market_root="${LEZ_MARKET_ROOT:-}"
@@ -271,84 +372,8 @@ else
   : > "$RUNTIME/market-bootstrap.env"
 fi
 chmod 0644 "$RUNTIME/market-bootstrap.env"
-identities_root="${LEZ_WALLET_IDENTITIES:-$market_root/identities}"
-# The role keys reach the Nodes (uid 4713) through a bind mount, which keeps host
-# ownership. On Linux the role container also carries the host user's group
-# (compose.yaml group_add, LEZ_HOST_GID), so the copies are group-readable only;
-# Docker Desktop on macOS shares files under its own access rules, so there they
-# stay world-readable (README, devnet caveat).
-if [[ "$(uname -s)" == Linux ]]; then key_mode=0640 key_dir_mode=0750; else key_mode=0644 key_dir_mode=0755; fi
-for pair in maker:maker-munich-01 taker:taker-zurich-01; do
-  role="${pair%%:*}"; wallet="${pair##*:}"
-  mkdir -p "$RUNTIME/lez/$role"
-  chmod "$key_dir_mode" "$RUNTIME/lez/$role"
-  if [[ -n "$identities_root" && -f "$identities_root/$wallet/lez-signer.key" ]]; then
-    cp "$identities_root/$wallet/lez-signer.key" "$RUNTIME/lez/$role/lez-signer.key"
-    cp "$identities_root/$wallet/identity.json" "$RUNTIME/lez/$role/identity.json"
-  else
-    echo "warning: $wallet identity unavailable; $role Node runs without the Bitcoin lifecycle" >&2
-  fi
-  # The entrypoint copies these owner-private into the Node's state volume.
-  chmod "$key_mode" "$RUNTIME/lez/$role"/* 2>/dev/null || true
-done
-# Each role's Zcash key, minted once beside its LEZ identity and kept across
-# reruns: the Maker's is also its Delivery signing key (the entrypoint installs
-# it; the ZEC ceremony binds Delivery identity, Chat key and Zcash key into one
-# key) and zebra mines to its transparent address, so the Maker owns the
-# coinbase the ZEC provisioner spends; the Taker's key funds Zcash in
-# TakerSellsForeign (scripts/zec-provision.sh pays it once from the Maker's).
-# Nothing here is a constant: a fresh runtime mints fresh keys. The address
-# comes from zec-local-poc-identity, staged on the host by from-scratch.sh
-# --only rust or, once the stage is gone, run from the Taker image.
-zcash_transparent_address() { # zcash_transparent_address <owner-private key file>
-  local key="$1" tool="$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" identity
-  if [[ -x "$tool" ]]; then
-    identity="$("$tool" --zcash-key-file "$key")"
-  else
-    identity="$(docker run --rm --user "$(id -u):$(id -g)" -v "$key:/in/zcash.key:ro" \
-      --entrypoint zec-local-poc-identity "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" \
-      --zcash-key-file /in/zcash.key </dev/null)"
-  fi || { echo "zec-local-poc-identity failed: stage it (from-scratch.sh --only rust) or build the Taker image first" >&2; return 1; }
-  python3 -c 'import json, sys; print(json.load(sys.stdin)["transparent_address"])' <<<"$identity"
-}
-for role in maker taker; do
-  if [[ ! -s "$RUNTIME/lez/$role/zcash.key" ]]; then
-    (umask 077; openssl rand -hex 32 >"$RUNTIME/lez/$role/zcash.key")
-    echo "minted the $role Zcash key: runtime/lez/$role/zcash.key"
-  fi
-done
-# The identity tool reads owner-private files only; the mounted copy is
-# readable by the Node like lez-signer.key (the entrypoint re-installs it 0600),
-# so derive from a private copy under runtime/secrets.
-# (an absolute path: the identity tool refuses a relative key path, and up.sh
-# passes the runtime directory as a relative one)
-# Without the tool (neither staged nor in a built Taker image, e.g. a checkout
-# that has not built anything yet) the ZEC lane cannot run, like a missing LEZ
-# identity above: zebra keeps the template's miner address and says so. A tool
-# that is present but fails stops the script.
-zec_identity_tool_available() {
-  [[ -x "$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" ]] && return 0
-  command -v docker >/dev/null 2>&1 &&
-    docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1
-}
-chmod "$key_mode" "$RUNTIME/lez/maker/zcash.key" "$RUNTIME/lez/taker/zcash.key"
-mkdir -p "$RUNTIME/zebra"
-if zec_identity_tool_available; then
-  maker_zcash_private="$(mktemp "$(cd "$RUNTIME" && pwd -P)/secrets/zcash-key.XXXXXX")"
-  trap 'rm -f "$maker_zcash_private"' EXIT
-  install -m 0600 "$RUNTIME/lez/maker/zcash.key" "$maker_zcash_private"
-  zebra_miner_address="$(zcash_transparent_address "$maker_zcash_private")" || exit 1
-  rm -f "$maker_zcash_private"
-  trap - EXIT
-  sed "s|^miner_address = .*|miner_address = \"$zebra_miner_address\"|" "$DEPLOY_ROOT/assets/zebra/zebrad.toml" >"$RUNTIME/zebra/zebrad.toml"
-  echo "zebra mines to the Maker's Zcash key ($zebra_miner_address): runtime/zebra/zebrad.toml"
-else
-  cp "$DEPLOY_ROOT/assets/zebra/zebrad.toml" "$RUNTIME/zebra/zebrad.toml"
-  echo "warning: zec-local-poc-identity unavailable (stage it with from-scratch.sh --only rust or build the Taker image); zebra keeps the template miner address and the ZEC lane cannot run" >&2
-fi
-chmod 0644 "$RUNTIME/zebra/zebrad.toml"
+role_files "$RUNTIME" maker-munich-01 taker-zurich-01 runtime
 mkdir -p "$RUNTIME/sockets"
-rm -f "$RUNTIME/runtime.env"
 # Recovery timing profile for the Node-owned Bitcoin lifecycle. `local` keeps
 # network-like deadlines; `fast` shortens them so refund and abandonment paths
 # can be exercised in minutes (Bitcoin CSV maturity is a block count, mined on
@@ -444,8 +469,11 @@ printf '%s\n' \
   "LEZ_HEARTBEAT_ALLOCATION=$heartbeat_allocation" \
   "LEZ_HEARTBEAT_SECONDS=$heartbeat_seconds" \
   "LEZ_HEARTBEAT_STALL_SECONDS=$heartbeat_stall_seconds" \
-  >"$RUNTIME/runtime.env"
-chmod 0600 "$RUNTIME/runtime.env"
+  >"$RUNTIME/runtime.env.tmp"
+chmod 0600 "$RUNTIME/runtime.env.tmp"
+# Replaced in one step: every harness script (and a running regression lane)
+# sources it, and must never find it missing or half written.
+mv -f "$RUNTIME/runtime.env.tmp" "$RUNTIME/runtime.env"
 
 # Configs contain public chain settings and are mounted as individual files.
 chmod 0644 "$RUNTIME/config/"*.json "$RUNTIME/config/"*.yaml
