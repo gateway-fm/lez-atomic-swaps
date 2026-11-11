@@ -30,6 +30,12 @@ is marked as a proposal or a guess.
 
 ## What we observed
 
+The run used the packages as built at 13:13Z on 2026-11-10, before commit
+`22196d30` (smaller upstream patches; the signer socket moved from lez_core
+into lez_swap_node). Today's patched versions are lez_core `0.4.1-sign.4` and
+lez_indexer_module `1.1.1-rpc.4` (`deploy/builder/patches/README.md`). The
+transcript has not been rerun on those packages.
+
 Packages (all unsigned; S08–S20):
 
 | package | version | manifestVersion | variants | declared dependencies |
@@ -152,7 +158,7 @@ Mapping onto the session (proposal):
 | `/run/lez/<role>` sockets | a short directory under `$XDG_RUNTIME_DIR` (or `$TMPDIR`) named by the instance id — Unix socket paths are limited to 108 bytes and session paths are long |
 | `LEZ_*` environment, `/run-config`, market-bootstrap.env | one config document, set by `configure(json)` and kept in `data/…/config.json`; the desk shows and edits it |
 | `/run-lez-identity/identity.json` | created or imported once into `data/…/identity.json` (0600); backup = the session's `data/` |
-| LEZ signing key | stays in lez_core's wallet (already: `serve_signer`); not in `keyring/`, which is for package signers |
+| LEZ signing key | stays in lez_core's wallet (already: lez_swap_node's `serve_signer` asks lez_core for each signature); not in `keyring/`, which is for package signers |
 | socat loopback forwards to bitcoind/sequencer/indexer/zebra | not needed when the endpoints are configured as real addresses; the BTC adapter and sidecars accept only loopback endpoints today — relaxing that is BTC-adjacent and needs its own review |
 | Node log via `log_file` | the Node's stdout/stderr to the host's, so logosctl's rotated `logs/daemon.log` carries it (GUESS: the pipe is inherited; not verified) |
 
@@ -223,7 +229,7 @@ protocol off v0.2.4:
    Basecamp pin to its v0.3 release, so the harness runs the same runtime a
    user installs.
 4. Moving LEZ itself to v0.3 (lez_core 0.5, indexer 1.2, blockchain_module
-   0.3) is a protocol change and its own milestone; the four patches would
+   0.3) is a protocol change and its own milestone; the upstream patches would
    have to be rebased onto it.
 
 ## Recommended order

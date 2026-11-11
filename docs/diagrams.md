@@ -7,28 +7,38 @@ transaction.
 
 ## Running product stack
 
-Each party runs one Basecamp holding its desk and its Node (the desk starts the
-Node through Basecamp's `lez_swap_node`); the desk drives that Node, and the Nodes settle the swap
+Each party runs one Basecamp holding its desk, its LEZ signer and its Node: the
+desk starts the role's LEZ wallet in Basecamp's `lez_core` and has Basecamp's
+`lez_swap_node` serve that wallet's signer socket and launch and supervise the
+Node. The desk drives that Node, and the Nodes settle the swap
 themselves (ADR 0213): the Taker Node reserves the lot with the Maker Node over
 its owner-local Chat socket, plans its Bitcoin funding from its own Core
 wallet, prepares its LEZ claim through a per-swap sidecar, runs the adaptor
 signing ceremony and activates its actor; each Node then drives its own actor
-against the standing chains. Nothing outside the two Nodes holds swap
-authority; no service holds the host Docker socket.
+against the standing chains. Nothing outside the two Nodes and their wallets
+holds swap authority; no service holds the host Docker socket. The LEZ devnet
+is one more Basecamp, whose LEZ Network desk starts `blockchain_module` and
+`lez_indexer_module`, plus the sequencer as a plain service.
 
 ```mermaid
 flowchart LR
     subgraph MAKER_BC["Maker's Basecamp (maker-node, VNC :5901)"]
         MAKER_UI["LEZ Maker desk\nMunich Vault 01"]
+        MAKER_W["lez_core + lez_swap_node\nwallet · signer socket · supervisor"]
         MAKER["lez-maker-node\noffers · Chat server · actor supervisor"]
     end
     subgraph TAKER_BC["Taker's Basecamp (taker-node, VNC :5902)"]
         TAKER_UI["LEZ Taker desk\nZurich Wallet 01"]
+        TAKER_W["lez_core + lez_swap_node\nwallet · signer socket · supervisor"]
         TAKER["lez-taker-node\ndiscovery · take · lock · claim · observer"]
     end
 
     MAKER_UI -->|"owner-only Unix socket"| MAKER
     TAKER_UI -->|"owner-only Unix socket"| TAKER
+    MAKER_UI --> MAKER_W
+    TAKER_UI --> TAKER_W
+    MAKER_W -->|"launch, restart"| MAKER
+    TAKER_W -->|"launch, restart"| TAKER
 
     MAKER -->|"signed offer files"| DELIVERY["Delivery directory"]
     DELIVERY --> TAKER
@@ -38,12 +48,15 @@ flowchart LR
     TAKER --> TAKER_ACTOR["lez-btc-taker-actor (in-process)\n+ per-swap LEZ sidecar"]
 
     MAKER_ACTOR --> BTC["Bitcoin Core 31.1 regtest\nP2TR / MuSig2 adaptor path"]
-    MAKER_ACTOR --> LEZ["LEZ v0.2 devnet\nRisc0 escrow program"]
+    MAKER_ACTOR --> LEZ["LEZ v0.2 devnet\nnetwork Basecamp + sequencer\nRisc0 escrow program"]
     TAKER_ACTOR --> BTC
     TAKER_ACTOR --> LEZ
 
-    BTC --> BTC_EXPLORER["Bitcoin explorer :3002"]
-    LEZ --> LEZ_EXPLORER["LEZ explorer :3003\n+ exported swap evidence"]
+    MAKER_ACTOR -.->|"LEZ signatures"| MAKER_W
+    TAKER_ACTOR -.->|"LEZ signatures"| TAKER_W
+
+    BTC --> BTC_EXPLORER["Bitcoin explorer :3002\n(profile explorers)"]
+    LEZ --> LEZ_EXPLORER["LEZ explorer :3003\n+ exported swap evidence\n(profile explorers)"]
     TAKER -.->|"export-node-evidence.py"| LEZ_EXPLORER
 ```
 
@@ -93,10 +106,10 @@ sequenceDiagram
     B-->>T: Exact lock reaches required finality
     T->>B: Publish claim with adapted final signature
     B-->>M: Exact final signature becomes canonical
-    M->>M: Combine with retained pre-signature; parity-aware extract; require tG=T
+    M->>M: Combine with retained pre-signature, parity-aware extract, require tG=T
     A-->>M: Fresh check: exact first lock remains unspent and claimable
     M->>A: Publish follow-up claim using t
-    Note over T,M: Both principals transferred; fees reconcile separately
+    Note over T,M: Both principals transferred, fees reconcile separately
 ```
 
 For the BTC-for-LEZ run shown in the proposal video, the five public effects

@@ -1,6 +1,6 @@
 # Deployment components, RPCs, and local nodes
 
-Status: Living executable inventory — 2026-09-04 (local product stack); the M2 topology below it is retained as history
+Status: Living executable inventory — 2026-11-11 (local product stack, PR #120); the M2 topology below it is retained as history
 
 This document is the concrete deployment companion to the
 [system architecture](system-architecture.md). It distinguishes processes that
@@ -12,99 +12,135 @@ No port is invented for an unimplemented integration. Exact current artifact,
 deployment, transaction, balance, and run facts are retained in the
 [canonical M2 certification packet](../evidence/m2-canonical-local-certification-20260714.json).
 
-## Current local product stack (ADR 0213, 2026-09-04)
+## Current local product stack (PR #120, 2026-11-11)
 
-Everything below runs from `deploy/compose.yaml` on one arm64 host. Each party
-runs one Basecamp container (maker-node, taker-node; VNC on 127.0.0.1:5901 and
-:5902) whose desk starts that party's Node through Basecamp's `lez_swap_node`
-and talks only to that Node's owner-only Unix socket in the same container; the two
-Nodes meet only at the Maker's Chat socket and the Delivery directory; each Node
-reaches the chains through loopback forwarders inside its own container.
+Everything below runs from `deploy/compose.yaml` on one arm64 host. Seven
+containers run by default and none of them is an init container:
+
+- `network`: one headless Basecamp whose **LEZ Network** desk starts two Logos
+  modules, `blockchain_module` 0.2.4 (the released lgx, unpatched; the
+  devnet's block producer, HTTP on `:18080`, alias `bedrock`) and
+  `lez_indexer_module` (1.1.1 source on LEZ v0.2.4 plus
+  `deploy/builder/patches/lez-indexer-module`; `indexer_service`'s JSON-RPC on
+  `:8779`, alias `indexer`).
+- `sequencer`: upstream's `sequencer_service` as a plain service; there is no
+  sequencer module.
+- `maker-node`, `taker-node`: each party's own Basecamp (uid 4713, VNC on
+  127.0.0.1:5901 and :5902). The role's desk starts the role's LEZ signer in
+  Basecamp's `lez_core` (patched, `deploy/builder/patches/logos-execution-zone-module`)
+  and has Basecamp's `lez_swap_node` serve the signer socket and launch and
+  supervise the Node (`node-entrypoint.sh`). The desk talks only to that
+  Node's owner-only Unix socket in the same container.
+- `bitcoin-core`, `btc-miner`, `zebra`: plain containers.
+
+`basecamp-ui` is the base image of the three Basecamps and runs no container
+(`scale: 0`). `btc-explorer` and `lez-explorer` (profile `explorers`),
+`heartbeat` (profile `heartbeat`) and `tools` (profile `tools`, one-shot) run
+only on request. The two Nodes meet only at the Maker's Chat socket and the
+Delivery directory; each Node reaches the chains through loopback forwarders
+inside its own container.
 
 ```mermaid
 flowchart TB
     subgraph MakerNode["maker-node: the Maker's Basecamp (uid 4713, VNC :5901)"]
-        MakerDesk["LEZ Maker desk (lez-maker-ui.lgx)"]
+        MakerDesk["LEZ Maker desk (lez_atomic_swap_maker)"]
         MakerAdapter["node_market.cpp: view model + actions"]
-        MakerInspector["qt-mcp inspector ← ui-tests/verify.mjs"]
-        MakerBin["lez-maker-node"]
+        MakerCore["lez_core: the Maker's LEZ wallet"]
+        MakerSup["lez_swap_node: signer socket + Node supervisor"]
+        MakerBin["lez-maker-node (node-entrypoint.sh)"]
         MakerStore[("maker.sqlite3: offers, negotiations, swaps, actor registrations")]
         MakerActor["lez-btc-maker-actor (child process per drive)"]
         MakerSidecar["lez-v02-bridge-poc (one per swap, 127.0.0.1:190xx)"]
-        MakerSwapDir[("swaps/&lt;reservation&gt;/: role root, actor store, journals")]
     end
 
     subgraph TakerNode["taker-node: the Taker's Basecamp (uid 4713, VNC :5902)"]
-        TakerDesk["LEZ Taker desk (lez-taker-ui.lgx)"]
+        TakerDesk["LEZ Taker desk (lez_atomic_swap_taker)"]
         TakerAdapter["node_market.cpp: view model + actions"]
-        TakerInspector["qt-mcp inspector ← ui-tests/verify.mjs"]
-        TakerBin["lez-taker-node"]
+        TakerCore["lez_core: the Taker's LEZ wallet"]
+        TakerSup["lez_swap_node: signer socket + Node supervisor"]
+        TakerBin["lez-taker-node (node-entrypoint.sh)"]
         TakerRegistry[("registry.sqlite3: swaps, authorities, requests")]
         TakerActor["lez-btc-taker-actor (library, program hash pinned)"]
         TakerSidecar["lez-v02-bridge-poc (one per swap, 127.0.0.1:195xx)"]
-        TakerSwapDir[("swaps/&lt;reservation&gt;/: role root, actor store, journals")]
     end
 
     Chat["/run/lez/maker/chat.sock (shared volume)"]
     Delivery["/delivery (shared volume): signed offer files"]
 
-    subgraph Chains["network: chains"]
+    subgraph Network["network: the LEZ network's Basecamp"]
+        NetDesk["LEZ Network desk (lez_network)"]
+        Bedrock["blockchain_module 0.2.4 :18080 (alias bedrock)"]
+        Indexer["lez_indexer_module :8779 (alias indexer)"]
+    end
+
+    subgraph Chains["other services on network chains"]
+        Sequencer["sequencer :3040 (plain service)"]
         Core["bitcoin-core (regtest, txindex, txospenderindex)"]
-        Miner["btc-miner (one block / 120 s)"]
-        Bedrock["bedrock"]
-        Sequencer["sequencer :3040"]
-        Indexer["indexer :8779"]
-        BtcExplorer["btc-explorer :3002"]
-        LezExplorer["lez-explorer :3003 (+ runtime/evidence index)"]
+        Miner["btc-miner"]
+        Zebra["zebra (Regtest)"]
     end
 
     MakerDesk --> MakerAdapter
     TakerDesk --> TakerAdapter
-    MakerAdapter -->|"maker_offer_publish/withdraw, maker_offer_list, swap_history, maker_actor_monitor_v1"| MakerBin
-    TakerAdapter -->|"taker_offer_list_v1, taker_swap_initiate/lock/claim/refund_v1, taker_swap_list_v1"| TakerBin
-    MakerInspector -.-> MakerDesk
-    TakerInspector -.-> TakerDesk
-
+    MakerDesk -->|"open, import_public_account"| MakerCore
+    TakerDesk -->|"open, import_public_account"| TakerCore
+    MakerDesk -->|"serve_signer, start_node"| MakerSup
+    TakerDesk -->|"serve_signer, start_node"| TakerSup
+    MakerSup -->|"sign_public_message_hash"| MakerCore
+    TakerSup -->|"sign_public_message_hash"| TakerCore
+    MakerSup -->|"launch, restart"| MakerBin
+    TakerSup -->|"launch, restart"| TakerBin
+    MakerAdapter -->|"owner socket"| MakerBin
+    TakerAdapter -->|"owner socket"| TakerBin
     MakerBin --> MakerStore
     MakerBin -->|"publish / withdraw"| Delivery
     Delivery -->|"discover"| TakerBin
-    TakerBin -->|"btc_reserve_v1, btc_ceremony_reserve/nonce/partial_v1, btc_chat_propose/complete_v2"| Chat
+    TakerBin -->|"reserve, ceremony, propose/complete"| Chat
     Chat --> MakerBin
     MakerBin -->|"supervisor drives"| MakerActor
     MakerBin --> MakerSidecar
-    MakerActor --> MakerSwapDir
     TakerBin --> TakerRegistry
     TakerBin -->|"observer drives"| TakerActor
     TakerBin --> TakerSidecar
-    TakerActor --> TakerSwapDir
+    MakerSidecar -->|"signer socket"| MakerSup
+    TakerSidecar -->|"signer socket"| TakerSup
 
+    NetDesk -->|"start"| Bedrock
+    NetDesk -->|"start_indexer, serve_rpc"| Indexer
     MakerActor -->|"127.0.0.1:18443 (socat)"| Core
     TakerActor -->|"127.0.0.1:18443 (socat)"| Core
-    MakerSidecar -->|"127.0.0.1:3040 / 8779 (socat)"| Sequencer
-    TakerSidecar -->|"127.0.0.1:3040 / 8779 (socat)"| Sequencer
-    MakerSidecar --> Indexer
-    TakerSidecar --> Indexer
+    MakerSidecar -->|"127.0.0.1:3040 (socat)"| Sequencer
+    TakerSidecar -->|"127.0.0.1:3040 (socat)"| Sequencer
+    MakerSidecar -->|"127.0.0.1:8779 (socat)"| Indexer
+    TakerSidecar -->|"127.0.0.1:8779 (socat)"| Indexer
     Miner --> Core
-    Bedrock --> Sequencer
-    Sequencer --> Indexer
-    Core --> BtcExplorer
-    Indexer --> LezExplorer
+    Sequencer -->|"inscriptions"| Bedrock
+    Indexer -->|"reads blocks"| Bedrock
 ```
 
-| Binary | Image | Responsibility | Lifecycle |
+The ZEC pair adds a per-corridor LEZ sidecar started by `node-entrypoint.sh`
+and the ZEC actors, which reach Zebra on a fourth loopback forwarder
+(`127.0.0.1:18232`); they are left out of the diagram.
+
+| Binary or module | Image | Responsibility | Lifecycle |
 |---|---|---|---|
-| `lez-maker-node` | maker-node | offers, routes and prices; Delivery publishing and withdrawal; Chat server for reservation, the three ceremony rounds and propose/complete; actor supervisor; per-swap sidecar keep-alive; owner RPC | service |
-| `lez-taker-node` | taker-node | offer discovery; take (reservation, Bitcoin funding plan from wallet `lez-taker`, LEZ claim preparation, draft, ceremony, actor activation); lock, claim, refund; observer that drives its actor's chain observations; swap list and monitor; owner RPC | service |
+| `lez-maker-node` | maker-node | offers, routes and prices; Delivery publishing and withdrawal; Chat server for reservation, the three ceremony rounds and propose/complete; actor supervisor; per-swap sidecar keep-alive; owner RPC | launched by `lez_swap_node` (`start_node`), restarted 2 s after it exits, held down while the hold file exists (`scripts/node-hold.sh`) |
+| `lez-taker-node` | taker-node | offer discovery; take (reservation, Bitcoin funding plan from wallet `lez-taker`, LEZ claim preparation, draft, ceremony, actor activation); lock, claim, refund; observer that drives its actor's chain observations; swap list and monitor; owner RPC | as the Maker Node |
+| `lez_swap_node` (our module, `modules/lez-swap-node`) | maker-node, taker-node | `start_node`, `stop_node`, `node_status`, `serve_signer` | loaded by the role's desk in that party's Basecamp |
+| `lez_core` (patched) | maker-node, taker-node | the role's LEZ wallet: imports the role key, signs a 32-byte message hash for the one account | loaded by the role's desk |
+| LEZ Network desk (`apps/basecamp/network`), `blockchain_module`, `lez_indexer_module` (patched) | network | the LEZ devnet's block producer and its indexer; Re-index rebuilds the indexer's database | the container's Basecamp; the desk starts both modules when the container starts |
 | `lez-btc-maker-actor` / `lez-btc-taker-actor` | node images | the role's durable swap state machine: observes both chains, projects transitions, signs and broadcasts effects, answers `status` | Maker: child process per drive; Taker: linked in-process with the program hash pinned in every persisted swap |
-| `lez-v02-bridge-poc` | node images | LEZ v0.2 sidecar: prepares and submits escrow initialization, funding and claims against sequencer and indexer; one durable reservation per state directory, hence one per swap | spawned per swap, respawned on restart |
+| `lez-v02-bridge-poc` | node images | LEZ v0.2 sidecar: prepares escrow initialization, funding, claims and refunds, has the role's wallet sign them over the signer socket, submits them; one durable reservation per state directory, hence one per swap | spawned per swap, respawned on restart |
 | `lez-maker-cli` / `lez-taker-cli` | node images | operator CLI over the Node socket | on demand |
 | `lez-taker-registry-init` | taker-node | creates the Taker registry schema | once, from the entrypoint |
-| `lez-maker-chat-gateway` / `lez-taker-chat-gateway` | node images | Logos Chat relay gateways for non-local peers | packaged, not on the local path |
-| `lez-runtime-healthcheck` | every lez image | JSON-RPC probe for Compose health checks | every 10 s |
-| `node-entrypoint.sh` | node images | renders the role's identity, Core cookie and `btc-role.json` from the market root, starts the loopback forwarders, execs the Node | container start |
-| `sequencer_service`, `indexer_service`, `r0vm` | lez-services | LEZ devnet and prover | service |
+| `lez-maker-chat-gateway` / `lez-taker-chat-gateway` | node images | Logos Chat relay gateways for non-local peers | packaged, not started on the local path |
+| `lez-runtime-healthcheck` | node images, zebra, sequencer | JSON-RPC probe for Compose health checks | every 10–15 s |
+| `node-entrypoint.sh` | node images | renders the role's identity, Core cookie and `btc-role.json`, starts the loopback forwarders, waits for the signer socket, execs the Node | each Node start |
+| `sequencer_service`, `r0vm` | lez-services | LEZ devnet sequencer and prover | service |
 | `bitcoind`, `bitcoin-cli` | bitcoin-core | regtest chain; wallets `lez-taker`, `lez-maker`, `lez-miner` | service |
-| `server.js` | lez-explorer | indexer proxy, block and transaction UI, evidence view and hash index | service |
+| `zebrad` | zebra | Zcash Regtest for the ZEC pair | service |
+| `lez-wallet-heartbeat` | lez-wallet-module (profile `heartbeat`) | the finality heartbeat, transfers through `lez_core` in a headless logoscore | optional service |
+| `server.js` | lez-explorer (profile `explorers`) | indexer proxy, block and transaction UI, evidence view and hash index | optional service |
 
 Owner RPC methods the desks use: Maker `maker_health`, `maker_pair_list`,
 `maker_local_price_list`, `maker_local_route_save_v1`, `maker_offer_publish`,
@@ -115,32 +151,37 @@ Owner RPC methods the desks use: Maker `maker_health`, `maker_pair_list`,
 methods between the Nodes: `btc_reserve_v1`, `btc_ceremony_reserve_v1`,
 `btc_ceremony_nonce_v1`, `btc_ceremony_partial_v1`, `btc_chat_propose_v2`,
 `btc_chat_complete_v2`. Host-side tooling: `up.sh`, `gen-config.sh`,
+`regress.sh` (with `lane.sh`/`lanes.sh` for parallel lanes),
 `swap-through-ui.sh`, `export-node-evidence.py`, `verify-all.sh`
-(`verify-explorers.py`, `verify-market.py`, both desk suites, each in its party's Basecamp), `reset-swaps.sh`;
-`market-bootstrap.sh` runs once in a throwaway container of the builder image (`deploy/builder`), which also builds the arm64 artifacts the stack cannot pull; no long-lived build container exists.
+(`verify-explorers.py`, `verify-market.py`, both desk suites, each in its
+party's Basecamp), `reset-swaps.sh`; `market-bootstrap.sh` runs once in a
+throwaway container of the builder image (`deploy/builder`), which also builds
+the arm64 artifacts the stack cannot pull; no long-lived build container
+exists.
 
 ## Keys and signing in the local product stack
 
-Every key lives on the Node that uses it; the desks hold none. Long-lived
-keys are per Node; everything a swap signs with is created for that swap under
-its own directory and never leaves the container.
+The desks hold no key at rest; each Node holds its own long-lived keys except
+the LEZ account key, which lives in the role's `lez_core` wallet. Everything a
+swap signs with is created for that swap under its own directory and never
+leaves the container.
 
 ```
- HOST (deploy/runtime, runner-work)                 MAKER NODE state volume            TAKER NODE state volume
- ─────────────────────────────────                  ───────────────────────            ───────────────────────
- runner-work/market/identities/<wallet>/            delivery-signing.key  secp256k1    btc/lez-signer.key   LEZ account key
-   lez-signer.key   LEZ account keys of the           signs offer envelopes; public      of taker-zurich-01: the Taker's
-   identity.json    four funded wallets               half published as                  sidecar signs its LEZ claim tx
- runtime/lez/<role>/lez-signer.key                    /delivery/maker-delivery-          with it
-   bind-mounted copy for each Node                    identity.pub                      btc/btc-rpc-cookie   Core RPC auth
- runtime/secrets/mining.key   regtest scalar 1      btc-chat-signing.key  secp256k1    (Core wallet lez-taker holds the
-   (wallet lez-miner)                                 the Maker's agreement identity:    funding UTXO keys inside Core)
- runtime/secrets/btc-rpc-cookie                        seeds every Maker role root and
-                                                       signs its proposals
-                                                     btc/lez-signer.key   LEZ account key
-                                                       of maker-munich-01: the Maker's
-                                                       sidecar signs escrow init/fund
-                                                     btc/btc-rpc-cookie   Core RPC auth
+ HOST (deploy/runtime, market root)                 MAKER BASECAMP (maker-node)        TAKER BASECAMP (taker-node)
+ ──────────────────────────────────                 ───────────────────────────        ───────────────────────────
+ <market root>/identities/<wallet>/                 lez_core wallet                    lez_core wallet
+   lez-signer.key   LEZ account keys of the           the key of maker-munich-01,        the key of taker-zurich-01,
+   identity.json    funded wallets                    imported by the desk from          imported the same way; signs
+ runtime/lez/<role>/lez-signer.key, zcash.key         /run-lez-identity/maker; signs     the Taker sidecar's LEZ claim
+   bind-mounted copy for each role's Basecamp         escrow init/fund through the       through the signer socket
+   (0640 in a 0750 directory on Linux)                signer socket                    state volume:
+ runtime/secrets/mining.key   regtest scalar 1      state volume:                        btc/btc-rpc-cookie   Core RPC auth
+   (wallet lez-miner)                                 delivery-signing.key  secp256k1      (Core wallet lez-taker holds the
+ runtime/secrets/btc-rpc-cookie                         signs offer envelopes; the          funding UTXO keys inside Core)
+                                                        minted zcash.key when mounted
+                                                      btc-chat-signing.key  secp256k1
+                                                        the Maker's agreement identity
+                                                      btc/btc-rpc-cookie   Core RPC auth
 
  PER SWAP, on each Node:  swaps/<reservation id>/
    role/private/agreement.key            MuSig2 participant key; Maker's is derived from btc-chat-signing.key,
@@ -157,6 +198,15 @@ its own directory and never leaves the container.
                                           draft, agreement key and actor config
 ```
 
+With `LEZ_WALLET_SIGNER_SOCKET` set (compose.yaml sets it for both roles)
+`node-entrypoint.sh` removes any `btc/lez-signer.key` from the state volume
+and waits up to 120 s for the signer socket. The desk still reads the key
+file from the bind mount once, to import it into `lez_core`
+(`apps/basecamp/common/lez_role_signer.h`). On the ZEC devnet corridor the
+provisioner (`scripts/zec-provision.sh`) copies each role's key into the
+corridor material; the corridor's sidecar signs through the same socket when
+it is up and falls back to that file only without it.
+
 How the signatures happen, in order:
 
 ```
@@ -172,9 +222,12 @@ How the signatures happen, in order:
                 secret nonces stay in journals/*.sqlite; partial signatures cross Chat; both hold verified
                 pre-signatures s′ before any value moves
  5 lock BTC     Taker Node: Core wallet lez-taker signs the funding PSBT ─► P2TR(aggregate key, CSV refund leaf)
- 6 fund LEZ     Maker actor observes the lock ─► Maker sidecar signs escrow initialize + fund with lez-signer.key
+ 6 fund LEZ     Maker actor observes the lock ─► Maker sidecar plans escrow initialize + fund; the Maker's
+                lez_core signs each message hash over the signer socket; the sidecar checks the signature
+                and public key against the planned message and account before it submits
  7 reveal       Taker actor adapts the LEZ pre-signature with t (adaptor-secret.key) ─► final signature s
-                ─► Taker sidecar signs and submits the revealing claim transaction with lez-signer.key
+                ─► Taker sidecar submits the revealing claim; its transaction signature comes from the
+                Taker's lez_core the same way
  8 follow-up    Maker actor sees s on LEZ, extracts t = s − s′ (parity-aware, requires tG = T), adapts its
                 Bitcoin pre-signature ─► key-path spend of the lock to its claim destination ─► Core RPC
  refunds        Taker actor: CSV refund of the Bitcoin lock with bitcoin-refund.key if the Maker never funds;
@@ -187,7 +240,9 @@ so a completed swap's directory holds no key that reaches another swap. And
 the actor program's hash is pinned in every persisted swap, so replacing the
 binary (a rebuild, the image strip) makes existing swaps unloadable rather
 than letting a different program act with their keys; `reset-swaps.sh`
-forgets them.
+forgets them. It refuses a swap that may still hold funds unless given
+`--abandon-open`, which moves that swap's directory to `.reset-archive/`
+instead of deleting it.
 
 ## M2 executable local topology (2026-07-18, superseded above)
 

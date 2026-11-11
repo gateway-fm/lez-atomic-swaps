@@ -59,5 +59,8 @@ here.
 
 The [system architecture](system-architecture.md) and
 [deployment/RPC map](deployment-components-and-rpcs.md) are the detailed M3
-references. The shorter [M3+ product diagrams](../diagrams.md) show only the
+references; the deployment map's first section is the current PR #120 stack
+(LEZ network, signers and Nodes in Basecamp). The
+[Logos-native packaging note](logos-native-packaging.md) records what the
+official Logos tools do with these packages outside Compose. The shorter [M3+ product diagrams](../diagrams.md) show only the
 LEZ/BTC stack exercised by this submission.
