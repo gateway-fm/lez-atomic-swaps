@@ -9,7 +9,7 @@
 # PHASE is one of the phases below, or one build step on its own
 # (`--only build:rapidsnark`, `build:lez-services`, `build:r0vm`,
 # `build:escrow`, `build:sidecar`, `build:indexer-module`, `build:wallet-module`, `build:swap-node-module`,
-# `build:regenesis`, `build:identities`); that is how the
+# `build:role-node-modules`, `build:regenesis`, `build:identities`); that is how the
 # release workflow spreads the cold build over several runners.
 #
 # Every phase is idempotent: it checks what already exists and does only the
@@ -22,7 +22,8 @@
 #   build     LEZ services, r0vm, rapidsnark, the escrow artifact, the LEZ
 #             sidecar and the wallet identities, each in one `docker run --rm`
 #             of the ephemeral builder image (deploy/builder)
-#   stage     Bitcoin Core, LEZ services, r0vm, sidecar into the image contexts
+#   stage     Bitcoin Core, LEZ services, r0vm, sidecar into the image contexts;
+#             each role's Node payload package (package-role-node.sh)
 #   stack     gen-config → compose build → up → market bootstrap → UI suites
 #   --evidence skips UI/Nix, uses fast timing, and prepares the API scenarios.
 #   swap      (--swap) one full BTC → LEZ swap through the two Basecamp apps
@@ -287,10 +288,13 @@ phase_nix() {
 # ---- rust ----------------------------------------------------------------------
 phase_rust() {
   PHASE=rust
-  local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway
+  # Each role's Node and what it runs, packaged by the stage phase
+  # (package-role-node.sh); the Taker image keeps the ZEC provisioners, which
+  # scripts/zec-provision.sh runs from it.
+  local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli
     maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
     taker-node/lez-taker-node taker-node/lez-taker-cli
-    taker-node/lez-taker-chat-gateway taker-node/lez-taker-registry-init
+    taker-node/lez-taker-registry-init
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
     taker-node/zec-local-poc-provision taker-node/zec-local-poc-chat-draft taker-node/zec-local-poc-chat-finalize
     taker-node/zec-local-poc-identity taker-node/zec-local-poc-transfer
@@ -468,6 +472,28 @@ build_swap_node_module() {
       printf '%s\\n' '$stamp' > /provision/lez_swap_node/source.stamp"
 }
 
+# lez_maker_node and lez_taker_node, the packages that carry each role's Node:
+# their plugins (modules/lez-<role>-node), built here; the stage phase adds the
+# Node and everything it runs (package-role-node.sh). Same pins as
+# lez_swap_node, so a warm store builds them in minutes.
+build_role_node_modules() {
+  local role name out stamp
+  for role in maker taker; do
+    name="lez_${role}_node"
+    out="$PROVISION/$name"
+    stamp="$(cd "$REPO_ROOT/modules/lez-$role-node" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
+    [[ -f "$out/$name-plugin.lgx" && "$(cat "$out/source.stamp" 2>/dev/null)" == "$stamp" ]] && continue
+    log "building $name (modules/lez-$role-node) as a portable lgx in nix"
+    docker run --rm --ulimit nofile=1048576:1048576 -v lez-build-nix:/nix -v "$PROVISION:/provision" \
+      -v "$REPO_ROOT/modules/lez-$role-node:/up/mod:ro" "$LEZ_NIX_IMAGE" sh -euc "
+        echo 'experimental-features = nix-command flakes' >> /etc/nix/nix.conf; echo 'max-jobs = 4' >> /etc/nix/nix.conf
+        rm -rf /tmp/src; mkdir -p /tmp/src/mod; tar -C /up/mod -cf - . | tar -C /tmp/src/mod -xf -
+        nix build -L path:/tmp/src/mod#lgx-portable --out-link /tmp/lgx 2>&1 | tail -3
+        mkdir -p /provision/$name; cp -L /tmp/lgx/*.lgx /provision/$name/$name-plugin.lgx
+        printf '%s\\n' '$stamp' > /provision/$name/source.stamp"
+  done
+}
+
 # r0vm from the risc0 tag (no arm64 release asset exists)
 build_r0vm() {
   if [[ ! -x "$PROVISION/tools-arm/bin/r0vm" ]]; then
@@ -590,6 +616,7 @@ phase_build() {
   build_step_wanted indexer-module && build_indexer_module
   build_step_wanted wallet-module && build_wallet_module
   build_step_wanted swap-node-module && build_swap_node_module
+  build_step_wanted role-node-modules && build_role_node_modules
   build_step_wanted regenesis && build_regenesis
   own_provision
   build_step_wanted identities && build_identities
@@ -649,6 +676,17 @@ phase_stage() {
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
     cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"
     echo "$expected" > "$DEPLOY_ROOT/images/$role-node/sidecar-expected.txt"
+  done
+  # Each role's image installs its Node payload package, built from the plugin
+  # (build:role-node-modules) and the executables staged above. The release
+  # workflow's images job has no Nix store and packages them in its Basecamp job.
+  for role in maker taker; do
+    if [[ -f "$PROVISION/lez_${role}_node/lez_${role}_node-plugin.lgx" ]]; then
+      bash "$DEPLOY_ROOT/scripts/package-role-node.sh" "$role" \
+        "$PROVISION/lez_${role}_node/lez_${role}_node-plugin.lgx" "$DEPLOY_ROOT/images/$role-node/lez_${role}_node.lgx"
+    elif [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
+      fail "no $PROVISION/lez_${role}_node/lez_${role}_node-plugin.lgx; run from-scratch.sh --only build:role-node-modules first"
+    fi
   done
   # the market bootstrap and identity tools, in the wallet-module image (the
   # compose `tools` service)
@@ -715,7 +753,7 @@ phase_swap() {
 
 case "$ONLY" in
   ""|host|sources|nix|rust|build|stage|stack|swap) ;;
-  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module|build:swap-node-module|build:regenesis) ;;
+  build:rapidsnark|build:lez-services|build:r0vm|build:escrow|build:sidecar|build:identities|build:indexer-module|build:wallet-module|build:swap-node-module|build:role-node-modules|build:regenesis) ;;
   *) echo "unknown phase: $ONLY" >&2; exit 64 ;;
 esac
 for p in host sources nix rust build stage stack; do

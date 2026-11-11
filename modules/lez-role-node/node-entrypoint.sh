@@ -5,9 +5,22 @@
 # Node-owned Bitcoin lifecycle configuration (ADR 0213). Everything the Node
 # needs is rendered here from mounted, read-only inputs so the state volume
 # holds owner-private copies. Chains are selected purely by these inputs.
+#
+# This launcher travels in the role's payload package (lez_maker_node,
+# lez_taker_node; modules/lez-maker-node, deploy/scripts/package-role-node.sh)
+# beside the executables it runs, which it finds next to itself. Basecamp's
+# lez_swap_node starts it with the role as its argument and owns the Node's
+# life: the Node is the process group's leader (this script execs it), and
+# the helpers started here (loopback forwards, ZEC sidecars) are signalled
+# when the Node goes (setpriv --pdeathsig), so none outlives it.
 set -euo pipefail
 
 role="${1:?maker|taker}"
+bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# A helper started here ends with the Node (its parent once this script execs
+# it): setpriv (util-linux) asks the kernel for that, where it is installed.
+with_node=()
+command -v setpriv >/dev/null && with_node=(setpriv --pdeathsig TERM)
 state="/var/lib/lez/$role"
 run="/run/lez/$role"
 btc_state="$state/btc"
@@ -30,12 +43,12 @@ chmod 0700 "$state" 2>/dev/null || true
 bitcoin_host="${LEZ_BITCOIN_CORE_HOST:-bitcoin-core}"
 sequencer_host="${LEZ_SEQUENCER_HOST:-sequencer}"
 indexer_host="${LEZ_INDEXER_HOST:-indexer}"
-socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
-socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
-socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
+"${with_node[@]}" socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
+"${with_node[@]}" socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
+"${with_node[@]}" socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
 # The ZEC actors reach Zebra the same way (deterministic_local route).
 zebra_host="${LEZ_ZEBRA_HOST:-zebra}"
-socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr "TCP:${zebra_host}:18232" &
+"${with_node[@]}" socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr "TCP:${zebra_host}:18232" &
 for _ in $(seq 1 60); do
   curl -sf --max-time 3 --user "$(cat "$cookie_src")" -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18443/ >/dev/null 2>&1 && break
@@ -80,7 +93,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
   bitcoin_genesis="$(curl -fsS --max-time 10 --user "$(cat "$btc_state/btc-rpc-cookie")" \
     --header 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockhash","params":[0]}' http://127.0.0.1:18443/ | jq -er '.result')"
-  actor_program="/usr/local/bin/lez-btc-$role-actor"
+  actor_program="$bin/lez-btc-$role-actor"
   actor_sha="$(sha256sum "$actor_program" | cut -d' ' -f1)"
   wallet_json='null'
   [[ -n "${LEZ_BTC_WALLET:-}" ]] && wallet_json="\"${LEZ_BTC_WALLET}\""
@@ -105,7 +118,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --argjson wallet "$wallet_json" --argjson claim_destination "$claim_destination_json" \
     --arg btc_genesis "$bitcoin_genesis" \
     --arg channel "$channel_id" --arg genesis "$lez_genesis_hash" --arg program "$escrow_program_id" \
-    --arg transfer "$auth_transfer_program_id" --arg sidecar_program /usr/local/bin/lez-v02-bridge-poc \
+    --arg transfer "$auth_transfer_program_id" --arg sidecar_program "$bin/lez-v02-bridge-poc" \
     --arg sequencer "$sequencer_url" --arg indexer "$indexer_url" --argjson port_base "$sidecar_port_base" \
     --arg signer "$btc_state/lez-signer.key" --arg wallet_socket "$lez_wallet_socket" --arg signer_account "$signer_account" \
     --arg actor "$actor_program" --arg actor_sha "$actor_sha" \
@@ -196,7 +209,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   # three times; one that runs but does not listen within 90 s is left alone.
   zec_candidate_ready=0
   for zec_start in 1 2 3; do
-    /usr/local/bin/lez-v02-bridge-poc --listen-address "$zec_listen" --node-profile local \
+    "${with_node[@]}" "$bin/lez-v02-bridge-poc" --listen-address "$zec_listen" --node-profile local \
       --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
       --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
       "${zec_signer_args[@]}" --state-directory "$zec_sidecar_state" \
@@ -247,7 +260,7 @@ case "$role" in
       od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$state/btc-chat-signing.key"
       chmod 0600 "$state/btc-chat-signing.key"
     fi
-    identity="$(/usr/local/bin/lez-maker-cli delivery-identity --signing-key-file "$state/delivery-signing.key" \
+    identity="$("$bin/lez-maker-cli" delivery-identity --signing-key-file "$state/delivery-signing.key" \
       | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
     [[ -n "$identity" ]] || { echo "could not publish maker identity" >&2; exit 1; }
     printf '%s\n' "$identity" >/delivery/.maker-delivery-identity.pub.tmp
@@ -275,7 +288,7 @@ case "$role" in
           head -c 32 /dev/urandom >"$state/zec-claim-recovery.key"
           chmod 0600 "$state/zec-claim-recovery.key"
         fi
-        zec_actor_program="/usr/local/bin/lez-zec-maker-actor"
+        zec_actor_program="$bin/lez-zec-maker-actor"
         args+=(--maker-claim-key-id "${LEZ_ZEC_CLAIM_KEY_ID:-devnet-zec-claim-v1}"
           --maker-claim-key-file "$state/zec-claim-recovery.key"
           --zec-maker-actor-root "$zec_state/actors"
@@ -299,7 +312,7 @@ case "$role" in
     # a failed attempt sooner (gen-config.sh); unset, the Node's own defaults.
     [[ -z "${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}" ]] || args+=(--actor-requeue-delay-seconds "$LEZ_MAKER_ACTOR_REQUEUE_SECONDS")
     [[ -z "${LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS:-}" ]] || args+=(--actor-failure-backoff-seconds "$LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS")
-    exec /usr/local/bin/lez-maker-node "${args[@]}"
+    exec "$bin/lez-maker-node" "${args[@]}"
     ;;
   taker)
     for _ in $(seq 1 60); do
@@ -308,7 +321,7 @@ case "$role" in
     done
     maker_identity="$(tr -d ' \n' </delivery/maker-delivery-identity.pub)"
     [[ "$maker_identity" =~ ^(02|03)[0-9a-f]{64}$ ]] || { echo "maker public identity unavailable" >&2; exit 1; }
-    [[ -s "$state/registry.sqlite3" ]] || /usr/local/bin/lez-taker-registry-init --database "$state/registry.sqlite3"
+    [[ -s "$state/registry.sqlite3" ]] || "$bin/lez-taker-registry-init" --database "$state/registry.sqlite3"
     if [[ "$btc_lifecycle_ready" == 1 ]]; then
       # The prepared ZEC catalog (taker_service_config/prepared.rs) only when
       # this corridor's sidecar answers; the key stays absent otherwise so a
@@ -348,7 +361,7 @@ PY
          maximum_offers:16}' >"$state/role.json"
     fi
     chmod 0600 "$state/role.json"
-    exec /usr/local/bin/lez-taker-node --socket "$run/node.sock" --ready-file "$run/ready" --role-config "$state/role.json"
+    exec "$bin/lez-taker-node" --socket "$run/node.sock" --ready-file "$run/ready" --role-config "$state/role.json"
     ;;
   *) echo "unknown role $role" >&2; exit 2 ;;
 esac

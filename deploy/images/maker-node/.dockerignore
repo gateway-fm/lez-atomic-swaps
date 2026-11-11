@@ -1,0 +1,8 @@
+# Only what the Dockerfile copies: the payload package, the source receipts
+# and (Taker) the ZEC provisioners. The debug executables staged here are
+# inputs of scripts/package-role-node.sh, not of the image.
+*
+!Dockerfile
+!lez_maker_node.lgx
+!build-source.txt
+!sidecar-source.txt

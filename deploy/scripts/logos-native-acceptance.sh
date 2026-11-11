@@ -4,8 +4,14 @@
 # keep what every command printed.
 #
 #   scripts/logos-native-acceptance.sh --role maker --role-lgx <role.lgx> \
-#       --module <lez_core.lgx> --module <lez_swap_node.lgx> [--module <x.lgx>]... \
-#       [--tools-nix <docker volume or directory>] [--out <dir>]
+#       --module <lez_core.lgx> --module <lez_swap_node.lgx> --module <lez_maker_node.lgx> \
+#       [--module <x.lgx>]... [--tools-nix <docker volume or directory>] [--out <dir>]
+#
+# lez_<role>_node is the role's Node payload package (modules/lez-<role>-node,
+# scripts/package-role-node.sh): the Node, its actors, the LEZ sidecar and the
+# launcher, which lez_swap_node starts. The Node itself needs the role's
+# configuration (chains, identity: Compose provides it); in this bare session
+# the launcher starts and stops for want of it, which is what is judged.
 #
 # The official Logos path is .lgx -> `logosctl package install` (dependencies,
 # root hash) -> a session (modules/ data/ keyring/ logs/) -> `module load`,
@@ -336,9 +342,17 @@ step "$ok" "module show lez_swap_node" "$RUN" "$L module show lez_swap_node"
 step "$callok" "call lez_swap_node node_status $role" "$RUN" "$L call lez_swap_node node_status $role"
 step '[[ -s "$o" ]]' "the installed package graph carries the $role Node and its launcher" "$RUN" \
   "find $S/modules $S/plugins \\( -name node-entrypoint.sh -o -name 'lez-$role-node*' \\) -print"
-step "$callok"' && [[ "$(result)" == 0 ]]' "start_node with the launcher Compose provides" "$RUN" \
-  "$L call lez_swap_node start_node $role /usr/local/bin/node-entrypoint.sh $S/logs/$role-node.log $S/$role-node.hold"
-step "$callok"' && grep -q running "$o"' "the $role Node is running" "$RUN" "$L call lez_swap_node node_status $role"
+node_pkg="lez_${role}_node"
+step "$ok" "module load $node_pkg (the $role Node package, with its declared dependencies)" "$RUN" "$L module load $node_pkg"
+step "$callok"' && [[ "$(result)" == /*/bin/node-entrypoint.sh ]]' "call $node_pkg launcher: the installed launcher" "$RUN" "$L call $node_pkg launcher"
+launcher="$(result)"
+step "$callok"' && result | jq -e ".files[\"lez-'"$role"'-node\"]" >/dev/null' "call $node_pkg payload: the installed files and their sha256" "$RUN" "$L call $node_pkg payload"
+step "$callok"' && [[ "$(result)" == 0 ]]' "start_node with the package's launcher" "$RUN" \
+  "$L call lez_swap_node start_node $role ${launcher:-/missing} $S/logs/$role-node.log $S/$role-node.hold"
+sleep 3
+step "$callok"' && result | jq -e ".starts >= 1" >/dev/null' "lez_swap_node launched the $role Node from the package" "$RUN" "$L call lez_swap_node node_status $role"
+step info "the $role Node's output (without the role's configuration, which Compose provides, it stops at once)" "$RUN" "tail -5 $S/logs/$role-node.log"
+docker exec "$RUN" bash -c "$L call lez_swap_node stop_node $role" >/dev/null 2>&1
 
 # The supervisor itself, with a stand-in launcher: a two-line shell script, not a Node.
 step info "STUB: a stand-in launcher (sleeps; not a Node)" "$RUN" \
@@ -372,7 +386,7 @@ docker exec "$RUN" bash -c "$L call lez_swap_node stop_node $role; for p in \$(p
 section "Remove"
 step "$ok" "package remove $role_pkg" "$RUN" "$L package remove $role_pkg -y"
 step "$ok" "package remove lez_core (takes its dependents)" "$RUN" "$L package remove lez_core -y"
-step '! grep -Eq "lez_core|lez_swap_node|lez_atomic_swap" "$o"' "nothing of ours is left installed" "$RUN" "$L package ls"
+step '! grep -Eq "lez_core|lez_swap_node|lez_(maker|taker)_node|lez_atomic_swap" "$o"' "nothing of ours is left installed" "$RUN" "$L package ls"
 step info "what remove leaves in the session" "$RUN" "find $S/modules $S/plugins $S/data -maxdepth 2 | sort"
 docker exec "$RUN" bash -c "find $S -maxdepth 3 | sort; echo; ls -la $S/keyring" >"$out/session-layout.txt" 2>&1
 docker exec "$RUN" bash -c "cat $S/logs/daemon.log" >"$out/daemon.log" 2>&1

@@ -288,13 +288,14 @@ services:
 
   # ─── swap application ───────────────────────────────────────────────────
   maker-node:
-    # The Maker's own Basecamp (images/maker-node: the basecamp-ui image plus
-    # the Maker Node), on VNC at 127.0.0.1:5901. Its Maker desk, opened when
-    # the container starts, is the one the Maker uses and the UI tests drive
-    # (ui-tests/, mounted for them). The desk starts the Maker's LEZ signer in
-    # Basecamp's lez_core and has Basecamp's lez_swap_node launch and supervise
-    # the Maker Node, the swap engine (node-entrypoint.sh, restarted when it
-    # exits; its output is this container's log). `docker restart|stop|logs
+    # The Maker's own Basecamp (images/maker-node: the basecamp-ui image with
+    # the Maker's Node package, lez_maker_node, installed), on VNC at
+    # 127.0.0.1:5901. Its Maker desk, opened when the container starts, is the
+    # one the Maker uses and the UI tests drive (ui-tests/, mounted for them).
+    # The desk starts the Maker's LEZ signer in Basecamp's lez_core and has
+    # Basecamp's lez_swap_node launch and supervise the Maker Node, the swap
+    # engine, from the package (its launcher, restarted when it exits; its
+    # output is this container's log). `docker restart|stop|logs
     # lez-maker-node` act on the Maker's whole Basecamp: desk, signer and Node;
     # the Node alone is held down by the supervisor's hold file
     # (LEZ_MAKER_NODE_HOLD, scripts/node-hold.sh).
@@ -321,7 +322,8 @@ services:
       LEZ_WALLET_SEQUENCER_URL: http://sequencer:3040
       LEZ_MAKER_SIGNER_SOCKET: /run/lez-wallet/maker/signer.sock
       LEZ_MAKER_SIGNER_IDENTITY: /run-lez-identity/maker
-      LEZ_MAKER_NODE_LAUNCHER: /usr/local/bin/node-entrypoint.sh
+      # The Node's launcher from the installed lez_maker_node package.
+      LEZ_MAKER_NODE_LAUNCHER: package
       LEZ_MAKER_NODE_LOG: /proc/1/fd/1
       LEZ_MAKER_NODE_HOLD: /tmp/lez-node-hold
       LEZ_MAKER_RPC_SOCKET: /run/lez/maker/node.sock
@@ -392,8 +394,9 @@ services:
     logging: *role-logging
 
   taker-node:
-    # The Taker's own Basecamp (images/taker-node: the basecamp-ui image plus
-    # the Taker Node), on VNC at 127.0.0.1:5902: as maker-node, for the Taker.
+    # The Taker's own Basecamp (images/taker-node: the basecamp-ui image with
+    # the Taker's Node package, lez_taker_node, installed), on VNC at
+    # 127.0.0.1:5902: as maker-node, for the Taker.
     build:
       context: ./images/taker-node
       additional_contexts:
@@ -413,7 +416,8 @@ services:
       LEZ_WALLET_SEQUENCER_URL: http://sequencer:3040
       LEZ_TAKER_SIGNER_SOCKET: /run/lez-wallet/taker/signer.sock
       LEZ_TAKER_SIGNER_IDENTITY: /run-lez-identity/taker
-      LEZ_TAKER_NODE_LAUNCHER: /usr/local/bin/node-entrypoint.sh
+      # The Node's launcher from the installed lez_taker_node package.
+      LEZ_TAKER_NODE_LAUNCHER: package
       LEZ_TAKER_NODE_LOG: /proc/1/fd/1
       LEZ_TAKER_NODE_HOLD: /tmp/lez-node-hold
       LEZ_TAKER_RPC_SOCKET: /run/lez/taker/node.sock

@@ -189,12 +189,16 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:wallet-module
       - name: lez_swap_node, which runs a role's Node inside Basecamp (modules/lez-swap-node)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:swap-node-module
+      - name: The plugins of lez_maker_node and lez_taker_node, the packages that carry each role's Node (modules/lez-<role>-node)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:role-node-modules
       - name: Collect payloads
         run: |
           set -euo pipefail
           mkdir -p _out
           cp "$LEZ_WORKSPACE"/provision/data/lez_indexer_module/lez_indexer_module.lgx "$LEZ_WORKSPACE"/provision/data/lez_core/lez_core.lgx \
-            "$LEZ_WORKSPACE"/provision/data/lez_swap_node/lez_swap_node.lgx _out/
+            "$LEZ_WORKSPACE"/provision/data/lez_swap_node/lez_swap_node.lgx \
+            "$LEZ_WORKSPACE"/provision/data/lez_maker_node/lez_maker_node-plugin.lgx \
+            "$LEZ_WORKSPACE"/provision/data/lez_taker_node/lez_taker_node-plugin.lgx _out/
           sha256sum _out/*.lgx
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -342,6 +346,20 @@ jobs:
         with:
           name: node-contexts
           path: deploy/images
+      # Each role's image installs that role's Node payload package: its plugin
+      # (lez-modules) with the Node binaries, actors and sidecar staged in the
+      # contexts, packaged with lgx from this job's Nix store.
+      - name: Package lez_maker_node and lez_taker_node
+        env:
+          # the --only nix step's store, which holds the module builder's lgx
+          LEZ_NIX_VOLUME: lez-nix-store-arm
+        run: |
+          set -euo pipefail
+          for role in maker taker; do
+            chmod 0755 deploy/images/$role-node/lez-* || true
+            deploy/scripts/package-role-node.sh "$role" "$GITHUB_WORKSPACE/_in/lez-modules/lez_${role}_node-plugin.lgx" \
+              "deploy/images/$role-node/lez_${role}_node.lgx"
+          done
       # basecamp-ui is build-only in compose.yaml (scale 0, no container): the
       # base of the parties' and the LEZ network's Basecamps. It is pushed all
       # the same so `docker compose pull` resolves every service; its layers are
@@ -424,8 +442,9 @@ jobs:
           for image in bitcoin-core btc-miner btc-explorer services explorer wallet-module; do
             docker push "${LEZ_IMAGE_PREFIX}-${image}:${LEZ_IMAGE_TAG}"
           done
-      # Each role's image is that party's Basecamp (the basecamp-ui image plus
-      # the role's Node), and the LEZ network's is a Basecamp with the indexer's
+      # Each role's image is that party's Basecamp (the basecamp-ui image with
+      # the role's Node package installed, packaged there from these staged
+      # executables), and the LEZ network's is a Basecamp with the indexer's
       # r0vm: the basecamp-ui job builds them from these contexts.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

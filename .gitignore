@@ -34,6 +34,7 @@ __pycache__/
 /deploy/images/lez-network-module/r0vm
 /deploy/images/lez-network-module/regenesis
 /deploy/images/lez-wallet-module/*.lgx
+/deploy/images/*-node/lez_*_node.lgx
 /deploy/images/bitcoin-core/bin/
 /deploy/images/basecamp-ui/assets/
 

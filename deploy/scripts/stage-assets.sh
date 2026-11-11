@@ -48,11 +48,9 @@ fi
 # ---- role Nodes: separate native-arm64 image payloads ---------------------
 if [[ ! -x images/maker-node/lez-maker-node \
    || ! -x images/maker-node/lez-maker-cli \
-   || ! -x images/maker-node/lez-maker-chat-gateway \
    || ! -x images/maker-node/lez-runtime-healthcheck \
    || ! -x images/taker-node/lez-taker-node \
    || ! -x images/taker-node/lez-taker-cli \
-   || ! -x images/taker-node/lez-taker-chat-gateway \
    || ! -x images/taker-node/lez-taker-registry-init \
    || ! -x images/taker-node/lez-runtime-healthcheck \
    || ! -x images/maker-node/lez-btc-maker-actor \
@@ -64,9 +62,9 @@ if [[ ! -x images/maker-node/lez-maker-node \
 Build the workspace binaries natively (repo root):
   cargo build --locked --bins -p lez-maker-node -p lez-taker-node \
     -p lez-runtime-healthcheck
-Then copy target/debug/{lez-maker-cli,lez-maker-node,lez-maker-chat-gateway,
+Then copy target/debug/{lez-maker-cli,lez-maker-node,
 lez-runtime-healthcheck} -> images/maker-node/ and
-target/debug/{lez-taker-cli,lez-taker-node,lez-taker-chat-gateway,
+target/debug/{lez-taker-cli,lez-taker-node,
 lez-taker-registry-init,lez-runtime-healthcheck} -> images/taker-node/.
 Also copy target/debug/lez-runtime-healthcheck -> images/lez-services/.
 The Node-owned Bitcoin lifecycle (ADR 0213) also needs the actor programs
@@ -77,6 +75,21 @@ ephemeral builder image (scripts/from-scratch.sh --only build ->
 provision/data/sidecar/lez-v02-bridge-poc -> both node images).
 MISSING
     exit 1
+fi
+
+# ---- role Node payload packages: what each role's image installs -----------
+# The executables above, packaged with the role's plugin (lez_maker_node,
+# lez_taker_node) by scripts/package-role-node.sh (from-scratch.sh --only stage).
+if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
+    for role in maker taker; do
+        if [[ ! -f "images/$role-node/lez_${role}_node.lgx" ]]; then
+            cat >&2 <<MISSING
+Package the $role Node (the plugin from from-scratch.sh --only build:role-node-modules):
+  scripts/package-role-node.sh $role <provision>/lez_${role}_node/lez_${role}_node-plugin.lgx images/$role-node/lez_${role}_node.lgx
+MISSING
+            exit 1
+        fi
+    done
 fi
 
 # ---- lez-wallet-module: the LEZ wallet module + market bootstrap tools -------
