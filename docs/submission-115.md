@@ -159,12 +159,13 @@ Stated plainly; each one is open unless it says otherwise.
    install still resolves no dependencies and `logosctl` loads no `ui_qml`
    package (item 3 above). Moving LEZ itself to v0.3 is out of scope (#107).
 5. **Packaging evidence.** The latest logos-native runs
-   (`docs/evidence/logos-native-2026-11-11-b/`) used the release set of the
+   (`docs/evidence/logos-native-2026-11-11-c/`) used the release set of the
    combined landing (`packages.tsv` there: `lez_core` 0.4.1-sign.4,
-   `lez_swap_node` 0.3.0, `lez_maker_node` / `lez_taker_node` 0.1.0, the desks
-   0.2.5, `lez_network` 0.1.0, Chat 0.2.2, Delivery 0.2.0); their README
-   classifies every remaining FAIL. The 2026-11-10 and 2026-11-11 runs are
-   kept for comparison.
+   `lez_swap_node` 0.3.1, `lez_maker_node` / `lez_taker_node` 0.1.0, the desks
+   0.2.5, `lez_network` 0.1.0, Chat 0.2.2, Delivery 0.2.0): 116 steps, 13 FAIL
+   per role, 9 of them unsigned packages and 4 `logosctl` behaviours classified
+   in the 2026-11-11-b README. The 2026-11-10, 2026-11-11 and 2026-11-11-b runs
+   are kept for comparison.
 6. **Custody boundary.** The LEZ key is a plaintext file under
    `deploy/runtime/lez/<role>/` (mode 0640 in a 0750 directory on Linux, 0644
    on macOS, `deploy/scripts/gen-config.sh`), bind-mounted into the role's
@@ -265,7 +266,7 @@ claims them.
 | Full regression on the release candidate | `deploy/scripts/regress.sh full` (93 tests: `regress.sh list full`) on one frozen commit, results committed under `docs/evidence/` | done on `023c929e`, 2026-11-11: 92 of 93 passed in one run of 134 minutes on three lanes, 0 frozen tries; the one failure (`zec-claim-collision`, a provoked nonce race that went the other way) passed on its second rerun. `docs/evidence/regression-m2-2026-11-11/` |
 | Public-network evidence (logos-co/rfp#122) | swaps on public Zcash Testnet and a public LEZ testnet with the released artifacts | Not applicable to this release: the public LEZ testnet has moved to LEZ 0.3, which this LEZ v0.2.4 stack cannot talk to; public-network evidence is postponed to the release that ports to LEZ 0.4 (#107). The engine already signs for Zcash Testnet's NU7 and the regtest devnet runs NU7. A legacy v0.2 LEZ endpoint still answers; exploratory work against it is on a follow-up branch and is not part of this PR |
 | CI and release workflow on the final commit | all required PR checks green (DCO needs item 12), then `.github/workflows/release-images.yml` dispatched on the same commit | not verified here (no CI state is recorded in the repository) |
-| Native install proof | `deploy/scripts/logos-native-acceptance.sh` on the final packages, or an accepted waiver | run on the combined landing's release set (`docs/evidence/logos-native-2026-11-11-b/`): every remaining FAIL is unsigned packages (out of scope) or upstream logosctl/runtime behaviour, classified there; not yet on the release candidate |
+| Native install proof | `deploy/scripts/logos-native-acceptance.sh` on the final packages, or an accepted waiver | run on the combined landing's release set (`docs/evidence/logos-native-2026-11-11-c/`): 13 FAIL per role, every one unsigned packages (out of scope) or upstream logosctl behaviour, classified in `logos-native-2026-11-11-b/`; `module stats` is INFO with an upstream request and the Node's stats are judged through `node_stats`; not yet on the release candidate |
 | Topology decision in #115 | Logos agrees R2, R5, R7, R11, R13, R14 and the network-package question | open |
 
 ## Open-issue ledger
@@ -295,6 +296,7 @@ re-checked for this document.
 | `docs/evidence/regression-modules-4c-2026-11-10/` | Module regression: every test of the step-4c set has a passing try; failed tries are classified in `RESULTS.txt` (freezes, one Zebra capacity failure, one actor-observation timeout not reproduced) | `4626f8af`, `0f8228d8`; node and indexer then in two Basecamps; before the patch split, the funding fix and the lanes |
 | `docs/evidence/logos-native-2026-11-10/` | One run of `logos-native-acceptance.sh`: 95 steps, 25 FAIL, 1 NOT RUN | packages built 2026-11-10 13:13Z, before `22196d30` |
 | `docs/evidence/logos-native-2026-11-11/` | `logos-native-acceptance.sh` for the Maker and the Taker with the role Node packages; the landing's lifecycle checks on the live stack; the supervisor harness | the packages of this landing (`lez_swap_node` 0.3.0, `lez_<role>_node` 0.1.0) |
+| `docs/evidence/logos-native-2026-11-11-c/` | `logos-native-acceptance.sh` for both roles (116 steps, 13 FAIL each); `node_stats` through each role's Basecamp compared with `/proc` idle and during swaps; the lifecycle checks on the live Maker and Taker; the supervisor harness | `a3b33884` (`lez_swap_node` 0.3.1) |
 | `docs/evidence/testnet-20260918/`, `docs/evidence/testnet3-provider-20260918/` | Public testnet swaps (LEZ testnet, Bitcoin testnet4 / testnet3 provider) | before PR #120 |
 
 No committed evidence covers the current topology (`b63c958b` and later).

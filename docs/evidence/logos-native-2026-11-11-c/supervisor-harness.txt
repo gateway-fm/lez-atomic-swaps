@@ -1,0 +1,109 @@
+# lez_swap_node supervisor, host-side harness (modules/lez-swap-node/src/lez_swap_node_impl.cpp at a3b33884, Logos SDK stubbed, g++ -std=c++20)
+# cases 1-3 as in ../logos-native-2026-11-11/supervisor-harness.txt; case 4 node_stats against ps; case 5 the zombie wait, before a3b33884 (end_group counting zombies) and after it, under a child subreaper that never reaps (as a container whose pid 1 is not an init)
+== case 1: kill -9 the Node
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+lez_swap_node: maker: Node started (pid 3036896, start 1)
+3036896 3036893 3036896 <scratch>/pay/bin/ut-node 300
+3036897 3036896 3036896 sleep 601
+kill -9 3036896
+lez_swap_node: maker: Node ended (signal 9)
+after kill (group cleaned):
+lez_swap_node: maker: Node started (pid 3037106, start 2)
+after restart:
+3037106 3036893 3037106 <scratch>/pay/bin/ut-node 300
+3037107 3037106 3037106 sleep 601
+records: node-maker.group node-maker.lock node-maker.start  group=3037106
+lez_swap_node: maker: Node ended (signal 15)
+start=0
+{"role":"maker","state":"restarting","pid":0,"starts":1,"last_exit":"signal 9"}
+{"role":"maker","state":"running","pid":3037106,"starts":2,"last_exit":"signal 9"}
+after harness exit (destructor):
+records: node-maker.lock node-maker.start 
+
+== case 2: the module host is killed (-9), then loaded again
+3037481 3037476 3037481 <scratch>/pay/bin/ut-node 300
+3037482 3037481 3037481 sleep 601
+kill -9 host 3037476
+case2.sh: line 5: 3037476 Killed                  H serve start sleep60 > "$S/out2a.txt" 2>&1
+after the host died (Node gone by PDEATHSIG; its helper left):
+3037482       1 3037481 sleep 601
+records: node-maker.group node-maker.lock node-maker.start signers 
+<signer.sock> aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+-- load again (records resumed; no start call)
+after the reload:
+3037628 3037624 3037628 <scratch>/pay/bin/ut-node 300
+3037629 3037628 3037628 sleep 601
+lez_swap_node: signer: resuming the signer on <signer.sock>
+lez_swap_node: signer: signing for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa on <signer.sock>
+lez_swap_node: maker: resuming the Node a previous host of this module supervised
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+lez_swap_node: Warning: maker: ending the Node group 3037481 a previous host left running
+lez_swap_node: maker: Node started (pid 3037628, start 1)
+{"role":"maker","state":"running","pid":3037628,"starts":1,"last_exit":""}
+lez_swap_node: maker: Node ended (signal 15)
+-- stop_node forgets the role
+lez_swap_node: maker: Node ended (signal 15)
+stop=0
+{"role":"maker","state":"stopped","pid":0,"starts":1,"last_exit":"signal 15"}
+records: node-maker.lock signers 
+-- load again: nothing resumed
+lez_swap_node: signer: resuming the signer on <signer.sock>
+lez_swap_node: signer: signing for aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa on <signer.sock>
+
+
+== case 3: an old host outlives its Basecamp; a new host of the same instance starts
+old host 3038200:
+3038203 3038200 3038203 <scratch>/pay/bin/ut-node 300
+3038204 3038203 3038203 sleep 601
+with both hosts (one Node):
+3038203 3038200 3038203 <scratch>/pay/bin/ut-node 300
+3038204 3038203 3038203 sleep 601
+lez_swap_node: maker: resuming the Node a previous host of this module supervised
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+start=0
+lez_swap_node: Warning: maker: another host of this module supervises the Node; waiting for it to go
+{"role":"maker","state":"waiting","pid":0,"starts":0,"last_exit":""}
+kill -9 old host 3038200
+case3.sh: line 9: 3038200 Killed                  ( H start sleep20 ) > "$S/out3a.txt" 2>&1
+after the old host died (the waiting host took over):
+3038617 3038537 3038617 <scratch>/pay/bin/ut-node 300
+3038618 3038617 3038617 sleep 601
+lez_swap_node: maker: resuming the Node a previous host of this module supervised
+lez_swap_node: maker: supervising <scratch>/pay/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+start=0
+lez_swap_node: Warning: maker: another host of this module supervises the Node; waiting for it to go
+lez_swap_node: Warning: maker: ending the Node group 3038203 a previous host left running
+lez_swap_node: maker: Node started (pid 3038617, start 1)
+{"role":"maker","state":"running","pid":3038617,"starts":1,"last_exit":""}
+lez_swap_node: maker: Node ended (signal 15)
+
+== case 4: node_stats (stand-in Node with a helper and a busy-looping sidecar in its group)
+ps (pid ppid pgid nlwp rss_kb time args) for the group at ~4 s:
+    PID    PPID    PGID NLWP   RSS     TIME COMMAND
+3039233 3039230 3039233    1  1968 00:00:00 <scratch>/pay2/bin/ut-node 300
+3039234 3039233 3039233    1  1964 00:00:00 sleep 601
+3039235 3039233 3039233    1  1744 00:00:03 bash <scratch>/pay2/bin/node-entrypoint.sh maker
+host 3039230: 3039230    2  4140 <scratch>/harness <scratch>/persist <scratch>/pay2/bin/node-entrypoint.sh <scratch>/node.log <scratch>/hold stats start sleep2 stats sleep3 stats
+
+lez_swap_node: maker: supervising <scratch>/pay2/bin/node-entrypoint.sh (log <scratch>/node.log, hold file <scratch>/hold)
+start=0
+lez_swap_node: maker: Node started (pid 3039233, start 1)
+{"role":"maker","state":"running","pid":3039233,"uptime_seconds":2.0,"starts":1,"restarts":0,"last_exit":"","processes":[{"pid":3039233,"ppid":3039230,"name":"ut-node","state":"S","cpu_percent":0.0,"cpu_time_seconds":0.00,"memory_mb":1.922,"threads":1,"fds":4},{"pid":3039234,"ppid":3039233,"name":"sleep","state":"S","cpu_percent":0.0,"cpu_time_seconds":0.00,"memory_mb":1.918,"threads":1,"fds":4},{"pid":3039235,"ppid":3039233,"name":"bash","state":"R","cpu_percent":97.0,"cpu_time_seconds":1.95,"memory_mb":1.703,"threads":1,"fds":4}],"group":{"processes":3,"cpu_percent":97.0,"cpu_time_seconds":1.95,"memory_mb":5.543,"threads":3,"fds":12},"host":{"pid":3039230,"ppid":3039227,"name":"harness","state":"R","cpu_percent":0.5,"cpu_time_seconds":0.01,"memory_mb":4.043,"threads":2,"fds":8}}
+{"role":"maker","state":"running","pid":3039233,"uptime_seconds":5.0,"starts":1,"restarts":0,"last_exit":"","processes":[{"pid":3039233,"ppid":3039230,"name":"ut-node","state":"S","cpu_percent":0.0,"cpu_time_seconds":0.00,"memory_mb":1.922,"threads":1,"fds":4},{"pid":3039234,"ppid":3039233,"name":"sleep","state":"S","cpu_percent":0.0,"cpu_time_seconds":0.00,"memory_mb":1.918,"threads":1,"fds":4},{"pid":3039235,"ppid":3039233,"name":"bash","state":"R","cpu_percent":99.6,"cpu_time_seconds":4.95,"memory_mb":1.703,"threads":1,"fds":4}],"group":{"processes":3,"cpu_percent":99.6,"cpu_time_seconds":4.95,"memory_mb":5.543,"threads":3,"fds":12},"host":{"pid":3039230,"ppid":3039227,"name":"harness","state":"R","cpu_percent":0.3,"cpu_time_seconds":0.02,"memory_mb":4.043,"threads":2,"fds":8}}
+lez_swap_node: maker: Node ended (signal 15)
+after harness exit:
+
+
+== case 5: the host is killed; its Node's helper is orphaned to a parent that never reaps
+-- lez_swap_node before a3b33884
+orphaned helper: 3138005 3137982 3138004 S    sleep 601
+new Node after 10.341964186 s; helper now: 3139956 3139955 3139955 S sleep 601
+lez_swap_node: Warning: maker: ending the Node group 3138004 a previous host left running
+lez_swap_node: maker: Node started (pid 3139955, start 1)
+{"role":"maker","state":"running","pid":3139955,"starts":1,"last_exit":""}
+-- lez_swap_node a3b33884
+orphaned helper: 3143417 3137982 3143416 S    sleep 601
+new Node after .339237206 s; helper now: 3143873 3143872 3143872 S sleep 601
+lez_swap_node: Warning: maker: ending the Node group 3143416 a previous host left running
+lez_swap_node: maker: Node started (pid 3143872, start 1)
+{"role":"maker","state":"running","pid":3143872,"starts":1,"last_exit":""}

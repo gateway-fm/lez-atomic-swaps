@@ -402,7 +402,16 @@ processes a module host started") and judges instead that
 `logosctl call lez_swap_node node_stats <role>` names the pid `node_status`
 gave, exactly the Node's process group as `/proc` shows it (the stand-in Node
 and its helper), the `lez_swap_node` host as the Node's parent, and each
-process's VmRSS. The desks do not show it.
+process's VmRSS. The desks do not show it. Evidence:
+[docs/evidence/logos-native-2026-11-11-c](../evidence/logos-native-2026-11-11-c/README.md)
+(13 FAIL per role instead of 14; `node_stats` through each role's Basecamp on
+the stack matches `/proc` idle and during swaps).
+
+That run also found a supervisor fault: after a host crash an orphaned
+helper of the Node's group is reaped by whatever init the host runs under, and
+under one that never reaps (a container whose pid 1 is not an init) the next
+host waited the whole 10 s grace for the zombie before starting the Node.
+`end_group` now waits only for members that still run.
 
 ## Recommended order
 

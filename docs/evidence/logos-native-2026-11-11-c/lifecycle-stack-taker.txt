@@ -1,0 +1,202 @@
+== [19:34:11Z] before
+    143       7     143     564 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_nod
+    175     143     175     563 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node --socket /run/lez/taker/node.sock --ready-file /run/lez/taker/ready
+    182     175     175     563 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+    183     175     175     563 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    184     175     175     563 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    185     175     175     563 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+    224     175     175     562 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19902 --node-profile local --sequenc
+    236     184     175     562 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    237     183     175     562 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    251     175     175     561 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19904 --node-profile local --sequenc
+    263     184     175     561 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    264     183     175     561 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+Nodes: 1; healthy
+lrwxrwxrwx 1 lez lez 0 Nov 11 19:34 /proc/175/exe -> /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node
+
+== [19:34:11Z] node_stats taker in lez-taker-node (image c8fe2e4a5954)
+{"role":"taker","state":"running","pid":175,"uptime_seconds":564,"starts":1,"restarts":0,"last_exit":"","group":{"processes":13,"cpu_percent":1.9,"cpu_time_seconds":11.06,"memory_mb":121.379,"threads":39,"fds":107},"host":{"pid":143,"name":"ld-linux-x86-64","memory_mb":22.902,"threads":4}}
+  175 ppid 143 lez-taker-node S cpu 1.9% 10.64s rss 42.809 MB thr 11 fds 16
+  182 ppid 175 socat S cpu 0% 0.12s rss 4.238 MB thr 1 fds 6
+  183 ppid 175 socat S cpu 0% 0.02s rss 4.258 MB thr 1 fds 6
+  184 ppid 175 socat S cpu 0% 0.14s rss 4.238 MB thr 1 fds 6
+  185 ppid 175 socat S cpu 0% 0.05s rss 4.25 MB thr 1 fds 6
+  224 ppid 175 lez-v02-bridge- S cpu 0% 0.05s rss 22.984 MB thr 9 fds 15
+  236 ppid 184 socat S cpu 0% 0s rss 3.008 MB thr 1 fds 7
+  237 ppid 183 socat S cpu 0% 0s rss 3.055 MB thr 1 fds 7
+  251 ppid 175 lez-v02-bridge- S cpu 0% 0.04s rss 23.41 MB thr 9 fds 15
+  263 ppid 184 socat S cpu 0% 0s rss 3.008 MB thr 1 fds 7
+  264 ppid 183 socat S cpu 0% 0s rss 3.055 MB thr 1 fds 7
+  282 ppid 175 tee S cpu 0% 0s rss 1.516 MB thr 1 fds 4
+  283 ppid 175 tee S cpu 0% 0s rss 1.551 MB thr 1 fds 5
+-- ps in the container (pid ppid pgid nlwp rss_kB args), the Node's group and the host:
+    143       7     143    4 23452 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_node_plugin.so --instance-pers
+    175     143     175   11 43836 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node --socket /run/lez/taker/node.sock --ready-file /run/lez/taker/ready --role-config /var/lib/lez
+    182     175     175    1  4340 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+    183     175     175    1  4360 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    184     175     175    1  4340 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    185     175     175    1  4352 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+    224     175     175    9 23536 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19902 --node-profile local --sequencer-url http://127.0.0.1:304
+    236     184     175    1  3080 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    237     183     175    1  3128 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    251     175     175    9 23972 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19904 --node-profile local --sequencer-url http://127.0.0.1:304
+    263     184     175    1  3080 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    264     183     175    1  3128 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    282     175     175    1  1552 tee -a /run/lez/taker/node.log
+    283     175     175    1  1588 tee -a /run/lez/taker/node.log
+-- docker top (host pids):
+PID                 PPID                PGID                NLWP                RSS                 COMMAND
+3078368             3077863             3078368             4                   23452               /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name l
+3078493             3078368             3078493             11                  43836               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node
+3078500             3078493             3078493             1                   4340                socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:
+3078501             3078493             3078493             1                   4360                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+3078502             3078493             3078493             1                   4340                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3078503             3078493             3078493             1                   4352                socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+3078546             3078493             3078493             9                   23536               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge
+3078559             3078502             3078493             1                   3080                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3078564             3078501             3078493             1                   3128                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+3078621             3078493             3078493             9                   23972               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge
+3078633             3078502             3078493             1                   3080                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3078638             3078501             3078493             1                   3128                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+MATCH
+
+== [19:34:12Z] 1. kill -9 the taker Node
+Node pid 175; its group: 175
+[19:34:14Z] 1.5 s later, members of the old group still alive:
+[19:34:18Z] healthy again
+    143       7     143     571 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_nod
+   1726     143    1726       3 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node --socket /run/lez/taker/node.sock --ready-file /run/lez/taker/ready
+   1730    1726    1726       3 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+   1731    1726    1726       3 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+   1732    1726    1726       3 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+   1733    1726    1726       3 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+   1771    1726    1726       2 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19902 --node-profile local --sequenc
+   1783    1732    1726       2 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+   1784    1731    1726       2 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+   1799    1726    1726       1 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19904 --node-profile local --sequenc
+   1811    1732    1726       1 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+   1812    1731    1726       1 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+Nodes: 1
+== [19:34:18Z] node_stats taker in lez-taker-node (image c8fe2e4a5954)
+{"role":"taker","state":"running","pid":1726,"uptime_seconds":3.7,"starts":2,"restarts":1,"last_exit":"signal 9","group":{"processes":13,"cpu_percent":4.4,"cpu_time_seconds":0.14,"memory_mb":104.781,"threads":38,"fds":107},"host":{"pid":143,"name":"ld-linux-x86-64","memory_mb":22.91,"threads":4}}
+  1726 ppid 143 lez-taker-node S cpu 1.6% 0.06s rss 26.523 MB thr 10 fds 16
+  1730 ppid 1726 socat S cpu 0% 0s rss 4.23 MB thr 1 fds 6
+  1731 ppid 1726 socat S cpu 0% 0s rss 4.254 MB thr 1 fds 6
+  1732 ppid 1726 socat S cpu 0% 0s rss 4.188 MB thr 1 fds 6
+  1733 ppid 1726 socat S cpu 0% 0s rss 4.254 MB thr 1 fds 6
+  1771 ppid 1726 lez-v02-bridge- S cpu 1.2% 0.04s rss 23.23 MB thr 9 fds 15
+  1783 ppid 1732 socat S cpu 0% 0s rss 2.914 MB thr 1 fds 7
+  1784 ppid 1731 socat S cpu 0% 0s rss 2.887 MB thr 1 fds 7
+  1799 ppid 1726 lez-v02-bridge- S cpu 1.7% 0.04s rss 23.406 MB thr 9 fds 15
+  1811 ppid 1732 socat S cpu 0% 0s rss 2.91 MB thr 1 fds 7
+  1812 ppid 1731 socat S cpu 0% 0s rss 2.887 MB thr 1 fds 7
+  1831 ppid 1726 tee S cpu 0% 0s rss 1.52 MB thr 1 fds 4
+  1832 ppid 1726 tee S cpu 0% 0s rss 1.578 MB thr 1 fds 5
+-- ps in the container (pid ppid pgid nlwp rss_kB args), the Node's group and the host:
+    143       7     143    4 23460 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_node_plugin.so --instance-pers
+   1726     143    1726   10 27160 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node --socket /run/lez/taker/node.sock --ready-file /run/lez/taker/ready --role-config /var/lib/lez
+   1730    1726    1726    1  4332 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+   1731    1726    1726    1  4356 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+   1732    1726    1726    1  4288 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+   1733    1726    1726    1  4356 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+   1771    1726    1726    9 23788 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19902 --node-profile local --sequencer-url http://127.0.0.1:304
+   1783    1732    1726    1  2984 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+   1784    1731    1726    1  2956 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+   1799    1726    1726    9 23968 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19904 --node-profile local --sequencer-url http://127.0.0.1:304
+   1811    1732    1726    1  2980 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+   1812    1731    1726    1  2956 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+   1831    1726    1726    1  1556 tee -a /run/lez/taker/node.log
+   1832    1726    1726    1  1616 tee -a /run/lez/taker/node.log
+-- docker top (host pids):
+PID                 PPID                PGID                NLWP                RSS                 COMMAND
+3078368             3077863             3078368             4                   23460               /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name l
+3131461             3078368             3131461             10                  27160               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node
+3131465             3131461             3131461             1                   4332                socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:
+3131466             3131461             3131461             1                   4356                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+3131467             3131461             3131461             1                   4288                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3131468             3131461             3131461             1                   4356                socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+3131510             3131461             3131461             9                   23788               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge
+3131522             3131467             3131461             1                   2984                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3131524             3131466             3131461             1                   2956                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+3131612             3131461             3131461             9                   23968               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge
+3131626             3131467             3131461             1                   2980                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3131627             3131466             3131461             1                   2956                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+MATCH
+
+== [19:34:19Z] 2. the lez_swap_node host is stopped as liblogos stops a module host (SIGTERM)
+host pid(s): 143
+[19:34:22Z] 3 s later:
+Nodes: 0; healthy
+node-taker.group
+node-taker.lock
+node-taker.start
+signers
+
+== [19:34:22Z] 3. restart Basecamp (docker restart lez-taker-node)
+[19:34:29Z] healthy
+    126       7     126       4 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_nod
+    143     126     143       4 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node --socket /run/lez/taker/node.sock --ready-file /run/lez/taker/ready
+    147     143     143       4 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+    148     143     143       4 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    149     143     143       4 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    150     143     143       4 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+    206     143     143       4 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19902 --node-profile local --sequenc
+    218     149     143       4 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    219     148     143       4 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    234     143     143       3 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19904 --node-profile local --sequenc
+    246     149     143       3 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    247     148     143       3 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+Nodes: 1
+[2026-11-11 19:24:48.351] [info] [logos] [lez_swap_node] lez_swap_node: taker: supervising /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/node-entrypoint.sh (log /proc/1/fd/1, hold file /tmp/
+[2026-11-11 19:24:48.352] [info] [logos] [lez_swap_node] lez_swap_node: taker: Node started (pid 175, start 1)
+[2026-11-11 19:34:13.116] [info] [logos] [lez_swap_node] lez_swap_node: taker: Node ended (signal 9)
+[2026-11-11 19:34:15.118] [info] [logos] [lez_swap_node] lez_swap_node: taker: Node started (pid 1726, start 2)
+[2026-11-11 19:34:25.482] [info] [logos] [lez_swap_node] lez_swap_node: signer: resuming the signer on /run/lez-wallet/taker/signer.sock
+[2026-11-11 19:34:25.482] [info] [logos] [lez_swap_node] lez_swap_node: taker: resuming the Node a previous host of this module supervised
+[2026-11-11 19:34:25.482] [info] [logos] [lez_swap_node] lez_swap_node: taker: supervising /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/node-entrypoint.sh (log /proc/1/fd/1, hold file /tmp/
+[2026-11-11 19:34:25.484] [info] [logos] [lez_swap_node] lez_swap_node: taker: Node started (pid 143, start 1)
+== [19:34:30Z] node_stats taker in lez-taker-node (image c8fe2e4a5954)
+{"role":"taker","state":"running","pid":143,"uptime_seconds":5.8,"starts":1,"restarts":0,"last_exit":"","group":{"processes":13,"cpu_percent":3.2,"cpu_time_seconds":0.17,"memory_mb":110.605,"threads":38,"fds":107},"host":{"pid":126,"name":"ld-linux-x86-64","memory_mb":23.184,"threads":4}}
+  143 ppid 126 lez-taker-node S cpu 1.2% 0.07s rss 32.57 MB thr 10 fds 16
+  147 ppid 143 socat S cpu 0% 0s rss 4.242 MB thr 1 fds 6
+  148 ppid 143 socat S cpu 0% 0s rss 4.246 MB thr 1 fds 6
+  149 ppid 143 socat S cpu 0% 0s rss 4.129 MB thr 1 fds 6
+  150 ppid 143 socat S cpu 0% 0s rss 4.195 MB thr 1 fds 6
+  206 ppid 143 lez-v02-bridge- S cpu 0.9% 0.05s rss 23.094 MB thr 9 fds 15
+  218 ppid 149 socat S cpu 0% 0s rss 2.887 MB thr 1 fds 7
+  219 ppid 148 socat S cpu 0% 0s rss 3.008 MB thr 1 fds 7
+  234 ppid 143 lez-v02-bridge- S cpu 1.1% 0.05s rss 23.383 MB thr 9 fds 15
+  246 ppid 149 socat S cpu 0% 0s rss 2.887 MB thr 1 fds 7
+  247 ppid 148 socat S cpu 0% 0s rss 3.008 MB thr 1 fds 7
+  266 ppid 143 tee S cpu 0% 0s rss 1.516 MB thr 1 fds 4
+  267 ppid 143 tee S cpu 0% 0s rss 1.441 MB thr 1 fds 5
+-- ps in the container (pid ppid pgid nlwp rss_kB args), the Node's group and the host:
+    126       7     126    4 23744 /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name lez_swap_node --path /opt/basecamp/modules/lez_swap_node/lez_swap_node_plugin.so --instance-pers
+    143     126     143   10 33352 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node --socket /run/lez/taker/node.sock --ready-file /run/lez/taker/ready --role-config /var/lib/lez
+    147     143     143    1  4344 socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+    148     143     143    1  4348 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    149     143     143    1  4228 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    150     143     143    1  4296 socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+    206     143     143    9 23648 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19902 --node-profile local --sequencer-url http://127.0.0.1:304
+    218     149     143    1  2956 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    219     148     143    1  3080 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    234     143     143    9 23944 /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 127.0.0.1:19904 --node-profile local --sequencer-url http://127.0.0.1:304
+    246     149     143    1  2956 socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+    247     148     143    1  3080 socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+    266     143     143    1  1552 tee -a /run/lez/taker/node.log
+    267     143     143    1  1476 tee -a /run/lez/taker/node.log
+-- docker top (host pids):
+PID                 PPID                PGID                NLWP                RSS                 COMMAND
+3132979             3132743             3132979             4                   23744               /lib64/ld-linux-x86-64.so.2 /opt/basecamp/bin/.logos_host.elf --name l
+3133008             3132979             3133008             10                  33352               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-taker-node
+3133012             3133008             3133008             1                   4344                socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:
+3133013             3133008             3133008             1                   4348                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+3133014             3133008             3133008             1                   4228                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3133015             3133008             3133008             1                   4296                socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+3133082             3133008             3133008             9                   23648               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge
+3133096             3133014             3133008             1                   2956                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3133097             3133013             3133008             1                   3080                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+3133210             3133008             3133008             9                   23944               /var/lez/basecamp-taker-user/modules/lez_taker_node/bin/lez-v02-bridge
+3133246             3133014             3133008             1                   2956                socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+3133249             3133013             3133008             1                   3080                socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+MATCH

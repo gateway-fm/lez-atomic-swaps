@@ -171,8 +171,9 @@ a larger genesis and tip, `f0c88084`); the upstream cause
 
 ## Packages: what `logosctl` still refuses (upstream)
 
-The Logos-native acceptance (`docs/evidence/logos-native-2026-11-11-b/`) has
-14 failing steps per role left: 9 are unsigned packages (ours and upstream's
-alike; signing is not part of this PR), 4 are `logosctl` behaviour with issue
-texts in that directory's README, and one is `module stats` showing the module
-host instead of the Node it supervises.
+The Logos-native acceptance (`docs/evidence/logos-native-2026-11-11-c/`) has
+13 failing steps per role left: 9 are unsigned packages (ours and upstream's
+alike; signing is not part of this PR) and 4 are `logosctl` behaviour with
+issue texts in `docs/evidence/logos-native-2026-11-11-b/README.md`. `module
+stats` showing the module host instead of the Node is recorded as an upstream
+request; the Node's own figures are judged through `node_stats`.
