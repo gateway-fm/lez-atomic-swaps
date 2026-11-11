@@ -28,8 +28,11 @@ pub enum ZecProfileRecordV1 {
     /// The devnet profile with the 12-minute LEZ refund delay (wire tag 4).
     DeterministicLocalDevnetV3,
     /// The devnet refund journeys' profile with the 4-minute LEZ refund delay
-    /// (wire tag 5). Last on purpose: tags are append-only.
+    /// (wire tag 5).
     DeterministicLocalDevnetV4,
+    /// LEZ and Zcash public-testnet acceptance profile on NU7 (wire tag 6).
+    /// Last on purpose: tags are append-only.
+    PublicTestnetV2,
 }
 
 impl From<ZecProfileId> for ZecProfileRecordV1 {
@@ -41,6 +44,7 @@ impl From<ZecProfileId> for ZecProfileRecordV1 {
             ZecProfileId::DeterministicLocalDevnetV3 => Self::DeterministicLocalDevnetV3,
             ZecProfileId::DeterministicLocalDevnetV4 => Self::DeterministicLocalDevnetV4,
             ZecProfileId::PublicTestnetV1 => Self::PublicTestnetV1,
+            ZecProfileId::PublicTestnetV2 => Self::PublicTestnetV2,
         }
     }
 }
@@ -54,6 +58,7 @@ impl From<ZecProfileRecordV1> for ZecProfileId {
             ZecProfileRecordV1::DeterministicLocalDevnetV3 => Self::DeterministicLocalDevnetV3,
             ZecProfileRecordV1::DeterministicLocalDevnetV4 => Self::DeterministicLocalDevnetV4,
             ZecProfileRecordV1::PublicTestnetV1 => Self::PublicTestnetV1,
+            ZecProfileRecordV1::PublicTestnetV2 => Self::PublicTestnetV2,
         }
     }
 }

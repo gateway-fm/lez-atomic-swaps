@@ -1575,6 +1575,14 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
                 7_300_000,
                 14_500,
             ),
+            ZecProfileId::PublicTestnetV2 => (
+                NetworkType::Test,
+                LezEnvironmentV1::PublicTestnetV0_2,
+                100,
+                3_800,
+                7_300_000,
+                14_500,
+            ),
         };
     let contract = Bip199Contract::new(refund_lock, refund_hash, [9; 32], claimant_hash);
     let binding = ZecSwapBinding::new(

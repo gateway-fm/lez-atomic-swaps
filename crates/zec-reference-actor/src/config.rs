@@ -108,6 +108,10 @@ enum ConsensusBranchConfig {
     Nu6_1,
     #[serde(rename = "5437f330")]
     Nu6_2,
+    #[serde(rename = "37a5165b")]
+    Nu6_3,
+    #[serde(rename = "77190ad9")]
+    Nu7,
 }
 
 impl ConsensusBranchConfig {
@@ -123,6 +127,8 @@ impl ConsensusBranchConfig {
             Self::Nu6 => "c8e71055",
             Self::Nu6_1 => "4dec4df0",
             Self::Nu6_2 => "5437f330",
+            Self::Nu6_3 => "37a5165b",
+            Self::Nu7 => "77190ad9",
         }
     }
 }
@@ -1458,9 +1464,38 @@ mod tests {
     use url::Url;
 
     use super::{
-        ActorRole, DeterministicLocalV0_2ActorConfigInput,
+        ActorRole, ConsensusBranchConfig, DeterministicLocalV0_2ActorConfigInput,
         encode_deterministic_local_v0_2_actor_config,
     };
+
+    #[test]
+    fn consensus_branches_name_nu6_3_and_nu7_by_their_consensus_ids() {
+        for (spelling, branch, id) in [
+            (
+                "5437f330",
+                ConsensusBranchConfig::Nu6_2,
+                zcash_protocol::consensus::BranchId::Nu6_2,
+            ),
+            (
+                "37a5165b",
+                ConsensusBranchConfig::Nu6_3,
+                zcash_protocol::consensus::BranchId::Nu6_3,
+            ),
+            (
+                "77190ad9",
+                ConsensusBranchConfig::Nu7,
+                zcash_protocol::consensus::BranchId::Nu7,
+            ),
+        ] {
+            let parsed: ConsensusBranchConfig = serde_json::from_value(json!(spelling)).unwrap();
+            assert_eq!(parsed, branch);
+            assert_eq!(serde_json::to_value(branch).unwrap(), json!(spelling));
+            assert_eq!(branch.as_str(), spelling);
+            assert_eq!(u32::from_str_radix(spelling, 16).unwrap(), u32::from(id));
+        }
+        // The pre-release NU7 placeholder never names a branch.
+        assert!(serde_json::from_value::<ConsensusBranchConfig>(json!("ffffffff")).is_err());
+    }
 
     #[test]
     fn deterministic_local_actor_budget_covers_refund_historical_phases() {

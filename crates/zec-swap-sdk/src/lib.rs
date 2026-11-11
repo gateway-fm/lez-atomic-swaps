@@ -132,7 +132,9 @@ pub use ports::{
     RevealingClaimSubmitOutcomeV1, ZcashClaimPort, ZcashFirstLockPort,
     ZcashMakerLockObservationPort, ZcashRefundPort, ZcashTakerFirstLockObservationPort,
 };
-pub use profile::{ProfileError, ZecProfileId, ZecRefundProfile};
+pub use profile::{
+    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, ProfileError, ZecProfileId, ZecRefundProfile,
+};
 pub use refund::{
     MAX_REFUND_SUBMISSION_BYTES, PreparedRefundSubmissionV1, RefundDriveOutcome,
     RefundEligibilityObservationV1, RefundError, RefundEvidenceV1, RefundFundingWaitReasonV1,

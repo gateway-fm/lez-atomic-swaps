@@ -243,7 +243,12 @@ fn assert_mined_vector(text: &str, txid: &str, branch: BranchId, branch_id: u32,
 
     // The same transaction claiming any other branch hashes differently, so
     // the mined signature no longer verifies: the branch id is committed.
-    for other in [BranchId::Nu6_1, BranchId::Nu6_2, BranchId::Nu6_3, BranchId::Nu7] {
+    for other in [
+        BranchId::Nu6_1,
+        BranchId::Nu6_2,
+        BranchId::Nu6_3,
+        BranchId::Nu7,
+    ] {
         if other == branch {
             continue;
         }

@@ -204,6 +204,7 @@ impl Fixture {
             | ZecProfileId::DeterministicLocalDevnetV3
             | ZecProfileId::DeterministicLocalDevnetV4 => (NetworkType::Regtest, BranchId::Nu6_2),
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
+            ZecProfileId::PublicTestnetV2 => (NetworkType::Test, BranchId::Nu7),
         };
         let output = ExpectedBip199Output::new(
             network,
@@ -425,7 +426,7 @@ fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
     let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
     assert_eq!(wire[profile_offset], 5, "the v4 profile is wire tag 5");
     let mut unknown = wire.clone();
-    unknown[profile_offset] = 6;
+    unknown[profile_offset] = 7;
     assert!(
         ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
         "a tag past the last profile must not decode"
@@ -441,6 +442,48 @@ fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
         stale.validate().is_err(),
         "a four-block Zcash window under v4 must not validate"
     );
+}
+
+#[test]
+fn public_testnet_v2_is_wire_tag_six_on_nu7_with_its_own_window() {
+    let mut fixture = Fixture::public(SwapDirection::TakerSellsLez);
+    fixture.body_profile = ZecProfileId::PublicTestnetV2;
+    fixture.binding_profile = ZecProfileId::PublicTestnetV2;
+    // 3,700 blocks after the Zcash anchor (100); the LEZ side is V1's.
+    fixture.zcash_refund_lock = 3_800;
+    fixture.expiry_delta = 120;
+    let agreement = fixture.validate().expect("v2 agreement validates");
+    assert_eq!(
+        agreement.binding().expected_output().consensus_branch_id(),
+        BranchId::Nu7
+    );
+    let wire = agreement.encode_wire().expect("bounded wire");
+    let decoded = ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+        .expect("the v2 profile decodes from its own wire");
+    assert_eq!(decoded.record(), agreement.record());
+    let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+    assert_eq!(wire[profile_offset], 6, "public-testnet-v2 is wire tag 6");
+    let mut unknown = wire.clone();
+    unknown[profile_offset] = 7;
+    assert!(
+        ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
+        "a tag past the last profile must not decode"
+    );
+
+    // V1's 192-block window, or a deterministic LEZ environment, does not
+    // validate under V2.
+    let mut v1_window = Fixture::public(SwapDirection::TakerSellsLez);
+    v1_window.body_profile = ZecProfileId::PublicTestnetV2;
+    v1_window.binding_profile = ZecProfileId::PublicTestnetV2;
+    v1_window.expiry_delta = 120;
+    assert!(v1_window.validate().is_err());
+    let mut local_lez = Fixture::public(SwapDirection::TakerSellsLez);
+    local_lez.body_profile = ZecProfileId::PublicTestnetV2;
+    local_lez.binding_profile = ZecProfileId::PublicTestnetV2;
+    local_lez.zcash_refund_lock = 3_800;
+    local_lez.expiry_delta = 120;
+    local_lez.environment = LezEnvironmentV1::DeterministicLocalV0_2;
+    assert!(local_lez.validate().is_err());
 }
 
 #[test]

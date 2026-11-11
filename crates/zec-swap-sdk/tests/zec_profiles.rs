@@ -1,5 +1,7 @@
 use lez_swap_core::{Chain, ChainPosition, LezUnixMilliseconds, SwapDirection, UnixSeconds};
-use lez_zec_swap_sdk::{ProfileError, ZecProfileId, ZecRefundProfile};
+use lez_zec_swap_sdk::{
+    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, ProfileError, ZecProfileId, ZecRefundProfile,
+};
 use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 
 #[test]
@@ -200,4 +202,47 @@ fn devnet_v4_shortens_the_lez_refund_delay_and_keeps_every_other_v3_parameter() 
     assert_eq!(v3.zcash_network(), v4.zcash_network());
     assert_eq!(v3.consensus_branch_id(), v4.consensus_branch_id());
     assert_eq!(v3.expiry_delta_blocks(), v4.expiry_delta_blocks());
+}
+
+/// V2 is V1 on NU7 with a Zcash refund window that still opens no earlier than
+/// the LEZ refund delay plus the margin at Testnet's fastest measured pace.
+#[test]
+fn public_testnet_v2_signs_for_nu7_and_sizes_its_window_for_the_fastest_pace() {
+    let v1 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV1);
+    let v2 = ZecRefundProfile::for_id(ZecProfileId::PublicTestnetV2);
+    assert_eq!(v2.id().as_str(), "public-testnet-v2");
+    assert_eq!(v2.zcash_network(), NetworkType::Test);
+    assert_eq!(v2.consensus_branch_id(), BranchId::Nu7);
+    assert_eq!(u32::from(v2.consensus_branch_id()), 0x7719_0ad9);
+    assert_eq!(v2.lez_confirmations(), 2);
+    assert_eq!(v2.zcash_confirmations(), 10);
+    assert_eq!(v2.lez_refund_delay(), UnixSeconds::new(7_200));
+    assert_eq!(v2.zcash_refund_blocks(), 3_700);
+    assert_eq!(v2.required_margin(), UnixSeconds::new(7_200));
+    assert_eq!(v2.expiry_delta_blocks(), 120);
+    assert_eq!(v1.lez_refund_delay(), v2.lez_refund_delay());
+    assert_eq!(v1.required_margin(), v2.required_margin());
+    // V1 is unchanged: NU6.2, 192 blocks.
+    assert_eq!(v1.consensus_branch_id(), BranchId::Nu6_2);
+    assert_eq!(v1.zcash_refund_blocks(), 192);
+
+    let needed_millis = (v2.lez_refund_delay().value() + v2.required_margin().value()) * 1_000;
+    let fastest_window_millis =
+        u64::from(v2.zcash_refund_blocks()) * PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS;
+    assert!(fastest_window_millis >= needed_millis);
+    assert!(
+        u64::from(v1.zcash_refund_blocks()) * PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS < needed_millis
+    );
+    assert!(
+        v2.validate_consensus(NetworkType::Test, BranchId::Nu7)
+            .is_ok()
+    );
+    assert_eq!(
+        v2.validate_consensus(NetworkType::Test, BranchId::Nu6_2),
+        Err(ProfileError::ConsensusBranchMismatch)
+    );
+    assert_eq!(
+        v2.validate_consensus(NetworkType::Test, BranchId::Nu6_3),
+        Err(ProfileError::ConsensusBranchMismatch)
+    );
 }

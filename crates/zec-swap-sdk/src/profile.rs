@@ -6,6 +6,12 @@ use lez_swap_core::{
 };
 use zcash_protocol::consensus::{BlockHeight, BranchId, NetworkType};
 
+/// The fastest Zcash Testnet pace a public profile's refund window is sized
+/// for, milliseconds a block: 1,000 blocks in 3,922 s under Testnet's
+/// min-difficulty rule, measured just before NU7 (2026-11-11). A Testnet
+/// provisioner states the Zcash refund's earliest wall time with it.
+pub const PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS: u64 = 3_900;
+
 /// A reviewed immutable ZEC parameter profile.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ZecProfileId {
@@ -44,6 +50,13 @@ pub enum ZecProfileId {
     DeterministicLocalDevnetV4,
     /// LEZ 0.2 and Zcash public-testnet acceptance profile.
     PublicTestnetV1,
+    /// [`Self::PublicTestnetV1`] on Zcash Testnet's NU7 (branch `77190ad9`,
+    /// active since height 4,465,026), with the Zcash refund window sized for
+    /// Testnet's measured pace. V1 signs for NU6.2, which Testnet left at
+    /// 4,134,000, and its 192 blocks last ~73 min at the 22.7 s a block
+    /// Testnet averaged after NU7, far less than the four hours its own
+    /// schedule asks for (2026-11-11). Same LEZ parameters and confirmations.
+    PublicTestnetV2,
 }
 
 impl ZecProfileId {
@@ -57,6 +70,7 @@ impl ZecProfileId {
             Self::DeterministicLocalDevnetV3 => "deterministic-local-devnet-v3",
             Self::DeterministicLocalDevnetV4 => "deterministic-local-devnet-v4",
             Self::PublicTestnetV1 => "public-testnet-v1",
+            Self::PublicTestnetV2 => "public-testnet-v2",
         }
     }
 }
@@ -177,6 +191,28 @@ impl ZecRefundProfile {
                 zcash_refund_blocks: 192,
                 required_margin: UnixSeconds::new(7_200),
                 expiry_delta_blocks: 40,
+            },
+            ZecProfileId::PublicTestnetV2 => Self {
+                id,
+                zcash_network: NetworkType::Test,
+                consensus_branch_id: BranchId::Nu7,
+                lez_confirmations: 2,
+                zcash_confirmations: 10,
+                lez_refund_delay: UnixSeconds::new(7_200),
+                // The Zcash refund (the later one) must not open before the
+                // LEZ refund delay plus the margin, 4 h after funding, even
+                // at the fastest pace Testnet has run: refund blocks times
+                // PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS >= LEZ refund delay +
+                // required margin. Testnet's min-difficulty rule lets runs of
+                // cheap blocks through: 1,000 blocks in 3,922 s just before
+                // NU7 (3.9 s a block). 3,700 blocks x 3.9 s = 14,430 s >=
+                // 14,400 s. At the 22.7 s a block Testnet averaged from NU7
+                // to 2026-11-11 the window is ~23 h.
+                zcash_refund_blocks: 3_700,
+                required_margin: UnixSeconds::new(7_200),
+                // NU7's 25 s target keeps librustzcash's 120-block default
+                // expiry at the 50 min that 40 blocks of 75 s were.
+                expiry_delta_blocks: 120,
             },
         }
     }

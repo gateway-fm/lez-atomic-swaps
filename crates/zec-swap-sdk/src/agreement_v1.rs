@@ -1855,6 +1855,7 @@ fn decode_profile(value: u8) -> Result<ZecProfileRecordV1, ZecAgreementV1Error> 
         3 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV2),
         4 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV3),
         5 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV4),
+        6 => Ok(ZecProfileRecordV1::PublicTestnetV2),
         _ => Err(ZecAgreementV1Error::MalformedWireRecord),
     }
 }
@@ -2331,7 +2332,7 @@ fn validate_lez_chain_profile(
             LezEnvironmentV1::DeterministicLocalV0_2
                 | LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility
         ),
-        ZecProfileRecordV1::PublicTestnetV1 => {
+        ZecProfileRecordV1::PublicTestnetV1 | ZecProfileRecordV1::PublicTestnetV2 => {
             terms.chain.environment == LezEnvironmentV1::PublicTestnetV0_2
         }
     };

@@ -109,14 +109,18 @@ def bundle(corridors, preflights=None, artifacts=True):
 class LaneProfile(unittest.TestCase):
     def test_the_lane_names_what_the_agreement_profile_pins(self):
         profile = (ROOT / 'crates/zec-swap-sdk/src/profile.rs').read_text()
-        block = re.search(r'ZecProfileId::PublicTestnetV1 => Self \{(.*?)\}', profile, re.S).group(1)
+        # The variant the lane names, by its stable id (profile.rs as_str).
+        variant = re.search(rf'Self::(\w+) => "{re.escape(ENV["LEZ_ZEC_SWAP_PROFILE"])}"', profile).group(1)
+        self.assertTrue(variant.startswith('PublicTestnet'), variant)
+        block = re.search(rf'ZecProfileId::{variant} => Self \{{(.*?)\}}', profile, re.S).group(1)
         branch = re.search(r'consensus_branch_id: BranchId::(\w+)', block).group(1)
         config = (ROOT / 'crates/zec-reference-actor/src/config.rs').read_text()
         branch_hex = re.search(rf'Self::{branch} => "([0-9a-f]{{8}})"', config).group(1)
-        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE'], re.search(r'Self::PublicTestnetV1 => "([^"]+)"', profile).group(1))
+        self.assertEqual(branch_hex, '77190ad9', 'Zcash Testnet has been on NU7 since height 4,465,026')
         self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_BRANCH'], branch_hex)
         self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_CONFIRMATIONS'], re.search(r'zcash_confirmations: (\d+)', block).group(1))
-        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_REFUND_BLOCKS'], re.search(r'zcash_refund_blocks: (\d+)', block).group(1))
+        self.assertEqual(ENV['LEZ_ZEC_SWAP_PROFILE_REFUND_BLOCKS'],
+                         re.search(r'zcash_refund_blocks: ([\d_]+)', block).group(1).replace('_', ''))
 
     def test_the_provider_route_is_the_origin_the_actor_pins(self):
         config = (ROOT / 'crates/zec-reference-actor/src/config.rs').read_text()
@@ -132,10 +136,10 @@ class Preflight(unittest.TestCase):
         self.assertEqual(result['endpoint'], 'https://zcash-testnet-zebrad.gateway.tatum.io/')
 
     def test_a_testnet_on_another_branch_is_blocked_by_name(self):
-        result = lane.preflight(ENV, route(answers=zebra_answers(chain_info(branch='77190ad9')))[0])
+        result = lane.preflight(ENV, route(answers=zebra_answers(chain_info(branch='5437f330')))[0])
         self.assertFalse(result['supported'])
         self.assertEqual([c['name'] for c in result['checks'] if not c['ok']], ['consensus_branch'])
-        self.assertIn('77190ad9 (NU7)', result['blockers'][0])
+        self.assertIn('5437f330 (NU6.2)', result['blockers'][0])
 
     def test_a_regtest_node_on_the_testnet_port_is_refused(self):
         # Zebra reports `test` for Regtest too: only the genesis tells them apart.
@@ -225,7 +229,7 @@ class Bundle(unittest.TestCase):
         self.assertIn('status passed without the digests of the artifacts that ran', lane.validate(evidence))
 
     def test_a_blocked_preflight_is_never_swap_evidence(self):
-        blocked = lane.preflight(ENV, route(answers=zebra_answers(chain_info(branch='77190ad9')))[0])
+        blocked = lane.preflight(ENV, route(answers=zebra_answers(chain_info(branch='5437f330')))[0])
         evidence = bundle([], [blocked])
         self.assertEqual((evidence['status'], evidence['evidence_kind']), ('blocked', 'public-chain-preflight'))
         self.assertEqual(lane.validate(evidence), [])
