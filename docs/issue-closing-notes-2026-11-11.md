@@ -117,8 +117,18 @@ official 1.2.0, which is built on LEZ 0.3 and comes with the LEZ 0.4 port
 (#107); the Maker's Node runs in the Maker's Basecamp under `lez_swap_node`,
 like the Taker's, rather than as a daemon under `logosctl`.
 
-Follow-ups after PR #120: the Node's own figures in `module stats`; the role's
-configuration and identity inside the package; the `darwin-arm64` package.
+The Node's resource use: `logosctl module stats` samples one process per
+module, the `logos_host` the runtime started, and a module has no way to add
+the processes it starts, so it shows the supervisor and not the Node. PR #120
+adds `lez_swap_node.node_stats(role)` (module 0.3.1): pid, uptime, restarts,
+CPU, memory, threads and open files of the Node and of every process in its
+group (forwards, sidecars), read from `/proc`; the acceptance script judges it
+against `/proc`. `module stats` itself still shows only the host; upstream
+request: "`module stats` reports only the `logos_host` process; include (or
+list) the processes a module host started".
+
+Follow-ups after PR #120: the role's configuration and identity inside the
+package; the `darwin-arm64` package.
 
 ## #112: finality and claim visibility
 

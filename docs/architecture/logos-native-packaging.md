@@ -346,7 +346,7 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   `sign` (`manifest.sig`), `verify --keyring-dir`, and logosctl a `key`
   command for trusted package-signing keys; no registry is involved.
 
-## The Node's resource use (follow-up: node_stats)
+## The Node's resource use (2026-11-11, c)
 
 `logosctl module stats` lists each module's `logos_host`, never the Node that
 `lez_swap_node` started (2026-11-11-b, S95). How the runtime computes it, from
