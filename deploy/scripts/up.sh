@@ -190,7 +190,11 @@ case "${LEZ_IMAGES:-build}" in
       # BuildKit resolves every FROM against its registry with a short
       # deadline; pull the base images first, with retries, so a slow registry
       # cannot fail the build of payloads that are already staged.
+      # A FROM may also name a Compose build context (`additional_contexts:
+      # basecamp: service:basecamp-ui`): another service's image, built below.
+      built_here="$(sed -n 's/^ *\([A-Za-z0-9_.-]*\): *service:.*/\1/p' compose.yaml | sort -u)"
       for image in $(grep -h '^FROM' images/*/Dockerfile | awk '{print $2}' | sort -u); do
+        ! grep -qxF "$image" <<<"$built_here" || continue
         docker image inspect "$image" >/dev/null 2>&1 && continue
         echo "  pulling $image"
         for _ in 1 2 3; do docker pull -q "$image" >/dev/null && break; sleep 10; done

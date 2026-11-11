@@ -452,7 +452,15 @@ build_logos_module() { # build_logos_module <out-name> <module submodule> <modul
       for p in /patches/*.patch; do
         case \$(basename \$p) in 0001-lez-*) (cd /tmp/src/lez && git apply \$p) ;; *) (cd /tmp/src/mod && git apply \$p) ;; esac
       done
-      nix build -L path:/tmp/src/mod#lgx-portable --override-input logos-execution-zone path:/tmp/src/lez --out-link /tmp/lgx 2>&1 | tail -3
+      # The Cargo git dependencies are fetched one repository at a time and a
+      # fetch can fail (\"Cannot find Git revision ... in ref\", seen for
+      # iden3/ffiasm and EspressoSystems/jellyfish on an empty store); what was
+      # fetched stays in the store, so the next attempt goes further.
+      for attempt in 1 2 3 4; do
+        nix build -L path:/tmp/src/mod#lgx-portable --override-input logos-execution-zone path:/tmp/src/lez --out-link /tmp/lgx 2>&1 | tail -3
+        [ -e /tmp/lgx ] && break
+        echo \"nix build of $name: attempt \$attempt produced no package\"
+      done
       mkdir -p /provision/$name; cp -L /tmp/lgx/*.lgx /provision/$name/$name.lgx
       printf '%s\\n' '$stamp' > /provision/$name/source-patches.stamp"
 }
@@ -740,7 +748,13 @@ phase_stack() {
   if [[ "$EVIDENCE_MODE" == 1 ]]; then
     contexts=(images/{bitcoin-core,btc-miner,lez-services,maker-node,taker-node}/Dockerfile)
   fi
+  # A FROM may also name a Compose build context (`additional_contexts:
+  # basecamp: service:basecamp-ui`): that is another service's image, built
+  # here, and no registry has it.
+  local built_here
+  built_here="$(sed -n 's/^ *\([A-Za-z0-9_.-]*\): *service:.*/\1/p' compose.yaml | sort -u)"
   for image in $(grep -h '^FROM' "${contexts[@]}" | awk '{print $2}' | sort -u); do
+    ! grep -qxF "$image" <<<"$built_here" || continue
     docker image inspect "$image" >/dev/null 2>&1 && continue
     log "pulling $image"
     for _ in 1 2 3; do docker pull -q "$image" >/dev/null && break; sleep 10; done
@@ -749,7 +763,10 @@ phase_stack() {
   log "gen-config, image builds, and stack start"
   local attempt
   for attempt in 1 2 3; do
+    # (up.sh runs bootstrap-market.sh, which must find this workspace's
+    # provision directory when --workspace named another one)
     LEZ_MARKET_ROOT="$MARKET_ROOT" LEZ_WALLET_IDENTITIES="$MARKET_ROOT/identities" \
+      LEZ_WORKSPACE="$WORKSPACE" LEZ_PROVISION="$PROVISION" \
       SKIP_UI_VERIFY=1 bash scripts/up.sh && break
     [[ "$attempt" -lt 3 ]] || fail "up.sh did not succeed in three attempts"
     log "up.sh failed (registry deadline?); retrying in 30 s"

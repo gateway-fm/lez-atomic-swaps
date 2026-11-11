@@ -58,7 +58,11 @@ for _ in $(seq 1 360); do
   sleep 10
   current="$(tip || true)"
   [[ -n "$current" ]] || continue
-  if [[ "$current" -gt 1 && $((current - previous)) -lt 5 ]] && historical_read_ok "$((current - 1))"; then
+  # Caught up: the height moves at the chain's pace again, not at a replay's.
+  # The devnet makes a block a second, so a caught-up indexer moves ~10 in
+  # these 10 s (it moved 4-5 on the hosts this was first run on, and "fewer
+  # than 5" then never came true on a faster one: an hour's wait).
+  if [[ "$current" -gt 1 && $((current - previous)) -lt 25 ]] && historical_read_ok "$((current - 1))"; then
     echo "re-indexed to $current; historical reads restored"
     exit 0
   fi

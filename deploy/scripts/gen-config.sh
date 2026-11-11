@@ -137,8 +137,14 @@ role_files() {
   # --only rust or, once the stage is gone, run from the Taker image.
   zcash_transparent_address() { # zcash_transparent_address <owner-private key file>
     local key="$1" tool="$DEPLOY_ROOT/images/taker-node/zec-local-poc-identity" identity
-    if [[ -x "$tool" ]]; then
+    if [[ -x "$tool" && "$(uname -s)" == Linux ]]; then
       identity="$("$tool" --zcash-key-file "$key")"
+    elif [[ -x "$tool" ]]; then
+      # The staged tool is a Linux binary: macOS runs it in the Node images'
+      # base (Docker Desktop), before any Taker image exists.
+      identity="$(docker run --rm --network none --user "$(id -u):$(id -g)" -v "$tool:/zec-local-poc-identity:ro" \
+        -v "$key:/in/zcash.key:ro" --entrypoint /zec-local-poc-identity debian:bookworm-slim \
+        --zcash-key-file /in/zcash.key </dev/null)"
     else
       identity="$(docker run --rm --user "$(id -u):$(id -g)" -v "$key:/in/zcash.key:ro" \
         --entrypoint zec-local-poc-identity "${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}" \
