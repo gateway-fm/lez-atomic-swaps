@@ -5,7 +5,16 @@
 #
 #   scripts/logos-native-acceptance.sh --role maker --role-lgx <role.lgx> \
 #       --module <lez_core.lgx> --module <lez_swap_node.lgx> --module <lez_maker_node.lgx> \
-#       [--module <x.lgx>]... [--tools-nix <docker volume or directory>] [--out <dir>]
+#       [--module <x.lgx>]... [--network-lgx <lez_network.lgx>] \
+#       [--tools-nix <docker volume or directory>] [--out <dir>]
+#
+# The packages are the release set from-scratch.sh --only stage writes
+# (deploy/images/basecamp-ui/assets/packages/: lgx-portable builds, our
+# packages' dependencies pinned to the set's versions). lez_network is the LEZ
+# network's operator package (the LEZ Network desk, which declares
+# blockchain_module and lez_indexer_module); a role package declares no network
+# module (it reaches the network its configuration names), so a trader using
+# the public testnet does not install it.
 #
 # lez_<role>_node is the role's Node payload package (modules/lez-<role>-node,
 # scripts/package-role-node.sh): the Node, its actors, the LEZ sidecar and the
@@ -42,16 +51,17 @@ caller_dir="$PWD"
 self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-usage() { sed -n '2,33p' "$self" | sed 's/^# \{0,1\}//'; exit 64; }
+usage() { sed -n '2,43p' "$self" | sed 's/^# \{0,1\}//'; exit 64; }
 
 abs() { [[ "$1" == /* ]] && echo "$1" || echo "$caller_dir/$1"; }
-role=maker role_lgx="" tools_nix=lez-nix-store-arm out=""
+role=maker role_lgx="" network_lgx="" tools_nix=lez-nix-store-arm out=""
 modules=()
 while (($#)); do
   case "$1" in
     --role) role="${2:?}"; shift 2 ;;
     --role-lgx) role_lgx="$(abs "${2:?}")"; shift 2 ;;
     --module) modules+=("$(abs "${2:?}")"); shift 2 ;;
+    --network-lgx) network_lgx="$(abs "${2:?}")"; shift 2 ;;
     --tools-nix) tools_nix="${2:?}"; [[ -e "$caller_dir/$tools_nix" && "$tools_nix" != /* ]] && tools_nix="$caller_dir/$tools_nix"; shift 2 ;;
     --out) out="${2:?}"; [[ "$out" == /* ]] || out="$caller_dir/$out"; shift 2 ;;
     -h|--help) usage ;;
@@ -60,7 +70,7 @@ while (($#)); do
 done
 [[ "$role" == maker || "$role" == taker ]] || { echo "--role must be maker or taker" >&2; exit 64; }
 [[ -f "$role_lgx" ]] || { echo "--role-lgx <role package .lgx> is required" >&2; exit 64; }
-for tool in docker jq sha256sum curl tar; do
+for tool in docker jq sha256sum curl tar python3; do
   command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 66; }
 done
 
@@ -142,6 +152,8 @@ add_input() { # add_input <path.lgx>: stage it under its manifest name
 add_input "$role_lgx"
 role_pkg="${names[0]}"
 for m in "${modules[@]}"; do add_input "$m"; done
+network_pkg=""
+[[ -n "$network_lgx" ]] && { add_input "$network_lgx"; network_pkg="${names[-1]}"; }
 
 # Wrappers so the transcript reads `logosctl …`, `lm …` as the docs write them.
 cat >"$work/bin/logosctl" <<'EOF'
@@ -261,7 +273,8 @@ for name in "${names[@]}"; do
   f="$work/in/$name.lgx"
   tar -xzOf "$f" manifest.json | jq -r --arg sha "$(sha256sum <"$f" | cut -c1-64)" '
     [.name, $sha, .version, .manifestVersion, .type, (.main | keys | join(",")),
-     ((.dependencies // []) | map(if type == "string" then . else .name end) | join(",")), .hashes.root] | @tsv' >>"$out/inputs.tsv"
+     ((.dependencies // []) | if any(type == "object") then map(select(type == "object") | "\(.name) \(.version // "*")")
+       else . end | join(",")), .hashes.root] | @tsv' >>"$out/inputs.tsv"
 done
 { printf '\n```\n'; column -t -s $'\t' "$out/inputs.tsv" 2>/dev/null || cat "$out/inputs.tsv"; printf '```\n'; } >>"$T"
 
@@ -303,26 +316,21 @@ notrun "lm verify <installed dir> --did <pinned signer>" \
 
 section "Install the role package alone"
 step "$ok" "install $role_pkg as built" "$RUN" "$L package install ${file_of[$role_pkg]} --root-hash ${root_of[$role_pkg]:-none} -y"
-if ! (( rc == 0 )) && grep -q 'does not contain variant' "$o" && has_tool lgx; then
-  # The desks are built with the builder's dev variant tag (linux-amd64-dev);
-  # logosctl takes only the portable name. Rebuild the package under the plain
-  # name with lgx (stage-basecamp-package.sh does the same to Basecamp's tree).
-  dev="$(tar -xzOf "$work/in/$role_pkg.lgx" manifest.json | jq -r '.main | keys[0]')"
-  plain="${dev%-dev}"
-  view="$(tar -xzOf "$work/in/$role_pkg.lgx" manifest.json | jq -r '.view')"
-  main="$(tar -xzOf "$work/in/$role_pkg.lgx" manifest.json | jq -r --arg v "$dev" '.main[$v]')"
-  step info "DERIVED: $role_pkg with variant $dev renamed $plain (lgx extract/add/remove)" "$TOOLS" \
-    "cp ${file_of[$role_pkg]} /x/$role_pkg-$plain.lgx && chmod u+w /x/$role_pkg-$plain.lgx && /x/lgx extract /x/$role_pkg-$plain.lgx -v $dev -o /x/relabel && /x/lgx add /x/$role_pkg-$plain.lgx -v $plain -f /x/relabel/$dev --main $main --view $view -y && /x/lgx remove /x/$role_pkg-$plain.lgx -v $dev -y && /x/lgx manifest /x/$role_pkg-$plain.lgx"
-  docker cp "$work/x/$role_pkg-$plain.lgx" "$RUN:/tmp/$role_pkg-$plain.lgx" >/dev/null 2>&1
-  role_file="/tmp/$role_pkg-$plain.lgx"
-  step "$ok" "package show (derived)" "$RUN" "$L --json package show $role_file"
-  role_root="$(jq -r '.rootHash // empty' "$o" 2>/dev/null)"
-  step "$ok" "install $role_pkg (derived) with its root hash" "$RUN" "$L package install $role_file --root-hash $role_root -y"
-fi
 step '(( rc == 0 )) && ! grep -q not_installed "$o"' \
   "installing the role package pulled in its dependencies" "$RUN" "$L package deps $role_pkg --recursive"
-step 'grep -Eq "blockchain_module|lez_indexer_module|lez_network" "$o"' \
-  "the role package declares its LEZ network requirement" "$RUN" "$L package deps $role_pkg --recursive"
+# Each dependency carries a version range (pin-package-dependencies.sh), so the
+# default catalog's other packages of the same names (lez_core 0.5.1,
+# chat_module 0.3.0, ...) do not satisfy it. The resolved view (--recursive)
+# takes the first entry of a name, the range; without --recursive logosctl
+# lists the manifest's entries as written, the bare names the v0.2 runtime
+# reads included.
+step '(( rc == 0 )) && jq -e "length > 0 and all(.[]; (.requiredVersion // \"\") != \"\")" "$o" >/dev/null' \
+  "every dependency $role_pkg declares resolves with a version range" "$RUN" "$L --json package deps $role_pkg --recursive"
+# B3: the LEZ network is reached through the endpoints the role is configured
+# with (the public testnet's or an operator's); its modules are the operator
+# package lez_network's dependencies, not the role's.
+step '(( rc == 0 )) && ! grep -Eq "blockchain_module|lez_indexer_module|lez_network" "$o"' \
+  "the role package requires no LEZ network module (B3: lez_network is the operator package)" "$RUN" "$L --json package deps $role_pkg --recursive"
 
 section "Install the modules"
 for name in "${names[@]:1}"; do
@@ -332,8 +340,37 @@ if [[ -n "${file_of[lez_swap_node]:-}" ]]; then
   step '(( rc != 0 ))' "a wrong --root-hash is refused" "$RUN" \
     "$L package install ${file_of[lez_swap_node]} --root-hash 0000000000000000000000000000000000000000000000000000000000000000 -y"
 fi
-step '(( rc == 0 )) && ! grep -q not_installed "$o"' "every dependency of $role_pkg is installed" "$RUN" "$L package deps $role_pkg --recursive"
+step '(( rc == 0 )) && ! grep -Eq "not_installed|version_mismatch" "$o"' "every dependency of $role_pkg is installed, at a version in its range" "$RUN" "$L package deps $role_pkg --recursive"
+# The range excludes the default catalog's lez_core 0.5.1: the same lez_core
+# with only its manifest version changed to 0.5.1 is reported version_mismatch.
+if [[ -n "${file_of[lez_core]:-}" && -n "${file_of[lez_swap_node]:-}" ]]; then
+  python3 -I - "$work/in/lez_core.lgx" "$work/x/lez_core-0.5.1.lgx" <<'PY'
+import io, json, sys, tarfile
+with tarfile.open(sys.argv[1], "r:gz") as t:
+    members = [(m, t.extractfile(m).read() if m.isfile() else None) for m in t.getmembers()]
+with tarfile.open(sys.argv[2], "w:gz", format=tarfile.GNU_FORMAT) as t:
+    for m, d in members:
+        if m.name == "manifest.json":
+            j = json.loads(d); j["version"] = "0.5.1"; d = json.dumps(j, indent=2).encode(); m.size = len(d)
+        t.addfile(m, io.BytesIO(d) if d is not None else None)
+PY
+  docker cp "$work/x/lez_core-0.5.1.lgx" "$RUN:/tmp/lez_core-0.5.1.lgx" >/dev/null 2>&1
+  step '(( rc == 0 )) && jq -e "any(.[]; .name == \"lez_core\" and .status == \"version_mismatch\")" "$o" >/dev/null' \
+    "a lez_core 0.5.1 (the default catalog's version) does not satisfy lez_swap_node's range" "$RUN" \
+    "$L package install /tmp/lez_core-0.5.1.lgx -y >/dev/null && $L --json package deps lez_swap_node"
+  step "$ok" "install lez_core again with its root hash" "$RUN" \
+    "$L package install ${file_of[lez_core]} --root-hash ${root_of[lez_core]:-none} -y"
+fi
 step "$ok" "package ls" "$RUN" "$L package ls"
+
+if [[ -n "$network_pkg" ]]; then
+  section "The LEZ network's operator package"
+  step "$ok" "install $network_pkg with its root hash" "$RUN" \
+    "$L package install ${file_of[$network_pkg]} --root-hash ${root_of[$network_pkg]:-none} -y"
+  step '(( rc == 0 )) && jq -e "any(.[]; .name == \"blockchain_module\") and any(.[]; .name == \"lez_indexer_module\") and all(.[]; (.requiredVersion // \"\") != \"\" and .status == \"installed\")" "$o" >/dev/null' \
+    "$network_pkg declares blockchain_module and lez_indexer_module with version ranges, both installed in range" "$RUN" \
+    "$L --json package deps $network_pkg --recursive"
+fi
 
 section "Lifecycle and behaviour"
 step "$ok" "module load $role_pkg" "$RUN" "$L module load $role_pkg"
@@ -416,10 +453,24 @@ if [[ -n "$TOOLS" && -n "$logoscore_dir" ]]; then
     "logoscore --config-dir /x/era/cfg load-module lez_swap_node && logoscore --config-dir /x/era/cfg call lez_swap_node node_status $role"
 fi
 if has_tool lgpm; then
+  # The module builder's lgpm is the development build (logos-package-manager
+  # `cli`), which takes only `<platform>-dev` variants. Logos's own release
+  # package is the control: our release packages are judged by whether lgpm
+  # treats them as it treats blockchain_module.
+  lgpm="mkdir -p /x/lgpm-root/modules /x/lgpm-root/plugins && /x/lgpm --modules-dir /x/lgpm-root/modules --ui-plugins-dir /x/lgpm-root/plugins install --file"
+  control_rc=""
+  if [[ -n "${file_of[blockchain_module]:-}" ]]; then
+    step info "lgpm (v0.2-era, the module builder's development build): install blockchain_module (Logos's release package, the control)" "$TOOLS" \
+      "$lgpm ${file_of[blockchain_module]}"
+    control_rc=$rc
+  fi
   for name in lez_swap_node "$role_pkg"; do
     [[ -n "${file_of[$name]:-}" ]] || continue
-    step "$ok" "lgpm (v0.2-era, the desks' installer): install $name" "$TOOLS" \
-      "mkdir -p /x/lgpm-root/modules /x/lgpm-root/plugins && /x/lgpm --modules-dir /x/lgpm-root/modules --ui-plugins-dir /x/lgpm-root/plugins install --file ${file_of[$name]}"
+    if [[ -n "$control_rc" ]]; then
+      step "(( (rc == 0) == (control_rc == 0) ))" "lgpm (v0.2-era development build) treats $name as it treats Logos's release package" "$TOOLS" "$lgpm ${file_of[$name]}"
+    else
+      step "$ok" "lgpm (v0.2-era, the desks' installer): install $name" "$TOOLS" "$lgpm ${file_of[$name]}"
+    fi
   done
 fi
 
