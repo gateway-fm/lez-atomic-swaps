@@ -153,5 +153,74 @@ class EarlyLockChecks(unittest.TestCase):
             e2e.lez_transaction_block('maker', 'not-a-hash')
 
 
+class OffchainCut(unittest.TestCase):
+    """#103 item 9: the cut denies the shared inodes, the restore puts back the
+    modes the Nodes check for, and the Maker's open Chat connections are read
+    from its /proc/net/unix."""
+    def test_the_cut_denies_the_socket_and_the_directory_in_the_makers_container(self):
+        self.assertEqual(e2e.offchain_cut_commands('lez-l2'), [
+            ['docker', 'exec', 'lez-l2-maker-node', 'chmod', '0000', '/run/lez/maker/chat.sock'],
+            ['docker', 'exec', 'lez-l2-maker-node', 'chmod', '0000', '/delivery']])
+
+    def test_the_restore_puts_back_the_modes_the_nodes_require(self):
+        self.assertEqual(e2e.offchain_restore_commands('lez'), [
+            ['docker', 'exec', 'lez-maker-node', 'chmod', '0600', '/run/lez/maker/chat.sock'],
+            ['docker', 'exec', 'lez-maker-node', 'chmod', '0700', '/delivery']])
+
+    def test_nothing_is_renamed_or_loosened(self):
+        for command in e2e.offchain_cut_commands('lez') + e2e.offchain_restore_commands('lez'):
+            self.assertNotIn('mv', command)
+            self.assertNotIn('0755', command)
+
+    def test_only_accepted_connections_on_the_chat_socket_count(self):
+        listing = (
+            'Num       RefCount Protocol Flags    Type St Inode Path\n'
+            '0000000000000000: 00000002 00000000 00010000 0001 01 41001 /run/lez/maker/chat.sock\n'
+            '0000000000000000: 00000003 00000000 00000000 0001 03 41002 /run/lez/maker/chat.sock\n'
+            '0000000000000000: 00000003 00000000 00000000 0001 03 41003 /run/lez/maker/node.sock\n'
+            '0000000000000000: 00000003 00000000 00000000 0001 03 41004\n')
+        self.assertEqual(e2e.connected_chat_sockets(listing), 1)
+        self.assertEqual(e2e.connected_chat_sockets(listing.splitlines()[0]), 0)
+
+    def test_the_taker_probe_runs_as_the_containers_user_and_reads_both_channels(self):
+        result = unittest.mock.Mock(stdout='{"chat": "EACCES", "delivery": "EACCES", "delivery_fds": 0, "uid": 4713}',
+                                    stderr='', returncode=0)
+        with patch.object(e2e.subprocess, 'run', return_value=result) as run:
+            probe = e2e.taker_offchain_probe()
+        command = run.call_args.args[0]
+        self.assertEqual(command[:4], ['docker', 'exec', 'lez-taker-node', 'python3'])
+        self.assertNotIn('-u', command)
+        self.assertEqual(command[-2:], ['/run/lez/maker/chat.sock', '/delivery'])
+        self.assertEqual(probe['uid'], 4713)
+
+    @unittest.skipIf(os.geteuid() == 0, 'root ignores the modes the cut sets')
+    def test_the_probe_sees_the_mode_cut_as_a_refusal(self):
+        import socket
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            chat, delivery = os.path.join(tmp, 'chat.sock'), os.path.join(tmp, 'delivery')
+            os.mkdir(delivery, 0o700)
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(chat)
+            listener.listen(4)
+            os.chmod(chat, 0o600)
+            self.addCleanup(listener.close)
+
+            def probe():
+                out = subprocess.run([sys.executable, '-c', e2e.TAKER_OFFCHAIN_PROBE, chat, delivery],
+                                     capture_output=True, text=True, check=True).stdout
+                return json.loads(out)
+            before = probe()
+            self.assertEqual((before['chat'], before['delivery']), ('connected', 'readable'))
+            os.chmod(chat, 0o000)
+            os.chmod(delivery, 0o000)
+            try:
+                after = probe()
+            finally:
+                os.chmod(delivery, 0o700)
+            self.assertEqual((after['chat'], after['delivery'], after['delivery_fds']), ('EACCES', 'EACCES', 0))
+
+
 if __name__ == '__main__':
     unittest.main()

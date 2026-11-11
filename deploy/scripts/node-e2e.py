@@ -978,68 +978,252 @@ def scenario_early_lock(stamp: str) -> dict:
             "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
-# Chat is a unix socket on the volume both Nodes share; Delivery is a directory the Maker
-# writes and the Taker reads. Renaming one and closing the other's mode is how the Rust
-# process tests cut them, and it needs no container restart.
+# The two off-chain channels of this stack (docs/architecture/deployment-components-
+# and-rpcs.md, "Component map"): the Maker Node's Chat listener is a Unix socket on
+# the maker_socket volume, which the Taker's Basecamp mounts at the same path, and
+# Delivery is the delivery_dir volume, written by the Maker and mounted read-only by
+# the Taker. Both Nodes run as uid 4713 (compose.yaml `user:`) with no capabilities.
+# The cut denies the inodes themselves: the socket to mode 0000 (connect(2) needs
+# write permission on it) and the directory to 0000 (no listing, no lookup), so every
+# non-root process on either side of the shared volume, the Taker Node included, is
+# refused by the kernel, and a fresh connect or read is impossible rather than merely
+# pointed elsewhere. Chat opens one connection per call (local_rpc.rs), so a
+# connection that was open at the cut is a call in flight; the cut waits for the
+# Maker's last accepted connection on the socket to close and then requires that no
+# connection appears again (ChatConnections). Restoring puts back the modes the Nodes
+# check for (owner_socket_is_available: 0600; Delivery: 0700).
 CHAT_SOCKET = "/run/lez/maker/chat.sock"
-CHAT_SOCKET_OFFLINE = "/run/lez/maker/chat.offline"
+DELIVERY_DIR = "/delivery"
+CHAT_SOCKET_MODE, DELIVERY_MODE = "0600", "0700"
+CHAT_DRAIN_SECONDS = 60
 
 
-def maker_health() -> dict:
-    return call("maker", "maker_health", {})
+def offchain_cut_commands(prefix: str) -> list[list[str]]:
+    maker = f"{prefix}-maker-node"
+    return [["docker", "exec", maker, "chmod", "0000", CHAT_SOCKET],
+            ["docker", "exec", maker, "chmod", "0000", DELIVERY_DIR]]
 
 
-def cut_delivery_and_chat() -> None:
-    docker("exec", NODES["maker"][0], "mv", CHAT_SOCKET, CHAT_SOCKET_OFFLINE)
-    docker("exec", NODES["maker"][0], "chmod", "0755", "/delivery")
+def offchain_restore_commands(prefix: str) -> list[list[str]]:
+    maker = f"{prefix}-maker-node"
+    return [["docker", "exec", maker, "chmod", CHAT_SOCKET_MODE, CHAT_SOCKET],
+            ["docker", "exec", maker, "chmod", DELIVERY_MODE, DELIVERY_DIR]]
+
+
+# Run in the Taker's container as its Node's user: what that user can still reach.
+TAKER_OFFCHAIN_PROBE = (
+    "import errno, json, os, socket, sys\n"
+    "chat, delivery = sys.argv[1], sys.argv[2]\n"
+    "out = {}\n"
+    "s = socket.socket(socket.AF_UNIX)\n"
+    "s.settimeout(5)\n"
+    "try:\n"
+    "    s.connect(chat); out['chat'] = 'connected'\n"
+    "except OSError as e:\n"
+    "    out['chat'] = errno.errorcode.get(e.errno, str(e.errno))\n"
+    "finally:\n"
+    "    s.close()\n"
+    "try:\n"
+    "    os.listdir(delivery); out['delivery'] = 'readable'\n"
+    "except OSError as e:\n"
+    "    out['delivery'] = errno.errorcode.get(e.errno, str(e.errno))\n"
+    "fds = 0\n"
+    "for pid in filter(str.isdigit, os.listdir('/proc')):\n"
+    "    try:\n"
+    "        names = os.listdir(f'/proc/{pid}/fd')\n"
+    "    except OSError:\n"
+    "        continue\n"
+    "    for fd in names:\n"
+    "        try:\n"
+    "            fds += os.readlink(f'/proc/{pid}/fd/{fd}').startswith(delivery)\n"
+    "        except OSError:\n"
+    "            pass\n"
+    "out['delivery_fds'] = fds\n"
+    "out['uid'] = os.getuid()\n"
+    "print(json.dumps(out))\n"
+)
+
+
+def taker_offchain_probe() -> dict:
+    """What the Taker's side can still do: connect to the Maker's Chat socket,
+    list Delivery, and how many open file descriptors in its container point
+    into Delivery. Run as the container's user, the one its Node runs as."""
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", TAKER_OFFCHAIN_PROBE,
+                             CHAT_SOCKET, DELIVERY_DIR], capture_output=True, text=True, check=False,
+                            stdin=subprocess.DEVNULL)
+    try:
+        return json.loads(result.stdout)
+    except ValueError as error:
+        raise Failure(f"the Taker-side probe did not run: {result.stdout[:120]} {result.stderr[:200]}") from error
+
+
+def connected_chat_sockets(proc_net_unix: str, path: str = CHAT_SOCKET) -> int:
+    """Connections accepted on `path` that are still open, from a /proc/net/unix
+    listing: an accepted socket carries its listener's address, and state 03 is
+    connected (the listener itself is 01)."""
+    count = 0
+    for line in proc_net_unix.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 8 and fields[7] == path and fields[5] == "03":
+            count += 1
+    return count
+
+
+class ChatConnections(threading.Thread):
+    """Samples the Maker's open connections on its Chat socket every two seconds
+    (its container's /proc/net/unix) while a cut is meant to hold, and remembers
+    every sample that showed one."""
+
+    def __init__(self) -> None:
+        super().__init__(daemon=True)
+        self.stopped = threading.Event()
+        self.samples = 0
+        self.seen: list[tuple[str, int]] = []
+
+    def read(self) -> int | None:
+        result = subprocess.run(["docker", "exec", NODES["maker"][0], "cat", "/proc/net/unix"],
+                                capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+        return connected_chat_sockets(result.stdout) if result.returncode == 0 else None
+
+    def run(self) -> None:
+        while not self.stopped.wait(2):
+            open_now = self.read()
+            if open_now is None:
+                continue
+            self.samples += 1
+            if open_now:
+                self.seen.append((time.strftime("%H:%M:%S"), open_now))
+
+    def stop(self) -> None:
+        self.stopped.set()
+        self.join(timeout=30)
+
+
+def wait_chat_drained() -> None:
+    """A call in flight at the cut keeps its connection until it ends; waits for
+    the Maker to hold none (bounded by the Chat client's call timeout)."""
+    wait = Wait("the Maker's Chat connections open at the cut to close", CHAT_DRAIN_SECONDS)
+    probe = ChatConnections()
+    while wait.running():
+        open_now = probe.read()
+        if open_now == 0:
+            return
+        wait.note(open_now, f"{open_now} connection(s) still open on {CHAT_SOCKET}")
+        time.sleep(2)
+    raise wait.failure()
+
+
+def health(role: str) -> dict:
+    if role == "maker":
+        return call("maker", "maker_health", {})
+    return call("taker", "taker_health", {"schema_version": 1})
+
+
+def cut_delivery_and_chat() -> ChatConnections:
+    """Cuts both channels and proves the cut from both sides before anything
+    else happens: the Taker's user can still connect and list beforehand (so the
+    probe is not blind), is refused both afterwards with EACCES, holds no file
+    descriptor in Delivery, the Maker holds no Chat connection once a call in
+    flight has ended, and both Nodes report chat and delivery unavailable and
+    are degraded. Returns the Chat watch, running until the restore."""
+    before = taker_offchain_probe()
+    if before.get("chat") != "connected" or before.get("delivery") != "readable":
+        raise Failure(f"before the cut the Taker's side already cannot reach Chat or Delivery: {before}")
+    for command in offchain_cut_commands(PREFIX):
+        subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL)
+    after = taker_offchain_probe()
+    if after.get("chat") != "EACCES" or after.get("delivery") != "EACCES" or after.get("delivery_fds"):
+        raise Failure(f"the cut does not hold on the Taker's side (uid {after.get('uid')}): {after}")
+    log(f"  the Taker's side (uid {after['uid']}) is refused: connect {after['chat']}, list Delivery "
+        f"{after['delivery']}, {after['delivery_fds']} descriptors into it")
+    wait_chat_drained()
+    watch = ChatConnections()
+    watch.start()
+    for role in ("maker", "taker"):
+        wait = Wait(f"the {role} Node to report chat and delivery unavailable", 120)
+        while wait.running():
+            reported = health(role)
+            if reported.get("chat") == "unavailable" and reported.get("delivery") == "unavailable":
+                break
+            wait.note((reported.get("chat"), reported.get("delivery")),
+                      f"chat {reported.get('chat')}, delivery {reported.get('delivery')}")
+            time.sleep(5)
+        else:
+            raise wait.failure()
+        if not reported.get("degraded"):
+            raise Failure(f"the {role} reports both dependencies unavailable but is not degraded")
+    log("  both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection")
+    return watch
+
+
+def assert_cut_held(watch: ChatConnections) -> dict:
+    """At the end of what ran under the cut: the Taker's side is still refused
+    and no Chat connection was seen open at any sample since the drain."""
+    watch.stop()
+    after = taker_offchain_probe()
+    if after.get("chat") != "EACCES" or after.get("delivery") != "EACCES" or after.get("delivery_fds"):
+        raise Failure(f"the cut no longer held at the end: {after}")
+    if watch.seen:
+        raise Failure(f"a Chat connection was open on the Maker during the cut: {watch.seen[:5]}")
+    if watch.samples == 0:
+        raise Failure("the Maker's /proc/net/unix could not be read during the cut; nothing shows Chat stayed unused")
+    log(f"  the cut held: {watch.samples} samples of the Maker's Chat socket, none with a connection; "
+        "the Taker's side still refused")
+    return {"chat_samples": watch.samples, "chat_connections_seen": 0, "taker_probe_at_end": after}
 
 
 def restore_delivery_and_chat() -> None:
-    subprocess.run(["docker", "exec", NODES["maker"][0], "mv", CHAT_SOCKET_OFFLINE, CHAT_SOCKET],
-                   check=False, capture_output=True)
-    subprocess.run(["docker", "exec", NODES["maker"][0], "chmod", "0700", "/delivery"],
-                   check=False, capture_output=True)
+    for command in offchain_restore_commands(PREFIX):
+        subprocess.run(command, check=False, capture_output=True, stdin=subprocess.DEVNULL)
+
+
+def assert_restored() -> None:
+    """Both channels back: the Taker's side connects and lists again and neither
+    Node is degraded."""
+    probe = taker_offchain_probe()
+    if probe.get("chat") != "connected" or probe.get("delivery") != "readable":
+        raise Failure(f"after the restore the Taker's side still cannot reach Chat or Delivery: {probe}")
+    for role in ("maker", "taker"):
+        wait = Wait(f"the {role} Node to leave degraded once both dependencies returned", 120)
+        while wait.running():
+            reported = health(role)
+            if not reported.get("degraded"):
+                break
+            wait.note((reported.get("chat"), reported.get("delivery")),
+                      f"chat {reported.get('chat')}, delivery {reported.get('delivery')}, degraded")
+            time.sleep(5)
+        else:
+            raise wait.failure()
+    log("  both dependencies are back and neither Node is degraded")
 
 
 def scenario_offline_after_lock(stamp: str) -> dict:
     """R2: once the first lock is on chain the swap proceeds on chain state alone.
 
-    Both off-chain dependencies are cut after the lock and stay down until the swap is
-    complete. Neither Node is restarted: the point is that a swap in flight does not need
-    Logos Chat or Delivery, not that it survives a restart.
+    Both off-chain dependencies are cut after the lock (cut_delivery_and_chat: the
+    kernel refuses the Taker's Node user a connect to Chat and a read of Delivery, as
+    proven from the Taker's container) and stay cut until the swap is complete, while
+    the Maker's open Chat connections are sampled throughout and must stay none.
+    Neither Node is restarted: the point is that a swap in flight does not need Logos
+    Chat or Delivery, not that it survives a restart.
     """
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     lock(swap_id)
     log("  cutting Logos Chat and Delivery, with the first lock already on chain")
-    cut_delivery_and_chat()
+    watch = None
     try:
-        deadline = time.time() + 120
-        while time.time() < deadline:
-            health = maker_health()
-            if health.get("chat") == "unavailable" and health.get("delivery") == "unavailable":
-                break
-            time.sleep(5)
-        else:
-            raise Failure(f"the Maker did not report both dependencies unavailable: {json.dumps(health)[:200]}")
-        if not health.get("degraded"):
-            raise Failure("the Maker reports both dependencies unavailable but is not degraded")
-        log("  the Maker reports chat and delivery unavailable, and degraded")
+        watch = cut_delivery_and_chat()
         claim(swap_id, stamp)
         wait_completed(swap_id)
-        log("  the swap completed with both off-chain dependencies down")
+        held = assert_cut_held(watch)
+        log("  the swap completed with both off-chain dependencies cut")
     finally:
+        if watch is not None:
+            watch.stop()
         restore_delivery_and_chat()
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        health = maker_health()
-        if not health.get("degraded"):
-            log("  both dependencies are back and the Maker is no longer degraded")
-            break
-        time.sleep(5)
-    else:
-        raise Failure(f"the Maker stayed degraded after both dependencies returned: {json.dumps(health)[:200]}")
-    return {"swap_id": swap_id, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+    assert_restored()
+    return {"swap_id": swap_id, "cut": held, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
 def scenario_concurrent(stamp: str) -> dict:
@@ -3362,40 +3546,27 @@ def scenario_zec_early_lock(stamp: str) -> dict:
 
 def scenario_zec_offline_after_lock(stamp: str) -> dict:
     """R2 for Zcash: once the first lock is confirmed the swap proceeds on chain
-    state alone. Logos Chat and Delivery are cut on the Maker and stay down until
-    the swap is complete; neither Node is restarted."""
+    state alone. Logos Chat and Delivery are cut as in the BTC twin
+    (cut_delivery_and_chat, proven from both sides) and stay cut until the swap
+    is complete; neither Node is restarted."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
     zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=1500, corridor=corridor,
                          mine_pending_only=False, describe="(the first lock confirmed)")
     log("  cutting Logos Chat and Delivery, with the first lock confirmed")
-    cut_delivery_and_chat()
+    watch = None
     try:
-        deadline = time.time() + 120
-        while time.time() < deadline:
-            health = maker_health()
-            if health.get("chat") == "unavailable" and health.get("delivery") == "unavailable":
-                break
-            time.sleep(5)
-        else:
-            raise Failure(f"the Maker did not report both dependencies unavailable: {json.dumps(health)[:200]}")
-        if not health.get("degraded"):
-            raise Failure("the Maker reports both dependencies unavailable but is not degraded")
-        log("  the Maker reports chat and delivery unavailable, and degraded")
+        watch = cut_delivery_and_chat()
         zec_finish(swap_id, config, corridor, stamp)
-        log("  the swap completed with both off-chain dependencies down")
+        held = assert_cut_held(watch)
+        log("  the swap completed with both off-chain dependencies cut")
     finally:
+        if watch is not None:
+            watch.stop()
         restore_delivery_and_chat()
-    deadline = time.time() + 120
-    while time.time() < deadline:
-        if not maker_health().get("degraded"):
-            log("  both dependencies are back and the Maker is no longer degraded")
-            break
-        time.sleep(5)
-    else:
-        raise Failure("the Maker stayed degraded after both dependencies returned")
-    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"]}
+    assert_restored()
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "cut": held}
 
 
 def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
