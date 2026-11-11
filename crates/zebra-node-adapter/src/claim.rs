@@ -4143,7 +4143,7 @@ mod tests {
         let expected = agreement.binding().expected_output();
         let key = SecretKey::from_slice(&[7; 32]).expect("fixed funding key");
         let public_key = PublicKey::from_secret_key(&Secp256k1::new(), &key);
-        let owner_script: Script = TransparentAddress::from_pubkey(&public_key).script().into();
+        let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&public_key).script().into();
         let input_value =
             Zatoshis::from_u64(u64::from(expected.value()) + 20_000).expect("input value");
         let request = TransparentFundingRequest::new(
@@ -4256,7 +4256,7 @@ mod tests {
     }
 
     fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-        match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("public key")) {
+        match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("public key")) {
             TransparentAddress::PublicKeyHash(hash) => hash,
             TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
         }

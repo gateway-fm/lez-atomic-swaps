@@ -220,7 +220,7 @@ pub struct LocalPocZcashIdentity {
 const REGTEST_P2PKH_PREFIX: [u8; 2] = [0x1D, 0x25];
 
 fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
-    let TransparentAddress::PublicKeyHash(hash) = TransparentAddress::from_pubkey(public_key)
+    let TransparentAddress::PublicKeyHash(hash) = lez_zec_swap_sdk::p2pkh_address(public_key)
     else {
         bail!("public key did not derive a P2PKH address");
     };
@@ -1322,7 +1322,7 @@ async fn select_mature_regtest_candidate(
         "Zebra genesis does not match the deterministic Regtest fixture"
     );
 
-    let owner_script: Script = TransparentAddress::from_pubkey(funding_key).script().into();
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(funding_key).script().into();
     let tip_height = u32::from(before.tip_height());
     let mut selected = None;
     let mut passed_over = 0u32;
@@ -1589,7 +1589,7 @@ fn build_agreement(
 }
 
 fn public_key_hash(key: &PublicKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(key) {
+    match lez_zec_swap_sdk::p2pkh_address(key) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("a public key always maps to P2PKH"),
     }

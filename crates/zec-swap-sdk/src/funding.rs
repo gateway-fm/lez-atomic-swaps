@@ -8,8 +8,7 @@ use secp256k1::{PublicKey, SecretKey};
 use zcash_primitives::transaction::{
     Authorization as TransactionAuthorization, Authorized as TransactionAuthorized, Transaction,
     TransactionData, TxVersion,
-    sighash::{SignableInput as TransactionSignableInput, signature_hash},
-    txid::TxIdDigester,
+    sighash::{PrecomputedSighashData, SignableInput as TransactionSignableInput},
 };
 use zcash_protocol::{
     consensus::{BlockHeight, BranchId},
@@ -22,7 +21,10 @@ use zcash_transparent::{
     bundle::{OutPoint, TxOut},
 };
 
-use crate::Bip199Contract;
+use crate::{
+    Bip199Contract,
+    zcash_keys::{p2pkh_address, zcash_public_key, zcash_secret_key},
+};
 
 /// Failures produced while selecting coins or building a funding transaction.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -363,8 +365,9 @@ fn build_transparent_payment(
     secret_key: &SecretKey,
 ) -> Result<Transaction, FundingBuildError> {
     let mut signing_set = TransparentSigningSet::new();
-    let signing_pubkey = signing_set.add_key(*secret_key);
-    if signing_pubkey != request.funding_pubkey {
+    let signing_pubkey = signing_set.add_key(zcash_secret_key(secret_key));
+    let funding_pubkey = zcash_public_key(&request.funding_pubkey);
+    if signing_pubkey != funding_pubkey {
         return Err(FundingBuildError::WrongFundingKey);
     }
     let selection = select_funding_utxos(request)?;
@@ -372,7 +375,7 @@ fn build_transparent_payment(
     for candidate in selection.selected() {
         builder
             .add_p2pkh_input(
-                request.funding_pubkey,
+                funding_pubkey,
                 candidate.outpoint.clone(),
                 candidate.output.clone(),
             )
@@ -400,8 +403,10 @@ fn build_transparent_payment(
         None,
         None,
     );
-    let txid_parts = unsigned.digest(TxIdDigester);
-    let authorized_bundle = unsigned
+    let precomputed = PrecomputedSighashData::new_zip244(unsigned)
+        .map_err(|error| FundingBuildError::CanonicalBuilder(error.to_string()))?;
+    let authorized_bundle = precomputed
+        .tx()
         .transparent_bundle()
         .ok_or_else(|| {
             FundingBuildError::CanonicalBuilder("funding transaction has no bundle".into())
@@ -409,12 +414,9 @@ fn build_transparent_payment(
         .clone()
         .apply_signatures(
             |input| {
-                *signature_hash(
-                    &unsigned,
-                    &TransactionSignableInput::Transparent(input),
-                    &txid_parts,
-                )
-                .as_ref()
+                *precomputed
+                    .signature_hash(&TransactionSignableInput::Transparent(input))
+                    .as_ref()
             },
             &signing_set,
         )
@@ -435,5 +437,5 @@ fn build_transparent_payment(
 }
 
 fn funding_address(public_key: &PublicKey) -> TransparentAddress {
-    TransparentAddress::from_pubkey(public_key)
+    p2pkh_address(public_key)
 }

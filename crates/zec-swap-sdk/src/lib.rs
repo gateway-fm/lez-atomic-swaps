@@ -26,6 +26,7 @@ mod sdk;
 mod spend_observation;
 mod transaction;
 mod zcash_claim_context;
+mod zcash_keys;
 mod zec_binding_record;
 
 pub use agreement_v1::{
@@ -150,6 +151,7 @@ pub use zcash_claim_context::{
     ZcashClaimContextError, ZcashClaimContextV1, ZcashFundingContextV1,
     ZcashFundingObservationError, ZcashFundingObservationV1, ZcashUnspentOutputSnapshotV1,
 };
+pub use zcash_keys::{p2pkh_address, p2pkh_hash};
 pub use zec_binding_record::{
     ZecBindingRecordError, ZecProfileRecordV1, ZecSwapBinding, ZecSwapBindingRecordV1,
 };

@@ -142,7 +142,7 @@ fn public_key(key: &SecretKey) -> PublicKey {
 }
 
 fn public_key_hash(key: &SecretKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&public_key(key)) {
+    match lez_zec_swap_sdk::p2pkh_address(&public_key(key)) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public key produces P2PKH"),
     }

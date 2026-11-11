@@ -16,8 +16,7 @@ use zcash_primitives::{
     block::BlockHash,
     transaction::{
         Authorization as TransactionAuthorization, Transaction,
-        sighash::{SignableInput as TransactionSignableInput, signature_hash},
-        txid::TxIdDigester,
+        sighash::{PrecomputedSighashData, SignableInput as TransactionSignableInput},
     },
 };
 use zcash_protocol::{
@@ -33,7 +32,7 @@ use zcash_script::{
     signature::{HashType, SignedOutputs},
 };
 use zcash_transparent::{
-    address::{Script, TransparentAddress},
+    address::Script,
     bundle::{Authorization as TransparentAuthorization, Bundle, OutPoint, TxIn, TxOut},
     sighash::{
         SighashType, SignableInput as TransparentSignableInput, TransparentAuthorizingContext,
@@ -893,10 +892,7 @@ fn validated_role_key(
     if encoded != compressed {
         return Err(SpendObservationError::WrongSpendingRole);
     }
-    let actual_hash = match TransparentAddress::from_pubkey(&public_key) {
-        TransparentAddress::PublicKeyHash(hash) => hash,
-        TransparentAddress::ScriptHash(_) => unreachable!("public keys always yield P2PKH"),
-    };
+    let actual_hash = crate::zcash_keys::p2pkh_hash(&public_key);
     if actual_hash != expected_hash {
         return Err(SpendObservationError::WrongSpendingRole);
     }
@@ -1031,8 +1027,10 @@ fn executes_contract(
             |bundle| bundle,
             |bundle| bundle,
         );
-    let txid_parts = data.digest(TxIdDigester);
-    let Some(bundle) = data.transparent_bundle() else {
+    let Ok(precomputed) = PrecomputedSighashData::new_zip244(data) else {
+        return false;
+    };
+    let Some(bundle) = precomputed.tx().transparent_bundle() else {
         return false;
     };
     let sighash = |script_code: &Code, hash_type: &HashType| {
@@ -1075,12 +1073,9 @@ fn executes_contract(
         )
         .ok()?;
         Some(
-            *signature_hash(
-                &data,
-                &TransactionSignableInput::Transparent(signable),
-                &txid_parts,
-            )
-            .as_ref(),
+            *precomputed
+                .signature_hash(&TransactionSignableInput::Transparent(signable))
+                .as_ref(),
         )
     };
     let input = &transaction

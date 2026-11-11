@@ -487,7 +487,7 @@ fn agreement() -> ZecAgreementV1 {
 }
 
 fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
+    match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }

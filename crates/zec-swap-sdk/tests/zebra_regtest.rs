@@ -43,7 +43,7 @@ fn public_key(secret_key: &SecretKey) -> PublicKey {
 }
 
 fn pubkey_hash(secret_key: &SecretKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&public_key(secret_key)) {
+    match lez_zec_swap_sdk::p2pkh_address(&public_key(secret_key)) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys always yield P2PKH"),
     }
@@ -672,7 +672,7 @@ async fn prove_concurrent_claim_refund_and_tip_reorg(
         &claim_contract,
         OutPoint::new(*claim_funding.txid().as_ref(), 0),
         contract_output(&claim_funding),
-        TransparentAddress::from_pubkey(&public_key(&key(8))),
+        lez_zec_swap_sdk::p2pkh_address(&public_key(&key(8))),
         zatoshis(10_000),
         BlockHeight::from_u32(refund_at + 40),
         BranchId::Nu6_2,
@@ -689,7 +689,7 @@ async fn prove_concurrent_claim_refund_and_tip_reorg(
         &refund_contract,
         OutPoint::new(*refund_funding.txid().as_ref(), 0),
         contract_output(&refund_funding),
-        TransparentAddress::from_pubkey(&public_key(&key(9))),
+        lez_zec_swap_sdk::p2pkh_address(&public_key(&key(9))),
         zatoshis(10_000),
         BlockHeight::from_u32(refund_at + 40),
         BranchId::Nu6_2,
@@ -718,8 +718,8 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
     let fork_client = fork_client();
     let funder_key = key(4);
     let claimant_key = key(2);
-    let claim_destination = TransparentAddress::from_pubkey(&public_key(&key(3)));
-    let refund_destination = TransparentAddress::from_pubkey(&public_key(&key(5)));
+    let claim_destination = lez_zec_swap_sdk::p2pkh_address(&public_key(&key(3)));
+    let refund_destination = lez_zec_swap_sdk::p2pkh_address(&public_key(&key(5)));
 
     generate_to(&client, 104).await;
     let candidates = actor_utxos(&client).await;
@@ -806,8 +806,14 @@ async fn real_actor_keys_fund_claim_and_refund_through_zebra_consensus() {
     generate_to(&client, block_count(&client).await + 1).await;
     assert_confirmed(&client, &refund_txid, &refund).await;
 
-    prove_concurrent_claim_refund_and_tip_reorg(&client, &fork_client, &funder_key, third, fourth)
-        .await;
+    Box::pin(prove_concurrent_claim_refund_and_tip_reorg(
+        &client,
+        &fork_client,
+        &funder_key,
+        third,
+        fourth,
+    ))
+    .await;
 
     eprintln!(
         "Zebra accepted actor claim {} and refund {}",

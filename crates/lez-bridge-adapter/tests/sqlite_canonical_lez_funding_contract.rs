@@ -708,7 +708,7 @@ fn lowerhex(bytes: [u8; 32]) -> String {
 }
 
 fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("public key")) {
+    match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("public key")) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public key yields P2PKH"),
     }

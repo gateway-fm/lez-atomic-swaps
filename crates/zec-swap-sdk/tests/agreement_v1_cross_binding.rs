@@ -845,7 +845,7 @@ fn agreement_derives_and_validates_canonical_funding_claim_and_refund_requests()
         OutPoint::new([0x31; 32], 2),
         TxOut::new(
             Zatoshis::from_u64(150_000_000).expect("value"),
-            TransparentAddress::from_pubkey(&funder_key).script().into(),
+            lez_zec_swap_sdk::p2pkh_address(&funder_key).script().into(),
         ),
     );
     fixture.funding_input_set_commitment =
@@ -1230,7 +1230,7 @@ fn public_key(secret_key: &SecretKey) -> PublicKey {
 }
 
 fn pubkey_hash(bytes: &[u8; 33]) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
+    match lez_zec_swap_sdk::p2pkh_address(&PublicKey::from_slice(bytes).expect("fixture pubkey")) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public keys produce P2PKH"),
     }

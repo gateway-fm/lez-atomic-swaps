@@ -2482,10 +2482,7 @@ fn verify_role_signature(
 }
 
 fn pubkey_hash(public_key: &PublicKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(public_key) {
-        TransparentAddress::PublicKeyHash(hash) => hash,
-        TransparentAddress::ScriptHash(_) => unreachable!("public keys always yield P2PKH"),
-    }
+    crate::zcash_keys::p2pkh_hash(public_key)
 }
 
 const fn role_mapping(

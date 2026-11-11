@@ -845,7 +845,7 @@ fn fixture(direction: SwapDirection, values: [u64; 2]) -> Fixture {
         Participant::Maker => maker_key,
         Participant::Taker => taker_key,
     };
-    let owner_script: Script = TransparentAddress::from_pubkey(&funding_key)
+    let owner_script: Script = lez_zec_swap_sdk::p2pkh_address(&funding_key)
         .script()
         .into();
     let outpoints = vec![OutPoint::new([0x11; 32], 0), OutPoint::new([0x22; 32], 1)];
@@ -960,7 +960,7 @@ fn public_key(secret: &SecretKey) -> PublicKey {
 }
 
 fn public_key_hash(key: &PublicKey) -> [u8; 20] {
-    match TransparentAddress::from_pubkey(key) {
+    match lez_zec_swap_sdk::p2pkh_address(key) {
         TransparentAddress::PublicKeyHash(hash) => hash,
         TransparentAddress::ScriptHash(_) => unreachable!("public key produces P2PKH"),
     }
