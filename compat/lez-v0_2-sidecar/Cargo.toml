@@ -52,7 +52,7 @@ xmr-reference-actor = { version = "=0.1.0", path = "../../crates/xmr-reference-a
 zeroize = "=1.9.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "=1.1.4", features = ["fs", "process"] }
+rustix = { version = "=1.1.6", features = ["fs", "process"] }
 
 [dev-dependencies]
 tokio = { version = "=1.53.3", features = ["macros", "rt-multi-thread"] }
