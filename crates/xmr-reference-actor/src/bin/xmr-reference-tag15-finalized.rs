@@ -25,7 +25,9 @@ use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
     XmrActivatedAgreementV1, XmrAgreementV1,
 };
-use rustix::fs::{CWD, OFlags, RenameFlags, SealFlags, fcntl_get_seals, open, renameat_with};
+use rustix::fs::{CWD, OFlags, RenameFlags, open, renameat_with};
+#[cfg(target_os = "linux")]
+use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
@@ -348,6 +350,7 @@ fn parse_view_key(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
         .context("Monero view key is not a canonical scalar")
 }
 
+#[cfg(target_os = "linux")]
 fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
     let mut file =
         File::open(format!("/proc/self/fd/{fd}")).with_context(|| format!("open {label} FD"))?;
@@ -373,6 +376,14 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
         "{label} FD is oversized or changed"
     );
     Ok(bytes)
+}
+
+/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
+/// has no seal to check, so the descriptor is never trusted. The parent
+/// cannot produce one there either (`effect_input_custody`).
+#[cfg(target_os = "macos")]
+fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
 }
 
 fn read_sidecar_capability_fd(fd: i32) -> Result<SidecarCapability> {

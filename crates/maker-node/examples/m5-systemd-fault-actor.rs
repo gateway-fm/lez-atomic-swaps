@@ -25,7 +25,12 @@ fn run() -> Result<(), &'static str> {
         return Err("sealed configuration is unavailable");
     }
     let config = ActorConfig::load_private_fd(fd).map_err(|_| "sealed configuration is invalid")?;
-    if !Path::new("/proc/self/fd/198").exists() {
+    #[cfg(target_os = "linux")]
+    let inherited_lock = Path::new("/proc/self/fd/198");
+    // macOS has no /proc; /dev/fd/198 exists only while descriptor 198 is open.
+    #[cfg(target_os = "macos")]
+    let inherited_lock = Path::new("/dev/fd/198");
+    if !inherited_lock.exists() {
         return Err("inherited actor lock is unavailable");
     }
     let effect = effect_path(config.role_state_db());

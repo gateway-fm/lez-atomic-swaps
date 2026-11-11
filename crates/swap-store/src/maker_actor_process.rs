@@ -5,7 +5,6 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io::{Read as _, Seek as _, Write as _},
-    os::fd::AsRawFd as _,
     os::unix::fs::{MetadataExt as _, PermissionsExt as _},
     path::{Component, Path, PathBuf},
     process::Command,
@@ -15,12 +14,13 @@ use command_fds::{CommandFdExt as _, FdMapping};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, SwapCoordinator, SwapId};
 use rusqlite::{Connection, OptionalExtension as _, Row, Transaction, TransactionBehavior, params};
-use rustix::fs::{
-    FlockOperation, MemfdFlags, Mode, OFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, flock,
-    memfd_create,
-};
+use rustix::fs::{FlockOperation, Mode, OFlags, flock};
+#[cfg(target_os = "linux")]
+use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, memfd_create};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd as _;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -697,7 +697,7 @@ impl PinnedExecutable {
     ///
     /// Fails if the child descriptor mapping cannot be installed.
     pub fn into_command(self) -> Result<Command, MakerActorProcessError> {
-        let mut command = Command::new(format!("/proc/self/fd/{PINNED_EXECUTABLE_FD}"));
+        let mut command = pinned_program_command(&self.program, PINNED_EXECUTABLE_FD)?;
         command
             .fd_mappings(vec![FdMapping {
                 parent_fd: self.program.into(),
@@ -735,7 +735,7 @@ impl PinnedExecutable {
         }
         let actor_mapping = actor_lock.fd_mapping_to(MAKER_ACTOR_LOCK_FD)?;
         let workflow_mapping = workflow_lock.fd_mapping_to(PINNED_EXECUTABLE_WORKFLOW_LOCK_FD)?;
-        let mut command = Command::new(format!("/proc/self/fd/{PINNED_EXECUTABLE_FD}"));
+        let mut command = pinned_program_command(&self.program, PINNED_EXECUTABLE_FD)?;
         command
             .fd_mappings(vec![
                 FdMapping {
@@ -795,6 +795,7 @@ impl PinnedExecutable {
 
         let actor_mapping = actor_lock.fd_mapping_to(MAKER_ACTOR_LOCK_FD)?;
         let workflow_mapping = workflow_lock.fd_mapping_to(PINNED_EXECUTABLE_WORKFLOW_LOCK_FD)?;
+        let mut command = pinned_program_command(&self.program, PINNED_EXECUTABLE_FD)?;
         let mut mappings = Vec::with_capacity(3 + plan.descriptors.len());
         mappings.push(FdMapping {
             parent_fd: self.program.into(),
@@ -810,7 +811,6 @@ impl PinnedExecutable {
                     child_fd,
                 }),
         );
-        let mut command = Command::new(format!("/proc/self/fd/{PINNED_EXECUTABLE_FD}"));
         command
             .fd_mappings(mappings)
             .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
@@ -911,7 +911,7 @@ impl MakerActorArtifacts {
         held_lock.validate_for(&self.record)?;
         validate_actor_state(self.record.manifest().state_database_path(), &self.state)?;
         let lock_mapping = held_lock.fd_mapping()?;
-        let mut command = Command::new(format!("/proc/self/fd/{MAKER_ACTOR_PROGRAM_FD}"));
+        let mut command = pinned_program_command(&self.program, MAKER_ACTOR_PROGRAM_FD)?;
         command
             .fd_mappings(vec![
                 FdMapping {
@@ -946,7 +946,7 @@ impl MakerActorArtifacts {
         validate_actor_state(self.record.manifest().state_database_path(), &self.state)?;
         let lock_mapping = held_lock.fd_mapping()?;
         let transfer_mapping = held_lock.fd_mapping_to(MAKER_ACTOR_LOCK_TRANSFER_FD)?;
-        let mut command = Command::new(format!("/proc/self/fd/{MAKER_ACTOR_PROGRAM_FD}"));
+        let mut command = pinned_program_command(&self.program, MAKER_ACTOR_PROGRAM_FD)?;
         command
             .fd_mappings(vec![
                 FdMapping {
@@ -2768,6 +2768,45 @@ fn validate_actor_state(
     validate_artifact_parent(path, MakerActorArtifactKind::State)
 }
 
+/// The command that executes the pinned program its child receives on
+/// `child_fd`: on Linux the sealed descriptor itself, which no path names.
+#[cfg(target_os = "linux")]
+#[allow(clippy::unnecessary_wraps)]
+fn pinned_program_command(
+    _program: &File,
+    child_fd: i32,
+) -> Result<Command, MakerActorProcessError> {
+    Ok(Command::new(format!("/proc/self/fd/{child_fd}")))
+}
+
+/// macOS cannot execute a descriptor, so the command names the pinned copy
+/// [`sealed_artifact`] keeps in the owner-private artifact directory. The
+/// name is taken from the open descriptor and must still be that inode, with
+/// one link and unchanged size, mode and times. Weaker than Linux: `execve`
+/// resolves the name again, so a same-user process can still swap the file
+/// after this check; the descriptor the child inherits is not what runs.
+#[cfg(target_os = "macos")]
+fn pinned_program_command(
+    program: &File,
+    _child_fd: i32,
+) -> Result<Command, MakerActorProcessError> {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let name =
+        rustix::fs::getpath(program).map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    let path = PathBuf::from(std::ffi::OsStr::from_bytes(name.as_bytes()));
+    let opened = program
+        .metadata()
+        .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    let named =
+        fs::symlink_metadata(&path).map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
+    if !same_artifact(&opened, &named) || named.nlink() != 1 {
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    Ok(Command::new(path))
+}
+
+#[cfg(target_os = "linux")]
 fn sealed_artifact(name: &str, bytes: &[u8], mode: u32) -> Result<File, MakerActorProcessError> {
     let descriptor = memfd_create(name, MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING)
         .map_err(|_| MakerActorProcessError::ArtifactPreparation)?;
@@ -2801,6 +2840,180 @@ fn sealed_artifact(name: &str, bytes: &[u8], mode: u32) -> Result<File, MakerAct
     }
     drop(writer);
     Ok(reader)
+}
+
+/// The macOS stand-in for a write-sealed anonymous file.
+///
+/// macOS has neither `memfd_create` seals nor execution from a descriptor, so
+/// the verified bytes are copied into an owner-private directory (mode 0700,
+/// under the per-user temporary directory) and handed on as a read-only
+/// descriptor:
+///
+/// - a config (no execute bit) is unlinked before it is returned. No path
+///   names it and the only descriptor is read-only, so it has link count 0 as
+///   a sealed memfd has, and the child checks exactly that;
+/// - a program keeps a name, the SHA-256 of its bytes, because `execve` needs
+///   one. It is placed with an exclusive rename, so a name already handed to
+///   a command is never replaced, and an existing copy is used only if it is
+///   still one private link whose bytes hash to that name.
+///
+/// What is weaker than on Linux, and why this is not a silent fallback: a
+/// seal is enforced by the kernel against every process, the owner included.
+/// Here nothing stops another process of the same user from opening the
+/// config copy for writing in the instant before it is unlinked, or from
+/// writing to or replacing the named program between the last check
+/// ([`pinned_program_command`]) and the child's `execve`. Other users are
+/// kept out by the 0700 directory, and a replaced original deployment path
+/// changes nothing, as on Linux.
+#[cfg(target_os = "macos")]
+fn sealed_artifact(name: &str, bytes: &[u8], mode: u32) -> Result<File, MakerActorProcessError> {
+    let directory = private_artifact_directory()?;
+    let executable = mode & 0o100 != 0;
+    let pinned_path = directory.join(hex_lower(Sha256::digest(bytes).as_slice()));
+    if executable {
+        if let Some(reader) = existing_pinned_program(&pinned_path, bytes, mode) {
+            return Ok(reader);
+        }
+        match fs::remove_file(&pinned_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(MakerActorProcessError::ArtifactPreparation),
+        }
+    }
+
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce).map_err(artifact_preparation)?;
+    let staging_path = directory.join(format!(".{name}-{}", hex_lower(&nonce)));
+    let mut writer = open_no_symlinks(
+        &staging_path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+        Mode::RUSR | Mode::WUSR,
+    )
+    .map_err(artifact_preparation)?;
+    let staged = (|| {
+        writer.write_all(bytes)?;
+        writer.flush()?;
+        writer.set_permissions(fs::Permissions::from_mode(mode))
+    })();
+    if staged.is_err() {
+        let _ = fs::remove_file(&staging_path);
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    let Ok(reader) = open_no_symlinks(&staging_path, OFlags::RDONLY, Mode::empty()) else {
+        let _ = fs::remove_file(&staging_path);
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    };
+    if executable {
+        // Never replace a name another pin may already have handed to a
+        // command: a concurrent pin of the same bytes that won the race is
+        // used only if it is still exactly these bytes.
+        match rustix::fs::renameat_with(
+            rustix::fs::CWD,
+            &staging_path,
+            rustix::fs::CWD,
+            &pinned_path,
+            rustix::fs::RenameFlags::NOREPLACE,
+        ) {
+            Ok(()) => {}
+            Err(rustix::io::Errno::EXIST) => {
+                let _ = fs::remove_file(&staging_path);
+                return existing_pinned_program(&pinned_path, bytes, mode)
+                    .ok_or(MakerActorProcessError::ArtifactPreparation);
+            }
+            Err(_) => {
+                let _ = fs::remove_file(&staging_path);
+                return Err(MakerActorProcessError::ArtifactPreparation);
+            }
+        }
+    } else if fs::remove_file(&staging_path).is_err() {
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    let written = writer.metadata().map_err(artifact_preparation)?;
+    drop(writer);
+    let metadata = reader.metadata().map_err(artifact_preparation)?;
+    if metadata.dev() != written.dev()
+        || metadata.ino() != written.ino()
+        || !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.len() != bytes.len() as u64
+        || metadata.permissions().mode() & 0o7777 != mode
+        || metadata.nlink() != u64::from(executable)
+    {
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    Ok(reader)
+}
+
+/// An already pinned program copy, if it is still exactly these bytes.
+#[cfg(target_os = "macos")]
+fn existing_pinned_program(path: &Path, bytes: &[u8], mode: u32) -> Option<File> {
+    let mut reader = open_no_symlinks(path, OFlags::RDONLY, Mode::empty()).ok()?;
+    let metadata = reader.metadata().ok()?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+        || metadata.len() != bytes.len() as u64
+        || metadata.permissions().mode() & 0o7777 != mode
+        || metadata.nlink() != 1
+    {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0_u8; 1 << 16];
+    loop {
+        let read = reader.read(&mut buffer).ok()?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    if hasher.finalize().as_slice() != Sha256::digest(bytes).as_slice() {
+        return None;
+    }
+    reader.seek(std::io::SeekFrom::Start(0)).ok()?;
+    Some(reader)
+}
+
+/// The owner-private directory that holds the pinned copies: created 0700
+/// under the per-user temporary directory, and refused if it is anything but
+/// a real directory of this user that nobody else can enter.
+#[cfg(target_os = "macos")]
+fn private_artifact_directory() -> Result<PathBuf, MakerActorProcessError> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let effective_uid = rustix::process::geteuid().as_raw();
+    // /var is a symlink on macOS; everything below is opened without following any.
+    let root = fs::canonicalize(std::env::temp_dir()).map_err(artifact_preparation)?;
+    let directory = root.join(format!("lez-pinned-artifacts-{effective_uid}"));
+    match fs::DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(_) => return Err(MakerActorProcessError::ArtifactPreparation),
+    }
+    let metadata = fs::symlink_metadata(&directory).map_err(artifact_preparation)?;
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != effective_uid
+        || metadata.permissions().mode() & 0o7777 != 0o700
+    {
+        return Err(MakerActorProcessError::ArtifactPreparation);
+    }
+    Ok(directory)
+}
+
+#[cfg(target_os = "macos")]
+fn artifact_preparation<E>(_: E) -> MakerActorProcessError {
+    MakerActorProcessError::ArtifactPreparation
+}
+
+#[cfg(target_os = "macos")]
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
 }
 
 fn same_artifact(left: &fs::Metadata, right: &fs::Metadata) -> bool {
@@ -3071,4 +3284,162 @@ fn rebuild_actor_kind_tables_for_monero(
          DROP TABLE maker_actor_processes_before_monero;",
     )?;
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    use super::*;
+
+    fn unique_script(tag: &str) -> Vec<u8> {
+        let mut nonce = [0_u8; 16];
+        getrandom::fill(&mut nonce).expect("nonce");
+        format!("#!/bin/sh\n# {}\necho {tag}\n", hex_lower(&nonce)).into_bytes()
+    }
+
+    fn read_all(file: &mut File) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        file.seek(std::io::SeekFrom::Start(0)).expect("rewind");
+        file.read_to_end(&mut bytes).expect("read");
+        bytes
+    }
+
+    #[test]
+    fn config_copy_is_unlinked_owner_private_and_read_only() {
+        let bytes = b"{\"config\":true}\n";
+        let mut config = sealed_artifact("test-config", bytes, 0o600).expect("pin config");
+        let metadata = config.metadata().expect("config metadata");
+        assert!(metadata.file_type().is_file());
+        assert_eq!(metadata.nlink(), 0);
+        assert_eq!(metadata.mode() & 0o7777, 0o600);
+        assert_eq!(metadata.uid(), rustix::process::geteuid().as_raw());
+        assert_eq!(
+            rustix::fs::fcntl_getfl(&config).expect("access mode") & OFlags::RWMODE,
+            OFlags::RDONLY
+        );
+        assert!(config.write_all(b"x").is_err());
+        assert_eq!(read_all(&mut config), bytes);
+        let flags = rustix::io::fcntl_getfd(&config).expect("descriptor flags");
+        assert!(flags.contains(rustix::io::FdFlags::CLOEXEC));
+    }
+
+    #[test]
+    fn artifact_directory_is_owner_only() {
+        let directory = private_artifact_directory().expect("artifact directory");
+        let metadata = fs::symlink_metadata(&directory).expect("directory metadata");
+        assert!(metadata.file_type().is_dir());
+        assert_eq!(metadata.mode() & 0o7777, 0o700);
+        assert_eq!(metadata.uid(), rustix::process::geteuid().as_raw());
+        assert_eq!(fs::canonicalize(&directory).expect("canonical"), directory);
+    }
+
+    #[test]
+    fn program_copy_is_content_addressed_read_only_and_executable() {
+        let bytes = unique_script("pinned");
+        let mut program = sealed_artifact("test-program", &bytes, 0o700).expect("pin program");
+        assert_eq!(
+            rustix::fs::fcntl_getfl(&program).expect("access mode") & OFlags::RWMODE,
+            OFlags::RDONLY
+        );
+        assert_eq!(read_all(&mut program), bytes);
+        let command = pinned_program_command(&program, MAKER_ACTOR_PROGRAM_FD).expect("command");
+        let path = PathBuf::from(command.get_program());
+        assert_eq!(
+            path,
+            private_artifact_directory()
+                .expect("artifact directory")
+                .join(hex_lower(Sha256::digest(&bytes).as_slice()))
+        );
+        let named = fs::symlink_metadata(&path).expect("pinned metadata");
+        assert_eq!(named.nlink(), 1);
+        assert_eq!(named.mode() & 0o7777, 0o700);
+
+        let mut command = command;
+        let output = command.output().expect("run pinned program");
+        assert!(output.status.success());
+        assert_eq!(output.stdout, b"pinned\n");
+
+        let again = sealed_artifact("test-program", &bytes, 0o700).expect("pin again");
+        let reused = again.metadata().expect("reused metadata");
+        assert_eq!(
+            (reused.dev(), reused.ino()),
+            (named.dev(), named.ino()),
+            "an intact copy is reused"
+        );
+        fs::remove_file(path).expect("clean up pinned copy");
+    }
+
+    #[test]
+    fn replaced_pinned_program_is_not_executed_or_reused() {
+        let bytes = unique_script("original");
+        let program = sealed_artifact("test-program", &bytes, 0o700).expect("pin program");
+        let path = PathBuf::from(
+            pinned_program_command(&program, PINNED_EXECUTABLE_FD)
+                .expect("command")
+                .get_program(),
+        );
+        let original = program.metadata().expect("original metadata");
+
+        // Another inode put under the same name: the held program is refused.
+        let replacement = path.with_extension("replacement");
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o700)
+            .open(&replacement)
+            .and_then(|mut file| file.write_all(&unique_script("replaced")))
+            .expect("write replacement");
+        fs::rename(&replacement, &path).expect("replace pinned name");
+        assert!(matches!(
+            pinned_program_command(&program, PINNED_EXECUTABLE_FD),
+            Err(MakerActorProcessError::ArtifactPreparation)
+        ));
+
+        // The replacement does not hash to the name, so a new pin of the
+        // verified bytes makes a fresh exact copy instead of reusing it.
+        let mut repinned = sealed_artifact("test-program", &bytes, 0o700).expect("repin");
+        let fresh = repinned.metadata().expect("fresh metadata");
+        assert_ne!(fresh.ino(), original.ino());
+        assert_eq!(read_all(&mut repinned), bytes);
+        let mut command = pinned_program_command(&repinned, PINNED_EXECUTABLE_FD).expect("command");
+        assert_eq!(command.output().expect("run").stdout, b"original\n");
+        fs::remove_file(path).expect("clean up pinned copy");
+    }
+
+    #[test]
+    fn program_changed_in_place_or_hard_linked_is_refused() {
+        let bytes = unique_script("in-place");
+        let program = sealed_artifact("test-program", &bytes, 0o700).expect("pin program");
+        let path = PathBuf::from(
+            pinned_program_command(&program, PINNED_EXECUTABLE_FD)
+                .expect("command")
+                .get_program(),
+        );
+
+        let alias = path.with_extension("alias");
+        fs::hard_link(&path, &alias).expect("hard link");
+        assert!(pinned_program_command(&program, PINNED_EXECUTABLE_FD).is_err());
+        fs::remove_file(&alias).expect("remove hard link");
+
+        let mut tampered = bytes.clone();
+        let last = tampered.len() - 2;
+        tampered[last] = b'X';
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|mut file| file.write_all(&tampered))
+            .expect("rewrite in place");
+        assert!(
+            existing_pinned_program(&path, &bytes, 0o700).is_none(),
+            "changed bytes must not be reused"
+        );
+        let mut repinned = sealed_artifact("test-program", &bytes, 0o700).expect("repin");
+        assert_eq!(read_all(&mut repinned), bytes);
+        assert!(
+            pinned_program_command(&program, PINNED_EXECUTABLE_FD).is_err(),
+            "the old copy no longer has the name"
+        );
+        fs::remove_file(path).expect("clean up pinned copy");
+    }
 }

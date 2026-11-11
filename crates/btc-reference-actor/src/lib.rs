@@ -96,6 +96,9 @@ use lez_swap_store::{
     PublicEffectSubmissionResult, SqliteAdaptorSessionJournal, SqliteBtcMakerLockJournal,
     SqliteBtcRecoveryStore, SqlitePublicEffectJournal,
 };
+#[cfg(target_os = "macos")]
+use rustix::fs::{OFlags, fcntl_getfl};
+#[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
@@ -9875,7 +9878,11 @@ fn read_sealed_config_fd(fd: i32, maximum: usize) -> Result<Zeroizing<Vec<u8>>, 
     if fd != MAKER_ACTOR_CONFIG_FD {
         return Err(());
     }
+    #[cfg(target_os = "linux")]
     let mut file = File::open(format!("/proc/self/fd/{fd}")).map_err(|_| ())?;
+    // macOS has no /proc; /dev/fd/N duplicates the inherited descriptor.
+    #[cfg(target_os = "macos")]
+    let mut file = File::open(format!("/dev/fd/{fd}")).map_err(|_| ())?;
     let before = file.metadata().map_err(|_| ())?;
     validate_sealed_config_metadata(&before, maximum)?;
     validate_config_seals(&file)?;
@@ -9916,10 +9923,25 @@ fn validate_sealed_config_metadata(metadata: &fs::Metadata, maximum: usize) -> R
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn validate_config_seals(file: &File) -> Result<(), ()> {
     let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
     let actual = fcntl_get_seals(file).map_err(|_| ())?;
     if actual.contains(required) {
+        Ok(())
+    } else {
+        Err(())
+    }
+}
+
+/// macOS has no seals. The supervisor hands over an unlinked owner-private
+/// copy on a read-only descriptor (`lez-swap-store`, `sealed_artifact`); what
+/// can be checked here is that this descriptor cannot write. That is weaker
+/// than a seal, which binds every descriptor of the file.
+#[cfg(target_os = "macos")]
+fn validate_config_seals(file: &File) -> Result<(), ()> {
+    let flags = fcntl_getfl(file).map_err(|_| ())?;
+    if flags & OFlags::RWMODE == OFlags::RDONLY {
         Ok(())
     } else {
         Err(())

@@ -1,9 +1,10 @@
 //! Bounded execution of one durable maker-actor scheduling attempt.
 
+#[cfg(target_os = "linux")]
+use std::fs;
 #[cfg(feature = "test-crash-hooks")]
 use std::path::PathBuf;
 use std::{
-    fs,
     io::{self, Read},
     os::unix::process::CommandExt as _,
     process::{Child, ExitStatus, Stdio},
@@ -152,7 +153,12 @@ impl MakerActorSupervisorConfig {
 }
 
 fn boottime_milliseconds() -> u64 {
+    #[cfg(target_os = "linux")]
     let now = clock_gettime(ClockId::Boottime);
+    // macOS has no CLOCK_BOOTTIME; its CLOCK_MONOTONIC keeps counting while
+    // the machine sleeps, which is the property wanted here.
+    #[cfg(target_os = "macos")]
+    let now = clock_gettime(ClockId::Monotonic);
     let seconds = u64::try_from(now.tv_sec).unwrap_or(u64::MAX);
     let nanoseconds = u64::try_from(now.tv_nsec).unwrap_or(u64::MAX);
     seconds
@@ -1038,6 +1044,7 @@ fn read_bounded_and_drain(mut stream: impl Read, maximum: usize) -> io::Result<V
     Ok(retained)
 }
 
+#[cfg(target_os = "linux")]
 fn child_start_ticks(pid: u32) -> Result<u64, ()> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|_| ())?;
     let (_, fields) = stat.rsplit_once(") ").ok_or(())?;
@@ -1047,6 +1054,32 @@ fn child_start_ticks(pid: u32) -> Result<u64, ()> {
         .ok_or(())?
         .parse()
         .map_err(|_| ())
+}
+
+/// macOS has no /proc. The child's start time comes from `ps`, in UTC and the
+/// C locale so the text is the same on every call, and is folded into a
+/// non-zero number: with the pid it identifies one process, to the second
+/// rather than to the clock tick Linux gives.
+#[cfg(target_os = "macos")]
+fn child_start_ticks(pid: u32) -> Result<u64, ()> {
+    use sha2::{Digest as _, Sha256};
+
+    let output = std::process::Command::new("/bin/ps")
+        .env_clear()
+        .env("TZ", "UTC")
+        .env("LC_ALL", "C")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|_| ())?;
+    let started = output.stdout.trim_ascii();
+    if !output.status.success() || started.is_empty() {
+        return Err(());
+    }
+    let digest = Sha256::digest(started);
+    let folded = u64::from_be_bytes(digest[..8].try_into().map_err(|_| ())?) >> 2;
+    Ok(folded.max(1))
 }
 
 struct ParsedStatus {

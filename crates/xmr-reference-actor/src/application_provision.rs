@@ -23,8 +23,12 @@ use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrActivatedAgreementV1,
     XmrAgreementV1, XmrSessionTranscriptV1,
 };
+#[cfg(target_os = "macos")]
+use rustix::fs::{OFlags, fcntl_getfl};
+#[cfg(target_os = "linux")]
+use rustix::fs::{SealFlags, fcntl_get_seals};
 use rustix::{
-    fs::{RenameFlags, SealFlags, fcntl_get_seals, renameat_with},
+    fs::{RenameFlags, renameat_with},
     io::Errno,
 };
 use serde::{Deserialize, Serialize};
@@ -2148,8 +2152,12 @@ fn read_sealed_config_fd(fd: i32) -> Result<Zeroizing<Vec<u8>>> {
         fd == MAKER_ACTOR_CONFIG_FD,
         "XMR Maker actor config descriptor must be {MAKER_ACTOR_CONFIG_FD}"
     );
-    let mut file =
-        File::open(format!("/proc/self/fd/{fd}")).context("open sealed XMR Maker actor config")?;
+    #[cfg(target_os = "linux")]
+    let descriptor_path = format!("/proc/self/fd/{fd}");
+    // macOS has no /proc; /dev/fd/N duplicates the inherited descriptor.
+    #[cfg(target_os = "macos")]
+    let descriptor_path = format!("/dev/fd/{fd}");
+    let mut file = File::open(descriptor_path).context("open sealed XMR Maker actor config")?;
     let before = file
         .metadata()
         .context("inspect sealed XMR Maker actor config")?;
@@ -2195,12 +2203,27 @@ fn validate_sealed_config_metadata(metadata: &fs::Metadata) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn validate_config_seals(file: &File) -> Result<()> {
     let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
     let actual = fcntl_get_seals(file).context("inspect XMR Maker actor config seals")?;
     ensure!(
         actual.contains(required),
         "XMR Maker actor config is not fully sealed"
+    );
+    Ok(())
+}
+
+/// macOS has no seals. The supervisor hands over an unlinked owner-private
+/// copy on a read-only descriptor (`lez-swap-store`, `sealed_artifact`); what
+/// can be checked here is that this descriptor cannot write. That is weaker
+/// than a seal, which binds every descriptor of the file.
+#[cfg(target_os = "macos")]
+fn validate_config_seals(file: &File) -> Result<()> {
+    let flags = fcntl_getfl(file).context("inspect XMR Maker actor config access mode")?;
+    ensure!(
+        flags & OFlags::RWMODE == OFlags::RDONLY,
+        "XMR Maker actor config descriptor is writable"
     );
     Ok(())
 }
@@ -2265,8 +2288,13 @@ const fn role_name(role: ActorRole) -> &'static str {
 mod tests {
     use super::*;
 
-    use std::{ffi::CString, io::Write as _};
+    #[cfg(target_os = "linux")]
+    use std::ffi::CString;
+    use std::io::Write as _;
+    #[cfg(target_os = "macos")]
+    use std::os::unix::fs::OpenOptionsExt as _;
 
+    #[cfg(target_os = "linux")]
     use rustix::fs::{MemfdFlags, Mode, fchmod, fcntl_add_seals, memfd_create};
 
     fn manifest() -> XmrActorProvisionManifestV2 {
@@ -2434,6 +2462,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     fn config_memfd(bytes: &[u8], seals: SealFlags) -> File {
         let name = CString::new("lez-xmr-actor-test-config").expect("memfd name");
         let descriptor = memfd_create(
@@ -2452,19 +2481,43 @@ mod tests {
     fn sealed_config_pinned_digest_and_sidecar_boundaries_fail_closed() {
         assert!(load_validated_xmr_maker_authority_fd(MAKER_ACTOR_CONFIG_FD - 1).is_err());
 
-        let incomplete = config_memfd(
-            b"{}\n",
-            SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW,
-        );
-        assert!(validate_sealed_config_metadata(&incomplete.metadata().unwrap()).is_ok());
-        assert!(validate_config_seals(&incomplete).is_err());
+        #[cfg(target_os = "linux")]
+        {
+            let incomplete = config_memfd(
+                b"{}\n",
+                SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW,
+            );
+            assert!(validate_sealed_config_metadata(&incomplete.metadata().unwrap()).is_ok());
+            assert!(validate_config_seals(&incomplete).is_err());
 
-        let complete = config_memfd(
-            b"{}\n",
-            SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
-        );
-        assert!(validate_sealed_config_metadata(&complete.metadata().unwrap()).is_ok());
-        assert!(validate_config_seals(&complete).is_ok());
+            let complete = config_memfd(
+                b"{}\n",
+                SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE,
+            );
+            assert!(validate_sealed_config_metadata(&complete.metadata().unwrap()).is_ok());
+            assert!(validate_config_seals(&complete).is_ok());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // The macOS stand-in: an unlinked 0600 copy, accepted only on a
+            // read-only descriptor.
+            let root = tempfile::tempdir().expect("config root");
+            let path = root.path().join("config");
+            let mut writable = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+                .expect("create config");
+            writable.write_all(b"{}\n").expect("write config");
+            let read_only = File::open(&path).expect("reopen config read-only");
+            fs::remove_file(&path).expect("unlink config");
+            assert!(validate_sealed_config_metadata(&writable.metadata().unwrap()).is_ok());
+            assert!(validate_config_seals(&writable).is_err());
+            assert!(validate_sealed_config_metadata(&read_only.metadata().unwrap()).is_ok());
+            assert!(validate_config_seals(&read_only).is_ok());
+        }
 
         let directory = tempfile::tempdir().expect("private source root");
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))

@@ -115,11 +115,10 @@ use maker_refund_activation::{
 use monero::Address as MoneroAddress;
 #[cfg(feature = "sessions")]
 use rustix::fs::Dir;
+#[cfg(target_os = "linux")]
+use rustix::fs::{ResolveFlags, openat2};
 use rustix::{
-    fs::{
-        AtFlags, CWD, Mode, OFlags, RenameFlags, ResolveFlags, mkdirat, openat, openat2,
-        renameat_with, unlinkat,
-    },
+    fs::{AtFlags, CWD, Mode, OFlags, RenameFlags, mkdirat, openat, renameat_with, unlinkat},
     io::Errno,
 };
 use secp256k1::rand::{CryptoRng, RngCore, SeedableRng, rngs::OsRng, rngs::StdRng};
@@ -3079,6 +3078,7 @@ impl SecureDestination {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn open_private_directory(path: &Path, label: &'static str) -> Result<File> {
     let file = openat2(
         CWD,
@@ -3086,6 +3086,23 @@ fn open_private_directory(path: &Path, label: &'static str) -> Result<File> {
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
         ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|_| anyhow!("{label} is unavailable or unsafe"))?;
+    validate_owner_directory(&file, label)?;
+    Ok(file)
+}
+
+/// macOS: `O_NOFOLLOW_ANY` refuses a symlink in any component, the last one
+/// included, as `RESOLVE_NO_SYMLINKS` plus `O_NOFOLLOW` do on Linux (macOS
+/// rejects the two flags together with `EINVAL`).
+#[cfg(target_os = "macos")]
+fn open_private_directory(path: &Path, label: &'static str) -> Result<File> {
+    let file = openat(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW_ANY | OFlags::CLOEXEC,
+        Mode::empty(),
     )
     .map(File::from)
     .map_err(|_| anyhow!("{label} is unavailable or unsafe"))?;
@@ -3110,6 +3127,7 @@ fn effective_uid() -> u32 {
     rustix::process::geteuid().as_raw()
 }
 
+#[cfg(target_os = "linux")]
 fn open_path_no_symlinks(path: &Path, label: &'static str) -> Result<File> {
     openat2(
         CWD,
@@ -3117,6 +3135,21 @@ fn open_path_no_symlinks(path: &Path, label: &'static str) -> Result<File> {
         OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
         ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|_| anyhow!("{label} is unavailable or unsafe"))
+}
+
+/// macOS: `O_NOFOLLOW_ANY` refuses a symlink in any component, the last one
+/// included, as `RESOLVE_NO_SYMLINKS` plus `O_NOFOLLOW` do on Linux (macOS
+/// rejects the two flags together with `EINVAL`).
+#[cfg(target_os = "macos")]
+fn open_path_no_symlinks(path: &Path, label: &'static str) -> Result<File> {
+    openat(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW_ANY | OFlags::CLOEXEC,
+        Mode::empty(),
     )
     .map(File::from)
     .map_err(|_| anyhow!("{label} is unavailable or unsafe"))
