@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use lez_actor_supervision::terminal_phase;
+use lez_actor_supervision::{ActorLastOutcomeV1, LastOutcomes, terminal_phase};
 use lez_swap_core::SwapId;
 use lez_swap_store::{
     ActorHeldLock, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
@@ -445,6 +445,45 @@ fn resolve_claimed_attempt(
     })
 }
 
+/// What each supervised swap's actor last did or waits for (#103 item 6),
+/// for `maker_actor_monitor_v1`. In memory: the supervisor's workers and the
+/// owner API run in one process, and the next attempt refills it after a
+/// restart.
+static LAST_OUTCOMES: std::sync::LazyLock<LastOutcomes> =
+    std::sync::LazyLock::new(LastOutcomes::new);
+
+/// The last outcome of `swap_id`'s actor this process saw, if any.
+#[must_use]
+pub fn maker_actor_last_outcome(swap_id: &SwapId) -> Option<ActorLastOutcomeV1> {
+    LAST_OUTCOMES.get(swap_id.as_str())
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Keeps one attempt's end as the swap's last outcome: the effect the actor
+/// printed (with the wait it named), or the class the attempt failed by.
+fn record_last_outcome(
+    swap_id: &SwapId,
+    command: &str,
+    effect: Option<&[u8]>,
+    failure: Option<&str>,
+) {
+    let outcome = match (effect, failure) {
+        (_, Some(class)) => Some(ActorLastOutcomeV1::failed(command, class, unix_now())),
+        (Some(effect), None) => serde_json::from_slice::<Value>(effect)
+            .ok()
+            .and_then(|value| ActorLastOutcomeV1::from_effect(command, &value, unix_now())),
+        (None, None) => None,
+    };
+    if let Some(outcome) = outcome {
+        LAST_OUTCOMES.record(swap_id.as_str(), outcome);
+    }
+}
+
 /// One secret-free line per supervised effect, in the words both Nodes use
 /// (`lez_actor_supervision::log_effect`).
 fn log_effect(swap_id: &str, command: ActorEffectCommand, effect: &[u8]) {
@@ -534,6 +573,10 @@ fn run_claimed_attempt(
     run_claimed_attempt_with_lock(store, lease, held_lock, config, cancellation)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one attempt read in order: status, decision, effect, and its last outcome kept"
+)]
 fn run_claimed_attempt_with_lock(
     store: &mut SqliteSwapStore,
     lease: &MakerActorLeaseV1,
@@ -560,6 +603,8 @@ fn run_claimed_attempt_with_lock(
         .map_err(ClaimedAttemptError::Scheduling)?
         .map(|action| action.action());
     let mut progress = None;
+    // The command whose failure an attempt resolves by, for its last outcome.
+    let mut attempted = ActorInvocation::Status.name();
     let attempt = (|| {
         let status = match run_child(
             store,
@@ -606,6 +651,7 @@ fn run_claimed_attempt_with_lock(
         if let Some(class) = effect_held_back(store, lease, config, command, &status) {
             return Ok(ClaimedAttempt::Backoff(class));
         }
+        attempted = command.name();
         let effect = match run_child(
             store,
             lease,
@@ -626,6 +672,12 @@ fn run_claimed_attempt_with_lock(
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         };
         log_effect(lease.record().swap_id().as_str(), command, &effect);
+        record_last_outcome(
+            lease.record().swap_id(),
+            command.name(),
+            Some(&effect),
+            None,
+        );
         if status_revision.is_some_and(|revision| parsed_effect.revision < revision) {
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         }
@@ -636,6 +688,9 @@ fn run_claimed_attempt_with_lock(
             (false, _) => Ok(ClaimedAttempt::Requeue),
         }
     })()?;
+    if let ClaimedAttempt::Backoff(class) | ClaimedAttempt::Failed(class) = attempt {
+        record_last_outcome(lease.record().swap_id(), attempted, None, Some(class));
+    }
     Ok(ClaimedAttemptResult {
         attempt,
         progress,
@@ -2081,5 +2136,39 @@ mod failure_alphabet_tests {
         assert!(lez_actor_supervision::validate_failure_class(
             "coordinator_restarted"
         ));
+    }
+}
+
+#[cfg(test)]
+mod last_outcome_tests {
+    use lez_swap_core::SwapId;
+
+    use super::{maker_actor_last_outcome, record_last_outcome};
+
+    /// #103 item 6: what an attempt ended with is the swap's last outcome,
+    /// the actor's named wait included; a failed attempt replaces it by class.
+    #[test]
+    fn an_attempts_end_is_kept_as_the_swaps_last_outcome() {
+        let swap = SwapId::new("r103-runtime-swap".to_owned()).unwrap();
+        record_last_outcome(
+            &swap,
+            "recover",
+            Some(
+                br#"{"schema_version":1,"role":"maker","command":"recover","outcome":"awaiting_observation","chain":"bitcoin","phase":"both_legs_locked","revision":2,"next_action":"recover_maker_leg","wait":{"kind":"bitcoin_refund_maturity","chain":"bitcoin","until_height":1234,"chain_height":1229}}"#,
+            ),
+            None,
+        );
+        let kept = maker_actor_last_outcome(&swap).expect("kept");
+        assert_eq!(kept.step, "recover");
+        assert_eq!(kept.revision, Some(2));
+        let wait = kept.waiting_for.expect("wait");
+        assert_eq!(
+            (wait.kind.as_str(), wait.until_height, wait.chain_height),
+            ("bitcoin_refund_maturity", Some(1234), Some(1229))
+        );
+        record_last_outcome(&swap, "recover", None, Some("actor_timeout"));
+        let failed = maker_actor_last_outcome(&swap).expect("kept");
+        assert_eq!(failed.failure_class.as_deref(), Some("actor_timeout"));
+        assert_eq!(failed.waiting_for, None);
     }
 }

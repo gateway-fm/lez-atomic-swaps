@@ -9509,3 +9509,217 @@ fn late_maker_lock_admits_first_lock_recovery() {
         );
     }
 }
+
+/// A first-lock safety read that holds the refund the way the live LEZ read
+/// does when the Maker's lock is absent but finalized LEZ time is before the
+/// cutoff: it notes the wait, then answers uncertain.
+struct FinalityBeforeCutoffSafety {
+    finalized_unix_seconds: u64,
+}
+
+#[async_trait]
+impl FirstLockRecoverySafetyPort for FinalityBeforeCutoffSafety {
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        _read_ordinal: u8,
+    ) -> Result<FirstLockRecoverySafetyObservation, ActorCommandError> {
+        let cutoff = agreement
+            .body()
+            .recovery_plan()
+            .maker_second_lock_cutoff_unix_seconds();
+        note_wait(
+            ActorWaitV1::new("lez_finality_past_cutoff", "lez")
+                .until_time(cutoff, Some(self.finalized_unix_seconds)),
+        );
+        Ok(FirstLockRecoverySafetyObservation::Uncertain {
+            maker_chain: agreement.coordinator().funded_chain(Participant::Maker),
+        })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_refund_held_for_lez_finality_reports_the_cutoff_and_the_finalized_time() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&fixture).await;
+    let cutoff = fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    let safety = FinalityBeforeCutoffSafety {
+        finalized_unix_seconds: cutoff - 420,
+    };
+    let refund = FixedRefundObserver::new(ready_refund_observation(
+        &fixture.agreement,
+        RefundTransition::FirstLockRecovery,
+    ));
+    let output = Box::pin(with_reported_wait(
+        &fixture.config,
+        drive_first_lock_refund_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &safety,
+            &refund,
+        ),
+    ))
+    .await
+    .expect("a held refund only observes");
+    // The decision is unchanged: nothing projected, no refund observed.
+    assert_eq!(output.revision, 1);
+    assert_eq!(refund.transitions(), Vec::new());
+    let wait = output.wait().expect("the hold is named").clone();
+    assert_eq!(wait.kind, "lez_finality_past_cutoff");
+    assert_eq!(wait.chain, "lez");
+    assert_eq!(wait.until_unix_seconds, Some(cutoff));
+    assert_eq!(wait.chain_unix_seconds, Some(cutoff - 420));
+    let value = output_json(ActorCommandOutputV1::Effect(output));
+    assert_eq!(value["outcome"], "awaiting_observation");
+    assert_eq!(value["wait"]["kind"], "lez_finality_past_cutoff");
+    assert_eq!(value["wait"]["until_unix_seconds"], cutoff);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_noted_wait_is_dropped_once_the_step_projects_and_a_bare_output_has_no_wait_key() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    activate_and_project_both_locks(&fixture).await;
+    let ready = FixedRefundObserver::new(ready_refund_observation(
+        &fixture.agreement,
+        RefundTransition::MakerLeg,
+    ));
+    let projected = Box::pin(with_reported_wait(&fixture.config, async {
+        note_wait(ActorWaitV1::new("bitcoin_refund_maturity", "bitcoin").until_height(9, Some(8)));
+        Box::pin(drive_refund_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &ready,
+        ))
+        .await
+    }))
+    .await
+    .expect("the refund projects");
+    assert!(projected.changed_durable_state());
+    assert_eq!(projected.wait(), None);
+    let value = output_json(ActorCommandOutputV1::Effect(projected));
+    assert!(value.get("wait").is_none(), "{value}");
+
+    // Outside the reporting scope a note is dropped and nothing is attached.
+    note_wait(ActorWaitV1::new("bitcoin_refund_maturity", "bitcoin"));
+    let pending = FixedRefundObserver::new(ActorRefundObservation::Pending {
+        chain: Chain::Bitcoin,
+    });
+    let bare = drive_refund_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &pending,
+    )
+    .await
+    .expect("pending");
+    assert_eq!(bare.wait(), None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn without_a_noted_wait_the_takers_wait_for_the_makers_lock_names_the_cutoff() {
+    freeze_wall_clock_before_maker_cutoff();
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&fixture).await;
+    let (_, status) = open_projection(
+        &fixture.config,
+        &fixture.agreement,
+        fixture.agreement_wire.clone(),
+    )
+    .expect("projection");
+    let maker_chain = fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let output = with_reported_wait(&fixture.config, async {
+        Ok(effect_output(
+            &fixture.config,
+            ActorEffectCommandV1::Drive,
+            ActorEffectOutcomeV1::AwaitingObservation {
+                chain: maker_chain.into(),
+            },
+            &status,
+        ))
+    })
+    .await
+    .expect("awaiting");
+    assert_eq!(
+        output.next_action,
+        ActorNextActionV1::ObserveMakerSecondLockOrRecoverTakerLeg
+    );
+    let wait = output.wait().expect("phase wait").clone();
+    assert_eq!(wait.kind, "maker_lock");
+    assert_eq!(wait.chain, chain_label(maker_chain));
+    assert_eq!(
+        wait.until_unix_seconds,
+        Some(FIXTURE_MAKER_CUTOFF_UNIX_SECONDS)
+    );
+    assert_eq!(wait.chain_unix_seconds, None);
+
+    // A projected step is reported as it was, with no phase wait.
+    let projected = with_reported_wait(&fixture.config, async {
+        Ok(effect_output(
+            &fixture.config,
+            ActorEffectCommandV1::Drive,
+            ActorEffectOutcomeV1::NotYetComposed {
+                durable_revision: 1,
+            },
+            &status,
+        ))
+    })
+    .await
+    .expect("not yet composed");
+    assert_eq!(projected.wait(), None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_lez_refund_before_its_refund_time_notes_the_refund_time_and_the_finalized_time() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    let refund_at_ms = fixture.agreement.lez_terms().refund_at_ms();
+    let noted = NOTED_WAIT
+        .scope(std::cell::RefCell::new(None), async {
+            note_lez_refund_time_wait(&fixture.agreement, refund_at_ms - 61_000);
+            NOTED_WAIT.with(|noted| noted.borrow_mut().take())
+        })
+        .await
+        .expect("noted before the refund time");
+    assert_eq!(noted.kind, "lez_finality_past_refund_time");
+    assert_eq!(noted.until_unix_seconds, Some(refund_at_ms / 1_000));
+    assert_eq!(
+        noted.chain_unix_seconds,
+        Some((refund_at_ms - 61_000) / 1_000)
+    );
+    let after = NOTED_WAIT
+        .scope(std::cell::RefCell::new(None), async {
+            note_lez_refund_time_wait(&fixture.agreement, refund_at_ms);
+            NOTED_WAIT.with(|noted| noted.borrow_mut().take())
+        })
+        .await;
+    assert_eq!(after, None, "nothing is held once finality passed it");
+}
+
+#[test]
+fn every_actor_error_has_a_distinct_failure_class_in_the_shared_alphabet() {
+    let errors = [
+        ActorCommandError::ConfigurationUnavailable,
+        ActorCommandError::AgreementUnavailable,
+        ActorCommandError::AgreementBindingInvalid,
+        ActorCommandError::StateUnavailable,
+        ActorCommandError::NotActivated,
+        ActorCommandError::ActivationMaterialUnavailable,
+        ActorCommandError::ObservationUnavailable,
+        ActorCommandError::ProjectionUnavailable,
+    ];
+    let classes: HashSet<_> = errors.iter().map(|error| error.failure_class()).collect();
+    assert_eq!(classes.len(), errors.len());
+    assert!(
+        classes
+            .iter()
+            .all(|class| lez_actor_supervision::validate_failure_class(class))
+    );
+}
