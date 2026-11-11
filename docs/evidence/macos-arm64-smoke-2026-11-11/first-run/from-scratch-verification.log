@@ -1,0 +1,21 @@
+[19:26:34 stack] desk suites in each party's Basecamp (the Maker suite also seeds the order book)
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+1 passed, 0 failed
+  OK   all services up
+  OK   Bitcoin chain at height 217
+  OK   Bitcoin spender index present (actor lock observation)
+  OK   LEZ chain finalized at block 580
+15/15 checks passed
+  OK   explorer transaction display
+15/15 market checks passed
+  OK   Node market behaviour
+3 passed, 0 failed
+  OK   desk suite: maker
+1 passed, 0 failed
+  OK   desk suite: taker
+
+[19:27:46 stack] done
