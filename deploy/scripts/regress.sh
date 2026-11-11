@@ -29,6 +29,9 @@
 # and the miner recreated, the chain kept). A ZEC test runs on either: its
 # windows come from the corridor's agreement.
 #
+# LEZ_REGRESS_RECORD=1 records every desk test (ui-e2e.sh --record) and keeps
+# the recordings in the run's videos/ directory.
+#
 # LEZ_LANES=N (N > 1) runs N tests at a time, one per lane: lane 1 is the stack,
 # lanes 2..N each one more Maker/Taker pair with its own Bitcoin Core, miner and
 # Zebra on the same LEZ chain (scripts/lane.sh, scripts/lanes.sh, which this
@@ -187,9 +190,21 @@ use_profile() { # use_profile <profile>: switch the standing stack to it unless 
   [[ "$LEZ_TIMING_PROFILE" == "$1" ]] || { log "    runtime.env still names profile $LEZ_TIMING_PROFILE"; return 1; }
 }
 command_of() { # command_of <kind> <pair> <scenario> <direction>
-  local pair=(); [[ "$2" == zec ]] && pair=(--pair Zcash)
+  local pair=() record=(); [[ "$2" == zec ]] && pair=(--pair Zcash)
+  [[ "${LEZ_REGRESS_RECORD:-0}" != 1 ]] || record=(--record)
   if [[ "$1" == node ]]; then echo python3 scripts/node-e2e.py "${pair[@]}" --direction "$4" "$3"
-  else echo bash scripts/ui-e2e.sh "$3" "${pair[@]}" --direction "$4"; fi
+  else echo bash scripts/ui-e2e.sh "$3" "${pair[@]}" --direction "$4" "${record[@]}"; fi
+}
+# keep_video <scenario> <direction> <try> <verdict> <started>: with
+# LEZ_REGRESS_RECORD=1 every desk test is recorded (ui-e2e.sh --record, on its
+# lane's two Basecamp displays); the recording this try wrote is kept with the
+# run, a try that did not pass under a name that says so.
+keep_video() {
+  [[ "${LEZ_REGRESS_RECORD:-0}" == 1 ]] || return 0
+  local video="${LEZ_LANE_RUNTIME:-runtime}/evidence/videos/$2-$1.mp4" name="$2-$1"
+  [[ -s "$video" && "$(stat -c %Y "$video")" -ge "$5" ]] || return 0
+  [[ "$4" == PASSED ]] || name+="-try$3-$4"
+  mkdir -p "$out/videos" && cp "$video" "$out/videos/$name.mp4"
 }
 keep() { cp runtime/e2e/*.json "$out/e2e/" 2>/dev/null; cp runtime/evidence/zec/*.json "$out/zec/" 2>/dev/null; true; }
 
@@ -232,6 +247,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
     log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s (+$(( started - prepared )) s before it$([[ "$fresh" == 0 ]] || echo ', a new chain among them'))"
     printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$try" "$verdict" "$(( $(date +%s) - started ))" "$(date -u +%FT%TZ)" >>"$out/results.tsv"
     keep
+    [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
     [[ "$verdict" == PASSED ]] && return 0
     if [[ "$verdict" != FROZEN ]]; then
       sed 's/\x1b\[[0-9;]*m//g' "$logfile" | grep -E '✗|FAILED|Failure|Traceback|rror' | tail -3 | cut -c1-220 | sed 's/^/      /' | tee -a "$out/regress.log"
@@ -318,6 +334,7 @@ lane_job() {
   case "$rc" in 0) verdict=PASSED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
   if [[ -e "$dir/void" ]]; then verdict=FROZEN
   elif [[ "$verdict" != PASSED ]] && ! moving "${LEZ_REGRESS_MOVING_WINDOW:-30}"; then verdict=FROZEN; fi
+  [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
   printf '%s\t%s\n' "$verdict" "$(( $(date +%s) - started ))" >"$dir/verdict"
 }
 
