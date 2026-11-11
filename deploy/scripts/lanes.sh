@@ -67,15 +67,15 @@ lane_up() {
   done
   bash scripts/gen-config.sh runtime || return 1
   # (with their init containers, which own the new volumes to the chains' uid)
-  docker compose "${lane_compose[@]}" up -d bitcoin-core zebra || return 1
+  docker compose "${lane_compose[@]}" up -d --no-build bitcoin-core zebra || return 1
   wait_healthy 600 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-zebra" || return 1
-  docker compose "${lane_compose[@]}" up -d --no-deps btc-miner || return 1
+  docker compose "${lane_compose[@]}" up -d --no-build --no-deps btc-miner || return 1
   python3 scripts/seed-btc-wallets.py || return 1
   # Recreated: the LEZ chain or the lane's files may be new since they started.
   # The Taker pins the Maker's Delivery identity at start, so the Maker first.
-  docker compose "${lane_compose[@]}" up -d --no-deps --force-recreate maker-node || return 1
+  docker compose "${lane_compose[@]}" up -d --no-build --no-deps --force-recreate maker-node || return 1
   wait_healthy 1200 "$LEZ_CONTAINER_PREFIX-maker-node" || return 1
-  docker compose "${lane_compose[@]}" up -d --no-deps --force-recreate taker-node || return 1
+  docker compose "${lane_compose[@]}" up -d --no-build --no-deps --force-recreate taker-node || return 1
   wait_healthy 1200 "$LEZ_CONTAINER_PREFIX-taker-node" || return 1
   local deadline=$(( $(date +%s) + 300 ))
   until owner_ready maker maker_health '{}' && owner_ready taker taker_health '{"schema_version":1}'; do
