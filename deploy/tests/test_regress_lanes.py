@@ -10,6 +10,7 @@ import pathlib
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -301,6 +302,25 @@ class LaneNames(unittest.TestCase):
             self.stack(tmp, LEZ_STACK_PREFIX='lez')
         self.assertEqual(refused.exception.returncode, 64)
         self.assertIn("runs the stack 'lezb'", refused.exception.stderr)
+
+    def test_a_one_lane_scenario_of_another_stack_drives_that_stacks_pair(self):
+        # regress.sh exports runtime.env (LEZ_STACK_PREFIX among it), not lane.sh
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        (tmp / 'scripts').mkdir()
+        (tmp / 'runtime').mkdir()
+        for name in ('lane.sh', 'node-e2e.py'):
+            shutil.copy(SCRIPTS / name, tmp / 'scripts')
+        (tmp / 'runtime' / 'runtime.env').write_text('LEZ_STACK_PREFIX=lezb\nLEZ_STACK_PORT_OFFSET=1000\n')
+        clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
+        probe = ('import importlib.util, sys; spec = importlib.util.spec_from_file_location("e2e", sys.argv[1]); '
+                 'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); '
+                 'print(m.NODES["taker"][0], m.BTC_CLI[2], m.STACK_INDEXER_URL, m.ZEBRA_URL)')
+        out = subprocess.run([sys.executable, '-c', probe, str(tmp / 'scripts' / 'node-e2e.py')],
+                             env={**clean, 'LEZ_STACK_PREFIX': 'lezb', 'LEZ_STACK_PORT_OFFSET': '1000'},
+                             capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(out, ['lezb-taker-node', 'lezb-bitcoin-core', 'http://127.0.0.1:9779/',
+                               'http://127.0.0.1:19232/'])
 
     def test_not_a_stack_name_or_offset(self):
         for env in ({'LEZ_STACK_PREFIX': 'Lez_B'}, {'LEZ_STACK_PORT_OFFSET': '-5'}, {'LEZ_STACK_PORT_OFFSET': '50000'}):

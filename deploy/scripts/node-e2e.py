@@ -95,9 +95,11 @@ if os.environ.get("LEZ_LANE", "1") != "1" and "LEZ_LANE_RUNTIME" not in os.envir
         key, _, value = pair.decode().partition("=")
         if key.startswith("LEZ_"):
             os.environ[key] = value
-elif "LEZ_STACK_PREFIX" not in os.environ:
-    # Lane 1 run by hand: the stack's names and ports from lane.sh (another stack
-    # than the default one when this deploy directory's runtime.env names it).
+elif "LEZ_CONTAINER_PREFIX" not in os.environ:
+    # Lane 1 without its names (by hand, or regress.sh's one-lane run, which
+    # exports runtime.env but not lane.sh): the stack's names and ports from
+    # lane.sh, another stack than the default one when this deploy directory's
+    # runtime.env names it.
     names = subprocess.run(["bash", "-c", "source scripts/lane.sh && env -0"],
                            cwd=DEPLOY_ROOT, capture_output=True, check=True).stdout
     for pair in names.split(b"\0"):
