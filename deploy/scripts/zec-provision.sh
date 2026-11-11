@@ -132,11 +132,12 @@ compose=(docker compose "${lane_compose[@]}")
 MAKER_NODE="$LEZ_CONTAINER_PREFIX-maker-node"
 TAKER_NODE="$LEZ_CONTAINER_PREFIX-taker-node"
 # The provisioner and the transfer tool accept only a loopback Zebra endpoint:
-# lane 1's Zebra is published on the host's 127.0.0.1:18232; a lane's is
-# 127.0.0.1:18232 inside its Taker's container (the Node's forwarder).
-if [[ "$LEZ_LANE" == 1 ]]; then zebra_net=(--network host); else zebra_net=(--network "container:$TAKER_NODE"); fi
+# lane 1's Zebra is published on the host's 127.0.0.1:18232; a lane's, and
+# that of a stack with a port offset (scripts/lane.sh), is 127.0.0.1:18232
+# inside its Taker's container (the Node's forwarder).
+if [[ "$LEZ_LANE" == 1 && "$LEZ_STACK_PORT_OFFSET" == 0 ]]; then zebra_net=(--network host); else zebra_net=(--network "container:$TAKER_NODE"); fi
 TAKER_IMAGE="${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}"
-VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez}"
+VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-$LEZ_STACK_PREFIX}"
 STAGING="$VOLUME_PREFIX-zec-staging"
 MAKER_VOLUME="$VOLUME_PREFIX-zec-maker"
 TAKER_VOLUME="$VOLUME_PREFIX-zec-taker"
@@ -145,7 +146,7 @@ NODE_UID=4713
 ZEC_ROOT=/var/lib/lez/zec            # the volume, as the Node containers see it
 CORRIDOR="$ZEC_ROOT/corridor"        # the provisioner's output root
 ZEBRA_URL="${LEZ_ZEBRA_URL:-http://127.0.0.1:18232/}"
-INDEXER_URL="${LEZ_INDEXER_URL:-http://127.0.0.1:8779/}"
+INDEXER_URL="${LEZ_INDEXER_URL:-$LEZ_STACK_INDEXER_URL}"
 # Loopback ports for the role sidecars inside the Node containers; outside
 # both BTC per-swap ranges (maker 19000+400, taker 19500+400).
 MAKER_BRIDGE_PORT="${LEZ_ZEC_MAKER_BRIDGE_PORT:-19901}"

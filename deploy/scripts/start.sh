@@ -25,6 +25,9 @@ set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DEPLOY_ROOT"
+# The stack's names and ports (scripts/lane.sh; lez-* and the usual ports by default).
+# shellcheck source=lane.sh
+source scripts/lane.sh
 
 QUICK=0
 RUN_SWAP=0
@@ -134,7 +137,7 @@ docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-
 wait_nodes_ready() { # wait_nodes_ready <seconds>
   local deadline=$(( $(date +%s) + $1 ))
   node_ready() { # node_ready <role> <method> <params>
-    docker exec "lez-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
+    docker exec "$LEZ_CONTAINER_PREFIX-$1-node" curl -sS --max-time 120 --unix-socket "/run/lez/$1/node.sock" \
       -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null |
       python3 -c 'import json,sys; r=json.load(sys.stdin).get("result",{}); sys.exit(0 if r.get("ready") is True and r.get("degraded") is not True else 1)' 2>/dev/null
@@ -148,7 +151,7 @@ log "waiting for both Nodes to report ready"
 wait_nodes_ready 300
 # A Maker without the market's routes is ready and not degraded, and can make
 # no offer: the routes come from the bootstrap manifest it just rendered.
-maker_routes="$(docker exec lez-maker-node curl -sS --max-time 120 --unix-socket /run/lez/maker/node.sock \
+maker_routes="$(docker exec "$LEZ_CONTAINER_PREFIX-maker-node" curl -sS --max-time 120 --unix-socket /run/lez/maker/node.sock \
   -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"maker_health","params":[{}]}' http://localhost/ 2>/dev/null |
   jq -r '.result.routes // [] | length' 2>/dev/null || echo 0)"
@@ -159,7 +162,7 @@ maker_routes="$(docker exec lez-maker-node curl -sS --max-time 120 --unix-socket
 if [[ "$QUICK" != 1 ]]; then
   log "desk suites in each party's Basecamp (the Maker suite also seeds the order book)"
   for role in maker taker; do
-    docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]' || fail "$role desk suite failed"
+    docker exec "$LEZ_CONTAINER_PREFIX-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]' || fail "$role desk suite failed"
   done
   bash scripts/verify-all.sh 2>&1 | grep -E 'OK|FAIL|checks|failed|✓|✗|^    [A-Za-z]' || fail "verify-all.sh reported a failed stage"
 fi
@@ -174,10 +177,10 @@ cat <<BANNER
 ──────────────────────────────────────────────────────────────────
  LEZ swap stack is up from ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}
 
-   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: ${vnc_password}; the Maker desk)
-   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: ${vnc_password}; the Taker desk)
-   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining)
-   explorers             BTC http://127.0.0.1:3002, LEZ + proof http://127.0.0.1:3003/#/evidence
+   Maker's Basecamp      vnc://127.0.0.1:$LEZ_MAKER_VNC_PORT     (VNC password: ${vnc_password}; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:$LEZ_TAKER_VNC_PORT     (VNC password: ${vnc_password}; the Taker desk)
+   Bitcoin regtest RPC   http://127.0.0.1:$LEZ_BTC_RPC_PORT   (auto-mining)
+   explorers             BTC http://127.0.0.1:$LEZ_BTC_EXPLORER_PORT, LEZ + proof http://127.0.0.1:$LEZ_LEZ_EXPLORER_PORT/#/evidence
                          (off unless verify-all.sh ran; docker compose --env-file runtime/runtime.env --profile explorers up -d)
    swap                  ./scripts/swap-through-ui.sh   (or click through the two desks)
    verify                ./scripts/verify-all.sh

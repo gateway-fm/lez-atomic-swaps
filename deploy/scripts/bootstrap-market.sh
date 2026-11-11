@@ -17,6 +17,9 @@ REPO_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
 WORKSPACE="${LEZ_WORKSPACE:-$(cd "$REPO_ROOT/.." && pwd)}"
 PROVISION="${LEZ_PROVISION:-$WORKSPACE/provision/data}"
 cd "$DEPLOY_ROOT"
+# The stack's Docker network (scripts/lane.sh).
+# shellcheck source=lane.sh
+source scripts/lane.sh
 
 market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
 # The genesis allocations gen-config.sh wrote; the claims must match them exactly.
@@ -34,7 +37,7 @@ escrow_pin="$(sed -n 's/^ *expected_image_id="\([0-9a-f]\{64\}\)".*/\1/p' "$REPO
 # wallet operation, and keeps its deployer.
 docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1 ||
   docker compose build heartbeat >/dev/null
-docker run --rm --network lez-swap-chains --user "$(id -u):$(id -g)" \
+docker run --rm --network "$LEZ_STACK_NETWORK" --user "$(id -u):$(id -g)" \
   -v "$PROVISION:/provision:ro" -v "$market_root:/market" -v "$DEPLOY_ROOT/scripts:/scripts:ro" \
   -e MARKET_ROOT=/market -e ESCROW_PROGRAM_ID="$escrow_pin" \
   -e DEPLOYER=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer \

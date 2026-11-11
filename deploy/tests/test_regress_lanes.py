@@ -262,6 +262,51 @@ class LaneNames(unittest.TestCase):
                              capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(out, 'lez-l3')
 
+    def test_another_stack_derives_every_name_and_port_from_its_prefix_and_offset(self):
+        stack = {'LEZ_STACK_PREFIX': 'lezb', 'LEZ_STACK_PORT_OFFSET': '1000'}
+        self.assertEqual(self.names(None, **stack),
+                         ['lezb', 'runtime', 'http://127.0.0.1:19232/', 'zebra', '6901', '6902',
+                          'maker-munich-01', 'taker-zurich-01', 'unset',
+                          '--env-file', 'runtime/runtime.env'])
+        self.assertEqual(self.names('2', LEZ_VOLUME_PREFIX='lezb', **stack),
+                         ['lezb-l2', 'runtime/lanes/2', 'http://127.0.0.1:19242/', 'lezb-l2-zebra', '6911', '6912',
+                          'maker-basel-02', 'taker-limmat-02', 'lezb-l2',
+                          '-p', 'lezb-lane-2', '--env-file', 'runtime/runtime.env', '-f', 'compose.yaml',
+                          '-f', 'compose.lane.yaml'])
+        self.assertEqual(self.stack(**stack), ['lezb', 'lezb-swap-stack', 'lezb-swap-chains', '19443', '4040',
+                                               '9779', '4002', '4003', 'http://127.0.0.1:9779/'])
+
+    def test_the_default_stack_keeps_its_names_and_ports(self):
+        self.assertEqual(self.stack(), ['lez', 'lez-swap-stack', 'lez-swap-chains', '18443', '3040',
+                                        '8779', '3002', '3003', 'http://127.0.0.1:8779/'])
+
+    def stack(self, deploy=None, **env):
+        script = ('source "$1" && echo "$LEZ_STACK_PREFIX $LEZ_STACK_PROJECT $LEZ_STACK_NETWORK $LEZ_BTC_RPC_PORT '
+                  '$LEZ_SEQUENCER_PORT $LEZ_INDEXER_PORT $LEZ_BTC_EXPLORER_PORT $LEZ_LEZ_EXPLORER_PORT '
+                  '$LEZ_STACK_INDEXER_URL"')
+        clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
+        lane = (deploy / 'scripts' / 'lane.sh') if deploy else (SCRIPTS / 'lane.sh')
+        return subprocess.run(['bash', '-c', script, '-', str(lane)], env={**clean, **env},
+                              capture_output=True, text=True, check=True).stdout.split()
+
+    def test_a_deploy_directory_runs_the_stack_its_runtime_names(self):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        (tmp / 'scripts').mkdir()
+        (tmp / 'runtime').mkdir()
+        shutil.copy(SCRIPTS / 'lane.sh', tmp / 'scripts')
+        (tmp / 'runtime' / 'runtime.env').write_text('LEZ_STACK_PREFIX=lezb\nLEZ_STACK_PORT_OFFSET=1000\n')
+        self.assertEqual(self.stack(tmp)[:2], ['lezb', 'lezb-swap-stack'])
+        with self.assertRaises(subprocess.CalledProcessError) as refused:
+            self.stack(tmp, LEZ_STACK_PREFIX='lez')
+        self.assertEqual(refused.exception.returncode, 64)
+        self.assertIn("runs the stack 'lezb'", refused.exception.stderr)
+
+    def test_not_a_stack_name_or_offset(self):
+        for env in ({'LEZ_STACK_PREFIX': 'Lez_B'}, {'LEZ_STACK_PORT_OFFSET': '-5'}, {'LEZ_STACK_PORT_OFFSET': '50000'}):
+            with self.assertRaises(subprocess.CalledProcessError, msg=env):
+                self.stack(**env)
+
     def test_not_a_lane(self):
         run = subprocess.run(['bash', '-c', 'source "$1"', '-', str(SCRIPTS / 'lane.sh')],
                              env={**os.environ, 'LEZ_LANE': 'two'}, capture_output=True, text=True)

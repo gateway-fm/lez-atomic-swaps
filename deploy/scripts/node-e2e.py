@@ -95,7 +95,18 @@ if os.environ.get("LEZ_LANE", "1") != "1" and "LEZ_LANE_RUNTIME" not in os.envir
         key, _, value = pair.decode().partition("=")
         if key.startswith("LEZ_"):
             os.environ[key] = value
+elif "LEZ_STACK_PREFIX" not in os.environ:
+    # Lane 1 run by hand: the stack's names and ports from lane.sh (another stack
+    # than the default one when this deploy directory's runtime.env names it).
+    names = subprocess.run(["bash", "-c", "source scripts/lane.sh && env -0"],
+                           cwd=DEPLOY_ROOT, capture_output=True, check=True).stdout
+    for pair in names.split(b"\0"):
+        key, _, value = pair.decode().partition("=")
+        if key.startswith("LEZ_STACK_") or key in ("LEZ_CONTAINER_PREFIX", "LEZ_INDEXER_PORT", "LEZ_ZEBRA_URL"):
+            os.environ.setdefault(key, value)
 PREFIX = os.environ.get("LEZ_CONTAINER_PREFIX", "lez")
+# The stack's indexer on the host (scripts/lane.sh: its port offset).
+STACK_INDEXER_URL = os.environ.get("LEZ_STACK_INDEXER_URL", "http://127.0.0.1:8779/")
 # The lane's own files: role identities and keys (lez/), corridors (zec/),
 # summaries (e2e/) and exported evidence (evidence/). runtime.env and the
 # heartbeat's status stay in RUNTIME.
@@ -1555,7 +1566,7 @@ def zec_drive_exit(config: str) -> tuple[int, str]:
 def lez_account_balance(account_id: str) -> int:
     """The LEZ indexer's balance of an account, over its published loopback port."""
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getAccount", "params": [account_id]}).encode()
-    request = urllib.request.Request("http://127.0.0.1:8779/", data=body, headers={"content-type": "application/json"})
+    request = urllib.request.Request(STACK_INDEXER_URL, data=body, headers={"content-type": "application/json"})
     with urllib.request.urlopen(request, timeout=30) as response:
         return int(json.load(response)["result"]["balance"])
 

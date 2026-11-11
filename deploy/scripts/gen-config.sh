@@ -66,12 +66,33 @@ heartbeat_seconds="${LEZ_HEARTBEAT_SECONDS:-20}"
 heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-60}"
 [[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_stall_seconds" =~ ^[0-9]+$ ]] || { echo "LEZ_HEARTBEAT_SECONDS and LEZ_HEARTBEAT_STALL_SECONDS must be integers" >&2; exit 1; }
 
-# Preserve the selected volume namespace on ordinary restarts too.
+# The stack this runtime belongs to (scripts/lane.sh derives its names and
+# ports): a prefix or port offset other than the default is recorded in
+# runtime.env, so every script run from this deploy directory acts on this
+# stack, and a runtime made for one stack never serves another.
+stack_prefix=lez; stack_offset=0
+if [[ -f "$RUNTIME/runtime.env" ]]; then
+  stack_prefix="$(sed -n 's/^LEZ_STACK_PREFIX=//p' "$RUNTIME/runtime.env" | head -1)"; stack_prefix="${stack_prefix:-lez}"
+  stack_offset="$(sed -n 's/^LEZ_STACK_PORT_OFFSET=//p' "$RUNTIME/runtime.env" | head -1)"; stack_offset="${stack_offset:-0}"
+fi
+if [[ -n "${LEZ_STACK_PREFIX:-}" && "$LEZ_STACK_PREFIX" != "$stack_prefix" && -f "$RUNTIME/runtime.env" ]]; then
+  echo "$RUNTIME belongs to the stack '$stack_prefix', not '$LEZ_STACK_PREFIX': a second stack runs from a deploy directory of its own" >&2
+  exit 1
+fi
+stack_prefix="${LEZ_STACK_PREFIX:-$stack_prefix}"; stack_offset="${LEZ_STACK_PORT_OFFSET:-$stack_offset}"
+[[ "$stack_prefix" =~ ^[a-z][a-z0-9]*(-[a-z0-9]+)*$ && "$stack_offset" =~ ^(0|[1-9][0-9]{0,4})$ ]] ||
+  { echo "invalid LEZ_STACK_PREFIX or LEZ_STACK_PORT_OFFSET" >&2; exit 1; }
+stack_lines=()
+[[ "$stack_prefix" == lez ]] || stack_lines+=("LEZ_STACK_PREFIX=$stack_prefix")
+[[ "$stack_offset" == 0 ]] || stack_lines+=("LEZ_STACK_PORT_OFFSET=$stack_offset")
+
+# Preserve the selected volume namespace on ordinary restarts too; another
+# stack's volumes are named after its prefix.
 volume_prefix="${LEZ_VOLUME_PREFIX:-}"
 if [[ -z "$volume_prefix" && -f "$RUNTIME/runtime.env" ]]; then
   volume_prefix="$(sed -n 's/^LEZ_VOLUME_PREFIX=//p' "$RUNTIME/runtime.env" | head -1)"
 fi
-volume_prefix="${volume_prefix:-lez}"
+volume_prefix="${volume_prefix:-$stack_prefix}"
 [[ "$volume_prefix" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo "invalid LEZ_VOLUME_PREFIX" >&2; exit 1; }
 
 umask 077
@@ -446,6 +467,21 @@ fi
   echo "LEZ_MARKET_ROOT must select the market root (wallet identities, market-bootstrap.env)" >&2
   exit 1
 }
+# A market root's escrow deployment and manifest belong to one stack's LEZ
+# chain, so each stack has a root of its own (its identities may be copies): a
+# stack other than the default one marks its root (market_root/stack) and takes
+# no root that already carries a deployment or another stack's mark.
+market_stack="$(cat "$market_root/stack" 2>/dev/null || true)"
+if [[ -n "$market_stack" && "$market_stack" != "$stack_prefix" ]]; then
+  echo "the market root $market_root belongs to the stack '$market_stack', not '$stack_prefix' (LEZ_MARKET_ROOT: a root of its own)" >&2
+  exit 1
+elif [[ -z "$market_stack" && "$stack_prefix" != lez ]]; then
+  [[ ! -e "$market_root/bootstrap/deployment.json" && ! -e "$market_root/market-bootstrap.env" ]] || {
+    echo "the market root $market_root carries another chain's escrow deployment; the stack '$stack_prefix' needs a root of its own (LEZ_MARKET_ROOT)" >&2
+    exit 1
+  }
+  echo "$stack_prefix" >"$market_root/stack"
+fi
 # Only public deployment IDs are mounted from the market. Its private root
 # is mode 0700 and cannot be traversed by the Nodes' uid on Linux.
 if [[ -s "$market_root/market-bootstrap.env" ]]; then
@@ -541,6 +577,7 @@ case "$timing_profile" in
   *)     maker_actor=(2 10) taker_sweep=3 ;;
 esac
 printf '%s\n' \
+  ${stack_lines[@]+"${stack_lines[@]}"} \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
   "LEZ_HOST_UID=$(id -u)" \
   "LEZ_HOST_GID=$(id -g)" \

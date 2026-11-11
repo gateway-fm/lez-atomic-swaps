@@ -4,8 +4,9 @@
 # A lane is one more Maker/Taker pair, each party's own Basecamp as in the
 # stack, with its own Bitcoin Core, miner and Zebra, on the stack's one LEZ
 # network (scripts/lane.sh names it; compose.lane.yaml runs it as the Compose
-# project lez-lane-<k>). Lane 2 settles as maker-basel-02 / taker-limmat-02,
-# which every genesis funds; lanes 3 and up need their own funded wallets.
+# project <prefix>-lane-<k>, lez-lane-<k> in the default stack). Lane 2
+# settles as maker-basel-02 / taker-limmat-02, which every genesis funds; lanes
+# 3 and up need their own funded wallets.
 #
 #   scripts/lanes.sh up <N>        lanes 2..N: their files (gen-config.sh with
 #                                  LEZ_LANE), chains, wallets, and Nodes recreated
@@ -28,7 +29,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 command="${1:-}"; count="${2:-}"
 [[ "$command" =~ ^(up|stop|down|status|mint)$ && "$count" =~ ^[1-9]$ ]] ||
-  { sed -n 2,26p "${BASH_SOURCE[0]}"; exit 64; }
+  { sed -n 2,27p "${BASH_SOURCE[0]}"; exit 64; }
 wipe=0; [[ "${3:-}" != --wipe ]] || wipe=1
 set -a
 # shellcheck source=/dev/null
@@ -62,7 +63,7 @@ lane_up() {
     [[ -s "$identity" ]] || { log "lane $LEZ_LANE: no $wallet identity in the market root (scripts/lanes.sh mint $LEZ_LANE, then up.sh --fresh-lez funds it)"; return 1; }
     balance="$(curl -s --max-time 60 -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":[\"$(jq -r .account_id "$identity")\"]}" \
-      http://127.0.0.1:8779/ | jq -r '.result.balance // 0')"
+      "$LEZ_STACK_INDEXER_URL" | jq -r '.result.balance // 0')"
     [[ "${balance:-0}" != 0 ]] || { log "lane $LEZ_LANE: $wallet holds no LEZ on this chain (a chain made before its identity: up.sh --fresh-lez)"; return 1; }
   done
   bash scripts/gen-config.sh runtime || return 1

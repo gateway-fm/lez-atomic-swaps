@@ -13,8 +13,11 @@ cd "$DEPLOY_ROOT"
 # the volume prefix in particular selects which volumes --wipe removes.
 if [[ -f runtime/runtime.env ]]; then set -a; source runtime/runtime.env; set +a; fi
 export BTC_RPC_PASSWORD="${BTC_RPC_PASSWORD:-teardown}"
+# The stack this directory runs (its Compose project and container names).
+# shellcheck source=lane.sh
+source scripts/lane.sh
 # A stack from before the parties' Basecamps took the desks also ran this one.
-docker rm -f lez-basecamp-ui >/dev/null 2>&1 || true
+docker rm -f "$LEZ_STACK_PREFIX-basecamp-ui" >/dev/null 2>&1 || true
 
 if [[ "${1:-}" == "--wipe" ]]; then
   docker compose down -v --remove-orphans
@@ -25,7 +28,7 @@ if [[ "${1:-}" == "--wipe" ]]; then
     [[ ! -f "$market_root/$f" ]] || mv "$market_root/$f" "$market_root/$f.chain-$stamp.bak"
   done
   rm -rf runtime
-  echo "stack down; runtime state and ${LEZ_VOLUME_PREFIX:-lez}-* volumes wiped; the escrow deployment in $market_root retired (identities kept)"
+  echo "stack down; runtime state and ${LEZ_VOLUME_PREFIX:-$LEZ_STACK_PREFIX}-* volumes wiped; the escrow deployment in $market_root retired (identities kept)"
 else
   docker compose down --remove-orphans
   echo "stack down (state retained; use --wipe to remove)"

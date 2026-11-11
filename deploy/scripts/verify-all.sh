@@ -17,6 +17,9 @@ set -a
 # shellcheck source=/dev/null
 source "$env_file"
 set +a
+# The stack this directory runs (scripts/lane.sh): its containers and ports.
+# shellcheck source=lane.sh
+source scripts/lane.sh || exit 1
 compose=(docker compose --env-file "$env_file")
 failures=0
 section() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
@@ -32,23 +35,24 @@ unhealthy="$("${compose[@]}" ps --format '{{.Service}} {{.Status}}' |
 report "$([[ -z "$unhealthy" ]] && echo 0 || echo 1)" "all services up"
 
 section "settlement chains"
-btc_height="$(docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf \
+btc_height="$(docker exec "$LEZ_CONTAINER_PREFIX-bitcoin-core" bitcoin-cli -conf=/run-config/bitcoin.conf \
   -datadir=/var/lib/bitcoin getblockcount 2>/dev/null)"
 report "$([[ "${btc_height:-0}" -gt 100 ]] && echo 0 || echo 1)" \
   "Bitcoin chain at height ${btc_height:-unknown}"
-indexes="$(docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf \
+indexes="$(docker exec "$LEZ_CONTAINER_PREFIX-bitcoin-core" bitcoin-cli -conf=/run-config/bitcoin.conf \
   -datadir=/var/lib/bitcoin getindexinfo 2>/dev/null)"
 grep -q txospenderindex <<<"$indexes"
 report "$?" "Bitcoin spender index present (actor lock observation)"
 lez_head="$(curl -sf -H 'content-type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' http://127.0.0.1:8779/ |
+  -d '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' "$LEZ_STACK_INDEXER_URL" |
   python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])' 2>/dev/null)"
 report "$([[ "${lez_head:-None}" != None ]] && echo 0 || echo 1)" "LEZ chain finalized at block ${lez_head:-unknown}"
 
 section "block explorers"
 # Off by default (Compose profile "explorers"): started here for their checks.
 "${compose[@]}" --profile explorers up -d --wait --wait-timeout 180 btc-explorer lez-explorer >/dev/null 2>&1
-python3 scripts/verify-explorers.py --evidence-dir runtime/evidence
+python3 scripts/verify-explorers.py --evidence-dir runtime/evidence \
+  --btc "http://127.0.0.1:$LEZ_BTC_EXPLORER_PORT" --lez "http://127.0.0.1:$LEZ_LEZ_EXPLORER_PORT"
 report "$?" "explorer transaction display"
 
 section "Node market"
@@ -57,7 +61,7 @@ report "$?" "Node market behaviour"
 
 section "desk regressions (each party's own Basecamp)"
 for role in maker taker; do
-  docker exec "lez-$role-node" node /ui-tests/verify.mjs "$role" </dev/null 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]'
+  docker exec "$LEZ_CONTAINER_PREFIX-$role-node" node /ui-tests/verify.mjs "$role" </dev/null 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]'
   report "${PIPESTATUS[0]}" "desk suite: $role"
 done
 

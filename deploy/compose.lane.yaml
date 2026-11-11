@@ -2,13 +2,14 @@
 # pair, each party's own Basecamp as in compose.yaml, with its own Bitcoin Core,
 # miner and Zebra, beside the one LEZ network of lane 1 (scripts/lane.sh).
 #
-#   docker compose -p lez-lane-<k> --env-file runtime/runtime.env \
+#   docker compose -p <prefix>-lane-<k> --env-file runtime/runtime.env \
 #     -f compose.yaml -f compose.lane.yaml up -d --no-deps <lane services>
 #
-# with scripts/lane.sh's variables exported (LEZ_CONTAINER_PREFIX=lez-l<k>,
+# with scripts/lane.sh's variables exported (LEZ_CONTAINER_PREFIX=<prefix>-l<k>,
 # LEZ_VOLUME_PREFIX, LEZ_LANE_RUNTIME=runtime/lanes/<k>, LEZ_ZEBRA_PORT and the
 # VNC ports); scripts/lanes.sh does this. The lane's Bitcoin Core, miner and
-# Zebra stay on the lane's own network: on lez-swap-chains Compose would give
+# Zebra stay on the lane's own network: on the stack's network
+# (<prefix>-swap-chains, lez-swap-chains by default) Compose would give
 # them the aliases bitcoin-core and zebra a second time, and lane 1's names
 # would resolve to two nodes. The Nodes join both networks and name the lane's
 # chains by container name (node-entrypoint.sh's LEZ_*_HOST).
@@ -55,7 +56,7 @@ services:
 
 networks:
   chains:
-    name: lez-swap-chains
+    name: ${LEZ_STACK_PREFIX:-lez}-swap-chains
     external: true
   lane:
     name: ${LEZ_CONTAINER_PREFIX}-net

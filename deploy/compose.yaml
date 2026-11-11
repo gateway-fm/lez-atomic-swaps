@@ -1,4 +1,9 @@
-name: lez-swap-stack
+# The stack's names derive from LEZ_STACK_PREFIX (scripts/lane.sh): unset, they
+# are lez-swap-stack, lez-network, lez-sequencer, lez-heartbeat, the explorers,
+# the network lez-swap-chains and the ports below; a second stack on the same
+# host (deploy/README.md) takes another prefix and LEZ_STACK_PORT_OFFSET, and
+# lane.sh exports the ports it gives.
+name: ${LEZ_STACK_PREFIX:-lez}-swap-stack
 
 # Images are named ${LEZ_IMAGE_PREFIX}-<service>:${LEZ_IMAGE_TAG}. The default
 # (lez-<service>:local) is what `docker compose build` produces on this host;
@@ -26,6 +31,8 @@ x-role-logging: &role-logging
 # its own Bitcoin Core, miner and Zebra beside the one LEZ network: the
 # LEZ_CONTAINER_PREFIX, LEZ_LANE_RUNTIME, LEZ_ZEBRA_PORT and VNC port variables
 # below name its containers, files and ports. Unset, they are lane 1: this stack.
+# Container names fall back to the stack's prefix, volume names to the stack's
+# volume prefix (gen-config.sh records it in runtime.env).
 
 services:
   # ─── Bitcoin regtest ────────────────────────────────────────────────────
@@ -34,7 +41,7 @@ services:
   bitcoin-core:
     build: ./images/bitcoin-core
     image: ${LEZ_IMAGE_PREFIX:-lez}-bitcoin-core:${LEZ_IMAGE_TAG:-local}
-    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-bitcoin-core
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-bitcoin-core
     command:
       - "-conf=/run-config/bitcoin.conf"
       - "-datadir=/var/lib/bitcoin"
@@ -46,7 +53,7 @@ services:
       org.logos-co.atomic-swaps.scope: bitcoin-core-regtest-e2e
       org.logos-co.atomic-swaps.component: bitcoin-core
     ports:
-      - "127.0.0.1:18443:18443"
+      - "127.0.0.1:${LEZ_BTC_RPC_PORT:-18443}:18443"
     volumes:
       - ./runtime/btc/bitcoin.conf:/run-config/bitcoin.conf:ro
       - bitcoin_core_data:/var/lib/bitcoin
@@ -74,7 +81,7 @@ services:
   zebra:
     build: ./images/zebra
     image: ${LEZ_IMAGE_PREFIX:-lez}-zebra:${LEZ_IMAGE_TAG:-local}
-    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-zebra
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zebra
     command:
       - "--config"
       - "/run-config/zebrad.toml"
@@ -111,7 +118,7 @@ services:
   btc-miner:
     build: ./images/btc-miner
     image: ${LEZ_IMAGE_PREFIX:-lez}-btc-miner:${LEZ_IMAGE_TAG:-local}
-    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-btc-miner
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-btc-miner
     depends_on:
       bitcoin-core:
         condition: service_healthy
@@ -133,7 +140,7 @@ services:
   btc-explorer:
     build: ./images/btc-explorer
     image: ${LEZ_IMAGE_PREFIX:-lez}-btc-explorer:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-btc-explorer
+    container_name: ${LEZ_STACK_PREFIX:-lez}-btc-explorer
     profiles: [explorers]
     depends_on:
       bitcoin-core:
@@ -142,7 +149,7 @@ services:
       BTCEXP_BITCOIND_URI: http://lezrpc:${BTC_RPC_PASSWORD:?run scripts/up.sh first}@bitcoin-core:18443
       BTCEXP_ADDRESS_API: none
     ports:
-      - "127.0.0.1:3002:3002"
+      - "127.0.0.1:${LEZ_BTC_EXPLORER_PORT:-3002}:3002"
     networks: [chains]
     read_only: true
     security_opt: ["no-new-privileges:true"]
@@ -170,7 +177,7 @@ services:
       additional_contexts:
         basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-network-module:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-network
+    container_name: ${LEZ_STACK_PREFIX:-lez}-network
     environment:
       HOME: /tmp
       POL_PROOF_DEV_MODE: "true"
@@ -183,7 +190,7 @@ services:
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
       org.logos-co.atomic-swaps.component: lez-network
     ports:
-      - "127.0.0.1:8779:8779"
+      - "127.0.0.1:${LEZ_INDEXER_PORT:-8779}:8779"
     healthcheck:
       test: ["CMD", "/usr/local/bin/lez-network-health", "18080", "8779"]
       interval: 10s
@@ -222,7 +229,7 @@ services:
   sequencer:
     build: ./images/lez-services
     image: ${LEZ_IMAGE_PREFIX:-lez}-services:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-sequencer
+    container_name: ${LEZ_STACK_PREFIX:-lez}-sequencer
     entrypoint: ["/usr/local/bin/sequencer_service"]
     command: ["/run-config/sequencer_config.json", "--port", "3040"]
     environment:
@@ -234,7 +241,7 @@ services:
       org.logos-co.atomic-swaps.scope: lez-v0.2-local-devnet
       org.logos-co.atomic-swaps.component: sequencer
     ports:
-      - "127.0.0.1:3040:3040"
+      - "127.0.0.1:${LEZ_SEQUENCER_PORT:-3040}:3040"
     depends_on:
       network:
         condition: service_healthy
@@ -266,7 +273,7 @@ services:
   lez-explorer:
     build: ./images/lez-explorer
     image: ${LEZ_IMAGE_PREFIX:-lez}-explorer:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-lez-explorer
+    container_name: ${LEZ_STACK_PREFIX:-lez}-lez-explorer
     profiles: [explorers]
     depends_on:
       network:
@@ -276,7 +283,7 @@ services:
       M3_BTC_EVIDENCE_FILE: /run/lez-evidence/m3-btc-ui-evidence.json
       LEZ_EVIDENCE_DIR: /run/lez-evidence/swaps
     ports:
-      - "127.0.0.1:3003:3003"
+      - "127.0.0.1:${LEZ_LEZ_EXPLORER_PORT:-3003}:3003"
     volumes:
       - ./runtime/m3-btc-ui-evidence.json:/run/lez-evidence/m3-btc-ui-evidence.json:ro
       - ./runtime/evidence:/run/lez-evidence/swaps:ro
@@ -306,7 +313,7 @@ services:
       additional_contexts:
         basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}
-    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-maker-node
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-maker-node
     depends_on:
       sequencer:
         condition: service_healthy
@@ -405,7 +412,7 @@ services:
       additional_contexts:
         basecamp: service:basecamp-ui
     image: ${LEZ_IMAGE_PREFIX:-lez}-taker-node:${LEZ_IMAGE_TAG:-local}
-    container_name: ${LEZ_CONTAINER_PREFIX:-lez}-taker-node
+    container_name: ${LEZ_CONTAINER_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-taker-node
     depends_on:
       sequencer:
         condition: service_healthy
@@ -549,7 +556,7 @@ services:
   heartbeat:
     build: ./images/lez-wallet-module
     image: ${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}
-    container_name: lez-heartbeat
+    container_name: ${LEZ_STACK_PREFIX:-lez}-heartbeat
     profiles: [heartbeat]
     user: "${LEZ_HOST_UID:-1000}:${LEZ_HOST_GID:-1000}"
     environment:
@@ -587,27 +594,27 @@ services:
 
 networks:
   chains:
-    name: lez-swap-chains
+    name: ${LEZ_STACK_PREFIX:-lez}-swap-chains
     driver: bridge
 
 volumes:
   bitcoin_core_data:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-bitcoin-core-data
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-bitcoin-core-data
   zebra_data:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-zebra-data
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zebra-data
   maker_state:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-maker-state
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-maker-state
   maker_socket:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-maker-socket
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-maker-socket
   taker_state:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-taker-state
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-taker-state
   zec_maker:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-zec-maker
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zec-maker
   zec_taker:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-zec-taker
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-zec-taker
   delivery_dir:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-delivery-dir
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-delivery-dir
   maker_wallet:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-maker-wallet
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-maker-wallet
   taker_wallet:
-    name: ${LEZ_VOLUME_PREFIX:-lez}-taker-wallet
+    name: ${LEZ_VOLUME_PREFIX:-${LEZ_STACK_PREFIX:-lez}}-taker-wallet

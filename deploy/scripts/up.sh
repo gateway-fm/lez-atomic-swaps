@@ -33,6 +33,12 @@
 set -euo pipefail
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DEPLOY_ROOT"
+# This stack is regression lane 1 (scripts/lane.sh): its Basecamps' names, and
+# the stack's own (LEZ_STACK_PREFIX, as this directory's runtime.env records it).
+export LEZ_LANE=1
+# shellcheck source=lane.sh
+source scripts/lane.sh
+maker_node="$LEZ_CONTAINER_PREFIX-maker-node"; taker_node="$LEZ_CONTAINER_PREFIX-taker-node"
 
 BUILD=0; FRESH_LEZ=0
 while [[ $# -gt 0 ]]; do
@@ -49,7 +55,7 @@ while [[ $# -gt 0 ]]; do
       # volumes another run or another checkout left behind under the default
       # prefix (a wipe under the old prefix does not touch those). gen-config
       # records it in runtime.env; the next down.sh --wipe removes exactly it.
-      export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-lez-$(date +%Y%m%d%H%M%S)}"
+      export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-$LEZ_STACK_PREFIX-$(date +%Y%m%d%H%M%S)}"
       shift ;;
     -h|--help) sed -n 2,17p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
@@ -60,11 +66,6 @@ for tool in docker jq openssl xxd; do
   command -v "$tool" >/dev/null || { echo "missing tool: $tool" >&2; exit 1; }
 done
 mkdir -p runtime
-# This stack is regression lane 1 (scripts/lane.sh): its Basecamps' names.
-export LEZ_LANE=1
-# shellcheck source=lane.sh
-source scripts/lane.sh
-maker_node="$LEZ_CONTAINER_PREFIX-maker-node"; taker_node="$LEZ_CONTAINER_PREFIX-taker-node"
 load_env() { set -a; source runtime/runtime.env; set +a; export BTC_RPC_PASSWORD; }
 # Every stage's wall time, in this script's own output, so each bring-up (and
 # each regress.sh chain log) says where its time went.
@@ -114,7 +115,7 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   # stops both Nodes and leaves them stopped, so they start once on the new
   # chain instead of starting, stopping and starting. A retry (a new chain that
   # did not finalize) has nothing left to forget: the first attempt did it.
-  if [[ "${LEZ_FRESH_ATTEMPT:-1}" == 1 ]] && docker volume inspect "${LEZ_VOLUME_PREFIX:-lez}-maker-state" >/dev/null 2>&1; then
+  if [[ "${LEZ_FRESH_ATTEMPT:-1}" == 1 ]] && docker volume inspect "${LEZ_VOLUME_PREFIX:-$LEZ_STACK_PREFIX}-maker-state" >/dev/null 2>&1; then
     stage "forget the old chain's swaps (reset-swaps.sh --offline)"
     echo "  forgetting swaps that referenced the old chain"
     bash scripts/reset-swaps.sh --offline --abandon-open 2>&1 | tail -1
@@ -229,11 +230,11 @@ done
 # The containers of services this file no longer has: the bedrock and indexer
 # Basecamps (now the one network Basecamp, whose aliases they would shadow) and
 # the init containers the images' own data directories replaced.
-docker rm -f lez-bedrock lez-indexer lez-state-init lez-bitcoin-init lez-zebra-init >/dev/null 2>&1 || true
+docker rm -f "$LEZ_STACK_PREFIX"-{bedrock,indexer,state-init,bitcoin-init,zebra-init} >/dev/null 2>&1 || true
 docker compose up -d --no-build bitcoin-core btc-miner zebra network sequencer
 [[ "${LEZ_EXPLORERS:-0}" != 1 ]] || docker compose --profile explorers up -d --no-build btc-explorer lez-explorer
 stage "chains healthy"
-wait_healthy 2400 lez-bitcoin-core lez-zebra lez-network lez-sequencer
+wait_healthy 2400 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-zebra" "$LEZ_STACK_PREFIX-network" "$LEZ_STACK_PREFIX-sequencer"
 # A new LEZ chain can stop finalizing within its first minute (README, "a
 # frozen devnet"); everything after this point would then wait on it in vain
 # (the indexer repair, the vault claims). A healthy new chain's indexer serves
@@ -248,7 +249,7 @@ if [[ "$FRESH_LEZ" == 1 ]]; then
   lez_finalized() {
     curl -s --max-time 10 -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
-      http://127.0.0.1:8779/ 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
+      "$LEZ_STACK_INDEXER_URL" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
   }
   # read every 2 s: once it serves a height, a healthy chain finalizes every second or two
   first=""; moved=0; now=""
@@ -299,7 +300,7 @@ echo "[5/6] Nodes…"
 # The containers of services this file no longer has: the third Basecamp that
 # held both desks (it publishes 5901, the Maker's Basecamp's VNC port now) and
 # the init containers the role images' own state directories replaced.
-docker rm -f lez-basecamp-ui lez-maker-init lez-taker-init >/dev/null 2>&1 || true
+docker rm -f "$LEZ_STACK_PREFIX"-{basecamp-ui,maker-init,taker-init} >/dev/null 2>&1 || true
 # A changed runtime.env (a timing profile switch, say) reaches the Nodes only
 # through a recreate; entrypoints read it once.
 if [[ "$before" != "$after" || "$env_before" != "$env_after" || "$FRESH_LEZ" == 1 ]]; then
@@ -365,21 +366,21 @@ fi
 # start.sh prints its own banner once the market is bootstrapped.
 [[ "${LEZ_NO_BANNER:-0}" != 1 ]] || exit "$ui_failed"
 if [[ "${LEZ_EXPLORERS:-0}" == 1 ]]; then
-  explorers="BTC http://127.0.0.1:3002, LEZ http://127.0.0.1:3003"
+  explorers="BTC http://127.0.0.1:$LEZ_BTC_EXPLORER_PORT, LEZ http://127.0.0.1:$LEZ_LEZ_EXPLORER_PORT"
 else
   explorers="off (LEZ_EXPLORERS=1 ./scripts/up.sh starts them)"
 fi
 cat <<BANNER
 
 ──────────────────────────────────────────────────────────────────
- LEZ swap stack is up (volumes: ${LEZ_VOLUME_PREFIX:-lez}-*)
+ LEZ swap stack is up (volumes: ${LEZ_VOLUME_PREFIX:-$LEZ_STACK_PREFIX}-*)
 
-   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / ${MINE_INTERVAL:-120} s)
-   LEZ indexer RPC       http://127.0.0.1:8779
+   Bitcoin regtest RPC   http://127.0.0.1:$LEZ_BTC_RPC_PORT   (auto-mining, 1 block / ${MINE_INTERVAL:-120} s)
+   LEZ indexer RPC       http://127.0.0.1:$LEZ_INDEXER_PORT
    explorers             ${explorers}
-   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: ${VNC_PASSWORD:-lezswap}; the Maker desk)
-   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: ${VNC_PASSWORD:-lezswap}; the Taker desk)
-   Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
+   Maker's Basecamp      vnc://127.0.0.1:$LEZ_MAKER_VNC_PORT     (VNC password: ${VNC_PASSWORD:-lezswap}; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:$LEZ_TAKER_VNC_PORT     (VNC password: ${VNC_PASSWORD:-lezswap}; the Taker desk)
+   Maker Node            docker exec $maker_node lez-maker-cli --socket /run/lez/maker/node.sock health
 
  logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
  a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen

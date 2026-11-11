@@ -8,14 +8,16 @@
 set -euo pipefail
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DEPLOY_ROOT"
+# shellcheck source=lane.sh
+source scripts/lane.sh
 wait_for_completion=1; [[ "${1:-}" == "--no-wait" ]] && wait_for_completion=0
 
 rpc() { # rpc <container> <socket> <method> <params-json>
   docker exec "$1" curl -sS --max-time 1440 --unix-socket "$2" -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$3\",\"params\":[$4]}" http://localhost/
 }
-mk() { rpc lez-maker-node /run/lez/maker/node.sock "$@"; }
-tk() { rpc lez-taker-node /run/lez/taker/node.sock "$@"; }
+mk() { rpc "$LEZ_CONTAINER_PREFIX-maker-node" /run/lez/maker/node.sock "$@"; }
+tk() { rpc "$LEZ_CONTAINER_PREFIX-taker-node" /run/lez/taker/node.sock "$@"; }
 result() { python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(1) if "error" in d and print(json.dumps(d["error"])) else print(json.dumps(d["result"]))'; }
 stamp="$(date -u +%s)"
 route='{"pair":"Bitcoin","direction":"TakerSellsForeign"}'
@@ -51,7 +53,7 @@ initiate="$(tk taker_swap_initiate_v1 "{\"schema_version\":1,\"request_id\":\"$r
   \"maker_identity\":$maker_identity,\"signed_envelope_sha256\":$envelope_sha,\"foreign_units\":$foreign_units,\"expected_lez_units\":$lez_units}")"
 printf '%s\n' "$initiate" | cut -c1-600
 swap_id="$(printf '%s' "$initiate" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["result"]["swap"]["swap_id"] if "result" in d else "")')"
-[[ -n "$swap_id" ]] || { echo "initiation failed; Taker log:"; docker logs lez-taker-node 2>&1 | tail -20; echo "Maker log:"; docker logs lez-maker-node 2>&1 | tail -20; exit 1; }
+[[ -n "$swap_id" ]] || { echo "initiation failed; Taker log:"; docker logs "$LEZ_CONTAINER_PREFIX-taker-node" 2>&1 | tail -20; echo "Maker log:"; docker logs "$LEZ_CONTAINER_PREFIX-maker-node" 2>&1 | tail -20; exit 1; }
 echo "swap $swap_id"
 
 echo "== Taker: lock Bitcoin"

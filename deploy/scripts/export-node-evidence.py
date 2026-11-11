@@ -31,8 +31,9 @@ LANE_RUNTIME = DEPLOY_ROOT / os.environ.get("LEZ_LANE_RUNTIME", "runtime")
 TAKER_SOCKET = "/run/lez/taker/node.sock"
 TAKER_SWAPS = "/var/lib/lez/taker/btc/swaps"
 MAKER_SWAPS = "/var/lib/lez/maker/btc/swaps"
-INDEXER = "http://127.0.0.1:8779"
-LEZ_EXPLORER = "http://127.0.0.1:3003"
+# The stack's indexer and LEZ explorer on the host (lane.sh: its port offset).
+INDEXER = f"http://127.0.0.1:{os.environ.get('LEZ_INDEXER_PORT', '8779')}"
+LEZ_EXPLORER = f"http://127.0.0.1:{os.environ.get('LEZ_LEZ_EXPLORER_PORT', '3003')}"
 BTC_CLI = ["docker", "exec", f"{PREFIX}-bitcoin-core", "bitcoin-cli",
            "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin"]
 

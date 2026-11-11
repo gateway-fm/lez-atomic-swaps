@@ -9,15 +9,18 @@
 # read past the gap fails, a restart refuses to start, and a swap's Maker
 # actor cannot observe its own LEZ initialization. The index is derived from
 # the node, so wiping it and re-indexing restores it (~2-3 min per 1000 blocks).
-# The indexer and the node share the LEZ network's Basecamp (lez-network): its
+# The indexer and the node share the LEZ network's Basecamp (lez-network, the
+# stack's <prefix>-network: scripts/lane.sh): its
 # LEZ Network desk's Re-index has the indexer module delete its database and
 # start again while the node keeps producing blocks.
 #
 #   scripts/repair-indexer.sh [--check]    --check only reports, exit 1 when broken
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# shellcheck source=lane.sh
+source scripts/lane.sh
 
-indexer_url="http://127.0.0.1:8779"
+indexer_url="$LEZ_STACK_INDEXER_URL"
 # A historical read replays from the last breakpoint, so its cost grows with the
 # distance to it: on LEZ v0.2.4 a read 99 blocks past a breakpoint takes ~16 s
 # (indexer_service and the indexer module alike). A shorter limit would call a
@@ -48,7 +51,7 @@ echo "indexer cannot serve a historical read at its tip (${current:-unreachable}
 [[ "${1:-}" != "--check" ]] || exit 1
 
 echo "re-indexing from the node…"
-docker exec lez-network node /opt/lez-network-reindex.mjs >/dev/null ||
+docker exec "$LEZ_STACK_PREFIX-network" node /opt/lez-network-reindex.mjs >/dev/null ||
   { echo "the LEZ Network desk did not take the Re-index" >&2; exit 1; }
 previous=0
 for _ in $(seq 1 360); do

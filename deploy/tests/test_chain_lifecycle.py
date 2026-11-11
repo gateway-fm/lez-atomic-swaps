@@ -49,6 +49,7 @@ class DownWipe(Workspace):
     def setUp(self):
         super().setUp()
         shutil.copy(SCRIPTS / 'down.sh', self.deploy / 'scripts')
+        shutil.copy(SCRIPTS / 'lane.sh', self.deploy / 'scripts')
         executable(self.bin / 'docker', '#!/bin/sh\necho "docker $*" >>"$CALLS"\n')
         (self.deploy / 'runtime').mkdir()
         (self.deploy / 'runtime' / 'runtime.env').write_text(f'LEZ_MARKET_ROOT={self.market}\n')
@@ -76,6 +77,14 @@ class DownWipe(Workspace):
         self.assertTrue((self.deploy / 'runtime' / 'runtime.env').exists())
         self.assertTrue((self.market / 'bootstrap' / 'deployment.json').exists())
         self.assertTrue((self.market / 'market-bootstrap.env').exists())
+        self.assertIn('docker rm -f lez-basecamp-ui', self.logged())
+
+    def test_a_second_stacks_directory_takes_its_own_stack_down(self):
+        env_file = self.deploy / 'runtime' / 'runtime.env'
+        env_file.write_text(env_file.read_text() + 'LEZ_STACK_PREFIX=lezb\nLEZ_STACK_PORT_OFFSET=1000\n')
+        self.down()
+        self.assertIn('docker rm -f lezb-basecamp-ui', self.logged())
+        self.assertNotIn(' lez-', self.logged())
 
 
 # The indexer: getBlockById 1 answers the live genesis; every vault reads 0 and

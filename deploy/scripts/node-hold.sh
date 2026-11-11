@@ -11,10 +11,13 @@
 #   scripts/node-hold.sh hold <maker|taker>...
 #   scripts/node-hold.sh release <maker|taker>...
 #
-# LEZ_CONTAINER_PREFIX selects the stack's containers (default lez).
+# LEZ_CONTAINER_PREFIX selects the pair's containers (default: lane 1 of the
+# stack the deploy directory runs, scripts/lane.sh; lez in the default stack).
 set -euo pipefail
 action="${1:-}"; shift || true
-prefix="${LEZ_CONTAINER_PREFIX:-lez}"
+# shellcheck source=lane.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lane.sh"
+prefix="$LEZ_CONTAINER_PREFIX"
 [[ "$action" == hold || "$action" == release ]] && [[ $# -gt 0 ]] ||
   { echo "usage: node-hold.sh hold|release <maker|taker>..." >&2; exit 64; }
 for role in "$@"; do

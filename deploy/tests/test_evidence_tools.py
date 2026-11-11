@@ -111,6 +111,45 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(config.stat().st_mode & 0o777, 0o644)
 
 
+    def test_another_stack_is_recorded_and_keeps_a_market_root_of_its_own(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root/'market').mkdir()
+            env = dict({k: v for k, v in os.environ.items() if not k.startswith('LEZ_')},
+                       LEZ_MARKET_ROOT=str(root/'market'), LEZ_STACK_PREFIX='lezb', LEZ_STACK_PORT_OFFSET='1000')
+            command = ['bash', str(SCRIPTS/'gen-config.sh'), str(root/'runtime')]
+            subprocess.run(command, env=env, check=True, capture_output=True)
+            recorded = (root/'runtime/runtime.env').read_text()
+            for line in ('LEZ_STACK_PREFIX=lezb\n', 'LEZ_STACK_PORT_OFFSET=1000\n', 'LEZ_VOLUME_PREFIX=lezb\n'):
+                self.assertIn(line, recorded)
+            self.assertEqual((root/'market/stack').read_text(), 'lezb\n')
+            # a rerun without the stack's variables keeps them
+            env.pop('LEZ_STACK_PREFIX'); env.pop('LEZ_STACK_PORT_OFFSET')
+            subprocess.run(command, env=env, check=True, capture_output=True)
+            self.assertEqual((root/'runtime/runtime.env').read_text(), recorded)
+            # this runtime never serves the default stack, nor this root another stack
+            run = subprocess.run(command, env=dict(env, LEZ_STACK_PREFIX='lez'), capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn("belongs to the stack 'lezb'", run.stderr)
+            run = subprocess.run(['bash', str(SCRIPTS/'gen-config.sh'), str(root/'runtime-c')],
+                                 env=dict(env, LEZ_STACK_PREFIX='lezc'), capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn("market root", run.stderr)
+
+    def test_a_second_stack_takes_no_market_root_with_a_deployment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root/'market/bootstrap').mkdir(parents=True)
+            (root/'market/bootstrap/deployment.json').write_text('{}')
+            env = dict({k: v for k, v in os.environ.items() if not k.startswith('LEZ_')},
+                       LEZ_MARKET_ROOT=str(root/'market'), LEZ_STACK_PREFIX='lezb')
+            run = subprocess.run(['bash', str(SCRIPTS/'gen-config.sh'), str(root/'runtime')],
+                                 env=env, capture_output=True, text=True)
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn("another chain's escrow deployment", run.stderr)
+            self.assertFalse((root/'market/stack').exists())
+
+
 class RecorderTests(unittest.TestCase):
     def test_another_checkouts_stack_is_rejected_before_capture(self):
         with patch.object(rec, 'command', return_value='/different/checkout/deploy') as command:

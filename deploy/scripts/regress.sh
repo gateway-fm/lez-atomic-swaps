@@ -42,6 +42,11 @@
 # lane and the chain each try ran on. Unset or 1: one test at a time, as above.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# The stack this directory runs (scripts/lane.sh): its LEZ network's container
+# and its indexer on the host. The scripts each test runs take the rest of its
+# names from lane.sh themselves.
+stack="$(source scripts/lane.sh && echo "$LEZ_STACK_PREFIX $LEZ_STACK_INDEXER_URL")" || exit 64
+read -r stack_prefix stack_indexer_url <<<"$stack"
 
 directions=(TakerSellsLez TakerSellsForeign)
 tier_tests() { # tier_tests <tier>
@@ -105,7 +110,7 @@ log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$out/regress.log"; }
 finalized() {
   curl -s --max-time 10 -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
-    http://127.0.0.1:8779/ 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
+    "$stack_indexer_url" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
 }
 load_env() { set -a; source runtime/runtime.env; set +a; }
 # moving <seconds>: true as soon as the finalized height advances within that time
@@ -128,7 +133,7 @@ moving() {
 # on a new chain instead.
 max_storage_price="${LEZ_REGRESS_MAX_STORAGE_PRICE:-6000}"
 storage_price() {
-  docker exec lez-network bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080 || exit 1
+  docker exec "$stack_prefix-network" bash -c 'exec 3<>/dev/tcp/127.0.0.1/18080 || exit 1
     printf "GET /mantle/gas-prices HTTP/1.1\r\nHost: bedrock\r\nConnection: close\r\n\r\n" >&3
     timeout 5 cat <&3' 2>/dev/null | sed -n 's/.*"storage_gas_price":\([0-9][0-9]*\).*/\1/p'
 }

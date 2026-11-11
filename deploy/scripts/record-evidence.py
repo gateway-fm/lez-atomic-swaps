@@ -7,6 +7,7 @@ import fcntl
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -51,7 +52,7 @@ rows=[]
 for kind,payload in s.execute('select evidence_kind,payload_json from btc_actor_evidence order by aggregate_revision'):
  d=json.loads(payload); rows.append({'kind':kind,'chain':d['chain'],'proof':d['proof'],'refund_position':d.get('refund_position')})
 print(json.dumps(rows))'''
-        journal = json.loads(X.docker('lez-taker-node','python3','-c',reader,
+        journal = json.loads(X.docker(E.NODES['taker'][0],'python3','-c',reader,
             X.TAKER_SWAPS+'/'+aggregate['directory']+'/actor/state.sqlite3'))
         public = {k:v for k,v in snapshot.items() if k.endswith('transaction_id') or k in ('phase', 'direction')}
         for item in journal:
@@ -91,7 +92,7 @@ print(json.dumps(rows))'''
         evidence['bitcoin_refund_reconciliation'] = {'spent_lock_outputs':spent,'principal_sats':principal_sats,
             'refund_outputs_sats':returned_sats,'fee_sats':principal_sats-returned_sats,
             'note':'On-chain output reconciliation; Core wallet balance alone is not a refund proof.'}
-        contribution = json.loads(X.docker('lez-taker-node', 'cat',
+        contribution = json.loads(X.docker(E.NODES['taker'][0], 'cat',
             X.TAKER_SWAPS+'/'+aggregate['directory']+'/role/contribution-summary.json'))
         expected = contribution['bitcoin_claim_destination_script_pubkey']
         if isinstance(expected, list):
@@ -184,13 +185,14 @@ def record(name, root, commit):
 def provenance(commit):
     binaries = {}
     for role in ('maker', 'taker'):
-        working_dir = command('docker', 'inspect', f'lez-{role}-node', '--format',
+        node = E.NODES[role][0]
+        working_dir = command('docker', 'inspect', node, '--format',
                               '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}')
         if pathlib.Path(working_dir).resolve() != DEPLOY.resolve():
             raise RuntimeError(f'{role}: running stack belongs to another checkout ({working_dir})')
         paths = [f'lez-{role}-node', f'lez-btc-{role}-actor', 'lez-v02-bridge-poc']
         for binary in paths:
-            actual = command('docker', 'exec', f'lez-{role}-node', 'sha256sum', '/usr/local/bin/'+binary).split()[0]
+            actual = command('docker', 'exec', node, 'sha256sum', '/usr/local/bin/'+binary).split()[0]
             # Images strip debug symbols, so compare the running executable
             # with the built image, not the unstripped staging directory.
             expected = command('docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'sha256sum',
@@ -199,11 +201,12 @@ def provenance(commit):
                 raise RuntimeError(f'{role}/{binary}: running executable differs from the built image')
             binaries[f'{role}/{binary}'] = actual
         for receipt in ('build-source.txt', 'sidecar-source.txt'):
-            built = command('docker', 'exec', f'lez-{role}-node', 'cat', '/usr/local/share/lez/'+receipt)
+            built = command('docker', 'exec', node, 'cat', '/usr/local/share/lez/'+receipt)
             if built != commit:
                 raise RuntimeError(f'{role}/{receipt}: rebuild this checkout and recreate the Nodes')
     containers = {}
-    for name in ('lez-bitcoin-core', 'lez-network', 'lez-sequencer', 'lez-maker-node', 'lez-taker-node'):
+    stack = os.environ.get('LEZ_STACK_PREFIX', 'lez')
+    for name in (f'{E.PREFIX}-bitcoin-core', f'{stack}-network', f'{stack}-sequencer', E.NODES['maker'][0], E.NODES['taker'][0]):
         containers[name] = command('docker', 'inspect', name, '--format', '{{.Image}}')
     return {'repository_commit': commit, 'timing': E.timing_profile(), 'binary_sha256': binaries,
             'container_images': containers, 'bitcoin_genesis': E.bitcoin('getblockhash', '0'),
