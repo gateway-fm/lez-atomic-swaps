@@ -58,6 +58,26 @@ impl RefundStepV1 {
         ) && direction == SwapDirection::TakerSellsLez
     }
 
+    /// Admits this step against the whole active coordinator, not only its phase.
+    ///
+    /// After a revealing claim is recorded no refund is admitted while that evidence stands,
+    /// the coordinator's own rule for `refund_maker_leg` and `refund_taker_leg`. The reorg
+    /// phases admit the LEZ step and can hold claim evidence, so the phase alone would let
+    /// the SDK stage and broadcast a refund the coordinator then refuses to project.
+    pub(crate) fn validate_active(
+        self,
+        agreement: &ZecAgreementV1,
+        coordinator: &SwapCoordinator,
+    ) -> Result<(), RefundError> {
+        if coordinator.claim_evidence().is_some() {
+            return Err(RefundError::ClaimEvidenceRecorded {
+                step: self,
+                phase: coordinator.phase(),
+            });
+        }
+        self.validate_active_phase(agreement, coordinator.phase())
+    }
+
     pub(crate) fn validate_active_phase(
         self,
         agreement: &ZecAgreementV1,
@@ -292,9 +312,7 @@ impl RefundIntentV1 {
         staged_revision: u64,
         prepared: PreparedRefundSubmissionV1,
     ) -> Result<Self, RefundError> {
-        prepared
-            .step
-            .validate_active_phase(agreement, coordinator.phase())?;
+        prepared.step.validate_active(agreement, coordinator)?;
         let owner = prepared.step.owner(agreement);
         if local_participant != owner {
             return Err(RefundError::WrongRole {
@@ -518,9 +536,7 @@ impl RefundTransitionV1 {
         predecessor_revision: u64,
         evidence: RefundEvidenceV1,
     ) -> Result<Self, RefundError> {
-        evidence
-            .step
-            .validate_active_phase(agreement, coordinator.phase())?;
+        evidence.step.validate_active(agreement, coordinator)?;
         let owner = evidence.step.owner(agreement);
         if local_participant == owner {
             return Err(RefundError::WrongObserverRole {
@@ -598,9 +614,7 @@ impl RefundTransitionV1 {
         {
             return Err(RefundError::ContextMismatch);
         }
-        self.evidence
-            .step
-            .validate_active_phase(agreement, coordinator.phase())?;
+        self.evidence.step.validate_active(agreement, coordinator)?;
         self.evidence
             .step
             .validate_deadline(agreement, self.evidence.position)?;
@@ -680,6 +694,14 @@ pub enum RefundError {
     /// Step is not legal in this phase.
     #[error("{step:?} refund is unavailable in phase {phase:?}")]
     WrongPhase {
+        /// Refund step.
+        step: RefundStepV1,
+        /// Current phase.
+        phase: Phase,
+    },
+    /// A revealing claim is recorded: no refund is admitted while that evidence stands.
+    #[error("{step:?} refund is unavailable in phase {phase:?}: a revealing claim is recorded")]
+    ClaimEvidenceRecorded {
         /// Refund step.
         step: RefundStepV1,
         /// Current phase.

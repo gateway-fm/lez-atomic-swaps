@@ -162,7 +162,8 @@ pub enum ZecSdkError {
         /// The caller's trusted clock, Unix milliseconds.
         now_ms: u64,
     },
-    /// Refund driving is unavailable in the active pre-lock, claim, or completed phase.
+    /// Refund driving is unavailable in the active pre-lock, claim, or completed phase, or
+    /// in any phase once a revealing claim is recorded.
     #[error("refund driving is unavailable in phase {0:?}")]
     RefundNotReady(Phase),
     /// First-lock intent may only be staged from the fresh offered phase.
