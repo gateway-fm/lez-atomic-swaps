@@ -14,7 +14,79 @@ deployment, transaction, balance, and run facts are retained in the
 
 ## Current local product stack (PR #120, 2026-11-11)
 
-Everything below runs from `deploy/compose.yaml` on one arm64 host. Seven
+### Component map
+
+Every box is one container of `deploy/compose.yaml`. `BASECAMP` marks a
+container that is a Logos Basecamp hosting Logos modules; `PLAIN` marks an
+ordinary service container. "up" is an upstream Logos module, "ours" a module
+of this repository, and "patches" counts the upstream patches it is built with
+(`deploy/builder/patches/README.md`).
+
+```text
+ DOCKER COMPOSE (7 long-running containers)
+ ════════════════════════════════════════════════════════════════════════════════════════
+
+ ┌─ maker-node ─────────────── BASECAMP ─┐        ┌─ taker-node ─────────────── BASECAMP ─┐
+ │  Maker desk (UI, VNC :5901)           │        │  Taker desk (UI, VNC :5902)           │
+ │                                       │  chat  │                                       │
+ │  Logos modules                        │◄──────►│  Logos modules                        │
+ │   chat_module, delivery_module  (up)  │ offers │   chat_module, delivery_module  (up)  │
+ │   lez_core            (up + 2 patches)│        │   lez_core            (up + 2 patches)│
+ │     └ the role's LEZ wallet / signer  │        │     └ the role's LEZ wallet / signer  │
+ │   lez_swap_node       (ours)          │        │   lez_swap_node       (ours)          │
+ │     └ supervises the Node, serves the │        │     └ supervises the Node, serves the │
+ │       signer socket                   │        │       signer socket                   │
+ │   lez_maker_node      (ours, package) │        │   lez_taker_node      (ours, package) │
+ │     └ carries, as plain processes:    │        │     └ carries, as plain processes:    │
+ │        lez-maker-node  (Rust Node)    │        │        lez-taker-node  (Rust Node)    │
+ │        BTC / ZEC actors               │        │        BTC / ZEC actors               │
+ │        LEZ sidecar (one per swap)     │        │        LEZ sidecar (one per swap)     │
+ │        launcher + loopback forwards   │        │        launcher + loopback forwards   │
+ └───────┬───────────┬───────────┬───────┘        └───────┬───────────┬───────────┬───────┘
+         │           │           │                        │           │           │
+         │ LEZ       │ BTC RPC   │ ZEC RPC      (the Taker reaches the same three services)
+         ▼           ▼           ▼
+ ┌─ network ────── BASECAMP ──┐ ┌─ bitcoin-core ─ PLAIN ─┐  ┌─ zebra ──────── PLAIN ─┐
+ │ LEZ Network desk (headless)│ │ Bitcoin Core, regtest  │  │ Zebra, regtest         │
+ │  blockchain_module  (up,   │ └───────────▲────────────┘  └────────────────────────┘
+ │    released, unpatched)    │ ┌─ btc-miner ─── PLAIN ──┐
+ │    └ Bedrock node          │ │ mines regtest blocks   │
+ │  lez_indexer_module (up +  │ └────────────────────────┘
+ │    3 patches)              │
+ │    └ LEZ indexer + JSON-RPC│
+ └─────────────▲──────────────┘
+               │ blocks
+ ┌─ sequencer ───────── PLAIN ─┐
+ │ LEZ v0.2.4 sequencer_service│
+ └─────────────────────────────┘
+
+ BUILD-ONLY / OPTIONAL (Compose, not started by default)
+   basecamp-ui    the image the three Basecamps are built from (scale 0)
+   heartbeat      keeps LEZ blocks coming on an idle chain (profile)
+   btc-explorer, lez-explorer   (profile "explorers")
+   tools          one-shot provisioning tools (profile)
+
+ REGRESSION LANES (harness only, separate Compose projects; scripts/lanes.sh)
+   lane 2..N:  own maker-node + taker-node Basecamps, own bitcoin-core, btc-miner, zebra,
+               all on the one network + sequencer above
+```
+
+| Where it runs | What | Containers |
+|---|---|---|
+| In Basecamp, as Logos modules | the Bedrock node, the LEZ indexer, each role's LEZ wallet, the Node supervisor, each role's Node package, Chat and Delivery | `network`, `maker-node`, `taker-node` |
+| In Basecamp, as plain processes | the Rust Node, its actors and sidecars: carried by a Logos package and started by `lez_swap_node`, not Logos modules themselves | `maker-node`, `taker-node` |
+| Plain containers | the LEZ sequencer, Bitcoin Core, the regtest miner, Zebra | `sequencer`, `bitcoin-core`, `btc-miner`, `zebra` |
+
+Why the plain ones are plain: no sequencer module exists at LEZ v0.2.4;
+Bitcoin Core stays bring-your-own (#115) and the upstream bitcoind module is
+not adoptable as it stands; the upstream zebrad module needs changes and has
+no released package; the miner exists only on regtest. On the public-testnet
+route (`compose.testnet.yaml`) there is no local chain at all: the Nodes and
+signers reach the official LEZ sequencer directly.
+
+### Containers and modules in detail
+
+Everything below runs from `deploy/compose.yaml` on one Linux host. Seven
 containers run by default and none of them is an init container:
 
 - `network`: one headless Basecamp whose **LEZ Network** desk starts two Logos

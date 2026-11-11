@@ -24,6 +24,10 @@ user's machine.
 
 ## What runs in Basecamp and what stays in Compose
 
+A component map of the whole stack (which box is a Basecamp, which module is
+upstream, patched or ours) is in
+[`docs/architecture/deployment-components-and-rpcs.md`](architecture/deployment-components-and-rpcs.md#component-map).
+
 Source: `deploy/compose.yaml`. Seven containers run by default; no init
 container exists (commit `b63c958b`). `docker compose config --services`
 with the default profiles lists `bitcoin-core btc-miner network sequencer

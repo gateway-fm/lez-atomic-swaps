@@ -4,8 +4,8 @@ One compose project: the LEZ v0.2 devnet (one Basecamp hosting the LEZ node and
 the indexer as Logos modules, plus the sequencer) + Bitcoin Core regtest +
 Zebra regtest + each party's own Basecamp, holding that party's desk, its LEZ
 signer and its canonical Node (drivable over VNC and by automated end-to-end
-tests). Block explorers for both chains are an optional profile. All native
-arm64, started with one command.
+tests). Block explorers for both chains are an optional profile. All native to
+the host, started with one command.
 
 Seven containers run by default: `bitcoin-core`, `btc-miner`, `zebra`,
 `network`, `sequencer`, `maker-node` and `taker-node`. No init container runs.
@@ -13,6 +13,9 @@ Seven containers run by default: `bitcoin-core`, `btc-miner`, `zebra`,
 (profile `explorers`), `heartbeat` (profile `heartbeat`) and `tools` (profile
 `tools`, one-shot) start only on request. [docs/submission-115.md](../docs/submission-115.md)
 says which of these run in Basecamp and why the rest stay in Compose.
+The [component map](../docs/architecture/deployment-components-and-rpcs.md#component-map)
+draws them: which container is a Basecamp, and which module in it is upstream,
+patched or ours.
 
 ## Prebuilt images (no build)
 
