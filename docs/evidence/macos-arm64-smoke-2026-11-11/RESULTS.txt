@@ -21,6 +21,11 @@ Every test that ran on this host, in the order it ran. Nothing failed and nothin
 19:58:31  ui:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 67s
 regression smoke: 6 of 6 passed in 6 min, 0 new chains, 0 profile switches, 0 frozen tries
 
+== Logos-native acceptance, scripts/logos-native-acceptance.sh, linux-arm64 release set, 20:03Z – 20:16Z (../logos-native-2026-11-11-arm64/)
+maker: 115 steps: 93 PASS, 14 FAIL, 7 INFO, 1 NOT RUN; every step's verdict as in the amd64 run (../logos-native-2026-11-11-b/)
+taker: 115 steps: 93 PASS, 14 FAIL, 7 INFO, 1 NOT RUN; every step's verdict as in the amd64 run
+(a first Taker run, started beside the Maker's, stopped unpacking logosctl into the cache both share; the run kept is its rerun)
+
 == Static checks on the branch, macOS and a Linux container (python:3.12-bookworm)
 deploy/tests (python3 -m unittest discover -s deploy/tests): 77 of 77 on macOS at 4903d14d, in the checkout before any stack ran there (c1d6f813 alone: 71 of 77, six regress.sh lane tests fail for want of setsid)
 deploy/tests in a checkout whose stack is up: test_another_stack_derives_every_name_and_port_from_its_prefix_and_offset fails, because it reads that stack's runtime/runtime.env; so it does at c1d6f813
