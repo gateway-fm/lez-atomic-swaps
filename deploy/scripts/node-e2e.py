@@ -769,61 +769,170 @@ def node_balances(role: str) -> dict:
             "lez_units": (view.get("lez") or {}).get("balance_atomic_units")}
 
 
-def scenario_early_lock_reverse(stamp: str) -> dict:
-    """R1 mirrored: the Taker locks LEZ, so the lock the Maker must not act on early is
-    the LEZ one, and the lock the Maker must not send is Bitcoin.
+def lez_transaction_block(role: str, transaction_id: str) -> int | None:
+    """The block that role's own sequencer route (its loopback forwarder to
+    3040) has a LEZ transaction in, None while the sequencer has not included it.
+    The sequencer serves what it has included whether or not Bedrock has
+    finalized it: it is where a LEZ transaction can be seen unconfirmed."""
+    if not (len(transaction_id) == 64 and all(c in "0123456789abcdef" for c in transaction_id)):
+        raise Failure(f"the LEZ lock's transaction id {transaction_id!r} is not a 32-byte hex hash")
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getTransaction", "params": [transaction_id]})
+    result = subprocess.run(["docker", "exec", NODES[role][0], "curl", "-sS", "-m", "10",
+                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:3040/"],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    try:
+        reply = json.loads(result.stdout)
+    except ValueError as error:
+        raise Failure(f"the {role}'s sequencer route did not answer getTransaction: "
+                      f"{result.stdout[:120]} {result.stderr[:120]}") from error
+    if "error" in reply:
+        raise Failure(f"the {role}'s sequencer refused getTransaction: {json.dumps(reply['error'])[:200]}")
+    found = reply.get("result")
+    return int(found[1]) if found else None
 
-    Nothing can hold a LEZ transaction out of a block the way the miner holds a Bitcoin
-    one, so the Maker's sight of LEZ is cut instead: its loopback forwarder to the indexer
-    is stopped while the Taker locks. The lock is real and finalizes on time; the Maker
-    simply cannot see it, which is the same thing its observer faces when the chain is
-    behind. It must not lock Bitcoin on a first leg it has not observed.
-    """
+
+def lez_owner_account(role: str) -> str:
+    """The LEZ account the role's Node pays from: its balance view's owner
+    account, else the lane identity's (the market wallet its signer holds)."""
+    if role == "maker":
+        reply = rpc("maker", "maker_wallet_balances_v1", {})
+    else:
+        reply = rpc("taker", "taker_wallet_balances_v1", {"schema_version": 1})
+    account = ((reply.get("result") or {}).get("lez") or {}).get("owner_account_base58")
+    return account or json.loads((LANE_RUNTIME / "lez" / role / "identity.json").read_text())["account_id"]
+
+
+def node_bitcoin_wallet(role: str) -> str:
+    """The Core wallet the role's Node funds and is paid from (its balance view)."""
+    if role == "maker":
+        view = call("maker", "maker_wallet_balances_v1", {})
+    else:
+        view = call("taker", "taker_wallet_balances_v1", {"schema_version": 1})
+    wallet = (view.get("bitcoin") or {}).get("wallet")
+    if not wallet:
+        raise Failure(f"the {role} Node names no Core wallet ({json.dumps(view.get('bitcoin'))[:120]}); "
+                      "this scenario reads what that wallet spends")
+    return wallet
+
+
+def wallet_sends_since(wallet: str, block_hash: str) -> list[str]:
+    """Transactions the Core wallet has sent since a block, in a later block or
+    in the mempool: Core's own record of what left the wallet on chain. A
+    funding that is only planned (inputs locked, nothing broadcast) is not one."""
+    since = bitcoin(f"-rpcwallet={wallet}", "listsinceblock", block_hash, "1", "false", "true")
+    return sorted({entry["txid"] for entry in since.get("transactions", []) if entry.get("category") == "send"})
+
+
+def wait_lez_final_through(height: int, profile: dict, why: str) -> None:
+    """Waits until the indexer has finalized `height`, so that anything
+    submitted up to it can be read final; bounded by the profile's LEZ step and
+    stall allowance (gen-config.sh: 20 + 40 s on the devnet)."""
+    wait = Wait(f"LEZ finality to reach block {height} ({why})",
+                3 * (profile_seconds(profile, "LEZ_LEZ_STEP_SECONDS", 20)
+                     + profile_seconds(profile, "LEZ_LEZ_STALL_SECONDS", 40)))
+    while wait.running():
+        reading = lez_chain_reading()
+        if isinstance(reading.get("finalized"), int) and reading["finalized"] >= height:
+            return
+        wait.note(reading.get("finalized"), format_chain(reading))
+        time.sleep(2)
+    raise wait.failure()
+
+
+def scenario_early_lock_reverse(stamp: str) -> dict:
+    """R1 mirrored: the Taker locks LEZ first, so the lock the Maker must not act on
+    early is a LEZ one, and the lock it must not send is Bitcoin.
+
+    What "seen but not confirmed" is on LEZ: the sequencer serves a transaction as
+    soon as it includes it, and Bedrock finalizes it seconds later; a Node knows a
+    LEZ lock is final only from the indexer, whose blocks are the finalized ones
+    (the sidecar's observation reads its fixed finalized window there). LEZ has no
+    mempool, and its finality cannot be held back without freezing the chain every
+    lane shares, so the Maker is denied the finality source instead: its loopback
+    forwarder to the indexer is stopped while its forwarder to the sequencer keeps
+    running. The Taker's lock is then read back over the Maker's own sequencer
+    route, included: the lock is in front of the Maker, and nothing it can read
+    says it is final. For the profile's attention span (maker_attention_seconds)
+    the Maker must not lock, which is checked three ways on every poll: its phase
+    (nothing that implies an observed first leg), its own record (no maker_lock
+    effect: maker_lock_recorded, not the Taker's view) and the chain (no send from
+    the Maker's Core wallet since the hold began, in a block or in the mempool:
+    listsinceblock). Once the view is back the Maker locks, and the same chain
+    check is required to see that lock, so it cannot have been blind."""
+    profile = timing_profile()
+    held = maker_attention_seconds(profile)
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
-    log("  cutting the Maker's view of LEZ so it cannot see the Taker's lock")
+    wallet = node_bitcoin_wallet("maker")
+    log("  cutting the Maker's indexer forwarder, its only source of LEZ finality; its sequencer forwarder stays")
     cut_lez_view("maker")
     try:
         wait_lez_view("maker", restored=False)
-        lock(swap_id)
-        log("  the Taker's LEZ lock is sent, and the Maker is blind to it")
-        # Long enough for the Maker's observer to have polled several times over.
-        deadline = time.time() + 90
+        start_block = str(bitcoin("getbestblockhash"))
+        txid = lock(swap_id)
+        wait = Wait(f"the Taker's LEZ lock {txid[:12]} on the Maker's own sequencer route", 120)
+        while wait.running():
+            included = lez_transaction_block("maker", txid)
+            if included is not None:
+                break
+            wait.note(None, "not included yet")
+            time.sleep(2)
+        else:
+            raise wait.failure()
+        log(f"  the Taker's LEZ lock {txid[:12]} is in block {included} on the Maker's sequencer route, and the "
+            f"Maker cannot read finality; watching it for {held}s")
+        deadline = time.time() + held
         while time.time() < deadline:
             phase = maker_phase(swap_id)
             if phase in MAKER_OBSERVED_TAKER_LOCK:
-                raise Failure(f"the Maker reached {phase} without having seen the Taker's lock")
-            if bitcoin_effects(swap_id, ("maker_lock",)):
-                raise Failure(
-                    "the Maker locked Bitcoin before observing the Taker's lock. Its reads "
-                    "over 127.0.0.1:8779 were already failing when this started, so either it "
-                    "sees LEZ by some route other than the indexer forwarder — in which case "
-                    "the mechanism cannot withhold the first leg and this scenario is wrong — "
-                    "or it locks on a leg it has not observed, which is the R1 defect itself")
+                raise Failure(f"the Maker reached {phase} on a LEZ lock it could not see finalized (R1)")
+            recorded = maker_lock_recorded(swap_id)
+            if recorded is not None:
+                raise Failure(f"the Maker recorded its Bitcoin lock {recorded[:12]} on a LEZ lock it could not see "
+                              "finalized (R1)")
+            sent = wallet_sends_since(wallet, start_block)
+            if sent:
+                raise Failure(f"the Maker's Core wallet {wallet} sent {[t[:12] for t in sent]} while it could not see "
+                              "the Taker's lock finalized: a Bitcoin lock on chain or in the mempool (R1)")
             time.sleep(5)
-        log(f"  the Maker stayed at {maker_phase(swap_id)} for 90s, blind to the first leg")
+        log(f"  for {held}s the Maker stayed at {maker_phase(swap_id)}: no maker_lock in its record, no send from "
+            f"{wallet} since block {start_block[:12]} | {format_chain(lez_chain_reading())}")
     finally:
         restore_lez_view("maker")
     wait_lez_view("maker", restored=True)
-    log("  the Maker can see LEZ again; it may now lock")
-    wait_maker_past_lock(swap_id, timeout=900)
+    log("  the Maker can read LEZ finality again; it may now lock")
+    maker_lock = wait_maker_past_lock(swap_id, timeout=900)
+    sent = wallet_sends_since(wallet, start_block)
+    if maker_lock not in sent:
+        raise Failure(f"the Maker recorded its Bitcoin lock {maker_lock[:12]} but {wallet} shows no such send since "
+                      f"{start_block[:12]} ({[t[:12] for t in sent]}): the chain check above could not have seen it")
+    log(f"  the Maker's lock {maker_lock[:12]} is a send from {wallet}, so the check above was able to see one")
     claim(swap_id, stamp)
     wait_completed(swap_id)
-    return {"swap_id": swap_id, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+    return {"swap_id": swap_id, "taker_lez_lock": txid, "seen_in_block": included, "held_seconds": held,
+            "maker_bitcoin_lock": maker_lock, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
 def scenario_early_lock(stamp: str) -> dict:
     """R1: the Maker does not lock until the Taker's lock is confirmed.
 
     Forward the Taker's lock is the Bitcoin one, and on regtest the harness decides when a
-    transaction confirms: the miner is held so the lock sits in the mempool, and the Maker
-    must sit with it. Mirrored the Taker's lock is LEZ, which has no mempool to hold it in,
-    so scenario_early_lock_reverse withholds the Maker's sight of it instead.
+    transaction confirms: the miner is held so the lock sits in the mempool, below the
+    agreement's required confirmations, and the Maker must sit with it. Its LEZ lock is
+    checked absent in its own record (maker_lock_recorded) and on the chain (its LEZ
+    account's finalized balance unchanged once finality has caught up with everything the
+    sequencer had at the end of the hold). Mirrored the Taker's lock is LEZ:
+    scenario_early_lock_reverse.
     """
     if REVERSE:
         return scenario_early_lock_reverse(stamp)
+    profile = timing_profile()
+    held = maker_attention_seconds(profile)
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
+    required = int(taker_view(swap_id)["terms"].get("required_bitcoin_confirmations") or 1)
+    account = lez_owner_account("maker")
+    balance = lez_account_balance(account)
     log("  stopping the miner so the Taker's lock stays unconfirmed")
     docker("stop", MINER)
     try:
@@ -831,8 +940,11 @@ def scenario_early_lock(stamp: str) -> dict:
         confirmations = (bitcoin("getrawtransaction", txid, "1") or {}).get("confirmations", 0)
         if confirmations:
             raise Failure(f"the lock already has {confirmations} confirmations; the miner was not held")
-        # Long enough for the Maker's observer to have polled several times over.
-        deadline = time.time() + 90
+        if txid not in bitcoin("getrawmempool"):
+            raise Failure(f"the Taker's lock {txid[:12]} is not in the mempool: the Maker could not see it at all")
+        log(f"  the Taker's lock {txid[:12]} is in the mempool with 0 of {required} required confirmations; "
+            f"watching the Maker for {held}s")
+        deadline = time.time() + held
         while time.time() < deadline:
             phase = maker_phase(swap_id)
             if phase in MAKER_OBSERVED_TAKER_LOCK:
@@ -843,7 +955,17 @@ def scenario_early_lock(stamp: str) -> dict:
             if maker_lock_recorded(swap_id) is not None:
                 raise Failure("the Maker locked LEZ before the Taker's lock confirmed")
             time.sleep(5)
-        log(f"  the Maker stayed at {maker_phase(swap_id)} for 90s with the lock unconfirmed")
+        # The chain: a LEZ lock submitted in the hold is final once finality has
+        # passed what the sequencer had at its end; the Maker's account must not
+        # have paid anything by then.
+        tip = lez_chain_reading().get("tip")
+        if isinstance(tip, int):
+            wait_lez_final_through(tip, profile, "everything submitted during the hold")
+        if lez_account_balance(account) != balance:
+            raise Failure(f"the Maker's LEZ account {account[:12]} went from {balance} to "
+                          f"{lez_account_balance(account)} while the Taker's lock was unconfirmed (R1)")
+        log(f"  the Maker stayed at {maker_phase(swap_id)} for {held}s with the lock unconfirmed; its LEZ account "
+            f"still holds {balance} | {format_chain(lez_chain_reading())}")
         mine(1)
         log("  the Taker's lock is confirmed; the Maker may now lock")
         wait_maker_past_lock(swap_id, timeout=900)
@@ -852,7 +974,7 @@ def scenario_early_lock(stamp: str) -> dict:
         wait_healthy("maker")
     claim(swap_id, stamp)
     wait_completed(swap_id)
-    return {"swap_id": swap_id, "lock_txid": txid,
+    return {"swap_id": swap_id, "lock_txid": txid, "held_seconds": held, "required_confirmations": required,
             "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
@@ -3148,44 +3270,72 @@ def zec_poll_until(what: str, timeout: int, check) -> None:
     raise wait.failure()
 
 
+def taker_lez_lock_effect(swap_id: str) -> str | None:
+    """The Taker's own LEZ lock as its view records it, when it lists one."""
+    for effect in taker_view(swap_id).get("effects") or []:
+        if effect.get("kind") == "taker_lock" and str(effect.get("chain", "")).lower() == "lez":
+            return effect.get("transaction_id")
+    return None
+
+
 def scenario_zec_early_lock(stamp: str) -> dict:
     """R1 for Zcash: the party that locks second must not lock on a first leg it
     has not seen confirmed. Selling LEZ the first leg is the Taker's LEZ lock and
-    the second the Maker's Zcash funding: the Maker's LEZ view (indexer and
-    sequencer forwarders) is cut right after the take, the Taker's lock is
-    confirmed, and for 90 s the Maker must not fund (its outpoint unspent, the
-    mempool empty, its actor before both legs). Selling ZEC the first leg is the
-    Taker's Zcash funding: it is held unmined in zebra's mempool and for 90 s
-    the Maker must not lock LEZ (its actor stays before taker_lock_confirmed).
-    The view is restored or the funding mined, and the swap completes."""
+    the second the Maker's Zcash funding: as in the BTC twin
+    (scenario_early_lock_reverse), the Maker's indexer forwarder, its only
+    source of LEZ finality, is cut right after the take while its sequencer
+    forwarder keeps running; the Taker's lock is confirmed (its actor at
+    taker_lock_confirmed) and, where the Taker's view lists the lock, read back
+    included over the Maker's own sequencer route. For the Maker's attention
+    span the Maker must not fund: its outpoint unspent, zebra's mempool empty,
+    its phase before both legs. Selling ZEC the first leg is the Taker's Zcash
+    funding: it is held unmined in zebra's mempool, below the pre-reveal depth,
+    and the Maker must not lock LEZ: its phase stays before
+    taker_lock_confirmed, and on the chain its LEZ account's finalized balance
+    is unchanged once finality has passed everything the sequencer held at the
+    end of the hold. The view is restored or the funding mined, and the swap
+    completes."""
+    profile = timing_profile()
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
-    held = 90
+    held = maker_attention_seconds(profile)
+    seen_in_block = None
     if zec_taker_sells_lez():
-        log("  cutting the Maker's view of LEZ (indexer and sequencer forwarders) so it cannot see the Taker's lock")
-        zec_cut_routes("maker", "indexer", "sequencer")
+        log("  cutting the Maker's indexer forwarder, its only source of LEZ finality; its sequencer forwarder stays")
+        zec_cut_routes("maker", "indexer")
         try:
             wait_lez_view("maker", restored=False)
             zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=1500, corridor=corridor,
-                                 mine_pending_only=True, describe="(the Taker's LEZ lock, the Maker blind to it)")
+                                 mine_pending_only=True, describe="(the Taker's LEZ lock, the Maker without finality)")
             if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
-                raise Failure(f"the Taker actor is at {zec_actor_phase(config)}: the Maker funded although blind to LEZ")
-            log(f"  the Taker's LEZ lock is confirmed and the Maker cannot see it; watching for {held}s")
+                raise Failure(f"the Taker actor is at {zec_actor_phase(config)}: the Maker funded without LEZ finality")
+            lez_lock = taker_lez_lock_effect(swap_id)
+            if lez_lock:
+                seen_in_block = lez_transaction_block("maker", lez_lock)
+                if seen_in_block is None:
+                    raise Failure(f"the Taker's confirmed LEZ lock {lez_lock[:12]} is not on the Maker's sequencer route")
+                log(f"  the Taker's LEZ lock {lez_lock[:12]} is in block {seen_in_block} on the Maker's sequencer route")
+            else:
+                log("  the Taker's view lists no LEZ lock effect; its actor at taker_lock_confirmed is what says it is in")
+            log(f"  the Maker cannot read LEZ finality; watching it for {held}s")
             deadline = time.time() + held
             while time.time() < deadline:
                 if zec_outpoint_unspent(outpoint) is not True or zec_mempool():
-                    raise Failure("the Maker funded Zcash on a first leg it had not observed (R1)")
+                    raise Failure("the Maker funded Zcash on a first leg it could not see finalized (R1)")
                 if maker_phase(swap_id) in {"awaiting_maker_confirmations", "both_legs_locked"}:
-                    raise Failure(f"the Maker reached {maker_phase(swap_id)} without seeing the Taker's lock")
+                    raise Failure(f"the Maker reached {maker_phase(swap_id)} without LEZ finality for the Taker's lock")
                 time.sleep(5)
-            log(f"  the Maker stayed at {maker_phase(swap_id)} for {held}s and funded nothing")
+            log(f"  the Maker stayed at {maker_phase(swap_id)} for {held}s and funded nothing: outpoint "
+                f"{outpoint[0][:12]}:{outpoint[1]} unspent, zebra's mempool empty")
         finally:
-            zec_restore_routes("maker", "indexer", "sequencer")
+            zec_restore_routes("maker", "indexer")
         wait_lez_view("maker", restored=True)
-        log("  the Maker can see LEZ again; it may now fund Zcash")
+        log("  the Maker can read LEZ finality again; it may now fund Zcash")
     else:
+        account = lez_owner_account("maker")
+        balance = lez_account_balance(account)
         log("  the Taker Node funds the Zcash HTLC; the harness mines nothing, so it stays unconfirmed")
         zec_poll_until("the Taker's Zcash funding in zebra's mempool", 900, lambda: bool(zec_mempool()))
         log(f"  the Taker's funding {zec_mempool()[0][:12]} waits in the mempool; watching the Maker for {held}s")
@@ -3197,10 +3347,17 @@ def scenario_zec_early_lock(stamp: str) -> dict:
             if zec_actor_phase(config) in ZEC_SAW_FIRST_LOCK:
                 raise Failure(f"the Taker actor reached {zec_actor_phase(config)} on an unconfirmed funding")
             time.sleep(5)
-        log(f"  the Maker stayed at {maker_phase(swap_id)} for {held}s; mining the funding now")
+        tip = lez_chain_reading().get("tip")
+        if isinstance(tip, int):
+            wait_lez_final_through(tip, profile, "everything submitted during the hold")
+        if lez_account_balance(account) != balance:
+            raise Failure(f"the Maker's LEZ account {account[:12]} went from {balance} to "
+                          f"{lez_account_balance(account)} on an unconfirmed Zcash funding (R1)")
+        log(f"  the Maker stayed at {maker_phase(swap_id)} for {held}s and its LEZ account still holds {balance}; "
+            "mining the funding now")
     zec_finish(swap_id, config, corridor, stamp)
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
-            "held_seconds": held, "second_leg_withheld": True}
+            "held_seconds": held, "second_leg_withheld": True, "seen_in_block": seen_in_block}
 
 
 def scenario_zec_offline_after_lock(stamp: str) -> dict:

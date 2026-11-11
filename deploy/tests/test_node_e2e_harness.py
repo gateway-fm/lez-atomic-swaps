@@ -11,6 +11,7 @@ import pathlib
 import tempfile
 import time
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
@@ -114,6 +115,42 @@ class WaitEvidence(unittest.TestCase):
                                                       'LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS': '10'}), 90)
         self.assertEqual(e2e.maker_attention_seconds({'LEZ_MAKER_ACTOR_REQUEUE_SECONDS': '',
                                                       'LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS': ''}), 175)
+
+
+class EarlyLockChecks(unittest.TestCase):
+    """#103 item 8: what the early-lock scenarios read from the chain."""
+    def test_only_what_the_wallet_sent_counts_as_a_lock(self):
+        since = {'transactions': [{'txid': 'aa' * 32, 'category': 'receive'},
+                                  {'txid': 'bb' * 32, 'category': 'send'},
+                                  {'txid': 'bb' * 32, 'category': 'send'}]}
+        with patch.object(e2e, 'bitcoin', lambda *args: since):
+            self.assertEqual(e2e.wallet_sends_since('lez-maker', 'cc' * 32), ['bb' * 32])
+
+    def test_the_wallet_is_asked_for_the_mempool_too(self):
+        calls = []
+        with patch.object(e2e, 'bitcoin', lambda *args: calls.append(args) or {'transactions': []}):
+            e2e.wallet_sends_since('lez-maker', 'cc' * 32)
+        self.assertEqual(calls, [('-rpcwallet=lez-maker', 'listsinceblock', 'cc' * 32, '1', 'false', 'true')])
+
+    def run_lookup(self, stdout):
+        result = unittest.mock.Mock(stdout=stdout, stderr='', returncode=0)
+        with patch.object(e2e.subprocess, 'run', return_value=result) as run:
+            found = e2e.lez_transaction_block('maker', 'ab' * 32)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ['docker', 'exec', 'lez-maker-node'])
+        self.assertEqual(command[-1], 'http://127.0.0.1:3040/', "the Maker's own sequencer forwarder")
+        self.assertEqual(json.loads(command[-2])['params'], ['ab' * 32])
+        return found
+
+    def test_an_included_lock_is_read_with_its_block(self):
+        self.assertEqual(self.run_lookup('{"jsonrpc":"2.0","id":1,"result":[{"tx":1},4211]}'), 4211)
+        self.assertIsNone(self.run_lookup('{"jsonrpc":"2.0","id":1,"result":null}'))
+
+    def test_a_route_that_does_not_answer_is_a_failure_not_an_absence(self):
+        with self.assertRaises(e2e.Failure):
+            self.run_lookup('')
+        with self.assertRaises(e2e.Failure):
+            e2e.lez_transaction_block('maker', 'not-a-hash')
 
 
 if __name__ == '__main__':
