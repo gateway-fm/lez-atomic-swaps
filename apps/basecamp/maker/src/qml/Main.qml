@@ -47,6 +47,9 @@ Item {
     // read in the background every 10 s; null until the Node reports it.
     property var lezChain: null
     property bool lezChainBusy: false
+    // The Node's last health reply, read with lezChain; null until one
+    // arrives and again once the channel fails. The header badge reads it.
+    property var nodeHealth: null
     // ---- The activity log: what the desk asked and what the Node answered,
     // plus every change the background poll notices. Newest last.
     property var activity: []
@@ -134,6 +137,9 @@ Item {
         if (root.nodeLink === "up") return
         root.nodeLink = "up"
         root.note("node", "Node replied over the owner-local channel")
+        // The badge waits for a health reply; ask for one now rather than at
+        // the next 10 s tick.
+        if (root.nodeHealth === null) root.refreshLezChain()
     }
     // A call that never reached the Node. This does own the strip, because a
     // failed channel outranks whatever the last request put there — including
@@ -142,6 +148,7 @@ Item {
     function linkDown(reason) {
         var lost = root.nodeLink === "up"
         root.nodeLink = "down"
+        root.nodeHealth = null
         root.statusMode = "error"
         root.statusTitle = "Node unavailable"
         root.statusDetail = String(reason)
@@ -257,6 +264,7 @@ Item {
     }
     function health() {
         root.run(root.backend.health(), "Check Node", function(result) {
+            root.nodeHealth = result
             root.lezChain = result.lez_chain ?? null
             var ok = result.ready === true && result.degraded !== true
             root.statusMode = ok ? "success" : "error"
@@ -291,14 +299,50 @@ Item {
                 var before = root.lezChainLine()
                 try {
                     var envelope = JSON.parse(String(value))
-                    if (envelope.ok === true) root.lezChain = (envelope.result ?? {}).lez_chain ?? null
-                } catch (error) { return }
+                    if (envelope.ok === true) {
+                        root.nodeHealth = envelope.result ?? {}
+                        root.lezChain = root.nodeHealth.lez_chain ?? null
+                    }
+                } catch (error) { }
+                // The channel is judged by this reply like by any other, so
+                // the badge and the strip follow the same Node.
+                root.observeEnvelope(value)
                 var after = root.lezChainLine()
                 if (after !== "" && before === "") root.note("error", after)
                 else if (after === "" && before !== "") root.note("node", "LEZ finality moves again")
             },
-            function(error) { root.lezChainBusy = false })
+            function(error) {
+                root.lezChainBusy = false
+                root.linkDown(error)
+            })
     }
+    // The header badge: what the Node answers, never only that this view
+    // loaded (#103 item 7: a green "Backend connected" stood beside the red
+    // "Node unavailable" strip with the Node down). It reads the channel the
+    // strip reads, so a Node the strip calls unavailable is unavailable here
+    // too, and the last health reply for ready and degraded.
+    function nodeBadge() {
+        if (!root.ready) return {tone: "waiting", text: "Desk loading"}
+        if (root.nodeLink === "down") return {tone: "down", text: "Node unavailable"}
+        var health = root.nodeHealth
+        if (root.nodeLink !== "up" || health === null) return {tone: "waiting", text: "Checking the Node"}
+        if (health.ready !== true) return {tone: "down", text: "Node not ready"}
+        if (health.degraded === true) {
+            var chain = health.lez_chain ?? {}
+            var reason = chain.degraded !== true ? ""
+                : chain.reason === "lez_finality_stalled" ? " · LEZ finality stalled"
+                : chain.reason === "lez_indexer_unreachable" ? " · LEZ indexer unreachable"
+                : " · LEZ chain"
+            return {tone: "degraded", text: "Node degraded" + reason}
+        }
+        return {tone: "up", text: "Node connected"}
+    }
+    readonly property var badgeColors: ({
+        up: {fill: "#11271F", border: "#497621", dot: "#7EE100", text: "#B8F57C"},
+        degraded: {fill: "#2A1A12", border: "#8A5A2B", dot: "#FF9F43", text: "#FFC58A"},
+        down: {fill: "#2A1418", border: "#61323E", dot: "#FF5A6E", text: "#FF9AA6"},
+        waiting: {fill: "#292318", border: "#62438B", dot: "#8950FA", text: "#C6AAFF"}
+    })
     function chatStatus() {
         root.run(root.backend.chatStatus(), "Chat status", function(result) {
             root.chatState = String(result.state ?? "unknown")
@@ -547,16 +591,19 @@ Item {
                         }
                     }
                     Rectangle {
+                        id: connectionBadge
+                        readonly property var badge: root.nodeBadge()
+                        readonly property var colors: root.badgeColors[connectionBadge.badge.tone]
                         implicitWidth: connectionRow.implicitWidth + 20; implicitHeight: 30; radius: 15
-                        color: root.ready ? "#11271F" : "#292318"
-                        border.width: 1; border.color: root.ready ? "#497621" : "#62438B"
+                        color: connectionBadge.colors.fill
+                        border.width: 1; border.color: connectionBadge.colors.border
                         RowLayout {
                             id: connectionRow; anchors.centerIn: parent; spacing: 8
-                            Rectangle { implicitWidth: 7; implicitHeight: 7; radius: 4; color: root.ready ? "#7EE100" : "#8950FA" }
+                            Rectangle { implicitWidth: 7; implicitHeight: 7; radius: 4; color: connectionBadge.colors.dot }
                             Label {
                                 objectName: "makerConnection"
-                                text: root.ready ? "Backend connected" : "Connecting"
-                                color: root.ready ? "#B8F57C" : "#C6AAFF"
+                                text: connectionBadge.badge.text
+                                color: connectionBadge.colors.text
                                 font.pixelSize: 11; font.weight: Font.DemiBold
                             }
                         }
