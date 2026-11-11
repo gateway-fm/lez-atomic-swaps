@@ -17,6 +17,37 @@ M2 is [rfp#122](https://github.com/logos-co/rfp/issues/122). Its six official
 deliverables, each mapped to the artefact that answers it, the proof the
 reviewer can run, and where it stands on `feat/m2-zec-on-docker` today.
 
+## State on 2026-11-11 (PR #120)
+
+Read this first; the tables below were written on 2026-11-03 for the Docker
+stack and are kept as the record of that submission shape.
+
+- **The stack moved.** PR #120 runs the stack as Logos modules (issue #115):
+  one network Basecamp, each role's Node in a Logos package inside the role's
+  Basecamp. `docs/submission-115.md` is the traceability and the limitations.
+  The sequencing decision of 2026-10-28 below ("M2 on the Docker stack first")
+  is superseded: M2's evidence is produced on the modules stack.
+- **Zcash is on NU7.** Public Zcash Testnet activated NU7; the engine signs
+  for it (checked against mined Testnet transactions) and the regtest devnet
+  runs Zebra 7.0.0 with NU7 from height 1, so the regression exercises the
+  same consensus branch (deliverable 2).
+- **Deliverable 1, public testnet 0.2.** The LEZ v0.2 testnet now lives at
+  `testnet-legacy.lez.logos.co`. The escrow was deployed there and exercised
+  (initialize, fund, revealing claim) on 2026-11-11; that evidence, and the
+  route changes it needed, are on the branch `followup/public-testnet`, not
+  in PR #120. A full ZEC corridor on the public networks has **not** run: the
+  public Logos chain needs upstream's legacy indexer build and finalizes
+  about 8.5 hours behind its tip. The work is paused.
+- **Deliverable 6, recordings.** `regress.sh` records every desk test of a
+  full run (`LEZ_REGRESS_RECORD=1`); the release candidate's run is the source
+  of the demo set.
+- **Review findings due with the ZEC submission** (issue #103 items 1 and 16,
+  #112, #113): fixed in PR #120; `docs/issue-closing-notes-2026-11-11.md`.
+- **Still open for the submission:** the release candidate's evidence set
+  (`docs/evidence/regression-m2-<date>/`), the tag and release (0.3.0), the
+  rfp#122 comment, the fresh-machine walk of the Zcash guide (U10), the
+  catalog under the organisation (#106).
+
 ## The six deliverables
 
 | # | Official deliverable (rfp#122) | Artefact | Proof | Today |
