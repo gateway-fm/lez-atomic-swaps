@@ -68,6 +68,39 @@ edited; the workspace and pair tests pass.
 
 Items 2 and 6 to 15 were not re-checked for this PR.
 
+## #115: reply to the three questions of 28 October, and what follows PR #120
+
+PR #120 runs the stack as Logos modules: the Logos Blockchain node
+(`blockchain_module` 0.2.4, the released package) and the LEZ indexer in one
+network Basecamp; each role's LEZ wallet (`lez_core`), the Node supervisor
+(`lez_swap_node`) and the Node itself, carried by a Logos package
+(`lez_maker_node` / `lez_taker_node`), in that role's Basecamp. The sequencer
+proxy for the Nodes, the chat gateway and `desk-sockets.py` are gone.
+`docs/submission-115.md` maps each line of this issue to the code, and lists
+where the result differs from it.
+
+1. **Bitcoin as a module (`logos-bitcoind-module`).** Not in PR #120 and not
+   planned for M2. Bitcoin Core stays bring-your-own, as this issue first
+   scoped it; the assessment is in `docs/submission-115.md` (source reading
+   only, no spike was run).
+2. **Zebra as a module (`logos-zebrad-module`).** Not in PR #120 and not
+   planned for M2: there is no released package of it, and the stack's Zebra
+   is a plain container (Zebra 7.0.0, NU7).
+3. **macOS.** The role packages are Linux only today: `lez-swap-store` keeps
+   its Linux-only hardening. On a Mac the stack runs in Docker, with each
+   desk inside its role's Basecamp container and reached over VNC; native
+   macOS desks talking to Nodes in Docker are no longer a path. A
+   `darwin-arm64` role package is follow-up work.
+
+Also different from the issue's text, and staying so for M2: the indexer is
+the 1.1.1 source rebuilt on LEZ v0.2.4 with three patches rather than the
+official 1.2.0, which is built on LEZ 0.3 and comes with the LEZ 0.4 port
+(#107); the Maker's Node runs in the Maker's Basecamp under `lez_swap_node`,
+like the Taker's, rather than as a daemon under `logosctl`.
+
+Follow-ups after PR #120: the Node's own figures in `module stats`; the role's
+configuration and identity inside the package; the `darwin-arm64` package.
+
 ## #112: finality and claim visibility
 
 (1) `maker_health` and `taker_health` include `lez_chain`: the last finalized
