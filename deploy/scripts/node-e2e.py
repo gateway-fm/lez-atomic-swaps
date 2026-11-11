@@ -3451,6 +3451,10 @@ def lez_finalized_height() -> int:
 
 def run(name: str) -> bool:
     stamp = str(int(time.time()))
+    # Ids made from the stamp reach the one LEZ chain the lanes share
+    # (zec-provision.sh does the same): no two lanes may make the same one.
+    if os.environ.get("LEZ_LANE", "1") != "1":
+        stamp += f"{int(os.environ['LEZ_LANE']):02d}"
     log(f"=== {name} (stamp {stamp})")
     started = time.time()
     summary = {"scenario": name, "pair": ROUTE["pair"], "direction": ROUTE["direction"], "stamp": stamp,

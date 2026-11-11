@@ -221,7 +221,12 @@ if [[ "$ADD" == 1 ]]; then
   previous_run="$(cat "$LANE/zec/current" 2>/dev/null)" || fail "--add needs a live corridor ($LANE/zec/current)"
   [[ -s "$LANE/zec/$previous_run/prepared.json" ]] || fail "--add: $LANE/zec/$previous_run/prepared.json is missing"
 fi
+# The swap, offer and reservation ids come from this stamp, and the swap id
+# names the swap's LEZ escrow account on the one chain every lane shares: two
+# lanes provisioning in the same second took the same id, and the second
+# Taker's lez_initialize was refused for good (AccountAlreadyInitialized).
 stamp="$(date +%s)"
+[[ "$LEZ_LANE" == 1 ]] || stamp="$stamp$(printf '%02d' "$LEZ_LANE")"
 run_id="zec-devnet-$stamp"
 out="$LANE/zec/$run_id"
 mkdir -p "$out"
