@@ -20,7 +20,10 @@
 #
 # Results go to LEZ_REGRESS_OUT (runtime/regress/<UTC stamp>): results.tsv (one
 # line per try), logs/ (each try's output), e2e/ and zec/ (the evidence the
-# scenarios export). Exit status 0 when every test has a passing try.
+# scenarios export), chain.tsv (the finalized height and the sequencer's tip at
+# every finality sample, at most every 30 s, with the test that was running), and
+# regress.log, whose start and verdict lines of each try carry both as well.
+# Exit status 0 when every test has a passing try.
 #
 # Needs the stack up on the fast or the refund timing profile
 # (LEZ_TIMING_PROFILE=fast scripts/up.sh). The Bitcoin refund scenarios run on
@@ -56,8 +59,8 @@ host_require_bash51 && host_require_timeout || exit
 # The stack this directory runs (scripts/lane.sh): its LEZ network's container
 # and its indexer on the host. The scripts each test runs take the rest of its
 # names from lane.sh themselves.
-stack="$(source scripts/lane.sh && echo "$LEZ_STACK_PREFIX $LEZ_STACK_INDEXER_URL")" || exit 64
-read -r stack_prefix stack_indexer_url <<<"$stack"
+stack="$(source scripts/lane.sh && echo "$LEZ_STACK_PREFIX $LEZ_STACK_INDEXER_URL $LEZ_SEQUENCER_PORT")" || exit 64
+read -r stack_prefix stack_indexer_url stack_sequencer_port <<<"$stack"
 
 directions=(TakerSellsLez TakerSellsForeign)
 tier_tests() { # tier_tests <tier>
@@ -125,6 +128,21 @@ finalized() {
     --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}' \
     "$stack_indexer_url" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
 }
+# the sequencer's tip: what finality trails, so a frozen chain (tip moving,
+# finality flat) reads apart from a stopped one (both flat) in the log
+tip() {
+  curl -s --max-time 10 -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getLastBlockId","params":[]}' \
+    "http://127.0.0.1:$stack_sequencer_port/" 2>/dev/null | sed -n 's/.*"result":\([0-9][0-9]*\).*/\1/p'
+}
+chain_state() { # chain_state: "LEZ finalized N, tip M" for the log
+  local f t; f="$(finalized)"; t="$(tip)"
+  echo "LEZ finalized ${f:-?}, tip ${t:-?}"
+}
+chain_sample() { # chain_sample <what was running> [finalized]: one row of chain.tsv
+  local f="${2:-$(finalized)}"
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$1" "${f:-?}" "$(tip)" >>"$out/chain.tsv"
+}
 load_env() { set -a; source runtime/runtime.env; set +a; }
 # moving <seconds>: true as soon as the finalized height advances within that time
 # (read every 2 s: a healthy chain finalizes a block every second or two)
@@ -159,10 +177,11 @@ fresh_chain() { # fresh_chain [ENV=VALUE...]: up.sh --fresh-lez checks the new c
   load_env
   fresh=1
 }
-# watched <log> <command...>: the command in its own process group; stopped with
-# status 99 once the finalized height has stood still for $flat_limit seconds.
+# watched <test> <log> <command...>: the command in its own process group;
+# stopped with status 99 once the finalized height has stood still for
+# $flat_limit seconds. Each 30 s sample is a row of chain.tsv.
 watched() {
-  local logfile="$1"; shift
+  local test="$1" logfile="$2"; shift 2
   host_setsid "$@" >"$logfile" 2>&1 </dev/null &
   local pid=$! last flat_since now
   last="$(finalized)"; flat_since="$(date +%s)"
@@ -170,9 +189,10 @@ watched() {
     # a second's granularity: the next test starts as soon as this one ends
     for _ in $(seq 30); do sleep 1; kill -0 "$pid" 2>/dev/null || break 2; done
     now="$(finalized)"
+    chain_sample "$test" "$now"
     if [[ -n "$now" && "$now" != "$last" ]]; then last="$now"; flat_since="$(date +%s)"; fi
     if (( $(date +%s) - flat_since >= flat_limit )); then
-      log "    finality has stood at ${last:-nothing} for ${flat_limit} s: the chain is frozen, stopping the test"
+      log "    finality has stood at ${last:-nothing} for ${flat_limit} s (sequencer tip $(tip || true)): the chain is frozen, stopping the test"
       kill -TERM -- "-$pid" 2>/dev/null; sleep 20; kill -KILL -- "-$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
       return 99
@@ -245,16 +265,17 @@ run_test() { # run_test <kind:pair:scenario:direction>
     # a new chain's Nodes start without swaps (up.sh); otherwise forget the last test's
     [[ "$fresh" == 1 ]] || bash scripts/reset-swaps.sh --abandon-open >"$out/logs/reset.log" 2>&1 || log "    reset-swaps.sh failed before $1 (logs/reset.log)"
     logfile="$out/logs/$kind-$pair-$scenario-$direction-$try.log"; started="$(date +%s)"
+    log "    $1 (try $try) starts: $(chain_state)"
     # The finality probe above and the watch below cover node-e2e.py's own
     # finality preflight (a 10 s sample when the heartbeat's status is stale).
     # shellcheck disable=SC2046  # the command is a word list
-    watched "$logfile" env LEZ_E2E_SKIP_FINALITY_PREFLIGHT=1 timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" \
+    watched "$1" "$logfile" env LEZ_E2E_SKIP_FINALITY_PREFLIGHT=1 timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" \
       $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
     case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 98) verdict=NOT-EXERCISED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
     if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 30; then verdict=FROZEN; fi
     # what the harness spent before the scenario started (finality probe, a new
     # chain, reset-swaps.sh) apart from the scenario itself (its preflights included)
-    log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s (+$(( started - prepared )) s before it$([[ "$fresh" == 0 ]] || echo ', a new chain among them'))"
+    log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s (+$(( started - prepared )) s before it$([[ "$fresh" == 0 ]] || echo ', a new chain among them')); $(chain_state)"
     printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$try" "$verdict" "$(( $(date +%s) - started ))" "$(date -u +%FT%TZ)" >>"$out/results.tsv"
     keep
     [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
@@ -308,10 +329,11 @@ keep_lane() { # keep_lane <lane>: the lane's exported summaries and evidence
 # (storage_price) is marked in $out/worn: no test starts on it, and once every
 # lane is idle a new chain replaces it.
 chain_watch() {
-  local last now since price
+  local last now since price sampled=0
   last="$(finalized)"; since="$(date +%s)"
   while true; do
     sleep "$poll"; now="$(finalized)"
+    if (( $(date +%s) - sampled >= 30 )); then chain_sample lanes "$now"; sampled="$(date +%s)"; fi
     if [[ -n "$now" && "$now" != "$last" ]]; then last="$now"; since="$(date +%s)"; fi
     if [[ ! -e "$out/worn" ]]; then
       price="$(storage_price)"
@@ -320,7 +342,7 @@ chain_watch() {
       fi
     fi
     if (( $(date +%s) - since >= flat_limit )); then
-      log "    finality has stood at ${last:-nothing} for ${flat_limit} s: the chain is frozen, every lane's test is void"
+      log "    finality has stood at ${last:-nothing} for ${flat_limit} s (sequencer tip $(tip || true)): the chain is frozen, every lane's test is void"
       return 0
     fi
   done
@@ -378,7 +400,7 @@ lanes_main() {
     verdict=FAILED; seconds=0
     [[ ! -s "$out/lanes/$k/verdict" ]] || IFS=$'\t' read -r verdict seconds <"$out/lanes/$k/verdict"
     [[ -s "$out/lanes/$k/verdict" || ! -e "$out/lanes/$k/void" ]] || verdict=FROZEN
-    log "=== $t (try $try, lane $k): $verdict in $seconds s"
+    log "=== $t (try $try, lane $k): $verdict in $seconds s; $(chain_state)"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$t" "$try" "$verdict" "$seconds" "$(date -u +%FT%TZ)" "$k" "$chains" >>"$out/results.tsv"
     keep_lane "$k"
     unset 'busy[$k]' 'busy_test[$k]' 'busy_try[$k]'
@@ -433,7 +455,7 @@ lanes_main() {
       t="${queue[$pick]}"; queue=("${queue[@]:0:pick}" "${queue[@]:pick+1}")
       try=$(( ${tries_of[$t]:-0} + 1 )); tries_of[$t]=$try
       rm -f "$out/lanes/$k/verdict" "$out/lanes/$k/void" "$out/lanes/$k/pgid"
-      log "    [lane $k] $t (try $try)"
+      log "    [lane $k] $t (try $try) starts: $(chain_state)"
       lane_job "$k" "$t" "$try" "${fresh[$k]}" &
       busy[$k]=$!; busy_test[$k]="$t"; busy_try[$k]="$try"; fresh[$k]=0
     done

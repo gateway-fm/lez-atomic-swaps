@@ -231,6 +231,33 @@ class LaneGroups(Runner):
         self.assertLess(max(refund_ends), min(fast_starts), 'no refund test still ran at the switch')
 
 
+class ChainEvidence(Runner):
+    """#103 item 12: each try's start and verdict carry the finalized height and
+    the sequencer's tip, and a freeze names the tip it froze under."""
+    def test_each_try_logs_finality_and_the_tip(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        log = (self.out / 'regress.log').read_text()
+        self.assertRegex(log, r'node:btc:happy:TakerSellsLez \(try 1\) starts: LEZ finalized \d+, tip \d+')
+        self.assertRegex(log, r'=== node:btc:happy:TakerSellsLez \(try 1\): PASSED .*; LEZ finalized \d+, tip \d+')
+
+    def test_lanes_log_finality_and_the_tip_too(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez', 'node:btc:replay:TakerSellsLez', LEZ_LANES='2')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        log = (self.out / 'regress.log').read_text()
+        self.assertRegex(log, r'\[lane \d\] node:btc:happy:TakerSellsLez \(try 1\) starts: LEZ finalized \d+, tip \d+')
+        self.assertRegex(log, r'=== node:btc:replay:TakerSellsLez \(try 1, lane \d\): PASSED in \d+ s; '
+                              r'LEZ finalized \d+, tip \d+')
+
+    def test_a_freeze_names_the_tip(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez', plan={'happy': {'freeze_once': True}},
+                              LEZ_LANES='2')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertRegex((self.out / 'regress.log').read_text(), r'for 3 s \(sequencer tip \d+\): the chain is frozen')
+        rows = [line.split('\t') for line in (self.out / 'chain.tsv').read_text().splitlines()]
+        self.assertTrue(rows and all(len(row) == 4 and row[1] == 'lanes' for row in rows), rows)
+
+
 class LaneNames(unittest.TestCase):
     def names(self, lane, **env):
         script = ('source "$1"; echo "$LEZ_CONTAINER_PREFIX $LEZ_LANE_RUNTIME $LEZ_ZEBRA_URL $LEZ_ZEBRA_HOST '
