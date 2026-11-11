@@ -76,12 +76,13 @@ Or connect any VNC client to those ports. The default password is
 steps are in
 [`apps/basecamp/README.md`](apps/basecamp/README.md#each-partys-desk-in-its-own-basecamp).
 
-Earlier releases published the two Basecamp apps to a personal module
-catalog,
-`https://raw.githubusercontent.com/mandrigin/logos-modules-release-base/main/logos-repo.json`
-([`docs/evidence/review-2026-09-12/README.md`](docs/evidence/review-2026-09-12/README.md)).
-It is not organization-owned, and nothing here checks that it carries this
-branch's packages; an organization-owned catalog is issue #106, still open. A
+The module catalog that carries the two Basecamp apps belongs to the
+organization:
+`https://raw.githubusercontent.com/gateway-fm/logos-modules-release-base/main/logos-repo.json`.
+Releases up to v0.2.5 named the same catalog under a personal account
+([`docs/evidence/review-2026-09-12/README.md`](docs/evidence/review-2026-09-12/README.md));
+that address keeps serving until the next release (issue #106). Nothing here
+checks that the catalog carries this branch's packages. A
 desk installed from a catalog also needs a Node of its own on the same host
 ([`apps/basecamp/README.md`](apps/basecamp/README.md)): the role packages do
 not carry one yet ([`docs/submission-115.md`](docs/submission-115.md)).
