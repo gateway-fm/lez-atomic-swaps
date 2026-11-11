@@ -1,0 +1,115 @@
+S01	PASS	logosctl version
+S02	PASS	lm version (v0.2-era, from the module builder's nix store)
+S03	PASS	lgx version (v0.2-era, from the module builder's nix store)
+S04	PASS	lgpm version (v0.2-era, from the module builder's nix store)
+S05	PASS	logoscore version (the v0.2-era runtime in our images)
+S06	PASS	start a clean session daemon
+S07	PASS	package show lez_atomic_swap_taker
+S08	FAIL	lez_atomic_swap_taker is signed by a signer that can be pinned
+S09	PASS	package show lez_core
+S10	FAIL	lez_core is signed by a signer that can be pinned
+S11	PASS	package show lez_swap_node
+S12	FAIL	lez_swap_node is signed by a signer that can be pinned
+S13	PASS	package show lez_taker_node
+S14	FAIL	lez_taker_node is signed by a signer that can be pinned
+S15	PASS	package show chat_module
+S16	FAIL	chat_module is signed by a signer that can be pinned
+S17	PASS	package show delivery_module
+S18	FAIL	delivery_module is signed by a signer that can be pinned
+S19	PASS	package show lez_indexer_module
+S20	FAIL	lez_indexer_module is signed by a signer that can be pinned
+S21	PASS	package show blockchain_module
+S22	FAIL	blockchain_module is signed by a signer that can be pinned
+S23	PASS	package show lez_network
+S24	FAIL	lez_network is signed by a signer that can be pinned
+S25	PASS	lgx verify lez_atomic_swap_taker (structure, Merkle root)
+S26	PASS	lgx verify lez_core (structure, Merkle root)
+S27	PASS	lgx verify lez_swap_node (structure, Merkle root)
+S28	PASS	lgx verify lez_taker_node (structure, Merkle root)
+S29	PASS	lgx verify chat_module (structure, Merkle root)
+S30	PASS	lgx verify delivery_module (structure, Merkle root)
+S31	PASS	lgx verify lez_indexer_module (structure, Merkle root)
+S32	PASS	lgx verify blockchain_module (structure, Merkle root)
+S33	PASS	lgx verify lez_network (structure, Merkle root)
+S34	PASS	lm metadata lez_atomic_swap_taker
+S35	PASS	lm methods lez_atomic_swap_taker
+S36	PASS	lm events lez_atomic_swap_taker
+S37	PASS	lm metadata lez_core
+S38	PASS	lm methods lez_core
+S39	PASS	lm events lez_core
+S40	PASS	lm metadata lez_swap_node
+S41	PASS	lm methods lez_swap_node
+S42	PASS	lm events lez_swap_node
+S43	PASS	lm metadata lez_taker_node
+S44	PASS	lm methods lez_taker_node
+S45	PASS	lm events lez_taker_node
+S46	PASS	lm metadata chat_module
+S47	PASS	lm methods chat_module
+S48	PASS	lm events chat_module
+S49	PASS	lm metadata delivery_module
+S50	PASS	lm methods delivery_module
+S51	PASS	lm events delivery_module
+S52	PASS	lm metadata lez_indexer_module
+S53	PASS	lm methods lez_indexer_module
+S54	PASS	lm events lez_indexer_module
+S55	PASS	lm metadata blockchain_module
+S56	PASS	lm methods blockchain_module
+S57	PASS	lm events blockchain_module
+S58	PASS	lm metadata lez_network
+S59	PASS	lm methods lez_network
+S60	PASS	lm events lez_network
+S61	NOT RUN	lm verify <installed dir> --did <pinned signer>
+S62	PASS	install lez_atomic_swap_taker as built
+S63	FAIL	installing the role package pulled in its dependencies
+S64	PASS	every dependency lez_atomic_swap_taker declares resolves with a version range
+S65	PASS	the role package requires no LEZ network module (B3: lez_network is the operator package)
+S66	PASS	install lez_core with its root hash
+S67	PASS	install lez_swap_node with its root hash
+S68	PASS	install lez_taker_node with its root hash
+S69	PASS	install chat_module with its root hash
+S70	PASS	install delivery_module with its root hash
+S71	PASS	install lez_indexer_module with its root hash
+S72	PASS	install blockchain_module with its root hash
+S73	FAIL	a wrong --root-hash is refused
+S74	PASS	every dependency of lez_atomic_swap_taker is installed, at a version in its range
+S75	PASS	a lez_core 0.5.1 (the default catalog's version) does not satisfy lez_swap_node's range
+S76	PASS	install lez_core again with its root hash
+S77	PASS	package ls
+S78	PASS	install lez_network with its root hash
+S79	PASS	lez_network declares blockchain_module and lez_indexer_module with version ranges, both installed in range
+S80	FAIL	module load lez_atomic_swap_taker
+S81	PASS	module load lez_swap_node (with its declared dependencies)
+S82	PASS	module show lez_swap_node
+S83	PASS	call lez_swap_node node_status taker
+S84	PASS	the installed package graph carries the taker Node and its launcher
+S85	PASS	module load lez_taker_node (the taker Node package, with its declared dependencies)
+S86	PASS	call lez_taker_node launcher: the installed launcher
+S87	PASS	call lez_taker_node payload: the installed files and their sha256
+S88	PASS	start_node with the package's launcher
+S89	PASS	lez_swap_node launched the taker Node from the package
+S90	INFO	the taker Node's output (without the role's configuration, which Compose provides, it stops at once)
+S91	INFO	STUB: a stand-in launcher (sleeps; not a Node)
+S92	PASS	STUB: start_node with the stand-in launcher
+S93	PASS	STUB: node_status reports the supervised child
+S94	PASS	module stats
+S95	FAIL	module stats shows the taker Node (pid 400) itself
+S96	PASS	module reload lez_swap_node
+S97	PASS	the taker Node is supervised again after the reload
+S98	INFO	processes after the reload
+S99	INFO	kill -9 the lez_swap_node host process
+S100	FAIL	the runtime reports lez_swap_node as crashed
+S101	PASS	no orphaned taker Node after the host crash
+S102	INFO	load lez_swap_node again and start the role again (what a desk does)
+S103	PASS	exactly one taker Node after recovery
+S104	PASS	package remove lez_atomic_swap_taker
+S105	PASS	package remove lez_core (takes its dependents)
+S106	PASS	nothing of ours is left installed
+S107	INFO	what remove leaves in the session
+S108	PASS	daemon stop
+S109	PASS	logosctl 0.3.0: install, load lez_swap_node, call node_status
+S110	PASS	logosctl 0.3.0: install lez_atomic_swap_taker as built
+S111	PASS	logoscore 0.2.3: modules laid out as the images do (no installer in this release)
+S112	PASS	logoscore 0.2.3: load-module lez_swap_node, call node_status
+S113	INFO	lgpm (v0.2-era, the module builder's development build): install blockchain_module (Logos's release package, the control)
+S114	PASS	lgpm (v0.2-era development build) treats lez_swap_node as it treats Logos's release package
+S115	PASS	lgpm (v0.2-era development build) treats lez_atomic_swap_taker as it treats Logos's release package

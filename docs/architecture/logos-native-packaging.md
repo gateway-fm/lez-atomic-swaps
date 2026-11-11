@@ -1,7 +1,8 @@
 # Logos-native packaging: what the official tools say about PR #120, and how to close the gaps
 
 Status: Proposed — 2026-11-10; (a) and (c) implemented 2026-11-11 (below,
-"What was built")
+"What was built"); release variants (d1 without signing) and B3 implemented
+2026-11-11 ("Release packages and the LEZ network")
 
 ```mermaid
 flowchart LR
@@ -286,15 +287,70 @@ Option A1 with lez_swap_node kept as the one lifecycle owner, and the parts of
 
 Not built: configuration in `data/` (`configure(json)`) — the launcher still
 reads Compose environment and mounts; events (`node_exited`) and readiness in
-`status()`; manifest ≥ 0.6, versioned or signed dependencies; B2/B3; portable
-desks (d1). Basecamp 0.2.0 does not reload a crashed module host, so after a
-host crash the Node stays down (no orphan) until the module is loaded again.
+`status()`; manifest ≥ 0.6; signed packages and signer-pinned dependencies.
+Basecamp 0.2.0 does not reload a crashed module host, so after a host crash
+the Node stays down (no orphan) until the module is loaded again.
+
+## Release packages and the LEZ network (2026-11-11, b)
+
+Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-2026-11-11-b/README.md)
+(both roles, on the packages of the combined landing).
+
+- **Release variants (d1, without signing).** The `-dev` variant came from the
+  builder's `lgx` and `install` outputs, which bundle with nix-bundle-lgx's
+  `dev` bundler (variant `<platform>-dev`, libraries resolved from
+  `/nix/store`). The builder also has `lgx-portable` (nix-bundle-lgx's
+  `portable` bundler: nix-bundle-dir lays the non-Qt libraries beside the
+  plugin, variant `linux-amd64`/`linux-arm64`), which our core modules already
+  used and which the per-role catalog flakes name. The desks are now built
+  from `apps/basecamp#lez-{maker,taker,network}-ui-lgx-portable`, Chat and
+  Delivery from their own flakes' `lgx-portable` at the revisions
+  `apps/basecamp/flake.lock` pins. `from-scratch.sh --only stage` installs the
+  images from those same files (`stage-basecamp-package.sh` lays out what lgpm
+  and logosctl lay out; nothing is renamed, a `-dev` package is refused), so
+  the image and a logosctl install use one artifact. The module builder's
+  lgpm is the development build of logos-package-manager (`cli`), which takes
+  only `-dev`; it refuses Logos's own release `blockchain_module` 0.2.4 the
+  same way (its `cli-portable` build is the one for release packages).
+- **Dependencies with version ranges.** The LGX manifest (0.3.0, the version
+  our packages already carry) allows `{"name", "version", "signer"}` entries;
+  logosctl 0.3.2 resolves them (`package deps --recursive` shows
+  `requiredVersion` and `status: version_mismatch`). Basecamp 0.2.0 and the
+  v0.2 runtime read only string entries (logos-package-manager `4871ed19`
+  `package_manager_lib.cpp`, logos-module `a3e288a7` `module_metadata.cpp`,
+  Basecamp `PluginLoader.cpp`), so object-only entries would stop Basecamp
+  loading a desk's modules. `deploy/scripts/pin-package-dependencies.sh`
+  therefore writes each of our packages' dependencies twice: first
+  `{"name": n, "version": "~<version of n in the release set>"}`, then the bare
+  name. logosctl takes the first entry of a name; Basecamp 0.2.0 the string.
+  The manifest's root hash covers the variants' files, not the manifest, so it
+  is unchanged. `metadata.json` keeps bare names: the builder generates one
+  client per entry there (`buildCppPlugin.nix`, `staticDeps`). So the default
+  catalog's `lez_core` 0.5.1, `lez_indexer_module` 1.2.1 and `chat_module`
+  0.3.0 no longer satisfy our packages (observation 3); distinct names were not
+  needed. A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
+  `lgx-portable`) is not pinned: it gets the bare names of `metadata.json`.
+- **B3.** The role packages declare no LEZ network module: the Node reaches the
+  sequencer and indexer its configuration names (the public testnet's or an
+  operator's). `lez_network` (the LEZ Network desk) is the operator package: it
+  declares `blockchain_module ~0.2.4` and `lez_indexer_module ~1.1.1-rpc.4`,
+  installs with logosctl, and is what the devnet's `network` Basecamp runs. A
+  trader on the public testnet does not install it. Its desk still starts the
+  modules only with the configuration paths Compose provides.
+- The release set and its `packages.tsv` (name, version, variant, dependency
+  ranges, sha256, root hash) are written to
+  `deploy/images/basecamp-ui/assets/packages/` by the stage phase and uploaded
+  by the release workflow as the `logos-packages` artifact.
+- **Signing** is out of scope (owner, 2026-11-11); the packages stay unsigned.
+  Nothing upstream blocks it: lgx 0.1.0 has `keygen` (Ed25519, `did:jwk`),
+  `sign` (`manifest.sig`), `verify --keyring-dir`, and logosctl a `key`
+  command for trusted package-signing keys; no registry is involved.
 
 ## Recommended order
 
-1. Portable, signed packages for the role desks and our modules (d1); the
-   acceptance script against them.
+1. Done without signing: release (portable) packages for the desks, Chat and
+   Delivery, versioned dependencies, B3 (2026-11-11, b). Open: signing.
 2. Done: `lez_maker_node` / `lez_taker_node` payload modules with the single
    lifecycle owner (a + c). Open: config in `data/`, identity onboarding.
-3. Role network requirement as B3, with versioned, signer-pinned dependencies.
+3. Done: B3 with versioned dependencies. Open: signer-pinned ones (with signing).
 4. Builder and runtime pins (d2–d3).

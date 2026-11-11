@@ -1,0 +1,10 @@
+name	file sha256	version	manifestVersion	type	variants	dependencies	root hash
+lez_atomic_swap_taker	f3ac54dc79b126c25eb4eb7c130ac872b1b747ab403e4ce1d72ddde3241ca378	0.2.5	0.3.0	ui_qml	linux-amd64	chat_module ~0.2.2,delivery_module ~0.2.0,lez_core ~0.4.1-sign.4,lez_swap_node ~0.3.0,lez_taker_node ~0.1.0	81798ac0522ed2af3008ee7415fb167e36376f354f407ddf21f353229426ebac
+lez_core	12f508bcae8de5f042360d934d5c253668f1b5c693292aa4cfc6c1bc0300ba36	0.4.1-sign.4	0.3.0	core	linux-amd64		8872f8e34689b5ae0953423b57a2b317ed748fd03a4c46e232049d182c792edf
+lez_swap_node	e37d762fbbdadde797588500ca4b9d52d8fc1caa5978a9dcbc7af73893f09c7d	0.3.0	0.2.0	core	linux-amd64	lez_core ~0.4.1-sign.4	a9e04c9f7dca3c7a18163ed7380a70e5b40e3ac83b280ed5248de9edd40da104
+lez_taker_node	39f58a3c855d332ff6bd8d49edafc9b6096d706e7566786680214d19cc61710a	0.1.0	0.2.0	core	linux-amd64	lez_swap_node ~0.3.0	119fd8f66ef0b1862facfa93d47480ff334600896189b58c4e2f68d9ff801209
+chat_module	4c25d2fde45453f321b38d37118a123aaf1837d17e333cc124fbff0c20958dcf	0.2.2	0.3.0	core	linux-amd64	delivery_module	52973857080126e187b921ee56e9e6c3130299e31f49c162413ceaf738cb6308
+delivery_module	b8a0cc3eb60bdf2185ed40c8a738618c783a65d2b4cb40e710f97131c457e337	0.2.0	0.3.0	core	linux-amd64		4962bd38d5e0f5091fc87a640c837bf58770187db41fccd12e8af0dcf957b2fc
+lez_indexer_module	c40df9b7ec056d75c67bca2ae51768c68cf712358af39bbecc7ed758fa428239	1.1.1-rpc.4	0.2.0	core	linux-amd64		6288c56b37037a6875723e60a449a4f6d31036340ecaa224ecc9b50f7d0e187d
+blockchain_module	31819f06aa0639874fa0257f58c24e1add6fce2b489c843b64905e28f59f0c84	0.2.4	0.3.0	core	darwin-arm64,linux-amd64,linux-arm64		2e57268c4ec1fdcf07e4b6bf1b33b5ac99705c071f879e6ca1c41b4e543cc674
+lez_network	ef31e9c156ba07ba62cae0024a22349352c0e08eb86d7fcdfda840bdf44855f3	0.1.0	0.3.0	ui_qml	linux-amd64	blockchain_module ~0.2.4,lez_indexer_module ~1.1.1-rpc.4	343ee056a16c2253d49f11fef64baffa02ff9847666f13188032f33949fd25ce

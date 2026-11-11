@@ -1,0 +1,73 @@
+[2026-11-11 15:32:39.186] [info] Inter-module access enforcement is OFF (no access policy set): any loaded module may call any other
+[2026-11-11 15:32:39.204] [info] [logos] Granting host services to 'capability_module': token_registry,token_delivery
+[2026-11-11 15:32:39.238] [out] [capability_module] [2026-11-11 15:32:39.238] [info] Granting host services to capability_module: ["token_registry","token_delivery"]
+[2026-11-11 15:32:39.245] [info] [logos] Module loaded: capability_module
+[2026-11-11 15:32:39.275] [info] [logos] Module loaded: modules_state
+[2026-11-11 15:32:39.320] [info] [logos] Module loaded: package_manager
+[2026-11-11 15:32:39.324] [info] [logos] Pushed module snapshot to modules_state
+[2026-11-11 15:32:39.368] [info] [logos] [storage_module] StorageModuleImpl: Initializing...
+[2026-11-11 15:32:39.371] [info] [logos] Module loaded: storage_module
+[2026-11-11 15:32:39.408] [info] [logos] Module loaded: package_downloader
+Logosctl daemon started (pid 23, instance 12dcef57df8f)
+Daemon state: /tmp/acceptance/daemon/state.json
+Local client config: /tmp/acceptance/client/config.yaml
+[2026-11-11 15:32:39.421] [warning] [logos] [capability_module] Warning: QObject::connect: No such signal ::eventResponse(QString,QVariantList)
+[2026-11-11 15:32:39.421] [warning] [logos] [capability_module] Warning: QObject::connect: No such signal ::eventResponse(QString,QVariantList)
+[2026-11-11 15:32:39.422] [info] [logos] [storage_module] StorageModuleImpl::init called
+[2026-11-11 15:32:39.474] [out] [storage_module] INF 2026-11-11 15:32:39.470+00:00 Creating a private key and saving it       tid=38
+[2026-11-11 15:32:39.474] [out] [storage_module] INF 2026-11-11 15:32:39.471+00:00 Bootstrapping node using a predefined network topics="libstorage libstoragelifecycle" tid=38 network="[logos.test]: Logos testnet"
+[2026-11-11 15:32:39.474] [out] [storage_module] INF 2026-11-11 15:32:39.472+00:00 AutoNAT client enabled                     topics="libstorage libstoragelifecycle" tid=38 scheduleInterval=1m numPeersToAsk=3 maxQueueSize=3 minConfidence=0.6
+[2026-11-11 15:32:39.475] [out] [storage_module] INF 2026-11-11 15:32:39.473+00:00 Threadpool started                         topics="libstorage libstoragelifecycle" tid=38 numThreads=8
+[2026-11-11 15:32:39.485] [info] [logos] [storage_module] StorageModuleImpl::start called
+[2026-11-11 15:32:39.493] [out] [storage_module] WRN 2026-11-11 15:32:39.489+00:00 No key for a QueryResponse                 topics="storage repostore" tid=38
+[2026-11-11 15:32:39.501] [out] [storage_module] INF 2026-11-11 15:32:39.499+00:00 Starting node with Mix relay pool          topics="storage node" tid=38 count=4
+[2026-11-11 15:32:39.504] [out] [storage_module] WRN 2026-11-11 15:32:39.500+00:00 No Mix-compatible address among announced addrs topics="storage discovery" tid=38 addrs=[]
+[2026-11-11 15:32:39.504] [out] [storage_module] INF 2026-11-11 15:32:39.500+00:00 Mix local address updated                  topics="storage discovery" tid=38 address=/ip4/0.0.0.0/tcp/0
+[2026-11-11 15:32:39.504] [out] [storage_module] NTC 2026-11-11 15:32:39.500+00:00 Started Storage node                       topics="storage node" tid=38 id=16U*fo9Zfo addrs=[]
+[2026-11-11 15:32:39.504] [out] [storage_module] WRN 2026-11-11 15:32:39.501+00:00 Cannot connect to bootstrap node           topics="storage node" tid=38 error="Unable to establish outgoing link in establishConnection: peer_id=16U*iRJWnW addrs=@[/ip4/178.128.140.206/tcp/8070, /ip4/178.128.140.206/tcp/8070/mix-transport/An67-cPFkDpqyeTEjDPbhtN8NUxt9S-niBc5QRLyc2xrfadHgJmHjhbhrmTY2S86xaAz0wkgJnLzjEsjWAApyTU=]"
+[2026-11-11 15:32:39.504] [out] [storage_module] WRN 2026-11-11 15:32:39.501+00:00 Cannot connect to bootstrap node           topics="storage node" tid=38 error="Unable to establish outgoing link in establishConnection: peer_id=16U*29vrbB addrs=@[/ip4/129.212.221.44/tcp/8070, /ip4/129.212.221.44/tcp/8070/mix-transport/A_aTx0w5sTTjM1GEgYYDd1cbzpzGQZ8eiqL77znxAunKouXQ3WVLH-5B4g_222ZrPRKBRi-10dcrPmrbrQPMHQI=]"
+[2026-11-11 15:32:39.504] [out] [storage_module] WRN 2026-11-11 15:32:39.501+00:00 Cannot connect to bootstrap node           topics="storage node" tid=38 error="Unable to establish outgoing link in establishConnection: peer_id=16U*XWmJd4 addrs=@[/ip4/34.70.60.201/tcp/8070, /ip4/34.70.60.201/tcp/8070/mix-transport/Aph_ARtkKQwuVAqmTaccbMpF5q2Ub3rOI8AO8jNJPqU_iCJShu0awGv6pVemEA0WydIx1Dhc7GOXi9r88D1QPi8=]"
+[2026-11-11 15:32:39.504] [out] [storage_module] WRN 2026-11-11 15:32:39.502+00:00 Cannot connect to bootstrap node           topics="storage node" tid=38 error="Unable to establish outgoing link in establishConnection: peer_id=16U*pN9NEM addrs=@[/ip4/34.123.182.254/tcp/8070]"
+[2026-11-11 15:32:39.504] [out] [storage_module] WRN 2026-11-11 15:32:39.502+00:00 Cannot connect to bootstrap node           topics="storage node" tid=38 error="Unable to establish outgoing link in establishConnection: peer_id=16U*H6rT9Z addrs=@[/ip4/47.76.168.186/tcp/8070, /ip4/47.76.168.186/tcp/8070/mix-transport/Ar0XuiYSeu54D9yrXkzAhdOMfB8HB7ym0kzrGxL7-8fQdS5frXlbh5XV2xRCFIpk_iHH_7VAF-42Vq5CtPEC8hc=]"
+[2026-11-11 15:32:39.505] [out] [storage_module] WRN 2026-11-11 15:32:39.503+00:00 Cannot connect to bootstrap node           topics="storage node" tid=38 error="Unable to establish outgoing link in establishConnection: peer_id=16U*i66rfD addrs=@[/ip4/47.76.178.164/tcp/8070]"
+[2026-11-11 15:33:44.206] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_atomic_swap_maker.lgx
+[2026-11-11 15:33:50.864] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_core.lgx
+[2026-11-11 15:33:53.976] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_swap_node.lgx
+[2026-11-11 15:34:02.173] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_maker_node.lgx
+[2026-11-11 15:34:07.731] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/chat_module.lgx
+[2026-11-11 15:34:12.016] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/delivery_module.lgx
+[2026-11-11 15:34:16.274] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_indexer_module.lgx
+[2026-11-11 15:34:33.873] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/blockchain_module.lgx
+[2026-11-11 15:34:40.423] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_swap_node.lgx
+[2026-11-11 15:35:07.545] [warning] [logos] [package_manager] Warning: Package is unsigned: /tmp/lez_core-0.5.1.lgx
+[2026-11-11 15:35:17.691] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_core.lgx
+[2026-11-11 15:35:21.994] [warning] [logos] [package_manager] Warning: Package is unsigned: /in/lez_network.lgx
+[2026-11-11 15:35:22.594] [warning] [logos] Module not found in known modules: lez_atomic_swap_maker
+[2026-11-11 15:35:22.594] [warning] [logos] Missing dependencies detected: lez_atomic_swap_maker
+[2026-11-11 15:35:22.594] [warning] [logos] Cannot resolve dependencies for: lez_atomic_swap_maker
+[2026-11-11 15:35:22.804] [info] [logos] Module loaded: lez_core
+[2026-11-11 15:35:22.843] [info] [logos] Module loaded: lez_swap_node
+[2026-11-11 15:35:23.642] [info] [logos] Module loaded: lez_maker_node
+[2026-11-11 15:35:24.267] [info] [logos] [lez_swap_node] lez_swap_node: maker: supervising /tmp/acceptance/modules/lez_maker_node/bin/node-entrypoint.sh (log /tmp/acceptance/logs/maker-node.log, hold file /tmp/acceptance/maker-node.hold)
+[2026-11-11 15:35:24.268] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 353, start 1)
+[2026-11-11 15:35:24.281] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node ended (exit 1)
+[2026-11-11 15:35:26.283] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 356, start 2)
+[2026-11-11 15:35:26.289] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node ended (exit 1)
+[2026-11-11 15:35:28.121] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 397, start 1)
+[2026-11-11 15:35:28.123] [info] [logos] [lez_swap_node] lez_swap_node: maker: supervising /tmp/stub-launcher (log /tmp/stub.log, hold file /tmp/stub.hold)
+[2026-11-11 15:35:30.985] [info] [logos] Module unloaded: lez_swap_node
+[2026-11-11 15:35:31.015] [info] [logos] [lez_swap_node] lez_swap_node: maker: resuming the Node a previous host of this module supervised
+[2026-11-11 15:35:31.016] [info] [logos] [lez_swap_node] lez_swap_node: maker: supervising /tmp/stub-launcher (log /tmp/stub.log, hold file /tmp/stub.hold)
+[2026-11-11 15:35:31.017] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 433, start 1)
+[2026-11-11 15:35:31.017] [info] [logos] Module loaded: lez_swap_node
+[2026-11-11 15:35:35.874] [critical] [logos] Module process crashed: lez_swap_node
+[2026-11-11 15:35:39.412] [info] [logos] [lez_swap_node] lez_swap_node: maker: resuming the Node a previous host of this module supervised
+[2026-11-11 15:35:39.412] [info] [logos] [lez_swap_node] lez_swap_node: maker: supervising /tmp/stub-launcher (log /tmp/stub.log, hold file /tmp/stub.hold)
+[2026-11-11 15:35:39.412] [info] [logos] Module loaded: lez_swap_node
+[2026-11-11 15:35:39.414] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node started (pid 578, start 1)
+[2026-11-11 15:35:41.834] [info] [logos] [lez_swap_node] lez_swap_node: maker: Node ended (signal 15)
+[2026-11-11 15:35:42.140] [warning] [logos] Cannot unload module (not loaded): lez_atomic_swap_maker
+[2026-11-11 15:35:42.376] [info] [logos] Module unloaded: lez_maker_node
+[2026-11-11 15:35:42.427] [info] [logos] Module unloaded: lez_swap_node
+[2026-11-11 15:35:42.427] [warning] [logos] Cannot unload module (not loaded): lez_maker_node
+[2026-11-11 15:35:42.477] [info] [logos] Module unloaded: lez_core

@@ -75,7 +75,7 @@ the current code.
 | R8 | `desk-sockets.py` disappears | Removed in commit `f1dfe773`; each party's desk is reached in its own Basecamp over VNC | `git ls-files` finds no such file | — | Verified. |
 | R9 | SQLite stays | `crates/swap-store` (`rusqlite` 0.41, commit `ddf12e27`) | unit tests in CI | — | Not re-run by this change. |
 | R10 | Bitcoin Core stays bring-your-own | `bitcoin-core` plain container; testnet route uses your own Core or a public RPC provider (`docs/testnet-run.md` sections 2 and 9) | `scripts/verify-bitcoin-core-release.sh` in CI | — | Not re-run by this change. |
-| R11 | A user installs the Maker or Taker package and has nothing else to start | The role's executables now come with the package graph (desk → `lez_<role>_node` → `lez_swap_node` → `lez_core`); with `LEZ_<ROLE>_NODE_LAUNCHER=package` the desk starts the Node from it. Not met: the role's configuration (chain endpoints, identity, state paths) is still Compose environment and mounts, the launcher needs host tools (bash, socat, jq, curl, python3, setpriv), a file install resolves no dependencies, and the desks' `-dev` variant is refused by `logosctl` | logos-native acceptance run | `docs/evidence/logos-native-2026-11-11/` | Executables: packaged. Configuration and install graph: gap stands. |
+| R11 | A user installs the Maker or Taker package and has nothing else to start | The role's executables now come with the package graph (desk → `lez_<role>_node` → `lez_swap_node` → `lez_core`); with `LEZ_<ROLE>_NODE_LAUNCHER=package` the desk starts the Node from it. Not met: the role's configuration (chain endpoints, identity, state paths) is still Compose environment and mounts, the launcher needs host tools (bash, socat, jq, curl, python3, setpriv), a file install resolves no dependencies (the packages themselves, desks included, now install with `logosctl`) | logos-native acceptance run | `docs/evidence/logos-native-2026-11-11/` | Executables: packaged. Configuration and install graph: gap stands. |
 | R12 | Out of scope: the LEZ 0.4 port (#107) and a public indexer (logos-co/rfp#126) | The stack stays on LEZ v0.2.4 (`LEZ_SOURCE_COMMIT`, `LEZ_MODULES_LEZ_COMMIT` in `from-scratch.sh`); the indexer runs only on the devnet | — | — | Respected. |
 | R13 | Reviewer question on #115: use `logos-bitcoind-module` and `logos-zebrad-module` | Not adopted; reasons in the table above | source reading only | — | Assessment, **no spike run**. |
 | R14 | Platforms: a native role package on darwin-arm64, with a non-Linux store | Not met. `crates/swap-store/src/lib.rs` refuses to compile off Linux (memfd seals, `openat2`); the release builds Linux arm64 images (`.github/workflows/release-images.yml`) | — | — | Gap stands. |
@@ -129,22 +129,33 @@ Stated plainly; each one is open unless it says otherwise.
    stays down (no orphan) until the module is loaded again (a desk reopened,
    `logosctl module load`, Basecamp restarted); in Compose the role's health
    check goes unhealthy.
-3. **Packages do not install as a graph.** The desks are built with the
-   `linux-amd64-dev` variant, which `logosctl` refuses (S50, S91); a file
-   install resolves no dependencies (S54); dependencies are bare names, and
-   the default catalog carries other packages under the same names (`lez_core`
-   0.5.1, `lez_indexer_module` 1.2.1, observation 3 in the packaging note). The
-   Basecamp images work because `stage-basecamp-package.sh` renames the variant.
+3. **Packages install one by one, unsigned.** Every package is a release
+   package now (`lgx-portable`, variant `linux-amd64`/`linux-arm64`) and
+   `logosctl` 0.3.2 and 0.3.0 install each of them, desks included; the
+   Basecamp images are installed from the same files, nothing is renamed. Our
+   packages' dependencies carry version ranges (`~<version in the release
+   set>`, `deploy/scripts/pin-package-dependencies.sh`), so the default
+   catalog's other `lez_core` 0.5.1, `lez_indexer_module` 1.2.1 and
+   `chat_module` 0.3.0 do not satisfy them (logos-native run 2026-11-11-b,
+   S64, S74, S75). Still: a file install resolves no dependencies (logosctl,
+   S63), so a user installs the set package by package; the packages are
+   unsigned (owner: out of scope, 2026-11-11); the bare dependency names stay
+   in the manifest after the ranges for Basecamp 0.2.0, which reads only string
+   entries (packaging note, "Release packages and the LEZ network").
 4. **Pinned v0.2 artifacts against the official v0.3 procedure.** The images
    run Basecamp 0.2.0 (`48b26c0`) and the headless heartbeat runs logoscore
    0.2.3; the official build-and-run procedure is Logos Testnet v0.3 with
-   `logosctl` 0.3.x. `logosctl` 0.3.2 installed and loaded our core modules in
-   the logos-native run (S56–S68), but the desks and the dependency graph did
-   not work (items 3 above). Moving LEZ itself to v0.3 is out of scope (#107).
-5. **Packaging evidence.** The 2026-11-11 logos-native runs
-   (`docs/evidence/logos-native-2026-11-11/`) used the packages of this
-   landing (`lez_core` 0.4.1-sign.4, `lez_swap_node` 0.3.0, `lez_maker_node` /
-   `lez_taker_node` 0.1.0). The 2026-11-10 run is kept for comparison.
+   `logosctl` 0.3.x. `logosctl` 0.3.2 and 0.3.0 install every package of the release
+   set and load our core modules (logos-native run 2026-11-11-b); a file
+   install still resolves no dependencies and `logosctl` loads no `ui_qml`
+   package (item 3 above). Moving LEZ itself to v0.3 is out of scope (#107).
+5. **Packaging evidence.** The latest logos-native runs
+   (`docs/evidence/logos-native-2026-11-11-b/`) used the release set of the
+   combined landing (`packages.tsv` there: `lez_core` 0.4.1-sign.4,
+   `lez_swap_node` 0.3.0, `lez_maker_node` / `lez_taker_node` 0.1.0, the desks
+   0.2.5, `lez_network` 0.1.0, Chat 0.2.2, Delivery 0.2.0); their README
+   classifies every remaining FAIL. The 2026-11-10 and 2026-11-11 runs are
+   kept for comparison.
 6. **Custody boundary.** The LEZ key is a plaintext file under
    `deploy/runtime/lez/<role>/` (mode 0640 in a 0750 directory on Linux, 0644
    on macOS, `deploy/scripts/gen-config.sh`), bind-mounted into the role's
@@ -156,11 +167,14 @@ Stated plainly; each one is open unless it says otherwise.
    On the ZEC devnet corridor, `scripts/zec-provision.sh` also copies each
    role's LEZ key into the corridor material; the corridor sidecar signs
    through the wallet socket when it is up.
-7. **The LEZ network needs Compose.** The LEZ Network desk hosts nothing
-   without the config paths Compose sets; the role packages do not declare it
-   (`apps/basecamp/maker/metadata.json`). Whether a network package is an
-   operator package, an automatic dependency or devnet-only scaffolding is
-   undecided.
+7. **The LEZ network is an operator package that needs Compose.** Decided as
+   option B3 (packaging note): the role packages declare no network module and
+   reach the sequencer and indexer their configuration names; `lez_network`
+   (the LEZ Network desk) is the operator package, declaring
+   `blockchain_module ~0.2.4` and `lez_indexer_module ~1.1.1-rpc.4`, and installs
+   with `logosctl` (run 2026-11-11-b, S78–S79). A user of the public testnet
+   does not need it. Its desk still hosts nothing without the config paths
+   Compose sets.
 8. **The public testnet route has not moved.** It no longer needs the
    sequencer proxy for the Nodes and signers (R6; the escrow deployment still
    uses it), but it uses upstream's `indexer_service` and Logos Blockchain node as
@@ -240,7 +254,7 @@ claims them.
 | Full regression on the release candidate | `deploy/scripts/regress.sh full` (93 tests: `regress.sh list full`) on one frozen commit, results committed under `docs/evidence/` | pending |
 | Zcash public-Testnet lane (logos-co/rfp#122) | happy paths and a real refund on public Zcash Testnet and LEZ testnet 0.2 with the released artifacts, transaction ids and heights retained | pending |
 | CI and release workflow on the final commit | all required PR checks green (DCO needs item 12), then `.github/workflows/release-images.yml` dispatched on the same commit | not verified here (no CI state is recorded in the repository) |
-| Native install proof | `deploy/scripts/logos-native-acceptance.sh` on the final packages, or an accepted waiver | run on this landing's packages (`docs/evidence/logos-native-2026-11-11/`); its remaining FAILs are listed there; not yet on the release candidate |
+| Native install proof | `deploy/scripts/logos-native-acceptance.sh` on the final packages, or an accepted waiver | run on the combined landing's release set (`docs/evidence/logos-native-2026-11-11-b/`): every remaining FAIL is unsigned packages (out of scope) or upstream logosctl/runtime behaviour, classified there; not yet on the release candidate |
 | Topology decision in #115 | Logos agrees R2, R5, R7, R11, R13, R14 and the network-package question | open |
 
 ## Open-issue ledger
