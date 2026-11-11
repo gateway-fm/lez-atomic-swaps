@@ -989,7 +989,8 @@ def scenario_late_claim_unmined(stamp: str) -> dict:
                 raise Failure("neither the terms nor the Maker's lock give the Maker's Bitcoin refund height")
             log(f"  the claim {claim_txid[:12]} waits in the mempool with the Taker down; mining empty blocks every "
                 f"{pace}s until the window closes ({window_closes}) and the Maker's refund opens at height {refund_height}")
-            bound = max(0, window_closes - time.time()) + (refund_height - int(bitcoin("getblockcount"))) * pace + 600
+            # Each round reads Core and the Maker before it mines, so it takes longer than the pace.
+            bound = max(0, window_closes - time.time()) + (refund_height - int(bitcoin("getblockcount"))) * (pace + 3) + 600
             wait = Wait("the refund path to open with the claim unmined", bound)
             while wait.running():
                 height = int(bitcoin("getblockcount"))
