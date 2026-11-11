@@ -28,6 +28,18 @@
 # that wants the other one, up.sh switches the profile (runtime.env, both Nodes
 # and the miner recreated, the chain kept). A ZEC test runs on either: its
 # windows come from the corridor's agreement.
+#
+# LEZ_LANES=N (N > 1) runs N tests at a time, one per lane: lane 1 is the stack,
+# lanes 2..N each one more Maker/Taker pair with its own Bitcoin Core, miner and
+# Zebra on the same LEZ chain (scripts/lane.sh, scripts/lanes.sh, which this
+# brings up). Idle lanes take the longest test left (LEZ_REGRESS_DURATIONS, a
+# results.tsv of an earlier run, says how long each took). One watcher reads
+# the finalized height every LEZ_REGRESS_POLL_SECONDS (5); when the chain is
+# frozen every lane's test is void: all are stopped, put back first in line,
+# and one new chain serves every lane. A worn chain is replaced, and the timing
+# profile switched, once every lane is idle. The zec-balance-refusal tests need
+# a chain of their own and run last, on lane 1 alone. results.tsv gains the
+# lane and the chain each try ran on. Unset or 1: one test at a time, as above.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
@@ -76,13 +88,16 @@ case "$mode" in
   smoke|refunds|full) mapfile -t tests < <(tier_tests "$mode") ;;
   list) tier_tests "${1:-full}"; exit ;;
   run) tests=("$@"); [[ ${#tests[@]} -gt 0 ]] || { echo "run needs at least one test" >&2; exit 64; } ;;
-  *) sed -n 2,28p "${BASH_SOURCE[0]}"; exit 64 ;;
+  *) sed -n 2,42p "${BASH_SOURCE[0]}"; exit 64 ;;
 esac
 
 out="${LEZ_REGRESS_OUT:-runtime/regress/$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$out/logs" "$out/e2e" "$out/zec"
 flat_limit="${LEZ_REGRESS_FLAT_SECONDS:-60}"
 tries="${LEZ_REGRESS_TRIES:-4}"
+lane_count="${LEZ_LANES:-1}"
+[[ "$lane_count" =~ ^[1-9]$ ]] || { echo "LEZ_LANES must be 1 to 9" >&2; exit 64; }
+poll="${LEZ_REGRESS_POLL_SECONDS:-5}"
 # The runner owns the chain: a ZEC desk test's zec-provision.sh must not
 # recreate it from inside a test (ensure-chain.sh) behind the runner's back.
 export LEZ_ZEC_SKIP_CHAIN_CHECK=1
@@ -223,16 +238,226 @@ run_test() { # run_test <kind:pair:scenario:direction>
   return 1
 }
 
+# ---- lanes (LEZ_LANES > 1) -------------------------------------------------------
+# A test's expected length, to start the longest first: its last PASSED try in
+# LEZ_REGRESS_DURATIONS when given, else its class's.
+expected_seconds() { # expected_seconds <test>
+  local seconds=""
+  if [[ -n "${LEZ_REGRESS_DURATIONS:-}" && -s "${LEZ_REGRESS_DURATIONS}" ]]; then
+    seconds="$(awk -F'\t' -v t="$1" '$1 == t && $3 == "PASSED" { s = $4 } END { print s }' "$LEZ_REGRESS_DURATIONS")"
+  fi
+  if [[ -z "$seconds" ]]; then
+    case "$1" in
+      *refund*|*stale-window*) seconds=1000 ;;
+      ui:*) seconds=350 ;;
+      *) seconds=250 ;;
+    esac
+  fi
+  echo "$seconds"
+}
+# Tests that need a chain of their own: run last, on lane 1 alone (run_test).
+serial_test() { [[ "$1" == *:zec-balance-refusal:* ]]; }
+# A test's group is the timing profile it needs (profile_of; empty: either).
+# Tests of one group run until none is left that may run, then every lane goes
+# idle and enter_group switches the whole stack to the next profile (use_profile:
+# up.sh recreates lane 1's Nodes, and lanes.sh every other lane's, LEZ_LANES
+# being exported).
+test_group() { profile_of "$1"; }
+enter_group() { use_profile "$1"; }
+lane_runtime() { if [[ "$1" == 1 ]]; then echo runtime; else echo "runtime/lanes/$1"; fi; }
+keep_lane() { # keep_lane <lane>: the lane's exported summaries and evidence
+  local dir; dir="$(lane_runtime "$1")"
+  cp "$dir"/e2e/*.json "$out/e2e/" 2>/dev/null; cp "$dir"/evidence/zec/*.json "$out/zec/" 2>/dev/null; true
+}
+# chain_watch: returns once the finalized height has stood still for
+# $flat_limit seconds (the chain is frozen); runs beside the lanes. A worn chain
+# (storage_price) is marked in $out/worn: no test starts on it, and once every
+# lane is idle a new chain replaces it.
+chain_watch() {
+  local last now since price
+  last="$(finalized)"; since="$(date +%s)"
+  while true; do
+    sleep "$poll"; now="$(finalized)"
+    if [[ -n "$now" && "$now" != "$last" ]]; then last="$now"; since="$(date +%s)"; fi
+    if [[ ! -e "$out/worn" ]]; then
+      price="$(storage_price)"
+      if [[ -n "$price" ]] && (( price >= max_storage_price )); then
+        log "    the chain is worn (storage gas price $price): no test starts on it"; touch "$out/worn"
+      fi
+    fi
+    if (( $(date +%s) - since >= flat_limit )); then
+      log "    finality has stood at ${last:-nothing} for ${flat_limit} s: the chain is frozen, every lane's test is void"
+      return 0
+    fi
+  done
+}
+# lane_job <lane> <test> <try> <fresh>: one try on one lane, in the background;
+# writes "<verdict>\t<seconds>" to $out/lanes/<lane>/verdict. The test's process
+# group goes to .../pgid; a .../void marker means the runner stopped it (frozen).
+lane_job() {
+  local k="$1" t="$2" try="$3" fresh="$4" kind pair scenario direction dir="$out/lanes/$1" logfile started rc verdict
+  IFS=: read -r kind pair scenario direction <<<"$t"
+  export LEZ_LANE="$k" LEZ_REPAIR_INDEXER=0 LEZ_E2E_INDEXER_CHECK_ONLY=1
+  # shellcheck source=lane.sh
+  source scripts/lane.sh
+  # a lane whose Nodes a new chain just recreated starts without swaps (up.sh)
+  [[ "$fresh" == 1 ]] || bash scripts/reset-swaps.sh --abandon-open >"$dir/reset.log" 2>&1 ||
+    log "    [lane $k] reset-swaps.sh failed before $t (lanes/$k/reset.log)"
+  logfile="$out/logs/$kind-$pair-$scenario-$direction-$try.log"; started="$(date +%s)"
+  # shellcheck disable=SC2046  # the command is a word list
+  setsid env LEZ_E2E_SKIP_FINALITY_PREFLIGHT=1 timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" \
+    $(command_of "$kind" "$pair" "$scenario" "$direction") \
+    >"$logfile" 2>&1 </dev/null &
+  echo "$!" >"$dir/pgid"
+  wait "$!"; rc=$?
+  case "$rc" in 0) verdict=PASSED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
+  if [[ -e "$dir/void" ]]; then verdict=FROZEN
+  elif [[ "$verdict" != PASSED ]] && ! moving "${LEZ_REGRESS_MOVING_WINDOW:-30}"; then verdict=FROZEN; fi
+  printf '%s\t%s\n' "$verdict" "$(( $(date +%s) - started ))" >"$dir/verdict"
+}
+
+lanes_main() {
+  local -a queue=() serial=() requeue=()
+  local -A busy=() busy_test=() busy_try=() tries_of=() fresh=()
+  local k t try watcher done_pid verdict seconds group
+  for t in "${tests[@]}"; do serial_test "$t" && serial+=("$t"); done
+  # the longest first
+  mapfile -t queue < <(
+    for t in "${tests[@]}"; do
+      serial_test "$t" || printf '%s\t%s\n' "$(expected_seconds "$t")" "$t"
+    done | sort -t$'\t' -s -k1,1nr | cut -f2)
+  export LEZ_LANES="$lane_count"
+  for (( k = 1; k <= lane_count; k++ )); do mkdir -p "$out/lanes/$k"; fresh[$k]=0; done
+  log "lanes: $lane_count (lane 1 is the stack; lanes 2..$lane_count: scripts/lanes.sh up)"
+  bash scripts/lanes.sh up "$lane_count" >"$out/logs/lanes-up.log" 2>&1 ||
+    { log "lanes 2..$lane_count did not come up (logs/lanes-up.log)"; failed=("${tests[@]}"); return 2; }
+  rm -f "$out/worn"
+  local price; price="$(storage_price)"
+  if ! moving "${LEZ_REGRESS_MOVING_WINDOW:-30}" || { [[ -n "$price" ]] && (( price >= max_storage_price )); }; then
+    log "    the chain is frozen or worn (storage gas price ${price:-?})"; fresh_chain || { failed=("${tests[@]}"); return 2; }
+    for (( k = 1; k <= lane_count; k++ )); do fresh[$k]=1; done
+  fi
+  # a try is over: its verdict, its row, and what happens to the test
+  finish_try() { # finish_try <lane>
+    local k="$1" t="${busy_test[$1]}" try="${busy_try[$1]}" logfile kind pair scenario direction
+    verdict=FAILED; seconds=0
+    [[ ! -s "$out/lanes/$k/verdict" ]] || IFS=$'\t' read -r verdict seconds <"$out/lanes/$k/verdict"
+    [[ -s "$out/lanes/$k/verdict" || ! -e "$out/lanes/$k/void" ]] || verdict=FROZEN
+    log "=== $t (try $try, lane $k): $verdict in $seconds s"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$t" "$try" "$verdict" "$seconds" "$(date -u +%FT%TZ)" "$k" "$chains" >>"$out/results.tsv"
+    keep_lane "$k"
+    unset 'busy[$k]' 'busy_test[$k]' 'busy_try[$k]'
+    case "$verdict" in
+      PASSED) ;;
+      FROZEN)
+        if (( try < tries )); then requeue+=("$t"); else failed+=("$t"); fi ;;
+      *)
+        IFS=: read -r kind pair scenario direction <<<"$t"
+        logfile="$out/logs/$kind-$pair-$scenario-$direction-$try.log"
+        sed 's/\x1b\[[0-9;]*m//g' "$logfile" 2>/dev/null | grep -E '✗|FAILED|Failure|Traceback|rror' | tail -3 | cut -c1-220 | sed 's/^/      /' | tee -a "$out/regress.log"
+        failed+=("$t") ;;
+    esac
+  }
+  # pick: the index of the first queued test that may run in the current group, or -1
+  next_test() {
+    local i g; pick=-1
+    for i in "${!queue[@]}"; do
+      g="$(test_group "${queue[$i]}")"
+      [[ -z "$g" || "$g" == "$group" ]] && { pick="$i"; return; }
+    done
+  }
+  local pick next=""
+  # the group of the first (longest) test that names one, if any
+  for t in "${queue[@]}"; do next="$(test_group "$t")"; [[ -z "$next" ]] || break; done
+  group="$next"
+  if [[ -n "$group" ]]; then
+    log "group $group"; enter_group "$group" || { failed=("${queue[@]}" "${serial[@]}"); return 2; }
+  fi
+  chain_watch & watcher=$!
+  while (( ${#queue[@]} > 0 || ${#busy[@]} > 0 )); do
+    # a worn chain: once every lane is idle, a new one
+    if [[ -e "$out/worn" ]] && (( ${#busy[@]} == 0 )); then
+      kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null; rm -f "$out/worn"
+      fresh_chain || { failed+=("${queue[@]}" "${serial[@]}"); queue=(); serial=(); log "no LEZ chain could be started; stopping"; return 2; }
+      for (( k = 1; k <= lane_count; k++ )); do fresh[$k]=1; done
+      chain_watch & watcher=$!
+    fi
+    # nothing left for this group: once every lane is idle, the stack moves on to
+    # the group of the first test waiting
+    next_test
+    if (( pick < 0 && ${#busy[@]} == 0 )); then
+      for t in "${queue[@]}"; do next="$(test_group "$t")"; [[ -z "$next" ]] || break; done
+      group="$next"; log "group $group"
+      enter_group "$group" || { failed+=("${queue[@]}"); queue=(); break; }
+    fi
+    for (( k = 1; k <= lane_count; k++ )); do
+      [[ -z "${busy[$k]:-}" && ! -e "$out/worn" ]] || continue
+      next_test; (( pick >= 0 )) || break
+      t="${queue[$pick]}"; queue=("${queue[@]:0:pick}" "${queue[@]:pick+1}")
+      try=$(( ${tries_of[$t]:-0} + 1 )); tries_of[$t]=$try
+      rm -f "$out/lanes/$k/verdict" "$out/lanes/$k/void" "$out/lanes/$k/pgid"
+      log "    [lane $k] $t (try $try)"
+      lane_job "$k" "$t" "$try" "${fresh[$k]}" &
+      busy[$k]=$!; busy_test[$k]="$t"; busy_try[$k]="$try"; fresh[$k]=0
+    done
+    if (( ${#busy[@]} == 0 )); then
+      [[ -e "$out/worn" ]] || (( pick >= 0 )) || { failed+=("${queue[@]}"); queue=(); break; }
+      continue
+    fi
+    wait -n -p done_pid
+    if [[ "$done_pid" == "$watcher" ]]; then
+      # frozen: every lane's test is void; they go back first in line
+      for k in "${!busy[@]}"; do
+        touch "$out/lanes/$k/void"
+        [[ ! -s "$out/lanes/$k/pgid" ]] || kill -TERM -- "-$(cat "$out/lanes/$k/pgid")" 2>/dev/null
+      done
+      sleep "${LEZ_REGRESS_KILL_GRACE:-20}"
+      for k in "${!busy[@]}"; do
+        [[ ! -s "$out/lanes/$k/pgid" ]] || kill -KILL -- "-$(cat "$out/lanes/$k/pgid")" 2>/dev/null
+        kill -KILL "${busy[$k]}" 2>/dev/null
+        wait "${busy[$k]}" 2>/dev/null
+        finish_try "$k"
+      done
+      queue=("${requeue[@]}" "${queue[@]}"); requeue=(); rm -f "$out/worn"
+      fresh_chain || { failed+=("${queue[@]}" "${serial[@]}"); queue=(); serial=(); log "no LEZ chain could be started; stopping"; return 2; }
+      for (( k = 1; k <= lane_count; k++ )); do fresh[$k]=1; done
+      chain_watch & watcher=$!
+      continue
+    fi
+    for k in "${!busy[@]}"; do
+      [[ "${busy[$k]}" == "$done_pid" ]] || continue
+      finish_try "$k"
+      queue=("${requeue[@]}" "${queue[@]}"); requeue=()
+    done
+  done
+  kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+  (( ${#serial[@]} > 0 )) || return 0
+  # the tests that need a chain of their own: lane 1 alone, one after another
+  log "lanes: ${#serial[@]} test(s) on a chain of their own, lane 1 alone"
+  bash scripts/lanes.sh stop "$lane_count" >"$out/logs/lanes-stop.log" 2>&1 || log "    lanes.sh stop failed (logs/lanes-stop.log)"
+  export LEZ_LANES=1
+  for t in "${serial[@]}"; do
+    run_test "$t"; rc=$?
+    if (( rc == 2 )); then log "no LEZ chain could be started; stopping"; failed+=("$t"); break; fi
+    (( rc == 0 )) || failed+=("$t")
+  done
+}
+
 load_env
 [[ "${LEZ_TIMING_PROFILE:-local}" =~ ^(fast|refund)$ ]] || { echo "the regression needs the fast or the refund timing profile: LEZ_TIMING_PROFILE=fast scripts/up.sh" >&2; exit 1; }
 began="$(date +%s)"; failed=()
 log "regression ${mode}: ${#tests[@]} tests at $(git rev-parse --short HEAD 2>/dev/null || echo '?') (tree dirty: $(git status --short 2>/dev/null | wc -l)), results in $out"
 log "profile $LEZ_TIMING_PROFILE: a Bitcoin block every ${MINE_INTERVAL:-?} s; Maker cutoff ${LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS} s, refunds at ${LEZ_BTC_EARLIER_REFUND_SECONDS} and ${LEZ_BTC_LATER_REFUND_SECONDS} s"
+if (( lane_count > 1 )); then
+  trap 'kill $(jobs -p) 2>/dev/null' EXIT
+  lanes_main
+else
 for t in "${tests[@]}"; do
   run_test "$t"; rc=$?
   if (( rc == 2 )); then log "no LEZ chain could be started; stopping"; failed+=("$t"); break; fi
   (( rc == 0 )) || failed+=("$t")
 done
+fi
 passed=$(( ${#tests[@]} - ${#failed[@]} ))
 log "regression ${mode}: $passed of ${#tests[@]} passed in $(( ($(date +%s) - began) / 60 )) min, $chains new chains, $switches profile switches, $(awk -F'\t' '$3 == "FROZEN"' "$out/results.tsv" 2>/dev/null | wc -l) frozen tries"
 for t in "${failed[@]}"; do log "  not passed: $t"; done
