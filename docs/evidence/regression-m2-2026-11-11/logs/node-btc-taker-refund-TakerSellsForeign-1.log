@@ -1,0 +1,19 @@
+[16:00:06] === taker-refund (stamp 179441280603)
+[16:00:06] preflight: indexer historical reads
+[16:00:06]   indexer serves historical reads at the tip (843)
+[16:00:06] preflight: LEZ finality check waived by request
+[16:00:07]   Maker published offer-e2e-179441280603
+[16:00:10]   Taker took offer-e2e-179441280603: swap c44e2047c8fc (not_activated)
+[16:00:10]   stopping the Maker Node so it never funds
+[16:00:12]   Taker locked bitcoin: 3bcd0f4ac677 (replay=False)
+[16:00:16]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 100s after it
+[16:00:17]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[16:01:11]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[16:01:56]   refund request admitted (attempt 10, state awaiting_second_lock)
+[16:02:09]   refund request replayed (attempt 11, state refund_in_progress)
+[16:03:09]   refund request replayed (attempt 16, state refund_in_progress)
+[16:04:09]   refund request replayed (attempt 21, state refund_in_progress)
+[16:04:44]   Taker refunded; Taker Node balances {'btc_trusted_sat': 525006988900, 'lez_units': 2000000} → {'btc_trusted_sat': 525006984800, 'lez_units': 2000000}
+[16:05:15]   Maker reconciled to refunded
+[16:05:15]   the Bitcoin refund 21eb00a00bab is a script-path spend: three witness items
+[16:05:15] === taker-refund: passed in 309s

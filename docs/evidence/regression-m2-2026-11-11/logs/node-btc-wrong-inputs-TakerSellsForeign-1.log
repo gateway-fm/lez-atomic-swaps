@@ -1,0 +1,25 @@
+[17:31:39] === wrong-inputs (stamp 179441829903)
+[17:31:39] preflight: indexer historical reads
+[17:31:41]   indexer serves historical reads at the tip (3634)
+[17:31:41] preflight: LEZ finality check waived by request
+[17:31:41]   Maker published offer-e2e-179441829903
+[17:31:42]   rejected as expected: reusing a publish request id for another offer (maker offer request ID conflicts with its durable mutation)
+[17:31:42]   rejected as expected: withdrawing with a stale revision (stale maker offer revision: expected 6, actual 1)
+[17:31:42]   rejected as expected: taking with a mismatched envelope hash (initiation_selection_mismatch)
+[17:31:42]   rejected as expected: taking an off-preset amount (initiation_selection_mismatch)
+[17:31:42]   rejected as expected: taking with a wrong LEZ quote (initiation_selection_mismatch)
+[17:31:43]   rejected as expected: locking an unknown swap (lock_swap_unknown)
+[17:31:43]   rejected as expected: claiming an unknown swap (swap_not_found)
+[17:31:44]   Taker took offer-e2e-179441829903: swap 5516bf3bd479 (not_activated)
+[17:31:45]   rejected as expected: claiming before the Maker funded (taker_action_unavailable)
+[17:31:45]   rejected as expected: taking the consumed lot again (initiation_selection_mismatch)
+[17:31:45]   consumed lot left Delivery and cannot be taken again
+[17:31:45]   Taker locked bitcoin: 7304ef796ef6 (replay=False)
+[17:31:46]   taker 5516bf3bd479: awaiting_first_lock (gen 0) | maker: leased
+[17:31:50]   taker 5516bf3bd479: awaiting_second_lock (gen 1) | maker: leased
+[17:32:43]   taker 5516bf3bd479: claim_available (gen 2) | maker: taker_lock_confirmed
+[17:32:44]   Taker claimed LEZ (replay=False)
+[17:32:44]   taker 5516bf3bd479: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[17:33:17]   taker 5516bf3bd479: completed (gen 4) | maker: claim_evidence_available
+[17:33:21]   both Nodes report 5516bf3bd479 completed
+[17:33:21] === wrong-inputs: passed in 101s

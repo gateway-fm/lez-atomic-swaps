@@ -1,0 +1,15 @@
+[reset 17:52:34] abandoning the open swaps below; their per-swap directories and stores go to /var/lib/lez/<role>/.reset-archive/20261111T175234Z
+  taker zec-devnet-swap-1794419438-b refund_available
+  maker zec-devnet-swap-1794419438-b leased
+[reset 17:52:34] holding both Nodes down inside their Basecamps (their per-swap sidecars stop with them)
+[reset 17:52:36] Taker: swap directories and registry rows
+  registry: swaps, authorities and requests cleared
+[reset 17:52:36] Maker: swap directories, actor registrations, negotiations, consumed offers
+  maker_zec_negotiations: 2 rows removed
+  maker_offers (reserved/consumed): 2 rows removed
+  swaps (+ actor registrations, progress, events, projections): 2 rows removed
+  zec_sdk_agreements (+ every ZEC recovery row): 2 rows removed
+[reset 17:52:37] Bitcoin wallets: release coins reserved by plans that never broadcast
+[reset 17:52:37] exported evidence: back to the certified sample
+[reset 17:52:37] releasing both Nodes
+[reset 17:52:45] done: Taker lists 0 swaps, Maker lists 0

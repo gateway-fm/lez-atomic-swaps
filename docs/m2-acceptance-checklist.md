@@ -43,8 +43,11 @@ stack and are kept as the record of that submission shape.
   of the demo set.
 - **Review findings due with the ZEC submission** (issue #103 items 1 and 16,
   #112, #113): fixed in PR #120; `docs/issue-closing-notes-2026-11-11.md`.
-- **Still open for the submission:** the release candidate's evidence set
-  (`docs/evidence/regression-m2-<date>/`), the tag and release (0.3.0), the
+- **The evidence set** is `docs/evidence/regression-m2-2026-11-11/`: all 93
+  tests in one run on three lanes (92 passed; the one failure and its reruns
+  are explained in its `RESULTS.txt`), with provenance and the ZEC demo
+  recordings.
+- **Still open for the submission:** the tag and release (0.3.0), the
   rfp#122 comment, the fresh-machine walk of the Zcash guide (U10), the
   catalog under the organisation (#106).
 

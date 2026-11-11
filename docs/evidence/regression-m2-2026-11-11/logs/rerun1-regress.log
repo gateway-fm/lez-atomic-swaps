@@ -1,0 +1,6 @@
+[17:49:20] regression run: 1 tests at 023c929e (tree dirty: 0), results in runtime/regress/20261111T174920Z
+[17:49:20] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[17:52:31] === node:zec:zec-claim-collision:TakerSellsForeign (try 1): FAILED in 180 s (+11 s before it)
+      [17:52:28] FAILED: NO-COLLISION: A completed without a superseded claim (C's lock was in a block before A's claim was planned, or C's lock lost the nonce instead: taker actor zec-devnet-swap-1794419438-b: drive → submi
+[17:52:31] regression run: 0 of 1 passed in 3 min, 0 new chains, 0 profile switches, 0 frozen tries
+[17:52:31]   not passed: node:zec:zec-claim-collision:TakerSellsForeign

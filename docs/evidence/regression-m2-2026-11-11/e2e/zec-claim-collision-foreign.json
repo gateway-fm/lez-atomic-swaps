@@ -1,0 +1,35 @@
+{
+  "scenario": "zec-claim-collision",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1794419565",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": ""
+  },
+  "swap_a": "zec-devnet-swap-1794419566",
+  "swap_c": "zec-devnet-swap-1794419642-b",
+  "corridor": "zec-devnet-1794419642",
+  "claim_supersessions": [
+    "actor claim: revealing LEZ claim superseded (planned nonce 5, live 6); re-plan 1 at nonce 6: 048593d6fb1707b1bfe28848fb0e0252f9bd7eabb0d6e48fc00c2bebb72ac9df -> 606b38f81b47db73e901aef2116f8a54b7baedba91b838554097eb9e9fdf8b80; 580 s left before the LEZ refund time"
+  ],
+  "c_first_lock_replans": [
+    "taker actor zec-devnet-swap-1794419642-b: drive \u2192 submitted lez_fund (phase offered, revision 0, next create_and_fund_lez) re-planned [1 lez_fund nonce 6\u21927 tx 9f9e13cd4dc1c18794c3fec7cadaab0d170aa1ec1f2b64327bf3e978bf7b8ce6\u21921a8f1d00b8d85b1fbd90b9a7712c49c1c00ebdef0bdcca4fb3e3a0c5059e8dfc]"
+  ],
+  "claim_press_delay_seconds": 0.5,
+  "result": "passed",
+  "seconds": 190
+}

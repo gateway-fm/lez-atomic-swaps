@@ -1,0 +1,15 @@
+[17:32:28] === restart-taker (stamp 179441834802)
+[17:32:28] preflight: indexer historical reads
+[17:32:30]   indexer serves historical reads at the tip (3661)
+[17:32:30] preflight: LEZ finality check waived by request
+[17:32:31]   Maker published offer-e2e-179441834802
+[17:32:33]   Taker took offer-e2e-179441834802: swap f3d526866281 (not_activated)
+[17:32:33]   Taker locked bitcoin: 61144be6da14 (replay=False)
+[17:32:33]   restarting lez-l2-taker-node
+[17:32:44]   taker f3d526866281: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[17:33:44]   taker f3d526866281: claim_available (gen 2) | maker: taker_lock_confirmed
+[17:33:45]   Taker claimed LEZ (replay=False)
+[17:33:45]   taker f3d526866281: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[17:34:20]   taker f3d526866281: completed (gen 4) | maker: claim_evidence_available
+[17:34:23]   both Nodes report f3d526866281 completed
+[17:34:23] === restart-taker: passed in 115s
