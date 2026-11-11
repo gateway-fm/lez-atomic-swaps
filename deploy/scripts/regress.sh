@@ -29,6 +29,11 @@
 # and the miner recreated, the chain kept). A ZEC test runs on either: its
 # windows come from the corridor's agreement.
 #
+# A test that exits 98 could not produce the situation it tests (node-e2e.py,
+# NotExercised: zec-claim-collision's provoked nonce race went the other way).
+# Its try is recorded as NOT-EXERCISED and it runs again on the same chain, up
+# to LEZ_REGRESS_TRIES times in all; it passes only when a try passes.
+#
 # LEZ_REGRESS_RECORD=1 records every desk test (ui-e2e.sh --record) and keeps
 # the recordings in the run's videos/ directory.
 #
@@ -240,7 +245,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
     # shellcheck disable=SC2046  # the command is a word list
     watched "$logfile" env LEZ_E2E_SKIP_FINALITY_PREFLIGHT=1 timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" \
       $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
-    case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
+    case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 98) verdict=NOT-EXERCISED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
     if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 30; then verdict=FROZEN; fi
     # what the harness spent before the scenario started (finality probe, a new
     # chain, reset-swaps.sh) apart from the scenario itself (its preflights included)
@@ -249,6 +254,8 @@ run_test() { # run_test <kind:pair:scenario:direction>
     keep
     [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
     [[ "$verdict" == PASSED ]] && return 0
+    # the scenario's provoked race went the other way: the same chain, again
+    [[ "$verdict" != NOT-EXERCISED ]] || continue
     if [[ "$verdict" != FROZEN ]]; then
       sed 's/\x1b\[[0-9;]*m//g' "$logfile" | grep -E '✗|FAILED|Failure|Traceback|rror' | tail -3 | cut -c1-220 | sed 's/^/      /' | tee -a "$out/regress.log"
       return 1
@@ -331,9 +338,9 @@ lane_job() {
     >"$logfile" 2>&1 </dev/null &
   echo "$!" >"$dir/pgid"
   wait "$!"; rc=$?
-  case "$rc" in 0) verdict=PASSED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
+  case "$rc" in 0) verdict=PASSED ;; 98) verdict=NOT-EXERCISED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
   if [[ -e "$dir/void" ]]; then verdict=FROZEN
-  elif [[ "$verdict" != PASSED ]] && ! moving "${LEZ_REGRESS_MOVING_WINDOW:-30}"; then verdict=FROZEN; fi
+  elif [[ "$verdict" != PASSED && "$verdict" != NOT-EXERCISED ]] && ! moving "${LEZ_REGRESS_MOVING_WINDOW:-30}"; then verdict=FROZEN; fi
   [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
   printf '%s\t%s\n' "$verdict" "$(( $(date +%s) - started ))" >"$dir/verdict"
 }
@@ -371,7 +378,7 @@ lanes_main() {
     unset 'busy[$k]' 'busy_test[$k]' 'busy_try[$k]'
     case "$verdict" in
       PASSED) ;;
-      FROZEN)
+      FROZEN | NOT-EXERCISED)
         if (( try < tries )); then requeue+=("$t"); else failed+=("$t"); fi ;;
       *)
         IFS=: read -r kind pair scenario direction <<<"$t"

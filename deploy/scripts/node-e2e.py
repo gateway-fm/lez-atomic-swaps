@@ -146,6 +146,16 @@ class Failure(Exception):
     """A scenario assertion failed."""
 
 
+class NotExercised(Failure):
+    """The scenario could not produce the situation it tests (a race it
+    provokes went the other way); nothing was found wrong. The process exits
+    with NOT_EXERCISED_EXIT so a runner can try the scenario again."""
+
+
+NOT_EXERCISED_EXIT = 98
+NOT_EXERCISED: list[str] = []
+
+
 def log(message: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {message}", flush=True)
 
@@ -2167,9 +2177,11 @@ def scenario_zec_claim_collision(stamp: str) -> dict:
     while C's lock is not yet in a block (one about every 2 s): both carry one
     nonce, C's arrived first. A must then show its claim superseded and
     re-planned (both nonces, both ids, the margin to its LEZ refund time) and
-    complete. When C's lock was already in a block by then, nothing collided:
-    the scenario says so by name (NO-COLLISION) and fails, so a runner can try
-    again. C is left to the Nodes; the scenario does not wait for it."""
+    complete. When C's lock was already in a block by then, or the race went
+    the other way (C's lock lost the nonce and was re-planned), the claim was
+    never superseded: the scenario says so by name (NO-COLLISION) and exits
+    NOT_EXERCISED_EXIT, and regress.sh runs it again. C is left to the Nodes;
+    the scenario does not wait for it."""
     if zec_taker_sells_lez():
         raise Failure("zec-claim-collision runs with --direction TakerSellsForeign (swap A sells ZEC)")
     first = zec_provision()
@@ -2214,7 +2226,7 @@ def scenario_zec_claim_collision(stamp: str) -> dict:
     for line in superseded + first_lock_replans:
         log(f"  node: {line[:260]}")
     if not superseded:
-        raise Failure("NO-COLLISION: A completed without a superseded claim (C's lock was in a block before "
+        raise NotExercised("NO-COLLISION: A completed without a superseded claim (C's lock was in a block before "
                       "A's claim was planned, or C's lock lost the nonce instead"
                       f"{': ' + first_lock_replans[0][:120] if first_lock_replans else ''}); try again")
     return {"swap_a": swap_a, "swap_c": swap_c, "corridor": corridors[0]["run_id"],
@@ -3519,8 +3531,10 @@ def run(name: str) -> bool:
         summary.update({**SCENARIOS, **ZEC_SCENARIOS}[name](stamp))
         summary["result"] = "passed"
     except Failure as failure:
-        summary["result"] = "failed"
+        summary["result"] = "not_exercised" if isinstance(failure, NotExercised) else "failed"
         summary["error"] = str(failure)
+        if isinstance(failure, NotExercised):
+            NOT_EXERCISED.append(name)
         log(f"FAILED: {failure}")
     summary["seconds"] = round(time.time() - started)
     out = LANE_RUNTIME / "e2e"
@@ -3593,7 +3607,7 @@ def main() -> int:
             parser.error("zec-* scenarios need --pair Zcash")
     for name in names:
         if not run(name):
-            return 1
+            return NOT_EXERCISED_EXIT if name in NOT_EXERCISED else 1
     return 0
 
 
