@@ -1,0 +1,156 @@
+{
+  "corridors": [],
+  "coverage": {
+    "acceptance_complete": false,
+    "directions": [],
+    "happy": false,
+    "provider_complete_corridor": false,
+    "refund": false,
+    "self_hosted_complete_corridor": false
+  },
+  "evidence_kind": "public-chain-preflight",
+  "interventions": [],
+  "lane_profile": "public-zec-testnet-v1",
+  "lez": {
+    "end": {
+      "channel_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "last_block_id": 80689,
+      "observed_at": "2026-11-11T06:00:38Z",
+      "sequencer": "https://testnet.lez.logos.co/"
+    },
+    "start": {
+      "channel_id": "0101010101010101010101010101010101010101010101010101010101010101",
+      "last_block_id": 80689,
+      "observed_at": "2026-11-11T06:00:12Z",
+      "sequencer": "https://testnet.lez.logos.co/"
+    }
+  },
+  "provenance": {
+    "artifacts": [],
+    "describe": "pr120-before-rebase-241-ga825b27e",
+    "dirty": false,
+    "node_containers": "lez-testnet",
+    "source_sha": "a825b27efedb64a5622462c2d08d4401cf962d99",
+    "workflow_run": ""
+  },
+  "schema_version": 1,
+  "shielding": "not part of atomicity: received transparent TAZ is shielded, if at all, by a separate wallet action",
+  "status": "blocked",
+  "swap_profile": {
+    "consensus_branch": "5437f330",
+    "id": "public-testnet-v1",
+    "zcash_confirmations": 10,
+    "zcash_refund_blocks": 192
+  },
+  "written_at": "2026-11-11T06:00:38Z",
+  "zcash_routes": [
+    {
+      "blockers": [
+        "next block on branch 77190ad9 (NU7), the agreement profile public-testnet-v1 signs for 5437f330 (NU6.2)"
+      ],
+      "chain": "test",
+      "checks": [
+        {
+          "detail": "chain 'test', want 'test'",
+          "name": "chain",
+          "ok": true
+        },
+        {
+          "detail": "genesis 05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38",
+          "name": "genesis",
+          "ok": true
+        },
+        {
+          "detail": "blocks 4607169, estimated 4607169, verification 1.0",
+          "name": "synchronized",
+          "ok": true
+        },
+        {
+          "detail": "next block on branch 77190ad9 (NU7), the agreement profile public-testnet-v1 signs for 5437f330 (NU6.2)",
+          "name": "consensus_branch",
+          "ok": false
+        }
+      ],
+      "consensus": {
+        "chain_tip": "77190ad9",
+        "next_block": "77190ad9"
+      },
+      "credential": "none",
+      "endpoint": "https://zcash-testnet-zebrad.gateway.tatum.io/",
+      "genesis_hash": "05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38",
+      "observed_at": "2026-11-11T06:00:38Z",
+      "provider_errors": [],
+      "route": "provider",
+      "route_kind": "tatum_testnet_x_api_key",
+      "supported": false,
+      "tip": {
+        "estimated_height": 4607169,
+        "hash": "000024aaa702d70b0861311677a93cfbf2f89b7a88d33d81ae249e9a1299a6b7",
+        "height": 4607169,
+        "verification_progress": 1.0
+      },
+      "upgrades": {
+        "2bb40e60": {
+          "activation_height": 584000,
+          "name": "Blossom",
+          "status": "active"
+        },
+        "37a5165b": {
+          "activation_height": 4134000,
+          "name": "NU6.3",
+          "status": "active"
+        },
+        "4dec4df0": {
+          "activation_height": 3536500,
+          "name": "NU6.1",
+          "status": "active"
+        },
+        "5437f330": {
+          "activation_height": 4052000,
+          "name": "NU6.2",
+          "status": "active"
+        },
+        "5ba81b19": {
+          "activation_height": 207500,
+          "name": "Overwinter",
+          "status": "active"
+        },
+        "76b809bb": {
+          "activation_height": 280000,
+          "name": "Sapling",
+          "status": "active"
+        },
+        "77190ad9": {
+          "activation_height": 4465026,
+          "name": "NU7",
+          "status": "active"
+        },
+        "c2d6d0b4": {
+          "activation_height": 1842420,
+          "name": "NU5",
+          "status": "active"
+        },
+        "c8e71055": {
+          "activation_height": 2976000,
+          "name": "NU6",
+          "status": "active"
+        },
+        "e9ff75a6": {
+          "activation_height": 1028500,
+          "name": "Canopy",
+          "status": "active"
+        },
+        "f5b9230b": {
+          "activation_height": 903800,
+          "name": "Heartwood",
+          "status": "active"
+        }
+      },
+      "zebra": {
+        "connections": 37,
+        "subversion": "/Zebra:7.0.0/",
+        "version": 7000000
+      }
+    }
+  ]
+}
