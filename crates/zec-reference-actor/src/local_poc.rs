@@ -34,7 +34,7 @@ use url::Url;
 use zcash_primitives::{block::BlockHash, transaction::Transaction};
 use zcash_protocol::{
     TxId,
-    consensus::{BlockHeight, NetworkType},
+    consensus::{BlockHeight, BranchId, NetworkType},
     value::Zatoshis,
 };
 use zcash_transparent::{
@@ -228,8 +228,14 @@ struct FundingChain {
 impl FundingChain {
     fn for_profile(profile: ZecRefundProfile) -> Result<Self> {
         match profile.zcash_network() {
+            // The Regtest fixture's branch is its profile's: NU6.2 on the
+            // Zebra 5.2 profiles, NU7 on the Zebra 7 ones (same genesis).
             NetworkType::Regtest => Ok(Self {
-                identity: ZebraChainIdentity::deterministic_regtest_nu6_2(),
+                identity: match profile.consensus_branch_id() {
+                    BranchId::Nu6_2 => ZebraChainIdentity::deterministic_regtest_nu6_2(),
+                    BranchId::Nu7 => ZebraChainIdentity::deterministic_regtest_nu7(),
+                    _ => bail!("no Regtest fixture runs the profile's consensus branch"),
+                },
                 min_confirmations: COINBASE_MATURITY_CONFIRMATIONS,
                 tip_may_advance: false,
             }),
@@ -632,6 +638,14 @@ enum LocalPocProfile {
     /// `deterministic-local-devnet-v4`: V3 with a 4 min LEZ refund delay, for
     /// the devnet's refund journeys (they never claim).
     DeterministicLocalDevnetV4,
+    /// `deterministic-local-v2`: the isolated test lane on Zebra 7's NU7.
+    DeterministicLocalV2,
+    /// `deterministic-local-devnet-v5`: V3 on NU7, the devnet's profile for
+    /// swaps that claim once its Zebra runs Zebra 7.
+    DeterministicLocalDevnetV5,
+    /// `deterministic-local-devnet-v6`: V4 on NU7, the devnet's refund
+    /// journeys' profile.
+    DeterministicLocalDevnetV6,
     /// `public-testnet-v2`: Zcash Testnet on NU7 and the official LEZ v0.2
     /// testnet, funded from an ordinary transparent output of the funder's
     /// key (scripts/public-zec-testnet.sh).
@@ -646,6 +660,9 @@ impl LocalPocProfile {
             Self::DeterministicLocalDevnetV2 => ZecProfileId::DeterministicLocalDevnetV2,
             Self::DeterministicLocalDevnetV3 => ZecProfileId::DeterministicLocalDevnetV3,
             Self::DeterministicLocalDevnetV4 => ZecProfileId::DeterministicLocalDevnetV4,
+            Self::DeterministicLocalV2 => ZecProfileId::DeterministicLocalV2,
+            Self::DeterministicLocalDevnetV5 => ZecProfileId::DeterministicLocalDevnetV5,
+            Self::DeterministicLocalDevnetV6 => ZecProfileId::DeterministicLocalDevnetV6,
             Self::PublicTestnetV2 => ZecProfileId::PublicTestnetV2,
         }
     }
@@ -2208,7 +2225,6 @@ mod testnet_provision_tests {
     use lez_zebra_node_adapter::{
         ZebraCanonicalBlock, ZebraChainInfo, ZebraTransactionState, ZebraUnspentOutput,
     };
-    use zcash_protocol::consensus::BranchId;
 
     use super::*;
 
@@ -2225,6 +2241,16 @@ mod testnet_provision_tests {
         "fa7d4300ada64fc68088ac000000",
     );
     const NU7_TX_HEIGHT: u32 = 4_465_026;
+    /// The coinbase of height 1 on the pinned Zebra 7 Regtest fixture, NU7
+    /// active from height 1 (tests/e2e/zebra/zebrad.toml, 2026-11-11): a v6
+    /// transaction (version group d884b698, branch 77190ad9) paying
+    /// 208,333,333 zatoshis to the fixture's miner key, `[4; 32]`.
+    const REGTEST_NU7_COINBASE: &str = concat!(
+        "0600008098b684d8d90a19770000000001000000010000000000000000000000000000000000000000000000",
+        "000000000000000000ffffffff285126f09fa6933a2039601c2a397699d2de9efe8dbc1c15ea18b323e3bd7f",
+        "9ae732933ca8eb11e3f4ffffffff0115ea6a0c000000001976a914888dbbd7998f9f80d4f82b4f9ce6d5882f",
+        "310aec88ac00000000",
+    );
     const SPENDER: &str = "02bc0a8bf008166b8a99a1bcf27086172fd709467ea55b429449a3fe6a92f03738";
 
     #[derive(Debug, thiserror::Error)]
@@ -2232,9 +2258,11 @@ mod testnet_provision_tests {
     struct Unserved;
 
     /// A Testnet Zebra serving one real block at `NU7_TX_HEIGHT` (and empty
-    /// blocks elsewhere) and the UTXO set it is told.
+    /// blocks elsewhere) and the UTXO set it is told; with `regtest_nu7`, the
+    /// Zebra 7 Regtest fixture's block 1 instead.
     struct FakeTestnet {
         tip: u32,
+        tx_height: u32,
         branch: BranchId,
         genesis: BlockHash,
         transaction: Vec<u8>,
@@ -2245,6 +2273,7 @@ mod testnet_provision_tests {
         fn new() -> Self {
             Self {
                 tip: NU7_TX_HEIGHT + 11,
+                tx_height: NU7_TX_HEIGHT,
                 branch: BranchId::Nu7,
                 genesis: FundingChain::for_profile(ZecRefundProfile::for_id(
                     ZecProfileId::PublicTestnetV2,
@@ -2253,6 +2282,17 @@ mod testnet_provision_tests {
                 .identity
                 .genesis_hash(),
                 transaction: hex::decode(NU7_TX).unwrap(),
+                unspent: HashMap::new(),
+            }
+        }
+
+        fn regtest_nu7() -> Self {
+            Self {
+                tip: 1 + COINBASE_MATURITY_CONFIRMATIONS,
+                tx_height: 1,
+                branch: BranchId::Nu7,
+                genesis: ZebraChainIdentity::deterministic_regtest_nu7().genesis_hash(),
+                transaction: hex::decode(REGTEST_NU7_COINBASE).unwrap(),
                 unspent: HashMap::new(),
             }
         }
@@ -2294,7 +2334,7 @@ mod testnet_provision_tests {
 
         async fn canonical_block(&self, hash: BlockHash) -> Result<ZebraCanonicalBlock, Unserved> {
             let height = u32::from_le_bytes(hash.0[..4].try_into().unwrap());
-            let transactions = if height == NU7_TX_HEIGHT {
+            let transactions = if height == self.tx_height {
                 vec![self.txid()]
             } else {
                 Vec::new()
@@ -2383,6 +2423,100 @@ mod testnet_provision_tests {
         );
         assert_eq!(regtest.min_confirmations, COINBASE_MATURITY_CONFIRMATIONS);
         assert!(!regtest.tip_may_advance);
+    }
+
+    #[test]
+    fn the_regtest_chain_follows_the_profile_branch() {
+        for (profile, identity) in [
+            (
+                ZecProfileId::DeterministicLocalDevnetV4,
+                ZebraChainIdentity::deterministic_regtest_nu6_2(),
+            ),
+            (
+                ZecProfileId::DeterministicLocalDevnetV5,
+                ZebraChainIdentity::deterministic_regtest_nu7(),
+            ),
+            (
+                ZecProfileId::DeterministicLocalDevnetV6,
+                ZebraChainIdentity::deterministic_regtest_nu7(),
+            ),
+            (
+                ZecProfileId::DeterministicLocalV2,
+                ZebraChainIdentity::deterministic_regtest_nu7(),
+            ),
+        ] {
+            let chain = FundingChain::for_profile(ZecRefundProfile::for_id(profile)).unwrap();
+            assert_eq!(chain.identity, identity, "{}", profile.as_str());
+            assert_eq!(chain.min_confirmations, COINBASE_MATURITY_CONFIRMATIONS);
+            assert!(!chain.tip_may_advance);
+        }
+        for spelling in [
+            "deterministic-local-v2",
+            "deterministic-local-devnet-v5",
+            "deterministic-local-devnet-v6",
+        ] {
+            let profile: LocalPocProfile =
+                serde_json::from_value(serde_json::json!(spelling)).unwrap();
+            assert_eq!(profile.id().as_str(), spelling);
+        }
+    }
+
+    /// Zebra 7's NU7 coinbase is a v6 transaction; the Regtest funder search
+    /// reads it and takes its output once it is mature, and not before.
+    #[tokio::test]
+    async fn a_regtest_nu7_funder_output_is_a_mature_v6_coinbase() {
+        let chain = FundingChain::for_profile(ZecRefundProfile::for_id(
+            ZecProfileId::DeterministicLocalDevnetV5,
+        ))
+        .unwrap();
+        let miner = PublicKey::from_secret_key(
+            &Secp256k1::new(),
+            &SecretKey::from_slice(&[4; 32]).unwrap(),
+        );
+        let mut zebra = FakeTestnet::regtest_nu7();
+        let transaction = Transaction::read(zebra.transaction.as_slice(), BranchId::Nu7).unwrap();
+        assert_eq!(transaction.version().header() & 0x7fff_ffff, 6);
+        assert_eq!(transaction.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(
+            transaction.txid().to_string(),
+            "7df23a26010cd4aa7e6174bf146dc9d0ab7ec3197d6aaa8d8cfee439c1b59c98"
+        );
+        let txid = zebra.txid();
+        zebra
+            .unspent
+            .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS + 1);
+        let (candidate, tip, genesis) =
+            select_funding_candidate(&zebra, &chain, &miner, 0, 1, 100_000_000)
+                .await
+                .unwrap();
+        assert_eq!(candidate.outpoint, OutPoint::new(*txid.as_ref(), 0));
+        assert_eq!(u64::from(candidate.output.value()), 208_333_333);
+        assert_eq!(candidate.height, 1);
+        assert_eq!(tip, 1 + COINBASE_MATURITY_CONFIRMATIONS);
+        assert_eq!(genesis, chain.identity.genesis_hash());
+
+        // One block short of maturity there is nothing to take; nor on a
+        // Zebra that still runs NU6.2.
+        let mut young = FakeTestnet::regtest_nu7();
+        young.tip = COINBASE_MATURITY_CONFIRMATIONS - 1;
+        young
+            .unspent
+            .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS - 1);
+        assert!(
+            select_funding_candidate(&young, &chain, &miner, 0, 1, 100_000_000)
+                .await
+                .is_err()
+        );
+        let mut old_branch = FakeTestnet::regtest_nu7();
+        old_branch.branch = BranchId::Nu6_2;
+        old_branch
+            .unspent
+            .insert((txid, 0), COINBASE_MATURITY_CONFIRMATIONS + 1);
+        assert!(
+            select_funding_candidate(&old_branch, &chain, &miner, 0, 1, 100_000_000)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -203,6 +203,9 @@ impl Fixture {
             | ZecProfileId::DeterministicLocalDevnetV2
             | ZecProfileId::DeterministicLocalDevnetV3
             | ZecProfileId::DeterministicLocalDevnetV4 => (NetworkType::Regtest, BranchId::Nu6_2),
+            ZecProfileId::DeterministicLocalV2
+            | ZecProfileId::DeterministicLocalDevnetV5
+            | ZecProfileId::DeterministicLocalDevnetV6 => (NetworkType::Regtest, BranchId::Nu7),
             ZecProfileId::PublicTestnetV1 => (NetworkType::Test, BranchId::Nu6_2),
             ZecProfileId::PublicTestnetV2 => (NetworkType::Test, BranchId::Nu7),
         };
@@ -426,7 +429,7 @@ fn devnet_v4_profile_is_wire_tag_five_with_its_own_deadlines() {
     let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
     assert_eq!(wire[profile_offset], 5, "the v4 profile is wire tag 5");
     let mut unknown = wire.clone();
-    unknown[profile_offset] = 7;
+    unknown[profile_offset] = 10;
     assert!(
         ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
         "a tag past the last profile must not decode"
@@ -464,7 +467,7 @@ fn public_testnet_v2_is_wire_tag_six_on_nu7_with_its_own_window() {
     let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
     assert_eq!(wire[profile_offset], 6, "public-testnet-v2 is wire tag 6");
     let mut unknown = wire.clone();
-    unknown[profile_offset] = 7;
+    unknown[profile_offset] = 10;
     assert!(
         ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
         "a tag past the last profile must not decode"
@@ -484,6 +487,54 @@ fn public_testnet_v2_is_wire_tag_six_on_nu7_with_its_own_window() {
     local_lez.expiry_delta = 120;
     local_lez.environment = LezEnvironmentV1::DeterministicLocalV0_2;
     assert!(local_lez.validate().is_err());
+}
+
+#[test]
+fn nu7_regtest_profiles_are_wire_tags_seven_to_nine_and_sign_for_nu7() {
+    // (profile, tag, LEZ refund delay): deadlines from the LEZ anchor (100 s)
+    // and the Zcash one (116) as in the NU6.2 namesakes' fixtures.
+    for (profile, tag, delay, refund_blocks) in [
+        (ZecProfileId::DeterministicLocalV2, 7_u8, 60_u64, 4_u32),
+        (ZecProfileId::DeterministicLocalDevnetV5, 8, 720, 8),
+        (ZecProfileId::DeterministicLocalDevnetV6, 9, 240, 8),
+    ] {
+        let mut fixture = Fixture::new(SwapDirection::TakerSellsLez);
+        fixture.body_profile = profile;
+        fixture.binding_profile = profile;
+        fixture.earlier_latest_ms = (100 + delay) * 1_000;
+        fixture.later_earliest = 100 + delay + 30;
+        fixture.zcash_refund_lock = 116 + refund_blocks;
+        let agreement = fixture.validate().expect("NU7 Regtest agreement validates");
+        assert_eq!(
+            agreement.binding().expected_output().consensus_branch_id(),
+            BranchId::Nu7
+        );
+        assert_eq!(
+            agreement.binding().expected_output().network(),
+            NetworkType::Regtest
+        );
+        let wire = agreement.encode_wire().expect("bounded wire");
+        let decoded = ZecAgreementV1::from_wire_at(&wire, UnixSeconds::new(NOW))
+            .expect("the NU7 profile decodes from its own wire");
+        assert_eq!(decoded.record(), agreement.record());
+        let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
+        assert_eq!(wire[profile_offset], tag, "{} wire tag", profile.as_str());
+        // The same bytes under the NU6.2 namesake's tag do not validate: the
+        // binding names NU7.
+        let mut namesake = wire.clone();
+        namesake[profile_offset] = match tag {
+            7 => 0,
+            8 => 4,
+            _ => 5,
+        };
+        assert!(ZecAgreementV1::from_wire_at(&namesake, UnixSeconds::new(NOW)).is_err());
+        let mut unknown = wire.clone();
+        unknown[profile_offset] = 10;
+        assert!(
+            ZecAgreementV1::from_wire_at(&unknown, UnixSeconds::new(NOW)).is_err(),
+            "a tag past the last profile must not decode"
+        );
+    }
 }
 
 #[test]

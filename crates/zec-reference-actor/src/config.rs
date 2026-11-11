@@ -115,8 +115,9 @@ enum ConsensusBranchConfig {
 }
 
 impl ConsensusBranchConfig {
-    /// The spelling of a branch a provisioned corridor may sign for: NU6.2 on
-    /// the deterministic Regtest fixture, NU6.3 or NU7 on public Testnet.
+    /// The spelling of a branch a provisioned corridor may sign for: NU6.2 or
+    /// NU7 on the deterministic Regtest fixture (Zebra 5.2 or 7), NU6.3 or NU7
+    /// on public Testnet.
     const fn provisioned(branch: zcash_protocol::consensus::BranchId) -> Option<Self> {
         match branch {
             zcash_protocol::consensus::BranchId::Nu6_2 => Some(Self::Nu6_2),
@@ -569,9 +570,13 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
         .ok_or(ActorConfigError::InvalidConfiguration)?;
     let (route, network) = match input.zebra_route {
         ProvisionedZebraRoute::DeterministicLocal => {
-            // The fixture is pinned to NU6.2 (zebra-node-adapter
-            // ZebraChainIdentity::deterministic_regtest_nu6_2).
-            if consensus_branch_id != ConsensusBranchConfig::Nu6_2 {
+            // The fixture is pinned to NU6.2 on Zebra 5.2 or NU7 on Zebra 7
+            // (zebra-node-adapter ZebraChainIdentity::deterministic_regtest_nu6_2
+            // and deterministic_regtest_nu7).
+            if !matches!(
+                consensus_branch_id,
+                ConsensusBranchConfig::Nu6_2 | ConsensusBranchConfig::Nu7
+            ) {
                 return Err(ActorConfigError::InvalidConfiguration);
             }
             (
@@ -1561,16 +1566,16 @@ mod tests {
 
     #[test]
     fn deterministic_local_actor_budget_covers_refund_historical_phases() {
-        let runtime = RuntimeDescriptor::new(
-            Participant::Maker,
-            RuntimeCompatibility::LeeV0_2_0,
-            Hex32::from_bytes([1; 32]),
-            Hex32::from_bytes([2; 32]),
-            Hex32::from_bytes([3; 32]),
-            Hex32::from_bytes([4; 32]),
-            Hex32::from_bytes([5; 32]),
-        );
-        let encoded =
+        let encode = |branch| {
+            let runtime = RuntimeDescriptor::new(
+                Participant::Maker,
+                RuntimeCompatibility::LeeV0_2_0,
+                Hex32::from_bytes([1; 32]),
+                Hex32::from_bytes([2; 32]),
+                Hex32::from_bytes([3; 32]),
+                Hex32::from_bytes([4; 32]),
+                Hex32::from_bytes([5; 32]),
+            );
             encode_deterministic_local_v0_2_actor_config(DeterministicLocalV0_2ActorConfigInput {
                 role: ActorRole::Maker,
                 run_id: RunId::new("timeout-regression").unwrap(),
@@ -1588,14 +1593,21 @@ mod tests {
                 bridge_runtime: runtime,
                 zebra_endpoint: Url::parse("http://127.0.0.1:19002/").unwrap(),
                 zebra_route: ProvisionedZebraRoute::DeterministicLocal,
-                zebra_consensus_branch_id: zcash_protocol::consensus::BranchId::Nu6_2,
+                zebra_consensus_branch_id: branch,
                 zebra_genesis_hash: Hex32::from_bytes([7; 32]),
                 counterparty_scan_blocks: 1_024,
                 lez_discovery_window: DiscoveryWindow::new(1, 256).unwrap(),
                 zcash_funding_outpoints: Vec::new(),
             })
-            .unwrap();
+        };
+        let encoded = encode(zcash_protocol::consensus::BranchId::Nu6_2).unwrap();
         let raw: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(raw["bridge"]["request_timeout_millis"], json!(60_000));
+        // The Regtest fixture runs NU6.2 (Zebra 5.2) or NU7 (Zebra 7), never
+        // another branch.
+        let encoded = encode(zcash_protocol::consensus::BranchId::Nu7).unwrap();
+        let raw: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(raw["zebra"]["identity"]["consensus_branch_id"], "77190ad9");
+        assert!(encode(zcash_protocol::consensus::BranchId::Nu6_3).is_err());
     }
 }

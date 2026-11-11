@@ -246,3 +246,65 @@ fn public_testnet_v2_signs_for_nu7_and_sizes_its_window_for_the_fastest_pace() {
         Err(ProfileError::ConsensusBranchMismatch)
     );
 }
+
+/// The NU7 Regtest profiles are their NU6.2 namesakes on NU7, parameter for
+/// parameter: local-v2 is local-v1's, devnet-v5 is v3's, devnet-v6 is v4's.
+/// The NU6.2 ones keep their meaning under their ids.
+#[test]
+fn nu7_regtest_profiles_are_their_nu6_2_namesakes_on_nu7() {
+    for (old, new, spelling) in [
+        (
+            ZecProfileId::DeterministicLocalV1,
+            ZecProfileId::DeterministicLocalV2,
+            "deterministic-local-v2",
+        ),
+        (
+            ZecProfileId::DeterministicLocalDevnetV3,
+            ZecProfileId::DeterministicLocalDevnetV5,
+            "deterministic-local-devnet-v5",
+        ),
+        (
+            ZecProfileId::DeterministicLocalDevnetV4,
+            ZecProfileId::DeterministicLocalDevnetV6,
+            "deterministic-local-devnet-v6",
+        ),
+    ] {
+        let old = ZecRefundProfile::for_id(old);
+        let new = ZecRefundProfile::for_id(new);
+        assert_eq!(new.id().as_str(), spelling);
+        assert_eq!(old.consensus_branch_id(), BranchId::Nu6_2);
+        assert_eq!(new.consensus_branch_id(), BranchId::Nu7);
+        assert_eq!(new.zcash_network(), NetworkType::Regtest);
+        assert_eq!(old.zcash_network(), new.zcash_network());
+        assert_eq!(old.lez_confirmations(), new.lez_confirmations());
+        assert_eq!(old.zcash_confirmations(), new.zcash_confirmations());
+        assert_eq!(old.lez_refund_delay(), new.lez_refund_delay());
+        assert_eq!(old.zcash_refund_blocks(), new.zcash_refund_blocks());
+        assert_eq!(old.required_margin(), new.required_margin());
+        assert_eq!(old.expiry_delta_blocks(), new.expiry_delta_blocks());
+        assert!(
+            new.validate_consensus(NetworkType::Regtest, BranchId::Nu7)
+                .is_ok()
+        );
+        assert_eq!(
+            new.validate_consensus(NetworkType::Regtest, BranchId::Nu6_2),
+            Err(ProfileError::ConsensusBranchMismatch)
+        );
+        assert_eq!(
+            old.validate_consensus(NetworkType::Regtest, BranchId::Nu7),
+            Err(ProfileError::ConsensusBranchMismatch)
+        );
+    }
+    assert_eq!(
+        ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV5)
+            .lez_refund_delay()
+            .value(),
+        720
+    );
+    assert_eq!(
+        ZecRefundProfile::for_id(ZecProfileId::DeterministicLocalDevnetV6)
+            .lez_refund_delay()
+            .value(),
+        240
+    );
+}
