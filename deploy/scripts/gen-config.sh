@@ -483,7 +483,7 @@ mkdir -p "$RUNTIME/sockets"
 # for them), derived from the LEZ chain's measured step latency rather than
 # fixed: LEZ_LEZ_STEP_SECONDS is one LEZ step as the counterpart Node sees it
 # (submit, inclusion, finality, the Nodes' polling: the Taker's observer sweeps
-# every 15 s, the Maker's actor is requeued every 2 s), LEZ_LEZ_STALL_SECONDS
+# every 3 s, the Maker's actor is requeued every 2 s), LEZ_LEZ_STALL_SECONDS
 # the finality stall a step must survive. Nobody claims, so:
 #   cutoff  = 2 steps (the Taker's lock, then the Maker's) + 20 s of desk + stall
 #   earlier = cutoff + margin       (the least the agreement accepts)
@@ -527,9 +527,18 @@ timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
 # a confirmation, finality) is seconds away, so it looks again after 2 s and
 # retries after 10 s. The attempt deadline stays the Node's 30 s: one
 # historical indexer read can take ~16 s (repair-indexer.sh).
+# The Taker's observer drives its Node-owned Bitcoin swaps that wait on a chain
+# once per sweep and sleeps 15 s between sweeps (the Node's default, kept on
+# `local`); on the devnet's profiles it sleeps 3 s, about one regtest block.
+# A sweep is sequential, one swap after the other: per swap waiting on a chain
+# one status read (the actor's own database) and one observing drive (a few
+# Bitcoin Core reads, and the sidecar's sequencer reads while a LEZ leg is
+# watched); a finished swap costs only its status read. The pause starts
+# after a sweep ends, so a slow indexer read lengthens the sweep and never
+# overlaps the next one.
 case "$timing_profile" in
-  local) maker_actor=("" "") ;;
-  *)     maker_actor=(2 10) ;;
+  local) maker_actor=("" "") taker_sweep="" ;;
+  *)     maker_actor=(2 10) taker_sweep=3 ;;
 esac
 printf '%s\n' \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
@@ -553,6 +562,7 @@ printf '%s\n' \
   "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
   "LEZ_MAKER_ACTOR_REQUEUE_SECONDS=${maker_actor[0]}" \
   "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS=${maker_actor[1]}" \
+  "LEZ_TAKER_OBSERVER_SWEEP_SECONDS=$taker_sweep" \
   "LEZ_GENESIS_TIME=$genesis_time" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \

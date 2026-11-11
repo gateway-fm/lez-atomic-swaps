@@ -2291,7 +2291,8 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
 }
 
 /// Starts the Taker observer when a runtime is available; the monitor and the
-/// terminal actions stay the only user-facing surface.
+/// terminal actions stay the only user-facing surface. It sweeps every
+/// `--observer-sweep-seconds` (15 s by default).
 fn spawn_dynamic_observer(state: Arc<TakerServiceState>) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         eprintln!("taker observer: no async runtime; observation drives run only on demand");
@@ -2300,7 +2301,7 @@ fn spawn_dynamic_observer(state: Arc<TakerServiceState>) {
     handle.spawn(async move {
         loop {
             Box::pin(observe_dynamic_swaps(&state)).await;
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            tokio::time::sleep(state.observer_sweep_interval).await;
         }
     });
 }

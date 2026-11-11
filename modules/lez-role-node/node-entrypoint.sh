@@ -378,7 +378,11 @@ PY
          maximum_offers:16}' >"$state/role.json"
     fi
     chmod 0600 "$state/role.json"
-    exec "$bin/lez-taker-node" --socket "$run/node.sock" --ready-file "$run/ready" --role-config "$state/role.json"
+    args=(--socket "$run/node.sock" --ready-file "$run/ready" --role-config "$state/role.json")
+    # The devnet's timing profiles sweep the Bitcoin swaps sooner
+    # (gen-config.sh); unset, the Node's own default.
+    [[ -z "${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}" ]] || args+=(--observer-sweep-seconds "$LEZ_TAKER_OBSERVER_SWEEP_SECONDS")
+    exec "$bin/lez-taker-node" "${args[@]}"
     ;;
   *) echo "unknown role $role" >&2; exit 2 ;;
 esac

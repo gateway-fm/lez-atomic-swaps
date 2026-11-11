@@ -11,7 +11,10 @@ mod zec_supervisor;
 
 pub(crate) use btc_dynamic::DynamicBtcRole;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
 use lez_swap_core::Pair;
@@ -34,7 +37,13 @@ struct TakerServiceState {
     /// Which pairs the prepared catalog holds, fixed at startup.
     btc_registered: bool,
     zec_registered: bool,
+    /// How long the Bitcoin observer waits between two sweeps.
+    observer_sweep_interval: Duration,
 }
+
+/// The Taker observer's production pause between two sweeps of the Node-owned
+/// Bitcoin swaps: 15 s.
+pub const DEFAULT_OBSERVER_SWEEP_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Builds the exact JSON-RPC module enabled by one validated service context.
 ///
@@ -48,6 +57,20 @@ struct TakerServiceState {
 pub fn taker_service_rpc_module(
     context: ConfiguredTakerServiceContext,
 ) -> Result<RpcModule<()>, RegisterMethodError> {
+    taker_service_rpc_module_with_sweep(context, DEFAULT_OBSERVER_SWEEP_INTERVAL)
+}
+
+/// As [`taker_service_rpc_module`], with the Bitcoin observer sweeping every
+/// `observer_sweep_interval` instead of [`DEFAULT_OBSERVER_SWEEP_INTERVAL`]
+/// (`--observer-sweep-seconds`; a devnet's timing profiles sweep sooner).
+///
+/// # Errors
+///
+/// Returns an error if one of the fixed method names cannot be registered.
+pub fn taker_service_rpc_module_with_sweep(
+    context: ConfiguredTakerServiceContext,
+    observer_sweep_interval: Duration,
+) -> Result<RpcModule<()>, RegisterMethodError> {
     let (backend, initiation) = context.into_parts();
     let btc_registered = initiation
         .as_ref()
@@ -60,6 +83,7 @@ pub fn taker_service_rpc_module(
         initiation: initiation.map(|value| Arc::new(Mutex::new(value))),
         btc_registered,
         zec_registered,
+        observer_sweep_interval,
     });
     let mut module = RpcModule::new(());
 
