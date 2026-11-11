@@ -50,10 +50,11 @@ both Nodes, then
                                          chain created with LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
 
 The ZEC refund windows come from the agreement, not the timing profile. The
-refund journeys provision their corridor under deterministic-local-devnet-v4
-(zec-provision.sh --profile), every other ZEC scenario under -v3: the Taker's
-LEZ refund opens the profile's LEZ refund delay (4 min under -v4, 12 min under
--v3) after the corridor was provisioned and the Maker's Zcash refund at an
+refund journeys provision their corridor under deterministic-local-devnet-v6
+(zec-provision.sh --profile), every other ZEC scenario under -v5 (both NU7, the
+devnet Zebra 7's branch; -v3/-v4 are their NU6.2 namesakes): the Taker's
+LEZ refund opens the profile's LEZ refund delay (4 min under -v6, 12 min under
+-v5) after the corridor was provisioned and the Maker's Zcash refund at an
 absolute zebra height (tip at provisioning + 9); the refund scenarios read
 those from the corridor and wait for them rather than guessing, so neither
 needs a BTC timing profile.
@@ -1365,15 +1366,20 @@ def zec_profile_refund_delay(profile: str) -> int:
     the only parameter the harness waits on)."""
     return {"deterministic-local-devnet-v1": 1800, "deterministic-local-devnet-v2": 1800,
             "deterministic-local-devnet-v3": 720, "deterministic-local-devnet-v4": 240,
+            "deterministic-local-devnet-v5": 720, "deterministic-local-devnet-v6": 240,
             "public-testnet-v2": 7200}.get(profile, 60)
 
 
 # The ZEC profile of the refund journeys (zec-swap-sdk profile.rs): nobody claims
 # there, so the LEZ refund delay only has to outlast provisioning, the take and
-# both first locks. Every other scenario keeps zec-provision.sh's default (-v3).
+# both first locks. Every other scenario keeps zec-provision.sh's default (-v5).
+# Both are NU7 profiles: the devnet's Zebra 7 runs NU7 from height 1.
 # The public lane has one profile for every scenario (zec-provision.sh
 # --zcash-network test: public-testnet-v2), refund journeys included.
-ZEC_REFUND_PROFILE = None if ZEC_PUBLIC else "deterministic-local-devnet-v4"
+ZEC_REFUND_PROFILE = None if ZEC_PUBLIC else "deterministic-local-devnet-v6"
+# The profiles whose corridors sign for NU7, the branch every Zebra the
+# harness drives runs (Zebra 7 Regtest; public Testnet).
+ZEC_NU7_PROFILES = {"deterministic-local-devnet-v5", "deterministic-local-devnet-v6", "public-testnet-v2"}
 
 
 def zec_current_refund_delay() -> int:
@@ -1397,6 +1403,14 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
         # The corridor the Nodes already run with (runtime/zec/current), for a
         # run that must not recreate them; its catalog entry must be untaken.
         log("  reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)")
+        # A corridor from before the devnet's Zebra moved to NU7 names NU6.2
+        # and outputs of a chain that is gone: say so instead of a stuck swap.
+        live_run = (LANE_RUNTIME / "zec" / "current").read_text().strip()
+        live_profile = json.loads((LANE_RUNTIME / "zec" / live_run / "spec.json").read_text()).get(
+            "profile", "deterministic-local-v1")
+        if live_profile not in ZEC_NU7_PROFILES:
+            raise Failure(f"the live corridor {live_run} was provisioned under {live_profile} (NU6.2), but the "
+                          "devnet's Zebra runs NU7: provision a new one (run without LEZ_ZEC_REUSE_CORRIDOR)")
     else:
         log(f"  provisioning a ZEC corridor {'beside the live one' if add else f'with {swaps} prepared swap(s)'} "
             "(zec-provision.sh; this recreates both Nodes)")

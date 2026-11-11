@@ -47,9 +47,9 @@
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
 #                         chain); the caller vouches for finality
 #     --profile ID        the agreement's ZEC refund profile (zec-swap-sdk
-#                         profile.rs): deterministic-local-devnet-v3 (12 min
-#                         LEZ refund delay) by default, -v4 (4 min) for the
-#                         refund journeys, which never claim
+#                         profile.rs): deterministic-local-devnet-v5 (NU7,
+#                         12 min LEZ refund delay) by default, -v6 (NU7,
+#                         4 min) for the refund journeys, which never claim
 #     --zcash-network NET regtest (the default) or test: public Zcash Testnet
 #                         on NU7 (scripts/public-zec-testnet.sh), profile
 #                         public-testnet-v2. Nothing is mined: the Zcash funder
@@ -101,7 +101,7 @@ done
 
 blocked() { echo "zec-provision.sh: blocked: $*" >&2; exit 3; }
 case "$ZCASH_NETWORK" in
-  regtest) PROFILE="${PROFILE:-deterministic-local-devnet-v3}" ;;
+  regtest) PROFILE="${PROFILE:-deterministic-local-devnet-v5}" ;;
   test)
     # A public Zcash Testnet corridor (local_poc.rs, profile public-testnet-v2):
     # the route, its credential and the owner's keys come from outside the
@@ -164,10 +164,12 @@ case "$DIRECTION" in
 esac
 # The devnet profiles a corridor may name (local_poc.rs LocalPocProfile); the
 # test lane's 60 s LEZ refund delay cannot be met on a chain that finalizes.
+# The devnet's Zebra runs NU7: -v5 and -v6 are -v3 and -v4 on NU7; the NU6.2
+# ones (-v3, -v4) keep their meaning but no longer match its chain.
 case "$ZCASH_NETWORK:$PROFILE" in
-  regtest:deterministic-local-devnet-v3|regtest:deterministic-local-devnet-v4) ;;
+  regtest:deterministic-local-devnet-v5|regtest:deterministic-local-devnet-v6) ;;
   test:public-testnet-v2) ;;
-  regtest:*) echo "zec-provision failed: --profile must be deterministic-local-devnet-v3 or -v4" >&2; exit 64 ;;
+  regtest:*) echo "zec-provision failed: --profile must be deterministic-local-devnet-v5 or -v6 (NU7)" >&2; exit 64 ;;
   test:*) echo "zec-provision failed: a Testnet corridor's --profile is public-testnet-v2" >&2; exit 64 ;;
 esac
 # Each role's Zcash key is minted beside its LEZ identity (gen-config.sh); the
@@ -220,6 +222,10 @@ reply=json.load(sys.stdin)
 if reply.get("error"): sys.stderr.write(json.dumps(reply["error"])+"\n"); sys.exit(1)
 json.dump(reply["result"], sys.stdout)'
 }
+# Zcash Regtest's genesis (getblockhash 0), the same on Zebra 5.2 and 7, and
+# NU7's branch id (zebra-node-adapter ZebraChainIdentity::deterministic_regtest_nu7).
+REGTEST_GENESIS=029f11d80ef9765602235e1bc9727e3eb6ba20839319f761fee920d63401e327
+NU7_BRANCH=77190ad9
 # Zcash Testnet's genesis (getblockhash 0); local_poc.rs pins the same.
 TESTNET_GENESIS=05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38
 zebra_testnet() { # zebra_testnet <method> <params-json>: one read on the Testnet route
@@ -392,6 +398,32 @@ print(info["blocks"])')" || blocked "the Zebra at $LEZ_ZEBRA_URL is not Zcash Te
   # after this tip.
   if [[ "$DIRECTION" == TakerSellsForeign ]]; then pay_taker=1; scan_from="$testnet_tip"; fi
 else
+# The devnet's Zebra is Zebra 7 on Regtest with NU7 from height 1, the branch
+# the -v5/-v6 profiles sign for. One from before (the 5.2.0 image, or a config
+# rendered from the NU6.2 template) says NU6.2 (5437f330) for its next block;
+# its chain cannot carry an NU7 corridor and Zebra 7 cannot read its state
+# (it starts an empty chain beside it). Such a Zebra is recreated here with a
+# new data volume, once, rather than failing in the provisioner's branch
+# check; only a Zebra serving the Regtest genesis is ever touched.
+zebra_next_branch() {
+  zebra getblockchaininfo | python3 -c 'import json,sys; print(json.load(sys.stdin)["consensus"]["nextblock"])'
+}
+[[ "$(zebra getblockhash '[0]' | tr -d '"')" == "$REGTEST_GENESIS" ]] ||
+  fail "the Zebra at $ZEBRA_URL does not serve the Regtest genesis"
+next_branch="$(zebra_next_branch)" || fail "zebra RPC unavailable at $ZEBRA_URL"
+if [[ "$next_branch" != "$NU7_BRANCH" ]]; then
+  log "  zebra's next block is on branch $next_branch, not NU7 ($NU7_BRANCH): recreating it on Zebra 7 with a new data volume"
+  # The rendered config keeps its miner address; only the activation changes.
+  sed -i 's/^"NU6\.2" = 1$/"NU7" = 1/' "$LANE/zebra/zebrad.toml"
+  grep -qx '"NU7" = 1' "$LANE/zebra/zebrad.toml" ||
+    fail "$LANE/zebra/zebrad.toml does not activate NU7: rerun scripts/gen-config.sh"
+  "${compose[@]}" rm -sf zebra >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME_PREFIX-zebra-data" >/dev/null 2>&1 || true
+  "${compose[@]}" up -d --no-deps zebra >/dev/null 2>&1 || fail "zebra did not start"
+  for _ in $(seq 1 30); do next_branch="$(zebra_next_branch 2>/dev/null)" && break; sleep 2; done
+  [[ "$next_branch" == "$NU7_BRANCH" ]] ||
+    fail "the recreated zebra is on branch ${next_branch:-unknown}, not NU7: rebuild its image (docker compose build zebra)"
+fi
 zebra_height="$(zebra getblockcount)" || fail "zebra RPC unavailable at $ZEBRA_URL"
 target=$(( MATURITY + MIN_MATURE_OUTPUTS ))
 while (( zebra_height < target )); do

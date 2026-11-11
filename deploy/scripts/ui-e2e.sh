@@ -307,7 +307,7 @@ export_evidence() { # export_evidence <swap_id>
 # ---- ZEC host-side steps (the Node offers only claim/refund for ZEC) ----------------
 # The refund journeys' ZEC profile (zec-swap-sdk profile.rs, node-e2e.py
 # ZEC_REFUND_PROFILE): a 4-minute LEZ refund delay, as nobody claims there.
-zec_refund_profile=deterministic-local-devnet-v4
+zec_refund_profile=deterministic-local-devnet-v6
 zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
   log "provisioning a ZEC corridor with ${1:-1} prepared swap(s)${2:+ under $2} (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
   bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" ${2:+--profile "$2"} 2>&1 | tail -4 | sed 's/^/   /'
