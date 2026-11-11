@@ -183,7 +183,10 @@ request; the Node's own figures are judged through `node_stats`.
 
 Checked by reading the code and the evidence at `18dd9dd8`, against `v0.2.5`
 (`c99ff8ce`) and `v0.2.6` (`4b76e2f7`, documentation only over `v0.2.5`).
-Nothing below was run for this check.
+Nothing below was run for this check. Items 8, 9, 10, 12 and 14 were
+rewritten after their harness fixes (later the same day); each says what the
+test asserted before and asserts now, checked by unit tests offline
+(`deploy/tests`), not yet by a run on the stack.
 
 **Item 2, upgrade with an open swap: unchanged in kind, not tested.** From
 `v0.2.6` to this head `SwapCoordinator` gained no field (`git diff
@@ -241,42 +244,77 @@ the build Logos saw the green badge on. Smallest close (desk): bind the
 badge to the last health result ("Node connected" / "Node unavailable") or
 label it "Desk loaded".
 
-**Item 8, early-lock selling LEZ: still holds for BTC.**
-`scenario_early_lock_reverse` (`deploy/scripts/node-e2e.py`) is unchanged
-since `v0.2.5`: it cuts the Maker's indexer forwarder, so the Maker cannot
-*see* the Taker's lock (not: sees it unfinalized), and it looks for the
-Maker's Bitcoin lock with `bitcoin_effects`, which reads the *Taker's* view.
-The ZEC twin (`scenario_zec_early_lock`, new) checks the chain itself: the
-Maker's funding outpoint unspent and zebra's mempool empty. Smallest close
-(harness): in the BTC reverse case fail on `maker_lock_recorded(swap_id)` or
-a non-empty `getrawmempool`, as the forward case and the ZEC twin do. "Seen
-but unconfirmed" stays out of reach on LEZ, which has no mempool to hold a
-transaction in.
+**Item 8, early-lock selling LEZ: fixed in `240c778e` (harness), not yet
+run on the stack.** Before, `scenario_early_lock_reverse` cut the Maker's
+indexer forwarder, so it tested a Maker that could not *see* the Taker's LEZ
+lock, and looked for the Maker's Bitcoin lock with `bitcoin_effects`, which
+reads the *Taker's* view. Now the Maker loses only its indexer forwarder, the
+one source that says a LEZ block is final (the sidecar observes LEZ in the
+indexer's finalized window), and keeps its sequencer forwarder; the Taker's
+lock is read back over the Maker's own route (`getTransaction` on its
+`127.0.0.1:3040`) as included, so the lock is in front of the Maker and
+nothing it can read says it is final. That is the closest LEZ has to "seen,
+unconfirmed": it has no mempool, and its finality cannot be held back without
+freezing the chain every lane shares. For the Maker's attention span (five
+rounds of its requeue plus backoff from the profile, at least 90 s) each
+poll asserts no phase that implies an observed first leg, no `maker_lock` in
+the Maker's own record (`maker_lock_recorded`), and no send from the Maker's
+Core wallet since the hold began, mined or in the mempool (`listsinceblock`
+with the mempool); once the view is back, the Maker's lock must appear as
+such a send, so the chain check is shown able to see one. Checked the
+others: forward (selling Bitcoin) already held the lock in the mempool and
+read the Maker's own record; it now also asserts 0 of the agreement's
+required confirmations and the Maker's LEZ balance unchanged once finality
+has passed the sequencer tip at the end of the hold. The ZEC twin selling
+LEZ cut both forwarders (the same blindness) and now cuts the indexer alone;
+selling ZEC it checked phases only and now checks the Maker's LEZ balance
+too. Upgrade once r103engine's view fields land: assert that the Maker's
+`waiting_for` names the Taker lock's finality during the hold.
 
-**Item 9, offline-after-lock: still holds.** `cut_delivery_and_chat` still
-renames `/run/lez/maker/chat.sock` and runs `chmod 0755 /delivery` in the
-Maker's container (the Maker's whole Basecamp now). The Maker's health turns
-`chat` and `delivery` to `unavailable` because it stats the path
-(`owner_socket_is_available`) and validates the directory mode
-(`validate_private_directory`): a policy trip, not a cut. The listening
-socket and any accepted connection stay open, the Taker's read-only
-`/delivery` stays readable, and only the Maker's health is asserted; the
-ZEC twin uses the same cut. Smallest close (harness): show that nothing
-off-chain was used after the cut (the Maker's chat and delivery request
-counts flat from the cut to completion, or a connect from the Taker's
-container refused), and cut delivery with `chmod 0000` rather than 0755.
+**Item 9, offline-after-lock: fixed in `98e60713` (harness), not yet run on
+the stack.** Before, the cut renamed `chat.sock` (an open connection
+survives) and set `/delivery` to 0755 (looser, still readable by the
+Taker), and only the Maker's health, which turned `unavailable` because it
+stats the path and checks the mode, was asserted. The transport is two
+shared volumes: the Maker's Chat socket on `maker_socket`, mounted into the
+Taker's Basecamp, and `delivery_dir`, read-only for the Taker; both Nodes run
+as uid 4713 without capabilities. The cut now sets both inodes to mode 0000,
+so the kernel refuses every non-root process on both sides a connect or a
+read; no image change is needed. Asserted: before the cut, a probe in the
+Taker's container as the Node's user connects and lists (so it is not blind);
+after it both fail with `EACCES` and no descriptor there points into
+`/delivery`; Chat opens one connection per call, so the scenario waits until
+the Maker holds no accepted connection on `chat.sock` (its
+`/proc/net/unix`), then samples that every 2 s until the swap completes and
+fails on any connection; both Nodes report chat and delivery `unavailable`
+and are degraded (the Taker's delivery state is its own failed discovery);
+the Taker's side is still refused at completion; the restore (in `finally`)
+puts back 0600 and 0700 and asserts the probe connects and lists again and
+neither Node is degraded. The Maker's log has no per-request Chat line, so
+"no request reached the Maker" rests on the kernel refusal plus the
+connection samples, not on a counter. The ZEC twin uses the same cut.
 
-**Item 10, refund-then-maker-lock selling the foreign coin: still holds.**
-`scenario_refund_admitted_forward` only checks that the Taker is not
-`completed` at the cutoff; "(maker lock unobserved)" is a log line, not an
-assertion. Both directions record `taker_balance_before` and `_after` and
-compare nothing, and the reverse case logs the maker lock as `timely` or
-`late` by median time without failing on `late`. The ZEC twin does assert
-the Taker's actor stayed at `taker_lock_confirmed`, but passes when the
-blind refund was not admitted (`blind_admission` false). Smallest close
-(harness): assert the Taker's view has no maker lock effect and is before
-`both_legs_locked` at admission, assert the balance delta (the lock amount
-back, less fees), and fail a reverse run whose lock was late by median.
+**Item 10, refund-then-maker-lock selling the foreign coin: fixed in
+`8af3e80d` (harness), not yet run on the stack.** Before, "(maker lock
+unobserved)" was a log line, balances were recorded and never compared, the
+reverse case logged "late" by median time and went on, and the ZEC twin
+passed with `blind_admission` false. Now the refund is asked for until
+admitted (within ten observer sweeps), and the Taker's view is asserted
+when it asks and right after admission: a state before the second lock and
+no `maker_lock` effect (forward: none at all; reversed: none with the
+agreement's confirmations, since the Taker may see the held lock in the
+mempool); a Node that refuses fails the scenario. Both directions then let
+the Maker refund its own leg and compare both parties on both chains, read
+from the chains (each Node's Core wallet, trusted + pending + immature, and
+its LEZ account's finalized balance): LEZ to the unit, the party that locked
+Bitcoin back less at most 20,000 sat of fees (4,100 observed for a lock and
+its refund), the other party to the satoshi. A reverse lock confirmed with a
+median time past the cutoff ends the try as `NotExercised` (exit 98, retried
+by `regress.sh`), since it is not the case the scenario tests. The ZEC twin
+selling ZEC now fails when the blind refund is not admitted (every recorded
+run admitted it), asserts the same at admission, and requires both LEZ
+accounts to end where they started. Upgrade once r103engine's fields land:
+assert the Taker's `waiting_for` at admission names the maker lock.
 
 **Item 11, property test: the model gained the depth, the note was not
 corrected.** The new property
@@ -290,20 +328,23 @@ refuses at the lock removal. What the new property shrinks to was not
 checked here, and the `v0.2.5` release text ("shrinks to exactly the
 reported shape") is unedited (release last updated 2026-09-28).
 
-**Item 12, regression evidence: partly.** Done: the runner is committed
-(`deploy/scripts/regress.sh`; a test that fails while finality moves is not
-retried, a frozen chain voids the try), and the M2 release-candidate run
-records its image ids and source (`docs/evidence/regression-m2-2026-11-11/
-PROVENANCE.md`, "Images"; 0 frozen tries). Not done: `regress.sh` samples
-the finalized height every 30 s but logs it only when it declares a freeze,
-and never the sequencer tip; the wait loops of `refund-then-maker-lock` log
-neither swap state nor finality and still fail with "the admitted-refund
-short-circuit is unfixed"; the `v0.2.5` evidence's "Chain recreations during
-the run" is still the placeholder comment; the `v0.2.5` release text still
-says "43 of 43" beside the "45 of 45" paragraph. Smallest close: one log line
-per wait iteration (state, finalized and tip) in `node-e2e.py`, the same
-pair at each `watched()` sample (harness), and the two text corrections
-(docs and release).
+**Item 12, regression evidence: the harness part fixed in `a4f1a48d`, the
+v0.2.5 provenance filled from its log in the last commit of this set; not
+yet run on the stack.** Before, `regress.sh` sampled the finalized height
+every 30 s but logged it only when it declared a freeze and never read the
+tip, and the wait loops logged no finality and failed with the generic
+"short-circuit is unfixed". Now every long wait in `node-e2e.py` logs its
+state, `LEZ finalized N, tip M` (from the heartbeat's status when fresh,
+else the host's indexer and sequencer ports, never a Node forwarder a
+scenario may have cut) on each change and at least every 60 s, and a
+timeout reads "timed out after N s waiting for <what>; last seen: <state>;
+LEZ finalized N, tip M". `regress.sh` writes both heights on each try's start
+and verdict line, each 30 s sample into `chain.tsv`, and the tip into the
+freeze line. The `v0.2.5` "Chain recreations" section now lists the four
+recreations `RESULTS.txt` records (tests, times) and says plainly what that
+log does not hold: no finality or tip reading, no classifier, nothing on
+what a stopped try left open. Still open: the `v0.2.5` release text's "43 of
+43" (a release edit, outside the repository).
 
 **Item 13, videos: no longer applies to this release, not fixed for
 `v0.2.5`.** The recordings of the M2 run are by-products of passing tests at
@@ -313,15 +354,32 @@ release attachments, and no release was built. The `v0.2.5` recordings were
 neither dated nor re-recorded. Whether the Taker's "Completed" is on screen
 in the happy-path recordings was not checked here.
 
-**Item 14, late-claim scenarios: still open.** `node-e2e.py` has no scenario
-in which the revealing claim is sent but never mined, in either direction.
-`survivor`, which `regress.sh full` runs in both directions, stops the Taker
-right after its claim is admitted and asserts the Maker completes, then the
-Taker; it does not hold the claim unconfirmed across the stop. Smallest close
-(harness): selling LEZ, hold the Taker's Bitcoin claim in the mempool (the
-miner stopped) across a Taker stop; selling Bitcoin, the LEZ claim has no
-mempool, so cut the Taker's sequencer forwarder before the claim, as #101
-did for the late locks.
+**Item 14, late-claim scenarios: fixed in `11f322b7` (harness), not yet run
+on the stack.** Before, no scenario held a revealing claim sent but not on
+chain, and `survivor` did not hold it unconfirmed across the stop. Two new
+scenarios, both directions, in `regress.sh full` on the `fast` profile:
+`late-claim-confirms` (a) sends the claim, stops the Taker before it has
+seen it confirmed and confirms it while the Taker is down (selling LEZ: the
+lane's miner stopped, the claim found in the mempool as the spend of the
+Maker's lock, mined with the Taker stopped; selling Bitcoin: the Taker's
+indexer forwarder cut the moment its LEZ claim is out, its view required to
+show the claim pending or the try is `NotExercised`, the Node stopped, the
+claim waited final); the Maker completes alone, the Taker on restart, and
+the balances show the lots traded. `late-claim-unmined` (b) keeps the claim
+off chain with the Taker stopped until the refund path is open (selling LEZ:
+empty blocks at the profile's pace mature the Maker's Bitcoin refund while
+the claim stays in the mempool; selling Bitcoin: the Taker's sequencer
+forwarder cut before the claim, so it is never included, asserted on the
+Maker's route, through the claim window, the Maker asserted not to reach
+claim evidence); then the Maker asks for its refund, the Taker returns and
+both Nodes settle on their own. Either outcome passes, but both parties'
+balances on both chains must fit a completed or a refunded swap and agree
+with both Nodes: no party with both lots or neither. For the ZEC pair,
+`zec-survivor` selling LEZ now holds (a): nothing but the harness mines
+zebra, so a claim found in its mempool before the stop must be confirmed
+before the Taker returns. A ZEC (b) is not added: zebra's `generate` takes
+the mempool with it, so the refund height cannot be reached around a held
+claim without another mining path.
 
 **Item 15, LEZ v0.3: partly.** #107 (2026-10-12) assesses the port against
 LEZ 0.4, with which the project agreed to port once rather than through 0.3:
