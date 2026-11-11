@@ -299,6 +299,7 @@ proptest! {
         );
         let mut taker_funded = false;
         let mut maker_funded = false;
+        let mut settled_snapshot: Option<SwapCoordinator> = None;
 
         for event in events {
             let before = swap.clone();
@@ -370,6 +371,13 @@ proptest! {
                 "phase {:?} with claim evidence set",
                 swap.phase()
             );
+
+            // A settled coordinator is unchanged by any later input, accepted or not.
+            if let Some(settled) = settled_snapshot.as_ref() {
+                prop_assert_eq!(&swap, settled, "settled coordinator changed after {:?}", event);
+            } else if matches!(swap.phase(), Phase::Completed | Phase::Refunded) {
+                settled_snapshot = Some(swap.clone());
+            }
         }
     }
 }

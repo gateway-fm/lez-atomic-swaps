@@ -973,15 +973,25 @@ impl SwapCoordinator {
     ///
     /// Before maker funding, this clears the observation so an explicit replacement can be
     /// accepted. After maker funding, the committed transaction ID is retained and claims are
-    /// suspended; a different transaction can never be substituted silently.
+    /// suspended; a different transaction can never be substituted silently. A `Completed` or
+    /// `Refunded` swap is settled: the removal is refused and changes nothing.
     ///
     /// # Errors
     ///
     /// Returns [`Error::ConflictingTakerLock`] when the removed transaction is not the committed
-    /// taker transaction.
+    /// taker transaction, and [`Error::InvalidPhase`] once the swap is settled.
     pub fn observe_taker_lock_removed(&mut self, transaction_id: &str) -> Result<(), Error> {
         if self.taker_lock_transaction_id.as_deref() != Some(transaction_id) {
             return Err(Error::ConflictingTakerLock);
+        }
+        // A settled swap is never changed again. The removal is refused rather than absorbed:
+        // accepting it while keeping the funding flag would leave the coordinator answering a
+        // replayed claim as if the leg were still on the chain.
+        if matches!(self.phase, Phase::Completed | Phase::Refunded) {
+            return Err(Error::InvalidPhase {
+                expected: Phase::BothLegsLocked,
+                actual: self.phase,
+            });
         }
         // Recorded before the phase dispatch: the leg is gone whatever the phase already
         // says about the other one. The `_` arm below drops the transition when the maker
@@ -1015,15 +1025,23 @@ impl SwapCoordinator {
     /// Records that the committed maker-funded transaction left the canonical chain.
     ///
     /// The transaction ID remains pinned. Claims are suspended until the exact
-    /// transaction reappears, while independent refunds remain available.
+    /// transaction reappears, while independent refunds remain available. A `Completed` or
+    /// `Refunded` swap is settled: the removal is refused and changes nothing.
     ///
     /// # Errors
     ///
     /// Returns [`Error::ConflictingMakerLock`] when the removed transaction does not
-    /// match the committed maker funding ID.
+    /// match the committed maker funding ID, and [`Error::InvalidPhase`] once the swap is
+    /// settled.
     pub fn observe_maker_lock_removed(&mut self, transaction_id: &str) -> Result<(), Error> {
         if self.maker_lock_transaction_id.as_deref() != Some(transaction_id) {
             return Err(Error::ConflictingMakerLock);
+        }
+        if matches!(self.phase, Phase::Completed | Phase::Refunded) {
+            return Err(Error::InvalidPhase {
+                expected: Phase::BothLegsLocked,
+                actual: self.phase,
+            });
         }
         // As above, and for the same reason: a maker removal while the taker leg is already
         // the reason for the phase used to be dropped entirely.

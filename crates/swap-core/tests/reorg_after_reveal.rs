@@ -272,3 +272,58 @@ fn maker_lock_returning_during_taker_reorg_restores_claim_authority() {
         );
     }
 }
+
+#[test]
+fn lock_removal_after_completion_is_refused_and_changes_nothing() {
+    for (pair, direction) in PROFILES {
+        let mut swap = revealed(pair, direction);
+        let followup = ChainProof::new("followup-claim", 1).unwrap();
+        swap.observe_followup_claim(swap.first_claimant().other(), followup.clone())
+            .unwrap();
+        assert_eq!(swap.phase(), Phase::Completed);
+        let settled = swap.clone();
+
+        assert_settled_removals_refused(&mut swap, &settled);
+
+        // The follow-up claim is still an idempotent replay, not a funding error.
+        swap.observe_followup_claim(swap.first_claimant().other(), followup)
+            .unwrap();
+        assert_eq!(swap, settled);
+    }
+}
+
+#[test]
+fn lock_removal_after_both_refunds_is_refused_and_changes_nothing() {
+    for (pair, direction) in PROFILES {
+        let mut swap = coordinator(pair, direction, 1);
+        swap.observe_taker_lock(ChainProof::new("taker-lock", 2).unwrap())
+            .unwrap();
+        swap.observe_maker_lock(ChainProof::new("maker-lock", 1).unwrap())
+            .unwrap();
+        let maker_position = maker_refund_position(&swap);
+        let taker_position = taker_refund_position(&swap);
+        swap.refund_maker_leg(maker_position).unwrap();
+        swap.refund_taker_leg(taker_position).unwrap();
+        assert_eq!(swap.phase(), Phase::Refunded);
+        let settled = swap.clone();
+
+        assert_settled_removals_refused(&mut swap, &settled);
+    }
+}
+
+/// A settled swap refuses both lock removals and is left exactly as it was.
+fn assert_settled_removals_refused(swap: &mut SwapCoordinator, settled: &SwapCoordinator) {
+    let expected = Err(Error::InvalidPhase {
+        expected: Phase::BothLegsLocked,
+        actual: settled.phase(),
+    });
+    assert_eq!(swap.observe_taker_lock_removed("taker-lock"), expected);
+    assert_eq!(swap.observe_maker_lock_removed("maker-lock"), expected);
+    assert_eq!(
+        swap,
+        settled,
+        "{:?} {:?}",
+        settled.pair(),
+        settled.direction()
+    );
+}
