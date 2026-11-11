@@ -108,12 +108,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _out/images _out/sidecar
-          for role in maker-node taker-node lez-services; do
+          # zebra: the health check its image carries; taker-node: the ZEC
+          # corridor provisioners (zec-local-poc-*) its image keeps beside the
+          # Node package (scripts/zec-provision.sh, gen-config.sh run them).
+          for role in maker-node taker-node lez-services zebra; do
             mkdir -p "_out/images/$role"
             cp deploy/images/$role/lez-* "_out/images/$role/"
             [[ ! -f deploy/images/$role/build-source.txt ]] || cp deploy/images/$role/build-source.txt "_out/images/$role/"
           done
-          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-local-actor-identity,source-commit.txt} _out/sidecar/
+          cp deploy/images/taker-node/zec-local-poc-* _out/images/taker-node/
+          # source-tree.txt: the sidecar tree it was built from, which the stage
+          # phase compares with the checkout's before it stages the sidecar.
+          cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
           du -sh _out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -440,11 +446,12 @@ jobs:
           mkdir -p "$p/regenesis" && install -m 0755 _in/escrow/regenesis "$p/regenesis/"
           install -m 0755 _in/escrow/lez-zec-escrow-v02-deployer "$p/escrow-artifact/debug/"
           install -m 0755 _in/node/sidecar/lez-v02-* "$p/sidecar/"
-          cp _in/node/sidecar/source-commit.txt "$p/sidecar/"
-          for role in maker-node taker-node lez-services; do
+          cp _in/node/sidecar/source-commit.txt _in/node/sidecar/source-tree.txt "$p/sidecar/"
+          for role in maker-node taker-node lez-services zebra; do
             install -m 0755 _in/node/images/$role/lez-* "deploy/images/$role/"
             [[ ! -f _in/node/images/$role/build-source.txt ]] || cp _in/node/images/$role/build-source.txt "deploy/images/$role/"
           done
+          install -m 0755 _in/node/images/taker-node/zec-local-poc-* deploy/images/taker-node/
       - name: Stage image contexts (Bitcoin Core, LEZ sequencer, LEZ modules, sidecars, tools)
         env:
           LEZ_STAGE_SKIP_BASECAMP_UI: "1"
@@ -459,8 +466,8 @@ jobs:
         run: |
           set -euo pipefail
           docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
-          docker compose --profile tools --profile explorers build bitcoin-core btc-miner btc-explorer sequencer lez-explorer tools
-          for image in bitcoin-core btc-miner btc-explorer services explorer wallet-module; do
+          docker compose --profile tools --profile explorers build bitcoin-core zebra btc-miner btc-explorer sequencer lez-explorer tools
+          for image in bitcoin-core zebra btc-miner btc-explorer services explorer wallet-module; do
             docker push "${LEZ_IMAGE_PREFIX}-${image}:${LEZ_IMAGE_TAG}"
           done
       # Each role's image is that party's Basecamp (the basecamp-ui image with
