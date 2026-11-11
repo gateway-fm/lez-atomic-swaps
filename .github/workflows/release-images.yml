@@ -11,7 +11,7 @@ name: release-images
 #   lez-services  the sequencer from the pinned logos-execution-zone
 #   lez-modules   the LEZ indexer and wallet as Logos modules (lgx, Nix, from the
 #                 third_party submodules plus builder/patches)
-#   escrow        r0vm and the digest-pinned escrow artifact (deployer)
+#   escrow        r0vm, regenesis and the digest-pinned escrow artifact (deployer)
 # Every job pulls the builder image pinned in deploy/builder/image.lock (the
 # prover toolchain is baked in), and the escrow and LEZ-services jobs restore
 # their outputs from the Actions cache when nothing they depend on changed;
@@ -269,6 +269,11 @@ jobs:
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:rapidsnark
       - name: r0vm (risc0 tag)
         run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:r0vm
+      # gen-config.sh runs it from the LEZ network's image to give each new
+      # chain its own genesis time; an image without it starts chains at
+      # upstream's fixed time, with the slow first finality that brings.
+      - name: regenesis (per-chain genesis, logos-blockchain 0.2.4)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:regenesis
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: escrow-guest
@@ -282,6 +287,7 @@ jobs:
           set -euo pipefail
           mkdir -p _out
           cp "$LEZ_WORKSPACE/provision/data/tools-arm/bin/r0vm" "$LEZ_WORKSPACE/provision/data/escrow-artifact/debug/lez-zec-escrow-v02-deployer" _out/
+          cp "$LEZ_WORKSPACE/provision/data/regenesis/regenesis" _out/
           du -sh _out
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -392,6 +398,7 @@ jobs:
           install -m 0644 _in/lez-modules/lez_indexer_module.lgx "$p/lez_indexer_module/"
           install -m 0644 _in/lez-modules/lez_core.lgx "$p/lez_core/"
           install -m 0755 _in/escrow/r0vm "$p/tools-arm/bin/"
+          mkdir -p "$p/regenesis" && install -m 0755 _in/escrow/regenesis "$p/regenesis/"
           install -m 0755 _in/escrow/lez-zec-escrow-v02-deployer "$p/escrow-artifact/debug/"
           install -m 0755 _in/node/sidecar/lez-v02-* "$p/sidecar/"
           cp _in/node/sidecar/source-commit.txt "$p/sidecar/"
