@@ -2,7 +2,8 @@
 # repair-indexer.sh — rebuild the LEZ indexer's database when it can no longer
 # serve historical account reads.
 #
-# The v0.2 indexer takes a state breakpoint every 100 blocks and serves
+# The v0.2 indexer takes a state breakpoint every 10 blocks
+# (deploy/builder/patches, breakpoint-interval; 100 upstream) and serves
 # getAccountAtBlock by replaying from the last breakpoint. On a long-lived
 # chain it occasionally fails to write one; from then on every historical
 # read past the gap fails, a restart refuses to start, and a swap's Maker

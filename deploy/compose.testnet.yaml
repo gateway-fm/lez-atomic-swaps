@@ -37,6 +37,10 @@ services:
 
   taker-node:
     container_name: lez-testnet-taker-node
+    # Not the local sequencer: on this route the chain is the public one.
+    depends_on: !override
+      maker-node:
+        condition: service_healthy
     environment:
       <<: *testnet-node-env
     ports: !override

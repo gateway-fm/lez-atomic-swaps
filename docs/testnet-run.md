@@ -237,13 +237,12 @@ before it submits anything.
 ## 8. Running the swaps on the desks
 
 Both directions run from `deploy/`, against the public stack rather than the local
-defaults. Start the two Basecamps with `--no-deps`: in `compose.testnet.yaml`
-the Taker's Basecamp still names the local `sequencer` among its dependencies,
-and without the flag Compose would start the local devnet beside them:
+defaults. `compose.testnet.yaml` drops the Basecamps' dependencies on the local
+chain, so starting them starts nothing else:
 
 ```sh
 docker compose -p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml \
-  up -d --no-deps maker-node taker-node
+  up -d maker-node taker-node
 export LEZ_STACK_COMPOSE_ARGS="-p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml"
 export LEZ_CONTAINER_PREFIX=lez-testnet LEZ_REPAIR_INDEXER=0 LEZ_EXPORT_EVIDENCE=0
 export LEZ_UI_LEZ_AMOUNT=100 LEZ_UI_BTC_AMOUNT=0.0001
@@ -327,7 +326,7 @@ docker run -d --name lez-t3-provider --restart unless-stopped --network lez-test
 export LEZ_MAKER_BTC_CLAIM_DESTINATION=<an address of the Maker owner's wallet>
 export LEZ_TAKER_BTC_CLAIM_DESTINATION=<an address of the Taker owner's wallet>
 docker compose -p lez-testnet --env-file testnet.env -f compose.yaml -f compose.testnet.yaml \
-  -f compose.testnet3-provider.yaml up -d --no-deps maker-node taker-node
+  -f compose.testnet3-provider.yaml up -d maker-node taker-node
 ```
 
 The two claim addresses must differ: an agreement refuses a Maker and a Taker paid at

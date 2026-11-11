@@ -20,7 +20,7 @@ role="${BASECAMP_ROLE:-}"
 case "$role" in
   maker) user_dir=/var/lez/basecamp-maker-user ;;
   taker) user_dir=/var/lez/basecamp-taker-user ;;
-  # The LEZ network node or indexer's Basecamp (compose.yaml bedrock, indexer):
+  # The LEZ network node or indexer's Basecamp (compose.yaml network):
   # its user directory, where the modules keep their state, lives on the
   # service's state volume; the LEZ Network desk comes from the image.
   network)
