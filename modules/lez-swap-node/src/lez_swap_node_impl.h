@@ -57,6 +57,18 @@ public:
     /// never started.
     std::string node_status(const std::string& role);
 
+    /// `role`'s Node's resource use as compact JSON, read from /proc: the
+    /// supervision (role, state, pid, uptime_seconds, starts, restarts,
+    /// last_exit); `processes`, one object per member of the Node's process
+    /// group (the Node first, then its forwards and sidecars): pid, ppid,
+    /// name, state, cpu_percent, cpu_time_seconds, memory_mb (VmRSS),
+    /// threads, fds; `group`, their sums; `host`, the same for this module's
+    /// own host process. cpu_percent is measured since this role's previous
+    /// node_stats call, or over the process's life on the first. Empty when
+    /// the role was never started. The runtime's `module stats` samples only
+    /// the module host's pid, so this is where the Node's own use is seen.
+    std::string node_stats(const std::string& role);
+
     /// Serve `account_id_hex`'s LEZ signatures to the role's Node on the
     /// owner-only Unix socket `socket_path`: one JSON line per connection,
     /// {"account_id", "message_hash"} in, the wallet's {"signature",

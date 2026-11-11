@@ -113,6 +113,62 @@ namespace {
         if (::kill(-group, SIGKILL) == 0) std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
+    // One process as /proc shows it (node_stats). `ok` is false when the
+    // process is gone (or never was).
+    struct Usage {
+        bool ok = false;
+        pid_t pid = 0, ppid = 0;
+        std::string name, state;
+        double cpu_seconds = 0, age_seconds = 0, memory_mb = 0;
+        long threads = 0, fds = 0;
+    };
+
+    Usage usage_of(pid_t pid) {
+        Usage u;
+        u.pid = pid;
+        const std::string base = "/proc/" + std::to_string(pid);
+        std::ifstream stat(base + "/stat");
+        std::string line;
+        std::getline(stat, line);
+        // pid (comm) state ppid pgrp ...: comm may hold spaces and parentheses.
+        const auto open = line.find('('), close = line.rfind(')');
+        if (open == std::string::npos || close == std::string::npos || close < open) return u;
+        u.name = line.substr(open + 1, close - open - 1);
+        std::istringstream rest(line.substr(close + 1));
+        std::vector<std::string> fields; // fields[0] is stat's field 3 (state)
+        for (std::string f; rest >> f;) fields.push_back(f);
+        if (fields.size() < 20) return u;
+        const double tick = static_cast<double>(::sysconf(_SC_CLK_TCK));
+        if (tick <= 0) return u;
+        u.state = fields[0];
+        u.ppid = static_cast<pid_t>(std::atol(fields[1].c_str()));
+        // utime + stime (fields 14, 15): the process's own CPU, as `module
+        // stats` counts it; num_threads (20); starttime (22), in ticks since boot.
+        u.cpu_seconds = (std::strtod(fields[11].c_str(), nullptr) + std::strtod(fields[12].c_str(), nullptr)) / tick;
+        u.threads = std::atol(fields[17].c_str());
+        double boot_uptime = 0;
+        std::ifstream("/proc/uptime") >> boot_uptime;
+        u.age_seconds = std::max(0.0, boot_uptime - std::strtod(fields[19].c_str(), nullptr) / tick);
+        std::ifstream status(base + "/status");
+        for (std::string entry; std::getline(status, entry);) {
+            if (entry.rfind("VmRSS:", 0) == 0) { u.memory_mb = std::strtod(entry.c_str() + 6, nullptr) / 1024.0; break; }
+        }
+        if (DIR* fd = ::opendir((base + "/fd").c_str())) {
+            while (const dirent* entry = ::readdir(fd)) {
+                if (entry->d_name[0] != '.') ++u.fds;
+            }
+            ::closedir(fd);
+        }
+        u.ok = true;
+        return u;
+    }
+
+    std::string fixed(double value, int decimals) {
+        char text[64];
+        std::snprintf(text, sizeof(text), "%.*f", decimals, value);
+        return text;
+    }
+
     // One supervised role. `pid` is the running Node's process (group leader),
     // 0 while none runs; everything else is guarded by `mutex`.
     struct Role {
@@ -130,6 +186,10 @@ namespace {
         uint64_t starts = 0;
         std::string last_exit;
         std::thread thread;
+        // When the running Node was started; node_stats' previous CPU reading
+        // of each process (CPU seconds, when), for cpu_percent.
+        std::chrono::steady_clock::time_point started;
+        std::map<pid_t, std::pair<double, std::chrono::steady_clock::time_point>> cpu_seen;
 
         // fork + exec, with only async-signal-safe calls in the child: every
         // string the child needs is prepared before the fork.
@@ -233,6 +293,7 @@ namespace {
                     ::setpgid(child, child);
                     record_group(child);
                     pid = child;
+                    started = std::chrono::steady_clock::now();
                     ++starts;
                     state = "running";
                     info(name, "Node started (pid " + std::to_string(child) + ", start " + std::to_string(starts) + ")");
@@ -582,4 +643,70 @@ std::string LezSwapNodeImpl::node_status(const std::string& role) {
     return "{\"role\":" + json_string(supervised->name) + ",\"state\":" + json_string(supervised->state) +
            ",\"pid\":" + std::to_string(supervised->pid.load()) + ",\"starts\":" + std::to_string(supervised->starts) +
            ",\"last_exit\":" + json_string(supervised->last_exit) + "}";
+}
+
+std::string LezSwapNodeImpl::node_stats(const std::string& role) {
+    std::shared_ptr<Role> supervised;
+    {
+        auto& s = supervisor_of(supervisor);
+        std::lock_guard lock(s.mutex);
+        if (auto it = s.roles.find(role); it != s.roles.end()) supervised = it->second;
+    }
+    if (!supervised) return "";
+    std::lock_guard lock(supervised->mutex);
+    const auto now = std::chrono::steady_clock::now();
+    const pid_t leader = supervised->pid.load();
+    // The Node's group, the Node first; nothing while no Node runs.
+    std::vector<pid_t> members;
+    if (leader > 0) {
+        members = members_of(leader);
+        std::sort(members.begin(), members.end());
+        members.erase(std::remove(members.begin(), members.end(), leader), members.end());
+        members.insert(members.begin(), leader);
+    }
+    std::map<pid_t, std::pair<double, std::chrono::steady_clock::time_point>> seen;
+    auto percent = [&](const Usage& u) {
+        double p = u.age_seconds > 0 ? u.cpu_seconds / u.age_seconds * 100.0 : 0.0;
+        if (auto it = supervised->cpu_seen.find(u.pid); it != supervised->cpu_seen.end()) {
+            const double elapsed = std::chrono::duration<double>(now - it->second.second).count();
+            if (elapsed > 0) p = std::max(0.0, (u.cpu_seconds - it->second.first) / elapsed * 100.0);
+        }
+        seen[u.pid] = {u.cpu_seconds, now};
+        return p;
+    };
+    auto object = [](const Usage& u, double cpu_percent) {
+        return "{\"pid\":" + std::to_string(u.pid) + ",\"ppid\":" + std::to_string(u.ppid) + ",\"name\":" + json_string(u.name) +
+               ",\"state\":" + json_string(u.state) + ",\"cpu_percent\":" + fixed(cpu_percent, 1) +
+               ",\"cpu_time_seconds\":" + fixed(u.cpu_seconds, 2) + ",\"memory_mb\":" + fixed(u.memory_mb, 3) +
+               ",\"threads\":" + std::to_string(u.threads) + ",\"fds\":" + std::to_string(u.fds) + "}";
+    };
+    std::string processes;
+    Usage total;
+    double total_percent = 0;
+    long count = 0;
+    for (const pid_t member : members) {
+        const Usage u = usage_of(member);
+        if (!u.ok) continue;
+        const double p = percent(u);
+        processes += (processes.empty() ? "" : ",") + object(u, p);
+        ++count;
+        total_percent += p;
+        total.cpu_seconds += u.cpu_seconds;
+        total.memory_mb += u.memory_mb;
+        total.threads += u.threads;
+        total.fds += u.fds;
+    }
+    const Usage host = usage_of(::getpid());
+    const double host_percent = host.ok ? percent(host) : 0.0;
+    supervised->cpu_seen.swap(seen);
+    const double uptime = leader > 0 ? std::chrono::duration<double>(now - supervised->started).count() : 0.0;
+    const uint64_t starts = supervised->starts;
+    return "{\"role\":" + json_string(supervised->name) + ",\"state\":" + json_string(supervised->state) +
+           ",\"pid\":" + std::to_string(leader) + ",\"uptime_seconds\":" + fixed(uptime, 1) +
+           ",\"starts\":" + std::to_string(starts) + ",\"restarts\":" + std::to_string(starts > 0 ? starts - 1 : 0) +
+           ",\"last_exit\":" + json_string(supervised->last_exit) + ",\"processes\":[" + processes + "]" +
+           ",\"group\":{\"processes\":" + std::to_string(count) + ",\"cpu_percent\":" + fixed(total_percent, 1) +
+           ",\"cpu_time_seconds\":" + fixed(total.cpu_seconds, 2) + ",\"memory_mb\":" + fixed(total.memory_mb, 3) +
+           ",\"threads\":" + std::to_string(total.threads) + ",\"fds\":" + std::to_string(total.fds) + "}" +
+           ",\"host\":" + (host.ok ? object(host, host_percent) : std::string("null")) + "}";
 }
