@@ -8683,6 +8683,24 @@ fn encode_lez_maker_lock_absence_evidence(
     .map_err(trace_observation_unavailable)
 }
 
+/// A first-lock refund whose LEZ read did not answer (the sequencer or the
+/// indexer is down, or the finalized scan is not conclusive) waits for the
+/// same thing as one that read finalized LEZ time before the cutoff; only
+/// the finalized time is unknown, so the wait has no chain reading. Seen
+/// live on the devnet with the sequencer stopped (#103 item 6): the row said
+/// `awaiting_observation` and nothing else.
+fn note_unread_lez_cutoff_wait(agreement: &BtcAgreementV1) {
+    note_wait(
+        ActorWaitV1::new("lez_finality_past_cutoff", "lez").until_time(
+            agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds(),
+            None,
+        ),
+    );
+}
+
 #[async_trait]
 impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
     #[allow(
@@ -8714,6 +8732,7 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     "first_lock_safety_uncertain",
                     &format!("lez transport: {error:?}"),
                 );
+                note_unread_lez_cutoff_wait(agreement);
                 return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
             }
         };
@@ -8724,6 +8743,7 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     "first_lock_safety_uncertain",
                     &format!("lez classify_finalized_witnessed_funding: {error:?}"),
                 );
+                note_unread_lez_cutoff_wait(agreement);
                 return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
             }
         };
@@ -8808,6 +8828,7 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     "first_lock_safety_uncertain",
                     &format!("lez finalized funding classification uncertain: {uncertain:?}"),
                 );
+                note_unread_lez_cutoff_wait(agreement);
                 Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
             }
         }
