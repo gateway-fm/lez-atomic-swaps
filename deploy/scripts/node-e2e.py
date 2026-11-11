@@ -108,6 +108,14 @@ LEZ_UNITS = 1_000
 ZEC_FOREIGN_UNITS = 100_000_000
 ZEC_LEZ_UNITS = 50_000
 ZEBRA_URL = os.environ.get("LEZ_ZEBRA_URL", "http://127.0.0.1:18232/")  # Compose publishes zebra's RPC on the host loopback
+# The public Zcash Testnet lane (scripts/public-zec-testnet.sh): zebra is a
+# Testnet node or provider, so nothing is ever mined; a wait for blocks waits
+# for the chain's own (at most LEZ_ZEC_BLOCK_WAIT_SECONDS each), and every ZEC
+# wait is LEZ_ZEC_TIMEOUT_SCALE times its devnet length. The route's credential
+# is a file (Zebra's .cookie, or a provider key sent as x-api-key), read per call.
+ZEC_PUBLIC = os.environ.get("LEZ_ZEC_PUBLIC_TESTNET") == "1"
+ZEC_BLOCK_WAIT_SECONDS = int(os.environ.get("LEZ_ZEC_BLOCK_WAIT_SECONDS", "900"))
+ZEC_TIMEOUT_SCALE = int(os.environ.get("LEZ_ZEC_TIMEOUT_SCALE", "1")) if ZEC_PUBLIC else 1
 NODES = {"maker": (f"{PREFIX}-maker-node", "/run/lez/maker/node.sock"),
          "taker": (f"{PREFIX}-taker-node", "/run/lez/taker/node.sock")}
 MINER = f"{PREFIX}-btc-miner"
@@ -1282,10 +1290,21 @@ def scenario_tampered_config(stamp: str) -> dict:
 ZEC_CORRIDOR: dict = {}
 
 
+def zebra_headers() -> dict:
+    headers = {"content-type": "application/json"}
+    if os.environ.get("LEZ_ZEBRA_API_KEY_FILE"):
+        headers["x-api-key"] = pathlib.Path(os.environ["LEZ_ZEBRA_API_KEY_FILE"]).read_text().strip()
+    elif os.environ.get("LEZ_ZEBRA_COOKIE_FILE"):
+        import base64
+        cookie = pathlib.Path(os.environ["LEZ_ZEBRA_COOKIE_FILE"]).read_text().strip()
+        headers["authorization"] = "Basic " + base64.b64encode(cookie.encode()).decode()
+    return headers
+
+
 def zebra(method: str, params: list | None = None) -> object:
     import urllib.request
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}).encode()
-    request = urllib.request.Request(ZEBRA_URL, data=body, headers={"content-type": "application/json"})
+    request = urllib.request.Request(ZEBRA_URL, data=body, headers=zebra_headers())
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             reply = json.load(response)
@@ -1297,8 +1316,28 @@ def zebra(method: str, params: list | None = None) -> object:
 
 
 def zebra_mine(blocks: int, why: str) -> None:
+    if ZEC_PUBLIC:
+        zebra_wait_blocks(blocks, why)
+        return
     zebra("generate", [blocks])
     log(f"  zebra: mined {blocks} block(s) → height {zebra('getblockcount')} ({why})")
+
+
+def zebra_wait_blocks(blocks: int, why: str) -> None:
+    """The public lane's zebra_mine: the chain makes its own blocks."""
+    start = int(zebra("getblockcount"))
+    deadline = time.time() + blocks * ZEC_BLOCK_WAIT_SECONDS
+    log(f"  zebra at {start}: waiting for {blocks} Testnet block(s), never mining ({why})")
+    while (height := int(zebra("getblockcount"))) < start + blocks:
+        if time.time() > deadline:
+            raise Failure(f"Zcash Testnet made {height - start} of {blocks} block(s) in {blocks * ZEC_BLOCK_WAIT_SECONDS}s ({why})")
+        time.sleep(15)
+    log(f"  zebra: Testnet reached height {height} ({why})")
+
+
+def zec_timeout(seconds: int) -> int:
+    """A ZEC wait's length: its devnet length, scaled on the public lane."""
+    return seconds * ZEC_TIMEOUT_SCALE
 
 
 ZEC_CORRIDORS: list[dict] = []
@@ -1343,10 +1382,16 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
             "(zec-provision.sh; this recreates both Nodes)")
         result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "zec-provision.sh"), "--skip-chain-check",
                                  "--direction", ROUTE["direction"], "--swaps", str(swaps), *(["--add"] if add else []),
-                                 *(["--profile", profile] if profile else [])],
+                                 *(["--profile", profile] if profile else []),
+                                 *(["--zcash-network", "test"] if ZEC_PUBLIC else [])],
                                 capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, stdin=subprocess.DEVNULL)
         for line in result.stdout.strip().splitlines()[-6:]:
             log(f"    {line}")
+        if result.returncode == 3:
+            # The provisioner cannot build a corridor for this network: not a
+            # failed swap, a missing capability (public-zec-testnet.sh: blocked).
+            log(f"  zec-provision.sh: blocked: {result.stderr.strip()[-400:]}")
+            raise SystemExit(3)
         if result.returncode != 0:
             raise Failure(f"zec-provision.sh failed: {result.stderr.strip()[-300:] or result.stdout.strip()[-300:]}")
     run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
@@ -1625,6 +1670,8 @@ ZEC_DEPTH_SECONDS = 10
 
 
 def zec_mine_pending() -> None:
+    if ZEC_PUBLIC:
+        return  # Testnet miners include it
     pool = zebra("getrawmempool")
     if isinstance(pool, list) and pool:
         zebra_mine(1, f"mempool had {[t[:12] for t in pool]}")
@@ -1632,7 +1679,10 @@ def zec_mine_pending() -> None:
 
 def zec_mining_policy(phase: str | None, corridor: dict) -> None:
     """Mines at most one zebra block per poll, and only for a reason; `phase` is
-    the Taker actor's durable phase (read, not driven)."""
+    the Taker actor's durable phase (read, not driven). On the public lane
+    depth comes from Testnet's own blocks."""
+    if ZEC_PUBLIC:
+        return
     height = int(zebra("getblockcount"))
     pool = zebra("getrawmempool")
     if isinstance(pool, list) and pool:
@@ -1679,6 +1729,7 @@ def zec_wait_until(swap_id: str, config: str, states: set[str], timeout: int, co
     what waits in the mempool, never for depth: the Maker's funding then stays
     at one confirmation, below the pre-reveal gate, which is the refund
     journeys' setup."""
+    timeout = zec_timeout(timeout)
     deadline = time.time() + timeout
     last = None
     next_depth = 0.0
@@ -1774,6 +1825,7 @@ def zec_wait_all_until(swaps: list[tuple[str, str, dict]], states: set[str], tim
     """Polls several swaps in turn until every swap's Node state is in `states`;
     the Taker Node's supervisor drives both actors, the mining policy is
     applied per corridor."""
+    timeout = zec_timeout(timeout)
     deadline = time.time() + timeout
     done: dict[str, dict] = {}
     last: dict[str, tuple] = {}
@@ -2528,6 +2580,7 @@ def zec_wait_until_phase(swap_id: str, config: str, phases: set[str], timeout: i
     block is generated only to include what waits in the mempool, never for
     depth: that keeps the Maker's funding at one confirmation, below the
     pre-reveal gate."""
+    timeout = zec_timeout(timeout)
     deadline = time.time() + timeout
     last = None
     next_depth = 0.0

@@ -50,6 +50,10 @@
 #                         profile.rs): deterministic-local-devnet-v3 (12 min
 #                         LEZ refund delay) by default, -v4 (4 min) for the
 #                         refund journeys, which never claim
+#     --zcash-network NET regtest (the default) or test: public Zcash Testnet
+#                         (scripts/public-zec-testnet.sh). The provisioner
+#                         builds Regtest corridors only, so `test` exits 3
+#                         (blocked) and says what is missing
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a
@@ -69,6 +73,7 @@ SWAPS=1
 ADD=0   # --add: a second corridor ("-b") beside the live one, with its own Zcash anchor; the catalog lists both
 DIRECTION=TakerSellsLez   # --direction: who sells what; TakerSellsForeign funds the Taker's Zcash key first
 PROFILE=deterministic-local-devnet-v3   # --profile: the LEZ escrow's validity window ends at its refund time
+ZCASH_NETWORK=regtest   # --zcash-network: the chain the corridor is provisioned on
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
@@ -77,10 +82,24 @@ while [[ $# -gt 0 ]]; do
     --add) ADD=1; shift ;;
     --direction) DIRECTION="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
-    -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
+    --zcash-network) ZCASH_NETWORK="$2"; shift 2 ;;
+    -h|--help) sed -n '2,56p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
+
+case "$ZCASH_NETWORK" in
+  regtest) ;;
+  test)
+    # zec-reference-actor local_poc.rs provisions a corridor only on the
+    # deterministic Regtest Zebra: it checks the Regtest genesis and NU6.2,
+    # funds from a mature coinbase output and writes NetworkType::Regtest into
+    # the agreement. A Testnet corridor needs a Testnet provisioner and an
+    # agreement profile on the live branch (docs/zcash-testnet-setup.md).
+    echo "zec-provision.sh: Zcash Testnet corridors are not supported by the provisioner (local_poc.rs is Regtest-only)" >&2
+    exit 3 ;;
+  *) echo "--zcash-network must be regtest or test" >&2; exit 64 ;;
+esac
 
 compose=(docker compose "${lane_compose[@]}")
 MAKER_NODE="$LEZ_CONTAINER_PREFIX-maker-node"
