@@ -69,6 +69,11 @@ commit they name.
 
 ## What bringing ZEC back would take
 
+Status, 2026-11-11: done. The ZEC leg runs through the Nodes and both desks in
+both directions on the modules stack, on Zebra 7 regtest with NU7
+(`docs/m2-acceptance-checklist.md`, `docs/submission-115.md`). The list below is
+kept as the record of what was planned.
+
 Build the Nodes with `pair-zec`, add Zebra to the stack, restore the pair
 selector and the shielding guidance in the Taker desk, give a ZEC swap a
 user-driven initiation like Bitcoin's, and record one desk-to-chain run. That

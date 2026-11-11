@@ -3,7 +3,7 @@
 Last reconciled: 2026-07-11 against the live RFP-003 and Gateway's accepted
 replacement proposal #112. Rows U1, U8, S8, and D1 were reconciled again on
 2026-10-08 for the milestone-3 acceptance items, and rows F4, U1, U6, U10,
-S1, S5, S8, and D1 on 2026-11-03 for the milestone-2 acceptance items; the remaining rows still carry
+S1, S5, S8, and D1 on 2026-11-03 for the milestone-2 acceptance items, and U10 and S1 again on 2026-11-11 (PR #120); the remaining rows still carry
 their 2026-07-11 status. Issue #61 is superseded. IDs below follow the RFP's
 Functionality, Usability, Reliability, Performance, Supportability, and Demo
 ordering. A row is not acceptance: `Passing` requires the named evidence at the
@@ -40,7 +40,7 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 | U7 | SPEL IDL for LEZ escrow program(s) | IDL generation/validation test against pinned compatible SPEL/LEZ versions | Sketch in M1; executable M2 |
 | U8 | Bitcoin Core testnet setup guide, self-hosted and public | [Guide](bitcoin-testnet4-setup.md) covers Route A self-hosted Testnet4, Route B exact-HTTPS gateway, and Route C keyless public provider on Testnet3, each with wallet creation, funding, and the swap directions it can serve; recorded runs in [testnet4](evidence/testnet4-20260919/README.md) and [testnet3 provider](evidence/testnet3-provider-20260918/README.md) | Done at v0.2.6 |
 | U9 | Monero stagenet and wallet-RPC setup guide, self-hosted and public | Fresh-machine documentation test reaches funded wallet and SDK connectivity for both routes | Planned M4 |
-| U10 | Zebra/Zcash testnet transparent-wallet guide, self-hosted and public | [Guide](zcash-testnet-setup.md): the self-hosted Zebra route and the public Zebrad provider route, each with wallet creation, funding and the directions it serves; the Docker devnet route in [`deploy/README.md`](../deploy/README.md) (Zebra regtest mining to the Maker's minted key). No fresh-machine run is recorded | Guide delivered at M2; fresh-machine walk-through open |
+| U10 | Zebra/Zcash testnet transparent-wallet guide, self-hosted and public | [Guide](zcash-testnet-setup.md): the self-hosted Zebra route and the public Zebrad provider route, each with wallet creation, funding and the directions it serves; the Docker devnet route in [`deploy/README.md`](../deploy/README.md) (Zebra regtest mining to the Maker's minted key). The self-hosted route was walked on 2026-11-11 from empty volumes (Zebra 7.0.0 from its pinned image and the guide's configuration, synced to the Testnet tip; a transparent key funded with 0.1 TAZ from a proof-of-work faucet; the route preflight passed on NU7); a walk on a machine with nothing installed is not recorded | Guide delivered at M2; clean-machine walk-through open |
 
 ## Reliability
 
@@ -65,7 +65,7 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| S1 | LEZ escrow deployed/tested on testnet 0.2 | Version-pinned deployment manifest and public smoke-test transaction evidence | Devnet only: the ZEC leg settles on the deployed v0.2 escrow (ImageID `c22d61fc…`, the program the BTC leg uses) on each recreated Docker devnet chain; a public testnet-0.2 smoke transaction is not recorded (M2–M4) |
+| S1 | LEZ escrow deployed/tested on testnet 0.2 | Version-pinned deployment manifest and public smoke-test transaction evidence | Devnet only: the ZEC leg settles on the deployed v0.2 escrow (ImageID `c22d61fc…`, the program the BTC leg uses) on each recreated Docker devnet chain; a public testnet-0.2 smoke transaction is not recorded. Not applicable to this release: the public LEZ testnet has moved to LEZ 0.3, which this LEZ v0.2.4 stack cannot talk to; public-network evidence is postponed to the release that ports to LEZ 0.4 (#107) |
 | S2 | Standalone LEZ sequencer E2E is included in CI | Isolated CI job boots sequencer on ephemeral resources and runs guest lifecycle suites | Planned; primitive compatibility lane exists |
 | S3 | Default-branch CI is green | Required checks run format, strict Clippy, workspace tests, traceability, dependencies, and isolated E2E | Local workflow/gates green; remote branch pending |
 | S4 | Every F/U/R/P hard requirement has a corresponding test | Traceability completeness guard plus test-report manifest rejects missing or skipped requirement IDs | Matrix guard passing; acceptance tests incomplete |

@@ -31,13 +31,13 @@ stack and are kept as the record of that submission shape.
   for it (checked against mined Testnet transactions) and the regtest devnet
   runs Zebra 7.0.0 with NU7 from height 1, so the regression exercises the
   same consensus branch (deliverable 2).
-- **Deliverable 1, public testnet 0.2.** The LEZ v0.2 testnet now lives at
-  `testnet-legacy.lez.logos.co`. The escrow was deployed there and exercised
-  (initialize, fund, revealing claim) on 2026-11-11; that evidence, and the
-  route changes it needed, are on the branch `followup/public-testnet`, not
-  in PR #120. A full ZEC corridor on the public networks has **not** run: the
-  public Logos chain needs upstream's legacy indexer build and finalizes
-  about 8.5 hours behind its tip. The work is paused.
+- **Public testnet (deliverable 1's public half, and any public corridor).**
+  Not applicable to this release. The public LEZ testnet has moved to LEZ 0.3, which this LEZ v0.2.4 stack cannot talk to.
+  Public-network evidence is postponed to the release that ports to LEZ 0.4 (#107). The devnet evidence stands for
+  the escrow: deployed, funded, claimed and refunded in both directions on
+  every recreated chain. (A legacy v0.2 endpoint still answers; exploratory
+  work against it is on a follow-up branch and is not part of this
+  submission.)
 - **Deliverable 6, recordings.** `regress.sh` records every desk test of a
   full run (`LEZ_REGRESS_RECORD=1`); the release candidate's run is the source
   of the demo set.

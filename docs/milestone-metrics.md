@@ -63,6 +63,10 @@ evidence instead of assigning a percentage to unlike work items.
 
 ## M2 current scorecard
 
+The table below is the July 2026 proof-of-concept scorecard and is kept as
+that record. Where M2 stands now is in `docs/m2-acceptance-checklist.md`
+("State on 2026-11-11").
+
 ### PoC
 
 | Metric | Current measurement | Evidence or next measurement point |
