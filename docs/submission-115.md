@@ -1,0 +1,237 @@
+# Issue #115 submission: the swap stack as Logos modules in Basecamp
+
+Status: draft for review, 2026-11-11. Code at `6a78ac0a` (head of PR #120,
+branch `feat/split-lez-node-route`) plus the documentation commits that add
+this file. Every claim below names a file, a commit or an evidence path in
+this repository. Where nothing in the repository proves a claim, the row says
+**not verified**.
+
+This is not a release record. No release, tag or full-suite run binds to this
+code yet (see [Pending gates](#pending-gates)).
+
+## Short answer
+
+The LEZ network node, the LEZ indexer, each role's LEZ wallet and each role's
+Node supervisor run as Logos modules inside Basecamp processes. Compose still
+hosts those Basecamps and supplies the Rust Node binaries, configuration,
+identities, volumes and lifecycle. The sequencer, Bitcoin Core, Zebra and the
+miner stay plain containers. Five upstream patches are carried as patch files;
+none has been offered upstream.
+
+So the stack is a working rehearsal of the module topology inside Docker, not
+yet "install the Maker or Taker package and nothing else to start" on a
+user's machine.
+
+## What runs in Basecamp and what stays in Compose
+
+Source: `deploy/compose.yaml`. Seven containers run by default; no init
+container exists (commit `b63c958b`). `docker compose config --services`
+with the default profiles lists `bitcoin-core btc-miner network sequencer
+maker-node taker-node zebra basecamp-ui`, and `basecamp-ui` has `scale: 0`.
+
+| Component | Runs where | Why there |
+|---|---|---|
+| LEZ network node: `blockchain_module` 0.2.4 | `network` container: a headless Basecamp; its LEZ Network desk (`apps/basecamp/network`) starts it | The released lgx a Basecamp user installs, unpatched, sha256-pinned (`BLOCKCHAIN_MODULE_SHA256` in `deploy/scripts/from-scratch.sh`). The config and deployment paths come from Compose environment (`LEZ_NETWORK_NODE_CONFIG`, `LEZ_NETWORK_NODE_DEPLOYMENT`); without them the desk starts nothing (`apps/basecamp/common/lez_network_host.h`). |
+| LEZ indexer: `lez_indexer_module` 1.1.1-rpc.4 | the same `network` Basecamp | Built from source with three patches (below), because the swap Nodes, sidecars and explorer read `indexer_service` JSON-RPC and the module offered only Logos calls (`deploy/builder/patches/README.md`). |
+| LEZ Network desk (`lez_network` 0.1.0) | the same `network` Basecamp | Starts both modules and runs Re-index (`deploy/scripts/repair-indexer.sh`). Not a role package; it declares `blockchain_module` and `lez_indexer_module` (`apps/basecamp/network/metadata.json`). |
+| LEZ sequencer: `sequencer_service` | plain `sequencer` container | There is no sequencer module (`deploy/compose.yaml`, `deploy/README.md` service table). |
+| Role LEZ wallet: `lez_core` 0.4.1-sign.4 | `maker-node` / `taker-node`: each party's headless Basecamp | The desk opens the wallet and imports the role key (`apps/basecamp/common/lez_role_signer.h`); patched to import a public account and sign a message hash. |
+| `lez_swap_node` 0.2.0 (our module, `modules/lez-swap-node`) | each party's Basecamp | Serves the role's signer socket (asks `lez_core` for every signature) and launches and supervises the role's Node: `start_node`, `stop_node`, `node_status`, `serve_signer` (`modules/lez-swap-node/src/lez_swap_node_impl.h`). |
+| Maker and Taker desks (`lez_atomic_swap_maker`, `lez_atomic_swap_taker`) | each party's Basecamp, one desk per Basecamp, on VNC 127.0.0.1:5901 / :5902 | Commit `51f8f19b`. The UI tests drive the same desks (`deploy/ui-tests`). |
+| Rust Maker / Taker Node and their actors and sidecars | processes inside each party's Basecamp container, children of `lez_swap_node` | The binaries and `node-entrypoint.sh` come from the Docker image (`deploy/images/<role>-node/Dockerfile`), not from any Logos package (logos-native run, step S69). |
+| Loopback forwarders (`socat`) | inside each role container (`node-entrypoint.sh`) | The Bitcoin adapter, wallet client and LEZ sidecars accept only literal-loopback endpoints. Relaxing that is BTC-adjacent and not done. |
+| Bitcoin Core 31.1 regtest | plain `bitcoin-core` container | #115 keeps Bitcoin bring-your-own. `logos-bitcoind-module` was assessed and not adopted: built without the wallet the Nodes use, a 14-method RPC allowlist, no `txindex`/`txospenderindex`, RPC bound to the module's loopback, no released lgx, and a from-source Core in place of the Guix-verified 31.1 that M3 was accepted on (`scripts/verify-bitcoin-core-release.sh`). This assessment read upstream sources; no spike was run. |
+| Zebra 5.2.0 regtest | plain `zebra` container | `logos-zebrad-module` was assessed and not adopted in this PR: no released lgx, Zebra 7.0.0 instead of 5.2.0 under the ZEC tests, cookie auth always on, no upstream aarch64-linux build, and it would still be a container exposing TCP JSON-RPC. No spike was run. |
+| `btc-miner` | plain container | Regtest harness only. |
+| `btc-explorer`, `lez-explorer` | profile `explorers`, off by default | Reviewer and demo aids, not product runtime. |
+| `heartbeat` | profile `heartbeat` | Finality watcher; its transfers go through `lez_core` in a headless logoscore, but its host is Compose. |
+| `tools` | profile `tools`, one-shot | Escrow deployment, vault claims, identity minting for the market bootstrap. |
+| `basecamp-ui` | build only (`scale: 0`) | Base image of the three Basecamps (`deploy/images/basecamp-ui`). |
+| Identities, keys, configuration, volumes, restart policy | Compose mounts and `deploy/scripts/gen-config.sh` | No package onboards them yet. |
+
+## Requirement traceability
+
+The #115 requirements below are as restated in this repository's planning
+notes and in the reviewer reports of 2026-11-10; the issue text itself is not
+in the repository. "Verified on the current code" means checked against
+`6a78ac0a` by a static check or test that ran on it. Runtime evidence in the
+repository predates the current topology, so no runtime row is verified on
+the current code.
+
+| # | Requirement | Where it is implemented | How it is verified | Evidence | On the current code |
+|---|---|---|---|---|---|
+| R1 | The LEZ network node is the Logos `blockchain_module` | `network` service; `deploy/images/lez-network-module/Dockerfile`; `apps/basecamp/network`; commits `c703d531`, `4626f8af`, `b63c958b` | `regress.sh` regression; `docker compose config -q`; `scripts/check-m6-basecamp-package-contract.mjs` (covers the LEZ Network desk) | `docs/evidence/regression-modules-4c-2026-11-10/` (code `4626f8af`/`0f8228d8`: node and indexer in two separate Basecamps) | Static checks pass. Runtime: **not verified** (no committed run on the one-container `network` of `b63c958b`). |
+| R2 | The indexer is the official `lez_indexer_module` v1.2.0 | Deviation: 1.1.1 source (`5033da44`) rebuilt on LEZ v0.2.4 with three patches, version `1.1.1-rpc.4` | as R1 | as R1 | Deviation stands. Our planning notes record v1.2.0 as built on LEZ v0.3.0, a protocol change; that is **not verified** in this repository. |
+| R3 | The LEZ wallet `lez_core` (#115: a later swap-in) | Done in this PR: the desk imports the role key into patched `lez_core`; `lez_swap_node` serves the signer socket; the sidecar verifies every returned witness against its planned message and account (`compat/lez-v0_2-sidecar/src/message_signer.rs`). Commits `1e2cbc7e`, `228689cc`, `22196d30` | regression as R1 | as R1 (signer then served by `lez_core` itself, before `22196d30` moved it into `lez_swap_node`) | Runtime: **not verified** on the current code. |
+| R4 | The Taker Node becomes a Logos module | Partly: the Node is a child process launched and restarted by `lez_swap_node` (commit `934c97d1`); its binary is not in any package | regression; logos-native acceptance run | `docs/evidence/logos-native-2026-11-10/` steps S69–S71 (nothing installed contains the Node; `start_node` with the Compose launcher returns 1) | Gap stands. |
+| R5 | The Maker Node stays a daemon under `logosctl` | Deviation: the Maker Node is supervised by `lez_swap_node` like the Taker's. `logosctl` manages modules only, so there is no daemon to manage (`docs/architecture/logos-native-packaging.md`, option A4) | as R4 | as R4 | Needs a decision in #115. |
+| R6 | The sequencer proxy disappears | Local devnet: there is no proxy; the Nodes forward a loopback port to `sequencer` with `socat`. Public testnet: the proxy is still needed. The Rust config has `sequencer_route: official_public` (commit `64782d4a`), but `node-entrypoint.sh` does not render it | reading `deploy/images/*/node-entrypoint.sh` and `deploy/compose.testnet.yaml` | `docs/testnet-run.md` | Testnet half **open** (code change needed). |
+| R7 | The Chat gateway disappears | Not started anywhere on the local path; still copied into both role images (`deploy/images/<role>-node/Dockerfile`) | reading the entrypoints | — | Not started: yes. Removed from images: no. |
+| R8 | `desk-sockets.py` disappears | Removed in commit `f1dfe773`; each party's desk is reached in its own Basecamp over VNC | `git ls-files` finds no such file | — | Verified. |
+| R9 | SQLite stays | `crates/swap-store` (`rusqlite` 0.41, commit `ddf12e27`) | unit tests in CI | — | Not re-run by this change. |
+| R10 | Bitcoin Core stays bring-your-own | `bitcoin-core` plain container; testnet route uses your own Core or a public RPC provider (`docs/testnet-run.md` sections 2 and 9) | `scripts/verify-bitcoin-core-release.sh` in CI | — | Not re-run by this change. |
+| R11 | A user installs the Maker or Taker package and has nothing else to start | Only inside the Compose image: the desk starts its signer and Node (commit `51f8f19b`). Not on a user's machine | logos-native acceptance run | `docs/evidence/logos-native-2026-11-10/` (95 steps, 25 FAIL, 1 NOT RUN) | Gap stands; that run used packages from before `22196d30`. |
+| R12 | Out of scope: the LEZ 0.4 port (#107) and a public indexer (logos-co/rfp#126) | The stack stays on LEZ v0.2.4 (`LEZ_SOURCE_COMMIT`, `LEZ_MODULES_LEZ_COMMIT` in `from-scratch.sh`); the indexer runs only on the devnet | — | — | Respected. |
+| R13 | Reviewer question on #115: use `logos-bitcoind-module` and `logos-zebrad-module` | Not adopted; reasons in the table above | source reading only | — | Assessment, **no spike run**. |
+| R14 | Platforms: a native role package on darwin-arm64, with a non-Linux store | Not met. `crates/swap-store/src/lib.rs` refuses to compile off Linux (memfd seals, `openat2`); the release builds Linux arm64 images (`.github/workflows/release-images.yml`) | — | — | Gap stands. |
+| R15 | Compose as small as possible | Seven default containers, no init containers, explorers optional, `basecamp-ui` build-only (commits `51f8f19b`, `b63c958b`) | `docker compose config --services`; `deploy/tests` | — | Verified (static). |
+
+## Upstream patch register
+
+Five patch files under `deploy/builder/patches/`. The upstream sources stay
+clean git submodules under `third_party/` at the commits below;
+`from-scratch.sh` applies the patches to a scratch copy before each module's
+own flake builds its lgx. Line counts are `wc -l` of the patch files.
+`blockchain_module` 0.2.4 is the released lgx and is not patched.
+
+| Patch | Lines | Applies to | What it adds | Security and review notes | Upstream state | Removal condition |
+|---|---|---|---|---|---|---|
+| `lez-indexer-module/0001-lez-v0.2.4-indexer-breakpoint-interval.patch` | 13 | logos-execution-zone `9edf4a622fe9` (`lez/storage`) | a state snapshot every 10 blocks instead of 100, so `getAccountAtBlock` answers inside the swap actors' ~30 s attempts (commit `89350dcc`) | an index written with the other interval must be rebuilt; upstream's `indexer_core` test `accept_block_snapshots_state_at_breakpoint_interval` fails with this value | not offered | upstream makes the interval configurable or faster |
+| `lez-indexer-module/0001-lez-v0.2.4-indexer-ffi-rpc-serve.patch` | 177 | logos-execution-zone `9edf4a622fe9` (`lez/indexer/ffi`, `lez/indexer/service`) | `indexer_rpc_serve(indexer, port)`: `indexer_service`'s own JSON-RPC over the core the FFI runs; serving again replaces the previous server | binds `0.0.0.0:port` inside the module process; isolation comes from the container network (Compose publishes `127.0.0.1:8779` only); the finalized-block subscription is refused | not offered | the module exposes a contract the Nodes and sidecars can use, or upstream ships this |
+| `lez-indexer-module/0002-lez-indexer-module-rpc.patch` | 52 | lez-indexer-module `5033da442a7f` | `serve_rpc(port)` over the call above; version `1.1.1-rpc.4`; the build supplies the patched LEZ v0.2.4 source (`--override-input logos-execution-zone`) | same listener as above | not offered | as above |
+| `logos-execution-zone-module/0001-lez-wallet-ffi-sign-public-message-hash.patch` | 120 | logos-execution-zone `9edf4a622fe9` (`lez/wallet-ffi`) | `wallet_ffi_sign_public_message_hash`: a signature over a 32-byte hash with a public account the wallet holds | signs an arbitrary 32-byte hash for the one account: no typed transaction preview, purpose, rate limit or audit record. The sidecar checks every witness, so a wrong signer cannot authorize a swap transaction, but a same-user process that reaches the socket can ask for any hash | not offered (related: logos-execution-zone-module#73, message signing) | an official wallet signing API the sidecar can use |
+| `logos-execution-zone-module/0002-module-import-and-sign-public-account.patch` | 111 | logos-execution-zone-module `acf0cd501b26` | `import_public_account(private key hex)` over the FFI's existing import, and `sign_public_message_hash(account, hash)`; version `0.4.1-sign.4` | the key arrives as hex from a plaintext key file the desk reads from a Compose bind mount | not offered | as above, plus a key onboarding and backup story |
+
+Our own module `modules/lez-swap-node` is not an upstream patch. The signer
+socket it serves is owner-only (created under `umask 077`,
+`modules/lez-swap-node/src/lez_swap_node_impl.cpp`) and serves one account.
+
+## Known limitations
+
+Stated plainly; each one is open unless it says otherwise.
+
+1. **The Node is launched by our module, not packaged as one.** No Logos
+   package contains the Rust Node, `node-entrypoint.sh` or the role's
+   configuration and identity (logos-native run, S69–S71). A desk installed
+   from a catalog needs a Node of its own on the same host
+   (`apps/basecamp/README.md`). The proposal for closing this is in
+   `docs/architecture/logos-native-packaging.md` (payload module per role, one
+   lifecycle owner).
+2. **Two lifecycle owners.** `lez_swap_node` re-implements restart and hold.
+   Under `logosctl` outside Compose, `module reload` killed the Node and did
+   not start it again (S78), and after a module host crash the Node kept
+   running and a second start gave two Nodes (S81–S84). Inside Compose the
+   container's death hides this.
+3. **Packages do not install as a graph.** The desks are built with the
+   `linux-amd64-dev` variant, which `logosctl` refuses (S50, S91); a file
+   install resolves no dependencies (S54); dependencies are bare names, and
+   the default catalog carries other packages under the same names (`lez_core`
+   0.5.1, `lez_indexer_module` 1.2.1, observation 3 in the packaging note). The
+   Basecamp images work because `stage-basecamp-package.sh` renames the variant.
+4. **Pinned v0.2 artifacts against the official v0.3 procedure.** The images
+   run Basecamp 0.2.0 (`48b26c0`) and the headless heartbeat runs logoscore
+   0.2.3; the official build-and-run procedure is Logos Testnet v0.3 with
+   `logosctl` 0.3.x. `logosctl` 0.3.2 installed and loaded our core modules in
+   the logos-native run (S56–S68), but the desks and the dependency graph did
+   not work (items 3 above). Moving LEZ itself to v0.3 is out of scope (#107).
+5. **The packaging evidence is older than the patches.** The logos-native run
+   used `lez_core` 0.4.1-import.3 and `lez_indexer_module` 1.1.1-rpc.3, before
+   commit `22196d30`. It has not been rerun.
+6. **Custody boundary.** The LEZ key is a plaintext file under
+   `deploy/runtime/lez/<role>/` (mode 0640 in a 0750 directory on Linux, 0644
+   on macOS, `deploy/scripts/gen-config.sh`), bind-mounted into the role's
+   Basecamp. The desk imports it into a wallet it creates under `/tmp` in the
+   container with a random password it does not keep
+   (`apps/basecamp/common/lez_role_signer.h`), and imports the key again on
+   every desk start. `/tmp` is not a volume, so a recreated container builds
+   a new wallet from the file: the file, not the wallet, is the durable copy. Signing is raw 32-byte hash signing (patch register above).
+   On the ZEC devnet corridor, `scripts/zec-provision.sh` also copies each
+   role's LEZ key into the corridor material; the corridor sidecar signs
+   through the wallet socket when it is up.
+7. **The LEZ network needs Compose.** The LEZ Network desk hosts nothing
+   without the config paths Compose sets; the role packages do not declare it
+   (`apps/basecamp/maker/metadata.json`). Whether a network package is an
+   operator package, an automatic dependency or devnet-only scaffolding is
+   undecided.
+8. **The public testnet route has not moved.** It still needs the sequencer
+   proxy (R6), uses upstream's `indexer_service` and Logos Blockchain node as
+   plain containers instead of the modules, and has not been run since the
+   Nodes moved into their Basecamps (`docs/testnet-run.md`). In
+   `deploy/compose.testnet.yaml` the Taker's Basecamp still depends on the
+   local `sequencer`; the guide starts both with `--no-deps`.
+9. **Linux only.** See R14. Only `blockchain_module` 0.2.4 ships a
+   darwin-arm64 variant; our packages carry only the build host's variant
+   (packaging note, observation 10).
+10. **Finality freezes on the devnet.** The upstream freeze
+    (logos-blockchain#3643) is reduced by configuration only. The devnet runs
+    1 s LEZ blocks and Bedrock `security_param` 2 for speed; against the
+    freeze it has a 10^7 sequencer tip and 10^12 per genesis note (commit
+    `f0c88084`), and the
+    sequencer paying from 40 notes of its own instead of the block producer's
+    (commit `88fcabbf`), both in `gen-config.sh`. `regress.sh` and the
+    `heartbeat` detect a freeze and the harness moves to a new chain. Node
+    health (`MakerHealthV1` in `crates/maker-node/src/rpc_contracts.rs`)
+    reports dependency state, not the finalized height, and the desks do not
+    show finality. How often the current code freezes is **not verified** by
+    any committed evidence.
+11. **Fixed container names.** `lez-network`, `lez-sequencer`,
+    `lez-heartbeat` and the explorers do not take `LEZ_CONTAINER_PREFIX`; the
+    regression lanes share them by design (`deploy/compose.lane.yaml`), but two
+    independent stacks cannot run on one host.
+12. **DCO.** Commit `5eac17c2` has author `igor@ffconsulting.org` and
+    sign-off `i@mandrigin.ru`, so the DCO check fails on it. Fixing it needs
+    the owner to rewrite and force-push the branch.
+13. **Reviewer entry point.** `submission/README.md` still introduces the
+    v0.1.1 M1 + M3 + M6 package; this file is linked from `docs/submission.md`
+    only.
+14. **Stale comments in code**, to be fixed with the code:
+    `deploy/scripts/repair-indexer.sh` says the indexer snapshots every 100
+    blocks (the patch makes it 10); `deploy/images/basecamp-ui/entrypoint.sh`
+    still names "compose.yaml bedrock, indexer"; `deploy/scripts/gen-config.sh`
+    cites `FREEZE-INVESTIGATION.md`, which is not in the repository.
+15. **The Zcash Testnet guide.** `docs/zcash-testnet-setup.md` says the live
+    corridor is pending, and `scripts/test-zcash-testnet-guide-contract.sh`
+    fails on it today ("guide is missing: project-owned signer").
+
+## Pending gates
+
+None of these has happened on the current code. Nothing in this document
+claims them.
+
+| Gate | What closes it | State |
+|---|---|---|
+| Full regression on the release candidate | `deploy/scripts/regress.sh full` (93 tests: `regress.sh list full`) on one frozen commit, results committed under `docs/evidence/` | pending |
+| Zcash public-Testnet lane (logos-co/rfp#122) | happy paths and a real refund on public Zcash Testnet and LEZ testnet 0.2 with the released artifacts, transaction ids and heights retained | pending |
+| CI and release workflow on the final commit | all required PR checks green (DCO needs item 12), then `.github/workflows/release-images.yml` dispatched on the same commit | not verified here (no CI state is recorded in the repository) |
+| Native install proof | `deploy/scripts/logos-native-acceptance.sh` on the final packages, or an accepted waiver | pending (last run: `docs/evidence/logos-native-2026-11-10/`, older packages) |
+| Topology decision in #115 | Logos agrees R2, R5, R7, R11, R13, R14 and the network-package question | open |
+
+## Open-issue ledger
+
+Issue states are as of the 2026-11-10 reviewer snapshot; they were not
+re-checked for this document.
+
+| Issue | Disposition | Evidence or state |
+|---|---|---|
+| gateway-fm #115: run the stack as Logos modules | Open. This document is the traceability for it; closing needs the decisions under Pending gates | this file |
+| gateway-fm #106: organization-owned catalog | Open. The README now says the catalog it names is personal and links this issue | `README.md` |
+| gateway-fm #112: finality and claim visibility | Open. Detection exists in the harness (`regress.sh`) and the `heartbeat` (`runtime/heartbeat/status.json`); Node health and the desks do not report finality | limitation 10 |
+| gateway-fm #113: wipe, then start, cannot trade | Partly addressed in code: `down.sh --wipe` retires the chain's escrow deployment (commit `18c49392`), the bootstrap refuses a deployment recorded for another genesis, `reset-swaps.sh` refuses open swaps and archives their keys (commit `90dd2e21`); tests in `deploy/tests/test_chain_lifecycle.py`. Wipe, re-bootstrap and a trade on the final artifacts: open. Fixed container names: limitation 11 | `deploy/tests/test_chain_lifecycle.py` |
+| gateway-fm #114: Bedrock pin and finality stall | The pin half: the node is the released `blockchain_module` 0.2.4, sha256-pinned. The stall half: open upstream (logos-blockchain#3643), reduced by configuration (limitation 10) | `deploy/scripts/from-scratch.sh`, `deploy/scripts/gen-config.sh` |
+| gateway-fm #103: Logos v0.2.5 review notes | Open. No item-by-item reconciliation has been written | open |
+| gateway-fm #52: offer history | Open. Nothing in PR #120 changes or proves it | open |
+| gateway-fm #107: LEZ 0.4 port | Out of scope; the stack stays on LEZ v0.2.4 | R12 |
+| logos-co/rfp#122: M2 ZEC/LEZ | Open. The public-Testnet lane is pending; the committed ZEC evidence is local Zebra regtest on the private LEZ devnet | Pending gates; limitation 15 |
+| logos-co/rfp#126: M6 mini-app GUIs, public indexer hosting | Open. PR #120 runs the indexer only inside the devnet's Compose-hosted Basecamp; no hosting decision is recorded | R12 |
+| logos-co/rfp#123: M3 BTC/LEZ | Accepted at v0.2.6; PR #120 does not reopen it and uses it as the regression baseline | — |
+| gateway-fm PR #116 | Closed without merge, superseded by #119 and #120 | — |
+
+## Evidence in the repository
+
+| Path | What | Code it ran on |
+|---|---|---|
+| `docs/evidence/regression-modules-4c-2026-11-10/` | Module regression: every test of the step-4c set has a passing try; failed tries are classified in `RESULTS.txt` (freezes, one Zebra capacity failure, one actor-observation timeout not reproduced) | `4626f8af`, `0f8228d8`; node and indexer then in two Basecamps; before the patch split, the funding fix and the lanes |
+| `docs/evidence/logos-native-2026-11-10/` | One run of `logos-native-acceptance.sh`: 95 steps, 25 FAIL, 1 NOT RUN | packages built 2026-11-10 13:13Z, before `22196d30` |
+| `docs/evidence/testnet-20260918/`, `docs/evidence/testnet3-provider-20260918/` | Public testnet swaps (LEZ testnet, Bitcoin testnet4 / testnet3 provider) | before PR #120 |
+
+No committed evidence covers the current topology (`b63c958b` and later).
+
+## Where to read next
+
+- `deploy/README.md`: the stack, services, timing profiles, freezes, lanes.
+- `docs/architecture/deployment-components-and-rpcs.md`: processes, modules,
+  sockets and keys of the current stack.
+- `docs/architecture/logos-native-packaging.md`: what `logosctl` does with
+  these packages, and the proposal for the role Node as a payload module.
+- `deploy/builder/patches/README.md`: the patches in detail.
+- `docs/testnet-run.md`: the public testnet route.
