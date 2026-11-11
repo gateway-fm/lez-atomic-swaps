@@ -40,7 +40,7 @@ export LEZ_LANE=1
 source scripts/lane.sh
 maker_node="$LEZ_CONTAINER_PREFIX-maker-node"; taker_node="$LEZ_CONTAINER_PREFIX-taker-node"
 
-BUILD=0; FRESH_LEZ=0
+BUILD=0; FRESH_LEZ=0; FRESH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build) BUILD=1; shift ;;
@@ -56,7 +56,7 @@ while [[ $# -gt 0 ]]; do
       # prefix (a wipe under the old prefix does not touch those). gen-config
       # records it in runtime.env; the next down.sh --wipe removes exactly it.
       export LEZ_VOLUME_PREFIX="${LEZ_VOLUME_PREFIX:-$LEZ_STACK_PREFIX-$(date +%Y%m%d%H%M%S)}"
-      shift ;;
+      FRESH=1; shift ;;
     -h|--help) sed -n 2,17p "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
@@ -281,9 +281,11 @@ stage "Bitcoin Core wallets (seed-btc-wallets.py)"
 python3 scripts/seed-btc-wallets.py
 
 before="$(sha256sum runtime/market-bootstrap.env 2>/dev/null | cut -c1-64 || true)"
-if [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]]; then
+if [[ ( "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ) && "$FRESH_LEZ" != 1 && "$FRESH" != 1 ]]; then
   echo "[4/6] market: bootstrapped by start.sh from the tools image after this"
 else
+  # (a release bundle's --fresh-lez or --fresh made a new chain with no escrow
+  # deployment: bootstrap-market.sh deploys from the tools image, #103 item 4)
   stage "market bootstrap"
   echo "[4/6] market (escrow program, vault claims, bootstrap manifest)…"
   if ! bash scripts/bootstrap-market.sh 2>&1 | tail -3; then

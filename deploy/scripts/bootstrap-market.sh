@@ -27,8 +27,19 @@ wallet_maker_allocation="$(sed -n 's/^LEZ_WALLET_MAKER_ALLOCATION=//p' runtime/r
 wallet_taker_allocation="$(sed -n 's/^LEZ_WALLET_TAKER_ALLOCATION=//p' runtime/runtime.env | head -1)"
 [[ "$wallet_maker_allocation" =~ ^[0-9]+$ && "$wallet_taker_allocation" =~ ^[0-9]+$ ]] || { echo "runtime/runtime.env carries no LEZ_WALLET_{MAKER,TAKER}_ALLOCATION; run scripts/gen-config.sh runtime again" >&2; exit 65; }
 [[ -d "$market_root/identities" ]] || { echo "LEZ_MARKET_ROOT in runtime/runtime.env must hold the wallet identities" >&2; exit 65; }
-[[ -x "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" ]] || { echo "escrow deployer missing under $PROVISION; run from-scratch.sh --only build" >&2; exit 65; }
-escrow_pin="$(sed -n 's/^ *expected_image_id="\([0-9a-f]\{64\}\)".*/\1/p' "$REPO_ROOT/scripts/verify-lez-v02-provisional.sh" | head -1)"
+if [[ "${LEZ_IMAGES:-build}" == pull || "${LEZ_IMAGES:-build}" == present ]]; then
+  # A release bundle (scripts/lane.sh read its release.env): no repository and
+  # no provision directory. The deployer is the one in the tools image (as
+  # start.sh's bootstrap uses it), the program the one release.env names.
+  escrow_pin="${LEZ_ESCROW_PROGRAM_ID:-}"
+  deployer=/usr/local/bin/lez-zec-escrow-v02-deployer
+  provision_mount=()
+else
+  [[ -x "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" ]] || { echo "escrow deployer missing under $PROVISION; run from-scratch.sh --only build" >&2; exit 65; }
+  escrow_pin="$(sed -n 's/^ *expected_image_id="\([0-9a-f]\{64\}\)".*/\1/p' "$REPO_ROOT/scripts/verify-lez-v02-provisional.sh" | head -1)"
+  deployer=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer
+  provision_mount=(-v "$PROVISION:/provision:ro")
+fi
 [[ "$escrow_pin" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot read the escrow pin" >&2; exit 65; }
 
 # The bootstrap runs in the LEZ wallet module's image: the vault claims go
@@ -38,9 +49,9 @@ escrow_pin="$(sed -n 's/^ *expected_image_id="\([0-9a-f]\{64\}\)".*/\1/p' "$REPO
 docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-wallet-module:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1 ||
   docker compose build heartbeat >/dev/null
 docker run --rm --network "$LEZ_STACK_NETWORK" --user "$(id -u):$(id -g)" \
-  -v "$PROVISION:/provision:ro" -v "$market_root:/market" -v "$DEPLOY_ROOT/scripts:/scripts:ro" \
+  ${provision_mount[@]+"${provision_mount[@]}"} -v "$market_root:/market" -v "$DEPLOY_ROOT/scripts:/scripts:ro" \
   -e MARKET_ROOT=/market -e ESCROW_PROGRAM_ID="$escrow_pin" \
-  -e DEPLOYER=/provision/escrow-artifact/debug/lez-zec-escrow-v02-deployer \
+  -e DEPLOYER="$deployer" \
   -e VAULT_CLAIM_BIN=/usr/local/bin/lez-wallet-vault-claim \
   -e LEZ_BOOTSTRAP_DEFER_CLAIM="${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" \
   -e LEZ_WALLET_MAKER_ALLOCATION="$wallet_maker_allocation" -e LEZ_WALLET_TAKER_ALLOCATION="$wallet_taker_allocation" \
