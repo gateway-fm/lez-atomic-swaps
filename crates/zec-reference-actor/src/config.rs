@@ -115,6 +115,17 @@ enum ConsensusBranchConfig {
 }
 
 impl ConsensusBranchConfig {
+    /// The spelling of a branch a provisioned corridor may sign for: NU6.2 on
+    /// the deterministic Regtest fixture, NU6.3 or NU7 on public Testnet.
+    const fn provisioned(branch: zcash_protocol::consensus::BranchId) -> Option<Self> {
+        match branch {
+            zcash_protocol::consensus::BranchId::Nu6_2 => Some(Self::Nu6_2),
+            zcash_protocol::consensus::BranchId::Nu6_3 => Some(Self::Nu6_3),
+            zcash_protocol::consensus::BranchId::Nu7 => Some(Self::Nu7),
+            _ => None,
+        }
+    }
+
     const fn as_str(self) -> &'static str {
         match self {
             Self::Sprout => "00000000",
@@ -473,6 +484,23 @@ pub fn validate_maker_manifest_config_bytes(
     Ok(())
 }
 
+/// The Zebra route a provisioned corridor's actors use.
+#[derive(Clone, Debug)]
+pub(crate) enum ProvisionedZebraRoute {
+    /// The deterministic Regtest fixture on loopback, no credential.
+    DeterministicLocal,
+    /// A self-hosted public-Testnet Zebra on loopback, cookie-authenticated.
+    SelfHostedTestnetCookie {
+        /// Owner-private cookie file the actor reads.
+        cookie_file: PathBuf,
+    },
+    /// Tatum's Testnet Zebrad gateway, authenticated by an API key.
+    TatumTestnetXApiKey {
+        /// Owner-private API key file the actor reads.
+        api_key_file: PathBuf,
+    },
+}
+
 /// Complete primitive inputs for one deterministic-local-v0.2 actor config.
 ///
 /// This constructor exists so a local fixture provisioner can emit the exact
@@ -508,9 +536,14 @@ pub(crate) struct DeterministicLocalV0_2ActorConfigInput {
     pub(crate) bridge_capability_file: PathBuf,
     /// Exact role-specific v0.2 runtime descriptor.
     pub(crate) bridge_runtime: RuntimeDescriptor,
-    /// Shared isolated Zebra Regtest endpoint.
+    /// Shared Zebra endpoint: the isolated Regtest fixture, or a public
+    /// Testnet route named by `zebra_route`.
     pub(crate) zebra_endpoint: Url,
-    /// Exact pinned Regtest genesis hash.
+    /// How the actors reach `zebra_endpoint`, and so the network it serves.
+    pub(crate) zebra_route: ProvisionedZebraRoute,
+    /// The consensus branch the corridor signs for.
+    pub(crate) zebra_consensus_branch_id: zcash_protocol::consensus::BranchId,
+    /// Exact pinned genesis hash.
     pub(crate) zebra_genesis_hash: Hex32,
     /// Finite counterparty observation horizon.
     pub(crate) counterparty_scan_blocks: u32,
@@ -532,8 +565,41 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
 ) -> Result<Vec<u8>, ActorConfigError> {
     let bridge_endpoint = LoopbackHttpEndpoint::new(input.bridge_endpoint.as_str())
         .map_err(|_| ActorConfigError::InvalidConfiguration)?;
-    let zebra_endpoint = LoopbackHttpEndpoint::new(input.zebra_endpoint.as_str())
-        .map_err(|_| ActorConfigError::InvalidConfiguration)?;
+    let consensus_branch_id = ConsensusBranchConfig::provisioned(input.zebra_consensus_branch_id)
+        .ok_or(ActorConfigError::InvalidConfiguration)?;
+    let (route, network) = match input.zebra_route {
+        ProvisionedZebraRoute::DeterministicLocal => {
+            // The fixture is pinned to NU6.2 (zebra-node-adapter
+            // ZebraChainIdentity::deterministic_regtest_nu6_2).
+            if consensus_branch_id != ConsensusBranchConfig::Nu6_2 {
+                return Err(ActorConfigError::InvalidConfiguration);
+            }
+            (
+                ZebraRouteConfig::DeterministicLocal {
+                    endpoint: LoopbackHttpEndpoint::new(input.zebra_endpoint.as_str())
+                        .map_err(|_| ActorConfigError::InvalidConfiguration)?,
+                    cookie_file: None,
+                },
+                ZcashNetworkConfig::Regtest,
+            )
+        }
+        ProvisionedZebraRoute::SelfHostedTestnetCookie { cookie_file } => (
+            ZebraRouteConfig::SelfHostedCookie {
+                endpoint: LoopbackHttpEndpoint::new(input.zebra_endpoint.as_str())
+                    .map_err(|_| ActorConfigError::InvalidConfiguration)?,
+                cookie_file,
+            },
+            ZcashNetworkConfig::Test,
+        ),
+        ProvisionedZebraRoute::TatumTestnetXApiKey { api_key_file } => (
+            ZebraRouteConfig::TatumTestnetXApiKey {
+                endpoint: TatumTestnetHttpsEndpoint::new(input.zebra_endpoint.as_str())
+                    .map_err(|_| ActorConfigError::InvalidConfiguration)?,
+                api_key_file,
+            },
+            ZcashNetworkConfig::Test,
+        ),
+    };
     let raw = RawActorConfig {
         schema_version: CONFIG_SCHEMA_VERSION,
         role: input.role,
@@ -556,14 +622,11 @@ pub(crate) fn encode_deterministic_local_v0_2_actor_config(
             request_timeout_millis: DEFAULT_LOCAL_BRIDGE_REQUEST_TIMEOUT_MILLIS,
         },
         zebra: ZebraConfig {
-            route: ZebraRouteConfig::DeterministicLocal {
-                endpoint: zebra_endpoint,
-                cookie_file: None,
-            },
+            route,
             identity: ZebraIdentityConfig {
-                network: ZcashNetworkConfig::Regtest,
+                network,
                 rpc_chain: ZebraRpcChainConfig::Test,
-                consensus_branch_id: ConsensusBranchConfig::Nu6_2,
+                consensus_branch_id,
                 genesis_hash: input.zebra_genesis_hash,
             },
             counterparty_scan_blocks: input.counterparty_scan_blocks,
@@ -584,10 +647,9 @@ pub(crate) fn encode_rebound_local_v0_2_actor_config(
     role_state_db: PathBuf,
     bridge_journal_db: PathBuf,
 ) -> Result<Vec<u8>, ActorConfigError> {
-    if !matches!(
-        source.zebra.route,
-        ZebraRouteConfig::DeterministicLocal { .. }
-    ) {
+    // A provisioned corridor: the Regtest fixture, or a public Testnet route
+    // (zec-local-poc-provision never writes a Main-network actor).
+    if source.zebra.identity.network == ZcashNetworkConfig::Main {
         return Err(ActorConfigError::InvalidConfiguration);
     }
     let mut bridge = source.bridge.clone();
@@ -1465,7 +1527,7 @@ mod tests {
 
     use super::{
         ActorRole, ConsensusBranchConfig, DeterministicLocalV0_2ActorConfigInput,
-        encode_deterministic_local_v0_2_actor_config,
+        ProvisionedZebraRoute, encode_deterministic_local_v0_2_actor_config,
     };
 
     #[test]
@@ -1525,6 +1587,8 @@ mod tests {
                 bridge_capability_file: PathBuf::from("/tmp/sidecar.capability"),
                 bridge_runtime: runtime,
                 zebra_endpoint: Url::parse("http://127.0.0.1:19002/").unwrap(),
+                zebra_route: ProvisionedZebraRoute::DeterministicLocal,
+                zebra_consensus_branch_id: zcash_protocol::consensus::BranchId::Nu6_2,
                 zebra_genesis_hash: Hex32::from_bytes([7; 32]),
                 counterparty_scan_blocks: 1_024,
                 lez_discovery_window: DiscoveryWindow::new(1, 256).unwrap(),

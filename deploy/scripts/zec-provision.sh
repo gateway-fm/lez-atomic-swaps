@@ -51,9 +51,20 @@
 #                         LEZ refund delay) by default, -v4 (4 min) for the
 #                         refund journeys, which never claim
 #     --zcash-network NET regtest (the default) or test: public Zcash Testnet
-#                         (scripts/public-zec-testnet.sh). The provisioner
-#                         builds Regtest corridors only, so `test` exits 3
-#                         (blocked) and says what is missing
+#                         on NU7 (scripts/public-zec-testnet.sh), profile
+#                         public-testnet-v2. Nothing is mined: the Zcash funder
+#                         spends an ordinary output of its key that the owner
+#                         paid (TAZ), 10 blocks deep. Reads LEZ_ZEBRA_URL and
+#                         exactly one of LEZ_ZEBRA_COOKIE_FILE (self-hosted
+#                         Zebra on loopback) or LEZ_ZEBRA_API_KEY_FILE (Tatum);
+#                         the role keys maker-zcash.key/taker-zcash.key from
+#                         LEZ_ZEC_TESTNET_KEY_DIR (0700, outside the repo; the
+#                         Maker's is also its Delivery identity); the funder
+#                         search starts at LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT
+#                         or where the last Testnet corridor's did
+#                         (runtime/zec/testnet-funding-from); the principal is
+#                         LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS (0.01 TAZ). Exits
+#                         3 (blocked) when one of these is missing
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a
@@ -72,7 +83,7 @@ CHAIN_CHECK=1
 SWAPS=1
 ADD=0   # --add: a second corridor ("-b") beside the live one, with its own Zcash anchor; the catalog lists both
 DIRECTION=TakerSellsLez   # --direction: who sells what; TakerSellsForeign funds the Taker's Zcash key first
-PROFILE=deterministic-local-devnet-v3   # --profile: the LEZ escrow's validity window ends at its refund time
+PROFILE=""   # --profile: the LEZ escrow's validity window ends at its refund time; per network below
 ZCASH_NETWORK=regtest   # --zcash-network: the chain the corridor is provisioned on
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -88,16 +99,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+blocked() { echo "zec-provision.sh: blocked: $*" >&2; exit 3; }
 case "$ZCASH_NETWORK" in
-  regtest) ;;
+  regtest) PROFILE="${PROFILE:-deterministic-local-devnet-v3}" ;;
   test)
-    # zec-reference-actor local_poc.rs provisions a corridor only on the
-    # deterministic Regtest Zebra: it checks the Regtest genesis and NU6.2,
-    # funds from a mature coinbase output and writes NetworkType::Regtest into
-    # the agreement. A Testnet corridor needs a Testnet provisioner and an
-    # agreement profile on the live branch (docs/zcash-testnet-setup.md).
-    echo "zec-provision.sh: Zcash Testnet corridors are not supported by the provisioner (local_poc.rs is Regtest-only)" >&2
-    exit 3 ;;
+    # A public Zcash Testnet corridor (local_poc.rs, profile public-testnet-v2):
+    # the route, its credential and the owner's keys come from outside the
+    # repository; without them there is nothing to try.
+    PROFILE="${PROFILE:-public-testnet-v2}"
+    CHAIN_CHECK=0   # ensure-chain.sh recreates the local devnet chain; the LEZ side here is the public testnet
+    [[ -n "${LEZ_ZEBRA_URL:-}" ]] || blocked "LEZ_ZEBRA_URL names no Zcash Testnet route"
+    if [[ -n "${LEZ_ZEBRA_COOKIE_FILE:-}" && -z "${LEZ_ZEBRA_API_KEY_FILE:-}" ]]; then
+      ZEBRA_CREDENTIAL="$LEZ_ZEBRA_COOKIE_FILE"; ZEBRA_ROUTE_KIND=self_hosted_cookie; ZEBRA_CREDENTIAL_FIELD=cookie_file
+      ZEBRA_TRANSFER_CREDENTIAL=--zebra-cookie-file
+    elif [[ -n "${LEZ_ZEBRA_API_KEY_FILE:-}" && -z "${LEZ_ZEBRA_COOKIE_FILE:-}" ]]; then
+      ZEBRA_CREDENTIAL="$LEZ_ZEBRA_API_KEY_FILE"; ZEBRA_ROUTE_KIND=tatum_testnet_x_api_key; ZEBRA_CREDENTIAL_FIELD=api_key_file
+      ZEBRA_TRANSFER_CREDENTIAL=--zebra-api-key-file
+    else
+      blocked "a Testnet route needs exactly one of LEZ_ZEBRA_COOKIE_FILE or LEZ_ZEBRA_API_KEY_FILE"
+    fi
+    [[ -s "$ZEBRA_CREDENTIAL" ]] || blocked "the Zebra credential file $ZEBRA_CREDENTIAL is missing"
+    KEY_DIR="${LEZ_ZEC_TESTNET_KEY_DIR:-}"
+    [[ -n "$KEY_DIR" && -d "$KEY_DIR" ]] || blocked "LEZ_ZEC_TESTNET_KEY_DIR names no key directory"
+    KEY_DIR="$(realpath "$KEY_DIR")"
+    case "$KEY_DIR/" in "$(realpath ..)/"*) blocked "LEZ_ZEC_TESTNET_KEY_DIR is inside the repository" ;; esac
+    [[ "$(stat -c %a "$KEY_DIR")" == 700 ]] || blocked "LEZ_ZEC_TESTNET_KEY_DIR must be mode 0700"
+    ;;
   *) echo "--zcash-network must be regtest or test" >&2; exit 64 ;;
 esac
 
@@ -123,8 +150,10 @@ INDEXER_URL="${LEZ_INDEXER_URL:-http://127.0.0.1:8779/}"
 # both BTC per-swap ranges (maker 19000+400, taker 19500+400).
 MAKER_BRIDGE_PORT="${LEZ_ZEC_MAKER_BRIDGE_PORT:-19901}"
 TAKER_BRIDGE_PORT="${LEZ_ZEC_TAKER_BRIDGE_PORT:-19902}"
-# The provisioner's template: 1 ZEC against 50 000 LEZ units (local_poc.rs).
+# The provisioner's template: 1 ZEC against 50 000 LEZ units (local_poc.rs);
+# on Testnet the principal is the lane's (0.01 TAZ by default), against the same LEZ.
 FOREIGN_UNITS=100000000
+[[ "$ZCASH_NETWORK" != test ]] || FOREIGN_UNITS="${LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS:-1000000}"
 LEZ_UNITS=50000
 ROUTE="{\"pair\":\"Zcash\",\"direction\":\"$DIRECTION\"}"
 case "$DIRECTION" in
@@ -134,14 +163,23 @@ case "$DIRECTION" in
 esac
 # The devnet profiles a corridor may name (local_poc.rs LocalPocProfile); the
 # test lane's 60 s LEZ refund delay cannot be met on a chain that finalizes.
-case "$PROFILE" in
-  deterministic-local-devnet-v3|deterministic-local-devnet-v4) ;;
-  *) echo "zec-provision failed: --profile must be deterministic-local-devnet-v3 or -v4" >&2; exit 64 ;;
+case "$ZCASH_NETWORK:$PROFILE" in
+  regtest:deterministic-local-devnet-v3|regtest:deterministic-local-devnet-v4) ;;
+  test:public-testnet-v2) ;;
+  regtest:*) echo "zec-provision failed: --profile must be deterministic-local-devnet-v3 or -v4" >&2; exit 64 ;;
+  test:*) echo "zec-provision failed: a Testnet corridor's --profile is public-testnet-v2" >&2; exit 64 ;;
 esac
 # Each role's Zcash key is minted beside its LEZ identity (gen-config.sh); the
 # Maker's is also its Delivery signing key and zebra's miner address.
 MAKER_ZCASH_KEY_FILE="$LANE/lez/maker/zcash.key"
 TAKER_ZCASH_KEY_FILE="$LANE/lez/taker/zcash.key"
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  # The owner's Testnet keys; the Maker's must also be the testnet stack's
+  # Maker key (its Delivery identity), checked in step 0.
+  MAKER_ZCASH_KEY_FILE="$KEY_DIR/maker-zcash.key"
+  TAKER_ZCASH_KEY_FILE="$KEY_DIR/taker-zcash.key"
+fi
+TESTNET_FUNDING_FROM="$LANE/zec/testnet-funding-from"   # the next Testnet funder search's first height
 TAKER_FUNDING_ZATOSHIS=200000000   # 2 ZEC moved to the Taker's key before a TakerSellsForeign corridor
 # The offer's validity bounds the catalog's: the draft copies the offer expiry
 # into the transcript and the take checks it. The store's maximum, so one
@@ -181,6 +219,27 @@ reply=json.load(sys.stdin)
 if reply.get("error"): sys.stderr.write(json.dumps(reply["error"])+"\n"); sys.exit(1)
 json.dump(reply["result"], sys.stdout)'
 }
+# Zcash Testnet's genesis (getblockhash 0); local_poc.rs pins the same.
+TESTNET_GENESIS=05a60a92d99d85997cce3b87616c089f6124d7342af37106edc76126334a2c38
+zebra_testnet() { # zebra_testnet <method> <params-json>: one read on the Testnet route
+  # The credential is read from its file here, never put on a command line.
+  python3 - "$LEZ_ZEBRA_URL" "$ZEBRA_ROUTE_KIND" "$ZEBRA_CREDENTIAL" "$1" "${2:-[]}" <<'PY'
+import base64, json, pathlib, sys, urllib.request
+url, kind, credential, method, params = sys.argv[1:]
+secret = pathlib.Path(credential).read_text().strip()
+headers = {"content-type": "application/json"}
+if kind == "tatum_testnet_x_api_key":
+    headers["x-api-key"] = secret
+else:
+    headers["authorization"] = "Basic " + base64.b64encode(secret.encode()).decode()
+body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": json.loads(params)}).encode()
+with urllib.request.urlopen(urllib.request.Request(url, body, headers), timeout=60) as response:
+    reply = json.load(response)
+if reply.get("error"):
+    sys.stderr.write(json.dumps(reply["error"]) + "\n"); sys.exit(1)
+json.dump(reply["result"], sys.stdout)
+PY
+}
 # A throwaway container of the Taker image on the staging/role volumes.
 # Root for file plumbing; the Node uid for anything that reads private files.
 helper() { # helper <uid> [docker run flags...] -- <bash -c script>
@@ -211,6 +270,9 @@ recreate_nodes() {
 }
 
 [[ "$SWAPS" =~ ^[12]$ ]] || fail "--swaps takes 1 or 2"
+# Two corridors at once (the concurrent fixture) are a devnet shape; a Testnet
+# run provisions one corridor and spends one owner-funded output.
+[[ "$ZCASH_NETWORK" != test || ( "$SWAPS" == 1 && "$ADD" == 0 ) ]] || fail "a Testnet run provisions one corridor (no --swaps 2, no --add)"
 # Two swaps provisioned at once share one Zcash anchor and so one four-block
 # refund window (the agreement's BIP-199 deadline is profile-derived, it cannot
 # be widened): two fundings, their pre-reveal depth and two claims do not fit.
@@ -259,7 +321,9 @@ swap_id="$(swap_id_of 0)"; offer_id="$(offer_id_of 0)"; reservation_id="$(reserv
 
 # ---- 0. the Maker's Delivery identity ------------------------------------------
 log "0/8 Maker Delivery identity"
-for c in "$MAKER_NODE" "$TAKER_NODE" "$LEZ_CONTAINER_PREFIX-zebra"; do
+required_containers=("$MAKER_NODE" "$TAKER_NODE")
+[[ "$ZCASH_NETWORK" == test ]] || required_containers+=("$LEZ_CONTAINER_PREFIX-zebra")   # Testnet: the route is remote or self-hosted
+for c in "${required_containers[@]}"; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
 done
 for f in "$MAKER_ZCASH_KEY_FILE" "$TAKER_ZCASH_KEY_FILE"; do
@@ -273,6 +337,10 @@ expected_identity="$(docker run --rm --user 0:0 -v "$PWD/$MAKER_ZCASH_KEY_FILE:/
 current_identity="$(docker run --rm -v "$DELIVERY_VOLUME:/d:ro" --entrypoint cat "$TAKER_IMAGE" /d/maker-delivery-identity.pub </dev/null 2>/dev/null | tr -d ' \n')"
 if [[ "$current_identity" == "$expected_identity" ]]; then
   log "  Maker Delivery identity is its minted Zcash key ($expected_identity)"
+elif [[ "$ZCASH_NETWORK" == test ]]; then
+  # The entrypoint installs $LANE/lez/maker/zcash.key; on Testnet that must be
+  # the owner's funded Maker key, and only the operator puts it there.
+  fail "the Maker's Delivery identity ($current_identity) is not the Testnet Maker key's ($expected_identity): install $MAKER_ZCASH_KEY_FILE as $LANE/lez/maker/zcash.key (0600) and recreate the Nodes"
 else
   [[ "$RESTART" == 1 ]] || fail "the Maker's Delivery identity ($current_identity) is not the corridor key ($expected_identity); rerun without --no-restart to pin it"
   log "  pinning the Maker Delivery identity $current_identity → $expected_identity (both Nodes recreated)"
@@ -303,6 +371,26 @@ if [[ "$CHAIN_CHECK" == 1 ]]; then
 else
   log "  LEZ chain check skipped by the caller"
 fi
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  # Zcash Testnet: identified by chain, genesis and NU7, never mined. The
+  # funder search starts at the operator's height or where the last Testnet
+  # corridor's funder output was (its change lands at or after it).
+  testnet_tip="$(zebra_testnet getblockchaininfo | python3 -c 'import json,sys
+info=json.load(sys.stdin)
+assert info["chain"]=="test", "not a test chain"
+assert info["consensus"]["chaintip"]=="77190ad9", "the chain tip is not on NU7 (77190ad9): " + info["consensus"]["chaintip"]
+print(info["blocks"])')" || blocked "the Zebra at $LEZ_ZEBRA_URL is not Zcash Testnet on NU7"
+  [[ "$(zebra_testnet getblockhash '[0]' | tr -d '"')" == "$TESTNET_GENESIS" ]] ||
+    blocked "the Zebra at $LEZ_ZEBRA_URL does not serve Zcash Testnet's genesis"
+  scan_from="${LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT:-$(cat "$TESTNET_FUNDING_FROM" 2>/dev/null || true)}"
+  [[ "$scan_from" =~ ^[0-9]+$ ]] ||
+    blocked "no Testnet funder search start: set LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT to the height of the owner's TAZ payment"
+  log "  Zcash Testnet tip $testnet_tip (NU7); the Maker's funder outputs from height $scan_from"
+  maker_scan_from="$scan_from"; pay_taker=0; payments=1
+  # Selling ZEC, the Taker funds from a payment the Maker makes in step 3,
+  # after this tip.
+  if [[ "$DIRECTION" == TakerSellsForeign ]]; then pay_taker=1; scan_from="$testnet_tip"; fi
+else
 zebra_height="$(zebra getblockcount)" || fail "zebra RPC unavailable at $ZEBRA_URL"
 target=$(( MATURITY + MIN_MATURE_OUTPUTS ))
 while (( zebra_height < target )); do
@@ -347,6 +435,7 @@ PY
 )" || fail "reading $TAKER_POOL from zebra failed"
   if [[ -z "$scan_from" ]]; then pay_taker=1; scan_from=$(( zebra_height + 1 )); fi
 fi
+fi
 
 # ---- 2. spec ------------------------------------------------------------------
 log "2/8 spec"
@@ -367,11 +456,21 @@ finalized="$(curl -sS --max-time 10 -H 'content-type: application/json' \
 # that from provisioning): the lock they look for happens after this
 # provisioning. The 32 blocks back cover the finality lag at provisioning.
 discovery_start=$(( finalized > 32 ? finalized - 32 : 1 ))
+# Testnet: the route (its credential as the provisioner and the actors see it,
+# copied into the staging volume in step 3) and the lane's principal.
+spec_extra='{}'
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  spec_extra="$(python3 -c 'import json,sys
+url,kind,field,path,principal=sys.argv[1:]
+print(json.dumps({"zebra_endpoint": url, "zebra_route": {"kind": kind, field: path},
+                  "zcash_principal_zatoshis": int(principal)}))' \
+    "$LEZ_ZEBRA_URL" "$ZEBRA_ROUTE_KIND" "$ZEBRA_CREDENTIAL_FIELD" "$ZEC_ROOT/signers/zebra.credential" "$FOREIGN_UNITS")"
+fi
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" "$scan_from" "$LANE" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" "$scan_from" "$LANE" "$spec_extra" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile, scan_from, lane) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile, scan_from, lane, extra) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
@@ -396,6 +495,7 @@ spec = {
     "zcash_funding_skip": int(skip),
     "zcash_funding_scan_from_height": int(scan_from),
 }
+spec.update(json.loads(extra))
 json.dump(spec, open(out, "w"), indent=2)
 print(f"  spec {swap_id}: channel {channel[:12]}… escrow {escrow[:12]}… discovery from {start}, funder output #{int(skip) + 1}")
 PY
@@ -408,9 +508,15 @@ docker volume rm -f "$STAGING" >/dev/null 2>&1 || true
 docker volume create "$STAGING" >/dev/null
 spec_mounts=()
 for (( k = 0; k < SWAPS; k++ )); do spec_mounts+=(-v "$PWD/$(out_of $k)/spec.json:/in/spec${SUFFIX[$(slot_of $k)]}.json:ro"); done
-helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
+abs() { if [[ "$1" == /* ]]; then echo "$1"; else echo "$PWD/$1"; fi; }
+credential_mount=(); credential_install=""
+if [[ "$ZCASH_NETWORK" == test ]]; then
+  credential_mount=(-v "$(abs "$ZEBRA_CREDENTIAL"):/in/zebra.credential:ro")
+  credential_install="install -m 0600 /in/zebra.credential $ZEC_ROOT/signers/zebra.credential"
+fi
+helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" "${credential_mount[@]}" \
   -v "$PWD/$LANE/lez/maker/lez-signer.key:/in/maker.key:ro" -v "$PWD/$LANE/lez/taker/lez-signer.key:/in/taker.key:ro" \
-  -v "$PWD/$MAKER_ZCASH_KEY_FILE:/in/maker-zcash.key:ro" -v "$PWD/$TAKER_ZCASH_KEY_FILE:/in/taker-zcash.key:ro" -- "
+  -v "$(abs "$MAKER_ZCASH_KEY_FILE"):/in/maker-zcash.key:ro" -v "$(abs "$TAKER_ZCASH_KEY_FILE"):/in/taker-zcash.key:ro" -- "
   set -e; umask 077
   mkdir -p $ZEC_ROOT/signers
   for f in /in/spec*.json; do install -m 0600 \$f $ZEC_ROOT/\$(basename \$f); done
@@ -418,8 +524,36 @@ helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" \
   install -m 0600 /in/taker.key $ZEC_ROOT/signers/taker.key
   install -m 0600 /in/maker-zcash.key $ZEC_ROOT/signers/maker-zcash.key
   install -m 0600 /in/taker-zcash.key $ZEC_ROOT/signers/taker-zcash.key
+  $credential_install
   chown -R $NODE_UID:$NODE_UID $ZEC_ROOT && chmod 0700 $ZEC_ROOT $ZEC_ROOT/signers"
-if [[ "$DIRECTION" == TakerSellsForeign ]]; then
+if [[ "$ZCASH_NETWORK" == test && "$pay_taker" == 1 ]]; then
+  # The Taker funds Zcash on Testnet: the Maker's owner-funded key pays the
+  # Taker's once per swap, and the provisioner waits for Testnet to bury the
+  # payment ten blocks deep (public-testnet-v2's Zcash confirmations).
+  taker_value=$(( FOREIGN_UNITS + 20000 ))   # principal + funding fee + change margin
+  for (( p = 0; p < payments; p++ )); do
+    docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
+      --entrypoint zec-local-poc-transfer "$TAKER_IMAGE" \
+      --zebra-endpoint "$LEZ_ZEBRA_URL" --zcash-network test "$ZEBRA_TRANSFER_CREDENTIAL" "$ZEC_ROOT/signers/zebra.credential" \
+      --scan-from-height "$maker_scan_from" --skip "$p" \
+      --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" \
+      --value-zatoshis "$taker_value" </dev/null >"$out/taker-funding-$p.json" ||
+      fail "zec-local-poc-transfer failed on Testnet (see above)"
+    log "  Testnet transfer $(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(s["transaction_id"] + " to " + s["to_address"])' "$out/taker-funding-$p.json")"
+  done
+  # Wait for the last payment to be ten blocks deep; the Taker's funder
+  # search starts at the tip seen before the payments (step 1).
+  last="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["transaction_id"])' "$out/taker-funding-$(( payments - 1 )).json")"
+  depth=0
+  for _ in $(seq 1 "${LEZ_ZEC_TESTNET_PAYMENT_WAIT_MINUTES:-120}"); do
+    depth="$(zebra_testnet getrawtransaction "[\"$last\", 1]" 2>/dev/null |
+      python3 -c 'import json,sys; print(json.load(sys.stdin).get("confirmations") or 0)' 2>/dev/null || echo 0)"
+    (( depth >= 10 )) && break
+    sleep 60
+  done
+  (( depth >= 10 )) || fail "the Taker's Testnet payment $last is not ten blocks deep after ${LEZ_ZEC_TESTNET_PAYMENT_WAIT_MINUTES:-120} min"
+  log "  the Taker's Testnet payment is $depth blocks deep; its funder search starts at $scan_from"
+elif [[ "$DIRECTION" == TakerSellsForeign ]]; then
   # The Taker funds Zcash: it needs mature outputs under its own key. Zebra
   # mines to the Maker's key only, so the Maker pays the Taker, and 100 blocks
   # make those outputs funder candidates (the provisioner's maturity rule
@@ -474,6 +608,11 @@ print(f"  provisioned run {s['run_id']}: agreement sha256 {s['signed_agreement_s
       f"private_material_disclosed={s['private_material_disclosed']}")
 PY
 done
+if [[ "$ZCASH_NETWORK" == test && "$DIRECTION" == TakerSellsLez ]]; then
+  # The Maker's next Testnet funder output is this one's change: search from here next time.
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zcash_candidate_height"])' "$out/provision-summary.json" \
+    > "$TESTNET_FUNDING_FROM" || fail "the provision summary names no Testnet funder height"
+fi
 
 # ---- 4. distribute ------------------------------------------------------------
 log "4/8 distribute into $MAKER_VOLUME / $TAKER_VOLUME"

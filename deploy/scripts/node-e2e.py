@@ -1347,13 +1347,16 @@ def zec_profile_refund_delay(profile: str) -> int:
     """The LEZ refund delay of a ZEC profile, seconds (zec-swap-sdk profile.rs:
     the only parameter the harness waits on)."""
     return {"deterministic-local-devnet-v1": 1800, "deterministic-local-devnet-v2": 1800,
-            "deterministic-local-devnet-v3": 720, "deterministic-local-devnet-v4": 240}.get(profile, 60)
+            "deterministic-local-devnet-v3": 720, "deterministic-local-devnet-v4": 240,
+            "public-testnet-v2": 7200}.get(profile, 60)
 
 
 # The ZEC profile of the refund journeys (zec-swap-sdk profile.rs): nobody claims
 # there, so the LEZ refund delay only has to outlast provisioning, the take and
 # both first locks. Every other scenario keeps zec-provision.sh's default (-v3).
-ZEC_REFUND_PROFILE = "deterministic-local-devnet-v4"
+# The public lane has one profile for every scenario (zec-provision.sh
+# --zcash-network test: public-testnet-v2), refund journeys included.
+ZEC_REFUND_PROFILE = None if ZEC_PUBLIC else "deterministic-local-devnet-v4"
 
 
 def zec_current_refund_delay() -> int:

@@ -5,7 +5,7 @@ use zec_reference_actor::zcash_identity_from_key_file;
 
 #[derive(Clone, Parser)]
 #[command(
-    about = "Print the public identity (key, hash, Regtest address) of an owner-private Zcash key"
+    about = "Print the public identity (key, hash, Regtest/Testnet address) of an owner-private Zcash key"
 )]
 struct Arguments {
     /// Owner-private Zcash key: 32 raw bytes or 64 hex characters.

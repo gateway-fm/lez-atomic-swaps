@@ -18,11 +18,16 @@
 # every Zcash transaction the scenario names is looked up again on the route
 # (and on the other route, when both are supported, as an independent check).
 #
-# Nothing here funds, mines or signs. The Nodes must already run on the public
-# networks (docs/testnet-run.md: LEZ side services; this lane: the Zcash route)
-# with an owner-funded transparent key. Credentials are files, named by
-# LEZ_ZEC_PROVIDER_API_KEY_FILE and LEZ_ZEC_SELF_HOSTED_COOKIE_FILE; their
-# contents never reach a log or the bundle (zec-public-evidence.py checks).
+# Nothing here mines. The Nodes must already run on the public networks
+# (docs/testnet-run.md: LEZ side services; this lane: the Zcash route), the
+# Maker under the owner-funded Testnet key: each corridor is provisioned by
+# zec-provision.sh --zcash-network test (profile public-testnet-v2, NU7),
+# which spends an ordinary output of that key and reads the role keys from
+# LEZ_ZEC_TESTNET_KEY_DIR (outside the repository) and the funder search start
+# from LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT on its first run. Credentials are
+# files, named by LEZ_ZEC_PROVIDER_API_KEY_FILE and
+# LEZ_ZEC_SELF_HOSTED_COOKIE_FILE; their contents never reach a log or the
+# bundle (zec-public-evidence.py checks).
 #
 # Environment: LEZ_ZEC_LANE_ENV (default deploy/zec-public-testnet.env),
 # LEZ_CONTAINER_PREFIX (default lez-testnet: the Nodes of compose.testnet.yaml),
