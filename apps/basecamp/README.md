@@ -42,6 +42,9 @@ From this directory, with Nix flakes enabled:
 ```sh
 nix build --no-update-lock-file .#lez-maker-ui -o result-lez-maker-ui
 nix build --no-update-lock-file .#lez-taker-ui -o result-lez-taker-ui
+nix build --no-update-lock-file .#lez-maker-ui-lgx-portable -o result-lez-maker-ui-lgx-portable
+nix build --no-update-lock-file .#lez-taker-ui-lgx-portable -o result-lez-taker-ui-lgx-portable
+nix build --no-update-lock-file .#lez-network-ui-lgx-portable -o result-lez-network-ui-lgx-portable
 nix build --no-update-lock-file .#lez-maker-ui-lgx -o result-lez-maker-ui-lgx
 nix build --no-update-lock-file .#lez-taker-ui-lgx -o result-lez-taker-ui-lgx
 nix build --no-update-lock-file .#lez-maker-ui-install -o result-lez-maker-ui-install
@@ -50,8 +53,16 @@ nix build --no-update-lock-file .#lez-maker-ui-integration-test
 nix build --no-update-lock-file .#lez-taker-ui-integration-test
 ```
 
-The `*-lgx` outputs are the distributable package archives. The `*-install`
-outputs are developer-install trees for an isolated Basecamp `--user-dir`.
+The `*-lgx-portable` outputs are the release packages (variant
+`linux-amd64`/`linux-arm64`, the libraries they need beside the plugin): what
+`logosctl package install` takes and what the devnet images install, after
+`deploy/scripts/pin-package-dependencies.sh` has given their dependencies
+version ranges. The `*-lgx` outputs and the `*-install` developer-install
+trees (for an isolated Basecamp `--user-dir`) are the module builder's
+development builds: variant `<platform>-dev`, libraries from `/nix/store`;
+logosctl refuses them. `lez-network-ui-lgx-portable` is the LEZ network's
+operator package (the LEZ Network desk, depending on `blockchain_module` and
+`lez_indexer_module`); a trader on the public testnet does not need it.
 Do not put both roles into one evidence directory: separate user directories
 make role discovery, socket authority, and cleanup auditable.
 
@@ -328,7 +339,7 @@ After stopping only the processes started for this run:
 
 ```sh
 rm -rf "$M6_ROOT"
-rm -f result-lez-maker-ui result-lez-taker-ui result-lez-maker-ui-lgx result-lez-taker-ui-lgx
+rm -f result-lez-maker-ui result-lez-taker-ui result-lez-maker-ui-lgx result-lez-taker-ui-lgx result-lez-*-ui-lgx-portable
 rm -f result-lez-maker-ui-install result-lez-taker-ui-install
 ```
 

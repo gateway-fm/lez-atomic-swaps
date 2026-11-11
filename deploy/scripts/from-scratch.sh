@@ -17,13 +17,16 @@
 #
 #   host      docker, jq, git, curl, openssl, xxd (Homebrew on macOS)
 #   sources   pinned checkouts next to this repo (the "workspace")
-#   nix       Basecamp bundle, qt-mcp, both role packages, Chat + Delivery
+#   nix       Basecamp bundle, qt-mcp, the release packages (lgx-portable) of
+#             the role desks, the LEZ Network desk, Chat and Delivery
 #   rust      Node binaries and Bitcoin actors in the pinned rust image
 #   build     LEZ services, r0vm, rapidsnark, the escrow artifact, the LEZ
 #             sidecar and the wallet identities, each in one `docker run --rm`
 #             of the ephemeral builder image (deploy/builder)
 #   stage     Bitcoin Core, LEZ services, r0vm, sidecar into the image contexts;
-#             each role's Node payload package (package-role-node.sh)
+#             each role's Node payload package (package-role-node.sh); the
+#             release set with pinned dependencies (pin-package-dependencies.sh)
+#             installed into the Basecamp contexts (stage-basecamp-package.sh)
 #   stack     gen-config → compose build → up → market bootstrap → UI suites
 #   --evidence skips UI/Nix, uses fast timing, and prepares the API scenarios.
 #   swap      (--swap) one full BTC → LEZ swap through the two Basecamp apps
@@ -241,48 +244,46 @@ phase_nix() {
     nix_build qt-mcp "path:/src/basecamp#logos-qt-mcp"
     nix_export qt-mcp "$ASSETS/qt-mcp"
   fi
-  # The role packages are rebuilt when apps/basecamp changed since they were
-  # staged (the tree hash of the checkout, plus a digest of uncommitted edits).
+  # The desks' release packages (lgx-portable: variant linux-amd64/linux-arm64,
+  # what logosctl and Basecamp install) are rebuilt when apps/basecamp changed
+  # since they were built (the tree hash of the checkout, plus a digest of
+  # uncommitted edits). The stage phase pins their dependencies and installs
+  # them into the image contexts (pin-package-dependencies.sh).
   local role sources
-  # The staged package is architecture-specific, so the stamp carries the host
-  # variant too: otherwise a bundle staged on one architecture is kept on
+  # The package is architecture-specific, so the stamp carries the host
+  # architecture too: otherwise a package built on one architecture is kept on
   # another and Basecamp silently drops the role modules.
   sources="$(git -C "$REPO_ROOT" rev-parse "HEAD:apps/basecamp" 2>/dev/null || echo none)-$(git -C "$REPO_ROOT" diff HEAD -- apps/basecamp | sha256sum | cut -c1-12)-$(uname -m)"
   # maker and taker: the role desks; network: the LEZ Network desk, which hosts
   # the LEZ network node and indexer in their Basecamps.
-  local plugin
   for role in maker taker network; do
-    plugin="lez_atomic_swap_$role"; [[ "$role" == network ]] && plugin=lez_network
-    if [[ ! -f "$ASSETS/$role-user/plugins/$plugin/manifest.json" \
-       || "$(cat "$ASSETS/$role-user/.sources" 2>/dev/null)" != "$sources" ]]; then
-      log "building the $role package"
-      nix_build "$role-install" "path:/workspace/apps/basecamp#lez-$role-ui-install"
-      nix_export "$role-install" "$ASSETS/.nix-out/$role-user"
-      bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$ASSETS/.nix-out/$role-user" "$role"
-      echo "$sources" > "$ASSETS/$role-user/.sources"
+    if ! ls "$ASSETS/.nix-out/$role-lgx-portable"/*.lgx >/dev/null 2>&1 \
+       || [[ "$(cat "$ASSETS/.nix-out/$role-lgx-portable/.sources" 2>/dev/null)" != "$sources" ]]; then
+      log "building the $role package (lgx-portable)"
+      nix_build "$role-lgx" "path:/workspace/apps/basecamp#lez-$role-ui-lgx-portable"
+      nix_export "$role-lgx" "$ASSETS/.nix-out/$role-lgx-portable"
+      echo "$sources" > "$ASSETS/.nix-out/$role-lgx-portable/.sources"
     fi
   done
-  local module output host_basecamp_variant
-  case "$(uname -m)" in
-    x86_64 | amd64) host_basecamp_variant=linux-amd64 ;;
-    *) host_basecamp_variant=linux-arm64 ;;
-  esac
-  for module in chat_module:lgx delivery_module:delivery_module-lgx; do
-    output="${module#*:}"; module="${module%%:*}"
-    # Re-stage when the module is missing *or* was staged for another
-    # architecture: Basecamp refuses a foreign variant and starts without it.
-    if [[ ! -f "$ASSETS/bundle/modules/$module/manifest.json" \
-       || "$(cat "$ASSETS/bundle/modules/$module/variant" 2>/dev/null)" != "$host_basecamp_variant" ]]; then
-      log "building $module from logos-chat-module@$chat_rev"
+  # Chat and its Delivery runtime, the releases the desks are built against
+  # (apps/basecamp/flake.lock), as release packages too. Each is built from its
+  # own flake so its binary cache (nixConfig) applies.
+  local module ref delivery_rev
+  delivery_rev="$(jq -r '.nodes["logos-delivery-module"].locked.rev' "$REPO_ROOT/apps/basecamp/flake.lock")"
+  for module in chat_module delivery_module; do
+    ref="github:logos-co/logos-chat-module/$chat_rev#lgx-portable"
+    [[ "$module" == delivery_module ]] && ref="github:logos-co/logos-delivery-module/$delivery_rev#lgx-portable"
+    if ! ls "$ASSETS/.nix-out/$module-lgx-portable"/*.lgx >/dev/null 2>&1 \
+       || [[ "$(cat "$ASSETS/.nix-out/$module-lgx-portable/.sources" 2>/dev/null)" != "$ref-$(uname -m)" ]]; then
+      log "building $module ($ref)"
       # The out-link and the export directory must not share a name: the
       # export replaces its destination, which would delete the link first.
-      nix_build "$module-lgx" "github:logos-co/logos-chat-module/$chat_rev#$output"
-      nix_export "$module-lgx" "$ASSETS/.nix-out/$module"
-      bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" \
-        "$(find "$ASSETS/.nix-out/$module" -name '*.lgx' | head -1)" module
+      nix_build "$module-lgx" "$ref"
+      nix_export "$module-lgx" "$ASSETS/.nix-out/$module-lgx-portable"
+      echo "$ref-$(uname -m)" > "$ASSETS/.nix-out/$module-lgx-portable/.sources"
     fi
   done
-  log "Basecamp payloads staged"
+  log "Basecamp bundle and release packages built"
 }
 
 # ---- rust ----------------------------------------------------------------------
@@ -641,29 +642,6 @@ phase_stage() {
   # the LEZ wallet as a Logos module (lez_core), for the market bootstrap's vault
   # claims and the finality heartbeat
   install -m 0644 "$PROVISION/lez_core/lez_core.lgx" "$DEPLOY_ROOT/images/lez-wallet-module/"
-  # ... and a runtime module of the Basecamp bundle: each desk hosts its role's
-  # LEZ signer in it; lez_swap_node beside it runs the role's Node (both skipped
-  # where the bundle is staged elsewhere)
-  if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 ]]; then
-    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_core/lez_core.lgx" module
-    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_swap_node/lez_swap_node.lgx" module
-    # The LEZ network node and the LEZ indexer run in a Basecamp too (the
-    # network service: its LEZ Network desk starts them), so both are runtime
-    # modules of the bundle. The node module is the released package, fetched
-    # once and checked against its pin; it is unpacked, never executed here.
-    local chain_lgx="$PROVISION/blockchain_module/blockchain_module-$BLOCKCHAIN_MODULE_VERSION.lgx"
-    if [[ "$(shasum -a 256 "$chain_lgx" 2>/dev/null | cut -c1-64)" != "$BLOCKCHAIN_MODULE_SHA256" ]]; then
-      # The provision tree may belong to root (a builder container made it).
-      docker run --rm -v "$PROVISION:/provision" debian:bookworm-slim \
-        sh -c 'mkdir -p /provision/blockchain_module && chown "$1" /provision/blockchain_module' _ "$(id -u):$(id -g)"
-      curl -fsSL -o "$chain_lgx.part" \
-        "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$BLOCKCHAIN_MODULE_VERSION/blockchain_module-$BLOCKCHAIN_MODULE_VERSION.lgx"
-      [[ "$(shasum -a 256 "$chain_lgx.part" | cut -c1-64)" == "$BLOCKCHAIN_MODULE_SHA256" ]] || fail "blockchain_module $BLOCKCHAIN_MODULE_VERSION does not match its pinned sha256"
-      mv "$chain_lgx.part" "$chain_lgx"
-    fi
-    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$chain_lgx" module
-    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" module
-  fi
   # Fail closed on a sidecar built from another sidecar tree (or one with no
   # tree stamp at all): rebuild it from this checkout first.
   local expected staged
@@ -688,6 +666,49 @@ phase_stage() {
       fail "no $PROVISION/lez_${role}_node/lez_${role}_node-plugin.lgx; run from-scratch.sh --only build:role-node-modules first"
     fi
   done
+  # The release set: every package the Basecamps install, with our packages'
+  # dependencies pinned to the versions in this set
+  # (images/basecamp-ui/assets/packages/, packages.tsv lists them), then
+  # installed from those files: the runtime modules into the bundle (each desk
+  # hosts its role's LEZ signer in lez_core and has lez_swap_node run its Node;
+  # the LEZ Network desk starts blockchain_module and lez_indexer_module), the
+  # desks into their user directories, each role's Node package into its
+  # image context. Skipped where the bundle is staged elsewhere, and in the
+  # API-only evidence mode, which builds no Nix packages.
+  if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" != 1 && "${LEZ_API_ONLY:-0}" != 1 ]]; then
+    # The LEZ network node module is the released package, fetched once and
+    # checked against its pin; it is unpacked, never executed here.
+    local chain_lgx="$PROVISION/blockchain_module/blockchain_module-$BLOCKCHAIN_MODULE_VERSION.lgx"
+    if [[ "$(shasum -a 256 "$chain_lgx" 2>/dev/null | cut -c1-64)" != "$BLOCKCHAIN_MODULE_SHA256" ]]; then
+      # The provision tree may belong to root (a builder container made it).
+      docker run --rm -v "$PROVISION:/provision" debian:bookworm-slim \
+        sh -c 'mkdir -p /provision/blockchain_module && chown "$1" /provision/blockchain_module' _ "$(id -u):$(id -g)"
+      curl -fsSL -o "$chain_lgx.part" \
+        "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$BLOCKCHAIN_MODULE_VERSION/blockchain_module-$BLOCKCHAIN_MODULE_VERSION.lgx"
+      [[ "$(shasum -a 256 "$chain_lgx.part" | cut -c1-64)" == "$BLOCKCHAIN_MODULE_SHA256" ]] || fail "blockchain_module $BLOCKCHAIN_MODULE_VERSION does not match its pinned sha256"
+      mv "$chain_lgx.part" "$chain_lgx"
+    fi
+    local release="$ASSETS/packages" pkgs=() lgx name
+    for name in maker taker network chat_module delivery_module; do
+      lgx="$(ls "$ASSETS/.nix-out/$name-lgx-portable"/*.lgx 2>/dev/null | head -1)"
+      [[ -n "$lgx" ]] || fail "no $name release package in $ASSETS/.nix-out/$name-lgx-portable; run from-scratch.sh --only nix first"
+      pkgs+=("$lgx")
+    done
+    pkgs+=("$PROVISION/lez_core/lez_core.lgx" "$PROVISION/lez_swap_node/lez_swap_node.lgx"
+      "$PROVISION/lez_indexer_module/lez_indexer_module.lgx" "$chain_lgx"
+      "$DEPLOY_ROOT/images/maker-node/lez_maker_node.lgx" "$DEPLOY_ROOT/images/taker-node/lez_taker_node.lgx")
+    rm -rf "$release"
+    bash "$DEPLOY_ROOT/scripts/pin-package-dependencies.sh" --out "$release" "${pkgs[@]}"
+    for name in lez_core lez_swap_node blockchain_module lez_indexer_module chat_module delivery_module; do
+      bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/$name.lgx" module
+    done
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_atomic_swap_maker.lgx" maker
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_atomic_swap_taker.lgx" taker
+    bash "$DEPLOY_ROOT/scripts/stage-basecamp-package.sh" "$release/lez_network.lgx" network
+    for role in maker taker; do
+      install -m 0644 "$release/lez_${role}_node.lgx" "$DEPLOY_ROOT/images/$role-node/lez_${role}_node.lgx"
+    done
+  fi
   # the market bootstrap and identity tools, in the wallet-module image (the
   # compose `tools` service)
   install -m 0755 "$PROVISION/escrow-artifact/debug/lez-zec-escrow-v02-deployer" \

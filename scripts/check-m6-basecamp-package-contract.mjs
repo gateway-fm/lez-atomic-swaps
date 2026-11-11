@@ -181,7 +181,10 @@ for (const value of ["maker", "taker"]) {
     new RegExp(`lez-${value}-ui-install\\s*=.*\\.install`),
     `must expose the official ${value} developer-install tree`,
   );
-  for (const suffix of ["", "-lgx", "-install", "-integration-test"]) {
+  // -lgx-portable is the release package (linux-amd64/linux-arm64) that
+  // logosctl installs and from-scratch.sh stages; -lgx and -install are the
+  // builder's development builds (`<platform>-dev`).
+  for (const suffix of ["", "-lgx", "-lgx-portable", "-install", "-integration-test"]) {
     requirePattern(
       rootFlake,
       flakeSource,
@@ -190,6 +193,12 @@ for (const value of ["maker", "taker"]) {
     );
   }
 }
+requirePattern(
+  rootFlake,
+  flakeSource,
+  /lez-network-ui-lgx-portable\s*=\s*network\.packages\.\$\{system\}\.lgx-portable/,
+  "must expose the LEZ Network desk's release package (the operator package)",
+);
 requirePattern(
   rootFlake,
   flakeSource,

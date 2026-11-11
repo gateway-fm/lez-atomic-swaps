@@ -59,19 +59,27 @@
       });
       systems = builtins.attrNames probe.packages;
     in {
+      # `-lgx-portable` is the release package (variant linux-amd64 /
+      # linux-arm64, the libraries it needs beside the plugin), what logosctl
+      # and Basecamp install; `-lgx` and `-install` are the builder's
+      # development builds (variant `<platform>-dev`, libraries from
+      # /nix/store), which logosctl refuses.
       packages = builtins.listToAttrs (map (system: let maker = makerFor system; taker = takerFor system; network = networkFor system; in {
         name = system;
         value = {
           lez-maker-ui = maker.packages.${system}.default;
           lez-maker-ui-lgx = maker.packages.${system}.lgx;
+          lez-maker-ui-lgx-portable = maker.packages.${system}.lgx-portable;
           lez-maker-ui-install = maker.packages.${system}.install;
           lez-maker-ui-integration-test = withShortRuntimePath maker.packages.${system}.integration-test;
           lez-taker-ui = taker.packages.${system}.default;
           lez-taker-ui-lgx = taker.packages.${system}.lgx;
+          lez-taker-ui-lgx-portable = taker.packages.${system}.lgx-portable;
           lez-taker-ui-install = taker.packages.${system}.install;
           lez-taker-ui-integration-test = withShortRuntimePath taker.packages.${system}.integration-test;
           lez-network-ui = network.packages.${system}.default;
           lez-network-ui-lgx = network.packages.${system}.lgx;
+          lez-network-ui-lgx-portable = network.packages.${system}.lgx-portable;
           lez-network-ui-install = network.packages.${system}.install;
           default = maker.packages.${system}.default;
         };

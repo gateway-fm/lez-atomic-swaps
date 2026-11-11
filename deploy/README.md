@@ -548,7 +548,7 @@ shifted ports are free. `compose.testnet.yaml` keeps its own project
 | `taker-node` | `images/taker-node` | the Taker's own Basecamp on VNC `127.0.0.1:5902`, as `maker-node`, with the Taker's package `lez_taker_node`: canonical Node, CLI, registry initializer, `lez-btc-taker-actor`, `lez-zec-taker-actor` (supervised by the Node itself: activation, the LEZ lock, the observation of the Maker's legs; its schedule lives in `taker-actor-schedule.sqlite3` beside the registry), the role sidecar, the health probe and the launcher; same loopback forwarders as the Maker. The ZEC corridor provisioners (`zec-local-poc-*`, run by `scripts/zec-provision.sh`) are image tools, not part of the package |
 | `heartbeat` (profile `heartbeat`) | `images/lez-wallet-module` | the LEZ finality heartbeat (above); `up.sh` starts it when `LEZ_HEARTBEAT_SECONDS` is not `0` |
 | `tools` (profile `tools`) | `images/lez-wallet-module` | one-shot only (`docker compose --profile tools run --rm tools '…'`): the escrow deployer, the vault claims through the LEZ wallet module (`lez-wallet-vault-claim`) and the identity tool for `start.sh`'s bootstrap; runs as the host user with the market root mounted, never as a service |
-| `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + role install trees + qt-mcp; Xvfb/fluxbox/x11vnc |
+| `basecamp-ui` (build only, `scale: 0`) | `images/basecamp-ui` | the base image of every Basecamp in the stack (`maker-node`, `taker-node`, `network`, through their `basecamp` build context); runs no container. Portable Basecamp 0.2.0-RC3 **inspector twin** + the release packages installed (desks, runtime modules) + qt-mcp; Xvfb/fluxbox/x11vnc |
 
 Each desk reaches its own Node over the Node's owner socket inside the same
 container; the desks read their market from the Nodes
@@ -577,9 +577,12 @@ service holds the host Docker socket.
   `from-scratch.sh`); its `linux-arm64` variant runs here.
 - Basecamp + role packages were built with the module-builder flake for
   aarch64-linux; the `bin-bundle-dir-inspector` output is self-contained.
-- The `linux-arm64-dev` variant tags in the locally built role packages were
-  renamed to `linux-arm64` (variant file + manifest keys) so the release
-  Basecamp accepts them.
+- The desks, Chat and Delivery are built as release packages (`lgx-portable`,
+  variant `linux-arm64`/`linux-amd64`), the same files `logosctl` installs; the
+  stage phase pins our packages' dependencies
+  (`scripts/pin-package-dependencies.sh`, the set in
+  `images/basecamp-ui/assets/packages/`) and installs the images from them.
+  Nothing is renamed.
 
 ## Layout
 
@@ -592,7 +595,8 @@ scripts/up.sh              one-command bring-up (+ desk verification); LEZ_IMAGE
 scripts/swap-through-ui.sh one complete swap driven through the two desks
 scripts/node-hold.sh       hold a Node down inside its running Basecamp, or release it
 scripts/market-bootstrap.sh one-time settlement-chain bootstrap (one throwaway builder container)
-scripts/stage-basecamp-package.sh stage one Nix-built package or module into the Basecamp image
+scripts/pin-package-dependencies.sh write the release set: our packages' dependencies with version ranges
+scripts/stage-basecamp-package.sh install one release package (desk or module) into the Basecamp image
 scripts/export-node-evidence.py publish a completed swap's public evidence from the Nodes
 scripts/reset-swaps.sh     forget every persisted swap on both Nodes (after an actor rebuild)
 scripts/verify-all.sh      containers, chains, explorers, Node market, desk suites

@@ -324,24 +324,6 @@ jobs:
         with:
           name: lez-module-payloads
           path: _in/lez-modules
-      # The LEZ wallet (lez_core) and lez_swap_node are runtime modules of the
-      # bundle: each desk hosts its role's LEZ signer in the one and has the
-      # other launch and supervise its role's Node.
-      # ... and so are the LEZ network node (the released blockchain_module,
-      # checked against its pin) and the LEZ indexer: the network image is a
-      # Basecamp whose LEZ Network desk starts both.
-      - name: Stage lez_core, lez_swap_node, blockchain_module and lez_indexer_module into the Basecamp bundle
-        run: |
-          set -euo pipefail
-          deploy/scripts/stage-basecamp-package.sh "$GITHUB_WORKSPACE/_in/lez-modules/lez_core.lgx" module
-          deploy/scripts/stage-basecamp-package.sh "$GITHUB_WORKSPACE/_in/lez-modules/lez_swap_node.lgx" module
-          deploy/scripts/stage-basecamp-package.sh "$GITHUB_WORKSPACE/_in/lez-modules/lez_indexer_module.lgx" module
-          version="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_VERSION=//p' deploy/scripts/from-scratch.sh)"
-          sum="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_SHA256=//p' deploy/scripts/from-scratch.sh)"
-          curl -fsSL -o "$RUNNER_TEMP/blockchain_module.lgx" \
-            "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$version/blockchain_module-$version.lgx"
-          echo "$sum  $RUNNER_TEMP/blockchain_module.lgx" | sha256sum -c -
-          deploy/scripts/stage-basecamp-package.sh "$RUNNER_TEMP/blockchain_module.lgx" module
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: node-contexts
@@ -360,6 +342,45 @@ jobs:
             deploy/scripts/package-role-node.sh "$role" "$GITHUB_WORKSPACE/_in/lez-modules/lez_${role}_node-plugin.lgx" \
               "deploy/images/$role-node/lez_${role}_node.lgx"
           done
+      # The release set, as from-scratch.sh --only stage writes it: every
+      # package the Basecamps install (the desks, Chat and Delivery from the
+      # --only nix step, lez_core, lez_swap_node, lez_indexer_module, the
+      # released blockchain_module checked against its pin, both lez_<role>_node),
+      # our packages' dependencies pinned to the versions in the set, then
+      # installed from those files into the bundle, the desks' user
+      # directories and the role contexts.
+      - name: Pin and install the release set
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_VERSION=//p' deploy/scripts/from-scratch.sh)"
+          sum="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_SHA256=//p' deploy/scripts/from-scratch.sh)"
+          curl -fsSL -o "$RUNNER_TEMP/blockchain_module.lgx" \
+            "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$version/blockchain_module-$version.lgx"
+          echo "$sum  $RUNNER_TEMP/blockchain_module.lgx" | sha256sum -c -
+          out=deploy/images/basecamp-ui/assets/.nix-out
+          release=deploy/images/basecamp-ui/assets/packages
+          deploy/scripts/pin-package-dependencies.sh --out "$release" \
+            "$out"/maker-lgx-portable/*.lgx "$out"/taker-lgx-portable/*.lgx "$out"/network-lgx-portable/*.lgx \
+            "$out"/chat_module-lgx-portable/*.lgx "$out"/delivery_module-lgx-portable/*.lgx \
+            _in/lez-modules/lez_core.lgx _in/lez-modules/lez_swap_node.lgx _in/lez-modules/lez_indexer_module.lgx \
+            "$RUNNER_TEMP/blockchain_module.lgx" \
+            deploy/images/maker-node/lez_maker_node.lgx deploy/images/taker-node/lez_taker_node.lgx
+          for name in lez_core lez_swap_node blockchain_module lez_indexer_module chat_module delivery_module; do
+            deploy/scripts/stage-basecamp-package.sh "$release/$name.lgx" module
+          done
+          deploy/scripts/stage-basecamp-package.sh "$release/lez_atomic_swap_maker.lgx" maker
+          deploy/scripts/stage-basecamp-package.sh "$release/lez_atomic_swap_taker.lgx" taker
+          deploy/scripts/stage-basecamp-package.sh "$release/lez_network.lgx" network
+          for role in maker taker; do
+            install -m 0644 "$release/lez_${role}_node.lgx" "deploy/images/$role-node/lez_${role}_node.lgx"
+          done
+          cat "$release/packages.tsv"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logos-packages
+          path: deploy/images/basecamp-ui/assets/packages
+          retention-days: 30
+          if-no-files-found: error
       # basecamp-ui is build-only in compose.yaml (scale 0, no container): the
       # base of the parties' and the LEZ network's Basecamps. It is pushed all
       # the same so `docker compose pull` resolves every service; its layers are

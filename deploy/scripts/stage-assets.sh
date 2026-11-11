@@ -114,22 +114,26 @@ if [[ "${LEZ_STAGE_SKIP_BASECAMP_UI:-0}" == 1 ]]; then
     log "skipping basecamp-ui assets (LEZ_STAGE_SKIP_BASECAMP_UI=1)"
 elif [[ "${LEZ_API_ONLY:-0}" != 1 && ! -d images/basecamp-ui/assets/bundle ]]; then
     cat >&2 <<'MISSING'
-Build with the pinned flakes (nix, experimental-features enabled):
+Build with the pinned flakes (nix, experimental-features enabled), or run
+scripts/from-scratch.sh --only nix and --only stage, which do all of this:
   nix build path:../basecamp#bin-bundle-dir-inspector -o bundle
-  nix build path:apps/basecamp#lez-maker-ui-install -o maker-user
-  nix build path:apps/basecamp#lez-taker-ui-install -o taker-user
   nix build path:../basecamp#logos-qt-mcp -o qt-mcp
-  nix build github:logos-co/logos-chat-module/v0.2.2#lgx -o chat-lgx
-  nix build github:logos-co/logos-chat-module/v0.2.2#delivery_module-lgx -o delivery-lgx
+  nix build path:apps/basecamp#lez-maker-ui-lgx-portable -o maker-lgx
+  nix build path:apps/basecamp#lez-taker-ui-lgx-portable -o taker-lgx
+  nix build path:apps/basecamp#lez-network-ui-lgx-portable -o network-lgx
+  nix build github:logos-co/logos-chat-module/<rev in apps/basecamp/flake.lock>#lgx-portable -o chat-lgx
+  nix build github:logos-co/logos-delivery-module/<rev in apps/basecamp/flake.lock>#lgx-portable -o delivery-lgx
 Then copy:
   bundle/     -> images/basecamp-ui/assets/bundle
   qt-mcp/     -> images/basecamp-ui/assets/qt-mcp
-and stage the role packages plus the modules they depend on (this pins the
-variant tag):
-  scripts/stage-basecamp-package.sh maker-user maker
-  scripts/stage-basecamp-package.sh taker-user taker
-  scripts/stage-basecamp-package.sh chat-lgx/*.lgx module
-  scripts/stage-basecamp-package.sh delivery-lgx/*.lgx module
+pin the release set's dependencies and install it (the desks, Chat, Delivery,
+lez_core, lez_swap_node, lez_indexer_module, blockchain_module and both
+lez_<role>_node packages):
+  scripts/pin-package-dependencies.sh --out images/basecamp-ui/assets/packages <every .lgx>
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/<module>.lgx module
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/lez_atomic_swap_maker.lgx maker
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/lez_atomic_swap_taker.lgx taker
+  scripts/stage-basecamp-package.sh images/basecamp-ui/assets/packages/lez_network.lgx network
 MISSING
     exit 1
 fi

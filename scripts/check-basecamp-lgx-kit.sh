@@ -2,7 +2,9 @@
 # check-basecamp-lgx-kit.sh <package.lgx>...
 #
 # A packaged Basecamp desk must carry the shared UI kit next to its Main.qml
-# in every variant it ships; a package without it compiles nowhere (#50).
+# in every variant it ships; a package without it compiles nowhere (#50). It
+# must be a release package: a development variant (`<platform>-dev`, the
+# module builder's `lgx` output) is refused by logosctl.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -25,6 +27,11 @@ for archive in "$@"; do
     continue
   fi
   while IFS= read -r variant; do
+    if [[ "$variant" == *-dev ]]; then
+      echo "$archive: variant $variant is a development build (build lgx-portable)" >&2
+      status=1
+      continue
+    fi
     missing=()
     for name in "${kit[@]}"; do
       printf '%s\n' "$entries" | grep -qx "variants/$variant/qml/$name" || missing+=("$name")
