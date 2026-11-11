@@ -182,10 +182,16 @@ Stated plainly; each one is open unless it says otherwise.
     reports dependency state, not the finalized height, and the desks do not
     show finality. How often the current code freezes is **not verified** by
     any committed evidence.
-11. **Fixed container names.** `lez-network`, `lez-sequencer`,
-    `lez-heartbeat` and the explorers do not take `LEZ_CONTAINER_PREFIX`; the
-    regression lanes share them by design (`deploy/compose.lane.yaml`), but two
-    independent stacks cannot run on one host.
+11. **A second stack needs its own checkout.** Every stack-wide name (the
+    Compose project, the Docker network, `<prefix>-network`, `-sequencer`,
+    `-heartbeat`, the explorers, the lanes' projects and containers) derives
+    from `LEZ_STACK_PREFIX` and every published port from
+    `LEZ_STACK_PORT_OFFSET` (`deploy/scripts/lane.sh`; default `lez` and 0,
+    today's names and ports), so two independent stacks run on one host
+    (`deploy/README.md`, "a second stack on the same host"). The runtime
+    directory is not a variable: the second stack runs from a deploy directory
+    of its own (a worktree) and a market root of its own; `gen-config.sh`
+    binds that directory and root to the stack.
 12. **DCO: closed.** One commit had an author that its sign-off did not
     name; the owner rewrote and force-pushed the branch on 2026-11-11 (same
     tree). Commit ids quoted in older notes and in evidence recorded before

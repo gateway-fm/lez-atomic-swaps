@@ -114,6 +114,15 @@ only on request. The two Nodes meet only at the Maker's Chat socket and the
 Delivery directory; each Node reaches the chains through loopback forwarders
 inside its own container.
 
+The containers are named `<prefix>-<service>` (`lez-network`,
+`lez-sequencer`, `lez-maker-node`, …; the explorers `lez-btc-explorer` and
+`lez-lez-explorer`), in the Compose project `<prefix>-swap-stack` on the
+Docker network `<prefix>-swap-chains`, with the prefix `lez` unless
+`LEZ_STACK_PREFIX` names another stack; `LEZ_STACK_PORT_OFFSET` shifts every
+published port. `deploy/scripts/lane.sh` derives all of them, and the
+regression lanes' `<prefix>-lane-<k>` / `<prefix>-l<k>-*` (deploy/README.md,
+"a second stack on the same host").
+
 ```mermaid
 flowchart TB
     subgraph MakerNode["maker-node: the Maker's Basecamp (uid 4713, VNC :5901)"]

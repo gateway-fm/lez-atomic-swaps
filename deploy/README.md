@@ -480,6 +480,52 @@ for all lanes: a frozen chain voids every lane's test, and one new chain
 them all. The scenarios, `reset-swaps.sh` and `zec-provision.sh` act on one lane
 when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 
+### A second stack on the same host
+
+Lanes share one LEZ network. A second, independent stack (its own LEZ chain,
+Bitcoin Core, Zebra, Nodes, heartbeat and lanes) runs beside the first under
+another stack prefix, `LEZ_STACK_PREFIX`, from which `scripts/lane.sh` derives
+every name, and a port offset, `LEZ_STACK_PORT_OFFSET`, added to every port the
+stack and its lanes publish on 127.0.0.1:
+
+| | default stack | `LEZ_STACK_PREFIX=lezb LEZ_STACK_PORT_OFFSET=1000` |
+|---|---|---|
+| Compose project, Docker network | `lez-swap-stack`, `lez-swap-chains` | `lezb-swap-stack`, `lezb-swap-chains` |
+| LEZ network, sequencer, heartbeat | `lez-network`, `lez-sequencer`, `lez-heartbeat` | `lezb-network`, `lezb-sequencer`, `lezb-heartbeat` |
+| explorers | `lez-btc-explorer` :3002, `lez-lez-explorer` :3003 | `lezb-btc-explorer` :4002, `lezb-lez-explorer` :4003 |
+| lane 1 (the stack's pair and chains) | `lez-maker-node`, `lez-taker-node`, `lez-bitcoin-core`, `lez-btc-miner`, `lez-zebra` | `lezb-maker-node`, … `lezb-zebra` |
+| lane k ≥ 2 | project `lez-lane-<k>`, containers `lez-l<k>-*` | project `lezb-lane-<k>`, containers `lezb-l<k>-*` |
+| Bitcoin RPC, sequencer, indexer, Zebra | :18443, :3040, :8779, :18232 (+10 per lane) | :19443, :4040, :9779, :19232 (+10 per lane) |
+| VNC (Maker, Taker) | :5901, :5902 (+10 per lane) | :6901, :6902 (+10 per lane) |
+| named volumes | `$LEZ_VOLUME_PREFIX-*` (`lez-<stamp>` after `up.sh --fresh`) | `lezb-*` |
+
+The second stack runs from a deploy directory of its own, so it has its own
+`runtime/` (chain state, keys, Node files, regression results), and from a
+market root of its own: a root's escrow deployment belongs to one stack's
+chain. Its identities can be copies of the first root's.
+
+```sh
+git worktree add --detach ../lez-stack-b HEAD
+mkdir -m 0700 ~/market-b && cp -a ~/market/identities ~/market-b/
+cd ../lez-stack-b/deploy
+LEZ_STACK_PREFIX=lezb LEZ_STACK_PORT_OFFSET=1000 LEZ_MARKET_ROOT=~/market-b \
+  LEZ_PROVISION=~/provision/data LEZ_TIMING_PROFILE=fast \
+  SKIP_UI_VERIFY=1 bash scripts/up.sh --fresh-lez
+bash scripts/regress.sh run node:btc:happy:TakerSellsLez
+bash scripts/down.sh --wipe       # its containers, volumes and runtime/ only
+```
+
+`gen-config.sh` records the prefix and the offset in that directory's
+`runtime.env` (only when they are not the default, so the default stack's
+`runtime.env` is unchanged) and marks the market root (`<root>/stack`); every
+script run from that directory then acts on that stack without the variables,
+a prefix the directory's `runtime.env` does not name is refused, and a stack
+other than the default takes no market root that holds another chain's
+deployment or another stack's mark. Both stacks use the same `lez-*:local`
+images. Use an offset of 100 or more (lanes take +10 each) and check that the
+shifted ports are free. `compose.testnet.yaml` keeps its own project
+(`lez-testnet`) and container names.
+
 ## Services
 
 | Service | Image | Notes |
