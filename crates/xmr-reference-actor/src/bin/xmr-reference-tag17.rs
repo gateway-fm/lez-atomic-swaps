@@ -2,9 +2,12 @@
 
 #![forbid(unsafe_code)]
 
+// Only the Linux sealed-descriptor reader reads.
+#[cfg_attr(target_os = "macos", allow(unused_imports))]
+use std::io::Read as _;
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read as _, Write as _},
+    io::Write as _,
     os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     time::Duration,
@@ -22,6 +25,7 @@ use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
     XmrActivatedAgreementV1, XmrAgreementV1,
 };
+#[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::Serialize;
 use xmr_reference_actor::{
@@ -273,6 +277,7 @@ fn parse_capability(bytes: &[u8]) -> Result<SidecarCapability> {
     SidecarCapability::new(text.as_str().to_owned()).context("Maker LEZ capability is invalid")
 }
 
+#[cfg(target_os = "linux")]
 fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
     let mut file =
         File::open(format!("/proc/self/fd/{fd}")).with_context(|| format!("open {label} FD"))?;
@@ -300,12 +305,30 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
     Ok(bytes)
 }
 
+/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
+/// has no seal to check, so the descriptor is never trusted. The parent
+/// cannot produce one there either (`effect_input_custody`).
+#[cfg(target_os = "macos")]
+fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
+}
+
+#[cfg(target_os = "linux")]
 fn ensure_private_share_absent() -> Result<()> {
     match File::open(format!("/proc/self/fd/{XMR_EFFECT_PRIVATE_XMR_SHARE_FD}")) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error).context("inspect forbidden Tag17 private-share FD"),
         Ok(_) => bail!("Tag17 worker received forbidden Monero private-share FD"),
     }
+}
+
+/// Not ported to macOS: there is no /proc, and a missing path must not read as
+/// an absent descriptor, so the check refuses outright.
+#[cfg(target_os = "macos")]
+fn ensure_private_share_absent() -> Result<()> {
+    bail!(
+        "Tag17 forbidden private-share FD {XMR_EFFECT_PRIVATE_XMR_SHARE_FD} check needs Linux /proc; XMR effects are not supported on macOS"
+    )
 }
 
 fn validate_evidence_root(path: &Path) -> Result<()> {

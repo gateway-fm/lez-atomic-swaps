@@ -69,6 +69,7 @@ fn enabled_daemon_supervises_actor_without_blocking_health_and_cancels_on_sigter
          exec /usr/bin/sleep 300\n",
         actor_pid_file.display()
     );
+    let program = actor_script(program);
     write_private(&actor_program, program.as_bytes(), 0o700);
 
     let database = root.path().join("maker.sqlite3");
@@ -218,6 +219,7 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         xmr_pid_file.display(),
         xmr_release.display()
     );
+    let xmr_program = actor_script(xmr_program);
     write_private(&xmr_program_path, xmr_program.as_bytes(), 0o700);
     let xmr_fixture =
         XmrChatFixture::new(&xmr_root, xmr_bytes, 1_000_000, 25_000, &xmr_program_path);
@@ -235,6 +237,7 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
          printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}'\n",
         zec_invocations.display()
     );
+    let zec_program = actor_script(zec_program);
     write_private(&zec_program_path, zec_program.as_bytes(), 0o700);
 
     let btc_fixture = BtcAuthorityFixture::new(&btc_root, "daemon-concurrency", btc_bytes);
@@ -246,6 +249,7 @@ fn daemon_runs_overlapping_actors_and_isolates_failing_peer_across_restart() {
         "#!/bin/sh\ntest \"$1\" = \"--config-fd\" || exit 91\ntest \"$2\" = \"196\" || exit 92\ntest -r /proc/self/fd/196 || exit 93\ntest -r /proc/self/fd/198 || exit 94\ntest \"$3\" = \"status\" || exit 95\nprintf '%s\\n' \"$3\" >> \"{}\"\nprintf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}'\n",
         btc_invocations.display()
     );
+    let btc_program = actor_script(btc_program);
     write_private(&btc_program_path, btc_program.as_bytes(), 0o700);
 
     // These marker programs prove process and control-plane isolation only. They do not
@@ -538,6 +542,7 @@ fn daemon_leases_two_accepted_xmr_applications_concurrently_across_restart() {
             pid_file.display(),
             release_file.display()
         );
+        let program = actor_script(program);
         write_private(&program_path, program.as_bytes(), 0o700);
         let fixture = XmrChatFixture::new(
             &fixture_root,
@@ -942,4 +947,17 @@ fn write_private(path: &Path, bytes: &[u8], mode: u32) {
         .expect("create private test artifact");
     file.write_all(bytes).expect("write private test artifact");
     file.sync_all().expect("sync private test artifact");
+}
+
+/// Test actor scripts probe their inherited descriptors through the platform's
+/// descriptor directory (`/proc/self/fd` on Linux, `/dev/fd` on macOS) and
+/// call `sleep` where the platform keeps it.
+fn actor_script(script: String) -> String {
+    if cfg!(target_os = "macos") {
+        script
+            .replace("/proc/self/fd/", "/dev/fd/")
+            .replace("/usr/bin/sleep", "/bin/sleep")
+    } else {
+        script
+    }
 }

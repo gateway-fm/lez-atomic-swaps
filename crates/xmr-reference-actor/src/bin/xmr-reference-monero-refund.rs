@@ -2,9 +2,12 @@
 
 #![forbid(unsafe_code)]
 
+// Only the Linux sealed-descriptor reader reads.
+#[cfg_attr(target_os = "macos", allow(unused_imports))]
+use std::io::Read as _;
 use std::{
     fs::{self, File, OpenOptions},
-    io::{Read as _, Write as _},
+    io::Write as _,
     os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
 };
@@ -21,6 +24,7 @@ use lez_xmr_swap_sdk::{
     CrossCurveScalar, MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES,
     MoneroPrivateViewKey, ReconstructedMoneroSpendKey, XmrActivatedAgreementV1, XmrAgreementV1,
 };
+#[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -445,6 +449,7 @@ fn parse_view_key(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {
         .context("Monero view key is not a canonical scalar")
 }
 
+#[cfg(target_os = "linux")]
 fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
     let mut file =
         File::open(format!("/proc/self/fd/{fd}")).with_context(|| format!("open {label} FD"))?;
@@ -470,6 +475,14 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
         "{label} FD is oversized or changed"
     );
     Ok(bytes)
+}
+
+/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
+/// has no seal to check, so the descriptor is never trusted. The parent
+/// cannot produce one there either (`effect_input_custody`).
+#[cfg(target_os = "macos")]
+fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
 }
 
 fn validate_evidence_root(path: &Path) -> Result<()> {

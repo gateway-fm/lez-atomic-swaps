@@ -24,7 +24,12 @@ fn exact_secure_worker_quote_is_copied_into_the_domain() {
         "good-worker",
         r#"printf '%s\n' '{"schema_version":1,"status":"ok","pair":"zcash","direction":"taker_sells_lez","lez_units_per_lot":5,"foreign_units_per_lot":2,"source_revision":7,"as_of_unix_seconds":1699999995}'"#,
     );
-    let source = source(&worker, &module, Duration::from_millis(500)).unwrap();
+    let source = source(
+        &worker,
+        &module,
+        Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS),
+    )
+    .unwrap();
     let route = route();
 
     let quote = source.quote(route, NOW).unwrap();
@@ -43,7 +48,12 @@ fn typed_unavailability_is_not_substituted_with_a_local_or_zero_quote() {
         "unavailable-worker",
         r#"printf '%s\n' '{"schema_version":1,"status":"unavailable","pair":"zcash","direction":"taker_sells_lez","lez_units_per_lot":null,"foreign_units_per_lot":null,"source_revision":null,"as_of_unix_seconds":null}'"#,
     );
-    let source = source(&worker, &module, Duration::from_millis(500)).unwrap();
+    let source = source(
+        &worker,
+        &module,
+        Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS),
+    )
+    .unwrap();
 
     assert!(matches!(
         source.quote(route(), NOW),
@@ -92,7 +102,12 @@ fn mutated_writable_hardlinked_and_wrong_hash_modules_fail_before_quote() {
     let worker = worker_script(run.path(), "marker-worker", "exit 91");
 
     let mutable = secure_file(run.path(), "mutable.so", b"module-v1", 0o600);
-    let mutated_source = source(&worker, &mutable, Duration::from_millis(500)).unwrap();
+    let mutated_source = source(
+        &worker,
+        &mutable,
+        Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS),
+    )
+    .unwrap();
     fs::write(&mutable, b"module-v2").unwrap();
     assert!(matches!(
         mutated_source.quote(route(), NOW),
@@ -101,21 +116,35 @@ fn mutated_writable_hardlinked_and_wrong_hash_modules_fail_before_quote() {
 
     let writable = secure_file(run.path(), "writable.so", b"module-v1", 0o620);
     assert!(matches!(
-        source(&worker, &writable, Duration::from_millis(500)),
+        source(
+            &worker,
+            &writable,
+            Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS)
+        ),
         Err(PriceSourceError::InvalidSource)
     ));
 
     let linked = secure_file(run.path(), "linked.so", b"module-v1", 0o600);
     fs::hard_link(&linked, run.path().join("linked-copy.so")).unwrap();
     assert!(matches!(
-        source(&worker, &linked, Duration::from_millis(500)),
+        source(
+            &worker,
+            &linked,
+            Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS)
+        ),
         Err(PriceSourceError::InvalidSource)
     ));
 
     let exact = secure_file(run.path(), "exact.so", b"module-v1", 0o600);
     let wrong_hash = [0x55; 32];
     assert!(matches!(
-        ProcessLogosPriceSource::new(worker, exact, wrong_hash, Duration::from_millis(500), 30,),
+        ProcessLogosPriceSource::new(
+            worker,
+            exact,
+            wrong_hash,
+            Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS),
+            30,
+        ),
         Err(PriceSourceError::InvalidSource)
     ));
 }
@@ -159,3 +188,12 @@ fn worker_script(root: &Path, name: &str, body: &str) -> PathBuf {
     let script = format!("#!/bin/sh\n{body}\n");
     secure_file(root, name, script.as_bytes(), 0o700)
 }
+
+/// Worker deadline for tests that do not exercise the deadline. macOS assesses
+/// every newly written executable on its first `execve` (about 0.2 s here),
+/// which leaves too little of the Linux 500 ms budget.
+const WORKER_TIMEOUT_MILLISECONDS: u64 = if cfg!(target_os = "macos") {
+    3_000
+} else {
+    500
+};

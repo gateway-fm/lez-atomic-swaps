@@ -1,8 +1,11 @@
+// Only the Linux sealed-input writer seeks and writes.
+#[cfg_attr(target_os = "macos", allow(unused_imports))]
+use std::io::{Seek as _, Write as _};
 use std::{
     collections::BTreeSet,
     fmt,
     fs::{self, File},
-    io::{Read as _, Seek as _, Write as _},
+    io::Read as _,
     os::{
         fd::AsRawFd as _,
         unix::fs::{MetadataExt as _, PermissionsExt as _},
@@ -20,7 +23,9 @@ use lez_bridge_protocol::{
 #[cfg(feature = "sessions")]
 use lez_xmr_release_authority::{PublicationProtectionKey, ReleaseStore};
 use lez_xmr_swap_sdk::{MoneroPrivateViewKey, XmrActivatedAgreementV1, XmrAgreementV1};
+#[cfg(target_os = "linux")]
 use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, fcntl_get_seals, memfd_create};
+#[cfg(target_os = "linux")]
 use rustix::io::fcntl_dupfd_cloexec;
 use sha2::{Digest as _, Sha256};
 use zeroize::{Zeroize as _, Zeroizing};
@@ -1103,6 +1108,7 @@ fn stable_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {
         && left.ctime_nsec() == right.ctime_nsec()
 }
 
+#[cfg(target_os = "linux")]
 fn seal_bytes(label: &str, bytes: &[u8]) -> Result<File> {
     let descriptor = memfd_create(label, MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING)
         .context("create sealed XMR effect input")?;
@@ -1140,4 +1146,15 @@ fn seal_bytes(label: &str, bytes: &[u8]) -> Result<File> {
         .context("allocate collision-free XMR effect input descriptor")?;
     drop(snapshot);
     Ok(File::from(high_descriptor))
+}
+
+/// Not ported to macOS: XMR effect inputs are handed to children as
+/// write-sealed memfds that they reopen by descriptor path, and macOS has no
+/// sealed anonymous file. Rather than hand over a weaker unsealed copy, every
+/// XMR effect input snapshot fails here, so no XMR effect child is started.
+#[cfg(target_os = "macos")]
+fn seal_bytes(label: &str, _bytes: &[u8]) -> Result<File> {
+    anyhow::bail!(
+        "sealed XMR effect input {label} needs Linux memfd seals; XMR effects are not supported on macOS"
+    )
 }
