@@ -392,16 +392,59 @@ step "$callok"' && result | jq -e ".starts >= 1" >/dev/null' "lez_swap_node laun
 step info "the $role Node's output (without the role's configuration, which Compose provides, it stops at once)" "$RUN" "tail -5 $S/logs/$role-node.log"
 docker exec "$RUN" bash -c "$L call lez_swap_node stop_node $role" >/dev/null 2>&1
 
-# The supervisor itself, with a stand-in launcher: a two-line shell script, not a Node.
+# The supervisor itself, with a stand-in launcher: a short shell script, not a
+# Node. It leaves a helper (sleep 299) in its process group, as the real
+# launcher leaves its forwards and sidecars, and becomes the stand-in Node (sleep 300).
 step info "STUB: a stand-in launcher (sleeps; not a Node)" "$RUN" \
-  "printf '#!/bin/sh\necho stub \$1 \$\$\nexec sleep 300\n' > /tmp/stub-launcher && chmod 0755 /tmp/stub-launcher && cat /tmp/stub-launcher"
+  "printf '#!/bin/sh\necho stub \$1 \$\$\nsleep 299 &\nexec sleep 300\n' > /tmp/stub-launcher && chmod 0755 /tmp/stub-launcher && cat /tmp/stub-launcher"
 step "$callok"' && [[ "$(result)" == 0 ]]' "STUB: start_node with the stand-in launcher" "$RUN" \
   "$L call lez_swap_node start_node $role /tmp/stub-launcher /tmp/stub.log /tmp/stub.hold"
 sleep 2
 step "$callok"' && grep -q running "$o"' "STUB: node_status reports the supervised child" "$RUN" "$L call lez_swap_node node_status $role"
 child="$(result | jq -r '.pid // empty' 2>/dev/null)"
 step "$ok" "module stats" "$RUN" "$L module stats"
-step "grep -qw '${child:-none}' \"\$o\"" "module stats shows the $role Node (pid ${child:-?}) itself" "$RUN" "$L module stats"
+# The runtime samples one pid per module, the logos_host it started
+# (liblogos logos_core_get_module_stats -> ProcessStats::getModuleStats over
+# ModuleManager::getModuleProcessIds; /proc/<pid>/stat utime+stime and VmRSS of
+# that pid only), and a module has no way to add processes to it. So the Node's
+# own use comes from lez_swap_node's node_stats, judged against /proc below.
+step info "module stats lists lez_swap_node's host, not the $role Node (pid ${child:-?}): the runtime samples one pid per module (upstream request: \"module stats reports only the logos_host process; include (or list) the processes a module host started\")" \
+  "$RUN" "$L module stats"
+# node_stats_match: the call's result names the Node (the pid node_status
+# gave), its group as /proc shows it (the stand-in Node and its helper, nothing
+# else), the lez_swap_node host as the Node's parent, and each process's
+# memory as its VmRSS (within 5% or 64 kB).
+node_stats_match() {
+  python3 -I - "$o" "${child:-0}" <<'PY'
+import json, sys
+lines = open(sys.argv[1]).read().splitlines()
+child = int(sys.argv[2])
+try:
+    call = json.loads(next(l for l in lines if l.startswith("{") and '"method"' in l))
+    r = json.loads(call["result"])
+    live = {}
+    for l in lines:
+        f = l.split()
+        if len(f) >= 6 and f[0] == "live":
+            live[int(f[1])] = {"ppid": int(f[2]), "pgrp": int(f[3]), "rss_kb": int(f[4]), "cmd": " ".join(f[5:])}
+    host = [p for p, v in live.items() if "logos_host --name lez_swap_node " in v["cmd"] + " "]
+    group = sorted(p for p, v in live.items() if v["pgrp"] == child)
+    procs = {p["pid"]: p for p in r["processes"]}
+    ok = (call.get("status") == "ok" and child > 0 and r["pid"] == child and r["state"] == "running"
+          and r["processes"][0]["pid"] == child and len(host) == 1 and r["host"]["pid"] == host[0]
+          and procs[child]["ppid"] == host[0] and len(group) == 2 and sorted(procs) == group
+          and r["group"]["processes"] == 2 and r["uptime_seconds"] > 0)
+    for p in group:
+        q = procs[p]
+        ok = ok and q["threads"] >= 1 and q["fds"] >= 1 and \
+            abs(q["memory_mb"] * 1024 - live[p]["rss_kb"]) <= max(64, 0.05 * live[p]["rss_kb"])
+except (StopIteration, KeyError, IndexError, TypeError, ValueError):
+    ok = False
+sys.exit(0 if ok else 1)
+PY
+}
+step node_stats_match "call lez_swap_node node_stats $role: the $role Node (pid ${child:-?}) and its process group, as /proc shows them" "$RUN" \
+  "$L call lez_swap_node node_stats $role; echo; echo 'pid ppid pgrp VmRSS_kB cmdline, from /proc:'; for p in \$(procs | awk '(\$3 == \"sleep\" && (\$4 == \"299\" || \$4 == \"300\")) || (\$3 ~ /logos_host\$/ && \$5 == \"lez_swap_node\") {print \$1}'); do echo \"live \$p \$(awk '{print \$4, \$5}' /proc/\$p/stat) \$(awk '/^VmRSS/{print \$2}' /proc/\$p/status) \$(tr '\\0' ' ' </proc/\$p/cmdline)\"; done"
 step "$ok" "module reload lez_swap_node" "$RUN" "$L module reload lez_swap_node"
 sleep 2
 step "$callok"' && grep -q running "$o"' "the $role Node is supervised again after the reload" "$RUN" "$L call lez_swap_node node_status $role"

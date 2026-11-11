@@ -346,6 +346,64 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   `sign` (`manifest.sig`), `verify --keyring-dir`, and logosctl a `key`
   command for trusted package-signing keys; no registry is involved.
 
+## The Node's resource use (follow-up: node_stats)
+
+`logosctl module stats` lists each module's `logos_host`, never the Node that
+`lez_swap_node` started (2026-11-11-b, S95). How the runtime computes it, from
+the sources the module builder pins (logos-liblogos, logos-container-subprocess,
+process-stats, read from the build's nix store) and the strings of the
+`liblogos_core.so` that logosctl 0.3.2, logosctl 0.3.0 and logoscore 0.2.3 ship:
+
+- `logos_core_get_module_stats()` (liblogos `src/logos_core/logos_core.cpp`) is
+  `ProcessStats::getModuleStats(ModuleManager::getModuleProcessIds())`.
+  `getModuleProcessIds()` is `ModuleLoaderRegistry::getAllPids()`, the union
+  of each loader's `getAllPids()`: a `std::unordered_map<std::string, int64_t>`,
+  one pid per module name. For process modules that is
+  `SubprocessContainer::getAllProcessIds()` (logos-container-subprocess
+  `src/subprocess_container.cpp`): the boost::process id of the `logos_host`
+  the container launched, keyed by module name.
+- `ProcessStats::getProcessStats(pid)` (process-stats `src/process_stats.cpp`)
+  reads `/proc/<pid>/stat` fields 14–15 (utime, stime: the process's own
+  threads; cutime/cstime are not read) and `VmRSS` from `/proc/<pid>/status`,
+  of that pid only. No process group, session, cgroup, `task/*/children` or
+  descendant walk: of `/proc`, the shipped `liblogos_core.so` files name only
+  `/proc/`, `/stat`, `/status` and `VmRSS:`.
+- A module cannot contribute: `ModuleLoader` / `ModuleContainer` have no hook
+  for extra pids, the module SDK (`LogosModuleContext`, the universal codegen)
+  has no stats interface, and `metadata.json` no field naming processes.
+
+So, of the ways to make `module stats` itself show the Node:
+
+- (a) a runtime way for a module to report or include its child processes:
+  there is none (above);
+- (b) a configuration the runtime samples that we could meet: the sample is one
+  pid's own counters, so only a Node running as threads of the `logos_host`
+  process would be counted. That is A3 (the Node as a library loaded in
+  process), which changes the frozen Rust engine's process model. Keeping the
+  Node in the host's process group or session would not help (neither is
+  read) and would give up the Node being its own process-group leader, which
+  is how its group is reaped today;
+- (c) done: `lez_swap_node` 0.3.1 reports the Node's use itself.
+  `node_stats(role)` (`modules/lez-swap-node/src/lez_swap_node_impl.h`, the
+  `.lidl` contracts) returns the supervision (state, pid, `uptime_seconds`,
+  `starts`, `restarts`, `last_exit`), one entry per member of the Node's
+  process group (the Node first, then its forwards and sidecars: pid, ppid,
+  name, state, `cpu_percent`, `cpu_time_seconds`, `memory_mb` as VmRSS,
+  threads, open fds), their sums under `group`, and the same for the module's
+  own host under `host`. The counters are the ones `module stats` uses
+  (utime+stime, VmRSS), read from `/proc` with no new dependency;
+  `cpu_percent` is measured since the role's previous `node_stats` call, or
+  over the process's life on the first call. The `group` sum counts shared
+  pages once per process.
+
+The acceptance script records `module stats` as INFO with the upstream request
+("`module stats` reports only the `logos_host` process; include (or list) the
+processes a module host started") and judges instead that
+`logosctl call lez_swap_node node_stats <role>` names the pid `node_status`
+gave, exactly the Node's process group as `/proc` shows it (the stand-in Node
+and its helper), the `lez_swap_node` host as the Node's parent, and each
+process's VmRSS. The desks do not show it.
+
 ## Recommended order
 
 1. Done without signing: release (portable) packages for the desks, Chat and

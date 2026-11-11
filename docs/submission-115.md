@@ -40,7 +40,7 @@ maker-node taker-node zebra basecamp-ui`, and `basecamp-ui` has `scale: 0`.
 | LEZ Network desk (`lez_network` 0.1.0) | the same `network` Basecamp | Starts both modules and runs Re-index (`deploy/scripts/repair-indexer.sh`). Not a role package; it declares `blockchain_module` and `lez_indexer_module` (`apps/basecamp/network/metadata.json`). |
 | LEZ sequencer: `sequencer_service` | plain `sequencer` container | There is no sequencer module (`deploy/compose.yaml`, `deploy/README.md` service table). |
 | Role LEZ wallet: `lez_core` 0.4.1-sign.4 | `maker-node` / `taker-node`: each party's headless Basecamp | The desk opens the wallet and imports the role key (`apps/basecamp/common/lez_role_signer.h`); patched to import a public account and sign a message hash. |
-| `lez_swap_node` 0.3.0 (our module, `modules/lez-swap-node`) | each party's Basecamp | Serves the role's signer socket (asks `lez_core` for every signature) and is the Node's one lifecycle owner: `start_node`, `stop_node`, `node_status`, `serve_signer` (`modules/lez-swap-node/src/lez_swap_node_impl.h`). The Node dies with the module's host (`PR_SET_PDEATHSIG`); a Node group a dead host left is ended before the next start; what the desk asked for is resumed when the module is loaded again. |
+| `lez_swap_node` 0.3.1 (our module, `modules/lez-swap-node`) | each party's Basecamp | Serves the role's signer socket (asks `lez_core` for every signature) and is the Node's one lifecycle owner: `start_node`, `stop_node`, `node_status`, `node_stats`, `serve_signer` (`modules/lez-swap-node/src/lez_swap_node_impl.h`). The Node dies with the module's host (`PR_SET_PDEATHSIG`); a Node group a dead host left is ended before the next start; what the desk asked for is resumed when the module is loaded again. |
 | `lez_maker_node` / `lez_taker_node` 0.1.0 (our payload packages, `modules/lez-<role>-node`) | installed in each party's Basecamp (`<user dir>/modules`) | Carry the role's Node: the Rust Node, its CLI, its Bitcoin and Zcash actors, the LEZ v0.2 sidecar, the health probe and the launcher (`modules/lez-role-node/node-entrypoint.sh`) under `bin/`, with sha256s in `bin/payload.json`; `launcher()` and `payload()`. Linux only. Packaged by `deploy/scripts/package-role-node.sh`. |
 | Maker and Taker desks (`lez_atomic_swap_maker`, `lez_atomic_swap_taker`) | each party's Basecamp, one desk per Basecamp, on VNC 127.0.0.1:5901 / :5902 | Commit `51f8f19b`. The UI tests drive the same desks (`deploy/ui-tests`). |
 | Rust Maker / Taker Node and their actors and sidecars | processes inside each party's Basecamp container, children of `lez_swap_node` | Started from the installed role package (`lez_<role>_node`, above); the image only installs the package (`deploy/images/<role>-node/Dockerfile`). The configuration (chains, identity, volumes) still comes from Compose. |
@@ -124,7 +124,16 @@ Stated plainly; each one is open unless it says otherwise.
    next start, a new host waits while an old one still supervises, and a
    reload resumes the signer and the Node (logos-native run 2026-11-11, and
    the landing checks in its README). Restart and hold are still the module's,
-   not the runtime's, and `module stats` still shows the host, not the Node.
+   not the runtime's. `logosctl module stats` shows the module's host, not
+   the Node: the runtime samples one pid per module (the `logos_host` it
+   launched; liblogos `logos_core_get_module_stats`, process-stats
+   `getProcessStats`) and has no way for a module to add its child processes,
+   and running the Node inside the host would change the frozen engine's
+   process model (packaging note, A3). So `lez_swap_node` reports the Node's
+   use itself: `node_stats(role)` gives pid, uptime, restarts, CPU, RSS,
+   threads and open fds of the Node and each process of its group, read from
+   `/proc` (packaging note, "The Node's resource use"); the acceptance script
+   judges it against `/proc` and records `module stats` as an upstream request.
    Basecamp 0.2.0 does not reload a module whose host crashed: the Node then
    stays down (no orphan) until the module is loaded again (a desk reopened,
    `logosctl module load`, Basecamp restarted); in Compose the role's health
