@@ -29,7 +29,16 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/file.h>
+#if defined(__APPLE__)
+#include <crt_externs.h>
+#include <libproc.h>
+#include <mach/mach_time.h>
+#include <poll.h>
+#include <sys/event.h>
+#include <sys/sysctl.h>
+#else
 #include <sys/prctl.h>
+#endif
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -37,7 +46,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(__APPLE__)
+// A dylib on macOS has no `environ` symbol to link against.
+#define environ (*_NSGetEnviron())
+#else
 extern char** environ;
+#endif
 
 namespace {
     // Module diagnostics go to stderr; logos_host routes each line through its
@@ -65,6 +79,142 @@ namespace {
         return "status " + std::to_string(status);
     }
 
+#if defined(__APPLE__)
+    // macOS has no /proc: the same two questions are asked of libproc and
+    // sysctl, which answer them for the caller's own processes.
+
+    // The members of process group `group`, as the kernel lists them; each is
+    // asked for its group again (the list is a snapshot and may hold zeroes).
+    // With `running_only`, not those already ended and waiting to be reaped
+    // (which libproc does not list in the first place).
+    std::vector<pid_t> members_of(pid_t group, bool running_only = false) {
+        std::vector<pid_t> members;
+        const int wanted = ::proc_listpids(PROC_PGRP_ONLY, static_cast<uint32_t>(group), nullptr, 0);
+        if (wanted <= 0) return members;
+        std::vector<pid_t> listed(static_cast<size_t>(wanted) / sizeof(pid_t) + 64);
+        const int bytes = ::proc_listpids(PROC_PGRP_ONLY, static_cast<uint32_t>(group), listed.data(),
+                                          static_cast<int>(listed.size() * sizeof(pid_t)));
+        for (size_t i = 0; bytes > 0 && i < static_cast<size_t>(bytes) / sizeof(pid_t); ++i) {
+            proc_bsdinfo process{};
+            if (listed[i] > 0 &&
+                ::proc_pidinfo(listed[i], PROC_PIDTBSDINFO, 0, &process, sizeof(process)) == static_cast<int>(sizeof(process)) &&
+                static_cast<pid_t>(process.pbi_pgid) == group && !(running_only && process.pbi_status == SZOMB)) {
+                members.push_back(listed[i]);
+            }
+        }
+        return members;
+    }
+
+    // Whether process `pid` belongs to a Node this module started: it carries
+    // the role's `marker` in the environment it was executed with, or its
+    // executable lies in the payload `directory`, or one of its arguments
+    // names a file there. sysctl KERN_PROCARGS2 gives the executable, the
+    // arguments, then the environment of a process of the same user, but no
+    // environment for the system's own binaries (/bin/bash, /bin/sleep):
+    // the launcher run by the system's shell is known by its argument, and
+    // that is the one test Linux does not make. Paths come back with their
+    // links resolved (/var is /private/var here), so the directory is
+    // compared both as given and resolved.
+    bool started_by_us(pid_t pid, const std::string& marker, const std::string& directory) {
+        std::string resolved;
+        if (char buffer[PATH_MAX]; !directory.empty() && ::realpath(directory.c_str(), buffer) != nullptr) resolved = buffer;
+        const auto in_payload = [&](const char* path, size_t length) {
+            const std::string file(path, length);
+            return (!directory.empty() && file.rfind(directory + "/", 0) == 0) ||
+                   (!resolved.empty() && file.rfind(resolved + "/", 0) == 0);
+        };
+        int limit_name[2] = {CTL_KERN, KERN_ARGMAX};
+        int limit = 0;
+        size_t limit_size = sizeof(limit);
+        if (::sysctl(limit_name, 2, &limit, &limit_size, nullptr, 0) != 0 || limit <= 0) limit = 1 << 20;
+        std::vector<char> image(static_cast<size_t>(limit));
+        int name[3] = {CTL_KERN, KERN_PROCARGS2, pid};
+        size_t size = image.size();
+        int arguments = 0;
+        if (::sysctl(name, 3, image.data(), &size, nullptr, 0) == 0 && size > sizeof(arguments)) {
+            std::memcpy(&arguments, image.data(), sizeof(arguments));
+            const char* at = image.data() + sizeof(arguments);
+            const char* const end = image.data() + size;
+            const auto length = [&at, end] { return ::strnlen(at, static_cast<size_t>(end - at)); };
+            const auto next = [&at, end, &length] {
+                at += length();
+                if (at < end) ++at;
+            };
+            next(); // the executable's path, then padding to a word
+            while (at < end && *at == '\0') ++at;
+            for (int i = 0; i < arguments && at < end; ++i, next()) {
+                if (in_payload(at, length())) return true;
+            }
+            for (; at < end && *at != '\0'; next()) {
+                if (marker.compare(0, std::string::npos, at, length()) == 0) return true;
+            }
+        }
+        char exe[PROC_PIDPATHINFO_MAXSIZE];
+        const int length = ::proc_pidpath(pid, exe, sizeof(exe));
+        return length > 0 && in_payload(exe, static_cast<size_t>(length));
+    }
+
+    // Close this process's descriptors from `lowest` up, between fork and
+    // exec: `list` (sized before the fork, nothing may allocate here) takes
+    // the kernel's list of them; without it every possible number is closed.
+    void close_descriptors(proc_fdinfo* list, int capacity, int lowest) {
+        const int bytes = ::proc_pidinfo(::getpid(), PROC_PIDLISTFDS, 0, list, capacity);
+        if (bytes > 0 && bytes < capacity) {
+            for (size_t i = 0; i < static_cast<size_t>(bytes) / sizeof(proc_fdinfo); ++i) {
+                if (list[i].proc_fd >= lowest) ::close(list[i].proc_fd);
+            }
+            return;
+        }
+        for (int fd = lowest, limit = ::getdtablesize(); fd < limit; ++fd) ::close(fd);
+    }
+
+    // What PR_SET_PDEATHSIG does on Linux, as a process: forked by the Node's
+    // process before it executes the launcher, so no Node exists without one.
+    // It waits on the kernel's exit notification (kqueue EVFILT_PROC) for
+    // `host` and for the Node, and when the host goes it ends the Node's
+    // whole process group (SIGTERM, SIGKILL to what is left after STOP_GRACE).
+    // A host already gone when the watch is set cannot be watched (ESRCH):
+    // that ends the group too, so there is no window. When the Node goes
+    // first the host ends the rest of the group itself; the watch stays until
+    // the group is empty, then this process exits. It sits in a session of
+    // its own, outside the Node's group (the host's end_group neither signals
+    // nor waits for it), holds none of the host's descriptors (a copy of the
+    // role lock would keep the next host waiting), and makes only system
+    // calls: it is the fork of a threaded process.
+    [[noreturn]] void watch_host(pid_t host, pid_t node) {
+        ::setsid();
+        for (int fd = 0; fd < 3; ++fd) ::close(fd);
+        const int queue = ::kqueue();
+        struct kevent watch {};
+        EV_SET(&watch, host, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, nullptr);
+        bool host_gone = queue < 0 || ::kevent(queue, &watch, 1, nullptr, 0, nullptr) != 0;
+        EV_SET(&watch, node, EVFILT_PROC, EV_ADD, NOTE_EXIT, 0, nullptr);
+        bool node_gone = !host_gone && ::kevent(queue, &watch, 1, nullptr, 0, nullptr) != 0;
+        while (!host_gone) {
+            // Once the Node is gone: look at its group five times a second.
+            if (node_gone && ::kill(-node, 0) != 0) ::_exit(0);
+            const timespec soon{0, 200 * 1000 * 1000};
+            struct kevent event {};
+            const int events = ::kevent(queue, nullptr, 0, &event, 1, node_gone ? &soon : nullptr);
+            if (events < 0 && errno != EINTR) host_gone = true;
+            if (events == 1 && event.ident == static_cast<uintptr_t>(host)) host_gone = true;
+            if (events == 1 && event.ident == static_cast<uintptr_t>(node)) node_gone = true;
+        }
+        if (::kill(-node, SIGTERM) == 0) {
+            const int checks = static_cast<int>(std::chrono::seconds(STOP_GRACE).count()) * 10;
+            for (int i = 0; i < checks && ::kill(-node, 0) == 0; ++i) ::usleep(100 * 1000);
+            ::kill(-node, SIGKILL);
+        }
+        ::_exit(0);
+    }
+
+    // macOS has neither accept4 nor SOCK_CLOEXEC; a descriptor a concurrent
+    // spawn() copies before this runs is closed there (close_descriptors).
+    int close_on_exec(int fd) {
+        if (fd >= 0) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+        return fd;
+    }
+#else
     // The members of process group `group`: every process whose stat names it;
     // with `running_only`, not those already ended and waiting to be reaped.
     std::vector<pid_t> members_of(pid_t group, bool running_only = false) {
@@ -102,6 +252,7 @@ namespace {
         const ssize_t length = ::readlink(("/proc/" + std::to_string(pid) + "/exe").c_str(), exe, sizeof(exe) - 1);
         return !directory.empty() && length > 0 && std::string(exe, static_cast<size_t>(length)).rfind(directory + "/", 0) == 0;
     }
+#endif
 
     // End process group `group`: SIGTERM, SIGKILL to whatever is left after
     // STOP_GRACE. Returns once no member runs or after the SIGKILL. A member
@@ -127,6 +278,46 @@ namespace {
         long threads = 0, fds = 0;
     };
 
+#if defined(__APPLE__)
+    // The same record from libproc, in /proc's terms: name is the command
+    // name (15 characters, as Linux's comm), state "T" stopped, "R" with a
+    // thread running, else "S"; memory_mb is the resident size. libproc does
+    // not answer for a process that ended and was not reaped (seen on macOS
+    // 26: no BSD info, and the group listing leaves it out), so a zombie is
+    // absent here where Linux lists it with state "Z"; the SZOMB tests stand
+    // for a system that does report one.
+    Usage usage_of(pid_t pid) {
+        Usage u;
+        u.pid = pid;
+        proc_bsdinfo process{};
+        if (::proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &process, sizeof(process)) != static_cast<int>(sizeof(process))) return u;
+        u.name = std::string(process.pbi_comm, ::strnlen(process.pbi_comm, sizeof(process.pbi_comm)));
+        u.ppid = static_cast<pid_t>(process.pbi_ppid);
+        timeval now{};
+        ::gettimeofday(&now, nullptr);
+        u.age_seconds = std::max(0.0, static_cast<double>(now.tv_sec) - static_cast<double>(process.pbi_start_tvsec) +
+                                          (static_cast<double>(now.tv_usec) - static_cast<double>(process.pbi_start_tvusec)) / 1e6);
+        u.state = process.pbi_status == SZOMB ? "Z" : process.pbi_status == SSTOP ? "T" : "S";
+        proc_taskinfo task{};
+        if (process.pbi_status != SZOMB &&
+            ::proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &task, sizeof(task)) == static_cast<int>(sizeof(task))) {
+            // The task's CPU times are in Mach time units (not nanoseconds on Apple silicon).
+            mach_timebase_info_data_t base{};
+            if (::mach_timebase_info(&base) != KERN_SUCCESS || base.denom == 0) base = {1, 1};
+            u.cpu_seconds = static_cast<double>(task.pti_total_user + task.pti_total_system) *
+                            static_cast<double>(base.numer) / static_cast<double>(base.denom) / 1e9;
+            u.memory_mb = static_cast<double>(task.pti_resident_size) / (1024.0 * 1024.0);
+            u.threads = task.pti_threadnum;
+            if (u.state == "S" && task.pti_numrunning > 0) u.state = "R";
+            const int wanted = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
+            std::vector<proc_fdinfo> open(static_cast<size_t>(std::max(wanted, 0)) / sizeof(proc_fdinfo) + 64);
+            const int bytes = ::proc_pidinfo(pid, PROC_PIDLISTFDS, 0, open.data(), static_cast<int>(open.size() * sizeof(proc_fdinfo)));
+            if (bytes > 0) u.fds = static_cast<long>(static_cast<size_t>(bytes) / sizeof(proc_fdinfo));
+        }
+        u.ok = true;
+        return u;
+    }
+#else
     Usage usage_of(pid_t pid) {
         Usage u;
         u.pid = pid;
@@ -166,6 +357,7 @@ namespace {
         u.ok = true;
         return u;
     }
+#endif
 
     std::string fixed(double value, int decimals) {
         char text[64];
@@ -206,14 +398,29 @@ namespace {
             envp.push_back(marker.c_str());
             envp.push_back(nullptr);
             const pid_t parent = ::getpid();
+#if defined(__APPLE__)
+            const int listed = ::proc_pidinfo(parent, PROC_PIDLISTFDS, 0, nullptr, 0);
+            std::vector<proc_fdinfo> descriptors(static_cast<size_t>(std::max(listed, 0)) / sizeof(proc_fdinfo) + 64);
+#endif
             const pid_t child = ::fork();
             if (child != 0) return child;
             ::setpgid(0, 0);
+#if defined(__APPLE__)
+            // The Node dies with this module's host: macOS has no parent-death
+            // signal, so a watcher process ends the Node's group when the
+            // host goes (watch_host). No watcher, no Node.
+            close_descriptors(descriptors.data(), static_cast<int>(descriptors.size() * sizeof(proc_fdinfo)), 3);
+            const pid_t node = ::getpid();
+            const pid_t watcher = ::fork();
+            if (watcher < 0) ::_exit(1);
+            if (watcher == 0) watch_host(parent, node);
+#else
             // The Node dies with this module's host: the kernel sends SIGTERM
             // when the forking thread (this role's, alive exactly as long as
             // the role is supervised) or its process goes. A host that went
             // before this line leaves the child to init: do not start then.
             ::prctl(PR_SET_PDEATHSIG, SIGTERM);
+#endif
             if (::getppid() != parent) ::_exit(1);
             const int out = ::open(log_file.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0640);
             const int in = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
@@ -365,6 +572,11 @@ namespace {
         std::string socket_path, account;
         std::function<std::string(const std::string&)> sign;
         int listener = -1;
+#if defined(__APPLE__)
+        // shutdown() does not wake an accept() on macOS: stop() writes to
+        // this pipe and the thread waits on it together with the listener.
+        int wake[2] = {-1, -1};
+#endif
         std::atomic<bool> stopping{false};
         std::thread thread;
         std::mutex mutex;
@@ -373,7 +585,35 @@ namespace {
 
         ~Signer() {
             if (listener >= 0) ::close(listener);
+#if defined(__APPLE__)
+            for (const int end : wake) {
+                if (end >= 0) ::close(end);
+            }
+#endif
         }
+#if defined(__APPLE__)
+
+        // accept4(listener, SOCK_CLOEXEC) for macOS, ended by stop(): the next
+        // connection, or -1 with errno EINTR (look again) or ESHUTDOWN
+        // (stopped). The listener does not block, so a connection that went
+        // between poll and accept cannot hold the thread; the connection
+        // itself blocks as on Linux.
+        int accept_connection() const {
+            pollfd waiting[2] = {{listener, POLLIN, 0}, {wake[0], POLLIN, 0}};
+            if (::poll(waiting, 2, -1) < 0) return -1;
+            if (stopping || waiting[1].revents != 0 || (waiting[0].revents & (POLLERR | POLLNVAL)) != 0) {
+                errno = ESHUTDOWN;
+                return -1;
+            }
+            const int connection = close_on_exec(::accept(listener, nullptr, nullptr));
+            if (connection < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) errno = EINTR;
+                return -1;
+            }
+            ::fcntl(connection, F_SETFL, ::fcntl(connection, F_GETFL) & ~O_NONBLOCK);
+            return connection;
+        }
+#endif
 
         // One signing request per connection: read one line, answer one line, close.
         void answer(int connection) const {
@@ -406,7 +646,11 @@ namespace {
             running = true;
             thread = std::thread([self = shared_from_this()] {
                 while (!self->stopping) {
+#if defined(__APPLE__)
+                    const int connection = self->accept_connection();
+#else
                     const int connection = ::accept4(self->listener, nullptr, nullptr, SOCK_CLOEXEC);
+#endif
                     if (connection >= 0) self->answer(connection);
                     else if (errno != EINTR && errno != ECONNABORTED) break;
                 }
@@ -422,6 +666,9 @@ namespace {
         void stop() {
             stopping = true;
             if (listener >= 0) ::shutdown(listener, SHUT_RDWR);
+#if defined(__APPLE__)
+            if (wake[1] >= 0) (void)!::write(wake[1], "", 1);
+#endif
             ::unlink(socket_path.c_str());
             std::unique_lock lock(mutex);
             const bool ended_in_time = ended.wait_for(lock, std::chrono::seconds(2), [this] { return !running; });
@@ -573,8 +820,21 @@ int64_t LezSwapNodeImpl::serve_signer(const std::string& socket_path, const std:
         if (!posted || signature.wait_for(SIGN_TIMEOUT) != std::future_status::ready) return std::string();
         return signature.get();
     };
+#if defined(__APPLE__)
+    signer->listener = close_on_exec(::socket(AF_UNIX, SOCK_STREAM, 0));
+    if (signer->listener < 0 || ::pipe(signer->wake) != 0) return 1;
+    close_on_exec(signer->wake[0]);
+    close_on_exec(signer->wake[1]);
+    ::fcntl(signer->listener, F_SETFL, ::fcntl(signer->listener, F_GETFL) | O_NONBLOCK);
+    // Answering a client that already hung up must not raise SIGPIPE in the
+    // host; set on the listener, every connection inherits it (it cannot be
+    // set on a connection whose peer is gone).
+    const int no_sigpipe = 1;
+    ::setsockopt(signer->listener, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
+#else
     signer->listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (signer->listener < 0) return 1;
+#endif
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     std::memcpy(address.sun_path, socket_path.c_str(), socket_path.size());
