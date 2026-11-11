@@ -165,9 +165,8 @@ Stated plainly; each one is open unless it says otherwise.
    sequencer proxy for the Nodes and signers (R6; the escrow deployment still
    uses it), but it uses upstream's `indexer_service` and Logos Blockchain node as
    plain containers instead of the modules, and has not been run since the
-   Nodes moved into their Basecamps (`docs/testnet-run.md`). In
-   `deploy/compose.testnet.yaml` the Taker's Basecamp still depends on the
-   local `sequencer`; the guide starts both with `--no-deps`.
+   Nodes moved into their Basecamps (`docs/testnet-run.md`). The overlay no
+   longer starts the local chain with the Basecamps (commit `107599c8`).
 9. **Linux only.** See R14. Only `blockchain_module` 0.2.4 ships a
    darwin-arm64 variant; our packages carry only the build host's variant
    (packaging note, observation 10).
@@ -187,20 +186,41 @@ Stated plainly; each one is open unless it says otherwise.
     `lez-heartbeat` and the explorers do not take `LEZ_CONTAINER_PREFIX`; the
     regression lanes share them by design (`deploy/compose.lane.yaml`), but two
     independent stacks cannot run on one host.
-12. **DCO.** Commit `5eac17c2` has author `igor@ffconsulting.org` and
-    sign-off `i@mandrigin.ru`, so the DCO check fails on it. Fixing it needs
-    the owner to rewrite and force-push the branch.
+12. **DCO: closed.** One commit had an author that its sign-off did not
+    name; the owner rewrote and force-pushed the branch on 2026-11-11 (same
+    tree). Commit ids quoted in older notes and in evidence recorded before
+    that day name the old history.
 13. **Reviewer entry point.** `submission/README.md` still introduces the
     v0.1.1 M1 + M3 + M6 package; this file is linked from `docs/submission.md`
     only.
-14. **Stale comments in code**, to be fixed with the code:
-    `deploy/scripts/repair-indexer.sh` says the indexer snapshots every 100
-    blocks (the patch makes it 10); `deploy/images/basecamp-ui/entrypoint.sh`
-    still names "compose.yaml bedrock, indexer"; `deploy/scripts/gen-config.sh`
-    cites `FREEZE-INVESTIGATION.md`, which is not in the repository.
-15. **The Zcash Testnet guide.** `docs/zcash-testnet-setup.md` says the live
-    corridor is pending, and `scripts/test-zcash-testnet-guide-contract.sh`
-    fails on it today ("guide is missing: project-owned signer").
+14. **A stale comment in code.** `deploy/scripts/gen-config.sh` cites
+    `FREEZE-INVESTIGATION.md`, which is not in the repository.
+15. **Zcash network upgrades.** Public Zcash Testnet runs NU7 (consensus
+    branch `77190ad9`). The swap engine signs for NU6.3 and NU7 (checked
+    against two mined Testnet transactions,
+    `crates/zec-swap-sdk/tests/zcash_testnet_vectors.rs`), with the profile
+    `public-testnet-v2` and a Testnet corridor provisioner; **no transaction
+    of ours has been broadcast on Testnet**. The regtest devnet, where the
+    regression runs, is still Zebra 5.2.0 on NU6.2, so the matrix and the
+    public lane sign for different upgrades. The Zcash refund of
+    `public-testnet-v2` opens after 3,700 blocks, about a day at Testnet's
+    present pace. `docs/zcash-testnet-setup.md` says the live corridor is
+    pending, and `scripts/test-zcash-testnet-guide-contract.sh` (not in CI)
+    fails on it today.
+16. **A transaction the sequencer will never execute.** The LEZ v0.2.4
+    sequencer admits any transaction and drops an unexecutable one at block
+    building without telling its submitter. For an escrow initialization whose
+    account already exists, the sidecar now refuses by name before sending,
+    and the swap fails with a readable reason after 5 refusals over 60 s
+    (`status_detail` in the Taker's swap view); other steps only report
+    "submitted N times, not included". The stop is unit-tested, not exercised
+    on the stack. A sequencer patch that returns the execution error at
+    submission is written but neither built nor adopted (branch
+    `agent/seqfeedback`).
+17. **Tests read one thing from a log.** `node-e2e.py` counts the Maker's
+    lock attempts from the Node's own log file (`LEZ_NODE_LOG_FILE`), not
+    from an API. Logos Delivery writes ~12 MB of log a minute into each
+    role's container output with three lanes; nothing limits it.
 
 ## Pending gates
 
