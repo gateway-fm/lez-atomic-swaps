@@ -343,10 +343,12 @@ jobs:
           LEZ_NIX_VOLUME: lez-nix-store-arm
         run: |
           set -euo pipefail
+          # (package-role-node.sh and stage-basecamp-package.sh work from
+          # deploy/: every path handed to them is absolute)
           for role in maker taker; do
             chmod 0755 deploy/images/$role-node/lez-* || true
             deploy/scripts/package-role-node.sh "$role" "$GITHUB_WORKSPACE/_in/lez-modules/lez_${role}_node-plugin.lgx" \
-              "deploy/images/$role-node/lez_${role}_node.lgx"
+              "$GITHUB_WORKSPACE/deploy/images/$role-node/lez_${role}_node.lgx"
           done
       # The release set, as from-scratch.sh --only stage writes it: every
       # package the Basecamps install (the desks, Chat and Delivery from the
@@ -363,8 +365,8 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/blockchain_module.lgx" \
             "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$version/blockchain_module-$version.lgx"
           echo "$sum  $RUNNER_TEMP/blockchain_module.lgx" | sha256sum -c -
-          out=deploy/images/basecamp-ui/assets/.nix-out
-          release=deploy/images/basecamp-ui/assets/packages
+          out="$GITHUB_WORKSPACE/deploy/images/basecamp-ui/assets/.nix-out"
+          release="$GITHUB_WORKSPACE/deploy/images/basecamp-ui/assets/packages"
           deploy/scripts/pin-package-dependencies.sh --out "$release" \
             "$out"/maker-lgx-portable/*.lgx "$out"/taker-lgx-portable/*.lgx "$out"/network-lgx-portable/*.lgx \
             "$out"/chat_module-lgx-portable/*.lgx "$out"/delivery_module-lgx-portable/*.lgx \
