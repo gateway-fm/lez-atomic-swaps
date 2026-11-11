@@ -166,9 +166,11 @@ echo "[1/6] generating runtime config…"
 env_before="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 # The genesis must fund the identities the Nodes settle as, on a rerun too:
 # without this gen-config falls back to account ids recorded for another host.
-if [[ -z "${LEZ_WALLET_IDENTITIES:-}" && -f runtime/runtime.env ]]; then
-  market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
-  [[ ! -d "$market_root/identities" ]] || export LEZ_WALLET_IDENTITIES="$market_root/identities"
+# A first run (a second stack's new deploy directory) takes LEZ_MARKET_ROOT's.
+if [[ -z "${LEZ_WALLET_IDENTITIES:-}" ]]; then
+  market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env 2>/dev/null | head -1 || true)"
+  market_root="${market_root:-${LEZ_MARKET_ROOT:-}}"
+  [[ -z "$market_root" || ! -d "$market_root/identities" ]] || export LEZ_WALLET_IDENTITIES="$market_root/identities"
 fi
 bash scripts/gen-config.sh runtime
 env_after="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
