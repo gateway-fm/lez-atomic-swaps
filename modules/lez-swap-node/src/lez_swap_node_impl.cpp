@@ -65,8 +65,9 @@ namespace {
         return "status " + std::to_string(status);
     }
 
-    // The members of process group `group`: every process whose stat names it.
-    std::vector<pid_t> members_of(pid_t group) {
+    // The members of process group `group`: every process whose stat names it;
+    // with `running_only`, not those already ended and waiting to be reaped.
+    std::vector<pid_t> members_of(pid_t group, bool running_only = false) {
         std::vector<pid_t> members;
         DIR* proc = ::opendir("/proc");
         if (proc == nullptr) return members;
@@ -82,7 +83,7 @@ namespace {
             std::istringstream fields(line.substr(close + 1));
             std::string state;
             long ppid = 0, pgrp = 0;
-            if (fields >> state >> ppid >> pgrp && pgrp == group) members.push_back(pid);
+            if (fields >> state >> ppid >> pgrp && pgrp == group && !(running_only && state == "Z")) members.push_back(pid);
         }
         ::closedir(proc);
         return members;
@@ -103,11 +104,14 @@ namespace {
     }
 
     // End process group `group`: SIGTERM, SIGKILL to whatever is left after
-    // STOP_GRACE. Returns once the group is empty or after the SIGKILL.
+    // STOP_GRACE. Returns once no member runs or after the SIGKILL. A member
+    // that ended stays in the group until its parent reaps it, and an orphan's
+    // parent is whatever init the host runs under, which may never reap (a
+    // container whose pid 1 is not an init): such zombies do not count.
     void end_group(pid_t group) {
         if (group <= 0 || ::kill(-group, SIGTERM) != 0) return;
         const auto deadline = std::chrono::steady_clock::now() + STOP_GRACE;
-        while (::kill(-group, 0) == 0 && std::chrono::steady_clock::now() < deadline) {
+        while (!members_of(group, true).empty() && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         if (::kill(-group, SIGKILL) == 0) std::this_thread::sleep_for(std::chrono::milliseconds(200));
