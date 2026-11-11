@@ -354,6 +354,9 @@ services:
       # The actor supervisor's polling (gen-config.sh, per timing profile);
       # empty = the Node's defaults (5 s requeue, 30 s failure backoff).
       LEZ_MAKER_ACTOR_REQUEUE_SECONDS: ${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}
+      # The Node's own lines, whole, for the tests that count them
+      # (node-e2e.py); the container's output interleaves them with Delivery's.
+      LEZ_NODE_LOG_FILE: /run/lez/maker/node.log
       LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS: ${LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS:-}
       # Actor decision trace on stderr (`docker logs`); empty = off.
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
@@ -449,6 +452,9 @@ services:
       # The Bitcoin observer's pause between sweeps (gen-config.sh, per timing
       # profile); empty = the Node's default (15 s).
       LEZ_TAKER_OBSERVER_SWEEP_SECONDS: ${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}
+      # The Node's own lines, whole, for the tests that count them
+      # (node-e2e.py); the container's output interleaves them with Delivery's.
+      LEZ_NODE_LOG_FILE: /run/lez/taker/node.log
       # Actor decision trace on stderr (`docker logs`); empty = off.
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
     volumes:

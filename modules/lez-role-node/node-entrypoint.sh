@@ -24,6 +24,18 @@ command -v setpriv >/dev/null && with_node=(setpriv --pdeathsig TERM)
 state="/var/lib/lez/$role"
 run="/run/lez/$role"
 btc_state="$state/btc"
+
+# The Node's own lines, also in a file of their own when LEZ_NODE_LOG_FILE names
+# one. Inside Basecamp the Node shares the container's output with every module
+# the desk hosts, and Logos Delivery's lines land in the middle of the Node's;
+# a reader that needs whole Node lines (the devnet's tests) reads this file.
+# The file starts again once it has passed 16 MB.
+node_log_file() {
+  local file="${LEZ_NODE_LOG_FILE:-}"
+  [[ -n "$file" ]] || return 0
+  if [[ -f "$file" ]] && (( $(stat -c %s "$file") > 16777216 )); then : >"$file"; fi
+  exec > >(tee -a "$file") 2> >(tee -a "$file" >&2)
+}
 identity_src="/run-lez-identity"
 manifest="/run-market/market-bootstrap.env"
 cookie_src="/run-config/btc-rpc-cookie"
@@ -329,6 +341,7 @@ case "$role" in
     # a failed attempt sooner (gen-config.sh); unset, the Node's own defaults.
     [[ -z "${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}" ]] || args+=(--actor-requeue-delay-seconds "$LEZ_MAKER_ACTOR_REQUEUE_SECONDS")
     [[ -z "${LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS:-}" ]] || args+=(--actor-failure-backoff-seconds "$LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS")
+    node_log_file
     exec "$bin/lez-maker-node" "${args[@]}"
     ;;
   taker)
@@ -382,6 +395,7 @@ PY
     # The devnet's timing profiles sweep the Bitcoin swaps sooner
     # (gen-config.sh); unset, the Node's own default.
     [[ -z "${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}" ]] || args+=(--observer-sweep-seconds "$LEZ_TAKER_OBSERVER_SWEEP_SECONDS")
+    node_log_file
     exec "$bin/lez-taker-node" "${args[@]}"
     ;;
   *) echo "unknown role $role" >&2; exit 2 ;;

@@ -1594,13 +1594,24 @@ def zec_log_replans(swap_id: str, config: str) -> list[dict]:
 
 
 def maker_effect_lines(swap_id: str, since: str) -> list[str]:
-    """The Maker Node's effect lines for one swap since `since` (RFC 3339), in
-    order: `<command> → <outcome> <operation> (phase …, revision …, next …)`."""
-    result = subprocess.run(["docker", "logs", "--since", since, NODES["maker"][0]],
+    """The Maker Node's effect lines for one swap, in order:
+    `<command> → <outcome> <operation> (phase …, revision …, next …)`. Read
+    from the Node's own log file (LEZ_NODE_LOG_FILE, compose.yaml): the
+    container's output carries every module of the role's Basecamp, and
+    Logos Delivery's lines split the Node's or rotate them away. A Node
+    without the file (an older image) is read from the container's log since
+    `since` (RFC 3339)."""
+    container = NODES["maker"][0]
+    result = subprocess.run(["docker", "exec", container, "cat", "/run/lez/maker/node.log"],
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
+    text = result.stdout
+    if result.returncode != 0:
+        result = subprocess.run(["docker", "logs", "--since", since, container],
+                                capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
+        text = result.stdout + result.stderr
     prefix = f"maker actor {swap_id}: "
     lines = []
-    for line in (result.stdout + result.stderr).splitlines():
+    for line in text.splitlines():
         if prefix in line and " → " in line:
             lines.append(line.split(prefix, 1)[1].strip())
     return lines
