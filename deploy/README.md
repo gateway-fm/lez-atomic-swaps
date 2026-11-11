@@ -154,13 +154,18 @@ gen-config.sh removes the cause with configuration only:
 - The notes' values and owners are part of the genesis transaction, so the genesis
   block root and the SDP declaration's locked note id were recomputed for them
   (`builder/regenesis`); `gen-config.sh` checks both against the upstream file.
+- Each new chain's genesis time is the moment it is made (`LEZ_GENESIS_TIME` in
+  runtime.env, kept for its restarts), computed by `builder/regenesis` in the LEZ
+  network's image. With upstream's time (2026-07-31) the indexer's cold start first
+  read every slot since then, which delayed a new chain's first finalized block and
+  every re-index; an image without the tool still starts chains that way.
 
 `regress.sh` treats a chain whose storage price has reached 6000 (about five days of
 chain time) as worn and starts the next test on a new one.
 
 If a chain still freezes, the fix is the same: start a new one.
 `up.sh --fresh-lez` waits for the new chain's first finalized height, which a healthy
-chain's indexer serves ~100 s after the sequencer's first block, for up to 300 s
+chain's indexer serves ~15 s after the chain is healthy, for up to 300 s
 (`LEZ_FRESH_FIRST_FINALITY_SECONDS`). It then waits 60 s for the height to move
 (`LEZ_FRESH_FINALITY_SECONDS`). It starts another chain at once when either never
 comes, or when the market bootstrap cannot finish; six chains at most

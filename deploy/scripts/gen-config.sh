@@ -248,8 +248,9 @@ fi
 # is part of the inscription, so the genesis block root and the SDP
 # declaration's locked note id change with them. builder/regenesis computes
 # both (README there), in the LEZ network's image, for a new chain: one whose
-# Bedrock state is empty. Its time is kept in runtime.env (LEZ_GENESIS_TIME),
-# and a restart of the same chain renders the same genesis from it. The values
+# Bedrock state is empty and whose time runtime.env does not record yet
+# (LEZ_GENESIS_TIME; up.sh --fresh-lez drops it with the old chain). Every
+# later run, a restart of the same chain too, renders the same genesis. The values
 # for upstream's time were computed once and are checked here against the
 # upstream file they were computed from; a chain made before LEZ_GENESIS_TIME
 # was recorded, or by an image without regenesis, keeps them.
@@ -271,7 +272,7 @@ previous_genesis_time=""
 has_regenesis() { docker image inspect "$network_image" >/dev/null 2>&1 &&
   docker run --rm --network none --entrypoint /bin/sh "$network_image" -c 'test -x /usr/local/bin/regenesis' 2>/dev/null; }
 regenesis_present=0
-if [[ -n "$(ls -A "$RUNTIME/bedrock" 2>/dev/null)" ]]; then
+if [[ -n "$(ls -A "$RUNTIME/bedrock" 2>/dev/null)" || -n "$previous_genesis_time" ]]; then
   genesis_time="${previous_genesis_time:-$upstream_genesis_time}"
   [[ "$genesis_time" == "$upstream_genesis_time" ]] || ! has_regenesis || regenesis_present=1
 elif has_regenesis; then

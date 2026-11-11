@@ -148,6 +148,10 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
       docker run --rm --user 0 --volume "$PWD/runtime:/runtime" \
         --entrypoint /bin/sh "${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}" -c "rm -rf '/runtime/$d'"
   done
+  # So does its genesis time: without it gen-config.sh gives the new chain the
+  # time it is made.
+  grep -v '^LEZ_GENESIS_TIME=' runtime/runtime.env >runtime/runtime.env.tmp || true
+  chmod 0600 runtime/runtime.env.tmp && mv -f runtime/runtime.env.tmp runtime/runtime.env
   # The escrow deployment and the manifest the Nodes render belong to the old
   # chain; gen-config.sh would otherwise copy that manifest into the runtime.
   market_root="$(sed -n 's/^LEZ_MARKET_ROOT=//p' runtime/runtime.env | head -1)"
@@ -233,8 +237,10 @@ wait_healthy 2400 lez-bitcoin-core lez-zebra lez-network lez-sequencer
 # A new LEZ chain can stop finalizing within its first minute (README, "a
 # frozen devnet"); everything after this point would then wait on it in vain
 # (the indexer repair, the vault claims). A healthy new chain's indexer serves
-# no finalized height (null) for ~100 s after the sequencer's first block, then
-# moves every ~2 s (1 s blocks). So wait for the first height
+# its first finalized height ~15 s after the chain is healthy (with upstream's
+# genesis time, which an image without builder/regenesis keeps, ~45-100 s: the
+# indexer first reads every slot since that time), then it moves every ~2 s
+# (1 s blocks). So wait for the first height
 # (LEZ_FRESH_FIRST_FINALITY_SECONDS, 300) and then for it to move
 # (LEZ_FRESH_FINALITY_SECONDS, 60), and start another chain if either never comes.
 if [[ "$FRESH_LEZ" == 1 ]]; then
