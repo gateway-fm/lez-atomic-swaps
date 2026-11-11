@@ -2,10 +2,12 @@
 
 Status (2026-11-11): the acceptance lane exists — runner, evidence bundle and
 a manual/weekly workflow — and its preflight runs against public Zcash
-Testnet. **No public-testnet swap has run, and none can yet:** Zcash Testnet
-moved to NU7 (consensus branch `77190ad9`) at height 4,465,026 on 2026-10-04,
-and the swap engine signs only up to NU6.2 (`5437f330`). The lane says so by
-name and stops before anything is tried ([what is missing](#what-blocks-a-public-corridor)).
+Testnet. Zcash Testnet moved to NU7 (consensus branch `77190ad9`) at height
+4,465,026 on 2026-10-04; the swap engine now signs for it (librustzcash 0.31,
+agreement profile `public-testnet-v2`) and a Testnet corridor can be
+provisioned from an owner-funded transparent key. **No public-testnet swap
+has run yet:** the funder key holds no TAZ and no keyed route exists
+([what is missing](#what-blocks-a-public-corridor)).
 
 This guide separates what an operator can configure today from what is
 missing. It does not claim a passing public-testnet swap. The primary route is
@@ -20,7 +22,7 @@ flowchart LR
     Keys --> SDK["LEZ/ZEC SDK transaction builder"]
     SDK --> Route["Selected node route"]
     Route --> RPC["Cookie-authenticated loopback JSON-RPC"]
-    RPC --> Zebra["Self-hosted Zebra 6.0.0"]
+    RPC --> Zebra["Self-hosted Zebra ≥ 7.0.0"]
     Zebra <-->|"public Testnet P2P"| Peers["Zcash Testnet peers"]
     Route -.-> Tatum["Tatum Zebrad Testnet gateway"]
     Tatum -.-> Managed["Provider-managed Zebra"]
@@ -52,7 +54,7 @@ flowchart LR
   a different, digest-pinned Zebra than the public-testnet guidance above: it
   copies `zebrad` out of `zfnd/zebra:5.2.0` at a fixed digest. Regtest consensus
   is what that harness tests, so it moves on its own schedule. Public-testnet
-  work follows the 6.0.0 guidance.
+  work follows the ≥ 7.0.0 guidance.
 - Tatum documents a dedicated Zebrad JSON-RPC endpoint at
   `https://zcash-testnet-zebrad.gateway.tatum.io`, API-key authentication, a
   free Testnet key, and a separately monitored Testnet Zebrad status component.
@@ -295,9 +297,66 @@ and a refund corridor and a complete corridor on each route.
 Timing: a happy corridor waits for two LEZ-final effects (the LEZ testnet
 finalizes ~50 blocks, about 50 minutes, behind its tip) plus the Zcash
 confirmations; a refund corridor waits for the agreement's LEZ refund time
-and Zcash refund height. Our estimate, not a measurement: about 2 hours for a
-happy corridor and 4–5 hours for a refund under a profile sized for today's
-blocks, so a full scheduled run is most of a day on a self-hosted runner.
+and Zcash refund height. `public-testnet-v2` sizes the Zcash refund for
+safety at the fastest pace Testnet has run, not the average (below), so the
+Zcash refund opens ~23 hours after funding at today's 22.7 s blocks. Our
+estimate, not a measurement: about 2 hours for a happy corridor, about a day
+for a refund corridor; a full scheduled run is a day or more on a
+self-hosted runner.
+
+### The agreement profile: `public-testnet-v2`
+
+Profiles are immutable per id. `public-testnet-v1` (NU6.2, 192 Zcash refund
+blocks) keeps its meaning; `public-testnet-v2` (wire tag 6) is the Testnet
+profile since NU7:
+
+| Parameter | v1 | v2 | Why |
+|---|---|---|---|
+| Branch | NU6.2 `5437f330` | NU7 `77190ad9` | Testnet's chain tip since 4,465,026 |
+| LEZ refund delay / margin | 2 h / 2 h | 2 h / 2 h | unchanged |
+| Confirmations LEZ / Zcash | 2 / 10 | 2 / 10 | unchanged (10 Zcash blocks ≈ 4 min) |
+| Zcash refund blocks | 192 | 3,700 | rule below |
+| Expiry delta | 40 | 120 | 50 min at NU7's 25 s target, librustzcash's NU7 default |
+
+The rule: the Zcash refund (the later one) must not open before the LEZ refund
+delay plus the margin after funding, at the fastest pace Testnet has run —
+`refund blocks × 3.9 s ≥ 2 h + 2 h`. Testnet's min-difficulty rule lets cheap
+blocks through: 1,000 blocks took 3,922 s just before NU7. 3,700 × 3.9 s =
+14,430 s ≥ 14,400 s. At the 22.7 s average since NU7 the window is ~23 h; v1's
+192 blocks were ~73 min at that pace and ~12.5 min at the fastest. The
+provisioner states the Zcash refund's earliest time with the same 3.9 s
+(`PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS`).
+
+### Provisioning a Testnet corridor
+
+`scripts/zec-provision.sh --zcash-network test` (node-e2e.py calls it in
+public mode) builds one corridor under `public-testnet-v2`:
+
+- the route from `LEZ_ZEBRA_URL` and exactly one of `LEZ_ZEBRA_COOKIE_FILE`
+  (self-hosted Zebra on loopback) or `LEZ_ZEBRA_API_KEY_FILE` (Tatum), as
+  `public-zec-testnet.sh` sets them; chain `test`, genesis `05a60a92…2c38` and
+  a chain tip on NU7 are checked before anything else;
+- the role keys `maker-zcash.key` and `taker-zcash.key` from
+  `LEZ_ZEC_TESTNET_KEY_DIR` (mode 0700, refused inside the repository). The
+  Maker's key is also its Delivery identity: install it as the testnet
+  stack's `runtime/lez/maker/zcash.key` before the Nodes start;
+- the Zcash funder spends an ordinary unspent output of its key, 10 blocks
+  deep, found from `LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT` (the height of the
+  owner's TAZ payment, first run) or from where the last corridor's funder
+  output was (`runtime/zec/testnet-funding-from`; its change lands after it);
+- a Taker-funded corridor (`TakerSellsForeign`) first pays the Taker's key
+  from the Maker's (`zec-local-poc-transfer --zcash-network test`) and waits
+  for that payment to be 10 blocks deep;
+- the principal is `LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS` (0.01 TAZ in the lane
+  profile) against the template's 50,000 LEZ units; fees are 10,000 zatoshis
+  per Zcash transaction;
+- each actor gets its own copy of the route's credential beside its keys,
+  and scans the whole 3,701-block refund window for the counterparty's lock.
+
+Nothing is mined and nothing is broadcast before the actors run, except the
+Taker-funding payment. Zebra has no dry-run (`testmempoolaccept` answers
+"Method not found" on Zebra 7.0.0), so the first proof that a NU7 spend is
+accepted is a real one.
 
 What the lane does not record yet: LEZ transaction ids (node-e2e.py's ZEC
 summaries name only Zcash transactions; LEZ effects are visible on the
@@ -306,33 +365,36 @@ observation beyond the sequencer's tip.
 
 ### What blocks a public corridor
 
-Run on 2026-11-11, the preflight stops at the consensus branch: Testnet's next
-block is on NU7 (`77190ad9`), the agreement profile `public-testnet-v1` signs
-for NU6.2 (`5437f330`). The bundle of that run is
+Run on 2026-11-11, the first preflight stopped at the consensus branch:
+Testnet's next block is on NU7 (`77190ad9`), the then lane profile's
+`public-testnet-v1` signs for NU6.2 (`5437f330`). The bundle of that run is
 [`docs/evidence/zcash-public-testnet-20261111-preflight/`](evidence/zcash-public-testnet-20261111-preflight/SUMMARY.md);
-it holds no swap. Before a corridor can run, the swap engine needs, in this
-order:
+it holds no swap. Since then the swap engine:
 
-1. `zcash_protocol`/`zcash_primitives`/`zcash_transparent` versions that know
-   the final NU7 branch id (the pinned `zcash_protocol` 0.9.0 stops at NU6.2;
-   its `Nu7` is a cfg-gated placeholder `0xffffffff`);
-2. a new immutable agreement profile on NU7 with a Zcash refund window sized
-   for the measured block pace: `public-testnet-v1`'s 192 blocks last ~75–95
-   minutes at today's ~25 s blocks, while its own schedule wants the Zcash
-   refund at least its LEZ refund delay plus margin (4 hours) after funding —
-   576 blocks at 25 s, several thousand if the fastest-pace bound has to cover
-   min-difficulty runs;
-3. the actor's `ConsensusBranchConfig` able to name `37a5165b` and `77190ad9`;
-4. a Testnet corridor provisioner: `local_poc.rs` (behind
-   `scripts/zec-provision.sh`, whose `--zcash-network test` exits 3 with this
-   reason) accepts only the deterministic Regtest Zebra, funds from mature
-   coinbase outputs and writes `NetworkType::Regtest` into the agreement;
-5. a Zebra image that follows Testnet's NU7 for the self-hosted route.
+1. signs for NU6.3 and NU7: `zcash_protocol` 0.11.0, `zcash_primitives`
+   0.31.0 and `zcash_transparent` 0.11.0 carry the final ids. Two transparent
+   v5 spends mined on Testnet — `a85b0f6a352b9699d4221a93eeadbab457862c4dec2a3ac7ccd0d2f034fc89ea`
+   in the NU7 activation block and `d759e629035fc77989d8b3253d16660e5cd3beef33bd8a011ba335d0f44d7bb8`
+   in the last NU6.3 block — reproduce their txids and their signatures verify
+   under our ZIP-244 hash (`crates/zec-swap-sdk/tests/zcash_testnet_vectors.rs`);
+2. has the immutable profile `public-testnet-v2` (above), which the lane
+   profile `public-zec-testnet-v2` names;
+3. lets the actor's `ConsensusBranchConfig` name `37a5165b` and `77190ad9`;
+4. provisions Testnet corridors (above).
 
-Then the owner supplies: transparent TAZ at the funder's `tm…` address (no
-faucet answered), a Tatum Testnet API key as the secret
-`ZCASH_TESTNET_TATUM_API_KEY`, and a self-hosted runner `lez-zec-testnet`
-with ~16 GB for Testnet Zebra state.
+What is still missing, all of it the owner's or the host's:
+
+- transparent TAZ at the Maker funder key's `tm…` address (no faucet
+  answered). One happy and one refund corridor on each of the two routes,
+  `TakerSellsLez`, spend 4 × (0.01 + 0.0001) TAZ from it, about 0.041 TAZ; the
+  same four `TakerSellsForeign` corridors add 4 × 0.0103 TAZ of payments to
+  the Taker; 0.1 TAZ covers both directions;
+- a keyed route: a Tatum Testnet API key as the secret
+  `ZCASH_TESTNET_TATUM_API_KEY` (five keyless requests a minute cannot drive a
+  corridor), or a synced self-hosted Testnet Zebra ≥ 7.0.0 (~16 GB) and the
+  self-hosted runner `lez-zec-testnet`;
+- the testnet stack running the Maker under the funder key, with the LEZ
+  testnet side services (docs/testnet-run.md) and LEZ funds.
 
 Public Testnet is inherently dependent on peer availability, initial sync,
 faucet or pre-funded-wallet availability, activation timing, and organic reorgs.
@@ -361,5 +423,5 @@ public lane's failures retain their bundle and are never silently ignored.
 | Community faucet | Optional | External community operator | No SLA/current limits; may time out or be depleted |
 | Zcash Discord funding request | Optional fallback | External support process | Manual response and availability |
 | Zallet alpha.4 | Optional funding wallet only | Local operator | Alpha compatibility; no arbitrary HTLC signing; NU6.3 must be reverified |
-| Project transparent signer | Exists (`zcash_key_file`, actor-signed claim and refund) | Independent maker/taker | Signs only up to NU6.2: see [what blocks a public corridor](#what-blocks-a-public-corridor) |
-| Testnet corridor provisioner | Required repository work | Maker/taker setup | `local_poc.rs` provisions Regtest corridors only |
+| Project transparent signer | Exists (`zcash_key_file`, actor-signed claim and refund) | Independent maker/taker | Signs for NU6.2 (Regtest), NU6.3 and NU7; mined Testnet vectors verify, no NU7 spend broadcast yet |
+| Testnet corridor provisioner | Exists (`zec-provision.sh --zcash-network test`) | Maker/taker setup | Needs owner-funded TAZ and a keyed route; untried end to end |
