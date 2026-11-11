@@ -46,7 +46,7 @@ maker-node taker-node zebra basecamp-ui`, and `basecamp-ui` has `scale: 0`.
 | Rust Maker / Taker Node and their actors and sidecars | processes inside each party's Basecamp container, children of `lez_swap_node` | Started from the installed role package (`lez_<role>_node`, above); the image only installs the package (`deploy/images/<role>-node/Dockerfile`). The configuration (chains, identity, volumes) still comes from Compose. |
 | Loopback forwarders (`socat`) | inside each role container (the package's launcher) | The Bitcoin adapter, wallet client and LEZ sidecars accept only literal-loopback endpoints. Relaxing that is BTC-adjacent and not done. They end with the Node (`setpriv --pdeathsig`). |
 | Bitcoin Core 31.1 regtest | plain `bitcoin-core` container | #115 keeps Bitcoin bring-your-own. `logos-bitcoind-module` was assessed and not adopted: built without the wallet the Nodes use, a 14-method RPC allowlist, no `txindex`/`txospenderindex`, RPC bound to the module's loopback, no released lgx, and a from-source Core in place of the Guix-verified 31.1 that M3 was accepted on (`scripts/verify-bitcoin-core-release.sh`). This assessment read upstream sources; no spike was run. |
-| Zebra 5.2.0 regtest | plain `zebra` container | `logos-zebrad-module` was assessed and not adopted in this PR: no released lgx, Zebra 7.0.0 instead of 5.2.0 under the ZEC tests, cookie auth always on, no upstream aarch64-linux build, and it would still be a container exposing TCP JSON-RPC. No spike was run. |
+| Zebra 7.0.0 regtest (NU7) | plain `zebra` container | `logos-zebrad-module` was assessed and not adopted in this PR: no released lgx, Zebra 7.0.0 instead of 5.2.0 under the ZEC tests, cookie auth always on, no upstream aarch64-linux build, and it would still be a container exposing TCP JSON-RPC. No spike was run. |
 | `btc-miner` | plain container | Regtest harness only. |
 | `btc-explorer`, `lez-explorer` | profile `explorers`, off by default | Reviewer and demo aids, not product runtime. |
 | `heartbeat` | profile `heartbeat` | Finality watcher; its transfers go through `lez_core` in a headless logoscore, but its host is Compose. |
@@ -207,8 +207,10 @@ Stated plainly; each one is open unless it says otherwise.
     `crates/zec-swap-sdk/tests/zcash_testnet_vectors.rs`), with the profile
     `public-testnet-v2` and a Testnet corridor provisioner; **no transaction
     of ours has been broadcast on Testnet**. The regtest devnet, where the
-    regression runs, is still Zebra 5.2.0 on NU6.2, so the matrix and the
-    public lane sign for different upgrades. The Zcash refund of
+    regression runs, is Zebra 7.0.0 with NU7 from height 1 (profiles
+    `deterministic-local-devnet-v5` / `-v6`; the NU6.2 profiles keep their
+    ids and are refused on this chain), so the matrix and the public lane
+    sign for the same upgrade. The Zcash refund of
     `public-testnet-v2` opens after 3,700 blocks, about a day at Testnet's
     present pace. `docs/zcash-testnet-setup.md` says the live corridor is
     pending, and `scripts/test-zcash-testnet-guide-contract.sh` (not in CI)
