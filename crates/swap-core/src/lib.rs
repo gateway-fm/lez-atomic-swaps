@@ -1097,10 +1097,15 @@ impl SwapCoordinator {
     /// Returns [`Error::TakerLockNotConfirmed`] until confirmation policy is satisfied.
     fn observe_maker_lock_impl(&mut self, proof: ChainProof) -> Result<(), Error> {
         let confirmed = proof.confirmations >= self.maker_confirmation_policy.required();
+        // `TakerLockReorged` is here so the maker leg's depth is still recorded while the
+        // taker leg is the reason for the phase; the table below leaves that phase alone.
+        // It used to fall through to the early return further down, which kept a stale
+        // `maker_funding_confirmed` and let a claim through once the taker leg came back.
         if matches!(
             self.phase,
             Phase::AwaitingMakerConfirmations
                 | Phase::BothLegsLocked
+                | Phase::TakerLockReorged
                 | Phase::MakerLockReorged
                 | Phase::ClaimEvidenceAvailable
         ) {
@@ -1245,10 +1250,25 @@ impl SwapCoordinator {
 
     /// Refunds the maker-funded leg at its typed chain position.
     ///
+    /// After a revealing claim is recorded no refund is admitted while that evidence stands.
+    /// The phase alone cannot say this: the lock-removal observers move a swap that holds
+    /// claim evidence into `TakerLockReorged` or `MakerLockReorged`, which admit refunds, and
+    /// keep the evidence, so the refund asks [`Self::claim_evidence`] first. The model has no
+    /// observation of the revealing claim itself leaving the chain, so the evidence is never
+    /// withdrawn and the refusal is final: the revealing claim has spent one leg and given the
+    /// counterparty what it needs to claim the other, so neither leg is the refunder's to take.
+    ///
     /// # Errors
     ///
-    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable.
+    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable;
+    /// always the invalid-phase error once claim evidence is recorded.
     pub fn refund_maker_leg(&mut self, observed: ChainPosition) -> Result<(), Error> {
+        if self.claim_evidence.is_some() {
+            return Err(Error::InvalidPhase {
+                expected: Phase::BothLegsLocked,
+                actual: self.phase,
+            });
+        }
         if !matches!(
             self.phase,
             Phase::BothLegsLocked
@@ -1359,10 +1379,20 @@ impl SwapCoordinator {
 
     /// Refunds the taker-funded leg at its typed deadline.
     ///
+    /// After a revealing claim is recorded no refund is admitted while that evidence stands;
+    /// [`Self::refund_maker_leg`] says why the phase alone cannot enforce this.
+    ///
     /// # Errors
     ///
-    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable.
+    /// Returns an invalid-phase, wrong-clock, or unexpired-timelock error when unavailable;
+    /// always the invalid-phase error once claim evidence is recorded.
     pub fn refund_taker_leg(&mut self, observed: ChainPosition) -> Result<(), Error> {
+        if self.claim_evidence.is_some() {
+            return Err(Error::InvalidPhase {
+                expected: Phase::TakerLockConfirmed,
+                actual: self.phase,
+            });
+        }
         if !matches!(
             self.phase,
             Phase::AwaitingTakerConfirmations

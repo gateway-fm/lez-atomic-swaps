@@ -239,3 +239,137 @@ proptest! {
         }
     }
 }
+
+/// Events for the property below. Unlike [`Action`], maker locks carry a depth and the
+/// maker leg has a policy of two, so a maker leg can sit below policy while the taker leg is
+/// the reason for the phase (issue #103 item 1).
+#[derive(Clone, Debug)]
+enum LegEvent {
+    TakerLock { confirmations: u32 },
+    RemoveTakerLock,
+    MakerLock { confirmations: u32 },
+    RemoveMakerLock,
+    RevealingClaim,
+    FollowupClaim,
+    RefundMaker,
+    RefundTaker,
+}
+
+fn leg_events() -> impl Strategy<Value = Vec<LegEvent>> {
+    prop::collection::vec(
+        // Weighted towards lock observations at the two depths either side of policy:
+        // the defects this guards need several of them in a row around one removal.
+        prop_oneof![
+            4 => (1_u32..3).prop_map(|confirmations| LegEvent::TakerLock { confirmations }),
+            2 => Just(LegEvent::RemoveTakerLock),
+            4 => (1_u32..3).prop_map(|confirmations| LegEvent::MakerLock { confirmations }),
+            2 => Just(LegEvent::RemoveMakerLock),
+            2 => Just(LegEvent::RevealingClaim),
+            1 => Just(LegEvent::FollowupClaim),
+            1 => Just(LegEvent::RefundMaker),
+            1 => Just(LegEvent::RefundTaker),
+        ],
+        0..48,
+    )
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(4096))]
+
+    /// After a revealing claim is recorded no refund is admitted while that evidence stands,
+    /// so no reachable state is refunded with claim evidence set (the model has no event that
+    /// removes the revealing claim); and a claim is only admitted while both legs are at
+    /// their own policy depth (issue #103 items 16 and 1).
+    #[test]
+    fn no_refund_after_reveal_and_no_claim_below_maker_policy(events in leg_events()) {
+        let mut swap = SwapCoordinator::new_with_confirmation_policies(
+            SwapId::new("property-reorg-swap").unwrap(),
+            Pair::Zcash,
+            SwapDirection::TakerSellsForeign,
+            ConfirmationPolicy::new(2).unwrap(),
+            ConfirmationPolicy::new(2).unwrap(),
+            RecoverySchedule::new(
+                Pair::Zcash,
+                SwapDirection::TakerSellsForeign,
+                ChainPosition::block_height(Chain::Lez, 100),
+                ChainPosition::block_height(Chain::Zcash, 120),
+                TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100).unwrap(),
+            )
+            .unwrap(),
+        );
+        let mut taker_funded = false;
+        let mut maker_funded = false;
+
+        for event in events {
+            let before = swap.clone();
+            let settled = matches!(before.phase(), Phase::Completed | Phase::Refunded);
+            let result = match event {
+                LegEvent::TakerLock { confirmations } => swap.observe_taker_lock(
+                    ChainProof::new("zec-lock", confirmations).unwrap(),
+                ),
+                LegEvent::RemoveTakerLock => swap.observe_taker_lock_removed("zec-lock"),
+                LegEvent::MakerLock { confirmations } => swap.observe_maker_lock(
+                    ChainProof::new("lez-lock", confirmations).unwrap(),
+                ),
+                LegEvent::RemoveMakerLock => swap.observe_maker_lock_removed("lez-lock"),
+                LegEvent::RevealingClaim => swap.observe_revealing_claim(
+                    swap.first_claimant(),
+                    ChainProof::new("revealing-claim", 1).unwrap(),
+                    ClaimEvidence::new([3; 32]),
+                ),
+                LegEvent::FollowupClaim => swap.observe_followup_claim(
+                    swap.first_claimant().other(),
+                    ChainProof::new("followup-claim", 1).unwrap(),
+                ),
+                LegEvent::RefundMaker => {
+                    swap.refund_maker_leg(ChainPosition::block_height(Chain::Lez, 500))
+                }
+                LegEvent::RefundTaker => {
+                    swap.refund_taker_leg(ChainPosition::block_height(Chain::Zcash, 500))
+                }
+            };
+
+            if result.is_err() {
+                prop_assert_eq!(&swap, &before, "a rejected event mutated the coordinator");
+            } else {
+                // The model follows only what the coordinator accepted, never its phase.
+                match event {
+                    LegEvent::TakerLock { confirmations } if !settled => {
+                        taker_funded = confirmations >= 2;
+                    }
+                    LegEvent::MakerLock { confirmations } if !settled => {
+                        maker_funded = confirmations >= 2;
+                    }
+                    LegEvent::RemoveTakerLock => taker_funded = false,
+                    LegEvent::RemoveMakerLock => maker_funded = false,
+                    _ => {}
+                }
+                if matches!(event, LegEvent::RevealingClaim | LegEvent::FollowupClaim) {
+                    prop_assert!(
+                        taker_funded && maker_funded,
+                        "claim accepted in phase {:?} with taker_funded={} maker_funded={}",
+                        before.phase(),
+                        taker_funded,
+                        maker_funded
+                    );
+                }
+                if matches!(event, LegEvent::RefundMaker | LegEvent::RefundTaker) {
+                    prop_assert!(
+                        before.claim_evidence().is_none(),
+                        "refund accepted in phase {:?} after a revealing claim",
+                        before.phase()
+                    );
+                }
+            }
+
+            prop_assert!(
+                !(matches!(
+                    swap.phase(),
+                    Phase::Refunded | Phase::MakerLegRefunded | Phase::TakerLegRefunded
+                ) && swap.claim_evidence().is_some()),
+                "phase {:?} with claim evidence set",
+                swap.phase()
+            );
+        }
+    }
+}
