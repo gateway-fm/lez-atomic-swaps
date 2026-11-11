@@ -17,6 +17,7 @@ use std::{
 };
 
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
+use lez_btc_role_lifecycle::{DEFAULT_LEZ_FINALITY_STALL_SECONDS, LezFinalityWatch};
 use lez_swap_core::Pair;
 use serde_json::json;
 
@@ -39,6 +40,9 @@ struct TakerServiceState {
     zec_registered: bool,
     /// How long the Bitcoin observer waits between two sweeps.
     observer_sweep_interval: Duration,
+    /// The LEZ chain's progress for `taker_health`, from the Node-owned
+    /// lifecycle's indexer and sequencer.
+    lez_finality: Option<LezFinalityWatch>,
 }
 
 /// The Taker observer's production pause between two sweeps of the Node-owned
@@ -71,7 +75,32 @@ pub fn taker_service_rpc_module_with_sweep(
     context: ConfiguredTakerServiceContext,
     observer_sweep_interval: Duration,
 ) -> Result<RpcModule<()>, RegisterMethodError> {
+    taker_service_rpc_module_with_timing(
+        context,
+        observer_sweep_interval,
+        DEFAULT_LEZ_FINALITY_STALL_SECONDS,
+    )
+}
+
+/// As [`taker_service_rpc_module_with_sweep`], with `taker_health` reporting
+/// `lez_finality_stalled` once the finalized LEZ block id has stood still for
+/// `lez_finality_stall_seconds` while the sequencer's tip moved
+/// (`--lez-finality-stall-seconds`; the devnet passes its heartbeat's
+/// threshold). The chain is read only with the Node-owned lifecycle.
+///
+/// # Errors
+///
+/// Returns an error if one of the fixed method names cannot be registered.
+pub fn taker_service_rpc_module_with_timing(
+    context: ConfiguredTakerServiceContext,
+    observer_sweep_interval: Duration,
+    lez_finality_stall_seconds: u64,
+) -> Result<RpcModule<()>, RegisterMethodError> {
     let (backend, initiation) = context.into_parts();
+    let lez_finality = initiation
+        .as_ref()
+        .and_then(ConfiguredTakerInitiationContext::dynamic_btc)
+        .map(|dynamic| dynamic.lez_finality_watch(lez_finality_stall_seconds));
     let btc_registered = initiation
         .as_ref()
         .is_some_and(|context| context.has_pair(Pair::Bitcoin));
@@ -84,6 +113,7 @@ pub fn taker_service_rpc_module_with_sweep(
         btc_registered,
         zec_registered,
         observer_sweep_interval,
+        lez_finality,
     });
     let mut module = RpcModule::new(());
 
@@ -105,6 +135,10 @@ pub fn taker_service_rpc_module_with_sweep(
             }
             if state.btc_registered {
                 health = health.with_btc_lifecycle_registered();
+            }
+            // The LEZ chain's progress (#112); absent without the lifecycle.
+            if let Some(watch) = state.lez_finality.as_ref() {
+                health = health.with_lez_chain(Some(watch.progress().await));
             }
             Ok::<_, ErrorObjectOwned>(health)
         }

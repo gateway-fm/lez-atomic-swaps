@@ -30,6 +30,9 @@ x-testnet-node-env: &testnet-node-env
   # wallet's sequencer client speaks HTTPS (rustls, the platform verifier).
   LEZ_WALLET_SEQUENCER_URL: https://testnet.lez.logos.co/
   LEZ_V02_CHANNEL_ID: "0101010101010101010101010101010101010101010101010101010101010101"
+  # The Nodes' own LEZ finality stall threshold (600 s, ten public blocks),
+  # never the devnet heartbeat's 60 s an env file copied from runtime.env carries.
+  LEZ_NODE_FINALITY_STALL_SECONDS: ""
 
 services:
   maker-node:

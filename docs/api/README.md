@@ -103,7 +103,7 @@ required unless marked optional. `null` revisions on insertion are intentional.
 
 | Method | Request | Result / behavior |
 |---|---|---|
-| `maker_health` | `{}` | `{schema_version, ready, degraded, delivery, chat, routes}`; dependency states are `disabled`, `available`, `unavailable`. `ready` alone does not prove a route or wallet is usable. |
+| `maker_health` | `{}` | `{schema_version, ready, degraded, delivery, chat, routes}`, plus `lez_chain` on a Node with the Node-owned lifecycle ([LEZ chain progress](#lez-chain-progress-in-health)); dependency states are `disabled`, `available`, `unavailable`. `ready` alone does not prove a route or wallet is usable; `degraded` is true while a configured dependency is unavailable or `lez_chain.degraded` is. |
 | `maker_wallet_balances_v1` | `{}` | What this Maker's own wallets hold, read-only: `bitcoin` (`state`, `wallet`, `network`, `trusted_sat`, `untrusted_pending_sat`, `immature_sat` from its Core wallet's `getbalances`) and `lez` (`state`, `owner_account_hex`, `owner_account_base58`, `balance_atomic_units`, `nonce` from the indexer). `state` is `available`, `unavailable` or `disabled`; amounts are exact integers and zero when not available. Coins locked by a planned, not yet broadcast funding are not trusted. |
 | `maker_pair_list` | `{}` | Array of `{revision, value}`; `value` is the route configuration below. |
 | `maker_local_price_list` | `{}` | Array of `{revision, value}`; `value` is the local ratio below. |
@@ -210,11 +210,58 @@ To apply a spread to reference data, obtain the reference in your application
 and submit the resulting local ratio. Guarded publication does not run a Logos
 feed and a strategy transform inside the node.
 
+### LEZ chain progress in health
+
+Both health methods carry `lez_chain` once the Node runs the Node-owned
+lifecycle, read from the indexer and sequencer its sidecars use (`lez.indexer_url`,
+`lez.sequencer_url` of the role configuration). It is an additive field of
+schema 1: absent on a Node without the lifecycle and on older Nodes, and a
+client that does not know it ignores it.
+
+```text
+"lez_chain": {
+  "degraded": true,
+  "reason": "lez_finality_stalled",
+  "finalized_block_id": 84,
+  "finalized_advanced_at_unix_seconds": 1760413500,
+  "finalized_flat_seconds": 104400,
+  "tip_block_id": 1286,
+  "stall_threshold_seconds": 600,
+  "observed_at_unix_seconds": 1760517900
+}
+```
+
+- `finalized_block_id`: the indexer's `getLastFinalizedBlockId`, the last one
+  known while the indexer does not answer; `null` before its first answer.
+- `finalized_advanced_at_unix_seconds`: when this Node first saw that id;
+  `finalized_flat_seconds`: how long ago that was at `observed_at_unix_seconds`.
+- `tip_block_id`: the sequencer's `getLastBlockId`, `null` when it did not answer.
+- `degraded` and `reason`: `lez_finality_stalled` once the finalized id has not
+  changed for `stall_threshold_seconds` while the tip moved past where it was
+  when finality last moved, or could not be read (the rule of the devnet's
+  finality heartbeat; a chain whose tip stands still too is idle, not stalled);
+  `lez_indexer_unreachable` while the indexer does not answer. `reason` is
+  absent while the chain moves. Reasons are additive `snake_case` strings:
+  tolerate one you do not know.
+
+Every lock, claim and refund waits on LEZ finality, so a degraded chain
+degrades the Node: `degraded` is true and the desks show one line above the
+swaps ("LEZ finality has not advanced for N min — swaps wait until it does").
+The threshold is `--lez-finality-stall-seconds` on `lez-maker-node` and
+`lez-taker-node` (10–86400, default 600: ten blocks of the public testnet); the
+devnet passes its heartbeat's `LEZ_HEARTBEAT_STALL_SECONDS` (60 s) through
+`LEZ_NODE_FINALITY_STALL_SECONDS`. Nothing polls in the background: a health
+call samples the chain (two reads, side by side, 3 s timeout each) at most once
+every 5 s and otherwise answers from the last sample, so "when it advanced" is
+as precise as health is asked (the desks ask every 10 s), and a Node started on
+a chain that is already frozen reports the stall one threshold after its first
+sample.
+
 ## Taker method reference
 
 | Method | Request object | Result / behavior |
 |---|---|---|
-| `taker_health` | `{schema_version:1}` | Health, registered methods and per-route capability rows. Check them before depending on initiation/monitoring/actions. |
+| `taker_health` | `{schema_version:1}` | Health, registered methods and per-route capability rows, plus `lez_chain` with the Node-owned lifecycle ([LEZ chain progress](#lez-chain-progress-in-health)), which also sets `degraded`. Check them before depending on initiation/monitoring/actions. |
 | `taker_wallet_balances_v1` | `{schema_version:1}` | What this Taker's own wallets hold, the same shape as `maker_wallet_balances_v1`: its Core wallet (`bitcoin`) and its LEZ owner account (`lez`). Registered with the BTC lifecycle. |
 | `taker_offer_list_v1` | `{schema_version:1, route:null}` or an exact route | `{schema_version:1, offers:[{offer, maker_identity, signed_envelope_sha256}]}` from the node's authenticated discovery source. |
 | `taker_swap_initiate_v1` | `{schema_version:1, request_id, offer_id, route, maker_identity, signed_envelope_sha256, foreign_units, expected_lez_units}`; optional `logos_offer_announcement_base64`, `funding_transaction_hex` | `{schema_version:1, swap, was_replay}`. Revalidates selected offer and exact amounts; BTC dynamic configuration drives reservation, preparation, ceremony and actor activation. It can reserve capital/prepare signing state; it is not a dry-run quote. |

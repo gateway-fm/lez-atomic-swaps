@@ -341,6 +341,9 @@ case "$role" in
     # a failed attempt sooner (gen-config.sh); unset, the Node's own defaults.
     [[ -z "${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}" ]] || args+=(--actor-requeue-delay-seconds "$LEZ_MAKER_ACTOR_REQUEUE_SECONDS")
     [[ -z "${LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS:-}" ]] || args+=(--actor-failure-backoff-seconds "$LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS")
+    # How long LEZ finality may stand still before maker_health says so
+    # (gen-config.sh: the devnet heartbeat's threshold); unset, the Node's 600 s.
+    [[ -z "${LEZ_NODE_FINALITY_STALL_SECONDS:-}" ]] || args+=(--lez-finality-stall-seconds "$LEZ_NODE_FINALITY_STALL_SECONDS")
     node_log_file
     exec "$bin/lez-maker-node" "${args[@]}"
     ;;
@@ -395,6 +398,8 @@ PY
     # The devnet's timing profiles sweep the Bitcoin swaps sooner
     # (gen-config.sh); unset, the Node's own default.
     [[ -z "${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}" ]] || args+=(--observer-sweep-seconds "$LEZ_TAKER_OBSERVER_SWEEP_SECONDS")
+    # As the Maker: how long LEZ finality may stand still before taker_health says so.
+    [[ -z "${LEZ_NODE_FINALITY_STALL_SECONDS:-}" ]] || args+=(--lez-finality-stall-seconds "$LEZ_NODE_FINALITY_STALL_SECONDS")
     node_log_file
     exec "$bin/lez-taker-node" "${args[@]}"
     ;;

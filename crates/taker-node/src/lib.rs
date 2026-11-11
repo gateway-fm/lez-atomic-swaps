@@ -30,6 +30,7 @@ pub use taker_facade::{
 };
 pub use taker_service::{
     DEFAULT_OBSERVER_SWEEP_INTERVAL, taker_service_rpc_module, taker_service_rpc_module_with_sweep,
+    taker_service_rpc_module_with_timing,
 };
 pub use taker_service_config::{
     ConfiguredTakerFacadeBackend, ConfiguredTakerServiceContext, OwnerChatSocketProbe,

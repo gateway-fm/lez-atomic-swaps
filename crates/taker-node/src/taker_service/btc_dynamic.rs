@@ -23,8 +23,8 @@ use btc_role_preflight::{
 use lez_bridge_protocol::RequestId;
 use lez_bridge_protocol::{PrepareWitnessedEscrowResult, SubmissionOutcome};
 use lez_btc_role_lifecycle::{
-    BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezSidecar, SwapLayout, SwapSidecar,
-    TakerCeremony, WalletBalancesV1,
+    BitcoinWallet, BtcRoleRuntime, FundingPlan, LegSessions, LezFinalityWatch, LezSidecar,
+    SwapLayout, SwapSidecar, TakerCeremony, WalletBalancesV1,
     actor::{ActorSynthesis, activate, synthesize},
     balances::{lez_owner_sequenced_balance, role_wallet_balances},
     layout::{read_private, write_private_exact},
@@ -202,6 +202,12 @@ impl DynamicBtcRole {
             .into_iter()
             .find(|candidate| candidate.offer().id() == offer_id)
             .context("selected BTC offer is unavailable, expired, or not authentic")
+    }
+
+    /// The LEZ chain watch `taker_health` samples: this role's indexer and
+    /// sequencer, the endpoints its sidecars use.
+    pub(super) fn lez_finality_watch(&self, stall_threshold_seconds: u64) -> LezFinalityWatch {
+        LezFinalityWatch::for_runtime(&self.runtime, stall_threshold_seconds)
     }
 
     /// What this Taker's own wallets hold (owner desk readout).

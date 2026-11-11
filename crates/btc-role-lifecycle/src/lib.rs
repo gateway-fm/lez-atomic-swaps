@@ -15,6 +15,7 @@ compile_error!("lez-btc-role-lifecycle requires Unix file-permission semantics")
 pub mod actor;
 pub mod balances;
 pub mod ceremony;
+pub mod chain_progress;
 pub mod config;
 pub mod funding;
 pub mod layout;
@@ -25,6 +26,10 @@ pub mod wire;
 pub use balances::{BalanceStateV1, WalletBalancesV1, role_wallet_balances};
 pub use ceremony::{
     CeremonyLegPackets, LegSessions, MakerCeremony, TakerCeremony, TakerCeremonyOutcome,
+};
+pub use chain_progress::{
+    DEFAULT_LEZ_FINALITY_STALL_SECONDS, LEZ_FINALITY_STALL_SECONDS_RANGE, LezChainDegradedReasonV1,
+    LezChainProgressV1, LezFinalityRule, LezFinalityWatch,
 };
 pub use config::{
     BitcoinNetworkName, BtcRoleConfigV1, BtcRoleRuntime, LezNetworkName, LezSequencerRoute,

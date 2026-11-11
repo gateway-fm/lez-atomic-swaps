@@ -3,12 +3,13 @@ use std::{path::PathBuf, time::Duration};
 use anyhow::{Context as _, ensure};
 use clap::Parser;
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
+use lez_btc_role_lifecycle::DEFAULT_LEZ_FINALITY_STALL_SECONDS;
 use lez_node_common::shutdown_signal;
 use lez_taker_node::{
     DEFAULT_OBSERVER_SWEEP_INTERVAL, load_taker_service_context,
     node_config::load_node_arguments,
     owner_rpc_server::{bind_owner_socket, publish_ready_file, server_config},
-    taker_service_rpc_module_with_sweep,
+    taker_service_rpc_module_with_timing,
 };
 use sd_notify::NotifyState;
 use tokio::task::JoinSet;
@@ -31,6 +32,11 @@ struct Arguments {
     /// Bitcoin swaps waiting on a chain; 15 when not given.
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..=3600))]
     observer_sweep_seconds: Option<u64>,
+    /// Seconds the finalized LEZ block id may stand still, while the
+    /// sequencer's tip moves, before `taker_health` reports
+    /// `lez_finality_stalled` (Node-owned lifecycle only); 600 when not given.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(10..=86_400))]
+    lez_finality_stall_seconds: Option<u64>,
 }
 
 #[tokio::main]
@@ -46,8 +52,14 @@ async fn main() -> anyhow::Result<()> {
     let sweep = arguments
         .observer_sweep_seconds
         .map_or(DEFAULT_OBSERVER_SWEEP_INTERVAL, Duration::from_secs);
-    let module =
-        taker_service_rpc_module_with_sweep(context, sweep).context("build Taker RPC module")?;
+    let module = taker_service_rpc_module_with_timing(
+        context,
+        sweep,
+        arguments
+            .lez_finality_stall_seconds
+            .unwrap_or(DEFAULT_LEZ_FINALITY_STALL_SECONDS),
+    )
+    .context("build Taker RPC module")?;
     let (listener, _socket_guard) =
         bind_owner_socket(&arguments.socket).context("bind Taker Node socket")?;
     let _ready_guard = arguments

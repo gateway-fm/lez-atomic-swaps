@@ -411,6 +411,13 @@ Bitcoin and LEZ networks — chain lifecycle is not the swap's job:
   minutes while it lasts, once when it clears) and writes
   `runtime/heartbeat/status.json` with `stalled: true`, which the runners read
   instead of waiting out a vault sweep on a dead chain.
+  Both Nodes apply the same rule to their own reads of the indexer and the
+  sequencer with the same threshold (`LEZ_NODE_FINALITY_STALL_SECONDS`, which
+  `gen-config.sh` sets to `LEZ_HEARTBEAT_STALL_SECONDS`): `maker_health` and
+  `taker_health` turn `degraded` with `lez_chain.reason: lez_finality_stalled`
+  and both desks show "LEZ finality has not advanced for N min — swaps wait
+  until it does" (docs/api/README.md; `scripts/ui-e2e.sh lez-finality-stall`
+  checks it by stopping the sequencer).
 
 Both carry `org.logos-co.atomic-swaps.{run,scope,component}` labels
 (`market-btc-0001` / `market-lez-0001`). The one-time bootstrap — escrow

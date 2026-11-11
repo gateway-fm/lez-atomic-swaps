@@ -576,6 +576,16 @@ case "$timing_profile" in
   local) maker_actor=("" "") taker_sweep="" ;;
   *)     maker_actor=(2 10) taker_sweep=3 ;;
 esac
+# Both Nodes report the LEZ chain's progress in their health methods and turn
+# degraded (`lez_finality_stalled`, #112) once the finalized block id stands
+# still while the sequencer's tip moves; the Nodes' default threshold, 600 s,
+# is ten blocks of the public testnet. The devnet makes a block a second, and
+# its finality heartbeat already calls a chain stalled after
+# LEZ_HEARTBEAT_STALL_SECONDS of that, so the Nodes take the same threshold on
+# every profile: one definition of a stall on the devnet.
+node_finality_stall="$heartbeat_stall_seconds"
+(( node_finality_stall >= 10 && node_finality_stall <= 86400 )) ||
+  { echo "LEZ_HEARTBEAT_STALL_SECONDS must be 10..=86400 for the Nodes' stall threshold" >&2; exit 1; }
 printf '%s\n' \
   ${stack_lines[@]+"${stack_lines[@]}"} \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
@@ -600,6 +610,7 @@ printf '%s\n' \
   "LEZ_MAKER_ACTOR_REQUEUE_SECONDS=${maker_actor[0]}" \
   "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS=${maker_actor[1]}" \
   "LEZ_TAKER_OBSERVER_SWEEP_SECONDS=$taker_sweep" \
+  "LEZ_NODE_FINALITY_STALL_SECONDS=$node_finality_stall" \
   "LEZ_GENESIS_TIME=$genesis_time" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \

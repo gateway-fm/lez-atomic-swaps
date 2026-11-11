@@ -67,6 +67,7 @@ use btc_reference_actor::{
 };
 use jsonrpsee::{RpcModule, core::RpcResult, types::ErrorObjectOwned};
 use lez_bridge_protocol::RequestId;
+use lez_btc_role_lifecycle::LezFinalityWatch;
 use lez_btc_swap_sdk::{
     BtcAgreementDraftV1, BtcAgreementTermsV1, BtcAgreementV1, BtcMakerAgreementProposalV1,
     BtcRoleContributionPairV1, BtcRoleContributionV1, MAX_BTC_AGREEMENT_RECORD_BYTES,
@@ -141,6 +142,9 @@ pub struct MakerRpc {
     btc_role_agreement_authority: Option<Arc<BtcMakerRoleAgreementAuthority>>,
     /// Node-owned Bitcoin lifecycle (ADR 0213); supersedes the fixture paths.
     btc_lifecycle: Option<Arc<BtcMakerLifecycle>>,
+    /// The LEZ chain's progress for `maker_health`, from the lifecycle's
+    /// indexer and sequencer.
+    lez_finality: Option<Arc<LezFinalityWatch>>,
     #[cfg(feature = "pair-xmr")]
     xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
     #[cfg(feature = "pair-zec")]
@@ -191,7 +195,8 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "btc_lifecycle",
                 &self.btc_lifecycle.as_ref().map(|_| "configured"),
-            );
+            )
+            .field("lez_finality", &self.lez_finality);
         #[cfg(feature = "pair-xmr")]
         debug.field(
             "xmr_chat_authority",
@@ -229,6 +234,7 @@ impl MakerRpc {
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
             btc_lifecycle: None,
+            lez_finality: None,
             #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
             #[cfg(feature = "pair-zec")]
@@ -256,6 +262,7 @@ impl MakerRpc {
             btc_actor_provisioner: None,
             btc_role_agreement_authority: None,
             btc_lifecycle: None,
+            lez_finality: None,
             #[cfg(feature = "pair-xmr")]
             xmr_chat_authority: None,
             #[cfg(feature = "pair-zec")]
@@ -317,6 +324,7 @@ impl MakerRpc {
         let lifecycle = Arc::new(lifecycle);
         lifecycle.spawn_sidecar_keepalive();
         lifecycle.spawn_escrow_preparer(Arc::clone(&self.store));
+        self.lez_finality = Some(Arc::new(lifecycle.lez_finality_watch()));
         self.btc_lifecycle = Some(lifecycle);
         self
     }
@@ -1268,7 +1276,13 @@ fn register_health_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()
                             MakerDependencyStateV1::Unavailable
                         }
                     });
-            Ok(MakerHealthV1::ready(delivery, chat, routes))
+            // The LEZ chain's progress (#112), sampled through the lifecycle's
+            // indexer and sequencer; absent without the lifecycle.
+            let lez_chain = context
+                .lez_finality
+                .as_ref()
+                .map(|watch| tokio::runtime::Handle::current().block_on(watch.progress()));
+            Ok(MakerHealthV1::ready(delivery, chat, routes).with_lez_chain(lez_chain))
         },
     )?;
     Ok(())

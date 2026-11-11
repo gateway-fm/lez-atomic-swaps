@@ -365,6 +365,10 @@ services:
       # (node-e2e.py); the container's output interleaves them with Delivery's.
       LEZ_NODE_LOG_FILE: /run/lez/maker/node.log
       LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS: ${LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS:-}
+      # How long LEZ finality may stand still before maker_health reports
+      # lez_finality_stalled (gen-config.sh: the heartbeat's threshold); empty
+      # = the Node's default (600 s).
+      LEZ_NODE_FINALITY_STALL_SECONDS: ${LEZ_NODE_FINALITY_STALL_SECONDS:-}
       # Actor decision trace on stderr (`docker logs`); empty = off.
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
     volumes:
@@ -459,6 +463,9 @@ services:
       # The Bitcoin observer's pause between sweeps (gen-config.sh, per timing
       # profile); empty = the Node's default (15 s).
       LEZ_TAKER_OBSERVER_SWEEP_SECONDS: ${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}
+      # How long LEZ finality may stand still before taker_health reports
+      # lez_finality_stalled (gen-config.sh); empty = the Node's default (600 s).
+      LEZ_NODE_FINALITY_STALL_SECONDS: ${LEZ_NODE_FINALITY_STALL_SECONDS:-}
       # The Node's own lines, whole, for the tests that count them
       # (node-e2e.py); the container's output interleaves them with Delivery's.
       LEZ_NODE_LOG_FILE: /run/lez/taker/node.log
