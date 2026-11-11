@@ -50,6 +50,9 @@
 # lane and the chain each try ran on. Unset or 1: one test at a time, as above.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# shellcheck source=host.sh
+source scripts/host.sh
+host_require_bash51 && host_require_timeout || exit
 # The stack this directory runs (scripts/lane.sh): its LEZ network's container
 # and its indexer on the host. The scripts each test runs take the rest of its
 # names from lane.sh themselves.
@@ -160,7 +163,7 @@ fresh_chain() { # fresh_chain [ENV=VALUE...]: up.sh --fresh-lez checks the new c
 # status 99 once the finalized height has stood still for $flat_limit seconds.
 watched() {
   local logfile="$1"; shift
-  setsid "$@" >"$logfile" 2>&1 </dev/null &
+  host_setsid "$@" >"$logfile" 2>&1 </dev/null &
   local pid=$! last flat_since now
   last="$(finalized)"; flat_since="$(date +%s)"
   while kill -0 "$pid" 2>/dev/null; do
@@ -209,7 +212,7 @@ command_of() { # command_of <kind> <pair> <scenario> <direction>
 keep_video() {
   [[ "${LEZ_REGRESS_RECORD:-0}" == 1 ]] || return 0
   local video="${LEZ_LANE_RUNTIME:-runtime}/evidence/videos/$2-$1.mp4" name="$2-$1"
-  [[ -s "$video" && "$(stat -c %Y "$video")" -ge "$5" ]] || return 0
+  [[ -s "$video" && "$(host_mtime "$video")" -ge "$5" ]] || return 0
   [[ "$4" == PASSED ]] || name+="-try$3-$4"
   mkdir -p "$out/videos" && cp "$video" "$out/videos/$name.mp4"
 }
@@ -336,7 +339,7 @@ lane_job() {
     log "    [lane $k] reset-swaps.sh failed before $t (lanes/$k/reset.log)"
   logfile="$out/logs/$kind-$pair-$scenario-$direction-$try.log"; started="$(date +%s)"
   # shellcheck disable=SC2046  # the command is a word list
-  setsid env LEZ_E2E_SKIP_FINALITY_PREFLIGHT=1 timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" \
+  host_setsid env LEZ_E2E_SKIP_FINALITY_PREFLIGHT=1 timeout -k 30 "${LEZ_REGRESS_TEST_TIMEOUT:-3600}" \
     $(command_of "$kind" "$pair" "$scenario" "$direction") \
     >"$logfile" 2>&1 </dev/null &
   echo "$!" >"$dir/pgid"

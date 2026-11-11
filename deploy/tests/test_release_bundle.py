@@ -41,6 +41,7 @@ class ReleaseBundle(unittest.TestCase):
         deploy = tmp / 'lez-swap-stack-v0.3.0-arm64'
         (deploy / 'scripts').mkdir(parents=True)
         shutil.copy(SCRIPTS / 'lane.sh', deploy / 'scripts')
+        shutil.copy(SCRIPTS / 'host.sh', deploy / 'scripts')
         (deploy / 'compose.yaml').write_text('name: ${LEZ_STACK_PREFIX:-lez}-swap-stack\n')
         if release_env is not None:
             (deploy / 'release.env').write_text(release_env)

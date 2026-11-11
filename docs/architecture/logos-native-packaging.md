@@ -114,7 +114,15 @@ the earlier build, 0.1.0, declared `dependencies: []`.)
     released binary: the builder's lm 0.1.0 has `metadata|methods|events` but
     no `verify`, so `lm verify --did` was not run (S49), and there is no DID to
     pin anyway. Our core packages carry only the build host's variant; only
-    blockchain_module 0.2.4 is multi-platform. Nothing was run on arm64.
+    blockchain_module 0.2.4 is multi-platform. Every
+    observation in this note was made on a linux-amd64 host. Two things have
+    run on arm64 since, both on an Apple-silicon Mac where Docker Desktop runs
+    the `linux-arm64` variant of the packages: the acceptance walk of this
+    note, with every step's verdict as on amd64
+    (`docs/evidence/logos-native-2026-11-11-arm64/`), and the Compose stack,
+    built from nothing and smoke-tested
+    (`docs/evidence/macos-arm64-smoke-2026-11-11/`). Neither is a native
+    darwin package: none exists.
 
 ## Proposal
 

@@ -27,6 +27,8 @@
 # runtime/lanes/<k>/lanes.log.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# shellcheck source=host.sh
+source scripts/host.sh
 command="${1:-}"; count="${2:-}"
 [[ "$command" =~ ^(up|stop|down|status|mint)$ && "$count" =~ ^[1-9]$ ]] ||
   { sed -n 2,27p "${BASH_SOURCE[0]}"; exit 64; }

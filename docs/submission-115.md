@@ -193,7 +193,13 @@ Stated plainly; each one is open unless it says otherwise.
    longer starts the local chain with the Basecamps (commit `107599c8`).
 9. **Linux only.** See R14. Only `blockchain_module` 0.2.4 ships a
    darwin-arm64 variant; our packages carry only the build host's variant
-   (packaging note, observation 10).
+   (packaging note, observation 10). On a Mac the stack runs in Docker
+   Desktop with `linux-arm64` packages: built from nothing and smoke-tested on
+   Apple silicon on 2026-11-11 (`docs/evidence/macos-arm64-smoke-2026-11-11/`,
+   six of six smoke tests, two of them through the desks), and the
+   logos-native acceptance walk gives the amd64 verdicts step for step
+   (`docs/evidence/logos-native-2026-11-11-arm64/`). That is not a native
+   darwin package.
 10. **Finality freezes on the devnet.** The upstream freeze
     (logos-blockchain#3643) is reduced by configuration only. The devnet runs
     1 s LEZ blocks and Bedrock `security_param` 2 for speed; against the

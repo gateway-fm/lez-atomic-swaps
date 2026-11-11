@@ -1,0 +1,27 @@
+{
+  "scenario": "happy",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "stamp": "1794426730",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": ""
+  },
+  "swap_id": "c54c883ca634bf72d08ad877dbc520e3ea07bb4a254f85db32ffec9c916bff4b",
+  "bitcoin_claim": "512b2b0083aef5708d5a37d88dc71db3d388b58aac976e7452cd3d19ca0bef84",
+  "result": "passed",
+  "seconds": 38
+}

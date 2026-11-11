@@ -1,0 +1,32 @@
+[17:28:39 host] docker 29.9.2 ready; workspace <workspace>
+[17:28:39 sources] cloning https://github.com/logos-blockchain/logos-execution-zone.git@v0.2.4
+[17:28:53 sources] cloning https://github.com/logos-co/logos-basecamp.git@0.2.0
+[17:28:55 nix] building the Basecamp inspector bundle (path:/src/basecamp#bin-bundle-dir-inspector)
+[17:28:55 sources] sources pinned
+[17:36:53 build] pulling the pinned builder image sha256:02c7ac2159f9a899417c14b77424619319c29f8c81495626f3b45bff4197e352
+[17:37:49 nix] building qt-mcp
+[17:38:03 build] seeding the prover toolchain from the builder image
+[17:38:05 nix] building the maker package (lgx-portable)
+[17:38:09 build] building the LEZ v0.2 sequencer (rust 1.94.0, release, locked; ~40 min cold)
+[17:39:10 nix] building the taker package (lgx-portable)
+[17:40:45 nix] building the network package (lgx-portable)
+[17:41:30 nix] building chat_module (github:logos-co/logos-chat-module/dfe8ccf3eff3e95da0ba54043577270474a216ae#lgx-portable)
+[17:43:28 build] building the escrow artifact for this commit (cargo-risczero from source, then the pinned guest; ~1.5 h cold)
+[17:53:24 nix] building delivery_module (github:logos-co/logos-delivery-module/3258cdb0132e37228aa2519e0c01c0e7429a20dd#lgx-portable)
+[18:10:26 nix] Basecamp bundle and release packages built
+[18:10:26 rust] building the role Node binaries and Bitcoin actors in rust:1.96.0-bookworm
+[18:18:24 build] building the LEZ sidecar and the identity tool
+[18:19:57 build] building lez_indexer_module (LEZ v0.2.4 + builder/patches/lez-indexer-module) as a portable lgx in nix (~40 min cold)
+[18:36:36 build] building lez_core (LEZ v0.2.4 + builder/patches/logos-execution-zone-module) as a portable lgx in nix (~40 min cold)
+[19:22:18 host] docker 29.9.2 ready; workspace <workspace>
+[19:22:18 sources] sources pinned
+[19:22:19 nix] Basecamp bundle and release packages built
+[19:22:19 rust] building the role Node binaries and Bitcoin actors in rust:1.96.0-bookworm
+[19:22:29 build] building the LEZ sidecar and the identity tool
+[19:22:29 rust] Node binaries staged
+[19:23:42 build] artifacts built into <workspace>/provision/data
+[19:25:12 stack] gen-config, image builds, and stack start
+[19:26:15 stack] market bootstrap (escrow program, vault claims, bootstrap manifest)
+[19:26:34 stack] desk suites in each party's Basecamp (the Maker suite also seeds the order book)
+[19:27:46 stack] done
+[stage 19:25:12] all payloads staged

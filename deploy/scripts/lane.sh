@@ -43,6 +43,9 @@
 #   and, for k >= 2, LEZ_VOLUME_PREFIX (<the stack's volume prefix>-l<k>).
 # lane_compose (an array) holds LEZ_STACK_COMPOSE_ARGS split into words.
 
+# shellcheck source=host.sh
+source "$(dirname "${BASH_SOURCE[0]}")/host.sh"
+
 # lane_wallets <k>: "<maker wallet> <taker wallet>" of lane k. Lane 2 settles as
 # the second pair of market wallets, already in every genesis and claimed by
 # every bootstrap; lanes 3 and up have their own (minted and funded by

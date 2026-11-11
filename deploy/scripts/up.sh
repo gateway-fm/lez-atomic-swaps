@@ -143,7 +143,9 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   done
   # A snapshot is 1 to 8 GB and root-owned on Linux; a day of recreations fills
   # the disk. Keep the newest LEZ_KEEP_BROKEN_CHAINS (1: the one just made).
-  mapfile -t old_chains < <(find runtime -maxdepth 1 -name 'lez-broken-*' -printf '%f\n' | sort -t- -k3 -n | head -n "-${LEZ_KEEP_BROKEN_CHAINS:-1}")
+  # (BSD find has no -printf and BSD head no negative count: macOS)
+  mapfile -t old_chains < <(find runtime -maxdepth 1 -name 'lez-broken-*' | sed 's|^runtime/||' | sort -t- -k3 -n |
+    awk -v keep="${LEZ_KEEP_BROKEN_CHAINS:-1}" '{ line[NR] = $0 } END { for (i = 1; i <= NR - keep; i++) print line[i] }')
   for d in "${old_chains[@]}"; do
     rm -rf "runtime/$d" 2>/dev/null ||
       docker run --rm --user 0 --volume "$PWD/runtime:/runtime" \
@@ -188,7 +190,11 @@ case "${LEZ_IMAGES:-build}" in
       # BuildKit resolves every FROM against its registry with a short
       # deadline; pull the base images first, with retries, so a slow registry
       # cannot fail the build of payloads that are already staged.
+      # A FROM may also name a Compose build context (`additional_contexts:
+      # basecamp: service:basecamp-ui`): another service's image, built below.
+      built_here="$(sed -n 's/^ *\([A-Za-z0-9_.-]*\): *service:.*/\1/p' compose.yaml | sort -u)"
       for image in $(grep -h '^FROM' images/*/Dockerfile | awk '{print $2}' | sort -u); do
+        ! grep -qxF "$image" <<<"$built_here" || continue
         docker image inspect "$image" >/dev/null 2>&1 && continue
         echo "  pulling $image"
         for _ in 1 2 3; do docker pull -q "$image" >/dev/null && break; sleep 10; done

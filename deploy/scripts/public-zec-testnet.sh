@@ -39,6 +39,8 @@
 # serve this Testnet), 1 a corridor failed or the bundle is invalid.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=host.sh
+source scripts/host.sh
 
 ROUTES=self-hosted,provider
 SCENARIOS=zec-happy,zec-maker-refund

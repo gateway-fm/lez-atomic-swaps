@@ -123,7 +123,7 @@ case "$ZCASH_NETWORK" in
     [[ -n "$KEY_DIR" && -d "$KEY_DIR" ]] || blocked "LEZ_ZEC_TESTNET_KEY_DIR names no key directory"
     KEY_DIR="$(realpath "$KEY_DIR")"
     case "$KEY_DIR/" in "$(realpath ..)/"*) blocked "LEZ_ZEC_TESTNET_KEY_DIR is inside the repository" ;; esac
-    [[ "$(stat -c %a "$KEY_DIR")" == 700 ]] || blocked "LEZ_ZEC_TESTNET_KEY_DIR must be mode 0700"
+    [[ "$(host_mode "$KEY_DIR")" == 700 ]] || blocked "LEZ_ZEC_TESTNET_KEY_DIR must be mode 0700"
     ;;
   *) echo "--zcash-network must be regtest or test" >&2; exit 64 ;;
 esac
@@ -414,7 +414,7 @@ next_branch="$(zebra_next_branch)" || fail "zebra RPC unavailable at $ZEBRA_URL"
 if [[ "$next_branch" != "$NU7_BRANCH" ]]; then
   log "  zebra's next block is on branch $next_branch, not NU7 ($NU7_BRANCH): recreating it on Zebra 7 with a new data volume"
   # The rendered config keeps its miner address; only the activation changes.
-  sed -i 's/^"NU6\.2" = 1$/"NU7" = 1/' "$LANE/zebra/zebrad.toml"
+  host_sed_inplace 's/^"NU6\.2" = 1$/"NU7" = 1/' "$LANE/zebra/zebrad.toml"
   grep -qx '"NU7" = 1' "$LANE/zebra/zebrad.toml" ||
     fail "$LANE/zebra/zebrad.toml does not activate NU7: rerun scripts/gen-config.sh"
   "${compose[@]}" rm -sf zebra >/dev/null 2>&1 || true

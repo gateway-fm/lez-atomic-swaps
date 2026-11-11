@@ -50,6 +50,8 @@ set -uo pipefail
 caller_dir="$PWD"
 self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# shellcheck source=host.sh
+source scripts/host.sh
 
 usage() { sed -n '2,43p' "$self" | sed 's/^# \{0,1\}//'; exit 64; }
 
