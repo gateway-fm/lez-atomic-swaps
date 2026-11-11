@@ -11,7 +11,7 @@ them over a Docker network.
 | `lez-btc-testnet4` | Bitcoin Core 31.1 on testnet4, unpruned, `txindex` + `txospenderindex` | the Nodes fund their locks from a wallet per role. Observation alone needs only `txindex` on any Core from 24.0: without `txospenderindex` the adapter finds a spender from the mempool, the UTXO set and a scan back from the tip |
 | `lez-testnet-node` | Logos Blockchain node on the public testnet | feeds the indexer |
 | `lez-testnet-indexer` | LEZ v0.2.4 indexer following the public channel | the public endpoint serves no indexer (`getLastFinalizedBlockId`) |
-| `lez-testnet-sequencer` | nginx: plain HTTP on the Docker network to `https://testnet.lez.logos.co` | the Nodes accept only literal-loopback HTTP endpoints |
+| `lez-testnet-sequencer` | nginx: plain HTTP on the Docker network to `https://testnet.lez.logos.co` | only for the one-time escrow deployment (section 7): the deployer accepts only a literal-loopback HTTP endpoint. The Nodes and the role signers do not use it |
 
 Host requirements: arm64 with Docker, about 40 GB for testnet4 and room for
 the Logos Blockchain node's state.
@@ -26,14 +26,18 @@ How this route differs from the local devnet (`deploy/compose.yaml`):
 - The public chain is read by upstream's `indexer_service` and Logos
   Blockchain node as plain containers (sections 3 and 5), not by the
   `blockchain_module` / `lez_indexer_module` pair.
-- The sequencer proxy (section 4) is still needed on this route. The Nodes'
-  LEZ client and sidecar can reach the official HTTPS origin directly (the
-  `official_public` value of `sequencer_route`,
-  `crates/btc-role-lifecycle/src/config.rs`, commit `64782d4a`), but
-  `node-entrypoint.sh` does not render that field, so a Compose-run Node uses
-  the default `local` route: a literal-loopback HTTP port forwarded to
-  `lez-testnet-sequencer`. The role's signer is pointed at the same proxy
-  (`LEZ_WALLET_SEQUENCER_URL`, `compose.testnet.yaml`).
+- The Nodes, their sidecars and the role's signer reach the official
+  sequencer `https://testnet.lez.logos.co/` directly over HTTPS:
+  `compose.testnet.yaml` sets `LEZ_LEZ_SEQUENCER_ROUTE=official_public` and
+  `LEZ_SEQUENCER_URL`, the launcher (`modules/lez-role-node/node-entrypoint.sh`)
+  renders `sequencer_route: official_public` into the Node's configuration
+  (`crates/btc-role-lifecycle/src/config.rs`, commit `64782d4a`) and starts
+  the ZEC sidecars with the same profile, and the signer's wallet
+  (`LEZ_WALLET_SEQUENCER_URL`) speaks HTTPS itself (its sequencer client is
+  jsonrpsee's HTTP client with its default rustls TLS). The proxy (section 4)
+  is left only for the escrow deployment (section 7). This route has not been
+  run since the change: verified are the rendered configuration and
+  `docker compose -f compose.yaml -f compose.testnet.yaml config`.
 - This guide has not been run again since the role Nodes moved into their
   Basecamps (PR #120). The last recorded runs are
   [`docs/evidence/testnet-20260918/`](evidence/testnet-20260918/) and
@@ -148,9 +152,10 @@ The bootstrap peers are those in the Logos Blockchain Node 0.2.4 release notes.
 
 ## 4. The sequencer proxy
 
-The Nodes on this route accept only literal-loopback HTTP for the sequencer
-(see the list above), so a plain-HTTP proxy on the Docker network speaks TLS
-to the official sequencer for them.
+The escrow deployer accepts only literal-loopback HTTP for the sequencer
+(section 7), so a plain-HTTP proxy on the Docker network speaks TLS to the
+official sequencer for it. The Nodes and the role signers do not need it
+(they use the `official_public` route, above).
 
 ```sh
 mkdir -p ~/lez-testnet/proxy

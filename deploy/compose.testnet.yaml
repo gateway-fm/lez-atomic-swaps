@@ -6,23 +6,29 @@
 #   docker compose -p lez-testnet -f compose.yaml -f compose.testnet.yaml \
 #     up -d maker-node taker-node
 #
-# Nothing here is a chain: the Nodes reach services on the external Docker
-# network `lez-testnet`, each run next to this stack (docs/testnet-run.md):
+# Nothing here is a chain: the Nodes reach the official LEZ sequencer
+# https://testnet.lez.logos.co/ directly over HTTPS (the official_public
+# sequencer route: the Node, its per-swap sidecars and the role's signer
+# wallet; no proxy), and services on the external Docker network
+# `lez-testnet`, each run next to this stack (docs/testnet-run.md):
 #   lez-btc-testnet4       Bitcoin Core 31.1 on testnet4 (txindex, txospenderindex, RPC 18443)
-#   lez-testnet-sequencer  HTTP on :3040 to https://testnet.lez.logos.co (the official sequencer)
 #   lez-testnet-indexer    LEZ v0.2.4 indexer on :8779, following the public chain
 #   lez-testnet-node       Logos Blockchain node on the public testnet (feeds the indexer)
-# The Nodes keep their literal-loopback endpoints; their entrypoints forward
-# 127.0.0.1:18443/3040/8779 to these names.
+# Bitcoin Core and the indexer keep their literal-loopback endpoints; the
+# launcher forwards 127.0.0.1:18443/8779 to these names.
 
 x-testnet-node-env: &testnet-node-env
   LEZ_BTC_NETWORK: testnet4
   LEZ_LEZ_NETWORK: testnet
   LEZ_BITCOIN_CORE_HOST: lez-btc-testnet4
-  LEZ_SEQUENCER_HOST: lez-testnet-sequencer
   LEZ_INDEXER_HOST: lez-testnet-indexer
-  # The role's Basecamp hosts the role's signer (lez_core) beside its Node.
-  LEZ_WALLET_SEQUENCER_URL: http://lez-testnet-sequencer:3040
+  # The official sequencer, straight (modules/lez-role-node/node-entrypoint.sh
+  # renders the route into the Node's configuration and the sidecars' profile).
+  LEZ_LEZ_SEQUENCER_ROUTE: official_public
+  LEZ_SEQUENCER_URL: https://testnet.lez.logos.co/
+  # The role's Basecamp hosts the role's signer (lez_core) beside its Node; its
+  # wallet's sequencer client speaks HTTPS (rustls, the platform verifier).
+  LEZ_WALLET_SEQUENCER_URL: https://testnet.lez.logos.co/
   LEZ_V02_CHANNEL_ID: "0101010101010101010101010101010101010101010101010101010101010101"
 
 services:

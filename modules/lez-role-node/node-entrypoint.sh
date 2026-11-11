@@ -29,6 +29,18 @@ manifest="/run-market/market-bootstrap.env"
 cookie_src="/run-config/btc-rpc-cookie"
 sidecar_port_base="${LEZ_SIDECAR_PORT_BASE:?}"
 sequencer_url="${LEZ_SEQUENCER_URL:-http://sequencer:3040}"
+# How the Node and its sidecars reach the LEZ sequencer (LezSequencerRoute,
+# crates/btc-role-lifecycle/src/config.rs): "local", literal-loopback HTTP (the
+# devnet's forward below, or an operator's proxy), or "official_public", the
+# official testnet origin itself over HTTPS (LEZ_SEQUENCER_URL
+# https://testnet.lez.logos.co/), no proxy. The indexer stays loopback either
+# way: the official origin serves none.
+sequencer_route="${LEZ_LEZ_SEQUENCER_ROUTE:-local}"
+case "$sequencer_route" in
+  local) sidecar_route_args=(--node-profile local) ;;
+  official_public) sidecar_route_args=(--node-profile official_public --indexer-profile local) ;;
+  *) echo "$role: LEZ_LEZ_SEQUENCER_ROUTE must be local or official_public, not $sequencer_route" >&2; exit 2 ;;
+esac
 indexer_url="${LEZ_INDEXER_URL:-http://indexer:8779}"
 channel_id="${LEZ_V02_CHANNEL_ID:?}"
 auth_transfer_program_id="${LEZ_AUTH_TRANSFER_PROGRAM_ID:-fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a}"
@@ -44,7 +56,10 @@ bitcoin_host="${LEZ_BITCOIN_CORE_HOST:-bitcoin-core}"
 sequencer_host="${LEZ_SEQUENCER_HOST:-sequencer}"
 indexer_host="${LEZ_INDEXER_HOST:-indexer}"
 "${with_node[@]}" socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
-"${with_node[@]}" socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
+# (On the official_public route the sequencer is reached directly: no forward.)
+if [[ "$sequencer_route" == local ]]; then
+  "${with_node[@]}" socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
+fi
 "${with_node[@]}" socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
 # The ZEC actors reach Zebra the same way (deterministic_local route).
 zebra_host="${LEZ_ZEBRA_HOST:-zebra}"
@@ -120,6 +135,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --arg channel "$channel_id" --arg genesis "$lez_genesis_hash" --arg program "$escrow_program_id" \
     --arg transfer "$auth_transfer_program_id" --arg sidecar_program "$bin/lez-v02-bridge-poc" \
     --arg sequencer "$sequencer_url" --arg indexer "$indexer_url" --argjson port_base "$sidecar_port_base" \
+    --arg route "$sequencer_route" \
     --arg signer "$btc_state/lez-signer.key" --arg wallet_socket "$lez_wallet_socket" --arg signer_account "$signer_account" \
     --arg actor "$actor_program" --arg actor_sha "$actor_sha" \
     --arg btc_network "${LEZ_BTC_NETWORK:-regtest}" \
@@ -145,12 +161,13 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
               block_seconds:{fastest:$block_fastest, slowest:$block_slowest}, claim_fee_sat:1000,
               lock_fee:{confirmation_target:$fee_target, fallback_sat_per_vb:$fee_fallback,
                         max_sat_per_vb:$fee_max_rate, max_percent_of_value:$fee_max_percent}},
-     lez:{network:$lez_network, channel_id:$channel, genesis_block_hash:$genesis, escrow_program_id:$program,
+     lez:({network:$lez_network, channel_id:$channel, genesis_block_hash:$genesis, escrow_program_id:$program,
           authenticated_transfer_program_id:$transfer, sidecar_program:$sidecar_program,
           sequencer_url:$sequencer, indexer_url:$indexer, sidecar_port_base:$port_base, sidecar_port_count:400,
           signer_key_file:(if $wallet_socket == "" then $signer else null end),
           wallet_signer:(if $wallet_socket == "" then null else {socket:$wallet_socket, account_id:($signer_account | ascii_downcase)} end),
-          request_timeout_millis:120000, discovery_max_blocks:$discovery},
+          request_timeout_millis:120000, discovery_max_blocks:$discovery}
+          + (if $route == "local" then {} else {sequencer_route:$route} end)),
      recovery:{maker_second_lock_cutoff_seconds:$cutoff, earlier_refund_latest_seconds:$earlier,
                later_refund_earliest_seconds:$later, required_margin_seconds:$margin},
      actor:{program:$actor, program_sha256:$actor_sha}}' >"$btc_state/btc-role.json"
@@ -209,7 +226,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   # three times; one that runs but does not listen within 90 s is left alone.
   zec_candidate_ready=0
   for zec_start in 1 2 3; do
-    "${with_node[@]}" "$bin/lez-v02-bridge-poc" --listen-address "$zec_listen" --node-profile local \
+    "${with_node[@]}" "$bin/lez-v02-bridge-poc" --listen-address "$zec_listen" "${sidecar_route_args[@]}" \
       --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
       --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
       "${zec_signer_args[@]}" --state-directory "$zec_sidecar_state" \
