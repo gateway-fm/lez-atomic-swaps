@@ -82,6 +82,14 @@ contexts and compose files are identical.
 - The one failure and its two reruns (17:49Z, 17:52Z; single lane, same images
   and chain) are described in `RESULTS.txt`.
 
+## After the run: the collision test's harness fixes
+
+`RESULTS.txt` ends with an addendum: five further runs of `zec-claim-collision`
+through `regress.sh` between 18:02Z and 18:44Z, at the harness commits
+`d0a626c5` and `2adef99b`, on the same images and the same chain. Those
+commits and `34b8a169` change only `deploy/scripts/regress.sh` and
+`deploy/scripts/node-e2e.py`; no image was rebuilt.
+
 ## Recordings
 
 Every desk test was recorded on its lane's two Basecamp displays

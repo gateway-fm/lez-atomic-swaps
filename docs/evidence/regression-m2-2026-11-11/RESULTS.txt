@@ -215,3 +215,39 @@ Reruns
 ##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision rerun 1 FAILED in 180 s at 2026-11-11T17:52:31Z
 ##### E2E node zec TakerSellsForeign zec-claim-collision rerun 2 (20261111T175231Z)
 ##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision rerun 2 PASSED in 191 s at 2026-11-11T17:55:56Z
+
+Addendum: zec-claim-collision after the harness fixes (2026-11-11 18:02Z -> 18:44Z)
+
+After the run above the test's failure was traced to the harness: it noticed the lock's submission by
+polling `docker logs`, slower than a 1 s LEZ block, so the claim was planned one nonce late and raced the
+lock's second transaction instead, which it beat. Three harness commits followed (no engine or image
+change; same images and chain as the run): d0a626c5 (regress.sh runs a NOT-EXERCISED test again),
+2adef99b (the scenario follows the Node's log as a stream), 34b8a169 (NOT-EXERCISED gets its own try
+limit, 8). The trials below are every run of the test through regress.sh (LEZ_LANES=3) after d0a626c5,
+in order; logs are logs/collision-<run>-*.
+
+20261111T180217Z at d0a626c5 (runner retry only):
+##### E2E-RESULT node zec TakerSellsLez zec-happy attempt 1 PASSED in 118 s at 2026-11-11T18:05:00Z
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 PASSED in 183 s at 2026-11-11T18:06:10Z; claim admitted 2.2 s after the lock's submission
+
+20261111T180625Z at d0a626c5 (runner retry only (4 tries)):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 NOT-EXERCISED in 190 s at 2026-11-11T18:10:28Z; claim admitted 1.1 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 2 NOT-EXERCISED in 194 s at 2026-11-11T18:13:53Z; claim admitted 1.0 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 3 NOT-EXERCISED in 267 s at 2026-11-11T18:18:36Z; claim admitted 3.0 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 4 NOT-EXERCISED in 202 s at 2026-11-11T18:22:15Z; claim admitted 2.0 s after the lock's submission
+
+20261111T182237Z at 2adef99b (retry + log following):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 NOT-EXERCISED in 209 s at 2026-11-11T18:26:58Z; claim admitted 1.8 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 2 PASSED in 224 s at 2026-11-11T18:30:57Z; claim admitted 0.9 s after the lock's submission
+
+20261111T183059Z at 2adef99b (retry + log following):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 NOT-EXERCISED in 230 s at 2026-11-11T18:35:57Z; claim admitted 2.7 s after the lock's submission
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 2 PASSED in 229 s at 2026-11-11T18:39:58Z; claim admitted 1.0 s after the lock's submission
+
+20261111T184000Z at 2adef99b (retry + log following):
+##### E2E-RESULT node zec TakerSellsForeign zec-claim-collision attempt 1 PASSED in 205 s at 2026-11-11T18:44:32Z; claim admitted 0.5 s after the lock's submission
+
+With the runner's retry alone the test lost its race four tries out of four. With the log followed as a
+stream it passed in every trial: on its second try twice (claim admitted 0.9 and 1.0 s after the lock) and
+on its first once (0.5 s). The race is still close against a 1 s block, which is what the separate try
+limit is for; 34b8a169 itself changes only that limit and was not run on the stack.

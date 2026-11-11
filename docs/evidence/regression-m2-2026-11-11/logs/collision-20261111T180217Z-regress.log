@@ -1,0 +1,8 @@
+[18:02:17] regression run: 2 tests at d0a626c5 (tree dirty: 0), results in runtime/regress/20261111T180217Z
+[18:02:17] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[18:02:17] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[18:02:53]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 1)
+[18:02:53]     [lane 2] node:zec:zec-happy:TakerSellsLez (try 1)
+[18:05:00] === node:zec:zec-happy:TakerSellsLez (try 1, lane 2): PASSED in 118 s
+[18:06:10] === node:zec:zec-claim-collision:TakerSellsForeign (try 1, lane 1): PASSED in 183 s
+[18:06:10] regression run: 2 of 2 passed in 3 min, 0 new chains, 0 profile switches, 0 frozen tries
