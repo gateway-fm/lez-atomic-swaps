@@ -482,7 +482,7 @@ mkdir -p "$RUNTIME/sockets"
 # for them), derived from the LEZ chain's measured step latency rather than
 # fixed: LEZ_LEZ_STEP_SECONDS is one LEZ step as the counterpart Node sees it
 # (submit, inclusion, finality, the Nodes' polling: the Taker's observer sweeps
-# every 15 s, the Maker's actor is requeued every 5 s), LEZ_LEZ_STALL_SECONDS
+# every 15 s, the Maker's actor is requeued every 2 s), LEZ_LEZ_STALL_SECONDS
 # the finality stall a step must survive. Nobody claims, so:
 #   cutoff  = 2 steps (the Taker's lock, then the Maker's) + 20 s of desk + stall
 #   earlier = cutoff + margin       (the least the agreement accepts)
@@ -520,6 +520,16 @@ case "$timing_profile" in
   *) echo "LEZ_TIMING_PROFILE must be local, fast or refund" >&2; exit 1 ;;
 esac
 timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
+# The Maker's actor supervisor observes a live swap's actor 5 s after each
+# attempt and retries a failed one after 30 s (the Node's defaults, kept on
+# `local`). On the devnet's own profiles a step it waits for (the Taker's lock,
+# a confirmation, finality) is seconds away, so it looks again after 2 s and
+# retries after 10 s. The attempt deadline stays the Node's 30 s: one
+# historical indexer read can take ~16 s (repair-indexer.sh).
+case "$timing_profile" in
+  local) maker_actor=("" "") ;;
+  *)     maker_actor=(2 10) ;;
+esac
 printf '%s\n' \
   "LEZ_VOLUME_PREFIX=$volume_prefix" \
   "LEZ_HOST_UID=$(id -u)" \
@@ -540,6 +550,8 @@ printf '%s\n' \
   "LEZ_LEZ_STALL_SECONDS=$lez_stall_seconds" \
   "LEZ_BTC_BLOCK_SECONDS=$btc_block_seconds" \
   "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
+  "LEZ_MAKER_ACTOR_REQUEUE_SECONDS=${maker_actor[0]}" \
+  "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS=${maker_actor[1]}" \
   "LEZ_GENESIS_TIME=$genesis_time" \
   "LEZ_V02_CHANNEL_ID=$channel_id" \
   "LEZ_V02_MAKER_ACCOUNT_ID=$maker_account_id" \

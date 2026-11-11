@@ -295,6 +295,10 @@ case "$role" in
         --delivery-directory /delivery --delivery-signing-key-file "$state/delivery-signing.key"
         --actor-supervisor)
     fi
+    # The devnet's timing profiles observe a live swap's actor sooner and retry
+    # a failed attempt sooner (gen-config.sh); unset, the Node's own defaults.
+    [[ -z "${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}" ]] || args+=(--actor-requeue-delay-seconds "$LEZ_MAKER_ACTOR_REQUEUE_SECONDS")
+    [[ -z "${LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS:-}" ]] || args+=(--actor-failure-backoff-seconds "$LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS")
     exec /usr/local/bin/lez-maker-node "${args[@]}"
     ;;
   taker)
