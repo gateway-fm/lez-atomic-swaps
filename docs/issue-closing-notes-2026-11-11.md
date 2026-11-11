@@ -45,7 +45,26 @@ observers now refuse a removal in a settled phase and change nothing. Tests:
 also checks that a settled coordinator is unchanged by any later input, and
 the whole fuzz corpus passes.
 
-None of the three is reachable in shipped flows: the BTC lifecycle has no
+The ZEC SDK applies the same rule before it plans a refund, so it never stages
+or broadcasts a refund the coordinator would refuse to project (commit
+`37f706cd`). `next_refund_step` (`crates/zec-swap-sdk/src/sdk.rs`) and
+`RefundStepV1::validate_active_phase` (`src/refund.rs`) admitted the LEZ refund
+in `TakerLockReorged` and `MakerLockReorged` from the phase alone. Now
+`ActiveZecSwap::drive_refund` picks its step through `admitted_refund_step`,
+which offers none while claim evidence is recorded, and
+`RefundIntentV1::from_active`, `RefundTransitionV1::from_observed` and
+`RefundTransitionV1::apply_to` validate through `RefundStepV1::validate_active`,
+which refuses with `RefundError::ClaimEvidenceRecorded`. Tests, in both
+directions and both reorg phases:
+`no_refund_step_is_offered_in_a_reorg_phase_holding_claim_evidence`,
+`the_lez_refund_step_is_still_offered_in_a_reorg_phase_without_claim_evidence`,
+`refund_validation_refuses_a_reorg_phase_holding_claim_evidence` and
+`refund_validation_still_admits_a_reorg_phase_without_claim_evidence`. The BTC
+SDK needs no change: its planner treats the reorg phases as a wait, and
+`apply_recovery_transition` refunds only from phases that cannot hold claim
+evidence.
+
+None of the four is reachable in shipped flows: the BTC lifecycle has no
 lock-removal or depth-regression transition; the ZEC SDK applies removals only
 before the maker lock and refuses a lock depth below policy; maker-node's
 `apply_zcash_funding_event` has no non-test caller. No existing test was
