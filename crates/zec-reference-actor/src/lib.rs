@@ -10,6 +10,7 @@ use lez_swap_store::MAKER_ACTOR_CONFIG_FD;
 
 mod command;
 mod config;
+mod first_lock_attempts;
 mod local_poc;
 mod maker_provision;
 mod secure_file;
@@ -44,6 +45,15 @@ pub const LEZ_REVEALING_CLAIM_REPLAN_EXHAUSTED_EXIT_CODE: i32 = 5;
 /// window had closed ([`ActorCommandError::ClaimWindowClosed`], FINDINGS 26):
 /// nothing was sent; the actor's status names the refund as the next action.
 pub const LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE: i32 = 6;
+pub use first_lock_attempts::{
+    ESCROW_REFUSAL_STOP_ATTEMPTS, ESCROW_REFUSAL_STOP_SECONDS, LezFirstLockAttemptOutcomeV1,
+    LezFirstLockAttemptsV1, UNINCLUDED_NOTE_ATTEMPTS, UNINCLUDED_NOTE_SECONDS,
+    lez_first_lock_attempts, lez_first_lock_attempts_path,
+};
+/// Exit code of a drive that stopped because the swap's LEZ escrow account
+/// already exists without its initialization
+/// ([`ActorCommandError::LezEscrowAlreadyInitialized`]): the swap stops by name.
+pub const LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE: i32 = 7;
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
@@ -128,6 +138,9 @@ pub fn run_actor_process(expected_role: ActorRole) {
             }
             ActorCommandError::ClaimWindowClosed => {
                 exit_with_code(error, LEZ_CLAIM_WINDOW_CLOSED_EXIT_CODE)
+            }
+            ActorCommandError::LezEscrowAlreadyInitialized => {
+                exit_with_code(error, LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE)
             }
             _ => exit_with(error),
         });

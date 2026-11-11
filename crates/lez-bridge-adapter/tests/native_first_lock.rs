@@ -3159,6 +3159,81 @@ async fn first_lock_submit_selects_exact_step_and_keeps_ambiguity_unknown() {
     );
 }
 
+/// A bridge that refuses every submission by name: the escrow account the
+/// initialization would create already exists without it.
+#[derive(Clone)]
+struct EscrowTakenTransport {
+    submits: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Copy, Debug, Error)]
+#[error("escrow account already initialized")]
+struct EscrowTaken;
+
+#[async_trait]
+impl LezBridgeFirstLockTransport for EscrowTakenTransport {
+    type Error = EscrowTaken;
+
+    async fn observe_escrow(
+        &self,
+        _request: ObserveEscrowRequest,
+    ) -> Result<ObserveEscrowResult, Self::Error> {
+        Err(EscrowTaken)
+    }
+
+    async fn submit_transaction(
+        &self,
+        _request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, Self::Error> {
+        self.submits.fetch_add(1, Ordering::SeqCst);
+        Err(EscrowTaken)
+    }
+
+    fn is_escrow_already_initialized(_error: &Self::Error) -> bool {
+        true
+    }
+}
+
+#[tokio::test]
+async fn first_lock_submit_passes_a_named_escrow_refusal_on_instead_of_unknown() {
+    let agreement = agreement();
+    let plan = native_first_lock_plan();
+    let FirstLockPlanV1::Lez { initialize, .. } = &plan else {
+        panic!("native LEZ plan")
+    };
+    let submits = Arc::new(AtomicUsize::new(0));
+    let mut descriptor = runtime(&agreement);
+    descriptor.sidecar_role = BridgeParticipant::Taker;
+    descriptor.signer_account_id = Hex32::from_bytes(*agreement.lez_account(Participant::Taker));
+    let adapter = LezBridgeAdapter::new(
+        EscrowTakenTransport {
+            submits: Arc::clone(&submits),
+        },
+        RunId::new("native-run-0001").expect("run id"),
+        descriptor,
+        Participant::Taker,
+    )
+    .expect("matching actor sidecar");
+    // A known refusal is an error the caller can name, not an ambiguous
+    // outcome that would be resubmitted after a fresh observation.
+    let refused = adapter
+        .submit_native_first_lock_step(
+            &agreement,
+            RequestId::new("submit-init-refused").expect("request id"),
+            &plan,
+            initialize,
+        )
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(PrepareNativeFirstLockError::Transport(EscrowTaken))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(submits.load(Ordering::SeqCst), 1);
+}
+
 #[tokio::test]
 async fn reverse_taker_discovers_the_maker_funded_lez_lock() {
     let agreement = agreement_for_direction(

@@ -319,6 +319,14 @@ pub struct TakerSwapViewV1 {
     /// it is final) while this swap's own LEZ refund time is near.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revealing_claim_held_by: Option<String>,
+    /// One human-readable sentence on what holds a Zcash swap's LEZ lock
+    /// back, when the Node knows: its escrow initialization can never execute
+    /// because the escrow account already exists without it (with
+    /// `lez_escrow_already_initialized`: submitting stopped), or a LEZ lock
+    /// step was submitted many times over a long time and is not included yet
+    /// (submitting continues).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_detail: Option<String>,
     /// A Zcash swap's Taker actor phase (`both_legs_locked`, …), so a desk
     /// can say which part of the swap a state stands for.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1120,6 +1120,34 @@ impl NativeEscrowPlanner {
         prepared_signer_nonce(prepared, self.signer_account_id).map(Some)
     }
 
+    /// When `prepared` is an initialization of the native escrow lineage (the
+    /// original pair's or a re-plan's): the swap id its escrow accounts are
+    /// derived from, and the lineage's other initializations.
+    pub async fn native_escrow_initialization(
+        &self,
+        prepared: &PreparedTransaction,
+    ) -> Option<(Hex32, Vec<PreparedTransaction>)> {
+        let state = self.state.lock().await;
+        let active = state.active.as_ref()?;
+        let initializations = std::iter::once(&active.result.initialization)
+            .chain(
+                state
+                    .supersessions
+                    .iter()
+                    .map(|supersession| &supersession.result.initialization),
+            )
+            .collect::<Vec<_>>();
+        if !initializations.contains(&prepared) {
+            return None;
+        }
+        let others = initializations
+            .into_iter()
+            .filter(|initialization| *initialization != prepared)
+            .cloned()
+            .collect();
+        Some((active.request.terms.swap_id(), others))
+    }
+
     /// The isolated signer's nonce as the node reports it now.
     ///
     /// # Errors

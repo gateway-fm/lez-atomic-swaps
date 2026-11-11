@@ -53,20 +53,20 @@ pub use xmr_v3_first_lock::{
 use async_trait::async_trait;
 use lez_bridge_client::{BridgeClient, BridgeClientError, FinalizedWitnessedClaimPresence};
 use lez_bridge_protocol::{
-    AccountIds, DiscoveryWindow, EscrowMetadataFacts, EscrowObservationTarget, EscrowState,
-    ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32, InitializationFoundFacts,
-    InitializationObservation, MessageContext, NativeCustodyFacts, NativeEscrowAccountFacts,
-    NativeEscrowAccountObservation, NativeEscrowStep, NativeEscrowTerms, NativeEscrowTermsInput,
-    NativeRefundFoundFacts, NativeRefundObservation, NativeRefundObservationTarget,
-    ObserveEscrowRequest, ObserveEscrowResult, ObserveFinalizedWitnessedClaimRequest,
-    ObserveNativeRefundRequest, ObserveNativeRefundResult, ObserveRevealingClaimRequest,
-    ObserveRevealingClaimResult, ObservedTransactionFacts, Participant as BridgeParticipant,
-    PrepareNativeEscrowRequest, PrepareNativeEscrowResult, PrepareNativeRefundRequest,
-    PrepareNativeRefundResult, PrepareRevealingClaimRequest, PrepareRevealingClaimResult,
-    PreparedTransaction, ProtocolValueError, RequestId, RevealingClaimFoundFacts,
-    RevealingClaimObservation, RevealingClaimObservationTarget, RevealingPreimage, RunId,
-    RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome, SubmitTransactionRequest,
-    SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
+    AccountIds, DiscoveryWindow, ErrorCode, EscrowMetadataFacts, EscrowObservationTarget,
+    EscrowState, ExactTransactionBytes, FundingFoundFacts, FundingObservation, Hex32,
+    InitializationFoundFacts, InitializationObservation, MessageContext, NativeCustodyFacts,
+    NativeEscrowAccountFacts, NativeEscrowAccountObservation, NativeEscrowStep, NativeEscrowTerms,
+    NativeEscrowTermsInput, NativeRefundFoundFacts, NativeRefundObservation,
+    NativeRefundObservationTarget, ObserveEscrowRequest, ObserveEscrowResult,
+    ObserveFinalizedWitnessedClaimRequest, ObserveNativeRefundRequest, ObserveNativeRefundResult,
+    ObserveRevealingClaimRequest, ObserveRevealingClaimResult, ObservedTransactionFacts,
+    Participant as BridgeParticipant, PrepareNativeEscrowRequest, PrepareNativeEscrowResult,
+    PrepareNativeRefundRequest, PrepareNativeRefundResult, PrepareRevealingClaimRequest,
+    PrepareRevealingClaimResult, PreparedTransaction, ProtocolValueError, RequestId,
+    RevealingClaimFoundFacts, RevealingClaimObservation, RevealingClaimObservationTarget,
+    RevealingPreimage, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitTransactionRequest, SubmitTransactionResult, SupersedeNativeEscrowPrepareRequest,
     SupersedeNativeEscrowPrepareResult, TransactionId,
 };
 use lez_swap_core::{ChainPosition, LezUnixMilliseconds, Participant};
@@ -206,6 +206,14 @@ pub trait LezBridgeFirstLockTransport: Send + Sync {
         &self,
         request: SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, Self::Error>;
+
+    /// Whether a submission failed with the bridge's definite refusal of an
+    /// initialization whose escrow account another transaction initialized
+    /// (`ErrorCode::EscrowAlreadyInitialized`): nothing was sent, so the
+    /// outcome is known rather than ambiguous.
+    fn is_escrow_already_initialized(_error: &Self::Error) -> bool {
+        false
+    }
 }
 
 #[async_trait]
@@ -224,6 +232,11 @@ impl LezBridgeFirstLockTransport for BridgeClient {
         request: SubmitTransactionRequest,
     ) -> Result<SubmitTransactionResult, Self::Error> {
         BridgeClient::submit_transaction(self, request).await
+    }
+
+    fn is_escrow_already_initialized(error: &Self::Error) -> bool {
+        matches!(error, BridgeClientError::Remote(remote)
+            if remote.code() == ErrorCode::EscrowAlreadyInitialized)
     }
 }
 
@@ -1100,7 +1113,7 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
             request_id,
             bridge_participant(self.local_participant),
         );
-        let Ok(response) = LezBridgeFirstLockTransport::submit_transaction(
+        let response = match LezBridgeFirstLockTransport::submit_transaction(
             &self.transport,
             SubmitTransactionRequest::new(
                 context.clone(),
@@ -1109,8 +1122,14 @@ impl<T: LezBridgeFirstLockTransport> LezBridgeAdapter<T> {
             ),
         )
         .await
-        else {
-            return Ok(NativeFirstLockSubmitOutcome::Unknown);
+        {
+            Ok(response) => response,
+            // The bridge named why it did not send the initialization: a
+            // known outcome, passed on for the caller to name the swap's stop.
+            Err(error) if T::is_escrow_already_initialized(&error) => {
+                return Err(PrepareNativeFirstLockError::Transport(error));
+            }
+            Err(_) => return Ok(NativeFirstLockSubmitOutcome::Unknown),
         };
         if response.context != context || response.transaction_id != transaction.transaction_id {
             return Ok(NativeFirstLockSubmitOutcome::Unknown);

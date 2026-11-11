@@ -846,6 +846,10 @@ impl From<BridgeRuntimeError> for OperationFailure {
                 code: ErrorCode::ReplanExhausted,
                 message: "the native escrow pair was re-planned the maximum number of times",
             },
+            BridgeRuntimeError::EscrowAlreadyInitialized => Self {
+                code: ErrorCode::EscrowAlreadyInitialized,
+                message: "the native escrow account already exists, initialized by another transaction; this initialization can never execute",
+            },
             BridgeRuntimeError::SupersessionInclusionMismatch => Self::invalid_request(
                 "native escrow initialization inclusion does not match the superseded step",
             ),

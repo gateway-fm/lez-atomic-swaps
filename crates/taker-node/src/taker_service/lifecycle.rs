@@ -1293,6 +1293,27 @@ fn overlay_held_revealing_claim(view: &mut TakerSwapViewV1, state_db: &Path) {
         view.revealing_claim_held_by = Some(holder);
     }
 }
+/// A Zcash swap whose LEZ first-lock step keeps going out without being
+/// included: the actor's attempts record beside its state names it once one
+/// of its rules holds, in one sentence on the row (`status_detail`). Either
+/// the escrow initialization can never execute because its escrow account
+/// already exists without it (the swap stopped: `lez_escrow_already_initialized`),
+/// or a step was submitted many times over a long time for no reason the chain
+/// shows (the actor keeps submitting; nothing is decided).
+#[cfg(feature = "pair-zec")]
+fn overlay_lez_first_lock_attempts(view: &mut TakerSwapViewV1, state_db: &Path) {
+    if matches!(
+        view.state,
+        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
+    ) {
+        return;
+    }
+    view.status_detail = zec_reference_actor::lez_first_lock_attempts(state_db)
+        .and_then(|record| record.status_detail());
+}
+/// Without the Zcash pair no actor keeps a first-lock attempts record.
+#[cfg(not(feature = "pair-zec"))]
+const fn overlay_lez_first_lock_attempts(_view: &mut TakerSwapViewV1, _state_db: &Path) {}
 /// Without the Zcash pair no actor submits a revealing LEZ claim.
 #[cfg(not(feature = "pair-zec"))]
 fn revealing_claim_submitted_marker(_state_db: &Path) -> Option<PathBuf> {
@@ -1573,6 +1594,7 @@ async fn project_swap(
                                     Some("lez_depositor_balance_insufficient".to_owned());
                             }
                             overlay_held_revealing_claim(&mut view, &state_db);
+                            overlay_lez_first_lock_attempts(&mut view, &state_db);
                             super::zec_supervisor::overlay_schedule(&mut view, record.as_ref());
                             let admitted = lookup_monitored_action(initiation, &swap_id).await?;
                             overlay_zec_admitted_refund(
@@ -1694,6 +1716,7 @@ async fn project_receipt_bound_swap(
     }
     if pair == Pair::Zcash {
         overlay_held_revealing_claim(&mut view, config.state_db());
+        overlay_lez_first_lock_attempts(&mut view, config.state_db());
     }
     #[cfg(feature = "pair-zec")]
     if pair == Pair::Zcash {
@@ -1804,6 +1827,7 @@ fn view_from_actor_status(
         privacy_guidance,
         attention_reason: None,
         revealing_claim_held_by: None,
+        status_detail: None,
         actor_phase: None,
         claim_window_closed: None,
         last_failure_class: None,
@@ -2712,6 +2736,7 @@ fn commit_from_facts(
             privacy_guidance: None,
             attention_reason: None,
             revealing_claim_held_by: None,
+            status_detail: None,
             actor_phase: None,
             claim_window_closed: None,
             last_failure_class: None,
@@ -2812,6 +2837,7 @@ mod tests {
             privacy_guidance: None,
             attention_reason: None,
             revealing_claim_held_by: None,
+            status_detail: None,
             actor_phase: Some(phase.to_owned()),
             claim_window_closed: window_closed,
             last_failure_class: None,
@@ -2870,6 +2896,7 @@ mod tests {
             privacy_guidance: None,
             attention_reason: None,
             revealing_claim_held_by: None,
+            status_detail: None,
             actor_phase: None,
             claim_window_closed: None,
             last_failure_class: None,
@@ -2932,6 +2959,7 @@ mod tests {
             privacy_guidance: None,
             attention_reason: None,
             revealing_claim_held_by: None,
+            status_detail: None,
             actor_phase: None,
             claim_window_closed: None,
             last_failure_class: None,

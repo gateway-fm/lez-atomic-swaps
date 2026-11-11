@@ -74,6 +74,12 @@ pub enum BridgeRuntimeError {
     /// The native escrow pair was re-planned the maximum number of times.
     #[error("the native escrow pair was re-planned the maximum number of times")]
     ReplanExhausted,
+    /// A native escrow initialization whose escrow account already exists on
+    /// the chain while neither it nor another initialization of its lineage is
+    /// included: it can never execute (the sequencer would admit it and drop
+    /// it at block building), so it is not sent.
+    #[error("the native escrow account already exists, initialized by another transaction")]
+    EscrowAlreadyInitialized,
     /// The kept initialization is not included (step `Fund`) or the superseded
     /// initialization is already included (step `Initialize`).
     #[error("native escrow initialization inclusion does not match the superseded step")]
@@ -1514,6 +1520,31 @@ impl BridgeRuntime {
                 ));
             }
         }
+        // A native escrow initialization whose escrow account another
+        // transaction already initialized can never execute either: the
+        // official sequencer admits it to its mempool, drops it at block
+        // building ("AccountAlreadyInitialized") and tells the submitter
+        // nothing. Named instead of broadcast, so the caller can stop by name
+        // rather than resubmit forever. Only when no initialization of this
+        // lineage is included: the account is then not this swap's own.
+        if matches!(ownership, OwnedSubmission::Legacy)
+            && let Some((swap_id, lineage)) = self
+                .planner
+                .native_escrow_initialization(&request.transaction)
+                .await
+            && self.escrow_accounts_exist(swap_id).await?
+        {
+            let mut lineage_included = false;
+            for initialization in &lineage {
+                lineage_included |= self
+                    .node
+                    .prepared_transaction_is_included(initialization)
+                    .await?;
+            }
+            if !lineage_included {
+                return Err(BridgeRuntimeError::EscrowAlreadyInitialized);
+            }
+        }
         // An owned revealing claim whose nonce another transaction of this
         // signer took can never land either: named, never rebroadcast; the
         // caller re-plans the same claim at the live nonce (FINDINGS 24).
@@ -1547,6 +1578,23 @@ impl BridgeRuntime {
             request.transaction.transaction_id,
             SubmissionOutcome::Accepted,
         ))
+    }
+
+    /// Whether either account a native escrow initialization creates (the
+    /// metadata and custody PDAs of `swap_id`) already holds anything: the
+    /// escrow program's `init` accounts must be the default account.
+    async fn escrow_accounts_exist(&self, swap_id: Hex32) -> Result<bool, BridgeRuntimeError> {
+        let escrow_program = program_id_from_hex(self.runtime.escrow_program_id);
+        let swap_id = swap_id.as_bytes();
+        for account_id in [
+            compute_metadata_pda(&escrow_program, swap_id),
+            compute_custody_pda(&escrow_program, swap_id),
+        ] {
+            if self.node.native_account(account_id).await? != Account::default() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Observes an exact owned pair or discovers a counterparty pair by terms.
