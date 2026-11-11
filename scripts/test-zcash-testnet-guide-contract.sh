@@ -13,23 +13,21 @@ fail() {
 [[ -s "$guide" ]] || fail "missing non-empty $guide"
 
 required_literals=(
-  "Zebra 6.0.0"
-  "v6.0.0"
+  "Zebra 7.0.0"
+  "v7.0.0"
+  "77190ad9"
+  "consensus.nextblock"
   "Self-hosted"
   "Public Zebrad provider route"
   "Tatum"
   "transparent"
-  "project-owned signer"
-  "build_funding_transaction"
-  "build_claim_transaction"
-  "build_refund_transaction"
+  "Obtaining testnet funds"
   "getblockchaininfo"
+  "getaddressutxos"
   "gettxout"
   "sendrawtransaction"
   "faucet"
   "External-resource and flakiness summary"
-  "No public"
-  "manual-user-flows.md"
 )
 
 for literal in "${required_literals[@]}"; do

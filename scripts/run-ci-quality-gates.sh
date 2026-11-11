@@ -157,4 +157,7 @@ for compose_file in "${compose_files[@]}"; do
       "${compose_args[@]}" config --quiet
 done
 
+# The Zcash Testnet guide keeps the facts it was last walked with (no network).
+./scripts/test-zcash-testnet-guide-contract.sh
+
 echo "CI shell, workflow, Dockerfile, and Compose quality gates passed"
