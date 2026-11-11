@@ -248,13 +248,14 @@ readonly devnet_genesis_root=d0d73d3b253006bdb8086dc867442dac1a81e8fdbcdfceb74f0
 readonly devnet_locked_note=a4c6c9828735678bf91667e26ab47e26b8196b6c1be137b7a9e686be22fd6205
 readonly devnet_note_value=1000000000000
 readonly devnet_leader_notes=8
-readonly leader_key=2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26
-readonly sequencer_funding_key=ed266e6e887b9b97059dc1aa1b7b2e19b934291753c6336a163fe4ebaa28e717
+# Both are public keys (note owners in upstream's public devnet genesis), not secrets.
+readonly leader_note_owner=2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26
+readonly sequencer_note_owner=ed266e6e887b9b97059dc1aa1b7b2e19b934291753c6336a163fe4ebaa28e717
 readonly devnet_security_param=2
 awk -v up_root="$upstream_genesis_root" -v root="$devnet_genesis_root" \
     -v up_locked="$upstream_locked_note" -v locked="$devnet_locked_note" \
     -v value="$devnet_note_value" -v k="$devnet_security_param" \
-    -v leader="$leader_key" -v leader_notes="$devnet_leader_notes" -v sequencer="$sequencer_funding_key" '
+    -v leader="$leader_note_owner" -v leader_notes="$devnet_leader_notes" -v sequencer="$sequencer_note_owner" '
   # a note line is followed by its owner: hold it until the owner is known
   held != "" { if (index($0, "pk: '\''" leader "'\''")) { sub(/value: 1000000$/, "value: " value, held); notes++
                  if (notes > leader_notes) { sub(leader, sequencer); moved++ } }
@@ -274,7 +275,7 @@ jq --arg channel "$channel_id" \
   >"$RUNTIME/config/indexer_config.json"
 
 # The sequencer pays for its inscriptions from its own genesis notes (above).
-funding_key="$sequencer_funding_key"
+funding_key="$sequencer_note_owner"
 # The sequencer makes a LEZ block every second (block_create_timeout, upstream
 # 10 s) and retries a pending one after 2 s (upstream 7 s). Bedrock includes one
 # inscription about every 2 s at this pace, so a transaction is finalized in the

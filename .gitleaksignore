@@ -31,3 +31,5 @@ eae01e88bf88471250a8d5762052d771368fca50:deploy/scripts/market-bootstrap.sh:gene
 005b6d87fc8cad36e481b92995f7c337b5ab826d:deploy/scripts/market-bootstrap.sh:generic-api-key:20
 016c28dca102799e63c7915e925fc391d9a4cb88:deploy/assets/lez-source/sequencer-config/sequencer_config.json:generic-api-key:15
 9d71777641773bee72a7c7a45b52030f114a1073:deploy/assets/lez-source/sequencer-config/sequencer_config.json:generic-api-key:15
+88fcabbf2b5d4027b28981322b9360ce732d02f1:deploy/scripts/gen-config.sh:generic-api-key:251
+88fcabbf2b5d4027b28981322b9360ce732d02f1:deploy/scripts/gen-config.sh:generic-api-key:252

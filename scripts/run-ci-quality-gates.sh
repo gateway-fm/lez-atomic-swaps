@@ -152,6 +152,7 @@ for compose_file in "${compose_files[@]}"; do
   LEZ_MARKET_ROOT=/tmp/lez-ci-quality-market \
   LEZ_MAKER_BTC_CLAIM_DESTINATION=ci-quality-maker-address \
   LEZ_TAKER_BTC_CLAIM_DESTINATION=ci-quality-taker-address \
+  LEZ_CONTAINER_PREFIX=lez-ci-quality \
     "$compose" --project-name "lez-ci-quality-${RANDOM}" \
       "${compose_args[@]}" config --quiet
 done

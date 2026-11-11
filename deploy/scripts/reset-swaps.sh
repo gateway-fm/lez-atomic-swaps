@@ -52,6 +52,7 @@ export BTC_RPC_PASSWORD
 # shellcheck source=lane.sh
 source scripts/lane.sh
 node_of() { echo "$LEZ_CONTAINER_PREFIX-$1-node"; }
+# shellcheck disable=SC2154  # lane_compose is set by lane.sh, sourced above
 compose=(docker compose "${lane_compose[@]}")
 log() { printf '[reset %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
 running() { [[ "$(docker inspect -f '{{.State.Running}}' "$(node_of "$1")" 2>/dev/null)" == true ]]; }
