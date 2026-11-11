@@ -80,6 +80,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 
@@ -2162,6 +2163,29 @@ def taker_node_log_since(since: str) -> str:
     return read.stdout + read.stderr
 
 
+def taker_node_log_follow_until(marker: str, since: str, timeout: float) -> bool:
+    """Follows the Taker Node's log from `since` (RFC 3339) and returns True the
+    moment a line carries `marker`, False after `timeout` seconds."""
+    follow = subprocess.Popen(["docker", "logs", "-f", "--since", since, NODES["taker"][0]],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
+                              errors="replace")
+    found = threading.Event()
+
+    def read() -> None:
+        for line in follow.stdout:
+            if marker in line:
+                found.set()
+                return
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        return found.wait(timeout)
+    finally:
+        follow.kill()
+        follow.wait()
+
+
 def scenario_zec_claim_collision(stamp: str) -> dict:
     """FINDINGS 24, live: a revealing LEZ claim whose nonce another transaction
     of the same account takes is Superseded, re-planned at the live nonce and
@@ -2204,11 +2228,12 @@ def scenario_zec_claim_collision(stamp: str) -> dict:
     finally:
         ROUTE["direction"] = "TakerSellsForeign"
     marker = f"taker actor {swap_c}: drive → submitted lez_"
-    deadline = time.time() + 600
-    while marker not in taker_node_log_since(since):
-        if time.time() > deadline:
-            raise Failure(f"the Taker Node did not submit {swap_c[:12]}'s LEZ first lock within 600 s")
-        time.sleep(0.3)
+    # The claim must be planned while C's transaction is still in the mempool,
+    # and a LEZ block comes every second: the Node's log is followed as it is
+    # written (a `docker logs` poll took longer than a block, the claim was
+    # then planned one nonce later and raced C's next transaction instead).
+    if not taker_node_log_follow_until(marker, since, timeout=600):
+        raise Failure(f"the Taker Node did not submit {swap_c[:12]}'s LEZ first lock within 600 s")
     pressed = time.time()
     result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-a",
                                                    "swap_id": swap_a, "expected_generation": view_a["progress_generation"]},
