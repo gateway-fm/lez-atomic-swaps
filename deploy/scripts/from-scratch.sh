@@ -15,7 +15,8 @@
 # Every phase is idempotent: it checks what already exists and does only the
 # missing work, so a rerun after a failure continues where it stopped.
 #
-#   host      docker, jq, git, curl, openssl, xxd (Homebrew on macOS)
+#   host      docker, jq, git, curl, openssl, xxd (Homebrew on macOS, with its
+#             bash and coreutils: scripts/host.sh)
 #   sources   pinned checkouts next to this repo (the "workspace")
 #   nix       Basecamp bundle, qt-mcp, the release packages (lgx-portable) of
 #             the role desks, the LEZ Network desk, Chat and Delivery
@@ -42,6 +43,8 @@ set -euo pipefail
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
 WORKSPACE="$(cd "$REPO_ROOT/.." && pwd)"
+# shellcheck source=host.sh
+source "$DEPLOY_ROOT/scripts/host.sh"
 RUN_SWAP=0
 EVIDENCE_MODE=0
 ONLY=""
@@ -126,6 +129,8 @@ phase_host() {
     for formula in jq git curl openssl python3; do
       command -v "$formula" >/dev/null || { log "installing $formula"; brew install "${formula/python3/python}"; }
     done
+    # regress.sh bounds every test with coreutils `timeout`; macOS has none
+    command -v timeout >/dev/null || { log "installing coreutils"; brew install coreutils; }
     if ! command -v docker >/dev/null; then
       log "installing Docker Desktop"
       brew install --cask docker

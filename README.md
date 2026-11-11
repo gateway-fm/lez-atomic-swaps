@@ -41,7 +41,9 @@ contains the public transaction and block identities shown in the walkthrough.
 ## Run the product locally
 
 The packaged stack currently targets arm64, including Apple Silicon and arm64
-Linux, and requires Docker with Compose.
+Linux, and requires Docker with Compose. The scripts need bash 5.1 or newer
+and GNU `timeout`; macOS ships bash 3.2, so on a Mac run
+`brew install bash coreutils` once (the scripts say so when it is missing).
 
 **Prebuilt (minutes):** every release ships the images and a bundle. Download
 `lez-swap-stack-<tag>-arm64.tar.gz` from the

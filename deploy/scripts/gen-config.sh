@@ -7,6 +7,8 @@ set -euo pipefail
 
 DEPLOY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly DEPLOY_ROOT
+# shellcheck source=host.sh
+source "$DEPLOY_ROOT/scripts/host.sh"
 RUNTIME="${1:-$DEPLOY_ROOT/runtime}"
 readonly RUNTIME
 readonly LEZ_SOURCE="$DEPLOY_ROOT/assets/lez-source"

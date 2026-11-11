@@ -71,13 +71,13 @@ class Runner(unittest.TestCase):
         self.deploy = self.tmp / 'deploy'
         scripts = self.deploy / 'scripts'
         scripts.mkdir(parents=True)
-        for name in ('regress.sh', 'lane.sh'):
+        for name in ('regress.sh', 'lane.sh', 'host.sh'):
             shutil.copy(SCRIPTS / name, scripts)
         executable(scripts / 'node-e2e.py', FAKE_SCENARIO)
         executable(scripts / 'ui-e2e.sh', '#!/bin/sh\nexec python3 "$(dirname "$0")/node-e2e.py" "$@"\n')
         # up.sh: a new chain thaws the fake one; a profile switch rewrites runtime.env
         executable(scripts / 'up.sh', FAKE_LOGGER % ('up', 'rm -f "$STATE/frozen"\n'
-                                                     '[ -z "$LEZ_TIMING_PROFILE" ] || sed -i "s/^LEZ_TIMING_PROFILE=.*/'
+                                                     '[ -z "$LEZ_TIMING_PROFILE" ] || sed -i.bak "s/^LEZ_TIMING_PROFILE=.*/'
                                                      'LEZ_TIMING_PROFILE=$LEZ_TIMING_PROFILE/" "$(dirname "$0")/../runtime/runtime.env"'))
         # docker: Bedrock's storage price unreadable (no worn chain); nothing else is asked
         executable(self.bin / 'docker', '#!/bin/sh\nexit 1\n')
@@ -296,6 +296,7 @@ class LaneNames(unittest.TestCase):
         (tmp / 'scripts').mkdir()
         (tmp / 'runtime').mkdir()
         shutil.copy(SCRIPTS / 'lane.sh', tmp / 'scripts')
+        shutil.copy(SCRIPTS / 'host.sh', tmp / 'scripts')
         (tmp / 'runtime' / 'runtime.env').write_text('LEZ_STACK_PREFIX=lezb\nLEZ_STACK_PORT_OFFSET=1000\n')
         self.assertEqual(self.stack(tmp)[:2], ['lezb', 'lezb-swap-stack'])
         with self.assertRaises(subprocess.CalledProcessError) as refused:
@@ -309,7 +310,7 @@ class LaneNames(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp)
         (tmp / 'scripts').mkdir()
         (tmp / 'runtime').mkdir()
-        for name in ('lane.sh', 'node-e2e.py'):
+        for name in ('lane.sh', 'host.sh', 'node-e2e.py'):
             shutil.copy(SCRIPTS / name, tmp / 'scripts')
         (tmp / 'runtime' / 'runtime.env').write_text('LEZ_STACK_PREFIX=lezb\nLEZ_STACK_PORT_OFFSET=1000\n')
         clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}

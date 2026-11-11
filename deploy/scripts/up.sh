@@ -143,7 +143,9 @@ if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
   done
   # A snapshot is 1 to 8 GB and root-owned on Linux; a day of recreations fills
   # the disk. Keep the newest LEZ_KEEP_BROKEN_CHAINS (1: the one just made).
-  mapfile -t old_chains < <(find runtime -maxdepth 1 -name 'lez-broken-*' -printf '%f\n' | sort -t- -k3 -n | head -n "-${LEZ_KEEP_BROKEN_CHAINS:-1}")
+  # (BSD find has no -printf and BSD head no negative count: macOS)
+  mapfile -t old_chains < <(find runtime -maxdepth 1 -name 'lez-broken-*' | sed 's|^runtime/||' | sort -t- -k3 -n |
+    awk -v keep="${LEZ_KEEP_BROKEN_CHAINS:-1}" '{ line[NR] = $0 } END { for (i = 1; i <= NR - keep; i++) print line[i] }')
   for d in "${old_chains[@]}"; do
     rm -rf "runtime/$d" 2>/dev/null ||
       docker run --rm --user 0 --volume "$PWD/runtime:/runtime" \
