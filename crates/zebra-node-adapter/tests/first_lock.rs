@@ -1567,19 +1567,11 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
                 160_000,
                 200,
             ),
-            ZecProfileId::PublicTestnetV1 => (
+            ZecProfileId::PublicTestnetV1 | ZecProfileId::PublicTestnetV2 => (
                 NetworkType::Test,
                 LezEnvironmentV1::PublicTestnetV0_2,
                 100,
-                292,
-                7_300_000,
-                14_500,
-            ),
-            ZecProfileId::PublicTestnetV2 => (
-                NetworkType::Test,
-                LezEnvironmentV1::PublicTestnetV0_2,
-                100,
-                3_800,
+                100 + ZecRefundProfile::for_id(profile).zcash_refund_blocks(),
                 7_300_000,
                 14_500,
             ),
