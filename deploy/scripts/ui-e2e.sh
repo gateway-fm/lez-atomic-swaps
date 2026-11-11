@@ -26,6 +26,8 @@
 #   concurrent     two swaps taken, locked and claimed interleaved
 #   taker-refund   Maker's Basecamp stopped before it locks; the Taker refunds past the cutoff
 #   maker-refund   the Taker never claims; the Maker refunds, then the Taker refunds
+#   lez-finality-stall  the LEZ sequencer stopped until both Nodes report the stall
+#                  and both desks show it, then started again (#112; not in `all`)
 #   all            every scenario in sequence (stops at the first failure)
 #
 # replay and wrong-inputs have no desk equivalent: a desk sends one request per
@@ -420,6 +422,63 @@ scenario_node_offline() {
     wait_owner
   done
 }
+# #112: a frozen LEZ finality is reported by both Nodes and shown on both desks.
+# The stack's sequencer is stopped (no new blocks, nothing left to finalize, no
+# tip to read) until both Nodes' health turns degraded with
+# lez_finality_stalled and both desks show the line above their swaps; it is
+# started again and both recover. The Nodes' threshold is
+# LEZ_NODE_FINALITY_STALL_SECONDS (the heartbeat's 60 s on the devnet). Every
+# lane shares the one sequencer, so this runs on a stack nothing else uses.
+lez_chain() { # lez_chain <role> <method> <params>: the Node's health lez_chain, one line of JSON
+  docker exec "$container_prefix-$1-node" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
+    -H 'content-type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null |
+    python3 -c 'import json,sys; r=json.load(sys.stdin)["result"]; print(json.dumps({"degraded": r.get("degraded"), "lez_chain": r.get("lez_chain")}))' 2>/dev/null
+}
+wait_lez_chain() { # wait_lez_chain <stalled|moving> <seconds>: both Nodes report it
+  local want="$1" deadline=$(( $(date +%s) + $2 )) maker taker
+  while :; do
+    maker="$(lez_chain maker maker_health '{}')"; taker="$(lez_chain taker taker_health '{"schema_version":1}')"
+    if python3 - "$want" "$maker" "$taker" <<'PY'
+import json, sys
+want = sys.argv[1]
+for raw in sys.argv[2:]:
+    health = json.loads(raw or "{}")
+    chain = health.get("lez_chain") or {}
+    if want == "stalled" and not (health.get("degraded") is True and chain.get("reason") == "lez_finality_stalled"):
+        sys.exit(1)
+    if want == "moving" and not (chain and chain.get("degraded") is False):
+        sys.exit(1)
+PY
+    then
+      log "maker_health: $maker"; log "taker_health: $taker"; return 0
+    fi
+    (( $(date +%s) < deadline )) || { log "maker_health: $maker"; log "taker_health: $taker"; fail "the Nodes did not report the LEZ chain $want within $2 s"; }
+    sleep 5
+  done
+}
+scenario_lez_finality_stall() {
+  local sequencer="$LEZ_STACK_PREFIX-sequencer" threshold="${LEZ_NODE_FINALITY_STALL_SECONDS:-600}" stopped_at
+  note "Both Nodes report LEZ finality moving before the stall"
+  wait_lez_chain moving 180
+  note "The LEZ sequencer is stopped: finality stands still and both Nodes must turn degraded after ${threshold} s"
+  stopped_node="$sequencer"; docker stop "$sequencer" >/dev/null || fail "stopping $sequencer"; stopped_at="$(date +%s)"
+  wait_lez_chain stalled $(( threshold + 180 ))
+  log "degraded $(( $(date +%s) - stopped_at )) s after the sequencer stopped (threshold ${threshold} s)"
+  for role in maker taker; do
+    docker exec "$container_prefix-$role-node" node /ui-tests/verify-lez-chain.mjs "$role" stalled </dev/null 2>&1 |
+      grep -E '✓|✗|^    [a-zA-Z]|^  [a-z]+ desk:|passed|failed|Error'
+    [[ "${PIPESTATUS[0]}" == 0 ]] || fail "the $role desk did not show the LEZ finality stall"
+  done
+  note "The sequencer is started again: finality moves and both Nodes and desks recover"
+  docker start "$sequencer" >/dev/null || fail "starting $sequencer"; stopped_node=""
+  wait_lez_chain moving 600
+  for role in maker taker; do
+    docker exec "$container_prefix-$role-node" node /ui-tests/verify-lez-chain.mjs "$role" clear </dev/null 2>&1 |
+      grep -E '✓|✗|^    [a-zA-Z]|^  [a-z]+ desk:|passed|failed|Error'
+    [[ "${PIPESTATUS[0]}" == 0 ]] || fail "the $role desk still shows the LEZ finality stall"
+  done
+}
 scenario_concurrent() {
   local a b; ensure_coins "$lock_wallet" 2
   if [[ "$direction" == TakerSellsLez ]]; then
@@ -716,6 +775,7 @@ run_one() {
     taker-refund) scenario_taker_refund ;;
     maker-refund) scenario_maker_refund ;;
     node-offline) scenario_node_offline ;;
+    lez-finality-stall) scenario_lez_finality_stall ;;
     zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
     zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
     zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
