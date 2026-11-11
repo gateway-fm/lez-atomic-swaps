@@ -866,7 +866,11 @@ def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_e
                     f"(attempt {attempt}, state {view['state']})")
         else:
             category = (reply["error"].get("data") or {}).get("category")
-            if category not in {"taker_action_execution_unavailable", "taker_action_conflict", "taker_action_unavailable"}:
+            # progress_generation_conflict: the Node's observer advanced the
+            # swap between the view and the request (it sweeps every 3 s on the
+            # devnet's profiles); the next attempt reads a fresh view.
+            if category not in {"taker_action_execution_unavailable", "taker_action_conflict", "taker_action_unavailable",
+                                "progress_generation_conflict"}:
                 raise Failure(f"taker_swap_refund_v1 failed: {json.dumps(reply['error'])[:300]}")
             if attempt % 5 == 1:
                 log(f"  refund not yet accepted (attempt {attempt}: {category}); taker {view['state']} | maker: {maker_phase(swap_id)}")
