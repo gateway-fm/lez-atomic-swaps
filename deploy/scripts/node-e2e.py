@@ -1042,12 +1042,37 @@ def scenario_late_claim_unmined(stamp: str) -> dict:
         finally:
             zec_restore_routes("taker", "sequencer")  # a no-op on a stopped container; its start brings its own
             start_taker()
-    taker_view_end, maker_phase_end = drive_to_settlement(
-        swap_id, stamp, timeout=3 * int(profile["LEZ_LEZ_DISCOVERY_MAX_BLOCKS"])
-        + int(profile["LEZ_BTC_LATER_REFUND_SECONDS"]) + 900)
+    try:
+        taker_view_end, maker_phase_end = drive_to_settlement(
+            swap_id, stamp, timeout=3 * int(profile["LEZ_LEZ_DISCOVERY_MAX_BLOCKS"])
+            + int(profile["LEZ_BTC_LATER_REFUND_SECONDS"]) + 900)
+    finally:
+        if REVERSE:
+            note_late_bitcoin_claim(evidence)
     settlement = assert_settled_consistently(before, taker_view_end["state"], maker_phase_end)
     return {"swap_id": swap_id, **evidence, "taker_terminal_state": taker_view_end["state"],
             "maker_terminal_phase": maker_phase_end, **settlement}
+
+
+def note_late_bitcoin_claim(evidence: dict) -> None:
+    """Bitcoin cannot expire a claim: the one held in the mempool is mined once
+    the miner resumes, after the claim window, unless the Maker's refund took
+    the lock first. Mined, it spent the Maker's lock, and the Maker must take
+    the secret from it to its LEZ claim before the Taker's later refund time;
+    the balances then say whether it did. Recorded either way, so a failure
+    names which race it ran (the first run's claim was mined in the block
+    after the refund opened, and the Maker never claimed)."""
+    claim = evidence.get("claim")
+    if not claim:
+        return
+    try:
+        block = bitcoin("getrawtransaction", claim, "1").get("blockhash")
+    except Failure:
+        block = None
+    height = int(bitcoin("getblockheader", block)["height"]) if block else None
+    evidence["claim_mined_at_height"] = height
+    log(f"  the held claim {claim[:12]} " + (f"was mined after all, at height {height}" if height is not None
+                                            else "is not on chain"))
 
 
 def queue_maker_refund(swap_id: str, stamp: str, evidence: dict) -> None:
