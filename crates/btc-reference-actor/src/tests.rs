@@ -6014,6 +6014,7 @@ fn exact_lez_claim_presence(
 
 /// A finalized claim found by `request` in block `block_height`, read at
 /// `finalized_tip`, with `scanned_window` scanned.
+#[allow(clippy::too_many_arguments)]
 fn exact_lez_claim_presence_at(
     agreement: &BtcAgreementV1,
     request: &ObserveFinalizedWitnessedClaimRequest,

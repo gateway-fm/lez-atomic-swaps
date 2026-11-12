@@ -7751,12 +7751,18 @@ where
     P: LezClaimChainPort,
 {
     /// Classifies the claim in the swap's discovery window and, when it is
-    /// absent there while the chain has grown past that window, once more
-    /// over the whole span since the swap's start. A claim lands until the
-    /// LEZ refund time, which for the leg that refunds later lies past the
-    /// window bounding the Maker's lock (a Bitcoin claim mined late, then
-    /// the follow-up claim: swap fd0bf19d, final in block 525 of a window
-    /// ending near 455), as the LEZ refund lookups already allow for.
+    /// absent there, once more from the swap's start over the protocol's
+    /// largest window. A claim lands until the LEZ refund time, which for the
+    /// leg that refunds later lies past the window bounding the Maker's lock
+    /// (a Bitcoin claim mined late, then the follow-up claim: swap fd0bf19d,
+    /// final in block 525 of a window ending near 455).
+    ///
+    /// The sidecar scans a window only up to the finalized tip, reports the
+    /// last block it scanned as its tip, and answers a window reaching past
+    /// the tip as a prefix (`PrefixUncertain`), never as absence. So the wide
+    /// lookup covers every finalized block since the start, and only a claim
+    /// it finds replaces the first answer: an absence keeps the meaning it
+    /// had (the discovery window, complete), and a prefix is not absence.
     async fn classify_in_discovery_or_full_span(
         &self,
         agreement: &BtcAgreementV1,
@@ -7779,22 +7785,28 @@ where
             .chain
             .classify_finalized_witnessed_claim(request.clone())
             .await?;
-        if let FinalizedWitnessedClaimPresence::NotFound { finalized_tip, .. } = &presence {
-            let full_span = self.config.full_span_window(finalized_tip.height)?;
-            if full_span.max_blocks() > request.window.max_blocks() {
+        if matches!(presence, FinalizedWitnessedClaimPresence::NotFound { .. }) {
+            let widest = DiscoveryWindow::new(
+                request.window.start_height(),
+                lez_bridge_protocol::MAX_DISCOVERY_BLOCKS,
+            )
+            .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+            if widest.max_blocks() > request.window.max_blocks() {
                 let widened = finalized_lez_claim_request_in(
                     self.config,
                     agreement,
                     transition,
                     &self.prepared_claim,
                     self.effect.as_ref(),
-                    full_span,
+                    widest,
                 )?;
-                let presence = self
+                let found = self
                     .chain
                     .classify_finalized_witnessed_claim(widened.clone())
                     .await?;
-                return Ok((widened, presence));
+                if matches!(found, FinalizedWitnessedClaimPresence::PresentExact { .. }) {
+                    return Ok((widened, found));
+                }
             }
         }
         Ok((request, presence))
@@ -7922,8 +7934,28 @@ where
             FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
             |effect| FinalizedWitnessedAssetTransactionTargetV2::exact(effect.transaction.clone()),
         );
-        let (window, request_id, outcome) = self
-            .classify_asset_in_discovery_or_full_span(agreement, transition, &binding, &target)
+        // Not widened as the native lookup is: the asset sidecar reads only a
+        // window that ends at or below the finalized tip and reports that end
+        // as its clock, so the actor has no tip to widen to here (open).
+        let window = self.config.discovery_window()?;
+        let request_id = finalized_lez_asset_claim_request_id(
+            self.config,
+            agreement,
+            transition,
+            &binding,
+            &self.prepared_claim,
+            &target,
+            window,
+        )?;
+        let outcome = self
+            .chain
+            .classify_finalized_asset_claim(
+                &binding,
+                request_id.clone(),
+                self.prepared_claim.clone(),
+                target.clone(),
+                window,
+            )
             .await?;
 
         // A canonical conflicting public transaction burns authority before
@@ -7988,58 +8020,6 @@ impl<P> LezAssetClaimObserver<'_, P>
 where
     P: LezAssetClaimChainPort,
 {
-    /// The asset claim's lookup, widened as the native one is
-    /// ([`LezClaimObserver::classify_in_discovery_or_full_span`]).
-    async fn classify_asset_in_discovery_or_full_span(
-        &self,
-        agreement: &BtcAgreementV1,
-        transition: ClaimTransition,
-        binding: &BtcLezAssetBridgeBindingV2,
-        target: &FinalizedWitnessedAssetTransactionTargetV2,
-    ) -> Result<
-        (
-            DiscoveryWindow,
-            RequestId,
-            FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
-        ),
-        ActorCommandError,
-    > {
-        let discovery = self.config.discovery_window()?;
-        let mut window = discovery;
-        loop {
-            let request_id = finalized_lez_asset_claim_request_id(
-                self.config,
-                agreement,
-                transition,
-                binding,
-                &self.prepared_claim,
-                target,
-                window,
-            )?;
-            let outcome = self
-                .chain
-                .classify_finalized_asset_claim(
-                    binding,
-                    request_id.clone(),
-                    self.prepared_claim.clone(),
-                    target.clone(),
-                    window,
-                )
-                .await?;
-            if let FinalizedWitnessedAssetScanOutcomeV2::Absent {
-                finalized_clock, ..
-            } = &outcome
-            {
-                let full_span = self.config.full_span_window(finalized_clock.height)?;
-                if window == discovery && full_span.max_blocks() > window.max_blocks() {
-                    window = full_span;
-                    continue;
-                }
-            }
-            return Ok((window, request_id, outcome));
-        }
-    }
-
     async fn reconcile_asset_and_maybe_submit(
         &self,
         agreement: &BtcAgreementV1,
