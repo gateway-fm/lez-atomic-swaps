@@ -410,12 +410,19 @@ fn read_public_file(path: &Path, maximum: u64) -> Result<Vec<u8>> {
 }
 
 fn read_secret_text(path: &Path) -> Result<Zeroizing<String>> {
+    let credential = lez_systemd_credential::is_credential_path(path);
     let metadata = fs::symlink_metadata(path).context("secret file is unavailable")?;
     ensure!(
         metadata.file_type().is_file()
             && metadata.len() != 0
             && metadata.len() <= MAX_SECRET_FILE_BYTES
-            && metadata.permissions().mode().trailing_zeros() >= 6
+            && (metadata.permissions().mode().trailing_zeros() >= 6
+                || (credential
+                    && lez_systemd_credential::credential_ownership_ok(
+                        metadata.uid(),
+                        metadata.gid(),
+                        metadata.mode() & 0o7777,
+                    )))
             && metadata.nlink() == 1,
         "secret must be one bounded owner-only regular file"
     );
@@ -473,13 +480,24 @@ mod tests {
 
     use super::{
         Arguments, NodeRouteProfile, acquire_state_directory_lease, load_runtime_before_secrets,
-        validate_node_routes,
+        read_secret_text, validate_node_routes,
     };
     use lez_bridge_protocol::{Hex32, RunId};
 
     const LOCAL_SEQUENCER: &str = "http://127.0.0.1:3040/";
     const LOCAL_INDEXER: &str = "http://127.0.0.1:8779/";
     const OFFICIAL_PUBLIC: &str = "https://testnet.lez.logos.co/";
+
+    #[test]
+    fn secret_file_keeps_its_rule_outside_the_credential_directory() {
+        let run = tempfile::tempdir().unwrap();
+        let path = run.path().join("lez-signer.key");
+        fs::write(&path, "secret\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(read_secret_text(&path).unwrap().as_str(), "secret");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o440)).unwrap();
+        assert!(read_secret_text(&path).is_err());
+    }
 
     #[test]
     fn typed_node_profile_accepts_only_complete_local_or_official_public_routes() {
