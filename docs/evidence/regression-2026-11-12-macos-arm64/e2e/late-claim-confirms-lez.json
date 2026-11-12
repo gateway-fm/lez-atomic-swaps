@@ -1,0 +1,63 @@
+{
+  "scenario": "late-claim-confirms",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsLez",
+  "stamp": "179447005103",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "8709146e7403180c2f364fb81f596e5a7331afaa1c31508c81d541006cc133da",
+  "claim": "fb781e1c08fccf50f4ea5faecffcc440f904eba4c3e88e057ac45fac2d4c6958",
+  "claim_block": "0a3e1d97433514f14c9b5c3195f30bd1f3bc37e02ee65da88a1dc8a37b005452",
+  "balances_before": {
+    "maker": {
+      "btc_sat": 369995979400,
+      "lez_units": 2304000
+    },
+    "taker": {
+      "btc_sat": 525003987800,
+      "lez_units": 1696000
+    }
+  },
+  "balances_after": {
+    "maker": {
+      "btc_sat": 369994976300,
+      "lez_units": 2305000
+    },
+    "taker": {
+      "btc_sat": 525004986800,
+      "lez_units": 1695000
+    }
+  },
+  "deltas": {
+    "maker": {
+      "btc_sat": -1003100,
+      "lez_units": 1000
+    },
+    "taker": {
+      "btc_sat": 999000,
+      "lez_units": -1000
+    }
+  },
+  "outcome": "completed",
+  "result": "passed",
+  "seconds": 51
+}

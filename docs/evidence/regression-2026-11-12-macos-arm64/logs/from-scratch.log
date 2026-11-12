@@ -1,0 +1,700 @@
+
+[06:47:06 host] docker 29.9.2 ready; workspace <workspace>
+
+[06:47:06 sources] sources pinned
+
+[06:47:06 nix] Basecamp bundle and release packages built
+
+[06:47:06 rust] building the role Node binaries and Bitcoin actors in rust:1.96.0-bookworm
+info: latest update on 2026-05-28 for version 1.96.0 (ac68faa20 2026-05-25)
+info: downloading component clippy
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.24s
+
+[06:47:11 rust] Node binaries staged
+
+[06:47:11 build] building the LEZ sidecar and the identity tool
+   Compiling lez-v0-2-sidecar v0.0.0 (/workspace/compat/lez-v0_2-sidecar)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 27.65s
+
+[06:48:04 build] artifacts built into <workspace>/provision/data
+debconf: delaying package configuration, since apt-utils is not installed
+packaged lez_maker_node 0.1.0 (linux-arm64) -> <checkout>/deploy/images/maker-node/lez_maker_node.lgx ( 43M)
+debconf: delaying package configuration, since apt-utils is not installed
+packaged lez_taker_node 0.1.0 (linux-arm64) -> <checkout>/deploy/images/taker-node/lez_taker_node.lgx ( 57M)
+lez_atomic_swap_maker 0.2.5 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_atomic_swap_maker.lgx
+lez_atomic_swap_taker 0.2.5 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_atomic_swap_taker.lgx
+lez_network 0.1.0 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_network.lgx
+chat_module 0.2.2 -> <checkout>/deploy/images/basecamp-ui/assets/packages/chat_module.lgx
+delivery_module 0.2.0 -> <checkout>/deploy/images/basecamp-ui/assets/packages/delivery_module.lgx
+lez_core 0.4.1-sign.4 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_core.lgx
+lez_swap_node 0.3.1 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_swap_node.lgx
+lez_indexer_module 1.1.1-rpc.4 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_indexer_module.lgx
+blockchain_module 0.2.4 -> <checkout>/deploy/images/basecamp-ui/assets/packages/blockchain_module.lgx
+lez_maker_node 0.1.0 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_maker_node.lgx
+lez_taker_node 0.1.0 -> <checkout>/deploy/images/basecamp-ui/assets/packages/lez_taker_node.lgx
+staged lez_core 0.4.1-sign.4 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/lez_core
+staged lez_swap_node 0.3.1 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/lez_swap_node
+staged blockchain_module 0.2.4 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/blockchain_module
+staged lez_indexer_module 1.1.1-rpc.4 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/lez_indexer_module
+staged chat_module 0.2.2 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/chat_module
+staged delivery_module 0.2.0 (linux-arm64) -> images/basecamp-ui/assets/bundle/modules/delivery_module
+staged lez_atomic_swap_maker 0.2.5 (linux-arm64) -> images/basecamp-ui/assets/maker-user/plugins/lez_atomic_swap_maker
+staged lez_atomic_swap_taker 0.2.5 (linux-arm64) -> images/basecamp-ui/assets/taker-user/plugins/lez_atomic_swap_taker
+staged lez_network 0.1.0 (linux-arm64) -> images/basecamp-ui/assets/network-user/plugins/lez_network
+[stage 06:49:23] all payloads staged
+
+[06:49:23 stack] gen-config, image builds, and stack start
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1794466163 (2026-11-12T06:49:23Z), root 61c439ef9e5adc8bac5d2d595ce1e0d7e9a9a84351b1cc83b514595e9d1ef263
+minted the maker Zcash key: runtime/lez/maker/zcash.key
+minted the taker Zcash key: runtime/lez/taker/zcash.key
+zebra mines to the Maker's Zcash key (tmCN22mkmyhGDM8evUfRjTc79AWPBGdrLPF): runtime/zebra/zebrad.toml
+runtime generated at runtime
+  [time 06:49:24] runtime config: 1 s (1 s since up.sh started)
+[2/6] images…
+ Image lez-basecamp-ui:local Building 
+ Image lez-maker-node:local Building 
+ Image lez-taker-node:local Building 
+ Image lez-network-module:local Building 
+ Image lez-bitcoin-core:local Building 
+ Image lez-btc-miner:local Building 
+ Image lez-zebra:local Building 
+ Image lez-services:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 4.35kB done
+#1 DONE 0.0s
+
+#2 [bitcoin-core internal] load build definition from Dockerfile
+#2 transferring dockerfile: 1.47kB done
+#2 DONE 0.0s
+
+#3 [zebra internal] load build definition from Dockerfile
+#3 transferring dockerfile: 1.52kB done
+#3 DONE 0.0s
+
+#4 [btc-miner internal] load build definition from Dockerfile
+#4 transferring dockerfile: 279B done
+#4 DONE 0.0s
+
+#5 [zebra internal] load metadata for gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
+#5 DONE 0.0s
+
+#6 [zebra internal] load metadata for docker.io/zfnd/zebra:7.0.0@sha256:a70d2be8ffef3a4b6e37355724e36a0e6c1838e46baa28bfb216739f00cf2d34
+#6 DONE 0.0s
+
+#7 [zebra internal] load metadata for docker.io/library/debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+#7 DONE 0.0s
+
+#8 [basecamp-ui internal] load build definition from Dockerfile
+#8 transferring dockerfile: 2.40kB done
+#8 DONE 0.0s
+
+#9 [btc-miner internal] load metadata for docker.io/library/debian:bookworm-slim
+#9 DONE 0.0s
+
+#10 [sequencer internal] load build definition from Dockerfile
+#10 transferring dockerfile: 978B done
+#10 DONE 0.0s
+
+#11 [basecamp-ui internal] load metadata for docker.io/library/debian:trixie-slim
+#11 DONE 0.0s
+
+#12 [sequencer internal] load metadata for cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
+#12 DONE 0.0s
+
+#13 [bitcoin-core internal] load .dockerignore
+#13 transferring context: 2B done
+#13 DONE 0.0s
+
+#14 [btc-miner internal] load .dockerignore
+#14 transferring context: 2B done
+#14 DONE 0.0s
+
+#15 [maker-node internal] load build definition from Dockerfile
+#15 transferring dockerfile: 3.39kB 0.0s done
+#15 DONE 0.0s
+
+#16 [sequencer stage-1 1/6] FROM cgr.dev/chainguard/glibc-dynamic:latest@sha256:5bb932663cff4fb276186720e0357af55c5e47f12e4d9f44ea0060fa3e7bca88
+#16 DONE 0.0s
+
+#17 [zebra datadir 1/2] FROM docker.io/library/debian:trixie-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+#17 DONE 0.0s
+
+#18 [zebra internal] load .dockerignore
+#18 transferring context: 2B done
+#18 DONE 0.0s
+
+#19 [basecamp-ui internal] load .dockerignore
+#19 transferring context: 2B done
+#19 DONE 0.0s
+
+#20 [sequencer internal] load .dockerignore
+#20 transferring context: 2B done
+#20 DONE 0.0s
+
+#21 [btc-miner 1/2] FROM docker.io/library/debian:bookworm-slim
+#21 DONE 0.0s
+
+#22 [btc-miner 2/2] RUN apt-get update && apt-get install -y --no-install-recommends         curl jq     && rm -rf /var/lib/apt/lists/*
+#22 CACHED
+
+#23 [zebra zebra 1/1] FROM docker.io/zfnd/zebra:7.0.0@sha256:a70d2be8ffef3a4b6e37355724e36a0e6c1838e46baa28bfb216739f00cf2d34
+#23 DONE 0.0s
+
+#24 [zebra stage-2 1/4] FROM gcr.io/distroless/cc-debian13:nonroot@sha256:a77defd6fedbb3392b175ba8ea3d1c22be963c1597c248c3ba987ddd80bfb512
+#24 DONE 0.0s
+
+#25 [bitcoin-core internal] load build context
+#25 transferring context: 96B done
+#25 DONE 0.0s
+
+#26 [btc-miner] exporting to image
+#26 exporting layers done
+#26 writing image sha256:db9152efc62ff95bbd3d4a09d9142be7026095cc98f879c30e9fce59f6c436c7 done
+#26 naming to docker.io/library/lez-btc-miner:local done
+#26 DONE 0.0s
+
+#27 [bitcoin-core datadir 2/2] RUN mkdir /datadir
+#27 CACHED
+
+#28 [bitcoin-core stage-1 2/6] COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind
+#28 CACHED
+
+#29 [bitcoin-core stage-1 3/6] COPY --chmod=0555 bin/bitcoin-cli /usr/local/bin/bitcoin-cli
+#29 CACHED
+
+#30 [bitcoin-core stage-1 4/6] COPY --chmod=0555 bin/bitcoind /usr/local/bin/bitcoind
+#30 CACHED
+
+#31 [bitcoin-core stage-1 5/6] COPY --chmod=0555 bin/bitcoin-cli /usr/local/bin/bitcoin-cli
+#31 CACHED
+
+#32 [bitcoin-core stage-1 6/6] COPY --from=datadir --chown=65532:65532 /datadir /var/lib/bitcoin
+#32 CACHED
+
+#33 [taker-node internal] load build definition from Dockerfile
+#33 transferring dockerfile: 4.09kB done
+#33 DONE 0.0s
+
+#9 [taker-node internal] load metadata for docker.io/library/debian:bookworm-slim
+#9 DONE 0.0s
+
+#34 [network internal] load build definition from Dockerfile
+#34 transferring dockerfile: 1.93kB done
+#34 DONE 0.0s
+
+#35 [maker-node internal] load .dockerignore
+#35 transferring context: 389B done
+#35 DONE 0.0s
+
+#36 [taker-node internal] load .dockerignore
+#36 transferring context: 406B done
+#36 DONE 0.0s
+
+#37 [network internal] load .dockerignore
+#37 transferring context: 2B done
+#37 DONE 0.0s
+
+#38 [bitcoin-core] exporting to image
+#38 exporting layers done
+#38 writing image sha256:0eff51035e1f6508b2600be2fab559068d06957cdd49ebf0862694861aab9443 done
+#38 naming to docker.io/library/lez-bitcoin-core:local done
+#38 DONE 0.0s
+
+#39 [btc-miner] resolving provenance for metadata file
+#39 DONE 0.0s
+
+#40 [basecamp-ui  1/11] FROM docker.io/library/debian:trixie-slim
+#40 DONE 0.0s
+
+#41 [bitcoin-core] resolving provenance for metadata file
+#41 DONE 0.0s
+
+#42 [basecamp-ui internal] load build context
+#42 ...
+
+#43 [zebra internal] load build context
+#43 transferring context: 7.11MB 0.2s done
+#43 DONE 0.2s
+
+#27 [zebra datadir 2/2] RUN mkdir /datadir
+#27 CACHED
+
+#44 [zebra stage-2 3/4] COPY --chmod=0555 lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
+#44 CACHED
+
+#45 [zebra stage-2 2/4] COPY --from=zebra /usr/local/bin/zebrad /usr/local/bin/zebrad
+#45 CACHED
+
+#46 [zebra stage-2 4/4] COPY --from=datadir --chown=65532:65532 /datadir /var/lib/zebra
+#46 CACHED
+
+#47 [zebra] exporting to image
+#47 exporting layers done
+#47 writing image sha256:45f432d2e46059e96efc610bd9b3126b12fce0ea5df92a1e0e68dd0935bba77b done
+#47 naming to docker.io/library/lez-zebra:local done
+#47 DONE 0.0s
+
+#48 [zebra] resolving provenance for metadata file
+#48 DONE 0.0s
+
+#42 [basecamp-ui internal] load build context
+#42 ...
+
+#49 [sequencer internal] load build context
+#49 transferring context: 143.73MB 2.4s done
+#49 DONE 2.4s
+
+#50 [sequencer 2/4] COPY --chmod=0555 sequencer_service /usr/local/bin/sequencer_service
+#50 CACHED
+
+#51 [sequencer 3/4] COPY --chmod=0555 r0vm /usr/local/bin/r0vm
+#51 CACHED
+
+#52 [sequencer 4/4] COPY --chmod=0555 lez-runtime-healthcheck /usr/local/bin/lez-runtime-healthcheck
+#52 CACHED
+
+#42 [basecamp-ui internal] load build context
+#42 ...
+
+#53 [sequencer] exporting to image
+#53 exporting layers done
+#53 writing image sha256:3d27929115178d3d0b0539261385b71519abb7209d86b12fa87a0ac287f0881d done
+#53 naming to docker.io/library/lez-services:local done
+#53 DONE 0.0s
+
+#54 [sequencer] resolving provenance for metadata file
+#54 DONE 0.0s
+
+#42 [basecamp-ui internal] load build context
+#42 transferring context: 399.06MB 4.8s done
+#42 DONE 5.0s
+
+#40 [network  1/11] FROM docker.io/library/debian:trixie-slim
+#40 DONE 0.0s
+
+#21 [taker-node strip 1/4] FROM docker.io/library/debian:bookworm-slim
+#21 DONE 0.0s
+
+#55 [network  3/11] COPY assets/bundle /opt/basecamp
+#55 CACHED
+
+#56 [network  4/11] COPY assets/maker-user /var/lez-assets/maker-user
+#56 CACHED
+
+#57 [network  7/11] COPY assets/qt-mcp /opt/qt-mcp
+#57 CACHED
+
+#58 [network  8/11] COPY entrypoint.sh /entrypoint.sh
+#58 CACHED
+
+#59 [network  9/11] COPY open-desks.mjs /opt/lez-open-desks.mjs
+#59 CACHED
+
+#60 [network  6/11] COPY assets/network-user /var/lez-assets/network-user
+#60 CACHED
+
+#61 [network  2/11] RUN apt-get update && apt-get install -y --no-install-recommends         xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg         ca-certificates nodejs         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1         libgles2 libgl1-mesa-dri     && rm -rf /var/lib/apt/lists/*
+#61 CACHED
+
+#62 [network 10/11] COPY signer-health.sh /usr/local/bin/lez-signer-health
+#62 CACHED
+
+#63 [network  5/11] COPY assets/taker-user /var/lez-assets/taker-user
+#63 CACHED
+
+#64 [network 11/11] RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui     && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui     && mkdir -p /var/lez     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user     && chown -R 4713:4713 /var/lez /var/lez-assets     && chmod -R u+rwX /var/lez /var/lez-assets
+#64 CACHED
+
+#65 [maker-node internal] load build context
+#65 transferring context: 44.81MB 1.0s done
+#65 DONE 1.0s
+
+#66 [maker-node 1/8] RUN apt-get update && apt-get install -y --no-install-recommends         ca-certificates curl jq libpcsclite1 procps socat python3 util-linux     && rm -rf /var/lib/apt/lists/*
+#66 CACHED
+
+#67 [maker-node 2/8] RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez     && mkdir -p /var/lib/lez/maker /var/lib/lez/zec /run/lez/maker /run/lez-wallet/maker /delivery     && chown -R lez:lez /var/lib/lez /run/lez /run/lez-wallet /delivery     && chmod 0700 /var/lib/lez/maker /var/lib/lez/zec /run/lez/maker /run/lez-wallet/maker /delivery
+#67 CACHED
+
+#68 [network internal] load build context
+#68 ...
+
+#69 [maker-node 3/8] COPY --chmod=0444 lez_maker_node.lgx /tmp/lez_maker_node.lgx
+#69 DONE 0.8s
+
+#68 [network internal] load build context
+#68 transferring context: 104.81MB 2.1s done
+#68 DONE 2.1s
+
+#70 [network 2/5] COPY --chmod=0555 health.sh /usr/local/bin/lez-network-health
+#70 CACHED
+
+#71 [network 3/5] COPY --chmod=0444 reindex.mjs /opt/lez-network-reindex.mjs
+#71 CACHED
+
+#72 [network 1/5] COPY --chmod=0555 r0vm regenesi[s] /usr/local/bin/
+#72 CACHED
+
+#73 [network 4/5] WORKDIR /work
+#73 CACHED
+
+#74 [network] exporting to image
+#74 exporting layers done
+#74 writing image sha256:d031fc1d084757df962cd79646b67bad9021ef62c18a7ed0f49322d7e347c6e4 done
+#74 naming to docker.io/library/lez-network-module:local done
+#74 DONE 0.0s
+
+#75 [network] resolving provenance for metadata file
+#75 DONE 0.0s
+
+#76 [taker-node internal] load build context
+#76 ...
+
+#77 [maker-node 4/8] RUN set -eu; module=/var/lez/basecamp-maker-user/modules/lez_maker_node; unpacked="$(mktemp -d)";     tar -xzf /tmp/lez_maker_node.lgx -C "$unpacked";     variant="$(jq -r '.main | keys[0]' "$unpacked/manifest.json")";     mkdir -p "$module"; cp -R "$unpacked/variants/$variant/." "$module/";     cp "$unpacked/manifest.json" "$module/"; printf '%s\n' "$variant" > "$module/variant";     rm -rf "$unpacked" /tmp/lez_maker_node.lgx;     test -x "$module/bin/node-entrypoint.sh"; test -x "$module/bin/lez-maker-node";     for tool in "$module"/bin/*; do       case "${tool##*/}" in payload.json|node-entrypoint.sh) ;; *) ln -s "$tool" "/usr/local/bin/${tool##*/}" ;; esac;     done;     chown -R 4713:4713 /var/lez/basecamp-maker-user/modules
+#77 DONE 1.6s
+
+#78 [maker-node 5/8] COPY --chmod=0444 build-source.txt sidecar-source.txt /usr/local/share/lez/
+#78 DONE 0.1s
+
+#76 [taker-node internal] load build context
+#76 ...
+
+#79 [maker-node 6/8] RUN chmod 0755 /usr/local/share/lez
+#79 DONE 0.1s
+
+#76 [taker-node internal] load build context
+#76 ...
+
+#80 [maker-node 7/8] WORKDIR /var/lib/lez
+#80 DONE 0.1s
+
+#76 [taker-node internal] load build context
+#76 ...
+
+#81 [maker-node] exporting to image
+#81 exporting layers 0.3s done
+#81 writing image sha256:40a5ab0c7414375119bc0a22e4f85cfde0388a48967500ab69bd7d0ac81089c9 done
+#81 naming to docker.io/library/lez-maker-node:local done
+#81 DONE 0.3s
+
+#76 [taker-node internal] load build context
+#76 ...
+
+#82 [maker-node] resolving provenance for metadata file
+#82 DONE 0.0s
+
+#76 [taker-node internal] load build context
+#76 transferring context: 598.99MB 7.2s
+#76 transferring context: 852.90MB 9.8s done
+#76 DONE 9.8s
+
+#66 [taker-node 1/8] RUN apt-get update && apt-get install -y --no-install-recommends         ca-certificates curl jq libpcsclite1 procps socat python3 util-linux     && rm -rf /var/lib/apt/lists/*
+#66 CACHED
+
+#83 [taker-node stage-1 2/9] RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr/sbin/nologin lez     && mkdir -p /var/lib/lez/taker /var/lib/lez/zec /run/lez/taker /run/lez-wallet/taker /delivery     && chown -R lez:lez /var/lib/lez /run/lez /run/lez-wallet /delivery     && chmod 0700 /var/lib/lez/taker /var/lib/lez/zec /run/lez/taker /run/lez-wallet/taker /delivery
+#83 CACHED
+
+#84 [taker-node strip 2/4] RUN apt-get update && apt-get install -y --no-install-recommends binutils     && rm -rf /var/lib/apt/lists/*
+#84 CACHED
+
+#85 [taker-node strip 3/4] COPY zec-local-poc-provision zec-local-poc-identity zec-local-poc-transfer      zec-local-poc-chat-draft zec-local-poc-chat-finalize /payload/
+#85 CACHED
+
+#86 [taker-node strip 4/4] RUN strip /payload/*
+#86 CACHED
+
+#87 [taker-node stage-1 3/9] COPY --chmod=0444 lez_taker_node.lgx /tmp/lez_taker_node.lgx
+#87 DONE 0.9s
+
+#88 [taker-node stage-1 4/9] RUN set -eu; module=/var/lez/basecamp-taker-user/modules/lez_taker_node; unpacked="$(mktemp -d)";     tar -xzf /tmp/lez_taker_node.lgx -C "$unpacked";     variant="$(jq -r '.main | keys[0]' "$unpacked/manifest.json")";     mkdir -p "$module"; cp -R "$unpacked/variants/$variant/." "$module/";     cp "$unpacked/manifest.json" "$module/"; printf '%s\n' "$variant" > "$module/variant";     rm -rf "$unpacked" /tmp/lez_taker_node.lgx;     test -x "$module/bin/node-entrypoint.sh"; test -x "$module/bin/lez-taker-node";     for tool in "$module"/bin/*; do       case "${tool##*/}" in payload.json|node-entrypoint.sh) ;; *) ln -s "$tool" "/usr/local/bin/${tool##*/}" ;; esac;     done;     chown -R 4713:4713 /var/lez/basecamp-taker-user/modules
+#88 DONE 1.9s
+
+#89 [taker-node stage-1 5/9] COPY --from=strip --chmod=0555 /payload/ /usr/local/bin/
+#89 DONE 0.2s
+
+#90 [taker-node stage-1 6/9] COPY --chmod=0444 build-source.txt sidecar-source.txt /usr/local/share/lez/
+#90 DONE 0.0s
+
+#91 [taker-node stage-1 7/9] RUN chmod 0755 /usr/local/share/lez
+#91 DONE 0.1s
+
+#92 [taker-node stage-1 8/9] WORKDIR /var/lib/lez
+#92 DONE 0.0s
+
+#93 [basecamp-ui] exporting to image
+#93 exporting layers done
+#93 writing image sha256:4a3cabddb23dd497804de8c3abaffbb116031317b9b5d8c7d144b342722c673e done
+#93 naming to docker.io/library/lez-basecamp-ui:local done
+#93 DONE 0.0s
+
+#94 [basecamp-ui] resolving provenance for metadata file
+#94 DONE 0.0s
+
+#95 [taker-node] exporting to image
+#95 exporting layers 0.3s done
+#95 writing image sha256:e19cc0cf80012edd5e0072a7ca8852da90f6c2148014ea8971e458e9344d271d done
+#95 naming to docker.io/library/lez-taker-node:local done
+#95 DONE 0.3s
+
+#96 [taker-node] resolving provenance for metadata file
+#96 DONE 0.0s
+ Image lez-bitcoin-core:local Built 
+ Image lez-btc-miner:local Built 
+ Image lez-maker-node:local Built 
+ Image lez-network-module:local Built 
+ Image lez-services:local Built 
+ Image lez-taker-node:local Built 
+ Image lez-basecamp-ui:local Built 
+ Image lez-zebra:local Built 
+  [time 06:49:46] images: 22 s (23 s since up.sh started)
+[3/6] starting chains…
+ Network lez-swap-chains Creating 
+ Volume lez-zebra-data Creating 
+ Volume lez-zebra-data Creating 
+ Network lez-swap-chains Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Volume lez-bitcoin-core-data Created 
+ Volume lez-bitcoin-core-data Created 
+ Volume lez-zebra-data Created 
+ Volume lez-zebra-data Created 
+ Network lez-swap-chains Created 
+ Network lez-swap-chains Created 
+ Container lez-zebra Creating 
+ Container lez-network Creating 
+ Container lez-bitcoin-core Creating 
+ Container lez-network Created 
+ Container lez-sequencer Creating 
+ Container lez-bitcoin-core Created 
+ Container lez-btc-miner Creating 
+ Container lez-zebra Created 
+ Container lez-btc-miner Created 
+ Container lez-sequencer Created 
+ Container lez-bitcoin-core Starting 
+ Container lez-network Starting 
+ Container lez-zebra Starting 
+ Container lez-bitcoin-core Started 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-zebra Started 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+ Container lez-bitcoin-core Healthy 
+ Container lez-btc-miner Starting 
+ Container lez-btc-miner Started 
+  [time 06:49:52] start the chains (compose up): 6 s (29 s since up.sh started)
+  [time 06:49:58] chains healthy: 6 s (35 s since up.sh started)
+  [time 06:50:10] indexer check (repair-indexer.sh): 12 s (47 s since up.sh started)
+Regtest wallets ready; Maker 250.0 BTC, Taker 5250.0 BTC spendable.
+  [time 06:50:25] Bitcoin Core wallets (seed-btc-wallets.py): 15 s (62 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+taker-lane03: claimed 2000000 into 4ZS52TjyLddB47WBwj29duP8zeKU5GHc5MnoLgXrFVmj (560f33da5df9371423135715eb7a0a7bb7e37beb678b541e8e7db8a650855097)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 06:50:59] market bootstrap: 34 s (96 s since up.sh started)
+[5/6] Nodes…
+time="2026-11-12T07:51:00+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-bitcoin-core Running 
+ Container lez-sequencer Running 
+ Container lez-network Running 
+ Volume lez-delivery-dir Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-maker-state Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-taker-wallet Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-taker-wallet Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-delivery-dir Creating 
+ Volume lez-maker-state Creating 
+ Volume lez-maker-socket Created 
+ Volume lez-maker-socket Created 
+ Volume lez-maker-wallet Created 
+ Volume lez-maker-wallet Created 
+ Volume lez-taker-wallet Created 
+ Volume lez-taker-wallet Created 
+ Volume lez-maker-state Created 
+ Volume lez-maker-state Created 
+ Volume lez-delivery-dir Created 
+ Volume lez-delivery-dir Created 
+ Volume lez-zec-maker Created 
+ Volume lez-zec-maker Created 
+ Container lez-maker-node Creating 
+ Volume lez-zec-taker Created 
+ Volume lez-zec-taker Created 
+ Volume lez-taker-state Created 
+ Volume lez-taker-state Created 
+ Container lez-maker-node Created 
+ Container lez-taker-node Creating 
+ Container lez-taker-node Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-bitcoin-core Healthy 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-maker-node Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+  [time 06:51:07] start the Nodes (compose up): 8 s (104 s since up.sh started)
+  [time 06:51:13] Nodes healthy: 6 s (110 s since up.sh started)
+  [time 06:51:13] Nodes answer owner health: 0 s (110 s since up.sh started)
+15/15 market checks passed
+  [time 06:51:16] market check (verify-market.py): 3 s (113 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-network Running 
+ Container lez-sequencer Running 
+ Container lez-heartbeat Creating 
+ Container lez-heartbeat Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Healthy 
+ Container lez-heartbeat Starting 
+ Container lez-heartbeat Started 
+  [time 06:51:17] finality heartbeat: 1 s (114 s since up.sh started)
+[6/6] the parties' desks…
+
+──────────────────────────────────────────────────────────────────
+ LEZ swap stack is up (volumes: lez-*)
+
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / 2 s)
+   LEZ indexer RPC       http://127.0.0.1:8779
+   explorers             off (LEZ_EXPLORERS=1 ./scripts/up.sh starts them)
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: lezswap; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: lezswap; the Taker desk)
+   Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
+
+ logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
+ a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
+──────────────────────────────────────────────────────────────────
+  [time 06:51:17] desk suites: 0 s (114 s since up.sh started)
+indexer serves historical reads at the tip (38)
+
+[06:51:18 stack] market bootstrap (escrow program, vault claims, bootstrap manifest)
+maker-lane03: vault already claimed (owner holds 2000000)
+taker-lane03: vault already claimed (owner holds 2000000)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+ Image lez-basecamp-ui:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.71kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.40kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:trixie-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/11] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 599.69kB 0.3s done
+#6 DONE 0.3s
+
+#7 [ 6/11] COPY assets/network-user /var/lez-assets/network-user
+#7 CACHED
+
+#8 [10/11] COPY signer-health.sh /usr/local/bin/lez-signer-health
+#8 CACHED
+
+#9 [ 5/11] COPY assets/taker-user /var/lez-assets/taker-user
+#9 CACHED
+
+#10 [ 9/11] COPY open-desks.mjs /opt/lez-open-desks.mjs
+#10 CACHED
+
+#11 [ 3/11] COPY assets/bundle /opt/basecamp
+#11 CACHED
+
+#12 [ 8/11] COPY entrypoint.sh /entrypoint.sh
+#12 CACHED
+
+#13 [ 2/11] RUN apt-get update && apt-get install -y --no-install-recommends         xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg         ca-certificates nodejs         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1         libgles2 libgl1-mesa-dri     && rm -rf /var/lib/apt/lists/*
+#13 CACHED
+
+#14 [ 7/11] COPY assets/qt-mcp /opt/qt-mcp
+#14 CACHED
+
+#15 [ 4/11] COPY assets/maker-user /var/lez-assets/maker-user
+#15 CACHED
+
+#16 [11/11] RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui     && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui     && mkdir -p /var/lez     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user     && chown -R 4713:4713 /var/lez /var/lez-assets     && chmod -R u+rwX /var/lez /var/lez-assets
+#16 CACHED
+
+#17 exporting to image
+#17 exporting layers done
+#17 writing image sha256:4a3cabddb23dd497804de8c3abaffbb116031317b9b5d8c7d144b342722c673e done
+#17 naming to docker.io/library/lez-basecamp-ui:local
+#17 naming to docker.io/library/lez-basecamp-ui:local done
+#17 DONE 0.0s
+
+#18 resolving provenance for metadata file
+#18 DONE 0.0s
+ Image lez-basecamp-ui:local Built 
+time="2026-11-12T07:51:21+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:51:21+01:00" level=warning msg="volume \"lez-20260910222044-delivery-dir\" carries the compose label \"delivery_dir\" but does not match the compose file (using \"lez-delivery-dir\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:51:21+01:00" level=warning msg="volume \"lez-20260910222044-maker-socket\" carries the compose label \"maker_socket\" but does not match the compose file (using \"lez-maker-socket\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:51:21+01:00" level=warning msg="volume \"lez-20260910222044-maker-state\" carries the compose label \"maker_state\" but does not match the compose file (using \"lez-maker-state\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:51:21+01:00" level=warning msg="volume \"lez-20260910222044-taker-state\" carries the compose label \"taker_state\" but does not match the compose file (using \"lez-taker-state\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-maker-node Recreate 
+ Container lez-maker-node Recreated 
+ Container lez-taker-node Recreate 
+ Container lez-taker-node Recreated 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-maker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+ Container lez-taker-node Waiting 
+ Container lez-maker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Healthy 
+
+[06:51:31 stack] desk suites in each party's Basecamp (the Maker suite also seeds the order book)
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+1 passed, 0 failed
+  [32mOK[0m   all services up
+  [32mOK[0m   Bitcoin chain at height 256
+  [32mOK[0m   Bitcoin spender index present (actor lock observation)
+  [32mOK[0m   LEZ chain finalized at block 67
+15/15 checks passed
+  [32mOK[0m   explorer transaction display
+15/15 market checks passed
+  [32mOK[0m   Node market behaviour
+3 passed, 0 failed
+  [32mOK[0m   desk suite: maker
+1 passed, 0 failed
+  [32mOK[0m   desk suite: taker
+
+[06:51:47 stack] done
