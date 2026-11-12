@@ -4,22 +4,38 @@
 //! owns only immutable transcript bytes, ordered delivery, one-use secret-nonce
 //! persistence, and exact idempotent outbox replay.
 //!
-//! `PoC` security boundary: `nonce_encrypted_at_rest=false`. Secret nonce bytes
-//! are plaintext in the owner-only `SQLite` database and `WAL` until consumption.
-//! This is crash-safety evidence, not information-security or production signing
-//! readiness. No deterministic fixture secret is part of this module.
+//! `nonce_encrypted_at_rest=true` for every nonce this code reserves: the secret
+//! nonce is sealed with XChaCha20-Poly1305 under a key derived (HKDF-SHA256) from
+//! the role's signing secret, with the session id as associated data, until
+//! consumption. This protects a copy of the owner-only database and `WAL` taken
+//! without the signing key file; it does not protect against a reader of that
+//! file, who holds the signing key already. A plaintext record written by older
+//! code is still read and signed. No deterministic fixture secret is part of this
+//! module.
 
 use std::{fmt, path::Path};
 
+use chacha20poly1305::{
+    XChaCha20Poly1305, XNonce,
+    aead::{Aead, KeyInit, Payload},
+};
+use hkdf::Hkdf;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use zeroize::{Zeroize as _, Zeroizing};
 
-use crate::{StoreError, open_configured_connection, open_existing_configured_connection};
+use crate::{
+    StoreError, open_configured_connection, open_existing_configured_connection,
+    zec_recovery::fresh_claim_nonce,
+};
 
 const SECRET_NONCE_FINGERPRINT_DOMAIN: &[u8] =
     b"lez-atomic-swaps/adaptor-secret-nonce-fingerprint/v1";
+const NONCE_KEY_LABEL: &[u8] = b"lez-atomic-swaps/adaptor-session-journal/nonce-key/v1";
+const SEALED_NONCE_VERSION: u8 = 1;
+const SECRET_NONCE_BYTES: usize = 97;
+const SEALED_NONCE_BYTES: usize = 1 + 24 + SECRET_NONCE_BYTES + 16;
 
 macro_rules! public_bytes {
     ($name:ident, $length:expr, $description:literal) => {
@@ -92,6 +108,41 @@ impl fmt::Debug for SecretNonceBytes {
 impl Drop for SecretNonceBytes {
     fn drop(&mut self) {
         self.0.zeroize();
+    }
+}
+
+/// Key sealing secret nonces at rest, derived from the role's signing secret.
+///
+/// Debug output is deliberately redacted and memory is overwritten on drop.
+pub struct AdaptorNonceSealingKey(Zeroizing<[u8; 32]>);
+
+impl AdaptorNonceSealingKey {
+    /// Derives the sealing key with HKDF-SHA256 (no salt) from the role's
+    /// signing secret and a fixed label, so no further key has to be managed.
+    ///
+    /// # Panics
+    ///
+    /// Never: 32 bytes is within HKDF-SHA256's output limit.
+    #[must_use]
+    pub fn derive(signing_secret: &[u8; 32]) -> Self {
+        let mut key = Zeroizing::new([0_u8; 32]);
+        Hkdf::<Sha256>::new(None, signing_secret)
+            .expand(NONCE_KEY_LABEL, key.as_mut())
+            .expect("32 bytes is a valid HKDF-SHA256 output length");
+        Self(key)
+    }
+
+    fn cipher(&self) -> XChaCha20Poly1305 {
+        XChaCha20Poly1305::new((&*self.0).into())
+    }
+}
+
+impl fmt::Debug for AdaptorNonceSealingKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("AdaptorNonceSealingKey")
+            .field(&"[REDACTED]")
+            .finish()
     }
 }
 
@@ -541,6 +592,8 @@ impl SqliteAdaptorSessionJournal {
     ///
     /// An exact retry returns the original commitment and never rearms a consumed
     /// nonce. The same secret nonce cannot be reserved under another session ID.
+    /// The secret nonce is stored sealed under `key`; a journal file created by
+    /// older code, whose schema admits only plaintext, refuses the reservation.
     ///
     /// # Errors
     ///
@@ -549,6 +602,7 @@ impl SqliteAdaptorSessionJournal {
     pub fn reserve(
         &mut self,
         reservation: AdaptorSessionReservation,
+        key: &AdaptorNonceSealingKey,
     ) -> Result<ReservationCommit, AdaptorSessionJournalError> {
         reservation.identity.validate()?;
         let fingerprint = secret_nonce_fingerprint(reservation.secret_nonce.bytes());
@@ -582,6 +636,11 @@ impl SqliteAdaptorSessionJournal {
         if reused {
             return Err(AdaptorSessionJournalError::SecretNonceReuse);
         }
+        let sealed = seal_secret_nonce(
+            key,
+            reservation.identity.session_id(),
+            &reservation.secret_nonce,
+        )?;
 
         transaction.execute(
             "
@@ -600,7 +659,7 @@ impl SqliteAdaptorSessionJournal {
                 reservation.identity.adaptor_point.as_slice(),
                 reservation.identity.ordered_public_keys[0].as_slice(),
                 reservation.identity.ordered_public_keys[1].as_slice(),
-                reservation.secret_nonce.bytes().as_slice(),
+                sealed.as_slice(),
                 fingerprint.as_slice(),
                 reservation.own_commitment.bytes().as_slice(),
                 reservation.own_public_nonce.bytes().as_slice(),
@@ -742,6 +801,10 @@ impl SqliteAdaptorSessionJournal {
     /// invoking `signer`. If the process fails before commit, `SQLite` rolls back to
     /// the same immutable message and peer nonce, so retry cannot cross transcripts.
     ///
+    /// A sealed nonce that does not open under `key` (wrong key, tampered or
+    /// moved ciphertext) fails closed as [`AdaptorSessionJournalError::CorruptSession`]
+    /// and the session keeps its durable nonce: no new nonce is ever reserved for it.
+    ///
     /// # Errors
     ///
     /// Returns an error for a missing/conflicting session, invalid phase, signer failure,
@@ -749,6 +812,7 @@ impl SqliteAdaptorSessionJournal {
     pub fn sign_and_persist_partial<F>(
         &mut self,
         identity: &AdaptorSessionIdentity,
+        key: &AdaptorNonceSealingKey,
         signer: F,
     ) -> Result<PartialSignatureCommit, AdaptorSessionJournalError>
     where
@@ -769,10 +833,11 @@ impl SqliteAdaptorSessionJournal {
         if existing.phase != AdaptorSessionPhase::NoncesExchanged {
             return Err(AdaptorSessionJournalError::InvalidPhase);
         }
-        let secret_nonce = existing
+        let secret_nonce = &existing
             .secret_nonce
             .as_ref()
-            .ok_or(AdaptorSessionJournalError::CorruptSession)?;
+            .ok_or(AdaptorSessionJournalError::CorruptSession)?
+            .open(key, identity.session_id())?;
         if secret_nonce_fingerprint(secret_nonce.bytes()) != existing.secret_nonce_fingerprint {
             return Err(AdaptorSessionJournalError::CorruptSession);
         }
@@ -901,6 +966,11 @@ impl SqliteAdaptorSessionJournal {
 
     /// Loads one secret-free durable snapshot.
     ///
+    /// Without the sealing key, a sealed nonce is checked only for its version and
+    /// length, not against its fingerprint; a corrupt or foreign ciphertext is
+    /// caught when [`Self::sign_and_persist_partial`] opens it, and fails closed.
+    /// A plaintext record from older code is still checked against its fingerprint.
+    ///
     /// # Errors
     ///
     /// Returns an error when durable bytes are corrupt or the database read fails.
@@ -946,7 +1016,7 @@ fn migrate_adaptor_session_journal(
             adaptor_point            BLOB NOT NULL CHECK (length(adaptor_point) = 33),
             maker_public_key         BLOB NOT NULL CHECK (length(maker_public_key) = 33),
             taker_public_key         BLOB NOT NULL CHECK (length(taker_public_key) = 33),
-            secret_nonce             BLOB CHECK (secret_nonce IS NULL OR length(secret_nonce) = 97),
+            secret_nonce             BLOB CHECK (secret_nonce IS NULL OR length(secret_nonce) IN (97, 138)),
             secret_nonce_fingerprint BLOB NOT NULL UNIQUE
                 CHECK (length(secret_nonce_fingerprint) = 32),
             own_commitment           BLOB NOT NULL CHECK (length(own_commitment) = 32),
@@ -1014,9 +1084,64 @@ struct EncodedSession {
     phase: String,
 }
 
+/// A durable secret nonce: sealed, or plaintext as written by older code.
+enum StoredSecretNonce {
+    Plain(SecretNonceBytes),
+    Sealed(Vec<u8>),
+}
+
+impl StoredSecretNonce {
+    fn open(
+        &self,
+        key: &AdaptorNonceSealingKey,
+        session_id: &[u8; 32],
+    ) -> Result<SecretNonceBytes, AdaptorSessionJournalError> {
+        match self {
+            Self::Plain(secret) => Ok(SecretNonceBytes::new(*secret.bytes())),
+            Self::Sealed(sealed) => {
+                let plaintext = Zeroizing::new(
+                    key.cipher()
+                        .decrypt(
+                            XNonce::from_slice(&sealed[1..25]),
+                            Payload {
+                                msg: &sealed[25..],
+                                aad: session_id,
+                            },
+                        )
+                        .map_err(|_| AdaptorSessionJournalError::CorruptSession)?,
+                );
+                fixed_secret_nonce(&plaintext).map(SecretNonceBytes::new)
+            }
+        }
+    }
+}
+
+fn seal_secret_nonce(
+    key: &AdaptorNonceSealingKey,
+    session_id: &[u8; 32],
+    secret_nonce: &SecretNonceBytes,
+) -> Result<Vec<u8>, AdaptorSessionJournalError> {
+    let nonce = fresh_claim_nonce()?;
+    let ciphertext = key
+        .cipher()
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: secret_nonce.bytes(),
+                aad: session_id,
+            },
+        )
+        .map_err(|_| AdaptorSessionJournalError::CorruptSession)?;
+    let mut sealed = Vec::with_capacity(SEALED_NONCE_BYTES);
+    sealed.push(SEALED_NONCE_VERSION);
+    sealed.extend_from_slice(&nonce);
+    sealed.extend_from_slice(&ciphertext);
+    Ok(sealed)
+}
+
 struct PersistedSession {
     identity: AdaptorSessionIdentity,
-    secret_nonce: Option<SecretNonceBytes>,
+    secret_nonce: Option<StoredSecretNonce>,
     secret_nonce_fingerprint: [u8; 32],
     own_commitment: AdaptorNonceCommitment,
     own_public_nonce: AdaptorPublicNonce,
@@ -1033,13 +1158,19 @@ impl PersistedSession {
         self.identity.validate()?;
         match (&self.secret_nonce, self.phase) {
             (
-                Some(secret),
+                Some(StoredSecretNonce::Plain(secret)),
                 AdaptorSessionPhase::Reserved
                 | AdaptorSessionPhase::CommitmentExchanged
                 | AdaptorSessionPhase::NoncesExchanged,
             ) if secret_nonce_fingerprint(secret.bytes()) == self.secret_nonce_fingerprint => {
                 Ok(())
             }
+            (
+                Some(StoredSecretNonce::Sealed(sealed)),
+                AdaptorSessionPhase::Reserved
+                | AdaptorSessionPhase::CommitmentExchanged
+                | AdaptorSessionPhase::NoncesExchanged,
+            ) if sealed.len() == SEALED_NONCE_BYTES && sealed[0] == SEALED_NONCE_VERSION => Ok(()),
             (
                 None,
                 AdaptorSessionPhase::PartialPersisted
@@ -1136,9 +1267,15 @@ fn decode_session(encoded: EncodedSession) -> Result<PersistedSession, AdaptorSe
         identity,
         secret_nonce: encoded
             .secret_nonce
-            .map(|bytes| fixed_secret_nonce(&bytes))
-            .transpose()?
-            .map(SecretNonceBytes::new),
+            .map(|bytes| {
+                if bytes.len() == SECRET_NONCE_BYTES {
+                    fixed_secret_nonce(&bytes)
+                        .map(|secret| StoredSecretNonce::Plain(SecretNonceBytes::new(secret)))
+                } else {
+                    Ok(StoredSecretNonce::Sealed(bytes.to_vec()))
+                }
+            })
+            .transpose()?,
         secret_nonce_fingerprint: fixed_bytes(encoded.secret_nonce_fingerprint)?,
         own_commitment: AdaptorNonceCommitment::new(fixed_bytes(encoded.own_commitment)?),
         own_public_nonce: AdaptorPublicNonce::new(fixed_bytes(encoded.own_public_nonce)?),

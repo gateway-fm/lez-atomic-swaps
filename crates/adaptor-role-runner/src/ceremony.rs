@@ -13,9 +13,9 @@ use lez_adaptor_signature::{
     sign_persisted_adaptor_partial, verify_adaptor_partial_signature, verify_nonce_commitment,
 };
 use lez_swap_store::{
-    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionReservation, AdaptorSessionSnapshot,
-    SecretNonceBytes, SqliteAdaptorSessionJournal,
+    AdaptorNonceCommitment, AdaptorNonceSealingKey, AdaptorPartialSignature, AdaptorPresignature,
+    AdaptorPublicNonce, AdaptorSessionIdentity, AdaptorSessionPhase, AdaptorSessionReservation,
+    AdaptorSessionSnapshot, SecretNonceBytes, SqliteAdaptorSessionJournal,
 };
 use zeroize::Zeroizing;
 
@@ -131,12 +131,15 @@ impl CeremonySeat {
         if fresh.context_binding() != self.session.context_binding() {
             return Err(RunnerError::CryptographicValidation);
         }
-        let commit = self.journal.reserve(AdaptorSessionReservation::new(
-            self.identity.clone(),
-            SecretNonceBytes::new(*fresh.secret_nonce()),
-            AdaptorPublicNonce::new(fresh.public_nonce()),
-            AdaptorNonceCommitment::new(fresh.commitment()),
-        ))?;
+        let commit = self.journal.reserve(
+            AdaptorSessionReservation::new(
+                self.identity.clone(),
+                SecretNonceBytes::new(*fresh.secret_nonce()),
+                AdaptorPublicNonce::new(fresh.public_nonce()),
+                AdaptorNonceCommitment::new(fresh.commitment()),
+            ),
+            &AdaptorNonceSealingKey::derive(&secret_key),
+        )?;
         self.packet(
             PacketKind::NonceCommitment,
             *commit.own_commitment().bytes(),
@@ -202,9 +205,10 @@ impl CeremonySeat {
             .ok_or(RunnerError::PeerCommitmentUnavailable)?;
         let context = self.session.context();
         let role = self.role.sdk();
-        let signed = self
-            .journal
-            .sign_and_persist_partial(&self.identity, |material| {
+        let signed = self.journal.sign_and_persist_partial(
+            &self.identity,
+            &AdaptorNonceSealingKey::derive(secret_key),
+            |material| {
                 let persisted = PersistedAdaptorSigningMaterial::new(
                     *material.identity().signing_domain(),
                     material.secret_nonce(),
@@ -216,7 +220,8 @@ impl CeremonySeat {
                 sign_persisted_adaptor_partial(context, role, **secret_key, persisted)
                     .map(AdaptorPartialSignature::new)
                     .map_err(|_| ())
-            })?;
+            },
+        )?;
         self.packet(PacketKind::PartialSignature, *signed.partial().bytes())
     }
 

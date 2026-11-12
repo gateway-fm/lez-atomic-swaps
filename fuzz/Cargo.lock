@@ -1559,8 +1559,10 @@ name = "lez-swap-store"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "chacha20poly1305 0.10.1",
  "command-fds",
  "getrandom 0.3.4",
+ "hkdf",
  "lez-actor-supervision",
  "lez-bridge-protocol",
  "lez-btc-swap-sdk",

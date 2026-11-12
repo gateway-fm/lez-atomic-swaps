@@ -28,9 +28,9 @@ use lez_bridge_protocol::{
 };
 use lez_swap_core::Participant;
 use lez_swap_store::{
-    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, SecretNonceBytes,
-    SqliteAdaptorSessionJournal,
+    AdaptorNonceCommitment, AdaptorNonceSealingKey, AdaptorPartialSignature, AdaptorPresignature,
+    AdaptorPublicNonce, AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole,
+    SecretNonceBytes, SqliteAdaptorSessionJournal,
 };
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
@@ -405,12 +405,15 @@ fn write_claim_journal(path: &Path, stage: &StageBFixture, mutation: ClaimJourna
     );
     let mut journal = SqliteAdaptorSessionJournal::open(path).expect("claim journal");
     let _ = journal
-        .reserve(AdaptorSessionReservation::new(
-            identity.clone(),
-            SecretNonceBytes::new([0x91; 97]),
-            AdaptorPublicNonce::new(own_nonce),
-            AdaptorNonceCommitment::new(own_commitment),
-        ))
+        .reserve(
+            AdaptorSessionReservation::new(
+                identity.clone(),
+                SecretNonceBytes::new([0x91; 97]),
+                AdaptorPublicNonce::new(own_nonce),
+                AdaptorNonceCommitment::new(own_commitment),
+            ),
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+        )
         .expect("reserve claim nonce");
     if matches!(mutation, ClaimJournalMutation::IncompleteTaker) {
         return;
@@ -425,7 +428,11 @@ fn write_claim_journal(path: &Path, stage: &StageBFixture, mutation: ClaimJourna
         .record_verified_peer_public_nonce(&identity, AdaptorPublicNonce::new(peer_nonce))
         .expect("record claim peer nonce");
     let _ = journal
-        .sign_and_persist_partial(&identity, |_| Ok(AdaptorPartialSignature::new(own_partial)))
+        .sign_and_persist_partial(
+            &identity,
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+            |_| Ok(AdaptorPartialSignature::new(own_partial)),
+        )
         .expect("persist claim partial");
     let _ = journal
         .record_verified_peer_partial(&identity, AdaptorPartialSignature::new(peer_partial))

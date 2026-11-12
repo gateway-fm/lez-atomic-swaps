@@ -33,8 +33,8 @@ use lez_bridge_protocol::{
     SubmitTransactionRequest, SubmitTransactionResult, TransactionId,
 };
 use lez_swap_store::{
-    AdaptorNonceCommitment, AdaptorPartialSignature, AdaptorPresignature, AdaptorPublicNonce,
-    AdaptorSessionReservation, SecretNonceBytes, SqliteAdaptorSessionJournal,
+    AdaptorNonceCommitment, AdaptorNonceSealingKey, AdaptorPartialSignature, AdaptorPresignature,
+    AdaptorPublicNonce, AdaptorSessionReservation, SecretNonceBytes, SqliteAdaptorSessionJournal,
 };
 use lez_xmr_swap_sdk::{
     CrossCurveDleqProofV1, CrossCurveScalar, MoneroAddressNetworkV1, MoneroPrivateViewKey,
@@ -689,12 +689,15 @@ fn taker_refund_journal(stage: &StageFixture, path: &Path, presignature: [u8; 65
     let transcript = stage.activation.body().refund_transcript();
     let mut journal = SqliteAdaptorSessionJournal::open(path).expect("create Taker journal");
     let _ = journal
-        .reserve(AdaptorSessionReservation::new(
-            identity.clone(),
-            SecretNonceBytes::new([0x91; 97]),
-            AdaptorPublicNonce::new(transcript.taker_public_nonce()),
-            AdaptorNonceCommitment::new(transcript.taker_nonce_commitment()),
-        ))
+        .reserve(
+            AdaptorSessionReservation::new(
+                identity.clone(),
+                SecretNonceBytes::new([0x91; 97]),
+                AdaptorPublicNonce::new(transcript.taker_public_nonce()),
+                AdaptorNonceCommitment::new(transcript.taker_nonce_commitment()),
+            ),
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+        )
         .expect("reserve exact Taker refund transcript");
     let _ = journal
         .record_peer_commitment(
@@ -709,11 +712,15 @@ fn taker_refund_journal(stage: &StageFixture, path: &Path, presignature: [u8; 65
         )
         .expect("record Maker nonce");
     let _ = journal
-        .sign_and_persist_partial(&identity, |_| {
-            Ok(AdaptorPartialSignature::new(
-                stage.activation.body().taker_refund_partial(),
-            ))
-        })
+        .sign_and_persist_partial(
+            &identity,
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+            |_| {
+                Ok(AdaptorPartialSignature::new(
+                    stage.activation.body().taker_refund_partial(),
+                ))
+            },
+        )
         .expect("persist exact Taker partial");
     let _ = journal
         .record_verified_peer_partial(
@@ -739,12 +746,15 @@ fn maker_refund_journal(stage: &StageFixture, path: &Path) {
     let transcript = stage.activation.body().refund_transcript();
     let mut journal = SqliteAdaptorSessionJournal::open(path).expect("create Maker journal");
     let _ = journal
-        .reserve(AdaptorSessionReservation::new(
-            identity.clone(),
-            SecretNonceBytes::new([0x92; 97]),
-            AdaptorPublicNonce::new(transcript.maker_public_nonce()),
-            AdaptorNonceCommitment::new(transcript.maker_nonce_commitment()),
-        ))
+        .reserve(
+            AdaptorSessionReservation::new(
+                identity.clone(),
+                SecretNonceBytes::new([0x92; 97]),
+                AdaptorPublicNonce::new(transcript.maker_public_nonce()),
+                AdaptorNonceCommitment::new(transcript.maker_nonce_commitment()),
+            ),
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+        )
         .expect("reserve exact Maker refund transcript");
     let _ = journal
         .record_peer_commitment(
@@ -759,11 +769,15 @@ fn maker_refund_journal(stage: &StageFixture, path: &Path) {
         )
         .expect("record Taker nonce");
     let _ = journal
-        .sign_and_persist_partial(&identity, |_| {
-            Ok(AdaptorPartialSignature::new(
-                stage.activation.body().maker_refund_partial(),
-            ))
-        })
+        .sign_and_persist_partial(
+            &identity,
+            &AdaptorNonceSealingKey::derive(&[0x5a; 32]),
+            |_| {
+                Ok(AdaptorPartialSignature::new(
+                    stage.activation.body().maker_refund_partial(),
+                ))
+            },
+        )
         .expect("persist exact Maker partial");
     let _ = journal
         .record_verified_peer_partial(

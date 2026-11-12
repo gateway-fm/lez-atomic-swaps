@@ -4342,7 +4342,7 @@ fn prepared_claim_submission_context<'a>(
     )
 }
 
-fn fresh_claim_nonce() -> Result<[u8; 24], StoreError> {
+pub(crate) fn fresh_claim_nonce() -> Result<[u8; 24], StoreError> {
     let mut nonce = [0_u8; 24];
     getrandom::fill(&mut nonce).map_err(|_| StoreError::ClaimEntropy)?;
     Ok(nonce)
