@@ -20,6 +20,7 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
+    node-e2e.py outage-before-take  Chat and Delivery cut before the take: refused, no swap; the same take succeeds once back (R8)
     node-e2e.py zebra-down       the lane's Zebra stopped: a Bitcoin swap completes, then a Zcash one once it is back (R3)
     node-e2e.py taker-refund     Maker stopped before funding; Taker refunds its Bitcoin
     node-e2e.py maker-refund     Taker never claims; Maker refunds LEZ, then Taker refunds Bitcoin
@@ -1689,6 +1690,72 @@ def scenario_offline_after_lock(stamp: str) -> dict:
         restore_delivery_and_chat()
     assert_restored()
     return {"swap_id": swap_id, "cut": held, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+
+
+def take_after_outage(offer_id: str, stamp: str) -> tuple[str, dict]:
+    """R8: Logos Chat and Delivery cut before the take (cut_delivery_and_chat,
+    proven from the Taker's container; both Nodes report both unavailable and
+    are degraded). The Taker's take of an offer it discovered before the cut
+    is refused as dependency-unavailable with its own category,
+    `authenticated_delivery_unavailable` (it cannot confirm the offer is still
+    live); afterwards no swap names the offer in the Taker's list, the Maker's
+    offer record and swap history are as they were, and no Chat connection
+    reached the Maker. Once both are restored the same request, with the same
+    request id, takes the offer."""
+    entry = discover(offer_id)
+    request = take_request(offer_id, entry, f"e2e-take-{stamp}")
+    maker_offer = lambda: next(r for r in call("maker", "maker_offer_list", {}) if r["offer"]["id"] == offer_id)
+    maker_swaps = lambda: sorted(view.get("id") for view in call("maker", "swap_history", {}))
+    offer_before, swaps_before = maker_offer(), maker_swaps()
+    log("  cutting Logos Chat and Delivery before the take")
+    watch = None
+    try:
+        watch = cut_delivery_and_chat()
+        reply = rpc("taker", "taker_swap_initiate_v1", request, timeout=420)
+        error = reply.get("error") or {}
+        category = (error.get("data") or {}).get("category") if isinstance(error.get("data"), dict) else None
+        if "result" in reply or error.get("code") != -32010 or category != "authenticated_delivery_unavailable":
+            raise Failure(f"the take under the outage was not refused as authenticated_delivery_unavailable: "
+                          f"{json.dumps(reply)[:300]}")
+        log(f"  the Taker refused the take: {error.get('message')} ({category})")
+        taken = [swap for swap in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]
+                 if swap.get("offer_id") == offer_id]
+        offer_after, swaps_after = maker_offer(), maker_swaps()
+        if taken or offer_after != offer_before or swaps_after != swaps_before:
+            raise Failure(f"the refused take left a swap: Taker {taken}, Maker offer {offer_before} -> {offer_after}, "
+                          f"Maker history {len(swaps_before)} -> {len(swaps_after)} swaps")
+        log(f"  no swap on either Node: none in the Taker's list for {offer_id}, the Maker's offer record unchanged "
+            f"({offer_after['status']}, revision {offer_after['revision']}) and its history too")
+        # The refusal takes about a second, less than the Chat watch's period:
+        # the cut is held until it has sampled the Maker's socket twice.
+        deadline = time.time() + 30
+        while watch.samples < 2 and time.time() < deadline:
+            time.sleep(1)
+        held = assert_cut_held(watch)
+    finally:
+        if watch is not None:
+            watch.stop()
+        restore_delivery_and_chat()
+    assert_restored()
+    result = initiate(request)
+    swap_id = result["swap"]["swap_id"]
+    log(f"  restored, the same request {request['request_id']} took {offer_id}: swap {swap_id[:12]} "
+        f"({result['swap']['state']}, replay={result.get('was_replay')})")
+    return swap_id, {"refused": {"code": error.get("code"), "category": category}, "cut": held,
+                     "maker_offer_status": offer_before["status"], "maker_offer_revision": offer_before["revision"],
+                     "request_id": request["request_id"]}
+
+
+def scenario_outage_before_take(stamp: str) -> dict:
+    """R8: Chat and Delivery down before the take; the take is refused and
+    leaves no swap, and the same take succeeds once they are back
+    (take_after_outage). The swap then completes."""
+    offer_id = publish_offer(stamp)
+    swap_id, outage = take_after_outage(offer_id, stamp)
+    lock(swap_id)
+    claim(swap_id, stamp)
+    wait_completed(swap_id)
+    return {"swap_id": swap_id, "outage": outage}
 
 
 def scenario_concurrent(stamp: str) -> dict:
@@ -4152,6 +4219,17 @@ def scenario_zec_offline_after_lock(stamp: str) -> dict:
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "cut": held}
 
 
+def scenario_zec_outage_before_take(stamp: str) -> dict:
+    """R8 for Zcash: the corridor's offer taken under the outage of
+    take_after_outage, refused and left untaken, then taken with the same
+    request once Chat and Delivery are back; the swap completes."""
+    corridor = zec_provision()
+    swap_id, outage = take_after_outage(corridor["offer_id"], stamp)
+    config = zec_taker_actor_config(corridor["receipt_output"])
+    zec_finish(swap_id, config, corridor, stamp)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "outage": outage}
+
+
 def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
     """A refund admitted while the second lock is unobserved, then the second
     lock appears; the Nodes finish the recovery (the Maker's refund is queued as
@@ -4586,6 +4664,7 @@ ZEC_SCENARIOS = {
     "zec-claim-collision": scenario_zec_claim_collision,
     "zec-early-lock": scenario_zec_early_lock,
     "zec-offline-after-lock": scenario_zec_offline_after_lock,
+    "zec-outage-before-take": scenario_zec_outage_before_take,
     "zec-refund-then-maker-lock": scenario_zec_refund_then_maker_lock,
     "zec-replay": scenario_zec_replay,
     "zec-wrong-inputs": scenario_zec_wrong_inputs,
@@ -4615,6 +4694,7 @@ SCENARIOS = {
     "concurrent": scenario_concurrent,
     "early-lock": scenario_early_lock,
     "offline-after-lock": scenario_offline_after_lock,
+    "outage-before-take": scenario_outage_before_take,
     "taker-refund": scenario_taker_refund,
     "maker-refund": scenario_maker_refund,
     "refund-then-maker-lock": scenario_refund_admitted_then_maker_lock,
