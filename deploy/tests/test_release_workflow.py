@@ -87,6 +87,12 @@ class PackagesWorkflow(unittest.TestCase):
         self.assertEqual(set(linux_only.split('|')), {'lez_network', 'lez_indexer_module'})
         self.assertIn("ALL: '[\"darwin-arm64\",\"linux-amd64\",\"linux-arm64\"]'", self.PACKAGES)
 
+    def test_the_lgx_that_verifies_reads_versioned_dependencies(self):
+        # ff93a0df's lgx fails `lgx verify` on every pinned package
+        flake = re.search(r'LGX_FLAKE: github:logos-co/logos-package/([0-9a-f]{40})#lgx', self.PACKAGES).group(1)
+        self.assertNotEqual(flake, 'ff93a0df15ceab255f27687d22d962ea2737efbe')
+        self.assertIn(flake, (ROOT / 'apps/basecamp/flake.lock').read_text())
+
     def test_actions_are_pinned_by_commit(self):
         for ref in re.findall(r'uses: (\S+)', self.PACKAGES):
             self.assertRegex(ref, r'@[0-9a-f]{40}$', ref)
