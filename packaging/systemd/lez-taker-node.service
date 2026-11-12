@@ -17,6 +17,7 @@ RuntimeDirectoryMode=0700
 StateDirectory=lez/taker
 StateDirectoryMode=0700
 WorkingDirectory=/var/lib/lez/taker
+LoadCredentialEncrypted=lez-signer.key:/etc/lez/taker/credentials/lez-signer.key.cred
 # The role launcher (modules/lez-role-node/node-entrypoint.sh) renders the Node's
 # configuration from this file's inputs and execs the Node, which stays the main process.
 EnvironmentFile=/etc/lez/taker/env

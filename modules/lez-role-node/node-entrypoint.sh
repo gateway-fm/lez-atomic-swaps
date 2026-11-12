@@ -135,11 +135,13 @@ start_chat_gateway() { # start_chat_gateway <gateway endpoint arguments...>
 # The role's LEZ signer: the LEZ wallet as the Logos lez_core module
 # (lez-wallet-signer, its socket at LEZ_WALLET_SIGNER_SOCKET) holds the key and
 # the Node never sees it; without the socket the Node keeps a copy of the key
-# file for its sidecars, as before.
+# file for its sidecars, as before, or (LEZ_SIGNER_KEY_FILE, a systemd
+# deployment) reads the key where it is named: its credential, never copied.
 lez_wallet_socket="${LEZ_WALLET_SIGNER_SOCKET:-}"
+signer_key="${LEZ_SIGNER_KEY_FILE:-$btc_state/lez-signer.key}"
 # Owner-private copies of the mounted identity and Bitcoin RPC credentials.
 if [[ -z "$lez_wallet_socket" ]]; then
-  install -m 0600 "$identity_src/lez-signer.key" "$btc_state/lez-signer.key"
+  [[ -n "${LEZ_SIGNER_KEY_FILE:-}" ]] || install -m 0600 "$identity_src/lez-signer.key" "$btc_state/lez-signer.key"
 else
   rm -f "$btc_state/lez-signer.key"
   for _ in $(seq 1 120); do [[ -S "$lez_wallet_socket" ]] && break; sleep 1; done
@@ -209,7 +211,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     --arg transfer "$auth_transfer_program_id" --arg sidecar_program "$bin/lez-v02-bridge-poc" \
     --arg sequencer "$sequencer_url" --arg indexer "$indexer_url" --argjson port_base "$sidecar_port_base" \
     --arg route "$sequencer_route" \
-    --arg signer "$btc_state/lez-signer.key" --arg wallet_socket "$lez_wallet_socket" --arg signer_account "$signer_account" \
+    --arg signer "$signer_key" --arg wallet_socket "$lez_wallet_socket" --arg signer_account "$signer_account" \
     --arg actor "$actor_program" --arg actor_sha "$actor_sha" \
     --arg btc_network "${LEZ_BTC_NETWORK:-regtest}" \
     --arg lez_network "${LEZ_LEZ_NETWORK:-devnet}" \

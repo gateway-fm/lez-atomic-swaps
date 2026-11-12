@@ -20,6 +20,7 @@ WorkingDirectory=/var/lib/lez/maker
 LoadCredentialEncrypted=delivery-signing.key:/etc/lez/maker/credentials/delivery-signing.key.cred
 LoadCredentialEncrypted=maker-claim-recovery.key:/etc/lez/maker/credentials/maker-claim-recovery.key.cred
 LoadCredentialEncrypted=maker-claim-preimage.key:/etc/lez/maker/credentials/maker-claim-preimage.key.cred
+LoadCredentialEncrypted=lez-signer.key:/etc/lez/maker/credentials/lez-signer.key.cred
 # The role launcher (modules/lez-role-node/node-entrypoint.sh) renders the Node's
 # configuration from this file's inputs and execs the Node, which stays the main process.
 EnvironmentFile=/etc/lez/maker/env

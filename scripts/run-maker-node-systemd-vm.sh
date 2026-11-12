@@ -142,7 +142,7 @@ run systemctl --version
 step "Install (docs/maker-systemd-install.md)"
 run useradd --system --no-create-home --shell /usr/sbin/nologin lez-swap
 run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-maker-node-service.sh
-for name in delivery-signing.key maker-claim-recovery.key maker-claim-preimage.key; do
+for name in delivery-signing.key maker-claim-recovery.key maker-claim-preimage.key lez-signer.key; do
   printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=%s - /etc/lez/maker/credentials/%s.cred\n' "$name" "$name"
   head -c 32 /dev/urandom | systemd-creds encrypt --name="$name" - "/etc/lez/maker/credentials/$name.cred"
 done
@@ -233,6 +233,8 @@ as_owner offers
 
 step "Taker Node under its own unit"
 run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-taker-node-service.sh
+printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=lez-signer.key - /etc/lez/taker/credentials/lez-signer.key.cred\n'
+head -c 32 /dev/urandom | systemd-creds encrypt --name=lez-signer.key - /etc/lez/taker/credentials/lez-signer.key.cred 2>/dev/null
 # The Taker trusts the Maker's Delivery identity, derived here from the same credential.
 printf '$ maker_key=$(systemd-run ... lez-maker-cli delivery-identity --signing-key-file "$CREDENTIALS_DIRECTORY/delivery-signing.key")\n'
 identity="$(systemd-run --quiet --wait --pipe -p User=lez-swap \
@@ -338,8 +340,10 @@ done
 run install -m 0644 /payload/stack/market-bootstrap.env /etc/lez/market-bootstrap.env
 for role in maker taker; do
   run install -d -m 0755 "/etc/lez/$role/identity"
-  run install -o lez-swap -g lez-swap -m 0400 "/payload/stack/$role/identity.json" \
-    "/payload/stack/$role/lez-signer.key" "/etc/lez/$role/identity/"
+  run install -o lez-swap -g lez-swap -m 0400 "/payload/stack/$role/identity.json" "/etc/lez/$role/identity/"
+  # The role's LEZ signer key exists on this machine only as its encrypted credential.
+  run systemd-creds encrypt --name=lez-signer.key "/payload/stack/$role/lez-signer.key" \
+    "/etc/lez/$role/credentials/lez-signer.key.cred"
   run install -o lez-swap -g lez-swap -m 0400 /payload/stack/btc-rpc-cookie "/etc/lez/$role/btc-rpc-cookie"
   sed -e "s#^LEZ_BTC_WALLET=.*#LEZ_BTC_WALLET=$(cat "/payload/stack/$role/wallet")#" \
     -e '/^LEZ_V02_CHANNEL_ID=/d' "/etc/lez/$role/env.example" >"/etc/lez/$role/env"
@@ -348,6 +352,7 @@ for role in maker taker; do
   run cat "/etc/lez/$role/env"
 done
 run find /etc/lez -ls
+run find /etc/lez /var/lib/lez -name 'lez-signer.key*'
 
 step "Start both units through the launcher"
 run systemctl daemon-reload
@@ -408,6 +413,9 @@ done
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-taker-cli swap monitor --swap-id $swap_id"
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli monitor --id $swap_id"
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli history"
+
+step "No copy of either LEZ signer key on disk: only the encrypted credentials"
+run find / -xdev -name 'lez-signer.key*' -not -path '/payload/*'
 
 step "Journals"
 for unit in lez-maker-node lez-taker-node; do
