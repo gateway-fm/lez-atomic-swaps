@@ -553,6 +553,51 @@ builds (the Maker package is 31 MB, the Taker's 44 MB). A package carries
 one platform: a release with both would merge them with `lgx merge`, which
 has not been run.
 
+Running both roles on one Mac, headless, against the devnet's chains in
+Docker (only the chain containers running; the containers' Nodes stopped,
+since the native Nodes take the same identities):
+
+- **One Logos session per role.** The launcher reads the role's settings
+  from the host's environment under names both roles share
+  (`LEZ_SIDECAR_PORT_BASE`, `LEZ_WALLET_SIGNER_SOCKET`, `LEZ_BTC_WALLET`,
+  `LEZ_NODE_LOG_FILE`), as each role's container has its own environment, so
+  one host cannot run both roles; each role gets its own `logosctl` session
+  (`--config-dir`), daemon and environment, with one `LEZ_NODE_HOME` for
+  both so the Taker finds the Maker's Delivery directory and Chat socket.
+  The Maker's sidecar ports start at 19000 and the Taker's at 19500, as in
+  Compose, so the two never meet on the shared loopback.
+- **Inputs in `LEZ_NODE_HOME`.** `identity/<role>/` (`identity.json`,
+  `lez-signer.key`, the Maker's `zcash.key`), `market-bootstrap.env` and
+  `btc-rpc-cookie`, copied 0600 from the stack's `runtime/`.
+- **Session.** `logosctl package install` of `lez_core` (the darwin build),
+  `lez_swap_node` and `lez_<role>_node`; `module load lez_<role>_node`; then
+  the desk's calls: `lez_core create_new` (or `open`),
+  `import_public_account <key>`, `lez_swap_node serve_signer <socket>
+  <account>`, `lez_<role>_node launcher`, `lez_swap_node start_node <role>
+  <launcher> <log> <hold>`. The daemon's `PATH` was `/usr/bin:/bin:...`, so
+  the launcher ran under `/bin/bash` 3.2. `logosctl call` takes arguments on
+  its command line only, so the key is briefly in a process's arguments,
+  visible to processes of the same user; the desk passes it in process.
+- **Swaps.** `LEZ_E2E_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run
+  deploy/scripts/node-e2e.py happy` (and `replay`, `wrong-inputs`): the
+  harness reaches the native Nodes' owner sockets with the host's curl and
+  Bitcoin Core in its container as before.
+
+What ran on 2026-11-12 on an Apple-silicon Mac (macOS 26, logosctl 0.3.2),
+with the role packages built from `aa240744`:
+[docs/evidence/darwin-native-node-2026-11-12](../evidence/darwin-native-node-2026-11-12/README.md).
+Both Nodes started from their packages and reported ready, not degraded,
+Delivery and Chat available; the Bitcoin `happy` scenario passed in both
+directions, and `replay` and `wrong-inputs` passed, each LEZ transaction
+signed by the role's `lez_core` through `serve_signer` (no key file in the
+Nodes' state). With the Taker's `lez_swap_node` host killed (SIGKILL), the
+kqueue watcher ended the Taker Node's whole group (the Node and four
+sidecars) within two seconds; `module load lez_swap_node` resumed the
+signer and the Node, which reported ready again. Not run: any ZEC scenario
+(the corridor is provisioned only into the Node containers' volumes by
+`scripts/zec-provision.sh`), the refund, restart and off-chain scenarios
+(they stop or reach into the Node containers), the desks.
+
 ## Recommended order
 
 1. Done without signing: release (portable) packages for the desks, Chat and
