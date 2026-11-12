@@ -17,6 +17,7 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py survivor         Taker Node stopped after its LEZ claim; Maker completes alone
     node-e2e.py late-claim-confirms  the revealing claim sent, the Taker stopped, the claim confirms while it is down
     node-e2e.py late-claim-unmined   the revealing claim sent but never mined until the refund path is open
+    node-e2e.py maker-cli        the happy swap with every Maker call made by lez-maker-cli; a non-owner is refused (U3)
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
@@ -1690,6 +1691,70 @@ def scenario_offline_after_lock(stamp: str) -> dict:
         restore_delivery_and_chat()
     assert_restored()
     return {"swap_id": swap_id, "cut": held, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+
+
+def maker_cli(*arguments: str) -> object:
+    """One lez-maker-cli command in the Maker's container, as the Node's owner
+    (the container's user); its JSON answer."""
+    result = subprocess.run(["docker", "exec", NODES["maker"][0], "lez-maker-cli", *arguments],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if result.returncode != 0:
+        raise Failure(f"lez-maker-cli {arguments[0]} failed ({result.returncode}): {result.stderr.strip()[-300:]}")
+    return json.loads(result.stdout)
+
+
+def scenario_maker_cli(stamp: str) -> dict:
+    """U3/F9: the happy swap with every Maker call made by the operator CLI the
+    role image ships (`docker exec <maker> lez-maker-cli`), the Taker's as
+    always. The CLI has no command for maker_local_route_save_v1, which the
+    other scenarios use to save the pair and its price at once, so the route is
+    configured with configure-pair, then set-local-price, each against the
+    revision `pairs` and `prices` list; then publish-offer, offers, monitor
+    until the Maker reports the swap completed and terminal, and history. The
+    owner boundary: the same CLI as another user (nobody, 65534) is refused
+    connecting to the Node's 0600 socket, so no request is made."""
+    route = ["--pair", "bitcoin", "--direction", "taker-sells-lez" if REVERSE else "taker-sells-foreign"]
+    revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
+                                     if r["value"]["route"] == ROUTE), [])
+    maker_cli("configure-pair", "--request-id", f"e2e-cli-pair-{stamp}", *revision(maker_cli("pairs")), *route,
+              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(FOREIGN_UNITS),
+              "--maximum-foreign-units", str(FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+    maker_cli("set-local-price", "--request-id", f"e2e-cli-price-{stamp}", *revision(maker_cli("prices")), *route,
+              "--lez-units-per-lot", "1", "--foreign-units-per-lot", "1000")
+    offer_id = f"offer-e2e-cli-{stamp}"
+    maker_cli("publish-offer", "--request-id", f"e2e-cli-publish-{stamp}", "--offer-id", offer_id, *route)
+    listed = [record for record in maker_cli("offers") if record["offer"]["id"] == offer_id]
+    if len(listed) != 1 or listed[0]["offer"]["pair_configuration"]["route"] != ROUTE:
+        raise Failure(f"lez-maker-cli offers does not list {offer_id} on {ROUTE}: {listed}")
+    log(f"  Maker CLI configured the route, set its price and published {offer_id} ({listed[0]['status']})")
+    swap_id, _ = take(offer_id, stamp)
+    lock(swap_id)
+    claim(swap_id, stamp)
+    wait_taker(swap_id, {"completed"}, 1800, describe="(Maker follow-up claim)")
+    wait = Wait(f"lez-maker-cli monitor to report {swap_id[:12]} completed and terminal", 300)
+    while wait.running():
+        view = maker_cli("monitor", "--id", swap_id)
+        phase = ((view.get("progress") or {}).get("observation") or {}).get("phase") or view.get("schedule_state")
+        if view.get("schedule_state") == "terminal" and phase == "completed":
+            break
+        wait.note((phase, view.get("schedule_state")), f"maker {phase} (schedule {view.get('schedule_state')})")
+        time.sleep(3)
+    else:
+        raise wait.failure()
+    history = [entry for entry in maker_cli("history") if entry.get("id") == swap_id]
+    log(f"  lez-maker-cli monitor reports {swap_id[:12]} completed and terminal; history lists it "
+        f"{history[0]['phase'] if history else 'not at all'}")
+    container, socket = NODES["maker"]
+    denied = subprocess.run(["docker", "exec", "-u", "65534", container, "lez-maker-cli", "health"],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    mode = subprocess.run(["docker", "exec", container, "stat", "-c", "%a %U", socket],
+                          capture_output=True, text=True, check=False).stdout.strip()
+    if denied.returncode == 0 or "connect local RPC socket" not in denied.stderr or "Permission denied" not in denied.stderr:
+        raise Failure(f"lez-maker-cli health as uid 65534 was not refused at the socket: exit {denied.returncode}, "
+                      f"{denied.stdout.strip()[:200]} {denied.stderr.strip()[:200]}")
+    log(f"  as uid 65534 lez-maker-cli health is refused connecting to {socket} ({mode}): no request made")
+    return {"swap_id": swap_id, "offer_id": offer_id, "history": history,
+            "non_owner_health": {"exit": denied.returncode, "stderr": denied.stderr.strip()[-200:], "socket": mode}}
 
 
 def take_after_outage(offer_id: str, stamp: str) -> tuple[str, dict]:
@@ -4701,6 +4766,7 @@ SCENARIOS = {
     "regenerated-config": scenario_regenerated_config,
     "tampered-config": scenario_tampered_config,
     "zebra-down": scenario_zebra_down,
+    "maker-cli": scenario_maker_cli,
 }
 
 
