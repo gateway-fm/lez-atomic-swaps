@@ -28,6 +28,10 @@
 #   maker-refund   the Taker never claims; the Maker refunds, then the Taker refunds
 #   lez-finality-stall  the LEZ sequencer stopped until both Nodes report the stall
 #                  and both desks show it, then started again (#112; not in `all`)
+#   logos-happy    happy on the Logos transport (compose.logos.yaml): the Taker has no
+#                  Delivery directory and no Maker socket; the offer and every Chat
+#                  round travel through the two Basecamps' Logos Delivery and Chat
+#                  modules (Bitcoin only; not in `all`)
 #   all            every scenario in sequence (stops at the first failure)
 #
 # replay and wrong-inputs have no desk equivalent: a desk sends one request per
@@ -93,9 +97,10 @@ fail() { log "FAILED: $*"; exit 1; }
 # A scenario that stops a party's Basecamp registers it here, and one that
 # holds the Nodes down sets nodes_held; either is undone however the scenario
 # ends.
-stopped_node=""; nodes_held=0
+stopped_node=""; nodes_held=0; logos_on=0
 trap '[[ -z "$stopped_node" ]] || docker start "$stopped_node" >/dev/null 2>&1
-  [[ "$nodes_held" == 0 ]] || bash scripts/node-hold.sh release maker taker >/dev/null 2>&1' EXIT
+  [[ "$nodes_held" == 0 ]] || bash scripts/node-hold.sh release maker taker >/dev/null 2>&1
+  [[ "$logos_on" == 0 ]] || { chat_log; transport local; }' EXIT
 stop_node() { stopped_node="$1"; docker stop "$1" >/dev/null; }
 start_node() { # start_node <container>: the party's Basecamp again, its Node healthy and its desk open
   local role="${1#"$container_prefix"-}"; role="${role%-node}"
@@ -766,6 +771,89 @@ scenario_maker_refund() {
   maker_wait refunded "$swap"
 }
 
+# ---- the Logos transport (compose.logos.yaml, node-entrypoint.sh) ----------------
+chat_log() { # both Basecamps' Chat module lines (UTC): conversations, every message sent and received with its size
+  local role
+  for role in maker taker; do
+    log "$role Chat module:"
+    docker exec "$container_prefix-$role-node" sh -c "cat /var/lez/basecamp-$role-user/module_data/chat_module/*/chat_module_*.log" 2>/dev/null |
+      grep -E 'created|sent|received|failed|online' | sed 's/^/   /'
+  done
+  log "the Taker Node's last lines:"
+  docker exec "$taker_node" tail -n 15 /run/lez/taker/node.log 2>/dev/null | cut -c1-400 | sed 's/^/   /'
+}
+transport() { # transport <logos|local>: both Basecamps recreated on that transport, the Maker's first (as up.sh)
+  local args=("${stack_compose[@]}")
+  if [[ "$1" == logos ]]; then
+    [[ " ${args[*]} " == *" -f "* ]] || args+=(-f compose.yaml)
+    args+=(-f compose.logos.yaml)
+    # What a Taker on another host is told: the Maker's public Delivery identity.
+    LEZ_MAKER_DELIVERY_IDENTITY="$(docker exec "$maker_node" cat /delivery/maker-delivery-identity.pub)" ||
+      fail "the Maker's Delivery identity is unavailable"
+    export LEZ_MAKER_DELIVERY_IDENTITY
+  fi
+  logos_on=1
+  log "both Basecamps recreated on the $1 transport"
+  docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps maker-node </dev/null >/dev/null 2>&1 ||
+    fail "recreating the Maker's Basecamp on the $1 transport"
+  if [[ "$1" == logos ]]; then
+    # The Taker's Delivery node dials the Maker's: its libp2p address, by the
+    # Maker container's IP on the Docker network (the Delivery node's own DNS
+    # resolver does not ask Docker's), with the peer id its node logs.
+    local peer=""
+    for _ in $(seq 1 60); do
+      peer="$(docker logs "$maker_node" 2>&1 | sed -n 's/.*Started libp2p node.*(peerId: \([0-9A-Za-z]*\).*/\1/p' | tail -1)"
+      [[ -n "$peer" ]] && break
+      sleep 2
+    done
+    [[ -n "$peer" ]] || fail "the Maker's Delivery node did not start"
+    LEZ_MAKER_DELIVERY_PEER="/ip4/$(docker exec "$maker_node" hostname -i | awk '{print $1}')/tcp/60000/p2p/$peer"
+    export LEZ_MAKER_DELIVERY_PEER
+    log "the Taker's Delivery node dials the Maker's at $LEZ_MAKER_DELIVERY_PEER"
+  fi
+  docker compose "${args[@]}" up -d --no-build --force-recreate --no-deps taker-node </dev/null >/dev/null 2>&1 ||
+    fail "recreating the Taker's Basecamp on the $1 transport"
+  wait_healthy "$maker_node"; wait_healthy "$taker_node"; wait_desk maker; wait_desk taker
+  [[ "$1" == logos ]] || logos_on=0
+}
+gateway() { # gateway <role> <method> <params>: the role's Chat gateway answers on its control socket
+  docker exec "$container_prefix-$1-node" curl -sS --max-time 10 --unix-socket "/run/lez/$1/logos-chat-control.sock" \
+    -H 'content-type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null
+}
+scenario_logos_happy() {
+  [[ "$pair" == Bitcoin ]] || fail "logos-happy is a Bitcoin journey"
+  local swap started route node
+  transport logos
+  log "the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket"
+  docker exec "$taker_node" sh -c 'id -u; ! grep -q " /delivery " /proc/self/mountinfo && [ -z "$(ls -A /delivery)" ] &&
+    ! test -e /run/lez/maker && jq -c "{delivery_sources, chat_socket}" /var/lib/lez/taker/role.json' 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "the Taker still sees the Maker's Delivery directory or socket"
+  publish
+  started="$(date -u +%s)"; take swap
+  log "taken over Logos Delivery and Chat in $(( $(date -u +%s) - started )) s (discovery, conversation, reservation, ceremony)"
+  taker_act "$lock_action" "$swap"
+  maker_wait awaiting_taker_claim "$swap"
+  taker_act "$claim_action" "$swap"
+  finish "$swap"
+  # What carried it: the Taker gateway holds the Maker's announcement from
+  # Delivery and one bound Chat session; the Maker gateway binds a session only
+  # from a Chat message's authenticated sender.
+  route="{\"pair\":\"Bitcoin\",\"direction\":\"$direction\"}"
+  log "Chat gateways: Taker $(gateway taker logos_chat_status_v1 '{"schema_version":1}'); Maker $(gateway maker logos_chat_status_v1 '{"schema_version":1}')"
+  log "Taker gateway offers from Delivery: $(gateway taker logos_offer_list_v1 "{\"schema_version\":1,\"route\":$route}" |
+    python3 -c 'import json,sys; o=json.load(sys.stdin)["result"]["offers"]; print(len(o), "offer(s) of", len({e["maker_identity"] for e in o}), "Maker(s):", sorted({e["maker_identity"][:12] for e in o}))')"
+  gateway taker logos_chat_status_v1 '{"schema_version":1}' | grep -q '"session_bound":true' || fail "the Taker gateway has no bound Chat session"
+  gateway maker logos_chat_status_v1 '{"schema_version":1}' | grep -q '"session_count":[1-9]' || fail "the Maker gateway never received a Chat message"
+  gateway taker logos_offer_list_v1 "{\"schema_version\":1,\"route\":$route}" | grep -q "\"$LEZ_MAKER_DELIVERY_IDENTITY\"" ||
+    log "(the Maker's offers are no longer listed: its pending offers were taken or withdrawn)"
+  for node in "$maker_node" "$taker_node"; do
+    docker logs --since "$started" "$node" 2>&1 | grep -q 'Chat gateway exited' && log "the Chat gateway in $node restarted during the swap"
+  done
+  chat_log
+  transport local
+}
+
 run_one() {
   local name="$1" started; started="$(date -u +%s)"
   log "=== $name ($direction)"
@@ -780,6 +868,7 @@ run_one() {
     maker-refund) scenario_maker_refund ;;
     node-offline) scenario_node_offline ;;
     lez-finality-stall) scenario_lez_finality_stall ;;
+    logos-happy) scenario_logos_happy ;;
     zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
     zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
     zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
