@@ -359,7 +359,10 @@ zec_wait_both() { # zec_wait_both <swap_a> <swap_b> <taker state> [timeout]: wai
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-wait --swap-id "$1" --swap-id "$2" --until "$3" --timeout "${4:-3000}" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait (both) to $3"
 }
-zec_offer_ids() { python3 -c 'import json,sys; print("\n".join(e["offer_id"] for e in json.load(open(sys.argv[1]))))' "$LEZ_LANE_RUNTIME/zec/$(cat "$LEZ_LANE_RUNTIME/zec/current")/prepared.json"; }
+zec_offer_ids() {
+  if zec_take_time ""; then cat "$LEZ_LANE_RUNTIME/zec/take-time-offers"; return; fi
+  python3 -c 'import json,sys; print("\n".join(e["offer_id"] for e in json.load(open(sys.argv[1]))))' "$LEZ_LANE_RUNTIME/zec/$(cat "$LEZ_LANE_RUNTIME/zec/current")/prepared.json";
+}
 zec_refund_tail() { # zec_refund_tail <swap_id>: zebra to the refund height, the Maker's refund queued, its Zcash refund in a block
   log "mining zebra to the agreement's refund height; the Maker Node refunds its Zcash (operator action) once it sees the LEZ leg refunded"
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-refund-tail --swap-id "$1" 2>&1 | sed 's/^/   /'

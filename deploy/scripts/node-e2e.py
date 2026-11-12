@@ -5441,6 +5441,11 @@ def main() -> int:
             # A desk journey's take-time corridor: the offers its desk takes.
             try:
                 zec_take_time_offers(args.swaps, args.add)
+                # the desk journey's offer ids, in order (ui-e2e.sh zec_offer_ids)
+                listed = LANE_RUNTIME / "zec" / "take-time-offers"
+                listed.parent.mkdir(parents=True, exist_ok=True)
+                kept = listed.read_text().splitlines() if args.add and listed.exists() else []
+                listed.write_text("".join(f"{o}\n" for o in kept + [c["offer_id"] for c in ZEC_CORRIDORS]))
             except Failure as failure:
                 log(f"FAILED: {failure}")
                 return 1
