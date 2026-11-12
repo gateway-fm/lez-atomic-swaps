@@ -1,0 +1,31 @@
+[03:33:01] === late-claim-unmined (stamp 1794454381)
+[03:33:01] preflight: indexer historical reads
+[03:33:02]   indexer serves historical reads at the tip (108)
+[03:33:02] preflight: LEZ finality check waived by request
+[03:33:04]   Maker published offer-e2e-1794454381
+[03:33:05]   Taker took offer-e2e-1794454381: swap 5042c44101e1 (not_activated)
+[03:33:06]   Taker locked lez: c6d005398131 (replay=False)
+[03:33:06]   [0 s] waiting for the Taker's 5042c44101e1 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 95, tip 109 (14 unfinalized) [heartbeat]
+[03:33:26]   [20 s] waiting for the Taker's 5042c44101e1 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 116, tip 123 (7 unfinalized) [heartbeat]
+[03:33:43]   [37 s] waiting for the Taker's 5042c44101e1 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 129, tip 135 (6 unfinalized) [heartbeat]
+[03:33:43]   stopping the miner so the Taker's Bitcoin claim waits in the mempool
+[03:33:56]   stopping the Taker Node
+[03:33:57]   the claim aef2b9a98cc7 waits in the mempool with the Taker down; mining empty blocks every 2s until the window closes (1794454804) and the Maker's refund opens at height 71358
+[03:33:58]   [0 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71140, claim aef2b9a98cc7 in the mempool | LEZ finalized 129, tip 135 (6 unfinalized) [heartbeat]
+[03:34:57]   [60 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71162, claim aef2b9a98cc7 in the mempool | LEZ finalized 171, tip 174 (3 unfinalized) [heartbeat]
+[03:35:58]   [121 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71185, claim aef2b9a98cc7 in the mempool | LEZ finalized 209, tip 219 (10 unfinalized) [heartbeat]
+[03:36:59]   [182 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71208, claim aef2b9a98cc7 in the mempool | LEZ finalized 259, tip 262 (3 unfinalized) [heartbeat]
+[03:38:00]   [242 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71231, claim aef2b9a98cc7 in the mempool | LEZ finalized 286, tip 291 (5 unfinalized) [heartbeat]
+[03:39:00]   [303 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71253, claim aef2b9a98cc7 in the mempool | LEZ finalized 329, tip 331 (2 unfinalized) [heartbeat]
+[03:40:01]   [364 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71275, claim aef2b9a98cc7 in the mempool | LEZ finalized 364, tip 368 (4 unfinalized) [heartbeat]
+[03:41:02]   [425 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71297, claim aef2b9a98cc7 in the mempool | LEZ finalized 402, tip 408 (6 unfinalized) [heartbeat]
+[03:42:03]   [486 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71319, claim aef2b9a98cc7 in the mempool | LEZ finalized 430, tip 434 (4 unfinalized) [heartbeat]
+[03:43:05]   [548 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 71342, claim aef2b9a98cc7 in the mempool | LEZ finalized 472, tip 475 (3 unfinalized) [heartbeat]
+[03:43:48]   the refund path is open at height 71358; the claim was never mined; the Maker is at both_legs_locked
+[03:43:49]   the Maker's refund asked for: {"schema_version": 1, "swap_id": "5042c44101e1b23cb29146dcf8a32e2d643111c6a9abfb7a90cc2d7caeb572c5", "action": "refund", "requested_after_generation": 77, "was_replay": false}
+[03:43:57]   [0 s] waiting for both Nodes to settle 5042c44101e1: taker claim_in_progress offering None | maker both_legs_locked (schedule leased) | LEZ finalized 511, tip 515 (4 unfinalized) [heartbeat]
+[03:44:09]   [12 s] waiting for both Nodes to settle 5042c44101e1: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 511, tip 515 (4 unfinalized) [heartbeat]
+[03:44:26]   the held claim aef2b9a98cc7 was mined after all, at height 71359
+[03:44:26]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[03:44:26]   settled completed: both Nodes and both chains agree
+[03:44:26] === late-claim-unmined: passed in 686s
