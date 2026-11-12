@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import shutil
+import socket
 import stat
 import subprocess
 import tempfile
@@ -208,6 +209,44 @@ class Launcher(unittest.TestCase):
                 self.assertEqual(config['initiation']['btc_role_config'], str(home / 'taker/btc/btc-role.json'))
                 # No forwards: the chains' ports are on this host's loopback.
                 self.assertFalse(self.calls.exists(), self.calls.read_text() if self.calls.exists() else '')
+
+    def test_one_environment_starts_both_roles_with_their_own_settings(self):
+        # One host (one Basecamp with both desks) has one environment: each
+        # role's own LEZ_<ROLE>_<NAME> wins over the shared LEZ_<NAME>.
+        self.host('Darwin', setpriv=False)
+        home = self.tmp / 'home/Library/Application Support/LEZ'
+        self.inputs(home / 'identity/maker', home / 'market-bootstrap.env', home / 'btc-rpc-cookie')
+        (home / 'identity/taker').mkdir(parents=True)
+        (home / 'identity/taker/identity.json').write_text(json.dumps({'account_id_hex': ACCOUNT}))
+        sockets = []
+        for role in ('maker', 'taker'):
+            path = self.tmp / f'{role}-signer.sock'
+            listener = socket.socket(socket.AF_UNIX)
+            listener.bind(str(path))
+            self.addCleanup(listener.close)
+            sockets.append(path)
+        env = {
+            'LEZ_SIDECAR_PORT_BASE': '1', 'LEZ_BTC_WALLET': 'shared', 'LEZ_NODE_LOG_FILE': str(self.tmp / 'shared.log'),
+            'LEZ_MAKER_SIDECAR_PORT_BASE': '19000', 'LEZ_TAKER_SIDECAR_PORT_BASE': '19500',
+            'LEZ_MAKER_WALLET_SIGNER_SOCKET': str(sockets[0]), 'LEZ_TAKER_WALLET_SIGNER_SOCKET': str(sockets[1]),
+            'LEZ_MAKER_BTC_WALLET': 'lez-maker', 'LEZ_TAKER_BTC_WALLET': 'lez-taker',
+            'LEZ_MAKER_NODE_LOG_FILE': str(self.tmp / 'maker.log'), 'LEZ_TAKER_NODE_LOG_FILE': str(self.tmp / 'taker.log'),
+            'LEZ_TAKER_BTC_REFUND_CSV_BLOCKS': '99',
+        }
+        for bash in bashes():
+            with self.subTest(bash=bash):
+                for role, port, sock, wallet in (('maker', 19000, sockets[0], 'lez-maker'),
+                                                 ('taker', 19500, sockets[1], 'lez-taker')):
+                    self.run_launcher(bash, role, **env)
+                    config = json.loads((home / f'{role}/btc/btc-role.json').read_text())
+                    self.assertEqual(config['lez']['sidecar_port_base'], port)
+                    self.assertEqual(config['lez']['wallet_signer']['socket'], str(sock))
+                    self.assertIsNone(config['lez']['signer_key_file'])
+                    self.assertEqual(config['bitcoin']['wallet'], wallet)
+                    # Unset for the role: the shared name (or the default).
+                    self.assertEqual(config['bitcoin']['refund_csv_blocks'], 99 if role == 'taker' else 60)
+                    self.assertTrue((self.tmp / f'{role}.log').exists())
+                self.assertFalse((self.tmp / 'shared.log').exists())
 
     def test_a_socket_directory_too_long_for_a_unix_socket_is_refused(self):
         self.host('Darwin', setpriv=False)

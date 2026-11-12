@@ -24,6 +24,24 @@ set -euo pipefail
 
 role="${1:?maker|taker}"
 bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Each setting below may be given for one role only: LEZ_MAKER_<NAME> or
+# LEZ_TAKER_<NAME> (LEZ_MAKER_SIDECAR_PORT_BASE for LEZ_SIDECAR_PORT_BASE)
+# takes precedence over LEZ_<NAME> for that role. One host can then start
+# both roles' Nodes from one environment (one Basecamp with both desks), where
+# the names both roles share would otherwise collide; a role's container sets
+# the shared names for its one role.
+role_prefix="LEZ_$(tr '[:lower:]' '[:upper:]' <<<"$role")_"
+for name in SIDECAR_PORT_BASE WALLET_SIGNER_SOCKET BTC_WALLET BTC_CLAIM_DESTINATION NODE_LOG_FILE \
+    NODE_STATE_DIR NODE_RUN_ROOT ZEC_STATE_DIR NODE_IDENTITY_DIR MARKET_MANIFEST BTC_RPC_COOKIE_FILE DELIVERY_DIR \
+    SEQUENCER_URL INDEXER_URL LEZ_SEQUENCER_ROUTE BITCOIN_CORE_HOST SEQUENCER_HOST INDEXER_HOST ZEBRA_HOST \
+    V02_CHANNEL_ID AUTH_TRANSFER_PROGRAM_ID BTC_NETWORK LEZ_NETWORK \
+    BTC_REFUND_CSV_BLOCKS BTC_SECOND_LOCK_REFUND_CSV_BLOCKS BTC_BLOCK_SECONDS_FASTEST BTC_BLOCK_SECONDS_SLOWEST \
+    BTC_MAKER_LOCK_CUTOFF_SECONDS BTC_EARLIER_REFUND_SECONDS BTC_LATER_REFUND_SECONDS BTC_REFUND_MARGIN_SECONDS \
+    BTC_LOCK_FEE_CONFIRMATION_TARGET BTC_LOCK_FEE_FALLBACK_SAT_PER_VB BTC_LOCK_FEE_MAX_SAT_PER_VB \
+    BTC_LOCK_FEE_MAX_PERCENT LEZ_DISCOVERY_MAX_BLOCKS ZEC_CLAIM_KEY_ID NODE_FINALITY_STALL_SECONDS; do
+  specific="$role_prefix$name"
+  if [[ -n "${!specific+set}" ]]; then export "LEZ_$name=${!specific}"; fi
+done
 # A helper started here ends with the Node (its parent once this script execs
 # it): setpriv (util-linux) asks the kernel for that, where it is installed.
 # Elsewhere (macOS) the helper is ended with the Node's process group.

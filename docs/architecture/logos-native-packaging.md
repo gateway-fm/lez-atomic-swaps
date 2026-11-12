@@ -499,6 +499,14 @@ Compose:
 | Delivery directory | `LEZ_DELIVERY_DIR` | `/delivery` | `delivery` |
 | chain hosts, sequencer and indexer URLs | `LEZ_*_HOST`, `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL` | the Compose service names | `127.0.0.1` |
 
+Every setting the launcher reads (the paths above, `LEZ_SIDECAR_PORT_BASE`,
+`LEZ_WALLET_SIGNER_SOCKET`, `LEZ_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`,
+`LEZ_NODE_LOG_FILE`, the chain endpoints and the timing profile) can also be
+given for one role: `LEZ_MAKER_<NAME>` or `LEZ_TAKER_<NAME>` wins over
+`LEZ_<NAME>` for that role. A role's container sets the shared names for its
+one role, as before; one host with both roles (one Basecamp with both desks,
+one `logosctl` session) sets the role-specific ones, from one environment.
+
 A chain host that is `127.0.0.1` or `localhost` gets no `socat` forward: the
 service is already on this host's loopback (on a Mac the chains' containers
 publish their ports there). The launcher runs under any bash from 3.2 on
