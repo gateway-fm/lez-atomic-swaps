@@ -3,8 +3,8 @@
 `scripts/run-maker-node-systemd-vm.sh` boots a stock Ubuntu 24.04 cloud image under QEMU/KVM inside
 an `ubuntu:24.04` container given only `--device /dev/kvm` (no `--privileged`, no unit on the
 host), installs the packages and follows [docs/maker-systemd-install.md](../../maker-systemd-install.md)
-as root. Two kinds of run are recorded here: Bitcoin swaps executed between the two units
-against the devnet's chains (below), and the earlier run without chains.
+as root. Recorded here: Bitcoin swaps and a Zcash swap executed between the two units against the
+devnet's chains (below), and the earlier run without chains.
 
 ## A Bitcoin swap between the two units (`LEZ_STACK_DEPLOY_DIR` set)
 
@@ -39,6 +39,41 @@ against the devnet's chains (below), and the earlier run without chains.
   gains 999 000 sat (the lot less its 1 000-sat claim fee) and pays 1 000 LEZ; the Taker pays
   1 003 100 sat (the lot and a 3 100-sat lock fee) and gains 1 000 LEZ.
 - **Not run**: Zcash; a Taker-sells-LEZ swap; route-health probes against a failing chain.
+
+## A Zcash swap between the two units (`LEZ_SWAP_PAIR=zcash`)
+
+| File | What |
+|---|---|
+| `swap-zcash.log`, `-balances.txt` | one Zcash swap, Taker sells 50 000 LEZ for 1 ZEC, formed at take time by `zec_reserve_v1` (no dealer) |
+
+- **Source**: `0939c244` on `feat/m5-gaps` `e7cae1fa` (binary sha256s in the transcript's first
+  lines); the LEZ sidecar is the stack's `provision/data/sidecar` of this branch's sidecar tree
+  `98e9f1c3`. Stack at `713ea269` under the lock, lane 1's identities with its Node containers
+  stopped and healthy again afterwards. The VM also reaches `zebra:18232` (a fourth `guestfwd`).
+- **Keys**: the Delivery and LEZ signer keys as credentials, the Maker's Delivery credential being
+  lane 1's Maker Zcash key (Zebra's miner address, so the Maker holds mature outputs to fund
+  from); the Taker's Zcash key a `lez-swap`-owned file the launcher copies.
+- **What ran**: both units READY through the launcher, the Maker with its Zcash authority; the
+  Maker configures, prices and publishes the Zcash offer; the Taker lists and takes it; the Nodes
+  form the agreement at take time, the Taker's supervisor locks LEZ and the Maker funds Zcash;
+  once the funding is in a block the Maker is killed with `kill -9` and systemd restarts it
+  (`NRestarts=1`); the Maker reveals, the Taker reaches `claim_available`, claims its Zcash, and
+  both report `completed` (the Maker's history: `Completed`). The guest mined three Zebra blocks,
+  one each for the Maker's funding, its second confirmation and the Taker's claim, to Zebra's
+  configured miner address (lane 1's Maker), as `node-e2e.py`'s mining policy does.
+- **Balances**: the Taker pays 50 000 LEZ and gains 99 990 000 zatoshis (1 ZEC less its claim
+  fee); the Maker gains 50 000 LEZ, and its Zcash balance moves by the 1 ZEC it funded and the fees
+  less the three blocks' coinbase, which Zebra pays to it.
+- **Limit (stated, not changed)**: Zcash keys are not credentials. During and after the swap the
+  state directories hold, `lez-swap` mode 0600 and not removed at completion: each role's
+  long-lived Zcash key copied into the swap's `btc/swaps/<id>/zec/zcash.key` (for the Maker that
+  key is also its Delivery key; the transcript compares the copies with the role keys), the
+  Taker's also in `zec/zcash.key`, a per-swap `claim-recovery.key` per role, the Maker's per-swap
+  `claim-preimage.key`, and the Maker's long-lived `zec-claim-recovery.key`.
+- **Not run**: Taker sells ZEC (the Taker would need mature transparent outputs on its own key,
+  for example blocks mined to its address or a transfer from the Maker's); an earlier attempt of
+  this run, stopped by hand after the funding's first confirmation because the harness never
+  mined the second, left that swap's Taker LEZ lock and Maker Zcash funding on lane 1 unrefunded.
 
 ## The earlier run without chains
 

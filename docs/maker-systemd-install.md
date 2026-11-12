@@ -1,21 +1,22 @@
 # Installing the Maker and Taker Nodes as systemd services
 
 Every command below ran as root in an Ubuntu 24.04 VM (systemd 255) under
-`scripts/run-maker-node-systemd-vm.sh`, which also executed a Bitcoin swap between the two units
-against the devnet's chains; record: `docs/evidence/maker-systemd-2026-11-12/`.
+`scripts/run-maker-node-systemd-vm.sh`, which also executed a Bitcoin and a Zcash swap between the
+two units against the devnet's chains; record: `docs/evidence/maker-systemd-2026-11-12/`.
 
 ## Prerequisites
 
 Linux with systemd 255 or later, as root; `jq` and `socat` (`apt install jq socat`); Bitcoin
-Core, the LEZ sequencer and the LEZ indexer answering on `127.0.0.1:18443`, `:3040` and `:8779`
+Core, the LEZ sequencer, the LEZ indexer and Zebra answering on `127.0.0.1:18443`, `:3040`, `:8779`
+and `:18232`
 (local nodes, or a loopback forward such as `socat TCP-LISTEN:18443,bind=127.0.0.1,fork
 TCP:<core>:18443`); a funded LEZ account and Core wallet per role. Binaries built from this
 checkout (`cargo build --locked -p lez-maker-node -p lez-taker-node --features
 lez-maker-node/pair-zec,lez-taker-node/pair-zec --bins`, `-p btc-reference-actor --bins`,
-`-p zec-reference-actor --bin lez-zec-maker-actor`, `-p lez-logos-price-c-api --bins`,
+`-p zec-reference-actor --bin lez-zec-maker-actor --bin lez-zec-taker-actor`,
+`-p lez-logos-price-c-api --bins`,
 `-p lez-runtime-healthcheck`) and the LEZ sidecar of the same tree, built in the builder image
 (`deploy/scripts/from-scratch.sh --only build` → `provision/data/sidecar/lez-v02-bridge-poc`).
-Zcash swaps under the units are not covered yet.
 
 ## Install
 
@@ -32,9 +33,10 @@ units to `/usr/lib/systemd/system/`, `env.example` and an empty mode-0700 `crede
 
 ## Keys and inputs
 
-Every key reaches the Nodes only as an encrypted credential, decrypted by systemd at each start
+The Delivery and LEZ signer keys reach the Nodes only as encrypted credentials, decrypted at each start
 into `/run/credentials/<unit>/` (root:root 0440, readable by `lez-swap` through an ACL) and read
-there, never copied. The Maker unit loads four, the Taker unit one:
+there; only a Zcash swap copies one of them (the Maker's Delivery key, below). The Maker unit
+loads four, the Taker unit one:
 
 ```sh
 head -c 32 /dev/urandom | systemd-creds encrypt --name=delivery-signing.key - /etc/lez/maker/credentials/delivery-signing.key.cred
@@ -55,7 +57,16 @@ cp /etc/lez/maker/env.example /etc/lez/maker/env   # then set the wallet and LEZ
 ```
 
 `market-bootstrap.env` holds the LEZ escrow program id and genesis hash; the Core cookie copy
-must be renewed when Core restarts.
+must be renewed when Core restarts. In `env`, `LEZ_ZEC_STATE_DIR` (`/var/lib/lez/<role>/zec`) keeps
+the launcher's Zcash state inside the unit's state directory. For Zcash, the Maker's Zcash key
+is its Delivery key (the funder needs mature transparent outputs on it); the Taker's is a file,
+`install -o lez-swap -g lez-swap -m 0400 zcash.key /etc/lez/taker/identity/taker/`.
+
+**Zcash keys are not credentials.** During and after a Zcash swap the state directory holds,
+`lez-swap` mode 0600 and kept after completion: each role's long-lived Zcash key (for the Maker
+also its Delivery key) copied into every swap's `btc/swaps/<id>/zec/zcash.key`, the Taker's in
+`zec/zcash.key` too, a per-swap `claim-recovery.key` per role, the Maker's `claim-preimage.key`,
+and the Maker's long-lived `zec-claim-recovery.key`.
 
 ## Start and check
 
