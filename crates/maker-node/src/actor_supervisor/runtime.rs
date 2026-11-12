@@ -633,20 +633,14 @@ fn run_claimed_attempt_with_lock(
         if matches!(status_decision, StatusDecision::Blocked) && manual_action.is_none() {
             return Ok(ClaimedAttempt::Blocked);
         }
-        let command = match manual_action {
-            Some(action) => manual_effect_command(lease.record().manifest().kind(), action),
-            None => match status_decision {
-                StatusDecision::Blocked => return Ok(ClaimedAttempt::Blocked),
-                StatusDecision::Terminal => return Ok(ClaimedAttempt::Terminal),
-                StatusDecision::Run(command) => command,
-                StatusDecision::ObserveThenRecover => {
-                    if lease.record().attempt_count().is_multiple_of(2) {
-                        ActorEffectCommand::Drive
-                    } else {
-                        ActorEffectCommand::Recover
-                    }
-                }
-            },
+        let command = match attempt_command(
+            lease.record().manifest().kind(),
+            manual_action,
+            status_decision,
+            lease.record().attempt_count(),
+        ) {
+            Ok(command) => command,
+            Err(attempt) => return Ok(attempt),
         };
         if let Some(class) = effect_held_back(store, lease, config, command, &status) {
             return Ok(ClaimedAttempt::Backoff(class));
@@ -696,6 +690,30 @@ fn run_claimed_attempt_with_lock(
         progress,
         held_lock: Some(held_lock),
     })
+}
+
+/// The effect one attempt runs: the owner's queued action if there is one,
+/// else what the actor's status decided; an attempt with nothing to run ends
+/// as the status says (blocked or terminal).
+fn attempt_command(
+    kind: MakerActorKindV1,
+    manual_action: Option<MakerActorManualAction>,
+    status_decision: StatusDecision,
+    attempt_count: u64,
+) -> Result<ActorEffectCommand, ClaimedAttempt> {
+    match manual_action {
+        Some(action) => Ok(manual_effect_command(kind, action)),
+        None => match status_decision {
+            StatusDecision::Blocked => Err(ClaimedAttempt::Blocked),
+            StatusDecision::Terminal => Err(ClaimedAttempt::Terminal),
+            StatusDecision::Run(command) => Ok(command),
+            StatusDecision::ObserveThenRecover => Ok(if attempt_count.is_multiple_of(2) {
+                ActorEffectCommand::Drive
+            } else {
+                ActorEffectCommand::Recover
+            }),
+        },
+    }
 }
 
 const fn manual_effect_command(
@@ -1729,6 +1747,91 @@ mod tests {
             StatusDecision::ObserveThenRecover
         ));
         assert_eq!(parsed.revision, Some(2));
+    }
+
+    /// The commands a Bitcoin Maker runs over `attempts` consecutive attempts
+    /// at one status, with the owner's refund request open throughout.
+    fn btc_commands_with_refund_requested(
+        phase: &str,
+        revision: u64,
+        next_action: &str,
+        attempts: u64,
+    ) -> Vec<&'static str> {
+        (0..attempts)
+            .map(|attempt_count| {
+                let parsed = parse_status(
+                    &status(phase, revision, next_action),
+                    MakerActorKindV1::Bitcoin,
+                )
+                .unwrap();
+                match attempt_command(
+                    MakerActorKindV1::Bitcoin,
+                    Some(MakerActorManualAction::Refund),
+                    parsed.decision,
+                    attempt_count,
+                ) {
+                    Ok(command) => command.name(),
+                    Err(_) => "none",
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_refund_request_does_not_blind_the_maker_to_the_takers_revealing_claim() {
+        // #103 item 14, late-claim-unmined selling LEZ (2026-11-11): the
+        // Taker's Bitcoin claim waited in a stopped miner's mempool past the
+        // claim window; the Maker's operator asked for its refund; the claim
+        // was mined seconds later. Bitcoin cannot expire a claim, so the
+        // claim spent the Maker's lock and its refund can never confirm
+        // (`recover` reads a conflicting spend and waits). The request made
+        // every attempt `recover`, so the Maker never drove the observation
+        // that projects the claim and takes the secret to the LEZ leg, and
+        // the LEZ claim window (the Taker's later refund time) ran out:
+        // 332 recovers, both_legs_locked for 44 minutes.
+        //
+        // With the claim window closed the request is the recovery the
+        // supervisor already alternates with observing the claim.
+        let closed =
+            btc_commands_with_refund_requested("both_legs_locked", 2, "recover_maker_leg", 4);
+        assert!(
+            closed.contains(&"drive") && closed.contains(&"recover"),
+            "a refund request past the claim window must keep observing the claim: {closed:?}"
+        );
+        // Asked for before the window closed, the claim is still awaited too.
+        let open =
+            btc_commands_with_refund_requested("both_legs_locked", 2, "observe_revealing_claim", 4);
+        assert!(
+            open.contains(&"drive") && open.contains(&"recover"),
+            "a refund request in the claim window must keep observing the claim: {open:?}"
+        );
+        // Once the claim is projected the Maker's follow-up LEZ claim is the
+        // only way its leg is paid; `recover` has no transition there.
+        assert_eq!(
+            btc_commands_with_refund_requested(
+                "claim_evidence_available",
+                3,
+                "observe_followup_claim",
+                2
+            ),
+            ["drive", "drive"]
+        );
+        // Where no claim can exist yet, the request is the refund it was.
+        for (phase, revision, next_action) in [
+            (
+                "taker_lock_confirmed",
+                1,
+                "observe_maker_second_lock_or_recover_taker_leg",
+            ),
+            ("taker_lock_confirmed", 1, "recover_taker_leg"),
+            ("maker_leg_refunded", 3, "recover_taker_leg"),
+        ] {
+            assert_eq!(
+                btc_commands_with_refund_requested(phase, revision, next_action, 2),
+                ["recover", "recover"],
+                "{phase} {next_action}"
+            );
+        }
     }
 
     #[test]
