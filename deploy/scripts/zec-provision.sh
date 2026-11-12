@@ -411,8 +411,12 @@ zebra_next_branch() {
 [[ "$(zebra getblockhash '[0]' | tr -d '"')" == "$REGTEST_GENESIS" ]] ||
   fail "the Zebra at $ZEBRA_URL does not serve the Regtest genesis"
 next_branch="$(zebra_next_branch)" || fail "zebra RPC unavailable at $ZEBRA_URL"
-if [[ "$next_branch" != "$NU7_BRANCH" ]]; then
-  log "  zebra's next block is on branch $next_branch, not NU7 ($NU7_BRANCH): recreating it on Zebra 7 with a new data volume"
+# Regtest coinbases halve every 816 blocks: past 1500 (node-e2e.py
+# ZEBRA_WORN_HEIGHT) the Maker's key is mined too little to fund a lot, so a
+# worn Zebra is recreated the same way, unless a live corridor runs on it (--add).
+worn=0; (( ADD == 0 && $(zebra getblockcount) >= 1500 )) && worn=1
+if [[ "$next_branch" != "$NU7_BRANCH" || "$worn" == 1 ]]; then
+  log "  zebra's next block is on branch $next_branch (NU7 is $NU7_BRANCH), worn=$worn: recreating it on Zebra 7 with a new data volume"
   # The rendered config keeps its miner address; only the activation changes.
   host_sed_inplace 's/^"NU6\.2" = 1$/"NU7" = 1/' "$LANE/zebra/zebrad.toml"
   grep -qx '"NU7" = 1' "$LANE/zebra/zebrad.toml" ||

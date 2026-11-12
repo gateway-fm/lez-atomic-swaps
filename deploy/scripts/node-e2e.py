@@ -3337,6 +3337,52 @@ def zec_dynamic_publish(stamp: str, offers: list[tuple[str, str]]) -> None:
         log(f"  Maker CLI published {offer_id} on its running Node (no corridor)")
 
 
+# Regtest coinbases halve every 816 blocks (2.08, 1.04, 0.52 ZEC …) and a lane's
+# Zebra outlives the LEZ chains: past this height the Maker's key is no longer
+# mined outputs a 1 ZEC lot can be funded from, nor the dealer's 2 ZEC payment
+# to the Taker. Such a Zebra is renewed: a new data volume, the same genesis.
+ZEBRA_WORN_HEIGHT = 1500
+
+
+def zec_renew_worn_zebra() -> None:
+    """Between tests (never beside a live swap): a lane's worn Zebra recreated
+    empty and mined past coinbase maturity, as zec-provision.sh does."""
+    if ZEC_PUBLIC:
+        return
+    height = int(zebra("getblockcount"))
+    if height < ZEBRA_WORN_HEIGHT:
+        # a renewed chain (here or by zec-provision.sh) mined past maturity
+        if height < 110:
+            zebra_mine(110 - height, "coinbase maturity on a new chain")
+        return
+    container = f"{PREFIX}-zebra"
+    volume = subprocess.run(["docker", "inspect", "-f", '{{range .Mounts}}{{if eq .Destination "/var/lib/zebra"}}'
+                             '{{.Name}}{{end}}{{end}}', container], capture_output=True, text=True, check=True).stdout.strip()
+    log(f"  zebra at {height} is worn (coinbases halve every 816 blocks): renewing {container} with a new volume")
+    compose = ["docker", "compose", *os.environ.get("LEZ_STACK_COMPOSE_ARGS", "--env-file runtime/runtime.env").split()]
+    subprocess.run([*compose, "rm", "-sf", "zebra"], cwd=DEPLOY_ROOT, check=True, capture_output=True)
+    subprocess.run(["docker", "volume", "rm", volume], check=True, capture_output=True)
+    subprocess.run([*compose, "up", "-d", "--no-deps", "--no-build", "zebra"], cwd=DEPLOY_ROOT, check=True, capture_output=True)
+    deadline = time.time() + 120
+    while True:
+        try:
+            zebra("getblockcount")
+            break
+        except Failure:
+            if time.time() > deadline:
+                raise
+            time.sleep(2)
+    zebra_mine(110, "coinbase maturity on the renewed chain")
+
+
+def zec_fund() -> None:
+    """What a take-time Zcash swap needs before its offer: a Zebra whose
+    coinbases still fund the lot and, selling ZEC, one payment to the Taker's key."""
+    zec_renew_worn_zebra()
+    if not zec_taker_sells_lez():
+        zec_dynamic_fund_taker()
+
+
 def zec_take_time_offers(swaps: int, add: bool) -> dict:
     """zec_provision's take-time path: the funder made able to fund (selling
     ZEC, one payment to the Taker's key per offer) and `swaps` offers published,
@@ -3345,6 +3391,8 @@ def zec_take_time_offers(swaps: int, add: bool) -> dict:
     (zec-devnet-publish-<run stamp>), which zec-replay and zec-wrong-inputs reuse.
     With `add` the offer joins the live corridors."""
     stamp = str(int(time.time())) + (f"{int(os.environ['LEZ_LANE']):02d}" if os.environ.get("LEZ_LANE", "1") != "1" else "")
+    if not add:
+        zec_renew_worn_zebra()
     for _ in range(swaps if not zec_taker_sells_lez() else 0):
         zec_dynamic_fund_taker()
     offers = [(f"zec-devnet-publish-{stamp}{'-' + str(index) if index else ''}",
@@ -3368,8 +3416,7 @@ def scenario_zec_dynamic_happy(stamp: str) -> dict:
     the agreement at take time over Chat (zec_reserve_v1), each with its own
     keys; then the happy swap runs as zec-happy's does."""
     since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if not zec_taker_sells_lez():
-        zec_dynamic_fund_taker()
+    zec_fund()
     offer_id = f"offer-e2e-zecdyn-{stamp}"
     zec_dynamic_publish(stamp, [(f"e2e-zecdyn-publish-{stamp}", offer_id)])
     swap_id = zec_take_or_resume(offer_id, stamp)
@@ -5346,7 +5393,7 @@ def run(name: str) -> bool:
 def main() -> int:
     global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "all"])
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "all"])
     parser.add_argument("--swap-id", action="append", default=[],
                         help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
     parser.add_argument("--mine-pending-only", action="store_true",
@@ -5383,6 +5430,13 @@ def main() -> int:
                 parser.error(f"{args.scenario} needs --swap-id and --until or --until-phase")
             return 0 if zec_drive_tool(swap_id, args.until or "", args.timeout, args.mine_pending_only, args.until_phase) else 1
         args.swap_id = args.swap_id[0] if args.swap_id else None
+        if args.scenario == "zec-fund":
+            try:
+                zec_fund()
+            except Failure as failure:
+                log(f"FAILED: {failure}")
+                return 1
+            return 0
         if args.scenario == "zec-publish":
             # A desk journey's take-time corridor: the offers its desk takes.
             try:

@@ -319,7 +319,7 @@ export_evidence() { # export_evidence <swap_id>
 # ZEC_REFUND_PROFILE): a 4-minute LEZ refund delay, as nobody claims there.
 zec_refund_profile=deterministic-local-devnet-v6
 zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
-  if zec_take_time "${2:-}"; then zec_publish --swaps "${1:-1}"; return; fi
+  if zec_take_time "${2:-}"; then zec_publish_offers --swaps "${1:-1}"; return; fi
   log "provisioning a ZEC corridor with ${1:-1} prepared swap(s)${2:+ under $2} (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
   bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" ${2:+--profile "$2"} 2>&1 | tail -4 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh"
@@ -332,7 +332,7 @@ zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with
   log "corridor lot: $LEZ_UI_ZEC_AMOUNT ZEC for $LEZ_UI_ZEC_LEZ_AMOUNT LEZ units"
 }
 zec_provision_add() { # a second corridor beside the live one (its own Zcash anchor); recreates both Nodes with both
-  if zec_take_time ""; then zec_publish --swaps 1 --add; return; fi
+  if zec_take_time ""; then zec_publish_offers --swaps 1 --add; return; fi
   log "adding a second ZEC corridor beside the live one (zec-provision.sh --add: offer, draft, catalog of both, Nodes recreated)"
   bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --add 2>&1 | tail -4 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh --add"
@@ -342,7 +342,7 @@ zec_provision_add() { # a second corridor beside the live one (its own Zcash anc
 # its running Node and the Nodes agree when the desk takes one; a corridor of
 # another profile than the Nodes take under stays the dealer's.
 zec_take_time() { [[ "${LEZ_ZEC_AGREEMENT:-dealer}" == take-time && "${1:-${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}}" == "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" ]]; }
-zec_publish() { # zec_publish <node-e2e.py zec-publish arguments>
+zec_publish_offers() { # zec_publish_offers <node-e2e.py zec-publish arguments>
   log "publishing Zcash offer(s) on the running Maker Node (take-time agreement: no corridor, no Node recreated)"
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-publish "$@" 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-publish"
@@ -838,14 +838,18 @@ gateway() { # gateway <role> <method> <params>: the role's Chat gateway answers 
 }
 # A Zcash offer published from the Maker desk's form and agreed at take time
 # (zec_reserve_v1): no zec-provision.sh, no corridor, no Node recreated.
-zec_publish() { step "Maker desk publishes $direction Zcash offers from its form until two are pending" maker LEZ_UI_PUBLISH_ZEC=1; }
+# Selling ZEC the Taker funds from its own key: node-e2e.py zec-fund pays it
+# (and renews a worn Zebra) before the desk publishes.
+zec_publish() {
+  python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-fund 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-fund"
+  step "Maker desk publishes $direction Zcash offers from its form until two are pending" maker LEZ_UI_PUBLISH_ZEC=1
+}
 scenario_zec_desk_offer() {
-  [[ "$direction" == TakerSellsLez ]] || fail "zec-desk-offer runs TakerSellsLez (selling ZEC the Taker would need a funded Zcash key)"
   local swap; zec_publish; take swap
   zec_claim_and_complete "$swap"
 }
 scenario_logos_happy() {
-  [[ "$pair" == Bitcoin || "$direction" == TakerSellsLez ]] || fail "logos-happy on Zcash runs TakerSellsLez"
   local swap started route node
   transport logos
   log "the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket"
