@@ -341,7 +341,7 @@ zec_provision_add() { # a second corridor beside the live one (its own Zcash anc
 # LEZ_ZEC_AGREEMENT=take-time (node-e2e.py): the Maker publishes the offers on
 # its running Node and the Nodes agree when the desk takes one; a corridor of
 # another profile than the Nodes take under stays the dealer's.
-zec_take_time() { [[ "${LEZ_ZEC_AGREEMENT:-dealer}" == take-time && "${1:-${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}}" == "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" ]]; }
+zec_take_time() { [[ "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time && "${1:-${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}}" == "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" ]]; }
 zec_publish_offers() { # zec_publish_offers <node-e2e.py zec-publish arguments>
   log "publishing Zcash offer(s) on the running Maker Node (take-time agreement: no corridor, no Node recreated)"
   python3 scripts/node-e2e.py --pair Zcash --direction "$direction" zec-publish "$@" 2>&1 | sed 's/^/   /'

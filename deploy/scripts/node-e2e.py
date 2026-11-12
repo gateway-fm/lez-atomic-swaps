@@ -2698,7 +2698,7 @@ ZEC_NU7_PROFILES = {"deterministic-local-devnet-v5", "deterministic-local-devnet
 # public lane and the scenarios that test the static catalog itself. A
 # refund-profile corridor needs the Nodes on that profile (LEZ_ZEC_PROFILE,
 # regress.sh's ZEC profile group).
-ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "dealer")
+ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "take-time")
 ZEC_CATALOG_SCENARIOS = {"zec-regenerated-catalog", "zec-tampered-catalog"}
 SCENARIO = ""  # the scenario run() is running
 

@@ -214,7 +214,7 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
   IFS=: read -r kind pair scenario direction <<<"$1"
   # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile: the
   # refund journeys' (-v6) is group zec-v6, every other ZEC test runs on -v5 in `fast`.
-  if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-dealer}" == take-time ]]; then
+  if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
     case "$scenario" in zec-taker-refund|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
     return 0
   fi
@@ -227,7 +227,7 @@ use_profile() { # use_profile <profile>: switch the standing stack to it unless 
   # (LEZ_ZEC_PROFILE, exported: up.sh recreates the Nodes of every lane with it)
   local timing="$1" zec=deterministic-local-devnet-v5
   [[ "$1" != zec-v6 ]] || { timing="$LEZ_TIMING_PROFILE"; zec=deterministic-local-devnet-v6; }
-  [[ "${LEZ_ZEC_AGREEMENT:-dealer}" == take-time ]] || zec="${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}"
+  [[ "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]] || zec="${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}"
   [[ -n "$timing" ]] || return 0
   [[ "$timing" != "$LEZ_TIMING_PROFILE" || "$zec" != "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" ]] || return 0
   switches=$((switches + 1)); export LEZ_ZEC_PROFILE="$zec"
