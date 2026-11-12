@@ -19,7 +19,8 @@ name: release-packages
 #             and its node module has not run on macOS. The executables are
 #             signed ad hoc, not with a Developer ID, and not notarised.
 #   merge     merges each package's variants with lgx (the builder's
-#             manifests are identical across variants), pins the merged set
+#             manifests are identical across variants), puts back the
+#             manifest fields lgx merge drops, pins the merged set
 #             once (pin-package-dependencies.sh, so every variant carries the
 #             same requirements), verifies it, and writes what the catalog's
 #             _logos-release.yml publishes for a module: <name>-<version>.lgx
@@ -224,6 +225,15 @@ jobs:
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/merge.sh:/merge.sh:ro" \
             -e LGX_FLAKE "$NIX_IMAGE" sh /merge.sh
           sudo chown -R "$(id -u):$(id -g)" _merged
+      # lgx merge drops the manifest fields its model does not know
+      # (display_name: the desks would show their package names in Basecamp)
+      - name: Restore the merged manifests
+        run: |
+          set -euo pipefail
+          for f in _merged/*.lgx; do
+            name="$(basename "$f" .lgx)"
+            deploy/scripts/restore-merged-manifest.py "$f" _per-variant/"$name"-*.lgx
+          done
       - name: Pin the merged set
         run: |
           set -euo pipefail

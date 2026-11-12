@@ -57,7 +57,10 @@ class PackagesWorkflow(unittest.TestCase):
 
     def test_the_merged_set_is_pinned_before_the_catalog_assets_are_written(self):
         merge = self.PACKAGES.index('lgx merge')
+        restore = self.PACKAGES.index('deploy/scripts/restore-merged-manifest.py "$f"')
         pin = self.PACKAGES.index('pin-package-dependencies.sh --out _pinned _merged/')
+        self.assertLess(merge, restore)
+        self.assertLess(restore, pin)
         assets = self.PACKAGES.index('"$dir/$name-$version.lgx"')
         self.assertLess(merge, pin)
         self.assertLess(pin, assets)
