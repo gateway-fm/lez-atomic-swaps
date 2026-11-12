@@ -455,8 +455,11 @@ pub async fn transfer_local_v0_2_regtest(
         value_zatoshis,
         skip,
         1,
-        // Any mature output of the devnet's (1 ZEC + fees) shape pays a transfer.
-        ZCASH_PRINCIPAL_ZATOSHIS
+        // The first mature output that pays this transfer, at least of the
+        // devnet's (1 ZEC + fees) shape: Regtest coinbases halve, and an
+        // earlier output too small for a 2 ZEC payment was once picked first.
+        value_zatoshis
+            .max(ZCASH_PRINCIPAL_ZATOSHIS)
             .saturating_add(FUNDING_FEE_ZATOSHIS)
             .saturating_add(MINIMUM_CHANGE_ZATOSHIS),
         100,
