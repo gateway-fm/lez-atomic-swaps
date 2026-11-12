@@ -1,5 +1,5 @@
 use lez_swap_core::{
-    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Phase,
+    Chain, ChainPosition, ChainProof, ClaimEvidence, ConfirmationPolicy, Pair, Participant, Phase,
     RecoverySchedule, SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
 use proptest::prelude::*;
@@ -35,17 +35,38 @@ fn actions() -> impl Strategy<Value = Vec<Action>> {
     )
 }
 
-fn coordinator() -> SwapCoordinator {
-    SwapCoordinator::new(
+/// The Bitcoin and Zcash profiles, both directions of each.
+fn profile() -> impl Strategy<Value = (Pair, SwapDirection)> {
+    prop_oneof![
+        Just((Pair::Bitcoin, SwapDirection::TakerSellsForeign)),
+        Just((Pair::Bitcoin, SwapDirection::TakerSellsLez)),
+        Just((Pair::Zcash, SwapDirection::TakerSellsForeign)),
+        Just((Pair::Zcash, SwapDirection::TakerSellsLez)),
+    ]
+}
+
+fn coordinator(pair: Pair, direction: SwapDirection) -> SwapCoordinator {
+    let (maker_chain, taker_chain) = match direction {
+        SwapDirection::TakerSellsForeign => (Chain::Lez, Chain::from(pair)),
+        SwapDirection::TakerSellsLez => (Chain::from(pair), Chain::Lez),
+    };
+    // Zcash's safety interval is always measured LEZ to Zcash, Bitcoin's maker to taker.
+    let safety = if pair == Pair::Zcash {
+        TimelockSafety::between(Chain::Lez, Chain::Zcash, 1_000, 1_200, 100)
+    } else {
+        TimelockSafety::between(maker_chain, taker_chain, 1_000, 1_200, 100)
+    };
+    SwapCoordinator::new_with_direction(
         SwapId::new("property-swap").unwrap(),
-        Pair::Bitcoin,
+        pair,
+        direction,
         ConfirmationPolicy::new(2).unwrap(),
         RecoverySchedule::new(
-            Pair::Bitcoin,
-            SwapDirection::TakerSellsForeign,
-            ChainPosition::block_height(Chain::Lez, 100),
-            ChainPosition::block_height(Chain::Bitcoin, 120),
-            TimelockSafety::between(Chain::Lez, Chain::Bitcoin, 1_000, 1_200, 100).unwrap(),
+            pair,
+            direction,
+            ChainPosition::block_height(maker_chain, 100),
+            ChainPosition::block_height(taker_chain, 120),
+            safety.unwrap(),
         )
         .unwrap(),
     )
@@ -64,9 +85,10 @@ proptest! {
 
     #[test]
     fn arbitrary_event_sequences_preserve_atomicity_and_absorbing_terminal_states(
+        (pair, direction) in profile(),
         actions in actions()
     ) {
-        let mut swap = coordinator();
+        let mut swap = coordinator(pair, direction);
         let mut terminal = None;
         // What the chain says about each leg, tracked independently of `phase` — which is
         // the whole point: one variable cannot describe two legs, and a claim must never be
@@ -116,10 +138,16 @@ proptest! {
                     .unwrap(),
                 ),
                 Action::RefundMaker { now } => {
-                    swap.refund_maker_leg(ChainPosition::block_height(Chain::Lez, now))
+                    swap.refund_maker_leg(ChainPosition::block_height(
+                        swap.funded_chain(Participant::Maker),
+                        now,
+                    ))
                 }
                 Action::RefundTaker { now } => {
-                    swap.refund_taker_leg(ChainPosition::block_height(Chain::Bitcoin, now))
+                    swap.refund_taker_leg(ChainPosition::block_height(
+                        swap.funded_chain(Participant::Taker),
+                        now,
+                    ))
                 }
             };
             let after = swap.phase();
@@ -217,7 +245,7 @@ proptest! {
                         ));
                     }
                     Phase::MakerRecoveryAvailable => {
-                        prop_assert!(false, "generated BTC model has no event-gated recovery action");
+                        prop_assert!(false, "generated Bitcoin/Zcash model has no event-gated recovery action");
                     }
                     Phase::Refunded => {
                         prop_assert!(matches!(
