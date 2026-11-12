@@ -452,11 +452,22 @@ if (role === "maker") {
     // controls under the offscreen platform once the inventory has rendered.
     const check = await app.findByProperty("objectName", "makerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
-    await evaluateIn(app, check.matches[0].id, "clicked()");
+    // The strip shows the last reply: a market reply still on its way when
+    // the health reply lands replaces "Node ready" inside one poll interval
+    // (seen with two swaps on the desk), so the check is pressed again.
+    let lastError = null;
+    for (let press = 0; press < 4; press += 1) {
+      await evaluateIn(app, check.matches[0].id, "clicked()");
+      try {
+        await app.waitFor(async () => app.expectTexts(["Node ready"]), {
+          timeout: press < 3 ? 12000 : 45000, interval: 300, description: "Maker health status",
+        });
+        lastError = null;
+        break;
+      } catch (error) { lastError = error; }
+    }
     try {
-      await app.waitFor(async () => app.expectTexts(["Node ready"]), {
-        timeout: 45000, interval: 300, description: "Maker health status",
-      });
+      if (lastError) throw lastError;
     } catch (error) {
       const desk = await evaluateIn(app, check.matches[0].id,
         "JSON.stringify({ready: root.ready, busy: root.busy, status: root.statusTitle, detail: root.statusDetail, output: String(root.output).slice(0, 300)})");
@@ -575,11 +586,22 @@ if (role === "maker") {
     // controls under the offscreen platform once the order book has grown.
     const check = await app.findByProperty("objectName", "takerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
-    await evaluateIn(app, check.matches[0].id, "clicked()");
+    // The strip shows the last reply: a market reply still on its way when
+    // the health reply lands replaces "Node ready" inside one poll interval
+    // (seen with two swaps on the desk), so the check is pressed again.
+    let lastError = null;
+    for (let press = 0; press < 4; press += 1) {
+      await evaluateIn(app, check.matches[0].id, "clicked()");
+      try {
+        await app.waitFor(async () => app.expectTexts(["Node ready"]), {
+          timeout: press < 3 ? 12000 : 45000, interval: 300, description: "Taker health status",
+        });
+        lastError = null;
+        break;
+      } catch (error) { lastError = error; }
+    }
     try {
-      await app.waitFor(async () => app.expectTexts(["Node ready"]), {
-        timeout: 45000, interval: 300, description: "Taker health status",
-      });
+      if (lastError) throw lastError;
     } catch (error) {
       const desk = await evaluateIn(app, check.matches[0].id,
         "JSON.stringify({ready: root.ready, busy: root.busy, status: root.statusTitle, detail: root.statusDetail, output: String(root.output).slice(0, 300)})");
