@@ -75,6 +75,12 @@ All are `linux/arm64`.
 The bundle is `lez-swap-stack-v0.3.0-arm64.tar.gz`; `./scripts/start.sh`
 starts the stack from it.
 
+Our packages in this release are all at 0.3.0: the desks
+`lez_atomic_swap_maker` and `lez_atomic_swap_taker`, the LEZ Network desk
+`lez_network`, `lez_swap_node`, and the role packages `lez_maker_node` and
+`lez_taker_node`. The upstream ones keep their own versions (`lez_core`
+0.4.1-sign.4, `lez_indexer_module` 1.1.1-rpc.4, `blockchain_module` 0.2.4).
+
 ## Regression evidence
 
 Each set is under `docs/evidence/`, with `PROVENANCE.md` and `RESULTS.txt`.
