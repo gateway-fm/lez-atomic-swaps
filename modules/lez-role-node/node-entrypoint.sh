@@ -319,6 +319,20 @@ done
 if [[ "$zec_ready" == 1 ]]; then
   zec_run_id="$(jq -er '.run_id' "$zec_config")"
 fi
+# The Zcash role a Node takes swaps under at take time (zec_reserve_v1,
+# crates/zec-reference-actor/src/reserve.rs): the devnet profile and the Zebra
+# forward above; the Taker's own Zcash key (the Maker's is its Delivery key).
+mkdir -p "$zec_state"
+chmod 0700 "$zec_state"
+zec_role_config="$zec_state/zec-role.json"
+zec_key_field='{}'
+if [[ "$role" == taker && -s "$identity_src/$role/zcash.key" ]]; then
+  install -m 0600 "$identity_src/$role/zcash.key" "$zec_state/zcash.key"
+  zec_key_field="$(jq -n --arg key "$zec_state/zcash.key" '{zcash_key_file:$key}')"
+fi
+jq -n --arg profile "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" --argjson key "$zec_key_field" '
+  {schema_version:1, profile:$profile, zebra_endpoint:"http://127.0.0.1:18232"} + $key' >"$zec_role_config"
+chmod 0600 "$zec_role_config"
 
 case "$role" in
   maker)
@@ -354,7 +368,9 @@ case "$role" in
       --actor-supervisor)
     if [[ "$btc_lifecycle_ready" == 1 ]]; then
       args+=(--btc-role-config "$btc_state/btc-role.json")
-      if [[ "$zec_ready" == 1 ]]; then
+      # Corridor templates when zec-provision.sh left some; the Zcash role
+      # (take-time agreements, zec_reserve_v1) in any case.
+      if [[ "$zec_ready" == 1 || -s "$zec_role_config" ]]; then
         # The authority group of crates/maker-node/src/bin/lez-maker-node.rs:
         # the Node's claim-recovery key, the Zcash funder's preimage (the
         # Maker in TakerSellsLez), the provisioned Maker config as the one
@@ -373,6 +389,7 @@ case "$role" in
         zec_actor_program="$bin/lez-zec-maker-actor"
         args+=(--maker-claim-key-id "${LEZ_ZEC_CLAIM_KEY_ID:-devnet-zec-claim-v1}"
           --maker-claim-key-file "$state/zec-claim-recovery.key"
+          --zec-role-config "$zec_role_config"
           --zec-maker-actor-root "$zec_state/actors"
           --zec-actor-program "$zec_actor_program"
           --zec-actor-program-sha256 "$(sha256sum "$zec_actor_program" | cut -d' ' -f1)")
@@ -381,7 +398,7 @@ case "$role" in
         done
         # No Node-wide claim preimage: a completion takes the secret from the
         # agreement's own pinned template (each corridor entry carries one).
-        echo "maker ZEC authority configured (corridor $zec_run_id, ${#zec_configs[@]} template(s))"
+        echo "maker ZEC authority configured (corridor ${zec_run_id:-none}, ${#zec_configs[@]} template(s))"
       fi
     else
       # Without the lifecycle the Chat socket still needs a pair authority: a
@@ -471,13 +488,20 @@ PY
           echo "taker: prepared ZEC catalog was built under another Maker identity; ignored (re-run scripts/zec-provision.sh)"
         fi
       fi
+      # The Zcash role only with the Taker's Zcash key: take-time agreements
+      # (zec_reserve_v1) need it, a Node without one takes catalog swaps only.
+      zec_role_field='{}'
+      if [[ -s "$zec_state/zcash.key" ]]; then
+        zec_role_field="$(jq -n --arg config "$zec_role_config" '{zec_role_config:$config}')"
+      fi
       jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" \
-        --arg delivery "$delivery" --arg chat_socket "$chat_socket" --argjson prepared "$zec_catalog" '
+        --arg delivery "$delivery" --arg chat_socket "$chat_socket" --argjson prepared "$zec_catalog" \
+        --argjson zec_role "$zec_role_field" '
         {schema_version:1,
          delivery_sources:[{directory:$delivery, maker_public_key:$identity, source_id:"local-maker"}],
          chat_socket:$chat_socket, maximum_offers:16,
          initiation:({execute_prepared:true, registry_database:$registry, btc_role_config:$role_config}
-                     + (if ($prepared|length) > 0 then {prepared_zec:$prepared} else {} end))}' >"$state/role.json"
+                     + (if ($prepared|length) > 0 then {prepared_zec:$prepared} else {} end) + $zec_role)}' >"$state/role.json"
       echo "taker: $(jq length <<<"$zec_catalog") prepared ZEC entries configured"
     else
       jq -n --arg identity "$maker_identity" --arg delivery "$delivery" '

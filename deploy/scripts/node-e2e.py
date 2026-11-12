@@ -3131,6 +3131,12 @@ def scenario_zec_happy(stamp: str) -> dict:
     since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+    return zec_happy_after_take(stamp, since, swap_id, corridor)
+
+
+def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -> dict:
+    """The happy ZEC swap from a take on: both locks, the one claim, completion
+    on both Nodes and the Maker's restart after it."""
     config = zec_taker_actor_config(corridor["receipt_output"])
     outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
     # The Taker's first lock, the Maker's lock and (selling LEZ) its revealing
@@ -3188,6 +3194,100 @@ def scenario_zec_happy(stamp: str) -> dict:
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
             "zcash_claim": {"transaction_id": claim_tx[0], "height": claim_tx[1]},
             "zcash_refund_height": corridor["zcash_refund_height"]}
+
+
+# ---- the take-time Zcash agreement (zec_reserve_v1, docs/sdk-lez-zec.md) ------------
+# No corridor: the Maker publishes a Zcash offer with its CLI on its running
+# Node, the Taker takes it with its CLI, and the two Nodes compose the agreement
+# over Chat. Only the funder's Zcash output is the harness's to provide.
+
+ZEC_DYNAMIC_PROFILE = "deterministic-local-devnet-v5"   # node-entrypoint.sh zec-role.json
+ZEC_PROFILE_REFUND_BLOCKS = {"deterministic-local-devnet-v5": 8, "deterministic-local-devnet-v6": 8}
+
+
+def zec_dynamic_fund_taker() -> None:
+    """Selling ZEC the Taker funds from its own key. Zebra mines to the Maker's,
+    so the Maker's key pays the Taker's once (zec-local-poc-transfer in the
+    Taker's container, the Maker key there only for the payment), and 100
+    blocks make the payment a funder output (local_poc.rs: every Regtest
+    candidate waits out coinbase maturity)."""
+    container = NODES["taker"][0]
+    key = (LANE_RUNTIME / "lez" / "maker" / "zcash.key").read_bytes()
+    subprocess.run(["docker", "exec", "-i", container, "sh", "-c", "umask 077; cat >/tmp/zec-payer.key"],
+                   input=key, capture_output=True, check=True)
+    try:
+        paid = subprocess.run(["docker", "exec", container, "zec-local-poc-transfer",
+                               "--zebra-endpoint", "http://127.0.0.1:18232",
+                               "--from-zcash-key-file", "/tmp/zec-payer.key",
+                               "--to-zcash-key-file", "/var/lib/lez/zec/zcash.key",
+                               "--value-zatoshis", str(ZEC_FOREIGN_UNITS + 20_000)],
+                              capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    finally:
+        subprocess.run(["docker", "exec", container, "rm", "-f", "/tmp/zec-payer.key"], check=False)
+    if paid.returncode != 0:
+        raise Failure(f"paying the Taker's Zcash key failed: {paid.stderr.strip()[-300:]}")
+    log(f"  the Maker's key paid the Taker's: {json.loads(paid.stdout)['transaction_id'][:16]}…")
+    zebra_mine(1, "the payment to the Taker's key")
+    zebra_mine(100, "the Taker's payment matures into a funder output")
+
+
+def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
+    """The facts zec_happy_after_take reads from a corridor, here from the Taker's
+    take-time swap directory: its receipt path, the funder's committed outpoint
+    and the Zcash anchor the Maker fixed."""
+    reader = ("import glob,json,sys\n"
+              "for p in glob.glob('/var/lib/lez/taker/btc/swaps/*/zec-taker-prepared.json'):\n"
+              "    e=json.load(open(p))\n"
+              "    if e['swap_id']!=sys.argv[1]: continue\n"
+              "    r=json.load(open(p.replace('zec-taker-prepared.json','zec-taker-reserve.json')))\n"
+              "    print(json.dumps({'receipt_output':e['receipt_output'],'response':r['response'],"
+              "'taker_funding':r['request']['taker_funding']}))\n")
+    read = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", reader, swap_id],
+                          capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    if read.returncode != 0 or not read.stdout.strip():
+        raise Failure(f"the Taker has no take-time swap {swap_id[:12]}: {read.stderr.strip()[:200]}")
+    facts = json.loads(read.stdout)
+    response = facts["response"]
+    funding = response["maker_funding"] or facts["taker_funding"]
+    anchor = int(response["zcash_anchor_height"])
+    corridor = {"run_id": "take-time", "entry": 0, "offer_id": offer_id, "catalog_swap_id": swap_id,
+                "profile": ZEC_DYNAMIC_PROFILE,
+                "lez_refund_delay_seconds": zec_profile_refund_delay(ZEC_DYNAMIC_PROFILE),
+                "receipt_output": facts["receipt_output"],
+                "zebra_tip_at_provisioning": anchor - 1,
+                "zcash_refund_height": anchor + ZEC_PROFILE_REFUND_BLOCKS[ZEC_DYNAMIC_PROFILE],
+                "funding_outpoints": [{"transaction_id": bytes(funding["transaction_id"]).hex(),
+                                       "output_index": int(funding["output_index"])}]}
+    log(f"  take-time agreement: {zec_zcash_funder()} funds {corridor['funding_outpoints'][0]['transaction_id'][:16]}…"
+        f":{funding['output_index']}, Zcash anchor {anchor}, refund height {corridor['zcash_refund_height']}")
+    ZEC_CORRIDOR.clear()
+    ZEC_CORRIDOR.update(corridor)
+    return corridor
+
+
+def scenario_zec_dynamic_happy(stamp: str) -> dict:
+    """F9/U5: a Zcash swap with no dealer and no Node recreation. The Maker's
+    CLI configures the Zcash route, sets its price and publishes an offer on
+    the running Node; the Taker's CLI lists and takes it; the Nodes compose
+    the agreement at take time over Chat (zec_reserve_v1), each with its own
+    keys; then the happy swap runs as zec-happy's does."""
+    since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not zec_taker_sells_lez():
+        zec_dynamic_fund_taker()
+    route = ["--pair", "zcash", "--direction", "taker-sells-lez" if zec_taker_sells_lez() else "taker-sells-foreign"]
+    revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
+                                     if r["value"]["route"] == ROUTE), [])
+    maker_cli("configure-pair", "--request-id", f"e2e-zecdyn-pair-{stamp}", *revision(maker_cli("pairs")), *route,
+              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(ZEC_FOREIGN_UNITS),
+              "--maximum-foreign-units", str(ZEC_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+    maker_cli("set-local-price", "--request-id", f"e2e-zecdyn-price-{stamp}", *revision(maker_cli("prices")), *route,
+              "--lez-units-per-lot", "1", "--foreign-units-per-lot", str(ZEC_FOREIGN_UNITS // ZEC_LEZ_UNITS))
+    offer_id = f"offer-e2e-zecdyn-{stamp}"
+    maker_cli("publish-offer", "--request-id", f"e2e-zecdyn-publish-{stamp}", "--offer-id", offer_id, *route)
+    log(f"  Maker CLI published {offer_id} on its running Node (no corridor)")
+    swap_id = zec_take_or_resume(offer_id, stamp)
+    corridor = zec_dynamic_corridor(swap_id, offer_id)
+    return {**zec_happy_after_take(stamp, since, swap_id, corridor), "take_time_agreement": True}
 
 
 def zec_wait_all_until(swaps: list[tuple[str, str, dict]], states: set[str], timeout: int, describe: str = "") -> dict[str, dict]:
@@ -4993,6 +5093,7 @@ ZEC_SCENARIOS = {
     "zec-balance-refusal": scenario_zec_balance_refusal,
     "zec-bitcoin-down": scenario_zec_bitcoin_down,
     "zec-taker-cli": through_taker_cli(scenario_zec_happy),
+    "zec-dynamic-happy": through_taker_cli(scenario_zec_dynamic_happy),
 }
 
 
