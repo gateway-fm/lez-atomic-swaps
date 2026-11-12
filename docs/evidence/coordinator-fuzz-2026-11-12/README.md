@@ -41,4 +41,6 @@ One hour of `cargo fuzz run coordinator` against the swap coordinator state mach
 ## What this does not cover
 One target only: the coordinator state machine, driven by a fixed alphabet of observations with
 fixed proofs and heights. No network or RPC decoders, no store formats, no chain adapters or
-actors, no cryptography; edge coverage plateaued at 1306 within five minutes.
+actors, no cryptography; edge coverage plateaued at 1306 within five minutes. Offer announcements,
+Chat frames and Zcash agreement wires have their own targets since, run with `scripts/run-fuzz.sh`
+(the renamed script): [untrusted-input-fuzz-2026-11-12](../untrusted-input-fuzz-2026-11-12/).

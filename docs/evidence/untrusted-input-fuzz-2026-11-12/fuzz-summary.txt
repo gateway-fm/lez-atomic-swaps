@@ -1,0 +1,50 @@
+# libFuzzer summary lines per target from fuzz.log: the start, one line every ~300 s, the end, and the cmin result.
+# Fork-mode lines: #<total execs>: cov <edges> ft <features> corp <corpus files> exec/s <last job's rate> oom/timeout/crash <counts> time <s> job <n>
+
+## offer_announcement
+     Running `/work/target/x86_64-unknown-linux-gnu/release/offer_announcement -artifact_prefix=fuzz/artifacts/offer_announcement/ -fork=6 -max_total_time=1200 -max_len=32769 -timeout=2 -print_final_stats=1 -artifact_prefix=/work/artifacts/ /work/corpus`
+INFO: Seed: 3255136816
+INFO: Loaded 1 modules   (20014 inline 8-bit counters): 20014 [0x56617a362690, 0x56617a3674be), 
+INFO: -fork=6: 8 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork4840.dir
+#2073: cov: 2034 ft: 3464 corp: 8 exec/s: 1036 oom/timeout/crash: 0/0/0 time: 2s job: 1 dft_time: 0
+#5127027: cov: 3935 ft: 11680 corp: 2211 exec/s: 3691 oom/timeout/crash: 0/0/0 time: 308s job: 56 dft_time: 0
+#11588320: cov: 4125 ft: 12705 corp: 2676 exec/s: 7959 oom/timeout/crash: 0/0/0 time: 600s job: 80 dft_time: 0
+#21029128: cov: 4285 ft: 13479 corp: 3128 exec/s: 5225 oom/timeout/crash: 0/0/0 time: 916s job: 100 dft_time: 0
+#28688380: cov: 4401 ft: 13912 corp: 3369 exec/s: 6150 oom/timeout/crash: 0/0/0 time: 1218s job: 116 dft_time: 0
+INFO: fuzzed for 1218 seconds, wrapping up soon
+INFO: exiting: 0 time: 1219s
+# cargo fuzz cmin of the grown corpus (cmin.log)
+MERGE-OUTER: 3392 files, 0 in the initial corpus, 0 processed earlier
+MERGE-OUTER: 2418 new files with 13958 new features added; 4410 new coverage edges
+
+## chat_frame
+     Running `/work/target/x86_64-unknown-linux-gnu/release/chat_frame -artifact_prefix=fuzz/artifacts/chat_frame/ -fork=6 -max_total_time=1200 -max_len=16384 -timeout=2 -print_final_stats=1 -artifact_prefix=/work/artifacts/ /work/corpus`
+INFO: Seed: 4185491851
+INFO: Loaded 1 modules   (65318 inline 8-bit counters): 65318 [0x5c9adebfca30, 0x5c9adec0c956), 
+INFO: -fork=6: 5 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork4840.dir
+#13655: cov: 1677 ft: 2406 corp: 5 exec/s: 6827 oom/timeout/crash: 0/0/0 time: 2s job: 1 dft_time: 0
+#12451858: cov: 3459 ft: 7885 corp: 1858 exec/s: 7401 oom/timeout/crash: 0/0/0 time: 309s job: 56 dft_time: 0
+#26435504: cov: 3551 ft: 8309 corp: 1995 exec/s: 7608 oom/timeout/crash: 0/0/0 time: 601s job: 80 dft_time: 0
+#43439844: cov: 3664 ft: 9152 corp: 2202 exec/s: 9042 oom/timeout/crash: 0/0/0 time: 916s job: 100 dft_time: 0
+#56495193: cov: 3707 ft: 9491 corp: 2330 exec/s: 6597 oom/timeout/crash: 0/0/0 time: 1221s job: 116 dft_time: 0
+INFO: fuzzed for 1221 seconds, wrapping up soon
+INFO: exiting: 0 time: 1223s
+# cargo fuzz cmin of the grown corpus (cmin.log)
+MERGE-OUTER: 2337 files, 0 in the initial corpus, 0 processed earlier
+MERGE-OUTER: 1739 new files with 9504 new features added; 3707 new coverage edges
+
+## zec_agreement_wire
+     Running `/work/target/x86_64-unknown-linux-gnu/release/zec_agreement_wire -artifact_prefix=fuzz/artifacts/zec_agreement_wire/ -fork=6 -max_total_time=1200 -max_len=16385 -timeout=2 -print_final_stats=1 -artifact_prefix=/work/artifacts/ /work/corpus`
+INFO: Seed: 251492351
+INFO: Loaded 1 modules   (5542 inline 8-bit counters): 5542 [0x62810d1d5f30, 0x62810d1d74d6), 
+INFO: -fork=6: 5 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork4840.dir
+#15614: cov: 1027 ft: 1248 corp: 5 exec/s: 7807 oom/timeout/crash: 0/0/0 time: 2s job: 1 dft_time: 0
+#18534707: cov: 1447 ft: 2736 corp: 189 exec/s: 8957 oom/timeout/crash: 0/0/0 time: 302s job: 55 dft_time: 0
+#41106125: cov: 1457 ft: 2746 corp: 197 exec/s: 6524 oom/timeout/crash: 0/0/0 time: 606s job: 80 dft_time: 0
+#53969240: cov: 1459 ft: 2748 corp: 199 exec/s: 7573 oom/timeout/crash: 0/0/0 time: 908s job: 99 dft_time: 0
+#66113481: cov: 1461 ft: 2750 corp: 201 exec/s: 6090 oom/timeout/crash: 0/0/0 time: 1210s job: 115 dft_time: 0
+INFO: fuzzed for 1210 seconds, wrapping up soon
+INFO: exiting: 0 time: 1211s
+# cargo fuzz cmin of the grown corpus (cmin.log)
+MERGE-OUTER: 205 files, 0 in the initial corpus, 0 processed earlier
+MERGE-OUTER: 190 new files with 2749 new features added; 1461 new coverage edges
