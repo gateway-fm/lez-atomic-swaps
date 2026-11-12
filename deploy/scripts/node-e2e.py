@@ -2707,6 +2707,10 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
     (zec-provision.sh --profile; its default when None). Returns the first entry's corridor facts, or the
     entry of `swap_id` when the corridor is reused; every entry is kept in
     ZEC_CORRIDORS."""
+    if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1" and swap_id and taker_has_take_time_swap(swap_id):
+        # A swap agreed at take time (a desk's Zcash offer) has no corridor: its
+        # facts are in the Taker's swap directory.
+        return zec_dynamic_corridor(swap_id, "")
     if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1":
         # The corridor the Nodes already run with (runtime/zec/current), for a
         # run that must not recreate them; its catalog entry must be untaken.
@@ -3229,6 +3233,14 @@ def zec_dynamic_fund_taker() -> None:
     log(f"  the Maker's key paid the Taker's: {json.loads(paid.stdout)['transaction_id'][:16]}…")
     zebra_mine(1, "the payment to the Taker's key")
     zebra_mine(100, "the Taker's payment matures into a funder output")
+
+
+def taker_has_take_time_swap(swap_id: str) -> bool:
+    """Whether the Taker Node agreed `swap_id` at take time (zec_reserve_v1)."""
+    found = subprocess.run(["docker", "exec", NODES["taker"][0], "sh", "-c",
+                            f"grep -l '\"{swap_id}\"' /var/lib/lez/taker/btc/swaps/*/zec-taker-prepared.json"],
+                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    return found.returncode == 0 and bool(found.stdout.strip())
 
 
 def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:

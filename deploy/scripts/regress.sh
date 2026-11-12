@@ -102,7 +102,9 @@ tier_tests() { # tier_tests <tier>
       echo "node:zec:zec-claim-collision:TakerSellsForeign"
       echo "ui:zec:zec-concurrent-staggered:TakerSellsLez"
       # the desk take over the Logos Delivery and Chat modules (ui-e2e.sh logos-happy)
-      echo "ui:btc:logos-happy:TakerSellsForeign"
+      echo "ui:btc:logos-happy:TakerSellsForeign"; echo "ui:zec:logos-happy:TakerSellsLez"
+      # a Zcash offer from the Maker desk's form, taken from the Taker desk (no corridor)
+      echo "ui:zec:zec-desk-offer:TakerSellsLez"
       # last: each makes its own chain, one no other test can run on
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
     *) echo "unknown tier: $1 (smoke, refunds, full)" >&2; return 64 ;;

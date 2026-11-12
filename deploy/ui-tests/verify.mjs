@@ -156,9 +156,14 @@ const zecAmount = process.env.LEZ_UI_ZEC_AMOUNT || "1";
 const zecLezAmount = process.env.LEZ_UI_ZEC_LEZ_AMOUNT || "50000";
 const zecText = `${Number(zecAmount).toFixed(8)} ZEC`;
 const zecLezText = `${Number(zecLezAmount).toLocaleString("en-US")} LEZ`;
+// A Zcash journey publishes its offer from the Maker desk's form when
+// LEZ_UI_PUBLISH_ZEC is 1 (a take-time agreement, no corridor); otherwise its
+// offer came from a prepared corridor and nothing is published.
+const publishZec = zcash && process.env.LEZ_UI_PUBLISH_ZEC === "1";
+const [formForeign, formLez] = publishZec ? [zecAmount, zecLezAmount] : [btcAmount, lezAmount];
 const makerTerms = [
-  ["makerSellAmount", reverseDirection ? btcAmount : lezAmount, "amount"],
-  ["makerReceiveAmount", reverseDirection ? lezAmount : btcAmount, "amount"],
+  ["makerSellAmount", reverseDirection ? formForeign : formLez, "amount"],
+  ["makerReceiveAmount", reverseDirection ? formLez : formForeign, "amount"],
   ["makerMinimumSats", ""],
   ["makerOfferTtl", "3600"],
 ];
@@ -404,10 +409,12 @@ async function publishOfferOnce(app, predicate) {
   if (opener.matches?.length !== 1) throw new Error("New offer button not found");
   await evaluateIn(app, opener.matches[0].id, "clicked()");
   await new Promise((r) => setTimeout(r, 600));
+  await evaluateIn(app, (await app.findByProperty("objectName", "makerSellAmount")).matches[0].id,
+    `root.offerPair = "${publishZec ? "Zcash" : "Bitcoin"}"`);
   for (const [field, value, property] of makerTerms) await setText(app, field, value, property);
   await new Promise((r) => setTimeout(r, 300));
   const rate = await property(app, "makerRate", "text");
-  const quotedRate = `1 BTC = ${(Number(lezAmount) * 1e8 / Math.round(Number(btcAmount) * 1e8)).toLocaleString("en-US", { maximumFractionDigits: 8 })} LEZ`;
+  const quotedRate = `1 ${publishZec ? "ZEC" : "BTC"} = ${(Number(formLez) * 1e8 / Math.round(Number(formForeign) * 1e8)).toLocaleString("en-US", { maximumFractionDigits: 8 })} LEZ`;
   if (rate !== quotedRate) throw new Error(`offer form quotes ${rate} for the typed terms, expected ${quotedRate}`);
   const before = await property(app, "makerOutput", "text");
   const publish = await app.findByProperty("objectName", "makerCreateOffers");
@@ -500,13 +507,13 @@ if (role === "maker") {
     ), "Munich inventory");
     // Offers of the other direction may be open too; only this run's count.
     const pendingHere = (inventory) => (inventory ?? [])
-      .filter((offer) => offer.state === "pending" && offer.direction === wantedDirection).length;
+      .filter((offer) => offer.state === "pending" && offer.direction === wantedDirection && offer.pair === uiPair).length;
     let pending = pendingHere(munich.inventory);
     // The Node publishes one offer per click; two open offers prove the
     // inventory is indexed to this Node's identity and survives a refresh.
     // A Zcash journey publishes nothing from the desk: its offer came from the
     // prepared corridor, and a Bitcoin offer has no place in a ZEC recording.
-    while (!zcash && pending < 2) {
+    while ((!zcash || publishZec) && pending < 2) {
       const target = pending + 1;
       narrate(reverseDirection
         ? `New offer: the Maker sells ${btcShort} for ${lezText}; Publish sends it to the Maker Node, which signs and announces it over Delivery`
@@ -518,7 +525,7 @@ if (role === "maker") {
       pending = pendingHere(munich.inventory);
     }
     if (munich.selected_wallet_id !== "maker-munich-01" || munich.runner_ready !== true
-        || (!zcash && Number(munich.summary?.pending_offers ?? 0) < 2)) {
+        || ((!zcash || publishZec) && Number(munich.summary?.pending_offers ?? 0) < 2)) {
       throw new Error(`Node-indexed offer totals are wrong: ${JSON.stringify(munich).slice(0, 500)}`);
     }
     console.log(`  inventory: Munich Vault 01 (Maker Node) open offers=${pending} · market=${munich.summary.pending_offers}`);

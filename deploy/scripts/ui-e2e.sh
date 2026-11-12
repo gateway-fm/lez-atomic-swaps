@@ -31,7 +31,10 @@
 #   logos-happy    happy on the Logos transport (compose.logos.yaml): the Taker has no
 #                  Delivery directory and no Maker socket; the offer and every Chat
 #                  round travel through the two Basecamps' Logos Delivery and Chat
-#                  modules (Bitcoin only; not in `all`)
+#                  modules (Bitcoin, or Zcash TakerSellsLez from a desk-published
+#                  offer; not in `all`)
+#   zec-desk-offer the Maker desk's form publishes a Zcash offer, the Taker desk takes
+#                  it, the Nodes agree at take time (no zec-provision.sh); TakerSellsLez
 #   all            every scenario in sequence (stops at the first failure)
 #
 # replay and wrong-inputs have no desk equivalent: a desk sends one request per
@@ -821,25 +824,37 @@ gateway() { # gateway <role> <method> <params>: the role's Chat gateway answers 
     -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null
 }
+# A Zcash offer published from the Maker desk's form and agreed at take time
+# (zec_reserve_v1): no zec-provision.sh, no corridor, no Node recreated.
+zec_publish() { step "Maker desk publishes $direction Zcash offers from its form until two are pending" maker LEZ_UI_PUBLISH_ZEC=1; }
+scenario_zec_desk_offer() {
+  [[ "$direction" == TakerSellsLez ]] || fail "zec-desk-offer runs TakerSellsLez (selling ZEC the Taker would need a funded Zcash key)"
+  local swap; zec_publish; take swap
+  zec_claim_and_complete "$swap"
+}
 scenario_logos_happy() {
-  [[ "$pair" == Bitcoin ]] || fail "logos-happy is a Bitcoin journey"
+  [[ "$pair" == Bitcoin || "$direction" == TakerSellsLez ]] || fail "logos-happy on Zcash runs TakerSellsLez"
   local swap started route node
   transport logos
   log "the Taker's Basecamp, as the Node's user: no Delivery directory, no Maker socket"
   docker exec "$taker_node" sh -c 'id -u; ! grep -q " /delivery " /proc/self/mountinfo && [ -z "$(ls -A /delivery)" ] &&
     ! test -e /run/lez/maker && jq -c "{delivery_sources, chat_socket}" /var/lib/lez/taker/role.json' 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "the Taker still sees the Maker's Delivery directory or socket"
-  publish
+  if [[ "$pair" == Zcash ]]; then zec_publish; else publish; fi
   started="$(date -u +%s)"; take swap
   log "taken over Logos Delivery and Chat in $(( $(date -u +%s) - started )) s (discovery, conversation, reservation, ceremony)"
-  taker_act "$lock_action" "$swap"
-  maker_wait awaiting_taker_claim "$swap"
-  taker_act "$claim_action" "$swap"
-  finish "$swap"
+  if [[ "$pair" == Zcash ]]; then
+    zec_claim_and_complete "$swap"
+  else
+    taker_act "$lock_action" "$swap"
+    maker_wait awaiting_taker_claim "$swap"
+    taker_act "$claim_action" "$swap"
+    finish "$swap"
+  fi
   # What carried it: the Taker gateway holds the Maker's announcement from
   # Delivery and one bound Chat session; the Maker gateway binds a session only
   # from a Chat message's authenticated sender.
-  route="{\"pair\":\"Bitcoin\",\"direction\":\"$direction\"}"
+  route="{\"pair\":\"$pair\",\"direction\":\"$direction\"}"
   log "Chat gateways: Taker $(gateway taker logos_chat_status_v1 '{"schema_version":1}'); Maker $(gateway maker logos_chat_status_v1 '{"schema_version":1}')"
   log "Taker gateway offers from Delivery: $(gateway taker logos_offer_list_v1 "{\"schema_version\":1,\"route\":$route}" |
     python3 -c 'import json,sys; o=json.load(sys.stdin)["result"]["offers"]; print(len(o), "offer(s) of", len({e["maker_identity"] for e in o}), "Maker(s):", sorted({e["maker_identity"][:12] for e in o}))')"
@@ -869,6 +884,7 @@ run_one() {
     node-offline) scenario_node_offline ;;
     lez-finality-stall) scenario_lez_finality_stall ;;
     logos-happy) scenario_logos_happy ;;
+    zec-desk-offer) [[ "$pair" == Zcash ]] || fail "zec-desk-offer needs --pair Zcash"; scenario_zec_desk_offer ;;
     zec-happy) [[ "$pair" == Zcash ]] || fail "zec-happy needs --pair Zcash"; scenario_zec_happy ;;
     zec-maker-refund) [[ "$pair" == Zcash ]] || fail "zec-maker-refund needs --pair Zcash"; scenario_zec_maker_refund ;;
     zec-concurrent) [[ "$pair" == Zcash ]] || fail "zec-concurrent needs --pair Zcash"; scenario_zec_concurrent ;;
