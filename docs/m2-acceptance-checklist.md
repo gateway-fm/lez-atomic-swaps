@@ -46,7 +46,8 @@ stack and are kept as the record of that submission shape.
 - **The evidence set** is `docs/evidence/regression-m2-2026-11-11/`: all 93
   tests in one run on three lanes (92 passed; the one failure and its reruns
   are explained in its `RESULTS.txt`), with provenance and the ZEC demo
-  recordings.
+  recordings. The same 93 on `main`'s code on an Apple-silicon Mac, all
+  passed: `docs/evidence/regression-m2-2026-11-12-macos-arm64/`.
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.

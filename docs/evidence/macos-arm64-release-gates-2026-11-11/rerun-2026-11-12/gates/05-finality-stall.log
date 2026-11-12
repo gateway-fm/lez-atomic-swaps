@@ -1,0 +1,36 @@
+
+[03:25:04] === lez-finality-stall (TakerSellsForeign)
+
+[03:25:04] Both Nodes report LEZ finality moving before the stall
+
+[03:25:05] maker_health: {"degraded": false, "lez_chain": {"degraded": false, "finalized_block_id": 575, "finalized_advanced_at_unix_seconds": 1794453902, "finalized_flat_seconds": 0, "tip_block_id": 580, "stall_threshold_seconds": 60, "observed_at_unix_seconds": 1794453902}}
+
+[03:25:05] taker_health: {"degraded": false, "lez_chain": {"degraded": false, "finalized_block_id": 575, "finalized_advanced_at_unix_seconds": 1794453902, "finalized_flat_seconds": 0, "tip_block_id": 580, "stall_threshold_seconds": 60, "observed_at_unix_seconds": 1794453902}}
+
+[03:25:05] The LEZ sequencer is stopped: finality stands still and both Nodes must turn degraded after 60 s
+
+[03:26:12] maker_health: {"degraded": true, "lez_chain": {"degraded": true, "reason": "lez_finality_stalled", "finalized_block_id": 582, "finalized_advanced_at_unix_seconds": 1794453910, "finalized_flat_seconds": 62, "tip_block_id": null, "stall_threshold_seconds": 60, "observed_at_unix_seconds": 1794453972}}
+
+[03:26:12] taker_health: {"degraded": true, "lez_chain": {"degraded": true, "reason": "lez_finality_stalled", "finalized_block_id": 582, "finalized_advanced_at_unix_seconds": 1794453910, "finalized_flat_seconds": 62, "tip_block_id": null, "stall_threshold_seconds": 60, "observed_at_unix_seconds": 1794453972}}
+
+[03:26:12] degraded 67 s after the sequencer stopped (threshold 60 s)
+  maker desk: "LEZ finality has not advanced for 72 s (finalized block 582) — swaps wait until it does" · lez_chain={"degraded":true,"finalized_advanced_at_unix_seconds":1794453910,"finalized_block_id":582,"finalized_flat_seconds":72,"observed_at_unix_seconds":1794453982,"reason":"lez_finality_stalled","stall_threshold_seconds":60,"tip_block_id":null}
+  [32m✓[0m maker: the desk shows the LEZ finality stall
+1 passed, 0 failed
+  taker desk: "LEZ finality has not advanced for 72 s (finalized block 582) — swaps wait until it does" · lez_chain={"degraded":true,"finalized_advanced_at_unix_seconds":1794453910,"finalized_block_id":582,"finalized_flat_seconds":72,"observed_at_unix_seconds":1794453982,"reason":"lez_finality_stalled","stall_threshold_seconds":60,"tip_block_id":null}
+  [32m✓[0m taker: the desk shows the LEZ finality stall
+1 passed, 0 failed
+
+[03:26:23] The sequencer is started again: finality moves and both Nodes and desks recover
+
+[03:26:49] maker_health: {"degraded": false, "lez_chain": {"degraded": false, "finalized_block_id": 586, "finalized_advanced_at_unix_seconds": 1794454009, "finalized_flat_seconds": 0, "tip_block_id": 588, "stall_threshold_seconds": 60, "observed_at_unix_seconds": 1794454009}}
+
+[03:26:49] taker_health: {"degraded": false, "lez_chain": {"degraded": false, "finalized_block_id": 586, "finalized_advanced_at_unix_seconds": 1794454009, "finalized_flat_seconds": 0, "tip_block_id": 588, "stall_threshold_seconds": 60, "observed_at_unix_seconds": 1794454009}}
+  maker desk: no LEZ chain line · lez_chain={"degraded":false,"finalized_advanced_at_unix_seconds":1794454009,"finalized_block_id":586,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794454009,"stall_threshold_seconds":60,"tip_block_id":588}
+  [32m✓[0m maker: the desk no longer shows the LEZ finality stall
+1 passed, 0 failed
+  taker desk: no LEZ chain line · lez_chain={"degraded":false,"finalized_advanced_at_unix_seconds":1794454009,"finalized_block_id":586,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794454009,"stall_threshold_seconds":60,"tip_block_id":588}
+  [32m✓[0m taker: the desk no longer shows the LEZ finality stall
+1 passed, 0 failed
+
+[03:26:53] === lez-finality-stall (TakerSellsForeign): passed in 109s

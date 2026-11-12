@@ -1,5 +1,43 @@
-Release-gate checks of main on an Apple-silicon Mac (macOS 26.7.3, Docker Desktop, linux/arm64 images built from main), 2026-11-11; times UTC.
-Every check that ran, in order, with what failed before each fix. Logs: start-path/, gates/, smoke/.
+Release-gate checks of main on an Apple-silicon Mac (macOS 26.7.3, Docker Desktop, linux/arm64 images), 2026-11-11 and 2026-11-12; times UTC.
+
+READ THIS FIRST. Sections 1 to 5 below ran on 2026-11-11 with Node images built from 8bdf0749, not from main: from-scratch.sh
+had staged main's Node packages and then started the images an earlier build had left (PROVENANCE.md). The scripts under test
+were main's and the faults those sections found in them stand, but they are not evidence for main's Nodes. Every check was
+therefore run again on 2026-11-12 on images built from af3ac978; that rerun is the result, and it comes first.
+
+== Rerun on images built from af3ac978, 2026-11-12 (rerun-2026-11-12/)
+Both Node images report build source af3ac978 before the run, after section 4 and after section 5 (gates/summary.log).
+Sections 1 to 4 at adffc106 (the one untracked path was the regression evidence being written); section 5 at 7fd518cf, tree clean.
+1. Resume and Node restart
+   03:17:10  up.sh on the running stack: rc 0; the manifest is readable in both Node containers (392 bytes each)
+   03:17:59  both Nodes held and released (scripts/node-hold.sh): both running again
+2. Smoke tier, scripts/regress.sh smoke, started straight after the forced restart: 6 of 6, each on its first try
+   (smoke/regress-smoke.log). The 3 of 6 of 2026-11-11 in the same position did not recur.
+   node:btc:happy:TakerSellsLez PASSED in 34 s
+   node:zec:zec-happy:TakerSellsLez PASSED in 69 s
+   node:btc:happy:TakerSellsForeign PASSED in 66 s
+   node:zec:zec-happy:TakerSellsForeign PASSED in 63 s
+   ui:btc:happy:TakerSellsLez PASSED in 65 s
+   ui:zec:zec-happy:TakerSellsForeign PASSED in 69 s
+3. LEZ finality stall (#112)
+   03:26:53  scripts/ui-e2e.sh lez-finality-stall: passed in 109 s
+4. Wipe, then up.sh, then trade
+   03:27:25  down.sh --wipe: rc 0
+   03:28:31  up.sh (fast profile): rc 0
+   03:29:47  ui happy (Bitcoin, TakerSellsLez): passed in 76 s
+   03:30:57  ui zec-happy (Zcash, TakerSellsForeign): passed in 70 s
+5. The start.sh path (#113's steps), local images (start-path/summary-start.log)
+   03:31:31  down.sh --wipe: rc 0; market/ moved away, so no identity, deployment or manifest exists
+   03:32:46  start.sh: rc 0. Desk suite maker 3 passed, taker 1 passed; verify-all.sh: all services up, Bitcoin chain at height 211,
+             spender index present, LEZ finalized at block 35, 15/15 checks, explorer transaction display, 15/15 market checks,
+             Node market behaviour, desk suites again. 6 containers healthy, heartbeat restarts 0, maker_health ready, routes 1.
+   03:33:20  down.sh --wipe: rc 0, market/ left in place (#113's case)
+   03:34:33  start.sh: rc 0. 6 containers healthy, heartbeat restarts 0, maker_health ready, routes 1.
+   03:38:00  ui happy (Bitcoin, TakerSellsLez): passed in 207 s (the `local` timing profile start.sh uses)
+   03:39:19  ui zec-happy (Zcash, TakerSellsForeign): passed in 79 s; maker_health routes 3
+The full regression on the same images, 93 of 93: docs/evidence/regression-m2-2026-11-12-macos-arm64/.
+
+== The checks of 2026-11-11 (Nodes of 8bdf0749), in order, with what failed before each fix. Logs: start-path/, gates/, smoke/.
 
 == 1. Resume and Node restart, main af3ac978 + 2ab39a39 (gates/summary.log)
 Before 2ab39a39: up.sh on a running stack re-installed runtime/market-bootstrap.env; the file was gone from both Node
@@ -55,5 +93,5 @@ shellcheck 0.11.0 --severity=warning deploy/scripts/*.sh: the 8 findings main ha
 hadolint on deploy/images/lez-wallet-module/Dockerfile: no finding
 
 == Not run here
-Linux; a release bundle with published images (this is start.sh on local images); the full regression (it follows, on the commit
-this set is committed with); the 15-minute "Resubmit" path and the lez_indexer_unreachable reason of #112.
+Linux; a release bundle with published images (this is start.sh on local images); the 15-minute "Resubmit" path and the
+lez_indexer_unreachable reason of #112.

@@ -1,0 +1,26 @@
+[03:30:57] code 7fd518cf + 
+[03:31:31] down.sh --wipe rc=0
+[03:31:31] market/ moved aside: a first start on a host with nothing
+[03:32:46] start.sh rc=0
+3 passed, 0 failed
+1 passed, 0 failed
+  OK   all services up
+  OK   Bitcoin chain at height 211
+  OK   Bitcoin spender index present (actor lock observation)
+  OK   LEZ chain finalized at block 35
+15/15 checks passed
+  OK   explorer transaction display
+15/15 market checks passed
+  OK   Node market behaviour
+3 passed, 0 failed
+  OK   desk suite: maker
+1 passed, 0 failed
+  OK   desk suite: taker
+[03:32:46] containers healthy: 6; heartbeat restarts: 0; maker_health: {"ready":true,"degraded":false,"routes":1,"lez_degraded":false}
+[03:33:20] down.sh --wipe rc=0 with market/ left in place (#113's case); market/: bootstrap identities market-bootstrap.env.chain-1794454400.bak 
+[03:34:33] start.sh rc=0
+[03:34:33] containers healthy: 6; heartbeat restarts: 0; maker_health: {"ready":true,"degraded":false,"routes":1,"lez_degraded":false}
+[03:38:00] BTC desk trade rc=0: [03:38:00] === happy (TakerSellsLez): passed in 207s
+[03:39:19] ZEC desk trade rc=0: [03:39:19] === zec-happy (TakerSellsForeign): passed in 79s
+[03:39:19] containers healthy: 6; heartbeat restarts: 0; maker_health: {"ready":true,"degraded":false,"routes":3,"lez_degraded":false}
+[03:39:19] DONE

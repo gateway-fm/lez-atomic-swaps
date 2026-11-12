@@ -196,7 +196,9 @@ Stated plainly; each one is open unless it says otherwise.
    (packaging note, observation 10). On a Mac the stack runs in Docker
    Desktop with `linux-arm64` packages: built from nothing and smoke-tested on
    Apple silicon on 2026-11-11 (`docs/evidence/macos-arm64-smoke-2026-11-11/`,
-   six of six smoke tests, two of them through the desks), and the
+   six of six smoke tests, two of them through the desks), the full
+   regression passes there on `main`'s code
+   (`docs/evidence/regression-m2-2026-11-12-macos-arm64/`, 93 of 93), and the
    logos-native acceptance walk gives the amd64 verdicts step for step
    (`docs/evidence/logos-native-2026-11-11-arm64/`). That is not a native
    darwin package.
@@ -269,9 +271,9 @@ claims them.
 
 | Gate | What closes it | State |
 |---|---|---|
-| Full regression on the release candidate | `deploy/scripts/regress.sh full` (93 tests: `regress.sh list full`) on one frozen commit, results committed under `docs/evidence/` | done on `023c929e`, 2026-11-11: 92 of 93 passed in one run of 134 minutes on three lanes, 0 frozen tries; the one failure (`zec-claim-collision`, a provoked nonce race that went the other way) passed on its second rerun. `docs/evidence/regression-m2-2026-11-11/` |
+| Full regression on the release candidate | `deploy/scripts/regress.sh full` (93 tests: `regress.sh list full`) on one frozen commit, results committed under `docs/evidence/` | done on `023c929e`, 2026-11-11: 92 of 93 passed in one run of 134 minutes on three lanes, 0 frozen tries; the one failure (`zec-claim-collision`, a provoked nonce race that went the other way) passed on its second rerun. `docs/evidence/regression-m2-2026-11-11/`. Again on `main`'s code (`af3ac978` packages) on an Apple-silicon Mac, 2026-11-12: 93 of 93, each on its first try, 86 minutes on three lanes, 0 frozen tries. `docs/evidence/regression-m2-2026-11-12-macos-arm64/` |
 | Public-network evidence (logos-co/rfp#122) | swaps on public Zcash Testnet and a public LEZ testnet with the released artifacts | Not applicable to this release: the public LEZ testnet has moved to LEZ 0.3, which this LEZ v0.2.4 stack cannot talk to; public-network evidence is postponed to the release that ports to LEZ 0.4 (#107). The engine already signs for Zcash Testnet's NU7 and the regtest devnet runs NU7. A legacy v0.2 LEZ endpoint still answers; exploratory work against it is on a follow-up branch and is not part of this PR |
-| CI and release workflow on the final commit | all required PR checks green (DCO needs item 12), then `.github/workflows/release-images.yml` dispatched on the same commit | not green on `main` (`af3ac978`) as of 2026-11-11. `start.sh`, which the release workflow's smoke job and every bundle user run, could not finish there: four faults, found on an Apple-silicon Mac and fixed on this branch (`docs/evidence/macos-arm64-release-gates-2026-11-11/RESULTS.txt`, section 5). The workflow has to pass on the commit that carries those fixes; no CI state is recorded in the repository |
+| CI and release workflow on the final commit | all required PR checks green (DCO needs item 12), then `.github/workflows/release-images.yml` dispatched on the same commit | not green on `main` (`af3ac978`) as of 2026-11-11. `start.sh`, which the release workflow's smoke job and every bundle user run, could not finish there: four faults, found on an Apple-silicon Mac and fixed on this branch (`docs/evidence/macos-arm64-release-gates-2026-11-11/RESULTS.txt`, section 5, and its rerun on images built from `af3ac978`). The release workflow's run on `main` (43106618999) built every image and failed in its smoke job on the first of them (`libpcsclite.so.1`). The workflow has to pass on the commit that carries those fixes; no CI state is recorded in the repository |
 | Native install proof | `deploy/scripts/logos-native-acceptance.sh` on the final packages, or an accepted waiver | run on the combined landing's release set (`docs/evidence/logos-native-2026-11-11-c/`): 13 FAIL per role, every one unsigned packages (out of scope) or upstream logosctl behaviour, classified in `logos-native-2026-11-11-b/`; `module stats` is INFO with an upstream request and the Node's stats are judged through `node_stats`; on `linux-arm64` packages built on a Mac every step has the verdict of the amd64 run (`docs/evidence/logos-native-2026-11-11-arm64/`); not yet on the release candidate |
 | Topology decision in #115 | Logos agrees R2, R5, R7, R11, R13, R14 and the network-package question | open |
 
