@@ -20,6 +20,7 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
+    node-e2e.py zebra-down       the lane's Zebra stopped: a Bitcoin swap completes, then a Zcash one once it is back (R3)
     node-e2e.py taker-refund     Maker stopped before funding; Taker refunds its Bitcoin
     node-e2e.py maker-refund     Taker never claims; Maker refunds LEZ, then Taker refunds Bitcoin
     node-e2e.py refund-then-maker-lock  Refund admitted, then a late-but-timely maker lock; the observer must still recover
@@ -4431,6 +4432,151 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
     return {**summary, "taker_terminal_state": taker["state"]}
 
 
+# ---- one chain down, the other pair still swaps (R3) ---------------------------------
+# A lane's Bitcoin Core (with its miner) and its Zebra are each stopped while the
+# other pair swaps on the same two Nodes; the stack wires no route-health probe for
+# either chain, so health is asserted ready and what it says of the stopped
+# chain's pair is recorded as it is.
+
+def use_route(pair: str, direction: str) -> None:
+    """Switches the harness to the other pair inside one scenario, as main() sets it."""
+    global REVERSE, FOREIGN_UNITS, LEZ_UNITS
+    ROUTE.update({"pair": pair, "direction": direction})
+    REVERSE = direction == "TakerSellsLez"
+    # the Zcash corridor's lot, or the Bitcoin lot the module starts with
+    FOREIGN_UNITS, LEZ_UNITS = (ZEC_FOREIGN_UNITS, ZEC_LEZ_UNITS) if pair == "Zcash" else (1_000_000, 1_000)
+
+
+def node_reaches(role: str, port: int) -> bool:
+    """Whether the role's Node gets an answer from a chain over its own loopback
+    forwarder (node-entrypoint.sh); any HTTP answer counts, a refused or reset
+    connection does not."""
+    result = subprocess.run(["docker", "exec", NODES[role][0], "curl", "-s", "-o", "/dev/null", "-m", "10",
+                             f"http://127.0.0.1:{port}/"], capture_output=True, check=False, stdin=subprocess.DEVNULL)
+    return result.returncode == 0
+
+
+def container_running(container: str) -> bool:
+    return subprocess.run(["docker", "inspect", container, "--format", "{{.State.Running}}"],
+                          capture_output=True, text=True, check=False).stdout.strip() == "true"
+
+
+def stop_chain(containers: list[str], port: int) -> None:
+    """Stops one chain's containers on this lane and proves it from both Nodes:
+    each reached the chain over its forwarder before, neither does after, and
+    every container is stopped."""
+    for role in NODES:
+        if not node_reaches(role, port):
+            raise Failure(f"before the stop the {role} Node already cannot reach 127.0.0.1:{port}")
+    for container in containers:
+        log(f"  stopping {container}")
+        docker("stop", container)
+    still = [container for container in containers if container_running(container)]
+    reached = [role for role in NODES if node_reaches(role, port)]
+    if still or reached:
+        raise Failure(f"the chain is not down: running {still}, reached by {reached}")
+    log(f"  {', '.join(containers)} stopped; neither Node reaches 127.0.0.1:{port} any more")
+
+
+def start_chain(containers: list[str], timeout: int = 180) -> None:
+    """Starts them again, in order, each until healthy (or running, without a health check)."""
+    for container in containers:
+        docker("start", container)
+        wait = Wait(f"{container} to be healthy again", timeout)
+        while wait.running():
+            status = subprocess.run(["docker", "inspect", container, "--format",
+                                     "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}"],
+                                    capture_output=True, text=True, check=False).stdout.strip()
+            if status in ("healthy", "running"):
+                break
+            wait.note(status, status)
+            time.sleep(3)
+        else:
+            raise wait.failure()
+    log(f"  {', '.join(containers)} started again")
+
+
+def ready_while_down(pair: str) -> dict:
+    """Both Nodes answer health ready while `pair`'s chain is down; returns what
+    each says (degraded, and its entries for that pair) for the record."""
+    seen = {}
+    for role in ("maker", "taker"):
+        reported = health(role)
+        if reported.get("ready") is not True:
+            raise Failure(f"the {role} Node is not ready while {pair} is down: {json.dumps(reported)[:300]}")
+        entries = reported.get("routes") if role == "maker" else reported.get("pair_capabilities")
+        seen[role] = {"ready": True, "degraded": reported.get("degraded"),
+                      pair.lower(): [e for e in entries or [] if (e.get("route") or e).get("pair") == pair]}
+    return seen
+
+
+def scenario_zebra_down(stamp: str) -> dict:
+    """R3: with this lane's Zebra stopped (stop_chain: neither Node reaches it),
+    a Bitcoin happy swap in the test's direction completes on both Nodes, and
+    both stay ready in health before the take, after it, after the claim and
+    at completion. Zebra started again, a Zcash happy swap (scenario_zec_happy)
+    completes in the same direction on the same Nodes."""
+    zebra_container = f"{PREFIX}-zebra"
+    seen = []
+    stop_chain([zebra_container], 18232)
+    try:
+        seen.append(ready_while_down("Zcash"))
+        offer_id = publish_offer(stamp, "-btc")
+        swap_id, _ = take(offer_id, stamp, "-btc")
+        seen.append(ready_while_down("Zcash"))
+        lock(swap_id)
+        claim(swap_id, stamp, "-btc")
+        seen.append(ready_while_down("Zcash"))
+        wait_completed(swap_id)
+        seen.append(ready_while_down("Zcash"))
+        log(f"  the Bitcoin swap completed with Zebra stopped, both Nodes ready throughout; on Zcash the Maker's "
+            f"health said {seen[-1]['maker']['zcash']}, degraded {seen[-1]['maker']['degraded']}")
+    finally:
+        start_chain([zebra_container])
+    direction = ROUTE["direction"]
+    use_route("Zcash", direction)
+    try:
+        zcash = scenario_zec_happy(stamp)
+    finally:
+        use_route("Bitcoin", direction)
+    return {"swap_id": swap_id, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id),
+            "stopped": [zebra_container], "health_while_down": seen, "zcash_after_restart": zcash}
+
+
+def scenario_zec_bitcoin_down(stamp: str) -> dict:
+    """R3 mirrored: with this lane's Bitcoin Core and miner stopped (stop_chain:
+    neither Node reaches Core), a Zcash happy swap in the test's direction
+    completes on both Nodes, both ready in health throughout; Core and the
+    miner started again, a Bitcoin happy swap completes in the same direction.
+    The corridor is provisioned before the stop: zec-provision.sh recreates
+    both Nodes, and a Node's start reads Bitcoin's genesis block
+    (node-entrypoint.sh), so it is the running Nodes that face the outage."""
+    chain = [f"{PREFIX}-btc-miner", f"{PREFIX}-bitcoin-core"]
+    corridor = zec_provision()
+    seen = []
+    stop_chain(chain, 18443)
+    try:
+        seen.append(ready_while_down("Bitcoin"))
+        swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
+        config = zec_taker_actor_config(corridor["receipt_output"])
+        seen.append(ready_while_down("Bitcoin"))
+        zec_finish(swap_id, config, corridor, stamp)
+        seen.append(ready_while_down("Bitcoin"))
+        log(f"  the Zcash swap completed with Bitcoin Core stopped, both Nodes ready throughout; on Bitcoin the "
+            f"Maker's health said {seen[-1]['maker']['bitcoin']}, degraded {seen[-1]['maker']['degraded']}")
+    finally:
+        start_chain(chain[::-1])
+    direction = ROUTE["direction"]
+    use_route("Bitcoin", direction)
+    try:
+        bitcoin_swap = happy_swap(stamp, "-btc")
+        bitcoin_claim = assert_cooperative_claim_is_key_path(bitcoin_swap)
+    finally:
+        use_route("Zcash", direction)
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "stopped": chain, "health_while_down": seen,
+            "bitcoin_after_restart": {"swap_id": bitcoin_swap, "bitcoin_claim": bitcoin_claim}}
+
+
 ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-taker-refund": scenario_zec_taker_refund,
@@ -4451,6 +4597,7 @@ ZEC_SCENARIOS = {
     "zec-regenerated-catalog": scenario_zec_regenerated_catalog,
     "zec-tampered-catalog": scenario_zec_tampered_catalog,
     "zec-balance-refusal": scenario_zec_balance_refusal,
+    "zec-bitcoin-down": scenario_zec_bitcoin_down,
 }
 
 
@@ -4473,6 +4620,7 @@ SCENARIOS = {
     "refund-then-maker-lock": scenario_refund_admitted_then_maker_lock,
     "regenerated-config": scenario_regenerated_config,
     "tampered-config": scenario_tampered_config,
+    "zebra-down": scenario_zebra_down,
 }
 
 
