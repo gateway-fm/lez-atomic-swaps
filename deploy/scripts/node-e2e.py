@@ -4640,6 +4640,16 @@ def start_chain(containers: list[str], timeout: int = 180) -> None:
     log(f"  {', '.join(containers)} started again")
 
 
+def restart_nodes_while_down(pair: str) -> None:
+    """R3: each Node, restarted while `pair`'s chain is down, starts again
+    (its launcher reads nothing from that chain it has not kept)."""
+    for role in NODES:
+        log(f"  restarting the {role} Node with {pair}'s chain down")
+        docker("restart", NODES[role][0])
+        wait_healthy(role, timeout=300)
+    log(f"  both Nodes started again with {pair}'s chain down")
+
+
 def ready_while_down(pair: str) -> dict:
     """Both Nodes answer health ready while `pair`'s chain is down; returns what
     each says (degraded, and its entries for that pair) for the record."""
@@ -4656,7 +4666,7 @@ def ready_while_down(pair: str) -> dict:
 
 def scenario_zebra_down(stamp: str) -> dict:
     """R3: with this lane's Zebra stopped (stop_chain: neither Node reaches it),
-    a Bitcoin happy swap in the test's direction completes on both Nodes, and
+    both Nodes restarted, a Bitcoin happy swap in the test's direction completes on both Nodes, and
     both stay ready in health before the take, after it, after the claim and
     at completion. Zebra started again, a Zcash happy swap (scenario_zec_happy)
     completes in the same direction on the same Nodes."""
@@ -4664,6 +4674,7 @@ def scenario_zebra_down(stamp: str) -> dict:
     seen = []
     stop_chain([zebra_container], 18232)
     try:
+        restart_nodes_while_down("Zcash")
         seen.append(ready_while_down("Zcash"))
         offer_id = publish_offer(stamp, "-btc")
         swap_id, _ = take(offer_id, stamp, "-btc")
@@ -4689,17 +4700,18 @@ def scenario_zebra_down(stamp: str) -> dict:
 
 def scenario_zec_bitcoin_down(stamp: str) -> dict:
     """R3 mirrored: with this lane's Bitcoin Core and miner stopped (stop_chain:
-    neither Node reaches Core), a Zcash happy swap in the test's direction
-    completes on both Nodes, both ready in health throughout; Core and the
-    miner started again, a Bitcoin happy swap completes in the same direction.
-    The corridor is provisioned before the stop: zec-provision.sh recreates
-    both Nodes, and a Node's start reads Bitcoin's genesis block
-    (node-entrypoint.sh), so it is the running Nodes that face the outage."""
+    neither Node reaches Core), both Nodes restarted, a Zcash happy swap in
+    the test's direction completes on both Nodes, both ready in health
+    throughout; Core and the miner started again, a Bitcoin happy swap
+    completes in the same direction. The corridor is provisioned before the
+    stop: zec-provision.sh recreates both Nodes, and a Node's first start reads
+    Bitcoin's genesis block (node-entrypoint.sh keeps it for later starts)."""
     chain = [f"{PREFIX}-btc-miner", f"{PREFIX}-bitcoin-core"]
     corridor = zec_provision()
     seen = []
     stop_chain(chain, 18443)
     try:
+        restart_nodes_while_down("Bitcoin")
         seen.append(ready_while_down("Bitcoin"))
         swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
         config = zec_taker_actor_config(corridor["receipt_output"])

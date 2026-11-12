@@ -117,9 +117,22 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
      genesis_block_hash:$genesis,escrow_program_id:$program,signer_account_id:$signer}' \
     >"$btc_state/runtime.json"
   chmod 0600 "$btc_state/runtime.json"
-  bitcoin_genesis="$(curl -fsS --max-time 10 --user "$(cat "$btc_state/btc-rpc-cookie")" \
+  # Bitcoin's genesis as Core reports it, which the Node refuses unless it is
+  # the named network's (btc-role-lifecycle config.rs, ensure_networks_agree).
+  # It is kept, so a Node restarted while Core is down still starts: the
+  # Bitcoin adapter checks Core's genesis again before every Bitcoin step
+  # (btc-core-adapter ensure_ready), and only the Bitcoin pair waits for Core.
+  if bitcoin_genesis="$(curl -fsS --max-time 10 --user "$(cat "$btc_state/btc-rpc-cookie")" \
     --header 'content-type: application/json' \
-    --data '{"jsonrpc":"2.0","id":1,"method":"getblockhash","params":[0]}' http://127.0.0.1:18443/ | jq -er '.result')"
+    --data '{"jsonrpc":"2.0","id":1,"method":"getblockhash","params":[0]}' http://127.0.0.1:18443/ | jq -er '.result')"; then
+    printf '%s\n' "$bitcoin_genesis" >"$btc_state/bitcoin-genesis"
+  elif [[ -s "$btc_state/bitcoin-genesis" ]]; then
+    bitcoin_genesis="$(cat "$btc_state/bitcoin-genesis")"
+    echo "$role: Bitcoin Core does not answer; starting with the genesis it reported before, the Bitcoin pair waits for Core" >&2
+  else
+    echo "$role: Bitcoin Core does not answer and never has to this Node; its first start needs Core" >&2
+    exit 1
+  fi
   actor_program="$bin/lez-btc-$role-actor"
   actor_sha="$(sha256sum "$actor_program" | cut -d' ' -f1)"
   wallet_json='null'
