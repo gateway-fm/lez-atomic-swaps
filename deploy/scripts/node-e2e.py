@@ -85,6 +85,7 @@ import datetime
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import threading
@@ -172,6 +173,8 @@ def log(message: str) -> None:
 
 def rpc(role: str, method: str, params: object, timeout: int = 300) -> dict:
     """One owner-RPC call; returns the full JSON-RPC envelope."""
+    if role == "taker" and TAKER_CLI:
+        return taker_cli_rpc(method, params)
     container, socket = NODES[role]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": [params]})
     # No -i: curl takes the body from --data and never reads stdin, while the
@@ -1756,6 +1759,78 @@ def scenario_maker_cli(stamp: str) -> dict:
     log(f"  as uid 65534 lez-maker-cli health is refused connecting to {socket} ({mode}): no request made")
     return {"swap_id": swap_id, "offer_id": offer_id, "history": history,
             "non_owner_health": {"exit": denied.returncode, "stderr": denied.stderr.strip()[-200:], "socket": mode}}
+
+
+# ---- the Taker's side through its operator CLI (taker-cli) --------------------------
+# With TAKER_CLI set, every owner call a scenario makes to the Taker Node is a
+# `docker exec <taker> lez-taker-cli` command instead (taker_cli_rpc), so the
+# scenario's Taker side is what an operator types; the Maker's is unchanged.
+TAKER_CLI = False
+# The CLI's reads, polled every few seconds; every other command's exit and
+# duration is logged (the CLI's own timeouts: take 7 min, lock 2, claim/refund 5).
+TAKER_CLI_READS = {"offers", "list", "monitor"}
+
+
+def taker_cli_arguments(method: str, params: dict) -> list[str]:
+    """The lez-taker-cli command for one Taker owner RPC (docs/api/README.md)."""
+    if method == "taker_offer_list_v1":
+        route = params.get("route")
+        return ["swap", "offers"] + (["--pair", route["pair"].lower(), "--direction",
+                                      "taker-sells-lez" if route["direction"] == "TakerSellsLez"
+                                      else "taker-sells-foreign"] if route else [])
+    if method == "taker_swap_initiate_v1":
+        funding = params.get("funding_transaction_hex")
+        return (["swap", "take", "--request-id", params["request_id"], "--offer-id", params["offer_id"],
+                 "--foreign-units", str(params["foreign_units"])]
+                + (["--funding-transaction-hex", funding] if funding else []))
+    if method in ("taker_swap_monitor_v1", "taker_swap_lock_v1"):
+        return ["swap", method.split("_")[2], "--swap-id", params["swap_id"]]
+    if method in ("taker_swap_claim_v1", "taker_swap_refund_v1"):
+        return ["swap", method.split("_")[2], "--swap-id", params["swap_id"], "--request-id", params["request_id"],
+                "--expected-generation", str(params["expected_generation"])]
+    commands = {"taker_swap_list_v1": ["swap", "list"], "taker_wallet_balances_v1": ["balances"],
+                "taker_health": ["health"]}
+    if method not in commands:
+        raise Failure(f"lez-taker-cli has no command for {method}")
+    return commands[method]
+
+
+def taker_cli_rpc(method: str, params: dict) -> dict:
+    """One Taker owner call through lez-taker-cli, answered as rpc() answers:
+    the printed JSON as the result, or the printed `local RPC error <code>:
+    <message> <data>` as the error."""
+    arguments = taker_cli_arguments(method, params)
+    started = time.time()
+    result = subprocess.run(["docker", "exec", NODES["taker"][0], "lez-taker-cli", *arguments],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=600)
+    if arguments[0] == "swap" and arguments[1] not in TAKER_CLI_READS:
+        log(f"  lez-taker-cli {' '.join(arguments[:2])}: exit {result.returncode} after {time.time() - started:.0f} s"
+            + (f": {result.stderr.strip()[-300:]}" if result.returncode else ""))
+    if result.returncode == 0:
+        return {"result": json.loads(result.stdout)}
+    printed = re.search(r"local RPC error (-?\d+): (.*)", result.stderr)
+    if printed is None:
+        return {"error": {"code": -1, "message": f"lez-taker-cli: {result.stderr.strip()[-300:]}"}}
+    code, text = int(printed.group(1)), printed.group(2).strip()
+    # the server's data follows the message as compact JSON
+    for at in (i for i in range(len(text)) if text.startswith(" {", i)):
+        try:
+            return {"error": {"code": code, "message": text[:at], "data": json.loads(text[at + 1:])}}
+        except ValueError:
+            continue
+    return {"error": {"code": code, "message": text}}
+
+
+def through_taker_cli(scenario):
+    """`scenario` with the Taker driven by lez-taker-cli (TAKER_CLI)."""
+    def run(stamp: str) -> dict:
+        global TAKER_CLI
+        TAKER_CLI = True
+        try:
+            return scenario(stamp)
+        finally:
+            TAKER_CLI = False
+    return run
 
 
 def take_after_outage(offer_id: str, stamp: str) -> tuple[str, dict]:
@@ -4798,6 +4873,7 @@ ZEC_SCENARIOS = {
     "zec-tampered-catalog": scenario_zec_tampered_catalog,
     "zec-balance-refusal": scenario_zec_balance_refusal,
     "zec-bitcoin-down": scenario_zec_bitcoin_down,
+    "zec-taker-cli": through_taker_cli(scenario_zec_happy),
 }
 
 
@@ -4809,6 +4885,8 @@ SCENARIOS = {
     "restart-maker": lambda stamp: scenario_restart(stamp, "maker"),
     "kill-taker": lambda stamp: scenario_restart(stamp, "taker", kill=True),
     "kill-maker": lambda stamp: scenario_restart(stamp, "maker", kill=True),
+    "taker-cli": through_taker_cli(scenario_happy),
+    "taker-cli-refund": through_taker_cli(scenario_taker_refund),
     "survivor": scenario_survivor,
     "late-claim-confirms": scenario_late_claim_confirms,
     "late-claim-unmined": scenario_late_claim_unmined,
