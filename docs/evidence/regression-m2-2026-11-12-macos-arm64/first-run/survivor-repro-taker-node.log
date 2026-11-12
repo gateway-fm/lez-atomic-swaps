@@ -1,0 +1,12 @@
+taker actor zec-devnet-swap-1794445437: activate → activated - (phase offered, revision 0, next fund_zcash)
+taker actor zec-devnet-swap-1794445437: drive → submitted zcash_fund (phase offered, revision 0, next fund_zcash)
+taker actor zec-devnet-swap-1794445437: drive → awaiting_observation zcash_fund (phase offered, revision 0, next fund_zcash)
+taker actor zec-devnet-swap-1794445437: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+taker actor zec-devnet-swap-1794445437: drive → awaiting_observation maker_lock (phase taker_lock_confirmed, revision 1, next wait)
+taker actor zec-devnet-swap-1794445437: drive → projected maker_lock (phase both_legs_locked, revision 2, next claim_lez)
+actor claim unavailable: InvalidZcashFundingObservation(InsufficientConfirmations { required: 2, actual: 1 })
+{"class":"ClaimUnavailable","event":"taker_actor_command_failed","step":"effect"}
+{"class":"\"retried","event":"taker_actor_command_failed","step":"first attempt after admission"}
+actor claim unavailable: InvalidZcashFundingObservation(InsufficientConfirmations { required: 2, actual: 1 })
+taker actor zec-devnet-swap-1794445437: claim refused: actor claim is not currently available
+taker actor zec-devnet-swap-1794445437: attempt backs off (actor_drive_unavailable); retried every 30 s, logged again only when the class changes

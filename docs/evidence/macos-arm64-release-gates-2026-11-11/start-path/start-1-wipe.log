@@ -1,0 +1,5 @@
+time="2026-11-11T23:37:12+01:00" level=warning msg="The \"LEZ_V02_CHANNEL_ID\" variable is not set. Defaulting to a blank string."
+time="2026-11-11T23:37:12+01:00" level=warning msg="The \"LEZ_V02_CHANNEL_ID\" variable is not set. Defaulting to a blank string."
+ Network lez-swap-chains Removing 
+ Network lez-swap-chains Removed 
+stack down; runtime state and lez-* volumes wiped; the escrow deployment in <repo>/deploy/market retired (identities kept)

@@ -55,6 +55,12 @@ it (ADR 0215). Publish the release with its notes first; the assets follow
 about 2.5 hours later. `scripts/package-dist.sh <prefix> <tag>` produces the bundle
 locally from a committed tree.
 
+Upgrading from one release to the next is not supported before 1.0.0. Drain
+the old release first: withdraw every offer, let each open swap reach
+`completed` or `refunded` (a refund waits for its refund time), then install
+the new release on fresh state. The work to
+support upgrades is issue #133 and starts after 1.0.0.
+
 ## From scratch
 
 One command takes an arm64 host (macOS with Docker Desktop, or Linux with

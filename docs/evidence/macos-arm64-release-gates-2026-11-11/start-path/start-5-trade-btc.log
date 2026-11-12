@@ -1,0 +1,51 @@
+
+[22:40:46] === happy (TakerSellsLez)
+
+[22:40:47] Maker desk publishes TakerSellsLez offers until two are pending
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[22:40:51] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   5ebe8beb05fc65763132fb4a1dc5be926314f4fa4cf7a392d1067d999f15b511 awaiting_first_lock 0 -
+
+[22:40:54] Taker desk: lock_lez on 5ebe8beb05fc
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  ✓ taker: perform lock_lez
+2 passed, 0 failed
+
+[22:40:56] Maker desk shows 5ebe8beb05fc at awaiting_taker_claim
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's Bitcoin claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[22:43:29] Taker desk: claim_btc on 5ebe8beb05fc
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  ✓ taker: perform claim_btc
+2 passed, 0 failed
+
+[22:43:40] Maker desk shows 5ebe8beb05fc at completed
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[22:45:42] Taker desk shows 5ebe8beb05fc at completed
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+exported swap 5ebe8beb05fc: runtime/evidence/5ebe8beb05fc65763132fb4a1dc5be926314f4fa4cf7a392d1067d999f15b511.json (5 effects, completed 2026-11-11T22:45:27Z)
+
+[22:45:53] === happy (TakerSellsLez): passed in 307s

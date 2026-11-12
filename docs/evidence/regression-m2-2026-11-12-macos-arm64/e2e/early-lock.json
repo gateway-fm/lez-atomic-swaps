@@ -1,0 +1,28 @@
+{
+  "scenario": "early-lock",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "1794452833",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": ""
+  },
+  "swap_id": "ed570cc786bd7152d2ca400c55a0263cccb49a8f7d43fa260246010ee07c0451",
+  "lock_txid": "64585447e5bb11949ce7a99dbc121f95d840a591fb33bf79677e08bcc117ee90",
+  "bitcoin_claim": "482d556f1f09cac9d0147b3cda38b1370bb7bc3b221778f19d734b8c2e87a207",
+  "result": "passed",
+  "seconds": 160
+}

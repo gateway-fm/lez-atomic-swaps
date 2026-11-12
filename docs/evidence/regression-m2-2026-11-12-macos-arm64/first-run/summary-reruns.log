@@ -1,0 +1,24 @@
+[00:52:26] code 9fba9da9, dirty:  M scripts/ui-e2e.sh 
+[01:03:24] rerun a rc=0
+[00:52:26] regression run: 6 tests at 9fba9da9 (tree dirty:        1), results in <checkout>/deploy/runtime/regress/rerun-a
+[00:58:41] === ui:zec:zec-maker-refund:TakerSellsLez (try 1, lane 1): PASSED in 351 s
+[00:58:41] === ui:zec:zec-maker-refund:TakerSellsLez (try 2, lane 2): PASSED in 351 s
+[00:58:41] === ui:zec:zec-maker-refund:TakerSellsLez (try 3, lane 3): PASSED in 351 s
+[01:01:30] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 3): PASSED in 162 s
+[01:02:52] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 2): PASSED in 244 s
+[01:03:24] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 1): PASSED in 276 s
+[01:03:24] regression run: 6 of 6 passed in 10 min, 0 new chains, 0 profile switches,        0 frozen tries
+[01:30:55] rerun b1 rc=1
+[01:08:00] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 245 s
+[01:08:12] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 255 s
+[01:30:55] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): FAILED in 1618 s
+[01:30:55]   not passed: ui:zec:zec-survivor:TakerSellsForeign
+[01:35:37] rerun b2 rc=0
+[01:34:05] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): PASSED in 164 s
+[01:35:25] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 244 s
+[01:35:37] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 256 s
+[01:40:14] rerun b3 rc=0
+[01:38:47] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): PASSED in 161 s
+[01:40:12] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 245 s
+[01:40:14] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 247 s
+[01:40:14] DONE

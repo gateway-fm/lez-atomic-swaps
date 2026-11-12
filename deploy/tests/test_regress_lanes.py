@@ -286,12 +286,24 @@ class Tiers(unittest.TestCase):
 
 
 class LaneNames(unittest.TestCase):
+    # lane.sh reads the stack its deploy directory runs from runtime/runtime.env
+    # and release.env beside it. The names are checked on a copy in a directory
+    # that has neither, so a stack that ran in this checkout does not decide them.
+    @classmethod
+    def setUpClass(cls):
+        cls.deploy = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.deploy.cleanup)
+        os.mkdir(os.path.join(cls.deploy.name, 'scripts'))
+        for name in ('lane.sh', 'host.sh'):
+            shutil.copy(SCRIPTS / name, os.path.join(cls.deploy.name, 'scripts', name))
+        cls.lane_sh = os.path.join(cls.deploy.name, 'scripts', 'lane.sh')
+
     def names(self, lane, **env):
         script = ('source "$1"; echo "$LEZ_CONTAINER_PREFIX $LEZ_LANE_RUNTIME $LEZ_ZEBRA_URL $LEZ_ZEBRA_HOST '
                   '$LEZ_MAKER_VNC_PORT $LEZ_TAKER_VNC_PORT $LEZ_LANE_MAKER_WALLET $LEZ_LANE_TAKER_WALLET '
                   '${LEZ_VOLUME_PREFIX:-unset} ${lane_compose[*]}"')
         clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
-        return subprocess.run(['bash', '-c', script, '-', str(SCRIPTS / 'lane.sh')],
+        return subprocess.run(['bash', '-c', script, '-', self.lane_sh],
                               env={**clean, **({'LEZ_LANE': lane} if lane else {}), **env},
                               capture_output=True, text=True, check=True).stdout.split()
 
@@ -313,7 +325,7 @@ class LaneNames(unittest.TestCase):
     def test_a_lane_prefix_is_not_stacked_when_sourced_twice(self):
         clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
         out = subprocess.run(['bash', '-c', 'source "$1"; source "$1"; echo "$LEZ_VOLUME_PREFIX"', '-',
-                              str(SCRIPTS / 'lane.sh')], env={**clean, 'LEZ_LANE': '3', 'LEZ_VOLUME_PREFIX': 'lez'},
+                              self.lane_sh], env={**clean, 'LEZ_LANE': '3', 'LEZ_VOLUME_PREFIX': 'lez'},
                              capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(out, 'lez-l3')
 
@@ -340,7 +352,7 @@ class LaneNames(unittest.TestCase):
                   '$LEZ_SEQUENCER_PORT $LEZ_INDEXER_PORT $LEZ_BTC_EXPLORER_PORT $LEZ_LEZ_EXPLORER_PORT '
                   '$LEZ_STACK_INDEXER_URL"')
         clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
-        lane = (deploy / 'scripts' / 'lane.sh') if deploy else (SCRIPTS / 'lane.sh')
+        lane = (deploy / 'scripts' / 'lane.sh') if deploy else self.lane_sh
         return subprocess.run(['bash', '-c', script, '-', str(lane)], env={**clean, **env},
                               capture_output=True, text=True, check=True).stdout.split()
 
@@ -383,7 +395,7 @@ class LaneNames(unittest.TestCase):
                 self.stack(**env)
 
     def test_not_a_lane(self):
-        run = subprocess.run(['bash', '-c', 'source "$1"', '-', str(SCRIPTS / 'lane.sh')],
+        run = subprocess.run(['bash', '-c', 'source "$1"', '-', self.lane_sh],
                              env={**os.environ, 'LEZ_LANE': 'two'}, capture_output=True, text=True)
         self.assertEqual(run.returncode, 64)
 

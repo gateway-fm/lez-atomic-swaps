@@ -1,8 +1,9 @@
 # Notes for the open issues, 2026-11-11
 
 What PR #120 changed for each open issue Logos filed, with the commits and how
-each was checked. These are drafts for the issues; nothing here has been
-posted. Commit ids are those of `feat/split-lez-node-route`.
+each was checked. These were drafts for the issues. On 2026-11-11 each
+issue got a comment that says what was run since (#103, #112, #113, #114,
+#115); #106 is closed. Commit ids are those of `feat/split-lez-node-route`.
 
 ## #103, items 1 and 16: latent paths in `swap-core`
 
@@ -101,12 +102,13 @@ proxy for the Nodes, the chat gateway and `desk-sockets.py` are gone.
 where the result differs from it.
 
 1. **Bitcoin as a module (`logos-bitcoind-module`).** Not in PR #120 and not
-   planned for M2. Bitcoin Core stays bring-your-own, as this issue first
-   scoped it; the assessment is in `docs/submission-115.md` (source reading
-   only, no spike was run).
+   planned for M2. Built and run on 2026-11-11: the module as built cannot
+   serve the Nodes (no wallet, no `txindex` setting, an RPC port that refuses
+   four of the adapter's methods); issue #129 and the reply posted on #115.
 2. **Zebra as a module (`logos-zebrad-module`).** Not in PR #120 and not
-   planned for M2: there is no released package of it, and the stack's Zebra
-   is a plain container (Zebra 7.0.0, NU7).
+   planned for M2. Built and run on 2026-11-11: the node fits (Zebra 7.0.0,
+   NU7 regtest, every method we call); there is no released package and no
+   Linux arm64 build; issue #128 and the reply posted on #115.
 3. **macOS.** The role packages are Linux only today: `lez-swap-store` keeps
    its Linux-only hardening. On a Mac the stack runs in Docker, with each
    desk inside its role's Basecamp container and reached over VNC; native
@@ -215,7 +217,10 @@ the drain procedure: withdraw every offer; let each open swap reach
 `completed` or `refunded` (a refund waits for its refund time); check that
 `taker_swap_list_v1` and `swap_history` show nothing open, which
 `reset-swaps.sh` also refuses to pass (`90dd2e21`); then upgrade. No
-migration exists or is planned for M2.
+migration exists or is planned for M2. Item 2 moved to issue #133: the owner
+decided that upgrading between releases is not supported before 1.0.0 (drain,
+then install the new release on fresh state), and the work to support it
+starts after 1.0.0.
 
 **Item 6, a held refund looks like a dead node: closed, seen on the
 stack.** Before: both Nodes report `lez_chain` with
@@ -371,7 +376,8 @@ after a reveal and settled coordinators. The original property still has
 shrinks to the replayed claim on a completed swap, which `c75576ab` now
 refuses at the lock removal. What the new property shrinks to was not
 checked here, and the `v0.2.5` release text ("shrinks to exactly the
-reported shape") is unedited (release last updated 2026-09-28).
+reported shape") is unedited (release last updated 2026-09-28). Item 11
+moved to issue #134.
 
 **Item 12, regression evidence: the harness part fixed in `3f275a49`, the
 v0.2.5 provenance filled from its log in `97c99a30`; used by both full
@@ -389,7 +395,8 @@ freeze line. The `v0.2.5` "Chain recreations" section now lists the four
 recreations `RESULTS.txt` records (tests, times) and says plainly what that
 log does not hold: no finality or tip reading, no classifier, nothing on
 what a stopped try left open. Still open: the `v0.2.5` release text's "43 of
-43" (a release edit, outside the repository).
+43" (a release edit, outside the repository); that release-text part moved
+to issue #134.
 
 **Item 13, videos: no longer applies to this release, not fixed for
 `v0.2.5`.** The recordings of the M2 run are by-products of passing tests at
@@ -397,7 +404,8 @@ a stated source (`023c929e`) on recorded image ids; seven ZEC ones are in
 `videos/`, the other 25, the Bitcoin set included, are kept outside git for
 release attachments, and no release was built. The `v0.2.5` recordings were
 neither dated nor re-recorded. Whether the Taker's "Completed" is on screen
-in the happy-path recordings was not checked here.
+in the happy-path recordings was not checked here. Item 13 moved to issue
+#134.
 
 **Item 14, late-claim scenarios: added in `226244db` and `fcf9860e`
 (harness); on the stack they found two Bitcoin defects, fixed in `9579950b`

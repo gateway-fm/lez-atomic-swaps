@@ -591,7 +591,15 @@ services:
     command:
       - |
         set -eu
-        program="$$(sed -n 's/^M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID=//p' /run-market/market-bootstrap.env | head -1)"
+        # start.sh bootstraps the market after up.sh has started this service:
+        # wait for the manifest's program id rather than exit and be restarted
+        # (nine restarts on a first start, and "all services up" failed when
+        # verify-all.sh looked between two of them).
+        program=""
+        while [ -z "$$program" ]; do
+          program="$$(sed -n 's/^M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID=//p' /run-market/market-bootstrap.env 2>/dev/null | head -1)"
+          [ -n "$$program" ] || sleep 2
+        done
         recipient="$$(jq -r '.account_id_hex' /market/identities/heartbeat-echo-02/identity.json | tr 'A-F' 'a-f')"
         exec lez-wallet-heartbeat --sequencer-url http://sequencer:3040 --indexer-url http://indexer:8779 \
           --private-key-file /market/identities/heartbeat-pulse-01/lez-signer.key \

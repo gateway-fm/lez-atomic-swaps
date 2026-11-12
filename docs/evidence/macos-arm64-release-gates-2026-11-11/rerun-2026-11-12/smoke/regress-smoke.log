@@ -1,0 +1,9 @@
+[03:17:59] regression smoke: 6 tests at adffc106 (tree dirty:        1), results in runtime/regress/20261112T031759Z
+[03:17:59] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[03:18:41] === node:btc:happy:TakerSellsLez (try 1): PASSED in 34 s (+8 s before it)
+[03:20:01] === node:zec:zec-happy:TakerSellsLez (try 1): PASSED in 69 s (+11 s before it)
+[03:21:17] === node:btc:happy:TakerSellsForeign (try 1): PASSED in 66 s (+10 s before it)
+[03:22:28] === node:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 63 s (+8 s before it)
+[03:23:43] === ui:btc:happy:TakerSellsLez (try 1): PASSED in 65 s (+10 s before it)
+[03:25:04] === ui:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 69 s (+12 s before it)
+[03:25:04] regression smoke: 6 of 6 passed in 7 min, 0 new chains, 0 profile switches,        0 frozen tries

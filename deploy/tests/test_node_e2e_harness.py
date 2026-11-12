@@ -194,6 +194,7 @@ class OffchainCut(unittest.TestCase):
         self.assertEqual(probe['uid'], 4713)
 
     @unittest.skipIf(os.geteuid() == 0, 'root ignores the modes the cut sets')
+    @unittest.skipUnless(os.path.isdir('/proc/self/fd'), 'the probe counts descriptors in /proc, as in the Taker container')
     def test_the_probe_sees_the_mode_cut_as_a_refusal(self):
         import socket
         import subprocess

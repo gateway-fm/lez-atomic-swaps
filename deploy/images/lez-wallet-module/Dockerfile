@@ -42,8 +42,12 @@ LABEL org.logos-co.atomic-swaps.purpose="lez-v0.2-wallet-module"
 # compose `tools` service): market-bootstrap.sh (bash, jq, curl, socat for the
 # loopback-only official tools), the escrow deployer and the identity tool,
 # staged here by from-scratch.sh --only stage.
+# libpcsclite1: the identity tool links the LEZ wallet crate, which links pcsc;
+# without it start.sh cannot mint the wallet identities ("libpcsclite.so.1:
+# cannot open shared object file"). The build below runs the tool once so a
+# missing library fails the image build, not a user's first start.
 # hadolint ignore=DL3008
-RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl jq socat >/dev/null && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends ca-certificates curl jq socat libpcsclite1 >/dev/null && rm -rf /var/lib/apt/lists/*
 COPY --from=fetch /opt/logoscore /opt/logoscore
 COPY --from=fetch /opt/lez-modules /opt/lez-modules
 COPY --chmod=0444 wallet-lib.sh /usr/local/lib/lez-wallet-lib.sh
@@ -52,6 +56,7 @@ COPY --chmod=0555 heartbeat.sh /usr/local/bin/lez-wallet-heartbeat
 COPY --chmod=0555 signer.sh /usr/local/bin/lez-wallet-signer
 COPY --chmod=0555 lez-zec-escrow-v02-deployer /usr/local/bin/lez-zec-escrow-v02-deployer
 COPY --chmod=0555 lez-v02-local-actor-identity /usr/local/bin/lez-v02-local-actor-identity
+RUN /usr/local/bin/lez-v02-local-actor-identity --help >/dev/null && /usr/local/bin/lez-zec-escrow-v02-deployer --help >/dev/null
 ENV HOME=/tmp QT_QPA_PLATFORM=offscreen LANG=C.UTF-8
 USER 65532:65532
 WORKDIR /tmp

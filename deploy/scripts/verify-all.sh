@@ -51,6 +51,16 @@ report "$([[ "${lez_head:-None}" != None ]] && echo 0 || echo 1)" "LEZ chain fin
 section "block explorers"
 # Off by default (Compose profile "explorers"): started here for their checks.
 "${compose[@]}" --profile explorers up -d --wait --wait-timeout 180 btc-explorer lez-explorer >/dev/null 2>&1
+# Neither explorer has a health check, so `up --wait` returns when the
+# containers run, before they listen (the Bitcoin explorer closed the first
+# connection of a fresh start: "Remote end closed connection without
+# response"). Ask until both answer, for up to two minutes.
+explorers_deadline=$(( $(date +%s) + 120 ))
+until curl -sf -o /dev/null --max-time 5 "http://127.0.0.1:$LEZ_BTC_EXPLORER_PORT/" &&
+      curl -sf -o /dev/null --max-time 5 "http://127.0.0.1:$LEZ_LEZ_EXPLORER_PORT/"; do
+  (( $(date +%s) < explorers_deadline )) || break
+  sleep 2
+done
 python3 scripts/verify-explorers.py --evidence-dir runtime/evidence \
   --btc "http://127.0.0.1:$LEZ_BTC_EXPLORER_PORT" --lez "http://127.0.0.1:$LEZ_LEZ_EXPLORER_PORT"
 report "$?" "explorer transaction display"

@@ -1,0 +1,62 @@
+[08:49:04] === zec-concurrent (stamp 1794469744)
+[08:49:05] preflight: indexer historical reads
+[08:49:05]   indexer serves historical reads at the tip (2639)
+[08:49:05] preflight: LEZ finality check waived by request
+[08:49:05]   provisioning a ZEC corridor with 2 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[08:49:26]     [zec-provision 07:49:25]   maker sidecar answers on 127.0.0.1:19903
+[08:49:26]     [zec-provision 07:49:26]   taker sidecar answers on 127.0.0.1:19904
+[08:49:26]     [zec-provision 07:49:26]   maker sidecar answers on 127.0.0.1:19901
+[08:49:26]     [zec-provision 07:49:26]   taker sidecar answers on 127.0.0.1:19902
+[08:49:26]       maker_health: ready=True degraded=False
+[08:49:26]     [zec-provision 07:49:26]   Taker lists zec-devnet-offer-1794469745 zec-devnet-offer-1794469745-b ; corridor zec-devnet-1794469745 is live
+[08:49:26]   corridor zec-devnet-1794469745 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-1794469745, zebra tip 253, Zcash refund height 262
+[08:49:26]   corridor zec-devnet-1794469745 entry 1 (deterministic-local-devnet-v5): offer zec-devnet-offer-1794469745-b, zebra tip 253, Zcash refund height 262
+[08:49:26]   Taker took zec-devnet-offer-1794469745: swap zec-devnet-s (not_activated)
+[08:49:26]   receipt: swap zec-devnet-swap-1794469745, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794469745/actor/taker/actor-config.json
+[08:49:27]   Taker took zec-devnet-offer-1794469745-b: swap zec-devnet-s (not_activated)
+[08:49:27]   receipt: swap zec-devnet-swap-1794469745-b, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794469745-b/actor/taker/actor-config.json
+[08:49:27]   both taken: zec-devnet-swap-1794469745 and zec-devnet-swap-1794469745-b; driving both Taker actors in turn
+[08:49:27]   taker zec-devnet-swap-1794469745: not_activated (gen 0) | actor at - | maker: leased | zebra 253
+[08:49:27]   taker zec-devnet-swap-1794469745-b: not_activated (gen 0) | actor at - | maker: queued | zebra 253
+[08:49:27]   [0 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)): zec-devnet-s not_activated (actor at -); zec-devnet-s not_activated (actor at -) | LEZ finalized 2645, tip 2650 (5 unfinalized) [heartbeat]
+[08:49:37]   taker zec-devnet-swap-1794469745: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 253
+[08:49:38]   taker zec-devnet-swap-1794469745-b: awaiting_first_lock (gen 0) | actor at offered | maker: offered | zebra 253
+[08:49:38]   [10 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)): zec-devnet-s awaiting_first_lock (actor at offered); zec-devnet-s awaiting_first_lock (actor at offered) | LEZ finalized 2661, tip 2666 (5 unfinalized) [heartbeat]
+[08:49:48]   taker zec-devnet-swap-1794469745: refund_available (gen 1) | actor at taker_lock_confirmed | maker: offered | zebra 253
+[08:49:48]   zebra at 253: not mining, the Maker's Zcash funding is not out yet
+[08:49:48]   [21 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)): zec-devnet-s refund_available (actor at taker_lock_confirmed); zec-devnet-s awaiting_first_lock (actor at offered) | LEZ finalized 2661, tip 2666 (5 unfinalized) [heartbeat]
+[08:49:59]   taker zec-devnet-swap-1794469745-b: refund_available (gen 1) | actor at taker_lock_confirmed | maker: offered | zebra 253
+[08:49:59]   zebra at 253: not mining, the Maker's Zcash funding is not out yet
+[08:49:59]   [31 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)): zec-devnet-s refund_available (actor at taker_lock_confirmed); zec-devnet-s refund_available (actor at taker_lock_confirmed) | LEZ finalized 2679, tip 2682 (3 unfinalized) [heartbeat]
+[08:50:09]   zebra: mined 1 block(s) → height 254 (mempool had ['a876755ef689', 'e63e9a61cb49'])
+[08:50:09]   zebra: mined 1 block(s) → height 255 (Taker waits for Zcash funding depth (actor at taker_lock_confirmed))
+[08:50:19]   taker zec-devnet-swap-1794469745: refund_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 255
+[08:50:19]   zebra: mined 1 block(s) → height 256 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[08:50:20]   taker zec-devnet-swap-1794469745-b: refund_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 256
+[08:50:20]   zebra: mined 1 block(s) → height 257 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[08:50:20]   [52 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)): zec-devnet-s refund_available (actor at both_legs_locked); zec-devnet-s refund_available (actor at both_legs_locked) | LEZ finalized 2695, tip 2698 (3 unfinalized) [heartbeat]
+[08:50:30]   taker zec-devnet-swap-1794469745: claim_available (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 257
+[08:50:30]   zebra: mined 1 block(s) → height 258 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[08:50:30]   [63 s] waiting for 2 swaps to reach claim_available (two swaps: (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim)): zec-devnet-s claim_available (actor at claim_evidence_available); zec-devnet-s refund_available (actor at both_legs_locked) | LEZ finalized 2695, tip 2698 (3 unfinalized) [heartbeat]
+[08:50:40]   zebra: mined 1 block(s) → height 259 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[08:50:51]   taker zec-devnet-swap-1794469745-b: claim_available (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 259
+[08:50:51]   Maker's Zcash funding for zec-devnet-s: e63e9a61cb49b2a47b6716f541657fd995b661dfbce0dcc5f7d7a265b5a1a3fe in zebra block 254
+[08:50:51]   Maker's Zcash funding for zec-devnet-s: a876755ef689b8e03f03f96421f7103b78296b16f8d62fee54b0fb682ad009be in zebra block 254
+[08:50:51]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[08:50:51]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[08:50:51]   taker zec-devnet-swap-1794469745: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 259
+[08:50:51]   zebra: mined 1 block(s) → height 260 (mempool had ['3e3d21e96c86', '4c38949731db'])
+[08:50:52]   taker zec-devnet-swap-1794469745-b: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 260
+[08:50:52]   [0 s] waiting for 2 swaps to reach completed (two claim inclusions): zec-devnet-s claim_in_progress (actor at claim_evidence_available); zec-devnet-s claim_in_progress (actor at claim_evidence_available) | LEZ finalized 2709, tip 2714 (5 unfinalized) [heartbeat]
+[08:51:02]   taker zec-devnet-swap-1794469745: completed (gen 4) | actor at completed | maker: completed | zebra 260
+[08:51:02]   taker zec-devnet-swap-1794469745-b: completed (gen 4) | actor at completed | maker: completed | zebra 260
+[08:51:02]   Taker's Zcash claim for zec-devnet-s: 4c38949731dbdad9c6667b11c492c010e2a28af619d26803a8b8d65790748ca2 in zebra block 260
+[08:51:02]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2728, tip 2731 (3 unfinalized) [heartbeat]
+[08:51:02]   both Nodes report zec-devnet-s completed
+[08:51:02]   Taker's Zcash claim for zec-devnet-s: 3e3d21e96c86e9cdb6d4c44f01e6af52fc4c9995bdbedb62e8e0ced7b2b78f06 in zebra block 260
+[08:51:03]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2728, tip 2731 (3 unfinalized) [heartbeat]
+[08:51:03]   both Nodes report zec-devnet-s completed
+[08:51:03]   zec-devnet-s: the Taker re-planned its LEZ lock 0 times
+[08:51:03]   zec-devnet-s: LEZ lez_initialize re-plan 1: nonce 22 → 23, tx f6788d089272 → 533c304d2f15
+[08:51:03]   zec-devnet-s: LEZ lez_initialize re-plan 2: nonce 23 → 24, tx 533c304d2f15 → 039a60dbe260
+[08:51:03] === zec-concurrent: passed in 118s
