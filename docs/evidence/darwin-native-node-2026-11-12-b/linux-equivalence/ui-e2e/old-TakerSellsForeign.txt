@@ -1,0 +1,63 @@
+
+[12:00:00] === happy (TakerSellsForeign)
+
+[12:00:00] Maker desk publishes TakerSellsForeign offers until two are pending
+  ✓ step
+1 passed, 0 failed
+
+[12:00:00] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  ✓ step
+1 passed, 0 failed
+   abababababababababababababababababababababababababababababababab completed 4 -
+
+[12:00:00] Taker desk: lock_btc on abababababab
+  ✓ step
+1 passed, 0 failed
+
+[12:00:00] Maker desk shows abababababab at awaiting_taker_claim
+  ✓ step
+1 passed, 0 failed
+
+[12:00:00] Taker desk: claim_lez on abababababab
+  ✓ step
+1 passed, 0 failed
+
+[12:00:00] Maker desk shows abababababab at completed
+  ✓ step
+1 passed, 0 failed
+
+[12:00:00] Taker desk shows abababababab at completed
+  ✓ step
+1 passed, 0 failed
+
+[12:00:00] === happy (TakerSellsForeign): passed in 0s
+exit 0
+== calls
+date ["-u", "+%s"]
+date ["-u", "+%H:%M:%S"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "-e", "M3_UI_DIRECTION=TakerSellsForeign", "-e", "M3_UI_PAIR=Bitcoin", "-e", "DESK_DEBUG=0", "lez-maker-node", "node", "/ui-tests/verify.mjs", "maker"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "-e", "M3_UI_DIRECTION=TakerSellsForeign", "-e", "M3_UI_PAIR=Bitcoin", "-e", "DESK_DEBUG=0", "-e", "PREPARE_INTERACTIVE_BTC=1", "-e", "INTERACTIVE_OFFER_ID=", "lez-taker-node", "node", "/ui-tests/verify.mjs", "taker"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "-e", "M3_UI_DIRECTION=TakerSellsForeign", "-e", "M3_UI_PAIR=Bitcoin", "-e", "DESK_DEBUG=0", "-e", "INTERACTIVE_ACTION=lock_btc", "-e", "INTERACTIVE_SWAP_ID=abababababababababababababababababababababababababababababababab", "lez-taker-node", "node", "/ui-tests/verify.mjs", "taker"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "-e", "M3_UI_DIRECTION=TakerSellsForeign", "-e", "M3_UI_PAIR=Bitcoin", "-e", "DESK_DEBUG=0", "-e", "INTERACTIVE_ACTION=wait", "-e", "INTERACTIVE_STATE=awaiting_taker_claim", "-e", "INTERACTIVE_SWAP_ID=abababababababababababababababababababababababababababababababab", "-e", "INTERACTIVE_EXPECT_LABEL=Waiting for the Taker's LEZ claim", "lez-maker-node", "node", "/ui-tests/verify.mjs", "maker"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "-e", "M3_UI_DIRECTION=TakerSellsForeign", "-e", "M3_UI_PAIR=Bitcoin", "-e", "DESK_DEBUG=0", "-e", "INTERACTIVE_ACTION=claim_lez", "-e", "INTERACTIVE_SWAP_ID=abababababababababababababababababababababababababababababababab", "lez-taker-node", "node", "/ui-tests/verify.mjs", "taker"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "-e", "M3_UI_DIRECTION=TakerSellsForeign", "-e", "M3_UI_PAIR=Bitcoin", "-e", "DESK_DEBUG=0", "-e", "INTERACTIVE_ACTION=wait", "-e", "INTERACTIVE_STATE=completed", "-e", "INTERACTIVE_SWAP_ID=abababababababababababababababababababababababababababababababab", "-e", "INTERACTIVE_EXPECT_LABEL=", "lez-maker-node", "node", "/ui-tests/verify.mjs", "maker"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "-e", "M3_UI_DIRECTION=TakerSellsForeign", "-e", "M3_UI_PAIR=Bitcoin", "-e", "DESK_DEBUG=0", "-e", "INTERACTIVE_ACTION=wait", "-e", "INTERACTIVE_STATE=completed", "-e", "INTERACTIVE_SWAP_ID=abababababababababababababababababababababababababababababababab", "lez-taker-node", "node", "/ui-tests/verify.mjs", "taker"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "240", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_swap_list_v1\",\"params\":[{\"schema_version\":1}]}", "http://localhost/"]
+date ["-u", "+%s"]
+date ["-u", "+%H:%M:%S"]

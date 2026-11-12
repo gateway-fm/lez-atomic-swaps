@@ -30,6 +30,14 @@
 #                  and both desks show it, then started again (#112; not in `all`)
 #   all            every scenario in sequence (stops at the first failure)
 #
+# With LEZ_UI_NATIVE_RUN_ROOT set, both desks are in one Basecamp on this
+# host (its QML inspector at QML_INSPECTOR_HOST/QML_INSPECTOR_PORT, the
+# qt-mcp test framework at QT_MCP_FRAMEWORK), whose lez_swap_node runs both
+# Nodes natively with their sockets under that directory; only the chains are
+# in containers. Every desk step runs verify.mjs on this host; the scenarios
+# that stop or restart a party's Basecamp are refused there (one Basecamp
+# holds both parties).
+#
 # replay and wrong-inputs have no desk equivalent: a desk sends one request per
 # click and offers only the actions the Node reports. The refund scenarios need
 # the fast timing profile (LEZ_TIMING_PROFILE=fast scripts/up.sh).
@@ -58,6 +66,10 @@ videos="$PWD/$LEZ_LANE_RUNTIME/evidence/videos"; segments=(); segment_index=0; s
 #   LEZ_CONTAINER_PREFIX=lez-testnet LEZ_REPAIR_INDEXER=0 LEZ_EXPORT_EVIDENCE=0
 read -r -a stack_compose <<< "${LEZ_STACK_COMPOSE_ARGS:---env-file runtime/runtime.env}"
 container_prefix="${LEZ_CONTAINER_PREFIX:-lez}"
+native_run="${LEZ_UI_NATIVE_RUN_ROOT:-}"
+# in_node <role> <command...>: where the role's Node runs (its container, or this host)
+in_node() { local role="$1"; shift; if [[ -n "$native_run" ]]; then "$@"; else docker exec "$container_prefix-$role-node" "$@"; fi; }
+node_socket() { if [[ -n "$native_run" ]]; then echo "$native_run/$1/node.sock"; else echo "/run/lez/$1/node.sock"; fi; }
 maker_node="$container_prefix-maker-node"; taker_node="$container_prefix-taker-node"
 case "$direction" in TakerSellsForeign|TakerSellsLez) ;; *) echo "--direction must be TakerSellsForeign or TakerSellsLez" >&2; exit 64 ;; esac
 if [[ "$direction" == TakerSellsLez ]]; then
@@ -149,6 +161,13 @@ ui() { # ui <role> [ENV=VALUE...]: one step on the desk the role's own Basecamp 
     docker exec "$container" sh -c "rm -f /tmp/lez-recordings/$segment.*" >/dev/null 2>&1 || true
     return "$status"
   fi
+  if [[ -n "$native_run" ]]; then
+    local kv native_env=(BASECAMP_ROLE="$role")
+    for kv in "${envs[@]}"; do [[ "$kv" == -e ]] || native_env+=("$kv"); done
+    env "${native_env[@]}" node "$PWD/ui-tests/verify.mjs" "$role" </dev/null 2>&1 |
+      grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:|RETRIED-PRESS|pressing again' | grep -viE 'locale'
+    return "${PIPESTATUS[0]}"
+  fi
   docker exec "${envs[@]}" "$container" node /ui-tests/verify.mjs "$role" </dev/null 2>&1 |
     grep -E '✓|✗|^    [a-zA-Z]|interactive|Expected|passed|failed|has not|Error|DESK|reached|refused|not ready|label:|RETRIED-PRESS|pressing again' | grep -viE 'locale'
 }
@@ -180,7 +199,7 @@ join_video() {
 taker_swaps() { # the Taker Node's own view: "<swap_id> <state> <generation> <action>"
   local reply
   for _ in 1 2 3 4 5; do
-    reply="$(docker exec "$container_prefix-taker-node" curl -sS --max-time 240 --unix-socket /run/lez/taker/node.sock \
+    reply="$(in_node taker curl -sS --max-time 240 --unix-socket "$(node_socket taker)" \
       -H 'content-type: application/json' \
       --data '{"jsonrpc":"2.0","id":1,"method":"taker_swap_list_v1","params":[{"schema_version":1}]}' http://localhost/ 2>/dev/null)"
     [ -n "$reply" ] && break
@@ -213,7 +232,7 @@ wait_desk() { # wait_desk <role>: the role's Basecamp has opened its desk again 
   fail "the $1 desk was not opened again after its Basecamp started"
 }
 owner_ready() { # owner_ready <role> <method> <params>: the Node answers its owner
-  docker exec "$container_prefix-$1-node" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
+  in_node "$1" curl -sS --max-time 30 --unix-socket "$(node_socket "$1")" \
     -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null | grep -q '"result"'
 }
@@ -297,6 +316,8 @@ finish() { # finish <swap_id>: both desks show the swap completed, then export t
 }
 export_evidence() { # export_evidence <swap_id>
   [[ "${LEZ_EXPORT_EVIDENCE:-1}" == 1 ]] || return 0
+  # (export-node-evidence.py reads the Nodes in their containers)
+  [[ -z "$native_run" ]] || { log "evidence export skipped: native Nodes"; return 0; }
   if [[ "$pair" == Bitcoin ]]; then
     python3 scripts/export-node-evidence.py --swap "$1" || fail "evidence export"
   else
@@ -769,6 +790,12 @@ scenario_maker_refund() {
 run_one() {
   local name="$1" started; started="$(date -u +%s)"
   log "=== $name ($direction)"
+  if [[ -n "$native_run" ]]; then
+    case "$name" in
+      happy|zec-happy|concurrent|maker-refund|zec-maker-refund|zec-concurrent|zec-concurrent-staggered) ;;
+      *) fail "$name stops or restarts a party's Basecamp; with both desks in one native Basecamp (LEZ_UI_NATIVE_RUN_ROOT) it is not run" ;;
+    esac
+  fi
   if [[ "${LEZ_REPAIR_INDEXER:-1}" == 1 ]]; then bash scripts/repair-indexer.sh >/dev/null || fail "repair-indexer.sh"; fi
   case "$name" in
     happy) scenario_happy ;;

@@ -1,0 +1,74 @@
+
+[19:03:17] === happy (TakerSellsForeign)
+
+[19:03:17] Maker desk publishes TakerSellsForeign offers until two are pending
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+   0dd421b08315159472d167dfeee132aac3db9ed01b9c000c794e753750e48754 refunded 2 -
+   1b2bbcec74fbc01bb11584e84fde6aa1e9f15cb63cdd5e68293a53ac01b50b16 completed 4 -
+   2d3792b272fc26a24c4ef917cf0ebdcbfade8c6a3c095e981d13f89c3acf7da5 completed 4 -
+   338c9b8ff6197caaae5ae78c9f78ad19b0665616bf3b31203d2e716c0c81b7f4 completed 4 -
+   451de6b4356b73702c7e67b333b7d1c60ef8d8135913b0ebc346baab2ad3d77d refunded 4 -
+   553f2bf01e7f6944465537f63bc19ac19afcf325f7f4dfab300d3f688731bb97 completed 4 -
+   649b02319e8e3c48c88dc8ade215b00392c19c9eb08ef035442e1ba1b03ad3ed completed 4 -
+   7da90e4b41282548bf70a32c048fede7d8638241006afbce7737e3ec73286c14 completed 4 -
+   979df3618dfdf54e3c7dd1c46e0afe7e224e24b0844bb85f00a7984b1b03b743 completed 4 -
+   bc7b153635ef9a938e2bd3f3e0250acdb310110ba805664e39671e6743cb18a1 completed 4 -
+   c7ac6e6dc8283371eee2da865f796cd3194e3591286f873d058e48c6872b1b4f completed 4 -
+   e032160943a3f81ed58015c042f3303ae8550231788f19b83f82343e6d227497 completed 4 -
+   ea2a503e466ef5552ed53a013c6b587ce4b47e1755724e7cb90be18ec65cb32a completed 4 -
+   zec-devnet-swap-1794507927 attention_required 0 -
+   zec-devnet-swap-1794508200 attention_required 0 -
+   zec-devnet-swap-1794509460 attention_required 0 -
+   zec-devnet-swap-1794509525 attention_required 0 -
+   zec-devnet-swap-1794509579 attention_required 0 -
+   zec-devnet-swap-1794509658 attention_required 0 -
+   zec-devnet-swap-1794509724 attention_required 0 -
+   zec-devnet-swap-1794509809 refunded 4 -
+
+[19:03:22] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: wallet-indexed BTC order book is ready
+  [32m✓[0m taker: real Node health
+  [32m✓[0m taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   c973df017bbc77fc5c2f84376753e3a1b3d05be47e16835d27a0adc532406dff awaiting_first_lock 0 -
+
+[19:03:26] Taker desk: lock_btc on c973df017bbc
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform lock_btc
+2 passed, 0 failed
+
+[19:03:27] Maker desk shows c973df017bbc at awaiting_taker_claim
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  [32m✓[0m maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[19:03:50] Taker desk: claim_lez on c973df017bbc
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: perform claim_lez
+2 passed, 0 failed
+
+[19:03:52] Maker desk shows c973df017bbc at completed
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+  Node-owned swap: Maker reached completed (completed)
+  [32m✓[0m maker: wait completed reached by the Node
+4 passed, 0 failed
+
+[19:04:03] Taker desk shows c973df017bbc at completed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+  [32m✓[0m taker: swap reaches completed
+2 passed, 0 failed
+
+[19:04:03] evidence export skipped: native Nodes
+
+[19:04:03] === happy (TakerSellsForeign): passed in 46s
+exit 0

@@ -1,0 +1,17 @@
+[19:11:51] === happy (stamp 1794507111)
+[19:11:51] preflight: indexer historical reads
+[19:11:52]   indexer serves historical reads at the tip (11547)
+[19:11:52] preflight: the finality heartbeat saw finality move 0 s ago (finalized 11541)
+[19:11:52]   Maker published offer-e2e-1794507111
+[19:11:53]   Taker took offer-e2e-1794507111: swap 338c9b8ff619 (not_activated)
+[19:11:53]   Taker locked lez: 43bfe6e23f0f (replay=False)
+[19:11:53]   [0 s] waiting for the Taker's 338c9b8ff619 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker offered | LEZ finalized 11541, tip 11544 (3 unfinalized) [heartbeat]
+[19:12:02]   [9 s] waiting for the Taker's 338c9b8ff619 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 11541, tip 11544 (3 unfinalized) [heartbeat]
+[19:12:06]   [12 s] waiting for the Taker's 338c9b8ff619 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 11557, tip 11560 (3 unfinalized) [heartbeat]
+[19:12:06]   Taker claimed Bitcoin (replay=False)
+[19:12:06]   [0 s] waiting for the Taker's 338c9b8ff619 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 11557, tip 11560 (3 unfinalized) [heartbeat]
+[19:12:18]   [12 s] waiting for the Taker's 338c9b8ff619 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 11557, tip 11560 (3 unfinalized) [heartbeat]
+[19:12:18]   both Nodes report 338c9b8ff619 completed
+[19:12:18]   the Bitcoin claim 1afc2bf5e290 is a Taproot key-path spend: one 64-byte signature, no script
+[19:12:18] === happy: passed in 27s
+exit 0

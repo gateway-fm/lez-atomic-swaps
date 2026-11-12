@@ -421,6 +421,223 @@ under one that never reaps (a container whose pid 1 is not an init) the next
 host waited the whole 10 s grace for the zombie before starting the Node.
 `end_group` now waits only for members that still run.
 
+## The Node on macOS
+
+How a role's Node starts from its Logos package, step by step, and what in
+each step assumes Linux or a container.
+
+1. **The desk asks.** With `LEZ_<ROLE>_SIGNER_SOCKET` in the host's
+   environment (`apps/basecamp/common/lez_role_signer.h`) the desk opens or
+   creates the LEZ wallet in `lez_core` under `LEZ_WALLET_DIR`, imports the
+   role's key from `LEZ_<ROLE>_SIGNER_IDENTITY/lez-signer.key`, and has
+   `lez_swap_node.serve_signer(socket, account)` answer the Node's signing
+   requests on that socket. With `LEZ_<ROLE>_NODE_LAUNCHER=package`
+   (`lez_role_node.h`) it then calls `lez_<role>_node.launcher()`, which
+   returns `<modulePath>/bin/node-entrypoint.sh` when that file is
+   executable (`modules/lez-<role>-node/src/*_impl.cpp`), and
+   `lez_swap_node.start_node(role, launcher, LEZ_<ROLE>_NODE_LOG,
+   LEZ_<ROLE>_NODE_HOLD)`. Headless, the same calls go through
+   `logosctl call`. Nothing in this step is platform-specific.
+2. **The supervisor starts the launcher.** `lez_swap_node` forks; the child
+   becomes its own process-group leader, gets the host's whole environment
+   plus `LEZ_SWAP_NODE=<instance dir>:<role>`, stdin `/dev/null`, stdout and
+   stderr appended to the log file, and `execve`s `<launcher> <role>`. The
+   launcher's shebang is `#!/usr/bin/env bash`: the first `bash` on the
+   host's `PATH`. On Linux the child asks for `PR_SET_PDEATHSIG`; on macOS a
+   watcher process waits on kqueue for the host's exit and then ends the
+   Node's group. The group is recorded in the module's instance directory,
+   and a per-role `flock` keeps a second host from starting a second Node.
+3. **The launcher renders the configuration.** `node-entrypoint.sh` reads,
+   at fixed container paths: the identity (`/run-lez-identity/identity.json`;
+   `lez-signer.key` only when no signer socket is given; the Maker's
+   `zcash.key`, which is also its Delivery signing key), the market bootstrap
+   manifest (`/run-market/market-bootstrap.env`: escrow program and LEZ
+   genesis), the Bitcoin Core RPC cookie (`/run-config/btc-rpc-cookie`), and
+   the prepared ZEC corridor under `/var/lib/lez/zec`. It writes owner-private
+   copies and the Node's configuration (`btc/runtime.json`,
+   `btc/btc-role.json`, the Taker's `role.json`) under the state directory
+   `/var/lib/lez/<role>`, and the Maker's public Delivery identity into
+   `/delivery`. From the environment: `LEZ_SIDECAR_PORT_BASE` and
+   `LEZ_V02_CHANNEL_ID` (required), the sequencer and indexer URLs and route,
+   the Bitcoin wallet and claim destination, the recovery timing profile,
+   `LEZ_WALLET_SIGNER_SOCKET` and `LEZ_NODE_LOG_FILE`.
+4. **The launcher starts helpers.** Four `socat` forwards from
+   `127.0.0.1:{18443,3040,8779,18232}` to the Compose hosts `bitcoin-core`,
+   `sequencer`, `indexer` and `zebra` (the Bitcoin adapter and the sidecars
+   accept only loopback endpoints), and one LEZ sidecar
+   (`lez-v02-bridge-poc`) per prepared ZEC corridor, each under
+   `setpriv --pdeathsig TERM` where `setpriv` exists. It waits for Bitcoin
+   Core's `getblockcount`, asks it for the genesis hash and, with
+   `LEZ_BTC_CLAIM_DESTINATION=wallet`, for a claim address.
+5. **The launcher becomes the Node.** `exec lez-<role>-node`: the Node keeps
+   the launcher's pid, so it leads the group. It creates the owner socket
+   `/run/lez/<role>/node.sock` (`maker_health`, `taker_health`, the swap
+   API), the ready file `/run/lez/<role>/ready` and, for the Maker, the Chat
+   socket `/run/lez/maker/chat.sock`. The Maker writes its Delivery offers
+   into `/delivery`; the Taker reads them there and reaches the Maker over
+   that Chat socket, which is why Compose mounts the Maker's `delivery_dir`
+   and `maker_socket` volumes into the Taker. The Node starts the BTC actors
+   (`lez-btc-<role>-actor`, ZEC actors for ZEC swaps) and one LEZ sidecar per
+   swap itself, on loopback ports from `LEZ_SIDECAR_PORT_BASE` (400 ports).
+   The Node's resource use is read by the module (`node_stats`), from `/proc`
+   on Linux and libproc on macOS.
+
+The paths above are the launcher's Linux defaults. Each has its own
+variable, and on macOS (`uname -s` is `Darwin`) the defaults sit under one
+directory, `LEZ_NODE_HOME` (`~/Library/Application Support/LEZ`), with both
+roles side by side so the Taker finds the Maker's files as it does in
+Compose:
+
+| what | variable | Linux default | macOS default (under `LEZ_NODE_HOME`) |
+|---|---|---|---|
+| state (0700) | `LEZ_NODE_STATE_DIR` | `/var/lib/lez/<role>` | `<role>` |
+| sockets, ready file | `LEZ_NODE_RUN_ROOT` | `/run/lez` | `run` |
+| prepared ZEC corridor | `LEZ_ZEC_STATE_DIR` | `/var/lib/lez/zec` (the role's own volume) | `zec` (both roles; each reads its half) |
+| ZEC sidecars' state, log `<dir>.log` | `LEZ_ZEC_SIDECAR_DIR` | `<ZEC dir>/sidecar` | `zec/sidecar-<role>` |
+| identity | `LEZ_NODE_IDENTITY_DIR` | `/run-lez-identity` | `identity/<role>` |
+| market manifest | `LEZ_MARKET_MANIFEST` | `/run-market/market-bootstrap.env` | `market-bootstrap.env` |
+| Bitcoin RPC cookie | `LEZ_BTC_RPC_COOKIE_FILE` | `/run-config/btc-rpc-cookie` | `btc-rpc-cookie` |
+| Delivery directory | `LEZ_DELIVERY_DIR` | `/delivery` | `delivery` |
+| chain hosts, sequencer and indexer URLs | `LEZ_*_HOST`, `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL` | the Compose service names | `127.0.0.1` |
+
+Every setting the launcher reads (the paths above, `LEZ_SIDECAR_PORT_BASE`,
+`LEZ_WALLET_SIGNER_SOCKET`, `LEZ_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`,
+`LEZ_NODE_LOG_FILE`, the chain endpoints and the timing profile) can also be
+given for one role: `LEZ_MAKER_<NAME>` or `LEZ_TAKER_<NAME>` wins over
+`LEZ_<NAME>` for that role. A role's container sets the shared names for its
+one role, as before; one host with both roles (one Basecamp with both desks,
+one `logosctl` session) sets the role-specific ones, from one environment.
+
+A chain host that is `127.0.0.1` or `localhost` gets no `socat` forward: the
+service is already on this host's loopback (on a Mac the chains' containers
+publish their ports there). The launcher runs under any bash from 3.2 on
+(macOS's `/bin/bash`), sums with `shasum -a 256` where `sha256sum` is
+missing, sizes the log with `wc -c`, creates its state and socket
+directories when they are missing, and refuses a socket directory too long
+for a Unix socket path (104 bytes on macOS). Its helpers are `exec`ed from
+the launcher's own background jobs, so each is a child of the Node, as
+before. In the role's container image the launcher does exactly what it did
+before these variables existed: run before and after in
+`lez-maker-node:local` with the Node, its CLI and `curl` faked, both roles
+printed the same Node arguments, helpers, files, modes and rendered
+configuration. `deploy/tests/test_role_node_launcher.py` runs it as Linux
+(forwards under `setpriv --pdeathsig`, each the Node's child; none for a
+loopback host; none under `setpriv` where `setpriv` is missing) and as macOS
+(both roles under one home, under `/bin/bash` 3.2 where present).
+
+Weaker on macOS than on Linux, for the launcher:
+
+- **Helpers and the Node.** Linux: each helper (forward, ZEC sidecar) gets
+  `SIGTERM` from the kernel when the Node exits (`--pdeathsig`). macOS: there
+  is no such signal; a helper ends when `lez_swap_node` ends the Node's
+  process group after the Node exits, or when the kqueue watcher ends the
+  group after the host exits. A helper that leaves the group itself is not
+  ended. On macOS there are no forwards, so this concerns only the ZEC
+  sidecars.
+- **No privilege boundary from the container.** On Linux the Node runs as
+  its own user in a read-only, capability-less container that sees only its
+  role's mounts. On macOS it runs as the desktop user, beside both roles'
+  files: the other role's state is protected from it by nothing but the
+  same user's file modes (0700, 0600), which do not separate processes of
+  one user.
+- **The Maker's Chat socket.** Compose shares it with the Taker through a
+  volume only those two containers mount; on macOS it is a file under
+  `LEZ_NODE_HOME/run/maker` that every process of the user can connect to.
+- **The ZEC corridor.** Compose gives each role a volume with the shared
+  half and its own half only; on macOS both roles read one corridor root
+  (`LEZ_NODE_HOME/zec`), so each role's ZEC keys sit beside the other's,
+  separated only by file modes. The provisioners' copies of both roles' keys
+  are removed after provisioning, as the staging volume is in Compose.
+
+The darwin-arm64 role package comes from
+`deploy/scripts/package-role-node-darwin.sh <role> <plugin.lgx> <out.lgx>`,
+run on an Apple-silicon Mac with the plugin package the module builder built
+there (variant `darwin-arm64`). It builds the role's executables from the
+checkout with cargo (release, `--locked`; the sidecar with toolchain 1.96.0),
+refuses anything that is not an arm64 Mach-O executable, strips each with
+the macOS `strip` and signs it again ad hoc (`codesign --sign -`: stripping
+breaks the linker's signature, and Apple silicon runs no unsigned code),
+adds the launcher and `bin/payload.json`, and writes the variant with the
+lgx that built the plugin (found through the plugin's Nix derivation, or
+`LGX`), then `lgx verify` and the execute-bit check of the Linux script. The
+executables link only macOS system libraries. The two scripts list the same
+executables (`deploy/tests/test_role_node_package.py`); the Linux script is
+unchanged. The Linux images package debug builds; this one packages release
+builds (the Maker package is 31 MB, the Taker's 44 MB). A package carries
+one platform: a release with both would merge them with `lgx merge`, which
+has not been run.
+
+Running both roles on one Mac, headless, against the devnet's chains in
+Docker (only the chain containers running; the containers' Nodes stopped,
+since the native Nodes take the same identities):
+
+- **One Logos host for both roles.** One `logosctl` session (or one
+  Basecamp with both desks) runs both Nodes under one `lez_swap_node`, with
+  one LEZ wallet in `lez_core` holding both roles' accounts and one signer
+  socket per role. The environment sets the role-specific names
+  (`LEZ_MAKER_SIDECAR_PORT_BASE=19000`, `LEZ_TAKER_SIDECAR_PORT_BASE=19500`,
+  `LEZ_<ROLE>_WALLET_SIGNER_SOCKET`, `LEZ_<ROLE>_BTC_WALLET`,
+  `LEZ_<ROLE>_NODE_LOG_FILE`) and one `LEZ_NODE_HOME`, so the Taker finds the
+  Maker's Delivery directory and Chat socket. The two roles' sidecar port
+  ranges are those of Compose and do not meet on the shared loopback. The
+  Maker is started first: the Taker reads the Maker's Delivery identity when
+  it starts.
+- **Inputs in `LEZ_NODE_HOME`.** `identity/<role>/` (`identity.json`,
+  `lez-signer.key`, the Maker's `zcash.key`), `market-bootstrap.env` and
+  `btc-rpc-cookie`, copied 0600 from the stack's `runtime/`.
+- **Session.** `logosctl package install` of `lez_core` (the darwin build),
+  `lez_swap_node` and `lez_<role>_node`; `module load lez_<role>_node`; then
+  the desk's calls: `lez_core create_new` (or `open`),
+  `import_public_account <key>`, `lez_swap_node serve_signer <socket>
+  <account>`, `lez_<role>_node launcher`, `lez_swap_node start_node <role>
+  <launcher> <log> <hold>`. The daemon's `PATH` was `/usr/bin:/bin:...`, so
+  the launcher ran under `/bin/bash` 3.2. `logosctl call` takes arguments on
+  its command line only, so headless the role's key is briefly in the
+  `logosctl` process's arguments, visible to every process of the same user
+  (on Linux too). The desk does not do this: it hands the key to `lez_core`
+  over the Logos API inside Basecamp, and no process's arguments carried it
+  while the desks opened (sampled every 20 ms).
+- **Basecamp.** Both desks in one Basecamp start both signers and both
+  Nodes from the same environment; the desks and modules are installed into
+  the user directory as Basecamp's package manager lays them out. The
+  release Basecamp 0.2.3 lists and opens the desks but has no QML inspector,
+  so the UI tests drive the 0.2.0-RC3 build with the inspector (the version
+  the images run), built on the Mac from the basecamp flake
+  (`bin-bundle-dir-inspector`). That build's inspector listens on port 3768
+  on every interface (IPv6 `*`), so it is for a test machine only.
+- **Swaps.** `LEZ_E2E_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run
+  deploy/scripts/node-e2e.py <scenario>`: the harness reaches the native
+  Nodes' owner sockets with the host's curl, runs what it would run in a
+  Node's container beside the Node, stops a Node with its supervisor's hold
+  file and restarts one by ending it; ZEC corridors come from
+  `zec-provision.sh --native-home $LEZ_NODE_HOME`. The scenarios that cut a
+  loopback forward or the Chat socket in a container are refused: a native
+  Node has none. `LEZ_UI_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run
+  deploy/scripts/ui-e2e.sh happy` drives the two desks of one native
+  Basecamp the same way the stack's desks are driven.
+
+What ran on 2026-11-12 on an Apple-silicon Mac (macOS 26), against the
+devnet's chains in Docker:
+
+- One Logos session per role, packages from `aa240744`
+  ([darwin-native-node-2026-11-12](../evidence/darwin-native-node-2026-11-12/README.md)):
+  both Nodes ready; BTC `happy` both directions, `replay`, `wrong-inputs`;
+  the Taker's `lez_swap_node` host killed, its Node group gone in 2 s, back
+  on `module load`.
+- One Logos host for both roles, packages from `307c16f2`
+  ([darwin-native-node-2026-11-12-b](../evidence/darwin-native-node-2026-11-12-b/README.md)):
+  BTC `happy`, `restart-taker`, `restart-maker`, `survivor`, `taker-refund`,
+  `maker-refund`; ZEC `zec-happy` in both directions, `zec-restart-taker`,
+  `zec-restart-maker`, `zec-survivor`, `zec-maker-refund`: all passed. Both
+  desks in one native Basecamp started their signers and Nodes, showed the
+  Nodes connected, and a BTC swap driven through the two desks completed in
+  both directions; quitting Basecamp ended both Nodes in 2 s.
+
+Not run natively: the scenarios that cut a forward or the Chat socket in a
+container, ZEC `replay`/`wrong-inputs`/`concurrent`, the desk journeys other
+than `happy`, and anything beyond opening the desks in the release Basecamp
+0.2.3.
+
 ## Recommended order
 
 1. Done without signing: release (portable) packages for the desks, Chat and

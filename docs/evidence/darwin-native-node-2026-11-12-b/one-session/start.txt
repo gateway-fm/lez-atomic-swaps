@@ -1,0 +1,44 @@
+Daemon started (pid 9775)
+Logs: $SESSIONS/both/logs/daemon.log
+$ package install logos-lez_core-module-lib.lgx -y
+{"installed":["lez_core"],"status":"ok"}
+$ package install logos-lez_swap_node-module-lib.lgx -y
+{"installed":["lez_swap_node"],"status":"ok"}
+$ package install lez_maker_node.lgx -y
+{"installed":["lez_maker_node"],"status":"ok"}
+$ package install lez_taker_node.lgx -y
+{"installed":["lez_taker_node"],"status":"ok"}
+$ module load lez_maker_node
+{"dependencies_loaded":["lez_swap_node","lez_core"],"module":"lez_maker_node","status":"ok","version":"0.3.0"}
+$ module load lez_taker_node
+{"dependencies_loaded":[],"module":"lez_taker_node","status":"ok","version":"0.3.0"}
+$ call lez_core create_new <config> <storage> <statistics> <password>
+{"method":"create_new","module":"lez_core","result":"<redacted>","status":"ok"}
+$ call lez_core import_public_account <maker key>
+{"method":"import_public_account","module":"lez_core","result":0,"status":"ok"}
+$ call lez_swap_node serve_signer $LEZ_NODE_HOME/wallet/maker.sock 3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5
+{"method":"serve_signer","module":"lez_swap_node","result":0,"status":"ok"}
+$ call lez_core import_public_account <taker key>
+{"method":"import_public_account","module":"lez_core","result":0,"status":"ok"}
+$ call lez_swap_node serve_signer $LEZ_NODE_HOME/wallet/taker.sock 36a196d1b705f1d0cded05107c37b92537295868f3ce06f4d7ec194eff3ae54c
+{"method":"serve_signer","module":"lez_swap_node","result":0,"status":"ok"}
+$ call lez_maker_node launcher
+{"method":"launcher","module":"lez_maker_node","result":"$SESSIONS/both/modules/lez_maker_node/bin/node-entrypoint.sh","status":"ok"}
+$ call lez_swap_node start_node maker $SESSIONS/both/modules/lez_maker_node/bin/node-entrypoint.sh $LEZ_NODE_HOME/maker.out.log $LEZ_NODE_HOME/maker.hold
+{"method":"start_node","module":"lez_swap_node","result":0,"status":"ok"}
+$ call lez_taker_node launcher
+{"method":"launcher","module":"lez_taker_node","result":"$SESSIONS/both/modules/lez_taker_node/bin/node-entrypoint.sh","status":"ok"}
+$ call lez_swap_node start_node taker $SESSIONS/both/modules/lez_taker_node/bin/node-entrypoint.sh $LEZ_NODE_HOME/taker.out.log $LEZ_NODE_HOME/taker.hold
+{"method":"start_node","module":"lez_swap_node","result":0,"status":"ok"}
+$ maker_health
+{"ready":true,"degraded":false,"delivery":"available","chat":"available"}
+$ call lez_swap_node node_stats maker
+{"role":"maker","state":"running","pid":9874,"host":9840,"processes":["lez-maker-node","bash","bash","tee","tee","lez-v02-bridge-","lez-v02-bridge-","lez-v02-bridge-","lez-v02-bridge-","lez-v02-bridge-"]}
+{"sidecar_port_base":19000,"wallet_signer":{"socket":"$LEZ_NODE_HOME/wallet/maker.sock","account_id":"3c8dad490f7b2fcc9a497a8f568654f2ec49001e7cd823cfb18cd54f036a22a5"}}
+"lez-maker"
+$ taker_health
+{"ready":true,"degraded":false,"delivery":"available","chat":"available"}
+$ call lez_swap_node node_stats taker
+{"role":"taker","state":"running","pid":9942,"host":9840,"processes":["lez-taker-node","bash","bash","tee","tee","lez-v02-bridge-","lez-v02-bridge-","lez-v02-bridge-","lez-v02-bridge-","lez-v02-bridge-"]}
+{"sidecar_port_base":19500,"wallet_signer":{"socket":"$LEZ_NODE_HOME/wallet/taker.sock","account_id":"36a196d1b705f1d0cded05107c37b92537295868f3ce06f4d7ec194eff3ae54c"}}
+"lez-taker"
