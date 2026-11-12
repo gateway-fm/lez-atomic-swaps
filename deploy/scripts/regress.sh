@@ -212,21 +212,33 @@ watched() {
 profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile the test needs, empty for either
   local kind pair scenario direction
   IFS=: read -r kind pair scenario direction <<<"$1"
+  # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile: the
+  # refund journeys' (-v6) is group zec-v6, every other ZEC test runs on -v5 in `fast`.
+  if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-dealer}" == take-time ]]; then
+    case "$scenario" in zec-taker-refund|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
+    return 0
+  fi
   [[ "$pair" == btc ]] || return 0
   case "$scenario" in taker-refund|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
 }
 switches=0
 use_profile() { # use_profile <profile>: switch the standing stack to it unless it runs on it already
-  [[ -n "$1" && "$1" != "$LEZ_TIMING_PROFILE" ]] || return 0
-  switches=$((switches + 1))
-  log "    timing profile $LEZ_TIMING_PROFILE -> $1 (logs/profile-$switches.log)"
-  if ! LEZ_TIMING_PROFILE="$1" SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh >"$out/logs/profile-$switches.log" 2>&1 </dev/null; then
+  # zec-v6 keeps the timing profile and moves the Nodes' take-time ZEC profile
+  # (LEZ_ZEC_PROFILE, exported: up.sh recreates the Nodes of every lane with it)
+  local timing="$1" zec=deterministic-local-devnet-v5
+  [[ "$1" != zec-v6 ]] || { timing="$LEZ_TIMING_PROFILE"; zec=deterministic-local-devnet-v6; }
+  [[ "${LEZ_ZEC_AGREEMENT:-dealer}" == take-time ]] || zec="${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}"
+  [[ -n "$timing" ]] || return 0
+  [[ "$timing" != "$LEZ_TIMING_PROFILE" || "$zec" != "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" ]] || return 0
+  switches=$((switches + 1)); export LEZ_ZEC_PROFILE="$zec"
+  log "    timing profile $LEZ_TIMING_PROFILE -> $timing, ZEC profile $zec (logs/profile-$switches.log)"
+  if ! LEZ_TIMING_PROFILE="$timing" SKIP_UI_VERIFY=1 LEZ_NO_BANNER=1 bash scripts/up.sh >"$out/logs/profile-$switches.log" 2>&1 </dev/null; then
     # up.sh on a frozen chain cannot finish; a new chain takes the profile too
-    log "    up.sh did not switch the profile; a new chain on $1"
-    fresh_chain LEZ_TIMING_PROFILE="$1" || return 1
+    log "    up.sh did not switch the profile; a new chain on $timing"
+    fresh_chain LEZ_TIMING_PROFILE="$timing" || return 1
   fi
   load_env
-  [[ "$LEZ_TIMING_PROFILE" == "$1" ]] || { log "    runtime.env still names profile $LEZ_TIMING_PROFILE"; return 1; }
+  [[ "$LEZ_TIMING_PROFILE" == "$timing" ]] || { log "    runtime.env still names profile $LEZ_TIMING_PROFILE"; return 1; }
 }
 command_of() { # command_of <kind> <pair> <scenario> <direction>
   local pair=() record=(); [[ "$2" == zec ]] && pair=(--pair Zcash)

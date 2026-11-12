@@ -358,6 +358,8 @@ services:
       LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB: ${LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB:-25}
       LEZ_BTC_LOCK_FEE_MAX_PERCENT: ${LEZ_BTC_LOCK_FEE_MAX_PERCENT:-5}
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
+      # The ZEC profile take-time swaps are agreed under (zec-role.json).
+      LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
       # The actor supervisor's polling (gen-config.sh, per timing profile);
       # empty = the Node's defaults (5 s requeue, 30 s failure backoff).
       LEZ_MAKER_ACTOR_REQUEUE_SECONDS: ${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}
@@ -464,6 +466,8 @@ services:
       LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB: ${LEZ_BTC_LOCK_FEE_MAX_SAT_PER_VB:-25}
       LEZ_BTC_LOCK_FEE_MAX_PERCENT: ${LEZ_BTC_LOCK_FEE_MAX_PERCENT:-5}
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
+      # The ZEC profile take-time swaps are agreed under (zec-role.json).
+      LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
       # The Bitcoin observer's pause between sweeps (gen-config.sh, per timing
       # profile); empty = the Node's default (15 s).
       LEZ_TAKER_OBSERVER_SWEEP_SECONDS: ${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}

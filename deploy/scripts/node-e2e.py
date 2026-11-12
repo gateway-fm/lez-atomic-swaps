@@ -2690,6 +2690,19 @@ ZEC_REFUND_PROFILE = None if ZEC_PUBLIC else "deterministic-local-devnet-v6"
 ZEC_NU7_PROFILES = {"deterministic-local-devnet-v5", "deterministic-local-devnet-v6", "public-testnet-v2"}
 
 
+# How a Zcash scenario's agreement is made, read here only (LEZ_ZEC_AGREEMENT):
+# `dealer`, zec-provision.sh signs it for both parties and recreates the Nodes;
+# `take-time`, the Maker publishes an offer on its running Node and the Nodes
+# compose the agreement when the scenario takes it (zec_reserve_v1). What the
+# take-time path cannot serve stays on the dealer, and the log says why: the
+# public lane and the scenarios that test the static catalog itself. A
+# refund-profile corridor needs the Nodes on that profile (LEZ_ZEC_PROFILE,
+# regress.sh's ZEC profile group).
+ZEC_AGREEMENT = os.environ.get("LEZ_ZEC_AGREEMENT", "dealer")
+ZEC_CATALOG_SCENARIOS = {"zec-regenerated-catalog", "zec-tampered-catalog"}
+SCENARIO = ""  # the scenario run() is running
+
+
 def zec_current_refund_delay() -> int:
     """The LEZ refund delay of the corridor the Nodes run with (runtime/zec/current)."""
     run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
@@ -2706,12 +2719,25 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
     refund window of its own. `profile` names the agreement's ZEC profile
     (zec-provision.sh --profile; its default when None). Returns the first entry's corridor facts, or the
     entry of `swap_id` when the corridor is reused; every entry is kept in
-    ZEC_CORRIDORS."""
-    if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1" and swap_id and taker_has_take_time_swap(swap_id):
+    ZEC_CORRIDORS.
+
+    With LEZ_ZEC_AGREEMENT=take-time the corridor is an offer the Maker
+    publishes on its running Node (zec_take_time_offers); its agreement facts
+    are filled in after the scenario's own take (zec_taker_actor_config)."""
+    reuse = os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1"
+    if reuse and swap_id and taker_has_take_time_swap(swap_id):
         # A swap agreed at take time (a desk's Zcash offer) has no corridor: its
         # facts are in the Taker's swap directory.
         return zec_dynamic_corridor(swap_id, "")
-    if os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1":
+    if not reuse and ZEC_AGREEMENT == "take-time":
+        why = ("the public lane" if ZEC_PUBLIC else
+               f"{SCENARIO} tests the static catalog" if SCENARIO in ZEC_CATALOG_SCENARIOS else
+               f"the Nodes take under {ZEC_DYNAMIC_PROFILE}, not {profile}" if profile and profile != ZEC_DYNAMIC_PROFILE
+               else None)
+        if why is None:
+            return zec_take_time_offers(swaps, add)
+        log(f"  take-time agreement not used here ({why}): the dealer provisions this corridor")
+    if reuse:
         # The corridor the Nodes already run with (runtime/zec/current), for a
         # run that must not recreate them; its catalog entry must be untaken.
         log("  reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)")
@@ -2795,7 +2821,21 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
 
 
 def zec_taker_actor_config(receipt_output: str) -> str:
-    """The take wrote an acceptance receipt naming the provisioned Taker actor config."""
+    """The take wrote an acceptance receipt naming the provisioned Taker actor config.
+    A take-time corridor's receipt is known once its offer is taken: its facts
+    are read then and filled into the corridor the scenario holds."""
+    if receipt_output.startswith("take-time:"):
+        offer_id = receipt_output.split(":", 1)[1]
+        swaps = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]
+                 if s.get("offer_id") == offer_id]
+        if not swaps:
+            raise Failure(f"the take-time offer {offer_id} was not taken")
+        swaps.sort(key=lambda s: s["state"] in TERMINAL)
+        facts = zec_dynamic_corridor(swaps[0]["swap_id"], offer_id)
+        for corridor in ZEC_CORRIDORS:
+            if corridor["offer_id"] == offer_id:
+                corridor.update({key: value for key, value in facts.items() if key != "entry"})
+        receipt_output = facts["receipt_output"]
     result = subprocess.run(["docker", "exec", NODES["taker"][0], "cat", receipt_output],
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if result.returncode != 0:
@@ -3205,7 +3245,9 @@ def zec_happy_after_take(stamp: str, since: str, swap_id: str, corridor: dict) -
 # Node, the Taker takes it with its CLI, and the two Nodes compose the agreement
 # over Chat. Only the funder's Zcash output is the harness's to provide.
 
-ZEC_DYNAMIC_PROFILE = "deterministic-local-devnet-v5"   # node-entrypoint.sh zec-role.json
+# The profile the Nodes take under: node-entrypoint.sh's zec-role.json, from
+# LEZ_ZEC_PROFILE (compose.yaml; regress.sh's zec-v6 group switches it).
+ZEC_DYNAMIC_PROFILE = os.environ.get("LEZ_ZEC_PROFILE", "deterministic-local-devnet-v5")
 ZEC_PROFILE_REFUND_BLOCKS = {"deterministic-local-devnet-v5": 8, "deterministic-local-devnet-v6": 8}
 
 
@@ -3246,14 +3288,15 @@ def taker_has_take_time_swap(swap_id: str) -> bool:
 def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
     """The facts zec_happy_after_take reads from a corridor, here from the Taker's
     take-time swap directory: its receipt path, the funder's committed outpoint
-    and the Zcash anchor the Maker fixed."""
+    and the Zcash anchor the Maker fixed. The run id ends in the LEZ anchor,
+    where the agreement's LEZ refund delay starts."""
     reader = ("import glob,json,sys\n"
               "for p in glob.glob('/var/lib/lez/taker/btc/swaps/*/zec-taker-prepared.json'):\n"
               "    e=json.load(open(p))\n"
               "    if e['swap_id']!=sys.argv[1]: continue\n"
               "    r=json.load(open(p.replace('zec-taker-prepared.json','zec-taker-reserve.json')))\n"
               "    print(json.dumps({'receipt_output':e['receipt_output'],'response':r['response'],"
-              "'taker_funding':r['request']['taker_funding']}))\n")
+              "'taker_funding':r['request']['taker_funding'],'offer_id':r['request']['offer_id']}))\n")
     read = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", reader, swap_id],
                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if read.returncode != 0 or not read.stdout.strip():
@@ -3262,7 +3305,8 @@ def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
     response = facts["response"]
     funding = response["maker_funding"] or facts["taker_funding"]
     anchor = int(response["zcash_anchor_height"])
-    corridor = {"run_id": "take-time", "entry": 0, "offer_id": offer_id, "catalog_swap_id": swap_id,
+    corridor = {"run_id": f"take-time-{response['lez_anchor_unix_seconds']}", "entry": 0,
+                "offer_id": offer_id or facts["offer_id"], "catalog_swap_id": swap_id,
                 "profile": ZEC_DYNAMIC_PROFILE,
                 "lez_refund_delay_seconds": zec_profile_refund_delay(ZEC_DYNAMIC_PROFILE),
                 "receipt_output": facts["receipt_output"],
@@ -3277,6 +3321,46 @@ def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
     return corridor
 
 
+def zec_dynamic_publish(stamp: str, offers: list[tuple[str, str]]) -> None:
+    """The Maker's CLI enables this direction's Zcash route at the lot's price
+    and publishes each (request id, offer id) on its running Node."""
+    route = ["--pair", "zcash", "--direction", "taker-sells-lez" if zec_taker_sells_lez() else "taker-sells-foreign"]
+    revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
+                                     if r["value"]["route"] == ROUTE), [])
+    maker_cli("configure-pair", "--request-id", f"e2e-zecdyn-pair-{stamp}", *revision(maker_cli("pairs")), *route,
+              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(ZEC_FOREIGN_UNITS),
+              "--maximum-foreign-units", str(ZEC_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+    maker_cli("set-local-price", "--request-id", f"e2e-zecdyn-price-{stamp}", *revision(maker_cli("prices")), *route,
+              "--lez-units-per-lot", "1", "--foreign-units-per-lot", str(ZEC_FOREIGN_UNITS // ZEC_LEZ_UNITS))
+    for request_id, offer_id in offers:
+        maker_cli("publish-offer", "--request-id", request_id, "--offer-id", offer_id, *route)
+        log(f"  Maker CLI published {offer_id} on its running Node (no corridor)")
+
+
+def zec_take_time_offers(swaps: int, add: bool) -> dict:
+    """zec_provision's take-time path: the funder made able to fund (selling
+    ZEC, one payment to the Taker's key per offer) and `swaps` offers published,
+    each a corridor whose agreement facts zec_taker_actor_config fills in after
+    the scenario's own take. The first publication's request id is the dealer's
+    (zec-devnet-publish-<run stamp>), which zec-replay and zec-wrong-inputs reuse.
+    With `add` the offer joins the live corridors."""
+    stamp = str(int(time.time())) + (f"{int(os.environ['LEZ_LANE']):02d}" if os.environ.get("LEZ_LANE", "1") != "1" else "")
+    for _ in range(swaps if not zec_taker_sells_lez() else 0):
+        zec_dynamic_fund_taker()
+    offers = [(f"zec-devnet-publish-{stamp}{'-' + str(index) if index else ''}",
+               f"offer-e2e-zectt-{stamp}{'-' + str(index) if index else ''}") for index in range(swaps)]
+    zec_dynamic_publish(stamp, offers)
+    corridors = [{"run_id": f"take-time-{stamp}", "entry": index, "offer_id": offer_id, "catalog_swap_id": None,
+                  "profile": ZEC_DYNAMIC_PROFILE,
+                  "lez_refund_delay_seconds": zec_profile_refund_delay(ZEC_DYNAMIC_PROFILE),
+                  "receipt_output": f"take-time:{offer_id}", "funding_outpoints": []}
+                 for index, (_, offer_id) in enumerate(offers)]
+    if not add:
+        ZEC_CORRIDORS.clear()
+    ZEC_CORRIDORS.extend(corridors)
+    return ZEC_CORRIDORS[0]
+
+
 def scenario_zec_dynamic_happy(stamp: str) -> dict:
     """F9/U5: a Zcash swap with no dealer and no Node recreation. The Maker's
     CLI configures the Zcash route, sets its price and publishes an offer on
@@ -3286,17 +3370,8 @@ def scenario_zec_dynamic_happy(stamp: str) -> dict:
     since = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     if not zec_taker_sells_lez():
         zec_dynamic_fund_taker()
-    route = ["--pair", "zcash", "--direction", "taker-sells-lez" if zec_taker_sells_lez() else "taker-sells-foreign"]
-    revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
-                                     if r["value"]["route"] == ROUTE), [])
-    maker_cli("configure-pair", "--request-id", f"e2e-zecdyn-pair-{stamp}", *revision(maker_cli("pairs")), *route,
-              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(ZEC_FOREIGN_UNITS),
-              "--maximum-foreign-units", str(ZEC_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
-    maker_cli("set-local-price", "--request-id", f"e2e-zecdyn-price-{stamp}", *revision(maker_cli("prices")), *route,
-              "--lez-units-per-lot", "1", "--foreign-units-per-lot", str(ZEC_FOREIGN_UNITS // ZEC_LEZ_UNITS))
     offer_id = f"offer-e2e-zecdyn-{stamp}"
-    maker_cli("publish-offer", "--request-id", f"e2e-zecdyn-publish-{stamp}", "--offer-id", offer_id, *route)
-    log(f"  Maker CLI published {offer_id} on its running Node (no corridor)")
+    zec_dynamic_publish(stamp, [(f"e2e-zecdyn-publish-{stamp}", offer_id)])
     swap_id = zec_take_or_resume(offer_id, stamp)
     corridor = zec_dynamic_corridor(swap_id, offer_id)
     return {**zec_happy_after_take(stamp, since, swap_id, corridor), "take_time_agreement": True}
@@ -4731,9 +4806,13 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
         docker("start", NODES["maker"][0])
         wait_healthy("maker")
     if step == "refund-point" and zec_taker_sells_lez():
-        run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
-        wait_until(stamp_time(run_id) + zec_current_refund_delay() + 15,
-                   "for the agreement's LEZ refund time (the profile's delay after provisioning)")
+        if taker_has_take_time_swap(swap_id):
+            taken = zec_dynamic_corridor(swap_id, "")
+            opens = stamp_time(taken["run_id"]) + taken["lez_refund_delay_seconds"]
+        else:
+            run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
+            opens = stamp_time(run_id) + zec_current_refund_delay()
+        wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
         log("  the Taker's refund is due")
         return True
     corridor = zec_provision(swap_id=swap_id)
@@ -5237,6 +5316,8 @@ def run(name: str) -> bool:
     # (zec-provision.sh does the same): no two lanes may make the same one.
     if os.environ.get("LEZ_LANE", "1") != "1":
         stamp += f"{int(os.environ['LEZ_LANE']):02d}"
+    global SCENARIO
+    SCENARIO = name
     log(f"=== {name} (stamp {stamp})")
     started = time.time()
     summary = {"scenario": name, "pair": ROUTE["pair"], "direction": ROUTE["direction"], "stamp": stamp,
@@ -5265,7 +5346,7 @@ def run(name: str) -> bool:
 def main() -> int:
     global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "all"])
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "all"])
     parser.add_argument("--swap-id", action="append", default=[],
                         help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
     parser.add_argument("--mine-pending-only", action="store_true",
@@ -5274,6 +5355,8 @@ def main() -> int:
     parser.add_argument("--until-phase", help="zec-drive: Taker actor phase(s) to reach instead, '|'-separated")
     parser.add_argument("--timeout", type=int, default=2400, help="zec-drive / zec-step: seconds")
     parser.add_argument("--step", choices=ZEC_STEPS, help="zec-step: the host step of a ZEC desk journey")
+    parser.add_argument("--swaps", type=int, default=1, help="zec-publish: how many take-time offers")
+    parser.add_argument("--add", action="store_true", help="zec-publish: beside the live ones")
     parser.add_argument("--direction", choices=["TakerSellsForeign", "TakerSellsLez"], default=None,
                         help="which side the Taker sells; TakerSellsLez locks LEZ first and claims the foreign coin "
                              "(Bitcoin defaults to TakerSellsForeign, Zcash to TakerSellsLez)")
@@ -5300,6 +5383,14 @@ def main() -> int:
                 parser.error(f"{args.scenario} needs --swap-id and --until or --until-phase")
             return 0 if zec_drive_tool(swap_id, args.until or "", args.timeout, args.mine_pending_only, args.until_phase) else 1
         args.swap_id = args.swap_id[0] if args.swap_id else None
+        if args.scenario == "zec-publish":
+            # A desk journey's take-time corridor: the offers its desk takes.
+            try:
+                zec_take_time_offers(args.swaps, args.add)
+            except Failure as failure:
+                log(f"FAILED: {failure}")
+                return 1
+            return 0
         if args.scenario == "zec-refund-tail":
             if not args.swap_id:
                 parser.error("zec-refund-tail needs --swap-id")
