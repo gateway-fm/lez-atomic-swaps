@@ -1,79 +1,79 @@
-# Installing the Maker Node as a systemd service
+# Installing the Maker and Taker Nodes as systemd services
 
 Every command below ran as root in an Ubuntu 24.04 VM (systemd 255) under
-`scripts/run-maker-node-systemd-vm.sh`; record: `docs/evidence/maker-systemd-2026-11-12/`.
+`scripts/run-maker-node-systemd-vm.sh`, which also executed a Bitcoin swap between the two units
+against the devnet's chains; record: `docs/evidence/maker-systemd-2026-11-12/`.
 
 ## Prerequisites
 
-Linux with systemd 255 or later, as root, and the binaries built from this checkout:
-`cargo build --locked -p lez-maker-node --features pair-zec --bins` and
-`cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor`.
+Linux with systemd 255 or later, as root; `jq` and `socat` (`apt install jq socat`); Bitcoin
+Core, the LEZ sequencer and the LEZ indexer answering on `127.0.0.1:18443`, `:3040` and `:8779`
+(local nodes, or a loopback forward such as `socat TCP-LISTEN:18443,bind=127.0.0.1,fork
+TCP:<core>:18443`); a funded LEZ account and Core wallet per role. Binaries built from this
+checkout (`cargo build --locked -p lez-maker-node -p lez-taker-node --features
+lez-maker-node/pair-zec,lez-taker-node/pair-zec --bins`, `-p btc-reference-actor --bins`,
+`-p zec-reference-actor --bin lez-zec-maker-actor`, `-p lez-logos-price-c-api --bins`,
+`-p lez-runtime-healthcheck`) and the LEZ sidecar of the same tree, built in the builder image
+(`deploy/scripts/from-scratch.sh --only build` → `provision/data/sidecar/lez-v02-bridge-poc`).
+Zcash swaps under the units are not covered yet.
 
 ## Install
 
 ```sh
 useradd --system --no-create-home --shell /usr/sbin/nologin lez-swap
-SOURCE_BIN_DIR=target/debug ./scripts/install-maker-node-service.sh
+SOURCE_BIN_DIR=target/debug SIDECAR_PROGRAM=<sidecar> ./scripts/install-maker-node-service.sh
+SOURCE_BIN_DIR=target/debug SIDECAR_PROGRAM=<sidecar> ./scripts/install-taker-node-service.sh
 ```
 
-Binaries go to `/usr/bin`, the unit to `/usr/lib/systemd/system/`, examples and an empty
-mode-0700 `credentials/` to `/etc/lez/maker/`.
+Binaries, the sidecar and the role launcher (`lez-role-node-launcher`) go to `/usr/bin`, the
+units to `/usr/lib/systemd/system/`, `env.example` and an empty mode-0700 `credentials/` to
+`/etc/lez/<role>/`. Each unit runs the launcher, which renders the Node's configuration from
+`/etc/lez/<role>/env` and execs the Node.
 
-## Credentials
+## Keys and inputs
 
-The unit loads three encrypted credentials; create all three:
+Every key reaches the Nodes only as an encrypted credential, decrypted by systemd at each start
+into `/run/credentials/<unit>/` (root:root 0440, readable by `lez-swap` through an ACL) and read
+there, never copied. The Maker unit loads four, the Taker unit one:
 
 ```sh
 head -c 32 /dev/urandom | systemd-creds encrypt --name=delivery-signing.key - /etc/lez/maker/credentials/delivery-signing.key.cred
-head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-recovery.key - /etc/lez/maker/credentials/maker-claim-recovery.key.cred
-head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-preimage.key - /etc/lez/maker/credentials/maker-claim-preimage.key.cred
+systemd-creds encrypt --name=lez-signer.key lez-signer.key /etc/lez/maker/credentials/lez-signer.key.cred
 ```
 
-Without a TPM, `systemd-creds` binds them to `/var/lib/systemd/credential.secret` only. No key
-file stays on disk in plaintext: at each start systemd decrypts them into
-`/run/credentials/lez-maker-node.service/` (root:root, mode 0440, readable by the service user
-through an ACL), and the Node reads them there. The two claim keys are read only with the ZEC
-pair's authority configured, which the run did not.
+(the same `head -c 32 …` for `maker-claim-recovery.key` and `maker-claim-preimage.key`, and the
+Taker's own `lez-signer.key` into `/etc/lez/taker/credentials/`). `lez-signer.key` is the role's
+LEZ account key (64 lowercase hex). Without a TPM, `systemd-creds` binds them to
+`/var/lib/systemd/credential.secret` only. Per role, as run:
 
-## Configure and start
-
-`/etc/lez/maker/node.json` as run (run-local Delivery; no Chat, ZEC actors or route health):
-
-```json
-{"schema_version": 1, "arguments": [
-  "--socket", "/run/lez/maker/node.sock", "--database", "/var/lib/lez/maker/maker.sqlite3",
-  "--ready-file", "/run/lez/maker/ready", "--delivery-directory", "/var/lib/lez/maker/delivery",
-  "--delivery-signing-key-file", "/run/credentials/lez-maker-node.service/delivery-signing.key"]}
-```
 ```sh
-chown lez-swap:lez-swap /etc/lez/maker/node.json
-chmod 0600 /etc/lez/maker/node.json
+install -m 0644 market-bootstrap.env /etc/lez/market-bootstrap.env
+install -d -m 0755 /etc/lez/maker/identity
+install -o lez-swap -g lez-swap -m 0400 identity.json /etc/lez/maker/identity/
+install -o lez-swap -g lez-swap -m 0400 <core datadir>/.cookie /etc/lez/maker/btc-rpc-cookie
+cp /etc/lez/maker/env.example /etc/lez/maker/env   # then set the wallet and LEZ_V02_CHANNEL_ID
+```
+
+`market-bootstrap.env` holds the LEZ escrow program id and genesis hash; the Core cookie copy
+must be renewed when Core restarts.
+
+## Start and check
+
+```sh
 systemctl daemon-reload
-systemctl enable --now lez-maker-node
-```
-
-## Check it
-
-```sh
+systemctl start lez-maker-node    # before the Taker: it publishes the Maker identity the Taker trusts
+systemctl start lez-taker-node
 systemctl show -p ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
 runuser -u lez-swap -- lez-maker-cli health
-systemd-analyze security lez-maker-node
+runuser -u lez-swap -- lez-taker-cli health
 journalctl -u lez-maker-node
 ```
 
 `StatusText=maker RPC and durable state are ready` is the Node's sd_notify READY. State lives in
-`/var/lib/lez/maker/` (SQLite database, its lease, Delivery offers); the owner socket is
-`/run/lez/maker/node.sock`, owned by `lez-swap` with mode 0600 in a 0700 directory, so only the
-service user and root can drive the Node. Route health: `packaging/systemd/README.md`.
-
-In `journalctl -u lez-maker-node` a healthy start is `Starting …` then `Started …`, nothing from
-the Node; a key it refuses (wrong owner or mode, or outside the credential directory) is `Error:
-Delivery signing key must be an owner-owned, single-link mode-0400-or-0600 regular file …`.
+`/var/lib/lez/<role>/`; the owner sockets are `/run/lez/<role>/node.sock`, `lez-swap` mode
+0600 in a 0700 directory. Route health: `packaging/systemd/README.md`.
 
 ## Stop, start, upgrade
 
-`lez-maker-cli stop` / `start` (as root) drive `systemctl` on this unit only and wait for
-`inactive` / `active`. Upgrade: `lez-maker-cli stop`, re-run the install script with the new
-binaries, `systemctl daemon-reload`, `lez-maker-cli start`; state is kept. (The run exercised
-each command, not this sequence as an upgrade.) The Taker Node installs the same way with
-`scripts/install-taker-node-service.sh` and `/etc/lez/taker/{node,role}.json`.
+`lez-maker-cli stop` / `start` (as root) drive `systemctl` on that unit only. Upgrade: stop,
+re-run the install scripts with the new binaries, `systemctl daemon-reload`, start; state is kept.
