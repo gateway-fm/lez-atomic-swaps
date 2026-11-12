@@ -329,13 +329,16 @@ phase_rust() {
 # Every step is one throwaway container of the builder image. Registries and
 # build targets persist in named volumes; outputs land in $PROVISION.
 builder_run() { # builder_run [docker run flags...] -- <bash script>
-  local flags=()
+  local flags=() triple=aarch64-linux-gnu
   while [[ "$1" != "--" ]]; do flags+=("$1"); shift; done; shift
+  # The image is this host's architecture (an amd64 one is built with the
+  # x86_64 rapidsnark and GCC_TRIPLE: .github/workflows/release-packages.yml).
+  case "$(uname -m)" in x86_64|amd64) triple=x86_64-linux-gnu ;; esac
   docker run --rm -v "$REPO_ROOT:/workspace" -v "$LEZ_SOURCE:/lez-source" -v "$PROVISION:/provision" \
     -v lez-build-cargo:/cache/cargo -v lez-build-target:/cache/target \
     -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target/workspace \
     -e RAPIDSNARK_LIB_DIR=/provision/rapidsnark-arm \
-    -e BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/aarch64-linux-gnu/13/include \
+    -e BINDGEN_EXTRA_CLANG_ARGS="-I/usr/lib/gcc/$triple/13/include" \
     -w /workspace "${flags[@]}" "$BUILDER_IMAGE" bash -c "set -euo pipefail; $*"
 }
 # Outputs are written as root inside the container (on Linux; Docker Desktop

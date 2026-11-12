@@ -44,15 +44,17 @@ RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr
 # The package, installed where Basecamp installs a user's modules (<user
 # dir>/modules, which Basecamp scans beside its own): the package's one
 # platform variant, its manifest and the variant's name, as Basecamp's package
-# manager lays a module out. The tools the stack calls by their usual names
-# (the health check, the CLI, scripts/record-evidence.py, ...) link to the
-# installed files.
+# manager lays a module out (the manifest's dependencies as bare names, the
+# form Basecamp 0.2.0 reads: scripts/stage-basecamp-package.sh). The tools the
+# stack calls by their usual names (the health check, the CLI,
+# scripts/record-evidence.py, ...) link to the installed files.
 COPY --chmod=0444 lez_taker_node.lgx /tmp/lez_taker_node.lgx
 RUN set -eu; module=/var/lez/basecamp-taker-user/modules/lez_taker_node; unpacked="$(mktemp -d)"; \
     tar -xzf /tmp/lez_taker_node.lgx -C "$unpacked"; \
     variant="$(jq -r '.main | keys[0]' "$unpacked/manifest.json")"; \
     mkdir -p "$module"; cp -R "$unpacked/variants/$variant/." "$module/"; \
-    cp "$unpacked/manifest.json" "$module/"; printf '%s\n' "$variant" > "$module/variant"; \
+    jq 'if .dependencies then .dependencies |= map(if type == "object" then .name else . end) else . end' \
+      "$unpacked/manifest.json" > "$module/manifest.json"; printf '%s\n' "$variant" > "$module/variant"; \
     rm -rf "$unpacked" /tmp/lez_taker_node.lgx; \
     test -x "$module/bin/node-entrypoint.sh"; test -x "$module/bin/lez-taker-node"; \
     for tool in "$module"/bin/*; do \
