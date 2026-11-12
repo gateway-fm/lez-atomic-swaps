@@ -65,8 +65,9 @@ stack and are kept as the record of that submission shape.
   fixes are on `main` since PR #127 (`b6b1c273`), and the runs that show
   them are in `docs/evidence/macos-arm64-release-gates-2026-11-11/`.
 - **Still open for the submission:** the release workflow on the commit to
-  be tagged (rehearsal on `b6b1c273`, run 43189324839: TBD(release)); the
-  full regression on `b6b1c273` on an Apple-silicon Mac (TBD(release)); the
+  be tagged (not run yet; a rehearsal on `b6b1c273` is run 43189324839); the
+  full regression on the commit to be tagged, on an Apple-silicon Mac (not
+  run yet); the
   tag and release (0.3.0, notes drafted in `docs/release-notes-0.3.0.md`);
   the rfp#122 comment; the fresh-machine walk of the Zcash guide (U10).
 

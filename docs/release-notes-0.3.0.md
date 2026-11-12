@@ -85,7 +85,6 @@ Each set is under `docs/evidence/`, with `PROVENANCE.md` and `RESULTS.txt`.
 | `regression-2026-11-12` | Linux x86_64 | tests `2b6569e0`, images `964cb8c8`, rerun `62cf95ca` | 97 tests: 96 passed in one run, the one failure passed on its rerun |
 | `regression-m2-2026-11-12-macos-arm64` | Apple silicon, Docker Desktop | `af3ac978` | 93 tests: 93 passed |
 | `regression-2026-11-12-macos-arm64` | Apple silicon, Docker Desktop | `f2f9b980` | 97 tests: 97 passed |
-| TBD(release) | Apple silicon, Docker Desktop | `b6b1c273` | TBD(release) |
 
 Release gates on an Apple-silicon Mac (resume and Node restart, smoke tier,
 LEZ finality stall, wipe then start then trade):
