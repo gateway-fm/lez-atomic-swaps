@@ -347,5 +347,47 @@ class LateClaimSettlement(unittest.TestCase):
             self.settle(self.after(-4_000, 0, 0, 0), 'refunded', 'completed')
 
 
+
+class NativeNodes(unittest.TestCase):
+    """LEZ_E2E_NATIVE_RUN_ROOT: the Nodes run on this host, not in containers."""
+
+    def test_the_owner_socket_is_reached_with_this_hosts_curl(self):
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return unittest.mock.Mock(returncode=0, stdout='{"jsonrpc":"2.0","id":1,"result":{"ready":true}}', stderr='')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', '/home/lez/run'), patch.object(e2e.subprocess, 'run', fake_run):
+            self.assertEqual(e2e.call('taker', 'taker_health', {'schema_version': 1}), {'ready': True})
+            e2e.wait_healthy('maker', timeout=5)
+        self.assertEqual(ran[0][:6], ['curl', '-sS', '--max-time', '300', '--unix-socket', '/home/lez/run/taker/node.sock'])
+        self.assertIn('"method": "maker_health"', ran[1][ran[1].index('--data') + 1])
+        self.assertNotIn('docker', [part for command in ran for part in command])
+
+    def test_without_it_the_container_is_exec_d(self):
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return unittest.mock.Mock(returncode=0, stdout='{"jsonrpc":"2.0","id":1,"result":1}', stderr='')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run):
+            e2e.call('maker', 'maker_health', {})
+        self.assertEqual(ran[0][:7], ['docker', 'exec', 'lez-maker-node', 'curl', '-sS', '--max-time', '300'])
+        self.assertIn('/run/lez/maker/node.sock', ran[0])
+
+    def test_a_scenario_that_needs_the_containers_is_refused(self):
+        with tempfile.TemporaryDirectory() as runtime, \
+                patch.object(e2e, 'NATIVE_RUN_ROOT', '/home/lez/run'), \
+                patch.object(e2e, 'LANE_RUNTIME', pathlib.Path(runtime)), \
+                patch.object(e2e, 'timing_profile', lambda: {}), \
+                patch.object(e2e, 'wait_healthy', lambda *a, **k: self.fail('no Node may be asked')):
+            self.assertFalse(e2e.run('restart-taker'))
+            summary = json.loads((pathlib.Path(runtime) / 'e2e' / 'restart-taker.json').read_text())
+        self.assertEqual(summary['result'], 'failed')
+        self.assertIn('LEZ_E2E_NATIVE_RUN_ROOT', summary['error'])
+
+
 if __name__ == '__main__':
     unittest.main()

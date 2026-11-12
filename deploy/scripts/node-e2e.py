@@ -68,6 +68,11 @@ Bitcoin). The summary of a reverse run is `runtime/e2e/<scenario>-lez.json`;
 a Zcash run's is `runtime/e2e/<scenario>.json` (TakerSellsLez) or
 `runtime/e2e/<scenario>-foreign.json` (TakerSellsForeign).
 
+With LEZ_E2E_NATIVE_RUN_ROOT set, the Nodes are native ones on this host
+(started from their Logos packages; the chains stay in the stack's
+containers): the harness reaches their owner sockets under that directory
+with this host's curl and runs happy, replay and wrong-inputs only.
+
 The BTC refund scenarios need the `refund` (or the `fast`) timing profile
 (`LEZ_TIMING_PROFILE=refund scripts/up.sh`, which recreates the Nodes and the
 miner; regress.sh switches by itself); the harness refuses to start them under
@@ -137,6 +142,15 @@ ZEC_BLOCK_WAIT_SECONDS = int(os.environ.get("LEZ_ZEC_BLOCK_WAIT_SECONDS", "900")
 ZEC_TIMEOUT_SCALE = int(os.environ.get("LEZ_ZEC_TIMEOUT_SCALE", "1")) if ZEC_PUBLIC else 1
 NODES = {"maker": (f"{PREFIX}-maker-node", "/run/lez/maker/node.sock"),
          "taker": (f"{PREFIX}-taker-node", "/run/lez/taker/node.sock")}
+# Native Nodes: both role Nodes run on this host, each started from its Logos
+# package by a Logos host (docs/architecture/logos-native-packaging.md, "The
+# Node on macOS"), with only the chains in the stack's containers. Their owner
+# sockets are LEZ_E2E_NATIVE_RUN_ROOT/<role>/node.sock (the launcher's
+# LEZ_NODE_RUN_ROOT), reached with this host's curl. The scenarios that stop,
+# restart or reach into a Node's container are refused.
+NATIVE_RUN_ROOT = os.environ.get("LEZ_E2E_NATIVE_RUN_ROOT", "")
+NATIVE_SCENARIOS = {"happy", "replay", "wrong-inputs"}
+HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
 MAKER_WALLET = os.environ.get("LEZ_LANE_MAKER_WALLET", "maker-munich-01")
@@ -174,8 +188,11 @@ def rpc(role: str, method: str, params: object, timeout: int = 300) -> dict:
     # runner never closes. The curl inside the container has long exited by
     # then, so --max-time does not bound the wait and the scenario hangs until
     # its own timeout. Every other exec here already runs without -i.
+    via = ["docker", "exec", container]
+    if NATIVE_RUN_ROOT:
+        via, socket = [], str(pathlib.Path(NATIVE_RUN_ROOT) / role / "node.sock")
     result = subprocess.run(
-        ["docker", "exec", container, "curl", "-sS", "--max-time", str(timeout), "--unix-socket", socket,
+        [*via, "curl", "-sS", "--max-time", str(timeout), "--unix-socket", socket,
          "-H", "content-type: application/json", "--data", body, "http://localhost/"],
         capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if result.returncode != 0 or not result.stdout.strip():
@@ -223,6 +240,15 @@ def docker(*command: str) -> None:
 def wait_healthy(role: str, timeout: int = 180) -> None:
     container, _ = NODES[role]
     deadline = time.time() + timeout
+    if NATIVE_RUN_ROOT:
+        # A native Node has no container health check: ask the Node itself, as
+        # the check does (lez-runtime-healthcheck uds ... <role>_health).
+        method, params = HEALTH[role]
+        while time.time() < deadline:
+            if (rpc(role, method, params, timeout=10).get("result") or {}).get("ready") is True:
+                return
+            time.sleep(3)
+        raise Failure(f"the native {role} Node did not report ready within {timeout}s")
     while time.time() < deadline:
         status = subprocess.run(["docker", "inspect", container, "--format", "{{.State.Health.Status}}"],
                                 capture_output=True, text=True, check=False).stdout.strip()
@@ -4541,7 +4567,12 @@ def run(name: str) -> bool:
     started = time.time()
     summary = {"scenario": name, "pair": ROUTE["pair"], "direction": ROUTE["direction"], "stamp": stamp,
                "timing": timing_profile()}
+    if NATIVE_RUN_ROOT:
+        summary["nodes"] = {"native_run_root": NATIVE_RUN_ROOT}
     try:
+        if NATIVE_RUN_ROOT and name not in NATIVE_SCENARIOS:
+            raise Failure(f"{name} stops or reaches into a Node container; with native Nodes "
+                          f"(LEZ_E2E_NATIVE_RUN_ROOT) run {sorted(NATIVE_SCENARIOS)}")
         for role in ("maker", "taker"):
             wait_healthy(role, timeout=60)
         preflight()
