@@ -56,11 +56,18 @@ where
     }
 }
 
+// The server's `data` (its error category, and for some errors what the
+// caller needs to act, such as a funding address) follows as JSON.
 #[derive(Debug, Deserialize, Error)]
-#[error("local RPC error {code}: {message}")]
+#[error("local RPC error {code}: {message}{}", data_suffix(data.as_ref()))]
 pub(crate) struct LocalRpcRemoteError {
     pub(crate) code: i32,
     pub(crate) message: Box<str>,
+    pub(crate) data: Option<serde_json::Value>,
+}
+
+fn data_suffix(data: Option<&serde_json::Value>) -> String {
+    data.map(|data| format!(" {data}")).unwrap_or_default()
 }
 
 /// Calls one typed JSON-RPC method through an owner-local Unix socket.
@@ -86,6 +93,42 @@ where
         DEFAULT_LOCAL_RPC_TIMEOUT,
     )
     .await
+}
+
+/// Calls one typed owner-local method that may take longer than the default
+/// timeout, such as a swap step that waits on the counterparty or a chain.
+///
+/// # Errors
+///
+/// Returns the same errors as `call_local_rpc`; an elapsed `request_timeout`
+/// is a [`LocalRpcTimeout`].
+pub async fn call_local_rpc_with_timeout<P, R>(
+    socket: &Path,
+    method: &str,
+    parameter: &P,
+    request_timeout: Duration,
+) -> anyhow::Result<R>
+where
+    P: Serialize,
+    R: DeserializeOwned,
+{
+    call_local_rpc_bounded(
+        socket,
+        method,
+        parameter,
+        MAXIMUM_CONTROL_RPC_BODY_BYTES,
+        request_timeout,
+    )
+    .await
+}
+
+/// A local RPC call abandoned after its timeout: the server may have carried
+/// on, or stopped the call when the connection closed.
+#[derive(Debug, Error)]
+#[error("local RPC method {method} timed out after {milliseconds} milliseconds")]
+pub struct LocalRpcTimeout {
+    method: Box<str>,
+    milliseconds: u128,
 }
 
 /// Calls one typed taker-facing Chat method through a Unix socket.
@@ -163,11 +206,9 @@ where
         call_local_rpc_without_timeout(socket, method, parameter, maximum_body_bytes),
     )
     .await
-    .map_err(|_| {
-        anyhow::anyhow!(
-            "local RPC method {method} timed out after {} milliseconds",
-            request_timeout.as_millis()
-        )
+    .map_err(|_| LocalRpcTimeout {
+        method: method.into(),
+        milliseconds: request_timeout.as_millis(),
     })?
 }
 
@@ -303,7 +344,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{
-        LocalRpcRemoteError, MAXIMUM_CONTROL_RPC_BODY_BYTES, call_local_rpc, call_local_rpc_bounded,
+        LocalRpcRemoteError, LocalRpcTimeout, MAXIMUM_CONTROL_RPC_BODY_BYTES, call_local_rpc,
+        call_local_rpc_bounded,
     };
 
     const TEST_GUARD_TIMEOUT: Duration = Duration::from_secs(1);
@@ -340,6 +382,7 @@ mod tests {
         .expect("local RPC client ignored its configured timeout");
         let error = result.expect_err("nonresponsive local RPC must fail");
 
+        assert!(error.is::<LocalRpcTimeout>());
         assert!(
             error.to_string().contains("stalled_method")
                 && error.to_string().contains("50 milliseconds"),

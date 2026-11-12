@@ -27,8 +27,9 @@ use lez_swap_store::{
     maker_xmr_chat_swap_id,
 };
 use lez_taker_node::{
-    DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, call_local_rpc,
-    control_taker_service,
+    DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, TakerOfferListRequestV1,
+    TakerOfferListV1, TakerSwapInitiateRequestV1, call_local_rpc, control_taker_service,
+    local_rpc::{LocalRpcTimeout, call_local_rpc_with_timeout},
 };
 use secp256k1::PublicKey;
 use serde::Serialize;
@@ -60,6 +61,14 @@ use taker_accept_xmr::{
 
 #[cfg(feature = "pair-zec")]
 use taker_accept::{ZecTakeInput, load_taker_actor_from_receipt, take_zec};
+
+// Owner RPC timeouts for the `swap` commands. A take reserves with the Maker,
+// runs the signing ceremony and activates the actor; a lock or an action
+// waits on a chain. These match deploy/scripts/node-e2e.py's allowances.
+const NODE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const NODE_TAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(7);
+const NODE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(2);
+const NODE_ACTION_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(5);
 
 // Exact LEZ observation verifies finalized block proofs locally. The dual-XMR
 // actual-node run measured valid observations exceeding the generic 30-second
@@ -223,6 +232,68 @@ enum LifecycleCommand {
     Claim(LifecycleArguments),
     /// Attempt only the agreement-ordered Taker timeout recovery.
     Refund(LifecycleArguments),
+    /// Drive a swap through the running Taker Node's owner RPCs.
+    #[command(subcommand)]
+    Swap(SwapCommand),
+    /// Read this Taker's own wallet balances through its owner socket.
+    Balances,
+}
+
+/// Each command calls one Taker Node owner RPC and prints its JSON result.
+#[derive(Subcommand)]
+enum SwapCommand {
+    /// List authenticated offers (`taker_offer_list_v1`).
+    Offers {
+        #[arg(long, value_enum, requires = "direction")]
+        pair: Option<PairArgument>,
+        #[arg(long, value_enum, requires = "pair")]
+        direction: Option<DirectionArgument>,
+    },
+    /// Take one listed offer (`taker_swap_initiate_v1`) at its exact LEZ quote;
+    /// replay with the same request ID.
+    Take {
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        offer_id: String,
+        /// Foreign-chain atomic units (sats or zatoshis) within the offer's bounds.
+        #[arg(long)]
+        foreign_units: u64,
+        /// For a Node without a Bitcoin wallet: the signed, unsent lock paying
+        /// the address and amount its first take answered (-32018).
+        #[arg(long)]
+        funding_transaction_hex: Option<String>,
+    },
+    /// List this Node's swaps (`taker_swap_list_v1`).
+    List,
+    /// Read one swap (`taker_swap_monitor_v1`).
+    Monitor {
+        #[arg(long)]
+        swap_id: String,
+    },
+    /// Send the Taker's first lock of a Bitcoin swap (`taker_swap_lock_v1`).
+    Lock {
+        #[arg(long)]
+        swap_id: String,
+    },
+    /// Request the admissible claim (`taker_swap_claim_v1`).
+    Claim {
+        #[arg(long)]
+        swap_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        expected_generation: u64,
+    },
+    /// Request the admissible refund (`taker_swap_refund_v1`).
+    Refund {
+        #[arg(long)]
+        swap_id: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        expected_generation: u64,
+    },
 }
 
 #[derive(ClapArgs)]
@@ -308,7 +379,8 @@ struct XmrPlanOutput {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(error) = execute().await {
-        eprintln!("{error}");
+        // With its causes: "connect local RPC socket …: Permission denied".
+        eprintln!("{error:#}");
         std::process::exit(2);
     }
 }
@@ -930,7 +1002,156 @@ async fn execute_lifecycle(
         LifecycleCommand::Refund(arguments) => {
             execute_actor_lifecycle(&arguments, LifecycleAction::Refund).await
         }
+        LifecycleCommand::Swap(command) => execute_taker_swap(command, socket).await,
+        LifecycleCommand::Balances => {
+            print_taker_rpc(
+                socket,
+                "taker_wallet_balances_v1",
+                serde_json::json!({"schema_version": 1}),
+                NODE_READ_TIMEOUT,
+            )
+            .await
+        }
     }
+}
+
+async fn execute_taker_swap(command: SwapCommand, socket: &std::path::Path) -> anyhow::Result<()> {
+    let (method, parameters, timeout) = match command {
+        SwapCommand::Offers { pair, direction } => {
+            let route = match pair.zip(direction) {
+                Some((pair, direction)) => Some(MakerRouteV1::new(pair.into(), direction.into())?),
+                None => None,
+            };
+            (
+                "taker_offer_list_v1",
+                serde_json::json!({"schema_version": 1, "route": route}),
+                NODE_READ_TIMEOUT,
+            )
+        }
+        SwapCommand::Take {
+            request_id,
+            offer_id,
+            foreign_units,
+            funding_transaction_hex,
+        } => (
+            "taker_swap_initiate_v1",
+            take_request(
+                socket,
+                request_id,
+                &offer_id,
+                foreign_units,
+                funding_transaction_hex,
+            )
+            .await?,
+            NODE_TAKE_TIMEOUT,
+        ),
+        SwapCommand::List => (
+            "taker_swap_list_v1",
+            serde_json::json!({"schema_version": 1}),
+            NODE_READ_TIMEOUT,
+        ),
+        SwapCommand::Monitor { swap_id } => (
+            "taker_swap_monitor_v1",
+            serde_json::json!({"schema_version": 1, "swap_id": swap_id}),
+            NODE_READ_TIMEOUT,
+        ),
+        SwapCommand::Lock { swap_id } => (
+            "taker_swap_lock_v1",
+            serde_json::json!({"schema_version": 1, "swap_id": swap_id}),
+            NODE_LOCK_TIMEOUT,
+        ),
+        SwapCommand::Claim {
+            swap_id,
+            request_id,
+            expected_generation,
+        } => (
+            "taker_swap_claim_v1",
+            serde_json::json!({"schema_version": 1, "request_id": request_id,
+                "swap_id": swap_id, "expected_generation": expected_generation}),
+            NODE_ACTION_TIMEOUT,
+        ),
+        SwapCommand::Refund {
+            swap_id,
+            request_id,
+            expected_generation,
+        } => (
+            "taker_swap_refund_v1",
+            serde_json::json!({"schema_version": 1, "request_id": request_id,
+                "swap_id": swap_id, "expected_generation": expected_generation}),
+            NODE_ACTION_TIMEOUT,
+        ),
+    };
+    print_taker_rpc(socket, method, parameters, timeout).await
+}
+
+/// The initiate request for one offer as the Node lists it.
+async fn take_request(
+    socket: &std::path::Path,
+    request_id: String,
+    offer_id: &str,
+    foreign_units: u64,
+    funding_transaction_hex: Option<String>,
+) -> anyhow::Result<serde_json::Value> {
+    // The reviewed facts are the Node's own authenticated listing of
+    // the offer, as the Taker desk takes them.
+    let offers: TakerOfferListV1 = call_local_rpc(
+        socket,
+        "taker_offer_list_v1",
+        &TakerOfferListRequestV1 {
+            schema_version: 1,
+            route: None,
+        },
+    )
+    .await?;
+    let view = offers
+        .offers
+        .into_iter()
+        .find(|view| view.offer.id().as_str() == offer_id)
+        .with_context(|| format!("the Taker Node lists no live offer {offer_id}"))?;
+    let offer = &view.offer;
+    let expected_lez_units = offer.quote_foreign_amount(foreign_units).map_err(|error| {
+        anyhow::anyhow!(
+            "offer {offer_id} cannot take {foreign_units} foreign units: {error} \
+                 (bounds {}..={}, {} LEZ units per {} foreign units)",
+            offer.pair_configuration().minimum_foreign_units(),
+            offer.pair_configuration().maximum_foreign_units(),
+            offer.price().lez_units_per_lot(),
+            offer.price().foreign_units_per_lot(),
+        )
+    })?;
+    let request = TakerSwapInitiateRequestV1 {
+        schema_version: 1,
+        request_id: RequestId::new(request_id)?,
+        offer_id: offer.id().clone(),
+        route: offer.pair_configuration().route(),
+        maker_identity: view.maker_identity,
+        signed_envelope_sha256: view.signed_envelope_sha256,
+        foreign_units,
+        expected_lez_units,
+        logos_offer_announcement_base64: None,
+        funding_transaction_hex: funding_transaction_hex.map(Into::into),
+    };
+    serde_json::to_value(request).map_err(Into::into)
+}
+
+async fn print_taker_rpc(
+    socket: &std::path::Path,
+    method: &str,
+    parameters: serde_json::Value,
+    timeout: std::time::Duration,
+) -> anyhow::Result<()> {
+    let output: serde_json::Value =
+        match call_local_rpc_with_timeout(socket, method, &parameters, timeout).await {
+            Err(error) if error.is::<LocalRpcTimeout>() => anyhow::bail!(
+                "{error}. The Node stopped the call when the CLI disconnected or may still \
+                 finish it; check with `swap monitor`/`swap list`. Repeating the same command \
+                 is safe: the same --request-id replays or resumes a take, claim or refund, \
+                 and a lock repeats as the swap's one recorded lock."
+            ),
+            result => result?,
+        };
+    println!("{}", serde_json::to_string(&output)?);
+    Ok(())
 }
 
 async fn execute_taker_health(socket: &std::path::Path) -> anyhow::Result<()> {

@@ -1805,6 +1805,7 @@ mod tests {
         let error = anyhow::Error::new(LocalRpcRemoteError {
             code: -32_045,
             message: "requires Chat completion v2".into(),
+            data: None,
         });
         let failure = maker_remote_failure(&error);
         assert_eq!(failure.code, -32_045);
@@ -1813,6 +1814,7 @@ mod tests {
         let oversized = anyhow::Error::new(LocalRpcRemoteError {
             code: -32_045,
             message: "x".repeat(4 * 1024 + 1).into_boxed_str(),
+            data: None,
         });
         assert_ne!(
             maker_remote_failure(&oversized).message.as_ref(),

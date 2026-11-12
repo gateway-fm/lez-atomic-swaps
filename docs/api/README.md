@@ -396,6 +396,24 @@ Registration and errors:
 [service](../../crates/taker-node/src/taker_service.rs),
 [lifecycle](../../crates/taker-node/src/taker_service/lifecycle.rs).
 
+Taker CLI: `lez-taker-cli [--socket /run/lez/taker/node.sock]` calls one method
+per command, prints its JSON result, and on an error prints its code, message and
+`data`. `swap take` fills the offer's route, identity, digest and exact quote from
+the Node's listing. A timed-out step is safe to repeat with the same arguments.
+
+```sh
+lez-taker-cli swap offers --pair bitcoin --direction taker-sells-foreign   # or --pair zcash
+lez-taker-cli swap take --request-id take-1 --offer-id OFFER --foreign-units 100000
+lez-taker-cli swap lock --swap-id SWAP     # Bitcoin only; a Zcash Node locks by itself
+until lez-taker-cli swap monitor --swap-id SWAP | grep -q '"state":"claim_available"'; do sleep 10; done
+lez-taker-cli swap claim --swap-id SWAP --request-id claim-1 --expected-generation GEN
+```
+
+SWAP is the take reply's `swap.swap_id`, GEN the last monitor reply's
+`progress_generation`; `swap refund` takes the claim's flags. A Node without a Bitcoin wallet answers the take with -32018 and the
+address and amount: repeat the take with `--funding-transaction-hex` set to your
+signed, unsent payment. `swap list` and `balances` read the Node.
+
 ### Accept an authenticated offer
 
 The application chooses an entry returned by `taker_offer_list_v1` and an exact
