@@ -44,7 +44,10 @@ ProcSubset=pid
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=yes
 RestrictRealtime=yes
-RestrictSUIDSGID=yes
+# No RestrictSUIDSGID=: it makes openat2() fail with ENOSYS, and the Node opens every
+# state and key file with openat2(RESOLVE_NO_SYMLINKS), so it cannot start under it.
+# It can write only its mode-0700 state and runtime directories and a private /tmp, so a
+# set-ID file it made would be out of every other user's reach.
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 CapabilityBoundingSet=
