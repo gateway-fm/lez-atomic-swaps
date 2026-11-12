@@ -579,6 +579,23 @@ six passing runs. On the public `logos.test` fleet instead, of 13 Chat
 messages 5 arrived in 1–4 s, 2 after 109 s and 258 s and 6 not within the 20 s
 to 6 min watched, against the gateways' 25 s per round: no take completed.
 
+### A Logos price module
+
+A Maker route can take its price from a Logos price module, a shared library with the C API of
+`crates/logos-price-c-api/include/lez_logos_price_api.h`, instead of the price saved with it. Set
+`LEZ_LOGOS_PRICE_MODULE` to the module file and `LEZ_LOGOS_PRICE_MODULE_SHA256` to its sha256 (both
+or neither; `compose.yaml` hands them to the Maker's Basecamp): the launcher starts the Node with the
+package's `lez-logos-price-worker`, which loads the module in a child process on every quote and
+publish. `lez-maker-cli configure-pair … --price-source logos-c-api` then selects it for a route.
+Before every call the Node checks the module: an absolute path to a regular file (no symlink, one
+hard link) owned by root or the Node's user, not group- or other-writable, at most 64 MiB, with the
+pinned sha256, in a directory owned by root or the Node's user that is not group- or other-writable.
+A module that fails a check, answers unavailable or reports a price older than 30 s fails the quote
+or publish closed; offers already out keep their price. The systemd package installs the worker as
+`/usr/bin/lez-logos-price-worker`; there the three `--logos-price-*` flags go in the Node's
+`arguments`. No Logos price module exists yet: `node:btc:maker-price-module:TakerSellsForeign` runs
+the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ units per 2 sat).
+
 ## Services
 
 | Service | Image | Notes |
