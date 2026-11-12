@@ -1,0 +1,20 @@
+$ logosctl package install probe_object_only --dry-run -y  (try 1)
+$ logosctl package install probe_object_only --dry-run -y  (try 2)
+$ logosctl package install probe_object_only --dry-run -y  (try 3)
+$ logosctl package install probe_string_only --dry-run -y  (try 1)
+$ logosctl package install probe_string_only --dry-run -y  (try 2)
+$ logosctl package install probe_string_only --dry-run -y  (try 3)
+$ logosctl package install probe_string_then_object --dry-run -y  (try 1)
+$ logosctl package install probe_string_then_object --dry-run -y  (try 2)
+$ logosctl package install probe_string_then_object --dry-run -y  (try 3)
+$ logosctl package install probe_object_then_string --dry-run -y  (try 1)
+$ logosctl package install probe_object_then_string --dry-run -y  (try 2)
+$ logosctl package install probe_object_then_string --dry-run -y  (try 3)
+$ logosctl package install probe_object_then_string -y
+probe_object_then_string on disk: lez_core 0.5.1 root 5f39b202eddc; deps: ["lez_core 0.5.1 version_mismatch","lez_core 0.5.1 installed"]
+$ logosctl package install probe_string_then_object -y
+probe_string_then_object on disk: lez_core 0.4.1-sign.4 root c7cae13afe5b; deps: ["lez_core 0.4.1-sign.4 installed","lez_core 0.4.1-sign.4 installed"]
+$ logosctl package install probe_string_then_object -y (fresh session 2)
+probe_string_then_object run 2 on disk: lez_core 0.4.1-sign.4 root c7cae13afe5b
+$ logosctl package install probe_string_then_object -y (fresh session 3)
+probe_string_then_object run 3 on disk: lez_core 0.4.1-sign.4 root c7cae13afe5b

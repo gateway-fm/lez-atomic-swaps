@@ -1,0 +1,4 @@
+40438 75532 /Applications/LogosBasecamp.app/Contents/MacOS/LogosBasecamp.bin  
+40468 40438 /Applications/LogosBasecamp.app/Contents/MacOS/logos_host --name capability_module
+40470 40438 /Applications/LogosBasecamp.app/Contents/MacOS/logos_host --name package_manager
+40471 40438 /Applications/LogosBasecamp.app/Contents/MacOS/logos_host --name package_downloader

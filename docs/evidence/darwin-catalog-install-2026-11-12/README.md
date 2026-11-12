@@ -77,6 +77,7 @@ variant for platform".
 | node-e2e `happy`, BTC, TakerSellsForeign | passed, 37 s | `e2e/btc-happy.log` |
 | node-e2e `happy`, BTC, TakerSellsLez | passed, 23 s | `e2e/btc-happy-lez.log` |
 | node-e2e `zec-happy`, TakerSellsLez | passed, 54 s | `e2e/zec-happy-lez.log` |
+| The release Basecamp 0.2.3 on the same packages, desks clicked | pinned manifests: desks fail to load, no Node; a bare name before each pinned entry: both desks load their modules, both Nodes start and report ready | `basecamp-release/` |
 | Both desks in Basecamp 0.2.0-RC3 (inspector build) on a copy of the session's `modules/` and `plugins/` | desks fail to load: no core dependency loaded, "Timeout waiting for replica lez_core" | `desks/basecamp-catalog-manifests-excerpt.log` |
 | The same with each installed manifest's dependencies as bare names (what the role images do for Basecamp 0.2.0) | both desks open, start their signers and Nodes; `ui-e2e.sh happy` passed, 55 s | `desks/` |
 
@@ -97,8 +98,7 @@ objects, so Basecamp 0.2.0 loads none of a desk's modules and the desk times
 out. The role images write bare names for it; `scripts/bare-dependency-names.sh`
 does the same to the copy, and nothing else changed. Basecamp 0.2.0's own
 package manager reads manifests with the same parser, so installing through
-it was not tried. The release Basecamp 0.2.3's lgx accepts "a string or
-object" dependency entry; it has no inspector, so nothing was driven in it.
+it was not tried. The release Basecamps: next section.
 
 ### Found on the way (first attempt)
 
@@ -111,12 +111,99 @@ object" dependency entry; it has no inspector, so nothing was driven in it.
   fails `lgx verify` on a versioned dependency ("Invalid dependency entry (not
   a string)"); release-packages.yml now uses `ab885df3`.
 - **One TakerSellsLez swap failed on the Maker** in the first session
-  (`first-attempt/btc-happy-lez.log`): the Maker's BTC actor supervision
-  recorded `actor_deployment_invalid` at its first `status` step, 2 s after
-  the previous swap completed, and the swap stayed `Offered`; the actor's own
-  `status` with the same config succeeded afterwards. The next TakerSellsLez
-  swap in that session, and the one above, passed. Not explained; not seen in
-  the earlier native runs.
+  (`first-attempt/btc-happy-lez.log`): the Maker's actor supervision recorded
+  `actor_deployment_invalid` on the swap's first attempt, in the same second
+  the swap was registered and 4 s after the previous swap's actor finished;
+  the swap stayed `Offered`. That class is terminal and comes from the
+  artifact checks before the actor runs (the per-swap config and program
+  hashes, the config's role, swap and state path, the state file's owner,
+  mode and link count; a failure to stage the program copy is a retry, not
+  this class). Ruled out: a changed actor binary. Nothing was reinstalled
+  between the take and the failure, and the swap's record pins the program
+  sha256 `cd7bd733…6f91` and the config sha256 `3201104d…48be`, both equal to
+  the files on disk afterwards; the actor's own `status` with that config
+  succeeds. Not known: which check failed. The Maker logs no line for a
+  supervision failure (its store keeps only the class), so the cause cannot
+  be read back; a race between the swap's registration and its first
+  attempt (the state file appearing between two of the checks) fits the
+  timing but is not shown. The next TakerSellsLez swap in that session, and
+  the one above, passed.
+
+## Release Basecamp and the manifest form
+
+The question: does a desk installed from the catalog, with the pinned
+(object) dependencies, load in the Basecamp releases users run?
+
+**Sources.** Basecamp 0.2.3 is logos-basecamp `aa237766` with
+logos-package-manager `202af6fa` (its own build-commit banner,
+`basecamp-release/pinned-manifests.log`). Its installer writes the package's
+root manifest unchanged into the installed module (`package_manager_lib.cpp`,
+"Write the full root manifest.json"), so its own install gives the same
+manifest a logosctl install gives. Its scan of installed modules keeps a
+dependency only `if (d.is_string())` (`package_manager_lib.cpp` around line
+500): an object entry is dropped. `UIPluginManager` hands that list to
+`PluginLoader::loadCoreDependencies`, which loads `dep.toString()` for each:
+with only objects, no core module is loaded before the desk. The latest
+release, Basecamp 0.3.2 (`release/0.3.2`, `f2fae63`, 2026-10-06), reads both
+forms: its package manager (`4771a648`) takes `name` from a string or from an
+object (`readDeps`), and its `PluginLoader` reads each entry with
+`readDependencyEntry` ("Bare name or {name, version, signer}").
+
+**The app, 0.2.3** (`/Applications`, Developer ID, notarised), on its default
+profile (backup beside it), modules and plugins replaced by the catalog
+session's (the same files its installer writes; installing through its UI
+against the private-CA catalog was not done), started with the environment
+of `scripts/env-both.sh` (`scripts/start-basecamp-release.sh`), desks opened
+by clicking their sidebar buttons through System Events (this host's
+Accessibility permission allowed it):
+
+- Pinned manifests as installed: "Loading UI module", no "Loading core
+  dependency", "Timeout waiting for replica lez_core", "Failed to load UI
+  module ... Timeout waiting for ui-host"; no lez_core, lez_swap_node or role
+  module host, no Node process (`basecamp-release/pinned-*`).
+- Each pinned entry preceded by its bare name (`scripts/string-then-object.sh`):
+  every core dependency loaded for both desks, both Nodes started from the
+  profile's `modules/lez_<role>_node/bin` under the Basecamp's `logos_host`,
+  both owner sockets answer `ready: true`
+  (`basecamp-release/string-then-object*`). The Maker reported
+  `lez_finality_stalled`: the LEZ sequencer did not produce blocks after the
+  chain containers were started again for this check, so no swap ran here.
+- Basecamp 0.3.2 was downloaded but not run: launching it was not permitted
+  on this host.
+
+**logosctl 0.3.2** with four forms of one dependency on lez_core
+(`manifest-forms/`):
+
+| form | plan | lez_core on disk |
+|---|---|---|
+| `[{lez_core, 0.4.1-sign.4}]` | ours only | 0.4.1-sign.4 (ours) |
+| `["lez_core"]` | official 0.5.1 | 0.5.1 |
+| `["lez_core", {lez_core, 0.4.1-sign.4}]` | both: ours and the official 0.5.1 | ours (3 of 3 fresh sessions) |
+| `[{lez_core, 0.4.1-sign.4}, "lez_core"]` | both | official 0.5.1, `version_mismatch` |
+
+A string entry is a name only (logos-package `manifest.cpp`: "Legacy
+plain-string form: equivalent to { name }"); there is no exact-version string
+form. So no single form gives all three consumers what they need: the object
+form is exact for logosctl and Basecamp 0.3.x and loads nothing in Basecamp
+0.2.x; the bare name loads in every Basecamp and installs the official
+lez_core; a bare name before the object loads in Basecamp 0.2.3 and leaves
+our lez_core on disk with logosctl 0.3.2, but the installer also fetches and
+installs the official 0.5.1, and which one stays depends on entry order. The
+role images (Basecamp 0.2.0) do not depend on the published form: they write
+bare names when the image is built.
+
+To watch the 0.2.3 profile by hand (desks opened by a click on "LEZ Maker"
+and "LEZ Taker"):
+
+```sh
+grep -E 'Loading core dependency|Failed to load UI module' "$PROFILE"/logs/basecamp_*.log | tail
+pgrep -fl 'lez-(maker|taker)-node'
+curl -s --unix-socket "$LEZ_NODE_HOME/run/maker/node.sock" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"maker_health","params":[{}]}' http://x/
+curl -s --unix-socket "$LEZ_NODE_HOME/run/taker/node.sock" -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"taker_health","params":[{"schema_version":1}]}' http://x/
+tail "$LEZ_NODE_HOME"/maker.out.log "$LEZ_NODE_HOME"/taker.out.log
+```
 
 ## Inputs
 
@@ -137,11 +224,11 @@ object" dependency entry; it has no inspector, so nothing was driven in it.
 
 Paths are replaced by `$WORK` (this run's directory: session, Node home,
 catalog), `$LOGOSCTL`, `$CHECKOUT`, `$DEPLOY` (the stack's checkout),
-`$BASECAMP_BUILD`, `$MERGED`, `$RELEASE_PACKAGES`, `$TOOLS`, `$TMPDIR` and
+`$BASECAMP_BUILD`, `$MERGED`, `$RELEASE_PACKAGES`, `$TOOLS`, `$PROFILE` (the release Basecamp's profile), `$TMPDIR` and
 `$HOME`. The scripts read `LOGOSCTL`, `SESSION`, `LEZ_NODE_HOME`, `DEPLOY`,
 `CA_BUNDLE`, `BASECAMP` and `USER_DIR` from the environment. Keys are never
 printed (scanned before committing).
 
-Not run: anything on linux-amd64 (no variant yet); the release Basecamp 0.2.3
-beyond the parser check above; the Node scenarios other than `happy` and
+Not run: anything on linux-amd64 (no variant yet); Basecamp 0.3.2; an install
+through Basecamp's own package manager UI; the Node scenarios other than `happy` and
 `zec-happy`; a run of release-packages.yml on GitHub's runners.

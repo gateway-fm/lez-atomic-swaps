@@ -1,0 +1,8 @@
+LogosBasecamp version 0.2.3 (portable build)
+  - logos-basecamp aa237766baf61404e12da86b7303cb41065464c9
+  - logos-package-manager 202af6fa0f0f4493bc59c8a609dff9326f78a18d
+App launcher clicked: "lez_atomic_swap_maker"
+Loading UI module: "lez_atomic_swap_maker"
+ui-host [ "lez_atomic_swap_maker" ]: "RemoteTransportConnection: Timeout waiting for replica: \"lez_core\"\nLogosAPIConsumer: Failed to acquire plugin/replica for object: \"lez_core\"\nLezCore::open: remote call failed: \"failed to acquire remote object 'lez_core' (module not loaded, not published, 
+Timeout waiting for ui-host ready signal for "lez_atomic_swap_maker"
+Failed to load UI module "lez_atomic_swap_maker" : "Timeout waiting for ui-host for lez_atomic_swap_maker"

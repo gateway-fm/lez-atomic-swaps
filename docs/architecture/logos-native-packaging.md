@@ -680,11 +680,18 @@ run on macOS.
   The verifying lgx is logos-package `ab885df3`: the module builder's
   `ff93a0df` refuses a manifest with a versioned dependency. The executables
   are signed ad hoc, not with a Developer ID, and not notarised.
-- **Basecamp 0.2.0** reads only string dependency entries from an installed
-  manifest. A catalog install keeps the pinned entries, so Basecamp 0.2.0
-  loads none of a desk's modules and the desk does not open; the role images
-  write bare names for it. The release Basecamp's lgx (0.2.3) accepts both
-  forms.
+- **Basecamp 0.2.x** (0.2.0 in the images, the 0.2.3 release) keeps only
+  string dependency entries when it scans installed modules
+  (logos-package-manager `202af6fa`, `if (d.is_string())`), and its
+  `PluginLoader` loads a desk's core modules from that list. A catalog
+  install keeps the pinned objects, so Basecamp 0.2.x loads none of a desk's
+  modules and the desk does not open; the role images write bare names for
+  it. Basecamp 0.3.2 reads both forms (its package manager's `readDeps`, its
+  `PluginLoader`'s `readDependencyEntry`). A string entry is a name only;
+  there is no exact-version string. A bare name before each pinned entry
+  loads in 0.2.3, but logosctl 0.3.2 then also installs the official
+  `lez_core` 0.5.1 and keeps whichever entry comes last. No one form is exact
+  for logosctl and loads in Basecamp 0.2.x.
 - **linux-amd64.** Until a package carries `linux-amd64`, a default install of
   a desk on an x86_64 Linux host resolves the version and then stops with
   "Package does not contain variant for platform"; it installs nothing.
@@ -702,8 +709,11 @@ the installed packages and passed BTC `happy` in both directions and
 `zec-happy`. The same install in a linux-arm64 container got the linux-arm64
 variants and the same `lez_core`. Basecamp 0.2.0-RC3 on a copy of the session's
 packages ran `ui-e2e.sh happy` once their dependencies were written as bare
-names. Not run: the workflow on GitHub's runners, linux-amd64, the release
-Basecamp beyond its parser.
+names. The release Basecamp 0.2.3 on the same packages: with the pinned
+manifests the desks did not load and no Node started; with a bare name
+before each pinned entry both desks loaded their modules and both Nodes
+started and reported ready. Not run: the workflow on GitHub's runners,
+linux-amd64, Basecamp 0.3.2.
 
 ## Recommended order
 
