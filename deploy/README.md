@@ -553,6 +553,32 @@ images. Use an offset of 100 or more (lanes take +10 each) and check that the
 shifted ports are free. `compose.testnet.yaml` keeps its own project
 (`lez-testnet`) and container names.
 
+### Two transports
+
+The role launcher's `LEZ_TRANSPORT` (`modules/lez-role-node/node-entrypoint.sh`)
+says how the Taker reaches the Maker. `local`, the default: offers and the
+Maker's Delivery identity from the shared `delivery_dir` volume, Chat rounds
+straight to the Maker's socket in the shared `maker_socket` volume, so both
+Basecamps must be on one host. `logos` (`compose.logos.yaml`, test
+`ui:btc:logos-happy:TakerSellsForeign`): nothing is shared but the chains. Each
+role starts its Chat gateway (`lez-<role>-chat-gateway`, in its package) on
+`LEZ_LOGOS_CHAT_GATEWAY_SOCKET` (under `/run/lez/<role>`), the socket its desk's
+Logos Chat bridge uses; offers travel over Logos Delivery into the Taker desk's
+order book and the take's Chat rounds over Logos Chat. The Taker is given the
+Maker's public Delivery identity in `LEZ_MAKER_DELIVERY_IDENTITY`. The two
+Delivery nodes form a network of their own, `LEZ_LOGOS_DELIVERY_CONFIG`
+(delivery_module's createNode JSON, through the patched chat_module,
+`builder/patches/logos-chat-module`): a private cluster id, the Maker's node
+listening on TCP 60000 on every interface, the Taker's dialling
+`LEZ_MAKER_DELIVERY_PEER` (`/ip4/<address>/tcp/60000/p2p/<peer id>`; the Delivery
+node's resolver does not use Docker's DNS, so an address, not a name). Two
+hosts set the same variables with the Maker's reachable address; NAT traversal
+is not covered. On the devnet (2026-11-12) offers reached the Taker in about
+3 s, every Chat round took 0.3–0.9 s and the six rounds of a take 3–4 s, in
+six passing runs. On the public `logos.test` fleet instead, of 13 Chat
+messages 5 arrived in 1–4 s, 2 after 109 s and 258 s and 6 not within the 20 s
+to 6 min watched, against the gateways' 25 s per round: no take completed.
+
 ## Services
 
 | Service | Image | Notes |
