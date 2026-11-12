@@ -1,7 +1,8 @@
 # v0.3.0
 
-Draft of the release text. Every `TBD(release)` is filled from the green
-release workflow run and the runs still in progress before the tag is made.
+The release text. What exists only once the tag is made (image digests, the
+attached files, what the catalog holds) is on the release page, not in this
+file.
 
 Milestone 2 ([logos-co/rfp#122](https://github.com/logos-co/rfp/issues/122)):
 ZEC/LEZ swaps through the Maker and Taker desks and Nodes, on the stack that
@@ -54,23 +55,12 @@ nothing (#113, PR #127). Details and commits:
 
 ## Images
 
-Published to `ghcr.io/gateway-fm/lez-atomic-swaps/` at tag `v0.3.0`, from
-release-images run TBD(release) (run id and its result, smoke job included).
-All are `linux/arm64`.
-
-| Image | Digest at `v0.3.0` |
-|---|---|
-| `lez-maker-node` | TBD(release) |
-| `lez-taker-node` | TBD(release) |
-| `lez-network-module` | TBD(release) |
-| `lez-basecamp-ui` | TBD(release) |
-| `lez-services` | TBD(release) |
-| `lez-wallet-module` | TBD(release) |
-| `lez-bitcoin-core` | TBD(release) |
-| `lez-zebra` | TBD(release) |
-| `lez-btc-miner` | TBD(release) |
-| `lez-btc-explorer` | TBD(release) |
-| `lez-explorer` | TBD(release) |
+Published to `ghcr.io/gateway-fm/lez-atomic-swaps/` at tag `v0.3.0` by the
+release workflow, all `linux/arm64`: `lez-maker-node`, `lez-taker-node`,
+`lez-network-module`, `lez-basecamp-ui`, `lez-services`, `lez-wallet-module`,
+`lez-bitcoin-core`, `lez-zebra`, `lez-btc-miner`, `lez-btc-explorer` and
+`lez-explorer`. Their digests are listed on the release page, from the
+workflow run that built them.
 
 The bundle is `lez-swap-stack-v0.3.0-arm64.tar.gz`; `./scripts/start.sh`
 starts the stack from it.
@@ -81,9 +71,9 @@ Our packages in this release are all at 0.3.0: the desks
 `lez_taker_node`. The upstream ones keep their own versions (`lez_core`
 0.4.1-sign.4, `lez_indexer_module` 1.1.1-rpc.4, `blockchain_module` 0.2.4).
 
-The module catalog (`gateway-fm/logos-modules-release-base`): TBD(release)
-— the 0.3.0 packages are published to it with this release; until then it
-holds the two desks at 0.2.5.
+The module catalog (`gateway-fm/logos-modules-release-base`) gets the 0.3.0
+packages with this release; the release page says what was published. Before
+it the catalog holds the two desks at 0.2.5.
 
 ## Regression evidence
 
@@ -110,8 +100,7 @@ Seven ZEC recordings are in git, in
 `TakerSellsForeign-zec-stale-window`, `TakerSellsLez-zec-happy`,
 `TakerSellsLez-zec-maker-refund` and `TakerSellsLez-zec-concurrent`. Each is a
 by-product of a desk test that passed while being recorded. The full set,
-Bitcoin included, is attached to this release: TBD(release) (attachment
-names).
+Bitcoin included, is attached to the release.
 
 ## Upgrading
 
