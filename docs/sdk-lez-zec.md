@@ -188,18 +188,49 @@ crate. The two map like this:
 | --- | --- |
 | `maker_offer_publish` / `maker_offer_publish_v1` | offer discovery (publish) |
 | `taker_offer_list_v1` | offer discovery (discover) |
-| `taker_swap_initiate_v1` (a `prepared_zec` catalog entry) | negotiation over the Maker's Chat socket (`zec_chat_propose_v1`, `zec_chat_complete_v1`), then actor provisioning |
+| `taker_swap_initiate_v1` (a `prepared_zec` catalog entry, or any live Zcash offer with `zec_role_config`) | negotiation over the Maker's Chat socket (`zec_reserve_v1` for a take-time agreement, then `zec_chat_propose_v1`, `zec_chat_complete_v1`), then actor provisioning |
 | the Taker actor's `drive` (no desk button; driven on the Node host) | escrow creation — first lock |
 | the Maker Node's supervisor | escrow creation — second lock, then the revealing claim |
 | `taker_swap_claim_v1` | claim (the Taker's follow-up Zcash claim) |
 | `taker_swap_refund_v1`, `maker_actor_refund_v1` | refund |
 
-A ZEC take on the Nodes is prepared, not composed: the Taker's catalog entry
-carries the signed offer envelope, the unsigned draft bound to that offer, the
-signing key and the actor template, all produced by
-`scripts/zec-provision.sh` from live chain facts. If you are building a
-strategy or an integration, the JSON-RPC is the stable surface. If you are
-embedding the protocol in your own binary, this crate is.
+A ZEC take on the Nodes is either prepared or composed at take time. Prepared:
+the Taker's catalog entry carries the signed offer envelope, the unsigned draft
+bound to that offer, the signing key and the actor template, all produced by
+`scripts/zec-provision.sh` from live chain facts; the catalog is looked up
+first. Composed: with a Zcash role config on both Nodes (`--zec-role-config`
+on the Maker, `initiation.zec_role_config` on the Taker: profile, Zebra
+endpoint, the Taker's Zcash key) any live Zcash offer is taken by one more
+Chat round before the existing two:
+
+**`zec_reserve_v1`** (Taker → Maker; [`reserve.rs`](../crates/zec-reference-actor/src/reserve.rs)).
+The Taker sends the reservation id (derived from its initiation request), the
+offer id and signed envelope, the units, its Zcash public key and LEZ account,
+and, when it funds Zcash (`TakerSellsForeign`), its funding outpoint and the
+SHA-256 of the claim preimage it made. The Maker checks the offer is its own,
+live, on the Zcash route and the units within its bounds; the Taker's key and
+account differ from its own; in `TakerSellsForeign` the outpoint is unspent,
+pays the Taker's key, covers principal, fee and change and is mature on the
+Maker's Zebra. It then fixes the anchors at now (Zcash: its tip + 1; LEZ: its
+clock), in `TakerSellsLez` selects its own mature funding output (never one
+another live or completed reservation committed) and makes the preimage,
+composes the unsigned draft (`ZecAgreementDraftV1::new`) and answers with it,
+the swap id (derived from offer commitment and reservation), its LEZ account,
+the two anchors, its Zebra genesis and, in `TakerSellsLez`, its outpoint and
+digest. The Taker recomposes the whole body from the offer, its own facts and
+those few Maker facts with the same function and requires byte equality,
+after bounding them: anchor height within its own Zebra tip before and after
+the call (±3 blocks), anchor time within 120 s of its clock, the Maker's
+outpoint unspent, the Maker's, large and deep enough on its own Zebra.
+Neither side sends a private key or preimage. Each side then writes only its
+own material and actor template around the draft (the Taker at once, the Maker
+at `zec_chat_complete_v1`, which refuses a body other than the reserved one,
+as `zec_chat_propose_v1` does) and starts its own sidecar; propose and
+complete sign as for a catalog swap. A Maker holds at most 16 open
+reservations, each for 900 s; an identical retry is answered from its record.
+
+If you are building a strategy or an integration, the JSON-RPC is the stable
+surface. If you are embedding the protocol in your own binary, this crate is.
 
 ## Scope
 
