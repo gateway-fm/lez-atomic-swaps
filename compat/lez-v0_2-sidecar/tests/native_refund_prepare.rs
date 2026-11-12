@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{fs, os::unix::fs::PermissionsExt as _};
 
 use async_trait::async_trait;
@@ -388,7 +388,7 @@ async fn rejects_refund_signer_program_and_authority_mutations_before_nonce_rpc(
     assert_eq!(nonces.calls.load(Ordering::SeqCst), 0);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test]
 async fn rejects_identity_drift_and_restores_exact_refund_without_nonce_rpc() {
     let directory = tempfile::tempdir().unwrap();

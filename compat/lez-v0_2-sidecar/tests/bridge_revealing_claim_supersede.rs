@@ -4,7 +4,7 @@
 //! through `supersede_revealing_claim` into a durable lineage — the same claim
 //! at the live nonce — that survives a restart, answers a replay with the same
 //! bytes, refuses an included claim and stops by name after five re-plans.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::{
     fs,
