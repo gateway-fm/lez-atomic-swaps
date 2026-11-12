@@ -23,6 +23,7 @@ use crate::{
     ActorConfig, ActorRole,
     config::encode_rebound_local_v0_2_actor_config,
     local_poc::{create_private_directory, validate_role_authority, write_private_new},
+    reserve::is_draft_wire,
     secure_file::{FilePrivacy, read_bounded_identified},
 };
 
@@ -280,9 +281,7 @@ fn prepare_provision(
     let source_material = source
         .load_activate_material()
         .context("source actor activation material is invalid")?;
-    let source_agreement =
-        ZecAgreementV1::from_wire_at(source_material.signed_agreement_wire(), accepted_at)
-            .context("source agreement is invalid at final acceptance")?;
+    let source_wire = source_material.signed_agreement_wire();
     let accepted = AcceptedZecAgreementV1::accept_wire_at(
         final_agreement_wire,
         accepted_at,
@@ -295,13 +294,17 @@ fn prepare_provision(
         agreement.application_swap_id() == source.swap_id().as_str(),
         "final agreement swap ID differs from source actor"
     );
-    let expected = ZecAgreementDraftV1::rebind_validated_transcript(
-        &source_agreement,
-        *agreement.transcript(),
-    );
-    let expected_wire = expected
-        .encode_wire()
-        .context("failed to encode expected Chat body")?;
+    let expected_wire = if is_draft_wire(source_wire, accepted_at) {
+        // A take-time template (reserve.rs) holds the reservation's unsigned
+        // draft, transcript included: the final body must be exactly it.
+        source_wire.to_vec()
+    } else {
+        let source_agreement = ZecAgreementV1::from_wire_at(source_wire, accepted_at)
+            .context("source agreement is invalid at final acceptance")?;
+        ZecAgreementDraftV1::rebind_validated_transcript(&source_agreement, *agreement.transcript())
+            .encode_wire()
+            .context("failed to encode expected Chat body")?
+    };
     let expected = ZecAgreementDraftV1::from_wire_at(&expected_wire, accepted_at)
         .context("expected Chat body did not revalidate")?;
     ensure!(

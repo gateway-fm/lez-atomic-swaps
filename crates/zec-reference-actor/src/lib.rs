@@ -13,6 +13,7 @@ mod config;
 mod first_lock_attempts;
 mod local_poc;
 mod maker_provision;
+mod reserve;
 mod secure_file;
 #[cfg(feature = "test-crash-hooks")]
 mod test_crash_hook;
@@ -71,6 +72,12 @@ pub use maker_provision::{
     ZecActorProvisionV1, ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,
     provision_zec_maker_actor_from_config, provision_zec_taker_actor_from_chat,
     provision_zec_taker_actor_from_config,
+};
+pub use reserve::{
+    MAX_ANCHOR_CLOCK_SKEW_SECONDS, MAX_ANCHOR_HEIGHT_SKEW_BLOCKS, ZEC_ROLE_DRAFT_FILE, ZecLezRole,
+    ZecMakerReservation, ZecReservationTerms, ZecRoleConfigV1, ZecRoleTemplate, ZecTakerCheck,
+    ZecTakerContribution, begin_zec_taker_role, check_zec_taker_role, reserve_zec_maker_role,
+    select_zec_funding, write_zec_role_template, zec_dynamic_swap_id, zec_tip_height,
 };
 #[cfg(feature = "test-crash-hooks")]
 pub use test_crash_hook::{TestCrashHookError, arm_test_crash_hook};
