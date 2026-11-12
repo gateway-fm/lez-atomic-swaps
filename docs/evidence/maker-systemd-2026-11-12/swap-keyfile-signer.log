@@ -1,0 +1,475 @@
+
+## VM
+source commit: 153d3ac6de21001ccc7e129471f3d1cd5c266b99
+7ae97bda42eeb73871e9c7ccc66360e15939acf5bdb59559dea5c1c0090793fb  lez-maker-node
+54874128ffc0c25093d1900d1fa4fa0cc2060ddff6322a30c4b28cc0a07ef6b5  lez-maker-cli
+87a902c7120083280b1830930a8129fec34991285f7a3316472b971a3451361f  lez-zec-maker-actor
+0916d5f2e6e8cac8e298df955b0c61185c82c02049c723c90cd18a20ecaddf5a  lez-logos-price-worker
+8594ed76e8231689aed3696030f58c8f233fbd66aadf9aa683bdd1a5ebeff84b  lez-btc-maker-actor
+e77f19c3e37442ddddd2f6bda2d1db7c5cf88994bd3ea64e7654ad7401f15490  lez-runtime-healthcheck
+ebaf436305e4a0cac6e8d20f4f46ef21a9eccdfdc9e84932ab64e2ed5b1ed973  lez-taker-node
+5707725637a10a4beb27da2dcb3d6ed3a790fece8fa9c455bd9be5ea5e39dee9  lez-taker-cli
+a077686acbe4b85d66f9903f36995c95c3778d397e069a471d8b283e43b51571  lez-btc-taker-actor
+d902b2cbe867652d97b06e8135a724d9c44ff633d6c73e0b37d7ff7ad7224ea8  lez-taker-registry-init
+e024dfe6b9cd6b018270f0cc33a4abd73b19f7605610ec2e4ad265f7b77200a3  lez-v02-bridge-poc
+afdaa71f2500051f5d023297e7843753edf9752cce2dcd560ff2f1cf77bea7a5  modules/lez-role-node/node-entrypoint.sh
+stack: 9e383dd6b18b688561fef359f3955fa74e81832e
+lez-bitcoin-core image sha256:a2fc0c4660aba5b8a2dfd044c1d5f751d17f36b82a79912a4acf253d699ca4cd
+lez-sequencer image sha256:ce3eb7aeaa5ab280a0be3bcba875e502d349f0c1b57b8788101e937e4d3fa3a8
+lez-network image sha256:51a018ec2bceeacb4123b8607d4b2f280377b52729a0f254d251ccbeaf668449
+lez-maker-node image sha256:4a7df694f20fc47995dc2d06e276a7c004caf6fd06d1e3669cdd3b08f078d214
+lez-taker-node image sha256:5174b4616bd32d14b7961cd4f66c7b91b8a0adb43ee7adad6fea8552e7f69ac8
+$ grep PRETTY_NAME /etc/os-release
+PRETTY_NAME="Ubuntu 24.04.5 LTS"
+[exit 0]
+$ systemctl --version
+systemd 255 (255.4-1ubuntu8.18)
++PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified
+[exit 0]
+
+## Prerequisites: jq and socat (the launcher's), from Ubuntu's archive
+$ sh -c dpkg -i /payload/debs/*.deb >/dev/null && dpkg-query -W jq socat
+jq	1.7.1-3ubuntu0.24.04.2
+socat	1.8.0.0-4ubuntu0.1
+[exit 0]
+
+## Install both roles (docs/maker-systemd-install.md)
+$ useradd --system --no-create-home --shell /usr/sbin/nologin lez-swap
+[exit 0]
+$ env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-maker-node-service.sh
+installed canonical Maker Node artifacts below /
+[exit 0]
+$ env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-taker-node-service.sh
+installed canonical Taker Node artifacts below /
+[exit 0]
+
+## The chains on loopback: QEMU forwards 10.0.2.100 to the devnet, socat to 127.0.0.1
+$ systemd-run --quiet --unit=lez-chain-18443 -p Restart=always socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:10.0.2.100:18443
+[exit 0]
+$ systemd-run --quiet --unit=lez-chain-3040 -p Restart=always socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:10.0.2.100:3040
+[exit 0]
+$ systemd-run --quiet --unit=lez-chain-8779 -p Restart=always socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:10.0.2.100:8779
+[exit 0]
+$ sh -c curl -sS --user "$(cat /payload/stack/btc-rpc-cookie)" -H "content-type: application/json" --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getblockcount\",\"params\":[]}" http://127.0.0.1:18443/
+{"jsonrpc":"2.0","result":98709,"id":1}
+[exit 0]
+$ curl -sS http://127.0.0.1:8779/ -H content-type: application/json --data {"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}
+{"jsonrpc":"2.0","id":1,"result":547}[exit 0]
+
+## Inputs: credentials, identities, cookie copies, market constants, env files
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=delivery-signing.key - /etc/lez/maker/credentials/delivery-signing.key.cred
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-recovery.key - /etc/lez/maker/credentials/maker-claim-recovery.key.cred
+$ head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-preimage.key - /etc/lez/maker/credentials/maker-claim-preimage.key.cred
+$ install -m 0644 /payload/stack/market-bootstrap.env /etc/lez/market-bootstrap.env
+[exit 0]
+$ install -d -m 0755 /etc/lez/maker/identity
+[exit 0]
+$ install -o lez-swap -g lez-swap -m 0400 /payload/stack/maker/identity.json /payload/stack/maker/lez-signer.key /etc/lez/maker/identity/
+[exit 0]
+$ install -o lez-swap -g lez-swap -m 0400 /payload/stack/btc-rpc-cookie /etc/lez/maker/btc-rpc-cookie
+[exit 0]
+$ cat /etc/lez/maker/env
+# /etc/lez/maker/env: the role launcher's inputs (modules/lez-role-node/node-entrypoint.sh).
+# The role's LEZ identity: identity.json and lez-signer.key (owned by lez-swap, mode 0400).
+LEZ_IDENTITY_DIR=/etc/lez/maker/identity
+# The market's public constants: M3_POC_LEZ_ESCROW_PROGRAM_ID, M3_POC_LEZ_GENESIS_BLOCK_HASH.
+LEZ_MARKET_MANIFEST=/etc/lez/market-bootstrap.env
+# A copy of Bitcoin Core's RPC cookie the service user can read.
+LEZ_BTC_RPC_COOKIE_FILE=/etc/lez/maker/btc-rpc-cookie
+LEZ_BTC_WALLET=lez-maker
+LEZ_BTC_CLAIM_DESTINATION=wallet
+LEZ_DELIVERY_DIR=/var/lib/lez/maker/delivery
+LEZ_DELIVERY_SIGNING_KEY_FILE=/run/credentials/lez-maker-node.service/delivery-signing.key
+# Bitcoin Core on 127.0.0.1:18443 and the LEZ sequencer and indexer below answer on loopback.
+LEZ_CHAIN_FORWARDS=0
+LEZ_SEQUENCER_URL=http://127.0.0.1:3040
+LEZ_INDEXER_URL=http://127.0.0.1:8779
+LEZ_SIDECAR_PORT_BASE=19000
+LEZ_BTC_REFUND_CSV_BLOCKS=420
+LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS=240
+LEZ_BTC_BLOCK_SECONDS_FASTEST=2
+LEZ_BTC_BLOCK_SECONDS_SLOWEST=2
+LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS=240
+LEZ_BTC_EARLIER_REFUND_SECONDS=420
+LEZ_BTC_LATER_REFUND_SECONDS=840
+LEZ_BTC_REFUND_MARGIN_SECONDS=60
+LEZ_LEZ_DISCOVERY_MAX_BLOCKS=300
+LEZ_BTC_BLOCK_SECONDS=2
+LEZ_BTC_ACTOR_TRACE=
+LEZ_MAKER_ACTOR_REQUEUE_SECONDS=2
+LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS=10
+LEZ_TAKER_OBSERVER_SWEEP_SECONDS=3
+LEZ_NODE_FINALITY_STALL_SECONDS=60
+LEZ_V02_CHANNEL_ID=b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748
+[exit 0]
+$ install -d -m 0755 /etc/lez/taker/identity
+[exit 0]
+$ install -o lez-swap -g lez-swap -m 0400 /payload/stack/taker/identity.json /payload/stack/taker/lez-signer.key /etc/lez/taker/identity/
+[exit 0]
+$ install -o lez-swap -g lez-swap -m 0400 /payload/stack/btc-rpc-cookie /etc/lez/taker/btc-rpc-cookie
+[exit 0]
+$ cat /etc/lez/taker/env
+# /etc/lez/taker/env: the role launcher's inputs (modules/lez-role-node/node-entrypoint.sh).
+# The role's LEZ identity: identity.json and lez-signer.key (owned by lez-swap, mode 0400).
+LEZ_IDENTITY_DIR=/etc/lez/taker/identity
+# The market's public constants: M3_POC_LEZ_ESCROW_PROGRAM_ID, M3_POC_LEZ_GENESIS_BLOCK_HASH.
+LEZ_MARKET_MANIFEST=/etc/lez/market-bootstrap.env
+# A copy of Bitcoin Core's RPC cookie the service user can read.
+LEZ_BTC_RPC_COOKIE_FILE=/etc/lez/taker/btc-rpc-cookie
+LEZ_BTC_WALLET=lez-taker
+LEZ_BTC_CLAIM_DESTINATION=wallet
+# The Maker's run-local Delivery directory, read as the same service user.
+LEZ_DELIVERY_DIR=/var/lib/lez/maker/delivery
+# Bitcoin Core on 127.0.0.1:18443 and the LEZ sequencer and indexer below answer on loopback.
+LEZ_CHAIN_FORWARDS=0
+LEZ_SEQUENCER_URL=http://127.0.0.1:3040
+LEZ_INDEXER_URL=http://127.0.0.1:8779
+LEZ_SIDECAR_PORT_BASE=19500
+LEZ_BTC_REFUND_CSV_BLOCKS=420
+LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS=240
+LEZ_BTC_BLOCK_SECONDS_FASTEST=2
+LEZ_BTC_BLOCK_SECONDS_SLOWEST=2
+LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS=240
+LEZ_BTC_EARLIER_REFUND_SECONDS=420
+LEZ_BTC_LATER_REFUND_SECONDS=840
+LEZ_BTC_REFUND_MARGIN_SECONDS=60
+LEZ_LEZ_DISCOVERY_MAX_BLOCKS=300
+LEZ_BTC_BLOCK_SECONDS=2
+LEZ_BTC_ACTOR_TRACE=
+LEZ_MAKER_ACTOR_REQUEUE_SECONDS=2
+LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS=10
+LEZ_TAKER_OBSERVER_SWEEP_SECONDS=3
+LEZ_NODE_FINALITY_STALL_SECONDS=60
+LEZ_V02_CHANNEL_ID=b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748
+[exit 0]
+$ find /etc/lez -ls
+   262186      4 drwxr-xr-x   4 root     root         4096 Nov 12 20:05 /etc/lez
+   262187      4 drwxr-xr-x   4 root     root         4096 Nov 12 20:05 /etc/lez/maker
+   262252      4 -r--------   1 lez-swap lez-swap       40 Nov 12 20:05 /etc/lez/maker/btc-rpc-cookie
+   262236      4 -rw-------   1 root     root         1054 Nov 12 20:05 /etc/lez/maker/route-health.json.example
+   262234      4 -rw-------   1 root     root          931 Nov 12 20:05 /etc/lez/maker/node.json.example
+   262249      4 drwxr-xr-x   2 root     root         4096 Nov 12 20:05 /etc/lez/maker/identity
+   262251      4 -r--------   1 lez-swap lez-swap       65 Nov 12 20:05 /etc/lez/maker/identity/lez-signer.key
+   262250      4 -r--------   1 lez-swap lez-swap      442 Nov 12 20:05 /etc/lez/maker/identity/identity.json
+   262253      4 -rw-r--r--   1 root     root         1488 Nov 12 20:05 /etc/lez/maker/env
+   262235      4 -rw-------   1 root     root          981 Nov 12 20:05 /etc/lez/maker/env.example
+   262239      4 drwx------   2 root     root         4096 Nov 12 20:05 /etc/lez/maker/credentials
+   262246      4 -rw-r--r--   1 root     root          195 Nov 12 20:05 /etc/lez/maker/credentials/maker-claim-recovery.key.cred
+   262247      4 -rw-r--r--   1 root     root          195 Nov 12 20:05 /etc/lez/maker/credentials/maker-claim-preimage.key.cred
+   262245      4 -rw-r--r--   1 root     root          187 Nov 12 20:05 /etc/lez/maker/credentials/delivery-signing.key.cred
+   262248      4 -rw-r--r--   1 root     root          392 Nov 12 20:05 /etc/lez/market-bootstrap.env
+   262240      4 drwxr-xr-x   4 root     root         4096 Nov 12 20:05 /etc/lez/taker
+   262257      4 -r--------   1 lez-swap lez-swap       40 Nov 12 20:05 /etc/lez/taker/btc-rpc-cookie
+   262241      4 -rw-------   1 root     root          184 Nov 12 20:05 /etc/lez/taker/node.json.example
+   262254      4 drwxr-xr-x   2 root     root         4096 Nov 12 20:05 /etc/lez/taker/identity
+   262256      4 -r--------   1 lez-swap lez-swap       65 Nov 12 20:05 /etc/lez/taker/identity/lez-signer.key
+   262255      4 -r--------   1 lez-swap lez-swap      442 Nov 12 20:05 /etc/lez/taker/identity/identity.json
+   262242      4 -rw-------   1 root     root          249 Nov 12 20:05 /etc/lez/taker/role.json.example
+   262258      4 -rw-r--r--   1 root     root         1472 Nov 12 20:05 /etc/lez/taker/env
+   262243      4 -rw-------   1 root     root          965 Nov 12 20:05 /etc/lez/taker/env.example
+   262244      4 drwx------   2 root     root         4096 Nov 12 20:05 /etc/lez/taker/credentials
+[exit 0]
+
+## Start both units through the launcher
+$ systemctl daemon-reload
+[exit 0]
+$ systemctl start lez-maker-node
+[exit 0]
+$ systemctl start lez-taker-node
+[exit 0]
+$ systemctl show -p Type,ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+Type=notify
+MainPID=1206
+StatusText=maker RPC and durable state are ready
+NRestarts=0
+ActiveState=active
+SubState=running
+[exit 0]
+$ journalctl -u lez-maker-node --no-pager -o cat
+Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+maker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[exit 0]
+$ systemctl show -p Type,ActiveState,SubState,MainPID,NRestarts,StatusText lez-taker-node
+Type=notify
+MainPID=1268
+StatusText=Taker RPC and durable state are ready
+NRestarts=0
+ActiveState=active
+SubState=running
+[exit 0]
+$ journalctl -u lez-taker-node --no-pager -o cat
+Starting lez-taker-node.service - LEZ atomic-swap Taker Node...
+taker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+taker: 0 prepared ZEC entries configured
+Started lez-taker-node.service - LEZ atomic-swap Taker Node.
+[exit 0]
+$ systemd-analyze security --no-pager lez-maker-node
+  NAME                               DESCRIPTION                        EXPOSURE
+✓ SystemCallFilter=~@swap            System call allow list defined fo… 
+✗ SystemCallFilter=~@resources       System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@reboot          System call allow list defined fo… 
+✓ SystemCallFilter=~@raw-io          System call allow list defined fo… 
+✗ SystemCallFilter=~@privileged      System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@obsolete        System call allow list defined fo… 
+✓ SystemCallFilter=~@mount           System call allow list defined fo… 
+✓ SystemCallFilter=~@module          System call allow list defined fo… 
+✓ SystemCallFilter=~@debug           System call allow list defined fo… 
+✓ SystemCallFilter=~@cpu-emulation   System call allow list defined fo… 
+✓ SystemCallFilter=~@clock           System call allow list defined fo… 
+✓ RemoveIPC=                         Service user cannot leave SysV IP… 
+✗ RootDirectory=/RootImage=          Service runs within the host's ro…      0.1
+✓ User=/DynamicUser=                 Service runs under a static non-r… 
+✓ RestrictRealtime=                  Service realtime scheduling acces… 
+✓ CapabilityBoundingSet=~CAP_SYS_TI… Service processes cannot change t… 
+✓ NoNewPrivileges=                   Service processes cannot acquire … 
+✓ AmbientCapabilities=               Service process does not receive … 
+✓ CapabilityBoundingSet=~CAP_BPF     Service may load BPF programs      
+✓ SystemCallArchitectures=           Service may execute system calls … 
+✗ RestrictSUIDSGID=                  Service may create SUID/SGID files      0.2
+✗ RestrictAddressFamilies=~AF_UNIX   Service may allocate local sockets      0.1
+✗ RestrictAddressFamilies=~AF_(INET… Service may allocate Internet soc…      0.3
+✓ ProtectSystem=                     Service has strict read-only acce… 
+✓ ProtectProc=                       Service has restricted access to … 
+✓ SupplementaryGroups=               Service has no supplementary grou… 
+✓ CapabilityBoundingSet=~CAP_SYS_RA… Service has no raw I/O access      
+✓ CapabilityBoundingSet=~CAP_SYS_PT… Service has no ptrace() debugging… 
+✓ CapabilityBoundingSet=~CAP_SYS_(N… Service has no privileges to chan… 
+✓ CapabilityBoundingSet=~CAP_NET_AD… Service has no network configurat… 
+✓ CapabilityBoundingSet=~CAP_NET_(B… Service has no elevated networkin… 
+✓ CapabilityBoundingSet=~CAP_AUDIT_* Service has no audit subsystem ac… 
+✓ CapabilityBoundingSet=~CAP_SYS_AD… Service has no administrator priv… 
+✓ PrivateTmp=                        Service has no access to other so… 
+✓ ProcSubset=                        Service has no access to non-proc… 
+✓ CapabilityBoundingSet=~CAP_SYSLOG  Service has no access to kernel l… 
+✓ ProtectHome=                       Service has no access to home dir… 
+✓ PrivateDevices=                    Service has no access to hardware… 
+✗ PrivateNetwork=                    Service has access to the host's …      0.5
+✗ PrivateUsers=                      Service has access to other users       0.2
+✗ DeviceAllow=                       Service has a device ACL with som…      0.1
+✓ KeyringMode=                       Service doesn't share key materia… 
+✓ Delegate=                          Service does not maintain its own… 
+✗ IPAddressDeny=                     Service does not define an IP add…      0.2
+✓ NotifyAccess=                      Service child processes cannot al… 
+✓ ProtectClock=                      Service cannot write to the hardw… 
+✓ CapabilityBoundingSet=~CAP_SYS_PA… Service cannot use acct()          
+✓ CapabilityBoundingSet=~CAP_KILL    Service cannot send UNIX signals … 
+✓ ProtectKernelLogs=                 Service cannot read from or write… 
+✓ CapabilityBoundingSet=~CAP_WAKE_A… Service cannot program timers tha… 
+✓ CapabilityBoundingSet=~CAP_(DAC_*… Service cannot override UNIX file… 
+✓ ProtectControlGroups=              Service cannot modify the control… 
+✓ CapabilityBoundingSet=~CAP_LINUX_… Service cannot mark files immutab… 
+✓ CapabilityBoundingSet=~CAP_IPC_LO… Service cannot lock memory into R… 
+✓ ProtectKernelModules=              Service cannot load or read kerne… 
+✓ CapabilityBoundingSet=~CAP_SYS_MO… Service cannot load kernel modules 
+✓ CapabilityBoundingSet=~CAP_SYS_TT… Service cannot issue vhangup()     
+✓ CapabilityBoundingSet=~CAP_SYS_BO… Service cannot issue reboot()      
+✓ CapabilityBoundingSet=~CAP_SYS_CH… Service cannot issue chroot()      
+✓ PrivateMounts=                     Service cannot install system mou… 
+✓ CapabilityBoundingSet=~CAP_BLOCK_… Service cannot establish wake loc… 
+✓ MemoryDenyWriteExecute=            Service cannot create writable ex… 
+✓ RestrictNamespaces=~user           Service cannot create user namesp… 
+✓ RestrictNamespaces=~pid            Service cannot create process nam… 
+✓ RestrictNamespaces=~net            Service cannot create network nam… 
+✓ RestrictNamespaces=~uts            Service cannot create hostname na… 
+✓ RestrictNamespaces=~mnt            Service cannot create file system… 
+✓ CapabilityBoundingSet=~CAP_LEASE   Service cannot create file leases  
+✓ CapabilityBoundingSet=~CAP_MKNOD   Service cannot create device nodes 
+✓ RestrictNamespaces=~cgroup         Service cannot create cgroup name… 
+✓ RestrictNamespaces=~ipc            Service cannot create IPC namespa… 
+✓ ProtectHostname=                   Service cannot change system host… 
+✓ CapabilityBoundingSet=~CAP_(CHOWN… Service cannot change file owners… 
+✓ CapabilityBoundingSet=~CAP_SET(UI… Service cannot change UID/GID ide… 
+✓ LockPersonality=                   Service cannot change ABI persona… 
+✓ ProtectKernelTunables=             Service cannot alter kernel tunab… 
+✓ RestrictAddressFamilies=~AF_PACKET Service cannot allocate packet so… 
+✓ RestrictAddressFamilies=~AF_NETLI… Service cannot allocate netlink s… 
+✓ RestrictAddressFamilies=~…         Service cannot allocate exotic so… 
+✓ CapabilityBoundingSet=~CAP_MAC_*   Service cannot adjust SMACK MAC    
+✓ UMask=                             Files created by service are acce… 
+
+→ Overall exposure level for lez-maker-node.service: 1.6 OK :-)
+[exit 0]
+$ systemd-analyze security --no-pager lez-taker-node
+  NAME                               DESCRIPTION                        EXPOSURE
+✓ SystemCallFilter=~@swap            System call allow list defined fo… 
+✗ SystemCallFilter=~@resources       System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@reboot          System call allow list defined fo… 
+✓ SystemCallFilter=~@raw-io          System call allow list defined fo… 
+✗ SystemCallFilter=~@privileged      System call allow list defined fo…      0.2
+✓ SystemCallFilter=~@obsolete        System call allow list defined fo… 
+✓ SystemCallFilter=~@mount           System call allow list defined fo… 
+✓ SystemCallFilter=~@module          System call allow list defined fo… 
+✓ SystemCallFilter=~@debug           System call allow list defined fo… 
+✓ SystemCallFilter=~@cpu-emulation   System call allow list defined fo… 
+✓ SystemCallFilter=~@clock           System call allow list defined fo… 
+✓ RemoveIPC=                         Service user cannot leave SysV IP… 
+✗ RootDirectory=/RootImage=          Service runs within the host's ro…      0.1
+✓ User=/DynamicUser=                 Service runs under a static non-r… 
+✓ RestrictRealtime=                  Service realtime scheduling acces… 
+✓ CapabilityBoundingSet=~CAP_SYS_TI… Service processes cannot change t… 
+✓ NoNewPrivileges=                   Service processes cannot acquire … 
+✓ AmbientCapabilities=               Service process does not receive … 
+✓ CapabilityBoundingSet=~CAP_BPF     Service may load BPF programs      
+✓ SystemCallArchitectures=           Service may execute system calls … 
+✗ RestrictSUIDSGID=                  Service may create SUID/SGID files      0.2
+✗ RestrictAddressFamilies=~AF_UNIX   Service may allocate local sockets      0.1
+✗ RestrictAddressFamilies=~AF_(INET… Service may allocate Internet soc…      0.3
+✓ ProtectSystem=                     Service has strict read-only acce… 
+✓ ProtectProc=                       Service has restricted access to … 
+✓ SupplementaryGroups=               Service has no supplementary grou… 
+✓ CapabilityBoundingSet=~CAP_SYS_RA… Service has no raw I/O access      
+✓ CapabilityBoundingSet=~CAP_SYS_PT… Service has no ptrace() debugging… 
+✓ CapabilityBoundingSet=~CAP_SYS_(N… Service has no privileges to chan… 
+✓ CapabilityBoundingSet=~CAP_NET_AD… Service has no network configurat… 
+✓ CapabilityBoundingSet=~CAP_NET_(B… Service has no elevated networkin… 
+✓ CapabilityBoundingSet=~CAP_AUDIT_* Service has no audit subsystem ac… 
+✓ CapabilityBoundingSet=~CAP_SYS_AD… Service has no administrator priv… 
+✓ PrivateTmp=                        Service has no access to other so… 
+✓ ProcSubset=                        Service has no access to non-proc… 
+✓ CapabilityBoundingSet=~CAP_SYSLOG  Service has no access to kernel l… 
+✓ ProtectHome=                       Service has no access to home dir… 
+✓ PrivateDevices=                    Service has no access to hardware… 
+✗ PrivateNetwork=                    Service has access to the host's …      0.5
+✗ PrivateUsers=                      Service has access to other users       0.2
+✗ DeviceAllow=                       Service has a device ACL with som…      0.1
+✓ KeyringMode=                       Service doesn't share key materia… 
+✓ Delegate=                          Service does not maintain its own… 
+✗ IPAddressDeny=                     Service does not define an IP add…      0.2
+✓ NotifyAccess=                      Service child processes cannot al… 
+✓ ProtectClock=                      Service cannot write to the hardw… 
+✓ CapabilityBoundingSet=~CAP_SYS_PA… Service cannot use acct()          
+✓ CapabilityBoundingSet=~CAP_KILL    Service cannot send UNIX signals … 
+✓ ProtectKernelLogs=                 Service cannot read from or write… 
+✓ CapabilityBoundingSet=~CAP_WAKE_A… Service cannot program timers tha… 
+✓ CapabilityBoundingSet=~CAP_(DAC_*… Service cannot override UNIX file… 
+✓ ProtectControlGroups=              Service cannot modify the control… 
+✓ CapabilityBoundingSet=~CAP_LINUX_… Service cannot mark files immutab… 
+✓ CapabilityBoundingSet=~CAP_IPC_LO… Service cannot lock memory into R… 
+✓ ProtectKernelModules=              Service cannot load or read kerne… 
+✓ CapabilityBoundingSet=~CAP_SYS_MO… Service cannot load kernel modules 
+✓ CapabilityBoundingSet=~CAP_SYS_TT… Service cannot issue vhangup()     
+✓ CapabilityBoundingSet=~CAP_SYS_BO… Service cannot issue reboot()      
+✓ CapabilityBoundingSet=~CAP_SYS_CH… Service cannot issue chroot()      
+✓ PrivateMounts=                     Service cannot install system mou… 
+✓ CapabilityBoundingSet=~CAP_BLOCK_… Service cannot establish wake loc… 
+✓ MemoryDenyWriteExecute=            Service cannot create writable ex… 
+✓ RestrictNamespaces=~user           Service cannot create user namesp… 
+✓ RestrictNamespaces=~pid            Service cannot create process nam… 
+✓ RestrictNamespaces=~net            Service cannot create network nam… 
+✓ RestrictNamespaces=~uts            Service cannot create hostname na… 
+✓ RestrictNamespaces=~mnt            Service cannot create file system… 
+✓ CapabilityBoundingSet=~CAP_LEASE   Service cannot create file leases  
+✓ CapabilityBoundingSet=~CAP_MKNOD   Service cannot create device nodes 
+✓ RestrictNamespaces=~cgroup         Service cannot create cgroup name… 
+✓ RestrictNamespaces=~ipc            Service cannot create IPC namespa… 
+✓ ProtectHostname=                   Service cannot change system host… 
+✓ CapabilityBoundingSet=~CAP_(CHOWN… Service cannot change file owners… 
+✓ CapabilityBoundingSet=~CAP_SET(UI… Service cannot change UID/GID ide… 
+✓ LockPersonality=                   Service cannot change ABI persona… 
+✓ ProtectKernelTunables=             Service cannot alter kernel tunab… 
+✓ RestrictAddressFamilies=~AF_PACKET Service cannot allocate packet so… 
+✓ RestrictAddressFamilies=~AF_NETLI… Service cannot allocate netlink s… 
+✓ RestrictAddressFamilies=~…         Service cannot allocate exotic so… 
+✓ CapabilityBoundingSet=~CAP_MAC_*   Service cannot adjust SMACK MAC    
+✓ UMask=                             Files created by service are acce… 
+
+→ Overall exposure level for lez-taker-node.service: 1.6 OK :-)
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-maker-cli health
+{"chat":"available","degraded":false,"delivery":"available","lez_chain":{"degraded":false,"finalized_advanced_at_unix_seconds":1794513936,"finalized_block_id":549,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794513936,"stall_threshold_seconds":60,"tip_block_id":553},"ready":true,"routes":[],"schema_version":1}
+[exit 0]
+$ runuser -u lez-swap -- /usr/bin/lez-taker-cli health
+{"chat":"available","degraded":false,"delivery":"available","lez_chain":{"degraded":false,"finalized_advanced_at_unix_seconds":1794513937,"finalized_block_id":549,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794513937,"stall_threshold_seconds":60,"tip_block_id":554},"pair_capabilities":[{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Bitcoin","refund":"full_lifecycle","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"effect_checkpoint_only","initiation":"owner_cli_or_demo","monitoring":"owner_cli_or_demo","pair":"Monero","refund":"effect_checkpoint_only","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"not_on_this_node","initiation":"prepared_private_material","monitoring":"not_on_this_node","pair":"Zcash","refund":"not_on_this_node","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"not_on_this_node","initiation":"prepared_private_material","monitoring":"not_on_this_node","pair":"Zcash","refund":"not_on_this_node","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Bitcoin","refund":"full_lifecycle","supported_direction":"TakerSellsLez"}],"ready":true,"registered_methods":{"claim":true,"health":true,"initiate":true,"lock":true,"monitor":true,"offer_list":true,"refund":true,"swap_list":true},"schema_version":1}
+[exit 0]
+
+## The Maker prices and advertises Bitcoin, Taker sells BTC (1 000 000 sat for 1 000 LEZ)
+$ maker configure-pair --request-id systemd-pair-1 --pair bitcoin --direction taker-sells-foreign --enabled false --minimum-foreign-units 1000000 --maximum-foreign-units 1000000 --offer-ttl-seconds 3600
+{"revision":1,"was_replay":false}
+[exit 0]
+$ maker set-local-price --request-id systemd-price-1 --pair bitcoin --direction taker-sells-foreign --lez-units-per-lot 1 --foreign-units-per-lot 1000
+{"revision":1,"was_replay":false}
+[exit 0]
+$ maker configure-pair --request-id systemd-pair-2 --expected-revision 1 --pair bitcoin --direction taker-sells-foreign --enabled true --minimum-foreign-units 1000000 --maximum-foreign-units 1000000 --offer-ttl-seconds 3600
+{"revision":2,"was_replay":false}
+[exit 0]
+$ maker quote --pair bitcoin --direction taker-sells-foreign
+{"observed_at_unix_seconds":1794513937,"price":{"foreign_units_per_lot":1000,"lez_units_per_lot":1,"route":{"direction":"TakerSellsForeign","pair":"Bitcoin"}},"source_revision":1}
+[exit 0]
+$ maker publish-offer --request-id systemd-offer-1 --offer-id systemd-offer-1 --pair bitcoin --direction taker-sells-foreign
+{"revision":1,"was_replay":false}
+[exit 0]
+
+## The Taker discovers, takes and locks
+$ taker swap offers --pair bitcoin --direction taker-sells-foreign
+{"offers":[{"maker_identity":"03d82191c85250b7e477c20cc984f54ec7ee68a551d8c68ac87dbf6bcce799a32f","offer":{"created_at_unix_seconds":1794513937,"expires_at_unix_seconds":1794517537,"id":"systemd-offer-1","pair_configuration":{"enabled":true,"maximum_foreign_units":1000000,"minimum_foreign_units":1000000,"offer_ttl_seconds":3600,"price_source":"local","route":{"direction":"TakerSellsForeign","pair":"Bitcoin"}},"pair_configuration_revision":2,"price":{"foreign_units_per_lot":1000,"lez_units_per_lot":1,"route":{"direction":"TakerSellsForeign","pair":"Bitcoin"}},"price_observed_at_unix_seconds":1794513937,"price_source_revision":1},"signed_envelope_sha256":[179,232,47,192,13,117,136,178,116,51,46,136,53,218,26,208,209,50,35,250,49,163,196,19,204,232,57,31,161,236,157,21]}],"schema_version":1}
+[exit 0]
+$ taker swap take --request-id systemd-take-1 --offer-id systemd-offer-1 --foreign-units 1000000
+{"schema_version":1,"swap":{"available_action":null,"foreign_units":1000000,"lez_units":1000,"offer_id":"systemd-offer-1","privacy_guidance":null,"progress_generation":0,"route":{"direction":"TakerSellsForeign","pair":"Bitcoin"},"schema_version":1,"state":"not_activated","swap_id":"121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558"},"was_replay":false}
+[exit 0]
+swap: 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558
+$ taker swap lock --swap-id 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558
+{"chain":"bitcoin","schema_version":1,"swap_id":"121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558","transaction_id":"45c076784760163e7c6aa3dd4b59bed71fff4bfece5d6273a72dd0d624b4f233","was_replay":false}
+[exit 0]
+
+## kill -9 of the Maker between the Taker's lock and its claim; systemd restarts it
+$ kill -9 1206
+[exit 0]
+$ systemctl show -p ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+MainPID=1410
+StatusText=maker RPC and durable state are ready
+NRestarts=1
+ActiveState=active
+SubState=running
+[exit 0]
+
+## The Taker waits for claim_available, claims, and both sides complete
+taker: awaiting_second_lock (generation 1) at 20:05:57
+taker: claim_available (generation 2) at 20:06:57
+$ taker swap claim --swap-id 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558 --request-id systemd-claim-1 --expected-generation 2
+{"action":"claim","requested_after_generation":2,"schema_version":1,"swap_id":"121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558","was_replay":false}
+[exit 0]
+taker: claim_in_progress (generation 2) at 20:06:58
+taker: completed (generation 4) at 20:07:27
+$ sh -c runuser -u lez-swap -- /usr/bin/lez-taker-cli swap monitor --swap-id 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558
+{"available_action":null,"bitcoin_lock_fee_sat":3100,"effects":[{"chain":"Bitcoin","confirmations":1,"kind":"taker_lock","revision":1,"transaction_id":"45c076784760163e7c6aa3dd4b59bed71fff4bfece5d6273a72dd0d624b4f233"},{"chain":"Lez","confirmations":1,"kind":"maker_lock","revision":2,"transaction_id":"10d75bfd70429cebf35a0c2ff36b54794964c925ba16f7de41662084eed45a91"},{"chain":"Lez","confirmations":1,"kind":"revealing_claim","revision":3,"transaction_id":"3b9ede5ba0211956ac71de85ce4154a3920ea9a76257dcf3130d3f81ec2bc9ed"},{"chain":"Bitcoin","confirmations":1,"kind":"followup_claim","revision":4,"transaction_id":"c5fc60769fcc80fba6c1800cfa06508f60e29219c87496cd444b3e31157771b1"}],"foreign_units":1000000,"lez_units":1000,"offer_id":"systemd-offer-1","privacy_guidance":null,"progress_generation":4,"route":{"direction":"TakerSellsForeign","pair":"Bitcoin"},"schema_version":1,"state":"completed","swap_id":"121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558","terms":{"bitcoin_refund_height":99132,"bitcoin_value_sat":1000000,"earlier_refund_latest_unix_seconds":1794514357,"later_refund_earliest_unix_seconds":1794514777,"lez_amount":1000,"maker_second_lock_cutoff_unix_seconds":1794514177,"required_bitcoin_confirmations":1}}
+[exit 0]
+$ sh -c runuser -u lez-swap -- /usr/bin/lez-maker-cli monitor --id 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558
+{"actor_kind":"bitcoin","attempt_count":10,"effects":[{"chain":"Bitcoin","confirmations":8,"kind":"taker_lock","revision":1,"transaction_id":"45c076784760163e7c6aa3dd4b59bed71fff4bfece5d6273a72dd0d624b4f233"},{"chain":"Lez","confirmations":1,"kind":"maker_lock","revision":2,"transaction_id":"10d75bfd70429cebf35a0c2ff36b54794964c925ba16f7de41662084eed45a91"},{"chain":"Lez","confirmations":1,"kind":"revealing_claim","revision":3,"transaction_id":"3b9ede5ba0211956ac71de85ce4154a3920ea9a76257dcf3130d3f81ec2bc9ed"},{"chain":"Bitcoin","confirmations":5,"kind":"followup_claim","revision":4,"transaction_id":"c5fc60769fcc80fba6c1800cfa06508f60e29219c87496cd444b3e31157771b1"},{"chain":"Lez","confirmations":0,"kind":"lez_initialize","revision":0,"transaction_id":"1776dff4a21c4b57b4b75853e44c6ff8822487007af58a8b3035b991e0ff1e16"}],"lease_generation":10,"manual_action":null,"progress":{"observation":{"next_action":"complete","phase":"completed","revision":4,"state":"active"},"observed_at":1794514045,"source_generation":10},"schedule_state":"terminal","schema_version":1,"swap_id":"121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558","terms":{"bitcoin_refund_height":99132,"bitcoin_value_sat":1000000,"earlier_refund_latest_unix_seconds":1794514357,"later_refund_earliest_unix_seconds":1794514777,"lez_amount":1000,"maker_second_lock_cutoff_unix_seconds":1794514177,"required_bitcoin_confirmations":1}}
+[exit 0]
+$ sh -c runuser -u lez-swap -- /usr/bin/lez-maker-cli history
+[{"direction":"TakerSellsForeign","highest_alert_severity":null,"id":"121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558","pair":"Bitcoin","pending_alerts":0,"phase":"Completed","requires_attention":false}]
+[exit 0]
+
+## Journals
+$ journalctl -u lez-maker-node --no-pager -o short-monotonic
+[   89.311060] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[   89.825809] ubuntu lez-role-node-launcher[1206]: maker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+[   90.918082] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[   95.602423] ubuntu systemd[1]: lez-maker-node.service: Main process exited, code=killed, status=9/KILL
+[   95.609073] ubuntu systemd[1]: lez-maker-node.service: Failed with result 'signal'.
+[   95.609264] ubuntu systemd[1]: lez-maker-node.service: Consumed 1.973s CPU time, 51.2M memory peak, 0B memory swap peak.
+[  100.713351] ubuntu systemd[1]: lez-maker-node.service: Scheduled restart job, restart counter is at 1.
+[  100.724060] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  101.078818] ubuntu lez-role-node-launcher[1410]: maker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+[  112.198590] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → observed_then_projected - (phase taker_lock_confirmed, revision 1, next observe_maker_second_lock_or_recover_taker_leg)
+[  112.261947] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  112.339088] ubuntu lez-role-node-launcher[1410]: maker BTC lifecycle: sidecar for fc2cdb1bb7d197cef67fd0c4b5316b5740a69866200f182a75eea7a414fa246c unavailable: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory is already owned by another process
+[  112.345349] ubuntu lez-role-node-launcher[1410]: maker BTC lifecycle: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory is already owned by another process
+[  112.345834] ubuntu lez-role-node-launcher[1410]: maker BTC lifecycle: escrow preparation pass failed: ErrorObject { code: InternalError, message: "maker BTC lifecycle step failed", data: None }
+[  118.051092] ubuntu lez-role-node-launcher[1410]: maker BTC lifecycle: prepared the LEZ escrow for swap 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558
+[  122.748904] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → awaiting_observation - (phase taker_lock_confirmed, revision 1, next observe_maker_second_lock_or_recover_taker_leg)
+[  132.805478] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → awaiting_observation - (phase taker_lock_confirmed, revision 1, next observe_maker_second_lock_or_recover_taker_leg)
+[  145.259074] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → awaiting_observation - (phase taker_lock_confirmed, revision 1, next observe_maker_second_lock_or_recover_taker_leg)
+[  157.405911] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → awaiting_observation - (phase taker_lock_confirmed, revision 1, next observe_maker_second_lock_or_recover_taker_leg)
+[  177.493201] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → observed_then_projected - (phase both_legs_locked, revision 2, next observe_revealing_claim)
+[  191.573786] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → observed_then_projected - (phase claim_evidence_available, revision 3, next observe_followup_claim)
+[  201.123105] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → awaiting_observation - (phase claim_evidence_available, revision 3, next observe_followup_claim)
+[  210.282457] ubuntu lez-role-node-launcher[1410]: maker actor 121e18abac3c18740f6336b7f8475ac1330219ebc9680e558f7197d9a928b558: drive → observed_then_projected - (phase completed, revision 4, next complete)
+[exit 0]
+$ journalctl -u lez-taker-node --no-pager -o short-monotonic
+[   90.956078] ubuntu systemd[1]: Starting lez-taker-node.service - LEZ atomic-swap Taker Node...
+[   91.435433] ubuntu lez-role-node-launcher[1268]: taker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+[   91.517066] ubuntu lez-role-node-launcher[1268]: taker: 0 prepared ZEC entries configured
+[   91.557882] ubuntu systemd[1]: Started lez-taker-node.service - LEZ atomic-swap Taker Node.
+[exit 0]

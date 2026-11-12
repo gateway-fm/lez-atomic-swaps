@@ -1,17 +1,56 @@
 # Maker and Taker Nodes under systemd in an isolated VM, 2026-11-12
 
-`scripts/run-maker-node-systemd-vm.sh` booted a stock Ubuntu cloud image under QEMU/KVM inside an
-`ubuntu:24.04` container given only `--device /dev/kvm` (no `--privileged`, no unit on the host;
-the VM's NIC is QEMU user networking with `restrict=on`, so it has no outside network). In the VM,
-as root, it followed [docs/maker-systemd-install.md](../../maker-systemd-install.md) and recorded
-the result. The keys reached the Node only as encrypted systemd credentials.
+`scripts/run-maker-node-systemd-vm.sh` boots a stock Ubuntu 24.04 cloud image under QEMU/KVM inside
+an `ubuntu:24.04` container given only `--device /dev/kvm` (no `--privileged`, no unit on the
+host), installs the packages and follows [docs/maker-systemd-install.md](../../maker-systemd-install.md)
+as root. Two kinds of run are recorded here: Bitcoin swaps executed between the two units
+against the devnet's chains (below), and the earlier run without chains.
+
+## A Bitcoin swap between the two units (`LEZ_STACK_DEPLOY_DIR` set)
+
+| File | What |
+|---|---|
+| `swap-keyfile-signer.log`, `-balances.txt` | the swap with each role's LEZ signer key as a `lez-swap`-owned 0400 file, copied by the launcher into its state directory |
+| `swap-credential-signer.log`, `-balances.txt` | the same swap with every key only as an encrypted credential: the LEZ signer keys are read in place under `/run/credentials/<unit>/` by the Node and its sidecars, and no copy of them exists on disk |
+
+- **Source**: the credential run at `180a3976`, this branch on `feat/m5-gaps` `b6801ad3` with the
+  Zcash reserve round (the Maker starts with its Zcash authority, `maker ZEC authority configured`);
+  its code is this commit's. The key-file run at `153d3ac6`, an earlier rebase of this branch on
+  `6ad39beb`, before the credential commits. The transcripts' first lines list every binary's
+  sha256 and the launcher's. Debug binaries without debug info built on the host
+  (`CARGO_PROFILE_DEV_DEBUG=0`); the LEZ sidecar from the builder image: the stack's
+  `provision/data/sidecar` (tree `5486ebd9`, sha256 `e024dfe6…00a3`) for the key-file run, built
+  from this branch's sidecar tree in `lez-builder:local` (sha256 `b3ced25d…123a`) for the
+  credential run.
+- **Chains**: the devnet stack (key-file run at `9e383dd6`, credential run at `2a228123`; images
+  and their ids in the transcripts), under the
+  stack lock. The VM reaches exactly three endpoints, through QEMU `guestfwd` (one `socat` per
+  connection) from a container on the stack's network `lez-swap-chains`: `bitcoin-core:18443`,
+  `sequencer:3040`, `indexer:8779`; `socat` units put them on the VM's loopback. Identities, Core
+  wallets (`lez-maker`, `lez-taker`), cookie, market constants and timing profile are lane 1's;
+  lane 1's two Node containers were stopped for each run and were healthy again afterwards.
+- **What ran**: both units start through the role launcher (`Type=notify` READY,
+  `systemd-analyze security` 1.6 for each); the Maker configures, prices and publishes a Bitcoin
+  offer (Taker sells 1 000 000 sat for 1 000 LEZ); the Taker discovers, takes and locks Bitcoin;
+  the Maker's main process is killed with `kill -9` and systemd restarts it (`NRestarts=1`); the
+  Maker locks LEZ, the Taker reaches `claim_available`, claims, and both report the swap
+  `completed` (the Maker's history: `Completed`).
+- **Balances** (from the chains, as `node-e2e.py`'s `party_balances`): in each run the Maker
+  gains 999 000 sat (the lot less its 1 000-sat claim fee) and pays 1 000 LEZ; the Taker pays
+  1 003 100 sat (the lot and a 3 100-sat lock fee) and gains 1 000 LEZ.
+- **Not run**: Zcash; a Taker-sells-LEZ swap; route-health probes against a failing chain.
+
+## The earlier run without chains
+
+Recorded before the units ran the role launcher; without chains the script now starts each Node
+from its node.json through a drop-in, as this run's unit did directly.
 
 | File | What |
 |---|---|
 | `transcript.log` | the run: every command, its output and exit status |
 | `transcript-before-unit-fix.log` | an earlier run with `RestrictSUIDSGID=yes` still in the unit, up to the failed start |
 
-## Inputs
+### Inputs
 
 - Source: commit `3395e6a0` of the working branch the run was made on (`agent/m5-systemd`; not in
   this branch's history). Its trees of `packaging` (`4c39cffecaab6332605f01faf5091d17d612d04c`),
@@ -34,7 +73,7 @@ the result. The keys reached the Node only as encrypted systemd credentials.
   6.8.0-147-generic, systemd 255 (255.4-1ubuntu8.18), no TPM. QEMU 8.2.2.
 - Keys and credentials were generated inside the VM from `/dev/urandom` and died with it.
 
-## What ran and what it shows
+### What ran and what it shows
 
 - **Install**: service user, `install-maker-node-service.sh`, three `systemd-creds` credentials;
   `node.json` names the Delivery key as `/run/credentials/lez-maker-node.service/delivery-signing.key`.
@@ -62,7 +101,7 @@ the result. The keys reached the Node only as encrypted systemd credentials.
 - **Refused key**: a world-readable key file makes the start fail with `Error: Delivery signing key
   must be an owner-owned, single-link mode-0400-or-0600 regular file within its size bound`.
 
-## Findings
+### Findings
 
 1. **`RestrictSUIDSGID=yes` stopped the Node from starting** (`transcript-before-unit-fix.log`):
    under it systemd fails `openat2()` with ENOSYS, and the Node opens its lease, database and keys
@@ -71,7 +110,7 @@ the result. The keys reached the Node only as encrypted systemd credentials.
 2. **The Node refused the key systemd hands it as a credential** until `241d7fc5`: it accepted
    only a key file its own user owns with mode 0400/0600.
 
-## Not run
+### Not run
 
 No chain node, LEZ sidecar, Chat socket, ZEC actor deployment or route-health probe: the Maker
 was started with run-local Delivery only, so route health reads `disabled`, and the claim-recovery
