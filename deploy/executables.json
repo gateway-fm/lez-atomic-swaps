@@ -54,6 +54,9 @@
     {"manifest":"compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml","package":"lez-zec-escrow-v02-guest","target":"zec_escrow_v02","class":"guest","stability":"provisional","canonical_name":"zec_escrow_v02","legacy_aliases":[],"role":"shared","pair":"zcash","profiles":[]},
     {"manifest":"compat/spel-zec-escrow/Cargo.toml","package":"lez-zec-escrow-compat","target":"lez-zec-escrow-compat","class":"compatibility","stability":"retained","canonical_name":"lez-zec-escrow-compat","legacy_aliases":[],"role":"shared","pair":"zcash","profiles":[]},
     {"manifest":"compat/spel-zec-escrow/methods/guest/Cargo.toml","package":"lez-zec-escrow-guest","target":"zec_escrow","class":"guest","stability":"retained","canonical_name":"zec_escrow","legacy_aliases":[],"role":"shared","pair":"zcash","profiles":[]},
-    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"coordinator","class":"fuzz","stability":"non_deployable","canonical_name":"coordinator","legacy_aliases":[],"role":"none","pair":"all","profiles":[]}
+    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"coordinator","class":"fuzz","stability":"non_deployable","canonical_name":"coordinator","legacy_aliases":[],"role":"none","pair":"all","profiles":[]},
+    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"offer_announcement","class":"fuzz","stability":"non_deployable","canonical_name":"offer_announcement","legacy_aliases":[],"role":"none","pair":"all","profiles":[]},
+    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"chat_frame","class":"fuzz","stability":"non_deployable","canonical_name":"chat_frame","legacy_aliases":[],"role":"none","pair":"all","profiles":[]},
+    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"zec_agreement_wire","class":"fuzz","stability":"non_deployable","canonical_name":"zec_agreement_wire","legacy_aliases":[],"role":"none","pair":"zcash","profiles":[]}
   ]
 }

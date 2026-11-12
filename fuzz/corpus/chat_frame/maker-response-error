@@ -1,0 +1,1 @@
+{"schema_version":1,"frame_id":"9176f403f0e9ae33596239f811e5cde5675febe0172ee0b59c8146f122512db8","sender_role":"maker","recipient_role":"taker","message":{"kind":"response","request_frame_id":"0000000000000000000000000000000000000000000000000000000000000002","result":null,"error":{"code":-32018,"message":"offer unavailable"}}}

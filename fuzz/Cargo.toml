@@ -9,13 +9,39 @@ license = "MIT OR Apache-2.0"
 cargo-fuzz = true
 
 [dependencies]
+base64 = "=0.22.1"
 libfuzzer-sys = "=0.4.13"
+lez-node-common = { path = "../crates/node-common", version = "=0.1.0" }
 lez-swap-core = { path = "../crates/swap-core", version = "=0.1.0" }
+lez-swap-store = { path = "../crates/swap-store", version = "=0.1.0" }
+lez-zec-swap-sdk = { path = "../crates/zec-swap-sdk", version = "=0.1.0" }
 serde_json = "=1.0.150"
+tokio = { version = "=1.53.3", features = ["rt"] }
 
 [[bin]]
 name = "coordinator"
 path = "fuzz_targets/coordinator.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "offer_announcement"
+path = "fuzz_targets/offer_announcement.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chat_frame"
+path = "fuzz_targets/chat_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zec_agreement_wire"
+path = "fuzz_targets/zec_agreement_wire.rs"
 test = false
 doc = false
 bench = false

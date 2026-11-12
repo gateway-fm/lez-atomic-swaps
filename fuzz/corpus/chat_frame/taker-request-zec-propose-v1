@@ -1,0 +1,1 @@
+{"schema_version":1,"frame_id":"32640bbcc2a6c874e07c6925fba1714243168e2ced4f627a0f8ad0cc5d4fd357","sender_role":"taker","recipient_role":"maker","message":{"kind":"request","nonce":8,"method":"zec_chat_propose_v1","parameter":{"reservation_id":"fuzz-reservation-0001","schema_version":1,"signed_offer_envelope":[123,125]}}}

@@ -1,0 +1,1 @@
+{"frame_id":"3e8e3f97be58a70e64ee2b2f4603009425cd272d7745b46e201509aeb0afb765","message":{"kind":"request","method":"btc_chat_propose_v2","nonce":9,"parameter":{"foreign_units":100,"offer_id":"fuzz-seed-offer-002","request_id":"fuzz-request-0001","schema_version":2,"unsigned_draft_wire":[1,2,3]}},"recipient_role":"maker","schema_version":1,"sender_role":"taker"}
