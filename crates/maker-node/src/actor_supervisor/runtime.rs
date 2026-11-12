@@ -695,24 +695,49 @@ fn run_claimed_attempt_with_lock(
 /// The effect one attempt runs: the owner's queued action if there is one,
 /// else what the actor's status decided; an attempt with nothing to run ends
 /// as the status says (blocked or terminal).
+///
+/// A Bitcoin Maker's refund request never stops it observing the Taker's
+/// revealing claim. Bitcoin cannot expire a claim: one withheld past the
+/// claim window can still be mined before the Maker's refund, and then it
+/// has spent the Maker's lock, `recover` can only wait, and the Maker is paid
+/// only by taking the secret to its LEZ claim before the Taker's later refund
+/// time (#103 item 14, 2026-11-11: 332 recovers past that time). So with both
+/// legs locked the request alternates with the claim's observation, as the
+/// closed window does on its own, and once the claim is projected it waits
+/// behind the Maker's follow-up claim, which `recover` has no transition for.
 fn attempt_command(
     kind: MakerActorKindV1,
     manual_action: Option<MakerActorManualAction>,
     status_decision: StatusDecision,
     attempt_count: u64,
 ) -> Result<ActorEffectCommand, ClaimedAttempt> {
-    match manual_action {
-        Some(action) => Ok(manual_effect_command(kind, action)),
-        None => match status_decision {
-            StatusDecision::Blocked => Err(ClaimedAttempt::Blocked),
-            StatusDecision::Terminal => Err(ClaimedAttempt::Terminal),
-            StatusDecision::Run(command) => Ok(command),
-            StatusDecision::ObserveThenRecover => Ok(if attempt_count.is_multiple_of(2) {
-                ActorEffectCommand::Drive
-            } else {
-                ActorEffectCommand::Recover
-            }),
-        },
+    let observe_then_recover = || {
+        if attempt_count.is_multiple_of(2) {
+            ActorEffectCommand::Drive
+        } else {
+            ActorEffectCommand::Recover
+        }
+    };
+    match (manual_action, status_decision) {
+        (
+            Some(MakerActorManualAction::Refund),
+            StatusDecision::ObserveThenRecover
+            | StatusDecision::ObserveClaim {
+                claim_projected: false,
+            },
+        )
+        | (None, StatusDecision::ObserveThenRecover) => Ok(observe_then_recover()),
+        (
+            Some(MakerActorManualAction::Refund),
+            StatusDecision::ObserveClaim {
+                claim_projected: true,
+            },
+        )
+        | (None, StatusDecision::ObserveClaim { .. }) => Ok(ActorEffectCommand::Drive),
+        (Some(action), _) => Ok(manual_effect_command(kind, action)),
+        (None, StatusDecision::Blocked) => Err(ClaimedAttempt::Blocked),
+        (None, StatusDecision::Terminal) => Err(ClaimedAttempt::Terminal),
+        (None, StatusDecision::Run(command)) => Ok(command),
     }
 }
 
@@ -1136,6 +1161,13 @@ enum StatusDecision {
     /// so a claim that landed at the last moment is still found and a claim
     /// that never landed no longer holds the escrow.
     ObserveThenRecover,
+    /// A Bitcoin Maker whose drive observes the Taker's revealing claim
+    /// (both legs locked) or follows it with the Maker's own LEZ claim (the
+    /// claim projected). A drive, as `Run`, except that an owner's refund
+    /// request does not replace it; see [`attempt_command`].
+    ObserveClaim {
+        claim_projected: bool,
+    },
     Blocked,
     Terminal,
 }
@@ -1202,6 +1234,15 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
                 StatusDecision::Run(ActorEffectCommand::Recover)
             } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "recover_maker_leg") {
                 StatusDecision::ObserveThenRecover
+            } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "observe_revealing_claim")
+            {
+                StatusDecision::ObserveClaim {
+                    claim_projected: false,
+                }
+            } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "observe_followup_claim") {
+                StatusDecision::ObserveClaim {
+                    claim_projected: true,
+                }
             } else {
                 StatusDecision::Run(ActorEffectCommand::Drive)
             };
