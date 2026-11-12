@@ -6008,11 +6008,12 @@ fn exact_lez_claim_presence(
         aggregate_signature,
         block_height,
         finalized_tip,
+        request.window,
     )
 }
 
 /// A finalized claim found by `request` in block `block_height`, read at
-/// `finalized_tip`, with `request.window` scanned.
+/// `finalized_tip`, with `scanned_window` scanned.
 fn exact_lez_claim_presence_at(
     agreement: &BtcAgreementV1,
     request: &ObserveFinalizedWitnessedClaimRequest,
@@ -6021,6 +6022,7 @@ fn exact_lez_claim_presence_at(
     aggregate_signature: [u8; 64],
     block_height: u64,
     finalized_tip: ChainTip,
+    scanned_window: DiscoveryWindow,
 ) -> lez_bridge_client::FinalizedWitnessedClaimPresence {
     let block_hash = Hex32::from_bytes([93; 32]);
     let authority = request.terms.aggregate_authority_account_id();
@@ -6070,7 +6072,7 @@ fn exact_lez_claim_presence_at(
     lez_bridge_client::FinalizedWitnessedClaimPresence::PresentExact {
         context: request.context.clone(),
         finalized_tip,
-        scanned_window: request.window,
+        scanned_window,
         claim: Box::new(claim),
     }
 }
@@ -6924,8 +6926,8 @@ async fn lez_claim_owner_submits_once_then_projects_exact_finalized_presence() {
     }
 }
 
-/// A finalized LEZ chain holding one claim in block `claim_height`, read at
-/// `tip`: each classification scans the window it is asked for, up to the tip.
+/// A finalized LEZ chain holding one claim in block `claim_height`, finalized
+/// up to `tip`, answering classifications as the real sidecar does.
 #[derive(Clone)]
 struct LateLezClaimPort {
     agreement: BtcAgreementV1,
@@ -6954,11 +6956,16 @@ impl LezClaimChainPort for LateLezClaimPort {
             .lock()
             .expect("classify request lock")
             .push(request.clone());
+        // As the sidecar answers (`read_stable_finalized_prefix`): it scans
+        // the requested window up to the finalized tip, and the tip it reports
+        // is the last block it scanned, never one beyond the window. A window
+        // reaching past the tip is a prefix, never definitive absence.
         let start = request.window.start_height();
-        let end = (start + u64::from(request.window.max_blocks() - 1)).min(self.tip);
+        let requested_end = start + u64::from(request.window.max_blocks() - 1);
+        let end = requested_end.min(self.tip);
         let scanned = DiscoveryWindow::new(start, u32::try_from(end - start + 1).unwrap())
             .expect("scanned window");
-        let tip = ChainTip::new(Hex32::from_bytes([95; 32]), self.tip);
+        let tip = ChainTip::new(Hex32::from_bytes([95; 32]), end);
         if (start..=end).contains(&self.claim_height) {
             return Ok(exact_lez_claim_presence_at(
                 &self.agreement,
@@ -6968,15 +6975,22 @@ impl LezClaimChainPort for LateLezClaimPort {
                 self.aggregate_signature,
                 self.claim_height,
                 tip,
+                scanned,
             ));
         }
-        Ok(
+        Ok(if end == requested_end {
             lez_bridge_client::FinalizedWitnessedClaimPresence::NotFound {
                 context: request.context,
                 finalized_tip: tip,
                 scanned_window: scanned,
-            },
-        )
+            }
+        } else {
+            lez_bridge_client::FinalizedWitnessedClaimPresence::PrefixUncertain {
+                context: request.context,
+                finalized_tip: tip,
+                scanned_window: scanned,
+            }
+        })
     }
 
     async fn submit_transaction(
@@ -6995,9 +7009,12 @@ impl LezClaimChainPort for LateLezClaimPort {
 /// (exact lookup) nor the Taker (discovery by terms) ever found it: both
 /// waited at `claim_evidence_available` for good, the LEZ already paid out. A
 /// claim can land until the LEZ refund time, past the window that bounds
-/// the Maker's lock; a lookup that finds nothing in that window while the
-/// chain has grown past it looks again over the whole span since the start,
-/// as the LEZ refund lookups do.
+/// the Maker's lock, so a lookup that finds nothing in that window looks
+/// again over the span since the start. The first fix widened only when the
+/// absence reported a finalized tip past the window, which the real sidecar
+/// never does (its tip is the last block it scanned): the same hang again on
+/// the next run (swap 66fe1b77, claim in block 540). This fake port answers
+/// as the sidecar does.
 #[tokio::test(flavor = "current_thread")]
 async fn a_lez_claim_final_past_the_discovery_window_is_still_found() {
     for (role, own) in [(ActorRole::Taker, false), (ActorRole::Maker, true)] {
