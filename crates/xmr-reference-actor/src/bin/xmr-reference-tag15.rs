@@ -29,6 +29,7 @@ use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
     XmrActivatedAgreementV1, XmrAgreementV1,
 };
+#[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::Serialize;
 use xmr_reference_actor::{
@@ -461,6 +462,7 @@ fn parse_capability_bytes(bytes: &[u8]) -> Result<SidecarCapability> {
     SidecarCapability::new(text.as_str().to_owned()).context("Maker LEZ capability is invalid")
 }
 
+#[cfg(target_os = "linux")]
 fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
     let mut file =
         File::open(format!("/proc/self/fd/{fd}")).with_context(|| format!("open {label} FD"))?;
@@ -486,6 +488,14 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
         "{label} FD is oversized or changed"
     );
     Ok(bytes)
+}
+
+/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
+/// has no seal to check, so the descriptor is never trusted. The parent
+/// cannot produce one there either (`effect_input_custody`).
+#[cfg(target_os = "macos")]
+fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
 }
 
 fn validate_evidence_root(path: &Path) -> Result<()> {

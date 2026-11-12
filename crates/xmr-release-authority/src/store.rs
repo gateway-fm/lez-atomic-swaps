@@ -21,16 +21,19 @@ use lez_bridge_protocol::{ExactTransactionBytes, PreparedTransaction, Transactio
 use rusqlite::{
     Connection, ErrorCode, OpenFlags, OptionalExtension, Transaction, TransactionBehavior, params,
 };
+#[cfg(target_os = "linux")]
+use rustix::fs::{ResolveFlags, openat2};
 use rustix::{
-    fs::{CWD, Mode, OFlags, ResolveFlags, openat, openat2},
+    fs::{CWD, Mode, OFlags, openat},
     io::Errno,
     process::geteuid,
 };
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd as _;
 use std::{
     ffi::{OsStr, OsString},
     fmt,
     fs::{self, File},
-    os::fd::AsRawFd as _,
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
     sync::{Mutex, MutexGuard},
@@ -1250,6 +1253,7 @@ impl SecureDirectory {
         Ok(directory)
     }
 
+    #[cfg(target_os = "linux")]
     fn from_descriptor(descriptor: File) -> Result<Self, ReleaseError> {
         let metadata = validate_private_directory(&descriptor)?;
         let directory = Self {
@@ -1261,6 +1265,15 @@ impl SecureDirectory {
         };
         directory.revalidate()?;
         Ok(directory)
+    }
+
+    /// Not ported to macOS: the database connection reaches the file through
+    /// the `/proc/self/fd/N/` directory alias, and the macOS `/dev/fd` cannot
+    /// be walked into. Reopening the directory by name would drop the parent pin this
+    /// entry point exists for, so a parent-pinned directory is refused.
+    #[cfg(target_os = "macos")]
+    fn from_descriptor(_descriptor: File) -> Result<Self, ReleaseError> {
+        Err(ReleaseError::InsecureDirectory)
     }
 
     fn revalidate(&self) -> Result<(), ReleaseError> {
@@ -1281,6 +1294,7 @@ impl SecureDirectory {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn open_secure_directory(path: &Path) -> Result<File, ReleaseError> {
     openat2(
         CWD,
@@ -1288,6 +1302,21 @@ fn open_secure_directory(path: &Path) -> Result<File, ReleaseError> {
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
         ResolveFlags::NO_SYMLINKS,
+    )
+    .map(File::from)
+    .map_err(|_| ReleaseError::InsecureDirectory)
+}
+
+/// macOS: `O_NOFOLLOW_ANY` refuses a symlink in any component, the last one
+/// included, as `RESOLVE_NO_SYMLINKS` plus `O_NOFOLLOW` do on Linux (macOS
+/// rejects the two flags together with `EINVAL`).
+#[cfg(target_os = "macos")]
+fn open_secure_directory(path: &Path) -> Result<File, ReleaseError> {
+    openat(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW_ANY | OFlags::CLOEXEC,
+        Mode::empty(),
     )
     .map(File::from)
     .map_err(|_| ReleaseError::InsecureDirectory)
@@ -1831,6 +1860,8 @@ mod tests {
         assert_eq!(DATABASE_SCHEMA_VERSION, 3);
     }
 
+    // Parent-pinned directories are refused on macOS (`from_descriptor`).
+    #[cfg(target_os = "linux")]
     #[test]
     fn descriptor_relative_open_survives_directory_rename_and_rejects_paths() {
         let directory = directory();
@@ -2639,6 +2670,25 @@ mod tests {
         assert!(store.exact_publication(&ambiguous, &key).is_ok());
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn descriptor_relative_open_is_refused_on_macos() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = File::open(root.path()).unwrap();
+        assert!(matches!(
+            ReleaseStore::open_in_directory(directory, "release.sqlite3"),
+            Err(ReleaseError::InsecureDirectory)
+        ));
+        let directory = File::open(root.path()).unwrap();
+        assert!(matches!(
+            ReleaseStore::open_existing_in_directory(directory, "release.sqlite3"),
+            Err(ReleaseError::InsecureDirectory)
+        ));
+        assert!(!root.path().join("release.sqlite3").exists());
+    }
+
+    // Parent-pinned directories are refused on macOS (`from_descriptor`).
+    #[cfg(target_os = "linux")]
     #[test]
     fn descriptor_relative_open_existing_never_creates_missing_database() {
         let directory = directory();
@@ -2651,6 +2701,8 @@ mod tests {
         assert!(!path.exists());
     }
 
+    // Parent-pinned directories are refused on macOS (`from_descriptor`).
+    #[cfg(target_os = "linux")]
     #[test]
     fn descriptor_relative_open_existing_never_initializes_empty_file() {
         let directory = directory();

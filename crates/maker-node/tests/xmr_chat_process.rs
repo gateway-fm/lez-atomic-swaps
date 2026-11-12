@@ -1,5 +1,8 @@
 //! Exercises the XMR reference actor; compiled only with `pair-xmr`.
 #![cfg(feature = "pair-xmr")]
+// XMR effect children take write-sealed memfd inputs; XMR effects are not
+// ported to macOS and refuse to start there.
+#![cfg(target_os = "linux")]
 
 //! Separate-process proof for the M5 XMR Chat application handoff.
 //!
