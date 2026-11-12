@@ -15,6 +15,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -48,7 +49,9 @@ def bashes():
 @unittest.skipUnless(shutil.which('jq'), 'the launcher renders its configuration with jq')
 class Launcher(unittest.TestCase):
     def setUp(self):
-        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        # A short root: macOS gives TMPDIR under /var/folders/…, and a Unix
+        # socket path below it is longer than the launcher (and the kernel) allows.
+        self.tmp = pathlib.Path(tempfile.mkdtemp(dir='/tmp' if sys.platform == 'darwin' else None))
         self.addCleanup(shutil.rmtree, self.tmp)
         self.calls = self.tmp / 'calls.log'
         self.record = self.tmp / 'node.json'
