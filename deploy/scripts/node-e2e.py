@@ -18,6 +18,7 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py late-claim-confirms  the revealing claim sent, the Taker stopped, the claim confirms while it is down
     node-e2e.py late-claim-unmined   the revealing claim sent but never mined until the refund path is open
     node-e2e.py maker-cli        the happy swap with every Maker call made by lez-maker-cli; a non-owner is refused (U3)
+    node-e2e.py maker-price-module  a route priced by the TEST Logos price module: quote, publish, a swap; then fail-closed (F8)
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
@@ -82,12 +83,14 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -1831,6 +1834,122 @@ def through_taker_cli(scenario):
         finally:
             TAKER_CLI = False
     return run
+
+
+# The Maker's state volume holds the TEST price modules: a directory of the
+# Node's user, mode 0755, as the Node's file rules ask (logos_price_source.rs).
+PRICE_MODULE_DIR = "/var/lib/lez/maker/price-module"
+
+
+def install_test_price_module(variant: str) -> tuple[str, str]:
+    """The repository's TEST price module (crates/logos-price-c-api/tests/
+    fixtures/logos_price_fixture.c), compiled as the crate's test compiles it,
+    in the image the Nodes are built in, with its FIXTURE_<variant> mode ("" for
+    none), written into the Maker's container. Its path there and its sha256."""
+    crate = DEPLOY_ROOT.parent / "crates/logos-price-c-api"
+    name = f"lez-test-price-fixture-{variant.lower() or 'ok'}.so"
+    with tempfile.TemporaryDirectory() as out:
+        subprocess.run(["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
+                        "-v", f"{crate}:/crate:ro", "-v", f"{out}:/out", "rust:1.96.0-bookworm",
+                        "cc", "-shared", "-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", "/crate/include",
+                        *([f"-DFIXTURE_{variant}"] if variant else []),
+                        "/crate/tests/fixtures/logos_price_fixture.c", "-o", f"/out/{name}"],
+                       check=True, capture_output=True, stdin=subprocess.DEVNULL)
+        module = (pathlib.Path(out) / name).read_bytes()
+    path = f"{PRICE_MODULE_DIR}/{name}"
+    subprocess.run(["docker", "exec", "-i", NODES["maker"][0], "sh", "-c",
+                    f"umask 022 && mkdir -p {PRICE_MODULE_DIR} && cat >{path}"], input=module, check=True)
+    return path, hashlib.sha256(module).hexdigest()
+
+
+def recreate_maker_with_price_module(module: str = "", sha256: str = "") -> None:
+    """The Maker's Basecamp recreated with LEZ_LOGOS_PRICE_MODULE and
+    LEZ_LOGOS_PRICE_MODULE_SHA256 (empty: the default, no price module)."""
+    compose = os.environ.get("LEZ_STACK_COMPOSE_ARGS", "--env-file runtime/runtime.env").split()
+    subprocess.run(["docker", "compose", *compose, "up", "-d", "--no-build", "--force-recreate", "--no-deps", "maker-node"],
+                   cwd=DEPLOY_ROOT, check=True, capture_output=True, stdin=subprocess.DEVNULL,
+                   env={**os.environ, "LEZ_LOGOS_PRICE_MODULE": module, "LEZ_LOGOS_PRICE_MODULE_SHA256": sha256})
+    wait_healthy("maker", timeout=300)
+    arguments = subprocess.run(["docker", "exec", NODES["maker"][0], "ps", "-eo", "args"],
+                               capture_output=True, text=True, check=False).stdout
+    node = next((line for line in arguments.splitlines() if line.split(" ", 1)[0].endswith("/lez-maker-node")), "")
+    if bool(module) != (f"--logos-price-module {module} --logos-price-module-sha256 {sha256}" in node):
+        raise Failure(f"the recreated Maker Node does not run with price module {module or 'none'}: {node[-400:]}")
+    log(f"  Maker's Basecamp recreated with {'price module ' + module if module else 'no price module'}")
+
+
+def scenario_maker_price_module(stamp: str) -> dict:
+    """F8: a Maker prices a route with a Logos C-API price module, the
+    repository's TEST fixture (no real Logos price module exists). The Maker
+    runs it through its package's lez-logos-price-worker (LEZ_LOGOS_PRICE_MODULE
+    and its sha256); configure-pair selects the logos-c-api source; quote
+    answers the module's price (5 LEZ units per 2 sat, source revision 7); two
+    offers are published at it, carrying the module's sha256 as their source
+    identity; the Taker takes one and the swap completes. Then the Maker runs
+    the fixture's UNAVAILABLE build instead: quote and publish fail closed with
+    the typed unavailable error (-32003), and the offer still out is listed
+    active by the Maker and still offered to the Taker. The Maker goes back to
+    no price module however the scenario ends."""
+    global FOREIGN_UNITS, LEZ_UNITS
+    kept_units = FOREIGN_UNITS, LEZ_UNITS
+    FOREIGN_UNITS, LEZ_UNITS = 200_000, 500_000  # the fixture's 5 LEZ units per 2 sat
+    route = ["--pair", "bitcoin", "--direction", "taker-sells-foreign"]
+    try:
+        module, module_sha256 = install_test_price_module("")
+        recreate_maker_with_price_module(module, module_sha256)
+        revision = next((["--expected-revision", str(r["revision"])] for r in maker_cli("pairs")
+                         if r["value"]["route"] == ROUTE), [])
+        maker_cli("configure-pair", "--request-id", f"e2e-price-pair-{stamp}", *revision, *route,
+                  "--enabled", "true", "--price-source", "logos-c-api", "--minimum-foreign-units", str(FOREIGN_UNITS),
+                  "--maximum-foreign-units", str(FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+        quote = maker_cli("quote", *route)
+        if (quote["price"]["lez_units_per_lot"], quote["price"]["foreign_units_per_lot"], quote["source_revision"]) != (5, 2, 7):
+            raise Failure(f"quote is not the module's 5/2 at source revision 7: {quote}")
+        log(f"  quote through the module: {quote['price']['lez_units_per_lot']} LEZ units per "
+            f"{quote['price']['foreign_units_per_lot']} sat, source revision {quote['source_revision']}")
+        offers = []
+        for suffix in ("taken", "kept"):
+            offer_id = f"offer-e2e-price-{suffix}-{stamp}"
+            maker_cli("publish-offer", "--request-id", f"e2e-price-publish-{suffix}-{stamp}", "--offer-id", offer_id, *route)
+            offer = next(r for r in maker_cli("offers") if r["offer"]["id"] == offer_id)["offer"]
+            identity = offer.get("price_source_identity_sha256")
+            identity = bytes(identity).hex() if isinstance(identity, list) else identity
+            if identity != module_sha256 or offer["price"] != quote["price"]:
+                raise Failure(f"{offer_id} is not at the module's price under its identity: {offer}")
+            offers.append(offer_id)
+        log(f"  published {', '.join(offers)} at the module's price, source identity {module_sha256[:16]}…")
+        swap_id, _ = take(offers[0], stamp)
+        lock(swap_id)
+        claim(swap_id, stamp)
+        wait_taker(swap_id, {"completed"}, 1800, describe="(Maker follow-up claim)")
+        log(f"  swap {swap_id[:12]} on the module-priced offer completed")
+
+        unavailable, unavailable_sha256 = install_test_price_module("UNAVAILABLE")
+        recreate_maker_with_price_module(unavailable, unavailable_sha256)
+        refused = {"quote": rpc("maker", "maker_price_quote", {"route": ROUTE}),
+                   "publish": rpc("maker", "maker_offer_publish", {"request_id": f"e2e-price-publish-down-{stamp}",
+                                                                   "offer_id": f"offer-e2e-price-down-{stamp}",
+                                                                   "route": ROUTE})}
+        for method, reply in refused.items():
+            if (reply.get("error") or {}).get("code") != -32003:
+                raise Failure(f"{method} with the module unavailable is not the typed unavailable error: {reply}")
+        if any(r["offer"]["id"] == f"offer-e2e-price-down-{stamp}" for r in maker_cli("offers")):
+            raise Failure("the refused publish left an offer behind")
+        kept = next(r for r in maker_cli("offers") if r["offer"]["id"] == offers[1])
+        if kept["status"] != "active":
+            raise Failure(f"{offers[1]} is no longer active with the module unavailable: {kept['status']}")
+        discover(offers[1])
+        log(f"  module unavailable: quote and publish answer {refused['quote']['error']['message']!r} (-32003); "
+            f"{offers[1]} is still active and offered to the Taker")
+        maker_cli("withdraw-offer", "--request-id", f"e2e-price-withdraw-{stamp}", "--offer-id", offers[1],
+                  "--expected-revision", str(kept["revision"]))
+        return {"swap_id": swap_id, "offers": offers, "module_sha256": module_sha256, "quote": quote,
+                "unavailable": {"module_sha256": unavailable_sha256,
+                                **{method: reply["error"] for method, reply in refused.items()}}}
+    finally:
+        FOREIGN_UNITS, LEZ_UNITS = kept_units
+        recreate_maker_with_price_module()
+        subprocess.run(["docker", "exec", NODES["maker"][0], "rm", "-rf", PRICE_MODULE_DIR], check=False)
 
 
 def take_after_outage(offer_id: str, stamp: str) -> tuple[str, dict]:
@@ -4901,6 +5020,7 @@ SCENARIOS = {
     "tampered-config": scenario_tampered_config,
     "zebra-down": scenario_zebra_down,
     "maker-cli": scenario_maker_cli,
+    "maker-price-module": scenario_maker_price_module,
 }
 
 

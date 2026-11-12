@@ -95,7 +95,7 @@ tier_tests() { # tier_tests <tier>
         done
         for s in happy restart-taker restart-maker survivor concurrent node-offline; do echo "ui:btc:$s:$d"; done
       done
-      echo "node:btc:maker-cli:TakerSellsForeign"
+      echo "node:btc:maker-cli:TakerSellsForeign"; echo "node:btc:maker-price-module:TakerSellsForeign"
       echo "node:btc:taker-cli:TakerSellsForeign"; echo "node:btc:taker-cli-refund:TakerSellsForeign"
       echo "node:zec:zec-taker-cli:TakerSellsLez"
       echo "node:btc:outage-before-take:TakerSellsForeign"; echo "node:zec:zec-outage-before-take:TakerSellsLez"
