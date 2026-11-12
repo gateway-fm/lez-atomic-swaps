@@ -81,6 +81,10 @@ Our packages in this release are all at 0.3.0: the desks
 `lez_taker_node`. The upstream ones keep their own versions (`lez_core`
 0.4.1-sign.4, `lez_indexer_module` 1.1.1-rpc.4, `blockchain_module` 0.2.4).
 
+The module catalog (`gateway-fm/logos-modules-release-base`): TBD(release)
+— the 0.3.0 packages are published to it with this release; until then it
+holds the two desks at 0.2.5.
+
 ## Regression evidence
 
 Each set is under `docs/evidence/`, with `PROVENANCE.md` and `RESULTS.txt`.
