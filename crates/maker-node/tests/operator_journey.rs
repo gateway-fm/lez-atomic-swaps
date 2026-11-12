@@ -144,6 +144,8 @@ fn maker_cli_controls_owner_local_daemon_and_survives_restart() {
     assert_route_lists(&second_socket);
     assert_route_quote(&second_socket);
     assert_offer_history(&second_socket, "active", 1);
+    reprice_zec_route(&second_socket);
+    assert_offer_history(&second_socket, "active", 1);
     assert_delivery_offer(run.path(), true);
     withdraw_zec_offer(&second_socket);
     assert_offer_history(&second_socket, "withdrawn", 2);
@@ -720,6 +722,49 @@ fn publish_zec_offer(socket: &Path) {
         ],
     );
     assert_configuration_commit(&replay, 1, true);
+}
+
+/// A second price commit moves the quote to revision 2, and a set that still expects
+/// revision 1 is refused; the caller checks the earlier offer keeps its price.
+fn reprice_zec_route(socket: &Path) {
+    let set_price = |request_id: &str| {
+        maker_cli(
+            socket,
+            &[
+                "set-local-price",
+                "--request-id",
+                request_id,
+                "--expected-revision",
+                "1",
+                "--pair",
+                "zcash",
+                "--direction",
+                "taker-sells-lez",
+                "--lez-units-per-lot",
+                "7",
+                "--foreign-units-per-lot",
+                "3",
+            ],
+        )
+    };
+    assert_configuration_commit(&set_price("operator-price-zec-update-001"), 2, false);
+    let stale = set_price("operator-price-zec-update-002");
+    assert!(!stale.status.success(), "stale price revision was accepted");
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("stale maker configuration revision"),
+        "unexpected stale price error: {}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+
+    let quote = maker_cli(
+        socket,
+        &["quote", "--pair", "zcash", "--direction", "taker-sells-lez"],
+    );
+    assert_success(&quote);
+    let quote: Value = serde_json::from_slice(&quote.stdout).expect("CLI emits quote JSON");
+    assert_eq!(quote["price"]["lez_units_per_lot"], 7);
+    assert_eq!(quote["price"]["foreign_units_per_lot"], 3);
+    assert_eq!(quote["source_revision"], 2);
 }
 
 fn withdraw_zec_offer(socket: &Path) {
