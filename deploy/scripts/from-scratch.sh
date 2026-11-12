@@ -765,9 +765,12 @@ phase_stack() {
   for attempt in 1 2 3; do
     # (up.sh runs bootstrap-market.sh, which must find this workspace's
     # provision directory when --workspace named another one)
+    # --build: without it up.sh keeps images a host already has, and the
+    # payloads staged above (the Node packages among them) never reach the
+    # stack: the Nodes of an earlier checkout keep running.
     LEZ_MARKET_ROOT="$MARKET_ROOT" LEZ_WALLET_IDENTITIES="$MARKET_ROOT/identities" \
       LEZ_WORKSPACE="$WORKSPACE" LEZ_PROVISION="$PROVISION" \
-      SKIP_UI_VERIFY=1 bash scripts/up.sh && break
+      SKIP_UI_VERIFY=1 bash scripts/up.sh --build && break
     [[ "$attempt" -lt 3 ]] || fail "up.sh did not succeed in three attempts"
     log "up.sh failed (registry deadline?); retrying in 30 s"
     sleep 30
