@@ -49,10 +49,16 @@ time.sleep(plan.get("sleep", 0.5))
 note("end")
 sys.exit(plan.get("rc", 0))
 '''
+# The chain's height, one higher at every read unless frozen. The watcher and
+# every lane read it at once, so the read and the write are one step under a
+# lock: without it a reader met the file empty mid-write and started again at
+# 1, and a height that went back read as a frozen chain.
 FAKE_CURL = '''#!/bin/sh
-h="$STATE/height"; [ -s "$h" ] || echo 1 >"$h"
-n="$(cat "$h")"
-[ -e "$STATE/frozen" ] || { n=$((n + 1)); echo "$n" >"$h"; }
+h="$STATE/height"; lock="$STATE/height.lock"; tries=0
+until mkdir "$lock" 2>/dev/null; do tries=$((tries + 1)); [ "$tries" -lt 500 ] || break; sleep 0.01; done
+n="$(cat "$h" 2>/dev/null)"; n="${n:-1}"
+[ -e "$STATE/frozen" ] || { n=$((n + 1)); echo "$n" >"$h.$$" && mv "$h.$$" "$h"; }
+rmdir "$lock" 2>/dev/null
 echo "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":1,\\"result\\":$n}"
 '''
 FAKE_LOGGER = '''#!/bin/sh
