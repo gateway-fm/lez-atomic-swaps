@@ -20,6 +20,11 @@
 # same identities, so they are stopped for the run and started again afterwards. Run it under
 # the stack lock (~/m2-work/stack-lock.sh), with the stack up and lane 1 idle.
 #
+# LEZ_SWAP_PAIR=zcash runs one Zcash swap instead, Taker sells LEZ, formed at take time
+# (zec_reserve_v1) with the Maker funding Zcash from lane 1's Maker key, which the devnet's
+# Zebra mines to. The VM then also reaches Zebra :18232 and mines on it, one block at a time,
+# only for a transaction in its mempool or for the Maker's funding depth, as node-e2e.py does.
+#
 # SIDECAR_PROGRAM names the LEZ sidecar from the builder image (provision/data/sidecar).
 # The transcript and the console log land in OUTPUT_DIR (default target/maker-systemd-vm).
 set -euo pipefail
@@ -34,6 +39,7 @@ readonly sidecar_program="${SIDECAR_PROGRAM:?SIDECAR_PROGRAM must name the LEZ s
 readonly stack="${LEZ_STACK_DEPLOY_DIR:-}"
 readonly stack_network="${LEZ_STACK_NETWORK:-lez-swap-chains}"
 readonly lane_nodes=(lez-maker-node lez-taker-node)
+readonly swap_pair="${LEZ_SWAP_PAIR:-bitcoin}"
 btc_cli=(docker exec lez-bitcoin-core bitcoin-cli -conf=/run-config/bitcoin.conf -datadir=/var/lib/bitcoin)
 
 [[ -c /dev/kvm ]] || {
@@ -48,7 +54,7 @@ command -v docker >/dev/null || {
 if [[ -z "${SOURCE_BIN_DIR:-}" ]]; then
   cargo build --locked -p lez-maker-node --features pair-zec --bins
   cargo build --locked -p lez-taker-node --features pair-zec --bins
-  cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor
+  cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor --bin lez-zec-taker-actor
   cargo build --locked -p lez-logos-price-c-api --bin lez-logos-price-worker
   cargo build --locked -p btc-reference-actor --bins
   cargo build --locked -p lez-runtime-healthcheck
@@ -69,7 +75,7 @@ trap cleanup EXIT
 payload="$work/payload"
 install -d "$payload/scripts" "$payload/bin" "$payload/modules/lez-role-node"
 readonly binaries=(lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker lez-btc-maker-actor lez-runtime-healthcheck
-  lez-taker-node lez-taker-cli lez-btc-taker-actor lez-taker-registry-init)
+  lez-taker-node lez-taker-cli lez-btc-taker-actor lez-zec-taker-actor lez-taker-registry-init)
 cp scripts/install-maker-node-service.sh scripts/install-taker-node-service.sh "$payload/scripts/"
 cp -r packaging "$payload/"
 cp modules/lez-role-node/node-entrypoint.sh "$payload/modules/lez-role-node/"
@@ -95,7 +101,34 @@ balances() {
     lez="$(curl -fsS http://127.0.0.1:8779/ -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":[\"$account\"]}" \
       | jq .result.balance)"
-    echo "$role wallet=$wallet btc_sat=$sat lez_account=$account lez_units=$lez"
+    zat="$(python3 -I - "$payload/stack/$role/zcash.key" <<'PY'
+import hashlib, json, sys, urllib.request
+# The role's transparent Zcash address (regtest P2PKH, prefix 1d25) and Zebra's balance of it.
+P = 2**256 - 2**32 - 977
+G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
+     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)
+def add(a, b):
+    if a is None: return b
+    if b is None: return a
+    if a[0] == b[0] and (a[1] + b[1]) % P == 0: return None
+    m = (3 * a[0] * a[0] * pow(2 * a[1], -1, P)) if a == b else ((b[1] - a[1]) * pow(b[0] - a[0], -1, P))
+    x = (m * m - a[0] - b[0]) % P
+    return x, (m * (a[0] - x) - a[1]) % P
+k, point, base = int(open(sys.argv[1]).read().strip(), 16), None, G
+while k:
+    if k & 1: point = add(point, base)
+    base, k = add(base, base), k >> 1
+public = bytes([2 + (point[1] & 1)]) + point[0].to_bytes(32, "big")
+payload = bytes([0x1D, 0x25]) + hashlib.new("ripemd160", hashlib.sha256(public).digest()).digest()
+raw = payload + hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+alphabet, n, text = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz", int.from_bytes(raw, "big"), ""
+while n: n, r = divmod(n, 58); text = alphabet[r] + text
+body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getaddressbalance", "params": [{"addresses": [text]}]})
+request = urllib.request.Request("http://127.0.0.1:18232/", body.encode(), {"content-type": "application/json"})
+print(text, json.load(urllib.request.urlopen(request, timeout=30))["result"]["balance"])
+PY
+)"
+    echo "$role wallet=$wallet btc_sat=$sat lez_account=$account lez_units=$lez zcash_address=${zat% *} zatoshis=${zat#* }"
   done
 }
 
@@ -106,16 +139,18 @@ if [[ -n "$stack" ]]; then
   # with the work directory and never leaves this host.
   for role in maker taker; do
     install -d -m 0700 "$payload/stack/$role"
-    cp "$stack/runtime/lez/$role/identity.json" "$stack/runtime/lez/$role/lez-signer.key" "$payload/stack/$role/"
+    cp "$stack/runtime/lez/$role/identity.json" "$stack/runtime/lez/$role/lez-signer.key" \
+      "$stack/runtime/lez/$role/zcash.key" "$payload/stack/$role/"
     docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "lez-$role-node" \
       | sed -n 's/^LEZ_BTC_WALLET=//p' >"$payload/stack/$role/wallet"
   done
   cp "$stack/runtime/market-bootstrap.env" "$stack/runtime/secrets/btc-rpc-cookie" "$payload/stack/"
+  echo "$swap_pair" >"$payload/stack/pair"
   grep -E '^(LEZ_V02_CHANNEL_ID|LEZ_BTC_|LEZ_LEZ_DISCOVERY_MAX_BLOCKS|LEZ_MAKER_ACTOR_|LEZ_TAKER_OBSERVER_|LEZ_NODE_FINALITY_)' \
     "$stack/runtime/runtime.env" >"$payload/stack/profile.env"
   {
     echo "stack: $(git -C "$stack" rev-parse HEAD)"
-    for container in lez-bitcoin-core lez-sequencer lez-network "${lane_nodes[@]}"; do
+    for container in lez-bitcoin-core lez-sequencer lez-network lez-zebra "${lane_nodes[@]}"; do
       echo "$container image $(docker inspect -f '{{.Image}}' "$container")"
     done
   } >>"$payload/build-info"
@@ -323,7 +358,7 @@ run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-maker-node-service.
 run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-taker-node-service.sh
 
 step "The chains on loopback: QEMU forwards 10.0.2.100 to the devnet, socat to 127.0.0.1"
-for port in 18443 3040 8779; do
+for port in 18443 3040 8779 18232; do
   run systemd-run --quiet --unit="lez-chain-$port" -p Restart=always \
     socat "TCP-LISTEN:$port,bind=127.0.0.1,fork,reuseaddr" "TCP:10.0.2.100:$port"
 done
@@ -333,14 +368,20 @@ run curl -sS http://127.0.0.1:8779/ -H 'content-type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}'
 
 step "Inputs: credentials, identities, cookie copies, market constants, env files"
-for name in delivery-signing.key maker-claim-recovery.key maker-claim-preimage.key; do
+for name in maker-claim-recovery.key maker-claim-preimage.key; do
   printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=%s - /etc/lez/maker/credentials/%s.cred\n' "$name" "$name"
   head -c 32 /dev/urandom | systemd-creds encrypt --name="$name" - "/etc/lez/maker/credentials/$name.cred" 2>/dev/null
 done
+# The Maker's Delivery key is its Zcash key: lane 1's, which the devnet's Zebra mines to.
+run systemd-creds encrypt --name=delivery-signing.key /payload/stack/maker/zcash.key \
+  /etc/lez/maker/credentials/delivery-signing.key.cred
 run install -m 0644 /payload/stack/market-bootstrap.env /etc/lez/market-bootstrap.env
 for role in maker taker; do
   run install -d -m 0755 "/etc/lez/$role/identity"
   run install -o lez-swap -g lez-swap -m 0400 "/payload/stack/$role/identity.json" "/etc/lez/$role/identity/"
+  # The Taker's own Zcash key, lane 1's: a file the launcher copies into its Zcash state.
+  [[ "$role" == taker ]] && run install -D -o lez-swap -g lez-swap -m 0400 /payload/stack/taker/zcash.key \
+    /etc/lez/taker/identity/taker/zcash.key
   # The role's LEZ signer key exists on this machine only as its encrypted credential.
   run systemd-creds encrypt --name=lez-signer.key "/payload/stack/$role/lez-signer.key" \
     "/etc/lez/$role/credentials/lez-signer.key.cred"
@@ -367,6 +408,7 @@ run systemd-analyze security --no-pager lez-taker-node
 run runuser -u lez-swap -- /usr/bin/lez-maker-cli health
 run runuser -u lez-swap -- /usr/bin/lez-taker-cli health
 
+if [[ "$(cat /payload/stack/pair)" == bitcoin ]]; then
 step "The Maker prices and advertises Bitcoin, Taker sells BTC (1 000 000 sat for 1 000 LEZ)"
 route=(--pair bitcoin --direction taker-sells-foreign)
 bounds=(--minimum-foreign-units 1000000 --maximum-foreign-units 1000000 --offer-ttl-seconds 3600)
@@ -414,6 +456,112 @@ run sh -c "runuser -u lez-swap -- /usr/bin/lez-taker-cli swap monitor --swap-id 
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli monitor --id $swap_id"
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli history"
 
+else
+step "The Maker prices and advertises Zcash, Taker sells LEZ (1 ZEC for 50 000 LEZ)"
+route=(--pair zcash --direction taker-sells-lez)
+bounds=(--minimum-foreign-units 100000000 --maximum-foreign-units 100000000 --offer-ttl-seconds 3600)
+retry maker configure-pair --request-id systemd-pair-1 "${route[@]}" --enabled false "${bounds[@]}"
+retry maker set-local-price --request-id systemd-price-1 "${route[@]}" --lez-units-per-lot 1 --foreign-units-per-lot 2000
+retry maker configure-pair --request-id systemd-pair-2 --expected-revision 1 "${route[@]}" --enabled true "${bounds[@]}"
+retry maker quote "${route[@]}"
+retry maker publish-offer --request-id systemd-offer-1 --offer-id systemd-offer-1 "${route[@]}"
+
+step "The Taker discovers and takes: the Nodes form the agreement at take time (zec_reserve_v1)"
+retry taker swap offers "${route[@]}"
+retry taker swap take --request-id systemd-take-1 --offer-id systemd-offer-1 --foreign-units 100000000
+swap_id="$(taker swap list | jq -r '[.. | objects | select(has("swap_id")) | .swap_id] | first')"
+echo "swap: $swap_id"
+
+# Zebra has no miner: one block at a time, only for a transaction in its mempool or for the
+# Maker's Zcash funding to reach the two confirmations its pre-reveal gate wants
+# (node-e2e.py's zec_mining_policy), at most twelve blocks in all.
+zebra() { curl -fsS http://127.0.0.1:18232/ -H 'content-type: application/json' \
+  --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":${2:-[]}}" | jq -c .result; }
+mined=0
+# The first transaction Zebra's mempool holds after the take is the Maker's Zcash funding.
+funding_tx=""
+funding_depth() {
+  [[ -n "$funding_tx" ]] && zebra getrawtransaction "[\"$funding_tx\",1]" | jq -r '.confirmations // 0'
+}
+mine_if_needed() {
+  local why="" depth pool
+  pool="$(zebra getrawmempool)"
+  if [[ "$pool" != "[]" ]]; then
+    why="mempool $pool"
+    [[ -n "$funding_tx" ]] || funding_tx="$(jq -r '.[0]' <<<"$pool")"
+  else
+    depth="$(funding_depth)"
+    [[ -n "$depth" && "$depth" -lt 2 && "$1" != claim_available ]] && why="Maker's Zcash funding at $depth confirmation(s)"
+  fi
+  if [[ -n "$why" && "$mined" -lt 12 ]]; then
+    zebra generate '[1]' >/dev/null && mined=$((mined + 1))
+    echo "zebra: mined 1 block, height $(zebra getblockcount) ($why)"
+  fi
+}
+taker_state() { taker swap monitor --swap-id "$swap_id" 2>/dev/null | jq -r '(.swap // .) | "\(.state) \(.progress_generation)"'; }
+last=""
+for _ in $(seq 200); do
+  read -r state generation <<<"$(taker_state)"
+  [[ "$state" != "$last" ]] && echo "taker: $state (generation $generation) at $(date -u +%H:%M:%S)" && last="$state"
+  # Both legs locked: the Maker's Zcash funding is in a block.
+  [[ "$(funding_depth)" -ge 1 || "$state" == claim_available || "$state" == completed || "$state" == refunded \
+    || "$state" == attention_required ]] && break
+  mine_if_needed "$state"
+  sleep 5
+done
+
+step "Per-swap files that hold private keys, while the swap runs"
+run sh -c "find /var/lib/lez -type f \( -name '*.key' -o -name '*.capability' \) -printf '%m %u:%g %p\n' | sort"
+# A per-swap zcash.key holds 32 raw bytes; the role's own key files hold them as hex.
+raw_key() { python3 -I -c 'import sys; print(bytes.fromhex(sys.stdin.read().strip()).hex())'; }
+maker_key="$(systemd-creds decrypt --name=delivery-signing.key /etc/lez/maker/credentials/delivery-signing.key.cred - | raw_key)"
+taker_key="$(raw_key </etc/lez/taker/identity/taker/zcash.key)"
+for copy in $(find /var/lib/lez -type f -name zcash.key); do
+  copied="$(od -An -tx1 -v "$copy" | tr -d ' \n')"
+  [[ ${#copied} -ne 64 ]] && copied="$(raw_key <"$copy")"
+  if [[ "$copied" == "$maker_key" ]]; then echo "$copy holds the Maker's long-lived Zcash (and Delivery) key"
+  elif [[ "$copied" == "$taker_key" ]]; then echo "$copy holds the Taker's long-lived Zcash key"
+  else echo "$copy holds neither role's long-lived Zcash key"; fi
+done
+unset maker_key taker_key copied
+
+step "kill -9 of the Maker between the locks and the claim; systemd restarts it"
+pid="$(systemctl show -p MainPID --value lez-maker-node)"
+[[ "$pid" -gt 0 ]] && run kill -9 "$pid"
+for _ in $(seq 60); do
+  [[ "$(systemctl show -p NRestarts --value lez-maker-node)" == 1 \
+    && "$(systemctl show -p ActiveState --value lez-maker-node)" == active ]] && break
+  sleep 1
+done
+run systemctl show -p ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+
+step "The Taker waits for claim_available, claims, and both sides complete"
+for _ in $(seq 400); do
+  read -r state generation <<<"$(taker_state)"
+  [[ "$state" != "$last" ]] && echo "taker: $state (generation $generation) at $(date -u +%H:%M:%S)" && last="$state"
+  [[ "$state" == claim_available || "$state" == completed || "$state" == refunded || "$state" == attention_required ]] && break
+  mine_if_needed "$state"
+  sleep 5
+done
+retry taker swap claim --swap-id "$swap_id" --request-id systemd-claim-1 --expected-generation "$generation"
+for _ in $(seq 400); do
+  read -r state generation <<<"$(taker_state)"
+  [[ "$state" != "$last" ]] && echo "taker: $state (generation $generation) at $(date -u +%H:%M:%S)" && last="$state"
+  maker_view="$(maker monitor --id "$swap_id" 2>/dev/null)"
+  [[ "$state" == completed && "$(jq -r .schedule_state <<<"$maker_view")" == terminal ]] && break
+  mine_if_needed "$state"
+  sleep 5
+done
+echo "zebra: $mined block(s) mined in this run"
+run sh -c "runuser -u lez-swap -- /usr/bin/lez-taker-cli swap monitor --swap-id $swap_id"
+run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli monitor --id $swap_id"
+run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli history"
+
+step "Per-swap files that hold private keys, after completion"
+run sh -c "find /var/lib/lez -type f \( -name '*.key' -o -name '*.capability' \) -printf '%m %u:%g %p\n' | sort"
+
+fi
+
 step "No copy of either LEZ signer key on disk: only the encrypted credentials"
 run find / -xdev -name 'lez-signer.key*' -not -path '/payload/*'
 
@@ -436,7 +584,7 @@ CLOUD
 nic=user,restrict=on
 docker_network=()
 if [[ -n "$stack" ]]; then
-  for forward in bitcoin-core:18443 sequencer:3040 indexer:8779; do
+  for forward in bitcoin-core:18443 sequencer:3040 indexer:8779 zebra:18232; do
     nic+=",guestfwd=tcp:10.0.2.100:${forward#*:}-cmd:socat - TCP:$forward"
   done
   docker_network=(--network "$stack_network")
