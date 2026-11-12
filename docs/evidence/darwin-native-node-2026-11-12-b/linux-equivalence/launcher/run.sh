@@ -12,7 +12,7 @@ run() {
   printf '{"account_id_hex":"%s"}\n' ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff >/run-lez-identity/identity.json
   printf '%s' 1111111111111111111111111111111111111111111111111111111111111111 >/run-lez-identity/lez-signer.key
   printf '%s' 2222222222222222222222222222222222222222222222222222222222222222 >/run-lez-identity/zcash.key
-  printf 'M3_POC_LEZ_ESCROW_PROGRAM_ID=%s\nM3_POC_LEZ_GENESIS_BLOCK_HASH=%s\n' $(printf 'c%.0s' $(seq 64)) $(printf 'd%.0s' $(seq 64)) >/run-market/market-bootstrap.env
+  printf 'M3_POC_LEZ_ESCROW_PROGRAM_ID=%s\nM3_POC_LEZ_GENESIS_BLOCK_HASH=%s\n' "$(printf 'c%.0s' $(seq 64))" "$(printf 'd%.0s' $(seq 64))" >/run-market/market-bootstrap.env
   echo 'lezrpc:secret' >/run-config/btc-rpc-cookie
   if [[ $role == taker ]]; then echo 02abababababababababababababababababababababababababababababababab >/delivery/maker-delivery-identity.pub; fi
   cp "$script" /payload/node-entrypoint.sh
@@ -45,9 +45,9 @@ run() {
   if [[ -n "${WITH_SIGNER:-}" ]]; then
     mkdir -p /run/lez-wallet; rm -f /run/lez-wallet/signer.sock
     socat UNIX-LISTEN:/run/lez-wallet/signer.sock,fork /dev/null & sleep 0.5
-    extra=(LEZ_WALLET_SIGNER_SOCKET=/run/lez-wallet/signer.sock LEZ_NODE_LOG_FILE=/run/lez/$role/node.log)
+    extra=(LEZ_WALLET_SIGNER_SOCKET=/run/lez-wallet/signer.sock "LEZ_NODE_LOG_FILE=/run/lez/$role/node.log")
   fi
-  env "${extra[@]}" PATH="/fakes:$PATH" LEZ_SIDECAR_PORT_BASE=19000 LEZ_V02_CHANNEL_ID=$(printf 'e%.0s' $(seq 64)) LEZ_BTC_WALLET=lez-$role \
+  env "${extra[@]}" PATH="/fakes:$PATH" LEZ_SIDECAR_PORT_BASE=19000 LEZ_V02_CHANNEL_ID="$(printf 'e%.0s' $(seq 64))" LEZ_BTC_WALLET=lez-$role \
     LEZ_BTC_CLAIM_DESTINATION=wallet /payload/node-entrypoint.sh $role >/out/stdout 2>/out/stderr || echo "exit $?" >>/out/stdout
   sleep 1
   echo "== $role stdout"; cat /out/stdout; echo "== $role stderr"; cat /out/stderr

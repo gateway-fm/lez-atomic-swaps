@@ -3,7 +3,7 @@
 # each with its own log under $LOGS/suite/; stops at nothing (records all).
 set -u
 L=$LOGS/suite; mkdir -p "$L"
-cd $CHECKOUT/deploy
+cd "$CHECKOUT/deploy" || exit 1
 export LEZ_E2E_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run LEZ_E2E_INDEXER_CHECK_ONLY=1
 while read -r label args; do
   [[ -n "$label" ]] || continue
