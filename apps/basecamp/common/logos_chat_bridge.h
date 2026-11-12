@@ -73,8 +73,13 @@ public:
             state_ = QStringLiteral("error: invalid LEZ_LOGOS_CHAT_PRESET");
             return;
         }
-        const QVariantMap config{{QStringLiteral("delivery_preset"), preset},
-                                 {QStringLiteral("log_level"), QStringLiteral("info")}};
+        QVariantMap config{{QStringLiteral("delivery_preset"), preset},
+                           {QStringLiteral("log_level"), QStringLiteral("info")}};
+        // A Delivery network of the parties' own instead of the preset's
+        // public fleet: delivery_module's createNode JSON, passed as it is
+        // (chat_module ChatConfig.delivery_config, builder/patches/logos-chat-module).
+        const QString deliveryConfig = qEnvironmentVariable("LEZ_LOGOS_DELIVERY_CONFIG");
+        if (!deliveryConfig.isEmpty()) config.insert(QStringLiteral("delivery_config"), deliveryConfig);
         const auto result = chat.init(config);
         if (!result.success) {
             state_ = QStringLiteral("error: chat init failed");
