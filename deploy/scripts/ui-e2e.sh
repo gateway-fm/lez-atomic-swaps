@@ -641,7 +641,7 @@ scenario_zec_maker_refund() {
   note "The Taker Node drives the LEZ lock on its own; the Maker Node funds Zcash, and zebra is mined only for what waits in the mempool, so the funding stays one block deep and the Maker cannot claim yet"
   python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to both_legs_locked"
-  opens=$(( $(sed 's/.*-//' "$LEZ_LANE_RUNTIME/zec/current") + $(zec_refund_delay) + 15 ))
+  opens=$(( $(sed 's/.*-//' "$LEZ_LANE_RUNTIME/zec/current" | cut -c1-10) + $(zec_refund_delay) + 15 ))
   wait_until_unix "$opens" "for the agreement's LEZ refund time (the profile's delay after provisioning)"
   note "The LEZ refund time has passed and the Maker never claimed; the Taker desk offers Refund and the Maker desk watches its Zcash come back"
   maker_wait_bg maker_pid refunded "$swap"
