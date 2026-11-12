@@ -1,0 +1,35 @@
+diff --git a/flake.nix b/flake.nix
+--- a/flake.nix
++++ b/flake.nix
+@@ -118,6 +118,31 @@
+             if [ -n "$tool" ]; then
+               unset DEVELOPER_DIR SDKROOT
+               export xcrun_nocache=1
++              # xcrun finds the downloadable Metal Toolchain through a per-user
++              # mapping (~/Library/Developer/Xcode/XcodeToMetalToolchainIndexMapping.plist).
++              # A nix build user (_nixbldN, HOME=/var/empty) has none, so xcrun
++              # reports the toolchain missing although it is installed and its
++              # cryptex mount is world-readable (xcrun --find names Xcode's
++              # forwarding shim, which fails the same way). So run the tool from
++              # that mount, with xcrun's SDK passed as -isysroot to `metal`, and
++              # fall back to xcrun when no mount is there.
++              sdk=macosx; name=; rest=()
++              while [ $# -gt 0 ]; do
++                case "$1" in
++                  --sdk|-sdk) sdk="$2"; shift 2; continue ;;
++                  metal|metallib) if [ -z "$name" ]; then name="$1"; shift; continue; fi ;;
++                esac
++                rest+=("$1"); shift
++              done
++              for dir in /var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-*/Metal.xctoolchain/usr/bin; do
++                if [ -x "$dir/$name" ]; then
++                  if [ "$name" = metal ]; then
++                    exec "$dir/metal" -isysroot "$(/usr/bin/xcrun --sdk "$sdk" --show-sdk-path)" "''${rest[@]}"
++                  fi
++                  exec "$dir/$name" "''${rest[@]}"
++                fi
++              done
++              exec /usr/bin/xcrun --sdk "$sdk" "$name" "''${rest[@]}"
+             fi
+             exec /usr/bin/xcrun "$@"
+           '';
