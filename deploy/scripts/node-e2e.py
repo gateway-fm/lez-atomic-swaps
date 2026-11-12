@@ -12,6 +12,8 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py wrong-inputs     stale revisions, bad envelope hash, off-preset amount, consumed lot
     node-e2e.py restart-taker    Taker Node restarted between lock and claim
     node-e2e.py restart-maker    Maker Node restarted between lock and its funding
+    node-e2e.py kill-taker       restart-taker with SIGKILL of the Taker's container instead (R4)
+    node-e2e.py kill-maker       restart-maker with SIGKILL of the Maker's container instead (R4)
     node-e2e.py survivor         Taker Node stopped after its LEZ claim; Maker completes alone
     node-e2e.py late-claim-confirms  the revealing claim sent, the Taker stopped, the claim confirms while it is down
     node-e2e.py late-claim-unmined   the revealing claim sent but never mined until the refund path is open
@@ -708,17 +710,45 @@ def scenario_wrong_inputs(stamp: str) -> dict:
     return {"swap_id": swap_id}
 
 
-def scenario_restart(stamp: str, role: str) -> dict:
+def kill_node(role: str) -> dict:
+    """R4: the role's container killed with SIGKILL, not stopped. The container
+    is the party's Basecamp, and the Node runs in it as a child of Basecamp's
+    lez_swap_node module (modules/lez-role-node/node-entrypoint.sh), so the
+    kill takes Basecamp, the Node and its helpers down together, none of them
+    given a chance to clean up. Asserts the container exited by the signal
+    (exit code 137, not killed for memory), then starts it again."""
+    container, _ = NODES[role]
+    log(f"  killing {container} with SIGKILL")
+    docker("kill", "--signal", "KILL", container)
+    state = json.loads(subprocess.run(["docker", "inspect", container, "--format", "{{json .State}}"],
+                                      capture_output=True, text=True, check=True).stdout)
+    if state.get("Running") or state.get("ExitCode") != 137 or state.get("OOMKilled"):
+        raise Failure(f"{container} did not exit by SIGKILL: running {state.get('Running')}, exit code "
+                      f"{state.get('ExitCode')}, OOMKilled {state.get('OOMKilled')}")
+    log(f"  {container} exited by SIGKILL (exit code 137, not OOM-killed); starting it again")
+    docker("start", container)
+    wait_healthy(role)
+    return {"container": container, "exit_code": state["ExitCode"], "oom_killed": state["OOMKilled"],
+            "finished_at": state.get("FinishedAt")}
+
+
+def scenario_restart(stamp: str, role: str, kill: bool = False) -> dict:
+    """The role's Node restarted between the lock and the claim (`restart-<role>`,
+    docker restart: SIGTERM), or killed there with SIGKILL and started again
+    (`kill-<role>`, kill_node); either way the swap completes."""
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     lock(swap_id)
     container, _ = NODES[role]
-    log(f"  restarting {container}")
-    docker("restart", container)
-    wait_healthy(role)
+    if kill:
+        killed = kill_node(role)
+    else:
+        log(f"  restarting {container}")
+        docker("restart", container)
+        wait_healthy(role)
     claim(swap_id, stamp)
     wait_completed(swap_id)
-    return {"swap_id": swap_id, "restarted": container}
+    return {"swap_id": swap_id, "restarted": container, **({"killed": killed} if kill else {})}
 
 
 def scenario_survivor(stamp: str) -> dict:
@@ -3363,23 +3393,28 @@ def scenario_zec_wrong_inputs(stamp: str) -> dict:
     return {"swap_id": swap_id, "corridor": corridor["run_id"]}
 
 
-def scenario_zec_restart(stamp: str, role: str) -> dict:
+def scenario_zec_restart(stamp: str, role: str, kill: bool = False) -> dict:
     """ZEC analogue of `restart-<role>`: the Taker's LEZ lock final on both
     Nodes, the role's Node restarted, the swap carried to completed afterwards
     by the Nodes alone (each Node's supervisor resumes its actor from its
     store; a Taker row left leased by the restart is requeued as
     `coordinator_restarted`, which the Taker's view reports as
-    last_failure_class until its next attempt)."""
+    last_failure_class until its next attempt). `zec-kill-<role>` kills the
+    role's container with SIGKILL there instead (kill_node: Basecamp and the
+    Node in it go down together) and starts it again."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
     zec_wait_until(swap_id, config, {"refund_available"}, timeout=1200, corridor=corridor,
                     describe="(Taker first lock final)")
     container, _ = NODES[role]
-    log(f"  restarting {container}")
     restarted_at = time.time()
-    docker("restart", container)
-    wait_healthy(role)
+    if kill:
+        killed = kill_node(role)
+    else:
+        log(f"  restarting {container}")
+        docker("restart", container)
+        wait_healthy(role)
     classes = set()
     if role == "taker":
         # What the supervisor says about the restart: a row it held during the
@@ -3397,7 +3432,7 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
         log(f"  after the restart the Taker's schedule reports {sorted(classes) or 'no failure class'}; the supervisor resumes")
     zec_finish(swap_id, config, corridor, stamp)
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "restarted": container,
-            "taker_schedule_after_restart": sorted(classes)}
+            "taker_schedule_after_restart": sorted(classes), **({"killed": killed} if kill else {})}
 
 
 def scenario_zec_survivor(stamp: str) -> dict:
@@ -4410,6 +4445,8 @@ ZEC_SCENARIOS = {
     "zec-wrong-inputs": scenario_zec_wrong_inputs,
     "zec-restart-taker": lambda stamp: scenario_zec_restart(stamp, "taker"),
     "zec-restart-maker": lambda stamp: scenario_zec_restart(stamp, "maker"),
+    "zec-kill-taker": lambda stamp: scenario_zec_restart(stamp, "taker", kill=True),
+    "zec-kill-maker": lambda stamp: scenario_zec_restart(stamp, "maker", kill=True),
     "zec-survivor": scenario_zec_survivor,
     "zec-regenerated-catalog": scenario_zec_regenerated_catalog,
     "zec-tampered-catalog": scenario_zec_tampered_catalog,
@@ -4423,6 +4460,8 @@ SCENARIOS = {
     "wrong-inputs": scenario_wrong_inputs,
     "restart-taker": lambda stamp: scenario_restart(stamp, "taker"),
     "restart-maker": lambda stamp: scenario_restart(stamp, "maker"),
+    "kill-taker": lambda stamp: scenario_restart(stamp, "taker", kill=True),
+    "kill-maker": lambda stamp: scenario_restart(stamp, "maker", kill=True),
     "survivor": scenario_survivor,
     "late-claim-confirms": scenario_late_claim_confirms,
     "late-claim-unmined": scenario_late_claim_unmined,

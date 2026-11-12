@@ -81,14 +81,14 @@ tier_tests() { # tier_tests <tier>
     full)
       tier_tests refunds
       for d in "${directions[@]}"; do
-        for s in zec-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-survivor \
-          zec-concurrent zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock; do
+        for s in zec-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-kill-taker zec-kill-maker \
+          zec-survivor zec-concurrent zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock; do
           echo "node:zec:$s:$d"
         done
         for s in zec-happy zec-concurrent zec-restart-taker zec-restart-maker zec-survivor zec-node-offline; do
           echo "ui:zec:$s:$d"
         done
-        for s in happy replay wrong-inputs restart-taker restart-maker survivor late-claim-confirms \
+        for s in happy replay wrong-inputs restart-taker restart-maker kill-taker kill-maker survivor late-claim-confirms \
           late-claim-unmined concurrent early-lock offline-after-lock regenerated-config tampered-config; do
           echo "node:btc:$s:$d"
         done
