@@ -129,7 +129,7 @@ require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'
 readonly cargo_deny_policy='advisories bans licenses sources'
-readonly expected_cargo_deny_steps=8
+readonly expected_cargo_deny_steps=9
 cargo_deny_steps="$(rg -Fc -- "$cargo_deny_action" "$ci_workflow")"
 cargo_deny_policy_steps="$(rg -Fc -- "$cargo_deny_policy" "$ci_workflow")"
 [[ "$cargo_deny_steps" == "$expected_cargo_deny_steps" ]] \
@@ -142,7 +142,8 @@ for manifest in \
   compat/lez-v0.2-provisional/Cargo.toml \
   compat/lez-v0.2-provisional/escrow/methods/Cargo.toml \
   compat/lez-v0.2-provisional/escrow/methods/guest/Cargo.toml \
-  compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml; do
+  compat/lez-v0.2-provisional/escrow/deployer/Cargo.toml \
+  fuzz/Cargo.toml; do
   require_fixed "manifest-path: $manifest" "$ci_workflow"
 done
 
@@ -198,6 +199,28 @@ for forbidden in \
   ! rg -F "$forbidden" .github/workflows scripts/run-ci-quality-gates.sh >/dev/null \
     || fail "out-of-scope release gate remains: $forbidden"
 done
+
+# The one fuzz job: each target for a bounded time on a schedule or on demand, through the
+# pinned-nightly container runner. A nightly toolchain never gates a pull request, so the
+# workflow has no pull_request or push trigger and ci.yml never runs the fuzzer; the stable
+# corpus replay tests are the per-change gate and the fuzz graph is audited with the others.
+readonly fuzz_workflow=".github/workflows/fuzz.yml"
+for required in \
+  'workflow_dispatch:' \
+  'schedule:' \
+  'permissions:' \
+  'contents: read' \
+  'timeout-minutes: 45' \
+  'target: [coordinator, offer_announcement, chat_frame, zec_agreement_wire]' \
+  './scripts/run-fuzz.sh "${{ matrix.target }}" 120 ' \
+  'persist-credentials: false' \
+  'if: failure()'; do
+  require_fixed "$required" "$fuzz_workflow"
+done
+! rg -q -e '^  (pull_request|pull_request_target|push):' -e 'secrets\.' -e 'write' "$fuzz_workflow" \
+  || fail "$fuzz_workflow must stay scheduled, read-only and secret-free"
+! rg -Fq -e 'run-fuzz.sh' -e 'cargo fuzz' -e 'nightly' "$ci_workflow" "$quality_runner" \
+  || fail "the fuzzer must not run in the required CI workflow"
 
 trivy_fail_hard_steps="$(rg -c 'exit-code: "1"' "$ci_workflow")"
 (( trivy_fail_hard_steps >= 2 )) \

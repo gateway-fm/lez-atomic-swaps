@@ -18,6 +18,29 @@ exceptions = [
     # libFuzzer's runtime carries the permissive LLVM NCSA license in addition
     # to its MIT/Apache wrapper. Keep this allowance exact and graph-local.
     { crate = "libfuzzer-sys@0.4.13", allow = ["NCSA"] },
+    # The targets link node-common, swap-store and the Zcash SDK, which bring
+    # the rust-bitcoin, MuSig2, DLEQ and Keccak crates the workspace deny.toml
+    # already allows by exact version, plus the Zcash SDK's own secp256k1 0.33.
+    { crate = "base58ck@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin@0.32.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-io@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin-units@0.1.101", allow = ["CC0-1.0"] },
+    { crate = "bitcoin_hashes@0.14.101", allow = ["CC0-1.0"] },
+    { crate = "bounded-vec@0.9.0", allow = ["CC0-1.0"] },
+    { crate = "hex-conservative@0.2.2", allow = ["CC0-1.0"] },
+    { crate = "hex_lit@0.1.1", allow = ["MITNFA"] },
+    { crate = "secp256k1@0.29.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.10.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1@0.31.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.11.0", allow = ["CC0-1.0"] },
+    { crate = "secp256k1@0.33.1", allow = ["CC0-1.0"] },
+    { crate = "secp256k1-sys@0.14.1", allow = ["CC0-1.0"] },
+    { crate = "musig2@0.4.1", allow = ["Unlicense"] },
+    { crate = "secp@0.7.0", allow = ["Unlicense"] },
+    { crate = "secp256kfun_arithmetic_macros@0.2.0", allow = ["0BSD"] },
+    { crate = "secp256kfun@0.12.1", allow = ["0BSD"] },
+    { crate = "sigma_fun@0.9.0", allow = ["0BSD"] },
+    { crate = "tiny-keccak@2.0.2", allow = ["CC0-1.0"] },
 ]
 
 [bans]
