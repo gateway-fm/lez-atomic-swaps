@@ -44,9 +44,12 @@ node_log_file() {
   if [[ -f "$file" ]] && (( $(stat -c %s "$file") > 16777216 )); then : >"$file"; fi
   exec > >(tee -a "$file") 2> >(tee -a "$file" >&2)
 }
-identity_src="/run-lez-identity"
-manifest="/run-market/market-bootstrap.env"
-cookie_src="/run-config/btc-rpc-cookie"
+# The role's inputs: the container's read-only mounts, or where a systemd
+# deployment keeps them (packaging/systemd/lez-<role>-node.env.example).
+identity_src="${LEZ_IDENTITY_DIR:-/run-lez-identity}"
+manifest="${LEZ_MARKET_MANIFEST:-/run-market/market-bootstrap.env}"
+cookie_src="${LEZ_BTC_RPC_COOKIE_FILE:-/run-config/btc-rpc-cookie}"
+delivery="${LEZ_DELIVERY_DIR:-/delivery}"
 sidecar_port_base="${LEZ_SIDECAR_PORT_BASE:?}"
 sequencer_url="${LEZ_SEQUENCER_URL:-http://sequencer:3040}"
 # How the Node and its sidecars reach the LEZ sequencer (LezSequencerRoute,
@@ -72,18 +75,23 @@ chmod 0700 "$state" 2>/dev/null || true
 # wallet client and the LEZ sidecars accept only loopback endpoints, so this
 # container forwards 127.0.0.1 ports to the services by name. Each connection
 # is forwarded on its own, so a restarted service is reached again at once.
+# LEZ_CHAIN_FORWARDS=0 leaves them out where the chains already answer on
+# loopback (a systemd deployment, where both roles share one network).
+chain_forwards="${LEZ_CHAIN_FORWARDS:-1}"
 bitcoin_host="${LEZ_BITCOIN_CORE_HOST:-bitcoin-core}"
 sequencer_host="${LEZ_SEQUENCER_HOST:-sequencer}"
 indexer_host="${LEZ_INDEXER_HOST:-indexer}"
-"${with_node[@]}" socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
-# (On the official_public route the sequencer is reached directly: no forward.)
-if [[ "$sequencer_route" == local ]]; then
-  "${with_node[@]}" socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
+if [[ "$chain_forwards" == 1 ]]; then
+  "${with_node[@]}" socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
+  # (On the official_public route the sequencer is reached directly: no forward.)
+  if [[ "$sequencer_route" == local ]]; then
+    "${with_node[@]}" socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
+  fi
+  "${with_node[@]}" socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
+  # The ZEC actors reach Zebra the same way (deterministic_local route).
+  zebra_host="${LEZ_ZEBRA_HOST:-zebra}"
+  "${with_node[@]}" socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr "TCP:${zebra_host}:18232" &
 fi
-"${with_node[@]}" socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
-# The ZEC actors reach Zebra the same way (deterministic_local route).
-zebra_host="${LEZ_ZEBRA_HOST:-zebra}"
-"${with_node[@]}" socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr "TCP:${zebra_host}:18232" &
 for _ in $(seq 1 60); do
   curl -sf --max-time 3 --user "$(cat "$cookie_src")" -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18443/ >/dev/null 2>&1 && break
@@ -253,7 +261,7 @@ fi
 # per-swap sidecars (crates/btc-role-lifecycle/src/sidecar.rs). Material
 # provisioned on another chain is ignored rather than loaded: a catalog whose
 # envelope no longer authenticates would keep the Taker from starting at all.
-zec_state="/var/lib/lez/zec"
+zec_state="${LEZ_ZEC_STATE_DIR:-/var/lib/lez/zec}"
 zec_role="$zec_state/corridor/$role"
 zec_config="$zec_role/actor-config.json"
 zec_ready=0
@@ -336,9 +344,11 @@ chmod 0600 "$zec_role_config"
 
 case "$role" in
   maker)
-    if [[ ! -s "$state/delivery-signing.key" ]]; then
-      od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$state/delivery-signing.key"
-      chmod 0600 "$state/delivery-signing.key"
+    # A systemd deployment names its Delivery key, a credential, instead.
+    delivery_key="${LEZ_DELIVERY_SIGNING_KEY_FILE:-$state/delivery-signing.key}"
+    if [[ ! -s "$delivery_key" ]]; then
+      od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$delivery_key"
+      chmod 0600 "$delivery_key"
     fi
     # The Maker's Delivery signing key is its minted Zcash key
     # (runtime/lez/maker/zcash.key, gen-config.sh): the ZEC corridor binds the
@@ -347,23 +357,24 @@ case "$role" in
     # crates/taker-node/src/zec_taker_accept.rs), and zebra mines to that same
     # key. Replacing it orphans offers signed by the previous identity;
     # scripts/zec-provision.sh removes their Delivery files when it changes.
-    pinned_delivery_key="/run-lez-identity/zcash.key"
-    if [[ -r "$pinned_delivery_key" ]] && ! cmp -s "$pinned_delivery_key" "$state/delivery-signing.key"; then
-      install -m 0600 "$pinned_delivery_key" "$state/delivery-signing.key"
+    pinned_delivery_key="$identity_src/zcash.key"
+    if [[ -r "$pinned_delivery_key" ]] && ! cmp -s "$pinned_delivery_key" "$delivery_key"; then
+      install -m 0600 "$pinned_delivery_key" "$delivery_key"
       echo "maker Delivery signing key is the minted Zcash key ($pinned_delivery_key)"
     fi
     if [[ ! -s "$state/btc-chat-signing.key" ]]; then
       od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$state/btc-chat-signing.key"
       chmod 0600 "$state/btc-chat-signing.key"
     fi
-    identity="$("$bin/lez-maker-cli" delivery-identity --signing-key-file "$state/delivery-signing.key" \
+    identity="$("$bin/lez-maker-cli" delivery-identity --signing-key-file "$delivery_key" \
       | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
     [[ -n "$identity" ]] || { echo "could not publish maker identity" >&2; exit 1; }
-    printf '%s\n' "$identity" >/delivery/.maker-delivery-identity.pub.tmp
-    chmod 0444 /delivery/.maker-delivery-identity.pub.tmp
-    mv -f /delivery/.maker-delivery-identity.pub.tmp /delivery/maker-delivery-identity.pub
+    mkdir -p "$delivery"
+    printf '%s\n' "$identity" >"$delivery/.maker-delivery-identity.pub.tmp"
+    chmod 0444 "$delivery/.maker-delivery-identity.pub.tmp"
+    mv -f "$delivery/.maker-delivery-identity.pub.tmp" "$delivery/maker-delivery-identity.pub"
     args=(--socket "$run/node.sock" --database "$state/maker.sqlite3" --ready-file "$run/ready"
-      --delivery-directory /delivery --delivery-signing-key-file "$state/delivery-signing.key"
+      --delivery-directory "$delivery" --delivery-signing-key-file "$delivery_key"
       --chat-socket "$run/chat.sock" --btc-maker-signing-key-file "$state/btc-chat-signing.key"
       --actor-supervisor)
     if [[ "$btc_lifecycle_ready" == 1 ]]; then
@@ -404,7 +415,7 @@ case "$role" in
       # Without the lifecycle the Chat socket still needs a pair authority: a
       # static role root is the legacy shape; keep Chat off until bootstrap.
       args=(--socket "$run/node.sock" --database "$state/maker.sqlite3" --ready-file "$run/ready"
-        --delivery-directory /delivery --delivery-signing-key-file "$state/delivery-signing.key"
+        --delivery-directory "$delivery" --delivery-signing-key-file "$delivery_key"
         --actor-supervisor)
     fi
     # Route health (packaging/systemd/README.md): a Bitcoin or Zcash route reads
@@ -455,11 +466,10 @@ case "$role" in
       start_chat_gateway --proxy-socket "$chat_socket"
     else
       for _ in $(seq 1 60); do
-        [[ -s /delivery/maker-delivery-identity.pub ]] && break
+        [[ -s "$delivery/maker-delivery-identity.pub" ]] && break
         sleep 1
       done
-      maker_identity="$(tr -d ' \n' </delivery/maker-delivery-identity.pub)"
-      delivery=/delivery
+      maker_identity="$(tr -d ' \n' <"$delivery/maker-delivery-identity.pub")"
       chat_socket=/run/lez/maker/chat.sock
     fi
     [[ "$maker_identity" =~ ^(02|03)[0-9a-f]{64}$ ]] || { echo "maker public identity unavailable" >&2; exit 1; }
