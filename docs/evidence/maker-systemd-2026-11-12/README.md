@@ -13,10 +13,15 @@ the result. The keys reached the Node only as encrypted systemd credentials.
 
 ## Inputs
 
-- Source: commit `3395e6a0` (branch `agent/m5-systemd`). Debug binaries built on the host
-  (Ubuntu 24.04, glibc 2.39) with `cargo build --locked -p lez-maker-node --features pair-zec
-  --bins`, the same for `lez-taker-node`, and `cargo build --locked -p zec-reference-actor --bin
-  lez-zec-maker-actor`:
+- Source: commit `3395e6a0` of the working branch the run was made on (`agent/m5-systemd`; not in
+  this branch's history). Its trees of `packaging` (`4c39cffecaab6332605f01faf5091d17d612d04c`),
+  `crates/node-common` (`e4f9501d02b0de8a77fd852d46a1ef0b6ace79aa`) and the blob of
+  `scripts/run-maker-node-systemd-vm.sh` (`c908087ce783609d801406ccae5780d5df46ca9f`) are the same
+  at this head (`git rev-parse <commit>:<path>`); `crates/maker-node` (`bc9e9bde` then) differs by
+  `e1516cf2` (swap history phase), `crates/taker-node` (`9c38fe0c` then) by the CLI's error line
+  printing its causes (`cd031757`). Debug binaries built on the host (Ubuntu 24.04, glibc 2.39)
+  with `cargo build --locked -p lez-maker-node --features pair-zec --bins`, the same for
+  `lez-taker-node`, and `cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor`:
   - `lez-maker-node` `728c03afa18ae371b54e12a1e470c92cb85fe989261646633be675a2acb98bd7`
   - `lez-maker-cli` `5f9bd0e0d4fb5f184fd9e2d221a1f32010d0e340524c5dec2367ae7b27d41958`
   - `lez-zec-maker-actor` `c0a58260976958115bacf233ce95a170ec9a8a1d9623cf90fe5b002728a9c96d`
