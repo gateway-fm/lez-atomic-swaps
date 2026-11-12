@@ -26,7 +26,10 @@ use lez_swap_core::{
     Chain, ChainPosition, ChainProof, ConfirmationPolicy, Pair, Participant, RecoverySchedule,
     SwapCoordinator, SwapDirection, SwapId, TimelockSafety,
 };
-use lez_swap_store::{MakerActorKindV1, MakerActorManifestV1, SqliteSwapStore};
+use lez_swap_store::{
+    MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner, MakerActorManifestV1,
+    MakerActorProgressObservationV1, SqliteSwapStore,
+};
 use lez_zec_swap_sdk::{
     Bip199Contract, CanonicalZcashOutputObservation, CanonicalZcashOutputRemoval,
     ExpectedBip199Output, TransparentFundingRequest, TransparentUtxo, ZcashNodeRemovalSnapshot,
@@ -439,6 +442,41 @@ fn maker_actor_lifecycle_commands_are_read_only_replay_safe_and_restart_durable(
         start_daemon(run.path(), &database, "actor-lifecycle-second.ready");
     assert_eq!(maker_actor_monitor(&second_socket, swap_id), after);
     assert_missing_actor_errors(&second_socket);
+}
+
+/// `history` reads an actor-driven swap at the phase its actor reached, as
+/// `monitor` does, not at the Offered its Chat aggregate keeps.
+#[test]
+fn history_lists_an_actor_driven_swap_at_its_actor_phase() {
+    let run = tempdir().expect("isolated test directory");
+    let database = run.path().join("actor-history.sqlite3");
+    let swap_id = "m5-maker-history-zec";
+    seed_maker_actor(run.path(), &database, swap_id);
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    let lease = store
+        .claim_maker_actor(
+            &SwapId::new(swap_id).unwrap(),
+            MakerActorLeaseOwner::new([7; 16]).unwrap(),
+            11,
+        )
+        .unwrap()
+        .expect("queued actor is leased");
+    store
+        .resolve_maker_actor_attempt_with_progress(
+            &lease,
+            MakerActorAttemptResolution::Terminal,
+            &MakerActorProgressObservationV1::active("completed", 4, "complete").unwrap(),
+            12,
+        )
+        .unwrap();
+    drop(store);
+
+    let (_daemon, socket) = start_daemon(run.path(), &database, "actor-history.ready");
+    let history = maker_cli(&socket, &["history"]);
+    assert_success(&history);
+    let history: Value = serde_json::from_slice(&history.stdout).expect("CLI emits history JSON");
+    assert_eq!(history[0]["id"], swap_id);
+    assert_eq!(history[0]["phase"], "Completed");
 }
 
 fn maker_actor_monitor(socket: &Path, swap_id: &str) -> Value {

@@ -949,12 +949,42 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                     let alerts = store
                         .list_operator_alerts(swap.id(), 0, false)
                         .map_err(internal_store_error)?;
-                    SwapView::with_pending_alerts(swap, &alerts).map_err(internal_store_error)
+                    let mut view = SwapView::with_pending_alerts(swap, &alerts)
+                        .map_err(internal_store_error)?;
+                    // An actor-driven swap advances in its actor, not in this
+                    // aggregate (Chat leaves it Offered): its phase is the
+                    // actor's last observation, the one the monitor shows.
+                    if let Some(phase) = store
+                        .maker_actor_progress(swap.id())
+                        .map_err(maker_actor_process_error)?
+                        .and_then(|progress| actor_phase(progress.observation()))
+                    {
+                        view.phase = phase;
+                    }
+                    Ok(view)
                 })
                 .collect()
         },
     )?;
     Ok(())
+}
+
+/// The swap phase an actor observation names (`claim_evidence_available` is
+/// `ClaimEvidenceAvailable`); the supervisor admits only these names.
+fn actor_phase(observation: &MakerActorProgressObservationV1) -> Option<Phase> {
+    let MakerActorProgressObservationV1::Active { phase, .. } = observation else {
+        return None;
+    };
+    let name: String = phase
+        .split('_')
+        .map(|word| {
+            let mut letters = word.chars();
+            letters.next().map_or_else(String::new, |first| {
+                first.to_ascii_uppercase().to_string() + letters.as_str()
+            })
+        })
+        .collect();
+    serde_json::from_value(serde_json::Value::String(name)).ok()
 }
 
 /// Why a Zcash row needs its owner, by name, and the holding swap for a

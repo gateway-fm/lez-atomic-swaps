@@ -1742,8 +1742,9 @@ def scenario_maker_cli(stamp: str) -> dict:
     else:
         raise wait.failure()
     history = [entry for entry in maker_cli("history") if entry.get("id") == swap_id]
-    log(f"  lez-maker-cli monitor reports {swap_id[:12]} completed and terminal; history lists it "
-        f"{history[0]['phase'] if history else 'not at all'}")
+    if [entry["phase"] for entry in history] != ["Completed"]:
+        raise Failure(f"lez-maker-cli history does not list {swap_id[:12]} Completed: {history}")
+    log(f"  lez-maker-cli monitor reports {swap_id[:12]} completed and terminal; history lists it Completed")
     container, socket = NODES["maker"]
     denied = subprocess.run(["docker", "exec", "-u", "65534", container, "lez-maker-cli", "health"],
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
