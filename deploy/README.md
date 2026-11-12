@@ -575,7 +575,10 @@ node's resolver does not use Docker's DNS, so an address, not a name). Two
 hosts set the same variables with the Maker's reachable address; NAT traversal
 is not covered. On the devnet (2026-11-12) offers reached the Taker in about
 3 s, every Chat round took 0.3–0.9 s and the six rounds of a take 3–4 s, in
-six passing runs. On the public `logos.test` fleet instead, of 13 Chat
+six passing runs. A Zcash offer published from the Maker desk's form takes the
+same path (`ui:zec:logos-happy:TakerSellsLez`): its take-time agreement is three
+Chat rounds (`zec_reserve_v1`, propose, complete; 7.7, 10.5 and 4.0 KB to the
+Maker, 4.0, 4.2 and 0.4 KB back), 0.3–0.8 s each, three of three runs. On the public `logos.test` fleet instead, of 13 Chat
 messages 5 arrived in 1–4 s, 2 after 109 s and 258 s and 6 not within the 20 s
 to 6 min watched, against the gateways' 25 s per round: no take completed.
 
