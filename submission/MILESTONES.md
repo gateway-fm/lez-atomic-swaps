@@ -52,7 +52,9 @@ Later full runs of the same suite with the #103 scenarios added (97 tests):
 [`regression-2026-11-12`](../docs/evidence/regression-2026-11-12/RESULTS.txt)
 (Linux x86_64, 96 of 97 in one run, the one failure passed on its rerun),
 [`regression-2026-11-12-macos-arm64`](../docs/evidence/regression-2026-11-12-macos-arm64/RESULTS.txt)
-(Apple silicon, `f2f9b980`, 97 of 97); and the 93 tests on Apple silicon,
+(Apple silicon, `f2f9b980`, 97 of 97),
+[`regression-0.3.0-2026-11-12-macos-arm64`](../docs/evidence/regression-0.3.0-2026-11-12-macos-arm64/RESULTS.txt)
+(Apple silicon, the v0.3.0 candidate `b4e17cf0`, 97 of 97); and the 93 tests on Apple silicon,
 [`regression-m2-2026-11-12-macos-arm64`](../docs/evidence/regression-m2-2026-11-12-macos-arm64/RESULTS.txt)
 (`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. The
 release record is [`docs/release-notes-0.3.0.md`](../docs/release-notes-0.3.0.md).
