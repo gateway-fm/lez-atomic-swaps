@@ -75,8 +75,8 @@ struct RouteTerms {
 // Saves `terms` for the Bitcoin route in `direction` atomically against the
 // revisions the Node reports (`maker_local_route_save_v1`), then publishes one
 // signed offer on it.
-QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
-                     const QString& requestId, const QString& direction, const RouteTerms& terms);
+QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet, const QString& requestId,
+                     const QString& pair, const QString& direction, const RouteTerms& terms);
 QString makerWithdraw(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
                       const QString& requestId, const QString& offerId);
 

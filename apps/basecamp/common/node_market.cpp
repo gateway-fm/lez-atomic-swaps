@@ -67,9 +67,9 @@ QString directionDisplay(const QString& name, const QString& pair)
                                                      : pairSymbol(pair) + " → LEZ";
 }
 
-QJsonObject routeObject(const QString& direction)
+QJsonObject routeObject(const QString& pair, const QString& direction)
 {
-    return QJsonObject{{"pair", "Bitcoin"},
+    return QJsonObject{{"pair", pair},
                        {"direction", direction == QStringLiteral("taker_sells_lez")
                                          ? QStringLiteral("TakerSellsLez")
                                          : QStringLiteral("TakerSellsForeign")}};
@@ -1056,12 +1056,12 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
     };
 }
 
-qint64 revisionFor(const Reply& listed, const QString& direction)
+qint64 revisionFor(const Reply& listed, const QString& pair, const QString& direction)
 {
     for (const QJsonValue& candidate : listed.result.toArray()) {
         const QJsonObject entry = candidate.toObject();
         const QJsonObject route = entry.value("value").toObject().value("route").toObject();
-        if (route.value("pair").toString() == QStringLiteral("Bitcoin")
+        if (route.value("pair").toString() == pair
             && directionName(route.value("direction").toString()) == direction)
             return static_cast<qint64>(entry.value("revision").toDouble());
     }
@@ -1078,15 +1078,15 @@ QString makerSnapshot(const LocalJsonRpcClient& rpc, const MakerWallet& wallet)
     return success(snapshot);
 }
 
-QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
-                     const QString& requestId, const QString& direction, const RouteTerms& terms)
+QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet, const QString& requestId,
+                     const QString& pair, const QString& direction, const RouteTerms& terms)
 {
-    const QJsonObject route = routeObject(direction);
+    const QJsonObject route = routeObject(pair, direction);
     const Reply pairs = decode(rpc.call("maker_pair_list", "{}"));
     const Reply prices = decode(rpc.call("maker_local_price_list", "{}"));
     if (!pairs.ok || !prices.ok) return failure(QStringLiteral("node_failure"), QStringLiteral("The Maker Node's routes could not be read"));
-    const qint64 pairRevision = revisionFor(pairs, direction);
-    const qint64 priceRevision = revisionFor(prices, direction);
+    const qint64 pairRevision = revisionFor(pairs, pair, direction);
+    const qint64 priceRevision = revisionFor(prices, pair, direction);
     QJsonObject routeRequest{
         {"request_id", requestId + "-route"},
         {"configuration", QJsonObject{{"route", route}, {"enabled", true}, {"price_source", "local"},
@@ -1099,9 +1099,10 @@ QString makerPublish(const LocalJsonRpcClient& rpc, const MakerWallet& wallet,
     if (pairRevision >= 0) routeRequest.insert("expected_pair_revision", pairRevision);
     if (priceRevision >= 0) routeRequest.insert("expected_price_revision", priceRevision);
     const Reply saved = decode(rpc.call("maker_local_route_save_v1", compact(routeRequest)));
-    if (!saved.ok) return nodeFailure(saved, QStringLiteral("The Bitcoin route could not be enabled"));
+    if (!saved.ok) return nodeFailure(saved, "The " + pair + " route could not be enabled");
     const QString offerId = QStringLiteral("offer-%1-%2")
-                                .arg(direction == QStringLiteral("taker_sells_lez") ? "sell-btc" : "sell-lez")
+                                .arg(direction == QStringLiteral("taker_sells_lez")
+                                         ? "sell-" + pairSymbol(pair).toLower() : QStringLiteral("sell-lez"))
                                 .arg(QDateTime::currentSecsSinceEpoch());
     // Guarded publication: exactly the revisions the save returned, or a
     // conflict if anything changed them in between.

@@ -693,6 +693,9 @@ MAKER_FUNCTIONS = r'''
     // is derived from them and goes to the Node verbatim.
     property string sellSide: "lez"
     readonly property string offerDirection: root.sellSide === "lez" ? "taker_sells_foreign" : "taker_sells_lez"
+    // The foreign leg's chain: Bitcoin or Zcash (both count in 10^-8 units).
+    property string offerPair: "Bitcoin"
+    readonly property string foreignAsset: root.offerPair === "Zcash" ? "ZEC" : "BTC"
     property bool newOfferOpen: false
     function whole(text) {
         return /^[1-9][0-9]{0,15}$/.test(String(text)) ? Number(text) : NaN
@@ -716,12 +719,12 @@ MAKER_FUNCTIONS = r'''
     readonly property string rate: {
         if (!(root.offerSats > 0) || !(root.offerLez > 0)) return "Set both amounts"
         var perBitcoin = 100000000 * root.offerLez / root.offerSats
-        return "1 BTC = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
+        return "1 " + root.foreignAsset + " = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
     }
     // The Node's stored price for this direction, and how far the form's
     // rate sits from it: positive means you receive more per unit sold.
     readonly property var storedRoute: {
-        var routes = root.btcMarket.routes ?? []
+        var routes = root.offerPair === "Bitcoin" ? root.btcMarket.routes ?? [] : []  // the Node's Bitcoin routes only
         for (var i = 0; i < routes.length; ++i)
             if (routes[i].direction === root.offerDirection && routes[i].lez_units_per_lot > 0 && routes[i].foreign_units_per_lot > 0) return routes[i]
         return null
@@ -750,7 +753,7 @@ MAKER_FUNCTIONS = r'''
     }
     // Loads the Node's stored terms for the chosen direction into the form.
     function loadStoredTerms() {
-        var routes = root.btcMarket.routes ?? []
+        var routes = root.offerPair === "Bitcoin" ? root.btcMarket.routes ?? [] : []
         for (var i = 0; i < routes.length; ++i) {
             var r = routes[i]
             if (r.direction !== root.offerDirection || !(r.maximum_foreign_units > 0) || !(r.lez_units_per_lot > 0)) continue
@@ -770,7 +773,7 @@ MAKER_FUNCTIONS = r'''
         if (root.btcMarketBusy || !root.termsValid) return
         root.btcMarketBusy = true
         var requestId = "ui-maker-" + (root.sellSide === "lez" ? "sell-lez" : "sell-btc") + "-" + String(Date.now())
-        root.run(root.backend.btcPublishOffer(requestId, root.walletId(),
+        root.run(root.backend.btcPublishOffer(requestId, root.walletId(), root.offerPair,
             root.offerDirection, String(root.minimumSats), String(root.offerSats), termTtl.text,
             String(root.lezPerLot), String(root.satsPerLot)),
             "Publish offer", function(result) {
@@ -935,8 +938,14 @@ MAKER_OVERLAYS = r'''
                 Layout.fillWidth: true; spacing: 12
                 SectionTitle { text: "Compose an offer"; Layout.fillWidth: true }
                 SideToggle {
+                    objectName: "makerOfferPair"
+                    value: root.offerPair
+                    options: [["Bitcoin", "BITCOIN", "#B997FF"], ["Zcash", "ZCASH", "#F4B728"]]
+                    onPicked: function(pair) { root.offerPair = pair }
+                }
+                SideToggle {
                     value: root.sellSide
-                    options: [["lez", "SELL LEZ", "#7EE100"], ["btc", "SELL BTC", "#B997FF"]]
+                    options: [["lez", "SELL LEZ", "#7EE100"], ["btc", "SELL " + root.foreignAsset, "#B997FF"]]
                     onPicked: function(side) { root.sellSide = side }
                 }
             }
@@ -945,18 +954,18 @@ MAKER_OVERLAYS = r'''
                 objectName: "makerSellAmount"
                 Layout.fillWidth: true
                 label: "YOU SELL"
-                asset: root.sellSide === "lez" ? "LEZ" : "BTC"
+                asset: root.sellSide === "lez" ? "LEZ" : root.foreignAsset
                 accent: root.sellSide === "lez" ? "#7EE100" : "#B997FF"
-                note: root.sellSide === "lez" ? "Locked in the LEZ escrow until settlement" : "Locked in the Bitcoin P2TR contract until settlement"
+                note: root.sellSide === "lez" ? "Locked in the LEZ escrow until settlement" : "Locked in the " + (root.offerPair === "Zcash" ? "Zcash HTLC" : "Bitcoin P2TR contract") + " until settlement"
             }
             AmountLeg {
                 id: receiveAmount
                 objectName: "makerReceiveAmount"
                 Layout.fillWidth: true
                 label: "YOU RECEIVE"
-                asset: root.sellSide === "lez" ? "BTC" : "LEZ"
+                asset: root.sellSide === "lez" ? root.foreignAsset : "LEZ"
                 accent: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
-                note: root.sellSide === "lez" ? "Claimed from the P2TR contract once the secret is revealed" : "Claimed from the LEZ escrow once the secret is revealed"
+                note: root.sellSide === "lez" ? "Claimed from the " + (root.offerPair === "Zcash" ? "Zcash HTLC" : "P2TR contract") + " once the secret is revealed" : "Claimed from the LEZ escrow once the secret is revealed"
             }
             RowLayout {
                 Layout.fillWidth: true; spacing: 10
@@ -969,14 +978,14 @@ MAKER_OVERLAYS = r'''
                     font.pixelSize: 10; Layout.fillWidth: true
                 }
                 Label {
-                    text: root.sellSide === "lez" ? "ROUTE BTC → LEZ" : "ROUTE LEZ → BTC"
+                    text: root.sellSide === "lez" ? "ROUTE " + root.foreignAsset + " → LEZ" : "ROUTE LEZ → " + root.foreignAsset
                     color: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
                     font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8
                 }
             }
             GridLayout {
                 Layout.fillWidth: true; columns: 3; columnSpacing: 10; rowSpacing: 6
-                FieldLabel { text: "MINIMUM TAKER AMOUNT · SATS" }
+                FieldLabel { text: "MINIMUM TAKER AMOUNT · " + (root.offerPair === "Zcash" ? "ZATOSHI" : "SATS") }
                 FieldLabel { text: "OFFER LIFETIME · SECONDS" }
                 FieldLabel { text: "SPREAD · %" }
                 LuxeField { id: minimumAmount; objectName: "makerMinimumSats"; placeholderText: "whole offer"; Layout.fillWidth: true }
@@ -991,7 +1000,7 @@ MAKER_OVERLAYS = r'''
             }
             Label {
                 text: root.termsValid
-                    ? "The Taker may take any amount from " + root.formatBtcSats(root.minimumSats) + " to " + root.formatBtcSats(root.offerSats) + " at this exact rate. Indexed to " + makerWallet.currentText + " until taken or withdrawn."
+                    ? "The Taker may take any amount from " + root.btcAmount(root.minimumSats) + " to " + root.btcAmount(root.offerSats) + " " + root.foreignAsset + " at this exact rate. Indexed to " + makerWallet.currentText + " until taken or withdrawn."
                     : "Amounts must be whole units and the minimum must quote to whole LEZ at this rate."
                 color: root.termsValid ? "#68768A" : "#FF9FAF"; font.pixelSize: 10
                 wrapMode: Text.WordWrap; Layout.fillWidth: true

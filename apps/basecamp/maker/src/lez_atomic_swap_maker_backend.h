@@ -17,7 +17,8 @@ public:
     QString chatStatus() override;
     QString resetChat() override;
     QString btcMarket(QString walletId) override;
-    QString btcPublishOffer(QString requestId, QString walletId, QString direction,
+    // Publishes an offer of either pair, Bitcoin or Zcash (the name predates Zcash).
+    QString btcPublishOffer(QString requestId, QString walletId, QString pair, QString direction,
                             QString minimumForeignUnits, QString maximumForeignUnits,
                             QString offerTtlSeconds, QString lezUnitsPerLot,
                             QString foreignUnitsPerLot) override;

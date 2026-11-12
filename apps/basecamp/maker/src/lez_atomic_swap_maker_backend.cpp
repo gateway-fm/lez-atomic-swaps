@@ -97,16 +97,17 @@ QString LezAtomicSwapMakerBackend::btcMarket(QString walletId)
 }
 
 QString LezAtomicSwapMakerBackend::btcPublishOffer(
-    QString requestId, QString walletId, QString direction, QString minimumForeignUnits,
+    QString requestId, QString walletId, QString pair, QString direction, QString minimumForeignUnits,
     QString maximumForeignUnits, QString offerTtlSeconds, QString lezUnitsPerLot,
     QString foreignUnitsPerLot)
 {
     // The desk forwards the Maker's own terms; the Node validates them.
     qulonglong minimum = 0, maximum = 0, ttl = 0, lezLot = 0, foreignLot = 0;
     if (!marketRequest(requestId) || !makerWallet(walletId)
+        || (pair != QStringLiteral("Bitcoin") && pair != QStringLiteral("Zcash"))
         || (direction != QStringLiteral("taker_sells_foreign")
             && direction != QStringLiteral("taker_sells_lez"))) {
-        return invalidMarket(QStringLiteral("Review the direction and wallet"));
+        return invalidMarket(QStringLiteral("Review the pair, direction and wallet"));
     }
     if (!exactUnsigned(minimumForeignUnits, minimum) || !exactUnsigned(maximumForeignUnits, maximum)
         || !exactUnsigned(offerTtlSeconds, ttl) || !exactUnsigned(lezUnitsPerLot, lezLot)
@@ -117,7 +118,7 @@ QString LezAtomicSwapMakerBackend::btcPublishOffer(
         static_cast<qint64>(minimum), static_cast<qint64>(maximum), static_cast<qint64>(ttl),
         static_cast<qint64>(lezLot), static_cast<qint64>(foreignLot)};
     // The reply embeds a market snapshot: the snapshot budget applies.
-    return node_market::makerPublish(snapshotRpc_, kMakerWallet, requestId, direction, terms);
+    return node_market::makerPublish(snapshotRpc_, kMakerWallet, requestId, pair, direction, terms);
 }
 
 QString LezAtomicSwapMakerBackend::btcWithdrawOffer(
