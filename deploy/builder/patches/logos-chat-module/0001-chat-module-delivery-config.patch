@@ -1,0 +1,66 @@
+diff --git a/rust-lib/chat_module.lidl b/rust-lib/chat_module.lidl
+index 3885911..9e1136c 100644
+--- a/rust-lib/chat_module.lidl
++++ b/rust-lib/chat_module.lidl
+@@ -65,6 +65,11 @@ module chat_module {
+     ; "error" | "warn" | "info" | "debug" | "trace". Absent or unrecognised
+     ; means "info". Read once, at init: a later init leaves it as it was.
+     ? log_level: tstr
++    ; delivery_module's whole createNode configuration as JSON text, used as it
++    ; is in place of the one built from delivery_preset: a network of one's own
++    ; (cluster id, listen address, entry nodes, node key). Absent or empty means
++    ; the preset's.
++    ? delivery_config: tstr
+   }
+   ; Storage lives under the instance directory the host assigns; init fails when
+   ; the host assigned none.
+diff --git a/rust-lib/src/actions.rs b/rust-lib/src/actions.rs
+index 44a8ed4..881c859 100644
+--- a/rust-lib/src/actions.rs
++++ b/rust-lib/src/actions.rs
+@@ -249,18 +249,25 @@ pub(crate) fn initialize() -> Result<ModuleState, InitError> {
+ /// chat_module can't coexist with another delivery_module consumer today. Drop
+ /// these calls once the host bootstraps delivery_module and exposes it
+ /// ready-to-use.
+-pub(crate) fn start_delivery_bootstrap(preset: &str) {
++pub(crate) fn start_delivery_bootstrap(preset: &str, delivery_config: &str) {
+     // The layered app-developer shape from delivery_module's docs. Only wrapper
+     // keys may sit at the top level: any bare key (a top-level logLevel included)
+     // reroutes the config to the legacy flat parser, whose port defaults are
+     // fixed values — the layered path defaults every unpinned listening port to
+     // 0 (OS-assigned), which is what keeps instances sharing a host apart.
+-    let config_json = serde_json::json!({
+-        "mode": "Core",
+-        "preset": preset,
+-        "messagingOverrides": { "logLevel": "ERROR" },
+-    })
+-    .to_string();
++    // A caller's own delivery configuration (ChatConfig.delivery_config) is
++    // passed as it is instead.
++    let config_json = if delivery_config.is_empty() {
++        serde_json::json!({
++            "mode": "Core",
++            "preset": preset,
++            "messagingOverrides": { "logLevel": "ERROR" },
++        })
++        .to_string()
++    } else {
++        tracing::info!("init: joining the delivery network the caller configured");
++        delivery_config.to_string()
++    };
+ 
+     crate::modules()
+         .delivery_module
+diff --git a/rust-lib/src/lib.rs b/rust-lib/src/lib.rs
+index fdfe780..13d930a 100644
+--- a/rust-lib/src/lib.rs
++++ b/rust-lib/src/lib.rs
+@@ -123,7 +123,7 @@ impl ChatModule for ChatModuleImpl {
+                 // State is installed and the module lock is released; only now
+                 // bootstrap delivery, so its async completion callbacks acquire
+                 // a free lock instead of re-entering the one init holds.
+-                actions::start_delivery_bootstrap(preset);
++                actions::start_delivery_bootstrap(preset, config_field(&config, "delivery_config"));
+                 Ok(Value::Null)
+             }
+             Ok(Ok(InstallOutcome::AlreadyInstalled)) => {

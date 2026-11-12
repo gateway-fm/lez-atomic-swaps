@@ -273,17 +273,26 @@ phase_nix() {
   # Chat and its Delivery runtime, the releases the desks are built against
   # (apps/basecamp/flake.lock), as release packages too. Each is built from its
   # own flake so its binary cache (nixConfig) applies.
-  local module ref delivery_rev
+  # chat_module is built from a scratch copy of its pinned commit with
+  # builder/patches/logos-chat-module applied (ChatConfig.delivery_config).
+  local module ref delivery_rev chat_src="$ASSETS/.nix-out/chat_module-src"
+  local chat_patches="$DEPLOY_ROOT/builder/patches/logos-chat-module"
   delivery_rev="$(jq -r '.nodes["logos-delivery-module"].locked.rev' "$REPO_ROOT/apps/basecamp/flake.lock")"
   for module in chat_module delivery_module; do
-    ref="github:logos-co/logos-chat-module/$chat_rev#lgx-portable"
+    ref="path:/out/chat_module-src#lgx-portable@$chat_rev+$(cat "$chat_patches"/*.patch | sha256sum | cut -c1-16)"
     [[ "$module" == delivery_module ]] && ref="github:logos-co/logos-delivery-module/$delivery_rev#lgx-portable"
     if ! ls "$ASSETS/.nix-out/$module-lgx-portable"/*.lgx >/dev/null 2>&1 \
        || [[ "$(cat "$ASSETS/.nix-out/$module-lgx-portable/.sources" 2>/dev/null)" != "$ref-$(uname -m)" ]]; then
       log "building $module ($ref)"
+      if [[ "$module" == chat_module ]]; then
+        rm -rf "$chat_src"; git init -q "$chat_src"
+        git -C "$chat_src" fetch -q --depth 1 https://github.com/logos-co/logos-chat-module.git "$chat_rev"
+        git -C "$chat_src" checkout -q FETCH_HEAD
+        apply_source_patches "$chat_src" "$chat_patches"
+      fi
       # The out-link and the export directory must not share a name: the
       # export replaces its destination, which would delete the link first.
-      nix_build "$module-lgx" "$ref"
+      nix_build "$module-lgx" "${ref%@*}"
       nix_export "$module-lgx" "$ASSETS/.nix-out/$module-lgx-portable"
       echo "$ref-$(uname -m)" > "$ASSETS/.nix-out/$module-lgx-portable/.sources"
     fi

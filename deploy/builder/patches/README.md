@@ -72,6 +72,26 @@ wrap the wallet FFI's own key import.
   `open`/`create_new`, and the signer socket the Node's sidecars talk to is
   served by our own module, which asks lez_core for each signature.
 
+## logos-chat-module (github.com/logos-co/logos-chat-module)
+
+Why: chat_module creates the Delivery node itself, from a preset name only
+(`start_delivery_bootstrap`: `{mode: Core, preset, messagingOverrides:
+{logLevel}}`), so its user can join only a public fleet (`logos.test`,
+`logos.dev`). On that fleet a take's Chat rounds were lost or arrived minutes
+late (deploy/README.md, "Two transports"); two parties' Basecamps need a
+Delivery network of their own: a private cluster id, a listen address, the
+other party's node as entry node.
+
+- `0001-chat-module-delivery-config.patch` — `ChatConfig.delivery_config`:
+  delivery_module's whole `createNode` JSON, used as it is in place of the
+  preset's; absent or empty, nothing changes. The desks' Logos Chat bridge
+  passes `LEZ_LOGOS_DELIVERY_CONFIG` (compose.logos.yaml). `from-scratch.sh
+  --only nix` fetches the pinned commit (apps/basecamp/flake.lock) into a
+  scratch copy, applies this and builds the module's own `lgx-portable`.
+  Upstream should instead let the host own Delivery's lifecycle, as their own
+  TODO in `start_delivery_bootstrap` says: chat_module would use a node the
+  host configured and started.
+
 Our own module (`modules/lez-swap-node`: launches and supervises a role's Node
 inside Basecamp and serves that role's signer socket) is not an upstream patch.
 
@@ -83,3 +103,4 @@ inside Basecamp and serves that role's signer socket) is not an upstream patch.
 | logos-execution-zone-module/0001 wallet-ffi-sign | 120 | logos-execution-zone `9edf4a622fe9` | not yet offered (related: logos-execution-zone-module#73, message signing) |
 | logos-execution-zone-module/0001 darwin-metal-toolchain | 35 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | logos-execution-zone-module/0002 | 111 | logos-execution-zone-module `acf0cd501b26` | not yet offered |
+| logos-chat-module/0001 delivery-config | 66 | logos-chat-module `dfe8ccf3eff3` | not yet offered (upstream: the host owns Delivery's lifecycle) |
