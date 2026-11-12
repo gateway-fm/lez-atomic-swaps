@@ -482,15 +482,62 @@ each step assumes Linux or a container.
    The Node's resource use is read by the module (`node_stats`), from `/proc`
    on Linux and libproc on macOS.
 
-What assumes Linux or a container: the launcher stops on macOS at the first
-`"${with_node[@]}"` (no `setpriv`, so the array is empty, and `/bin/bash`
-3.2 with `set -u` treats an empty array as unbound); it uses GNU `stat -c`,
-`socat`, and the container paths and Compose host names above. The Taker
-finds the Maker's Delivery directory and Chat socket only because both
-containers mount the same volumes, so on one Mac both Nodes must run natively
-(Docker Desktop does not pass a Unix socket between a container and the
-host). The package build (`deploy/scripts/package-role-node.sh`) strips with
-GNU `strip` in a Debian container and writes one Linux variant.
+The paths above are the launcher's Linux defaults. Each has its own
+variable, and on macOS (`uname -s` is `Darwin`) the defaults sit under one
+directory, `LEZ_NODE_HOME` (`~/Library/Application Support/LEZ`), with both
+roles side by side so the Taker finds the Maker's files as it does in
+Compose:
+
+| what | variable | Linux default | macOS default (under `LEZ_NODE_HOME`) |
+|---|---|---|---|
+| state (0700) | `LEZ_NODE_STATE_DIR` | `/var/lib/lez/<role>` | `<role>` |
+| sockets, ready file | `LEZ_NODE_RUN_ROOT` | `/run/lez` | `run` |
+| prepared ZEC corridor | `LEZ_ZEC_STATE_DIR` | `/var/lib/lez/zec` | `zec/<role>` |
+| identity | `LEZ_NODE_IDENTITY_DIR` | `/run-lez-identity` | `identity/<role>` |
+| market manifest | `LEZ_MARKET_MANIFEST` | `/run-market/market-bootstrap.env` | `market-bootstrap.env` |
+| Bitcoin RPC cookie | `LEZ_BTC_RPC_COOKIE_FILE` | `/run-config/btc-rpc-cookie` | `btc-rpc-cookie` |
+| Delivery directory | `LEZ_DELIVERY_DIR` | `/delivery` | `delivery` |
+| chain hosts, sequencer and indexer URLs | `LEZ_*_HOST`, `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL` | the Compose service names | `127.0.0.1` |
+
+A chain host that is `127.0.0.1` or `localhost` gets no `socat` forward: the
+service is already on this host's loopback (on a Mac the chains' containers
+publish their ports there). The launcher runs under any bash from 3.2 on
+(macOS's `/bin/bash`), sums with `shasum -a 256` where `sha256sum` is
+missing, sizes the log with `wc -c`, creates its state and socket
+directories when they are missing, and refuses a socket directory too long
+for a Unix socket path (104 bytes on macOS). Its helpers are `exec`ed from
+the launcher's own background jobs, so each is a child of the Node, as
+before. In the role's container image the launcher does exactly what it did
+before these variables existed: run before and after in
+`lez-maker-node:local` with the Node, its CLI and `curl` faked, both roles
+printed the same Node arguments, helpers, files, modes and rendered
+configuration. `deploy/tests/test_role_node_launcher.py` runs it as Linux
+(forwards under `setpriv --pdeathsig`, each the Node's child; none for a
+loopback host; none under `setpriv` where `setpriv` is missing) and as macOS
+(both roles under one home, under `/bin/bash` 3.2 where present).
+
+Weaker on macOS than on Linux, for the launcher:
+
+- **Helpers and the Node.** Linux: each helper (forward, ZEC sidecar) gets
+  `SIGTERM` from the kernel when the Node exits (`--pdeathsig`). macOS: there
+  is no such signal; a helper ends when `lez_swap_node` ends the Node's
+  process group after the Node exits, or when the kqueue watcher ends the
+  group after the host exits. A helper that leaves the group itself is not
+  ended. On macOS there are no forwards, so this concerns only the ZEC
+  sidecars.
+- **No privilege boundary from the container.** On Linux the Node runs as
+  its own user in a read-only, capability-less container that sees only its
+  role's mounts. On macOS it runs as the desktop user, beside both roles'
+  files: the other role's state is protected from it by nothing but the
+  same user's file modes (0700, 0600), which do not separate processes of
+  one user.
+- **The Maker's Chat socket.** Compose shares it with the Taker through a
+  volume only those two containers mount; on macOS it is a file under
+  `LEZ_NODE_HOME/run/maker` that every process of the user can connect to.
+
+What still assumes Linux or a container: the package build
+(`deploy/scripts/package-role-node.sh`) strips with GNU `strip` in a Debian
+container and writes one Linux variant.
 
 ## Recommended order
 
