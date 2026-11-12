@@ -134,7 +134,8 @@ class BundleStartBuildsNothing(unittest.TestCase):
     def test_start_and_up_never_build(self):
         for name in ('start.sh', 'up.sh'):
             for line in code_lines(name):
-                if 'docker compose' not in line:
+                # a command, not the banner's hint that quotes one for the reader
+                if not re.search(r'(^|\|\||&&|\bthen|\bdo)\s*docker compose\b', line.strip()):
                     continue
                 words = line.split()
                 if 'up' in words:
@@ -160,8 +161,11 @@ class BundleStartBuildsNothing(unittest.TestCase):
                 for profile in ('tools', 'explorers'):
                     self.assertIn(f'--profile {profile}', line, f'{name}: {line.strip()}')
 
-    def run_verify_all(self, release_env):
+    def run_verify_all(self, release_env, checkout=False, **env):
         deploy = ReleaseBundle.deploy_dir(self, release_env)
+        if checkout:  # a checkout has the build contexts a bundle does not ship
+            for name in ('btc-explorer', 'lez-explorer'):
+                (deploy / 'images' / name).mkdir(parents=True)
         shutil.copy(SCRIPTS / 'verify-all.sh', deploy / 'scripts')
         (deploy / 'runtime').mkdir()
         (deploy / 'runtime' / 'runtime.env').write_text('LEZ_STACK_PREFIX=lez\n')
@@ -173,7 +177,7 @@ class BundleStartBuildsNothing(unittest.TestCase):
         log = deploy.parent / 'docker.log'
         clean = {key: value for key, value in os.environ.items() if not key.startswith('LEZ_')}
         subprocess.run(['bash', str(deploy / 'scripts' / 'verify-all.sh')],
-                       env={**clean, 'PATH': f'{fake}:{clean["PATH"]}', 'DOCKER_LOG': str(log)},
+                       env={**clean, **env, 'PATH': f'{fake}:{clean["PATH"]}', 'DOCKER_LOG': str(log)},
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
         return [line for line in log.read_text().splitlines() if line.startswith('compose ')]
 
@@ -184,10 +188,28 @@ class BundleStartBuildsNothing(unittest.TestCase):
             self.assertIn('--no-build', line.split(), line)
 
     def test_verify_all_on_a_checkout_is_unchanged(self):
-        ups = [l for l in self.run_verify_all(None) if 'up' in l.split()]
+        # Also on the checkout's own images (start.sh with the tag `local` sets
+        # LEZ_IMAGES=present): up.sh neither builds nor checks the explorers'
+        # images, so verify-all.sh is where a checkout first builds them.
+        for env in ({}, {'LEZ_IMAGES': 'present'}):
+            ups = [l for l in self.run_verify_all(None, checkout=True, **env) if 'up' in l.split()]
+            self.assertTrue(ups, env)
+            for line in ups:
+                self.assertNotIn('--no-build', line.split(), f'{env}: {line}')
+
+    def test_verify_all_builds_nothing_where_there_is_no_build_context(self):
+        # No release.env and no images/: nothing here could be built either.
+        for env in ({}, {'LEZ_IMAGES': 'present'}):
+            ups = [l for l in self.run_verify_all(None, **env) if 'up' in l.split()]
+            self.assertTrue(ups, env)
+            for line in ups:
+                self.assertIn('--no-build', line.split(), f'{env}: {line}')
+
+    def test_verify_all_builds_nothing_on_pulled_images_in_a_checkout(self):
+        ups = [l for l in self.run_verify_all(None, checkout=True, LEZ_IMAGES='pull') if 'up' in l.split()]
         self.assertTrue(ups)
         for line in ups:
-            self.assertNotIn('--no-build', line.split(), line)
+            self.assertIn('--no-build', line.split(), line)
 
     def test_every_built_service_names_an_image_release_env_selects(self):
         # A service compose could build has an image of the release's prefix

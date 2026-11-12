@@ -50,11 +50,15 @@ report "$([[ "${lez_head:-None}" != None ]] && echo 0 || echo 1)" "LEZ chain fin
 
 section "block explorers"
 # Off by default (Compose profile "explorers"): started here for their checks.
-# Images this host did not build (a release bundle, which has no images/
-# build contexts, or LEZ_IMAGES=pull|present) are started as they are: start.sh
-# and up.sh pulled them. A checkout builds them here when they are missing.
+# Pulled images (LEZ_IMAGES=pull, a release bundle) are started as they are:
+# start.sh and up.sh pulled the explorers with the rest, and a bundle has no
+# images/ build contexts. A checkout builds them here when they are missing,
+# also on its own images (LEZ_IMAGES=present): up.sh builds and checks only
+# the services outside the "explorers" profile.
 explorers_up=(--profile explorers up -d --wait --wait-timeout 180)
-[[ "${LEZ_IMAGES:-build}" != pull && "${LEZ_IMAGES:-build}" != present ]] || explorers_up+=(--no-build)
+if [[ "${LEZ_IMAGES:-build}" == pull || ! -d images/btc-explorer || ! -d images/lez-explorer ]]; then
+  explorers_up+=(--no-build)
+fi
 "${compose[@]}" "${explorers_up[@]}" btc-explorer lez-explorer >/dev/null 2>&1
 # Neither explorer has a health check, so `up --wait` returns when the
 # containers run, before they listen (the Bitcoin explorer closed the first
