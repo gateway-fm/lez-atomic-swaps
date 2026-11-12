@@ -19,9 +19,10 @@ tree (2026-09-09); corrections are marked ✎.
 | L2 | LEZ witnessed claim | `native_prepare.rs:1973` `complete_witnessed_claim` | none: verifies the aggregate signature from B3 under the untweaked MuSig2 key and installs it | — | — |
 | L3 | LEZ refund | `native_prepare.rs:1766` `prepare_native_refund` | none: unsigned `WitnessSet` (permissionless ABI) | — | — |
 
-Nonce custody: secret nonces are plaintext in the per-leg SQLite journal until
-the partial is persisted (`crates/swap-store/src/adaptor_session_journal.rs:7`,
-`:749` `sign_and_persist_partial`); a UNIQUE fingerprint blocks cross-session
+Nonce custody: secret nonces are sealed (XChaCha20-Poly1305, key derived from
+`agreement.key`) in the per-leg SQLite journal until the partial is persisted
+(`crates/swap-store/src/adaptor_session_journal.rs:7`, `:808`
+`sign_and_persist_partial`); a UNIQUE fingerprint blocks cross-session
 reuse. No signer trait exists for BTC or LEZ; ZEC has one
 (`crates/zebra-node-adapter/src/claim.rs:36` `ZebraClaimSigner`).
 
@@ -102,7 +103,7 @@ sidecar's `capability-file`.
 
 State split: the signer owns long-term keys, secret nonces, the Taker's t, the
 refund key and its own encrypted journal (today's `adaptor_session_journal`
-moves there, closing TM-0002's plaintext-nonce gap). The Node
+moves there with the key its nonces are sealed under). The Node
 keeps agreements, commitments, public nonces, presignatures, actor state and
 Chat round records. Presigned refunds stay in the Node (ADR 0044, INV-03), so
 recovery never depends on the signer. ADR 0034's gate becomes "challenge

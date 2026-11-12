@@ -383,7 +383,7 @@
       ],
       "control": "Some role secrets use encrypted envelopes; owner-only paths, redacted logs, and zeroizing wrappers reduce exposure.",
       "proofs": ["source@2888e8cf818143a7dce903f343fdbe70de9e267a:docs/architecture/deployment-components-and-rpcs.md", "source@2888e8cf818143a7dce903f343fdbe70de9e267a:crates/swap-store/src/adaptor_session_journal.rs", "docs/upstream-production-blockers.md"],
-      "remaining": "The BTC MuSig2 nonce journal and raw wallet or Delivery keys remain plaintext. Rollback fencing, rotation, restore drills, upstream formatting, dump policy, and long-lived custody also need production proof.",
+      "remaining": "Raw wallet or Delivery keys remain plaintext; the BTC MuSig2 nonce journal is sealed under a key derived from the role's signing key, so it protects a copy of the state directory but not a reader of that key file. Rollback fencing, rotation, restore drills, upstream formatting, dump policy, and long-lived custody also need production proof.",
       "owner": "key-custody",
       "state": "checking"
     },
