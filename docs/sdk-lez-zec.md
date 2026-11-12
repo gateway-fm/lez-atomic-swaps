@@ -229,6 +229,16 @@ as `zec_chat_propose_v1` does) and starts its own sidecar; propose and
 complete sign as for a catalog swap. A Maker holds at most 16 open
 reservations, each for 900 s; an identical retry is answered from its record.
 
+Before a first composed swap, pay the funder's own key: the Maker's when the
+Taker sells LEZ, the Taker's when it sells ZEC. `lez-maker-cli balances --zcash`
+and `lez-taker-cli balances --zcash` print that role's P2PKH address and the
+outputs paying it in the window the reserve searches (`funding_scan_blocks`
+below the mature tip), each with its confirmations and whether it is mature and
+already committed. A reserve without a mature output is refused with
+`no mature … funder output for <address> …` (Testnet: `no unspent funder output
+for <address> of at least … zatoshis …`), in the Maker's refusal or, for the
+Taker's own output, in the `reason` of the take's error data.
+
 If you are building a strategy or an integration, the JSON-RPC is the stable
 surface. If you are embedding the protocol in your own binary, this crate is.
 
