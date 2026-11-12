@@ -5999,6 +5999,29 @@ fn exact_lez_claim_presence(
     let request = finalized_lez_claim_request(config, agreement, transition, &prepared, effect)
         .expect("finalized LEZ claim request");
     let block_height = request.window.start_height() + 1;
+    let finalized_tip = finalized_lez_tip(request.window);
+    exact_lez_claim_presence_at(
+        agreement,
+        &request,
+        prepared,
+        transaction,
+        aggregate_signature,
+        block_height,
+        finalized_tip,
+    )
+}
+
+/// A finalized claim found by `request` in block `block_height`, read at
+/// `finalized_tip`, with `request.window` scanned.
+fn exact_lez_claim_presence_at(
+    agreement: &BtcAgreementV1,
+    request: &ObserveFinalizedWitnessedClaimRequest,
+    prepared: PreparedWitnessedClaim,
+    transaction: PreparedTransaction,
+    aggregate_signature: [u8; 64],
+    block_height: u64,
+    finalized_tip: ChainTip,
+) -> lez_bridge_client::FinalizedWitnessedClaimPresence {
     let block_hash = Hex32::from_bytes([93; 32]);
     let authority = request.terms.aggregate_authority_account_id();
     let metadata_account = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
@@ -6045,8 +6068,8 @@ fn exact_lez_claim_presence(
         custody,
     );
     lez_bridge_client::FinalizedWitnessedClaimPresence::PresentExact {
-        context: request.context,
-        finalized_tip: finalized_lez_tip(request.window),
+        context: request.context.clone(),
+        finalized_tip,
         scanned_window: request.window,
         claim: Box::new(claim),
     }
@@ -6898,6 +6921,153 @@ async fn lez_claim_owner_submits_once_then_projects_exact_finalized_presence() {
             .lock()
             .expect("exact request lock");
         assert_ne!(exact_requests[0].context.request_id, first_request_id);
+    }
+}
+
+/// A finalized LEZ chain holding one claim in block `claim_height`, read at
+/// `tip`: each classification scans the window it is asked for, up to the tip.
+#[derive(Clone)]
+struct LateLezClaimPort {
+    agreement: BtcAgreementV1,
+    prepared: PreparedWitnessedClaim,
+    transaction: PreparedTransaction,
+    aggregate_signature: [u8; 64],
+    claim_height: u64,
+    tip: u64,
+    classify_requests: Arc<Mutex<Vec<ObserveFinalizedWitnessedClaimRequest>>>,
+}
+
+#[async_trait]
+impl LezClaimChainPort for LateLezClaimPort {
+    async fn complete_witnessed_claim(
+        &self,
+        _request: CompleteWitnessedClaimRequest,
+    ) -> Result<CompleteWitnessedClaimResult, ActorCommandError> {
+        Err(ActorCommandError::ObservationUnavailable)
+    }
+
+    async fn classify_finalized_witnessed_claim(
+        &self,
+        request: ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<lez_bridge_client::FinalizedWitnessedClaimPresence, ActorCommandError> {
+        self.classify_requests
+            .lock()
+            .expect("classify request lock")
+            .push(request.clone());
+        let start = request.window.start_height();
+        let end = (start + u64::from(request.window.max_blocks() - 1)).min(self.tip);
+        let scanned = DiscoveryWindow::new(start, u32::try_from(end - start + 1).unwrap())
+            .expect("scanned window");
+        let tip = ChainTip::new(Hex32::from_bytes([95; 32]), self.tip);
+        if (start..=end).contains(&self.claim_height) {
+            return Ok(exact_lez_claim_presence_at(
+                &self.agreement,
+                &request,
+                self.prepared.clone(),
+                self.transaction.clone(),
+                self.aggregate_signature,
+                self.claim_height,
+                tip,
+            ));
+        }
+        Ok(
+            lez_bridge_client::FinalizedWitnessedClaimPresence::NotFound {
+                context: request.context,
+                finalized_tip: tip,
+                scanned_window: scanned,
+            },
+        )
+    }
+
+    async fn submit_transaction(
+        &self,
+        _request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError> {
+        Err(ActorCommandError::ObservationUnavailable)
+    }
+}
+
+/// #103 item 14, late-claim-unmined selling LEZ (2026-11-12, swap fd0bf19d):
+/// the Taker's Bitcoin claim was mined after the claim window, the Maker
+/// projected it and sent its follow-up LEZ claim, which was final in LEZ
+/// block 525, before the Taker's refund time. The discovery window, the
+/// swap's start plus 300 blocks, ended near block 455, so neither the Maker
+/// (exact lookup) nor the Taker (discovery by terms) ever found it: both
+/// waited at claim_evidence_available for good, the LEZ already paid out. A
+/// claim can land until the LEZ refund time, past the window that bounds
+/// the Maker's lock; a lookup that finds nothing in that window while the
+/// chain has grown past it looks again over the whole span since the start,
+/// as the LEZ refund lookups do.
+#[tokio::test(flavor = "current_thread")]
+async fn a_lez_claim_final_past_the_discovery_window_is_still_found() {
+    for (role, own) in [(ActorRole::Taker, false), (ActorRole::Maker, true)] {
+        let transition = ClaimTransition::FollowupClaim;
+        let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, role);
+        activate_and_project_both_locks(&fixture).await;
+        project_revealing_claim(&fixture).await;
+        let effect = if own {
+            prepare_lez_claim_effect(
+                &fixture.config,
+                &fixture.agreement,
+                transition,
+                &durable_status(&fixture),
+                &placeholder_lez_port(),
+            )
+            .await
+            .expect("prepare the Maker's follow-up claim")
+        } else {
+            None
+        };
+        let (transaction, signature) = effect.as_ref().map_or_else(
+            || {
+                (
+                    PreparedTransaction::new(
+                        TransactionId::from_bytes([103; 32]),
+                        ExactTransactionBytes::new(vec![104; 128]).expect("late claim bytes"),
+                    ),
+                    valid_lez_claim_signature(&fixture, transition),
+                )
+            },
+            |effect| (effect.transaction.clone(), effect.aggregate_signature),
+        );
+        let window = fixture.config.discovery_window().expect("discovery window");
+        let window_end = window.start_height() + u64::from(window.max_blocks() - 1);
+        let port = LateLezClaimPort {
+            agreement: fixture.agreement.clone(),
+            prepared: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            transaction,
+            aggregate_signature: signature,
+            claim_height: window_end + 70,
+            tip: window_end + 334,
+            classify_requests: Arc::new(Mutex::new(Vec::new())),
+        };
+        let observer = LezClaimObserver {
+            config: &fixture.config,
+            chain: port.clone(),
+            effect,
+            prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let projected = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("drive the follow-up claim"),
+        );
+        assert_eq!(
+            projected["outcome"], "observed_then_projected",
+            "{role:?}: a claim final past the discovery window must be found: {projected}"
+        );
+        assert_eq!(projected["revision"], transition.revision());
+        let requests = port.classify_requests.lock().expect("request lock");
+        assert_eq!(
+            requests[0].window, window,
+            "the discovery window is read first"
+        );
     }
 }
 
