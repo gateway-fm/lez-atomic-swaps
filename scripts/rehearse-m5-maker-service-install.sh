@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo build --locked -p lez-maker-node --bins
+cargo build --locked -p lez-maker-node --features pair-zec --bins
 cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor
 SOURCE_BIN_DIR="${SOURCE_BIN_DIR:-target/debug}" \
 DESTDIR="$stage" \
