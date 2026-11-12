@@ -16,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use lez_actor_supervision::terminal_phase;
+use lez_actor_supervision::{ActorLastOutcomeV1, LastOutcomes, terminal_phase};
 use lez_swap_core::SwapId;
 use lez_swap_store::{
     ActorHeldLock, MakerActorAttemptResolution, MakerActorKindV1, MakerActorLeaseOwner,
@@ -451,6 +451,45 @@ fn resolve_claimed_attempt(
     })
 }
 
+/// What each supervised swap's actor last did or waits for (#103 item 6),
+/// for `maker_actor_monitor_v1`. In memory: the supervisor's workers and the
+/// owner API run in one process, and the next attempt refills it after a
+/// restart.
+static LAST_OUTCOMES: std::sync::LazyLock<LastOutcomes> =
+    std::sync::LazyLock::new(LastOutcomes::new);
+
+/// The last outcome of `swap_id`'s actor this process saw, if any.
+#[must_use]
+pub fn maker_actor_last_outcome(swap_id: &SwapId) -> Option<ActorLastOutcomeV1> {
+    LAST_OUTCOMES.get(swap_id.as_str())
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Keeps one attempt's end as the swap's last outcome: the effect the actor
+/// printed (with the wait it named), or the class the attempt failed by.
+fn record_last_outcome(
+    swap_id: &SwapId,
+    command: &str,
+    effect: Option<&[u8]>,
+    failure: Option<&str>,
+) {
+    let outcome = match (effect, failure) {
+        (_, Some(class)) => Some(ActorLastOutcomeV1::failed(command, class, unix_now())),
+        (Some(effect), None) => serde_json::from_slice::<Value>(effect)
+            .ok()
+            .and_then(|value| ActorLastOutcomeV1::from_effect(command, &value, unix_now())),
+        (None, None) => None,
+    };
+    if let Some(outcome) = outcome {
+        LAST_OUTCOMES.record(swap_id.as_str(), outcome);
+    }
+}
+
 /// One secret-free line per supervised effect, in the words both Nodes use
 /// (`lez_actor_supervision::log_effect`).
 fn log_effect(swap_id: &str, command: ActorEffectCommand, effect: &[u8]) {
@@ -540,6 +579,10 @@ fn run_claimed_attempt(
     run_claimed_attempt_with_lock(store, lease, held_lock, config, cancellation)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one attempt read in order: status, decision, effect, and its last outcome kept"
+)]
 fn run_claimed_attempt_with_lock(
     store: &mut SqliteSwapStore,
     lease: &MakerActorLeaseV1,
@@ -566,6 +609,8 @@ fn run_claimed_attempt_with_lock(
         .map_err(ClaimedAttemptError::Scheduling)?
         .map(|action| action.action());
     let mut progress = None;
+    // The command whose failure an attempt resolves by, for its last outcome.
+    let mut attempted = ActorInvocation::Status.name();
     let attempt = (|| {
         let status = match run_child(
             store,
@@ -594,24 +639,19 @@ fn run_claimed_attempt_with_lock(
         if matches!(status_decision, StatusDecision::Blocked) && manual_action.is_none() {
             return Ok(ClaimedAttempt::Blocked);
         }
-        let command = match manual_action {
-            Some(action) => manual_effect_command(lease.record().manifest().kind(), action),
-            None => match status_decision {
-                StatusDecision::Blocked => return Ok(ClaimedAttempt::Blocked),
-                StatusDecision::Terminal => return Ok(ClaimedAttempt::Terminal),
-                StatusDecision::Run(command) => command,
-                StatusDecision::ObserveThenRecover => {
-                    if lease.record().attempt_count().is_multiple_of(2) {
-                        ActorEffectCommand::Drive
-                    } else {
-                        ActorEffectCommand::Recover
-                    }
-                }
-            },
+        let command = match attempt_command(
+            lease.record().manifest().kind(),
+            manual_action,
+            status_decision,
+            lease.record().attempt_count(),
+        ) {
+            Ok(command) => command,
+            Err(attempt) => return Ok(attempt),
         };
         if let Some(class) = effect_held_back(store, lease, config, command, &status) {
             return Ok(ClaimedAttempt::Backoff(class));
         }
+        attempted = command.name();
         let effect = match run_child(
             store,
             lease,
@@ -632,6 +672,12 @@ fn run_claimed_attempt_with_lock(
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         };
         log_effect(lease.record().swap_id().as_str(), command, &effect);
+        record_last_outcome(
+            lease.record().swap_id(),
+            command.name(),
+            Some(&effect),
+            None,
+        );
         if status_revision.is_some_and(|revision| parsed_effect.revision < revision) {
             return Ok(ClaimedAttempt::Failed("actor_output_invalid"));
         }
@@ -642,11 +688,63 @@ fn run_claimed_attempt_with_lock(
             (false, _) => Ok(ClaimedAttempt::Requeue),
         }
     })()?;
+    if let ClaimedAttempt::Backoff(class) | ClaimedAttempt::Failed(class) = attempt {
+        record_last_outcome(lease.record().swap_id(), attempted, None, Some(class));
+    }
     Ok(ClaimedAttemptResult {
         attempt,
         progress,
         held_lock: Some(held_lock),
     })
+}
+
+/// The effect one attempt runs: the owner's queued action if there is one,
+/// else what the actor's status decided; an attempt with nothing to run ends
+/// as the status says (blocked or terminal).
+///
+/// A Bitcoin Maker's refund request never stops it observing the Taker's
+/// revealing claim. Bitcoin cannot expire a claim: one withheld past the
+/// claim window can still be mined before the Maker's refund, and then it
+/// has spent the Maker's lock, `recover` can only wait, and the Maker is paid
+/// only by taking the secret to its LEZ claim before the Taker's later refund
+/// time (#103 item 14, 2026-11-11: 332 recovers past that time). So with both
+/// legs locked the request alternates with the claim's observation, as the
+/// closed window does on its own, and once the claim is projected it waits
+/// behind the Maker's follow-up claim, which `recover` has no transition for.
+fn attempt_command(
+    kind: MakerActorKindV1,
+    manual_action: Option<MakerActorManualAction>,
+    status_decision: StatusDecision,
+    attempt_count: u64,
+) -> Result<ActorEffectCommand, ClaimedAttempt> {
+    let observe_then_recover = || {
+        if attempt_count.is_multiple_of(2) {
+            ActorEffectCommand::Drive
+        } else {
+            ActorEffectCommand::Recover
+        }
+    };
+    match (manual_action, status_decision) {
+        (
+            Some(MakerActorManualAction::Refund),
+            StatusDecision::ObserveThenRecover
+            | StatusDecision::ObserveClaim {
+                claim_projected: false,
+            },
+        )
+        | (None, StatusDecision::ObserveThenRecover) => Ok(observe_then_recover()),
+        (
+            Some(MakerActorManualAction::Refund),
+            StatusDecision::ObserveClaim {
+                claim_projected: true,
+            },
+        )
+        | (None, StatusDecision::ObserveClaim { .. }) => Ok(ActorEffectCommand::Drive),
+        (Some(action), _) => Ok(manual_effect_command(kind, action)),
+        (None, StatusDecision::Blocked) => Err(ClaimedAttempt::Blocked),
+        (None, StatusDecision::Terminal) => Err(ClaimedAttempt::Terminal),
+        (None, StatusDecision::Run(command)) => Ok(command),
+    }
 }
 
 const fn manual_effect_command(
@@ -1096,6 +1194,13 @@ enum StatusDecision {
     /// so a claim that landed at the last moment is still found and a claim
     /// that never landed no longer holds the escrow.
     ObserveThenRecover,
+    /// A Bitcoin Maker whose drive observes the Taker's revealing claim
+    /// (both legs locked) or follows it with the Maker's own LEZ claim (the
+    /// claim projected). A drive, as `Run`, except that an owner's refund
+    /// request does not replace it; see [`attempt_command`].
+    ObserveClaim {
+        claim_projected: bool,
+    },
     Blocked,
     Terminal,
 }
@@ -1162,6 +1267,15 @@ fn parse_status(bytes: &[u8], kind: MakerActorKindV1) -> Result<ParsedStatus, ()
                 StatusDecision::Run(ActorEffectCommand::Recover)
             } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "recover_maker_leg") {
                 StatusDecision::ObserveThenRecover
+            } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "observe_revealing_claim")
+            {
+                StatusDecision::ObserveClaim {
+                    claim_projected: false,
+                }
+            } else if (kind, next_action) == (MakerActorKindV1::Bitcoin, "observe_followup_claim") {
+                StatusDecision::ObserveClaim {
+                    claim_projected: true,
+                }
             } else {
                 StatusDecision::Run(ActorEffectCommand::Drive)
             };
@@ -1709,6 +1823,91 @@ mod tests {
         assert_eq!(parsed.revision, Some(2));
     }
 
+    /// The commands a Bitcoin Maker runs over `attempts` consecutive attempts
+    /// at one status, with the owner's refund request open throughout.
+    fn btc_commands_with_refund_requested(
+        phase: &str,
+        revision: u64,
+        next_action: &str,
+        attempts: u64,
+    ) -> Vec<&'static str> {
+        (0..attempts)
+            .map(|attempt_count| {
+                let parsed = parse_status(
+                    &status(phase, revision, next_action),
+                    MakerActorKindV1::Bitcoin,
+                )
+                .unwrap();
+                match attempt_command(
+                    MakerActorKindV1::Bitcoin,
+                    Some(MakerActorManualAction::Refund),
+                    parsed.decision,
+                    attempt_count,
+                ) {
+                    Ok(command) => command.name(),
+                    Err(_) => "none",
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_refund_request_does_not_blind_the_maker_to_the_takers_revealing_claim() {
+        // #103 item 14, late-claim-unmined selling LEZ (2026-11-11): the
+        // Taker's Bitcoin claim waited in a stopped miner's mempool past the
+        // claim window; the Maker's operator asked for its refund; the claim
+        // was mined seconds later. Bitcoin cannot expire a claim, so the
+        // claim spent the Maker's lock and its refund can never confirm
+        // (`recover` reads a conflicting spend and waits). The request made
+        // every attempt `recover`, so the Maker never drove the observation
+        // that projects the claim and takes the secret to the LEZ leg, and
+        // the LEZ claim window (the Taker's later refund time) ran out:
+        // 332 recovers, both_legs_locked for 44 minutes.
+        //
+        // With the claim window closed the request is the recovery the
+        // supervisor already alternates with observing the claim.
+        let closed =
+            btc_commands_with_refund_requested("both_legs_locked", 2, "recover_maker_leg", 4);
+        assert!(
+            closed.contains(&"drive") && closed.contains(&"recover"),
+            "a refund request past the claim window must keep observing the claim: {closed:?}"
+        );
+        // Asked for before the window closed, the claim is still awaited too.
+        let open =
+            btc_commands_with_refund_requested("both_legs_locked", 2, "observe_revealing_claim", 4);
+        assert!(
+            open.contains(&"drive") && open.contains(&"recover"),
+            "a refund request in the claim window must keep observing the claim: {open:?}"
+        );
+        // Once the claim is projected the Maker's follow-up LEZ claim is the
+        // only way its leg is paid; `recover` has no transition there.
+        assert_eq!(
+            btc_commands_with_refund_requested(
+                "claim_evidence_available",
+                3,
+                "observe_followup_claim",
+                2
+            ),
+            ["drive", "drive"]
+        );
+        // Where no claim can exist yet, the request is the refund it was.
+        for (phase, revision, next_action) in [
+            (
+                "taker_lock_confirmed",
+                1,
+                "observe_maker_second_lock_or_recover_taker_leg",
+            ),
+            ("taker_lock_confirmed", 1, "recover_taker_leg"),
+            ("maker_leg_refunded", 3, "recover_taker_leg"),
+        ] {
+            assert_eq!(
+                btc_commands_with_refund_requested(phase, revision, next_action, 2),
+                ["recover", "recover"],
+                "{phase} {next_action}"
+            );
+        }
+    }
+
     #[test]
     fn parser_accepts_real_revision_zero_and_pair_specific_terminal_effects() {
         let activated = parse_status(
@@ -2114,5 +2313,39 @@ mod failure_alphabet_tests {
         assert!(lez_actor_supervision::validate_failure_class(
             "coordinator_restarted"
         ));
+    }
+}
+
+#[cfg(test)]
+mod last_outcome_tests {
+    use lez_swap_core::SwapId;
+
+    use super::{maker_actor_last_outcome, record_last_outcome};
+
+    /// #103 item 6: what an attempt ended with is the swap's last outcome,
+    /// the actor's named wait included; a failed attempt replaces it by class.
+    #[test]
+    fn an_attempts_end_is_kept_as_the_swaps_last_outcome() {
+        let swap = SwapId::new("r103-runtime-swap".to_owned()).unwrap();
+        record_last_outcome(
+            &swap,
+            "recover",
+            Some(
+                br#"{"schema_version":1,"role":"maker","command":"recover","outcome":"awaiting_observation","chain":"bitcoin","phase":"both_legs_locked","revision":2,"next_action":"recover_maker_leg","wait":{"kind":"bitcoin_refund_maturity","chain":"bitcoin","until_height":1234,"chain_height":1229}}"#,
+            ),
+            None,
+        );
+        let kept = maker_actor_last_outcome(&swap).expect("kept");
+        assert_eq!(kept.step, "recover");
+        assert_eq!(kept.revision, Some(2));
+        let wait = kept.waiting_for.expect("wait");
+        assert_eq!(
+            (wait.kind.as_str(), wait.until_height, wait.chain_height),
+            ("bitcoin_refund_maturity", Some(1234), Some(1229))
+        );
+        record_last_outcome(&swap, "recover", None, Some("actor_timeout"));
+        let failed = maker_actor_last_outcome(&swap).expect("kept");
+        assert_eq!(failed.failure_class.as_deref(), Some("actor_timeout"));
+        assert_eq!(failed.waiting_for, None);
     }
 }

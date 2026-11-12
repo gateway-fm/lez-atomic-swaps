@@ -1,0 +1,104 @@
+
+[05:35:42] === maker-refund (TakerSellsForeign)
+
+[05:35:42] Maker desk publishes TakerSellsForeign offers until two are pending
+  » Maker desk publishes TakerSellsForeign offers until two are pending
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » New offer: the Maker sells 1,000 LEZ for 0.01 BTC; Publish sends it to the Maker Node, which signs and announces it over Delivery
+  » New offer: the Maker sells 1,000 LEZ for 0.01 BTC; Publish sends it to the Maker Node, which signs and announces it over Delivery
+  » Inventory: 2 open sell-LEZ offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[05:35:59] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Available orders: the Maker's offers arrived over Delivery and are listed for this Taker
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  » Take offer on a sell-LEZ row: the Taker Node reserves the lot, plans its Bitcoin funding, runs the signing ceremony with the Maker and activates the swap
+  » Swap b93c5050d1d8 is in "My orders" and needs the Taker: its Bitcoin lock
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   b93c5050d1d8f9828f49769b8e36fb02ceb5ad72e021ba4ca286d909515ee5ca awaiting_first_lock 0 -
+
+[05:36:15] Taker desk: lock_btc on b93c5050d1d8
+  » Taker desk: lock_btc on b93c5050d1d8
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Lock 0.01 BTC: the Taker Node broadcasts the exact Bitcoin funding transaction it signed at take time
+  » Bitcoin lock broadcast; the Maker Node funds the LEZ escrow on its own once this lock is confirmed
+  ✓ taker: perform lock_btc
+2 passed, 0 failed
+
+[05:36:27] Maker desk shows b93c5050d1d8 at awaiting_taker_claim
+  » Maker desk shows b93c5050d1d8 at awaiting_taker_claim
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » New offer: the Maker sells 1,000 LEZ for 0.01 BTC; Publish sends it to the Maker Node, which signs and announces it over Delivery
+  » Inventory: 2 open sell-LEZ offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+  » Nothing to click here: the Maker Node locks LEZ on its own once the Taker's Bitcoin lock is final; the desk waits for "awaiting the Taker's claim"
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  » Maker desk now shows the swap as: awaiting taker claim
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[05:37:46] The Taker never claims; after its refund deadline (115 s after the take) the Maker Node refunds its own lock
+
+[05:37:46] Maker desk shows b93c5050d1d8 at refunding
+  » The Taker never claims; after its refund deadline (115 s after the take) the Maker Node refunds its own lock · Maker desk shows b93c5050d1d8 at refunding
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory: 2 open sell-LEZ offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+  » The Maker desk waits for the swap to reach "refunding"
+  Node-owned swap: Maker reached refunding (refunding)
+  » Maker desk now shows the swap as: refunding
+  ✓ maker: wait refunding reached by the Node
+4 passed, 0 failed
+
+[05:39:00] Taker desk: refund_btc on b93c5050d1d8
+  » Taker desk: refund_btc on b93c5050d1d8
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » The Maker never locked and its cutoff has passed: the desk offers Refund; pressing it admits the refund, which the Node drives once the Bitcoin timelock matures
+  » Refund admitted; the Taker Node broadcasts it when the timelock allows and follows it to confirmation
+  ✓ taker: perform refund_btc
+2 passed, 0 failed
+
+[05:39:11] Taker desk shows b93c5050d1d8 at refunded
+  » Taker desk shows b93c5050d1d8 at refunded
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » The Taker desk waits for the swap to show "refunded"
+  » Taker desk now shows the swap as: refunded
+  ✓ taker: swap reaches refunded
+2 passed, 0 failed
+
+[05:41:16] Maker desk shows b93c5050d1d8 at refunded
+  » Maker desk shows b93c5050d1d8 at refunded
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory: 2 open sell-LEZ offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+  » The Maker Node refunds its LEZ lock once its deadline passes; the desk waits for "refunded"
+  Node-owned swap: Maker reached refunded (refunded)
+  » Maker desk now shows the swap as: refunded
+  ✓ maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[05:41:41] video: runtime/evidence/videos/TakerSellsForeign-maker-refund.mp4
+
+[05:41:41] === maker-refund (TakerSellsForeign): passed in 359s

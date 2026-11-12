@@ -412,6 +412,7 @@ dependencies = [
  "corepc-types",
  "getrandom 0.3.4",
  "hex",
+ "lez-actor-supervision",
  "lez-bridge-adapter",
  "lez-bridge-client",
  "lez-bridge-protocol",
@@ -1909,6 +1910,7 @@ dependencies = [
 name = "lez-actor-supervision"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
 ]
 

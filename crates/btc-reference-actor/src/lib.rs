@@ -30,6 +30,7 @@ use bitcoin::{
     secp256k1::{Keypair, Message, Secp256k1, SecretKey},
 };
 use clap::{ArgGroup, Parser, Subcommand};
+use lez_actor_supervision::ActorWaitV1;
 use lez_bridge_adapter::{
     BtcLezAssetBridgeBindingV2, CapabilityFileBridgeClientFactory, FreshLezBridgeTransportFactory,
     LezBridgeAdapter,
@@ -831,6 +832,11 @@ pub struct ActorEffectOutputV1 {
     phase: ActorPhaseV1,
     revision: u64,
     next_action: ActorNextActionV1,
+    /// What an `awaiting_observation` waits for, when the actor can name it
+    /// and its bound (#103 item 6). Reporting only: the decision to wait was
+    /// taken before and without it; absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wait: Option<ActorWaitV1>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -931,6 +937,12 @@ impl ActorEffectOutputV1 {
             revision: self.revision,
             next_action: self.next_action,
         }
+    }
+
+    /// What the effect waits for, when it held a step for a reason it bounds.
+    #[must_use]
+    pub const fn wait(&self) -> Option<&ActorWaitV1> {
+        self.wait.as_ref()
     }
 
     /// Reports whether the effect changed durable state on this invocation.
@@ -1122,6 +1134,26 @@ pub enum ActorCommandError {
     /// Durable evidence projection failed or lost its predecessor CAS.
     #[error("actor evidence projection is unavailable")]
     ProjectionUnavailable,
+}
+
+impl ActorCommandError {
+    /// The failure class a supervising Node names this error by in a swap's
+    /// last outcome, in the words the Zcash supervisor uses where they mean
+    /// the same (`actor_not_activated`, `actor_material_unavailable`,
+    /// `actor_store_unavailable`).
+    #[must_use]
+    pub const fn failure_class(self) -> &'static str {
+        match self {
+            Self::ConfigurationUnavailable => "actor_configuration_unavailable",
+            Self::AgreementUnavailable => "actor_agreement_unavailable",
+            Self::AgreementBindingInvalid => "actor_agreement_binding_invalid",
+            Self::StateUnavailable => "actor_store_unavailable",
+            Self::NotActivated => "actor_not_activated",
+            Self::ActivationMaterialUnavailable => "actor_material_unavailable",
+            Self::ObservationUnavailable => "actor_observation_unavailable",
+            Self::ProjectionUnavailable => "actor_projection_unavailable",
+        }
+    }
 }
 
 /// Funding transition selected only from the durable predecessor revision.
@@ -3028,12 +3060,92 @@ pub async fn execute_actor_command(
     match command {
         ActorCommand::Activate => activate(config).map(ActorCommandOutputV1::Effect),
         ActorCommand::Status => status(config).map(ActorCommandOutputV1::Status),
-        ActorCommand::Recover => Box::pin(recover_live(config))
+        ActorCommand::Recover => with_reported_wait(config, Box::pin(recover_live(config)))
             .await
             .map(ActorCommandOutputV1::Effect),
-        ActorCommand::Drive => Box::pin(drive_live(config))
+        ActorCommand::Drive => with_reported_wait(config, Box::pin(drive_live(config)))
             .await
             .map(ActorCommandOutputV1::Effect),
+    }
+}
+
+tokio::task_local! {
+    /// The wait the running drive or recovery noted, if it held a step for a
+    /// reason it can bound; set by [`note_wait`] beside the decision.
+    static NOTED_WAIT: std::cell::RefCell<Option<ActorWaitV1>>;
+}
+
+/// Names why the running command holds a step and until when, beside the
+/// decision that holds it. Reporting only: nothing reads it back to decide,
+/// and outside [`with_reported_wait`] (a unit test calling a step directly)
+/// it is dropped.
+fn note_wait(wait: ActorWaitV1) {
+    let _ = NOTED_WAIT.try_with(|noted| *noted.borrow_mut() = Some(wait));
+}
+
+/// Runs one drive or recovery and attaches to an `awaiting_observation` what
+/// it waits for: the last wait a step noted, or else the wait its phase
+/// implies from the signed schedule (the Maker's lock until its cutoff, the
+/// other party's claim). Every other outcome is returned as the command
+/// produced it (#103 item 6: a held refund read as a dead Node).
+async fn with_reported_wait<F>(
+    config: &ActorConfig,
+    command: F,
+) -> Result<ActorEffectOutputV1, ActorCommandError>
+where
+    F: std::future::Future<Output = Result<ActorEffectOutputV1, ActorCommandError>>,
+{
+    NOTED_WAIT
+        .scope(std::cell::RefCell::new(None), async {
+            let mut output = command.await?;
+            if matches!(
+                output.outcome,
+                ActorEffectOutcomeV1::AwaitingObservation { .. }
+            ) {
+                output.wait = NOTED_WAIT
+                    .with(|noted| noted.borrow_mut().take())
+                    .or_else(|| phase_wait(config, &output));
+            }
+            Ok(output)
+        })
+        .await
+}
+
+/// The wait a phase implies when no step named one: from the signed
+/// schedule, never from a chain read.
+fn phase_wait(config: &ActorConfig, output: &ActorEffectOutputV1) -> Option<ActorWaitV1> {
+    let (agreement, _) = load_agreement(config).ok()?;
+    let plan = agreement.body().recovery_plan();
+    let chain_of = |participant| chain_label(agreement.coordinator().funded_chain(participant));
+    match (config.role, output.next_action) {
+        // The Taker's lock is in; the Maker's is awaited until its cutoff.
+        (ActorRole::Taker, ActorNextActionV1::ObserveMakerSecondLockOrRecoverTakerLeg) => Some(
+            ActorWaitV1::new("maker_lock", chain_of(Participant::Maker))
+                .until_time(plan.maker_second_lock_cutoff_unix_seconds(), None),
+        ),
+        // Both legs are locked; the Maker waits for the Taker's revealing
+        // claim, which can land until the claim window closes.
+        (ActorRole::Maker, ActorNextActionV1::ObserveRevealingClaim) => Some(
+            ActorWaitV1::new("counterparty_claim", chain_of(Participant::Maker))
+                .until_time(plan.earlier_refund_latest_unix_seconds(), None),
+        ),
+        // The Taker's revealing claim is final; the Maker's follow-up claim
+        // of the Taker's lock completes the swap.
+        (ActorRole::Taker, ActorNextActionV1::ObserveFollowupClaim) => Some(ActorWaitV1::new(
+            "counterparty_claim",
+            chain_of(Participant::Taker),
+        )),
+        _ => None,
+    }
+}
+
+/// A chain as [`ActorWaitV1::chain`] spells it.
+const fn chain_label(chain: Chain) -> &'static str {
+    match chain {
+        Chain::Bitcoin => "bitcoin",
+        Chain::Lez => "lez",
+        Chain::Zcash => "zcash",
+        Chain::Monero => "monero",
     }
 }
 
@@ -5882,13 +5994,29 @@ where
             }
         };
         let (observed, finalized) = match &observation {
-            BitcoinRefundObservation::Immature(_) => return BitcoinRefundScan::Immature,
+            BitcoinRefundObservation::Immature(eligibility) => {
+                note_wait(
+                    ActorWaitV1::new("bitcoin_refund_maturity", "bitcoin").until_height(
+                        u64::from(eligibility.first_valid_block_height()),
+                        Some(u64::from(eligibility.stable_tip().height())),
+                    ),
+                );
+                return BitcoinRefundScan::Immature;
+            }
             BitcoinRefundObservation::Eligible(_) => return BitcoinRefundScan::Eligible,
             BitcoinRefundObservation::ConflictingSpend => {
                 return BitcoinRefundScan::Conflicting;
             }
             BitcoinRefundObservation::Revealed(observed)
-            | BitcoinRefundObservation::Confirming(observed) => (observed, false),
+            | BitcoinRefundObservation::Confirming(observed) => {
+                note_wait(
+                    ActorWaitV1::new("bitcoin_refund_confirmations", "bitcoin").confirming(
+                        observed.confirmations(),
+                        agreement.required_bitcoin_confirmations(),
+                    ),
+                );
+                (observed, false)
+            }
             BitcoinRefundObservation::Finalized(observed) => (observed, true),
         };
         let chain_evidence = if finalized {
@@ -6478,6 +6606,7 @@ where
                         agreement.lez_terms().refund_at_ms()
                     ),
                 );
+                note_lez_refund_time_wait(agreement, response.clock_after.timestamp_ms);
                 PublicEffectObservation::Uncertain
             }
             WitnessedAssetRefundObservationV2::NotRequested => {
@@ -6732,6 +6861,18 @@ fn finalized_lez_asset_refund_observation(
     })
 }
 
+/// A LEZ refund held until finalized LEZ time (`finalized_ms`) passes the
+/// agreement's LEZ refund time; nothing is noted once it has.
+fn note_lez_refund_time_wait(agreement: &BtcAgreementV1, finalized_ms: u64) {
+    let refund_at_ms = agreement.lez_terms().refund_at_ms();
+    if finalized_ms < refund_at_ms {
+        note_wait(
+            ActorWaitV1::new("lez_finality_past_refund_time", "lez")
+                .until_time(refund_at_ms / 1_000, Some(finalized_ms / 1_000)),
+        );
+    }
+}
+
 struct LezRefundObserver<P> {
     config: ActorConfig,
     chain: P,
@@ -6790,6 +6931,7 @@ where
         if state == Some(EscrowState::Funded)
             && state_response.clock_after.timestamp_ms < agreement.lez_terms().refund_at_ms()
         {
+            note_lez_refund_time_wait(agreement, state_response.clock_after.timestamp_ms);
             return Ok(ActorRefundObservation::Pending { chain: Chain::Lez });
         }
 
@@ -6947,6 +7089,7 @@ where
                         agreement.lez_terms().refund_at_ms()
                     ),
                 );
+                note_lez_refund_time_wait(agreement, response.clock_after.timestamp_ms);
                 PublicEffectObservation::Uncertain
             }
             NativeRefundObservation::NotRequested => {
@@ -7520,17 +7663,8 @@ where
                 .map_err(|_| ActorCommandError::StateUnavailable)?;
         }
 
-        let request = finalized_lez_claim_request(
-            self.config,
-            agreement,
-            transition,
-            &self.prepared_claim,
-            self.effect.as_ref(),
-        )?;
-        let durable_request = request.clone();
-        let presence = self
-            .chain
-            .classify_finalized_witnessed_claim(request)
+        let (durable_request, presence) = self
+            .classify_in_discovery_or_full_span(agreement, transition)
             .await?;
         match &presence {
             FinalizedWitnessedClaimPresence::PresentExact {
@@ -7619,6 +7753,68 @@ impl<P> LezClaimObserver<'_, P>
 where
     P: LezClaimChainPort,
 {
+    /// Classifies the claim in the swap's discovery window and, when it is
+    /// absent there, once more from the swap's start over the protocol's
+    /// largest window. A claim lands until the LEZ refund time, which for the
+    /// leg that refunds later lies past the window bounding the Maker's lock
+    /// (a Bitcoin claim mined late, then the follow-up claim: swap fd0bf19d,
+    /// final in block 525 of a window ending near 455).
+    ///
+    /// The sidecar scans a window only up to the finalized tip, reports the
+    /// last block it scanned as its tip, and answers a window reaching past
+    /// the tip as a prefix (`PrefixUncertain`), never as absence. So the wide
+    /// lookup covers every finalized block since the start, and only a claim
+    /// it finds replaces the first answer: an absence keeps the meaning it
+    /// had (the discovery window, complete), and a prefix is not absence.
+    async fn classify_in_discovery_or_full_span(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: ClaimTransition,
+    ) -> Result<
+        (
+            ObserveFinalizedWitnessedClaimRequest,
+            FinalizedWitnessedClaimPresence,
+        ),
+        ActorCommandError,
+    > {
+        let request = finalized_lez_claim_request(
+            self.config,
+            agreement,
+            transition,
+            &self.prepared_claim,
+            self.effect.as_ref(),
+        )?;
+        let presence = self
+            .chain
+            .classify_finalized_witnessed_claim(request.clone())
+            .await?;
+        if matches!(presence, FinalizedWitnessedClaimPresence::NotFound { .. }) {
+            let widest = DiscoveryWindow::new(
+                request.window.start_height(),
+                lez_bridge_protocol::MAX_DISCOVERY_BLOCKS,
+            )
+            .map_err(|_| ActorCommandError::ConfigurationUnavailable)?;
+            if widest.max_blocks() > request.window.max_blocks() {
+                let widened = finalized_lez_claim_request_in(
+                    self.config,
+                    agreement,
+                    transition,
+                    &self.prepared_claim,
+                    self.effect.as_ref(),
+                    widest,
+                )?;
+                let found = self
+                    .chain
+                    .classify_finalized_witnessed_claim(widened.clone())
+                    .await?;
+                if matches!(found, FinalizedWitnessedClaimPresence::PresentExact { .. }) {
+                    return Ok((widened, found));
+                }
+            }
+        }
+        Ok((request, presence))
+    }
+
     async fn reconcile_and_maybe_submit(
         &self,
         agreement: &BtcAgreementV1,
@@ -7741,6 +7937,9 @@ where
             FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
             |effect| FinalizedWitnessedAssetTransactionTargetV2::exact(effect.transaction.clone()),
         );
+        // Not widened as the native lookup is: the asset sidecar reads only a
+        // window that ends at or below the finalized tip and reports that end
+        // as its clock, so the actor has no tip to widen to here (open).
         let window = self.config.discovery_window()?;
         let request_id = finalized_lez_asset_claim_request_id(
             self.config,
@@ -8123,7 +8322,40 @@ fn finalized_lez_claim_request(
     claim: &PreparedWitnessedClaim,
     effect: Option<&PreparedLezClaimEffect>,
 ) -> Result<ObserveFinalizedWitnessedClaimRequest, ActorCommandError> {
+    finalized_lez_claim_request_in(
+        config,
+        agreement,
+        transition,
+        claim,
+        effect,
+        config.discovery_window()?,
+    )
+}
+
+/// Whether `window` is one a claim lookup may scan: the swap's discovery
+/// window, or the whole span since the swap's start that a lookup widens to
+/// once the chain has grown past it ([`ActorConfig::full_span_window`]).
+fn admissible_lez_claim_window(
+    config: &ActorConfig,
+    window: DiscoveryWindow,
+) -> Result<bool, ActorCommandError> {
+    let discovery = config.discovery_window()?;
+    Ok(window.start_height() == discovery.start_height()
+        && window.max_blocks() >= discovery.max_blocks())
+}
+
+fn finalized_lez_claim_request_in(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    claim: &PreparedWitnessedClaim,
+    effect: Option<&PreparedLezClaimEffect>,
+    window: DiscoveryWindow,
+) -> Result<ObserveFinalizedWitnessedClaimRequest, ActorCommandError> {
     validate_actor_binding(config, agreement)?;
+    if !admissible_lez_claim_window(config, window)? {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
     if agreement
         .coordinator()
         .funded_chain(transition.funded_participant())
@@ -8135,7 +8367,6 @@ fn finalized_lez_claim_request(
         validate_prepared_lez_effect(effect, transition)?;
     }
     let terms = witnessed_lez_terms(agreement)?;
-    let window = config.discovery_window()?;
     let target = effect.map_or(
         FinalizedWitnessedClaimObservationTarget::DiscoverByTerms,
         |value| FinalizedWitnessedClaimObservationTarget::Exact {
@@ -8334,7 +8565,14 @@ fn validate_finalized_lez_claim_binding(
 ) -> Result<(), ActorCommandError> {
     let prepared = load_prepared_witnessed_claim(config, agreement)?;
     if request
-        != &finalized_lez_claim_request(config, agreement, transition, &prepared.claim, effect)?
+        != &finalized_lez_claim_request_in(
+            config,
+            agreement,
+            transition,
+            &prepared.claim,
+            effect,
+            request.window,
+        )?
     {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }
@@ -8543,6 +8781,24 @@ fn encode_lez_maker_lock_absence_evidence(
     .map_err(trace_observation_unavailable)
 }
 
+/// A first-lock refund whose LEZ read did not answer (the sequencer or the
+/// indexer is down, or the finalized scan is not conclusive) waits for the
+/// same thing as one that read finalized LEZ time before the cutoff; only
+/// the finalized time is unknown, so the wait has no chain reading. Seen
+/// live on the devnet with the sequencer stopped (#103 item 6): the row said
+/// `awaiting_observation` and nothing else.
+fn note_unread_lez_cutoff_wait(agreement: &BtcAgreementV1) {
+    note_wait(
+        ActorWaitV1::new("lez_finality_past_cutoff", "lez").until_time(
+            agreement
+                .body()
+                .recovery_plan()
+                .maker_second_lock_cutoff_unix_seconds(),
+            None,
+        ),
+    );
+}
+
 #[async_trait]
 impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
     #[allow(
@@ -8574,6 +8830,7 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     "first_lock_safety_uncertain",
                     &format!("lez transport: {error:?}"),
                 );
+                note_unread_lez_cutoff_wait(agreement);
                 return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
             }
         };
@@ -8584,6 +8841,7 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     "first_lock_safety_uncertain",
                     &format!("lez classify_finalized_witnessed_funding: {error:?}"),
                 );
+                note_unread_lez_cutoff_wait(agreement);
                 return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
             }
         };
@@ -8641,6 +8899,10 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                             "lez maker lock absent but finalized clock {observed_unix_seconds} is before cutoff {cutoff_unix_seconds} (scanned {scanned_window:?})"
                         ),
                     );
+                    note_wait(
+                        ActorWaitV1::new("lez_finality_past_cutoff", "lez")
+                            .until_time(cutoff_unix_seconds, Some(observed_unix_seconds)),
+                    );
                     return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
                 }
                 let absence_evidence = encode_lez_maker_lock_absence_evidence(
@@ -8664,6 +8926,7 @@ impl FirstLockRecoverySafetyPort for LiveLezMakerLockSafety {
                     "first_lock_safety_uncertain",
                     &format!("lez finalized funding classification uncertain: {uncertain:?}"),
                 );
+                note_unread_lez_cutoff_wait(agreement);
                 Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
             }
         }
@@ -8747,6 +9010,10 @@ fn encode_bitcoin_maker_lock_absence_evidence(
 
 #[async_trait]
 impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one read, every uncertain outcome traced and its wait noted in place"
+    )]
     async fn observe(
         &self,
         agreement: &BtcAgreementV1,
@@ -8805,8 +9072,16 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
                     chain_evidence,
                 })
             }
-            FundingObservation::Pending { .. } => {
+            FundingObservation::Pending {
+                confirmations,
+                stable_tip,
+            } => {
                 trace_note("first_lock_safety_uncertain", "bitcoin maker lock pending");
+                note_wait(
+                    ActorWaitV1::new("bitcoin_lock_confirmations", "bitcoin")
+                        .confirming(confirmations, agreement.required_bitcoin_confirmations())
+                        .at_height(u64::from(stable_tip.height())),
+                );
                 Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain })
             }
             FundingObservation::Absent { stable_tip } => {
@@ -8822,6 +9097,11 @@ impl FirstLockRecoverySafetyPort for LiveBitcoinMakerLockSafety {
                             "bitcoin maker lock absent; stable tip {} median time {observed_unix_seconds} before cutoff {cutoff_unix_seconds}",
                             stable_tip.height()
                         ),
+                    );
+                    note_wait(
+                        ActorWaitV1::new("bitcoin_time_past_cutoff", "bitcoin")
+                            .until_time(cutoff_unix_seconds, Some(observed_unix_seconds))
+                            .at_height(u64::from(stable_tip.height())),
                     );
                     return Ok(FirstLockRecoverySafetyObservation::Uncertain { maker_chain });
                 }
@@ -9783,6 +10063,7 @@ fn effect_output(
         phase: status.phase().into(),
         revision: status.revision(),
         next_action,
+        wait: None,
     }
 }
 

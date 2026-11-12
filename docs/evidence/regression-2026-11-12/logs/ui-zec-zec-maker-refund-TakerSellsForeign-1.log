@@ -1,0 +1,119 @@
+
+[03:54:36] === zec-maker-refund (TakerSellsForeign)
+
+[03:54:36] provisioning a ZEC corridor with 1 prepared swap(s) under deterministic-local-devnet-v6 (zec-provision.sh: offer, draft, catalog, Nodes recreated)
+   [zec-provision 03:55:13]   maker sidecar answers on 127.0.0.1:19901
+   [zec-provision 03:55:14]   taker sidecar answers on 127.0.0.1:19902
+     maker_health: ready=True degraded=False
+   [zec-provision 03:55:14]   Taker lists zec-devnet-offer-179445567603 ; corridor zec-devnet-179445567603 is live
+
+[03:55:14] corridor lot: 1.0 ZEC for 50000 LEZ units
+
+[03:55:15] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Available orders: the Maker's offers arrived over Delivery and are listed for this Taker
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  » Take offer on the Zcash row: the Taker Node runs the prepared ZEC ceremony with the Maker over Chat and provisions its Taker actor
+  » Swap zec-devnet-s is in "My orders"; its first lock (the Zcash HTLC) is driven by the Taker Node's supervisor, not a desk button
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   zec-devnet-swap-179445567603 awaiting_first_lock 0 -
+
+[03:55:28] Maker desk shows zec-devnet-s at awaiting_taker_claim
+
+[03:56:08] driving the Taker's ZEC actor on the Node until zec-devnet-s shows claim_available
+   [03:56:08]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+   [03:56:09]   corridor zec-devnet-179445567603 entry 0 (deterministic-local-devnet-v6): offer zec-devnet-offer-179445567603, zebra tip 1037, Zcash refund height 1046
+   [03:56:09]   receipt: swap zec-devnet-swap-179445567603, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179445567603/actor/taker/actor-config.json
+   [03:56:09]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-drive to claim_available): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 1037 | LEZ finalized 975, tip 977 (2 unfinalized) [heartbeat]
+   [03:56:09]   zebra: mined 1 block(s) → height 1038 (mempool had ['3a77ba65f9e3'])
+   [03:56:13]   [4 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-drive to claim_available): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 1038 | LEZ finalized 975, tip 977 (2 unfinalized) [heartbeat]
+   [03:56:20]   zebra: mined 1 block(s) → height 1039 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+   [03:56:44]   [35 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-drive to claim_available): taker claim_available (gen 2) | actor at both_legs_locked | maker taker_lock_confirmed | zebra 1039 | LEZ finalized 1000, tip 1002 (2 unfinalized) [heartbeat]
+   [03:56:44]   taker zec-devnet-s is claim_available
+  » Maker desk shows zec-devnet-s at awaiting_taker_claim
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk
+  ✓ maker: Node-indexed BTC offer inventory
+  » Nothing to click here: the Maker Node locks LEZ on its own once the Taker's Zcash lock is final; the desk waits for "awaiting the Taker's claim"
+  label: Waiting for the Taker's LEZ claim
+  Node-owned swap: Maker reached awaiting_taker_claim (awaiting_taker_claim)
+  » Maker desk now shows the swap as: awaiting taker claim
+  ✓ maker: wait awaiting_taker_claim reached by the Node
+4 passed, 0 failed
+
+[03:57:06] The Taker never claims; at the LEZ refund time the Maker Node refunds its LEZ escrow
+   [03:57:07]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+   [03:57:07]   corridor zec-devnet-179445567603 entry 0 (deterministic-local-devnet-v6): offer zec-devnet-offer-179445567603, zebra tip 1037, Zcash refund height 1046
+   [03:57:07]   waiting 103s for the agreement's LEZ refund time (the profile's delay after provisioning)
+   [03:57:07]   [0 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1012, tip 1014 (2 unfinalized) [heartbeat]
+   [03:58:07]   [60 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 1036, tip 1041 (5 unfinalized) [heartbeat]
+   [03:58:51]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-devnet-swap-179445567603", "action": "refund", "requested_after_generation": 25, "was_replay": false}
+   [03:58:51]   [0 s] waiting for the Maker's zec-devnet-s to reach maker_leg_refunded/refunded (the Maker refunding its LEZ escrow): maker both_legs_locked (schedule leased) | LEZ finalized 1065, tip 1068 (3 unfinalized) [heartbeat]
+   [03:59:34]   [42 s] waiting for the Maker's zec-devnet-s to reach maker_leg_refunded/refunded (the Maker refunding its LEZ escrow): maker maker_leg_refunded (schedule leased) | LEZ finalized 1083, tip 1096 (13 unfinalized) [heartbeat]
+   [03:59:34]   the Maker's LEZ leg is back (maker_leg_refunded); mining zebra to the Zcash refund height
+   [03:59:34]   zebra: mined 7 block(s) → height 1046 (Zcash refund height)
+
+[03:59:34] driving the Taker's ZEC actor on the Node until zec-devnet-s shows refund_available
+   [03:59:34]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+   [03:59:34]   corridor zec-devnet-179445567603 entry 0 (deterministic-local-devnet-v6): offer zec-devnet-offer-179445567603, zebra tip 1037, Zcash refund height 1046
+   [03:59:34]   receipt: swap zec-devnet-swap-179445567603, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179445567603/actor/taker/actor-config.json
+   [03:59:35]   [0 s] waiting for the Taker's zec-devnet-s to reach refund_available (zec-drive to refund_available): taker refund_available (gen 2) | actor at both_legs_locked | maker maker_leg_refunded | zebra 1046 | LEZ finalized 1083, tip 1096 (13 unfinalized) [heartbeat]
+   [03:59:35]   taker zec-devnet-s is refund_available
+
+[03:59:35] The Maker's LEZ is back; the Taker desk presses Refund and its Zcash comes back at the refund height
+
+[03:59:35] Taker desk: refund_zec on zec-devnet-s
+  » The Maker's LEZ is back; the Taker desk presses Refund and its Zcash comes back at the refund height · Taker desk: refund_zec on zec-devnet-s
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » The desk offers Refund for the Zcash HTLC; pressing it admits the refund, which the Node drives on the transparent pool once the HTLC's refund height is reached
+  » Refund admitted; the Taker Node broadcasts the HTLC refund when the height allows and follows it to a block
+  ✓ taker: perform refund_zec
+2 passed, 0 failed
+
+[03:59:50] driving the Taker's ZEC actor on the Node until zec-devnet-s shows refunded
+   [03:59:50]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+   [03:59:50]   corridor zec-devnet-179445567603 entry 0 (deterministic-local-devnet-v6): offer zec-devnet-offer-179445567603, zebra tip 1037, Zcash refund height 1046
+   [03:59:50]   receipt: swap zec-devnet-swap-179445567603, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179445567603/actor/taker/actor-config.json
+   [03:59:51]   [0 s] waiting for the Taker's zec-devnet-s to reach refunded (zec-drive to refunded): taker refund_in_progress (gen 3) | actor at maker_leg_refunded | maker maker_leg_refunded | zebra 1046 | LEZ finalized 1101, tip 1108 (7 unfinalized) [heartbeat]
+   [03:59:51]   zebra: mined 1 block(s) → height 1047 (mempool had ['eaa62f0155f0'])
+   [03:59:54]   [3 s] waiting for the Taker's zec-devnet-s to reach refunded (zec-drive to refunded): taker refunded (gen 4) | actor at refunded | maker maker_leg_refunded | zebra 1047 | LEZ finalized 1101, tip 1108 (7 unfinalized) [heartbeat]
+   [03:59:54]   taker zec-devnet-s is refunded
+
+[03:59:54] Maker desk shows zec-devnet-s at refunded
+  » Maker desk shows zec-devnet-s at refunded
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory refreshed: the Maker Node indexes its offers; the Zcash lot came from the prepared corridor, nothing is published from the desk
+  ✓ maker: Node-indexed BTC offer inventory
+  » The Maker Node refunds its LEZ lock once its deadline passes; the desk waits for "refunded"
+  Node-owned swap: Maker reached refunded (refunded)
+  » Maker desk now shows the swap as: refunded
+  ✓ maker: wait refunded reached by the Node
+4 passed, 0 failed
+
+[04:00:17] Taker desk shows zec-devnet-s at refunded
+  » Taker desk shows zec-devnet-s at refunded
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » The Taker desk waits for the swap to show "refunded"
+  » Taker desk now shows the swap as: refunded
+  ✓ taker: swap reaches refunded
+2 passed, 0 failed
+[04:00:27]   reusing the provisioned corridor the Nodes already loaded (LEZ_ZEC_REUSE_CORRIDOR=1)
+[04:00:27]   corridor zec-devnet-179445567603 entry 0 (deterministic-local-devnet-v6): offer zec-devnet-offer-179445567603, zebra tip 1037, Zcash refund height 1046
+[04:00:27]   receipt: swap zec-devnet-swap-179445567603, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179445567603/actor/taker/actor-config.json
+[04:00:28]   ZEC evidence written to <checkout>/deploy/runtime/lanes/3/evidence/zec/zec-devnet-swap-179445567603.json (taker refunded, maker refunded, funding 1038, spend 1047)
+
+[04:00:42] video: runtime/lanes/3/evidence/videos/TakerSellsForeign-zec-maker-refund.mp4
+
+[04:00:42] === zec-maker-refund (TakerSellsForeign): passed in 366s

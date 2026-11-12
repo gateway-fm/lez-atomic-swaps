@@ -2,6 +2,7 @@
 
 #include "local_json_rpc_client.h"
 
+#include <QDate>
 #include <QDateTime>
 #include <QHash>
 #include <QJsonArray>
@@ -172,6 +173,103 @@ QString minutesDisplay(qint64 seconds)
     return QString::number(seconds / 60) + " min";
 }
 
+// A moment on this desk's clock: "16:05" today, "12 Nov 16:05" otherwise.
+QString clockDisplay(qint64 unixSeconds)
+{
+    const QDateTime at = QDateTime::fromSecsSinceEpoch(unixSeconds);
+    return at.date() == QDate::currentDate() ? at.toString(QStringLiteral("HH:mm"))
+                                             : at.toString(QStringLiteral("d MMM HH:mm"));
+}
+
+// What the Node says a swap's actor waits for (`last_outcome.waiting_for`,
+// #103 item 6): a refund held until finalized LEZ time passes the cutoff read
+// for hours as a bare "Refund submitted" and then offered Resubmit, as if the
+// Node were dead. The wait is shown only while the attempt that named it is
+// recent: the Nodes attempt every few seconds, so an older outcome no longer
+// stands for the swap.
+constexpr qint64 kOutcomeFreshSeconds = 5 * 60;
+
+struct SwapWait {
+    QString text;         // plain words with the bound, empty when none
+    bool holds = false;   // a known bound the chain has not reached yet
+};
+
+QString chainDisplay(const QString& chain)
+{
+    if (chain == QStringLiteral("lez")) return QStringLiteral("LEZ");
+    if (chain == QStringLiteral("zcash")) return QStringLiteral("Zcash");
+    return QStringLiteral("Bitcoin");
+}
+
+SwapWait swapWait(const QJsonObject& lastOutcome, const QString& role)
+{
+    const QJsonObject wait = lastOutcome.value("waiting_for").toObject();
+    const qint64 at = integerField(lastOutcome, "at_unix_seconds");
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    if (wait.isEmpty() || at <= 0 || now - at > kOutcomeFreshSeconds) return {};
+    const QString kind = wait.value("kind").toString();
+    const QString chain = chainDisplay(wait.value("chain").toString());
+    const qint64 until = integerField(wait, "until_unix_seconds");
+    const qint64 chainTime = integerField(wait, "chain_unix_seconds");
+    const qint64 untilHeight = integerField(wait, "until_height");
+    const qint64 chainHeight = integerField(wait, "chain_height");
+    const qint64 confirmations = integerField(wait, "confirmations");
+    const qint64 required = integerField(wait, "required_confirmations");
+    const QString other = role == QStringLiteral("maker") ? QStringLiteral("the Taker's") : QStringLiteral("the Maker's");
+    // A bound read on the chain holds while the chain's reading is short of
+    // it; a bound with no reading (the agreement's own times) while this
+    // desk's clock is.
+    const bool timeHolds = until > 0 && (chainTime >= 0 ? chainTime < until : now < until);
+    const QString nowTime = chainTime > 0 ? " (now " + clockDisplay(chainTime) + ")" : QString();
+    if (kind == QStringLiteral("lez_finality_past_cutoff") && until > 0)
+        return {"Waiting for LEZ finality to pass the lock cutoff " + clockDisplay(until) + nowTime, timeHolds};
+    if (kind == QStringLiteral("bitcoin_time_past_cutoff") && until > 0)
+        return {"Waiting for Bitcoin time to pass the lock cutoff " + clockDisplay(until)
+                    + (chainTime > 0 ? " (now " + clockDisplay(chainTime)
+                                           + (chainHeight > 0 ? " at height " + QString::number(chainHeight) : QString()) + ")"
+                                     : QString()),
+                timeHolds};
+    if (kind == QStringLiteral("lez_finality_past_refund_time") && until > 0)
+        return {"Waiting for LEZ finality to pass the refund time " + clockDisplay(until) + nowTime, timeHolds};
+    if (kind == QStringLiteral("lez_refund_time") && until > 0)
+        return {"The LEZ refund opens at " + clockDisplay(until), timeHolds};
+    if (kind == QStringLiteral("bitcoin_refund_maturity") && untilHeight > 0)
+        return {"Refund matures at Bitcoin height " + QString::number(untilHeight)
+                    + (chainHeight >= 0 ? " (now " + QString::number(chainHeight) + ")" : QString()),
+                chainHeight < 0 || chainHeight < untilHeight};
+    if (kind == QStringLiteral("bitcoin_refund_confirmations") && required > 0)
+        return {"Bitcoin refund confirming: " + QString::number(qMax<qint64>(confirmations, 0)) + " of "
+                    + QString::number(required) + " confirmations",
+                confirmations < required};
+    if (kind == QStringLiteral("bitcoin_lock_confirmations") && required > 0)
+        return {"The Bitcoin lock has " + QString::number(qMax<qint64>(confirmations, 0)) + " of "
+                    + QString::number(required) + " confirmations",
+                confirmations < required};
+    if (kind == QStringLiteral("maker_lock"))
+        return {"Waiting for the Maker's " + chain + " lock" + (until > 0 ? " until " + clockDisplay(until) : QString()),
+                timeHolds};
+    if (kind == QStringLiteral("counterparty_claim"))
+        return {"Waiting for " + other + " " + chain + " claim" + (until > 0 ? " until " + clockDisplay(until) : QString()),
+                timeHolds};
+    if (kind == QStringLiteral("zcash_refund_height"))
+        return {"Waiting for the Zcash refund height", false};
+    // A kind this desk does not know yet, by its bound.
+    if (until > 0) return {"Waiting for " + chain + " until " + clockDisplay(until) + nowTime, timeHolds};
+    if (untilHeight > 0)
+        return {"Waiting for " + chain + " height " + QString::number(untilHeight)
+                    + (chainHeight >= 0 ? " (now " + QString::number(chainHeight) + ")" : QString()),
+                chainHeight < 0 || chainHeight < untilHeight};
+    return {};
+}
+
+// A row the wait text may speak for: one that is running and asks nothing of
+// the owner (a row with an action, or a named stop, keeps its own words).
+bool waitSpeaksFor(const QString& rowState, const QString& action)
+{
+    return action.isEmpty() && rowState != QStringLiteral("completed") && rowState != QStringLiteral("refunded")
+        && rowState != QStringLiteral("failed") && rowState != QStringLiteral("attention_required");
+}
+
 struct SwapRow {
     QString state;
     QString label;
@@ -192,7 +290,8 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
                  qint64 lockFeeSat, const QString& attentionReason = QString(),
                  const QString& heldBy = QString(), bool claimWindowClosed = false,
                  const QString& actorPhase = QString(), qint64 secondsInFlight = 0,
-                 const QString& failureClass = QString(), qint64 refundOpensAt = 0)
+                 const QString& failureClass = QString(), qint64 refundOpensAt = 0,
+                 const SwapWait& wait = SwapWait())
 {
     const bool sellsBitcoin = direction == QStringLiteral("taker_sells_foreign");  // sells the foreign coin
     const QString foreignChain = pair == QStringLiteral("Zcash") ? "Zcash" : "Bitcoin";
@@ -205,7 +304,9 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     const QString claimAction = sellsBitcoin ? "claim_lez" : "claim_" + foreignTag;
     // An in-flight claim or refund offers "Resubmit" only once it looks stuck
     // (kResubmitAfterSeconds, or a failure class from the Node); until then
-    // the row says it is being followed.
+    // the row says it is being followed. While the Node names a wait whose
+    // bound the chain has not reached (#103 item 6), nothing is stuck: the
+    // row says what it waits for and until when, and offers nothing.
     // A refund cannot land before the agreement's refund time, so its clock
     // starts there when the terms name it.
     const qint64 refundSeconds = refundOpensAt > 0
@@ -213,7 +314,9 @@ SwapRow takerRow(const QString& nodeState, const QString& availableAction, bool 
     const auto inFlight = [&](const QString& state, const QString& label, int percent, const QString& following,
                               const QString& action, const QString& verb) -> SwapRow {
         const qint64 seconds = action == refundAction ? refundSeconds : secondsInFlight;
-        if (seconds < kResubmitAfterSeconds && failureClass.isEmpty()) return {state, label, percent, following, "", ""};
+        if (wait.holds && failureClass.isEmpty()) return {state, label, percent, wait.text, "", ""};
+        if (seconds < kResubmitAfterSeconds && failureClass.isEmpty())
+            return {state, label, percent, wait.text.isEmpty() ? following : wait.text, "", ""};
         const QString stuck = !failureClass.isEmpty() ? "Your Node last backed off (" + failureClass + ")"
                                                       : "No change for " + minutesDisplay(seconds);
         return {state, label, percent,
@@ -683,7 +786,8 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
             const QString swapId = swap.value("swap_id").toString();
             const QString direction = directionName(swap.value("route").toObject().value("direction").toString());
             const QString nodeState = swap.value("state").toString();
-            const SwapRow row = takerRow(nodeState, swap.value("available_action").toString(),
+            const SwapWait wait = swapWait(swap.value("last_outcome").toObject(), QStringLiteral("taker"));
+            SwapRow row = takerRow(nodeState, swap.value("available_action").toString(),
                                          lockedSwaps.contains(swapId), direction, pair,
                                          formatForeign(pair, integerField(swap, "foreign_units")),
                                          formatLez(integerField(swap, "lez_units")),
@@ -694,7 +798,11 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
                                          swap.value("actor_phase").toString(),
                                          secondsInState(QStringLiteral("taker"), swapId, nodeState),
                                          swap.value("last_failure_class").toString(),
-                                         integerField(swap.value("terms").toObject(), "later_refund_earliest_unix_seconds"));
+                                         integerField(swap.value("terms").toObject(), "later_refund_earliest_unix_seconds"),
+                                         wait);
+            // A running row that asks nothing of the owner says what its
+            // actor waits for, when the Node names it.
+            if (!wait.text.isEmpty() && waitSpeaksFor(row.state, row.action)) row.detail = wait.text;
             swaps.append(swapRowObject(row, swapId, swap.value("offer_id").toString(), direction, pair,
                                        QStringLiteral("Munich Vault 01"), wallet.label, QStringLiteral("taker"),
                                        static_cast<qint64>(swap.value("progress_generation").toDouble()),
@@ -886,7 +994,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             const QString swapId = swap.value("id").toString();
             const QString direction = directionName(swap.value("direction").toString());
             QString phase, nextAction, schedule, failureClass, attentionReason, heldBy;
-            QJsonObject terms;
+            QJsonObject terms, lastOutcome;
             QJsonArray effects;
             const Reply monitored = decode(rpc.call("maker_actor_monitor_v1", compact({{"id", swapId}})));
             if (monitored.ok) {
@@ -895,6 +1003,7 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
                 failureClass = result.value("last_failure_class").toString();
                 attentionReason = result.value("attention_reason").toString();
                 heldBy = result.value("revealing_claim_held_by").toString();
+                lastOutcome = result.value("last_outcome").toObject();
                 terms = result.value("terms").toObject();
                 effects = result.value("effects").toArray();
                 const QJsonObject observation = result.value("progress").toObject().value("observation").toObject();
@@ -909,7 +1018,9 @@ QJsonObject makerSnapshotObject(const LocalJsonRpcClient& rpc, const MakerWallet
             for (const QJsonValue& effect : effects)
                 claimSent = claimSent || (effect.toObject().value("pending").toBool()
                                           && effect.toObject().value("kind").toString() == QStringLiteral("followup_claim"));
-            const SwapRow row = makerRow(phase, nextAction, schedule, direction, pair, failureClass, claimSent, attentionReason, heldBy);
+            SwapRow row = makerRow(phase, nextAction, schedule, direction, pair, failureClass, claimSent, attentionReason, heldBy);
+            const SwapWait wait = swapWait(lastOutcome, QStringLiteral("maker"));
+            if (!wait.text.isEmpty() && waitSpeaksFor(row.state, row.action)) row.detail = wait.text;
             swaps.append(swapRowObject(row, swapId, QString(), direction, pair, wallet.label,
                                        QStringLiteral("Zurich Wallet 01"), QStringLiteral("maker"), 0, terms, fill, effects));
             if (row.state == "completed") ++completed;

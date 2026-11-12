@@ -231,6 +231,54 @@ class LaneGroups(Runner):
         self.assertLess(max(refund_ends), min(fast_starts), 'no refund test still ran at the switch')
 
 
+class ChainEvidence(Runner):
+    """#103 item 12: each try's start and verdict carry the finalized height and
+    the sequencer's tip, and a freeze names the tip it froze under."""
+    def test_each_try_logs_finality_and_the_tip(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        log = (self.out / 'regress.log').read_text()
+        self.assertRegex(log, r'node:btc:happy:TakerSellsLez \(try 1\) starts: LEZ finalized \d+, tip \d+')
+        self.assertRegex(log, r'=== node:btc:happy:TakerSellsLez \(try 1\): PASSED .*; LEZ finalized \d+, tip \d+')
+
+    def test_lanes_log_finality_and_the_tip_too(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez', 'node:btc:replay:TakerSellsLez', LEZ_LANES='2')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        log = (self.out / 'regress.log').read_text()
+        self.assertRegex(log, r'\[lane \d\] node:btc:happy:TakerSellsLez \(try 1\) starts: LEZ finalized \d+, tip \d+')
+        self.assertRegex(log, r'=== node:btc:replay:TakerSellsLez \(try 1, lane \d\): PASSED in \d+ s; '
+                              r'LEZ finalized \d+, tip \d+')
+
+    def test_a_freeze_names_the_tip(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez', plan={'happy': {'freeze_once': True}},
+                              LEZ_LANES='2')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertRegex((self.out / 'regress.log').read_text(), r'for 3 s \(sequencer tip \d+\): the chain is frozen')
+        rows = [line.split('\t') for line in (self.out / 'chain.tsv').read_text().splitlines()]
+        self.assertTrue(rows and all(len(row) == 4 and row[1] == 'lanes' for row in rows), rows)
+
+
+class Tiers(unittest.TestCase):
+    """#103 item 14: the late-claim scenarios run in `full`, both directions;
+    `smoke` is the six happy swaps it was."""
+    def tier(self, name):
+        return subprocess.run(['bash', str(SCRIPTS / 'regress.sh'), 'list', name], capture_output=True, text=True,
+                              check=True).stdout.split()
+
+    def test_full_has_both_late_claim_cases_in_both_directions(self):
+        full = self.tier('full')
+        for scenario in ('late-claim-confirms', 'late-claim-unmined'):
+            for direction in ('TakerSellsLez', 'TakerSellsForeign'):
+                self.assertIn(f'node:btc:{scenario}:{direction}', full)
+        self.assertEqual(len(full), len(set(full)))
+
+    def test_smoke_is_unchanged(self):
+        self.assertEqual(self.tier('smoke'), [
+            'node:btc:happy:TakerSellsLez', 'node:zec:zec-happy:TakerSellsLez',
+            'node:btc:happy:TakerSellsForeign', 'node:zec:zec-happy:TakerSellsForeign',
+            'ui:btc:happy:TakerSellsLez', 'ui:zec:zec-happy:TakerSellsForeign'])
+
+
 class LaneNames(unittest.TestCase):
     def names(self, lane, **env):
         script = ('source "$1"; echo "$LEZ_CONTAINER_PREFIX $LEZ_LANE_RUNTIME $LEZ_ZEBRA_URL $LEZ_ZEBRA_HOST '
