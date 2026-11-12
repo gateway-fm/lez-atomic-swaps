@@ -2725,7 +2725,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
     publishes on its running Node (zec_take_time_offers); its agreement facts
     are filled in after the scenario's own take (zec_taker_actor_config)."""
     reuse = os.environ.get("LEZ_ZEC_REUSE_CORRIDOR") == "1"
-    if reuse and swap_id and taker_has_take_time_swap(swap_id):
+    if reuse and swap_id and ((LANE_RUNTIME / "zec" / "take-time" / f"{swap_id}.json").is_file()
+                              or taker_has_take_time_swap(swap_id)):
         # A swap agreed at take time (a desk's Zcash offer) has no corridor: its
         # facts are in the Taker's swap directory.
         return zec_dynamic_corridor(swap_id, "")
@@ -3299,7 +3300,15 @@ def zec_dynamic_corridor(swap_id: str, offer_id: str) -> dict:
               "'taker_funding':r['request']['taker_funding'],'offer_id':r['request']['offer_id']}))\n")
     read = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", reader, swap_id],
                           capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
-    if read.returncode != 0 or not read.stdout.strip():
+    # A desk journey may have the Taker's Node stopped (zec-survivor): the
+    # facts read once are kept on the host and reused.
+    cached = LANE_RUNTIME / "zec" / "take-time" / f"{swap_id}.json"
+    if read.returncode == 0 and read.stdout.strip():
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text(read.stdout)
+    elif cached.is_file():
+        read = subprocess.CompletedProcess(read.args, 0, cached.read_text(), "")
+    else:
         raise Failure(f"the Taker has no take-time swap {swap_id[:12]}: {read.stderr.strip()[:200]}")
     facts = json.loads(read.stdout)
     response = facts["response"]
