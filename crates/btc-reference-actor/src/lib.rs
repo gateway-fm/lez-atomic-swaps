@@ -7660,17 +7660,8 @@ where
                 .map_err(|_| ActorCommandError::StateUnavailable)?;
         }
 
-        let request = finalized_lez_claim_request(
-            self.config,
-            agreement,
-            transition,
-            &self.prepared_claim,
-            self.effect.as_ref(),
-        )?;
-        let durable_request = request.clone();
-        let presence = self
-            .chain
-            .classify_finalized_witnessed_claim(request)
+        let (durable_request, presence) = self
+            .classify_in_discovery_or_full_span(agreement, transition)
             .await?;
         match &presence {
             FinalizedWitnessedClaimPresence::PresentExact {
@@ -7759,6 +7750,56 @@ impl<P> LezClaimObserver<'_, P>
 where
     P: LezClaimChainPort,
 {
+    /// Classifies the claim in the swap's discovery window and, when it is
+    /// absent there while the chain has grown past that window, once more
+    /// over the whole span since the swap's start. A claim lands until the
+    /// LEZ refund time, which for the leg that refunds later lies past the
+    /// window bounding the Maker's lock (a Bitcoin claim mined late, then
+    /// the follow-up claim: swap fd0bf19d, final in block 525 of a window
+    /// ending near 455), as the LEZ refund lookups already allow for.
+    async fn classify_in_discovery_or_full_span(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: ClaimTransition,
+    ) -> Result<
+        (
+            ObserveFinalizedWitnessedClaimRequest,
+            FinalizedWitnessedClaimPresence,
+        ),
+        ActorCommandError,
+    > {
+        let request = finalized_lez_claim_request(
+            self.config,
+            agreement,
+            transition,
+            &self.prepared_claim,
+            self.effect.as_ref(),
+        )?;
+        let presence = self
+            .chain
+            .classify_finalized_witnessed_claim(request.clone())
+            .await?;
+        if let FinalizedWitnessedClaimPresence::NotFound { finalized_tip, .. } = &presence {
+            let full_span = self.config.full_span_window(finalized_tip.height)?;
+            if full_span.max_blocks() > request.window.max_blocks() {
+                let widened = finalized_lez_claim_request_in(
+                    self.config,
+                    agreement,
+                    transition,
+                    &self.prepared_claim,
+                    self.effect.as_ref(),
+                    full_span,
+                )?;
+                let presence = self
+                    .chain
+                    .classify_finalized_witnessed_claim(widened.clone())
+                    .await?;
+                return Ok((widened, presence));
+            }
+        }
+        Ok((request, presence))
+    }
+
     async fn reconcile_and_maybe_submit(
         &self,
         agreement: &BtcAgreementV1,
@@ -7881,25 +7922,8 @@ where
             FinalizedWitnessedAssetTransactionTargetV2::DiscoverByTerms {},
             |effect| FinalizedWitnessedAssetTransactionTargetV2::exact(effect.transaction.clone()),
         );
-        let window = self.config.discovery_window()?;
-        let request_id = finalized_lez_asset_claim_request_id(
-            self.config,
-            agreement,
-            transition,
-            &binding,
-            &self.prepared_claim,
-            &target,
-            window,
-        )?;
-        let outcome = self
-            .chain
-            .classify_finalized_asset_claim(
-                &binding,
-                request_id.clone(),
-                self.prepared_claim.clone(),
-                target.clone(),
-                window,
-            )
+        let (window, request_id, outcome) = self
+            .classify_asset_in_discovery_or_full_span(agreement, transition, &binding, &target)
             .await?;
 
         // A canonical conflicting public transaction burns authority before
@@ -7964,6 +7988,58 @@ impl<P> LezAssetClaimObserver<'_, P>
 where
     P: LezAssetClaimChainPort,
 {
+    /// The asset claim's lookup, widened as the native one is
+    /// ([`LezClaimObserver::classify_in_discovery_or_full_span`]).
+    async fn classify_asset_in_discovery_or_full_span(
+        &self,
+        agreement: &BtcAgreementV1,
+        transition: ClaimTransition,
+        binding: &BtcLezAssetBridgeBindingV2,
+        target: &FinalizedWitnessedAssetTransactionTargetV2,
+    ) -> Result<
+        (
+            DiscoveryWindow,
+            RequestId,
+            FinalizedWitnessedAssetScanOutcomeV2<FinalizedWitnessedAssetClaimFactsV2>,
+        ),
+        ActorCommandError,
+    > {
+        let discovery = self.config.discovery_window()?;
+        let mut window = discovery;
+        loop {
+            let request_id = finalized_lez_asset_claim_request_id(
+                self.config,
+                agreement,
+                transition,
+                binding,
+                &self.prepared_claim,
+                target,
+                window,
+            )?;
+            let outcome = self
+                .chain
+                .classify_finalized_asset_claim(
+                    binding,
+                    request_id.clone(),
+                    self.prepared_claim.clone(),
+                    target.clone(),
+                    window,
+                )
+                .await?;
+            if let FinalizedWitnessedAssetScanOutcomeV2::Absent {
+                finalized_clock, ..
+            } = &outcome
+            {
+                let full_span = self.config.full_span_window(finalized_clock.height)?;
+                if window == discovery && full_span.max_blocks() > window.max_blocks() {
+                    window = full_span;
+                    continue;
+                }
+            }
+            return Ok((window, request_id, outcome));
+        }
+    }
+
     async fn reconcile_asset_and_maybe_submit(
         &self,
         agreement: &BtcAgreementV1,
@@ -8263,7 +8339,40 @@ fn finalized_lez_claim_request(
     claim: &PreparedWitnessedClaim,
     effect: Option<&PreparedLezClaimEffect>,
 ) -> Result<ObserveFinalizedWitnessedClaimRequest, ActorCommandError> {
+    finalized_lez_claim_request_in(
+        config,
+        agreement,
+        transition,
+        claim,
+        effect,
+        config.discovery_window()?,
+    )
+}
+
+/// Whether `window` is one a claim lookup may scan: the swap's discovery
+/// window, or the whole span since the swap's start that a lookup widens to
+/// once the chain has grown past it ([`ActorConfig::full_span_window`]).
+fn admissible_lez_claim_window(
+    config: &ActorConfig,
+    window: DiscoveryWindow,
+) -> Result<bool, ActorCommandError> {
+    let discovery = config.discovery_window()?;
+    Ok(window.start_height() == discovery.start_height()
+        && window.max_blocks() >= discovery.max_blocks())
+}
+
+fn finalized_lez_claim_request_in(
+    config: &ActorConfig,
+    agreement: &BtcAgreementV1,
+    transition: ClaimTransition,
+    claim: &PreparedWitnessedClaim,
+    effect: Option<&PreparedLezClaimEffect>,
+    window: DiscoveryWindow,
+) -> Result<ObserveFinalizedWitnessedClaimRequest, ActorCommandError> {
     validate_actor_binding(config, agreement)?;
+    if !admissible_lez_claim_window(config, window)? {
+        return Err(ActorCommandError::AgreementBindingInvalid);
+    }
     if agreement
         .coordinator()
         .funded_chain(transition.funded_participant())
@@ -8275,7 +8384,6 @@ fn finalized_lez_claim_request(
         validate_prepared_lez_effect(effect, transition)?;
     }
     let terms = witnessed_lez_terms(agreement)?;
-    let window = config.discovery_window()?;
     let target = effect.map_or(
         FinalizedWitnessedClaimObservationTarget::DiscoverByTerms,
         |value| FinalizedWitnessedClaimObservationTarget::Exact {
@@ -8474,7 +8582,14 @@ fn validate_finalized_lez_claim_binding(
 ) -> Result<(), ActorCommandError> {
     let prepared = load_prepared_witnessed_claim(config, agreement)?;
     if request
-        != &finalized_lez_claim_request(config, agreement, transition, &prepared.claim, effect)?
+        != &finalized_lez_claim_request_in(
+            config,
+            agreement,
+            transition,
+            &prepared.claim,
+            effect,
+            request.window,
+        )?
     {
         return Err(ActorCommandError::AgreementBindingInvalid);
     }

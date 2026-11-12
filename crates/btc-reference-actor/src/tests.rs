@@ -6993,7 +6993,7 @@ impl LezClaimChainPort for LateLezClaimPort {
 /// block 525, before the Taker's refund time. The discovery window, the
 /// swap's start plus 300 blocks, ended near block 455, so neither the Maker
 /// (exact lookup) nor the Taker (discovery by terms) ever found it: both
-/// waited at claim_evidence_available for good, the LEZ already paid out. A
+/// waited at `claim_evidence_available` for good, the LEZ already paid out. A
 /// claim can land until the LEZ refund time, past the window that bounds
 /// the Maker's lock; a lookup that finds nothing in that window while the
 /// chain has grown past it looks again over the whole span since the start,
