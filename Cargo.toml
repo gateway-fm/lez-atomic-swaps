@@ -18,6 +18,7 @@ members = [
     "crates/swap-core",
     "crates/swap-sdk-core",
     "crates/swap-store",
+    "crates/systemd-credential",
     "crates/taker-node",
     "crates/xmr-monero-adapter",
     "crates/xmr-release-authority",

@@ -2052,6 +2052,7 @@ dependencies = [
  "lez-btc-core-adapter",
  "lez-btc-swap-sdk",
  "lez-swap-core",
+ "lez-systemd-credential",
  "lez-zec-swap-sdk",
  "rustix",
  "secp256k1 0.29.1",
@@ -2169,6 +2170,7 @@ dependencies = [
  "lez-swap-core",
  "lez-swap-sdk-core",
  "lez-swap-store",
+ "lez-systemd-credential",
  "lez-xmr-swap-sdk",
  "rustix",
  "secp256k1 0.29.1",
@@ -2245,6 +2247,14 @@ dependencies = [
  "zcash_protocol",
  "zcash_transparent",
  "zeroize",
+]
+
+[[package]]
+name = "lez-systemd-credential"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+ "tempfile",
 ]
 
 [[package]]

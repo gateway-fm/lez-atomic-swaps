@@ -1,12 +1,6 @@
 //! Owner-private file loading shared by Maker application binaries.
 
-use std::{
-    ffi::OsStr,
-    fs::File,
-    io::Read as _,
-    os::unix::fs::MetadataExt as _,
-    path::{Component, Path},
-};
+use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _, path::Path};
 
 use anyhow::{Context as _, ensure};
 use lez_swap_store::open_no_symlinks;
@@ -103,8 +97,7 @@ fn read_private_file_snapshot_inner(
     purpose: &str,
     after_read: impl FnOnce(),
 ) -> anyhow::Result<PrivateFileSnapshot> {
-    let credential =
-        is_systemd_credential_path(path, std::env::var_os("CREDENTIALS_DIRECTORY").as_deref());
+    let credential = lez_systemd_credential::is_credential_path(path);
     let mut file = open_private_file(path, purpose)?;
     let before = validate_private_file(&file, maximum_bytes, purpose, credential)?;
     let mut bytes = Zeroizing::new(Vec::new());
@@ -233,8 +226,7 @@ fn validate_private_file(
 }
 
 /// Owned by the effective user with mode 0400 or 0600; or, for a file systemd hands the
-/// service as a credential, owned by root:root and unwritable (0400, or 0440 when systemd
-/// grants the service user read access through an ACL, whose mask shows as the group bits).
+/// service as a credential, root:root and unwritable (`lez_systemd_credential`).
 const fn private_file_ownership_ok(
     owner: u32,
     group: u32,
@@ -243,36 +235,8 @@ const fn private_file_ownership_ok(
     systemd_credential: bool,
 ) -> bool {
     (owner == effective_user && matches!(mode, 0o400 | 0o600))
-        || (systemd_credential && owner == 0 && group == 0 && matches!(mode, 0o400 | 0o440))
-}
-
-/// Whether `path` names an entry directly inside the systemd credential directory, given as
-/// the service's `CREDENTIALS_DIRECTORY`, and that directory is root-owned and writable by
-/// root alone. The comparison is by path components; the file itself is then opened with no
-/// symbolic link anywhere in its path, so the entry really is in that directory, and only
-/// root can have put it there.
-fn is_systemd_credential_path(path: &Path, credentials_directory: Option<&OsStr>) -> bool {
-    let Some(directory) = credentials_directory.map(Path::new) else {
-        return false;
-    };
-    is_direct_child(path, directory)
-        && open_no_symlinks(
-            directory,
-            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NONBLOCK,
-            Mode::empty(),
-        )
-        .ok()
-        .and_then(|directory| directory.metadata().ok())
-        .is_some_and(|metadata| metadata.uid() == 0 && metadata.mode() & 0o022 == 0)
-}
-
-fn is_direct_child(path: &Path, directory: &Path) -> bool {
-    directory.is_absolute()
-        && !directory
-            .components()
-            .any(|component| component == Component::ParentDir)
-        && path.parent() == Some(directory)
-        && matches!(path.components().next_back(), Some(Component::Normal(_)))
+        || (systemd_credential
+            && lez_systemd_credential::credential_ownership_ok(owner, group, mode))
 }
 
 #[cfg(test)]
@@ -281,10 +245,9 @@ mod tests {
         fs::{self, OpenOptions},
         io::Write as _,
         os::unix::fs::PermissionsExt as _,
-        path::Path,
     };
 
-    use super::{is_direct_child, private_file_ownership_ok, read_private_file_snapshot_inner};
+    use super::{private_file_ownership_ok, read_private_file_snapshot_inner};
 
     #[test]
     fn snapshot_rejects_length_mutation_after_reading_same_descriptor() {
@@ -350,62 +313,10 @@ mod tests {
     }
 
     #[test]
-    fn credential_rule_accepts_only_an_unwritable_root_owned_file() {
+    fn credential_rule_applies_only_to_a_credential_path() {
         let service = 990;
-        assert!(private_file_ownership_ok(0, 0, 0o400, service, true));
         assert!(private_file_ownership_ok(0, 0, 0o440, service, true));
-        for mode in [0o600, 0o640, 0o444, 0o460, 0o4400, 0o1440] {
-            assert!(
-                !private_file_ownership_ok(0, 0, mode, service, true),
-                "{mode:o}"
-            );
-        }
         assert!(!private_file_ownership_ok(0, service, 0o440, service, true));
-        assert!(!private_file_ownership_ok(991, 0, 0o400, service, true));
-    }
-
-    #[test]
-    fn credential_path_must_sit_directly_in_the_named_directory() {
-        let directory = Path::new("/run/credentials/lez-maker-node.service");
-        assert!(is_direct_child(
-            &directory.join("delivery-signing.key"),
-            directory
-        ));
-        assert!(is_direct_child(
-            Path::new("/run/credentials/lez-maker-node.service/./key"),
-            directory
-        ));
-        for path in [
-            "/run/credentials/lez-maker-node.service/sub/key",
-            "/run/credentials/lez-maker-node.service/../other.service/key",
-            "/run/credentials/lez-maker-node.service/..",
-            "/run/credentials/lez-maker-node.service",
-            "/etc/lez/maker/key",
-            "run/credentials/lez-maker-node.service/key",
-        ] {
-            assert!(!is_direct_child(Path::new(path), directory), "{path}");
-        }
-        assert!(!is_direct_child(
-            Path::new("run/credentials/x/key"),
-            Path::new("run/credentials/x")
-        ));
-        assert!(!is_direct_child(
-            Path::new("/run/credentials/x/../y/key"),
-            Path::new("/run/credentials/x/../y")
-        ));
-    }
-
-    #[test]
-    fn credential_directory_must_be_owned_by_root() {
-        let run = tempfile::tempdir().unwrap();
-        let path = run.path().join("key");
-        private_file(&path, &[7; 32]);
-        // Only a root-owned directory is trusted, and a test run as root owns its tempdir.
-        assert_eq!(
-            super::is_systemd_credential_path(&path, Some(run.path().as_os_str())),
-            rustix::process::geteuid().is_root()
-        );
-        assert!(!super::is_systemd_credential_path(&path, None));
     }
 
     fn private_file(path: &std::path::Path, bytes: &[u8]) {
