@@ -565,15 +565,17 @@ Running both roles on one Mac, headless, against the devnet's chains in
 Docker (only the chain containers running; the containers' Nodes stopped,
 since the native Nodes take the same identities):
 
-- **One Logos session per role.** The launcher reads the role's settings
-  from the host's environment under names both roles share
-  (`LEZ_SIDECAR_PORT_BASE`, `LEZ_WALLET_SIGNER_SOCKET`, `LEZ_BTC_WALLET`,
-  `LEZ_NODE_LOG_FILE`), as each role's container has its own environment, so
-  one host cannot run both roles; each role gets its own `logosctl` session
-  (`--config-dir`), daemon and environment, with one `LEZ_NODE_HOME` for
-  both so the Taker finds the Maker's Delivery directory and Chat socket.
-  The Maker's sidecar ports start at 19000 and the Taker's at 19500, as in
-  Compose, so the two never meet on the shared loopback.
+- **One Logos host for both roles.** One `logosctl` session (or one
+  Basecamp with both desks) runs both Nodes under one `lez_swap_node`, with
+  one LEZ wallet in `lez_core` holding both roles' accounts and one signer
+  socket per role. The environment sets the role-specific names
+  (`LEZ_MAKER_SIDECAR_PORT_BASE=19000`, `LEZ_TAKER_SIDECAR_PORT_BASE=19500`,
+  `LEZ_<ROLE>_WALLET_SIGNER_SOCKET`, `LEZ_<ROLE>_BTC_WALLET`,
+  `LEZ_<ROLE>_NODE_LOG_FILE`) and one `LEZ_NODE_HOME`, so the Taker finds the
+  Maker's Delivery directory and Chat socket. The two roles' sidecar port
+  ranges are those of Compose and do not meet on the shared loopback. The
+  Maker is started first: the Taker reads the Maker's Delivery identity when
+  it starts.
 - **Inputs in `LEZ_NODE_HOME`.** `identity/<role>/` (`identity.json`,
   `lez-signer.key`, the Maker's `zcash.key`), `market-bootstrap.env` and
   `btc-rpc-cookie`, copied 0600 from the stack's `runtime/`.
