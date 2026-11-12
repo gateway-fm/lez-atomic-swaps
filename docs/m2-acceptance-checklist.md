@@ -15,9 +15,9 @@ said).
 
 M2 is [rfp#122](https://github.com/logos-co/rfp/issues/122). Its six official
 deliverables, each mapped to the artefact that answers it, the proof the
-reviewer can run, and where it stands on `feat/m2-zec-on-docker` today.
+reviewer can run, and where it stands at release v0.3.0.
 
-## State on 2026-11-11 (PR #120)
+## State at release v0.3.0 (2026-11-12)
 
 Read this first; the tables below were written on 2026-11-03 for the Docker
 stack and are kept as the record of that submission shape.
@@ -43,6 +43,9 @@ stack and are kept as the record of that submission shape.
   of the demo set.
 - **Review findings due with the ZEC submission** (issue #103 items 1 and 16,
   #112, #113): fixed in PR #120; `docs/issue-closing-notes-2026-11-11.md`.
+  #103 closed with PR #131 and #113 with PR #127 (2026-11-12); #112 stays
+  open for its remaining asks (chain events in the Activity pane,
+  `btc_height`).
 - **The evidence set** is `docs/evidence/regression-m2-2026-11-11/`: all 93
   tests in one run on three lanes (92 passed; the one failure and its reruns
   are explained in its `RESULTS.txt`), with provenance. The suite ran again
@@ -58,19 +61,21 @@ stack and are kept as the record of that submission shape.
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
-- **Still open for the submission:** the release workflow green on the commit
-  to be tagged (on `main` at `af3ac978`, `start.sh` could not finish; the
-  fixes and the runs that show them are in
-  `docs/evidence/macos-arm64-release-gates-2026-11-11/`), then the tag and
-  release (0.3.0), the rfp#122 comment, the fresh-machine walk of the Zcash
-  guide (U10).
+- **`start.sh` on `main`.** On `af3ac978` it could not finish; the four
+  fixes are on `main` since PR #127 (`b6b1c273`), and the runs that show
+  them are in `docs/evidence/macos-arm64-release-gates-2026-11-11/`.
+- **Still open for the submission:** the release workflow on the commit to
+  be tagged (rehearsal on `b6b1c273`, run 43189324839: TBD(release)); the
+  full regression on `b6b1c273` on an Apple-silicon Mac (TBD(release)); the
+  tag and release (0.3.0, notes drafted in `docs/release-notes-0.3.0.md`);
+  the rfp#122 comment; the fresh-machine walk of the Zcash guide (U10).
 
 ## The six deliverables
 
 | # | Official deliverable (rfp#122) | Artefact | Proof | Today |
 |---|---|---|---|---|
 | 1 | LEZ escrow program v1 deployed on testnet 0.2, SHA-256 HTLC preimage path, `BlockValidityWindow` / `TimestampValidityWindow` for the refund | The deployed LEZ v0.2 escrow (devnet ImageID `c22d61fc…`, the same program the BTC leg settles on); the ZEC agreement binds `secret_digest`, the Maker's `lez_revealing_claim` reveals it, `ZecRefundPlanV1` carries both windows | M6 service certificates (claim + refund, 2026-08-04); the devnet `zec-happy` / refund scenarios below; **S1 needs a version-pinned deployment manifest and a public testnet-0.2 smoke transaction** | Devnet: yes, settled and refunded in both directions in `docs/evidence/regression-m2-2026-11-02/`. Public testnet 0.2: open (S1) |
-| 2 | BIP-199 HTLC scripts and transaction construction on the transparent pool, integration tests against Zcash testnet **in CI** | `lez-zec-swap-sdk` (`bip199_contract`, `bip199_interpreter`, `zcash_transactions`, `zcash_funding` tests), `lez-zebra-node-adapter`, `zebra_regtest.rs` (fund → claim → refund through Zebra consensus) | A CI job that runs the Zebra regtest test on every push to the M2 branch. **On this branch CI parks the ZEC tests and excludes `lez-zebra-node-adapter`; the gate exists only on PR #116** (`8be5d829`, `2bf2e8f6`, `999bddfe`) | Done 2026-11-03: the three commits are on this branch (`ff958ec8`, `6574eeea`, `055bb204`), the Zebra test image's base moved to a clean distroless (`b7251402`); every new step ran green locally before the push |
+| 2 | BIP-199 HTLC scripts and transaction construction on the transparent pool, integration tests against Zcash testnet **in CI** | `lez-zec-swap-sdk` (`bip199_contract`, `bip199_interpreter`, `zcash_transactions`, `zcash_funding` tests), `lez-zebra-node-adapter`, `zebra_regtest.rs` (fund → claim → refund through Zebra consensus) | The `zebra-regtest` job of `.github/workflows/ci.yml`, which runs the Zebra regtest test on every push; it was first written on PR #116 (`8be5d829`, `2bf2e8f6`, `999bddfe`) | Done 2026-11-03 (`ff958ec8`, `6574eeea`, `055bb204`; the Zebra test image's base moved to a clean distroless, `b7251402`); on `main` since PR #119 |
 | 3 | LEZ/ZEC SDK with full lifecycle coverage (discovery, negotiation, escrow creation, claim, refund) | Name it: **`lez-zec-swap-sdk`** on `lez-swap-sdk-core` (confirm the layering from `docs/architecture/0013-sdk-layering.md`); `docs/sdk-lez-zec.md` stage → API → test map; `crates/zec-swap-sdk/README.md`; `crates/zec-swap-sdk/examples/full-lifecycle.rs` offline, compiled under `--all-targets` | The reviewer builds and runs the example from the tag; the named tests in `tests/sdk_lifecycle.rs` (e.g. `first_claimant_activation_persists_agreement_and_claim_preimage_in_both_directions`, `maker_happy_path_locks_the_opposite_chain_and_restarts_in_both_legs_locked`, `taker_reorg_between_lez_maker_steps_suspends_funding_until_replacement`) cited per stage; traceability U1 / S8 rows updated | Done: `docs/sdk-lez-zec.md`, `crates/zec-swap-sdk/README.md`, `crates/zec-swap-sdk/examples/full-lifecycle.rs`; U1 / S8 rows updated |
 | 4 | Step-by-step Zcash node setup (the M1-chosen node plus the public-node option): configuration, wallet setup, obtaining testnet funds | `docs/zcash-testnet-setup.md` (258 lines: self-hosted Zebra route, public Zebrad provider route, disposable transparent wallet and funds, corridor rehearsal) | Read it against the five topics the M3 reviewer checked on U8: each route, wallet creation, funding, **which direction each route serves and why**; a fresh-machine walk (U10) | Guide done (both routes, wallet, funding, directions). A fresh-machine record (U10) is still open |
 | 5 | Documented privacy posture: transparent-pool visibility and the shield-after-swap user pattern | One named section the reviewer can link (`docs/sdk-lez-zec.md` or `docs/zec-privacy-posture.md`), citing `docs/milestone-1/protocol-design.md`, ADR 0004, and the Node's `ShieldReceivedTransparentZecSeparately` guidance; the Taker desk's label for a Zcash row restored ("After a transparent ZEC claim, move funds to a shielded wallet address.") | The doc; the desk label visible in the ZEC desk recording | Done: `docs/sdk-lez-zec.md#privacy-posture`; the Taker desk shows the guidance on a completed ZEC row again (`takerShielding`, `node_market.cpp`) |
@@ -96,7 +101,7 @@ stack and are kept as the record of that submission shape.
 | `node-e2e.py --pair Zcash`, **both directions** (handover Part D) | happy, replay, wrong-inputs, restart-taker, restart-maker, survivor, concurrent, taker-refund, maker-refund, regenerated-catalog, tampered-catalog (fast profile for the refunds) | Decided 2026-10-28: both directions through the Nodes. Done 2026-11-01: 28/28 in both directions (the eleven plus early-lock, offline-after-lock and refund-then-maker-lock for BTC parity), profile `deterministic-local-devnet-v3` |
 | desk scenarios, Zcash | happy, concurrent, one refund (+ restart-taker if the catalog survives a restart, which it should) | Done 2026-11-01/02: 15 desk journeys in both directions (taker-refund, maker-refund, concurrent, concurrent-staggered, restart-taker, restart-maker, survivor, node-offline, happy, stale-window) plus the recordings; the Taker Node drives its own first LEZ lock after the take |
 | BTC regression on the same binaries | `node-e2e.py` 14 × TakerSellsForeign **and** 14 × TakerSellsLez, the desk suites, desk scenarios forward (8) and reversed (7): the full M3-shaped 45 | Decided 2026-10-28: the full set, both directions. Done on the M2 images: Node 28/28 and desks 16/16, eleven of them on a rerun after a devnet finality freeze (see the set's `RESULTS.txt`) |
-| CI | the Zebra regtest gate green on the pushed commit | On this branch since 2026-11-03; green locally (HTLC tests, Trivy 0 HIGH/CRITICAL) |
+| CI | the Zebra regtest gate green on the pushed commit | On `main` since PR #119 (written 2026-11-03); HTLC tests and Trivy 0 HIGH/CRITICAL |
 
 Every scenario exports its Node evidence (`export-node-evidence.py`) under
 the set, as the BTC scenarios do today.
@@ -110,7 +115,7 @@ State on 2026-11-03: items 1 to 6 done (4, the CI gate, on 2026-11-03); 7 done i
    `crates/zec-swap-sdk/examples/full-lifecycle.rs` (deliverable 3).
 2. The privacy-posture section and the restored desk label (5).
 3. `docs/zcash-testnet-setup.md` reviewed against the U8 standard (4).
-4. CI: the Zebra regtest gate and un-parked ZEC tests on this branch (2).
+4. CI: the Zebra regtest gate and un-parked ZEC tests (2).
 5. `docs/requirements-traceability.md`: F4, U1, U6, U10, S1, S5, S8, D1 rows
    edited in place (one row per ID — the guard counts them), "Last
    reconciled" refreshed.
@@ -121,14 +126,18 @@ State on 2026-11-03: items 1 to 6 done (4, the CI gate, on 2026-11-03); 7 done i
    reconciliation's "what bringing ZEC back would take" is now done or
    scoped — update it rather than leave it contradicting the tree.
 8. **No tag until everything is done and the evidence is in** (owner,
-   2026-10-28). The release will be `0.3.0`; until then a draft PR from
-   `feat/m2-zec-on-docker` to `main` so CI runs on every push, with the
-   release notes drafted alongside.
+   2026-10-28). The release is `0.3.0`. The M2 work reached `main` through
+   PRs #119, #120, #124, #131, #126 and #127; the release notes are drafted
+   in `docs/release-notes-0.3.0.md`.
 9. The rfp#122 comment, in the shape of the accepted rfp#123 one: point at
    the tag, map the six deliverables to links, state the direction and
    desk-lock scope in the body, do not tick Logos's boxes.
 
-## Sequencing against the rfp#122 note — decided
+## Sequencing against the rfp#122 note — decided, then superseded
+
+Superseded on 2026-11-11 (see "State at release v0.3.0" above): M2's
+evidence is produced on the modules stack of #115, as the rfp#122 note
+asked. The decision of 2026-10-28 is kept below as the record.
 
 The only comment on rfp#122 (2026-10-16) records the 13 October call:
 *"Gateway moves the Docker stack into Logos modules before starting M2

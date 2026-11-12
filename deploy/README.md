@@ -29,7 +29,7 @@ that `regress.sh` uses); `scripts/host.sh` refuses an older bash at the start
 of every script and names that command.
 
 ```sh
-tar -xzf lez-swap-stack-v0.2.5-arm64.tar.gz && cd lez-swap-stack-v0.2.5-arm64
+tar -xzf lez-swap-stack-v0.3.0-arm64.tar.gz && cd lez-swap-stack-v0.3.0-arm64
 ./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → desk suites
 ./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two desks
 ```

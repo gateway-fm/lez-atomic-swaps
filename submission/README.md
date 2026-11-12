@@ -4,6 +4,13 @@ This is the reviewer entry point for Gateway's LEZ ⇄ Bitcoin vertical slice.
 It packages the M1 protocol foundation, the M3 Bitcoin implementation evidence,
 and the M6 product surface without claiming unrelated milestone completion.
 
+Milestone 2 (ZEC/LEZ) is release v0.3.0. Its deliverables are mapped in
+[the M2 section of the milestone map](MILESTONES.md#m2--zeclez-leg), its
+release record is [`docs/release-notes-0.3.0.md`](../docs/release-notes-0.3.0.md),
+and the module topology it runs on is traced in
+[`docs/submission-115.md`](../docs/submission-115.md). The deck, walkthrough
+and manifest below predate it and show the BTC pair.
+
 ## Start here
 
 | Artifact | Purpose |
@@ -46,10 +53,11 @@ earlier run `m5arm-0820121736` and its separate record:
 
 ## Claim boundary
 
-This is evidence from Bitcoin Core 31.1 regtest and a private LEZ v0.2 devnet.
+This is evidence from Bitcoin Core 31.1 regtest, Zebra 7.0.0 regtest (M2) and a
+private LEZ v0.2 devnet.
 It is submitted for review; the public milestone issues remain open and their
 checkboxes remain unchecked. The pack does not claim public-network deployment,
-production custody, a formal cryptographic audit, M2 Zcash, M4 Monero, complete
+production custody, a formal cryptographic audit, M4 Monero, complete
 M5 operations, or M7 mainnet readiness.
 
 The historical milestone checkpoints are recorded by commit identity. The
