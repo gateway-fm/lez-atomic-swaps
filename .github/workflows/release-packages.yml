@@ -1,15 +1,23 @@
 name: release-packages
 
 # The eight Logos packages this project publishes to the module catalog, with
-# one platform variant per Linux architecture: the desks
-# lez_atomic_swap_maker, lez_atomic_swap_taker and lez_network,
-# lez_swap_node, the role Node packages lez_maker_node and lez_taker_node,
-# and the patched upstream modules lez_core and lez_indexer_module.
+# one platform variant per Linux architecture and, for the six a party's desk
+# installs, one for macOS on Apple silicon: the desks lez_atomic_swap_maker,
+# lez_atomic_swap_taker and lez_network, lez_swap_node, the role Node
+# packages lez_maker_node and lez_taker_node, and the patched upstream
+# modules lez_core and lez_indexer_module.
 #
 #   variant   builds every package natively on that architecture's runner
 #             (linux-arm64 on ubuntu-24.04-arm, linux-amd64 on ubuntu-24.04),
 #             the same from-scratch.sh steps release-images.yml runs, and
 #             uploads them unpinned as lgx-<variant>
+#   darwin    builds the darwin-arm64 variant of the two desks, lez_swap_node,
+#             both role packages and lez_core on macos-14 (Apple silicon)
+#             with build-darwin-packages.sh, uploaded as lgx-darwin-arm64.
+#             lez_network and lez_indexer_module stay Linux-only: the LEZ
+#             network's operator desk is not installed in a party's Basecamp,
+#             and its node module has not run on macOS. The executables are
+#             signed ad hoc, not with a Developer ID, and not notarised.
 #   merge     merges each package's variants with lgx (the builder's
 #             manifests are identical across variants), pins the merged set
 #             once (pin-package-dependencies.sh, so every variant carries the
@@ -135,9 +143,41 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  darwin:
+    name: packages (darwin-arm64)
+    runs-on: macos-14
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      # risc0 (in lez_core) compiles Metal kernels. Xcode 26 ships the Metal
+      # compiler as a separate component; the flake patch
+      # (builder/patches/logos-execution-zone-module/0001-lez-darwin-metal-*)
+      # lets the Nix build users run it.
+      - name: Metal compiler
+        run: |
+          set -euo pipefail
+          xcrun metal --version >/dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+          xcrun metal --version
+      - name: Rust toolchains (rust-toolchain.toml, the sidecar's 1.96.0)
+        run: rustup toolchain install 1.96.0 --profile minimal && rustup show active-toolchain
+      - name: Build the darwin-arm64 packages
+        run: deploy/scripts/build-darwin-packages.sh --out _out
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lgx-darwin-arm64
+          path: _out
+          retention-days: 7
+          if-no-files-found: error
+
   merge:
     name: merge, pin and verify
-    needs: [variant]
+    needs: [variant, darwin]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -170,7 +210,12 @@ jobs:
           nix --extra-experimental-features "nix-command flakes" build "$LGX_FLAKE" --out-link /tmp/lgx-tool
           for f in /w/_per-variant/*-linux-arm64.lgx; do
             name="$(basename "$f" -linux-arm64.lgx)"
-            /tmp/lgx-tool/bin/lgx merge /w/_per-variant/"$name"-linux-*.lgx -o "/w/_merged/$name.lgx" -y
+            set --
+            for v in /w/_per-variant/"$name"-linux-*.lgx /w/_per-variant/"$name"-darwin-*.lgx; do
+              # lez_network and lez_indexer_module have no darwin file
+              if [ -e "$v" ]; then set -- "$@" "$v"; fi
+            done
+            /tmp/lgx-tool/bin/lgx merge "$@" -o "/w/_merged/$name.lgx" -y
           done
           SH
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/merge.sh:/merge.sh:ro" \
@@ -183,7 +228,8 @@ jobs:
           cat _pinned/packages.tsv
       - name: Verify and lay out the catalog's release assets
         env:
-          REQUESTED: '["linux-amd64","linux-arm64"]'
+          LINUX: '["linux-amd64","linux-arm64"]'
+          ALL: '["darwin-arm64","linux-amd64","linux-arm64"]'
         run: |
           set -euo pipefail
           cat >"$RUNNER_TEMP/verify.sh" <<'SH'
@@ -199,11 +245,12 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" _pinned
           for name in lez_atomic_swap_maker lez_atomic_swap_taker lez_network lez_swap_node lez_maker_node lez_taker_node lez_core lez_indexer_module; do
             manifest="$(cat "_pinned/$name.manifest.json")"
+            case "$name" in lez_network|lez_indexer_module) requested="$LINUX" ;; *) requested="$ALL" ;; esac
             version="$(jq -r .version <<<"$manifest")"
             built="$(jq -c '.main | keys' <<<"$manifest")"
             # every requested variant, each dependency once and pinned
-            jq -e --argjson r "$REQUESTED" '(.main | keys) == $r' <<<"$manifest" >/dev/null \
-              || { echo "$name carries $built, not $REQUESTED" >&2; exit 1; }
+            jq -e --argjson r "$requested" '(.main | keys) == $r' <<<"$manifest" >/dev/null \
+              || { echo "$name carries $built, not $requested" >&2; exit 1; }
             jq -e '[.dependencies[] | objects | .name] as $n
                    | (.dependencies | all(type == "object")) and ($n | length) == ($n | unique | length)' <<<"$manifest" >/dev/null \
               || { echo "$name: a dependency is bare or listed twice" >&2; exit 1; }
@@ -213,7 +260,7 @@ jobs:
             jq -n --arg ref "$name-v$version" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               --arg sha "$(sha256sum "$dir/$name-$version.lgx" | cut -d' ' -f1)" \
               --argjson size "$(stat -c%s "$dir/$name-$version.lgx")" \
-              --argjson manifest "$manifest" --argjson requested "$REQUESTED" \
+              --argjson manifest "$manifest" --argjson requested "$requested" \
               '{publisherRef: $ref, releasedAt: $at, sha256: $sha, size: $size,
                 rootHash: ($manifest.hashes.root // ""),
                 builtVariants: ($manifest.main | keys), missingVariants: ($requested - ($manifest.main | keys)),
