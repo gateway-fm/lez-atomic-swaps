@@ -19,7 +19,7 @@ if [[ ! -d "$source_bin_dir" ]]; then
   exit 1
 fi
 
-for binary in lez-maker-node lez-maker-cli lez-zec-maker-actor; do
+for binary in lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker; do
   source_path="$source_bin_dir/$binary"
   if [[ ! -f "$source_path" || ! -x "$source_path" || -L "$source_path" ]]; then
     echo "required built executable is missing, non-executable, or a symlink: $source_path" >&2
@@ -31,7 +31,7 @@ if [[ ! -f "$unit_source" || -L "$unit_source" ]]; then
   exit 1
 fi
 
-for binary in lez-maker-node lez-maker-cli lez-zec-maker-actor; do
+for binary in lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker; do
   install -D -m 0755 "$source_bin_dir/$binary" \
     "$destination_root/usr/bin/$binary"
 done

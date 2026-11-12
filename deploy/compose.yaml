@@ -371,6 +371,10 @@ services:
       LEZ_NODE_FINALITY_STALL_SECONDS: ${LEZ_NODE_FINALITY_STALL_SECONDS:-}
       # Actor decision trace on stderr (`docker logs`); empty = off.
       LEZ_BTC_ACTOR_TRACE: ${LEZ_BTC_ACTOR_TRACE:-}
+      # A Logos price module file in the container and its sha256
+      # (node-entrypoint.sh, deploy/README.md); empty = none.
+      LEZ_LOGOS_PRICE_MODULE: ${LEZ_LOGOS_PRICE_MODULE:-}
+      LEZ_LOGOS_PRICE_MODULE_SHA256: ${LEZ_LOGOS_PRICE_MODULE_SHA256:-}
     volumes:
       - maker_state:/var/lib/lez/maker
       # The Node's sockets; the Taker Node reaches the Maker's Chat socket here.

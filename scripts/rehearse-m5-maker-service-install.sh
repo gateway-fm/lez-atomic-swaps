@@ -12,6 +12,7 @@ trap cleanup EXIT
 
 cargo build --locked -p lez-maker-node --features pair-zec --bins
 cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor
+cargo build --locked -p lez-logos-price-c-api --bin lez-logos-price-worker
 SOURCE_BIN_DIR="${SOURCE_BIN_DIR:-target/debug}" \
 DESTDIR="$stage" \
   ./scripts/install-maker-node-service.sh
@@ -39,6 +40,7 @@ test "$(stat -c '%a' "$stage/usr/bin/lez-maker-node")" = 755
 test "$(stat -c '%a' "$stage/usr/bin/lez-maker-cli")" = 755
 test "$(stat -c '%a' "$stage/usr/lib/systemd/system/lez-maker-node.service")" = 644
 test "$(stat -c '%a' "$stage/usr/bin/lez-zec-maker-actor")" = 755
+test "$(stat -c '%a' "$stage/usr/bin/lez-logos-price-worker")" = 755
 test "$(stat -c '%a' "$stage/etc/lez/maker/credentials")" = 700
 test "$(stat -c '%a' "$stage/etc/lez/maker/node.json.example")" = 600
 

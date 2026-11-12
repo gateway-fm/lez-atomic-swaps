@@ -413,6 +413,15 @@ case "$role" in
     # How long LEZ finality may stand still before maker_health says so
     # (gen-config.sh: the devnet heartbeat's threshold); unset, the Node's 600 s.
     [[ -z "${LEZ_NODE_FINALITY_STALL_SECONDS:-}" ]] || args+=(--lez-finality-stall-seconds "$LEZ_NODE_FINALITY_STALL_SECONDS")
+    # A Logos price module (deploy/README.md): LEZ_LOGOS_PRICE_MODULE names the
+    # module file, LEZ_LOGOS_PRICE_MODULE_SHA256 its pinned sha256; the Node runs
+    # it in the package's crash-isolated worker for the pairs configured with
+    # the logos-c-api price source. Both or neither; unset, no external source.
+    if [[ -n "${LEZ_LOGOS_PRICE_MODULE:-}${LEZ_LOGOS_PRICE_MODULE_SHA256:-}" ]]; then
+      args+=(--logos-price-worker "$bin/lez-logos-price-worker"
+        --logos-price-module "${LEZ_LOGOS_PRICE_MODULE:?LEZ_LOGOS_PRICE_MODULE_SHA256 needs LEZ_LOGOS_PRICE_MODULE}"
+        --logos-price-module-sha256 "${LEZ_LOGOS_PRICE_MODULE_SHA256:?LEZ_LOGOS_PRICE_MODULE needs LEZ_LOGOS_PRICE_MODULE_SHA256}")
+    fi
     [[ "$transport" != logos ]] || start_chat_gateway --maker-chat-socket "$run/chat.sock"
     node_log_file
     exec "$bin/lez-maker-node" "${args[@]}"

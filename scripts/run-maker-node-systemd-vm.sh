@@ -33,6 +33,7 @@ if [[ -z "${SOURCE_BIN_DIR:-}" ]]; then
   cargo build --locked -p lez-maker-node --features pair-zec --bins
   cargo build --locked -p lez-taker-node --features pair-zec --bins
   cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor
+  cargo build --locked -p lez-logos-price-c-api --bin lez-logos-price-worker
 fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/lez-maker-systemd-vm.XXXXXX")"
@@ -46,7 +47,7 @@ trap cleanup EXIT
 # files and the three binaries. It reaches the VM as a raw read-only disk holding a tar.
 payload="$work/payload"
 install -d "$payload/scripts" "$payload/bin"
-readonly binaries=(lez-maker-node lez-maker-cli lez-zec-maker-actor lez-taker-node lez-taker-cli)
+readonly binaries=(lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker lez-taker-node lez-taker-cli)
 cp scripts/install-maker-node-service.sh scripts/install-taker-node-service.sh "$payload/scripts/"
 cp -r packaging "$payload/"
 for binary in "${binaries[@]}"; do
