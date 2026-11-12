@@ -1374,7 +1374,6 @@ TAKER_PANELS = r'''
 
                         Panel {
                             objectName: "takerReview"
-                            visible: pair.currentText !== "Bitcoin"
                             Layout.fillWidth: true
                             SectionTitle { text: "Review exact terms" }
                             FieldLabel { text: "OFFER ID" }

@@ -4,11 +4,15 @@
 #include "lez_role_node.h"
 #include "lez_role_signer.h"
 
+#include <QCoreApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QSet>
+
+#include <atomic>
+#include <thread>
 
 namespace {
 constexpr qsizetype kMaximumOfferAnnouncementBytes = 32 * 1024;
@@ -173,12 +177,26 @@ QString LezAtomicSwapTakerBackend::initiate(
         || announcement.toBase64() != logosOfferAnnouncementBase64.toLatin1()) return invalid();
     QJsonArray digestBytes;
     for (const char byte : digest) digestBytes.append(static_cast<unsigned char>(byte));
-    return rpc_.call("taker_swap_initiate_v1", compact({{"schema_version", 1},
+    const QString request = compact({{"schema_version", 1},
         {"request_id", requestId}, {"offer_id", offerId},
         {"route", QJsonObject{{"pair", pair}, {"direction", direction}}},
         {"maker_identity", makerIdentity}, {"signed_envelope_sha256", digestBytes},
         {"foreign_units", static_cast<qint64>(foreign)}, {"expected_lez_units", static_cast<qint64>(lez)},
-        {"logos_offer_announcement_base64", logosOfferAnnouncementBase64}}));
+        {"logos_offer_announcement_base64", logosOfferAnnouncementBase64}});
+    // The take's reservation and ceremony rounds travel through this desk's
+    // Logos Chat bridge, whose timers run on this thread: the call waits as
+    // long as the main take's (slowRpc_) on a worker thread while this
+    // thread's event loop keeps the bridge moving frames.
+    QString reply;
+    std::atomic<bool> answered{false};
+    std::thread call([&] {
+        reply = slowRpc_.call("taker_swap_initiate_v1", request);
+        answered = true;
+        QMetaObject::invokeMethod(this, [] {}, Qt::QueuedConnection);  // wakes the loop below
+    });
+    while (!answered) QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents);
+    call.join();
+    return reply;
 }
 
 QString LezAtomicSwapTakerBackend::listSwaps()
