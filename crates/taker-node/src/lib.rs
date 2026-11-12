@@ -26,7 +26,7 @@ pub use taker_facade::{
     TakerRefundRequestV1, TakerRegisteredMethodsV1, TakerSwapInitiateRequestV1,
     TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1, TakerSwapStateV1,
     TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
-    taker_pair_capabilities_v1,
+    TakerWalletBalancesRequestV1, taker_pair_capabilities_v1,
 };
 pub use taker_service::{
     DEFAULT_OBSERVER_SWEEP_INTERVAL, taker_service_rpc_module, taker_service_rpc_module_with_sweep,

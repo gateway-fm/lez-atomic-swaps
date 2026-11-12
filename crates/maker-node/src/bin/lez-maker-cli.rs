@@ -5,10 +5,10 @@ use lez_bridge_protocol::RequestId;
 use lez_maker_node::{
     AlertAcknowledgeRequest, AlertListRequest, CreateSwapRequest, ListRequest,
     LocalPriceSetRequest, MakerActorActionCommitV1, MakerActorActionRequestV1,
-    MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, NodeServiceAction,
-    OfferPublishRequest, OfferWithdrawRequest, OperatorAlertView, PairConfigureRequest,
-    PriceQuoteRequest, PriceQuoteV1, RecoveryRequest, StatusRequest, SwapView, call_local_rpc,
-    control_maker_service, secure_file::load_secp256k1_secret,
+    MakerActorMonitorRequestV1, MakerActorMonitorV1, MakerHealthV1, MakerWalletBalancesRequest,
+    NodeServiceAction, OfferPublishRequest, OfferWithdrawRequest, OperatorAlertView,
+    PairConfigureRequest, PriceQuoteRequest, PriceQuoteV1, RecoveryRequest, StatusRequest,
+    SwapView, call_local_rpc, control_maker_service, secure_file::load_secp256k1_secret,
 };
 use lez_swap_core::{ClockBasis, Pair, SwapDirection};
 use lez_swap_store::{
@@ -79,6 +79,12 @@ enum Command {
     Prices,
     /// Probes the Maker Node and its `SQLite` reader through owner-local RPC.
     Health,
+    /// Reads this Maker's own wallet balances (`maker_wallet_balances_v1`).
+    Balances {
+        /// Also list what its Zcash role can fund from (reads its Zebra).
+        #[arg(long)]
+        zcash: bool,
+    },
     /// Reads one exact route quote through the configured runtime boundary.
     Quote {
         #[arg(long)]
@@ -258,6 +264,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::Value> {
     match command {
         Command::DeliveryIdentity { signing_key_file } => delivery_identity(&signing_key_file),
@@ -281,6 +288,14 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
             let health: MakerHealthV1 =
                 call_local_rpc(socket, "maker_health", &ListRequest::default()).await?;
             serde_json::to_value(health).map_err(Into::into)
+        }
+        Command::Balances { zcash } => {
+            call_local_rpc(
+                socket,
+                "maker_wallet_balances_v1",
+                &MakerWalletBalancesRequest { zcash },
+            )
+            .await
         }
         Command::Quote { pair, direction } => {
             let request = PriceQuoteRequest {

@@ -27,7 +27,7 @@ use lez_zec_swap_sdk::{
     ZecRefundProfile,
 };
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use url::Url;
 use zcash_protocol::consensus::NetworkType;
@@ -42,7 +42,8 @@ use crate::{
         LocalPocZebraRoute, MAX_TESTNET_FUNDING_SCAN_BLOCKS, MINIMUM_CHANGE_ZATOSHIS, RoleCorridor,
         actor_config_input, block_hash_display_hex, compose_agreement_body, connect_zebra,
         create_private_directory, fresh_claim_preimage, material_paths, read_zcash_key_file,
-        read_zebra_credential, select_funding_candidate, write_private_new, zcash_funder,
+        read_zebra_credential, regtest_p2pkh_address, select_funding_candidate, write_private_new,
+        zcash_funder,
     },
     secure_file::{FilePrivacy, read_bounded_identified},
 };
@@ -61,6 +62,8 @@ pub const MAX_ANCHOR_HEIGHT_SKEW_BLOCKS: u32 = 3;
 /// The file a role's take-time draft is kept in; its actor template names it
 /// as the agreement until the countersigned agreement replaces it.
 pub const ZEC_ROLE_DRAFT_FILE: &str = "draft.borsh";
+/// How many of the funder's outputs a balances view lists.
+const MAX_LISTED_FUNDER_OUTPUTS: usize = 8;
 
 /// A Node's Zcash role: the profile it takes swaps under, its Zebra and its
 /// own Zcash key. One file, owner-private (`--zec-role-config` on the Maker,
@@ -373,6 +376,116 @@ where
         candidate.rpc_transaction_id,
         candidate.outpoint.n(),
     ))
+}
+
+/// One transparent output paying a role's Zcash key, as the funder search
+/// finds it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ZecFunderOutputV1 {
+    /// RPC display order.
+    pub transaction_id: Hex32,
+    pub output_index: u32,
+    pub value_zatoshis: u64,
+    pub confirmations: u32,
+    /// Deep enough for a reservation to commit it.
+    pub mature: bool,
+    /// Committed to a reservation or swap of this Node already.
+    pub committed: bool,
+}
+
+/// What a role can fund Zcash from (the `zcash` field of the Nodes'
+/// `*_wallet_balances_v1`): its P2PKH address and the first outputs paying it
+/// in the window the funder search reads. Never fails: a Zebra that cannot be
+/// read leaves `state` `unavailable` and no outputs.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ZecFunderBalanceV1 {
+    pub state: &'static str,
+    pub address: String,
+    pub tip_height: u32,
+    pub scan_from_height: u32,
+    pub min_confirmations: u32,
+    pub outputs: Vec<ZecFunderOutputV1>,
+}
+
+impl ZecFunderBalanceV1 {
+    fn unavailable(owner: &PublicKey) -> Self {
+        Self {
+            state: "unavailable",
+            address: regtest_p2pkh_address(owner).unwrap_or_default(),
+            tip_height: 0,
+            scan_from_height: 0,
+            min_confirmations: 0,
+            outputs: Vec::new(),
+        }
+    }
+}
+
+impl ZecRoleConfigV1 {
+    /// This role's funder view for `owner`, through its own Zebra; `committed`
+    /// are the outpoints the Node's reservations hold.
+    pub async fn funder_balance(
+        &self,
+        owner: &PublicKey,
+        committed: &[CandidateOutpoint],
+    ) -> ZecFunderBalanceV1 {
+        match self.connect() {
+            Ok(rpc) => zec_funder_balance(self, &rpc, owner, committed).await,
+            Err(_) => ZecFunderBalanceV1::unavailable(owner),
+        }
+    }
+}
+
+/// Lists the first outputs paying `owner` from where [`select_zec_funding`]
+/// starts, with the same search at any depth, so a payment that is not yet
+/// mature shows as such. Each search resumes at the last output found.
+pub async fn zec_funder_balance<R>(
+    config: &ZecRoleConfigV1,
+    rpc: &R,
+    owner: &PublicKey,
+    committed: &[CandidateOutpoint],
+) -> ZecFunderBalanceV1
+where
+    R: ZebraRpc,
+    R::Error: std::error::Error + Send + Sync + 'static,
+{
+    let mut balance = ZecFunderBalanceV1::unavailable(owner);
+    let Ok(mut chain) = config.chain() else {
+        return balance;
+    };
+    let Ok((tip, _)) = tip_height(rpc, &chain).await else {
+        return balance;
+    };
+    balance.state = "available";
+    balance.tip_height = tip;
+    balance.min_confirmations = chain.min_confirmations;
+    balance.scan_from_height = tip
+        .saturating_sub(chain.min_confirmations)
+        .saturating_sub(config.funding_scan_blocks)
+        .max(1);
+    chain.min_confirmations = 1;
+    let (mut from, mut skip) = (balance.scan_from_height, 0);
+    while balance.outputs.len() < MAX_LISTED_FUNDER_OUTPUTS {
+        let Ok((found, tip, _)) =
+            select_funding_candidate(rpc, &chain, owner, skip, &[], from, 1).await
+        else {
+            break;
+        };
+        (from, skip) = (
+            found.height,
+            if found.height == from { skip + 1 } else { 1 },
+        );
+        let candidate = CandidateOutpoint::new(found.rpc_transaction_id, found.outpoint.n());
+        let confirmations = tip.saturating_sub(found.height).saturating_add(1);
+        balance.outputs.push(ZecFunderOutputV1 {
+            committed: committed.contains(&candidate),
+            transaction_id: found.rpc_transaction_id,
+            output_index: found.outpoint.n(),
+            value_zatoshis: u64::from(found.output.value()),
+            confirmations,
+            mature: confirmations >= balance.min_confirmations,
+        });
+    }
+    balance
 }
 
 /// Writes a role's own secrets into a new private `role_root`: its Zcash key,
@@ -1121,5 +1234,47 @@ mod tests {
         attempt(base, SwapDirection::TakerSellsLez, Vec::new(), "e")
             .await
             .unwrap();
+    }
+
+    /// The balances view lists the funder's outputs with their depth and
+    /// whether a reservation holds them; a key nothing pays gets its address,
+    /// and the reserve's refusal names that address.
+    #[tokio::test]
+    async fn the_funder_view_shows_what_a_reservation_could_commit() {
+        let directory = tempdir().unwrap();
+        let root = fs::canonicalize(directory.path()).unwrap();
+        let config = config(&root);
+        let zebra = zebra();
+        let only = select_zec_funding(&config, &zebra, &public(FUNDER), PRINCIPAL, &[])
+            .await
+            .unwrap();
+        let view = zec_funder_balance(
+            &config,
+            &zebra,
+            &public(FUNDER),
+            std::slice::from_ref(&only),
+        )
+        .await;
+        assert_eq!(view.state, "available");
+        assert_eq!(view.tip_height, zebra.tip);
+        assert_eq!(view.outputs.len(), 1);
+        let output = &view.outputs[0];
+        assert_eq!(output.transaction_id, only.transaction_id());
+        assert_eq!(output.output_index, only.output_index());
+        assert!(output.mature && output.committed && output.value_zatoshis > PRINCIPAL);
+        // A payment not yet coinbase-maturity deep shows, not mature.
+        let mut young = self::zebra();
+        young.tip = 50;
+        let view = zec_funder_balance(&config, &young, &public(FUNDER), &[]).await;
+        assert_eq!(view.outputs.len(), 1);
+        assert!(!view.outputs[0].mature && !view.outputs[0].committed);
+        assert_eq!(view.outputs[0].confirmations, 50);
+        // Nothing pays the other key.
+        let view = zec_funder_balance(&config, &zebra, &public(OTHER), &[]).await;
+        assert!(view.outputs.is_empty() && view.address.starts_with("tm"));
+        let refusal = select_zec_funding(&config, &zebra, &public(OTHER), PRINCIPAL, &[])
+            .await
+            .unwrap_err();
+        assert!(refusal.to_string().contains(&view.address), "{refusal}");
     }
 }

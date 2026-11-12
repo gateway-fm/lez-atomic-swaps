@@ -32,10 +32,10 @@ use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use zec_reference_actor::{
-    ActorRole, CandidateOutpoint, ZEC_ROLE_DRAFT_FILE, ZecLezRole, ZecMakerReservation,
-    ZecReservationTerms, ZecRoleConfigV1, ZecRoleTemplate, ZecTakerCheck, ZecTakerContribution,
-    begin_zec_taker_role, check_zec_taker_role, select_zec_funding, write_zec_role_template,
-    zec_dynamic_swap_id, zec_tip_height,
+    ActorRole, CandidateOutpoint, ZEC_ROLE_DRAFT_FILE, ZecFunderBalanceV1, ZecLezRole,
+    ZecMakerReservation, ZecReservationTerms, ZecRoleConfigV1, ZecRoleTemplate, ZecTakerCheck,
+    ZecTakerContribution, begin_zec_taker_role, check_zec_taker_role, select_zec_funding,
+    write_zec_role_template, zec_dynamic_swap_id, zec_tip_height,
 };
 
 use super::btc_dynamic::{DynamicBtcRole, TakeRequest};
@@ -156,6 +156,17 @@ impl DynamicZecRole {
             .filter_map(|bytes| serde_json::from_slice::<TakerReserveRecordV1>(&bytes).ok())
             .filter_map(|record| record.request.taker_funding.as_ref().map(candidate))
             .collect()
+    }
+
+    /// What this Taker can fund Zcash from (`taker_wallet_balances_v1`);
+    /// `None` when its Zcash key can no longer be read.
+    pub(crate) async fn funder_balance(&self) -> Option<ZecFunderBalanceV1> {
+        let secret = self.config.zcash_key().ok()?;
+        let mut key = SecretKey::from_slice(secret.as_ref()).ok()?;
+        let owner = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key);
+        key.non_secure_erase();
+        let committed = self.committed_funding(Path::new(""));
+        Some(self.config.funder_balance(&owner, &committed).await)
     }
 
     fn lez_role(&self) -> ZecLezRole {

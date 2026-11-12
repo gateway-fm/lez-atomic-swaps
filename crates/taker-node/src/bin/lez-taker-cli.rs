@@ -236,7 +236,11 @@ enum LifecycleCommand {
     #[command(subcommand)]
     Swap(SwapCommand),
     /// Read this Taker's own wallet balances through its owner socket.
-    Balances,
+    Balances {
+        /// Also list what its Zcash role can fund from (reads its Zebra).
+        #[arg(long)]
+        zcash: bool,
+    },
 }
 
 /// Each command calls one Taker Node owner RPC and prints its JSON result.
@@ -1003,11 +1007,15 @@ async fn execute_lifecycle(
             execute_actor_lifecycle(&arguments, LifecycleAction::Refund).await
         }
         LifecycleCommand::Swap(command) => execute_taker_swap(command, socket).await,
-        LifecycleCommand::Balances => {
+        LifecycleCommand::Balances { zcash } => {
             print_taker_rpc(
                 socket,
                 "taker_wallet_balances_v1",
-                serde_json::json!({"schema_version": 1}),
+                if zcash {
+                    serde_json::json!({"schema_version": 1, "zcash": true})
+                } else {
+                    serde_json::json!({"schema_version": 1})
+                },
                 NODE_READ_TIMEOUT,
             )
             .await

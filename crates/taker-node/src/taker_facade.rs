@@ -63,6 +63,18 @@ pub struct TakerHealthRequestV1 {
     pub schema_version: u16,
 }
 
+/// Parameters of `taker_wallet_balances_v1`. With `zcash` a Taker whose Zcash
+/// role is configured also reports what it can fund Zcash from, which costs a
+/// pass over its Zebra's recent blocks; without it, as before.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerWalletBalancesRequestV1 {
+    /// Request schema version; must be one.
+    pub schema_version: u16,
+    #[serde(default)]
+    pub zcash: bool,
+}
+
 /// Optional exact route filter for authenticated offer discovery.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -216,6 +228,7 @@ impl_request_schema_validation!(
     TakerSwapMonitorRequestV1,
     TakerClaimRequestV1,
     TakerRefundRequestV1,
+    TakerWalletBalancesRequestV1,
 );
 
 /// Secret-free authenticated offer displayed before user confirmation.

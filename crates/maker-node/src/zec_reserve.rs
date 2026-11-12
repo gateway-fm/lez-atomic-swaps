@@ -25,8 +25,9 @@ use lez_btc_role_lifecycle::{
 use lez_zec_swap_sdk::NegotiationTranscriptV1;
 use sha2::Digest as _;
 use zec_reference_actor::{
-    CandidateOutpoint, ZecLezRole, ZecReservationTerms, ZecRoleConfigV1, ZecRoleTemplate,
-    ZecTakerContribution, reserve_zec_maker_role, write_zec_role_template, zec_dynamic_swap_id,
+    CandidateOutpoint, ZecFunderBalanceV1, ZecLezRole, ZecReservationTerms, ZecRoleConfigV1,
+    ZecRoleTemplate, ZecTakerContribution, reserve_zec_maker_role, write_zec_role_template,
+    zec_dynamic_swap_id,
 };
 use zeroize::Zeroizing;
 
@@ -165,6 +166,14 @@ impl ZecMakerReservations {
             }
         }
         (committed, live)
+    }
+
+    /// What this Maker can fund Zcash from (`maker_wallet_balances_v1`): its
+    /// Zcash key is its Chat signing key.
+    pub(super) async fn funder_balance(&self, signing_key: &SecretKey) -> ZecFunderBalanceV1 {
+        let owner = PublicKey::from_secret_key(&Secp256k1::signing_only(), signing_key);
+        let (committed, _) = self.committed(trusted_now_unix_seconds().unwrap_or_default());
+        self.config.funder_balance(&owner, &committed).await
     }
 
     /// Refuses a proposal for a take-time reservation unless it is exactly

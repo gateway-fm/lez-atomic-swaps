@@ -74,10 +74,11 @@ pub use maker_provision::{
     provision_zec_taker_actor_from_config,
 };
 pub use reserve::{
-    MAX_ANCHOR_CLOCK_SKEW_SECONDS, MAX_ANCHOR_HEIGHT_SKEW_BLOCKS, ZEC_ROLE_DRAFT_FILE, ZecLezRole,
-    ZecMakerReservation, ZecReservationTerms, ZecRoleConfigV1, ZecRoleTemplate, ZecTakerCheck,
-    ZecTakerContribution, begin_zec_taker_role, check_zec_taker_role, reserve_zec_maker_role,
-    select_zec_funding, write_zec_role_template, zec_dynamic_swap_id, zec_tip_height,
+    MAX_ANCHOR_CLOCK_SKEW_SECONDS, MAX_ANCHOR_HEIGHT_SKEW_BLOCKS, ZEC_ROLE_DRAFT_FILE,
+    ZecFunderBalanceV1, ZecFunderOutputV1, ZecLezRole, ZecMakerReservation, ZecReservationTerms,
+    ZecRoleConfigV1, ZecRoleTemplate, ZecTakerCheck, ZecTakerContribution, begin_zec_taker_role,
+    check_zec_taker_role, reserve_zec_maker_role, select_zec_funding, write_zec_role_template,
+    zec_dynamic_swap_id, zec_funder_balance, zec_tip_height,
 };
 #[cfg(feature = "test-crash-hooks")]
 pub use test_crash_hook::{TestCrashHookError, arm_test_crash_hook};

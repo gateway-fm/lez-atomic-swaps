@@ -377,7 +377,7 @@ pub struct LocalPocZcashIdentity {
 /// Regtest transparent P2PKH address prefix (ZIP-? constant shared with testnet).
 const REGTEST_P2PKH_PREFIX: [u8; 2] = [0x1D, 0x25];
 
-fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
+pub(crate) fn regtest_p2pkh_address(public_key: &PublicKey) -> Result<String> {
     let TransparentAddress::PublicKeyHash(hash) = lez_zec_swap_sdk::p2pkh_address(public_key)
     else {
         bail!("public key did not derive a P2PKH address");
@@ -1814,13 +1814,16 @@ where
             "Zebra tip changed during candidate selection"
         );
     }
+    // The refusal names the funder's address, so its owner knows what to pay.
+    let address = regtest_p2pkh_address(funding_key).unwrap_or_default();
     let candidate = selected.with_context(|| match identity.network() {
         NetworkType::Regtest => format!(
-            "no mature deterministic Zebra funder output is available after passing over {skip}"
+            "no mature deterministic Zebra funder output for {address} is available after \
+             passing over {skip}"
         ),
         NetworkType::Test | NetworkType::Main => format!(
-            "no unspent funder output of at least {min_value} zatoshis, {} blocks deep, \
-             from height {scan_from_height} after passing over {skip}",
+            "no unspent funder output for {address} of at least {min_value} zatoshis, {} blocks \
+             deep, from height {scan_from_height} after passing over {skip}",
             chain.min_confirmations
         ),
     })?;

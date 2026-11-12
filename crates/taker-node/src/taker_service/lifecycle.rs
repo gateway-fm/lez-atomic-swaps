@@ -38,10 +38,10 @@ use crate::zec_taker_accept::{
 };
 use crate::{
     ConfiguredTakerInitiationContext, PreparedTakerInitiationV1, TakerActionCommitV1,
-    TakerBackendError, TakerClaimRequestV1, TakerHealthRequestV1, TakerInitiationCommitV1,
-    TakerLockCommitV1, TakerLockRequestV1, TakerOfferListRequestV1, TakerPrivacyGuidanceV1,
-    TakerRefundRequestV1, TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1,
-    TakerSwapMonitorRequestV1, TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1,
+    TakerBackendError, TakerClaimRequestV1, TakerInitiationCommitV1, TakerLockCommitV1,
+    TakerLockRequestV1, TakerOfferListRequestV1, TakerPrivacyGuidanceV1, TakerRefundRequestV1,
+    TakerSwapInitiateRequestV1, TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1,
+    TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1, TakerWalletBalancesRequestV1,
     btc_taker_accept::{
         BtcTakeInput, load_btc_taker_actor_from_receipt_for_monitor,
         take_btc_with_authenticated_offer_and_actor_config,
@@ -507,6 +507,7 @@ const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const SIGNING_KEY_BYTES: u64 = 32;
 
 /// Registers the prepared-ZEC lifecycle methods when a validated catalog exists.
+#[allow(clippy::too_many_lines)]
 pub(super) fn register(
     module: &mut RpcModule<()>,
     state: &Arc<TakerServiceState>,
@@ -521,7 +522,7 @@ pub(super) fn register(
     module.register_async_method("taker_wallet_balances_v1", move |params, _, _| {
         let state = Arc::clone(&balances_state);
         async move {
-            let request: TakerHealthRequestV1 = params
+            let request: TakerWalletBalancesRequestV1 = params
                 .one()
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
             request.validate_schema_version().map_err(|_| {
@@ -538,11 +539,16 @@ pub(super) fn register(
                     "initiation_registry_unavailable",
                 )
             })?;
-            let dynamic = tokio::task::spawn_blocking(move || {
-                initiation
-                    .lock()
-                    .ok()
-                    .and_then(|context| context.dynamic_btc())
+            let (dynamic, dynamic_zec) = tokio::task::spawn_blocking(move || {
+                let context = initiation.lock().ok();
+                #[cfg(feature = "pair-zec")]
+                let dynamic_zec = context.as_ref().and_then(|context| context.dynamic_zec());
+                #[cfg(not(feature = "pair-zec"))]
+                let dynamic_zec = None::<()>;
+                (
+                    context.and_then(|context| context.dynamic_btc()),
+                    dynamic_zec,
+                )
             })
             .await
             .map_err(|_| {
@@ -551,15 +557,31 @@ pub(super) fn register(
                     "Internal error",
                     "initiation_registry_unavailable",
                 )
-            })?
-            .ok_or_else(|| {
+            })?;
+            let dynamic = dynamic.ok_or_else(|| {
                 rpc_error(
                     DEPENDENCY_UNAVAILABLE_CODE,
                     "Taker dependency unavailable",
                     "balances_unavailable",
                 )
             })?;
-            Ok::<_, ErrorObjectOwned>(dynamic.wallet_balances().await)
+            #[cfg_attr(not(feature = "pair-zec"), allow(unused_mut))]
+            let mut balances =
+                serde_json::to_value(dynamic.wallet_balances().await).map_err(|_| {
+                    rpc_error(INTERNAL_ERROR_CODE, "Internal error", "balances_encoding")
+                })?;
+            #[cfg(feature = "pair-zec")]
+            if request.zcash
+                && let Some(dynamic_zec) = dynamic_zec
+                && let Some(view) = dynamic_zec.funder_balance().await
+            {
+                balances["zcash"] = serde_json::to_value(view).map_err(|_| {
+                    rpc_error(INTERNAL_ERROR_CODE, "Internal error", "balances_encoding")
+                })?;
+            }
+            #[cfg(not(feature = "pair-zec"))]
+            let _ = dynamic_zec;
+            Ok::<_, ErrorObjectOwned>(balances)
         }
     })?;
     let list_state = Arc::clone(state);

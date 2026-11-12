@@ -17,6 +17,15 @@ pub struct MakerOfferListRequest {
     pub states: Option<Vec<lez_swap_store::MakerOfferStatus>>,
 }
 
+/// Parameters of `maker_wallet_balances_v1`. With `zcash` a Maker whose
+/// Zcash role is configured also reports what it can fund Zcash from, which
+/// costs a pass over its Zebra's recent blocks; without it, as before.
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct MakerWalletBalancesRequest {
+    #[serde(default)]
+    pub zcash: bool,
+}
+
 /// Versioned read-only daemon health response.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MakerHealthV1 {

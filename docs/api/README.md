@@ -104,7 +104,7 @@ required unless marked optional. `null` revisions on insertion are intentional.
 | Method | Request | Result / behavior |
 |---|---|---|
 | `maker_health` | `{}` | `{schema_version, ready, degraded, delivery, chat, routes}`, plus `lez_chain` on a Node with the Node-owned lifecycle ([LEZ chain progress](#lez-chain-progress-in-health)); dependency states are `disabled`, `available`, `unavailable`. `ready` alone does not prove a route or wallet is usable; `degraded` is true while a configured dependency is unavailable or `lez_chain.degraded` is. |
-| `maker_wallet_balances_v1` | `{}` | What this Maker's own wallets hold, read-only: `bitcoin` (`state`, `wallet`, `network`, `trusted_sat`, `untrusted_pending_sat`, `immature_sat` from its Core wallet's `getbalances`) and `lez` (`state`, `owner_account_hex`, `owner_account_base58`, `balance_atomic_units`, `nonce` from the indexer). `state` is `available`, `unavailable` or `disabled`; amounts are exact integers and zero when not available. Coins locked by a planned, not yet broadcast funding are not trusted. |
+| `maker_wallet_balances_v1` | `{}`; optional `zcash:true` | What this Maker's own wallets hold, read-only: `bitcoin` (`state`, `wallet`, `network`, `trusted_sat`, `untrusted_pending_sat`, `immature_sat` from its Core wallet's `getbalances`) and `lez` (`state`, `owner_account_hex`, `owner_account_base58`, `balance_atomic_units`, `nonce` from the indexer). `state` is `available`, `unavailable` or `disabled`; amounts are exact integers and zero when not available. Coins locked by a planned, not yet broadcast funding are not trusted. With `zcash:true` on a Node whose Zcash role is configured, also `zcash` ([what a Zcash funder holds](#what-a-zcash-funder-holds)). |
 | `maker_pair_list` | `{}` | Array of `{revision, value}`; `value` is the route configuration below. |
 | `maker_local_price_list` | `{}` | Array of `{revision, value}`; `value` is the local ratio below. |
 | `maker_price_quote` | `{route}` | `{price, source_revision, observed_at_unix_seconds}` from the selected source; this is a price observation, not a strategy decision or funds reservation. |
@@ -257,6 +257,21 @@ as precise as health is asked (the desks ask every 10 s), and a Node started on
 a chain that is already frozen reports the stall one threshold after its first
 sample.
 
+### What a Zcash funder holds
+
+The role that funds Zcash (the Maker when the Taker sells LEZ, the Taker when it
+sells ZEC) needs a mature transparent output paying its own key, or its take is
+refused with a message naming the address. `zcash` (`lez-maker-cli balances
+--zcash`, `lez-taker-cli balances --zcash`; an additive field of schema 1,
+present only when asked for and the Zcash role is configured; it costs one pass
+over the blocks the funder search reads) is `{state, address, tip_height,
+scan_from_height, min_confirmations, outputs}`: `state` `available` or
+`unavailable`, `address` the role's P2PKH address to pay, and `outputs` at most
+eight outputs paying it from `scan_from_height` up, each `{transaction_id,
+output_index, value_zatoshis, confirmations, mature, committed}` (`mature`: deep
+enough to fund a reservation; `committed`: a reservation or swap of this Node
+holds it already).
+
 ### The actor's last outcome
 
 A step the actor holds on purpose used to read like a dead Node: a Taker's
@@ -333,7 +348,7 @@ not reached, offer no Resubmit.
 | Method | Request object | Result / behavior |
 |---|---|---|
 | `taker_health` | `{schema_version:1}` | Health, registered methods and per-route capability rows, plus `lez_chain` with the Node-owned lifecycle ([LEZ chain progress](#lez-chain-progress-in-health)), which also sets `degraded`. Check them before depending on initiation/monitoring/actions. |
-| `taker_wallet_balances_v1` | `{schema_version:1}` | What this Taker's own wallets hold, the same shape as `maker_wallet_balances_v1`: its Core wallet (`bitcoin`) and its LEZ owner account (`lez`). Registered with the BTC lifecycle. |
+| `taker_wallet_balances_v1` | `{schema_version:1}`; optional `zcash:true` | What this Taker's own wallets hold, the same shape as `maker_wallet_balances_v1`: its Core wallet (`bitcoin`) and its LEZ owner account (`lez`), and with `zcash:true` its Zcash role's `zcash`. Registered with the BTC lifecycle. |
 | `taker_offer_list_v1` | `{schema_version:1, route:null}` or an exact route | `{schema_version:1, offers:[{offer, maker_identity, signed_envelope_sha256}]}` from the node's authenticated discovery source. |
 | `taker_swap_initiate_v1` | `{schema_version:1, request_id, offer_id, route, maker_identity, signed_envelope_sha256, foreign_units, expected_lez_units}`; optional `logos_offer_announcement_base64`, `funding_transaction_hex` | `{schema_version:1, swap, was_replay}`. Revalidates selected offer and exact amounts; BTC dynamic configuration drives reservation, preparation, ceremony and actor activation. It can reserve capital/prepare signing state; it is not a dry-run quote. |
 | `taker_swap_list_v1` | `{schema_version:1}` | `{schema_version:1, swaps:[...]}`; includes recoverable persisted swaps. |

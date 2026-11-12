@@ -38,6 +38,7 @@ pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceE
 pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use rpc_contracts::{
     ListRequest, MakerDependencyStateV1, MakerHealthV1, MakerOfferListRequest, MakerRouteHealthV1,
+    MakerWalletBalancesRequest,
 };
 #[cfg(feature = "pair-xmr")]
 pub use xmr_chat::XmrMakerChatAuthority;
@@ -1308,11 +1309,12 @@ fn maker_actor_process_error(error: MakerActorProcessError) -> ErrorObjectOwned 
     }
 }
 /// `maker_wallet_balances_v1`: what this Maker's own Bitcoin Core wallet and
-/// LEZ owner account hold. Read-only; a Node without the BTC lifecycle
-/// reports both as disabled instead of failing.
+/// LEZ owner account hold, and on request what its Zcash role can fund from.
+/// Read-only; a Node without the BTC lifecycle reports both as disabled
+/// instead of failing.
 fn register_wallet_balances_method(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_async_method("maker_wallet_balances_v1", |params, context, _| async move {
-        let _: ListRequest = params.one()?;
+        let request: MakerWalletBalancesRequest = params.one()?;
         let Some(lifecycle) = context.btc_lifecycle.as_ref() else {
             return Ok::<_, ErrorObjectOwned>(serde_json::json!({
                 "schema_version": 1,
@@ -1321,8 +1323,20 @@ fn register_wallet_balances_method(module: &mut RpcModule<MakerRpc>) -> anyhow::
             }));
         };
         let balances = lifecycle.wallet_balances().await;
-        serde_json::to_value(balances)
-            .map_err(|_| rpc_error(INTERNAL_ERROR, "wallet balances could not be encoded"))
+        #[cfg_attr(not(feature = "pair-zec"), allow(unused_mut))]
+        let mut balances = serde_json::to_value(balances)
+            .map_err(|_| rpc_error(INTERNAL_ERROR, "wallet balances could not be encoded"))?;
+        #[cfg(feature = "pair-zec")]
+        if request.zcash
+            && let Some(reservations) = &context.zec_reservations
+            && let Some(key) = &context.chat_signing_key
+        {
+            balances["zcash"] = serde_json::to_value(reservations.funder_balance(key).await)
+                .map_err(|_| rpc_error(INTERNAL_ERROR, "wallet balances could not be encoded"))?;
+        }
+        #[cfg(not(feature = "pair-zec"))]
+        let _ = request;
+        Ok(balances)
     })?;
     Ok(())
 }
