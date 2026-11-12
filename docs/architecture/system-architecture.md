@@ -2562,8 +2562,9 @@ The final coordinator uses one durable aggregate per swap and atomic intent plus
 outbox persistence. Chain observations are at least once and therefore
 idempotent; conflicting evidence is rejected. Current M1 proves restart and
 observation idempotence for the prototype store. Atomic outbox, secret
-encryption, process-kill matrices, and pair transaction resubmission are M5 exit
-evidence, not present claims.
+encryption, and pair transaction resubmission are M5 exit evidence, not present
+claims; the `kill-maker`/`kill-taker` Node scenarios and their `zec-` twins
+SIGKILL a role's container between lock and claim (`deploy/scripts/node-e2e.py`).
 
 ## Delivery-to-architecture map
 

@@ -215,7 +215,7 @@ and the ZEC actors, which reach Zebra on a fourth loopback forwarder
 | LEZ Network desk (`apps/basecamp/network`), `blockchain_module`, `lez_indexer_module` (patched) | network | the LEZ devnet's block producer and its indexer; Re-index rebuilds the indexer's database | the container's Basecamp; the desk starts both modules when the container starts |
 | `lez-btc-maker-actor` / `lez-btc-taker-actor` | node images | the role's durable swap state machine: observes both chains, projects transitions, signs and broadcasts effects, answers `status` | Maker: child process per drive; Taker: linked in-process with the program hash pinned in every persisted swap |
 | `lez-v02-bridge-poc` | node images | LEZ v0.2 sidecar: prepares escrow initialization, funding, claims and refunds, has the role's wallet sign them over the signer socket, submits them; one durable reservation per state directory, hence one per swap | spawned per swap, respawned on restart |
-| `lez-maker-cli` / `lez-taker-cli` | node images | operator CLI over the Node socket | on demand |
+| `lez-maker-cli` / `lez-taker-cli` | node images | operator CLI over the Node socket (the Taker CLI's top-level `monitor`/`claim`/`refund` with `--actor-config` or `--receipt` run the actor in-process) | on demand |
 | `lez-taker-registry-init` | taker-node | creates the Taker registry schema | once, from the entrypoint |
 | `lez-maker-chat-gateway` / `lez-taker-chat-gateway` | node images | Logos Chat relay gateways for non-local peers | packaged, not started on the local path |
 | `lez-runtime-healthcheck` | node images, zebra, sequencer | JSON-RPC probe for Compose health checks | every 10–15 s |

@@ -57,10 +57,11 @@ Markdown link resolves. It is supporting provenance, not an M2 delivery claim.
 | M1 | The protocol, threat model, primitives, parameters, and SDK boundaries are the documented foundation used by the implementation. |
 | M3 | Direct implementation and evidence for the LEZ/BTC pair, including both directions, happy settlement, ordered refunds, restart survival, and overlapping swaps. |
 | M6 | M6 review, evidence, and prototypes plus the branch's current Basecamp packages; the video demonstrates the branch's BTC journey, not the complete M6 acceptance surface. |
-| M5 | Daemon, service, storage, and runner components are integrated transitively in the live stack; complete M5 delivery is not claimed by this package. |
+| M5 | Not claimed complete. In the tree: the Taker's CLI drives swaps on the Docker stack (`taker-cli` scenarios in `deploy/scripts/regress.sh`), both Nodes ran under systemd in a VM ([evidence](evidence/maker-systemd-2026-11-12/)), the coordinator fuzz target ran for an hour ([evidence](evidence/coordinator-fuzz-2026-11-12/)), and the `kill-maker`/`kill-taker` resilience scenarios SIGKILL a role mid-swap. Monero is not delivered; Zcash agreements are still provisioned by `deploy/scripts/zec-provision.sh`. |
 
-M2 Zcash, M4 Monero, and M7 audit/mainnet readiness are outside the package's
-claim. Some M6 milestone records necessarily mention Zcash because the
+M2 Zcash (tracked in [m2-acceptance-checklist.md](m2-acceptance-checklist.md)), M4
+Monero, and M7 audit/mainnet readiness are outside the package's claim. Some M6
+milestone records necessarily mention Zcash because the
 historical M6 review covered that journey; those records are provenance, not a
 claim that the current BTC video demonstrates M2.
 

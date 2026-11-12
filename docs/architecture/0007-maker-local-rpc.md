@@ -40,7 +40,8 @@ value sensitive and argument structures containing the token do not implement
 `Debug`. This deliberately small scheme is an integration adapter, not the
 production transport approval.
 
-Before M5 production freeze:
+Before M5 production freeze (the first item is done and the HTTP transport above is
+gone: `crates/node-common/src/owner_rpc_server.rs`):
 
 - Unix deployments use a Unix-domain socket inside a mode-0700 runtime directory;
   the socket is mode 0600 and owned by the maker account. Other platforms need an
