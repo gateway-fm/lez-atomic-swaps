@@ -1,0 +1,81 @@
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1794448127 (2026-11-12T01:48:47Z), root 427c63aff769b166320db16b750bf7815b0d79029fae4243ad443b04559689fc
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmNXorNmjuA9RrAHhxR9hZaNPaMnLqMBvzN): runtime/zebra/zebrad.toml
+runtime generated at runtime
+  [time 02:52:20] runtime config: 1 s (1 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 02:52:20] images: 0 s (1 s since up.sh started)
+[3/6] starting chains…
+time="2026-11-12T03:52:21+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-sequencer Running 
+ Container lez-zebra Running 
+ Container lez-bitcoin-core Running 
+ Container lez-btc-miner Running 
+ Container lez-network Running 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+  [time 02:52:21] start the chains (compose up): 1 s (2 s since up.sh started)
+  [time 02:52:21] chains healthy: 0 s (2 s since up.sh started)
+  [time 02:52:21] indexer check (repair-indexer.sh): 0 s (2 s since up.sh started)
+Regtest wallets ready; Maker 3474.999918 BTC, Taker 5249.999959 BTC spendable.
+  [time 02:52:22] Bitcoin Core wallets (seed-btc-wallets.py): 1 s (3 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+taker-lane03: vault already claimed (owner holds 1900000)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 02:52:23] market bootstrap: 1 s (4 s since up.sh started)
+[5/6] Nodes…
+time="2026-11-12T03:52:24+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T03:52:24+01:00" level=warning msg="volume \"lez-20260910222044-delivery-dir\" carries the compose label \"delivery_dir\" but does not match the compose file (using \"lez-delivery-dir\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T03:52:24+01:00" level=warning msg="volume \"lez-20260910222044-maker-socket\" carries the compose label \"maker_socket\" but does not match the compose file (using \"lez-maker-socket\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T03:52:24+01:00" level=warning msg="volume \"lez-20260910222044-maker-state\" carries the compose label \"maker_state\" but does not match the compose file (using \"lez-maker-state\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-network Running 
+ Container lez-bitcoin-core Running 
+ Container lez-sequencer Running 
+ Container lez-maker-node Recreate 
+ Container lez-maker-node Recreated 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Waiting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Healthy 
+ Container lez-bitcoin-core Healthy 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+time="2026-11-12T03:52:25+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T03:52:25+01:00" level=warning msg="volume \"lez-20260910222044-delivery-dir\" carries the compose label \"delivery_dir\" but does not match the compose file (using \"lez-delivery-dir\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T03:52:25+01:00" level=warning msg="volume \"lez-20260910222044-maker-socket\" carries the compose label \"maker_socket\" but does not match the compose file (using \"lez-maker-socket\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T03:52:25+01:00" level=warning msg="volume \"lez-20260910222044-maker-state\" carries the compose label \"maker_state\" but does not match the compose file (using \"lez-maker-state\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T03:52:25+01:00" level=warning msg="volume \"lez-20260910222044-taker-state\" carries the compose label \"taker_state\" but does not match the compose file (using \"lez-taker-state\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-taker-node Recreate 
+ Container lez-taker-node Recreated 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+  [time 02:52:26] start the Nodes (compose up): 3 s (7 s since up.sh started)
+  [time 02:52:32] Nodes healthy: 6 s (13 s since up.sh started)
+  [time 02:52:32] Nodes answer owner health: 0 s (13 s since up.sh started)
+[lanes 02:52:47] lane 2 up: lez-l2-{maker,taker}-node (maker-basel-02, taker-limmat-02), Zebra on 127.0.0.1:18242, VNC 5911/5912
+[lanes 02:52:47] lane 3 up: lez-l3-{maker,taker}-node (maker-lane03, taker-lane03), Zebra on 127.0.0.1:18252, VNC 5921/5922
+  [time 02:52:47] lanes 2..3 (lanes.sh up): 15 s (28 s since up.sh started)
+15/15 market checks passed
+  [time 02:52:49] market check (verify-market.py): 2 s (30 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-heartbeat Running 
+ Container lez-network Running 
+ Container lez-sequencer Running 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+  [time 02:52:50] finality heartbeat: 1 s (31 s since up.sh started)
+[6/6] the parties' desks…
+  [time 02:52:50] desk suites: 0 s (31 s since up.sh started)

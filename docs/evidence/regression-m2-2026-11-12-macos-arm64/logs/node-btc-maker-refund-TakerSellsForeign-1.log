@@ -1,0 +1,18 @@
+[03:11:00] === maker-refund (stamp 179444946002)
+[03:11:00] preflight: indexer historical reads
+[03:11:00]   indexer serves historical reads at the tip (1058)
+[03:11:00] preflight: LEZ finality check waived by request
+[03:11:00]   Maker published offer-e2e-179444946002
+[03:11:01]   Taker took offer-e2e-179444946002: swap dd2b853cc109 (not_activated)
+[03:11:01]   Taker locked bitcoin: 90789d8fc198 (replay=False)
+[03:11:01]   taker dd2b853cc109: awaiting_first_lock (gen 0) | maker: leased
+[03:11:05]   taker dd2b853cc109: awaiting_second_lock (gen 1) | maker: leased
+[03:11:48]   taker dd2b853cc109: claim_available (gen 2) | maker: taker_lock_confirmed
+[03:11:49]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (115s after the take)
+[03:11:49]   waiting 96s for the Maker's refund deadline
+[03:13:25]   Maker refund queued: {"schema_version": 1, "swap_id": "dd2b853cc109b40f3cc511b5a881a40f16d53d5653d3b6bdb6f7d76afee2cb9e", "action": "refund", "requested_after_generation": 35, "was_
+[03:13:25]   maker dd2b853cc109: maker_leg_refunded
+[03:13:26]   refund request admitted (attempt 1, state refund_available)
+[03:13:36]   both legs refunded
+[03:13:36]   the Bitcoin refund ca9b4f9d3335 is a script-path spend: three witness items
+[03:13:36] === maker-refund: passed in 156s

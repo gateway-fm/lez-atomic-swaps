@@ -1,0 +1,17 @@
+[04:08:46] === regenerated-config (stamp 179445292603)
+[04:08:46] preflight: indexer historical reads
+[04:08:46]   indexer serves historical reads at the tip (3765)
+[04:08:46] preflight: LEZ finality check waived by request
+[04:08:47]   Maker published offer-e2e-179445292603
+[04:08:48]   Taker took offer-e2e-179445292603: swap c876935766ae (not_activated)
+[04:08:48]   Taker locked bitcoin: 3744f6dae6af (replay=False)
+[04:08:48]   runtime configuration rendered again (chain and identities unchanged)
+[04:08:48]   restarting the Taker Node onto the re-rendered configuration
+[04:08:55]   swap c876935766ae reloaded as awaiting_second_lock
+[04:08:55]   taker c876935766ae: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[04:09:20]   taker c876935766ae: claim_available (gen 2) | maker: both_legs_locked
+[04:09:20]   Taker claimed LEZ (replay=False)
+[04:09:21]   taker c876935766ae: claim_in_progress (gen 2) | maker: both_legs_locked
+[04:09:37]   taker c876935766ae: completed (gen 4) | maker: claim_evidence_available
+[04:09:40]   both Nodes report c876935766ae completed
+[04:09:40] === regenerated-config: passed in 55s
