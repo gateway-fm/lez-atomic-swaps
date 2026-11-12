@@ -1,0 +1,13 @@
+[03:06:07] regression run: 3 tests at 964cb8c8 (tree dirty: 0), results in runtime/regress/20261112T030607Z
+[03:06:07] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[03:06:07] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[03:06:39] group fast
+[03:06:39]     [lane 1] node:btc:late-claim-unmined:TakerSellsLez (try 1) starts: LEZ finalized 105, tip 108
+[03:06:39]     [lane 2] node:btc:late-claim-confirms:TakerSellsLez (try 1) starts: LEZ finalized 105, tip 108
+[03:06:39]     [lane 3] node:zec:zec-early-lock:TakerSellsLez (try 1) starts: LEZ finalized 105, tip 108
+[03:07:58] === node:btc:late-claim-unmined:TakerSellsLez (try 1, lane 1): FAILED in 67 s; LEZ finalized 148, tip 152
+      [03:07:52] FAILED: the Maker has no Bitcoin lock on record for 004f2290d35c
+[03:08:44] === node:btc:late-claim-confirms:TakerSellsLez (try 1, lane 2): PASSED in 114 s; LEZ finalized 173, tip 179
+[03:10:25] === node:zec:zec-early-lock:TakerSellsLez (try 1, lane 3): PASSED in 215 s; LEZ finalized 238, tip 246
+[03:10:25] regression run: 2 of 3 passed in 4 min, 0 new chains, 0 profile switches, 0 frozen tries
+[03:10:25]   not passed: node:btc:late-claim-unmined:TakerSellsLez

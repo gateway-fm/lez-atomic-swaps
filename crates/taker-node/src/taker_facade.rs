@@ -6,6 +6,7 @@
 //! describe the current Node, CLI, and demo ownership of each route.
 
 use btc_reference_actor::ActorEffectV1;
+use lez_actor_supervision::ActorLastOutcomeV1;
 use lez_bridge_protocol::RequestId;
 use lez_btc_role_lifecycle::LezChainProgressV1;
 use lez_btc_swap_sdk::BtcAgreementTermsV1;
@@ -340,8 +341,18 @@ pub struct TakerSwapViewV1 {
     pub claim_window_closed: Option<bool>,
     /// Why the Node's supervisor last backed off on this swap's actor, or
     /// why it stopped (a `failed` row): one of the shared failure classes.
+    /// For a Bitcoin swap, the class of the actor's last attempt when it
+    /// failed (`last_outcome`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_failure_class: Option<String>,
+    /// What the swap's actor last did, or why it did not act, and when; with
+    /// `waiting_for` when it holds a step for a reason it can bound, such as
+    /// a refund held until finalized LEZ time passes the cutoff (#103 item
+    /// 6). Kept by this Node in memory from its last attempt: absent on a
+    /// finished swap, before the first attempt after a restart, and once the
+    /// actor's revision moved past the attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<ActorLastOutcomeV1>,
     /// Set when the row was answered from the Node's last status snapshot
     /// because the actor was busy (Unix seconds of that observation); absent
     /// on a row read from the actor itself.

@@ -23,7 +23,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use lez_actor_supervision::{AttemptFailure, AttemptResolution, log_effect_value, terminal_phase};
+use lez_actor_supervision::{
+    ActorLastOutcomeV1, ActorWaitV1, AttemptFailure, AttemptResolution, LastOutcomes,
+    log_effect_value, terminal_phase,
+};
 use lez_swap_core::{Phase, SwapId};
 use lez_swap_store::{
     ActorHeldLock, TakerActorLeaseV1, TakerActorProgressSnapshotV1, TakerActorScheduleRecordV1,
@@ -39,8 +42,9 @@ use super::{
     TakerServiceState,
     lifecycle::{
         LOCK_WAIT, LifecycleStatus, RouteActor, ZecActorStatus, lookup_admitted_action_for_swap,
-        mark_claim_submitted, reload_action_actor_custody, revealing_claim_was_submitted,
-        terminal_action_of, zec_actor_progress, zec_replay_actor_effect_required,
+        mark_claim_submitted, record_failed_outcome, reload_action_actor_custody,
+        revealing_claim_was_submitted, terminal_action_of, zec_actor_progress,
+        zec_replay_actor_effect_required,
     },
 };
 use crate::{
@@ -261,7 +265,13 @@ async fn supervise_due_swaps(state: &TakerServiceState, memory: &SharedLogMemory
         .unwrap_or_default()
     };
     for prepared in due {
-        Box::pin(supervise_one(&initiation, &prepared, memory)).await;
+        Box::pin(supervise_one(
+            &initiation,
+            &prepared,
+            memory,
+            &state.last_outcomes,
+        ))
+        .await;
     }
 }
 
@@ -270,6 +280,7 @@ async fn supervise_one(
     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     prepared: &PreparedTakerInitiationV1,
     memory: &SharedLogMemory,
+    outcomes: &LastOutcomes,
 ) {
     let swap_id = prepared.swap_id().clone();
     let lease = {
@@ -286,7 +297,7 @@ async fn supervise_one(
     let Some(lease) = lease else {
         return;
     };
-    let (attempt, snapshot) = attempt(initiation, prepared, memory).await;
+    let (attempt, snapshot) = attempt(initiation, prepared, memory, outcomes).await;
     let now = now_unix();
     let resolution = match attempt {
         ClaimedAttempt::Requeue => {
@@ -613,6 +624,7 @@ async fn attempt(
     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     prepared: &PreparedTakerInitiationV1,
     memory: &SharedLogMemory,
+    outcomes: &LastOutcomes,
 ) -> (ClaimedAttempt, Option<TakerActorProgressSnapshotV1>) {
     let swap_id = prepared.swap_id().clone();
     let Some(receipt_binding) = prepared.execution().receipt_binding() else {
@@ -630,7 +642,10 @@ async fn attempt(
         });
     let (config, held_lock, status) = match observe(prepared, receipt_binding).await {
         Ok(observed) => observed,
-        Err(failure) => return (ClaimedAttempt::Failure(failure), None),
+        Err(failure) => {
+            record_failed_outcome(outcomes, &swap_id, "status", failure.class());
+            return (ClaimedAttempt::Failure(failure), None);
+        }
     };
     let snapshot = snapshot_of_status(status);
     let phase_before = match status {
@@ -690,8 +705,12 @@ async fn attempt(
     .await
     {
         Ok(ran) => ran,
-        Err((failure, snapshot)) => return (ClaimedAttempt::Failure(failure), snapshot),
+        Err((failure, snapshot)) => {
+            record_failed_outcome(outcomes, &swap_id, command_name(command), failure.class());
+            return (ClaimedAttempt::Failure(failure), snapshot);
+        }
     };
+    record_zec_effect(outcomes, &swap_id, command, &effect, status);
     let phase = effect
         .get("phase")
         .and_then(serde_json::Value::as_str)
@@ -816,6 +835,50 @@ async fn run_effect(
     }
     let snapshot = snapshot_of_effect(&effect).or(snapshot);
     Ok((effect, snapshot))
+}
+
+/// Keeps one effect as the swap's last outcome, with the wait its
+/// `awaiting_deadline` stands for.
+fn record_zec_effect(
+    outcomes: &LastOutcomes,
+    swap_id: &SwapId,
+    command: ActorCommand,
+    effect: &serde_json::Value,
+    status: ZecActorStatus,
+) {
+    if let Some(outcome) =
+        ActorLastOutcomeV1::from_effect(command_name(command), effect, now_unix())
+    {
+        let outcome = match zec_wait(effect, status) {
+            Some(wait) => outcome.waiting(wait),
+            None => outcome,
+        };
+        outcomes.record(swap_id.as_str(), outcome);
+    }
+}
+
+/// The wait a Zcash actor's `awaiting_deadline` stands for, bounded by the
+/// agreement's LEZ refund time from its status when that is the deadline.
+/// The Zcash refund height is not in the status, so that wait has no bound.
+fn zec_wait(effect: &serde_json::Value, status: ZecActorStatus) -> Option<ActorWaitV1> {
+    let outcome = effect.get("outcome")?.as_str()?;
+    let operation = effect.get("operation").and_then(serde_json::Value::as_str);
+    match (outcome, operation) {
+        ("awaiting_deadline", Some("lez_refund")) => {
+            let ZecActorStatus::Active {
+                lez_refund_at_ms: Some(refund_at_ms),
+                ..
+            } = status
+            else {
+                return Some(ActorWaitV1::new("lez_refund_time", "lez"));
+            };
+            Some(ActorWaitV1::new("lez_refund_time", "lez").until_time(refund_at_ms / 1_000, None))
+        }
+        ("awaiting_deadline", Some("zcash_refund")) => {
+            Some(ActorWaitV1::new("zcash_refund_height", "zcash"))
+        }
+        _ => None,
+    }
 }
 
 const fn command_name(command: ActorCommand) -> &'static str {
@@ -1013,6 +1076,7 @@ pub(super) fn view_from_snapshot(
         actor_phase: None,
         claim_window_closed: None,
         last_failure_class: None,
+        last_outcome: None,
         observed_at: Some(snapshot.observed_at),
         terms: None,
         effects: Vec::new(),
@@ -1402,5 +1466,41 @@ mod tests {
             assert_eq!(action_from_name(action_name(action)), Some(action));
         }
         assert_eq!(phase_from_name("locked"), None);
+    }
+
+    /// #103 item 6 for Zcash: the actor's `awaiting_deadline` names the LEZ
+    /// refund time from its status when that is the deadline; the Zcash
+    /// refund height is not reported, so that wait has no bound; any other
+    /// outcome names no wait.
+    #[test]
+    fn a_refund_deadline_names_the_lez_refund_time_when_the_status_has_it() {
+        let status = ZecActorStatus::Active {
+            phase: Phase::BothLegsLocked,
+            revision: 3,
+            next_action: ZecLifecycleAction::Wait,
+            lez_refund_at_ms: Some(1_762_877_100_000),
+            revealing_claim_hold_attention_ms: None,
+        };
+        let lez = super::zec_wait(
+            &serde_json::json!({"outcome": "awaiting_deadline", "operation": "lez_refund"}),
+            status,
+        )
+        .expect("lez refund wait");
+        assert_eq!(lez.kind, "lez_refund_time");
+        assert_eq!(lez.until_unix_seconds, Some(1_762_877_100));
+        let zcash = super::zec_wait(
+            &serde_json::json!({"outcome": "awaiting_deadline", "operation": "zcash_refund"}),
+            status,
+        )
+        .expect("zcash refund wait");
+        assert_eq!(zcash.kind, "zcash_refund_height");
+        assert_eq!(zcash.until_height, None);
+        assert_eq!(
+            super::zec_wait(
+                &serde_json::json!({"outcome": "submitted", "operation": "lez_refund"}),
+                status
+            ),
+            None
+        );
     }
 }

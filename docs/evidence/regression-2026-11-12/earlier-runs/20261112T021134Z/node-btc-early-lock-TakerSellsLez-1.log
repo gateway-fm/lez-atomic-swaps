@@ -1,0 +1,23 @@
+[02:16:07] === early-lock (stamp 179444976702)
+[02:16:07] preflight: indexer historical reads
+[02:16:07]   indexer serves historical reads at the tip (257)
+[02:16:07] preflight: LEZ finality check waived by request
+[02:16:08]   Maker published offer-e2e-179444976702
+[02:16:09]   Taker took offer-e2e-179444976702: swap c8e8f9f62874 (not_activated)
+[02:16:10]   cutting the Maker's indexer forwarder, its only source of LEZ finality; its sequencer forwarder stays
+[02:16:10]   Taker locked lez: 847a5b8113f0 (replay=False)
+[02:16:11]   [0 s] waiting for the Taker's LEZ lock 847a5b8113f0 on the Maker's own sequencer route: not included yet | LEZ finalized 252, tip 256 (4 unfinalized) [heartbeat]
+[02:16:13]   the Taker's LEZ lock 847a5b8113f0 is in block 263 on the Maker's sequencer route, and the Maker cannot read finality; watching it for 90s
+[02:17:47]   for 90s the Maker stayed at offered: no maker_lock in its record, no send from lez-maker since block 5c6110584f51 | LEZ finalized 309, tip 312 (3 unfinalized) [heartbeat]
+[02:17:47]   the Maker can read LEZ finality again; it may now lock
+[02:17:48]   [0 s] waiting for the Maker's own lock record for c8e8f9f62874: maker offered, no maker_lock effect | LEZ finalized 309, tip 312 (3 unfinalized) [heartbeat]
+[02:18:01]   [14 s] waiting for the Maker's own lock record for c8e8f9f62874: maker taker_lock_confirmed, no maker_lock effect | LEZ finalized 320, tip 327 (7 unfinalized) [heartbeat]
+[02:18:21]   the Maker's lock a66e015f8bec is a send from lez-maker, so the check above was able to see one
+[02:18:22]   [0 s] waiting for the Taker's c8e8f9f62874 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 335, tip 341 (6 unfinalized) [heartbeat]
+[02:18:23]   Taker claimed Bitcoin (replay=False)
+[02:18:23]   [0 s] waiting for the Taker's c8e8f9f62874 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 335, tip 341 (6 unfinalized) [heartbeat]
+[02:18:48]   [24 s] waiting for the Taker's c8e8f9f62874 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 350, tip 355 (5 unfinalized) [heartbeat]
+[02:18:48]   [0 s] waiting for the Maker to report c8e8f9f62874 completed and terminal: maker claim_evidence_available (schedule leased) | LEZ finalized 350, tip 355 (5 unfinalized) [heartbeat]
+[02:18:52]   both Nodes report c8e8f9f62874 completed
+[02:18:52]   the Bitcoin claim 68c711bb16da is a Taproot key-path spend: one 64-byte signature, no script
+[02:18:52] === early-lock: passed in 165s

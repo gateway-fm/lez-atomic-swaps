@@ -1,0 +1,12 @@
+[01:25:40] regression run: 4 tests at d3131654 (tree dirty: 0), results in runtime/regress/20261112T012540Z
+[01:25:40] profile refund: a Bitcoin block every 2 s; Maker cutoff 100 s, refunds at 115 and 245 s
+[01:25:40] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[01:26:15] group fast
+[01:26:15]     timing profile refund -> fast (logs/profile-1.log)
+[01:27:19]     [lane 1] node:btc:late-claim-unmined:TakerSellsLez (try 1) starts: LEZ finalized 140, tip 147
+[01:27:19]     [lane 2] node:btc:late-claim-unmined:TakerSellsForeign (try 1) starts: LEZ finalized 140, tip 147
+[01:27:19]     [lane 3] ui:zec:zec-maker-refund:TakerSellsLez (try 1) starts: LEZ finalized 140, tip 147
+[01:34:31] === ui:zec:zec-maker-refund:TakerSellsLez (try 1, lane 3): PASSED in 418 s; LEZ finalized 348, tip 354
+[01:34:31]     [lane 3] ui:zec:zec-concurrent:TakerSellsForeign (try 1) starts: LEZ finalized 349, tip 354
+[01:35:43] === node:btc:late-claim-unmined:TakerSellsForeign (try 1, lane 2): PASSED in 491 s; LEZ finalized 390, tip 394
+[01:42:17] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 454 s; LEZ finalized 592, tip 606

@@ -39,6 +39,7 @@ use crate::{
     NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts, OfficialNodeRpc,
     RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
     decode_prepared_for_signer, finalized_asset_observation::FinalizedAssetObserver,
+    finalized_claim_observation::read_finalized_block,
     finalized_xmr_observation::FinalizedNativeXmrEffectObserver, native_prepare::OwnedSubmission,
     prepared_from_transaction, program_id_from_hex, program_id_to_hex,
     read_genesis_bound_finalized_clock,
@@ -130,6 +131,38 @@ struct ClaimScan {
     tip: ChainTip,
     claim: Option<(FoundTransaction, [u8; 32])>,
     fully_covered: bool,
+}
+
+/// What a discovery by terms reports found of the counterparty's escrow pair:
+/// only what the indexer holds finalized. The scan reads the sequencer, which
+/// serves a transaction as soon as it includes it, and a party that locks
+/// second on that would lock on a first leg it has not seen final (R1). A
+/// found transaction whose block the indexer has not finalized, or finalized
+/// as another block, is withheld as pending, never absent; so is everything
+/// when the indexer cannot be read. A depositor's exact observation of its
+/// own pair is not filtered.
+async fn withhold_unfinalized(indexer: &dyn FinalizedIndexerApi, scan: &mut PairScan) {
+    if scan.initialization.is_none() && scan.funding.is_none() {
+        return;
+    }
+    let finalized = indexer.last_finalized_block_id().await.ok().flatten();
+    let mut withheld = false;
+    for found in [&mut scan.initialization, &mut scan.funding] {
+        let Some(position) = found.as_ref().map(|found| found.facts.position) else {
+            continue;
+        };
+        let final_there = finalized.is_some_and(|finalized| position.height <= finalized)
+            && read_finalized_block(indexer, position.height)
+                .await
+                .is_ok_and(|block| block.header.hash.0 == *position.block_hash.as_bytes());
+        if !final_there {
+            *found = None;
+            withheld = true;
+        }
+    }
+    if withheld {
+        scan.fully_covered = false;
+    }
 }
 
 /// One exact-v0.2 planner and official-node composition used by the bridge server.
@@ -1652,7 +1685,10 @@ impl BridgeRuntime {
                 (window, None, false)
             }
         };
-        let scan = self.scan_pair(request, window, expected.as_ref()).await?;
+        let mut scan = self.scan_pair(request, window, expected.as_ref()).await?;
+        if !exact {
+            withhold_unfinalized(self.indexer.as_ref(), &mut scan).await;
+        }
         if let (Some(initialization), Some(funding)) =
             (scan.initialization.as_ref(), scan.funding.as_ref())
             && position_key(&initialization.facts.position) >= position_key(&funding.facts.position)
@@ -2769,4 +2805,192 @@ fn account_snapshot(
         program_id_to_hex(account.program_owner),
         account_sha256(account)?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use async_trait::async_trait;
+    use indexer_service_protocol::{
+        BedrockStatus, Block, BlockBody, BlockHeader, HashType, Signature as IndexedSignature,
+    };
+    use lez_bridge_protocol::ExactTransactionBytes;
+
+    use super::*;
+    use crate::HistoricalAccount;
+
+    /// The indexer as a discovery sees it: its last finalized block and the
+    /// blocks it serves by id, or nothing at all (its forwarder cut).
+    #[derive(Debug)]
+    struct Indexer {
+        finalized: Option<u64>,
+        blocks: BTreeMap<u64, Block>,
+    }
+
+    impl Indexer {
+        fn cut() -> Self {
+            Self {
+                finalized: None,
+                blocks: BTreeMap::new(),
+            }
+        }
+
+        fn finalized_through(height: u64) -> Self {
+            Self {
+                finalized: Some(height),
+                blocks: (1..=height)
+                    .map(|id| (id, block(id, id_byte(id))))
+                    .collect(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl FinalizedIndexerApi for Indexer {
+        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+            self.finalized
+                .map(Some)
+                .ok_or(BridgeRuntimeError::Unavailable)
+        }
+
+        async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+            self.finalized.ok_or(BridgeRuntimeError::Unavailable)?;
+            Ok(self.blocks.get(&block_id).cloned())
+        }
+
+        async fn block_by_hash(
+            &self,
+            block_hash: [u8; 32],
+        ) -> Result<Option<Block>, BridgeRuntimeError> {
+            self.finalized.ok_or(BridgeRuntimeError::Unavailable)?;
+            Ok(self
+                .blocks
+                .values()
+                .find(|block| block.header.hash.0 == block_hash)
+                .cloned())
+        }
+
+        async fn account_at_block(
+            &self,
+            _account_id: [u8; 32],
+            _block_id: u64,
+        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+            Err(BridgeRuntimeError::Unavailable)
+        }
+    }
+
+    fn id_byte(height: u64) -> u8 {
+        u8::try_from(height).expect("small test height")
+    }
+
+    fn block(block_id: u64, hash_byte: u8) -> Block {
+        Block {
+            header: BlockHeader {
+                block_id,
+                prev_block_hash: HashType([id_byte(block_id.saturating_sub(1)); 32]),
+                hash: HashType([hash_byte; 32]),
+                timestamp: 1_850_000_000_000 + block_id,
+                signature: IndexedSignature([hash_byte; 64]),
+            },
+            body: BlockBody {
+                transactions: Vec::new(),
+            },
+            bedrock_status: BedrockStatus::Finalized,
+        }
+    }
+
+    /// A transaction the sequencer scan found in the block of that height.
+    fn found(height: u64, transaction_byte: u8) -> FoundTransaction {
+        FoundTransaction {
+            facts: ObservedTransactionFacts::new(
+                TransactionId::from_bytes([transaction_byte; 32]),
+                ExactTransactionBytes::new(vec![transaction_byte]).expect("bytes"),
+                ChainPosition::new(Hex32::from_bytes([id_byte(height); 32]), height, 0),
+                AccountIds::new(vec![Hex32::from_bytes([9; 32])]).expect("signers"),
+                true,
+            ),
+            ordered_account_ids: AccountIds::new(vec![Hex32::from_bytes([8; 32])])
+                .expect("accounts"),
+        }
+    }
+
+    /// The counterparty's pair as the sequencer has it: initialized in block
+    /// 20, funded in block 22, the tip at 24 and the window fully scanned.
+    fn included_pair() -> PairScan {
+        PairScan {
+            tip: ChainTip::new(Hex32::from_bytes([24; 32]), 24),
+            initialization: Some(found(20, 1)),
+            funding: Some(found(22, 2)),
+            fully_covered: true,
+        }
+    }
+
+    fn reported(scan: &PairScan) -> (Option<u64>, Option<u64>, bool) {
+        (
+            scan.initialization
+                .as_ref()
+                .map(|found| found.facts.position.height),
+            scan.funding
+                .as_ref()
+                .map(|found| found.facts.position.height),
+            scan.fully_covered,
+        )
+    }
+
+    // R1 (Logos review #103 item 8): the Maker selling Zcash for the Taker's
+    // LEZ must not fund on a LEZ lock the indexer has not finalized. Its
+    // discovery reads the sequencer, so what the sequencer included and the
+    // indexer has not finalized is reported pending: never found, never absent.
+    #[tokio::test]
+    async fn a_counterparty_pair_the_indexer_cannot_vouch_for_is_pending() {
+        let mut scan = included_pair();
+        withhold_unfinalized(&Indexer::cut(), &mut scan).await;
+        assert_eq!(reported(&scan), (None, None, false), "indexer unreachable");
+
+        let mut scan = included_pair();
+        withhold_unfinalized(&Indexer::finalized_through(19), &mut scan).await;
+        assert_eq!(
+            reported(&scan),
+            (None, None, false),
+            "neither block finalized"
+        );
+
+        let mut scan = included_pair();
+        withhold_unfinalized(&Indexer::finalized_through(21), &mut scan).await;
+        assert_eq!(
+            reported(&scan),
+            (Some(20), None, false),
+            "only the initialization finalized"
+        );
+
+        let mut forked = Indexer::finalized_through(23);
+        forked.blocks.insert(22, block(22, 0xee));
+        let mut scan = included_pair();
+        withhold_unfinalized(&forked, &mut scan).await;
+        assert_eq!(
+            reported(&scan),
+            (Some(20), None, false),
+            "the indexer finalized another block 22"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_counterparty_pair_the_indexer_finalized_is_found() {
+        let mut scan = included_pair();
+        withhold_unfinalized(&Indexer::finalized_through(22), &mut scan).await;
+        assert_eq!(reported(&scan), (Some(20), Some(22), true));
+
+        let mut empty = PairScan {
+            initialization: None,
+            funding: None,
+            ..included_pair()
+        };
+        withhold_unfinalized(&Indexer::cut(), &mut empty).await;
+        assert_eq!(
+            reported(&empty),
+            (None, None, true),
+            "nothing found needs no finality"
+        );
+    }
 }

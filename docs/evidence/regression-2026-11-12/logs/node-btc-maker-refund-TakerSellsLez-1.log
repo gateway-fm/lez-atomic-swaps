@@ -1,0 +1,25 @@
+[05:21:56] === maker-refund (stamp 179446091602)
+[05:21:56] preflight: indexer historical reads
+[05:21:56]   indexer serves historical reads at the tip (3783)
+[05:21:56] preflight: LEZ finality check waived by request
+[05:21:57]   Maker published offer-e2e-179446091602
+[05:22:01]   Taker took offer-e2e-179446091602: swap f7e1c191822b (not_activated)
+[05:22:02]   Taker locked lez: 0d2b6343c9ef (replay=False)
+[05:22:03]   [0 s] waiting for the Taker's f7e1c191822b to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 3785, tip 3788 (3 unfinalized) [heartbeat]
+[05:22:14]   [11 s] waiting for the Taker's f7e1c191822b to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 3785, tip 3788 (3 unfinalized) [heartbeat]
+[05:22:38]   [35 s] waiting for the Taker's f7e1c191822b to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 3796, tip 3799 (3 unfinalized) [heartbeat]
+[05:22:44]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (115s after the take)
+[05:22:44]   waiting 96s for the Maker's refund deadline
+[05:22:44]   [0 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 3809, tip 3812 (3 unfinalized) [heartbeat]
+[05:23:44]   [60 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 3832, tip 3840 (8 unfinalized) [heartbeat]
+[05:24:21]   Maker refund queued: {"schema_version": 1, "swap_id": "f7e1c191822b1f2a84030acbecba411735aa150e28af1ff539108eb1c3990bf8", "action": "refund", "requested_after_generation": 17, "was_
+[05:24:22]   [0 s] waiting for the Maker to refund its leg: maker both_legs_locked | LEZ finalized 3864, tip 3867 (3 unfinalized) [heartbeat]
+[05:24:27]   waiting 124s for the Taker's LEZ refund time
+[05:24:27]   [0 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 3864, tip 3867 (3 unfinalized) [heartbeat]
+[05:25:27]   [60 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 3902, tip 3908 (6 unfinalized) [heartbeat]
+[05:26:27]   [120 s] waiting for for the Taker's LEZ refund time: sleeping | LEZ finalized 3945, tip 3949 (4 unfinalized) [heartbeat]
+[05:26:32]   [0 s] waiting for the Taker's refund of f7e1c191822b to land: taker refund_available (refund admitted) | maker maker_leg_refunded | LEZ finalized 3945, tip 3949 (4 unfinalized) [heartbeat]
+[05:26:39]   refund request admitted (attempt 1, state refund_available)
+[05:26:56]   both legs refunded
+[05:26:57]   the Bitcoin refund b9bd23ebeaf5 is a script-path spend: three witness items
+[05:26:57] === maker-refund: passed in 301s
