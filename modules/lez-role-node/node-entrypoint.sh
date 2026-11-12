@@ -32,7 +32,7 @@ bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the shared names for its one role.
 role_prefix="LEZ_$(tr '[:lower:]' '[:upper:]' <<<"$role")_"
 for name in SIDECAR_PORT_BASE WALLET_SIGNER_SOCKET BTC_WALLET BTC_CLAIM_DESTINATION NODE_LOG_FILE \
-    NODE_STATE_DIR NODE_RUN_ROOT ZEC_STATE_DIR NODE_IDENTITY_DIR MARKET_MANIFEST BTC_RPC_COOKIE_FILE DELIVERY_DIR \
+    NODE_STATE_DIR NODE_RUN_ROOT ZEC_STATE_DIR ZEC_SIDECAR_DIR NODE_IDENTITY_DIR MARKET_MANIFEST BTC_RPC_COOKIE_FILE DELIVERY_DIR \
     SEQUENCER_URL INDEXER_URL LEZ_SEQUENCER_ROUTE BITCOIN_CORE_HOST SEQUENCER_HOST INDEXER_HOST ZEBRA_HOST \
     V02_CHANNEL_ID AUTH_TRANSFER_PROGRAM_ID BTC_NETWORK LEZ_NETWORK \
     BTC_REFUND_CSV_BLOCKS BTC_SECOND_LOCK_REFUND_CSV_BLOCKS BTC_BLOCK_SECONDS_FASTEST BTC_BLOCK_SECONDS_SLOWEST \
@@ -59,7 +59,10 @@ if [[ "$(uname -s)" == Darwin ]]; then
   home="${LEZ_NODE_HOME:-$HOME/Library/Application Support/LEZ}"
   default_state="$home/$role"
   default_run_root="$home/run"
-  default_zec_state="$home/zec/$role"
+  # One corridor root for both roles, as zec-provision.sh --native-home
+  # writes it; each role's ZEC sidecars keep their state apart.
+  default_zec_state="$home/zec"
+  default_zec_sidecar="$home/zec/sidecar-$role"
   default_identity="$home/identity/$role"
   default_manifest="$home/market-bootstrap.env"
   default_cookie="$home/btc-rpc-cookie"
@@ -69,6 +72,7 @@ else
   default_state="/var/lib/lez/$role"
   default_run_root=/run/lez
   default_zec_state=/var/lib/lez/zec
+  default_zec_sidecar=
   default_identity=/run-lez-identity
   default_manifest=/run-market/market-bootstrap.env
   default_cookie=/run-config/btc-rpc-cookie
@@ -278,6 +282,9 @@ fi
 # provisioned on another chain is ignored rather than loaded: a catalog whose
 # envelope no longer authenticates would keep the Taker from starting at all.
 zec_state="${LEZ_ZEC_STATE_DIR:-$default_zec_state}"
+# The ZEC sidecars' state (one directory per corridor run) and their log
+# (<dir>.log): in the role's own ZEC volume on Linux.
+zec_sidecar_root="${LEZ_ZEC_SIDECAR_DIR:-${default_zec_sidecar:-$zec_state/sidecar}}"
 zec_role="$zec_state/corridor/$role"
 zec_config="$zec_role/actor-config.json"
 zec_ready=0
@@ -300,9 +307,9 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   zec_listen="${zec_endpoint#http://}"
   zec_listen="${zec_listen%%/*}"
   [[ "$zec_listen" =~ ^127\.0\.0\.1:[0-9]+$ ]] || { echo "$role: ZEC bridge endpoint $zec_endpoint is not loopback" >&2; exit 1; }
-  zec_sidecar_state="$zec_state/sidecar/$zec_run_id"
-  mkdir -p "$zec_state/sidecar" "$zec_sidecar_state"
-  chmod 0700 "$zec_state/sidecar" "$zec_sidecar_state"
+  zec_sidecar_state="$zec_sidecar_root/$zec_run_id"
+  mkdir -p "$zec_sidecar_root" "$zec_sidecar_state"
+  chmod 0700 "$zec_sidecar_root" "$zec_sidecar_state"
   # The ZEC sidecar signs through the same LEZ wallet module when it is up; its
   # account is the one the prepared runtime names.
   if [[ -n "$lez_wallet_socket" ]]; then
@@ -320,7 +327,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
       --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
       "${zec_signer_args[@]}" --state-directory "$zec_sidecar_state" \
       --authenticated-transfer-program-id "$auth_transfer_program_id" \
-      </dev/null >>"$zec_state/sidecar.log" 2>&1 &
+      </dev/null >>"$zec_sidecar_root.log" 2>&1 &
     zec_sidecar_pid=$!
     for _ in $(seq 1 90); do
       if (exec 3<>"/dev/tcp/127.0.0.1/${zec_listen##*:}") 2>/dev/null; then zec_candidate_ready=1; break; fi
@@ -329,7 +336,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
     done
     [[ "$zec_candidate_ready" == 1 ]] && break
     kill -0 "$zec_sidecar_pid" 2>/dev/null && break
-    echo "$role ZEC corridor $zec_run_id: sidecar exited before listening (start $zec_start of 3, see $zec_state/sidecar.log)" >&2
+    echo "$role ZEC corridor $zec_run_id: sidecar exited before listening (start $zec_start of 3, see $zec_sidecar_root.log)" >&2
     sleep 2
   done
   if [[ "$zec_candidate_ready" == 1 ]]; then
@@ -337,7 +344,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
     zec_configs+=("$zec_candidate")
     [[ "$zec_candidate" == "$zec_config" ]] && zec_ready=1
   else
-    echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen; ZEC stays off for it (see $zec_state/sidecar.log)" >&2
+    echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen; ZEC stays off for it (see $zec_sidecar_root.log)" >&2
   fi
 done
 if [[ "$zec_ready" == 1 ]]; then

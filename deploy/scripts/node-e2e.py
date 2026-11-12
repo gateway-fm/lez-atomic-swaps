@@ -69,9 +69,15 @@ a Zcash run's is `runtime/e2e/<scenario>.json` (TakerSellsLez) or
 `runtime/e2e/<scenario>-foreign.json` (TakerSellsForeign).
 
 With LEZ_E2E_NATIVE_RUN_ROOT set, the Nodes are native ones on this host
-(started from their Logos packages; the chains stay in the stack's
-containers): the harness reaches their owner sockets under that directory
-with this host's curl and runs happy, replay and wrong-inputs only.
+(started from their Logos packages by lez_swap_node; the chains stay in the
+stack's containers): the harness reaches their owner sockets under that
+directory with this host's curl, runs what it would run in a Node's container
+beside the Node (paths in the launcher's native layout under
+LEZ_E2E_NATIVE_HOME, by default the run root's parent), stops a Node with its
+supervisor's hold file (<home>/<role>.hold) and restarts it by ending it,
+reads its log from <home>/<role>.node.log, and provisions ZEC corridors with
+zec-provision.sh --native-home. The scenarios that cut a loopback forward or
+the Chat socket inside a container are refused (NATIVE_REFUSED).
 
 The BTC refund scenarios need the `refund` (or the `fast`) timing profile
 (`LEZ_TIMING_PROFILE=refund scripts/up.sh`, which recreates the Nodes and the
@@ -149,7 +155,18 @@ NODES = {"maker": (f"{PREFIX}-maker-node", "/run/lez/maker/node.sock"),
 # LEZ_NODE_RUN_ROOT), reached with this host's curl. The scenarios that stop,
 # restart or reach into a Node's container are refused.
 NATIVE_RUN_ROOT = os.environ.get("LEZ_E2E_NATIVE_RUN_ROOT", "")
-NATIVE_SCENARIOS = {"happy", "replay", "wrong-inputs"}
+# The native Nodes' LEZ_NODE_HOME (state, ZEC corridor, Delivery); each role's
+# hold file (lez_swap_node's start_node argument: while it exists the Node is
+# kept down) and the Node's own log file (the launcher's LEZ_NODE_LOG_FILE).
+NATIVE_HOME = pathlib.Path(os.environ.get("LEZ_E2E_NATIVE_HOME") or (pathlib.Path(NATIVE_RUN_ROOT).parent if NATIVE_RUN_ROOT else "."))
+NATIVE_FILES = {role: {"hold": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_HOLD") or str(NATIVE_HOME / f"{role}.hold"),
+                       "log": os.environ.get(f"LEZ_E2E_NATIVE_{role.upper()}_LOG") or str(NATIVE_HOME / f"{role}.node.log")}
+                for role in ("maker", "taker")}
+# Scenarios that cut a loopback forward or the Chat socket inside a Node's
+# container: a native Node reaches the chains directly, with nothing to cut.
+NATIVE_REFUSED = {"late-claim-confirms", "late-claim-unmined", "early-lock", "offline-after-lock",
+                  "refund-then-maker-lock", "zec-early-lock", "zec-refund-then-maker-lock", "zec-taker-refund",
+                  "zec-offline-after-lock"}
 HEALTH = {"maker": ("maker_health", {}), "taker": ("taker_health", {"schema_version": 1})}
 MINER = f"{PREFIX}-btc-miner"
 # The market wallets the lane's Nodes settle as (zec-balance-refusal names them).
@@ -235,6 +252,150 @@ def mine(blocks: int) -> None:
 
 def docker(*command: str) -> None:
     subprocess.run(["docker", *command], check=True, capture_output=True)
+
+
+# ---- a Node's container, or a native Node on this host --------------------------
+
+def native_pid(role: str) -> int | None:
+    """The native role Node's pid: the process serving its owner socket."""
+    socket = str(pathlib.Path(NATIVE_RUN_ROOT) / role / "node.sock")
+    found = subprocess.run(["pgrep", "-f", "--", f"--socket {socket}"], capture_output=True, text=True, check=False).stdout.split()
+    return int(found[0]) if found else None
+
+
+def native_bin(role: str) -> str:
+    """The installed role package's bin/, where the running native Node was started from."""
+    pid = native_pid(role)
+    if pid is None:
+        raise Failure(f"no native {role} Node runs (socket {NATIVE_RUN_ROOT}/{role}/node.sock)")
+    program = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
+    return str(pathlib.Path(program).parent)
+
+
+def node_path(role: str, text: str) -> str:
+    """A path (or a script naming paths) as the role's Node sees it: the
+    container's own for a container, the native layout for a native Node."""
+    if not NATIVE_RUN_ROOT:
+        return text
+    for other in ("maker", "taker"):
+        text = text.replace(f"/run/lez/{other}/node.log", NATIVE_FILES[other]["log"])
+    text = text.replace("/var/lib/lez/zec", str(NATIVE_HOME / "zec"))
+    for other in ("maker", "taker"):
+        text = text.replace(f"/var/lib/lez/{other}", str(NATIVE_HOME / other))
+    text = text.replace("/run/lez/", f"{NATIVE_RUN_ROOT.rstrip('/')}/")
+    if "/usr/local/bin/" in text:
+        text = text.replace("/usr/local/bin/", f"{native_bin(role)}/")
+    return text
+
+
+def node_command(role: str, argv: list[str]) -> list[str]:
+    """`argv` run where the role's Node runs: `docker exec` into its container,
+    or on this host (paths translated) beside a native Node."""
+    if not NATIVE_RUN_ROOT:
+        return ["docker", "exec", NODES[role][0], *argv]
+    return [node_path(role, part) for part in argv]
+
+
+def node_run(role: str, *argv: str) -> None:
+    """`argv` where the role's Node runs (node_command); fails on a non-zero exit."""
+    subprocess.run(node_command(role, list(argv)), check=True, capture_output=True)
+
+
+def node_stop(role: str) -> None:
+    """Take the role's Node down: its container stopped, or a native Node held
+    down by its supervisor (the hold file) and ended."""
+    if not NATIVE_RUN_ROOT:
+        docker("stop", NODES[role][0])
+        return
+    pathlib.Path(NATIVE_FILES[role]["hold"]).touch()
+    pid = native_pid(role)
+    if pid is not None:
+        os.kill(pid, 15)
+    deadline = time.time() + 30
+    while native_pid(role) is not None and time.time() < deadline:
+        time.sleep(0.5)
+    if native_pid(role) is not None:
+        raise Failure(f"the native {role} Node did not stop")
+
+
+def node_start(role: str, check: bool = True) -> None:
+    """Bring the role's Node back (its container started, or a native Node's hold released)."""
+    if not NATIVE_RUN_ROOT:
+        if check:
+            docker("start", NODES[role][0])
+        else:
+            subprocess.run(["docker", "start", NODES[role][0]], check=False, capture_output=True)
+        return
+    pathlib.Path(NATIVE_FILES[role]["hold"]).unlink(missing_ok=True)
+
+
+def node_restart(role: str) -> None:
+    """Restart the role's Node: its container, or a native Node ended and
+    started again by its supervisor; waits until the new Node runs."""
+    if not NATIVE_RUN_ROOT:
+        docker("restart", NODES[role][0])
+        return
+    old = native_pid(role)
+    if old is not None:
+        os.kill(old, 15)
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        new = native_pid(role)
+        if new is not None and new != old:
+            return
+        time.sleep(0.5)
+    raise Failure(f"the native {role} Node did not start again")
+
+
+class LogClock:
+    """A native Node's log file has no timestamps: what `docker logs --since`
+    gives a container is read here from the file's size at that moment,
+    sampled twice a second while the harness runs."""
+
+    def __init__(self) -> None:
+        self.samples: dict[str, list[tuple[float, int]]] = {"maker": [], "taker": []}
+        self.started = False
+
+    def start(self) -> None:
+        if self.started:
+            return
+        self.started = True
+        threading.Thread(target=self.sample, daemon=True).start()
+
+    def sample(self) -> None:
+        while True:
+            for role, samples in self.samples.items():
+                try:
+                    samples.append((time.time(), os.path.getsize(NATIVE_FILES[role]["log"])))
+                except OSError:
+                    pass
+            time.sleep(0.5)
+
+    def offset(self, role: str, since: str) -> int:
+        if since.endswith("s") and since[:-1].isdigit():
+            moment = time.time() - int(since[:-1])
+        else:
+            moment = datetime.datetime.fromisoformat(since.replace("Z", "+00:00")).timestamp()
+        before = [size for when, size in self.samples[role] if when <= moment]
+        return before[-1] if before else 0
+
+
+LOG_CLOCK = LogClock()
+
+
+def node_log_since(role: str, since: str) -> str:
+    """The role Node's output since `since` (RFC 3339, or `<n>s`)."""
+    if not NATIVE_RUN_ROOT:
+        read = subprocess.run(["docker", "logs", "--since", since, NODES[role][0]], capture_output=True,
+                              text=True, check=False, stdin=subprocess.DEVNULL)
+        return read.stdout + read.stderr
+    path = NATIVE_FILES[role]["log"]
+    offset = LOG_CLOCK.offset(role, since)
+    with open(path, "rb") as handle:
+        if offset > os.path.getsize(path):
+            offset = 0
+        handle.seek(offset)
+        return handle.read().decode(errors="replace")
 
 
 def wait_healthy(role: str, timeout: int = 180) -> None:
@@ -740,7 +901,7 @@ def scenario_restart(stamp: str, role: str) -> dict:
     lock(swap_id)
     container, _ = NODES[role]
     log(f"  restarting {container}")
-    docker("restart", container)
+    node_restart(role)
     wait_healthy(role)
     claim(swap_id, stamp)
     wait_completed(swap_id)
@@ -754,7 +915,7 @@ def scenario_survivor(stamp: str) -> dict:
     claim(swap_id, stamp)
     wait_taker(swap_id, {"claim_in_progress", "both_legs_locked", "completed"}, timeout=600)
     log("  stopping the Taker Node right after its revealing claim")
-    docker("stop", NODES["taker"][0])
+    node_stop("taker")
     try:
         wait = Wait("the Maker to complete without the Taker", 1800)
         while wait.running():
@@ -766,7 +927,7 @@ def scenario_survivor(stamp: str) -> dict:
         else:
             raise wait.failure()
     finally:
-        docker("start", NODES["taker"][0])
+        node_start("taker")
         wait_healthy("taker")
     wait_completed(swap_id, timeout=900)
     return {"swap_id": swap_id}
@@ -885,11 +1046,11 @@ def assert_settled_consistently(before: dict, taker_state: str, maker_phase_end:
 
 def stop_taker() -> None:
     log("  stopping the Taker Node")
-    docker("stop", NODES["taker"][0])
+    node_stop("taker")
 
 
 def start_taker() -> None:
-    subprocess.run(["docker", "start", NODES["taker"][0]], check=False, capture_output=True)
+    node_start("taker", check=False)
     wait_healthy("taker")
 
 
@@ -1237,8 +1398,8 @@ def lez_transaction_block(role: str, transaction_id: str) -> int | None:
     if not (len(transaction_id) == 64 and all(c in "0123456789abcdef" for c in transaction_id)):
         raise Failure(f"the LEZ lock's transaction id {transaction_id!r} is not a 32-byte hex hash")
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getTransaction", "params": [transaction_id]})
-    result = subprocess.run(["docker", "exec", NODES[role][0], "curl", "-sS", "-m", "10",
-                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:3040/"],
+    result = subprocess.run(node_command(role, ["curl", "-sS", "-m", "10",
+                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:3040/"]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     try:
         reply = json.loads(result.stdout)
@@ -1508,8 +1669,8 @@ def taker_offchain_probe() -> dict:
     """What the Taker's side can still do: connect to the Maker's Chat socket,
     list Delivery, and how many open file descriptors in its container point
     into Delivery. Run as the container's user, the one its Node runs as."""
-    result = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", TAKER_OFFCHAIN_PROBE,
-                             CHAT_SOCKET, DELIVERY_DIR], capture_output=True, text=True, check=False,
+    result = subprocess.run(node_command("taker", ["python3", "-c", TAKER_OFFCHAIN_PROBE,
+                             CHAT_SOCKET, DELIVERY_DIR]), capture_output=True, text=True, check=False,
                             stdin=subprocess.DEVNULL)
     try:
         return json.loads(result.stdout)
@@ -1541,7 +1702,7 @@ class ChatConnections(threading.Thread):
         self.seen: list[tuple[str, int]] = []
 
     def read(self) -> int | None:
-        result = subprocess.run(["docker", "exec", NODES["maker"][0], "cat", "/proc/net/unix"],
+        result = subprocess.run(node_command("maker", ["cat", "/proc/net/unix"]),
                                 capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
         return connected_chat_sockets(result.stdout) if result.returncode == 0 else None
 
@@ -1790,7 +1951,7 @@ def scenario_taker_refund(stamp: str) -> dict:
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     log(f"  stopping the Maker Node so it never {'locks Bitcoin' if REVERSE else 'funds'}")
-    docker("stop", NODES["maker"][0])
+    node_stop("maker")
     before = node_balances("taker")
     try:
         txid = lock(swap_id)
@@ -1801,7 +1962,7 @@ def scenario_taker_refund(stamp: str) -> dict:
         after = node_balances("taker")
         log(f"  Taker refunded; Taker Node balances {before} → {after}")
     finally:
-        docker("start", NODES["maker"][0])
+        node_start("maker")
         wait_healthy("maker")
     # The Maker follows the Taker's refund to Bitcoin finality; keep regtest
     # blocks coming so finality does not wait on the two-minute miner alone.
@@ -1946,8 +2107,8 @@ def lez_readable(role: str) -> bool:
     """Whether that Node can read the LEZ indexer over its own loopback forwarder."""
     container, _ = NODES[role]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getLastFinalizedBlockId", "params": []})
-    result = subprocess.run(["docker", "exec", container, "curl", "-sf", "-m", "10",
-                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:8779/"],
+    result = subprocess.run(node_command(role, ["curl", "-sf", "-m", "10",
+                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:8779/"]),
                             capture_output=True, text=True, check=False)
     try:
         return int(json.loads(result.stdout)["result"]) > 0
@@ -2205,7 +2366,7 @@ def taker_swap_directory(swap_id: str) -> str:
         "    s = json.load(open(f))\n"
         "    if bytes(s.get('swap_id') or []).hex() == sys.argv[1]: print(f.rsplit('/', 1)[0]); break\n"
     )
-    result = subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", reader, swap_id],
+    result = subprocess.run(node_command("taker", ["python3", "-c", reader, swap_id]),
                             capture_output=True, text=True, check=False)
     directory = result.stdout.strip()
     if not directory:
@@ -2234,7 +2395,7 @@ def scenario_regenerated_config(stamp: str) -> dict:
     lock(swap_id)
     regenerate_runtime_config()
     log("  restarting the Taker Node onto the re-rendered configuration")
-    docker("restart", NODES["taker"][0])
+    node_restart("taker")
     wait_healthy("taker")
     listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
     if len(listed) != 1 or listed[0]["state"] in TERMINAL:
@@ -2252,10 +2413,10 @@ def scenario_tampered_config(stamp: str) -> dict:
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     directory = taker_swap_directory(swap_id)
-    docker("exec", NODES["taker"][0], "sh", "-c",
+    node_run("taker", "sh", "-c",
            f"printf '\n' >> {directory}/taker-role-config.json")
     log("  appended one byte to the swap's copied taker-role-config.json")
-    docker("restart", NODES["taker"][0])
+    node_restart("taker")
     wait_healthy("taker")
     listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
     state = listed[0]["state"] if listed else "absent"
@@ -2393,7 +2554,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
         result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "zec-provision.sh"), "--skip-chain-check",
                                  "--direction", ROUTE["direction"], "--swaps", str(swaps), *(["--add"] if add else []),
                                  *(["--profile", profile] if profile else []),
-                                 *(["--zcash-network", "test"] if ZEC_PUBLIC else [])],
+                                 *(["--zcash-network", "test"] if ZEC_PUBLIC else []),
+                                 *(["--native-home", str(NATIVE_HOME)] if NATIVE_RUN_ROOT else [])],
                                 capture_output=True, text=True, check=False, cwd=DEPLOY_ROOT, stdin=subprocess.DEVNULL)
         for line in result.stdout.strip().splitlines()[-6:]:
             log(f"    {line}")
@@ -2413,6 +2575,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
         # runtime/zec/<run>/b/, its corridor root corridor/ or corridor-b/.
         entry_out = out if index == 0 else out / "b"
         corridor_root = "/var/lib/lez/zec/corridor" + ("" if index == 0 else "-b")
+        if (out / "zec-root").is_file():   # native Nodes: where zec-provision.sh --native-home wrote it
+            corridor_root = (out / "zec-root").read_text().strip() + "/corridor" + ("" if index == 0 else "-b")
         summary = json.loads((entry_out / "provision-summary.json").read_text())
         # The Zcash funder's actor config names the outpoint its funding spends
         # (the Maker's coinbase when the Taker sells LEZ, the Taker's paid output
@@ -2421,7 +2585,7 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
         funder = summary.get("zcash_candidate_owner", "maker")
         reader = (f"import json,sys; c=json.load(open(sys.argv[1] + '/{funder}/actor-config.json'));"
                   " print(json.dumps(c['zcash_funding_outpoints']))")
-        read = subprocess.run(["docker", "exec", NODES[funder][0], "python3", "-c", reader, corridor_root],
+        read = subprocess.run(node_command(funder, ["python3", "-c", reader, corridor_root]),
                               capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
         # A desk journey may have the funder's Node stopped (zec-taker-refund):
         # the outpoint read once is kept beside the run's summaries and reused.
@@ -2460,7 +2624,7 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
 
 def zec_taker_actor_config(receipt_output: str) -> str:
     """The take wrote an acceptance receipt naming the provisioned Taker actor config."""
-    result = subprocess.run(["docker", "exec", NODES["taker"][0], "cat", receipt_output],
+    result = subprocess.run(node_command("taker", ["cat", receipt_output]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
     if result.returncode != 0:
         raise Failure(f"no acceptance receipt at {receipt_output}: {result.stderr.strip()[:200]}")
@@ -2532,8 +2696,8 @@ def zec_take_or_resume(offer_id: str, stamp: str, suffix: str = "") -> str:
 def zec_drive(config: str) -> dict | None:
     """One `drive` of the Taker's ZEC actor; None when the actor refused (transient
     sidecar/chain reads) so the caller keeps polling."""
-    result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
-                             "--config", config, "drive"],
+    result = subprocess.run(node_command("taker", ["/usr/local/bin/lez-zec-taker-actor",
+                             "--config", config, "drive"]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=300)
     text = result.stdout.strip()
     if result.returncode != 0 or not text:
@@ -2549,8 +2713,8 @@ def zec_drive(config: str) -> dict | None:
 def zec_drive_exit(config: str) -> tuple[int, str]:
     """One `drive` of the Taker's ZEC actor, with its exit code and stderr: the
     balance refusal is exit 3 (`LEZ_DEPOSITOR_BALANCE_INSUFFICIENT_EXIT_CODE`)."""
-    result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
-                             "--config", config, "drive"],
+    result = subprocess.run(node_command("taker", ["/usr/local/bin/lez-zec-taker-actor",
+                             "--config", config, "drive"]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=300)
     return result.returncode, result.stderr
 
@@ -2565,8 +2729,8 @@ def lez_account_balance(account_id: str) -> int:
 
 def zec_status(config: str) -> dict | None:
     """One `status` of the Taker's ZEC actor (durable phase, no chain access)."""
-    result = subprocess.run(["docker", "exec", NODES["taker"][0], "/usr/local/bin/lez-zec-taker-actor",
-                             "--config", config, "status"],
+    result = subprocess.run(node_command("taker", ["/usr/local/bin/lez-zec-taker-actor",
+                             "--config", config, "status"]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
     text = result.stdout.strip()
     if result.returncode != 0 or not text:
@@ -2612,13 +2776,11 @@ def maker_effect_lines(swap_id: str, since: str) -> list[str]:
     without the file (an older image) is read from the container's log since
     `since` (RFC 3339)."""
     container = NODES["maker"][0]
-    result = subprocess.run(["docker", "exec", container, "cat", "/run/lez/maker/node.log"],
+    result = subprocess.run(node_command("maker", ["cat", "/run/lez/maker/node.log"]),
                             capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
     text = result.stdout
     if result.returncode != 0:
-        result = subprocess.run(["docker", "logs", "--since", since, container],
-                                capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL, timeout=120)
-        text = result.stdout + result.stderr
+        text = node_log_since("maker", since)
     prefix = f"maker actor {swap_id}: "
     lines = []
     for line in text.splitlines():
@@ -2827,7 +2989,7 @@ def scenario_zec_happy(stamp: str) -> dict:
     # with the daemon's claim key on each start, so a Maker that completed a
     # ZEC swap must come back on the same key and still report it completed.
     log("  restarting the Maker Node after the completed swap (claim-journal revalidation)")
-    docker("restart", NODES["maker"][0])
+    node_restart("maker")
     wait_healthy("maker")
     view = maker_view(swap_id)
     if view.get("schedule_state") != "terminal" or maker_phase(swap_id) != "completed":
@@ -3123,14 +3285,19 @@ def scenario_zec_balance_refusal(stamp: str) -> dict:
 
 def taker_node_log_since(since: str) -> str:
     """The Taker Node's log since `since` (RFC 3339), stdout and stderr."""
-    read = subprocess.run(["docker", "logs", "--since", since, NODES["taker"][0]], capture_output=True,
-                          text=True, check=False, stdin=subprocess.DEVNULL)
-    return read.stdout + read.stderr
+    return node_log_since("taker", since)
 
 
 def taker_node_log_follow_until(marker: str, since: str, timeout: float) -> bool:
     """Follows the Taker Node's log from `since` (RFC 3339) and returns True the
     moment a line carries `marker`, False after `timeout` seconds."""
+    if NATIVE_RUN_ROOT:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if marker in node_log_since("taker", since):
+                return True
+            time.sleep(0.2)
+        return False
     follow = subprocess.Popen(["docker", "logs", "-f", "--since", since, NODES["taker"][0]],
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
                               errors="replace")
@@ -3404,7 +3571,7 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
     container, _ = NODES[role]
     log(f"  restarting {container}")
     restarted_at = time.time()
-    docker("restart", container)
+    node_restart(role)
     wait_healthy(role)
     classes = set()
     if role == "taker":
@@ -3416,8 +3583,9 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
             if view.get("last_failure_class"):
                 classes.add(view["last_failure_class"])
             time.sleep(5)
-        restart_lines = subprocess.run(["docker", "logs", "--since", f"{int(time.time() - restarted_at) + 5}s", container],
-                                       capture_output=True, text=True, check=False).stderr
+        restart_lines = (subprocess.run(["docker", "logs", "--since", f"{int(time.time() - restarted_at) + 5}s", container],
+                                        capture_output=True, text=True, check=False).stderr if not NATIVE_RUN_ROOT
+                         else node_log_since(role, f"{int(time.time() - restarted_at) + 5}s"))
         if "coordinator_restarted" in restart_lines:
             classes.add("coordinator_restarted")
         log(f"  after the restart the Taker's schedule reports {sorted(classes) or 'no failure class'}; the supervisor resumes")
@@ -3454,7 +3622,7 @@ def scenario_zec_survivor(stamp: str) -> dict:
         except Failure as failure:
             log(f"  no Zcash claim in zebra's mempool before the stop ({failure}); the late-claim case is not held")
     log(f"  stopping the Taker Node right after its {zec_taker_claims()} claim")
-    docker("stop", NODES["taker"][0])
+    node_stop("taker")
     confirmed_while_stopped = False
     try:
         wait = Wait("the Maker to complete without the Taker", 1800)
@@ -3476,7 +3644,7 @@ def scenario_zec_survivor(stamp: str) -> dict:
             confirmed_while_stopped = True
             log(f"  the Taker's claim {held[0][:12]} confirmed ({confirmations}) while the Taker Node was down")
     finally:
-        docker("start", NODES["taker"][0])
+        node_start("taker")
         wait_healthy("taker")
     zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(Taker back)")
     wait_completed(swap_id, timeout=600)
@@ -3495,7 +3663,7 @@ def scenario_zec_regenerated_catalog(stamp: str) -> dict:
                     describe="(Taker first lock final)")
     regenerate_runtime_config()
     log("  restarting the Taker Node onto the re-rendered configuration")
-    docker("restart", NODES["taker"][0])
+    node_restart("taker")
     wait_healthy("taker")
     listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
     if len(listed) != 1 or listed[0]["state"] in TERMINAL:
@@ -3515,9 +3683,9 @@ def scenario_zec_tampered_catalog(stamp: str) -> dict:
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
-    docker("exec", NODES["taker"][0], "sh", "-c", f"printf '\n' >> {config}")
+    node_run("taker", "sh", "-c", f"printf '\n' >> {config}")
     log("  appended one byte to the swap's copied actor-config.json")
-    docker("restart", NODES["taker"][0])
+    node_restart("taker")
     wait_healthy("taker")
     listed = [s for s in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] if s["swap_id"] == swap_id]
     state = listed[0]["state"] if listed else "absent"
@@ -3761,7 +3929,7 @@ def zec_cut_maker_zebra_route() -> None:
     observe the Taker's LEZ lock through its sidecar but unable to plan or
     submit its Zcash funding (connection refused); the next container start
     brings the forwarder back."""
-    docker("exec", NODES["maker"][0], "pkill", "-f", "TCP:[^ ]*:18232")
+    node_run("maker", "pkill", "-f", "TCP:[^ ]*:18232")
 
 
 def zec_cut_maker_lez_submit_route() -> None:
@@ -3770,7 +3938,7 @@ def zec_cut_maker_lez_submit_route() -> None:
     (8779) is another process. Killing the sequencer one leaves the Maker able
     to observe the Taker's Zcash funding through its sidecar but unable to
     submit its LEZ lock; the next container start brings the forwarder back."""
-    docker("exec", NODES["maker"][0], "pkill", "-f", "TCP:[^ ]*:3040")
+    node_run("maker", "pkill", "-f", "TCP:[^ ]*:3040")
 
 
 def wait_maker_phase(swap_id: str, phases: set[str], timeout: int, describe: str) -> str:
@@ -3814,7 +3982,7 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
         if zec_outpoint_unspent(outpoint) is not True:
             raise Failure("the provisioned coinbase outpoint was spent although the Maker's zebra route was cut")
         log("  the Maker observed the Taker's LEZ lock; stopping the Maker Node so it never funds Zcash")
-        docker("stop", NODES["maker"][0])
+        node_stop("maker")
         # The LEZ escrow refunds only once the chain clock passes the agreement's
         # refund time: provisioning time + the profile's delay (4 min on the
         # refund journeys' profile). The provisioning summary does not carry it, so it is
@@ -3826,7 +3994,7 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
         zec_refund_until_terminal(swap_id, stamp, timeout=1800)
         log("  Taker refunded its LEZ escrow")
     finally:
-        docker("start", NODES["maker"][0])
+        node_start("maker")
         wait_healthy("maker")
     # Back up, the Maker's own drive re-observes the Taker's lock and finds the
     # escrow refunded, which its funding path refuses (no Zcash is ever sent).
@@ -3873,7 +4041,7 @@ def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
             raise Failure(f"the Maker locked LEZ although its sequencer route was cut (Taker actor at {zec_actor_phase(config)})")
         log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Maker observed it; "
             "stopping the Maker Node so it never locks LEZ")
-        docker("stop", NODES["maker"][0])
+        node_stop("maker")
         height = int(zebra("getblockcount"))
         if height < corridor["zcash_refund_height"]:
             zebra_mine(corridor["zcash_refund_height"] - height, "the agreement's Zcash refund height")
@@ -3881,7 +4049,7 @@ def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
         zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True)
         log("  Taker refunded its Zcash HTLC")
     finally:
-        docker("start", NODES["maker"][0])
+        node_start("maker")
         wait_healthy("maker")
     # Back up, the Maker re-observes the Taker's funding and finds it refunded;
     # the operator's refund action runs the agreement-ordered recovery and the
@@ -4268,7 +4436,7 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
     # The corridor read asks the Zcash funder's container for its outpoint:
     # selling LEZ that is the Maker, which these steps may find stopped.
     if step == "maker-up-reconcile":
-        docker("start", NODES["maker"][0])
+        node_start("maker")
         wait_healthy("maker")
     if step == "refund-point" and zec_taker_sells_lez():
         run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
@@ -4296,7 +4464,7 @@ def zec_step_tool(swap_id: str, step: str, timeout: int) -> bool:
             if zec_actor_phase(config) not in ZEC_FIRST_LOCK_CONFIRMED:
                 raise Failure(f"the Maker locked its leg although its route was cut (Taker at {zec_actor_phase(config)})")
             log("  the Maker observed the Taker's first lock; stopping the Maker Node")
-            docker("stop", NODES["maker"][0])
+            node_stop("maker")
         elif step == "refund-point":
             if zec_taker_sells_lez():
                 wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
@@ -4546,10 +4714,9 @@ def preflight() -> None:
 
 def lez_finalized_height() -> int:
     """The indexer's last finalized L2 block, read through the Taker's loopback forwarder."""
-    container, _ = NODES["taker"]
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getLastFinalizedBlockId", "params": []})
-    result = subprocess.run(["docker", "exec", container, "curl", "-sf", "-m", "10",
-                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:8779/"],
+    result = subprocess.run(node_command("taker", ["curl", "-sf", "-m", "10",
+                             "-H", "content-type: application/json", "--data", body, "http://127.0.0.1:8779/"]),
                             capture_output=True, text=True, check=False)
     try:
         return int(json.loads(result.stdout)["result"])
@@ -4570,9 +4737,11 @@ def run(name: str) -> bool:
     if NATIVE_RUN_ROOT:
         summary["nodes"] = {"native_run_root": NATIVE_RUN_ROOT}
     try:
-        if NATIVE_RUN_ROOT and name not in NATIVE_SCENARIOS:
-            raise Failure(f"{name} stops or reaches into a Node container; with native Nodes "
-                          f"(LEZ_E2E_NATIVE_RUN_ROOT) run {sorted(NATIVE_SCENARIOS)}")
+        if NATIVE_RUN_ROOT and name in NATIVE_REFUSED:
+            raise Failure(f"{name} cuts a loopback forward or the Chat socket inside a Node container; "
+                          f"native Nodes (LEZ_E2E_NATIVE_RUN_ROOT) have none: not run")
+        if NATIVE_RUN_ROOT:
+            LOG_CLOCK.start()
         for role in ("maker", "taker"):
             wait_healthy(role, timeout=60)
         preflight()

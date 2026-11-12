@@ -152,7 +152,7 @@ class Launcher(unittest.TestCase):
         text = LAUNCHER.read_text()
         linux = text[text.index('\nelse\n  default_state='):text.index('\nfi\n', text.index('\nelse\n  default_state='))]
         for line in ('default_state="/var/lib/lez/$role"', 'default_run_root=/run/lez',
-                     'default_zec_state=/var/lib/lez/zec', 'default_identity=/run-lez-identity',
+                     'default_zec_state=/var/lib/lez/zec', 'default_zec_sidecar=\n', 'default_identity=/run-lez-identity',
                      'default_manifest=/run-market/market-bootstrap.env',
                      'default_cookie=/run-config/btc-rpc-cookie', 'default_delivery=/delivery',
                      'default_chain_host=\n'):

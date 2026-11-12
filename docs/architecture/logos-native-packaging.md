@@ -492,7 +492,8 @@ Compose:
 |---|---|---|---|
 | state (0700) | `LEZ_NODE_STATE_DIR` | `/var/lib/lez/<role>` | `<role>` |
 | sockets, ready file | `LEZ_NODE_RUN_ROOT` | `/run/lez` | `run` |
-| prepared ZEC corridor | `LEZ_ZEC_STATE_DIR` | `/var/lib/lez/zec` | `zec/<role>` |
+| prepared ZEC corridor | `LEZ_ZEC_STATE_DIR` | `/var/lib/lez/zec` (the role's own volume) | `zec` (both roles; each reads its half) |
+| ZEC sidecars' state, log `<dir>.log` | `LEZ_ZEC_SIDECAR_DIR` | `<ZEC dir>/sidecar` | `zec/sidecar-<role>` |
 | identity | `LEZ_NODE_IDENTITY_DIR` | `/run-lez-identity` | `identity/<role>` |
 | market manifest | `LEZ_MARKET_MANIFEST` | `/run-market/market-bootstrap.env` | `market-bootstrap.env` |
 | Bitcoin RPC cookie | `LEZ_BTC_RPC_COOKIE_FILE` | `/run-config/btc-rpc-cookie` | `btc-rpc-cookie` |
