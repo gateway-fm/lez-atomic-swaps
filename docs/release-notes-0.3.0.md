@@ -71,9 +71,9 @@ Our packages in this release are all at 0.3.0: the desks
 `lez_taker_node`. The upstream ones keep their own versions (`lez_core`
 0.4.1-sign.4, `lez_indexer_module` 1.1.1-rpc.4, `blockchain_module` 0.2.4).
 
-The module catalog (`gateway-fm/logos-modules-release-base`) gets the 0.3.0
-packages with this release; the release page says what was published. Before
-it the catalog holds the two desks at 0.2.5.
+The module catalog (`gateway-fm/logos-modules-release-base`) holds the two
+desks at 0.2.5. The 0.3.0 packages are not published to it; they are
+installed in the images.
 
 ## Regression evidence
 
@@ -81,8 +81,8 @@ Each set is under `docs/evidence/`, with `PROVENANCE.md` and `RESULTS.txt`.
 
 | Set | Host | Commit | Result |
 |---|---|---|---|
-| `regression-m2-2026-11-11` | Linux x86_64 | `023c929e` | 93 tests: 92 passed in one run, the one failure passed on its rerun |
-| `regression-2026-11-12` | Linux x86_64 | tests `2b6569e0`, images `964cb8c8`, rerun `62cf95ca` | 97 tests: 96 passed in one run, the one failure passed on its rerun |
+| `regression-m2-2026-11-11` | Linux x86_64 | `023c929e` | 93 tests: 93 passed (1 rerun) |
+| `regression-2026-11-12` | Linux x86_64 | tests `2b6569e0`, images `964cb8c8`, rerun `62cf95ca` | 97 tests: 97 passed (1 rerun) |
 | `regression-m2-2026-11-12-macos-arm64` | Apple silicon, Docker Desktop | `af3ac978` | 93 tests: 93 passed |
 | `regression-2026-11-12-macos-arm64` | Apple silicon, Docker Desktop | `f2f9b980` | 97 tests: 97 passed |
 | `regression-0.3.0-2026-11-12-macos-arm64` | Apple silicon, Docker Desktop | `b4e17cf0` | 97 tests: 97 passed |
