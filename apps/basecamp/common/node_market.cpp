@@ -762,11 +762,14 @@ QJsonArray takerOffers(const LocalJsonRpcClient& rpc, Reply* error)
 }
 
 QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet& wallet,
-                                const QSet<QString>& lockedSwaps, Reply* error)
+                                const QSet<QString>& lockedSwaps, Reply* error,
+                                const QJsonArray& logosOffers = {})
 {
     QJsonArray orderBook;
     QJsonObject offersById;
-    for (const QJsonValue& candidate : takerOffers(rpc, error)) {
+    QJsonArray offers = takerOffers(rpc, error);
+    for (const QJsonValue& logos : logosOffers) offers.append(logos);
+    for (const QJsonValue& candidate : offers) {
         const QJsonObject view = candidate.toObject();
         const QJsonObject offer = view.value("offer").toObject();
         if (!nodePair(offer.value("pair_configuration").toObject().value("route").toObject().value("pair").toString())) continue;
@@ -836,21 +839,24 @@ QJsonObject takerSnapshotObject(const LocalJsonRpcClient& rpc, const TakerWallet
 } // namespace
 
 QString takerSnapshot(const LocalJsonRpcClient& rpc, const TakerWallet& wallet,
-                      const QSet<QString>& lockedSwaps)
+                      const QSet<QString>& lockedSwaps, const QJsonArray& logosOffers)
 {
     Reply error;
-    const QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &error);
+    const QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &error, logosOffers);
     if (!error.code.isEmpty() && !error.ok) return nodeFailure(error, QStringLiteral("The Taker Node did not answer"));
     return success(snapshot);
 }
 
 QString takerTake(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowRpc,
                   const TakerWallet& wallet, const QString& requestId, const QString& offerId,
-                  qint64 foreignUnits, const QSet<QString>& lockedSwaps)
+                  qint64 foreignUnits, const QSet<QString>& lockedSwaps,
+                  const QJsonArray& logosOffers)
 {
     Reply error;
     QJsonObject selected;
-    for (const QJsonValue& candidate : takerOffers(rpc, &error)) {
+    QJsonArray offers = takerOffers(rpc, &error);
+    for (const QJsonValue& logos : logosOffers) offers.append(logos);
+    for (const QJsonValue& candidate : offers) {
         const QJsonObject view = candidate.toObject();
         if (view.value("offer").toObject().value("id").toString() == offerId) selected = view;
     }
@@ -865,14 +871,17 @@ QString takerTake(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowR
         return failure(QStringLiteral("nonintegral_quote"),
                        QStringLiteral("That amount does not quote to whole LEZ units at the offer's price"));
     }
-    const Reply initiated = decode(slowRpc.call("taker_swap_initiate_v1", compact({
+    QJsonObject request{
         {"schema_version", 1}, {"request_id", requestId}, {"offer_id", offerId},
         {"route", configuration.value("route")}, {"maker_identity", selected.value("maker_identity")},
         {"signed_envelope_sha256", selected.value("signed_envelope_sha256")},
-        {"foreign_units", foreignUnits}, {"expected_lez_units", lez}})));
+        {"foreign_units", foreignUnits}, {"expected_lez_units", lez}};
+    if (selected.contains("announcement_base64"))
+        request.insert("logos_offer_announcement_base64", selected.value("announcement_base64"));
+    const Reply initiated = decode(slowRpc.call("taker_swap_initiate_v1", compact(request)));
     if (!initiated.ok) return nodeFailure(initiated, QStringLiteral("The Taker Node could not take the offer"));
     Reply refreshError;
-    QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &refreshError);
+    QJsonObject snapshot = takerSnapshotObject(rpc, wallet, lockedSwaps, &refreshError, logosOffers);
     snapshot.insert("taken", initiated.result);
     return success(snapshot);
 }

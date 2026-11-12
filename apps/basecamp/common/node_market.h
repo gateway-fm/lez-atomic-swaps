@@ -8,6 +8,7 @@
 // through them. Nothing here holds keys or signs anything.
 #pragma once
 
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
@@ -33,16 +34,20 @@ struct TakerWallet {
     QString id;
     QString label;
 };
+// `logosOffers` (Logos transport): the offer views the desk's Chat gateway holds
+// from Logos Delivery, listed beside the Node's own.
 QString takerSnapshot(const LocalJsonRpcClient& rpc, const TakerWallet& wallet,
-                      const QSet<QString>& lockedSwaps);
+                      const QSet<QString>& lockedSwaps, const QJsonArray& logosOffers = {});
 // Takes `foreignUnits` of `offerId` through `taker_swap_initiate_v1`
 // (long-running: reservation, funding plan, ceremony, actor activation) and
 // returns the refreshed snapshot. The amount must sit inside the offer's
 // bounds and quote to whole LEZ units at its exact lot price; the Node
-// re-checks both at reservation.
+// re-checks both at reservation. An offer from `logosOffers` is taken with its
+// signed announcement.
 QString takerTake(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowRpc,
                   const TakerWallet& wallet, const QString& requestId, const QString& offerId,
-                  qint64 foreignUnits, const QSet<QString>& lockedSwaps);
+                  qint64 foreignUnits, const QSet<QString>& lockedSwaps,
+                  const QJsonArray& logosOffers = {});
 // `lock_btc` broadcasts the funding transaction; `claim_lez` claims against the
 // generation the desk last saw; `refund_btc` asks for the recovery path.
 QString takerAction(const LocalJsonRpcClient& rpc, const LocalJsonRpcClient& slowRpc,

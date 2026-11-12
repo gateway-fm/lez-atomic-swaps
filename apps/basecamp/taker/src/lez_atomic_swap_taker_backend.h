@@ -3,9 +3,11 @@
 #include "rep_lez_atomic_swap_taker_source.h"
 #include "logos_ui_plugin_context.h"
 #include "local_json_rpc_client.h"
+#include <QJsonArray>
 #include <QSet>
 #include "logos_chat_bridge.h"
 
+#include <functional>
 #include <memory>
 
 class LezAtomicSwapTakerBackend : public LezAtomicSwapTakerSimpleSource,
@@ -35,6 +37,9 @@ public:
     void onContextReady() override;
 
 private:
+    QJsonArray logosOffers();
+    QString offThread(const std::function<QString()>& call);
+
     LocalJsonRpcClient rpc_;
     // Same socket, with the budget a market snapshot needs on a Node with history.
     LocalJsonRpcClient snapshotRpc_;

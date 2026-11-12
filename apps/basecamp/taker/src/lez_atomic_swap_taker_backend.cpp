@@ -96,13 +96,44 @@ QString LezAtomicSwapTakerBackend::resetChat()
     return chat_->resetSession();
 }
 
+// The Logos transport's Bitcoin offers: what the desk's Chat gateway holds from
+// Logos Delivery (none when the gateway is not configured).
+QJsonArray LezAtomicSwapTakerBackend::logosOffers()
+{
+    QJsonArray offers;
+    for (const QString direction : {QStringLiteral("TakerSellsForeign"), QStringLiteral("TakerSellsLez")}) {
+        const QJsonObject reply = QJsonDocument::fromJson(
+            chat_->listOffers(QStringLiteral("Bitcoin"), direction).toUtf8()).object();
+        for (const QJsonValue& offer : reply.value("result").toObject().value("offers").toArray())
+            offers.append(offer);
+    }
+    return offers;
+}
+
+// A take whose Chat rounds travel through this desk's Logos Chat bridge, whose
+// timers run on this thread: the call runs on a worker thread while this
+// thread's event loop keeps the bridge moving frames.
+QString LezAtomicSwapTakerBackend::offThread(const std::function<QString()>& call)
+{
+    QString reply;
+    std::atomic<bool> answered{false};
+    std::thread worker([&] {
+        reply = call();
+        answered = true;
+        QMetaObject::invokeMethod(this, [] {}, Qt::QueuedConnection);  // wakes the loop below
+    });
+    while (!answered) QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents);
+    worker.join();
+    return reply;
+}
+
 QString LezAtomicSwapTakerBackend::btcMarket(QString walletId)
 {
     if (walletId != kTakerWallet.id) {
         return evidenceFailure(QStringLiteral("invalid_btc_market_request"),
             QStringLiteral("This desk settles as the Node's own identity"));
     }
-    return node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_);
+    return node_market::takerSnapshot(snapshotRpc_, kTakerWallet, lockedSwaps_, logosOffers());
 }
 
 QString LezAtomicSwapTakerBackend::btcTakeOffer(
@@ -118,7 +149,17 @@ QString LezAtomicSwapTakerBackend::btcTakeOffer(
             QStringLiteral("The selected wallet or offer is invalid"));
     }
     if (!exactUnsigned(foreignUnits, amount)) return invalid();
-    // The reply embeds a market snapshot: the snapshot budget applies.
+    // The reply embeds a market snapshot: the snapshot budget applies. An offer
+    // from Logos Delivery is taken over a Chat conversation with its Maker.
+    const QJsonArray logos = logosOffers();
+    for (const QJsonValue& view : logos) {
+        if (view.toObject().value("offer").toObject().value("id").toString() != offerId) continue;
+        (void)chat_->connectOffer(view.toObject().value("maker_identity").toString(), offerId);
+        return offThread([&] {
+            return node_market::takerTake(snapshotRpc_, slowRpc_, kTakerWallet, requestId, offerId,
+                                          static_cast<qint64>(amount), lockedSwaps_, logos);
+        });
+    }
     return node_market::takerTake(snapshotRpc_, slowRpc_, kTakerWallet, requestId, offerId,
                                   static_cast<qint64>(amount), lockedSwaps_);
 }
@@ -183,20 +224,8 @@ QString LezAtomicSwapTakerBackend::initiate(
         {"maker_identity", makerIdentity}, {"signed_envelope_sha256", digestBytes},
         {"foreign_units", static_cast<qint64>(foreign)}, {"expected_lez_units", static_cast<qint64>(lez)},
         {"logos_offer_announcement_base64", logosOfferAnnouncementBase64}});
-    // The take's reservation and ceremony rounds travel through this desk's
-    // Logos Chat bridge, whose timers run on this thread: the call waits as
-    // long as the main take's (slowRpc_) on a worker thread while this
-    // thread's event loop keeps the bridge moving frames.
-    QString reply;
-    std::atomic<bool> answered{false};
-    std::thread call([&] {
-        reply = slowRpc_.call("taker_swap_initiate_v1", request);
-        answered = true;
-        QMetaObject::invokeMethod(this, [] {}, Qt::QueuedConnection);  // wakes the loop below
-    });
-    while (!answered) QCoreApplication::processEvents(QEventLoop::WaitForMoreEvents);
-    call.join();
-    return reply;
+    // As long as the main take waits (slowRpc_), off the bridge's thread.
+    return offThread([&] { return slowRpc_.call("taker_swap_initiate_v1", request); });
 }
 
 QString LezAtomicSwapTakerBackend::listSwaps()
