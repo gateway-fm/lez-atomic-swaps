@@ -1,0 +1,15 @@
+[22:15:58] === happy (stamp 1794518158)
+[22:15:58] preflight: indexer historical reads
+[22:15:59]   indexer serves historical reads at the tip (907)
+[22:15:59] preflight: the finality heartbeat saw finality move 0 s ago (finalized 900)
+[22:15:59]   Maker published offer-e2e-1794518158
+[22:16:00]   Taker took offer-e2e-1794518158: swap 71bcfffd957f (not_activated)
+[22:16:00]   Taker locked lez: 88f40a448424 (replay=False)
+[22:16:00]   [0 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 900, tip 903 (3 unfinalized) [heartbeat]
+[22:16:06]   [6 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker failed | LEZ finalized 900, tip 903 (3 unfinalized) [heartbeat]
+[22:17:07]   [66 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker failed | LEZ finalized 951, tip 954 (3 unfinalized) [heartbeat]
+[22:18:08]   [127 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker failed | LEZ finalized 1002, tip 1005 (3 unfinalized) [heartbeat]
+[22:19:08]   [187 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker failed | LEZ finalized 1053, tip 1056 (3 unfinalized) [heartbeat]
+[22:20:09]   [248 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker failed | LEZ finalized 1105, tip 1107 (2 unfinalized) [heartbeat]
+[22:21:09]   [309 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker failed | LEZ finalized 1154, tip 1158 (4 unfinalized) [heartbeat]
+[22:22:10]   [369 s] waiting for the Taker's 71bcfffd957f to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker failed | LEZ finalized 1189, tip 1192 (3 unfinalized) [heartbeat]

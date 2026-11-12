@@ -574,9 +574,10 @@ lgx that built the plugin (found through the plugin's Nix derivation, or
 executables link only macOS system libraries. The two scripts list the same
 executables (`deploy/tests/test_role_node_package.py`); the Linux script is
 unchanged. The Linux images package debug builds; this one packages release
-builds (the Maker package is 31 MB, the Taker's 44 MB). A package carries
-one platform: a release with both would merge them with `lgx merge`, which
-has not been run.
+builds (the Maker package is 31 MB, the Taker's 44 MB). A catalog package
+carries the platforms side by side (next section); the role images install
+their own architecture's Linux variant from it and refuse a package without
+one.
 
 Running both roles on one Mac, headless, against the devnet's chains in
 Docker (only the chain containers running; the containers' Nodes stopped,
@@ -648,6 +649,61 @@ Not run natively: the scenarios that cut a forward or the Chat socket in a
 container, ZEC `replay`/`wrong-inputs`/`concurrent`, the desk journeys other
 than `happy`, and anything beyond opening the desks in the release Basecamp
 0.2.3.
+
+### Catalog packages with darwin-arm64
+
+The catalog's installer (logosctl 0.3.x, Basecamp's package manager) picks a
+dependency's newest version that satisfies the requirement, by SemVer and
+without looking at platforms, and only then fails with "Package does not
+contain variant for platform" when that version has none for the host. So a
+desk installs on a platform only when every package it pulls in has a variant
+for that platform at the version it requires. For macOS on Apple silicon
+these are the desks, `lez_swap_node`, the role packages and `lez_core`; the
+official modules they take (chat_module, delivery_module, libp2p_module, the
+RLN modules) all have darwin-arm64 variants. `lez_network` and
+`lez_indexer_module` stay Linux-only: the LEZ network operator's desk is not
+installed in a party's Basecamp, and its indexer module has not been built or
+run on macOS.
+
+- **Build.** `deploy/scripts/build-darwin-packages.sh --out <dir>` on an
+  Apple-silicon Mac builds those six darwin-arm64 variants from the checkout:
+  the module builder's `lgx-portable` outputs, the role packages through
+  `package-role-node-darwin.sh`, and `lez_core` from the pinned submodules
+  with `builder/patches` (about 40 minutes on an empty Nix store; risc0 needs
+  the Metal compiler, a separate component on Xcode 26:
+  `xcodebuild -downloadComponent MetalToolchain`).
+- **Release.** `release-packages.yml` (manual dispatch) runs it on `macos-14`
+  beside the Linux jobs and merges each package's variants. `lgx merge` keeps
+  only the manifest fields it models and drops `display_name` (Basecamp then
+  lists the desks by package name), so `restore-merged-manifest.py` writes the
+  variants' common manifest back before the set is pinned once and verified.
+  The verifying lgx is logos-package `ab885df3`: the module builder's
+  `ff93a0df` refuses a manifest with a versioned dependency. The executables
+  are signed ad hoc, not with a Developer ID, and not notarised.
+- **Basecamp 0.2.0** reads only string dependency entries from an installed
+  manifest. A catalog install keeps the pinned entries, so Basecamp 0.2.0
+  loads none of a desk's modules and the desk does not open; the role images
+  write bare names for it. The release Basecamp's lgx (0.2.3) accepts both
+  forms.
+- **linux-amd64.** Until a package carries `linux-amd64`, a default install of
+  a desk on an x86_64 Linux host resolves the version and then stops with
+  "Package does not contain variant for platform"; it installs nothing.
+
+What ran on 2026-11-12
+([darwin-catalog-install-2026-11-12](../evidence/darwin-catalog-install-2026-11-12/README.md)):
+the v0.3.0 set with darwin-arm64 (the linux-arm64 variant from the v0.3.0
+release run, `14ebc3e5`; darwin-arm64 from `4bd826e6`) served from a local
+HTTPS catalog beside the official one. In a fresh `logosctl` 0.3.2 session on
+macOS both desks installed with every package's darwin-arm64 variant and our
+`lez_core` 0.4.1-sign.4; after both installs every dependency of both desks
+reports `installed` (after the first alone, `delivery_module` 0.3.3
+`version_mismatch`, the known chat_module 0.2.2 case). Both Nodes started from
+the installed packages and passed BTC `happy` in both directions and
+`zec-happy`. The same install in a linux-arm64 container got the linux-arm64
+variants and the same `lez_core`. Basecamp 0.2.0-RC3 on a copy of the session's
+packages ran `ui-e2e.sh happy` once their dependencies were written as bare
+names. Not run: the workflow on GitHub's runners, linux-amd64, the release
+Basecamp beyond its parser.
 
 ## Recommended order
 

@@ -1,0 +1,3 @@
+btc-happy exit 0
+btc-happy-lez exit 0
+zec-happy-lez exit 0
