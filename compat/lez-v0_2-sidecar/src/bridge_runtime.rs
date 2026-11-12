@@ -39,6 +39,7 @@ use crate::{
     NativeEscrowPlanner, NativePrepareError, OfficialNativeEscrowFacts, OfficialNodeRpc,
     RuntimeBoundaryError, ZecEscrowInstruction, compute_custody_pda, compute_metadata_pda,
     decode_prepared_for_signer, finalized_asset_observation::FinalizedAssetObserver,
+    finalized_claim_observation::read_finalized_block,
     finalized_xmr_observation::FinalizedNativeXmrEffectObserver, native_prepare::OwnedSubmission,
     prepared_from_transaction, program_id_from_hex, program_id_to_hex,
     read_genesis_bound_finalized_clock,
@@ -132,8 +133,37 @@ struct ClaimScan {
     fully_covered: bool,
 }
 
-/// What a discovery by terms reports found of the counterparty's escrow pair.
-async fn withhold_unfinalized(_indexer: &dyn FinalizedIndexerApi, _scan: &mut PairScan) {}
+/// What a discovery by terms reports found of the counterparty's escrow pair:
+/// only what the indexer holds finalized. The scan reads the sequencer, which
+/// serves a transaction as soon as it includes it, and a party that locks
+/// second on that would lock on a first leg it has not seen final (R1). A
+/// found transaction whose block the indexer has not finalized, or finalized
+/// as another block, is withheld as pending, never absent; so is everything
+/// when the indexer cannot be read. A depositor's exact observation of its
+/// own pair is not filtered.
+async fn withhold_unfinalized(indexer: &dyn FinalizedIndexerApi, scan: &mut PairScan) {
+    if scan.initialization.is_none() && scan.funding.is_none() {
+        return;
+    }
+    let finalized = indexer.last_finalized_block_id().await.ok().flatten();
+    let mut withheld = false;
+    for found in [&mut scan.initialization, &mut scan.funding] {
+        let Some(position) = found.as_ref().map(|found| found.facts.position) else {
+            continue;
+        };
+        let final_there = finalized.is_some_and(|finalized| position.height <= finalized)
+            && read_finalized_block(indexer, position.height)
+                .await
+                .is_ok_and(|block| block.header.hash.0 == *position.block_hash.as_bytes());
+        if !final_there {
+            *found = None;
+            withheld = true;
+        }
+    }
+    if withheld {
+        scan.fully_covered = false;
+    }
+}
 
 /// One exact-v0.2 planner and official-node composition used by the bridge server.
 pub struct BridgeRuntime {
