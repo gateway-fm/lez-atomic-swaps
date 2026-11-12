@@ -51,7 +51,10 @@ stack and are kept as the record of that submission shape.
   the one desk-step failure passed on its rerun); that set holds the ZEC demo
   recordings.
   The 93 of `main` (`af3ac978` packages) on an Apple-silicon Mac, all
-  passed: `docs/evidence/regression-m2-2026-11-12-macos-arm64/`.
+  passed: `docs/evidence/regression-m2-2026-11-12-macos-arm64/`. The 97 at
+  `f2f9b980` (`main` with PRs #131, #126 and #127) on an Apple-silicon Mac:
+  97 of 97, each on its first try, 98 minutes on three lanes
+  (`docs/evidence/regression-2026-11-12-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
