@@ -774,7 +774,13 @@ def wait_bitcoin_claim_in_mempool(swap_id: str, timeout: int = 120) -> str:
     (the miner is stopped): the mempool transaction that spends the Maker's
     lock, as Core decodes it, which is also the claim the Taker's view records
     when it lists one."""
+    # The Taker can be at claim_available a drive before the Maker's own view records its lock.
+    recorded = Wait(f"the Maker's record of its Bitcoin lock for {swap_id[:12]}", 90)
     maker_lock = maker_lock_recorded(swap_id)
+    while maker_lock is None and recorded.running():
+        recorded.note("none", lambda: f"maker {maker_phase(swap_id)}, no Bitcoin lock on record yet")
+        time.sleep(2)
+        maker_lock = maker_lock_recorded(swap_id)
     if maker_lock is None:
         raise Failure(f"the Maker has no Bitcoin lock on record for {swap_id[:12]}")
     wait = Wait(f"the Taker's Bitcoin claim of {swap_id[:12]} (a spend of {maker_lock[:12]}) in the mempool", timeout)
