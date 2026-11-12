@@ -1808,6 +1808,17 @@ def zec_wait_until(swap_id: str, config: str, states: set[str], timeout: int, co
                 f"| {described} | maker: {maker_phase(swap_id)} | zebra {zebra('getblockcount')}")
             last = (state, described, reason)
         if state in states:
+            # Selling ZEC, the Maker may lock LEZ while the Taker's funding is
+            # one deep, and the Node then offers the claim before the actor's
+            # pre-reveal gate (two confirmations) lets it run. A caller that
+            # mines nothing afterwards (zec-survivor stops the Taker right after
+            # its claim) would leave that claim refused and never retried.
+            if (state == "claim_available" and not zec_taker_sells_lez() and not ZEC_PUBLIC
+                    and not mine_pending_only):
+                confirmations = zec_funding_confirmations(corridor)
+                if (confirmations is not None and confirmations < 2
+                        and int(zebra("getblockcount")) + 1 < corridor["zcash_refund_height"]):
+                    zebra_mine(1, f"Taker's funding has {confirmations} confirmation(s); the pre-reveal gate wants 2")
             return view
         if state in TERMINAL:
             raise Failure(f"swap {swap_id[:12]} ended in {state}{' (' + reason + ')' if reason else ''} "

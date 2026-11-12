@@ -544,7 +544,7 @@ scenario_zec_concurrent() {
   # steps interleaving on the same role accounts, both Maker fundings (distinct
   # coinbase outputs), both revealing LEZ claims, both Zcash claims from the
   # Taker desk; both desks show two rows completed.
-  local swap_a swap_b offers maker_a maker_b taker_a
+  local swap_a swap_b offers maker_a taker_a
   if [[ "$record" == 1 ]]; then
     log "a clean Taker store for the recording (reset-swaps.sh): no stale row above the order book"
     bash scripts/reset-swaps.sh --abandon-open >/dev/null 2>&1 || fail "reset-swaps.sh"
@@ -557,12 +557,14 @@ scenario_zec_concurrent() {
   note "A second Zcash row is on the book: the Taker takes it too, and the Taker Node runs a second prepared ceremony with the Maker"
   take swap_b "${offers[1]}"
   note "The Taker Node drives both LEZ locks on its own, their steps interleaving on one account; the Maker Node funds Zcash for each from its own coinbase output and claims LEZ on each while the Maker desk watches both rows"
+  # One driver on the Maker desk at a time: two at once press its buttons
+  # between each other's checks (one's "Node ready" replaced by the other's
+  # "Market refreshed"). The second row is checked once the first has been.
   maker_wait_bg maker_a awaiting_taker_claim "$swap_a"
-  maker_wait_bg maker_b awaiting_taker_claim "$swap_b"
   desk_head_start
   zec_wait_both "$swap_a" "$swap_b" claim_available
   wait "$maker_a" || fail "Maker desk: awaiting_taker_claim ($swap_a)"
-  wait "$maker_b" || fail "Maker desk: awaiting_taker_claim ($swap_b)"
+  maker_wait awaiting_taker_claim "$swap_b"
   taker_act "$claim_action" "$swap_a"
   taker_act "$claim_action" "$swap_b"
   note "Both Zcash claims wait for zebra blocks; both desks watch the two swaps complete while the Taker Node observes them"
@@ -641,7 +643,9 @@ scenario_zec_maker_refund() {
   note "The Taker Node drives the LEZ lock on its own; the Maker Node funds Zcash, and zebra is mined only for what waits in the mempool, so the funding stays one block deep and the Maker cannot claim yet"
   python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to both_legs_locked"
-  opens=$(( $(sed 's/.*-//' "$LEZ_LANE_RUNTIME/zec/current") + $(zec_refund_delay) + 15 ))
+  # The stamp is its second in ten digits; lanes other than the first append
+  # their two-digit lane number (zec-provision.sh), which is not part of the time.
+  opens=$(( $(sed 's/.*-//' "$LEZ_LANE_RUNTIME/zec/current" | cut -c1-10) + $(zec_refund_delay) + 15 ))
   wait_until_unix "$opens" "for the agreement's LEZ refund time (the profile's delay after provisioning)"
   note "The LEZ refund time has passed and the Maker never claimed; the Taker desk offers Refund and the Maker desk watches its Zcash come back"
   maker_wait_bg maker_pid refunded "$swap"
