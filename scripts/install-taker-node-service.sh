@@ -10,7 +10,8 @@ readonly launcher="modules/lez-role-node/node-entrypoint.sh"
 # The LEZ sidecar links Python and is built in the builder image
 # (deploy/scripts/from-scratch.sh --only build -> provision/data/sidecar).
 readonly sidecar="${SIDECAR_PROGRAM:-$source_bin_dir/lez-v02-bridge-poc}"
-readonly binaries=(lez-taker-node lez-taker-cli lez-btc-taker-actor lez-taker-registry-init lez-runtime-healthcheck)
+readonly binaries=(lez-taker-node lez-taker-cli lez-btc-taker-actor lez-zec-taker-actor lez-taker-registry-init
+  lez-runtime-healthcheck)
 
 if [[ -n "$destination_root" && "$destination_root" != /* ]]; then
   echo "DESTDIR must be empty or an absolute staging root" >&2
