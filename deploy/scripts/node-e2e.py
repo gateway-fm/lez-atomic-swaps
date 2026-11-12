@@ -4578,9 +4578,11 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
 
 # ---- one chain down, the other pair still swaps (R3) ---------------------------------
 # A lane's Bitcoin Core (with its miner) and its Zebra are each stopped while the
-# other pair swaps on the same two Nodes; the stack wires no route-health probe for
-# either chain, so health is asserted ready and what it says of the stopped
-# chain's pair is recorded as it is.
+# other pair swaps on the same two Nodes. The Maker's route health
+# (node-entrypoint.sh) reads the stopped chain's routes unavailable: the Maker is
+# degraded, withdraws the offer published there before the stop and refuses a
+# new one, and the other pair's routes stay available. The Taker has no
+# per-chain health; what it says is recorded.
 
 def use_route(pair: str, direction: str) -> None:
     """Switches the harness to the other pair inside one scenario, as main() sets it."""
@@ -4650,9 +4652,20 @@ def restart_nodes_while_down(pair: str) -> None:
     log(f"  both Nodes started again with {pair}'s chain down")
 
 
+def publish_on(pair: str, stamp: str) -> str:
+    """An offer on `pair` in the test's direction; the harness's pair is kept."""
+    kept, direction = ROUTE["pair"], ROUTE["direction"]
+    use_route(pair, direction)
+    try:
+        return publish_offer(stamp, "-down")
+    finally:
+        use_route(kept, direction)
+
+
 def ready_while_down(pair: str) -> dict:
-    """Both Nodes answer health ready while `pair`'s chain is down; returns what
-    each says (degraded, and its entries for that pair) for the record."""
+    """Both Nodes answer health ready while `pair`'s chain is down; the Maker
+    reads every `pair` route unavailable, every other route available, and is
+    degraded. Returns what each says (degraded, its entries for that pair)."""
     seen = {}
     for role in ("maker", "taker"):
         reported = health(role)
@@ -4661,21 +4674,49 @@ def ready_while_down(pair: str) -> dict:
         entries = reported.get("routes") if role == "maker" else reported.get("pair_capabilities")
         seen[role] = {"ready": True, "degraded": reported.get("degraded"),
                       pair.lower(): [e for e in entries or [] if (e.get("route") or e).get("pair") == pair]}
+    routes = health("maker").get("routes") or []
+    wrong = [r for r in routes if (r["state"] == "unavailable") != (r["route"]["pair"] == pair)]
+    if not seen["maker"][pair.lower()] or wrong or seen["maker"]["degraded"] is not True:
+        raise Failure(f"with {pair} down the Maker's health is not {pair} unavailable, the rest available, "
+                      f"degraded: degraded {seen['maker']['degraded']}, routes {routes}")
     return seen
+
+
+def assert_offer_withdrawn_and_refused(pair: str, offer_id: str, stamp: str) -> None:
+    """With `pair`'s chain down the Maker withdraws `offer_id` (published there
+    before the stop) and refuses to publish another offer on that route."""
+    wait = Wait(f"the Maker to withdraw {offer_id} with {pair} down", 60)
+    while wait.running():
+        status = next(r["status"] for r in call("maker", "maker_offer_list", {}) if r["offer"]["id"] == offer_id)
+        if status == "withdrawn":
+            break
+        wait.note(status, f"offer {status}")
+        time.sleep(2)
+    else:
+        raise wait.failure()
+    reply = rpc("maker", "maker_offer_publish", {"request_id": f"e2e-down-publish-{stamp}",
+                                                 "offer_id": f"offer-e2e-down-again-{stamp}",
+                                                 "route": {"pair": pair, "direction": ROUTE["direction"]}})
+    if "chain dependency is unavailable" not in (reply.get("error") or {}).get("message", ""):
+        raise Failure(f"publishing on {pair} with its chain down was not refused for the route: {reply}")
+    log(f"  the Maker withdrew {offer_id} and refuses to publish on {pair}: {reply['error']['message']}")
 
 
 def scenario_zebra_down(stamp: str) -> dict:
     """R3: with this lane's Zebra stopped (stop_chain: neither Node reaches it),
-    both Nodes restarted, a Bitcoin happy swap in the test's direction completes on both Nodes, and
-    both stay ready in health before the take, after it, after the claim and
-    at completion. Zebra started again, a Zcash happy swap (scenario_zec_happy)
+    both Nodes restarted, a Bitcoin happy swap in the test's direction
+    completes on both Nodes, both ready in health (route health as above)
+    before the take, after it, after the claim and at completion. Zebra
+    started again, a Zcash happy swap (scenario_zec_happy)
     completes in the same direction on the same Nodes."""
     zebra_container = f"{PREFIX}-zebra"
     seen = []
+    down_offer = publish_on("Zcash", stamp)
     stop_chain([zebra_container], 18232)
     try:
         restart_nodes_while_down("Zcash")
         seen.append(ready_while_down("Zcash"))
+        assert_offer_withdrawn_and_refused("Zcash", down_offer, stamp)
         offer_id = publish_offer(stamp, "-btc")
         swap_id, _ = take(offer_id, stamp, "-btc")
         seen.append(ready_while_down("Zcash"))
@@ -4684,8 +4725,8 @@ def scenario_zebra_down(stamp: str) -> dict:
         seen.append(ready_while_down("Zcash"))
         wait_completed(swap_id)
         seen.append(ready_while_down("Zcash"))
-        log(f"  the Bitcoin swap completed with Zebra stopped, both Nodes ready throughout; on Zcash the Maker's "
-            f"health said {seen[-1]['maker']['zcash']}, degraded {seen[-1]['maker']['degraded']}")
+        log("  the Bitcoin swap completed with Zebra stopped, both Nodes ready throughout, the Maker's Zcash "
+            "routes unavailable and Bitcoin's available")
     finally:
         start_chain([zebra_container])
     direction = ROUTE["direction"]
@@ -4709,17 +4750,19 @@ def scenario_zec_bitcoin_down(stamp: str) -> dict:
     chain = [f"{PREFIX}-btc-miner", f"{PREFIX}-bitcoin-core"]
     corridor = zec_provision()
     seen = []
+    down_offer = publish_on("Bitcoin", stamp)
     stop_chain(chain, 18443)
     try:
         restart_nodes_while_down("Bitcoin")
         seen.append(ready_while_down("Bitcoin"))
+        assert_offer_withdrawn_and_refused("Bitcoin", down_offer, stamp)
         swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
         config = zec_taker_actor_config(corridor["receipt_output"])
         seen.append(ready_while_down("Bitcoin"))
         zec_finish(swap_id, config, corridor, stamp)
         seen.append(ready_while_down("Bitcoin"))
-        log(f"  the Zcash swap completed with Bitcoin Core stopped, both Nodes ready throughout; on Bitcoin the "
-            f"Maker's health said {seen[-1]['maker']['bitcoin']}, degraded {seen[-1]['maker']['degraded']}")
+        log("  the Zcash swap completed with Bitcoin Core stopped, both Nodes ready throughout, the Maker's "
+            "Bitcoin routes unavailable and Zcash's available")
     finally:
         start_chain(chain[::-1])
     direction = ROUTE["direction"]

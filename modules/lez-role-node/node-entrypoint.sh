@@ -15,6 +15,14 @@
 # when the Node goes (setpriv --pdeathsig), so none outlives it.
 set -euo pipefail
 
+# `probe-bitcoin <cookie file>`: the Maker's route-health probe for Bitcoin
+# (route-health.json, written below). The Node runs it with no environment;
+# it succeeds while Core answers over this container's forward.
+if [[ "${1:-}" == probe-bitcoin ]]; then
+  exec curl -sf --max-time 4 --user "$(cat "${2:?cookie file}")" -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' -o /dev/null http://127.0.0.1:18443/
+fi
+
 role="${1:?maker|taker}"
 bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # A helper started here ends with the Node (its parent once this script execs
@@ -350,6 +358,22 @@ case "$role" in
         --delivery-directory /delivery --delivery-signing-key-file "$state/delivery-signing.key"
         --actor-supervisor)
     fi
+    # Route health (packaging/systemd/README.md): a Bitcoin or Zcash route reads
+    # unavailable while its chain does not answer over this container's
+    # forward; the Maker then withdraws its offers there, refuses to quote or
+    # publish on it and reports itself degraded. Bitcoin is asked with the
+    # role's cookie (probe-bitcoin, above), Zcash with the package's health
+    # check; both are the package's own files beside the Node.
+    launcher="$bin/${BASH_SOURCE[0]##*/}"
+    jq -n --arg launcher "$launcher" --arg launcher_sha "$(sha256sum "$launcher" | cut -d' ' -f1)" \
+      --arg cookie "$btc_state/btc-rpc-cookie" --arg check "$bin/lez-runtime-healthcheck" \
+      --arg check_sha "$(sha256sum "$bin/lez-runtime-healthcheck" | cut -d' ' -f1)" '
+      [{pair:"Bitcoin", program:$launcher, program_sha256:$launcher_sha, args:["probe-bitcoin", $cookie]},
+       {pair:"Zcash", program:$check, program_sha256:$check_sha, args:["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]}]
+      | {schema_version:1, commands:[.[] as $probe | ("TakerSellsForeign", "TakerSellsLez") as $direction
+          | {route:{pair:$probe.pair, direction:$direction}} + ($probe | del(.pair)) + {timeout_milliseconds:5000}]}' \
+      >"$state/route-health.json"
+    args+=(--route-health-config "$state/route-health.json")
     # The devnet's timing profiles observe a live swap's actor sooner and retry
     # a failed attempt sooner (gen-config.sh); unset, the Node's own defaults.
     [[ -z "${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}" ]] || args+=(--actor-requeue-delay-seconds "$LEZ_MAKER_ACTOR_REQUEUE_SECONDS")
