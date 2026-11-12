@@ -1,0 +1,28 @@
+[11:40:37] lanes.sh down 3 --wipe rc=0
+[11:41:11] down.sh --wipe rc=0
+[11:41:11] containers left: 0
+[11:41:11] bundle scripts from 49ab8ecc, tree dirty: 0
+[11:41:11] package-dist.sh rc=0
+[11:41:11] bundle has images/: no; files: 71
+[11:44:13] start.sh rc=0
+3 passed, 0 failed
+1 passed, 0 failed
+  [32mOK[0m   all services up
+  [32mOK[0m   Bitcoin chain at height 211
+  [32mOK[0m   Bitcoin spender index present (actor lock observation)
+  [32mOK[0m   LEZ chain finalized at block 66
+15/15 checks passed
+  [32mOK[0m   explorer transaction display
+15/15 market checks passed
+  [32mOK[0m   Node market behaviour
+3 passed, 0 failed
+  [32mOK[0m   desk suite: maker
+1 passed, 0 failed
+  [32mOK[0m   desk suite: taker
+   verify                ./scripts/verify-all.sh
+   logs                  docker compose --env-file runtime/runtime.env logs -f <service>
+   stop                  ./scripts/down.sh            (--wipe removes chains and Node state)
+
+ wallet identities and the escrow deployment live in <bundle>/lez-swap-stack-sha-b6b1c273da53-arm64/market
+──────────────────────────────────────────────────────────────────
+[11:44:13] BUNDLE-DONE rc=0

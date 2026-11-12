@@ -1,0 +1,4 @@
+[11:41:11] bundle scripts from 49ab8ecc, tree dirty: 0
+bundle: <scratch>/gate7/dist/lez-swap-stack-sha-b6b1c273da53-arm64.tar.gz
+  ebbd3dd5f3fddffecdbd59375bd0d6823bac9d73d449d802b590ff8e99726844  lez-swap-stack-sha-b6b1c273da53-arm64.tar.gz
+  images: ghcr.io/gateway-fm/lez-atomic-swaps/lez-{bitcoin-core,zebra,btc-miner,btc-explorer,services,explorer,maker-node,taker-node,basecamp-ui,network-module,wallet-module}:sha-b6b1c273da53
