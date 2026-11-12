@@ -1,0 +1,118 @@
+== taker stdout
+taker Bitcoin lifecycle configured (escrow cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+taker: 0 prepared ZEC entries configured
+== taker stderr
+== taker node args
+arg --socket
+arg /run/lez/taker/node.sock
+arg --ready-file
+arg /run/lez/taker/ready
+arg --role-config
+arg /var/lib/lez/taker/role.json
+== taker helpers
+setpriv --pdeathsig TERM socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+setpriv --pdeathsig TERM socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+setpriv --pdeathsig TERM socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+setpriv --pdeathsig TERM socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+socat  TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+socat  TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+socat  TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+socat  TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+== taker files
+755 delivery
+644 delivery/maker-delivery-identity.pub
+755 run/lez
+755 run/lez/taker
+755 var/lib/lez
+700 var/lib/lez/taker
+700 var/lib/lez/taker/btc
+600 var/lib/lez/taker/btc/btc-role.json
+600 var/lib/lez/taker/btc/btc-rpc-cookie
+600 var/lib/lez/taker/btc/claim-destination
+600 var/lib/lez/taker/btc/identity.json
+600 var/lib/lez/taker/btc/lez-signer.key
+600 var/lib/lez/taker/btc/runtime.json
+700 var/lib/lez/taker/btc/swaps
+600 var/lib/lez/taker/registry.sqlite3
+600 var/lib/lez/taker/role.json
+== /var/lib/lez/taker/btc/btc-role.json
+{
+  "actor": {
+    "program": "/payload/lez-btc-taker-actor",
+    "program_sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb"
+  },
+  "bitcoin": {
+    "block_seconds": {
+      "fastest": 120,
+      "slowest": 120
+    },
+    "claim_destination_address": "bcrt1p",
+    "claim_fee_sat": 1000,
+    "cookie_file": "/var/lib/lez/taker/btc/btc-rpc-cookie",
+    "endpoint": "http://127.0.0.1:18443/",
+    "genesis_block_hash": "0f91",
+    "lock_fee": {
+      "confirmation_target": 6,
+      "fallback_sat_per_vb": 20,
+      "max_percent_of_value": 5,
+      "max_sat_per_vb": 25
+    },
+    "network": "regtest",
+    "refund_csv_blocks": 60,
+    "required_confirmations": 1,
+    "second_lock_refund_csv_blocks": 33,
+    "wallet": "lez-taker"
+  },
+  "lez": {
+    "authenticated_transfer_program_id": "fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a",
+    "channel_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "discovery_max_blocks": 2048,
+    "escrow_program_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "genesis_block_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "indexer_url": "http://indexer:8779",
+    "network": "devnet",
+    "request_timeout_millis": 120000,
+    "sequencer_url": "http://sequencer:3040",
+    "sidecar_port_base": 19000,
+    "sidecar_port_count": 400,
+    "sidecar_program": "/payload/lez-v02-bridge-poc",
+    "signer_key_file": "/var/lib/lez/taker/btc/lez-signer.key",
+    "wallet_signer": null
+  },
+  "recovery": {
+    "earlier_refund_latest_seconds": 3600,
+    "later_refund_earliest_seconds": 7200,
+    "maker_second_lock_cutoff_seconds": 1800,
+    "required_margin_seconds": 300
+  },
+  "schema_version": 1,
+  "swaps_root": "/var/lib/lez/taker/btc/swaps"
+}
+== /var/lib/lez/taker/btc/runtime.json
+{
+  "chain_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "channel_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "compatibility": "lee_v0_2_0",
+  "escrow_program_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "genesis_block_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "sidecar_role": "taker",
+  "signer_account_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}
+== /var/lib/lez/taker/role.json
+{
+  "chat_socket": "/run/lez/maker/chat.sock",
+  "delivery_sources": [
+    {
+      "directory": "/delivery",
+      "maker_public_key": "02abababababababababababababababababababababababababababababababab",
+      "source_id": "local-maker"
+    }
+  ],
+  "initiation": {
+    "btc_role_config": "/var/lib/lez/taker/btc/btc-role.json",
+    "execute_prepared": true,
+    "registry_database": "/var/lib/lez/taker/registry.sqlite3"
+  },
+  "maximum_offers": 16,
+  "schema_version": 1
+}

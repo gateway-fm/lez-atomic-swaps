@@ -543,6 +543,11 @@ Weaker on macOS than on Linux, for the launcher:
 - **The Maker's Chat socket.** Compose shares it with the Taker through a
   volume only those two containers mount; on macOS it is a file under
   `LEZ_NODE_HOME/run/maker` that every process of the user can connect to.
+- **The ZEC corridor.** Compose gives each role a volume with the shared
+  half and its own half only; on macOS both roles read one corridor root
+  (`LEZ_NODE_HOME/zec`), so each role's ZEC keys sit beside the other's,
+  separated only by file modes. The provisioners' copies of both roles' keys
+  are removed after provisioning, as the staging volume is in Compose.
 
 The darwin-arm64 role package comes from
 `deploy/scripts/package-role-node-darwin.sh <role> <plugin.lgx> <out.lgx>`,
@@ -587,27 +592,51 @@ since the native Nodes take the same identities):
   <account>`, `lez_<role>_node launcher`, `lez_swap_node start_node <role>
   <launcher> <log> <hold>`. The daemon's `PATH` was `/usr/bin:/bin:...`, so
   the launcher ran under `/bin/bash` 3.2. `logosctl call` takes arguments on
-  its command line only, so the key is briefly in a process's arguments,
-  visible to processes of the same user; the desk passes it in process.
+  its command line only, so headless the role's key is briefly in the
+  `logosctl` process's arguments, visible to every process of the same user
+  (on Linux too). The desk does not do this: it hands the key to `lez_core`
+  over the Logos API inside Basecamp, and no process's arguments carried it
+  while the desks opened (sampled every 20 ms).
+- **Basecamp.** Both desks in one Basecamp start both signers and both
+  Nodes from the same environment; the desks and modules are installed into
+  the user directory as Basecamp's package manager lays them out. The
+  release Basecamp 0.2.3 lists and opens the desks but has no QML inspector,
+  so the UI tests drive the 0.2.0-RC3 build with the inspector (the version
+  the images run), built on the Mac from the basecamp flake
+  (`bin-bundle-dir-inspector`). That build's inspector listens on port 3768
+  on every interface (IPv6 `*`), so it is for a test machine only.
 - **Swaps.** `LEZ_E2E_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run
-  deploy/scripts/node-e2e.py happy` (and `replay`, `wrong-inputs`): the
-  harness reaches the native Nodes' owner sockets with the host's curl and
-  Bitcoin Core in its container as before.
+  deploy/scripts/node-e2e.py <scenario>`: the harness reaches the native
+  Nodes' owner sockets with the host's curl, runs what it would run in a
+  Node's container beside the Node, stops a Node with its supervisor's hold
+  file and restarts one by ending it; ZEC corridors come from
+  `zec-provision.sh --native-home $LEZ_NODE_HOME`. The scenarios that cut a
+  loopback forward or the Chat socket in a container are refused: a native
+  Node has none. `LEZ_UI_NATIVE_RUN_ROOT=$LEZ_NODE_HOME/run
+  deploy/scripts/ui-e2e.sh happy` drives the two desks of one native
+  Basecamp the same way the stack's desks are driven.
 
-What ran on 2026-11-12 on an Apple-silicon Mac (macOS 26, logosctl 0.3.2),
-with the role packages built from `aa240744`:
-[docs/evidence/darwin-native-node-2026-11-12](../evidence/darwin-native-node-2026-11-12/README.md).
-Both Nodes started from their packages and reported ready, not degraded,
-Delivery and Chat available; the Bitcoin `happy` scenario passed in both
-directions, and `replay` and `wrong-inputs` passed, each LEZ transaction
-signed by the role's `lez_core` through `serve_signer` (no key file in the
-Nodes' state). With the Taker's `lez_swap_node` host killed (SIGKILL), the
-kqueue watcher ended the Taker Node's whole group (the Node and four
-sidecars) within two seconds; `module load lez_swap_node` resumed the
-signer and the Node, which reported ready again. Not run: any ZEC scenario
-(the corridor is provisioned only into the Node containers' volumes by
-`scripts/zec-provision.sh`), the refund, restart and off-chain scenarios
-(they stop or reach into the Node containers), the desks.
+What ran on 2026-11-12 on an Apple-silicon Mac (macOS 26), against the
+devnet's chains in Docker:
+
+- One Logos session per role, packages from `aa240744`
+  ([darwin-native-node-2026-11-12](../evidence/darwin-native-node-2026-11-12/README.md)):
+  both Nodes ready; BTC `happy` both directions, `replay`, `wrong-inputs`;
+  the Taker's `lez_swap_node` host killed, its Node group gone in 2 s, back
+  on `module load`.
+- One Logos host for both roles, packages from `307c16f2`
+  ([darwin-native-node-2026-11-12-b](../evidence/darwin-native-node-2026-11-12-b/README.md)):
+  BTC `happy`, `restart-taker`, `restart-maker`, `survivor`, `taker-refund`,
+  `maker-refund`; ZEC `zec-happy` in both directions, `zec-restart-taker`,
+  `zec-restart-maker`, `zec-survivor`, `zec-maker-refund`: all passed. Both
+  desks in one native Basecamp started their signers and Nodes, showed the
+  Nodes connected, and a BTC swap driven through the two desks completed in
+  both directions; quitting Basecamp ended both Nodes in 2 s.
+
+Not run natively: the scenarios that cut a forward or the Chat socket in a
+container, ZEC `replay`/`wrong-inputs`/`concurrent`, the desk journeys other
+than `happy`, and anything beyond opening the desks in the release Basecamp
+0.2.3.
 
 ## Recommended order
 
