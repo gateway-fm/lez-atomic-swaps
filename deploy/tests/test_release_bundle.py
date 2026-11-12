@@ -8,6 +8,7 @@ sources, now fills the image variables from it. Nothing here needs Docker.
 """
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -96,6 +97,108 @@ class ReleaseBundle(unittest.TestCase):
             sourced = code.index('source scripts/lane.sh')
             uses = [i for i, line in enumerate(code) if 'LEZ_IMAGE_TAG' in line]
             self.assertTrue(all(sourced < i for i in uses), name)
+
+
+def code_lines(name):
+    """The script's commands: comments dropped, continuation lines joined."""
+    joined, lines = '', []
+    for line in (SCRIPTS / name).read_text().splitlines():
+        if line.lstrip().startswith('#'):
+            continue
+        if line.endswith('\\'):
+            joined += line[:-1] + ' '
+            continue
+        lines.append(joined + line)
+        joined = ''
+    return lines
+
+
+# The fake docker records each call; every other command is the host's own.
+FAKE_DOCKER = '''#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"$DOCKER_LOG"
+'''
+
+
+class BundleStartBuildsNothing(unittest.TestCase):
+    """start.sh on a bundle starts the images it pulled and builds nothing.
+
+    The release smoke job (run 43189324839) died after the market bootstrap:
+    start.sh restarted the Nodes with `docker compose up` without --no-build.
+    The role images name another service as a build context
+    (`basecamp: service:basecamp-ui`), and for those compose builds on every
+    `up`; the bundle has no images/basecamp-ui, so the build could not even
+    load its context. Every `compose up` start.sh reaches must pass --no-build,
+    and every image it starts must be one it pulled.
+    """
+
+    def test_start_and_up_never_build(self):
+        for name in ('start.sh', 'up.sh'):
+            for line in code_lines(name):
+                if 'docker compose' not in line:
+                    continue
+                words = line.split()
+                if 'up' in words:
+                    self.assertIn('--no-build', line, f'{name}: {line.strip()}')
+                self.assertNotIn('--build', words, f'{name}: {line.strip()}')
+        # start.sh builds nothing at all; up.sh only in its LEZ_IMAGES=build branch.
+        build = re.compile(r'docker compose\b.*\sbuild\b')
+        self.assertEqual([l for l in code_lines('start.sh') if build.search(l)], [])
+        up = code_lines('up.sh')
+        builds = [i for i, l in enumerate(up) if build.search(l)]
+        branch = up.index('  build)')
+        branch_end = next(i for i in range(branch, len(up)) if up[i].strip() == ';;')
+        self.assertTrue(builds)
+        self.assertTrue(all(branch < i < branch_end for i in builds), [up[i] for i in builds])
+
+    def test_the_bundle_pulls_every_image_start_sh_starts(self):
+        # verify-all.sh starts the explorers (profile "explorers") with
+        # --no-build on a bundle, so the pulls must fetch them as well.
+        for name in ('start.sh', 'up.sh'):
+            pulls = [l for l in code_lines(name) if re.search(r'docker compose\b.*\spull\b', l)]
+            self.assertTrue(pulls, name)
+            for line in pulls:
+                for profile in ('tools', 'explorers'):
+                    self.assertIn(f'--profile {profile}', line, f'{name}: {line.strip()}')
+
+    def run_verify_all(self, release_env):
+        deploy = ReleaseBundle.deploy_dir(self, release_env)
+        shutil.copy(SCRIPTS / 'verify-all.sh', deploy / 'scripts')
+        (deploy / 'runtime').mkdir()
+        (deploy / 'runtime' / 'runtime.env').write_text('LEZ_STACK_PREFIX=lez\n')
+        fake = deploy.parent / 'bin'
+        fake.mkdir()
+        for tool, body in (('docker', FAKE_DOCKER), ('curl', '#!/usr/bin/env bash\nexit 0\n')):
+            (fake / tool).write_text(body)
+            (fake / tool).chmod(0o755)
+        log = deploy.parent / 'docker.log'
+        clean = {key: value for key, value in os.environ.items() if not key.startswith('LEZ_')}
+        subprocess.run(['bash', str(deploy / 'scripts' / 'verify-all.sh')],
+                       env={**clean, 'PATH': f'{fake}:{clean["PATH"]}', 'DOCKER_LOG': str(log)},
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=120)
+        return [line for line in log.read_text().splitlines() if line.startswith('compose ')]
+
+    def test_verify_all_starts_the_explorers_without_a_build_on_a_bundle(self):
+        ups = [l for l in self.run_verify_all(RELEASE_ENV) if 'up' in l.split()]
+        self.assertTrue(ups)
+        for line in ups:
+            self.assertIn('--no-build', line.split(), line)
+
+    def test_verify_all_on_a_checkout_is_unchanged(self):
+        ups = [l for l in self.run_verify_all(None) if 'up' in l.split()]
+        self.assertTrue(ups)
+        for line in ups:
+            self.assertNotIn('--no-build', line.split(), line)
+
+    def test_every_built_service_names_an_image_release_env_selects(self):
+        # A service compose could build has an image of the release's prefix
+        # and tag, so a bundle's pull and --no-build resolve it.
+        compose = (SCRIPTS.parent / 'compose.yaml').read_text()
+        services = re.split(r'\n(?=  [a-z][a-z0-9-]*:\n)', compose)
+        built = [s for s in services if re.search(r'^    build:', s, re.M)]
+        self.assertGreaterEqual(len(built), 10)
+        for service in built:
+            self.assertRegex(service, r'\n    image: \$\{LEZ_IMAGE_PREFIX:-lez\}-[a-z-]+:\$\{LEZ_IMAGE_TAG:-local\}\n',
+                             service.splitlines()[0])
 
 
 if __name__ == '__main__':
