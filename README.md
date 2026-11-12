@@ -9,6 +9,14 @@ It uses Taproot/MuSig2 adaptor signatures on Bitcoin, witnessed escrow on LEZ,
 signed offer discovery over Logos Delivery, and private negotiation over Logos
 Chat.
 
+The same desks and Nodes also swap Zcash and LEZ (Milestone 2, release
+v0.3.0): a BIP-199 hash-time-locked contract on Zcash's transparent pool
+against the same LEZ escrow, on Zebra 7 regtest and the private LEZ devnet.
+The SDK and its lifecycle are in [`docs/sdk-lez-zec.md`](docs/sdk-lez-zec.md),
+node setup in [`docs/zcash-testnet-setup.md`](docs/zcash-testnet-setup.md),
+and the release record in
+[`docs/release-notes-0.3.0.md`](docs/release-notes-0.3.0.md).
+
 [**Watch the 1:53 product walkthrough**](media/lez-btc-ui-swap-demo.mp4) ·
 [**Open the interactive deck**](media/lez-btc-m1-m3-m6-submission.html) ·
 [**Get the latest release**](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest) ·
@@ -16,7 +24,7 @@ Chat.
 
 [![Maker and Taker complete a BTC-to-LEZ swap](media/screenshots/lez-btc-m1-m3-m6-submission-cover.png)](media/lez-btc-ui-swap-demo.mp4)
 
-> **Project status:** the private-local BTC/LEZ product path works end to end
+> **Project status:** the private-local BTC/LEZ and ZEC/LEZ product paths work end to end
 > and is covered by real-chain, recovery, concurrency, UI, and offline tests.
 > Public-network operation, production key management, and an independent
 > cryptographic audit are still in progress.
@@ -26,6 +34,7 @@ Chat.
 | Product capability | Current implementation |
 |---|---|
 | Native BTC ↔ LEZ settlement | Bitcoin Core regtest plus a private LEZ v0.2 devnet; no wrapped asset |
+| Native ZEC ↔ LEZ settlement | Zebra 7.0.0 regtest (NU7) plus the same LEZ devnet; a BIP-199 HTLC on Zcash's transparent pool |
 | Maker liquidity | Wallet-owned offers, inventory, withdrawal, active swaps, and history |
 | Taker flow | Authenticated discovery, offer acceptance, progress, and role-owned actions |
 | Network transport | Signed offer broadcasts over Logos Delivery and private per-Taker negotiation over Logos Chat |
@@ -50,7 +59,7 @@ and GNU `timeout`; macOS ships bash 3.2, so on a Mac run
 [latest release](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest):
 
 ```sh
-tar -xzf lez-swap-stack-v0.2.5-arm64.tar.gz && cd lez-swap-stack-v0.2.5-arm64
+tar -xzf lez-swap-stack-v0.3.0-arm64.tar.gz && cd lez-swap-stack-v0.3.0-arm64
 ./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → desk suites
 ```
 
@@ -84,10 +93,12 @@ organization:
 Releases up to v0.2.5 named the same catalog under a personal account
 ([`docs/evidence/review-2026-09-12/README.md`](docs/evidence/review-2026-09-12/README.md));
 that address keeps serving until the next release (issue #106). Nothing here
-checks that the catalog carries this branch's packages. A
-desk installed from a catalog also needs a Node of its own on the same host
-([`apps/basecamp/README.md`](apps/basecamp/README.md)): the role packages do
-not carry one yet ([`docs/submission-115.md`](docs/submission-115.md)).
+checks that the catalog carries this release's packages. Each desk depends
+on its role's Node package (`lez_maker_node`, `lez_taker_node`), which
+carries the Node, but the Node's configuration and identity still come from
+the Compose stack, so a desk installed from a catalog does not trade on its
+own ([`apps/basecamp/README.md`](apps/basecamp/README.md);
+[`docs/submission-115.md`](docs/submission-115.md), limitation 1).
 
 The local product also exposes:
 
@@ -221,10 +232,10 @@ licence, architecture, DCO, and security-review requirements.
 | [`submission/`](submission/) | M1/M3/M6 reviewer map, evidence index, reproduction guide, and release checksums |
 | [`media/`](media/) | Interactive deck, PDF, walkthrough, captions, and screenshots |
 
-The current public release covers the M1 protocol foundation, the M3 BTC/LEZ
-vertical slice, and the M6 Maker/Taker experience. Additional asset protocols
-and public-network operations are being developed separately and will return in
-their own reviewed releases.
+The current public release, v0.3.0, covers the M1 protocol foundation, the M2
+ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, and the M6 Maker/Taker
+experience, on private local chains. Monero and public-network operation are
+not part of it ([`docs/release-notes-0.3.0.md`](docs/release-notes-0.3.0.md)).
 
 ## Contributing and security
 

@@ -33,7 +33,7 @@ Upstream: [logos-co/rfp#122](https://github.com/logos-co/rfp/issues/122)
 | LEZ/ZEC SDK with full lifecycle coverage | [`lez-zec-swap-sdk` with `lez-swap-sdk-core`](../docs/sdk-lez-zec.md): each stage mapped to its public API and the test that drives it; [crate README](../crates/zec-swap-sdk/README.md); [`examples/full-lifecycle.rs`](../crates/zec-swap-sdk/examples/full-lifecycle.rs) runs offline | Included |
 | Zcash node setup documentation | [`docs/zcash-testnet-setup.md`](../docs/zcash-testnet-setup.md): self-hosted Zebra and the public Zebrad provider, wallet creation, funding, the directions each route serves; the Docker devnet route in [`deploy/README.md`](../deploy/README.md) | Included; no fresh-machine run recorded |
 | Privacy posture | [`docs/sdk-lez-zec.md#privacy-posture`](../docs/sdk-lez-zec.md#privacy-posture); the Taker desk shows the Node's shield-after-swap guidance on a completed ZEC row | Included |
-| ZEC demo set per D1 | `zec-happy`, `zec-maker-refund`, `zec-concurrent` in both directions and `zec-stale-window` selling ZEC, in [`videos/`](../docs/evidence/regression-m2-2026-11-11/videos/); each a by-product of a desk journey that passed while being recorded | Included |
+| ZEC demo set per D1 | `zec-happy`, `zec-maker-refund`, `zec-concurrent` in both directions and `zec-stale-window` selling ZEC, in [`docs/evidence/regression-2026-11-12/videos/`](../docs/evidence/regression-2026-11-12/videos/) (seven recordings; the full set is attached to the v0.3.0 release); each a by-product of a desk journey that passed while being recorded | Included |
 
 Additional functional cases in this pack, all in one run on one set of images
 ([`PROVENANCE.md`](../docs/evidence/regression-m2-2026-11-11/PROVENANCE.md)), with
@@ -47,6 +47,15 @@ protections, and the BTC regression on the same binaries (28 Node tests, 16
 desk journeys): 93 tests, 92 passed in the run. The one failure, its cause and
 its reruns are in
 [`RESULTS.txt`](../docs/evidence/regression-m2-2026-11-11/RESULTS.txt).
+
+Later full runs of the same suite with the #103 scenarios added (97 tests):
+[`regression-2026-11-12`](../docs/evidence/regression-2026-11-12/RESULTS.txt)
+(Linux x86_64, 96 of 97 in one run, the one failure passed on its rerun),
+[`regression-2026-11-12-macos-arm64`](../docs/evidence/regression-2026-11-12-macos-arm64/RESULTS.txt)
+(Apple silicon, `f2f9b980`, 97 of 97); and the 93 tests on Apple silicon,
+[`regression-m2-2026-11-12-macos-arm64`](../docs/evidence/regression-m2-2026-11-12-macos-arm64/RESULTS.txt)
+(`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. The
+release record is [`docs/release-notes-0.3.0.md`](../docs/release-notes-0.3.0.md).
 
 
 ## M3 — BTC/LEZ leg
