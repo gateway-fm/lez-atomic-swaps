@@ -413,7 +413,7 @@ fn concurrent_signing_uses_one_callback_and_one_exact_outbox() {
 
 #[cfg(unix)]
 #[test]
-fn poc_plaintext_at_rest_journal_is_owner_private_and_secret_debug_is_redacted() {
+fn the_journal_file_is_owner_private_and_secret_debug_is_redacted() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("private-adaptor.sqlite");
     let identity = identity(7, AdaptorSessionRole::Maker);
