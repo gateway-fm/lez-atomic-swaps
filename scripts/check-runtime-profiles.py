@@ -313,7 +313,8 @@ def validate_role_symmetry(compose: str) -> None:
             "Type=notify", "NotifyAccess=main", "RuntimeDirectory=lez/" + role,
             "StateDirectory=lez/" + role, "UMask=0077", "NoNewPrivileges=yes",
             "ProtectSystem=strict", "KillMode=control-group",
-            f"ExecStart=/usr/bin/lez-{role}-node --config /etc/lez/{role}/node.json",
+            f"EnvironmentFile=/etc/lez/{role}/env",
+            f"ExecStart=/usr/bin/lez-role-node-launcher {role}",
         ):
             if directive not in unit:
                 fail(f"role symmetry {role}: systemd unit omits {directive}")

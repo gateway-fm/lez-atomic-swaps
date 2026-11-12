@@ -13,7 +13,13 @@ trap cleanup EXIT
 cargo build --locked -p lez-maker-node --features pair-zec --bins
 cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor
 cargo build --locked -p lez-logos-price-c-api --bin lez-logos-price-worker
+cargo build --locked -p btc-reference-actor --bin lez-btc-maker-actor
+cargo build --locked -p lez-runtime-healthcheck
+# The LEZ sidecar comes from the builder image; the staged install is only verified, never run.
+printf '#!/bin/sh\nexit 1\n' >"$stage/lez-v02-bridge-poc"
+chmod 0755 "$stage/lez-v02-bridge-poc"
 SOURCE_BIN_DIR="${SOURCE_BIN_DIR:-target/debug}" \
+SIDECAR_PROGRAM="${SIDECAR_PROGRAM:-$stage/lez-v02-bridge-poc}" \
 DESTDIR="$stage" \
   ./scripts/install-maker-node-service.sh
 
@@ -32,7 +38,7 @@ readonly verified_unit="$stage/lez-maker-node-verify.service"
 sed \
   -e "s#^User=lez-swap#User=$(id -un)#" \
   -e "s#^Group=lez-swap#Group=$(id -gn)#" \
-  -e "s#^ExecStart=/usr/bin/lez-maker-node#ExecStart=$stage/usr/bin/lez-maker-node#" \
+  -e "s#^ExecStart=/usr/bin/#ExecStart=$stage/usr/bin/#" \
   "$installed_unit" >"$verified_unit"
 systemd-analyze verify "$verified_unit"
 
