@@ -1,0 +1,228 @@
+name: release-packages
+
+# The eight Logos packages this project publishes to the module catalog, with
+# one platform variant per Linux architecture: the desks
+# lez_atomic_swap_maker, lez_atomic_swap_taker and lez_network,
+# lez_swap_node, the role Node packages lez_maker_node and lez_taker_node,
+# and the patched upstream modules lez_core and lez_indexer_module.
+#
+#   variant   builds every package natively on that architecture's runner
+#             (linux-arm64 on ubuntu-24.04-arm, linux-amd64 on ubuntu-24.04),
+#             the same from-scratch.sh steps release-images.yml runs, and
+#             uploads them unpinned as lgx-<variant>
+#   merge     merges each package's variants with lgx (the builder's
+#             manifests are identical across variants), pins the merged set
+#             once (pin-package-dependencies.sh, so every variant carries the
+#             same requirements), verifies it, and writes what the catalog's
+#             _logos-release.yml publishes for a module: <name>-<version>.lgx
+#             and a sidecar.json beside it (artifact catalog-packages)
+#
+# Manual dispatch only. It publishes nothing (no release, no catalog upload)
+# and leaves release-images.yml, which builds the images and the linux-arm64
+# packages they install, as it is.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  LEZ_WORKSPACE: ${{ github.workspace }}/../lez-ws
+  # lgx, the catalog's package tool, from the logos-package revision the
+  # module builder pins (apps/basecamp/flake.lock)
+  LGX_FLAKE: github:logos-co/logos-package/ff93a0df15ceab255f27687d22d962ea2737efbe#lgx
+  NIX_IMAGE: nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216118a6b7e5c6f6ae377c8d21
+
+jobs:
+  variant:
+    name: packages (${{ matrix.variant }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: linux-arm64
+            runner: ubuntu-24.04-arm
+          - variant: linux-amd64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: true
+      - name: Free runner disk
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true; df -h / | tail -1
+      - name: Registry login for the pinned builder image
+        if: matrix.variant == 'linux-arm64'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+      # The pinned builder image (deploy/builder/image.lock) is arm64-only. On
+      # amd64 it is built here from the same Dockerfile with the x86_64
+      # rapidsnark release; from-scratch.sh finds it under its local name and
+      # pulls nothing. The prover toolchain layer takes about two hours.
+      - name: Builder image (linux-amd64)
+        if: matrix.variant == 'linux-amd64'
+        run: |
+          docker build -q -t lez-builder:local \
+            --build-arg RAPIDSNARK_URL=https://github.com/logos-blockchain/logos-blockchain-rust-rapidsnark/releases/download/rapidsnark-pic-v0.0.8/rapidsnark-linux-x86_64-pic-v0.0.8.zip \
+            --build-arg RAPIDSNARK_LIB_SHA256=d4133227f845ff5bfa3672eb5b9c018a6a086bfa164b176bdaf76949c7d1f423 \
+            --build-arg GCC_TRIPLE=x86_64-linux-gnu \
+            deploy/builder
+      - name: Pinned sources
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only sources
+      - name: Node binaries and actors
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only rust
+      - name: LEZ sidecar
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:sidecar
+      - name: lez_indexer_module and lez_core (LEZ v0.2.4 + builder/patches)
+        run: |
+          deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:indexer-module
+          deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:wallet-module
+      - name: lez_swap_node and the role Node plugins
+        run: |
+          deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:swap-node-module
+          deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only build:role-node-modules
+      - name: The desks, Chat and Delivery (lgx-portable)
+        run: deploy/scripts/from-scratch.sh --workspace "$LEZ_WORKSPACE" --only nix
+      # The sidecar beside the Node binaries, as the stage phase puts it there.
+      - name: Package lez_maker_node and lez_taker_node
+        env:
+          LEZ_NIX_VOLUME: lez-nix-store-arm
+        run: |
+          set -euo pipefail
+          p="$LEZ_WORKSPACE/provision/data"
+          for role in maker taker; do
+            install -m 0755 "$p/sidecar/lez-v02-bridge-poc" "deploy/images/$role-node/"
+            cp "$p/sidecar/source-commit.txt" "deploy/images/$role-node/sidecar-source.txt"
+            cp "$p/sidecar/source-tree.txt" "deploy/images/$role-node/sidecar-tree.txt"
+            deploy/scripts/package-role-node.sh "$role" "$p/lez_${role}_node/lez_${role}_node-plugin.lgx" \
+              "$GITHUB_WORKSPACE/deploy/images/$role-node/lez_${role}_node.lgx"
+          done
+      - name: Collect the variant's packages
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          p="$LEZ_WORKSPACE/provision/data"
+          nix_out=deploy/images/basecamp-ui/assets/.nix-out
+          mkdir -p _out
+          one() { # one <name> <file>: the package as <name>-<variant>.lgx, checked to carry that variant
+            install -m 0644 "$2" "_out/$1-$VARIANT.lgx"
+            tar -xzOf "_out/$1-$VARIANT.lgx" manifest.json | jq -e --arg n "$1" --arg v "$VARIANT" \
+              '.name == $n and (.main | keys) == [$v]' >/dev/null || { echo "$2 is not $1 for $VARIANT only" >&2; exit 1; }
+          }
+          one lez_atomic_swap_maker "$(ls "$nix_out"/maker-lgx-portable/*.lgx)"
+          one lez_atomic_swap_taker "$(ls "$nix_out"/taker-lgx-portable/*.lgx)"
+          one lez_network "$(ls "$nix_out"/network-lgx-portable/*.lgx)"
+          one chat_module "$(ls "$nix_out"/chat_module-lgx-portable/*.lgx)"
+          one delivery_module "$(ls "$nix_out"/delivery_module-lgx-portable/*.lgx)"
+          for name in lez_core lez_indexer_module lez_swap_node; do one "$name" "$p/$name/$name.lgx"; done
+          for role in maker taker; do one "lez_${role}_node" "deploy/images/$role-node/lez_${role}_node.lgx"; done
+          sha256sum _out/*.lgx
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lgx-${{ matrix.variant }}
+          path: _out
+          retention-days: 7
+          if-no-files-found: error
+
+  merge:
+    name: merge, pin and verify
+    needs: [variant]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: lgx-*
+          path: _per-variant
+          merge-multiple: true
+      # The LEZ network node module is the released package (its pin in
+      # from-scratch.sh), multi-variant already: only its version enters the set.
+      - name: blockchain_module
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_VERSION=//p' deploy/scripts/from-scratch.sh)"
+          sum="$(sed -n 's/^readonly BLOCKCHAIN_MODULE_SHA256=//p' deploy/scripts/from-scratch.sh)"
+          curl -fsSL -o "$RUNNER_TEMP/blockchain_module.lgx" \
+            "https://github.com/logos-co/logos-modules-release/releases/download/blockchain_module-v$version/blockchain_module-$version.lgx"
+          echo "$sum  $RUNNER_TEMP/blockchain_module.lgx" | sha256sum -c -
+      - name: Merge each package's variants
+        run: |
+          set -euo pipefail
+          mkdir -p _merged
+          cat >"$RUNNER_TEMP/merge.sh" <<'SH'
+          set -eu
+          nix --extra-experimental-features "nix-command flakes" build "$LGX_FLAKE" --out-link /tmp/lgx-tool
+          for f in /w/_per-variant/*-linux-arm64.lgx; do
+            name="$(basename "$f" -linux-arm64.lgx)"
+            /tmp/lgx-tool/bin/lgx merge /w/_per-variant/"$name"-linux-*.lgx -o "/w/_merged/$name.lgx" -y
+          done
+          SH
+          docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/merge.sh:/merge.sh:ro" \
+            -e LGX_FLAKE "$NIX_IMAGE" sh /merge.sh
+          sudo chown -R "$(id -u):$(id -g)" _merged
+      - name: Pin the merged set
+        run: |
+          set -euo pipefail
+          deploy/scripts/pin-package-dependencies.sh --out _pinned _merged/*.lgx "$RUNNER_TEMP/blockchain_module.lgx"
+          cat _pinned/packages.tsv
+      - name: Verify and lay out the catalog's release assets
+        env:
+          REQUESTED: '["linux-amd64","linux-arm64"]'
+        run: |
+          set -euo pipefail
+          cat >"$RUNNER_TEMP/verify.sh" <<'SH'
+          set -eu
+          nix --extra-experimental-features "nix-command flakes" build "$LGX_FLAKE" --out-link /tmp/lgx-tool
+          for name in lez_atomic_swap_maker lez_atomic_swap_taker lez_network lez_swap_node lez_maker_node lez_taker_node lez_core lez_indexer_module; do
+            /tmp/lgx-tool/bin/lgx verify "/w/_pinned/$name.lgx"
+            /tmp/lgx-tool/bin/lgx manifest "/w/_pinned/$name.lgx" --json > "/w/_pinned/$name.manifest.json"
+          done
+          SH
+          docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/verify.sh:/verify.sh:ro" \
+            -e LGX_FLAKE "$NIX_IMAGE" sh /verify.sh
+          sudo chown -R "$(id -u):$(id -g)" _pinned
+          for name in lez_atomic_swap_maker lez_atomic_swap_taker lez_network lez_swap_node lez_maker_node lez_taker_node lez_core lez_indexer_module; do
+            manifest="$(cat "_pinned/$name.manifest.json")"
+            version="$(jq -r .version <<<"$manifest")"
+            built="$(jq -c '.main | keys' <<<"$manifest")"
+            # every requested variant, each dependency once and pinned
+            jq -e --argjson r "$REQUESTED" '(.main | keys) == $r' <<<"$manifest" >/dev/null \
+              || { echo "$name carries $built, not $REQUESTED" >&2; exit 1; }
+            jq -e '[.dependencies[] | objects | .name] as $n
+                   | (.dependencies | all(type == "object")) and ($n | length) == ($n | unique | length)' <<<"$manifest" >/dev/null \
+              || { echo "$name: a dependency is bare or listed twice" >&2; exit 1; }
+            dir="catalog/$name"
+            mkdir -p "$dir"
+            cp "_pinned/$name.lgx" "$dir/$name-$version.lgx"
+            jq -n --arg ref "$name-v$version" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --arg sha "$(sha256sum "$dir/$name-$version.lgx" | cut -d' ' -f1)" \
+              --argjson size "$(stat -c%s "$dir/$name-$version.lgx")" \
+              --argjson manifest "$manifest" --argjson requested "$REQUESTED" \
+              '{publisherRef: $ref, releasedAt: $at, sha256: $sha, size: $size,
+                rootHash: ($manifest.hashes.root // ""),
+                builtVariants: ($manifest.main | keys), missingVariants: ($requested - ($manifest.main | keys)),
+                manifest: $manifest}' > "$dir/sidecar.json"
+            echo "$name $version $built $(jq -c '[.dependencies[] | "\(.name) \(.version)"]' <<<"$manifest")"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: catalog-packages
+          path: catalog
+          retention-days: 30
+          if-no-files-found: error
