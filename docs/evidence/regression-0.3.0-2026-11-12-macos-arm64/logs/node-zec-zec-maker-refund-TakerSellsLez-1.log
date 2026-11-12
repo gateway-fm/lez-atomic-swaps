@@ -1,0 +1,40 @@
+[11:08:19] === zec-maker-refund (stamp 179447809903)
+[11:08:20] preflight: indexer historical reads
+[11:08:20]   indexer serves historical reads at the tip (442)
+[11:08:20] preflight: LEZ finality check waived by request
+[11:08:20]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[11:08:40]       taker: taker ZEC corridor zec-devnet-179447810003: sidecar listening on 127.0.0.1:19902
+[11:08:40]       taker: taker: 1 prepared ZEC entries configured
+[11:08:40]     [zec-provision 10:08:40]   maker sidecar answers on 127.0.0.1:19901
+[11:08:40]     [zec-provision 10:08:40]   taker sidecar answers on 127.0.0.1:19902
+[11:08:40]       maker_health: ready=True degraded=False
+[11:08:40]     [zec-provision 10:08:40]   Taker lists zec-devnet-offer-179447810003 ; corridor zec-devnet-179447810003 is live
+[11:08:40]   corridor zec-devnet-179447810003 entry 0 (deterministic-local-devnet-v6): offer zec-devnet-offer-179447810003, zebra tip 113, Zcash refund height 122
+[11:08:40]   Taker took zec-devnet-offer-179447810003: swap zec-devnet-s (not_activated)
+[11:08:40]   receipt: swap zec-devnet-swap-179447810003, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179447810003/actor/taker/actor-config.json
+[11:08:40]   [0 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker not_activated | actor at - | maker leased | zebra 113 | LEZ finalized 445, tip 451 (6 unfinalized) [heartbeat]
+[11:08:44]   [3 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker awaiting_first_lock | actor at offered | maker leased | zebra 113 | LEZ finalized 445, tip 451 (6 unfinalized) [heartbeat]
+[11:09:00]   [19 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker refund_available | actor at taker_lock_confirmed | maker offered | zebra 113 | LEZ finalized 451, tip 468 (17 unfinalized) [heartbeat]
+[11:09:07]   zebra: mined 1 block(s) → height 114 (mempool had ['f5c4b51f505e'])
+[11:09:10]   [29 s] waiting for the Taker actor of zec-devnet-s to reach phase awaiting_maker_confirmations/both_legs_locked (Taker LEZ lock → Maker Zcash funding): taker refund_available | actor at both_legs_locked | maker both_legs_locked | zebra 114 | LEZ finalized 477, tip 484 (7 unfinalized) [heartbeat]
+[11:09:10]   Maker's Zcash funding f5c4b51f505ecafafd8f59a2cda00226542ffeb31346bd435d823df2daaa4174 is in zebra block 114; the Taker refunds LEZ instead of waiting
+[11:09:10]   waiting 204s for the agreement's LEZ refund time (the profile's delay after provisioning)
+[11:09:10]   [0 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 477, tip 484 (7 unfinalized) [heartbeat]
+[11:10:10]   [60 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 527, tip 533 (6 unfinalized) [heartbeat]
+[11:11:10]   [120 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 560, tip 567 (7 unfinalized) [heartbeat]
+[11:12:10]   [180 s] waiting for for the agreement's LEZ refund time (the profile's delay after provisioning): sleeping | LEZ finalized 609, tip 615 (6 unfinalized) [heartbeat]
+[11:12:35]   [0 s] waiting for the Taker's refund of zec-devnet-s to reach refund_in_progress/refunded: taker refund_available (generation 2) | maker both_legs_locked | LEZ finalized 627, tip 632 (5 unfinalized) [heartbeat]
+[11:12:35]   refund request admitted (attempt 1, taker refund_available | maker: both_legs_locked)
+[11:12:41]   [6 s] waiting for the Taker's refund of zec-devnet-s to reach refund_in_progress/refunded: taker refund_in_progress (generation 2) | maker both_legs_locked | LEZ finalized 644, tip 649 (5 unfinalized) [heartbeat]
+[11:12:41]   the Taker's LEZ refund is admitted and in progress on the Node; the Maker's Zcash refund is owed next
+[11:12:41]   mining zebra to the agreement's refund height
+[11:12:41]   zebra: mined 8 block(s) → height 122 (Zcash refund height)
+[11:12:41]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-devnet-swap-179447810003", "action": "refund", "requested_after_generation": 33, "was_replay": false}
+[11:12:41]   [0 s] waiting for the Maker's Zcash refund of zec-devnet-s in a block and its row terminal: maker both_legs_locked (schedule leased), refund not in a block | zebra 122 | LEZ finalized 644, tip 649 (5 unfinalized) [heartbeat]
+[11:12:46]   [5 s] waiting for the Maker's Zcash refund of zec-devnet-s in a block and its row terminal: maker taker_leg_refunded (schedule leased), refund not in a block | zebra 122 | LEZ finalized 644, tip 649 (5 unfinalized) [heartbeat]
+[11:12:51]   zebra: mined 1 block(s) → height 123 (mempool had ['c60af3616115'])
+[11:12:52]   [10 s] waiting for the Maker's Zcash refund of zec-devnet-s in a block and its row terminal: maker refunded (schedule leased), refund in a block | zebra 123 | LEZ finalized 644, tip 649 (5 unfinalized) [heartbeat]
+[11:12:57]   Maker's Zcash refund c60af3616115b9cbc2458b04bc8e40758c95ba7963e2757e952e77568976560c is in zebra block 123; Maker ended refunded
+[11:12:57]   [0 s] waiting for the Taker's refund of zec-devnet-s to reach refunded: taker refunded (generation 4) | maker refunded | LEZ finalized 644, tip 649 (5 unfinalized) [heartbeat]
+[11:12:57]   Taker observed the Maker's Zcash refund; Taker ended refunded
+[11:12:57] === zec-maker-refund: passed in 277s

@@ -57,19 +57,23 @@ stack and are kept as the record of that submission shape.
   passed: `docs/evidence/regression-m2-2026-11-12-macos-arm64/`. The 97 at
   `f2f9b980` (`main` with PRs #131, #126 and #127) on an Apple-silicon Mac:
   97 of 97, each on its first try, 98 minutes on three lanes
-  (`docs/evidence/regression-2026-11-12-macos-arm64/`).
+  (`docs/evidence/regression-2026-11-12-macos-arm64/`). The 97 on the v0.3.0
+  candidate `b4e17cf0` (`main` after PR #135) on an Apple-silicon Mac: 97 of
+  97, each on its first try, 97 minutes on three lanes
+  (`docs/evidence/regression-0.3.0-2026-11-12-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
 - **`start.sh` on `main`.** On `af3ac978` it could not finish; the four
   fixes are on `main` since PR #127 (`b6b1c273`), and the runs that show
   them are in `docs/evidence/macos-arm64-release-gates-2026-11-11/`.
+- **CI** is green on `b4e17cf0`: `ci` and `public-readiness` both passed.
 - **Still open for the submission:** the release workflow on the commit to
-  be tagged (not run yet; a rehearsal on `b6b1c273` is run 43189324839); the
-  full regression on the commit to be tagged, on an Apple-silicon Mac (not
-  run yet); the
-  tag and release (0.3.0, notes drafted in `docs/release-notes-0.3.0.md`);
-  the rfp#122 comment; the fresh-machine walk of the Zcash guide (U10).
+  be tagged (not run yet; the rehearsal on `b6b1c273`, run 43189324839,
+  built every image and failed in its smoke job on a bundle `start.sh` that
+  tried to build an image from a folder the bundle does not ship, fixed in
+  PR #136); the tag and release (0.3.0, notes drafted in
+  `docs/release-notes-0.3.0.md`); the rfp#122 comment; the fresh-machine walk of the Zcash guide (U10).
 
 ## The six deliverables
 

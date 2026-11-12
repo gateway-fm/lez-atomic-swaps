@@ -212,7 +212,7 @@ case "${LEZ_IMAGES:-build}" in
     ;;
   pull)
     echo "  pulling ${LEZ_IMAGE_PREFIX:-lez}-*:${LEZ_IMAGE_TAG:-local}…"
-    docker compose --profile tools pull --quiet
+    docker compose --profile tools --profile explorers pull --quiet
     ;;
   present)
     # A developer's bundle run on images built locally (tag `local`): nothing is

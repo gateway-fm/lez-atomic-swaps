@@ -1,0 +1,22 @@
+[12:22:15] === taker-refund (stamp 1794482535)
+[12:22:15] preflight: indexer historical reads
+[12:22:15]   indexer serves historical reads at the tip (3823)
+[12:22:15] preflight: LEZ finality check waived by request
+[12:22:15]   Maker published offer-e2e-1794482535
+[12:22:18]   Taker took offer-e2e-1794482535: swap bb9e157937d1 (not_activated)
+[12:22:18]   stopping the Maker Node so it never funds
+[12:22:18]   Taker locked bitcoin: 652921206029 (replay=False)
+[12:22:18]   mined 124 blocks past the lock; the Maker cutoff is 100s after the take, the Taker's refund opens 100s after it
+[12:22:18]   [0 s] waiting for the Taker's refund of bb9e157937d1 to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 3822, tip 3824 (2 unfinalized) [heartbeat]
+[12:22:19]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[12:22:29]   [10 s] waiting for the Taker's refund of bb9e157937d1 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 3822, tip 3824 (2 unfinalized) [heartbeat]
+[12:23:11]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[12:23:32]   [73 s] waiting for the Taker's refund of bb9e157937d1 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 3869, tip 3874 (5 unfinalized) [heartbeat]
+[12:24:03]   refund request admitted (attempt 11, state awaiting_second_lock)
+[12:24:13]   [114 s] waiting for the Taker's refund of bb9e157937d1 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 3903, tip 3908 (5 unfinalized) [heartbeat]
+[12:24:57]   refund request replayed (attempt 16, state refund_in_progress)
+[12:25:18]   Taker refunded; Taker Node balances {'btc_trusted_sat': 525000965060, 'lez_units': 1999000} → {'btc_trusted_sat': 525000959820, 'lez_units': 1999000}
+[12:25:34]   [0 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 3964, tip 3970 (6 unfinalized) [heartbeat]
+[12:25:40]   Maker reconciled to refunded
+[12:25:40]   the Bitcoin refund 09ccdc9c24e6 is a script-path spend: three witness items
+[12:25:40] === taker-refund: passed in 206s
