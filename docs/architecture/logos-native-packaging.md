@@ -535,9 +535,23 @@ Weaker on macOS than on Linux, for the launcher:
   volume only those two containers mount; on macOS it is a file under
   `LEZ_NODE_HOME/run/maker` that every process of the user can connect to.
 
-What still assumes Linux or a container: the package build
-(`deploy/scripts/package-role-node.sh`) strips with GNU `strip` in a Debian
-container and writes one Linux variant.
+The darwin-arm64 role package comes from
+`deploy/scripts/package-role-node-darwin.sh <role> <plugin.lgx> <out.lgx>`,
+run on an Apple-silicon Mac with the plugin package the module builder built
+there (variant `darwin-arm64`). It builds the role's executables from the
+checkout with cargo (release, `--locked`; the sidecar with toolchain 1.96.0),
+refuses anything that is not an arm64 Mach-O executable, strips each with
+the macOS `strip` and signs it again ad hoc (`codesign --sign -`: stripping
+breaks the linker's signature, and Apple silicon runs no unsigned code),
+adds the launcher and `bin/payload.json`, and writes the variant with the
+lgx that built the plugin (found through the plugin's Nix derivation, or
+`LGX`), then `lgx verify` and the execute-bit check of the Linux script. The
+executables link only macOS system libraries. The two scripts list the same
+executables (`deploy/tests/test_role_node_package.py`); the Linux script is
+unchanged. The Linux images package debug builds; this one packages release
+builds (the Maker package is 31 MB, the Taker's 44 MB). A package carries
+one platform: a release with both would merge them with `lgx merge`, which
+has not been run.
 
 ## Recommended order
 
