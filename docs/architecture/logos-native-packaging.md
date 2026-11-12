@@ -320,23 +320,34 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   lgpm is the development build of logos-package-manager (`cli`), which takes
   only `-dev`; it refuses Logos's own release `blockchain_module` 0.2.4 the
   same way (its `cli-portable` build is the one for release packages).
-- **Dependencies with version ranges.** The LGX manifest (0.3.0, the version
-  our packages already carry) allows `{"name", "version", "signer"}` entries;
-  logosctl 0.3.2 resolves them (`package deps --recursive` shows
-  `requiredVersion` and `status: version_mismatch`). Basecamp 0.2.0 and the
-  v0.2 runtime read only string entries (logos-package-manager `4871ed19`
+- **Dependencies with version requirements.** The LGX manifest (0.3.0, the
+  version our packages already carry) allows `{"name", "version", "signer"}`
+  entries; logosctl 0.3.2 resolves them (`package deps --recursive` shows
+  `requiredVersion` and `status: version_mismatch`).
+  `deploy/scripts/pin-package-dependencies.sh` writes each of our packages'
+  dependencies once, as `{"name": n, "version": <requirement>}` with the
+  version of n in the release set: exact (`0.4.1-sign.4`) for the patched
+  `lez_core` and `lez_indexer_module` and for our own packages, `~<version>`
+  for Logos's `chat_module`, `delivery_module` and `blockchain_module`. Two
+  properties of logosctl 0.3.2 decide this (tested against the default catalog,
+  issue #139): a range on a patched module does not hold, because its
+  prerelease tag sorts below the official release it is cut from
+  (`~0.4.1-sign.4` matches the official `lez_core` 0.4.1 to 0.4.3 and the
+  resolver takes 0.4.3); and each entry resolves on its own, so a bare name
+  next to a pinned entry of the same name pulls in the newest release as well
+  (`lez_core` 0.5.1). An exact version, bare or as `=0.4.1-sign.4`, matches
+  only that build (`==` is rejected). Basecamp 0.2.0 and the v0.2 runtime read
+  only string entries (logos-package-manager `4871ed19`
   `package_manager_lib.cpp`, logos-module `a3e288a7` `module_metadata.cpp`,
-  Basecamp `PluginLoader.cpp`), so object-only entries would stop Basecamp
-  loading a desk's modules. `deploy/scripts/pin-package-dependencies.sh`
-  therefore writes each of our packages' dependencies twice: first
-  `{"name": n, "version": "~<version of n in the release set>"}`, then the bare
-  name. logosctl takes the first entry of a name; Basecamp 0.2.0 the string.
-  The manifest's root hash covers the variants' files, not the manifest, so it
-  is unchanged. `metadata.json` keeps bare names: the builder generates one
-  client per entry there (`buildCppPlugin.nix`, `staticDeps`). So the default
-  catalog's `lez_core` 0.5.1, `lez_indexer_module` 1.2.1 and `chat_module`
-  0.3.0 no longer satisfy our packages (observation 3); distinct names were not
-  needed. A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
+  Basecamp `PluginLoader.cpp`); the Basecamp images therefore install the
+  manifest with bare names (`stage-basecamp-package.sh`, the role Node
+  images), the form Basecamp 0.2.0 reads. The manifest's root hash covers the
+  variants' files, not the manifest, so it is unchanged. `metadata.json` keeps
+  bare names: the builder generates one client per entry there
+  (`buildCppPlugin.nix`, `staticDeps`). Logos's `chat_module` 0.2.x itself
+  declares a bare `delivery_module`, so a catalog install of a desk also pulls
+  the newest `delivery_module` (0.3.3) beside the `~0.2.0` the desk requires; our
+  manifests cannot prevent that. A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
   `lgx-portable`) is not pinned: it gets the bare names of `metadata.json`.
 - **B3.** The role packages declare no LEZ network module: the Node reaches the
   sequencer and indexer its configuration names (the public testnet's or an
@@ -346,7 +357,7 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   trader on the public testnet does not install it. Its desk still starts the
   modules only with the configuration paths Compose provides.
 - The release set and its `packages.tsv` (name, version, variant, dependency
-  ranges, sha256, root hash) are written to
+  requirements, sha256, root hash) are written to
   `deploy/images/basecamp-ui/assets/packages/` by the stage phase and uploaded
   by the release workflow as the `logos-packages` artifact.
 - **Signing** is out of scope (owner, 2026-11-11); the packages stay unsigned.

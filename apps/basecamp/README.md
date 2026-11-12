@@ -57,7 +57,7 @@ The `*-lgx-portable` outputs are the release packages (variant
 `linux-amd64`/`linux-arm64`, the libraries they need beside the plugin): what
 `logosctl package install` takes and what the devnet images install, after
 `deploy/scripts/pin-package-dependencies.sh` has given their dependencies
-version ranges. The `*-lgx` outputs and the `*-install` developer-install
+version requirements. The `*-lgx` outputs and the `*-install` developer-install
 trees (for an isolated Basecamp `--user-dir`) are the module builder's
 development builds: variant `<platform>-dev`, libraries from `/nix/store`;
 logosctl refuses them. `lez-network-ui-lgx-portable` is the LEZ network's
