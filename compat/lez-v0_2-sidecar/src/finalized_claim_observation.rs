@@ -314,7 +314,7 @@ pub(crate) async fn read_fixed_finalized_window(
     })
 }
 
-async fn read_finalized_block(
+pub(crate) async fn read_finalized_block(
     indexer: &dyn FinalizedIndexerApi,
     block_id: u64,
 ) -> Result<Block, BridgeRuntimeError> {

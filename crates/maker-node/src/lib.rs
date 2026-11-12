@@ -759,6 +759,13 @@ pub struct MakerActorMonitorV1 {
     /// it is final) while this swap's own LEZ refund time is near.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revealing_claim_held_by: Option<String>,
+    /// What the swap's actor last did, or why it did not act, and when; with
+    /// `waiting_for` when it holds a step for a reason it can bound (#103
+    /// item 6). Kept by the supervisor in memory: absent on a finished swap,
+    /// before the first attempt after a restart, and once the actor's
+    /// revision moved past the attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_outcome: Option<lez_actor_supervision::ActorLastOutcomeV1>,
     /// Latest validated actor lifecycle projection, when available.
     pub progress: Option<MakerActorProgressViewV1>,
     /// Latest explicit owner action, when available.
@@ -990,6 +997,32 @@ const fn zec_attention<T>(_record: &T) -> (Option<String>, Option<String>) {
     (None, None)
 }
 
+/// The supervisor's last outcome for a monitored swap, unless the swap is
+/// finished or the actor's revision has moved past the attempt (its wait was
+/// about a step that is over).
+fn monitored_last_outcome(
+    outcome: Option<lez_actor_supervision::ActorLastOutcomeV1>,
+    schedule_state: MakerActorScheduleState,
+    observation: Option<&MakerActorProgressObservationV1>,
+) -> Option<lez_actor_supervision::ActorLastOutcomeV1> {
+    let outcome = outcome?;
+    if schedule_state == MakerActorScheduleState::Terminal {
+        return None;
+    }
+    let revision = match observation {
+        Some(MakerActorProgressObservationV1::Active { revision, .. }) => Some(*revision),
+        _ => None,
+    };
+    if outcome
+        .revision
+        .zip(revision)
+        .is_some_and(|(attempted, current)| attempted != current)
+    {
+        return None;
+    }
+    Some(outcome)
+}
+
 fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<MakerActorMonitorV1>, _>(
         "maker_actor_monitor_v1",
@@ -1039,6 +1072,11 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
             // state (`zec_reference_actor::lez_depositor_balance_marker`); the
             // owner reads the reason here as the Taker's view names it.
             let (attention_reason, revealing_claim_held_by) = zec_attention(record);
+            let last_outcome = monitored_last_outcome(
+                actor_supervisor::maker_actor_last_outcome(record.swap_id()),
+                record.schedule_state(),
+                progress.as_ref().map(|progress| &progress.observation),
+            );
             Ok(MakerActorMonitorV1 {
                 schema_version: 1,
                 swap_id: record.swap_id().as_str().into(),
@@ -1049,6 +1087,7 @@ fn register_maker_actor_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
                 last_failure_class: record.last_failure_class().map(str::to_owned),
                 attention_reason,
                 revealing_claim_held_by,
+                last_outcome,
                 progress,
                 manual_action,
                 terms: context
@@ -1895,4 +1934,119 @@ fn internal_store_error(error: impl std::fmt::Display) -> ErrorObjectOwned {
 
 fn rpc_error(code: i32, message: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(code, message.into(), None::<()>)
+}
+
+#[cfg(test)]
+mod last_outcome_tests {
+    use lez_actor_supervision::{ActorLastOutcomeV1, ActorWaitV1};
+    use serde::Deserialize;
+    use serde_json::json;
+
+    use super::{
+        MakerActorMonitorV1, MakerActorProgressObservationV1, MakerActorScheduleState,
+        monitored_last_outcome,
+    };
+
+    fn waiting(revision: u64) -> ActorLastOutcomeV1 {
+        ActorLastOutcomeV1::from_effect(
+            "recover",
+            &json!({"outcome": "awaiting_observation", "revision": revision}),
+            1_000,
+        )
+        .unwrap()
+        .waiting(
+            ActorWaitV1::new("lez_finality_past_refund_time", "lez")
+                .until_time(1_762_877_100, Some(1_762_876_680)),
+        )
+    }
+
+    fn at(revision: u64) -> MakerActorProgressObservationV1 {
+        MakerActorProgressObservationV1::active("both_legs_locked", revision, "recover_maker_leg")
+            .unwrap()
+    }
+
+    /// #103 item 6 on the Maker: the supervisor's last outcome reaches the
+    /// monitor while the swap runs at the revision the attempt saw, and not
+    /// on a finished swap or once the actor moved on.
+    #[test]
+    fn the_monitor_shows_the_last_outcome_only_for_the_current_step() {
+        let shown = monitored_last_outcome(
+            Some(waiting(2)),
+            MakerActorScheduleState::Queued,
+            Some(&at(2)),
+        )
+        .expect("shown");
+        assert_eq!(
+            shown.waiting_for.unwrap().kind,
+            "lez_finality_past_refund_time"
+        );
+        assert_eq!(
+            monitored_last_outcome(
+                Some(waiting(2)),
+                MakerActorScheduleState::Terminal,
+                Some(&at(2))
+            ),
+            None
+        );
+        assert_eq!(
+            monitored_last_outcome(
+                Some(waiting(2)),
+                MakerActorScheduleState::Queued,
+                Some(&at(3))
+            ),
+            None
+        );
+        // A failed attempt names no revision and is shown as it is.
+        let failed = ActorLastOutcomeV1::failed("recover", "actor_timeout", 5);
+        assert_eq!(
+            monitored_last_outcome(
+                Some(failed.clone()),
+                MakerActorScheduleState::Backoff,
+                Some(&at(3))
+            ),
+            Some(failed)
+        );
+        assert_eq!(
+            monitored_last_outcome(None, MakerActorScheduleState::Queued, None),
+            None
+        );
+    }
+
+    /// Additive in schema 1: a reply without `last_outcome` parses, a reply
+    /// with it round-trips, and a client that knows only the old fields reads
+    /// the new reply.
+    #[test]
+    fn last_outcome_is_an_additive_monitor_field() {
+        /// A client that knows only the fields it reads.
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct OldClientMonitor {
+            schema_version: u16,
+            swap_id: String,
+            schedule_state: String,
+            attempt_count: u64,
+        }
+        let old = json!({
+            "schema_version": 1, "swap_id": "r103-maker-swap", "actor_kind": "bitcoin",
+            "schedule_state": "queued", "lease_generation": 4, "attempt_count": 9,
+            "progress": null, "manual_action": null
+        });
+        let parsed: MakerActorMonitorV1 = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(parsed.last_outcome, None);
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), old);
+
+        let mut new = parsed;
+        new.last_outcome = Some(waiting(2));
+        let value = serde_json::to_value(&new).unwrap();
+        assert_eq!(
+            value["last_outcome"]["waiting_for"]["until_unix_seconds"],
+            1_762_877_100_u64
+        );
+        assert_eq!(
+            serde_json::from_value::<MakerActorMonitorV1>(value.clone()).unwrap(),
+            new
+        );
+        let read: OldClientMonitor = serde_json::from_value(value).unwrap();
+        assert_eq!(read.attempt_count, 9);
+    }
 }

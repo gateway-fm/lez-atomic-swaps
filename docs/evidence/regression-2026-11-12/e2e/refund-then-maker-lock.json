@@ -1,0 +1,70 @@
+{
+  "scenario": "refund-then-maker-lock",
+  "pair": "Bitcoin",
+  "direction": "TakerSellsForeign",
+  "stamp": "179446160102",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "refund",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "123",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "65",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "100",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "115",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "245",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "15",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "130",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "03f18ceece377833d8bba5f78ca732104e06848a64a0170b7b724f8c07038fe4",
+  "taker_lock_txid": "1d178588bf0f67897af4fd11ec2a4ce2914cd2913d3294aedf1ddc3891a0122a",
+  "maker_lock": "2456e13f58ad2a0010f9e09ef0cd5a5ca363997e778a56904de2b7148c5b836d",
+  "cutoff": 1794461704,
+  "refund_admission": {
+    "asked_in_state": "awaiting_second_lock",
+    "admitted_state": "refund_in_progress",
+    "generation": 1
+  },
+  "maker_terminal_phase": "maker_leg_refunded",
+  "balances_before": {
+    "maker": {
+      "btc_sat": 367498896220,
+      "lez_units": 2049000
+    },
+    "taker": {
+      "btc_sat": 525000900600,
+      "lez_units": 1951000
+    }
+  },
+  "balances_after": {
+    "maker": {
+      "btc_sat": 367498896220,
+      "lez_units": 2049000
+    },
+    "taker": {
+      "btc_sat": 525000896500,
+      "lez_units": 1951000
+    }
+  },
+  "deltas": {
+    "maker": {
+      "btc_sat": 0,
+      "lez_units": 0
+    },
+    "taker": {
+      "btc_sat": -4100,
+      "lez_units": 0
+    }
+  },
+  "outcome": "refunded",
+  "result": "passed",
+  "seconds": 183
+}

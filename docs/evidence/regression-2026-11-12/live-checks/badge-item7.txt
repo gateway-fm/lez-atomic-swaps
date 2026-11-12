@@ -1,0 +1,26 @@
+# #103 item 7: header badge vs status strip, lane 1 (lez-*), head caebd6d9
+# reader: tools/badge-read.mjs via the QML inspector in each role's Basecamp
+$ docker exec lez-maker-node node /tmp/badge-read.mjs maker '^Node connected$'
+  READ 2026-11-11T21:44:52.251Z maker {"badge":"Node connected","strip_title":"Node connected","strip_detail":"0 swaps · 4 open offers","nodeLink":"up","health_degraded":false,"badge_label":"Node connected"}
+[2026-11-11T21:44:52Z] $ scripts/node-hold.sh hold maker
+$ read maker badge until 'Node unavailable'
+  READ 2026-11-11T21:44:54.018Z maker {"badge":"Node unavailable","strip_title":"Node unavailable","strip_detail":"Owner-local Node endpoint is unavailable","nodeLink":"down","health_degraded":null,"badge_label":"Node unavailable"}
+[2026-11-11T21:44:54Z] $ scripts/node-hold.sh release maker
+  READ 2026-11-11T21:44:59.748Z maker {"badge":"Checking the Node","strip_title":"Node connected","strip_detail":"1 swaps · 2 open offers","nodeLink":"up","health_degraded":null,"badge_label":"Node connected"}
+$ docker exec lez-taker-node node /tmp/badge-read.mjs taker '^Node connected$'
+  READ 2026-11-11T21:45:03.242Z taker {"badge":"Node degraded","strip_title":"Node connected","strip_detail":"0 swaps · 4 open offers","nodeLink":"up","health_degraded":true,"badge_label":"Node connected"}
+[2026-11-11T21:45:03Z] $ scripts/node-hold.sh hold taker
+$ read taker badge until 'Node unavailable'
+  READ 2026-11-11T21:45:04.994Z taker {"badge":"Node unavailable","strip_title":"Node unavailable","strip_detail":"Owner-local Node endpoint is unavailable","nodeLink":"down","health_degraded":null,"badge_label":"Node unavailable"}
+[2026-11-11T21:45:05Z] $ scripts/node-hold.sh release taker
+  READ 2026-11-11T21:45:07.563Z taker {"badge":"Node connected","strip_title":"Node connected","strip_detail":"1 swaps · 2 open offers","nodeLink":"up","health_degraded":false,"badge_label":"Node connected"}
+
+# LEZ finality stall (devnet threshold LEZ_NODE_FINALITY_STALL_SECONDS=60)
+[2026-11-11T21:45:43Z] $ docker stop lez-sequencer
+  READ 2026-11-11T21:46:52.256Z maker {"badge":"Node degraded · LEZ finality stalled","strip_title":"Node connected","strip_detail":"1 swaps · 2 open offers","nodeLink":"up","health_degraded":true,"badge_label":"Node degraded · LEZ finality stalled"}
+  READ 2026-11-11T21:47:03.886Z taker {"badge":"Node degraded · LEZ finality stalled","strip_title":"Node connected","strip_detail":"1 swaps · 2 open offers","nodeLink":"up","health_degraded":true,"badge_label":"Node degraded · LEZ finality stalled"}
+$ taker_health (lez_chain)
+{"ready": true, "degraded": true, "lez_chain": {"degraded": true, "reason": "lez_finality_stalled", "finalized_block_id": 355, "finalized_advanced_at_unix_seconds": 1794433552, "finalized_flat_seconds": 71, "tip_block_id": null, "stall_threshold_seconds": 60, "observed_at_unix_seconds": 1794433623}}
+[2026-11-11T21:47:04Z] $ docker start lez-sequencer
+  READ 2026-11-11T21:47:32.413Z maker {"badge":"Node connected","strip_title":"Node connected","strip_detail":"1 swaps · 2 open offers","nodeLink":"up","health_degraded":false,"badge_label":"Node connected"}
+  READ 2026-11-11T21:47:33.791Z taker {"badge":"Node connected","strip_title":"Node connected","strip_detail":"1 swaps · 2 open offers","nodeLink":"up","health_degraded":false,"badge_label":"Node connected"}
