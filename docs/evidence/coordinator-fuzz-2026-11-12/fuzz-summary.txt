@@ -1,0 +1,28 @@
+# libFuzzer summary lines from fuzz.log (216 lines in full): the start, one line every ~300 s, the end.
+# Fork-mode lines: #<total execs>: cov <edges> ft <features> corp <corpus files> exec/s <last job's rate> oom/timeout/crash <counts> time <s> job <n>
+     Running `/work/target/x86_64-unknown-linux-gnu/release/coordinator -artifact_prefix=fuzz/artifacts/coordinator/ -fork=6 -max_total_time=3600 -max_len=512 -timeout=2 -print_final_stats=1 -artifact_prefix=/work/artifacts/ /work/corpus`
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 3225078566
+INFO: Loaded 1 modules   (9803 inline 8-bit counters): 9803 [0x634ab615f140, 0x634ab616178b), 
+INFO: Loaded 1 PC tables (9803 PCs): 9803 [0x634ab6161790,0x634ab6187c40), 
+INFO: -fork=6: fuzzing in separate process(s)
+INFO: -fork=6: 9 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork50.dir
+#953: cov: 1118 ft: 2124 corp: 9 exec/s: 476 oom/timeout/crash: 0/0/0 time: 2s job: 1 dft_time: 0
+#727597: cov: 1306 ft: 7230 corp: 632 exec/s: 369 oom/timeout/crash: 0/0/0 time: 300s job: 55 dft_time: 0
+#1427004: cov: 1306 ft: 7951 corp: 710 exec/s: 480 oom/timeout/crash: 0/0/0 time: 600s job: 80 dft_time: 0
+#2110979: cov: 1306 ft: 8183 corp: 801 exec/s: 370 oom/timeout/crash: 0/0/0 time: 915s job: 100 dft_time: 0
+#2604304: cov: 1306 ft: 8200 corp: 812 exec/s: 320 oom/timeout/crash: 0/0/0 time: 1217s job: 116 dft_time: 0
+#3095983: cov: 1306 ft: 8361 corp: 838 exec/s: 303 oom/timeout/crash: 0/0/0 time: 1514s job: 130 dft_time: 0
+#3572024: cov: 1306 ft: 8384 corp: 850 exec/s: 292 oom/timeout/crash: 0/0/0 time: 1818s job: 143 dft_time: 0
+#3999443: cov: 1306 ft: 8395 corp: 856 exec/s: 274 oom/timeout/crash: 0/0/0 time: 2101s job: 154 dft_time: 0
+#4426933: cov: 1306 ft: 8402 corp: 857 exec/s: 243 oom/timeout/crash: 0/0/0 time: 2403s job: 165 dft_time: 0
+#4890463: cov: 1306 ft: 8409 corp: 860 exec/s: 219 oom/timeout/crash: 0/0/0 time: 2724s job: 176 dft_time: 0
+#5317716: cov: 1306 ft: 8409 corp: 860 exec/s: 296 oom/timeout/crash: 0/0/0 time: 3000s job: 185 dft_time: 0
+#5798090: cov: 1306 ft: 8409 corp: 860 exec/s: 218 oom/timeout/crash: 0/0/0 time: 3326s job: 195 dft_time: 0
+#6213892: cov: 1306 ft: 8411 corp: 861 exec/s: 253 oom/timeout/crash: 0/0/0 time: 3634s job: 204 dft_time: 0
+INFO: fuzzed for 3634 seconds, wrapping up soon
+INFO: exiting: 0 time: 3635s
+
+# cargo fuzz cmin of the grown corpus (cmin.log)
+MERGE-OUTER: 861 files, 0 in the initial corpus, 0 processed earlier
+MERGE-OUTER: 729 new files with 8410 new features added; 1306 new coverage edges
