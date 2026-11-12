@@ -92,6 +92,38 @@ done
 mkdir -p "$btc_state" "$btc_state/swaps"
 rm -f "$run/node.sock" "$run/ready" "$run/chat.sock"
 
+# How the two roles find and talk to each other (LEZ_TRANSPORT). "local", the
+# default: the Taker reads the Maker's offers and Delivery identity from a
+# shared Delivery directory (/delivery) and calls the Maker's Chat socket
+# directly (/run/lez/maker/chat.sock), both mounted from the Maker's side.
+# "logos": nothing is shared; offers and the Chat rounds travel through the
+# Logos Delivery and Chat modules of the two Basecamps (the desks' Logos Chat
+# bridge, apps/basecamp/common/logos_chat_bridge.cpp). Each role then runs its
+# Chat gateway (lez-<role>-chat-gateway) on the control socket the desk's
+# bridge reaches at LEZ_LOGOS_CHAT_GATEWAY_SOCKET: the Maker's hands the
+# Taker's requests to its Node's Chat socket, the Taker's serves the Node a
+# proxy socket in place of the Maker's, and the Taker learns the Maker's
+# Delivery identity from LEZ_MAKER_DELIVERY_IDENTITY. The gateway is started
+# again a second after it exits (its sessions are app-lifetime: the bridge
+# binds again and the Maker's next 10 s rebroadcast refills the offer index)
+# and ends with the Node's process group.
+transport="${LEZ_TRANSPORT:-local}"
+gateway_socket="${LEZ_LOGOS_CHAT_GATEWAY_SOCKET:-$run/logos-chat-control.sock}"
+case "$transport" in
+  local) ;;
+  logos) [[ "$gateway_socket" == "$run"/* ]] || { echo "$role: LEZ_LOGOS_CHAT_GATEWAY_SOCKET must be in $run" >&2; exit 2; } ;;
+  *) echo "$role: LEZ_TRANSPORT must be local or logos, not $transport" >&2; exit 2 ;;
+esac
+start_chat_gateway() { # start_chat_gateway <gateway endpoint arguments...>
+  rm -f "$gateway_socket" "$run/logos-chat-proxy.sock"
+  "${with_node[@]}" bash -c 'while :; do
+      rm -f "$1" "$2"; "${@:3}"
+      echo "'"$role"': Chat gateway exited ($?); starting it again" >&2; sleep 1
+    done' gateway "$gateway_socket" "$run/logos-chat-proxy.sock" \
+    "$bin/lez-$role-chat-gateway" endpoint --control-socket "$gateway_socket" "$@" </dev/null &
+  echo "$role: Logos transport, Chat gateway on $gateway_socket"
+}
+
 # The role's LEZ signer: the LEZ wallet as the Logos lez_core module
 # (lez-wallet-signer, its socket at LEZ_WALLET_SIGNER_SOCKET) holds the key and
 # the Node never sees it; without the socket the Node keeps a copy of the key
@@ -381,15 +413,29 @@ case "$role" in
     # How long LEZ finality may stand still before maker_health says so
     # (gen-config.sh: the devnet heartbeat's threshold); unset, the Node's 600 s.
     [[ -z "${LEZ_NODE_FINALITY_STALL_SECONDS:-}" ]] || args+=(--lez-finality-stall-seconds "$LEZ_NODE_FINALITY_STALL_SECONDS")
+    [[ "$transport" != logos ]] || start_chat_gateway --maker-chat-socket "$run/chat.sock"
     node_log_file
     exec "$bin/lez-maker-node" "${args[@]}"
     ;;
   taker)
-    for _ in $(seq 1 60); do
-      [[ -s /delivery/maker-delivery-identity.pub ]] && break
-      sleep 1
-    done
-    maker_identity="$(tr -d ' \n' </delivery/maker-delivery-identity.pub)"
+    if [[ "$transport" == logos ]]; then
+      # No shared directory: the Maker's offers arrive over Logos Delivery
+      # through the gateway, and the Node's Delivery source for that Maker is
+      # an empty directory of its own.
+      maker_identity="$(tr -d ' \n' <<<"${LEZ_MAKER_DELIVERY_IDENTITY:-}")"
+      delivery="$state/delivery"
+      install -d -m 0700 "$delivery"
+      chat_socket="$run/logos-chat-proxy.sock"
+      start_chat_gateway --proxy-socket "$chat_socket"
+    else
+      for _ in $(seq 1 60); do
+        [[ -s /delivery/maker-delivery-identity.pub ]] && break
+        sleep 1
+      done
+      maker_identity="$(tr -d ' \n' </delivery/maker-delivery-identity.pub)"
+      delivery=/delivery
+      chat_socket=/run/lez/maker/chat.sock
+    fi
     [[ "$maker_identity" =~ ^(02|03)[0-9a-f]{64}$ ]] || { echo "maker public identity unavailable" >&2; exit 1; }
     [[ -s "$state/registry.sqlite3" ]] || "$bin/lez-taker-registry-init" --database "$state/registry.sqlite3"
     if [[ "$btc_lifecycle_ready" == 1 ]]; then
@@ -417,17 +463,17 @@ PY
         fi
       fi
       jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" \
-        --argjson prepared "$zec_catalog" '
+        --arg delivery "$delivery" --arg chat_socket "$chat_socket" --argjson prepared "$zec_catalog" '
         {schema_version:1,
-         delivery_sources:[{directory:"/delivery", maker_public_key:$identity, source_id:"local-maker"}],
-         chat_socket:"/run/lez/maker/chat.sock", maximum_offers:16,
+         delivery_sources:[{directory:$delivery, maker_public_key:$identity, source_id:"local-maker"}],
+         chat_socket:$chat_socket, maximum_offers:16,
          initiation:({execute_prepared:true, registry_database:$registry, btc_role_config:$role_config}
                      + (if ($prepared|length) > 0 then {prepared_zec:$prepared} else {} end))}' >"$state/role.json"
       echo "taker: $(jq length <<<"$zec_catalog") prepared ZEC entries configured"
     else
-      jq -n --arg identity "$maker_identity" '
+      jq -n --arg identity "$maker_identity" --arg delivery "$delivery" '
         {schema_version:1,
-         delivery_sources:[{directory:"/delivery", maker_public_key:$identity, source_id:"local-maker"}],
+         delivery_sources:[{directory:$delivery, maker_public_key:$identity, source_id:"local-maker"}],
          maximum_offers:16}' >"$state/role.json"
     fi
     chmod 0600 "$state/role.json"
