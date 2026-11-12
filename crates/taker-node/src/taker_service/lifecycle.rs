@@ -2116,6 +2116,9 @@ enum InitiationError {
     Backend(TakerBackendError),
     ExecutionUnavailable,
     FundingRequired(lez_btc_role_lifecycle::FundingRequired),
+    /// The Taker has no Zcash output to fund from; the reason names its address.
+    #[cfg(feature = "pair-zec")]
+    ZecFundingUnavailable(String),
     Internal,
 }
 
@@ -2330,7 +2333,10 @@ async fn prepare_dynamic_zec(
         .await
         .map_err(|error| {
             eprintln!("taker ZEC reservation failed: {error:#}");
-            InitiationError::ExecutionUnavailable
+            match error.downcast::<super::zec_dynamic::ZecFundingUnavailable>() {
+                Ok(reason) => InitiationError::ZecFundingUnavailable(reason.0),
+                Err(_) => InitiationError::ExecutionUnavailable,
+            }
         })?;
     let entry = dynamic
         .load_entry(&configured)
@@ -3025,6 +3031,14 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
             "Taker dependency unavailable",
             "initiation_execution_unavailable",
         ),
+        // The same code and category as any unavailable execution, with
+        // the reason the owner can act on.
+        #[cfg(feature = "pair-zec")]
+        InitiationError::ZecFundingUnavailable(reason) => ErrorObjectOwned::owned(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker dependency unavailable",
+            Some(json!({"category": "initiation_execution_unavailable", "reason": reason})),
+        ),
         InitiationError::FundingRequired(required) => ErrorObjectOwned::owned(
             FUNDING_REQUIRED_CODE,
             "Bitcoin funding required",
@@ -3045,6 +3059,20 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Taker with nothing to fund Zcash from is told why (the address to
+    /// pay) under the code and category every unavailable execution has.
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_missing_zcash_funder_output_names_its_reason() {
+        let reason = "no mature deterministic Zebra funder output for tmAddr is available";
+        let error = map_initiation_error(InitiationError::ZecFundingUnavailable(reason.into()));
+        let plain = map_initiation_error(InitiationError::ExecutionUnavailable);
+        assert_eq!(error.code(), plain.code());
+        let data: serde_json::Value = serde_json::from_str(error.data().unwrap().get()).unwrap();
+        assert_eq!(data["category"], "initiation_execution_unavailable");
+        assert_eq!(data["reason"], reason);
+    }
 
     /// REVIEW 17:58Z: a refund admitted earlier reads in progress while it is
     /// owed and its admission open, whatever the generation; a failed attempt

@@ -52,6 +52,20 @@ const RESERVE_FILE: &str = "zec-taker-reserve.json";
 /// The Taker's own material and template inside the swap directory.
 const ROLE_DIRECTORY: &str = "zec";
 
+/// The Taker's own funder search found nothing to fund Zcash from (it funds
+/// in `TakerSellsForeign`); the reason names the address to pay, so the owner
+/// reads it in the take's error.
+#[derive(Debug)]
+pub(crate) struct ZecFundingUnavailable(pub(crate) String);
+
+impl std::fmt::Display for ZecFundingUnavailable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ZecFundingUnavailable {}
+
 /// The Taker's take-time Zcash authority, over the Node-owned lifecycle's LEZ
 /// role (identity, signer, swaps root, sidecar recipe).
 pub struct DynamicZecRole {
@@ -271,7 +285,8 @@ pub(super) async fn prepare(
                         request.foreign_units,
                         &dynamic.committed_funding(layout.root()),
                     )
-                    .await?;
+                    .await
+                    .map_err(|error| ZecFundingUnavailable(error.to_string()))?;
                     let digest = begin_zec_taker_role(&role_root, &taker_secret)?;
                     (
                         Some(ZecOutpointV1 {
