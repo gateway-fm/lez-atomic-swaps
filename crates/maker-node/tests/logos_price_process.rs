@@ -40,6 +40,29 @@ fn exact_secure_worker_quote_is_copied_into_the_domain() {
 }
 
 #[test]
+fn observation_older_than_the_parent_max_age_is_refused() {
+    let run = secure_run();
+    let module = secure_file(run.path(), "price.so", b"module-v1", 0o600);
+    // One second past the 30 s bound `source` configures; the worker answers ok.
+    let worker = worker_script(
+        run.path(),
+        "stale-worker",
+        r#"printf '%s\n' '{"schema_version":1,"status":"ok","pair":"zcash","direction":"taker_sells_lez","lez_units_per_lot":5,"foreign_units_per_lot":2,"source_revision":7,"as_of_unix_seconds":1699999969}'"#,
+    );
+    let source = source(
+        &worker,
+        &module,
+        Duration::from_millis(WORKER_TIMEOUT_MILLISECONDS),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        source.quote(route(), NOW),
+        Err(PriceSourceError::InvalidSource)
+    ));
+}
+
+#[test]
 fn typed_unavailability_is_not_substituted_with_a_local_or_zero_quote() {
     let run = secure_run();
     let module = secure_file(run.path(), "price.so", b"module-v1", 0o600);
