@@ -244,16 +244,25 @@ fn read_bounded_no_follow(path: &Path, maximum: usize) -> Result<(Vec<u8>, Metad
 ///
 /// The path must be absolute and normalized, the final component is not
 /// followed as a symlink, and the file must be a regular file owned by this
-/// process with no group or world permission bits.
+/// process with no group or world permission bits, or the single-link
+/// root-owned credential systemd hands the service (`lez_systemd_credential`).
 ///
 /// # Errors
 ///
 /// Fails when the file is missing, not owner-private, or larger than `maximum`.
 pub fn read_private(path: &Path, maximum: usize) -> Result<Vec<u8>> {
+    let credential = lez_systemd_credential::is_credential_path(path);
     let (bytes, metadata) = read_bounded_no_follow(path, maximum)?;
     ensure!(
-        metadata.mode().trailing_zeros() >= 6
-            && metadata.uid() == rustix::process::geteuid().as_raw(),
+        (metadata.mode().trailing_zeros() >= 6
+            && metadata.uid() == rustix::process::geteuid().as_raw())
+            || (credential
+                && metadata.nlink() == 1
+                && lez_systemd_credential::credential_ownership_ok(
+                    metadata.uid(),
+                    metadata.gid(),
+                    metadata.mode() & 0o7777,
+                )),
         "{} must be an owner-private file",
         path.display()
     );
@@ -270,4 +279,22 @@ pub fn read_private(path: &Path, maximum: usize) -> Result<Vec<u8>> {
 /// not regular, or it is larger than `maximum`.
 pub fn read_vetted(path: &Path, maximum: usize) -> Result<Vec<u8>> {
     read_bounded_no_follow(path, maximum).map(|(bytes, _)| bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, os::unix::fs::PermissionsExt as _};
+
+    use super::read_private;
+
+    #[test]
+    fn read_private_keeps_its_owner_rule_outside_the_credential_directory() {
+        let run = tempfile::tempdir().unwrap();
+        let path = run.path().join("lez-signer.key");
+        fs::write(&path, b"key").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(read_private(&path, 8).unwrap(), b"key");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o440)).unwrap();
+        assert!(read_private(&path, 8).is_err());
+    }
 }
