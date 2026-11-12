@@ -84,6 +84,50 @@ mod activation_wire_base64 {
     }
 }
 
+/// One transparent Zcash outpoint, its transaction id in RPC display order.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZecOutpointV1 {
+    pub transaction_id: [u8; 32],
+    pub output_index: u32,
+}
+
+/// `zec_reserve_v1`: the Taker's facts for a Zcash agreement composed at
+/// take time (docs/sdk-lez-zec.md). Public halves only.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZecReserveRequestV1 {
+    pub schema_version: u16,
+    pub reservation_id: RequestId,
+    pub offer_id: MakerOfferId,
+    pub signed_offer_envelope: Vec<u8>,
+    pub foreign_units: u64,
+    pub taker_zcash_public_key: Vec<u8>,
+    pub taker_lez_account: [u8; 32],
+    /// `TakerSellsForeign` only: the Taker's funding outpoint.
+    pub taker_funding: Option<ZecOutpointV1>,
+    /// `TakerSellsForeign` only: SHA-256 of the Taker's claim preimage.
+    pub taker_secret_digest: Option<[u8; 32]>,
+}
+
+/// The Maker's answer: the unsigned draft and the facts only it chose.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ZecReserveResponseV1 {
+    pub schema_version: u16,
+    pub was_replay: bool,
+    pub swap_id: Box<str>,
+    pub unsigned_draft_wire: Vec<u8>,
+    pub maker_lez_account: [u8; 32],
+    pub zcash_anchor_height: u32,
+    pub lez_anchor_unix_seconds: u64,
+    pub zebra_genesis: [u8; 32],
+    /// `TakerSellsLez` only: the Maker's funding outpoint.
+    pub maker_funding: Option<ZecOutpointV1>,
+    /// `TakerSellsLez` only: SHA-256 of the Maker's claim preimage.
+    pub maker_secret_digest: Option<[u8; 32]>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ZecChatProposeRequestV1 {

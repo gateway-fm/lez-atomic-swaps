@@ -16,7 +16,8 @@ pub use chat_contracts::{
     BtcChatCompleteResponseV2, BtcChatProposalV1, BtcChatProposalV2, BtcChatProposeRequestV1,
     BtcChatProposeRequestV2, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
     XmrChatStageARequestV1, XmrChatStageAResponseV1, ZecChatCompleteRequestV1,
-    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1,
+    ZecChatCompleteResponseV1, ZecChatProposalV1, ZecChatProposeRequestV1, ZecOutpointV1,
+    ZecReserveRequestV1, ZecReserveResponseV1,
 };
 pub use local_rpc::{call_local_chat_gateway_rpc, call_local_chat_rpc, call_local_rpc};
 pub use logos_chat_gateway::{

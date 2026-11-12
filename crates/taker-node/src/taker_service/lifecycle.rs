@@ -2139,23 +2139,32 @@ async fn initiate(
     // before authenticated Delivery performs asynchronous I/O.
     let offer_id = request.offer_id.clone();
     let selection_context = Arc::clone(&initiation);
-    let (catalog_entry, dynamic) = tokio::task::spawn_blocking(move || {
+    let (catalog_entry, dynamic, dynamic_zec) = tokio::task::spawn_blocking(move || {
         let context = selection_context
             .lock()
             .map_err(|_| InitiationError::Internal)?;
+        #[cfg(feature = "pair-zec")]
+        let dynamic_zec = context.dynamic_zec();
+        #[cfg(not(feature = "pair-zec"))]
+        let dynamic_zec = None::<()>;
         Ok::<_, InitiationError>((
             context.prepared_for_offer(&offer_id).cloned(),
             context.dynamic_btc(),
+            dynamic_zec,
         ))
     })
     .await
     .map_err(|_| InitiationError::Internal)??;
-    let prepared = match (catalog_entry, dynamic) {
-        (Some(prepared), _) => prepared,
-        (None, Some(dynamic)) if request.route.pair() == Pair::Bitcoin => {
+    let prepared = match (catalog_entry, dynamic, dynamic_zec) {
+        (Some(prepared), _, _) => prepared,
+        (None, Some(dynamic), _) if request.route.pair() == Pair::Bitcoin => {
             prepare_dynamic_btc(&state, &request, &initiation, &dynamic).await?
         }
-        (None, _) => return Err(InitiationError::SelectionMismatch),
+        #[cfg(feature = "pair-zec")]
+        (None, _, Some(dynamic)) if request.route.pair() == Pair::Zcash => {
+            prepare_dynamic_zec(&state, &request, &initiation, &dynamic).await?
+        }
+        (None, _, _) => return Err(InitiationError::SelectionMismatch),
     };
     if !request_matches_facts(&request, prepared.facts()) {
         return Err(InitiationError::SelectionMismatch);
@@ -2241,6 +2250,68 @@ async fn prepare_dynamic_btc(
         })?;
     let entry = dynamic
         .load_entry(&prepared.configured)
+        .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    let context = Arc::clone(initiation);
+    let inserted = entry.clone();
+    tokio::task::spawn_blocking(move || {
+        context
+            .lock()
+            .map_err(|_| InitiationError::Internal)?
+            .insert_prepared(inserted)
+            .map_err(|()| InitiationError::Conflict)
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)??;
+    Ok(entry)
+}
+
+/// Prepares a Zcash swap for any live offer at take time (`zec_reserve_v1`,
+/// docs/sdk-lez-zec.md) and registers it in the catalog, so the rest of the
+/// initiation is the prepared Zcash take, unchanged.
+#[cfg(feature = "pair-zec")]
+async fn prepare_dynamic_zec(
+    state: &TakerServiceState,
+    request: &TakerSwapInitiateRequestV1,
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    dynamic: &Arc<super::zec_dynamic::DynamicZecRole>,
+) -> Result<PreparedTakerInitiationV1, InitiationError> {
+    let (now, live_match) = selected_offer_is_live(state, request).await?;
+    if !live_match {
+        return Err(InitiationError::SelectionMismatch);
+    }
+    let announcement = match request.logos_offer_announcement_base64.as_deref() {
+        Some(proof_base64) => {
+            let encoded = BASE64_STANDARD
+                .decode(proof_base64.as_bytes())
+                .map_err(|_| InitiationError::SelectionMismatch)?;
+            Some(
+                verify_logos_offer_announcement(&encoded, now)
+                    .map_err(|_| InitiationError::SelectionMismatch)?
+                    .offer()
+                    .clone(),
+            )
+        }
+        None => None,
+    };
+    let take = btc_dynamic::TakeRequest {
+        request_id: request.request_id.clone(),
+        offer_id: request.offer_id.clone(),
+        route: request.route,
+        maker_identity: *request.maker_identity.as_bytes(),
+        signed_envelope_sha256: request.signed_envelope_sha256,
+        foreign_units: request.foreign_units,
+        expected_lez_units: request.expected_lez_units,
+        announcement,
+        funding_transaction_hex: None,
+    };
+    let configured = super::zec_dynamic::prepare(dynamic, &take, now)
+        .await
+        .map_err(|error| {
+            eprintln!("taker ZEC reservation failed: {error:#}");
+            InitiationError::ExecutionUnavailable
+        })?;
+    let entry = dynamic
+        .load_entry(&configured)
         .map_err(|_| InitiationError::ExecutionUnavailable)?;
     let context = Arc::clone(initiation);
     let inserted = entry.clone();

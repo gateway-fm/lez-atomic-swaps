@@ -15,6 +15,8 @@ mod xmr_chat;
 mod zec_application;
 #[cfg(feature = "pair-zec")]
 mod zec_chat;
+#[cfg(feature = "pair-zec")]
+mod zec_reserve;
 
 pub use actor_supervisor::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
@@ -51,6 +53,8 @@ pub use zec_application::{
 pub use zec_chat::ZecMakerActorProvisioner;
 #[cfg(feature = "pair-zec")]
 use zec_chat::register_zec_chat_methods;
+#[cfg(feature = "pair-zec")]
+pub use zec_reserve::ZecMakerReservations;
 
 use std::{
     fs,
@@ -152,6 +156,9 @@ pub struct MakerRpc {
     #[cfg(feature = "pair-zec")]
     #[cfg(feature = "pair-zec")]
     zec_actor_provisioner: Option<Arc<ZecMakerActorProvisioner>>,
+    /// Take-time Zcash agreements (`zec_reserve_v1`).
+    #[cfg(feature = "pair-zec")]
+    zec_reservations: Option<Arc<ZecMakerReservations>>,
 }
 
 impl std::fmt::Debug for MakerRpc {
@@ -211,6 +218,10 @@ impl std::fmt::Debug for MakerRpc {
             .field(
                 "zec_actor_provisioner",
                 &self.zec_actor_provisioner.as_ref().map(|_| "configured"),
+            )
+            .field(
+                "zec_reservations",
+                &self.zec_reservations.as_ref().map(|_| "configured"),
             );
         debug.finish()
     }
@@ -240,6 +251,8 @@ impl MakerRpc {
             #[cfg(feature = "pair-zec")]
             #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
+            #[cfg(feature = "pair-zec")]
+            zec_reservations: None,
         }
     }
 
@@ -270,6 +283,8 @@ impl MakerRpc {
             #[cfg(feature = "pair-zec")]
             #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
+            #[cfg(feature = "pair-zec")]
+            zec_reservations: None,
         }
     }
 
@@ -300,6 +315,30 @@ impl MakerRpc {
         self.zec_completion_store = Some(Arc::new(completion_store));
         self.zec_actor_provisioner = actor_provisioner.map(Arc::new);
         self
+    }
+
+    /// Attaches the take-time Zcash agreement (`zec_reserve_v1`) over the
+    /// LEZ role of `role_config_file` (the Node-owned lifecycle's), and
+    /// registers the templates of the reservations completed before a restart.
+    ///
+    /// # Errors
+    ///
+    /// Fails without the ZEC actor authority, or for an invalid Zcash or LEZ
+    /// role configuration.
+    #[cfg(feature = "pair-zec")]
+    pub fn with_zec_reservations(
+        mut self,
+        config_file: &Path,
+        role_config_file: &Path,
+    ) -> anyhow::Result<Self> {
+        let provisioner = self
+            .zec_actor_provisioner
+            .clone()
+            .context("ZEC reservations need the ZEC actor authority")?;
+        let reservations = Arc::new(ZecMakerReservations::load(config_file, role_config_file)?);
+        reservations.restore(&provisioner);
+        self.zec_reservations = Some(reservations);
+        Ok(self)
     }
 
     /// Attaches fixture-independent BTC role-agreement authority, optionally

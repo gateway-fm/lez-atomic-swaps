@@ -42,6 +42,9 @@ pub struct ConfiguredTakerInitiationContext {
     prepared_by_offer: BTreeMap<Box<str>, PreparedTakerInitiationV1>,
     /// Node-owned Bitcoin lifecycle: prepares any live Bitcoin offer at take time.
     dynamic_btc: Option<std::sync::Arc<DynamicBtcRole>>,
+    /// Take-time Zcash agreement (`zec_reserve_v1`) over the same LEZ role.
+    #[cfg(feature = "pair-zec")]
+    dynamic_zec: Option<std::sync::Arc<crate::taker_service::DynamicZecRole>>,
 }
 
 impl ConfiguredTakerInitiationContext {
@@ -54,7 +57,12 @@ impl ConfiguredTakerInitiationContext {
     /// Reports whether at least one prepared entry runs the given pair.
     #[must_use]
     pub fn has_pair(&self, pair: Pair) -> bool {
+        #[cfg(feature = "pair-zec")]
+        let dynamic_zec = pair == Pair::Zcash && self.dynamic_zec.is_some();
+        #[cfg(not(feature = "pair-zec"))]
+        let dynamic_zec = false;
         (pair == Pair::Bitcoin && self.dynamic_btc.is_some())
+            || dynamic_zec
             || self
                 .prepared_by_offer
                 .values()
@@ -65,6 +73,15 @@ impl ConfiguredTakerInitiationContext {
     #[must_use]
     pub fn dynamic_btc(&self) -> Option<std::sync::Arc<DynamicBtcRole>> {
         self.dynamic_btc.clone()
+    }
+
+    /// The take-time Zcash agreement, when configured.
+    #[cfg(feature = "pair-zec")]
+    #[must_use]
+    pub(crate) fn dynamic_zec(
+        &self,
+    ) -> Option<std::sync::Arc<crate::taker_service::DynamicZecRole>> {
+        self.dynamic_zec.clone()
     }
 
     /// Node-owned Bitcoin swaps whose actor is activated (receipt bound):
@@ -380,6 +397,11 @@ pub(super) struct InitiationConfigurationV1 {
     /// Node-owned Bitcoin lifecycle configuration (`BtcRoleConfigV1`).
     #[serde(default)]
     btc_role_config: Option<PathBuf>,
+    /// Zcash role configuration (`ZecRoleConfigV1`): take any live Zcash
+    /// offer at take time over the Bitcoin lifecycle's LEZ role.
+    #[cfg(feature = "pair-zec")]
+    #[serde(default)]
+    zec_role_config: Option<PathBuf>,
 }
 
 impl InitiationConfigurationV1 {
@@ -509,6 +531,33 @@ pub(super) fn build_initiation_context(
         }
     }
 
+    #[cfg(feature = "pair-zec")]
+    let dynamic_zec = match (&configuration.zec_role_config, &dynamic_btc) {
+        (None, _) => None,
+        (Some(_), None) => return Err(TakerServiceStartupError::InvalidConfiguration),
+        (Some(path), Some(btc)) => {
+            let role = crate::taker_service::DynamicZecRole::load(path, std::sync::Arc::clone(btc))
+                .map_err(|_| TakerServiceStartupError::InvalidConfiguration)?;
+            // As the Bitcoin swaps above: a swap prepared earlier stays
+            // visible while its files verify; one that no longer does is
+            // reported and skipped.
+            for configured in role.persisted_entries() {
+                match role.load_entry(&configured) {
+                    Ok(entry) => {
+                        prepared_by_offer.insert(configured.offer_id.as_str().into(), entry);
+                    }
+                    Err(error) => eprintln!(
+                        "taker: persisted ZEC swap {} no longer loads ({error:#}); skipped",
+                        configured.swap_id.as_str()
+                    ),
+                }
+            }
+            let role = std::sync::Arc::new(role);
+            role.spawn_sidecar_keepalive();
+            Some(role)
+        }
+    };
+
     Ok(ConfiguredTakerInitiationContext {
         execute_prepared: configuration.execute_prepared,
         registry,
@@ -516,6 +565,8 @@ pub(super) fn build_initiation_context(
         schedule,
         prepared_by_offer,
         dynamic_btc,
+        #[cfg(feature = "pair-zec")]
+        dynamic_zec,
     })
 }
 

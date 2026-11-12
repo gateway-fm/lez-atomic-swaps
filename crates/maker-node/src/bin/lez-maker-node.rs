@@ -251,7 +251,6 @@ struct ZecArguments {
         requires_all = [
             "delivery_directory",
             "maker_claim_key_file",
-            "zec_source_maker_config",
             "zec_maker_actor_root",
             "zec_actor_program",
             "zec_actor_program_sha256"
@@ -278,14 +277,18 @@ struct ZecArguments {
         ]
     )]
     zec_source_maker_config: Vec<PathBuf>,
+    /// Owner-private Zcash role config (profile, Zebra): compose each Zcash
+    /// agreement at take time (`zec_reserve_v1`) instead of from a template.
+    #[arg(long, requires_all = ["btc_role_config", "maker_claim_key_id", "zec_maker_actor_root"])]
+    zec_role_config: Option<PathBuf>,
     /// Existing owner-private mode-0700 base for deterministic per-swap actor bundles.
-    #[arg(long, requires_all = ["zec_source_maker_config", "zec_actor_program", "zec_actor_program_sha256"])]
+    #[arg(long, requires_all = ["maker_claim_key_id", "zec_actor_program", "zec_actor_program_sha256"])]
     zec_maker_actor_root: Option<PathBuf>,
     /// Absolute exact ZEC one-shot actor executable.
-    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program_sha256"])]
+    #[arg(long, requires_all = ["zec_maker_actor_root", "zec_actor_program_sha256"])]
     zec_actor_program: Option<PathBuf>,
     /// Exact 32-byte SHA-256 identity of the ZEC actor executable.
-    #[arg(long, requires_all = ["zec_source_maker_config", "zec_maker_actor_root", "zec_actor_program"])]
+    #[arg(long, requires_all = ["zec_maker_actor_root", "zec_actor_program"])]
     zec_actor_program_sha256: Option<Box<str>>,
     /// Stopped owner-private Maker actor database imported only as a terminal operator view.
     #[arg(long, requires_all = ["terminal_zec_swap_id", "terminal_zec_claim_key_id", "terminal_zec_claim_key_file"])]
@@ -919,7 +922,7 @@ fn configured_zec_actor_provisioner(
         arguments.zec.zec_actor_program.as_ref(),
         arguments.zec.zec_actor_program_sha256.as_deref(),
     );
-    if arguments.zec.zec_source_maker_config.is_empty() {
+    if arguments.zec.zec_source_maker_config.is_empty() && arguments.zec.zec_role_config.is_none() {
         ensure!(
             deployment == (None, None, None),
             "ZEC actor templates, root, program, and SHA-256 must be configured together"
@@ -942,6 +945,11 @@ fn configured_zec_actor_provisioner(
     let mut identity = [0_u8; 32];
     hex::decode_to_slice(program_sha256, &mut identity)
         .context("decode ZEC actor program SHA-256")?;
+    if arguments.zec.zec_source_maker_config.is_empty() {
+        return ZecMakerActorProvisioner::new_dynamic(root.clone(), program.clone(), identity)
+            .context("validate ZEC maker actor deployment")
+            .map(Some);
+    }
     ZecMakerActorProvisioner::new(
         &arguments.zec.zec_source_maker_config,
         root.clone(),
@@ -1317,6 +1325,19 @@ fn maker_context(
                 None => context,
             }
         }
+        None => context,
+    };
+    #[cfg(feature = "pair-zec")]
+    let context = match &arguments.zec.zec_role_config {
+        Some(path) => context
+            .with_zec_reservations(
+                path,
+                arguments
+                    .btc_role_config
+                    .as_deref()
+                    .context("ZEC reservations need --btc-role-config")?,
+            )
+            .context("configure ZEC reservations")?,
         None => context,
     };
     #[cfg(feature = "pair-xmr")]
