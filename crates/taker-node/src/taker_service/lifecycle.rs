@@ -1638,27 +1638,48 @@ async fn list_swaps(
     .await
     .map_err(|_| MonitoringError::RegistryUnavailable)??;
 
-    // One swap whose bundle is gone (an aborted take, a retired swap
-    // directory) must not hide every other swap: it is listed as needing
-    // attention and the desk can still inspect it. Every other failure (a
-    // dependency or state store that cannot answer) still fails the list, so
-    // a degraded Node is reported as degraded rather than as a row.
-    let mut swaps = Vec::with_capacity(swap_ids.len());
+    let mut rows = Vec::with_capacity(swap_ids.len());
     for facts in swap_ids {
-        match project_swap(&initiation, facts.swap_id()).await {
-            Ok(mut view) => {
+        let projected = project_swap(&initiation, facts.swap_id())
+            .await
+            .map(|mut view| {
                 overlay_last_outcome(&mut view, state.last_outcomes.get(facts.swap_id().as_str()));
-                swaps.push(view);
-            }
-            Err(MonitoringError::NotFound) => swaps
-                .push(commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap),
-            Err(error) => return Err(error),
-        }
+                view
+            });
+        rows.push((
+            commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap,
+            projected,
+        ));
     }
     Ok(TakerSwapListV1 {
         schema_version: 1,
-        swaps,
+        swaps: list_rows(rows)?,
     })
+}
+
+/// The list's rows from each swap's attention row and its projection. One
+/// swap whose bundle is gone (an aborted take, a retired swap directory), or
+/// whose own state cannot be read while other swaps' can (a corrupt Zcash
+/// role state; its monitor answers `taker_monitor_unavailable`), must not hide
+/// every other swap: it is listed as needing attention, the latter with that
+/// category as its `attention_reason`, and the desk can still inspect it. A
+/// failure every swap shares, or any other (a registry or result limit),
+/// still fails the list, so a degraded Node is reported as degraded rather
+/// than as rows.
+fn list_rows(
+    rows: Vec<(TakerSwapViewV1, Result<TakerSwapViewV1, MonitoringError>)>,
+) -> Result<Vec<TakerSwapViewV1>, MonitoringError> {
+    let readable = rows.iter().any(|(_, projected)| projected.is_ok());
+    rows.into_iter()
+        .map(|(mut attention, projected)| match projected {
+            Err(MonitoringError::NotFound) => Ok(attention),
+            Err(MonitoringError::DependencyUnavailable) if readable => {
+                attention.attention_reason = Some("taker_monitor_unavailable".to_owned());
+                Ok(attention)
+            }
+            other => other,
+        })
+        .collect()
 }
 
 async fn monitor_swap(
