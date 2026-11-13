@@ -373,8 +373,10 @@ provisioner states the Zcash refund's earliest time with the same 3.9 s
 
 ### Provisioning a Testnet corridor
 
-`scripts/zec-provision.sh --zcash-network test` (node-e2e.py calls it in
-public mode) builds one corridor under `public-testnet-v2`:
+`tests/fixtures/zec-catalog-fixture.sh --zcash-network test` (node-e2e.py
+calls it in public mode) builds one corridor under `public-testnet-v2`. It is
+the devnet's dealer test fixture (it holds both parties' keys); this lane is
+pending conversion to the take-time agreement, the way swaps are set up now:
 
 - the route from `LEZ_ZEBRA_URL` and exactly one of `LEZ_ZEBRA_COOKIE_FILE`
   (self-hosted Zebra on loopback) or `LEZ_ZEBRA_API_KEY_FILE` (Tatum), as
@@ -468,4 +470,4 @@ public lane's failures retain their bundle and are never silently ignored.
 | Zcash Discord funding request | Optional fallback | External support process | Manual response and availability |
 | Zallet alpha.4 | Optional funding wallet only | Local operator | Alpha compatibility; no arbitrary HTLC signing; NU6.3 must be reverified |
 | Project transparent signer | Exists (`zcash_key_file`, actor-signed claim and refund) | Independent maker/taker | Signs for NU6.2 (Regtest), NU6.3 and NU7; mined Testnet vectors verify, no NU7 spend broadcast yet |
-| Testnet corridor provisioner | Exists (`zec-provision.sh --zcash-network test`) | Maker/taker setup | Needs funded TAZ and a public LEZ testnet this stack can talk to; untried end to end (postponed to the LEZ 0.4 port) |
+| Testnet corridor provisioner | Exists (the dealer test fixture `tests/fixtures/zec-catalog-fixture.sh --zcash-network test`; pending conversion to take-time) | Maker/taker setup | Needs funded TAZ and a public LEZ testnet this stack can talk to; untried end to end (postponed to the LEZ 0.4 port) |

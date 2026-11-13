@@ -194,11 +194,11 @@ crate. The two map like this:
 | `taker_swap_claim_v1` | claim (the Taker's follow-up Zcash claim) |
 | `taker_swap_refund_v1`, `maker_actor_refund_v1` | refund |
 
-A ZEC take on the Nodes is either prepared or composed at take time. Prepared:
-the Taker's catalog entry carries the signed offer envelope, the unsigned draft
-bound to that offer, the signing key and the actor template, all produced by
-`scripts/zec-provision.sh` from live chain facts; the catalog is looked up
-first. Composed: with a Zcash role config on both Nodes (`--zec-role-config`
+A ZEC take on the Nodes is composed at take time: the Maker publishes an
+offer, the Taker takes it. (The Taker still accepts a prepared catalog entry,
+looked up first, which only the devnet test fixture
+`deploy/tests/fixtures/zec-catalog-fixture.sh` makes for the catalog tests: it
+holds both parties' keys.) With a Zcash role config on both Nodes (`--zec-role-config`
 on the Maker, `initiation.zec_role_config` on the Taker: profile, Zebra
 endpoint, the Taker's Zcash key) any live Zcash offer is taken by one more
 Chat round before the existing two:

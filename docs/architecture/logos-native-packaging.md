@@ -263,9 +263,10 @@ Option A1 with lez_swap_node kept as the one lifecycle owner, and the parts of
   whose executables lost their execute bit (lgx 0.1.0 keeps file modes;
   observation 9). One variant per build host; Linux only (swap-store). The
   Maker package names no Taker executable and vice versa
-  (`scripts/check-runtime-profiles.py`). The ZEC proof-of-concept provisioners
-  are not in the package; they stay in the Taker image for
-  `scripts/zec-provision.sh`.
+  (`scripts/check-runtime-profiles.py`). The ZEC dealer tools
+  (`executables.json` class `fixture`) are not in the package; they stay in the
+  Taker image for the catalog tests' devnet fixture
+  `tests/fixtures/zec-catalog-fixture.sh`.
 - **Graph.** desk → `chat_module`, `delivery_module`, `lez_core`,
   `lez_swap_node`, `lez_<role>_node`; `lez_<role>_node` → `lez_swap_node`;
   `lez_swap_node` → `lez_core`. Still bare names (observation 3).

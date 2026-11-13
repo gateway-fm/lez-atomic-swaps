@@ -286,8 +286,8 @@ With `LEZ_WALLET_SIGNER_SOCKET` set (compose.yaml sets it for both roles)
 `node-entrypoint.sh` removes any `btc/lez-signer.key` from the state volume
 and waits up to 120 s for the signer socket. The desk still reads the key
 file from the bind mount once, to import it into `lez_core`
-(`apps/basecamp/common/lez_role_signer.h`). On the ZEC devnet corridor the
-provisioner (`scripts/zec-provision.sh`) copies each role's key into the
+(`apps/basecamp/common/lez_role_signer.h`). On a ZEC catalog corridor the
+catalog tests' devnet fixture (`tests/fixtures/zec-catalog-fixture.sh`) copies each role's key into the
 corridor material; the corridor's sidecar signs through the same socket when
 it is up and falls back to that file only without it.
 
