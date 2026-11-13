@@ -804,6 +804,9 @@ fn run_child(
     command
         .args(["--config-fd", "196", actor_command])
         .env_clear()
+        // The one variable an actor keeps: where systemd put this unit's
+        // credentials, so a role key named there passes its reader's rule.
+        .envs(std::env::var_os("CREDENTIALS_DIRECTORY").map(|dir| ("CREDENTIALS_DIRECTORY", dir)))
         .current_dir("/")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
