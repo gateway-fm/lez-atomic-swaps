@@ -463,18 +463,14 @@ pub fn plan_m4_stage_a_unsigned_wire(input: &[u8]) -> Result<Vec<u8>> {
     encode_checked_unsigned_wire(&validated)
 }
 
-/// Reads a public role packet through the reviewed file reader, from bytes.
+/// Validates a public role packet from its lowercase hex.
 fn packet_from_hex(value: &str) -> Result<ValidatedRolePacket> {
     let bytes = hex::decode(value).context("decode lowercase hexadecimal packet")?;
     ensure!(
         hex::encode(&bytes) == value,
         "packet is not lowercase hexadecimal"
     );
-    let mut staged = NamedTempFile::new().context("create staged public role packet")?;
-    staged
-        .write_all(&bytes)
-        .context("write staged public role packet")?;
-    ValidatedRolePacket::read(staged.path())
+    ValidatedRolePacket::from_bytes(&bytes)
 }
 
 fn encode_checked_unsigned_wire(validated: &ValidatedXmrAgreementBodyV1) -> Result<Vec<u8>> {

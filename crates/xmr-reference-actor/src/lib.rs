@@ -1007,7 +1007,18 @@ impl ValidatedRolePacket {
         read_role_packet_with_digest(path).map(|(packet, _)| packet)
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    /// Validates canonical public role packet bytes as [`Self::read`] does a
+    /// file, with the same size bound.
+    ///
+    /// # Errors
+    ///
+    /// Rejects oversized or noncanonical JSON/hex, invalid or aliased keys, or
+    /// a failed DLEQ proof.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() as u64 <= ROLE_PACKET_MAX_BYTES,
+            "public role packet is oversized"
+        );
         let raw: RolePacketV1 =
             serde_json::from_slice(bytes).context("public role packet is malformed")?;
         ensure!(
