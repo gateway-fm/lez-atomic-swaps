@@ -11,9 +11,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use wait_timeout::ChildExt as _;
 
-use crate::{
-    MakerDependencyStateV1, MakerRouteHealthProbe, logos_price_source::validate_secure_file,
-};
+use crate::secure_file::is_secure_file;
 
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_COMMANDS: usize = 12;
@@ -126,7 +124,7 @@ impl ProcessRouteHealthProbe {
             if timeout.is_zero() || timeout > MAX_TIMEOUT {
                 return Err(RouteHealthProbeConfigError::Invalid);
             }
-            if validate_secure_file(&command.program, true, Some(program_sha256)).is_err()
+            if !is_secure_file(&command.program, true, Some(program_sha256))
                 && !unverified.contains(&command.route)
             {
                 unverified.push(command.route);
@@ -156,7 +154,7 @@ impl ProcessRouteHealthProbe {
     }
 
     fn command_is_healthy(command: &RouteHealthCommandV1) -> bool {
-        if validate_secure_file(&command.program, true, Some(command.program_sha256)).is_err() {
+        if !is_secure_file(&command.program, true, Some(command.program_sha256)) {
             return false;
         }
         let Ok(mut child) = Command::new(&command.program)
@@ -179,25 +177,21 @@ impl ProcessRouteHealthProbe {
             }
             Err(_) => return false,
         };
-        status.success()
-            && validate_secure_file(&command.program, true, Some(command.program_sha256)).is_ok()
+        status.success() && is_secure_file(&command.program, true, Some(command.program_sha256))
     }
 }
 
-impl MakerRouteHealthProbe for ProcessRouteHealthProbe {
-    fn state(&self, route: MakerRouteV1) -> MakerDependencyStateV1 {
+impl ProcessRouteHealthProbe {
+    /// Whether the route's chain dependency can serve it now: `None` when no
+    /// command names the route, otherwise whether every command for it passed.
+    #[must_use]
+    pub fn route_available(&self, route: MakerRouteV1) -> Option<bool> {
         let mut selected = self
             .commands
             .iter()
             .filter(|command| command.route == route);
-        let Some(first) = selected.next() else {
-            return MakerDependencyStateV1::Disabled;
-        };
-        if Self::command_is_healthy(first) && selected.all(Self::command_is_healthy) {
-            MakerDependencyStateV1::Available
-        } else {
-            MakerDependencyStateV1::Unavailable
-        }
+        let first = selected.next()?;
+        Some(Self::command_is_healthy(first) && selected.all(Self::command_is_healthy))
     }
 }
 
@@ -246,16 +240,16 @@ mod tests {
         let healthy_config = config(&program, digest, &["0"]);
         let parsed: RouteHealthConfigV1 = serde_json::from_slice(&healthy_config).unwrap();
         assert_eq!(parsed.schema_version, 1);
-        assert!(validate_secure_file(&program, true, None).is_ok());
-        assert!(validate_secure_file(&program, true, Some(digest)).is_ok());
+        assert!(is_secure_file(&program, true, None));
+        assert!(is_secure_file(&program, true, Some(digest)));
         let healthy = ProcessRouteHealthProbe::from_json_bytes(&healthy_config).unwrap();
-        assert_eq!(healthy.state(route), MakerDependencyStateV1::Available);
+        assert_eq!(healthy.route_available(route), Some(true));
         let failed =
             ProcessRouteHealthProbe::from_json_bytes(&config(&program, digest, &["7"])).unwrap();
-        assert_eq!(failed.state(route), MakerDependencyStateV1::Unavailable);
+        assert_eq!(failed.route_available(route), Some(false));
         fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
         fs::write(&program, b"#!/bin/sh\nexit 0\n").unwrap();
         fs::set_permissions(&program, fs::Permissions::from_mode(0o500)).unwrap();
-        assert_eq!(healthy.state(route), MakerDependencyStateV1::Unavailable);
+        assert_eq!(healthy.route_available(route), Some(false));
     }
 }

@@ -7,7 +7,6 @@ mod daemon_lifecycle;
 mod extension_api;
 mod logos_price_source;
 mod price_source;
-mod route_health;
 mod rpc_contracts;
 #[cfg(feature = "pair-xmr")]
 mod xmr_chat;
@@ -32,10 +31,10 @@ pub use daemon_lifecycle::{
     ProcessMakerDaemon,
 };
 pub use extension_api::OfferPublishRequestV1;
+pub use lez_node_common::route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use lez_node_common::*;
 pub use logos_price_source::ProcessLogosPriceSource;
 pub use price_source::{LocalPriceSource, PriceQuoteV1, PriceSource, PriceSourceError};
-pub use route_health::{ProcessRouteHealthProbe, RouteHealthProbeConfigError};
 pub use rpc_contracts::{
     ListRequest, MakerDependencyStateV1, MakerHealthV1, MakerOfferListRequest, MakerRouteHealthV1,
     MakerWalletBalancesRequest,
@@ -426,6 +425,18 @@ impl MakerRpc {
 pub trait MakerRouteHealthProbe: Send + Sync {
     /// Returns the current availability of the selected route's chain dependency.
     fn state(&self, route: MakerRouteV1) -> MakerDependencyStateV1;
+}
+
+/// The hash-pinned process probe (`--route-health-config`); a route no
+/// command names is disabled.
+impl MakerRouteHealthProbe for ProcessRouteHealthProbe {
+    fn state(&self, route: MakerRouteV1) -> MakerDependencyStateV1 {
+        match self.route_available(route) {
+            None => MakerDependencyStateV1::Disabled,
+            Some(true) => MakerDependencyStateV1::Available,
+            Some(false) => MakerDependencyStateV1::Unavailable,
+        }
+    }
 }
 
 /// Serializable operator-facing snapshot. Secret evidence is deliberately omitted.

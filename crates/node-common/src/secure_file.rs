@@ -1,11 +1,17 @@
 //! Owner-private file loading shared by Maker application binaries.
 
-use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _, path::Path};
+use std::{
+    fs::File,
+    io::Read as _,
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
+    path::Path,
+};
 
 use anyhow::{Context as _, ensure};
 use lez_swap_store::open_no_symlinks;
 use rustix::fs::{Mode, OFlags};
 use secp256k1::SecretKey;
+use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 /// Stable identity captured for one owner-private file snapshot.
@@ -237,6 +243,57 @@ const fn private_file_ownership_ok(
     (owner == effective_user && matches!(mode, 0o400 | 0o600))
         || (systemd_credential
             && lez_systemd_credential::credential_ownership_ok(owner, group, mode))
+}
+
+/// Upper bound for a non-executable artifact checked by [`is_secure_file`].
+const MAX_NON_EXECUTABLE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Whether `path` is a file only root or this process's user can replace: an
+/// absolute path to a regular file (no symlink) with one hard link, owned by
+/// root or the effective user, not group- or other-writable, executable when
+/// `executable`, in a directory with the same owner and write rules, and with
+/// the SHA-256 `expected_sha256` names.
+#[must_use]
+pub fn is_secure_file(path: &Path, executable: bool, expected_sha256: Option<[u8; 32]>) -> bool {
+    let check = || -> Option<()> {
+        if !path.is_absolute() {
+            return None;
+        }
+        let metadata = std::fs::symlink_metadata(path).ok()?;
+        let mode = metadata.permissions().mode();
+        let effective_uid = rustix::process::geteuid().as_raw();
+        let owner_uid = metadata.uid();
+        let trusted_owner = owner_uid == 0 || owner_uid == effective_uid;
+        let executable_mask = if owner_uid == effective_uid {
+            0o100
+        } else {
+            0o001
+        };
+        if !metadata.file_type().is_file()
+            || !trusted_owner
+            || metadata.nlink() != 1
+            || mode & 0o022 != 0
+            || (executable && mode & executable_mask == 0)
+            || (!executable && metadata.len() > MAX_NON_EXECUTABLE_BYTES)
+        {
+            return None;
+        }
+        let parent_metadata = std::fs::symlink_metadata(path.parent()?).ok()?;
+        if !parent_metadata.file_type().is_dir()
+            || (parent_metadata.uid() != 0 && parent_metadata.uid() != effective_uid)
+            || parent_metadata.permissions().mode() & 0o022 != 0
+        {
+            return None;
+        }
+        if let Some(expected) = expected_sha256 {
+            let actual: [u8; 32] = Sha256::digest(std::fs::read(path).ok()?).into();
+            if actual != expected {
+                return None;
+            }
+        }
+        Some(())
+    };
+    check().is_some()
 }
 
 #[cfg(test)]

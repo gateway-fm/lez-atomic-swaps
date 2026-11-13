@@ -5,6 +5,7 @@ pub mod local_rpc;
 pub mod logos_chat_gateway;
 pub mod node_config;
 pub mod owner_rpc_server;
+pub mod route_health;
 pub mod run_local_delivery;
 pub mod secure_file;
 pub mod service_control;
