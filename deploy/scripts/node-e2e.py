@@ -12,8 +12,8 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py wrong-inputs     stale revisions, bad envelope hash, off-preset amount, consumed lot
     node-e2e.py restart-taker    Taker Node restarted between lock and claim
     node-e2e.py restart-maker    Maker Node restarted between lock and its funding
-    node-e2e.py kill-taker       restart-taker with SIGKILL of the Taker's container instead (R4)
-    node-e2e.py kill-maker       restart-maker with SIGKILL of the Maker's container instead (R4)
+    node-e2e.py kill-taker       the Taker's container SIGKILLed at every transition, a fresh swap each (R4)
+    node-e2e.py kill-maker       the same for the Maker's container (R4)
     node-e2e.py survivor         Taker Node stopped after its LEZ claim; Maker completes alone
     node-e2e.py late-claim-confirms  the revealing claim sent, the Taker stopped, the claim confirms while it is down
     node-e2e.py late-claim-unmined   the revealing claim sent but never mined until the refund path is open
@@ -741,23 +741,76 @@ def kill_node(role: str) -> dict:
             "finished_at": state.get("FinishedAt")}
 
 
-def scenario_restart(stamp: str, role: str, kill: bool = False) -> dict:
-    """The role's Node restarted between the lock and the claim (`restart-<role>`,
-    docker restart: SIGTERM), or killed there with SIGKILL and started again
-    (`kill-<role>`, kill_node); either way the swap completes."""
+def scenario_restart(stamp: str, role: str) -> dict:
+    """The role's Node restarted between the lock and the claim (docker restart:
+    SIGTERM); the swap completes. kill-<role> is the SIGKILL matrix (scenario_kill_walk)."""
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     lock(swap_id)
     container, _ = NODES[role]
-    if kill:
-        killed = kill_node(role)
-    else:
-        log(f"  restarting {container}")
-        docker("restart", container)
-        wait_healthy(role)
+    log(f"  restarting {container}")
+    docker("restart", container)
+    wait_healthy(role)
     claim(swap_id, stamp)
     wait_completed(swap_id)
-    return {"swap_id": swap_id, "restarted": container, **({"killed": killed} if kill else {})}
+    return {"swap_id": swap_id, "restarted": container}
+
+
+# ---- kill-<role> (R4): SIGKILL at every durable transition ---------------------------
+# The Taker view's states between the take and a terminal state (TakerSwapStateV1),
+# each a point at which kill-<role> kills the role's container, every point on a
+# fresh swap that must then end completed or refunded as both Nodes and both
+# chains' balances agree (assert_settled_consistently). The refund path's points
+# (both legs locked while the refund times run, the Taker's refund admitted) are
+# one maker-refund swap killed twice (scenario_maker_refund's kill_role).
+BTC_KILL_POINTS = (
+    ("taken", {"not_activated", "awaiting_first_lock"}),
+    ("first lock sent", {"awaiting_first_lock"}),
+    ("first lock final", {"awaiting_second_lock"}),
+    ("both legs locked", {"claim_available"}),
+    ("claim sent", {"claim_in_progress"}),
+)
+
+
+def kill_at(role: str, swap_id: str, point: str, states: set[str]) -> dict:
+    """Kills the role's container (kill_node) once the Taker's view shows the
+    swap at `point`; a swap already past it is not the case the point tests."""
+    view = taker_view(swap_id)
+    if view["state"] not in states:
+        raise NotExercised(f"{swap_id[:12]} was already {view['state']} at the kill point '{point}' "
+                           f"({'/'.join(sorted(states))})")
+    at = {"point": point, "taker_state": view["state"], "maker_phase": maker_phase(swap_id),
+          "taker_effects": [effect.get("kind") for effect in view.get("effects") or []]}
+    log(f"  kill point '{point}': taker {at['taker_state']} (effects {at['taker_effects']}), maker {at['maker_phase']}")
+    return {**at, **kill_node(role)}
+
+
+def scenario_kill_walk(stamp: str, role: str) -> dict:
+    """R4: the role's container killed with SIGKILL at each of BTC_KILL_POINTS,
+    one fresh swap per point, then the refund path's two points on one
+    maker-refund swap; every swap settles consistently with the balances."""
+    require_fast_profile()
+    walked = []
+    for index, (point, states) in enumerate(BTC_KILL_POINTS):
+        suffix = f"-k{index}"
+        before = party_balances()
+        swap_id, _ = take(publish_offer(stamp, suffix), stamp, suffix)
+        killed = kill_at(role, swap_id, point, states) if point == "taken" else None
+        lock(swap_id)
+        if point == "first lock sent":
+            killed = kill_at(role, swap_id, point, states)
+        elif point in ("first lock final", "both legs locked"):
+            wait_taker(swap_id, states | {"claim_available"}, timeout=1500, describe=f"(kill point {point})")
+            killed = kill_at(role, swap_id, point, states)
+        claim(swap_id, stamp, suffix)
+        if point == "claim sent":
+            killed = kill_at(role, swap_id, point, states)
+        view = wait_taker(swap_id, {"completed", "refunded"}, timeout=1800, describe=f"(killed at {point})")
+        phase = wait_maker_terminal(swap_id, timeout=600, describe=f"(killed at {point})")
+        walked.append({"swap_id": swap_id, "kill": killed, **assert_settled_consistently(before, view["state"], phase)})
+    refund = scenario_maker_refund(stamp, kill_role=role)
+    walked.append(refund)
+    return {"role": role, "points": walked}
 
 
 def scenario_survivor(stamp: str) -> dict:
@@ -2073,14 +2126,16 @@ def require_fast_profile() -> dict:
     return profile
 
 
-def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_every: int = 10) -> dict:
+def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_every: int = 10,
+                                  kill_role: str | None = None, killed: list | None = None) -> dict:
     """The refund is a repeatable operator action: the Node answers
     `taker_action_execution_unavailable` while the actor's recovery checks are
     not yet satisfied and admits the request once they are. One request id is
     replayed throughout: a replay re-drives the admitted recovery, and the Node's
     own observer keeps driving it between requests. A block is mined between
     attempts so Bitcoin maturity and finality advance on regtest; `mine_every`
-    is the pause between attempts."""
+    is the pause between attempts. With `kill_role` that role's container is
+    killed once the refund is admitted (kill_at, appended to `killed`)."""
     wait = Wait(f"the Taker's refund of {swap_id[:12]} to land", timeout)
     attempt = 0
     category = None
@@ -2101,6 +2156,8 @@ def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_e
             if not reply["result"].get("was_replay") or attempt % 5 == 1:
                 log(f"  refund request {'replayed' if reply['result'].get('was_replay') else 'admitted'} "
                     f"(attempt {attempt}, state {view['state']})")
+            if kill_role and not reply["result"].get("was_replay"):
+                killed.append(kill_at(kill_role, swap_id, "refund admitted", {"refund_available", "refund_in_progress"}))
         else:
             category = (reply["error"].get("data") or {}).get("category")
             # progress_generation_conflict: the Node's observer advanced the
@@ -2184,8 +2241,14 @@ def maker_action_with_fresh_generation(method: str, swap_id: str, request_id: st
     raise Failure(f"maker {method} kept refusing a stale generation after {attempts} attempts: {json.dumps(last)[:200]}")
 
 
-def scenario_maker_refund(stamp: str) -> dict:
+def scenario_maker_refund(stamp: str, kill_role: str | None = None) -> dict:
+    """The Taker never claims; the Maker refunds its leg at its refund time, the
+    Taker its own at the later one. With `kill_role` (kill-<role>'s refund
+    swap) that role's container is killed while both legs wait for the refund
+    times and again once the Taker's refund is admitted, and the balances must
+    show both legs refunded."""
     profile = require_fast_profile()
+    before = party_balances() if kill_role else None
     earlier = int(profile["LEZ_BTC_EARLIER_REFUND_SECONDS"])
     later = int(profile["LEZ_BTC_LATER_REFUND_SECONDS"])
     csv_blocks = int(profile["LEZ_BTC_REFUND_CSV_BLOCKS"])
@@ -2197,6 +2260,8 @@ def scenario_maker_refund(stamp: str) -> dict:
     # Both legs are locked; the Bitcoin leg's CSV must mature before its
     # refund, whichever role locked it.
     mine(csv_blocks + 1)
+    killed = [kill_at(kill_role, swap_id, "both legs locked, refund times running", {"claim_available"})] \
+        if kill_role else []
     log(f"  Maker locked; the Taker never claims. Waiting for the Maker's refund deadline ({earlier}s after the take)")
     wait_until(started + earlier + 30, "for the Maker's refund deadline")
     result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-maker-refund-{stamp}")
@@ -2220,10 +2285,15 @@ def scenario_maker_refund(stamp: str) -> dict:
     # the request is retried until the Node admits it, so nothing waits here.
     if REVERSE:
         wait_until(started + later + 30, "for the Taker's LEZ refund time")
-    request_refund_until_terminal(swap_id, stamp, timeout=1500)
+    view = request_refund_until_terminal(swap_id, stamp, timeout=1500, kill_role=kill_role, killed=killed)
     log("  both legs refunded")
-    return {"swap_id": swap_id,
-            "bitcoin_refund": assert_refund_is_script_path(swap_id, required=True)}
+    summary = {"swap_id": swap_id, "bitcoin_refund": assert_refund_is_script_path(swap_id, required=True)}
+    if kill_role:
+        if len(killed) != 2:
+            raise Failure(f"the refund swap was killed at {[k['point'] for k in killed]}, not at both refund points")
+        phase = wait_maker_terminal(swap_id, timeout=600, describe="(after the refund kills)")
+        summary.update(kill=killed, **assert_settled_consistently(before, view["state"], phase))
+    return summary
 
 
 def wait_until(unix_seconds: float, describe: str, state=None) -> None:
@@ -3968,15 +4038,14 @@ def scenario_zec_wrong_inputs(stamp: str) -> dict:
     return {"swap_id": swap_id, "corridor": corridor["run_id"]}
 
 
-def scenario_zec_restart(stamp: str, role: str, kill: bool = False) -> dict:
+def scenario_zec_restart(stamp: str, role: str) -> dict:
     """ZEC analogue of `restart-<role>`: the Taker's LEZ lock final on both
     Nodes, the role's Node restarted, the swap carried to completed afterwards
     by the Nodes alone (each Node's supervisor resumes its actor from its
     store; a Taker row left leased by the restart is requeued as
     `coordinator_restarted`, which the Taker's view reports as
-    last_failure_class until its next attempt). `zec-kill-<role>` kills the
-    role's container with SIGKILL there instead (kill_node: Basecamp and the
-    Node in it go down together) and starts it again."""
+    last_failure_class until its next attempt). zec-kill-<role> is the SIGKILL
+    matrix (scenario_zec_kill_walk)."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -3984,12 +4053,9 @@ def scenario_zec_restart(stamp: str, role: str, kill: bool = False) -> dict:
                     describe="(Taker first lock final)")
     container, _ = NODES[role]
     restarted_at = time.time()
-    if kill:
-        killed = kill_node(role)
-    else:
-        log(f"  restarting {container}")
-        docker("restart", container)
-        wait_healthy(role)
+    log(f"  restarting {container}")
+    docker("restart", container)
+    wait_healthy(role)
     classes = set()
     if role == "taker":
         # What the supervisor says about the restart: a row it held during the
@@ -4007,7 +4073,69 @@ def scenario_zec_restart(stamp: str, role: str, kill: bool = False) -> dict:
         log(f"  after the restart the Taker's schedule reports {sorted(classes) or 'no failure class'}; the supervisor resumes")
     zec_finish(swap_id, config, corridor, stamp)
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "restarted": container,
-            "taker_schedule_after_restart": sorted(classes), **({"killed": killed} if kill else {})}
+            "taker_schedule_after_restart": sorted(classes)}
+
+
+# The Zcash Taker's points between the take and a terminal state: the Taker Node
+# sends its first lock itself, so the take and the lock in flight are one point;
+# the first lock final reads awaiting_second_lock, or refund_available where the
+# Taker may refund its leg (the restart scenario's point). The refund path has no
+# take-time point here (zec-taker-refund runs under the refund profile group).
+ZEC_KILL_POINTS = (
+    ("taken", {"not_activated", "awaiting_first_lock"}),
+    ("first lock final", {"awaiting_second_lock", "refund_available"}),
+    ("both legs locked", {"claim_available"}),
+    ("claim sent", {"claim_in_progress"}),
+)
+
+
+def lez_balances() -> dict:
+    return {role: lez_account_balance(lez_owner_account(role)) for role in ("maker", "taker")}
+
+
+def assert_lez_settled(before: dict, taker_state: str, maker_phase_end: str) -> dict:
+    """A Zcash swap's LEZ leg to the unit: the lot moved when both Nodes say
+    completed, nothing moved when they say refunded."""
+    deltas = {role: balance - before[role] for role, balance in lez_balances().items()}
+    if taker_state not in {"completed", "refunded"} or (maker_phase_end == "completed") != (taker_state == "completed"):
+        raise Failure(f"the Nodes disagree: Taker {taker_state}, Maker {maker_phase_end}")
+    want = {role: amounts["lez_units"] for role, amounts in
+            expected_settlement(taker_state, REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
+    if deltas != want:
+        raise Failure(f"the LEZ balances moved {deltas}, a {taker_state} swap moves {want}")
+    log(f"  settled {taker_state}: LEZ moved {deltas} as both Nodes say")
+    return {"lez_before": before, "lez_deltas": deltas, "outcome": taker_state}
+
+
+def scenario_zec_kill_walk(stamp: str, role: str) -> dict:
+    """R4 for Zcash: the role's container killed with SIGKILL at each of
+    ZEC_KILL_POINTS, one fresh take-time swap per point; each swap completes on
+    both Nodes and its LEZ leg moves the lot (assert_lez_settled)."""
+    walked = []
+    for index, (point, states) in enumerate(ZEC_KILL_POINTS):
+        suffix = f"-k{index}"
+        before = lez_balances()
+        corridor = zec_provision()
+        swap_id = zec_take_or_resume(corridor["offer_id"], stamp, suffix)
+        config = zec_taker_actor_config(corridor["receipt_output"])
+        if point == "claim sent":
+            view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                                  describe=zec_flow())
+            call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}{suffix}",
+                                                  "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                 timeout=300)
+            killed = kill_at(role, swap_id, point, states)
+            zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+            wait_completed(swap_id, timeout=600)
+        else:
+            if point != "taken":
+                zec_wait_until(swap_id, config, states | {"claim_available"}, timeout=2400, corridor=corridor,
+                               describe=f"(kill point {point})")
+            killed = kill_at(role, swap_id, point, states)
+            zec_finish(swap_id, config, corridor, stamp, suffix)
+        walked.append({"swap_id": swap_id, "kill": killed,
+                       **assert_lez_settled(before, taker_view(swap_id)["state"], maker_phase(swap_id))})
+    return {"role": role, "points": walked}
 
 
 def scenario_zec_survivor(stamp: str) -> dict:
@@ -5246,8 +5374,8 @@ ZEC_SCENARIOS = {
     "zec-wrong-inputs": scenario_zec_wrong_inputs,
     "zec-restart-taker": lambda stamp: scenario_zec_restart(stamp, "taker"),
     "zec-restart-maker": lambda stamp: scenario_zec_restart(stamp, "maker"),
-    "zec-kill-taker": lambda stamp: scenario_zec_restart(stamp, "taker", kill=True),
-    "zec-kill-maker": lambda stamp: scenario_zec_restart(stamp, "maker", kill=True),
+    "zec-kill-taker": lambda stamp: scenario_zec_kill_walk(stamp, "taker"),
+    "zec-kill-maker": lambda stamp: scenario_zec_kill_walk(stamp, "maker"),
     "zec-survivor": scenario_zec_survivor,
     "zec-regenerated-catalog": scenario_zec_regenerated_catalog,
     "zec-tampered-catalog": scenario_zec_tampered_catalog,
@@ -5264,8 +5392,8 @@ SCENARIOS = {
     "wrong-inputs": scenario_wrong_inputs,
     "restart-taker": lambda stamp: scenario_restart(stamp, "taker"),
     "restart-maker": lambda stamp: scenario_restart(stamp, "maker"),
-    "kill-taker": lambda stamp: scenario_restart(stamp, "taker", kill=True),
-    "kill-maker": lambda stamp: scenario_restart(stamp, "maker", kill=True),
+    "kill-taker": lambda stamp: scenario_kill_walk(stamp, "taker"),
+    "kill-maker": lambda stamp: scenario_kill_walk(stamp, "maker"),
     "taker-cli": through_taker_cli(scenario_happy),
     "taker-cli-refund": through_taker_cli(scenario_taker_refund),
     "survivor": scenario_survivor,

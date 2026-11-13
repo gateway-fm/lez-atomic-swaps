@@ -324,7 +324,8 @@ expected_seconds() { # expected_seconds <test>
   fi
   if [[ -z "$seconds" ]]; then
     case "$1" in
-      *late-claim-unmined*) seconds=1800 ;;
+      *late-claim-unmined*|*:kill-taker:*|*:kill-maker:*) seconds=1800 ;;
+      *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;
       *) seconds=250 ;;
