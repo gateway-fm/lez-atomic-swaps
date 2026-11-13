@@ -125,6 +125,7 @@ require_fixed 'nixos/nix:2.30.2@sha256:7894650fb65234b35c80010e6ca44149b70a4a216
 require_fixed 'cargo fmt --all --check' "$ci_workflow"
 require_fixed 'cargo clippy --locked --workspace --all-targets' "$ci_workflow"
 require_fixed 'cargo test --locked --workspace --all-targets' "$ci_workflow"
+require_fixed 'cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings' "$ci_workflow"
 require_fixed 'cargo doc --locked --workspace --no-deps' "$ci_workflow"
 
 readonly cargo_deny_action='uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25'

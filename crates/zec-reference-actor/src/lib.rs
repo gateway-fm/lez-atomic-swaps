@@ -60,13 +60,15 @@ pub use config::{
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
     validate_maker_manifest_config_bytes, validate_rebound_actor_pair,
 };
+pub use local_poc::{LocalPocZcashIdentity, zcash_identity_from_key_file};
+// The dealer test fixture (feature dealer-fixture): it holds both parties' keys.
+#[cfg(feature = "dealer-fixture")]
 pub use local_poc::{
     LocalPocChatDraftSummary, LocalPocChatFinalizeSummary, LocalPocLezSignerFiles,
-    LocalPocProvisionSummary, LocalPocTransferSummary, LocalPocZcashIdentity,
-    LocalPocZcashKeyFiles, TestnetZebraCredential, finalize_local_v0_2_chat_corridor,
-    prepare_local_v0_2_chat_draft, provision_local_v0_2_corridor,
-    provision_local_v0_2_corridor_with_material, provision_local_v0_2_corridor_with_signers,
-    transfer_local_v0_2_regtest, transfer_v0_2_testnet, zcash_identity_from_key_file,
+    LocalPocProvisionSummary, LocalPocTransferSummary, LocalPocZcashKeyFiles,
+    TestnetZebraCredential, finalize_local_v0_2_chat_corridor, prepare_local_v0_2_chat_draft,
+    provision_local_v0_2_corridor, provision_local_v0_2_corridor_with_material,
+    provision_local_v0_2_corridor_with_signers, transfer_local_v0_2_regtest, transfer_v0_2_testnet,
 };
 pub use maker_provision::{
     ZecActorProvisionV1, ZecMakerActorProvisionV1, provision_zec_maker_actor_from_chat,

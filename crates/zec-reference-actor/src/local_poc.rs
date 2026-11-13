@@ -1,33 +1,27 @@
 use std::{
-    fs::{self, DirBuilder, OpenOptions},
+    fs::{DirBuilder, OpenOptions},
     io::{Cursor, Write as _},
     os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _},
-    path::{Component, Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context as _, Result, bail, ensure};
-use lez_bridge_protocol::{
-    DiscoveryWindow, Hex32, Participant as BridgeParticipant, RequestId, RunId,
-    RuntimeCompatibility, RuntimeDescriptor,
-};
-use lez_swap_core::{Participant, SwapDirection, SwapId, UnixSeconds};
-use lez_swap_store::maker_zec_chat_session_id;
+use lez_bridge_protocol::{DiscoveryWindow, Hex32, RunId, RuntimeDescriptor};
+use lez_swap_core::{Participant, SwapDirection, SwapId};
 use lez_zebra_node_adapter::{
     HttpZebraRpc, HttpZebraRpcConfig, ZebraChainIdentity, ZebraRpc, ZebraRpcChain,
 };
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
-    LezEnvironmentV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, NegotiationTranscriptV1,
-    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, TransparentFundingRequest, TransparentUtxo,
-    ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZcashFundingInputSetV1, ZcashFundingInputV1,
-    ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementDraftV1, ZecAgreementRecordV1,
-    ZecAgreementV1, ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId,
-    ZecProfileRecordV1, ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
-    ZecTransactionPolicyV1, build_transparent_transfer_transaction, derive_lez_metadata_account_v1,
-    derive_lez_native_custody_account_v1, derive_lez_public_account_v0_2, derive_lez_swap_id_v1,
+    Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1, LezEnvironmentV1,
+    NegotiationTranscriptV1, PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, ZcashFundingInputSetV1,
+    ZcashFundingInputV1, ZcashTransparentDestinationV1, ZecAgreementBodyV1, ZecAgreementV1,
+    ZecLezTermsV1, ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1,
+    ZecRefundPlanV1, ZecRefundProfile, ZecSwapBinding, ZecSwapBindingRecordV1,
+    ZecTransactionPolicyV1, derive_lez_metadata_account_v1, derive_lez_native_custody_account_v1,
+    derive_lez_swap_id_v1,
 };
-use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use url::Url;
@@ -43,19 +37,54 @@ use zcash_transparent::{
 };
 use zeroize::Zeroizing;
 
+use crate::config::{DeterministicLocalV0_2ActorConfigInput, ProvisionedZebraRoute};
+use crate::secure_file::{FilePrivacy, read_bounded_identified};
+use crate::{ActorRole, CandidateOutpoint};
+
+// The dealer test fixture's own (feature dealer-fixture).
+#[cfg(feature = "dealer-fixture")]
+use std::{
+    fs,
+    path::Component,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[cfg(feature = "dealer-fixture")]
+use lez_bridge_protocol::{Participant as BridgeParticipant, RequestId, RuntimeCompatibility};
+#[cfg(any(test, feature = "dealer-fixture"))]
+use lez_swap_core::UnixSeconds;
+#[cfg(feature = "dealer-fixture")]
+use lez_swap_store::maker_zec_chat_session_id;
+#[cfg(feature = "dealer-fixture")]
+use lez_zec_swap_sdk::{
+    AcceptedZecAgreementV1, MAX_ZEC_AGREEMENT_RECORD_BYTES, TransparentFundingRequest,
+    TransparentUtxo, ZecAgreementDraftV1, build_transparent_transfer_transaction,
+    derive_lez_public_account_v0_2,
+};
+// The dealer's signing, also for the test that a take-time agreement is the dealer's.
+#[cfg(any(test, feature = "dealer-fixture"))]
+use lez_zec_swap_sdk::{ZEC_CONCRETE_AGREEMENT_SCHEMA_V2, ZecAgreementRecordV1};
+#[cfg(any(test, feature = "dealer-fixture"))]
+use secp256k1::Message;
+
+#[cfg(feature = "dealer-fixture")]
 use crate::config::{
-    DeterministicLocalV0_2ActorConfigInput, ProvisionedZebraRoute,
     encode_deterministic_local_v0_2_actor_config, encode_rebound_local_v0_2_actor_config,
 };
-use crate::secure_file::{FilePrivacy, read_bounded_identified};
-use crate::{ActorConfig, ActorRole, CandidateOutpoint, validate_actor_pair};
+#[cfg(feature = "dealer-fixture")]
+use crate::{ActorConfig, validate_actor_pair};
 
+#[cfg(feature = "dealer-fixture")]
 const SPEC_SCHEMA_VERSION: u16 = 1;
+#[cfg(feature = "dealer-fixture")]
 const MAX_SPEC_BYTES: usize = 32 * 1024;
+#[cfg(feature = "dealer-fixture")]
 const MAX_LEZ_SIGNER_KEY_BYTES: usize = 65;
 // Retained v0.2.0 fixture transfer program, kept for the record:
 // `FrexXMbyY6iZjwUo8DV3jfB8donj8H4kLRHT7xswCfJg`. Newer chains differ.
+#[cfg(feature = "dealer-fixture")]
 const FUNDED_ZCASH_KEY_BYTE: u8 = 4;
+#[cfg(feature = "dealer-fixture")]
 const OTHER_ZCASH_KEY_BYTE: u8 = 2;
 /// The claim secret of one provisioned swap: 32 bytes from the OS RNG, owner-
 /// private like the keys beside it (stored only in the funder's bundle; the
@@ -66,13 +95,16 @@ pub(crate) fn fresh_claim_preimage() -> anyhow::Result<Zeroizing<[u8; 32]>> {
     getrandom::fill(&mut preimage[..]).map_err(|_| anyhow::anyhow!("claim preimage RNG"))?;
     Ok(preimage)
 }
+#[cfg(feature = "dealer-fixture")]
 const LEZ_NATIVE_AMOUNT: u128 = 50_000;
+#[cfg(feature = "dealer-fixture")]
 const ZCASH_PRINCIPAL_ZATOSHIS: u64 = 100_000_000;
 pub(crate) const FUNDING_FEE_ZATOSHIS: u64 = 10_000;
 pub(crate) const MINIMUM_CHANGE_ZATOSHIS: u64 = 1_000;
 const CLAIM_FEE_ZATOSHIS: u64 = 10_000;
 const REFUND_FEE_ZATOSHIS: u64 = 10_000;
 const COINBASE_MATURITY_CONFIRMATIONS: u32 = 100;
+#[cfg(feature = "dealer-fixture")]
 const AGREEMENT_LIFETIME_SECONDS: u64 = 3_600;
 const COUNTERPARTY_SCAN_BLOCKS: u32 = 1_024;
 /// Zcash Testnet's genesis block hash as `getblockhash 0` prints it.
@@ -86,6 +118,7 @@ pub(crate) const MAX_TESTNET_FUNDING_SCAN_BLOCKS: u32 = 2_880;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(feature = "dealer-fixture")]
 struct ProvisionSpec {
     schema_version: u16,
     run_id: RunId,
@@ -121,6 +154,7 @@ struct ProvisionSpec {
     zcash_principal_zatoshis: Option<u64>,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl ProvisionSpec {
     fn zcash_principal(&self) -> u64 {
         self.zcash_principal_zatoshis
@@ -265,11 +299,13 @@ impl FundingChain {
 
 /// Owner-private LEZ signer files provisioned before a fresh local genesis.
 #[derive(Clone)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocLezSignerFiles {
     maker: PathBuf,
     taker: PathBuf,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl std::fmt::Debug for LocalPocLezSignerFiles {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -282,11 +318,13 @@ impl std::fmt::Debug for LocalPocLezSignerFiles {
 
 /// Owner-private Zcash key files of both roles: 32 raw bytes or 64 hex
 /// characters each. Absent, the deterministic test-lane keys apply.
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocZcashKeyFiles {
     maker: PathBuf,
     taker: PathBuf,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl std::fmt::Debug for LocalPocZcashKeyFiles {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -297,6 +335,7 @@ impl std::fmt::Debug for LocalPocZcashKeyFiles {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl LocalPocZcashKeyFiles {
     /// Binds one complete Maker/Taker Zcash key pair.
     #[must_use]
@@ -306,11 +345,13 @@ impl LocalPocZcashKeyFiles {
 }
 
 /// The two roles' Zcash secrets the corridor is built with.
+#[cfg(feature = "dealer-fixture")]
 struct ZcashKeyMaterial {
     maker: Zeroizing<[u8; 32]>,
     taker: Zeroizing<[u8; 32]>,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl ZcashKeyMaterial {
     /// The test-lane constants: the funder of `direction` owns the coinbase
     /// key, the other role the second constant.
@@ -409,6 +450,7 @@ pub fn zcash_identity_from_key_file(path: &Path) -> Result<LocalPocZcashIdentity
 
 /// What one Regtest transfer between the roles' keys produced.
 #[derive(Clone, Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocTransferSummary {
     /// The transfer's transaction id as the RPC displays it.
     pub transaction_id: String,
@@ -434,6 +476,7 @@ pub struct LocalPocTransferSummary {
 ///
 /// Fails closed for unsafe key files, equal keys, a non-Regtest Zebra, a
 /// missing mature output, an unaffordable value, or a rejected broadcast.
+#[cfg(feature = "dealer-fixture")]
 pub async fn transfer_local_v0_2_regtest(
     zebra_endpoint: &Url,
     from_key_file: &Path,
@@ -470,6 +513,7 @@ pub async fn transfer_local_v0_2_regtest(
 /// The credential of a Zcash Testnet route (the self-hosted Zebra's cookie
 /// file or the Tatum API key file), owner-private.
 #[derive(Clone)]
+#[cfg(feature = "dealer-fixture")]
 pub enum TestnetZebraCredential {
     /// A self-hosted Testnet Zebra on loopback and its `.cookie` file.
     SelfHostedCookie(PathBuf),
@@ -477,6 +521,7 @@ pub enum TestnetZebraCredential {
     TatumApiKey(PathBuf),
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl std::fmt::Debug for TestnetZebraCredential {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -486,6 +531,7 @@ impl std::fmt::Debug for TestnetZebraCredential {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl TestnetZebraCredential {
     fn route(&self) -> LocalPocZebraRoute {
         match self {
@@ -510,6 +556,7 @@ impl TestnetZebraCredential {
 ///
 /// As [`transfer_local_v0_2_regtest`], for a Zebra that is not Testnet on NU7,
 /// an unsafe credential, or no such output.
+#[cfg(feature = "dealer-fixture")]
 pub async fn transfer_v0_2_testnet(
     zebra_endpoint: &Url,
     credential: &TestnetZebraCredential,
@@ -544,6 +591,7 @@ pub async fn transfer_v0_2_testnet(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "dealer-fixture")]
 async fn transfer_between_keys(
     rpc: &HttpZebraRpc,
     chain: &FundingChain,
@@ -606,6 +654,7 @@ async fn transfer_between_keys(
     })
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn load_zcash_key_material(
     key_files: Option<&LocalPocZcashKeyFiles>,
     direction: LocalPocDirection,
@@ -619,6 +668,7 @@ fn load_zcash_key_material(
     Ok(ZcashKeyMaterial { maker, taker })
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl LocalPocLezSignerFiles {
     /// Binds one complete Maker/Taker signer pair for private no-clobber copying.
     #[must_use]
@@ -627,6 +677,7 @@ impl LocalPocLezSignerFiles {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 struct LezSignerMaterial {
     maker: Zeroizing<Vec<u8>>,
     taker: Zeroizing<Vec<u8>>,
@@ -683,11 +734,13 @@ impl LocalPocProfile {
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[cfg(feature = "dealer-fixture")]
 enum LocalPocDirection {
     TakerSellsForeign,
     TakerSellsLez,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl LocalPocDirection {
     const fn protocol(self) -> SwapDirection {
         match self {
@@ -724,6 +777,7 @@ impl LocalPocDirection {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(feature = "dealer-fixture")]
 struct LezRuntimeSpec {
     chain_id: Hex32,
     channel_id: Hex32,
@@ -736,6 +790,7 @@ struct LezRuntimeSpec {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(feature = "dealer-fixture")]
 struct BridgeSpec {
     maker_endpoint: Url,
     taker_endpoint: Url,
@@ -743,6 +798,7 @@ struct BridgeSpec {
 
 /// Secret-free result of provisioning one pair of local actor inputs.
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocProvisionSummary {
     schema_version: u16,
     run_id: RunId,
@@ -771,6 +827,7 @@ pub struct LocalPocProvisionSummary {
 
 /// Secret-free result of binding a validated chain-fact template to Chat.
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocChatDraftSummary {
     schema_version: u16,
     draft_file: PathBuf,
@@ -785,6 +842,7 @@ pub struct LocalPocChatDraftSummary {
 
 /// Secret-free result of producing fresh actors from a Chat agreement.
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 pub struct LocalPocChatFinalizeSummary {
     schema_version: u16,
     run_id: RunId,
@@ -800,6 +858,7 @@ pub struct LocalPocChatFinalizeSummary {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(feature = "dealer-fixture")]
 struct RolePaths {
     state_root: PathBuf,
     config_file: PathBuf,
@@ -816,6 +875,7 @@ pub(crate) struct SelectedCandidate {
     pub(crate) height: u32,
 }
 
+#[cfg(feature = "dealer-fixture")]
 struct AgreementFixture {
     wire: Zeroizing<Vec<u8>>,
     sha256: Hex32,
@@ -842,6 +902,7 @@ struct AgreementFixture {
 /// non-Regtest Zebra, unstable RPC view, missing mature actor-owned output,
 /// invalid agreement, unsafe output path, file collision, or actor-pair check.
 #[allow(clippy::too_many_lines)]
+#[cfg(feature = "dealer-fixture")]
 pub async fn provision_local_v0_2_corridor(
     spec_file: &Path,
     output_root: &Path,
@@ -860,6 +921,7 @@ pub async fn provision_local_v0_2_corridor(
 ///
 /// In addition to [`provision_local_v0_2_corridor`], fails for absent, aliased,
 /// non-canonical, non-private, malformed, equal, or account-mismatched signers.
+#[cfg(feature = "dealer-fixture")]
 pub async fn provision_local_v0_2_corridor_with_signers(
     spec_file: &Path,
     output_root: &Path,
@@ -881,6 +943,7 @@ pub async fn provision_local_v0_2_corridor_with_signers(
 /// In addition to [`provision_local_v0_2_corridor_with_signers`], fails for an
 /// absent, non-private, malformed or equal Zcash key file pair.
 #[allow(clippy::too_many_lines)]
+#[cfg(feature = "dealer-fixture")]
 pub async fn provision_local_v0_2_corridor_with_material(
     spec_file: &Path,
     output_root: &Path,
@@ -1124,6 +1187,7 @@ pub async fn provision_local_v0_2_corridor_with_material(
 ///
 /// Fails closed for unsafe input/output files, an invalid or expired template,
 /// invalid transcript expiry, or a draft that changes executable chain facts.
+#[cfg(feature = "dealer-fixture")]
 pub fn prepare_local_v0_2_chat_draft(
     source_agreement_file: &Path,
     now: UnixSeconds,
@@ -1182,6 +1246,7 @@ pub fn prepare_local_v0_2_chat_draft(
 /// agreements, incorrect role authority, changed chain facts, output collision,
 /// or a generated config that cannot be securely reloaded and activated.
 #[allow(clippy::too_many_lines, clippy::similar_names)]
+#[cfg(feature = "dealer-fixture")]
 pub fn finalize_local_v0_2_chat_corridor(
     source_maker_config_file: &Path,
     source_taker_config_file: &Path,
@@ -1376,11 +1441,13 @@ pub(crate) fn validate_role_authority(
 pub(crate) struct MaterialPaths {
     pub(crate) state_root: PathBuf,
     pub(crate) config: PathBuf,
+    #[cfg(feature = "dealer-fixture")]
     pub(crate) runtime: PathBuf,
     pub(crate) role_state_db: PathBuf,
     pub(crate) claim_recovery_key: PathBuf,
     pub(crate) claim_preimage: PathBuf,
     pub(crate) zcash_key: PathBuf,
+    #[cfg(feature = "dealer-fixture")]
     pub(crate) lez_signer_key: PathBuf,
     pub(crate) bridge_journal_db: PathBuf,
     pub(crate) capability: PathBuf,
@@ -1391,11 +1458,13 @@ pub(crate) fn material_paths(root: &Path, state_root: &Path) -> MaterialPaths {
     MaterialPaths {
         state_root: state_root.to_path_buf(),
         config: root.join("actor-config.json"),
+        #[cfg(feature = "dealer-fixture")]
         runtime: root.join("lez-runtime.json"),
         role_state_db: state_root.join("actor.sqlite3"),
         claim_recovery_key: root.join("claim-recovery.key"),
         claim_preimage: root.join("claim-preimage.key"),
         zcash_key: root.join("zcash.key"),
+        #[cfg(feature = "dealer-fixture")]
         lez_signer_key: root.join("lez-signer.key"),
         bridge_journal_db: state_root.join("bridge.sqlite3"),
         capability: root.join("sidecar.capability"),
@@ -1413,6 +1482,7 @@ pub(crate) struct RoleCorridor<'a> {
     pub(crate) profile: ZecProfileId,
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl<'a> RoleCorridor<'a> {
     fn of_spec(spec: &'a ProvisionSpec, role: ActorRole) -> Self {
         Self {
@@ -1487,6 +1557,7 @@ pub(crate) fn actor_config_input(
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn runtime_descriptor(
     spec: &ProvisionSpec,
     role: BridgeParticipant,
@@ -1503,6 +1574,7 @@ fn runtime_descriptor(
     )
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn role_summary(paths: &MaterialPaths) -> RolePaths {
     RolePaths {
         state_root: paths.state_root.clone(),
@@ -1513,12 +1585,14 @@ fn role_summary(paths: &MaterialPaths) -> RolePaths {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn load_spec(path: &Path) -> Result<ProvisionSpec> {
     let (bytes, _) = read_bounded_identified(path, MAX_SPEC_BYTES, FilePrivacy::OwnerPrivate)
         .map_err(|_| anyhow::anyhow!("local PoC spec is unavailable or unsafe"))?;
     serde_json::from_slice(bytes.as_slice()).context("local PoC spec is invalid")
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn load_lez_signer_material(
     signer_files: Option<&LocalPocLezSignerFiles>,
     maker_account_id: &str,
@@ -1582,6 +1656,7 @@ fn load_lez_signer_material(
     Ok(LezSignerMaterial { maker, taker })
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn validate_external_lez_signer_encoding(bytes: &[u8]) -> Result<()> {
     ensure!(
         bytes.len() == MAX_LEZ_SIGNER_KEY_BYTES
@@ -1594,6 +1669,7 @@ fn validate_external_lez_signer_encoding(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn derive_lez_signer_account(bytes: &[u8]) -> Result<[u8; 32]> {
     let encoded = bytes.strip_suffix(b"\n").unwrap_or(bytes);
     ensure!(
@@ -1613,6 +1689,7 @@ fn derive_lez_signer_account(bytes: &[u8]) -> Result<[u8; 32]> {
     Ok(derive_lez_public_account_v0_2(&x_only))
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn validate_spec(spec: &ProvisionSpec) -> Result<()> {
     ensure!(
         spec.schema_version == SPEC_SCHEMA_VERSION,
@@ -1834,6 +1911,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "dealer-fixture")]
 fn build_agreement(
     spec: &ProvisionSpec,
     zcash_keys: &ZcashKeyMaterial,
@@ -1909,6 +1987,7 @@ fn build_agreement(
     })
 }
 
+#[cfg(feature = "dealer-fixture")]
 impl SelectedCandidate {
     fn funding_input(&self) -> ZcashFundingInputV1 {
         ZcashFundingInputV1::new(
@@ -2094,6 +2173,7 @@ pub(crate) fn compose_agreement_body(facts: &AgreementFacts) -> Result<(ZecAgree
 
 /// Signs one composed body with both roles' keys and validates the record at
 /// `now`: the dealer's one-step countersignature.
+#[cfg(any(test, feature = "dealer-fixture"))]
 pub(crate) fn sign_agreement_body(
     body: ZecAgreementBodyV1,
     maker_secret: &SecretKey,
@@ -2121,12 +2201,14 @@ pub(crate) fn public_key_hash(key: &PublicKey) -> [u8; 20] {
     }
 }
 
+#[cfg(any(test, feature = "dealer-fixture"))]
 fn sign_agreement(commitment: [u8; 32], key: &SecretKey) -> [u8; 64] {
     Secp256k1::signing_only()
         .sign_ecdsa(&Message::from_digest(commitment), key)
         .serialize_compact()
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn labeled_hash(run_id: &str, label: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(b"logos.gateway.local-poc.v1\0");
@@ -2144,6 +2226,7 @@ fn program_id_words(value: Hex32) -> [u32; 8] {
     words
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn decode_base58_32(value: &str) -> Result<[u8; 32]> {
     let decoded = bs58::decode(value).into_vec()?;
     decoded
@@ -2163,6 +2246,7 @@ pub(crate) fn block_hash_display_hex(block_hash: BlockHash) -> Hex32 {
     Hex32::from_bytes(display)
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn random_capability() -> Result<Zeroizing<Vec<u8>>> {
     let mut random = Zeroizing::new([0_u8; 32]);
     getrandom::fill(&mut random[..])
@@ -2170,6 +2254,7 @@ fn random_capability() -> Result<Zeroizing<Vec<u8>>> {
     Ok(Zeroizing::new(hex::encode(&random[..]).into_bytes()))
 }
 
+#[cfg(feature = "dealer-fixture")]
 fn avoid_zero_or_equal(maker: &mut [u8; 32], taker: &mut [u8; 32]) {
     if maker.iter().all(|byte| *byte == 0) {
         maker[31] = 1;
@@ -2179,6 +2264,7 @@ fn avoid_zero_or_equal(maker: &mut [u8; 32], taker: &mut [u8; 32]) {
     }
 }
 
+#[cfg(feature = "dealer-fixture")]
 pub(crate) fn validate_new_output_root(path: &Path) -> Result<()> {
     ensure!(path.is_absolute(), "output root must be absolute");
     ensure!(
@@ -2223,7 +2309,7 @@ pub(crate) fn write_private_new(path: &Path, bytes: &[u8]) -> Result<()> {
         .with_context(|| format!("failed to sync private file {}", path.display()))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dealer-fixture"))]
 mod zcash_identity_tests {
     use super::*;
 
@@ -2240,7 +2326,7 @@ mod zcash_identity_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "dealer-fixture"))]
 mod signer_tests {
     use std::{fs, os::unix::fs::PermissionsExt as _};
 
@@ -2736,6 +2822,7 @@ pub(crate) mod testnet_provision_tests {
         assert!(select(regtest, NU7_TX_HEIGHT - 5, wanted).await.is_err());
     }
 
+    #[cfg(feature = "dealer-fixture")]
     fn spec(profile: &str, route: &serde_json::Value) -> ProvisionSpec {
         serde_json::from_value(serde_json::json!({
             "schema_version": 1, "run_id": "zec-testnet-1", "swap_id": "zec-testnet-swap-1",
@@ -2756,6 +2843,7 @@ pub(crate) mod testnet_provision_tests {
         .unwrap()
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_testnet_spec_names_its_route_and_the_profile_must_agree() {
         let tatum = serde_json::json!({"kind": "tatum_testnet_x_api_key", "api_key_file": "/run/secrets/tatum.key"});
@@ -2778,10 +2866,12 @@ pub(crate) mod testnet_provision_tests {
         );
     }
 
+    #[cfg(feature = "dealer-fixture")]
     fn tatum() -> serde_json::Value {
         serde_json::json!({"kind": "tatum_testnet_x_api_key", "api_key_file": "/run/secrets/tatum.key"})
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_testnet_corridor_agrees_on_nu7_the_lez_testnet_and_v2_deadlines() {
         let spec = spec("public-testnet-v2", &tatum());
@@ -2828,6 +2918,7 @@ pub(crate) mod testnet_provision_tests {
 
     /// A take-time role writes, for its own role, exactly the actor config
     /// the dealer writes for that role of the same corridor.
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_take_time_template_is_the_dealers_role_config() {
         use std::os::unix::fs::PermissionsExt as _;
@@ -2903,6 +2994,7 @@ pub(crate) mod testnet_provision_tests {
         assert_eq!(fs::read(written).unwrap(), dealer);
     }
 
+    #[cfg(feature = "dealer-fixture")]
     #[test]
     fn a_testnet_actor_config_names_the_route_nu7_and_the_whole_refund_window() {
         let spec = spec("public-testnet-v2", &tatum());

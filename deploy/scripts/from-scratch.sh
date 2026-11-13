@@ -324,6 +324,10 @@ phase_rust() {
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
       set -euo pipefail
       cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
+      # the dealer test fixture tools, alone: built with the others, feature
+      # unification would put the dealer into the Node and actor binaries
+      cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
+        --bin zec-local-poc-chat-finalize --bin zec-local-poc-transfer 2>&1 | tail -3
       for b in '"${bins[*]}"'; do install -m 0755 "/cache/target/debug/${b#*/}" "deploy/images/$b"; done
       chown -R "$(stat -c %u:%g deploy)" deploy/images/maker-node deploy/images/taker-node deploy/images/lez-services'
   for role in maker taker; do

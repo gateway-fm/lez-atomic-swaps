@@ -137,6 +137,12 @@ jobs:
           --test maker_actor_supervisor --test daemon_actor_supervisor_process
       - name: Run the ZEC actor's crash-hook test file
         run: cargo test --locked -p zec-reference-actor --features test-crash-hooks --test crash_hook
+      # The workspace runs above build the product without the dealer; the
+      # devnet's dealer test fixture (feature dealer-fixture) is linted and tested here.
+      - name: Lint and test the ZEC dealer test fixture
+        run: |
+          cargo clippy --locked -p zec-reference-actor --features dealer-fixture --all-targets -- -D warnings
+          cargo test --locked -p zec-reference-actor --features dealer-fixture
       - name: Lint the pair features the default build leaves out
         run: cargo clippy --locked -p lez-maker-node -p lez-taker-node --all-features --all-targets -- -D warnings
       - name: Verify M3 official cryptographic vectors
