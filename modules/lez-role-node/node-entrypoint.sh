@@ -336,8 +336,24 @@ mkdir -p "$zec_state"
 chmod 0700 "$zec_state"
 zec_role_config="$zec_state/zec-role.json"
 zec_key_field='{}'
-if [[ "$role" == taker && -s "$identity_src/$role/zcash.key" ]]; then
-  install -m 0600 "$identity_src/$role/zcash.key" "$zec_state/zcash.key"
+# The Taker's Zcash key: the identity's file, or (a systemd deployment) its credential.
+zec_key_source="${LEZ_ZCASH_KEY_SOURCE:-$identity_src/$role/zcash.key}"
+if [[ "$role" == taker && -s "$zec_key_source" ]]; then
+  # One role-level copy as 32 raw bytes, which every take-time swap names in
+  # place and binds by inode: rewritten only when the key itself changes.
+  if [[ "$(stat -c %s "$zec_key_source")" == 32 ]]; then
+    install -m 0600 "$zec_key_source" "$zec_state/.zcash.key.new"
+  else
+    zec_key_hex="$(tr -d ' \r\n' <"$zec_key_source")"
+    [[ "$zec_key_hex" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "$role: $zec_key_source is not a Zcash key" >&2; exit 1; }
+    # shellcheck disable=SC2059 # the format is the key's own \xHH escapes
+    printf "$(sed 's/../\\x&/g' <<<"$zec_key_hex")" >"$zec_state/.zcash.key.new"
+  fi
+  if cmp -s "$zec_state/.zcash.key.new" "$zec_state/zcash.key"; then
+    rm -f "$zec_state/.zcash.key.new"
+  else
+    mv -f "$zec_state/.zcash.key.new" "$zec_state/zcash.key"
+  fi
   zec_key_field="$(jq -n --arg key "$zec_state/zcash.key" '{zcash_key_file:$key}')"
 fi
 jq -n --arg profile "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" --argjson key "$zec_key_field" '
@@ -412,13 +428,15 @@ case "$role" in
         # the Maker from starting after its first ZEC swap.
         mkdir -p "$zec_state/actors"
         chmod 0700 "$zec_state/actors"
-        if [[ ! -s "$state/zec-claim-recovery.key" ]]; then
-          head -c 32 /dev/urandom >"$state/zec-claim-recovery.key"
-          chmod 0600 "$state/zec-claim-recovery.key"
+        # A systemd deployment names its claim-recovery key, a credential, instead.
+        zec_claim_key="${LEZ_ZEC_CLAIM_KEY_FILE:-$state/zec-claim-recovery.key}"
+        if [[ ! -s "$zec_claim_key" ]]; then
+          head -c 32 /dev/urandom >"$zec_claim_key"
+          chmod 0600 "$zec_claim_key"
         fi
         zec_actor_program="$bin/lez-zec-maker-actor"
         args+=(--maker-claim-key-id "${LEZ_ZEC_CLAIM_KEY_ID:-devnet-zec-claim-v1}"
-          --maker-claim-key-file "$state/zec-claim-recovery.key"
+          --maker-claim-key-file "$zec_claim_key"
           --zec-role-config "$zec_role_config"
           --zec-maker-actor-root "$zec_state/actors"
           --zec-actor-program "$zec_actor_program"
