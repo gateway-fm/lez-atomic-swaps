@@ -507,6 +507,47 @@ for all lanes: a frozen chain voids every lane's test, and one new chain
 them all. The scenarios, `reset-swaps.sh` and `tests/fixtures/zec-catalog-fixture.sh` act on one lane
 when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 
+### Monero (LEZ_MONERO=1)
+
+Monero regtest is off by default: a Bitcoin/Zcash run starts and waits for
+nothing of it, and a release bundle, which publishes no Monero image, never
+pulls one. `LEZ_MONERO=1` turns it on for the stack and every lane (Compose
+profile `monero`; `gen-config.sh` keeps the choice in `runtime.env`,
+`LEZ_MONERO=0` turns it off again):
+
+```sh
+LEZ_MONERO=1 bash scripts/stage-assets.sh    # once: fetch and verify the pinned release
+LEZ_MONERO=1 bash scripts/up.sh              # builds lez-monerod:local, starts it on every lane
+python3 scripts/monero-lane.py fund --role maker   # mine, pay the Maker 10 XMR, read its balance
+```
+
+Each lane runs `monerod` (an offline fakechain: no peers, no miner, blocks
+generated on demand; the Monero adapter mines its own ten confirmations) and
+three `monero-wallet-rpc`: `xmr-funding-wallet`, which the harness mines to and
+funds the roles from, and `maker-xmr-wallet` / `taker-xmr-wallet`, one per
+role. The image is the isolated lane's (`tests/e2e/monero`: Monero 0.18.5.1,
+its signed hash manifest checked against the pinned signer, the archive's
+sha256, the source tag; `scripts/verify-monero-release.sh`, run in a
+throwaway container by `stage-assets.sh`). Every RPC takes a Digest login that
+`gen-config.sh` mints once under `runtime[/lanes/<k>]/monero`; each role's
+Node gets monerod's and its own wallet-rpc's login beside its identity and
+forwards `127.0.0.1:18081` and `:18083` to them (the adapter accepts only
+literal-loopback endpoints). Where a role has those logins, its route health
+carries a Monero probe (`probe-monero`: monerod's `get_info`, its wallet-rpc's
+`get_version`), so `maker_health` / `taker_health` read the Monero route
+unavailable, and the Node degraded, while either does not answer. monerod and
+the funding wallet-rpc publish `127.0.0.1:18081+10(k-1)` and `18083+10(k-1)`.
+Like Zebra, Monero outlives `up.sh --fresh-lez` and `reset-swaps.sh`; `down.sh
+--wipe` (and `lanes.sh down N --wipe`) remove its volumes. `runtime.env`
+also carries the Monero leg's windows for the timing profile
+(`LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS`, `LEZ_XMR_REFUND_SECONDS`,
+`LEZ_XMR_PUNISH_SECONDS`: the Bitcoin cutoff plus the ten-block depth, then a
+LEZ step, a stall and the margin), which nothing reads yet: no Monero swap
+runs through the Nodes. Public stagenet is out of scope. Footprint, measured
+on 2026-11-13: the image is 115 MB; after 190 blocks a lane's monerod volume
+holds 0.5 MB and each wallet's 0.4 MB; monerod uses about 270 MB of memory,
+each wallet-rpc about 13 MB.
+
 ### A second stack on the same host
 
 Lanes share one LEZ network. A second, independent stack (its own LEZ chain,
