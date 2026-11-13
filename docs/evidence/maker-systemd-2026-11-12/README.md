@@ -44,15 +44,17 @@ devnet's chains (below), and the earlier run without chains.
 
 | File | What |
 |---|---|
-| `swap-zcash.log`, `-balances.txt` | one Zcash swap, Taker sells 50 000 LEZ for 1 ZEC, formed at take time by `zec_reserve_v1` (no dealer) |
+| `swap-zcash.log`, `-balances.txt` | one Zcash swap, Taker sells 50 000 LEZ for 1 ZEC, formed at take time by `zec_reserve_v1` (no dealer), every role key a credential |
 
-- **Source**: `0939c244` on `feat/m5-gaps` `e7cae1fa` (binary sha256s in the transcript's first
-  lines); the LEZ sidecar is the stack's `provision/data/sidecar` of this branch's sidecar tree
-  `98e9f1c3`. Stack at `713ea269` under the lock, lane 1's identities with its Node containers
-  stopped and healthy again afterwards. The VM also reaches `zebra:18232` (a fourth `guestfwd`).
-- **Keys**: the Delivery and LEZ signer keys as credentials, the Maker's Delivery credential being
-  lane 1's Maker Zcash key (Zebra's miner address, so the Maker holds mature outputs to fund
-  from); the Taker's Zcash key a `lez-swap`-owned file the launcher copies.
+- **Source**: `68732088` (binary sha256s in the transcript's first lines: the stack's image
+  binaries of that commit, debug info stripped; the sidecar is its tree `98e9f1c3`). Stack at
+  `68732088` under the lock, lane 1's identities with its Node containers stopped and healthy again
+  afterwards. The VM also reaches `zebra:18232` (a fourth `guestfwd`).
+- **Keys, all encrypted credentials**: the Maker's Delivery key (lane 1's Maker Zcash key, Zebra's
+  miner address, so the Maker holds mature outputs to fund from), LEZ signer and claim-recovery
+  key; the Taker's LEZ signer and Zcash key. The Maker's Zcash actors read the Delivery key in
+  place (`CREDENTIALS_DIRECTORY` passed through their cleared environment); the launcher keeps
+  one raw copy of the Taker's Zcash key, `taker/zec/zcash.key`, which its swaps name.
 - **What ran**: both units READY through the launcher, the Maker with its Zcash authority; the
   Maker configures, prices and publishes the Zcash offer; the Taker lists and takes it; the Nodes
   form the agreement at take time, the Taker's supervisor locks LEZ and the Maker funds Zcash;
@@ -64,16 +66,17 @@ devnet's chains (below), and the earlier run without chains.
 - **Balances**: the Taker pays 50 000 LEZ and gains 99 990 000 zatoshis (1 ZEC less its claim
   fee); the Maker gains 50 000 LEZ, and its Zcash balance moves by the 1 ZEC it funded and the fees
   less the three blocks' coinbase, which Zebra pays to it.
-- **Limit (stated, not changed)**: Zcash keys are not credentials. During and after the swap the
-  state directories hold, `lez-swap` mode 0600 and not removed at completion: each role's
-  long-lived Zcash key copied into the swap's `btc/swaps/<id>/zec/zcash.key` (for the Maker that
-  key is also its Delivery key; the transcript compares the copies with the role keys), the
-  Taker's also in `zec/zcash.key`, a per-swap `claim-recovery.key` per role, the Maker's per-swap
-  `claim-preimage.key`, and the Maker's long-lived `zec-claim-recovery.key`.
+- **What is on disk**: during and after the swap the transcript scans every file under
+  `/var/lib/lez` for the long-lived role keys, raw or hex. The Maker's Zcash/Delivery key and its
+  claim-recovery key are in no file; the Taker's Zcash key only in `taker/zec/zcash.key`
+  (`lez-swap` 0600, one role-level copy). Each swap's `btc/swaps/<id>/zec/` keeps its own
+  `claim-recovery.key` (fresh per swap) and the funder's `claim-preimage.key`, also after
+  completion: the Maker reads them again for a replayed completion.
 - **Not run**: Taker sells ZEC (the Taker would need mature transparent outputs on its own key,
-  for example blocks mined to its address or a transfer from the Maker's); an earlier attempt of
-  this run, stopped by hand after the funding's first confirmation because the harness never
-  mined the second, left that swap's Taker LEZ lock and Maker Zcash funding on lane 1 unrefunded.
+  for example blocks mined to its address or a transfer from the Maker's). An earlier attempt of
+  this run on 2026-11-12, stopped by hand after the funding's first confirmation because the
+  harness never mined the second, left that swap's Taker LEZ lock and Maker Zcash funding on
+  lane 1 unrefunded.
 
 ## The earlier run without chains
 

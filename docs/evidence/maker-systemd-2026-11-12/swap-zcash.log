@@ -1,26 +1,26 @@
 
 ## VM
-source commit: 0939c244b022278abf02823e157ceddda7d25bf3
-e270765c74f427f1251bd85ee124c87c055a0569a8e6e0b443e2f971fb203906  lez-maker-node
-75ab35d47a123d28510fae7276c054b43c77254b9b229fb782467dba693b57de  lez-maker-cli
-6d85c823539eb48c84231eb464f098b0bf300d3c5e21dcab29fd86b2fc3885d5  lez-zec-maker-actor
-0916d5f2e6e8cac8e298df955b0c61185c82c02049c723c90cd18a20ecaddf5a  lez-logos-price-worker
-8594ed76e8231689aed3696030f58c8f233fbd66aadf9aa683bdd1a5ebeff84b  lez-btc-maker-actor
-e77f19c3e37442ddddd2f6bda2d1db7c5cf88994bd3ea64e7654ad7401f15490  lez-runtime-healthcheck
-6e003309e06286091c0bd11812d0d3ba5814ee8a832e50dc383200541f513c35  lez-taker-node
-a5c384ff8f1d0b4e8d9ea58098eb8e3d4e709651f85218c162b317d7069cc607  lez-taker-cli
-a077686acbe4b85d66f9903f36995c95c3778d397e069a471d8b283e43b51571  lez-btc-taker-actor
-9b92acf4fe23bb8736e7bd7ecd4ec40c9231b0946cef83e74b69c5cef001c5d9  lez-zec-taker-actor
-96f3a9fa012cf5ead463f34bcb95dec93196c2aae78a88bd2d3125c0d033d253  lez-taker-registry-init
-88809edeab62742ba5c1d565dfdce98c36eb54525a33174b210af4356261b5e3  lez-v02-bridge-poc
-c52cfd99c922e50af7c0ed65b054bad23603075081886f9900f8565512847660  modules/lez-role-node/node-entrypoint.sh
-stack: 713ea269ea255bda7dcab25af0c74d3a0453863c
+source commit: 687320882ef4fd349f5626c666c84b8ab4fb1a5e
+bb726ccdca1752ad197550b1a2ede89139005a60a338fa82cc2467fa99fbf12b  lez-maker-node
+0f352849bdd8315004c403b7b9f98767563f28bc061fa33d26ae1d446b3b26cd  lez-maker-cli
+633f5c86671190ffcbb86ffa9abcf37d0a78f53278b96d8d68e1052984b222f1  lez-zec-maker-actor
+c644f8ea7f503221bbd0a4b8275091727fe67bae865b2608e6f767034fd8c8dc  lez-logos-price-worker
+3e38663507af969d3a4d431042683d261ca1d700646c2bea1b2ed0f0ad780d7b  lez-btc-maker-actor
+1c623a82b936da15a3c597a21d3b7a77fcfb2041c4d426acd1d85a57285f9e0e  lez-runtime-healthcheck
+8059413f9a9f939271bc79e9c64547baa8c8061e6c9e55cf3e1bb4a70c51d696  lez-taker-node
+783f01b2f2d3b92fb096dfd02680635d3fd684947c2ae203158d6289feef1aae  lez-taker-cli
+aa1e20cda5b4f363178ef585adedb4939a1b62230b98dba7b3a2d26c65417a7e  lez-btc-taker-actor
+2bb56320d485f85f5f77b16c6ae140c043533a7420979fa9338fcd6f044e8fcd  lez-zec-taker-actor
+ce3546cb5138df962d92cf76a2877f2561acdf9a1eb3a67a4f522bb6373cc8af  lez-taker-registry-init
+5897367a44fc9a771c00a7bfba61e7105ea9770239af584c7256341a9b0a21c2  lez-v02-bridge-poc
+42879879b4e91ee050a88a09eadde8712947f1cba33920d212a78cbaac6b0dff  modules/lez-role-node/node-entrypoint.sh
+stack: 687320882ef4fd349f5626c666c84b8ab4fb1a5e
 lez-bitcoin-core image sha256:a2fc0c4660aba5b8a2dfd044c1d5f751d17f36b82a79912a4acf253d699ca4cd
 lez-sequencer image sha256:ce3eb7aeaa5ab280a0be3bcba875e502d349f0c1b57b8788101e937e4d3fa3a8
 lez-network image sha256:51a018ec2bceeacb4123b8607d4b2f280377b52729a0f254d251ccbeaf668449
 lez-zebra image sha256:8093a13ad9cfd754315da4d5b152865c6e35c6dea868abb7b753fa55f5c0180c
-lez-maker-node image sha256:51c6c81ff3388fb966e77f41bd702ac21a155cfd8fc8d009ca77dc239441d5d1
-lez-taker-node image sha256:366c23b6da17272320dc3036894d8bd53f7285641fe3f8502ab59970499622db
+lez-maker-node image sha256:f3271caeb34cf6d99dec8c48db7f0798a045373614d590122f56af5cfc9e7195
+lez-taker-node image sha256:b4f52d37ba5e78cd948f14e18fb68b0ad65d0a9a2a86df3c3755b39c562b0867
 $ grep PRETTY_NAME /etc/os-release
 PRETTY_NAME="Ubuntu 24.04.5 LTS"
 [exit 0]
@@ -55,10 +55,10 @@ $ systemd-run --quiet --unit=lez-chain-8779 -p Restart=always socat TCP-LISTEN:8
 $ systemd-run --quiet --unit=lez-chain-18232 -p Restart=always socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:10.0.2.100:18232
 [exit 0]
 $ sh -c curl -sS --user "$(cat /payload/stack/btc-rpc-cookie)" -H "content-type: application/json" --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getblockcount\",\"params\":[]}" http://127.0.0.1:18443/
-{"jsonrpc":"2.0","result":103375,"id":1}
+{"jsonrpc":"2.0","result":122121,"id":1}
 [exit 0]
 $ curl -sS http://127.0.0.1:8779/ -H content-type: application/json --data {"jsonrpc":"2.0","id":1,"method":"getLastFinalizedBlockId","params":[]}
-{"jsonrpc":"2.0","id":1,"result":2375}[exit 0]
+{"jsonrpc":"2.0","id":1,"result":634}[exit 0]
 
 ## Inputs: credentials, identities, cookie copies, market constants, env files
 $ head -c 32 /dev/urandom | systemd-creds encrypt --name=maker-claim-recovery.key - /etc/lez/maker/credentials/maker-claim-recovery.key.cred
@@ -82,6 +82,8 @@ $ cat /etc/lez/maker/env
 # The role's LEZ identity (identity.json, public); its key is the lez-signer.key credential.
 LEZ_IDENTITY_DIR=/etc/lez/maker/identity
 LEZ_SIGNER_KEY_FILE=/run/credentials/lez-maker-node.service/lez-signer.key
+# The Maker's long-lived Zcash claim-recovery key (its Zcash key is its Delivery key).
+LEZ_ZEC_CLAIM_KEY_FILE=/run/credentials/lez-maker-node.service/maker-claim-recovery.key
 # The market's public constants: M3_POC_LEZ_ESCROW_PROGRAM_ID, M3_POC_LEZ_GENESIS_BLOCK_HASH.
 LEZ_MARKET_MANIFEST=/etc/lez/market-bootstrap.env
 # A copy of Bitcoin Core's RPC cookie the service user can read.
@@ -118,7 +120,8 @@ $ install -d -m 0755 /etc/lez/taker/identity
 [exit 0]
 $ install -o lez-swap -g lez-swap -m 0400 /payload/stack/taker/identity.json /etc/lez/taker/identity/
 [exit 0]
-$ install -D -o lez-swap -g lez-swap -m 0400 /payload/stack/taker/zcash.key /etc/lez/taker/identity/taker/zcash.key
+$ systemd-creds encrypt --name=zcash.key /payload/stack/taker/zcash.key /etc/lez/taker/credentials/zcash.key.cred
+Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
 [exit 0]
 $ systemd-creds encrypt --name=lez-signer.key /payload/stack/taker/lez-signer.key /etc/lez/taker/credentials/lez-signer.key.cred
 Credential secret file '/var/lib/systemd/credential.secret' is not located on encrypted media, using anyway.
@@ -130,6 +133,8 @@ $ cat /etc/lez/taker/env
 # The role's LEZ identity (identity.json, public); its key is the lez-signer.key credential.
 LEZ_IDENTITY_DIR=/etc/lez/taker/identity
 LEZ_SIGNER_KEY_FILE=/run/credentials/lez-taker-node.service/lez-signer.key
+# The Taker's Zcash key; the launcher keeps one raw copy of it in LEZ_ZEC_STATE_DIR.
+LEZ_ZCASH_KEY_SOURCE=/run/credentials/lez-taker-node.service/zcash.key
 # The market's public constants: M3_POC_LEZ_ESCROW_PROGRAM_ID, M3_POC_LEZ_GENESIS_BLOCK_HASH.
 LEZ_MARKET_MANIFEST=/etc/lez/market-bootstrap.env
 # A copy of Bitcoin Core's RPC cookie the service user can read.
@@ -163,33 +168,32 @@ LEZ_NODE_FINALITY_STALL_SECONDS=60
 LEZ_V02_CHANNEL_ID=b6adb2d238911395adde0b2f40b880ec03ffd1a3a8d97e7df8cacadf08873748
 [exit 0]
 $ find /etc/lez -ls
-   262186      4 drwxr-xr-x   4 root     root         4096 Nov 12 23:02 /etc/lez
-   262187      4 drwxr-xr-x   4 root     root         4096 Nov 12 23:02 /etc/lez/maker
-   262252      4 -r--------   1 lez-swap lez-swap       40 Nov 12 23:02 /etc/lez/maker/btc-rpc-cookie
-   262236      4 -rw-------   1 root     root         1054 Nov 12 23:01 /etc/lez/maker/route-health.json.example
-   262234      4 -rw-------   1 root     root          931 Nov 12 23:01 /etc/lez/maker/node.json.example
-   262249      4 drwxr-xr-x   2 root     root         4096 Nov 12 23:02 /etc/lez/maker/identity
-   262250      4 -r--------   1 lez-swap lez-swap      442 Nov 12 23:02 /etc/lez/maker/identity/identity.json
-   262253      4 -rw-r--r--   1 root     root         1669 Nov 12 23:02 /etc/lez/maker/env
-   262235      4 -rw-------   1 root     root         1162 Nov 12 23:01 /etc/lez/maker/env.example
-   262239      4 drwx------   2 root     root         4096 Nov 12 23:02 /etc/lez/maker/credentials
-   262245      4 -rw-r--r--   1 root     root          195 Nov 12 23:02 /etc/lez/maker/credentials/maker-claim-recovery.key.cred
-   262251      4 -rw-r--r--   1 root     root          231 Nov 12 23:02 /etc/lez/maker/credentials/lez-signer.key.cred
-   262246      4 -rw-r--r--   1 root     root          195 Nov 12 23:02 /etc/lez/maker/credentials/maker-claim-preimage.key.cred
-   262247      4 -rw-r--r--   1 root     root          231 Nov 12 23:02 /etc/lez/maker/credentials/delivery-signing.key.cred
-   262248      4 -rw-r--r--   1 root     root          392 Nov 12 23:02 /etc/lez/market-bootstrap.env
-   262240      4 drwxr-xr-x   4 root     root         4096 Nov 12 23:02 /etc/lez/taker
-   262259      4 -r--------   1 lez-swap lez-swap       40 Nov 12 23:02 /etc/lez/taker/btc-rpc-cookie
-   262241      4 -rw-------   1 root     root          184 Nov 12 23:01 /etc/lez/taker/node.json.example
-   262254      4 drwxr-xr-x   3 root     root         4096 Nov 12 23:02 /etc/lez/taker/identity
-   262256      4 drwxr-xr-x   2 root     root         4096 Nov 12 23:02 /etc/lez/taker/identity/taker
-   262257      4 -r--------   1 lez-swap lez-swap       65 Nov 12 23:02 /etc/lez/taker/identity/taker/zcash.key
-   262255      4 -r--------   1 lez-swap lez-swap      442 Nov 12 23:02 /etc/lez/taker/identity/identity.json
-   262242      4 -rw-------   1 root     root          249 Nov 12 23:01 /etc/lez/taker/role.json.example
-   262260      4 -rw-r--r--   1 root     root         1653 Nov 12 23:02 /etc/lez/taker/env
-   262243      4 -rw-------   1 root     root         1146 Nov 12 23:01 /etc/lez/taker/env.example
-   262244      4 drwx------   2 root     root         4096 Nov 12 23:02 /etc/lez/taker/credentials
-   262258      4 -rw-r--r--   1 root     root          231 Nov 12 23:02 /etc/lez/taker/credentials/lez-signer.key.cred
+   262190      4 drwxr-xr-x   4 root     root         4096 Nov 13 10:09 /etc/lez
+   262191      4 drwxr-xr-x   4 root     root         4096 Nov 13 10:09 /etc/lez/maker
+   262256      4 -r--------   1 lez-swap lez-swap       40 Nov 13 10:09 /etc/lez/maker/btc-rpc-cookie
+   262240      4 -rw-------   1 root     root         1054 Nov 13 10:09 /etc/lez/maker/route-health.json.example
+   262238      4 -rw-------   1 root     root          931 Nov 13 10:09 /etc/lez/maker/node.json.example
+   262253      4 drwxr-xr-x   2 root     root         4096 Nov 13 10:09 /etc/lez/maker/identity
+   262254      4 -r--------   1 lez-swap lez-swap      442 Nov 13 10:09 /etc/lez/maker/identity/identity.json
+   262257      4 -rw-r--r--   1 root     root         1844 Nov 13 10:09 /etc/lez/maker/env
+   262239      4 -rw-------   1 root     root         1337 Nov 13 10:09 /etc/lez/maker/env.example
+   262243      4 drwx------   2 root     root         4096 Nov 13 10:09 /etc/lez/maker/credentials
+   262249      4 -rw-r--r--   1 root     root          195 Nov 13 10:09 /etc/lez/maker/credentials/maker-claim-recovery.key.cred
+   262255      4 -rw-r--r--   1 root     root          231 Nov 13 10:09 /etc/lez/maker/credentials/lez-signer.key.cred
+   262250      4 -rw-r--r--   1 root     root          195 Nov 13 10:09 /etc/lez/maker/credentials/maker-claim-preimage.key.cred
+   262251      4 -rw-r--r--   1 root     root          231 Nov 13 10:09 /etc/lez/maker/credentials/delivery-signing.key.cred
+   262252      4 -rw-r--r--   1 root     root          392 Nov 13 10:09 /etc/lez/market-bootstrap.env
+   262244      4 drwxr-xr-x   4 root     root         4096 Nov 13 10:09 /etc/lez/taker
+   262262      4 -r--------   1 lez-swap lez-swap       40 Nov 13 10:09 /etc/lez/taker/btc-rpc-cookie
+   262245      4 -rw-------   1 root     root          184 Nov 13 10:09 /etc/lez/taker/node.json.example
+   262258      4 drwxr-xr-x   2 root     root         4096 Nov 13 10:09 /etc/lez/taker/identity
+   262259      4 -r--------   1 lez-swap lez-swap      442 Nov 13 10:09 /etc/lez/taker/identity/identity.json
+   262246      4 -rw-------   1 root     root          249 Nov 13 10:09 /etc/lez/taker/role.json.example
+   262263      4 -rw-r--r--   1 root     root         1809 Nov 13 10:09 /etc/lez/taker/env
+   262247      4 -rw-------   1 root     root         1302 Nov 13 10:09 /etc/lez/taker/env.example
+   262248      4 drwx------   2 root     root         4096 Nov 13 10:09 /etc/lez/taker/credentials
+   262261      4 -rw-r--r--   1 root     root          231 Nov 13 10:09 /etc/lez/taker/credentials/lez-signer.key.cred
+   262260      4 -rw-r--r--   1 root     root          219 Nov 13 10:09 /etc/lez/taker/credentials/zcash.key.cred
 [exit 0]
 $ find /etc/lez /var/lib/lez -name lez-signer.key*
 /etc/lez/maker/credentials/lez-signer.key.cred
@@ -206,7 +210,7 @@ $ systemctl start lez-taker-node
 [exit 0]
 $ systemctl show -p Type,ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
 Type=notify
-MainPID=1202
+MainPID=1208
 StatusText=maker RPC and durable state are ready
 NRestarts=0
 ActiveState=active
@@ -220,7 +224,7 @@ Started lez-maker-node.service - LEZ atomic-swap Maker Node.
 [exit 0]
 $ systemctl show -p Type,ActiveState,SubState,MainPID,NRestarts,StatusText lez-taker-node
 Type=notify
-MainPID=1275
+MainPID=1279
 StatusText=Taker RPC and durable state are ready
 NRestarts=0
 ActiveState=active
@@ -405,10 +409,10 @@ $ systemd-analyze security --no-pager lez-taker-node
 → Overall exposure level for lez-taker-node.service: 1.6 OK :-)
 [exit 0]
 $ runuser -u lez-swap -- /usr/bin/lez-maker-cli health
-{"chat":"available","degraded":false,"delivery":"available","lez_chain":{"degraded":false,"finalized_advanced_at_unix_seconds":1794524531,"finalized_block_id":2382,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794524531,"stall_threshold_seconds":60,"tip_block_id":2386},"ready":true,"routes":[],"schema_version":1}
+{"chat":"available","degraded":false,"delivery":"available","lez_chain":{"degraded":false,"finalized_advanced_at_unix_seconds":1794564565,"finalized_block_id":646,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794564565,"stall_threshold_seconds":60,"tip_block_id":649},"ready":true,"routes":[],"schema_version":1}
 [exit 0]
 $ runuser -u lez-swap -- /usr/bin/lez-taker-cli health
-{"chat":"available","degraded":false,"delivery":"available","lez_chain":{"degraded":false,"finalized_advanced_at_unix_seconds":1794524531,"finalized_block_id":2382,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794524531,"stall_threshold_seconds":60,"tip_block_id":2386},"pair_capabilities":[{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Bitcoin","refund":"full_lifecycle","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"effect_checkpoint_only","initiation":"owner_cli_or_demo","monitoring":"owner_cli_or_demo","pair":"Monero","refund":"effect_checkpoint_only","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Zcash","refund":"full_lifecycle","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Zcash","refund":"full_lifecycle","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Bitcoin","refund":"full_lifecycle","supported_direction":"TakerSellsLez"}],"ready":true,"registered_methods":{"claim":true,"health":true,"initiate":true,"lock":true,"monitor":true,"offer_list":true,"refund":true,"swap_list":true},"schema_version":1}
+{"chat":"available","degraded":false,"delivery":"available","lez_chain":{"degraded":false,"finalized_advanced_at_unix_seconds":1794564565,"finalized_block_id":647,"finalized_flat_seconds":0,"observed_at_unix_seconds":1794564565,"stall_threshold_seconds":60,"tip_block_id":649},"pair_capabilities":[{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Bitcoin","refund":"full_lifecycle","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"effect_checkpoint_only","initiation":"owner_cli_or_demo","monitoring":"owner_cli_or_demo","pair":"Monero","refund":"effect_checkpoint_only","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Zcash","refund":"full_lifecycle","supported_direction":"TakerSellsLez"},{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Zcash","refund":"full_lifecycle","supported_direction":"TakerSellsForeign"},{"authenticated_offer_browsing":true,"claim":"full_lifecycle","initiation":"prepared_private_material","monitoring":"receipt_bound","pair":"Bitcoin","refund":"full_lifecycle","supported_direction":"TakerSellsLez"}],"ready":true,"registered_methods":{"claim":true,"health":true,"initiate":true,"lock":true,"monitor":true,"offer_list":true,"refund":true,"swap_list":true},"routes":[{"route":{"direction":"TakerSellsForeign","pair":"Bitcoin"},"state":"available"},{"route":{"direction":"TakerSellsLez","pair":"Zcash"},"state":"available"},{"route":{"direction":"TakerSellsForeign","pair":"Zcash"},"state":"available"},{"route":{"direction":"TakerSellsLez","pair":"Bitcoin"},"state":"available"}],"schema_version":1}
 [exit 0]
 
 ## The Maker prices and advertises Zcash, Taker sells LEZ (1 ZEC for 50 000 LEZ)
@@ -422,7 +426,7 @@ $ maker configure-pair --request-id systemd-pair-2 --expected-revision 1 --pair 
 {"revision":2,"was_replay":false}
 [exit 0]
 $ maker quote --pair zcash --direction taker-sells-lez
-{"observed_at_unix_seconds":1794524532,"price":{"foreign_units_per_lot":2000,"lez_units_per_lot":1,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"source_revision":1}
+{"observed_at_unix_seconds":1794564567,"price":{"foreign_units_per_lot":2000,"lez_units_per_lot":1,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"source_revision":1}
 [exit 0]
 $ maker publish-offer --request-id systemd-offer-1 --offer-id systemd-offer-1 --pair zcash --direction taker-sells-lez
 {"revision":1,"was_replay":false}
@@ -430,37 +434,35 @@ $ maker publish-offer --request-id systemd-offer-1 --offer-id systemd-offer-1 --
 
 ## The Taker discovers and takes: the Nodes form the agreement at take time (zec_reserve_v1)
 $ taker swap offers --pair zcash --direction taker-sells-lez
-{"offers":[{"maker_identity":"03be4ca746724b7e045d9b7a7a4b04fe7b521684fc79a51d7efe1684b9a47578b1","offer":{"created_at_unix_seconds":1794524533,"expires_at_unix_seconds":1794528133,"id":"systemd-offer-1","pair_configuration":{"enabled":true,"maximum_foreign_units":100000000,"minimum_foreign_units":100000000,"offer_ttl_seconds":3600,"price_source":"local","route":{"direction":"TakerSellsLez","pair":"Zcash"}},"pair_configuration_revision":2,"price":{"foreign_units_per_lot":2000,"lez_units_per_lot":1,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"price_observed_at_unix_seconds":1794524533,"price_source_revision":1},"signed_envelope_sha256":[135,199,94,20,105,236,245,185,160,27,98,118,138,11,32,237,30,240,167,184,143,249,83,180,108,81,61,173,92,111,63,37]}],"schema_version":1}
+{"offers":[{"maker_identity":"03be4ca746724b7e045d9b7a7a4b04fe7b521684fc79a51d7efe1684b9a47578b1","offer":{"created_at_unix_seconds":1794564569,"expires_at_unix_seconds":1794568169,"id":"systemd-offer-1","pair_configuration":{"enabled":true,"maximum_foreign_units":100000000,"minimum_foreign_units":100000000,"offer_ttl_seconds":3600,"price_source":"local","route":{"direction":"TakerSellsLez","pair":"Zcash"}},"pair_configuration_revision":2,"price":{"foreign_units_per_lot":2000,"lez_units_per_lot":1,"route":{"direction":"TakerSellsLez","pair":"Zcash"}},"price_observed_at_unix_seconds":1794564569,"price_source_revision":1},"signed_envelope_sha256":[90,198,232,145,52,145,243,192,205,241,168,17,189,202,100,148,34,23,114,211,147,227,166,194,84,105,215,186,96,144,217,175]}],"schema_version":1}
 [exit 0]
 $ taker swap take --request-id systemd-take-1 --offer-id systemd-offer-1 --foreign-units 100000000
-{"schema_version":1,"swap":{"available_action":null,"foreign_units":100000000,"lez_units":50000,"offer_id":"systemd-offer-1","privacy_guidance":null,"progress_generation":0,"route":{"direction":"TakerSellsLez","pair":"Zcash"},"schema_version":1,"state":"not_activated","swap_id":"zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a"},"was_replay":false}
+{"schema_version":1,"swap":{"available_action":null,"foreign_units":100000000,"lez_units":50000,"offer_id":"systemd-offer-1","privacy_guidance":null,"progress_generation":0,"route":{"direction":"TakerSellsLez","pair":"Zcash"},"schema_version":1,"state":"not_activated","swap_id":"zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62"},"was_replay":false}
 [exit 0]
-swap: zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a
-taker: not_activated (generation 0) at 23:02:14
-taker: awaiting_first_lock (generation 0) at 23:02:19
-taker: refund_available (generation 1) at 23:02:35
-zebra: mined 1 block, height 1426 (mempool ["728b698094df14fad7a475808822b86f626ed24e451fc92d844d9acbf9245e77"])
+swap: zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62
+taker: not_activated (generation 0) at 10:09:31
+taker: awaiting_first_lock (generation 0) at 10:09:36
+taker: refund_available (generation 1) at 10:09:52
+zebra: mined 1 block, height 1067 (mempool ["8ad8256db1f314c1eabd07882f78d639c6b01fe0575a1a85479f033731b1976a"])
 
 ## Per-swap files that hold private keys, while the swap runs
 $ sh -c find /var/lib/lez -type f \( -name '*.key' -o -name '*.capability' \) -printf '%m %u:%g %p\n' | sort
 600 lez-swap:lez-swap /var/lib/lez/maker/btc-chat-signing.key
 600 lez-swap:lez-swap /var/lib/lez/maker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/claim-preimage.key
 600 lez-swap:lez-swap /var/lib/lez/maker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/claim-recovery.key
-600 lez-swap:lez-swap /var/lib/lez/maker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/zcash.key
-600 lez-swap:lez-swap /var/lib/lez/maker/zec-claim-recovery.key
 600 lez-swap:lez-swap /var/lib/lez/taker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/claim-recovery.key
-600 lez-swap:lez-swap /var/lib/lez/taker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/zcash.key
 600 lez-swap:lez-swap /var/lib/lez/taker/zec/zcash.key
 [exit 0]
-/var/lib/lez/maker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/zcash.key holds the Maker's long-lived Zcash (and Delivery) key
-/var/lib/lez/taker/zec/zcash.key holds the Taker's long-lived Zcash key
-/var/lib/lez/taker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/zcash.key holds the Taker's long-lived Zcash key
+$ scan /var/lib/lez for the long-lived role keys
+the Maker's Zcash and Delivery key: in no file
+the Maker's claim-recovery key: in no file
+the Taker's Zcash key: /var/lib/lez/taker/zec/zcash.key
 
 ## kill -9 of the Maker between the locks and the claim; systemd restarts it
-$ kill -9 1202
+$ kill -9 1208
 [exit 0]
 $ systemctl show -p ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
-MainPID=1582
+MainPID=1637
 StatusText=maker RPC and durable state are ready
 NRestarts=1
 ActiveState=active
@@ -468,23 +470,23 @@ SubState=running
 [exit 0]
 
 ## The Taker waits for claim_available, claims, and both sides complete
-zebra: mined 1 block, height 1427 (Maker's Zcash funding at 1 confirmation(s))
-taker: claim_available (generation 3) at 23:03:45
-$ taker swap claim --swap-id zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a --request-id systemd-claim-1 --expected-generation 3
-{"action":"claim","requested_after_generation":3,"schema_version":1,"swap_id":"zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a","was_replay":false}
+zebra: mined 1 block, height 1068 (Maker's Zcash funding at 1 confirmation(s))
+taker: claim_available (generation 3) at 10:11:14
+$ taker swap claim --swap-id zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62 --request-id systemd-claim-1 --expected-generation 3
+{"action":"claim","requested_after_generation":3,"schema_version":1,"swap_id":"zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62","was_replay":false}
 [exit 0]
-taker: claim_in_progress (generation 3) at 23:03:46
-zebra: mined 1 block, height 1428 (mempool ["dca8c8673b5811b34914671b1bed2623bdad0319072ae783ca4fd3ad320da80b"])
-taker: completed (generation 4) at 23:03:51
+taker: claim_in_progress (generation 3) at 10:11:14
+zebra: mined 1 block, height 1069 (mempool ["7fd586f9308f4c4e714cedf427ba0c0c18fbd155fa3481c9ca027f55acf5c892"])
+taker: completed (generation 4) at 10:11:20
 zebra: 3 block(s) mined in this run
-$ sh -c runuser -u lez-swap -- /usr/bin/lez-taker-cli swap monitor --swap-id zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a
-{"actor_phase":"completed","available_action":null,"foreign_units":100000000,"lez_units":50000,"offer_id":"systemd-offer-1","privacy_guidance":"shield_received_transparent_zec_separately","progress_generation":4,"route":{"direction":"TakerSellsLez","pair":"Zcash"},"schema_version":1,"state":"completed","swap_id":"zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a"}
+$ sh -c runuser -u lez-swap -- /usr/bin/lez-taker-cli swap monitor --swap-id zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62
+{"actor_phase":"completed","available_action":null,"foreign_units":100000000,"lez_units":50000,"offer_id":"systemd-offer-1","privacy_guidance":"shield_received_transparent_zec_separately","progress_generation":4,"route":{"direction":"TakerSellsLez","pair":"Zcash"},"schema_version":1,"state":"completed","swap_id":"zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62"}
 [exit 0]
-$ sh -c runuser -u lez-swap -- /usr/bin/lez-maker-cli monitor --id zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a
-{"actor_kind":"zcash","attempt_count":9,"lease_generation":9,"manual_action":null,"progress":{"observation":{"next_action":"complete","phase":"completed","revision":6,"state":"active"},"observed_at":1794524632,"source_generation":9},"schedule_state":"terminal","schema_version":1,"swap_id":"zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a"}
+$ sh -c runuser -u lez-swap -- /usr/bin/lez-maker-cli monitor --id zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62
+{"actor_kind":"zcash","attempt_count":10,"lease_generation":10,"manual_action":null,"progress":{"observation":{"next_action":"complete","phase":"completed","revision":6,"state":"active"},"observed_at":1794564679,"source_generation":10},"schedule_state":"terminal","schema_version":1,"swap_id":"zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62"}
 [exit 0]
 $ sh -c runuser -u lez-swap -- /usr/bin/lez-maker-cli history
-[{"direction":"TakerSellsLez","highest_alert_severity":null,"id":"zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a","pair":"Zcash","pending_alerts":0,"phase":"Completed","requires_attention":false}]
+[{"direction":"TakerSellsLez","highest_alert_severity":null,"id":"zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62","pair":"Zcash","pending_alerts":0,"phase":"Completed","requires_attention":false}]
 [exit 0]
 
 ## Per-swap files that hold private keys, after completion
@@ -492,12 +494,13 @@ $ sh -c find /var/lib/lez -type f \( -name '*.key' -o -name '*.capability' \) -p
 600 lez-swap:lez-swap /var/lib/lez/maker/btc-chat-signing.key
 600 lez-swap:lez-swap /var/lib/lez/maker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/claim-preimage.key
 600 lez-swap:lez-swap /var/lib/lez/maker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/claim-recovery.key
-600 lez-swap:lez-swap /var/lib/lez/maker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/zcash.key
-600 lez-swap:lez-swap /var/lib/lez/maker/zec-claim-recovery.key
 600 lez-swap:lez-swap /var/lib/lez/taker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/claim-recovery.key
-600 lez-swap:lez-swap /var/lib/lez/taker/btc/swaps/3cfd884195075393539ab8d3fa295e34c2de2448566f2eece6f8648603e4c572/zec/zcash.key
 600 lez-swap:lez-swap /var/lib/lez/taker/zec/zcash.key
 [exit 0]
+$ scan /var/lib/lez for the long-lived role keys
+the Maker's Zcash and Delivery key: in no file
+the Maker's claim-recovery key: in no file
+the Taker's Zcash key: /var/lib/lez/taker/zec/zcash.key
 
 ## No copy of either LEZ signer key on disk: only the encrypted credentials
 $ find / -xdev -name lez-signer.key* -not -path /payload/*
@@ -507,41 +510,42 @@ $ find / -xdev -name lez-signer.key* -not -path /payload/*
 
 ## Journals
 $ journalctl -u lez-maker-node --no-pager -o short-monotonic
-[   93.225090] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
-[   93.648812] ubuntu lez-role-node-launcher[1202]: maker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
-[   93.861191] ubuntu lez-role-node-launcher[1202]: maker ZEC authority configured (corridor none, 0 template(s))
-[  100.541825] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
-[  116.124398] ubuntu lez-role-node-launcher[1202]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: activate → activated - (phase offered, revision 0, next wait)
-[  127.647245] ubuntu lez-role-node-launcher[1202]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
-[  138.637511] ubuntu lez-role-node-launcher[1202]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → submitted zcash_fund (phase taker_lock_confirmed, revision 2, next wait)
-[  146.954952] ubuntu systemd[1]: lez-maker-node.service: Main process exited, code=killed, status=9/KILL
-[  146.961553] ubuntu systemd[1]: lez-maker-node.service: Failed with result 'signal'.
-[  146.963408] ubuntu systemd[1]: lez-maker-node.service: Consumed 48.218s CPU time, 111.0M memory peak, 0B memory swap peak.
-[  152.079768] ubuntu systemd[1]: lez-maker-node.service: Scheduled restart job, restart counter is at 1.
-[  152.093048] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
-[  152.488936] ubuntu lez-role-node-launcher[1582]: maker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
-[  152.695776] ubuntu lez-role-node-launcher[1582]: maker ZEC authority configured (corridor none, 0 template(s))
-[  169.374916] ubuntu lez-role-node-launcher[1694]: actor drive unavailable: LezTakerFirstLockObservation(Adapter(Transport(Transport { operation: ObserveEscrow })))
-[  169.376203] ubuntu lez-role-node-launcher[1694]: actor drive is unavailable
-[  169.395903] ubuntu lez-role-node-launcher[1582]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: attempt backs off (actor_exit_failed)
-[  169.525177] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
-[  180.503915] ubuntu lez-role-node-launcher[1582]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → projected maker_lock (phase both_legs_locked, revision 4, next claim_lez)
-[  191.900940] ubuntu lez-role-node-launcher[1582]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: claim → submitted lez_revealing_claim (phase both_legs_locked, revision 4, next claim_lez)
-[  202.699299] ubuntu lez-role-node-launcher[1582]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: claim → projected lez_revealing_claim (phase claim_evidence_available, revision 5, next wait)
-[  213.611834] ubuntu lez-role-node-launcher[1582]: maker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → projected zcash_followup_claim (phase completed, revision 6, next complete)
+[   73.256654] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[   73.557828] ubuntu lez-role-node-launcher[1208]: maker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+[   73.785862] ubuntu lez-role-node-launcher[1208]: maker ZEC authority configured (corridor none, 0 template(s))
+[   79.838675] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[   97.253502] ubuntu lez-role-node-launcher[1208]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: activate → activated - (phase offered, revision 0, next wait)
+[  107.669618] ubuntu lez-role-node-launcher[1208]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → awaiting_observation taker_first_lock (phase offered, revision 0, next wait)
+[  118.964316] ubuntu lez-role-node-launcher[1208]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+[  130.638733] ubuntu lez-role-node-launcher[1208]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → submitted zcash_fund (phase taker_lock_confirmed, revision 2, next wait)
+[  139.700137] ubuntu systemd[1]: lez-maker-node.service: Main process exited, code=killed, status=9/KILL
+[  139.704493] ubuntu systemd[1]: lez-maker-node.service: Failed with result 'signal'.
+[  139.705107] ubuntu systemd[1]: lez-maker-node.service: Consumed 58.878s CPU time, 113.4M memory peak, 0B memory swap peak.
+[  144.752570] ubuntu systemd[1]: lez-maker-node.service: Scheduled restart job, restart counter is at 1.
+[  144.762049] ubuntu systemd[1]: Starting lez-maker-node.service - LEZ atomic-swap Maker Node...
+[  145.090163] ubuntu lez-role-node-launcher[1637]: maker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+[  145.266577] ubuntu lez-role-node-launcher[1637]: maker ZEC authority configured (corridor none, 0 template(s))
+[  163.058509] ubuntu lez-role-node-launcher[1753]: actor drive unavailable: LezTakerFirstLockObservation(Adapter(Transport(Transport { operation: ObserveEscrow })))
+[  163.059933] ubuntu lez-role-node-launcher[1753]: actor drive is unavailable
+[  163.074199] ubuntu lez-role-node-launcher[1637]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: attempt backs off (actor_exit_failed)
+[  163.165358] ubuntu systemd[1]: Started lez-maker-node.service - LEZ atomic-swap Maker Node.
+[  173.810676] ubuntu lez-role-node-launcher[1637]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → projected maker_lock (phase both_legs_locked, revision 4, next claim_lez)
+[  184.762110] ubuntu lez-role-node-launcher[1637]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: claim → submitted lez_revealing_claim (phase both_legs_locked, revision 4, next claim_lez)
+[  195.392792] ubuntu lez-role-node-launcher[1637]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: claim → projected lez_revealing_claim (phase claim_evidence_available, revision 5, next wait)
+[  205.188115] ubuntu lez-role-node-launcher[1637]: maker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → projected zcash_followup_claim (phase completed, revision 6, next complete)
 [exit 0]
 $ journalctl -u lez-taker-node --no-pager -o short-monotonic
-[  100.570318] ubuntu systemd[1]: Starting lez-taker-node.service - LEZ atomic-swap Taker Node...
-[  101.147605] ubuntu lez-role-node-launcher[1275]: taker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
-[  101.279817] ubuntu lez-role-node-launcher[1275]: taker: 0 prepared ZEC entries configured
-[  101.348918] ubuntu systemd[1]: Started lez-taker-node.service - LEZ atomic-swap Taker Node.
-[  106.447978] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: activate → activated - (phase offered, revision 0, next create_and_fund_lez)
-[  112.104414] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
-[  118.229083] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez)
-[  124.032059] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
-[  129.225244] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → awaiting_observation maker_lock (phase taker_lock_confirmed, revision 1, next wait)
-[  144.820068] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → projected maker_lock (phase both_legs_locked, revision 2, next wait)
-[  150.096433] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → awaiting_observation lez_revealing_claim (phase both_legs_locked, revision 2, next wait)
-[  193.681068] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: drive → projected lez_revealing_claim (phase claim_evidence_available, revision 3, next claim_zcash)
-[  198.956667] ubuntu lez-role-node-launcher[1275]: taker actor zec-ae249f6872f08d355474e561cab39b74e3967c9fea5088ef486d48064586b08a: claim → projected zcash_followup_claim (phase completed, revision 4, next complete)
+[   79.880706] ubuntu systemd[1]: Starting lez-taker-node.service - LEZ atomic-swap Taker Node...
+[   80.264152] ubuntu lez-role-node-launcher[1279]: taker Bitcoin lifecycle configured (escrow c22d61fc00d68083a01bc20c607423e015b9aeb862bbcdf7681b07848368221b)
+[   80.427687] ubuntu lez-role-node-launcher[1279]: taker: 0 prepared ZEC entries configured
+[   80.639896] ubuntu systemd[1]: Started lez-taker-node.service - LEZ atomic-swap Taker Node.
+[   90.784503] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: activate → activated - (phase offered, revision 0, next create_and_fund_lez)
+[   96.503296] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
+[  102.626616] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez)
+[  108.186142] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+[  113.403723] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → awaiting_observation maker_lock (phase taker_lock_confirmed, revision 1, next wait)
+[  139.407329] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → projected maker_lock (phase both_legs_locked, revision 2, next wait)
+[  144.767248] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → awaiting_observation lez_revealing_claim (phase both_legs_locked, revision 2, next wait)
+[  189.789811] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: drive → projected lez_revealing_claim (phase claim_evidence_available, revision 3, next claim_zcash)
+[  194.995044] ubuntu lez-role-node-launcher[1279]: taker actor zec-a9f224953f7d6f17694df65cea0e7c9c415a607c7b0613857fec7511b8646e62: claim → projected zcash_followup_claim (phase completed, revision 4, next complete)
 [exit 0]
