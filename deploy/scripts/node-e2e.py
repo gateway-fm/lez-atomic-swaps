@@ -1729,6 +1729,25 @@ def assert_restored() -> None:
     log("  both dependencies are back and neither Node is degraded")
 
 
+# R2 at the later transitions: the counterparty killed while the cut holds, the
+# Taker once both legs are locked (it must claim after its restart), the Maker once
+# the Taker's claim is sent (it must make its follow-up claim after its restart).
+OFFLINE_COUNTERPARTY = {"both legs locked": "taker", "claim sent": "maker"}
+
+
+def kill_under_cut(role: str) -> dict:
+    """The role's container killed (kill_node) while Chat and Delivery are cut;
+    it must start again without them. A Maker started again makes a new Chat
+    socket (node-entrypoint.sh removes the old one), so the cut is applied to
+    that socket again once the Maker answers, and proven again from the
+    Taker's side; the Chat watch samples the new container throughout."""
+    killed = kill_node(role)
+    if role == "maker":
+        for command in offchain_cut_commands(PREFIX):
+            subprocess.run(command, check=True, capture_output=True, stdin=subprocess.DEVNULL)
+    return {**killed, "taker_probe_after_restart": assert_taker_side_cut()}
+
+
 def assert_taker_side_cut() -> dict:
     """The Taker's side still refused both channels (taker_offchain_probe)."""
     probe = taker_offchain_probe()
@@ -1756,10 +1775,9 @@ def scenario_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
     the Maker's open Chat connections are sampled throughout and must stay none.
     `at` is the first lock (offline-after-lock), both legs locked
     (offline-after-second-lock) or the Taker's claim sent (offline-after-claim).
-    Neither Node is restarted under the cut: a Node's launcher reads (Taker) or
-    writes (Maker) the Maker's identity in Delivery at every start and exits
-    while it cannot, so a Node killed during the outage stays down until
-    Delivery is back.
+    After the first lock neither Node is restarted; at the later transitions
+    the counterparty is killed under the cut as well and must start without
+    Chat and Delivery (OFFLINE_COUNTERPARTY, kill_under_cut).
     """
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
@@ -1770,8 +1788,11 @@ def scenario_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
         claim(swap_id, stamp)
     log(f"  cutting Logos Chat and Delivery at '{at}'")
     watch = None
+    killed = None
     try:
         watch = cut_delivery_and_chat()
+        if at != "first lock":
+            killed = kill_under_cut(OFFLINE_COUNTERPARTY[at])
         if at != "claim sent":
             claim(swap_id, stamp)
         wait_completed(swap_id)
@@ -1782,7 +1803,7 @@ def scenario_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
             watch.stop()
         restore_delivery_and_chat()
     assert_restored()
-    return {"swap_id": swap_id, "at": at, "cut": held,
+    return {"swap_id": swap_id, "at": at, "cut": held, "killed": killed,
             "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
@@ -5099,7 +5120,7 @@ def scenario_zec_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
     state alone. Logos Chat and Delivery are cut at `at` as in the BTC twin
     (cut_delivery_and_chat, proven from both sides) and stay cut until the swap
     is complete, at the first lock, both legs locked or the Taker's claim sent;
-    neither Node is restarted (see the BTC twin)."""
+    at the later two the counterparty is killed under the cut (see the BTC twin)."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -5115,8 +5136,11 @@ def scenario_zec_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
              timeout=300)
     log(f"  cutting Logos Chat and Delivery at '{at}'")
     watch = None
+    killed = None
     try:
         watch = cut_delivery_and_chat()
+        if at != "first lock":
+            killed = kill_under_cut(OFFLINE_COUNTERPARTY[at])
         if at == "claim sent":
             zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
             wait_completed(swap_id, timeout=600)
@@ -5130,7 +5154,7 @@ def scenario_zec_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
         restore_delivery_and_chat()
     assert_restored()
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "at": at,
-            "cut": held}
+            "cut": held, "killed": killed}
 
 
 def scenario_zec_outage_before_take(stamp: str) -> dict:
