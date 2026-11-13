@@ -67,6 +67,12 @@ readonly lane_genesis
 heartbeat_seconds="${LEZ_HEARTBEAT_SECONDS:-20}"
 heartbeat_stall_seconds="${LEZ_HEARTBEAT_STALL_SECONDS:-60}"
 [[ "$heartbeat_seconds" =~ ^[0-9]+$ && "$heartbeat_stall_seconds" =~ ^[0-9]+$ ]] || { echo "LEZ_HEARTBEAT_SECONDS and LEZ_HEARTBEAT_STALL_SECONDS must be integers" >&2; exit 1; }
+# Monero on every lane (LEZ_MONERO=1: compose profile "monero", role_files
+# below), kept across reruns like the timing profile; off unless asked for.
+monero="${LEZ_MONERO:-}"
+[[ -n "$monero" || ! -s "$RUNTIME/runtime.env" ]] || monero="$(sed -n 's/^LEZ_MONERO=//p' "$RUNTIME/runtime.env" | head -1)"
+monero="${monero:-0}"
+[[ "$monero" =~ ^[01]$ ]] || { echo "LEZ_MONERO must be 0 or 1" >&2; exit 1; }
 
 # The stack this runtime belongs to (scripts/lane.sh derives its names and
 # ports): a prefix or port offset other than the default is recorded in
@@ -188,6 +194,41 @@ role_files() {
     echo "warning: zec-local-poc-identity unavailable (stage it with from-scratch.sh --only rust or build the Taker image); zebra keeps the template miner address and the ZEC lane cannot run" >&2
   fi
   chmod 0644 "$dir/zebra/zebrad.toml"
+  # Monero (LEZ_MONERO=1): the lane's monerod and its funding, Maker and Taker
+  # wallet-rpc each take a Digest RPC login, minted once under <dir>/monero and
+  # kept across reruns, and their configs carry them (0644 like bitcoin.conf:
+  # the containers read them as uid 65532; regtest only). Each role's Node gets
+  # monerod's login and its own wallet-rpc's beside its identity
+  # (node-entrypoint.sh: a Node without them has no Monero route); with Monero
+  # off they are taken away again.
+  local name
+  if [[ "$monero" == 1 ]]; then
+    mkdir -p "$dir/monero"
+    for name in daemon funding maker taker; do
+      [[ -s "$dir/monero/$name.login" ]] || printf '%s:%s\n' "$name" "$(openssl rand -hex 16)" >"$dir/monero/$name.login"
+    done
+    # (the settings of the isolated lane, scripts/run-monero-e2e.sh)
+    printf '%s\n' regtest=1 offline=1 fixed-difficulty=1 data-dir=/var/lib/monero \
+      p2p-bind-ip=127.0.0.1 p2p-bind-port=18080 rpc-bind-ip=0.0.0.0 rpc-bind-port=18081 confirm-external-bind=1 \
+      "rpc-login=$(cat "$dir/monero/daemon.login")" rpc-ssl=disabled no-zmq=1 disable-dns-checkpoints=1 \
+      check-updates=disabled no-igd=1 max-concurrency=1 log-file=/dev/stdout log-level=1 >"$dir/monero/monerod.conf"
+    for name in funding maker taker; do
+      printf '%s\n' wallet-dir=/var/lib/monero-wallet rpc-bind-ip=0.0.0.0 rpc-bind-port=18083 confirm-external-bind=1 \
+        "rpc-login=$(cat "$dir/monero/$name.login")" rpc-ssl=disabled daemon-address=monerod:18081 \
+        "daemon-login=$(cat "$dir/monero/daemon.login")" daemon-ssl=disabled trusted-daemon=1 \
+        allow-mismatched-daemon-version=1 no-initial-sync=1 non-interactive=1 max-concurrency=1 \
+        log-file=/dev/stdout log-level=1 >"$dir/monero/wallet-$name.conf"
+    done
+    chmod 0644 "$dir/monero/"*.conf
+    for role in maker taker; do
+      cp "$dir/monero/daemon.login" "$dir/lez/$role/monerod.login"
+      cp "$dir/monero/$role.login" "$dir/lez/$role/monero-wallet-rpc.login"
+      chmod "$key_mode" "$dir/lez/$role/monerod.login" "$dir/lez/$role/monero-wallet-rpc.login"
+    done
+    echo "Monero: $label/monero (monerod and the funding, Maker and Taker wallet-rpc)"
+  else
+    rm -f "$dir"/lez/{maker,taker}/{monerod,monero-wallet-rpc}.login
+  fi
 }
 
 # A regression lane (LEZ_LANE >= 2, scripts/lane.sh) renders its own role files
@@ -631,6 +672,7 @@ printf '%s\n' \
   "LEZ_HEARTBEAT_ALLOCATION=$heartbeat_allocation" \
   "LEZ_HEARTBEAT_SECONDS=$heartbeat_seconds" \
   "LEZ_HEARTBEAT_STALL_SECONDS=$heartbeat_stall_seconds" \
+  "LEZ_MONERO=$monero" \
   >"$RUNTIME/runtime.env.tmp"
 chmod 0600 "$RUNTIME/runtime.env.tmp"
 # Replaced in one step: every harness script (and a running regression lane)

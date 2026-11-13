@@ -27,6 +27,10 @@
 #                            for the evidence run; no desk suites
 #   LEZ_EXPLORERS=1          also start the block explorers (Compose profile
 #                            "explorers", off by default)
+#   LEZ_MONERO=1             also Monero regtest on every lane (Compose profile
+#                            "monero", off by default; kept in runtime.env,
+#                            LEZ_MONERO=0 turns it off again); stage it first
+#                            with LEZ_MONERO=1 scripts/stage-assets.sh
 #
 # Requires the payloads staged by from-scratch.sh (images/*/ contexts, the
 # provision directory, the market root). SKIP_UI_VERIFY=1 skips the UI suites.
@@ -177,6 +181,9 @@ fi
 bash scripts/gen-config.sh runtime
 env_after="$(sha256sum runtime/runtime.env 2>/dev/null | cut -c1-64 || true)"
 load_env
+# Monero's services (LEZ_MONERO, as runtime.env now records it); none when off.
+monero_services=()
+[[ "${LEZ_MONERO:-0}" != 1 ]] || monero_services=(monerod xmr-funding-wallet maker-xmr-wallet taker-xmr-wallet)
 
 stage "images"
 echo "[2/6] images…"
@@ -223,6 +230,12 @@ case "${LEZ_IMAGES:-build}" in
     ;;
   *) echo "LEZ_IMAGES must be build, pull or present" >&2; exit 64 ;;
 esac
+# Monero's image is outside the default profile: built here, once it is staged.
+if (( ${#monero_services[@]} )) && [[ "${LEZ_IMAGES:-build}" == build ]] &&
+   { [[ "$BUILD" == 1 ]] || ! docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1; }; then
+  [[ -x images/monerod/bin/monerod ]] || { echo "Monero is not staged: LEZ_MONERO=1 scripts/stage-assets.sh" >&2; exit 1; }
+  docker compose --profile monero build monerod
+fi
 
 # The images exist from here on (built above, pulled, or present). The role and
 # LEZ Basecamp images are built on the basecamp-ui service (additional_contexts
@@ -239,7 +252,9 @@ done
 # Basecamps (now the one network Basecamp, whose aliases they would shadow) and
 # the init containers the images' own data directories replaced.
 docker rm -f "$LEZ_STACK_PREFIX"-{bedrock,indexer,state-init,bitcoin-init,zebra-init} >/dev/null 2>&1 || true
-docker compose up -d --no-build bitcoin-core btc-miner zebra network sequencer
+# (Monero's services start when named; nothing waits for them: the Nodes do not
+# need them to start, and the harness waits for their RPC itself)
+docker compose up -d --no-build bitcoin-core btc-miner zebra network sequencer ${monero_services[@]+"${monero_services[@]}"}
 [[ "${LEZ_EXPLORERS:-0}" != 1 ]] || docker compose --profile explorers up -d --no-build btc-explorer lez-explorer
 stage "chains healthy"
 wait_healthy 2400 "$LEZ_CONTAINER_PREFIX-bitcoin-core" "$LEZ_CONTAINER_PREFIX-zebra" "$LEZ_STACK_PREFIX-network" "$LEZ_STACK_PREFIX-sequencer"
