@@ -55,7 +55,7 @@ const MAKER_APPLICATION_CONFLICT_CODE: i32 = -32_009;
 const MAKER_OFFER_UNAVAILABLE_CODE: i32 = -32_018;
 
 /// The exact application Chat methods allowed through the transport bridge.
-pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 13] = [
+pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 17] = [
     "btc_chat_propose_v1",
     "btc_chat_propose_v2",
     "btc_chat_complete_v1",
@@ -69,6 +69,10 @@ pub const LOGOS_CHAT_GATEWAY_METHODS_V1: [&str; 13] = [
     "zec_chat_complete_v1",
     "xmr_chat_stage_a_v1",
     "xmr_chat_activate_v1",
+    "xmr_reserve_v1",
+    "xmr_ceremony_reserve_v1",
+    "xmr_ceremony_nonce_v1",
+    "xmr_ceremony_partial_v1",
 ];
 
 /// Fixed endpoint role for one gateway process.
