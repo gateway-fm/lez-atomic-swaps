@@ -29,6 +29,16 @@ if [[ "${1:-}" == probe-bitcoin ]]; then
   exec curl -sf --max-time 4 --user "$(cat "${2:?cookie file}")" -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' -o /dev/null http://127.0.0.1:18443/
 fi
+# `probe-monero <monerod login> <wallet-rpc login>`: the same for Monero; it
+# succeeds while monerod and the role's wallet-rpc both answer over this
+# container's forwards, with the Digest logins the Monero adapter uses.
+if [[ "${1:-}" == probe-monero ]]; then
+  curl -sf --max-time 2 --digest --user "$(cat "${2:?monerod login}")" -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"get_info"}' http://127.0.0.1:18081/json_rpc |
+    jq -e '.result.status == "OK"' >/dev/null || exit 1
+  exec curl -sf --max-time 2 --digest --user "$(cat "${3:?wallet-rpc login}")" -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"get_version"}' -o /dev/null http://127.0.0.1:18083/json_rpc
+fi
 
 role="${1:?maker|taker}"
 bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,6 +52,7 @@ role_prefix="LEZ_$(tr '[:lower:]' '[:upper:]' <<<"$role")_"
 for name in SIDECAR_PORT_BASE WALLET_SIGNER_SOCKET BTC_WALLET BTC_CLAIM_DESTINATION NODE_LOG_FILE \
     NODE_STATE_DIR NODE_RUN_ROOT ZEC_STATE_DIR ZEC_SIDECAR_DIR NODE_IDENTITY_DIR MARKET_MANIFEST BTC_RPC_COOKIE_FILE DELIVERY_DIR \
     SEQUENCER_URL INDEXER_URL LEZ_SEQUENCER_ROUTE BITCOIN_CORE_HOST SEQUENCER_HOST INDEXER_HOST ZEBRA_HOST \
+    MONEROD_HOST XMR_WALLET_HOST \
     V02_CHANNEL_ID AUTH_TRANSFER_PROGRAM_ID BTC_NETWORK LEZ_NETWORK \
     BTC_REFUND_CSV_BLOCKS BTC_SECOND_LOCK_REFUND_CSV_BLOCKS BTC_BLOCK_SECONDS_FASTEST BTC_BLOCK_SECONDS_SLOWEST \
     BTC_MAKER_LOCK_CUTOFF_SECONDS BTC_EARLIER_REFUND_SECONDS BTC_LATER_REFUND_SECONDS BTC_REFUND_MARGIN_SECONDS \
@@ -75,6 +86,7 @@ if [[ "$(uname -s)" == Darwin ]]; then
   # zcash.key) theirs; the Taker's Zcash key is in its identity directory.
   default_zec_role="$home/zec/role-$role"
   zcash_key_in_identity=zcash.key
+  monero_logins_in_identity=.
   default_identity="$home/identity/$role"
   default_manifest="$home/market-bootstrap.env"
   default_cookie="$home/btc-rpc-cookie"
@@ -87,6 +99,7 @@ else
   default_zec_sidecar=
   default_zec_role=
   zcash_key_in_identity="$role/zcash.key"
+  monero_logins_in_identity="$role"
   default_identity=/run-lez-identity
   default_manifest=/run-market/market-bootstrap.env
   default_cookie=/run-config/btc-rpc-cookie
@@ -178,6 +191,16 @@ if [[ "$chain_forwards" == 1 ]]; then
   zebra_host="${LEZ_ZEBRA_HOST:-${default_chain_host:-zebra}}"
   forward 18232 "$zebra_host"
 fi
+# Monero, only where the role has the RPC logins beside its identity
+# (gen-config.sh, LEZ_MONERO=1): monerod and the role's own wallet-rpc, which
+# the Monero adapter likewise reaches on literal loopback only.
+monero_logins="$identity_src/$monero_logins_in_identity"
+monero_ready=0
+[[ -s "$monero_logins/monerod.login" && -s "$monero_logins/monero-wallet-rpc.login" ]] && monero_ready=1
+if [[ "$chain_forwards" == 1 && "$monero_ready" == 1 ]]; then
+  forward 18081 "${LEZ_MONEROD_HOST:-${default_chain_host:-monerod}}"
+  forward 18083 "${LEZ_XMR_WALLET_HOST:-${default_chain_host:-$role-xmr-wallet}}"
+fi
 for _ in $(seq 1 60); do
   curl -sf --max-time 3 --user "$(cat "$cookie_src")" -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' http://127.0.0.1:18443/ >/dev/null 2>&1 && break
@@ -235,6 +258,13 @@ else
 fi
 install -m 0600 "$identity_src/identity.json" "$btc_state/identity.json"
 install -m 0600 "$cookie_src" "$btc_state/btc-rpc-cookie"
+# ... and of the Monero RPC logins, which the Monero probe below reads.
+monero_state="$state/monero-rpc"
+rm -rf "$monero_state"
+if [[ "$monero_ready" == 1 ]]; then
+  mkdir -p "$monero_state"
+  install -m 0600 "$monero_logins/monerod.login" "$monero_logins/monero-wallet-rpc.login" "$monero_state/"
+fi
 signer_account="$(jq -er '.account_id_hex' "$btc_state/identity.json")"
 
 btc_lifecycle_ready=0
@@ -458,15 +488,21 @@ chmod 0600 "$zec_role_config"
 # publish on it, the Taker refuses a new take on it, and both report
 # themselves degraded. Bitcoin is asked with the role's cookie
 # (probe-bitcoin, above), Zcash with the package's health check; both are the
-# package's own files beside the Node.
+# package's own files beside the Node. Monero, where the role has its logins,
+# is asked for its one route (TakerSellsLez) with probe-monero, above.
 launcher="$bin/${BASH_SOURCE[0]##*/}"
 jq -n --arg launcher "$launcher" --arg launcher_sha "$(sha256_of "$launcher")" \
   --arg cookie "$btc_state/btc-rpc-cookie" --arg check "$bin/lez-runtime-healthcheck" \
-  --arg check_sha "$(sha256_of "$bin/lez-runtime-healthcheck")" '
+  --arg check_sha "$(sha256_of "$bin/lez-runtime-healthcheck")" \
+  --argjson monero "$monero_ready" --arg monerod_login "$monero_state/monerod.login" \
+  --arg wallet_login "$monero_state/monero-wallet-rpc.login" '
   [{pair:"Bitcoin", program:$launcher, program_sha256:$launcher_sha, args:["probe-bitcoin", $cookie]},
    {pair:"Zcash", program:$check, program_sha256:$check_sha, args:["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]}]
-  | {schema_version:1, commands:[.[] as $probe | ("TakerSellsForeign", "TakerSellsLez") as $direction
-      | {route:{pair:$probe.pair, direction:$direction}} + ($probe | del(.pair)) + {timeout_milliseconds:5000}]}' \
+  | {schema_version:1, commands:([.[] as $probe | ("TakerSellsForeign", "TakerSellsLez") as $direction
+      | {route:{pair:$probe.pair, direction:$direction}} + ($probe | del(.pair)) + {timeout_milliseconds:5000}]
+      + if $monero == 1 then [{route:{pair:"Monero", direction:"TakerSellsLez"}, program:$launcher,
+          program_sha256:$launcher_sha, args:["probe-monero", $monerod_login, $wallet_login], timeout_milliseconds:5000}]
+        else [] end)}' \
   >"$state/route-health.json"
 
 case "$role" in
