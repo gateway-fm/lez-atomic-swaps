@@ -595,8 +595,8 @@ hard link) owned by root or the Node's user, not group- or other-writable, at mo
 pinned sha256, in a directory owned by root or the Node's user that is not group- or other-writable.
 A module that fails a check, answers unavailable or reports a price older than 30 s fails the quote
 or publish closed; offers already out keep their price. The systemd package installs the worker as
-`/usr/bin/lez-logos-price-worker`; there the three `--logos-price-*` flags go in the Node's
-`arguments`. No Logos price module exists yet: `node:btc:maker-price-module:TakerSellsForeign` runs
+`/usr/bin/lez-logos-price-worker`; there the unit runs the same launcher, so the two
+`LEZ_LOGOS_PRICE_MODULE*` values go in `/etc/lez/maker/env` and the launcher passes the flags. No Logos price module exists yet: `node:btc:maker-price-module:TakerSellsForeign` runs
 the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ units per 2 sat). How to write and run a module: [docs/price-module-guide.md](../docs/price-module-guide.md).
 
 ## Services
