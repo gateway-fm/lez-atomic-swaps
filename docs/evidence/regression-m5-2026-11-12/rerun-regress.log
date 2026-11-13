@@ -1,0 +1,5 @@
+[01:30:24] regression run: 1 tests at ad6eefad (tree dirty: 0), results in runtime/regress/20261113T013024Z
+[01:30:24] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[01:30:35]     node:btc:maker-price-module:TakerSellsForeign (try 1) starts: LEZ finalized 179, tip 185
+[01:32:36] === node:btc:maker-price-module:TakerSellsForeign (try 1): PASSED in 120 s (+11 s before it); LEZ finalized 265, tip 271
+[01:32:36] regression run: 1 of 1 passed in 2 min, 0 new chains, 0 profile switches, 0 frozen tries
