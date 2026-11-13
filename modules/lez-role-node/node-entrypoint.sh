@@ -404,10 +404,15 @@ case "$role" in
     identity="$("$bin/lez-maker-cli" delivery-identity --signing-key-file "$delivery_key" \
       | tr -d ' \n' | grep -o '02[0-9a-f]\{64\}\|03[0-9a-f]\{64\}')"
     [[ -n "$identity" ]] || { echo "could not publish maker identity" >&2; exit 1; }
-    mkdir -p "$delivery"
-    printf '%s\n' "$identity" >"$delivery/.maker-delivery-identity.pub.tmp"
-    chmod 0444 "$delivery/.maker-delivery-identity.pub.tmp"
-    mv -f "$delivery/.maker-delivery-identity.pub.tmp" "$delivery/maker-delivery-identity.pub"
+    # Best-effort (R2): a Maker restarted while Delivery is cut starts all the
+    # same; the identity, unchanged while its key is, is written again at the
+    # next start.
+    if ! { mkdir -p "$delivery" &&
+           printf '%s\n' "$identity" >"$delivery/.maker-delivery-identity.pub.tmp" &&
+           chmod 0444 "$delivery/.maker-delivery-identity.pub.tmp" &&
+           mv -f "$delivery/.maker-delivery-identity.pub.tmp" "$delivery/maker-delivery-identity.pub"; } 2>/dev/null; then
+      echo "maker: Delivery unavailable; its identity is published at the next start" >&2
+    fi
     args=(--socket "$run/node.sock" --database "$state/maker.sqlite3" --ready-file "$run/ready"
       --delivery-directory "$delivery" --delivery-signing-key-file "$delivery_key"
       --chat-socket "$run/chat.sock" --btc-maker-signing-key-file "$state/btc-chat-signing.key"
@@ -487,11 +492,26 @@ case "$role" in
       chat_socket="$run/logos-chat-proxy.sock"
       start_chat_gateway --proxy-socket "$chat_socket"
     else
+      # The Maker identity this Taker last started with is kept owner-private
+      # in its state: a restart while the Delivery directory cannot be entered
+      # (cut, R2) starts from it. Whenever Delivery can be read its copy is
+      # used, as before, and a change is logged: open swaps keep the identity
+      # they were taken under, new takes use Delivery's.
+      pinned="$state/maker-delivery-identity.pub"
       for _ in $(seq 1 60); do
         [[ -s "$delivery/maker-delivery-identity.pub" ]] && break
+        [[ ! -x "$delivery" && -s "$pinned" ]] && break
         sleep 1
       done
-      maker_identity="$(tr -d ' \n' <"$delivery/maker-delivery-identity.pub")"
+      maker_identity="$({ tr -d ' \n' <"$delivery/maker-delivery-identity.pub"; } 2>/dev/null || true)"
+      last="$({ tr -d ' \n' <"$pinned"; } 2>/dev/null || true)"
+      if [[ -z "$maker_identity" && ! -x "$delivery" ]]; then
+        maker_identity="$last"
+        echo "taker: Delivery unavailable; starting with the Maker identity it last used"
+      elif [[ "$maker_identity" != "$last" && "$maker_identity" =~ ^(02|03)[0-9a-f]{64}$ ]]; then
+        [[ -z "$last" ]] || echo "taker: the Maker's Delivery identity changed from $last to $maker_identity"
+        printf '%s\n' "$maker_identity" >"$pinned"
+      fi
       chat_socket=/run/lez/maker/chat.sock
     fi
     [[ "$maker_identity" =~ ^(02|03)[0-9a-f]{64}$ ]] || { echo "maker public identity unavailable" >&2; exit 1; }
