@@ -71,9 +71,9 @@ tier_tests() { # tier_tests <tier>
       echo "ui:btc:happy:TakerSellsLez"; echo "ui:zec:zec-happy:TakerSellsForeign" ;;
     refunds)
       for d in "${directions[@]}"; do
-        for s in zec-taker-refund zec-maker-refund zec-refund-then-maker-lock; do echo "node:zec:$s:$d"; done
+        for s in zec-taker-refund zec-taker-refund-offline zec-maker-refund zec-refund-then-maker-lock; do echo "node:zec:$s:$d"; done
         echo "ui:zec:zec-taker-refund:$d"
-        for s in taker-refund maker-refund refund-then-maker-lock; do echo "node:btc:$s:$d"; done
+        for s in taker-refund taker-refund-offline maker-refund refund-then-maker-lock; do echo "node:btc:$s:$d"; done
         for s in taker-refund maker-refund; do echo "ui:btc:$s:$d"; done
       done
       echo "ui:zec:zec-maker-refund:TakerSellsLez"; echo "ui:zec:zec-maker-refund:TakerSellsForeign"
@@ -83,14 +83,15 @@ tier_tests() { # tier_tests <tier>
       for d in "${directions[@]}"; do
         for s in zec-happy zec-dynamic-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-kill-taker zec-kill-maker \
           zec-survivor zec-concurrent zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock \
-          zec-bitcoin-down; do
+          zec-offline-after-second-lock zec-offline-after-claim zec-bitcoin-down; do
           echo "node:zec:$s:$d"
         done
         for s in zec-happy zec-concurrent zec-restart-taker zec-restart-maker zec-survivor zec-node-offline; do
           echo "ui:zec:$s:$d"
         done
         for s in happy replay wrong-inputs restart-taker restart-maker kill-taker kill-maker survivor late-claim-confirms \
-          late-claim-unmined concurrent early-lock offline-after-lock regenerated-config tampered-config zebra-down; do
+          late-claim-unmined concurrent early-lock offline-after-lock offline-after-second-lock offline-after-claim \
+          regenerated-config tampered-config zebra-down; do
           echo "node:btc:$s:$d"
         done
         for s in happy restart-taker restart-maker survivor concurrent node-offline; do echo "ui:btc:$s:$d"; done
@@ -215,11 +216,11 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
   # Take-time Zcash swaps are agreed under the Nodes' one ZEC profile: the
   # refund journeys' (-v6) is group zec-v6, every other ZEC test runs on -v5 in `fast`.
   if [[ "$pair" == zec && "${LEZ_ZEC_AGREEMENT:-take-time}" == take-time ]]; then
-    case "$scenario" in zec-taker-refund|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
+    case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
     return 0
   fi
   [[ "$pair" == btc ]] || return 0
-  case "$scenario" in taker-refund|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
+  case "$scenario" in taker-refund|taker-refund-offline|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
 }
 switches=0
 use_profile() { # use_profile <profile>: switch the standing stack to it unless it runs on it already

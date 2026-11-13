@@ -22,6 +22,8 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py concurrent       two swaps interleaved end to end
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
+    node-e2e.py offline-after-second-lock / offline-after-claim  the same cut later, and the counterparty killed under it
+    node-e2e.py taker-refund-offline  taker-refund with Chat and Delivery cut through the Taker's lock and refund (R2)
     node-e2e.py outage-before-take  Chat and Delivery cut before the take: refused, no swap; the same take succeeds once back (R8)
     node-e2e.py zebra-down       the lane's Zebra stopped: a Bitcoin swap completes, then a Zcash one once it is back (R3)
     node-e2e.py taker-refund     Maker stopped before funding; Taker refunds its Bitcoin
@@ -1723,24 +1725,51 @@ def assert_restored() -> None:
     log("  both dependencies are back and neither Node is degraded")
 
 
-def scenario_offline_after_lock(stamp: str) -> dict:
+def assert_taker_side_cut() -> dict:
+    """The Taker's side still refused both channels (taker_offchain_probe)."""
+    probe = taker_offchain_probe()
+    if probe.get("chat") != "EACCES" or probe.get("delivery") != "EACCES" or probe.get("delivery_fds"):
+        raise Failure(f"the cut does not hold on the Taker's side: {probe}")
+    log(f"  the Taker's side is still refused: connect {probe['chat']}, list Delivery {probe['delivery']}")
+    return probe
+
+
+def start_maker_after_cut(cut: bool) -> None:
+    """Starts the stopped Maker; after a cut the modes are put back as soon as
+    its container runs, before its Node is waited for."""
+    docker("start", NODES["maker"][0])
+    if cut:
+        restore_delivery_and_chat()
+    wait_healthy("maker")
+
+
+def scenario_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
     """R2: once the first lock is on chain the swap proceeds on chain state alone.
 
-    Both off-chain dependencies are cut after the lock (cut_delivery_and_chat: the
+    Both off-chain dependencies are cut at `at` (cut_delivery_and_chat: the
     kernel refuses the Taker's Node user a connect to Chat and a read of Delivery, as
     proven from the Taker's container) and stay cut until the swap is complete, while
     the Maker's open Chat connections are sampled throughout and must stay none.
-    Neither Node is restarted: the point is that a swap in flight does not need Logos
-    Chat or Delivery, not that it survives a restart.
+    `at` is the first lock (offline-after-lock), both legs locked
+    (offline-after-second-lock) or the Taker's claim sent (offline-after-claim).
+    Neither Node is restarted under the cut: a Node's launcher reads (Taker) or
+    writes (Maker) the Maker's identity in Delivery at every start and exits
+    while it cannot, so a Node killed during the outage stays down until
+    Delivery is back.
     """
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
     lock(swap_id)
-    log("  cutting Logos Chat and Delivery, with the first lock already on chain")
+    if at != "first lock":
+        wait_taker(swap_id, {"claim_available"}, timeout=1500, describe="(Maker funding)")
+    if at == "claim sent":
+        claim(swap_id, stamp)
+    log(f"  cutting Logos Chat and Delivery at '{at}'")
     watch = None
     try:
         watch = cut_delivery_and_chat()
-        claim(swap_id, stamp)
+        if at != "claim sent":
+            claim(swap_id, stamp)
         wait_completed(swap_id)
         held = assert_cut_held(watch)
         log("  the swap completed with both off-chain dependencies cut")
@@ -1749,7 +1778,8 @@ def scenario_offline_after_lock(stamp: str) -> dict:
             watch.stop()
         restore_delivery_and_chat()
     assert_restored()
-    return {"swap_id": swap_id, "cut": held, "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
+    return {"swap_id": swap_id, "at": at, "cut": held,
+            "bitcoin_claim": assert_cooperative_claim_is_key_path(swap_id)}
 
 
 def maker_cli(*arguments: str) -> object:
@@ -2173,7 +2203,12 @@ def request_refund_until_terminal(swap_id: str, stamp: str, timeout: int, mine_e
     raise wait.failure()
 
 
-def scenario_taker_refund(stamp: str) -> dict:
+def scenario_taker_refund(stamp: str, cut: bool = False) -> dict:
+    """The Maker stopped right after the take, the Taker locks and refunds its
+    leg alone. With `cut` (taker-refund-offline, R2) Chat and Delivery are cut
+    before the Maker is stopped (cut_delivery_and_chat, proven from both sides)
+    and stay cut through the Taker's lock and refund, the Taker's side refused
+    at the end; they are restored when the Maker starts again."""
     profile = require_fast_profile()
     csv_blocks = int(profile["LEZ_BTC_REFUND_CSV_BLOCKS"])
     cutoff = int(profile["LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS"])
@@ -2182,9 +2217,13 @@ def scenario_taker_refund(stamp: str) -> dict:
     opens = int(profile["LEZ_BTC_LATER_REFUND_SECONDS"]) if REVERSE else cutoff
     offer_id = publish_offer(stamp)
     swap_id, _ = take(offer_id, stamp)
+    if cut:
+        log("  cutting Logos Chat and Delivery before the Maker stops and the Taker locks")
+        cut_delivery_and_chat().stop()
     log(f"  stopping the Maker Node so it never {'locks Bitcoin' if REVERSE else 'funds'}")
     docker("stop", NODES["maker"][0])
     before = node_balances("taker")
+    held = None
     try:
         txid = lock(swap_id)
         mine(csv_blocks + 1)
@@ -2193,9 +2232,12 @@ def scenario_taker_refund(stamp: str) -> dict:
         request_refund_until_terminal(swap_id, stamp, timeout=opens + 1500)
         after = node_balances("taker")
         log(f"  Taker refunded; Taker Node balances {before} → {after}")
+        if cut:
+            held = assert_taker_side_cut()
     finally:
-        docker("start", NODES["maker"][0])
-        wait_healthy("maker")
+        start_maker_after_cut(cut)
+    if cut:
+        assert_restored()
     # The Maker follows the Taker's refund to Bitcoin finality; keep regtest
     # blocks coming so finality does not wait on the two-minute miner alone.
     wait = Wait("the Maker to reconcile the refunded swap to a terminal state", 900)
@@ -2210,7 +2252,7 @@ def scenario_taker_refund(stamp: str) -> dict:
     else:
         raise wait.failure()
     return {"swap_id": swap_id, "lock_txid": txid, "taker_balance_before": before,
-            "taker_balance_after": after,
+            "taker_balance_after": after, "cut": cut, "taker_probe_at_refund": held,
             "bitcoin_refund": assert_refund_is_script_path(swap_id, required=not REVERSE)}
 
 
@@ -4497,7 +4539,7 @@ def wait_maker_phase(swap_id: str, phases: set[str], timeout: int, describe: str
     raise wait.failure()
 
 
-def scenario_zec_taker_refund(stamp: str) -> dict:
+def scenario_zec_taker_refund(stamp: str, cut: bool = False) -> dict:
     """The Taker locks LEZ, the Maker never funds Zcash, the Taker refunds at
     the agreement's LEZ refund time (4 min after provisioning on the refund
     journeys' profile) and the Maker reconciles the refunded leg once it is back.
@@ -4508,9 +4550,11 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
     so a Maker that only ever saw the offer has nothing to reconcile and stays
     at `offered`. Its zebra route is therefore cut instead of stopping it at
     once: it observes the LEZ lock through the sidecar, cannot plan the Zcash
-    funding, and is stopped at `taker_lock_confirmed`."""
+    funding, and is stopped at `taker_lock_confirmed`. With `cut`
+    (zec-taker-refund-offline, R2) Chat and Delivery are cut before the Maker
+    is stopped and stay cut through the Taker's refund (as taker-refund's)."""
     if not zec_taker_sells_lez():
-        return scenario_zec_taker_refund_foreign(stamp)
+        return scenario_zec_taker_refund_foreign(stamp, cut)
     corridor = zec_provision(profile=ZEC_REFUND_PROFILE)
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
@@ -4526,6 +4570,8 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
         if zec_outpoint_unspent(outpoint) is not True:
             raise Failure("the provisioned coinbase outpoint was spent although the Maker's zebra route was cut")
         log("  the Maker observed the Taker's LEZ lock; stopping the Maker Node so it never funds Zcash")
+        if cut:
+            cut_delivery_and_chat().stop()
         docker("stop", NODES["maker"][0])
         # The LEZ escrow refunds only once the chain clock passes the agreement's
         # refund time: provisioning time + the profile's delay (4 min on the
@@ -4537,9 +4583,11 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
         log("  the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed")
         zec_refund_until_terminal(swap_id, stamp, timeout=1800)
         log("  Taker refunded its LEZ escrow")
+        held = assert_taker_side_cut() if cut else None
     finally:
-        docker("start", NODES["maker"][0])
-        wait_healthy("maker")
+        start_maker_after_cut(cut)
+    if cut:
+        assert_restored()
     # Back up, the Maker's own drive re-observes the Taker's lock and finds the
     # escrow refunded, which its funding path refuses (no Zcash is ever sent).
     # The operator's refund action runs the agreement-ordered recovery: the
@@ -4555,10 +4603,11 @@ def scenario_zec_taker_refund(stamp: str) -> dict:
     if phase not in {"refunded", "taker_leg_refunded"}:
         raise Failure(f"the Maker ended in {phase}, not a refunded phase")
     return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"],
-            "maker_terminal_phase": phase, "zcash_funding_outpoint_unspent": True}
+            "maker_terminal_phase": phase, "zcash_funding_outpoint_unspent": True, "cut": cut,
+            "taker_probe_at_refund": held}
 
 
-def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
+def scenario_zec_taker_refund_foreign(stamp: str, cut: bool = False) -> dict:
     """TakerSellsForeign: the Taker funds the Zcash HTLC, the Maker never locks
     LEZ, the Taker refunds its Zcash at the agreement's refund height and the
     Maker reconciles the refunded leg once it is back. As in the other
@@ -4585,6 +4634,8 @@ def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
             raise Failure(f"the Maker locked LEZ although its sequencer route was cut (Taker actor at {zec_actor_phase(config)})")
         log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Maker observed it; "
             "stopping the Maker Node so it never locks LEZ")
+        if cut:
+            cut_delivery_and_chat().stop()
         docker("stop", NODES["maker"][0])
         height = int(zebra("getblockcount"))
         if height < corridor["zcash_refund_height"]:
@@ -4592,9 +4643,11 @@ def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
         log("  the Taker's Zcash funding is confirmed, the Maker is down and the refund height is reached")
         zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True)
         log("  Taker refunded its Zcash HTLC")
+        held = assert_taker_side_cut() if cut else None
     finally:
-        docker("start", NODES["maker"][0])
-        wait_healthy("maker")
+        start_maker_after_cut(cut)
+    if cut:
+        assert_restored()
     # Back up, the Maker re-observes the Taker's funding and finds it refunded;
     # the operator's refund action runs the agreement-ordered recovery and the
     # non-owner ends Refunded.
@@ -4612,7 +4665,7 @@ def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
             "maker_terminal_phase": phase,
             "zcash_funding": {"transaction_id": funding[0], "height": funding[1]},
             "zcash_refund": {"transaction_id": refund_tx[0], "height": refund_tx[1]},
-            "zcash_refund_height": corridor["zcash_refund_height"]}
+            "zcash_refund_height": corridor["zcash_refund_height"], "cut": cut, "taker_probe_at_refund": held}
 
 
 def scenario_zec_maker_refund(stamp: str) -> dict:
@@ -4829,21 +4882,34 @@ def scenario_zec_early_lock(stamp: str) -> dict:
             "held_seconds": held, "second_leg_withheld": True, "seen_in_block": seen_in_block}
 
 
-def scenario_zec_offline_after_lock(stamp: str) -> dict:
+def scenario_zec_offline_after_lock(stamp: str, at: str = "first lock") -> dict:
     """R2 for Zcash: once the first lock is confirmed the swap proceeds on chain
-    state alone. Logos Chat and Delivery are cut as in the BTC twin
+    state alone. Logos Chat and Delivery are cut at `at` as in the BTC twin
     (cut_delivery_and_chat, proven from both sides) and stay cut until the swap
-    is complete; neither Node is restarted."""
+    is complete, at the first lock, both legs locked or the Taker's claim sent;
+    neither Node is restarted (see the BTC twin)."""
     corridor = zec_provision()
     swap_id = zec_take_or_resume(corridor["offer_id"], stamp)
     config = zec_taker_actor_config(corridor["receipt_output"])
-    zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=1500, corridor=corridor,
-                         mine_pending_only=False, describe="(the first lock confirmed)")
-    log("  cutting Logos Chat and Delivery, with the first lock confirmed")
+    if at == "first lock":
+        zec_wait_until_phase(swap_id, config, ZEC_PAST_FIRST_LOCK, timeout=1500, corridor=corridor,
+                             mine_pending_only=False, describe="(the first lock confirmed)")
+    else:
+        view = zec_wait_until(swap_id, config, {"claim_available"}, timeout=2400, corridor=corridor,
+                              describe=zec_flow())
+    if at == "claim sent":
+        call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                              "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+             timeout=300)
+    log(f"  cutting Logos Chat and Delivery at '{at}'")
     watch = None
     try:
         watch = cut_delivery_and_chat()
-        zec_finish(swap_id, config, corridor, stamp)
+        if at == "claim sent":
+            zec_wait_until(swap_id, config, {"completed"}, timeout=900, corridor=corridor, describe="(claim inclusion)")
+            wait_completed(swap_id, timeout=600)
+        else:
+            zec_finish(swap_id, config, corridor, stamp)
         held = assert_cut_held(watch)
         log("  the swap completed with both off-chain dependencies cut")
     finally:
@@ -4851,7 +4917,8 @@ def scenario_zec_offline_after_lock(stamp: str) -> dict:
             watch.stop()
         restore_delivery_and_chat()
     assert_restored()
-    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "cut": held}
+    return {"swap_id": swap_id, "corridor": corridor["run_id"], "profile": corridor["profile"], "at": at,
+            "cut": held}
 
 
 def scenario_zec_outage_before_take(stamp: str) -> dict:
@@ -5368,6 +5435,9 @@ ZEC_SCENARIOS = {
     "zec-claim-collision": scenario_zec_claim_collision,
     "zec-early-lock": scenario_zec_early_lock,
     "zec-offline-after-lock": scenario_zec_offline_after_lock,
+    "zec-offline-after-second-lock": lambda stamp: scenario_zec_offline_after_lock(stamp, "both legs locked"),
+    "zec-offline-after-claim": lambda stamp: scenario_zec_offline_after_lock(stamp, "claim sent"),
+    "zec-taker-refund-offline": lambda stamp: scenario_zec_taker_refund(stamp, cut=True),
     "zec-outage-before-take": scenario_zec_outage_before_take,
     "zec-refund-then-maker-lock": scenario_zec_refund_then_maker_lock,
     "zec-replay": scenario_zec_replay,
@@ -5402,6 +5472,9 @@ SCENARIOS = {
     "concurrent": scenario_concurrent,
     "early-lock": scenario_early_lock,
     "offline-after-lock": scenario_offline_after_lock,
+    "offline-after-second-lock": lambda stamp: scenario_offline_after_lock(stamp, "both legs locked"),
+    "offline-after-claim": lambda stamp: scenario_offline_after_lock(stamp, "claim sent"),
+    "taker-refund-offline": lambda stamp: scenario_taker_refund(stamp, cut=True),
     "outage-before-take": scenario_outage_before_take,
     "taker-refund": scenario_taker_refund,
     "maker-refund": scenario_maker_refund,
