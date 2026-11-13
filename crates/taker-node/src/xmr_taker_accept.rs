@@ -1,15 +1,18 @@
+#![doc(hidden)]
+//! Reusable owner-private XMR taker acceptance support.
+
 use std::path::{Path, PathBuf};
 
+use crate::{
+    DeliveryOfferQueryV1, RunLocalDelivery, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
+    XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
+    secure_file::read_private_file,
+};
 use anyhow::{Context as _, ensure};
 use lez_bridge_protocol::{RequestId, RunId};
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_xmr_chat_swap_id};
-use lez_taker_node::{
-    DeliveryOfferQueryV1, RunLocalDelivery, XmrChatActivateRequestV1, XmrChatActivateResponseV1,
-    XmrChatStageARequestV1, XmrChatStageAResponseV1, call_local_chat_rpc,
-    secure_file::read_private_file,
-};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrAgreementV1, XmrSwapDirectionV1,
 };
@@ -25,38 +28,40 @@ use xmr_reference_actor::{
 };
 use zeroize::Zeroizing;
 
-use lez_taker_node::acceptance_files::{
+use crate::acceptance_files::{
     MAX_TAKER_RECEIPT_BYTES, decode_sha256, derived_request_id, normalized_absolute,
     publish_exact_new, resolved_new_path,
 };
 
-pub(crate) struct XmrTakeInput<'a> {
-    pub(crate) delivery: Option<&'a RunLocalDelivery>,
-    pub(crate) now_unix_seconds: u64,
-    pub(crate) offer_id: &'a str,
-    pub(crate) chat_socket: &'a Path,
-    pub(crate) reservation_id: &'a str,
-    pub(crate) foreign_units: u64,
-    pub(crate) stage_a_file: &'a Path,
-    pub(crate) activation_file: &'a Path,
-    pub(crate) source_taker_root: &'a Path,
-    pub(crate) taker_public_packet: &'a Path,
-    pub(crate) maker_public_packet: &'a Path,
-    pub(crate) taker_role_journal: &'a Path,
-    pub(crate) taker_actor_root: &'a Path,
-    pub(crate) acceptance_receipt_file: &'a Path,
-    pub(crate) effect: Option<XmrEffectTakeInput<'a>>,
+#[derive(Debug)]
+pub struct XmrTakeInput<'a> {
+    pub delivery: Option<&'a RunLocalDelivery>,
+    pub now_unix_seconds: u64,
+    pub offer_id: &'a str,
+    pub chat_socket: &'a Path,
+    pub reservation_id: &'a str,
+    pub foreign_units: u64,
+    pub stage_a_file: &'a Path,
+    pub activation_file: &'a Path,
+    pub source_taker_root: &'a Path,
+    pub taker_public_packet: &'a Path,
+    pub maker_public_packet: &'a Path,
+    pub taker_role_journal: &'a Path,
+    pub taker_actor_root: &'a Path,
+    pub acceptance_receipt_file: &'a Path,
+    pub effect: Option<XmrEffectTakeInput<'a>>,
 }
 
-pub(crate) struct XmrEffectTakeInput<'a> {
-    pub(crate) effect_authority_file: &'a Path,
-    pub(crate) effect_manifest_file: &'a Path,
-    pub(crate) workflow_journal: &'a Path,
-    pub(crate) run_id: &'a str,
+#[derive(Debug)]
+pub struct XmrEffectTakeInput<'a> {
+    pub effect_authority_file: &'a Path,
+    pub effect_manifest_file: &'a Path,
+    pub workflow_journal: &'a Path,
+    pub run_id: &'a str,
 }
 
-#[derive(Serialize)]
-pub(crate) struct XmrAcceptanceOutput {
+#[derive(Debug, Serialize)]
+pub struct XmrAcceptanceOutput {
     schema_version: u16,
     offer_id: String,
     offer_revision: u64,
@@ -69,13 +74,13 @@ pub(crate) struct XmrAcceptanceOutput {
     actor: XmrAcceptanceActorOutput,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct XmrReplayOutput {
     stage_a: bool,
     activation: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct XmrAcceptanceActorOutput {
     role: ActorRole,
     receipt_file: PathBuf,
@@ -241,31 +246,44 @@ fn parse_effect_capable_receipt_bytes(bytes: &[u8]) -> anyhow::Result<XmrEffectR
 }
 
 /// Digest-pinned receipt-v2 bytes awaiting semantic validation under role lock.
-pub(crate) struct XmrTakerEffectReceiptSelector {
+pub struct XmrTakerEffectReceiptSelector {
     binding: XmrEffectReceiptBinding,
     actor_manifest_bytes: Zeroizing<Vec<u8>>,
     effect_manifest_bytes: Zeroizing<Vec<u8>>,
     effect_authority_bytes: Zeroizing<Vec<u8>>,
 }
 
+impl std::fmt::Debug for XmrTakerEffectReceiptSelector {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("XmrTakerEffectReceiptSelector")
+            .field("swap_id", &self.binding.swap_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl XmrTakerEffectReceiptSelector {
-    pub(crate) fn swap_id(&self) -> &SwapId {
+    #[must_use]
+    pub fn swap_id(&self) -> &SwapId {
         &self.binding.swap_id
     }
 
-    pub(crate) fn state_database(&self) -> &Path {
+    #[must_use]
+    pub fn state_database(&self) -> &Path {
         &self.binding.actor_state_database
     }
 
-    pub(crate) fn workflow_journal(&self) -> &Path {
+    #[must_use]
+    pub fn workflow_journal(&self) -> &Path {
         &self.binding.workflow_journal
     }
 
-    pub(crate) fn run_id(&self) -> &str {
+    #[must_use]
+    pub fn run_id(&self) -> &str {
         &self.binding.run_id
     }
 
-    pub(crate) fn validate_execution(&self) -> anyhow::Result<ValidatedXmrEffectExecutionV3> {
+    pub fn validate_execution(&self) -> anyhow::Result<ValidatedXmrEffectExecutionV3> {
         validate_xmr_effect_manifest_v3_projection_bytes(
             &self.effect_manifest_bytes,
             &self.actor_manifest_bytes,
@@ -306,7 +324,7 @@ impl XmrTakerEffectReceiptSelector {
     }
 }
 
-pub(crate) fn load_xmr_taker_effect_receipt_selector(
+pub fn load_xmr_taker_effect_receipt_selector(
     path: &Path,
 ) -> anyhow::Result<XmrTakerEffectReceiptSelector> {
     let receipt_bytes = read_private_file(
@@ -372,7 +390,7 @@ pub(crate) fn load_xmr_taker_effect_receipt_selector(
 ///
 /// The CLI must acquire the role-state kernel lock before semantically validating
 /// `manifest_bytes`; this split prevents a validate-then-lock TOCTOU window.
-pub(crate) struct XmrTakerReceiptSelector {
+pub struct XmrTakerReceiptSelector {
     swap_id: SwapId,
     swap_id_bytes: [u8; 32],
     state_database: PathBuf,
@@ -385,20 +403,45 @@ pub(crate) struct XmrTakerReceiptSelector {
     manifest_bytes: Zeroizing<Vec<u8>>,
 }
 
+impl std::fmt::Debug for XmrTakerReceiptSelector {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("XmrTakerReceiptSelector")
+            .field("swap_id", &self.swap_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl XmrTakerReceiptSelector {
-    pub(crate) fn swap_id(&self) -> &SwapId {
+    #[must_use]
+    pub fn swap_id(&self) -> &SwapId {
         &self.swap_id
     }
 
-    pub(crate) fn state_database(&self) -> &Path {
+    #[must_use]
+    pub fn state_database(&self) -> &Path {
         &self.state_database
     }
 
-    pub(crate) fn manifest_bytes(&self) -> &[u8] {
+    #[must_use]
+    pub fn manifest_bytes(&self) -> &[u8] {
         &self.manifest_bytes
     }
 
-    pub(crate) fn receipt_matches(
+    /// The published Stage A and its receipt-pinned digest.
+    #[must_use]
+    pub fn stage_a(&self) -> (&Path, [u8; 32]) {
+        (&self.stage_a_file, self.stage_a_sha256)
+    }
+
+    /// The published Stage B and its receipt-pinned digest.
+    #[must_use]
+    pub fn stage_b(&self) -> (&Path, [u8; 32]) {
+        (&self.stage_b_file, self.stage_b_sha256)
+    }
+
+    #[must_use]
+    pub fn receipt_matches(
         &self,
         authority: &xmr_reference_actor::ValidatedXmrTakerAuthorityV2,
     ) -> bool {
@@ -413,9 +456,7 @@ impl XmrTakerReceiptSelector {
     }
 }
 
-pub(crate) fn load_xmr_taker_receipt_selector(
-    path: &Path,
-) -> anyhow::Result<XmrTakerReceiptSelector> {
+pub fn load_xmr_taker_receipt_selector(path: &Path) -> anyhow::Result<XmrTakerReceiptSelector> {
     let bytes = read_private_file(
         path,
         MAX_TAKER_RECEIPT_BYTES,
@@ -490,7 +531,7 @@ fn decode_canonical_sha256(value: &str, label: &str) -> anyhow::Result<[u8; 32]>
 }
 
 #[allow(clippy::too_many_lines)] // Keeps the two RPC commits and receipt ordering visible together.
-pub(crate) async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAcceptanceOutput> {
+pub async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAcceptanceOutput> {
     validate_acceptance_paths(&input)?;
     let offer_id = MakerOfferId::new(input.offer_id)?;
     let reservation_id = RequestId::new(input.reservation_id)?;

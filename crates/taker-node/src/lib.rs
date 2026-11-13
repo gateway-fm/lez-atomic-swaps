@@ -8,6 +8,9 @@ mod taker_service_config;
 #[doc(hidden)]
 pub mod acceptance_files;
 pub mod btc_taker_accept;
+#[cfg(feature = "pair-xmr")]
+#[doc(hidden)]
+pub mod xmr_taker_accept;
 #[cfg(feature = "pair-zec")]
 #[doc(hidden)]
 pub mod zec_taker_accept;
