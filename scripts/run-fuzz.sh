@@ -21,10 +21,11 @@ case "$target" in
   offer_announcement) max_len=32769 ;;    # one byte over the announcement bound
   chat_frame) max_len=16384 ;;            # frames may reach 1 MiB; mutation stays far below it
   zec_agreement_wire) max_len=16385 ;;    # one byte over the agreement record bound
+  xmr_reserve_wire) max_len=393216 ;;     # the ~300 KiB reserve-response seed with room to grow
   *) max_len=0 ;;
 esac
 (( max_len > 0 )) && [[ "$seconds" =~ ^[1-9][0-9]{0,5}$ ]] || {
-  echo "usage: $0 coordinator|offer_announcement|chat_frame|zec_agreement_wire <seconds> [work-dir]" >&2
+  echo "usage: $0 coordinator|offer_announcement|chat_frame|zec_agreement_wire|xmr_reserve_wire <seconds> [work-dir]" >&2
   echo "       (FUZZ_JOBS, default 6, sets the parallel jobs)" >&2
   exit 2
 }

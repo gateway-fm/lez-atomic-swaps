@@ -57,6 +57,7 @@
     {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"coordinator","class":"fuzz","stability":"non_deployable","canonical_name":"coordinator","legacy_aliases":[],"role":"none","pair":"all","profiles":[]},
     {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"offer_announcement","class":"fuzz","stability":"non_deployable","canonical_name":"offer_announcement","legacy_aliases":[],"role":"none","pair":"all","profiles":[]},
     {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"chat_frame","class":"fuzz","stability":"non_deployable","canonical_name":"chat_frame","legacy_aliases":[],"role":"none","pair":"all","profiles":[]},
-    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"zec_agreement_wire","class":"fuzz","stability":"non_deployable","canonical_name":"zec_agreement_wire","legacy_aliases":[],"role":"none","pair":"zcash","profiles":[]}
+    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"zec_agreement_wire","class":"fuzz","stability":"non_deployable","canonical_name":"zec_agreement_wire","legacy_aliases":[],"role":"none","pair":"zcash","profiles":[]},
+    {"manifest":"fuzz/Cargo.toml","package":"lez-swap-core-fuzz","target":"xmr_reserve_wire","class":"fuzz","stability":"non_deployable","canonical_name":"xmr_reserve_wire","legacy_aliases":[],"role":"none","pair":"monero","profiles":[]}
   ]
 }

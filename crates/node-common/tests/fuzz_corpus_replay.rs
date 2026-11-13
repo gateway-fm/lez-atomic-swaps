@@ -1,11 +1,14 @@
-//! Replays every seed of `fuzz/corpus/offer_announcement` and `fuzz/corpus/chat_frame` through
-//! the fuzz targets' own harnesses and oracles, so the stable workspace test run covers the
-//! corpora that only cargo-fuzz (nightly) would otherwise execute.
+//! Replays every seed of `fuzz/corpus/offer_announcement`, `fuzz/corpus/chat_frame` and
+//! `fuzz/corpus/xmr_reserve_wire` through the fuzz targets' own harnesses and oracles, so the
+//! stable workspace test run covers the corpora that only cargo-fuzz (nightly) would otherwise
+//! execute.
 
 #[path = "../../../fuzz/fuzz_targets/chat_frame_harness.rs"]
 mod chat_frame_harness;
 #[path = "../../../fuzz/fuzz_targets/offer_announcement_harness.rs"]
 mod offer_announcement_harness;
+#[path = "../../../fuzz/fuzz_targets/xmr_reserve_wire_harness.rs"]
+mod xmr_reserve_wire_harness;
 
 fn replay(target: &str, run: fn(&[u8])) {
     let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -30,4 +33,9 @@ fn offer_announcement_fuzz_corpus_replays_on_stable() {
 #[test]
 fn chat_frame_fuzz_corpus_replays_on_stable() {
     replay("chat_frame", chat_frame_harness::run);
+}
+
+#[test]
+fn xmr_reserve_wire_fuzz_corpus_replays_on_stable() {
+    replay("xmr_reserve_wire", xmr_reserve_wire_harness::run);
 }
