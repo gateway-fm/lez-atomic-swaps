@@ -162,10 +162,18 @@ uses public PDAs, and its eventual deployment path must bind the program ID to
 the checked ELF and immutable deployment manifest rather than free-form input.
 
 The exact official LEZ graph also forces `hickory-proto 0.25.0-alpha.5`
-(`RUSTSEC-2026-0118`, `RUSTSEC-2026-0119` and, since 2026-11-11, `RUSTSEC-2026-0487`, `-0489`, `-0490` and `-0491`; since 2026-11-12, `RUSTSEC-2026-0505`, `-0511` and `-0512`, and `RUSTSEC-2026-0514` in `hickory-resolver`) through Logos-owned common/libp2p
+(`RUSTSEC-2026-0118`, `RUSTSEC-2026-0119` and, since 2026-11-11, `RUSTSEC-2026-0487`, `-0489`, `-0490` and `-0491`; since 2026-11-12, `RUSTSEC-2026-0505`, `-0511` and `-0512`, and `RUSTSEC-2026-0514` in `hickory-resolver`; since 2026-11-13, `RUSTSEC-2026-0530` and `-0531`) through Logos-owned common/libp2p
 dependencies. Graph-local `cargo-deny` policy permits only those exact
 advisories, while tests bind the upstream revisions, exclude the generated
 wallet graph, and keep the sequencer future unpolled with DNSSEC features
 absent. Under ADR 0018 this disclosed Logos-owned exception does not stop M2
 testnet certification, but it remains a production-release blocker until
 upstream removes the path or a separate security review explicitly accepts it.
+
+The same libp2p 0.55 pin forces `libp2p-gossipsub 0.48.0` (`RUSTSEC-2026-0534`,
+`-0535`, `-0536` and `-0537`), `libp2p-quic 0.12.0` (`RUSTSEC-2026-0525`) and
+`quinn-udp 0.5.15` (`RUSTSEC-2026-0538`), all since 2026-11-13. Their fixed
+releases need a newer libp2p. No source in this fixture, the deployer, the
+sidecar or the sequencer reproducers starts a libp2p swarm, gossipsub behaviour
+or QUIC endpoint. The exceptions go when LEZ moves off libp2p 0.55 with the
+port to LEZ 0.4 (issue #107).
