@@ -20,6 +20,8 @@ under `runtime/e2e/<scenario>.json`, so CI can run them as separate jobs.
     node-e2e.py maker-cli        the happy swap with every Maker call made by lez-maker-cli; a non-owner is refused (U3)
     node-e2e.py maker-price-module  a route priced by the TEST Logos price module: quote, publish, a swap; then fail-closed (F8)
     node-e2e.py concurrent       two swaps interleaved end to end
+    node-e2e.py concurrent-kill-maker  the same, the Maker SIGKILLed while both swaps are locked (R5)
+    node-e2e.py mixed-pair       a Bitcoin and a Zcash swap in flight at once on the same two Nodes (R5)
     node-e2e.py early-lock       the Taker's lock is held unconfirmed; the Maker must not lock (R1)
     node-e2e.py offline-after-lock  Chat and Delivery cut after the lock; the swap finishes on chain state alone (R2)
     node-e2e.py offline-after-second-lock / offline-after-claim  the same cut later, and the counterparty killed under it
@@ -2105,7 +2107,10 @@ def scenario_outage_before_take(stamp: str) -> dict:
     return {"swap_id": swap_id, "outage": outage}
 
 
-def scenario_concurrent(stamp: str) -> dict:
+def scenario_concurrent(stamp: str, kill: bool = False) -> dict:
+    """Two swaps interleaved end to end. With `kill` (concurrent-kill-maker, R5)
+    the Maker's container is killed with SIGKILL once both swaps have both legs
+    locked, and both must still complete."""
     ensure_coins("lez-maker" if REVERSE else "lez-taker", 2)
     ids = []
     if REVERSE:
@@ -2137,11 +2142,59 @@ def scenario_concurrent(stamp: str) -> dict:
         swap_b, _ = take(offer_b, stamp, "-b")
         lock(swap_b)
         ids = [("-a", swap_a), ("-b", swap_b)]
+    killed = None
+    if kill:
+        for _, swap_id in ids:
+            wait_taker(swap_id, {"claim_available"}, timeout=1500, describe="(both legs locked)")
+        log(f"  both swaps have both legs locked (Maker {[maker_phase(s) for _, s in ids]})")
+        killed = kill_node("maker")
     for suffix, swap_id in ids:
         claim(swap_id, stamp, suffix)
     for _, swap_id in ids:
         wait_completed(swap_id)
-    return {"swap_ids": [s for _, s in ids]}
+    return {"swap_ids": [s for _, s in ids], "killed": killed}
+
+
+def scenario_mixed_pair(stamp: str) -> dict:
+    """R5: a Bitcoin and a Zcash swap in flight at once on the same Maker and
+    Taker, in the test's direction. The Zcash offer is published first, then
+    the Bitcoin swap taken and locked, then the Zcash one taken; both must be
+    non-terminal at the moment both have been taken and again when the Bitcoin
+    claim is sent, and both complete on both Nodes."""
+    direction = ROUTE["direction"]
+    use_route("Zcash", direction)
+    try:
+        corridor = zec_provision()
+    finally:
+        use_route("Bitcoin", direction)
+    btc_swap, _ = take(publish_offer(stamp, "-btc"), stamp, "-btc")
+    lock(btc_swap)
+    use_route("Zcash", direction)
+    try:
+        zec_swap = zec_take_or_resume(corridor["offer_id"], stamp, "-zec")
+        config = zec_taker_actor_config(corridor["receipt_output"])
+    finally:
+        use_route("Bitcoin", direction)
+    overlap = []
+
+    def both_in_flight(when: str) -> None:
+        states = {pair: taker_view(swap_id)["state"] for pair, swap_id in (("Bitcoin", btc_swap), ("Zcash", zec_swap))}
+        phases = {pair: maker_phase(swap_id) for pair, swap_id in (("Bitcoin", btc_swap), ("Zcash", zec_swap))}
+        if any(state in TERMINAL for state in states.values()):
+            raise NotExercised(f"{when} one swap was already terminal: Taker {states}")
+        overlap.append({"when": when, "taker": states, "maker": phases})
+        log(f"  {when}, both in flight: Taker {states}, Maker {phases}")
+
+    both_in_flight("both taken")
+    claim(btc_swap, stamp, "-btc")
+    both_in_flight("the Bitcoin claim sent")
+    use_route("Zcash", direction)
+    try:
+        zec_finish(zec_swap, config, corridor, stamp, "-zec")
+    finally:
+        use_route("Bitcoin", direction)
+    wait_completed(btc_swap)
+    return {"bitcoin_swap": btc_swap, "zcash_swap": zec_swap, "overlap": overlap}
 
 
 # The timing profiles a refund scenario can run on (gen-config.sh): `refund`
@@ -3585,13 +3638,15 @@ def zec_wait_all_until(swaps: list[tuple[str, str, dict]], states: set[str], tim
     raise wait.failure()
 
 
-def scenario_zec_concurrent(stamp: str) -> dict:
+def scenario_zec_concurrent(stamp: str, kill: bool = False) -> dict:
     """ZEC analogue of `concurrent`, in the BTC shape: two prepared entries of
     one corridor run (`--swaps 2`), both taken together, both Taker actors
     driven by the Taker Node with their LEZ steps interleaving on the same role accounts,
     two Maker fundings from distinct coinbase outputs, two Taker claims, both
     completed on both Nodes. The staggered variant (A final before B starts)
-    is `zec-concurrent-staggered`, a fixture, not the evidence."""
+    is `zec-concurrent-staggered`, a fixture, not the evidence. With `kill`
+    (zec-concurrent-kill-maker, R5) the Maker's container is killed with
+    SIGKILL once both swaps offer the Taker its claim (both legs locked)."""
     zec_provision(swaps=2)
     corridors = list(ZEC_CORRIDORS)
     if len(corridors) != 2:
@@ -3604,6 +3659,10 @@ def scenario_zec_concurrent(stamp: str) -> dict:
     log(f"  both taken: {swaps[0][0]} and {swaps[1][0]}; driving both Taker actors in turn")
     views = zec_wait_all_until(swaps, {"claim_available"}, timeout=3000,
                                 describe="(two swaps: " + zec_flow() + ")")
+    killed = None
+    if kill:
+        killed = kill_node("maker")
+        views = zec_wait_all_until(swaps, {"claim_available"}, timeout=600, describe="(after the Maker's kill)")
     fundings = {}
     for swap_id, _, corridor in swaps:
         outpoint = (corridor["funding_outpoints"][0]["transaction_id"], int(corridor["funding_outpoints"][0]["output_index"]))
@@ -3642,7 +3701,7 @@ def scenario_zec_concurrent(stamp: str) -> dict:
                        "zcash_claim": {"transaction_id": claims[swap_id][0], "height": claims[swap_id][1]},
                        "taker_lez_replans": replans[swap_id]}
                       for swap_id, _, corridor in swaps],
-            "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"]}
+            "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"], "killed": killed}
 
 
 def zec_wait_refused(swap_id: str, timeout: int) -> dict:
@@ -5431,6 +5490,7 @@ ZEC_SCENARIOS = {
     "zec-taker-refund": scenario_zec_taker_refund,
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,
+    "zec-concurrent-kill-maker": lambda stamp: scenario_zec_concurrent(stamp, kill=True),
     "zec-concurrent-staggered": scenario_zec_concurrent_staggered,
     "zec-claim-collision": scenario_zec_claim_collision,
     "zec-early-lock": scenario_zec_early_lock,
@@ -5470,6 +5530,8 @@ SCENARIOS = {
     "late-claim-confirms": scenario_late_claim_confirms,
     "late-claim-unmined": scenario_late_claim_unmined,
     "concurrent": scenario_concurrent,
+    "concurrent-kill-maker": lambda stamp: scenario_concurrent(stamp, kill=True),
+    "mixed-pair": scenario_mixed_pair,
     "early-lock": scenario_early_lock,
     "offline-after-lock": scenario_offline_after_lock,
     "offline-after-second-lock": lambda stamp: scenario_offline_after_lock(stamp, "both legs locked"),
