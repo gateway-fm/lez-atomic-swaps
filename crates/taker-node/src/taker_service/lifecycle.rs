@@ -19,7 +19,7 @@ use lez_actor_supervision::{ActorLastOutcomeV1, LastOutcomes};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, Phase, SwapDirection, SwapId};
 use lez_swap_store::{
-    ActorHeldLock, MakerOfferStatus, TakerActionAdmissionV1, TakerFacadeActionV1,
+    ActorHeldLock, MakerOfferStatus, MakerRouteV1, TakerActionAdmissionV1, TakerFacadeActionV1,
     TakerFacadeStoreError, TakerInitiationAdmissionV1, TakerInitiationFactsV1,
 };
 #[cfg(feature = "pair-zec")]
@@ -2119,7 +2119,27 @@ enum InitiationError {
     /// The Taker has no Zcash output to fund from; the reason names its address.
     #[cfg(feature = "pair-zec")]
     ZecFundingUnavailable(String),
+    /// The route-health probe reads this pair's chain unavailable.
+    ChainUnavailable(Pair),
     Internal,
+}
+
+/// Refuses a take on `route` while its route-health probe reads the chain
+/// unavailable; a route no probe names is not refused.
+async fn refuse_unavailable_route(
+    state: &TakerServiceState,
+    route: MakerRouteV1,
+) -> Result<(), InitiationError> {
+    let Some(probe) = state.route_health.clone() else {
+        return Ok(());
+    };
+    let available = tokio::task::spawn_blocking(move || probe.route_available(route))
+        .await
+        .map_err(|_| InitiationError::Internal)?;
+    if available == Some(false) {
+        return Err(InitiationError::ChainUnavailable(route.pair()));
+    }
+    Ok(())
 }
 
 async fn initiate(
@@ -2159,6 +2179,9 @@ async fn initiate(
         };
         return Ok(commit_from_facts(&facts, true, state));
     }
+    // A new take on a route whose chain does not answer is refused here, by
+    // name; a replay above and the swaps already taken are left alone.
+    refuse_unavailable_route(&state, request.route).await?;
 
     // Clone private authority under the synchronous mutex, then release it
     // before authenticated Delivery performs asynchronous I/O.
@@ -3048,6 +3071,11 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
                 "amount_sat": required.value_sat,
             })),
         ),
+        InitiationError::ChainUnavailable(pair) => ErrorObjectOwned::owned(
+            DEPENDENCY_UNAVAILABLE_CODE,
+            "Taker dependency unavailable",
+            Some(json!({"category": "chain_unavailable", "pair": pair})),
+        ),
         InitiationError::Internal => rpc_error(
             INTERNAL_ERROR_CODE,
             "Internal error",
@@ -3081,7 +3109,7 @@ mod tests {
     #[test]
     fn an_admitted_zcash_refund_reads_in_progress_until_its_attempt_fails() {
         use lez_swap_core::{Pair, SwapDirection, SwapId};
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         let row = |phase: &str, window_closed: Option<bool>| TakerSwapViewV1 {
             schema_version: 1,
             swap_id: SwapId::new("m7-refund-swap").unwrap(),
@@ -3141,7 +3169,7 @@ mod tests {
     #[test]
     fn a_closed_claim_window_is_flagged_on_the_selling_zec_row_only() {
         use lez_swap_core::{Pair, SwapDirection, SwapId};
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         let row = |direction, action| TakerSwapViewV1 {
             schema_version: 1,
             swap_id: SwapId::new("m7-window-swap").unwrap(),
@@ -3202,7 +3230,7 @@ mod tests {
     #[test]
     fn a_claim_held_near_its_refund_time_names_its_holder_on_the_row() {
         use lez_swap_core::{Pair, SwapDirection, SwapId};
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         let swap = tempfile::tempdir().expect("swap directory");
         let state_db = swap.path().join("taker").join("state").join("zec.sqlite3");
         std::fs::create_dir_all(state_db.parent().expect("state directory")).expect("dirs");
@@ -3585,7 +3613,7 @@ mod tests {
 
     /// A Bitcoin row as the monitor projects it before the last outcome.
     fn btc_row(state: TakerSwapStateV1, generation: u64) -> TakerSwapViewV1 {
-        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        use lez_swap_store::MakerOfferId;
         TakerSwapViewV1 {
             schema_version: 1,
             swap_id: SwapId::new("r103-outcome-swap").unwrap(),

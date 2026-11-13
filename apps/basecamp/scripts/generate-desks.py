@@ -342,7 +342,11 @@ FOREIGN_FORMAT    function formatLez(value) {
         if (health.ready !== true) return {tone: "down", text: "Node not ready"}
         if (health.degraded === true) {
             var chain = health.lez_chain ?? {}
-            var reason = chain.degraded !== true ? ""
+            // A foreign chain the Node's route health reads down, by pair.
+            var down = []
+            for (var entry of health.routes ?? [])
+                if (entry.state === "unavailable" && down.indexOf(entry.route.pair) < 0) down.push(entry.route.pair)
+            var reason = chain.degraded !== true ? (down.length > 0 ? " · " + down.join(", ") + " unavailable" : "")
                 : chain.reason === "lez_finality_stalled" ? " · LEZ finality stalled"
                 : chain.reason === "lez_indexer_unreachable" ? " · LEZ indexer unreachable"
                 : " · LEZ chain"

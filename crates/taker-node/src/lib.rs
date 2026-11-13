@@ -23,7 +23,7 @@ pub use taker_facade::{
     TakerHealthRequestV1, TakerHealthV1, TakerInitiationCapabilityV1, TakerInitiationCommitV1,
     TakerLockCommitV1, TakerLockRequestV1, TakerMonitoringCapabilityV1, TakerOfferListRequestV1,
     TakerOfferListV1, TakerOfferViewV1, TakerPairCapabilityV1, TakerPrivacyGuidanceV1,
-    TakerRefundRequestV1, TakerRegisteredMethodsV1, TakerSwapInitiateRequestV1,
+    TakerRefundRequestV1, TakerRegisteredMethodsV1, TakerRouteHealthV1, TakerSwapInitiateRequestV1,
     TakerSwapListRequestV1, TakerSwapListV1, TakerSwapMonitorRequestV1, TakerSwapStateV1,
     TakerSwapViewV1, TakerTerminalActionCapabilityV1, TakerTerminalActionV1,
     TakerWalletBalancesRequestV1, taker_pair_capabilities_v1,

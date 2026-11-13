@@ -747,6 +747,22 @@ pub struct TakerHealthV1 {
     /// predate it. Additive like every optional field of schema 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lez_chain: Option<LezChainProgressV1>,
+    /// Whether each route's foreign chain answers, as the Maker reports it in
+    /// `maker_health`: only the routes `--route-health-config` names, and
+    /// absent without it. An unavailable route also sets `degraded`, and a new
+    /// take on it is refused (`chain_unavailable`). Additive like `lez_chain`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    routes: Vec<TakerRouteHealthV1>,
+}
+
+/// One route's foreign-chain availability in [`TakerHealthV1`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakerRouteHealthV1 {
+    /// The pair and direction.
+    pub route: MakerRouteV1,
+    /// `available` or `unavailable`.
+    pub state: TakerDependencyStateV1,
 }
 
 impl TakerHealthV1 {
@@ -767,7 +783,24 @@ impl TakerHealthV1 {
             pair_capabilities: taker_pair_capabilities_v1(),
             registered_methods: TakerRegisteredMethodsV1::read_only(),
             lez_chain: None,
+            routes: Vec::new(),
         }
+    }
+
+    /// Adds the routes' chain availability; an unavailable one degrades the Node.
+    #[must_use]
+    pub fn with_routes(mut self, routes: Vec<TakerRouteHealthV1>) -> Self {
+        self.degraded |= routes
+            .iter()
+            .any(|route| route.state == TakerDependencyStateV1::Unavailable);
+        self.routes = routes;
+        self
+    }
+
+    /// Returns the routes' chain availability, when route health is configured.
+    #[must_use]
+    pub fn routes(&self) -> &[TakerRouteHealthV1] {
+        &self.routes
     }
 
     /// Adds the LEZ chain's progress; a degraded chain degrades the Node.

@@ -5026,8 +5026,8 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
 # other pair swaps on the same two Nodes. The Maker's route health
 # (node-entrypoint.sh) reads the stopped chain's routes unavailable: the Maker is
 # degraded, withdraws the offer published there before the stop and refuses a
-# new one, and the other pair's routes stay available. The Taker has no
-# per-chain health; what it says is recorded.
+# new one, and the other pair's routes stay available. The Taker reads the same
+# routes the same way and refuses a new take on the stopped pair (chain_unavailable).
 
 def use_route(pair: str, direction: str) -> None:
     """Switches the harness to the other pair inside one scenario, as main() sets it."""
@@ -5108,22 +5108,21 @@ def publish_on(pair: str, stamp: str) -> str:
 
 
 def ready_while_down(pair: str) -> dict:
-    """Both Nodes answer health ready while `pair`'s chain is down; the Maker
-    reads every `pair` route unavailable, every other route available, and is
-    degraded. Returns what each says (degraded, its entries for that pair)."""
+    """Both Nodes answer health ready while `pair`'s chain is down, each
+    reading every `pair` route unavailable, every other route available, and
+    itself degraded. Returns what each says (degraded, its entries for that pair)."""
     seen = {}
     for role in ("maker", "taker"):
         reported = health(role)
         if reported.get("ready") is not True:
             raise Failure(f"the {role} Node is not ready while {pair} is down: {json.dumps(reported)[:300]}")
-        entries = reported.get("routes") if role == "maker" else reported.get("pair_capabilities")
+        routes = reported.get("routes") or []
         seen[role] = {"ready": True, "degraded": reported.get("degraded"),
-                      pair.lower(): [e for e in entries or [] if (e.get("route") or e).get("pair") == pair]}
-    routes = health("maker").get("routes") or []
-    wrong = [r for r in routes if (r["state"] == "unavailable") != (r["route"]["pair"] == pair)]
-    if not seen["maker"][pair.lower()] or wrong or seen["maker"]["degraded"] is not True:
-        raise Failure(f"with {pair} down the Maker's health is not {pair} unavailable, the rest available, "
-                      f"degraded: degraded {seen['maker']['degraded']}, routes {routes}")
+                      pair.lower(): [r for r in routes if r["route"]["pair"] == pair]}
+        wrong = [r for r in routes if (r["state"] == "unavailable") != (r["route"]["pair"] == pair)]
+        if not seen[role][pair.lower()] or wrong or seen[role]["degraded"] is not True:
+            raise Failure(f"with {pair} down the {role}'s health is not {pair} unavailable, the rest available, "
+                          f"degraded: degraded {seen[role]['degraded']}, routes {routes}")
     return seen
 
 
@@ -5145,6 +5144,17 @@ def assert_offer_withdrawn_and_refused(pair: str, offer_id: str, stamp: str) -> 
     if "chain dependency is unavailable" not in (reply.get("error") or {}).get("message", ""):
         raise Failure(f"publishing on {pair} with its chain down was not refused for the route: {reply}")
     log(f"  the Maker withdrew {offer_id} and refuses to publish on {pair}: {reply['error']['message']}")
+    # The Taker refuses a new take on the pair before it looks for the offer.
+    maker_identity = subprocess.run(["docker", "exec", NODES["taker"][0], "cat", "/delivery/maker-delivery-identity.pub"],
+                                    capture_output=True, text=True, check=True).stdout.strip()
+    take = rpc("taker", "taker_swap_initiate_v1", {
+        "schema_version": 1, "request_id": f"e2e-down-take-{stamp}", "offer_id": offer_id,
+        "route": {"pair": pair, "direction": ROUTE["direction"]}, "maker_identity": maker_identity,
+        "signed_envelope_sha256": [0] * 32, "foreign_units": FOREIGN_UNITS, "expected_lez_units": LEZ_UNITS})
+    data = (take.get("error") or {}).get("data") or {}
+    if (take.get("error") or {}).get("code") != -32010 or data != {"category": "chain_unavailable", "pair": pair}:
+        raise Failure(f"a take on {pair} with its chain down was not refused as chain_unavailable: {take}")
+    log(f"  the Taker refuses a take on {pair}: {json.dumps(take['error'])}")
 
 
 def scenario_zebra_down(stamp: str) -> dict:

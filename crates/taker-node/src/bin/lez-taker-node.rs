@@ -4,7 +4,9 @@ use anyhow::{Context as _, ensure};
 use clap::Parser;
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
 use lez_btc_role_lifecycle::DEFAULT_LEZ_FINALITY_STALL_SECONDS;
-use lez_node_common::shutdown_signal;
+use lez_node_common::{
+    route_health::ProcessRouteHealthProbe, secure_file::read_private_file, shutdown_signal,
+};
 use lez_taker_node::{
     DEFAULT_OBSERVER_SWEEP_INTERVAL, load_taker_service_context,
     node_config::load_node_arguments,
@@ -37,6 +39,10 @@ struct Arguments {
     /// `lez_finality_stalled` (Node-owned lifecycle only); 600 when not given.
     #[arg(long, value_parser = clap::value_parser!(u64).range(10..=86_400))]
     lez_finality_stall_seconds: Option<u64>,
+    /// Owner-private strict JSON mapping routes to hash-pinned chain health
+    /// commands, in the Maker's format (`--route-health-config`).
+    #[arg(long)]
+    route_health_config: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -47,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
         "Taker Node socket path must be absolute"
     );
 
+    let route_health = configured_route_health_probe(arguments.route_health_config.as_deref())?;
     let context = load_taker_service_context(&arguments.role_config)
         .context("load Taker Node role configuration")?;
     let sweep = arguments
@@ -58,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         arguments
             .lez_finality_stall_seconds
             .unwrap_or(DEFAULT_LEZ_FINALITY_STALL_SECONDS),
+        route_health,
     )
     .context("build Taker RPC module")?;
     let (listener, _socket_guard) =
@@ -132,6 +140,27 @@ async fn main() -> anyhow::Result<()> {
         Some(error) => Err(error),
         None => Ok(()),
     }
+}
+
+/// The route-health probe `--route-health-config` names, in the Maker's format.
+fn configured_route_health_probe(
+    path: Option<&std::path::Path>,
+) -> anyhow::Result<Option<ProcessRouteHealthProbe>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let bytes = read_private_file(path, 64 * 1024, "route health configuration")?;
+    let probe = ProcessRouteHealthProbe::from_json_bytes(&bytes)
+        .context("validate route health configuration")?;
+    // As the Maker: a route whose probe is missing or changed reads
+    // unavailable until the executable its digest names is in place.
+    for route in probe.unverified_routes() {
+        eprintln!(
+            "route health: {route:?} has no usable probe executable; this route is \
+             unavailable until it is installed"
+        );
+    }
+    Ok(Some(probe))
 }
 
 /// A connection task that panicked is a Node defect and stops the service; a
