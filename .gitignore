@@ -36,6 +36,7 @@ __pycache__/
 /deploy/images/lez-wallet-module/*.lgx
 /deploy/images/*-node/lez_*_node.lgx
 /deploy/images/bitcoin-core/bin/
+/deploy/images/monerod/
 /deploy/images/basecamp-ui/assets/
 
 # Source receipts for locally built evidence payloads
