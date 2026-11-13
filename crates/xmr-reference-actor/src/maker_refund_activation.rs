@@ -280,8 +280,12 @@ struct MakerClaimActivationSummaryV1 {
 
 /// Validates the already-finalized common effects and prepares only the
 /// receipt-v2 Taker claim authorization. No operator branch selector exists.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) fn activate_taker_claim_workflow(
+pub fn activate_taker_claim_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,
@@ -447,11 +451,15 @@ pub(crate) fn activate_taker_claim_workflow(
 
 /// Advances an already finalized Tag-14 workflow to the Taker Monero claim
 /// sweep only from exact finalized Tag-15 evidence and its validated signature.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
 #[allow(
     clippy::too_many_lines,
     reason = "the finalized-signature and durable-workflow checks remain linear for auditability"
 )]
-pub(crate) fn activate_taker_claim_sweep_workflow(
+pub fn activate_taker_claim_sweep_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,
@@ -635,8 +643,12 @@ fn validate_tag13_effect(effect: &Tag13EffectV1, expected: &str) -> Result<()> {
 
 /// Validates exact funding and finalized Tag14 evidence, then prepares only the
 /// Maker Tag15 Claim step. No operator-provided branch selector is accepted.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) fn activate_maker_claim_workflow(
+pub fn activate_maker_claim_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,
@@ -840,8 +852,12 @@ pub(crate) fn activate_maker_claim_workflow(
 
 /// Validates external evidence and advances one Maker workflow to the prepared
 /// Monero-refund sweep without accepting an operator-selected branch.
+///
+/// # Errors
+///
+/// Fails closed on any evidence, manifest or journal mismatch.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-pub(crate) fn activate_maker_refund_workflow(
+pub fn activate_maker_refund_workflow(
     effect_manifest: &Path,
     effect_authority: &Path,
     run_id: &str,

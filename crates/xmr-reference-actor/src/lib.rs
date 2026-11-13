@@ -107,7 +107,7 @@ use lez_xmr_swap_sdk::{
     XmrActivationBodyV1, XmrSessionTranscriptV1,
 };
 #[cfg(feature = "sessions")]
-use maker_refund_activation::{
+pub use maker_refund_activation::{
     activate_maker_claim_workflow, activate_maker_refund_workflow,
     activate_taker_claim_sweep_workflow, activate_taker_claim_workflow,
 };
@@ -1922,7 +1922,27 @@ fn compose_stage_b(
     let packets = StageRolePackets::read(ActorRole::Taker, own_public_packet, peer_public_packet)?;
     let material = validate_private_role(private_root, ActorRole::Taker, &packets)?;
     let agreement = read_validated_stage_a(agreement_stage_a, &packets)?;
+    let validated = compose_activation_body(&agreement, journal, &material.view)?;
+    let encoded = validated
+        .encode_unsigned_wire()
+        .context("encode unsigned Stage-B wire")?;
+    write_bounded_public_new(
+        &destination,
+        &encoded,
+        u64::try_from(MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES).unwrap_or(u64::MAX),
+        "unsigned Stage-B wire",
+    )
+}
 
+/// The unsigned Stage B the Taker composes from its completed claim and
+/// refund sessions in `journal`; it carries only a commitment to the Taker's
+/// claim partial.
+#[cfg(feature = "sessions")]
+fn compose_activation_body(
+    agreement: &XmrAgreementV1,
+    journal: &Path,
+    view: &MoneroPrivateViewKey,
+) -> Result<ValidatedXmrActivationBodyV1> {
     let claim_session = ValidatedSession::from_untweaked_context(
         agreement
             .claim_session_descriptor()
@@ -1959,17 +1979,8 @@ fn compose_stage_b(
         refund.taker_partial,
         refund.presignature,
     );
-    let validated = ValidatedXmrActivationBodyV1::validate(&agreement, body, &material.view)
-        .context("unsigned Stage-B body is invalid")?;
-    let encoded = validated
-        .encode_unsigned_wire()
-        .context("encode unsigned Stage-B wire")?;
-    write_bounded_public_new(
-        &destination,
-        &encoded,
-        u64::try_from(MAX_XMR_UNSIGNED_STAGE_B_WIRE_BYTES).unwrap_or(u64::MAX),
-        "unsigned Stage-B wire",
-    )
+    ValidatedXmrActivationBodyV1::validate(agreement, body, view)
+        .context("unsigned Stage-B body is invalid")
 }
 
 #[cfg(feature = "sessions")]
@@ -2280,11 +2291,111 @@ fn provision(
         Some(path) => read_private_view_key(path)?,
         None => MoneroPrivateViewKey::generate().context("generate private Monero view key")?,
     };
-    let mut rng = fallible_seeded_rng()?;
-    let agreement = match agreement_key_file {
-        Some(path) => GeneratedSecpKey::read_private(path, "Maker agreement key")?,
-        None => GeneratedSecpKey::generate(&mut rng),
+    let agreement = agreement_key_file
+        .map(|path| GeneratedSecpKey::read_private(path, "Maker agreement key"))
+        .transpose()?;
+    let material = generate_role_material(role, lez_owner_account, view_key, agreement)?;
+
+    let (public_stage_name, public_stage_file) = create_staged_file(
+        &public_destination.parent,
+        "public",
+        &material.packet_bytes,
+        ROLE_PACKET_MAX_BYTES,
+        "public packet",
+    )?;
+    let private_result = material.publish(&private_destination);
+    if let Err(error) = private_result {
+        cleanup_staged_file(&public_destination.parent, &public_stage_name);
+        return Err(error);
+    }
+
+    let publish_result = publish_staged_file(
+        &public_destination,
+        &public_stage_name,
+        &public_stage_file,
+        ROLE_PACKET_MAX_BYTES,
+        "public packet",
+    );
+    if publish_result.is_err() {
+        cleanup_staged_file(&public_destination.parent, &public_stage_name);
+    }
+    publish_result
+}
+
+/// Writes fresh private material for one swap into a new owner-only
+/// `private_root` and returns the role's canonical public packet. The Maker
+/// imports the Taker's per-swap `view_key` and its own long-lived
+/// `agreement_key`; the Taker generates both.
+///
+/// # Errors
+///
+/// Fails for a role/import mismatch, a zero owner account, an existing or
+/// unsafe root, or unavailable entropy.
+pub fn provision_role_root(
+    role: ActorRole,
+    private_root: &Path,
+    lez_owner_account: [u8; 32],
+    view_key: Option<MoneroPrivateViewKey>,
+    agreement_key: Option<&Zeroizing<[u8; 32]>>,
+) -> Result<Vec<u8>> {
+    ensure!(
+        role != ActorRole::Maker || view_key.is_some(),
+        "Maker must import the shared view key"
+    );
+    ensure!(
+        role == ActorRole::Maker || agreement_key.is_none(),
+        "only Maker may import an agreement key"
+    );
+    let destination = SecureDestination::new(private_root, "private role root")?;
+    destination.ensure_absent("private role root")?;
+    let view_key = match view_key {
+        Some(key) => key,
+        None => MoneroPrivateViewKey::generate().context("generate private Monero view key")?,
     };
+    let agreement = agreement_key
+        .map(|key| GeneratedSecpKey::from_secret(Zeroizing::new(**key), "Maker agreement key"))
+        .transpose()?;
+    let material = generate_role_material(role, lez_owner_account, view_key, agreement)?;
+    let packet = material.packet_bytes.clone();
+    material.publish(&destination)?;
+    Ok(packet)
+}
+
+/// One role's fresh private material and its canonical public packet, not
+/// yet on disk.
+struct RoleMaterial {
+    agreement: GeneratedSecpKey,
+    claim: GeneratedSecpKey,
+    refund: GeneratedSecpKey,
+    share: CrossCurveScalar,
+    view_key: MoneroPrivateViewKey,
+    packet_bytes: Vec<u8>,
+    manifest_bytes: Vec<u8>,
+}
+
+impl RoleMaterial {
+    fn publish(self, destination: &SecureDestination) -> Result<()> {
+        publish_private_bundle(
+            destination,
+            &self.agreement,
+            &self.claim,
+            &self.refund,
+            self.share,
+            self.view_key,
+            &self.manifest_bytes,
+        )
+    }
+}
+
+fn generate_role_material(
+    role: ActorRole,
+    lez_owner_account: [u8; 32],
+    view_key: MoneroPrivateViewKey,
+    agreement: Option<GeneratedSecpKey>,
+) -> Result<RoleMaterial> {
+    ensure!(lez_owner_account != [0; 32], "LEZ owner account is invalid");
+    let mut rng = fallible_seeded_rng()?;
+    let agreement = agreement.unwrap_or_else(|| GeneratedSecpKey::generate(&mut rng));
     let claim = GeneratedSecpKey::generate(&mut rng);
     let refund = GeneratedSecpKey::generate(&mut rng);
     let share = CrossCurveScalar::generate().context("generate private Monero share")?;
@@ -2320,38 +2431,15 @@ fn provision(
     };
     let manifest_bytes = manifest.canonical_bytes()?;
 
-    let (public_stage_name, public_stage_file) = create_staged_file(
-        &public_destination.parent,
-        "public",
-        &packet_bytes,
-        ROLE_PACKET_MAX_BYTES,
-        "public packet",
-    )?;
-    let private_result = publish_private_bundle(
-        &private_destination,
-        &agreement,
-        &claim,
-        &refund,
+    Ok(RoleMaterial {
+        agreement,
+        claim,
+        refund,
         share,
         view_key,
-        &manifest_bytes,
-    );
-    if let Err(error) = private_result {
-        cleanup_staged_file(&public_destination.parent, &public_stage_name);
-        return Err(error);
-    }
-
-    let publish_result = publish_staged_file(
-        &public_destination,
-        &public_stage_name,
-        &public_stage_file,
-        ROLE_PACKET_MAX_BYTES,
-        "public packet",
-    );
-    if publish_result.is_err() {
-        cleanup_staged_file(&public_destination.parent, &public_stage_name);
-    }
-    publish_result
+        packet_bytes,
+        manifest_bytes,
+    })
 }
 
 struct StageRolePackets {
@@ -2994,7 +3082,10 @@ impl GeneratedSecpKey {
             .strip_suffix(b"\r\n")
             .or_else(|| encoded.strip_suffix(b"\n"))
             .unwrap_or(&encoded);
-        let bytes = decode_secret_exact(trimmed)?;
+        Self::from_secret(decode_secret_exact(trimmed)?, label)
+    }
+
+    fn from_secret(bytes: Zeroizing<[u8; 32]>, label: &'static str) -> Result<Self> {
         let key = SecretKey::from_slice(bytes.as_ref())
             .with_context(|| format!("private {label} is invalid"))?;
         Ok(Self { key, bytes })
