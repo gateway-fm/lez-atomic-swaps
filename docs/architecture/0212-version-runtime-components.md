@@ -10,7 +10,8 @@ Supported compositions are data, not an implication derived from every Cargo
 target. `deploy/profiles/*.json` owns component lifecycle, executable, socket,
 state, credential, identity, dependency, health, verification, and nonclaim
 facts. `deploy/executables.json` classifies every host binary and guest/fuzz
-target. CI compares that catalog with Cargo metadata.
+target; class `fixture` marks devnet test fixtures (the Zcash dealer tools),
+which belong to no runtime profile. CI compares that catalog with Cargo metadata.
 
 Public role components use `lez-<role>-<kind>` and pair authorities use
 `lez-<pair>-<role>-<kind>`. Maker and Taker Nodes share the strict
