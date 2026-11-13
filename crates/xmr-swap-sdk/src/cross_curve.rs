@@ -205,8 +205,12 @@ impl CrossCurveDleqProofV1 {
         {
             return Err(CrossCurveDleqError::InvalidEd25519Point);
         }
-        let proof: CrossCurveDLEQProof = postcard::from_bytes(&self.proof_bytes)
-            .map_err(|_| CrossCurveDleqError::ProofSerialization)?;
+        let (proof, remainder): (CrossCurveDLEQProof, &[u8]) =
+            postcard::take_from_bytes(&self.proof_bytes)
+                .map_err(|_| CrossCurveDleqError::ProofSerialization)?;
+        if !remainder.is_empty() {
+            return Err(CrossCurveDleqError::ProofSerialization);
+        }
         if !proof_system()?.verify(&proof, (secp256k1_point, ed25519_point)) {
             return Err(CrossCurveDleqError::InvalidProof);
         }

@@ -450,9 +450,6 @@ fn truncated_and_over_long_encodings_are_rejected() {
 }
 
 #[test]
-#[ignore = "product defect: `verify` documents that it rejects trailing proof bytes, but \
-            postcard::from_bytes ignores them, so a resealed envelope with one extra proof \
-            byte verifies"]
 fn trailing_proof_bytes_are_rejected() {
     let mut proof_trailing = decode_wire(&wire_bytes("one"));
     proof_trailing.3.push(0);
