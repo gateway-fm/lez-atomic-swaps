@@ -1305,8 +1305,6 @@ pub(crate) mod tests {
     /// Q8 of the M4 design: a Taker packet whose DLEQ proof carries one extra
     /// proof byte (resealed so its transcript commitment matches) is refused.
     #[test]
-    #[ignore = "product defect: CrossCurveDleqProofV1::verify accepts trailing proof bytes \
-                (xmr-swap-sdk trailing_proof_bytes_are_rejected); passes once that fix lands"]
     fn the_maker_refuses_a_padded_taker_dleq_proof() {
         let round = reserve();
         let root = fs::canonicalize(round.directory.path()).unwrap();
