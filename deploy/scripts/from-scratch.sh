@@ -323,7 +323,7 @@ phase_rust() {
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
+      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
       # the dealer test fixture tools, alone: built with the others, feature
       # unification would put the dealer into the Node and actor binaries
       cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
