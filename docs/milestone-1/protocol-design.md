@@ -78,8 +78,9 @@ the taker reconstructs authority to spend the Monero output.
 If the maker never claims LEZ, the taker refunds LEZ and the maker recovers XMR
 using the pre-negotiated key-share recovery transcript. Every encrypted share,
 DLEQ proof, view material, refund/cancel artefact, and transcript step is persisted
-before the state that depends on it. Exact transaction/key-share encoding follows
-the h4sh3d/COMIT vectors and is not represented by the generic 32-byte skeleton.
+before the state that depends on it. No published vectors exist for the cross-curve
+DLEQ and key-share encoding; `crates/xmr-swap-sdk/tests/vectors/` holds self-generated
+regression vectors, not third-party ones.
 
 ## Transparent ZEC–LEZ
 
