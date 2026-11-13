@@ -14,8 +14,8 @@ v0.3.0): a BIP-199 hash-time-locked contract on Zcash's transparent pool
 against the same LEZ escrow, on Zebra 7 regtest and the private LEZ devnet.
 The SDK and its lifecycle are in [`docs/sdk-lez-zec.md`](docs/sdk-lez-zec.md),
 node setup in [`docs/zcash-testnet-setup.md`](docs/zcash-testnet-setup.md),
-and the release record in
-[`docs/release-notes-0.3.0.md`](docs/release-notes-0.3.0.md).
+and the release record on the
+[v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 
 [**Watch the 1:53 product walkthrough**](media/lez-btc-ui-swap-demo.mp4) ·
 [**Open the interactive deck**](media/lez-btc-m1-m3-m6-submission.html) ·
@@ -59,7 +59,7 @@ and GNU `timeout`; macOS ships bash 3.2, so on a Mac run
 [latest release](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest):
 
 ```sh
-tar -xzf lez-swap-stack-v0.3.0-arm64.tar.gz && cd lez-swap-stack-v0.3.0-arm64
+tar -xzf lez-swap-stack-v0.3.1-arm64.tar.gz && cd lez-swap-stack-v0.3.1-arm64
 ./scripts/start.sh               # pull images → wallet identities → chains → market bootstrap → desk suites
 ```
 
@@ -232,10 +232,11 @@ licence, architecture, DCO, and security-review requirements.
 | [`submission/`](submission/) | M1/M3/M6 reviewer map, evidence index, reproduction guide, and release checksums |
 | [`media/`](media/) | Interactive deck, PDF, walkthrough, captions, and screenshots |
 
-The current public release, v0.3.0, covers the M1 protocol foundation, the M2
+The current public release, v0.3.1, covers the M1 protocol foundation, the M2
 ZEC/LEZ pair, the M3 BTC/LEZ vertical slice, and the M6 Maker/Taker
 experience, on private local chains. Monero and public-network operation are
-not part of it ([`docs/release-notes-0.3.0.md`](docs/release-notes-0.3.0.md)).
+not part of it (release notes on the
+[release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/latest)).
 
 ## Contributing and security
 

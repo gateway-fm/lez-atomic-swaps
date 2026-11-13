@@ -381,7 +381,7 @@ refuses at the lock removal. What the new property shrinks to was not
 checked here, and the `v0.2.5` release text ("shrinks to exactly the
 reported shape") is unedited (release last updated 2026-09-28). Item 11
 moved to issue #134, closed on 2026-11-12 as superseded by the 0.3.x
-evidence; the correction is in `docs/release-notes-0.3.0.md`.
+evidence; the correction is in the [v0.3.0 release notes](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 
 **Item 12, regression evidence: the harness part fixed in `3f275a49`, the
 v0.2.5 provenance filled from its log in `97c99a30`; used by both full
@@ -401,7 +401,7 @@ log does not hold: no finality or tip reading, no classifier, nothing on
 what a stopped try left open. Still open: the `v0.2.5` release text's "43 of
 43" (a release edit, outside the repository); that release-text part moved
 to issue #134, which the owner closed on 2026-11-12 as superseded by the
-0.3.x evidence; the correction is in `docs/release-notes-0.3.0.md`.
+0.3.x evidence; the correction is in the [v0.3.0 release notes](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 
 **Item 13, videos: no longer applies to this release, not fixed for
 `v0.2.5`.** The recordings of the M2 runs are by-products of passing tests at
@@ -415,7 +415,7 @@ included, are kept outside git for release attachments
 neither dated nor re-recorded. Whether the Taker's "Completed" is on screen
 in the happy-path recordings was not checked here. Item 13 moved to issue
 #134, closed on 2026-11-12 as superseded by the 0.3.x evidence; the
-correction is in `docs/release-notes-0.3.0.md`.
+correction is in the [v0.3.0 release notes](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 
 **Item 14, late-claim scenarios: added in `226244db` and `fcf9860e`
 (harness); on the stack they found two Bitcoin defects, fixed in `9579950b`

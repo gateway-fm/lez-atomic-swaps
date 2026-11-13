@@ -133,8 +133,8 @@ State on 2026-11-03: items 1 to 6 done (4, the CI gate, on 2026-11-03); 7 done i
    scoped — update it rather than leave it contradicting the tree.
 8. **No tag until everything is done and the evidence is in** (owner,
    2026-10-28). The release is `0.3.0`. The M2 work reached `main` through
-   PRs #119, #120, #124, #131, #126 and #127; the release notes are drafted
-   in `docs/release-notes-0.3.0.md`.
+   PRs #119, #120, #124, #131, #126 and #127; the release notes are on
+   the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 9. The rfp#122 comment, in the shape of the accepted rfp#123 one: point at
    the tag, map the six deliverables to links, state the direction and
    desk-lock scope in the body, do not tick Logos's boxes.

@@ -5,7 +5,7 @@
 ; dependency_override (see the role metadata.json). Hand-maintained: keep it in
 ; sync with modules/lez-maker-node/src/lez_maker_node_impl.h.
 module lez_maker_node {
-  version "0.3.0"
+  version "0.3.1"
 
   method launcher() -> tstr
   method payload() -> tstr

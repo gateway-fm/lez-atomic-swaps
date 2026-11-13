@@ -4,7 +4,7 @@
 ; dependency_override (see the role metadata.json). Hand-maintained: keep it in
 ; sync with modules/lez-swap-node/src/lez_swap_node_impl.h.
 module lez_swap_node {
-  version "0.3.0"
+  version "0.3.1"
 
   method start_node(role: tstr, launcher: tstr, log_file: tstr, hold_file: tstr) -> int
   method stop_node(role: tstr) -> int

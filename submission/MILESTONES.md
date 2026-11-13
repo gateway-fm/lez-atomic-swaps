@@ -57,7 +57,7 @@ Later full runs of the same suite with the #103 scenarios added (97 tests):
 (Apple silicon, the v0.3.0 candidate `b4e17cf0`, 97 of 97); and the 93 tests on Apple silicon,
 [`regression-m2-2026-11-12-macos-arm64`](../docs/evidence/regression-m2-2026-11-12-macos-arm64/RESULTS.txt)
 (`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. The
-release record is [`docs/release-notes-0.3.0.md`](../docs/release-notes-0.3.0.md).
+release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 
 
 ## M3 — BTC/LEZ leg

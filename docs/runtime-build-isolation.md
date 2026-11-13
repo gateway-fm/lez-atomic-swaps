@@ -1,8 +1,10 @@
 # Runtime build isolation
 
-The fund-owning runtime is intentionally Linux-only because its secure process
-and file contracts require `memfd` seals and `openat2`. On macOS or Windows,
-run the supported container check:
+The fund-owning runtime's full process and file hardening is Linux-only: it
+requires `memfd` seals and `openat2`. On macOS the Nodes build and run natively
+with a weaker store (owner-private copies instead of sealed memory files;
+`docs/architecture/logos-native-packaging.md`, "The Node on macOS"). To check
+the Linux contracts on macOS or Windows, run the supported container check:
 
 ```sh
 ./scripts/check-linux-runtime.sh

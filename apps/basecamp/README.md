@@ -129,10 +129,12 @@ and mounts (`deploy/compose.yaml`).
 The desks' backends accept one thing: the absolute path of a Unix socket owned
 by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
 `LEZ_TAKER_RPC_SOCKET`, so a desk installed into another Basecamp (from the
-catalog) needs a Node of its own on the same host. Running the Node
-binaries natively on macOS is not supported: they build and pass their tests
-there (PR #126), but there is no darwin package and the launcher is
-Linux-only.
+catalog) needs a Node of its own on the same host. On an Apple-silicon Mac
+the Maker and Taker Nodes also run natively, from darwin-arm64 role packages
+(`deploy/scripts/package-role-node-darwin.sh`), against the devnet's chains in
+Docker (`docs/architecture/logos-native-packaging.md`, "The Node on macOS").
+Desks installed with exactly pinned dependencies have not loaded in the
+release Basecamp 0.2.x.
 
 The LEZ network itself runs in a third Basecamp, `lez-network`
 (`deploy/images/lez-network-module`). Its **LEZ Network** desk (`network/`,
