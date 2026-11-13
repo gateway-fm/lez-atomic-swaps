@@ -46,6 +46,13 @@ as `indexer_service` JSON-RPC (`getAccountAtBlock` among it).
   `indexer_core` test `accept_block_snapshots_state_at_breakpoint_interval`
   is written for 100 and fails with this value; the storage tests follow
   the constant.
+- `0001-lez-v0.2.4-indexer-bound-wal.patch` — upstream
+  logos-execution-zone, `lez/storage`, the indexer's store: the sequencer
+  store's 256 MiB `max_total_wal_size` (`lez-v0.2.4/0001`, above; the two
+  builds patch separate copies of the source). Only `cf_breakpoint` fills
+  memtables, so the other families kept every write-ahead log file alive up
+  to RocksDB's default bound (~28 GiB for its eight families): the indexer's
+  directory grew ~0.4 GB per 10 minutes.
 - `0001-lez-v0.2.4-indexer-ffi-rpc-serve.patch` — upstream
   logos-execution-zone, `lez/indexer/ffi` and `lez/indexer/service`:
   `indexer_rpc_serve(indexer, port)` serves `indexer_service`'s own JSON-RPC
@@ -114,6 +121,7 @@ inside Basecamp and serves that role's signer socket) is not an upstream patch.
 | patch | lines | applies to | upstream state |
 |---|---|---|---|
 | lez-v0.2.4/0001 sequencer-bound-wal | 40 | logos-execution-zone `47eba256` | not yet offered |
+| lez-indexer-module/0001 indexer-bound-wal | 28 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0001 breakpoint-interval | 13 | logos-execution-zone `9edf4a622fe9` | not offered (upstream: make the interval configurable) |
 | lez-indexer-module/0001 ffi-rpc-serve | 177 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0002 | 52 | lez-indexer-module `5033da442a7f` | not yet offered |
