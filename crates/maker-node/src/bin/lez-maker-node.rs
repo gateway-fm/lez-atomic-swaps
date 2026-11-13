@@ -1305,9 +1305,14 @@ fn maker_context(
         .into_iter()
         .map(|record| record.offer().clone())
         .collect::<Vec<_>>();
-    delivery
-        .reconcile(&active, now_unix_seconds)
-        .context("reconcile Delivery advertisements")?;
+    // A Delivery outage at start (R2) does not keep the Node and its swaps
+    // down: maker_health reconciles the advertisements on every call (the
+    // container's health check calls it every few seconds) once Delivery is back.
+    if let Err(error) = delivery.reconcile(&active, now_unix_seconds) {
+        eprintln!(
+            "maker: Delivery unavailable at start ({error}); advertisements are reconciled once it is back"
+        );
+    }
     let context = MakerRpc::with_delivery_transport(store, delivery, signing_key);
     #[cfg(feature = "pair-zec")]
     let context = match zec_authority {

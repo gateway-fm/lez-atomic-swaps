@@ -297,7 +297,9 @@ impl std::fmt::Debug for RunLocalDelivery {
 }
 
 impl RunLocalDelivery {
-    /// Creates or opens an owner-private publisher directory.
+    /// Creates or opens an owner-private publisher directory. A directory its
+    /// owner cannot use right now (mode 0000 during a Delivery outage) opens;
+    /// every operation checks it again and fails until it is private and usable.
     ///
     /// # Errors
     ///
@@ -316,7 +318,8 @@ impl RunLocalDelivery {
         })
     }
 
-    /// Opens an owner-private discovery directory without maker signing authority.
+    /// Opens an owner-private discovery directory without maker signing
+    /// authority; one its owner cannot use right now opens as the publisher's.
     ///
     /// # Errors
     ///
@@ -326,7 +329,7 @@ impl RunLocalDelivery {
         expected_maker: PublicKey,
     ) -> Result<Self, RunLocalDeliveryError> {
         let directory = directory.into();
-        validate_private_directory(&directory)?;
+        validate_openable_directory(&directory)?;
         Ok(Self {
             directory,
             expected_maker,
@@ -884,13 +887,29 @@ fn read_regular_offer_file(path: &Path) -> Result<Vec<u8>, RunLocalDeliveryError
 
 fn ensure_private_directory(directory: &Path) -> Result<(), RunLocalDeliveryError> {
     match fs::symlink_metadata(directory) {
-        Ok(_) => validate_private_directory(directory),
+        Ok(_) => validate_openable_directory(directory),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             DirBuilder::new().mode(0o700).create(directory)?;
             validate_private_directory(directory)
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// The check when a Node opens Delivery: the owner's own directory, open to
+/// nobody else. Unlike `validate_private_directory` it accepts one the owner
+/// cannot use right now (mode 0000 while Delivery is cut, R2), so a Node
+/// starts and restores its swaps during an outage; nothing can be read or
+/// written there until the per-operation check passes again.
+fn validate_openable_directory(directory: &Path) -> Result<(), RunLocalDeliveryError> {
+    let metadata = fs::symlink_metadata(directory)?;
+    if !metadata.file_type().is_dir()
+        || metadata.permissions().mode() & 0o7077 != 0
+        || metadata.uid() != rustix::process::geteuid().as_raw()
+    {
+        return Err(RunLocalDeliveryError::InsecureDirectory);
+    }
+    Ok(())
 }
 
 fn validate_private_directory(directory: &Path) -> Result<(), RunLocalDeliveryError> {
