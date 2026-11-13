@@ -120,12 +120,14 @@ pub(crate) fn read_bounded_identified(
     maximum: usize,
     privacy: FilePrivacy,
 ) -> Result<(Zeroizing<Vec<u8>>, FileLocation), SecureFileError> {
+    // A role key systemd hands the service as a credential (lez-systemd-credential).
+    let credential = lez_systemd_credential::is_credential_path(path);
     let before = fs::symlink_metadata(path).map_err(|_| SecureFileError::Unavailable)?;
-    validate_metadata(&before, maximum, privacy)?;
+    validate_metadata(&before, maximum, privacy, credential)?;
 
     let file = File::open(path).map_err(|_| SecureFileError::Unavailable)?;
     let opened = file.metadata().map_err(|_| SecureFileError::Unavailable)?;
-    validate_metadata(&opened, maximum, privacy)?;
+    validate_metadata(&opened, maximum, privacy, credential)?;
     let canonical = fs::canonicalize(path).map_err(|_| SecureFileError::Unavailable)?;
     let before_location = FileLocation::existing(canonical.clone(), &before);
     let opened_location = FileLocation::existing(canonical.clone(), &opened);
@@ -143,7 +145,7 @@ pub(crate) fn read_bounded_identified(
     }
 
     let after = fs::symlink_metadata(path).map_err(|_| SecureFileError::Unavailable)?;
-    validate_metadata(&after, maximum, privacy)?;
+    validate_metadata(&after, maximum, privacy, credential)?;
     let after_location = FileLocation::existing(canonical, &after);
     if !opened_location.unchanged(&after_location) {
         return Err(SecureFileError::Unsafe);
@@ -300,6 +302,7 @@ fn validate_metadata(
     metadata: &fs::Metadata,
     maximum: usize,
     privacy: FilePrivacy,
+    credential: bool,
 ) -> Result<(), SecureFileError> {
     let maximum = u64::try_from(maximum).map_err(|_| SecureFileError::Unsafe)?;
     if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > maximum {
@@ -309,12 +312,35 @@ fn validate_metadata(
     if matches!(privacy, FilePrivacy::OwnerPrivate) {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-        if metadata.uid() != rustix::process::geteuid().as_raw()
-            || metadata.permissions().mode() & 0o7777 != 0o600
-            || metadata.nlink() != 1
-        {
+        let mode = metadata.permissions().mode() & 0o7777;
+        let owned = metadata.uid() == rustix::process::geteuid().as_raw() && mode == 0o600;
+        let systemd_credential = credential
+            && lez_systemd_credential::credential_ownership_ok(
+                metadata.uid(),
+                metadata.gid(),
+                mode,
+            );
+        if !(owned || systemd_credential) || metadata.nlink() != 1 {
             return Err(SecureFileError::Unsafe);
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, os::unix::fs::PermissionsExt as _};
+
+    use super::{FilePrivacy, read_bounded_identified};
+
+    #[test]
+    fn owner_private_rule_is_unchanged_outside_the_credential_directory() {
+        let run = tempfile::tempdir().unwrap();
+        let path = run.path().join("zcash.key");
+        fs::write(&path, [7_u8; 32]).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_bounded_identified(&path, 65, FilePrivacy::OwnerPrivate).is_ok());
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o440)).unwrap();
+        assert!(read_bounded_identified(&path, 65, FilePrivacy::OwnerPrivate).is_err());
+    }
 }

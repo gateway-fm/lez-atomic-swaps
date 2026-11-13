@@ -4699,6 +4699,7 @@ dependencies = [
  "lez-bridge-protocol",
  "lez-swap-core",
  "lez-swap-store",
+ "lez-systemd-credential",
  "lez-zebra-node-adapter",
  "lez-zec-swap-sdk",
  "rustix",
