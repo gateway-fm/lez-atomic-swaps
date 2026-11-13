@@ -212,6 +212,60 @@ async fn configured_initiation_survives_process_restart_without_live_delivery() 
 
 #[cfg(feature = "pair-zec")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restart_while_delivery_is_unreadable_restores_the_swap_and_refuses_discovery() {
+    // R2: a Taker restarted during a Delivery outage (its source directory
+    // unreadable, as the devnet's outage cut leaves it) starts and keeps the
+    // swap it took; only discovery, which needs Delivery, fails until it is back.
+    let fixture = ProcessInitiationFixture::new();
+    let runtime = private_directory(fixture.root.join("runtime"));
+    let socket = runtime.join("taker.sock");
+    let mut service = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut service, &socket).await;
+    let request = fixture.request();
+    let first: TakerInitiationCommitV1 =
+        call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
+            .await
+            .unwrap();
+    assert!(service.terminate().await.success());
+
+    let delivery = fixture.delivery_offer.parent().unwrap().to_path_buf();
+    fs::set_permissions(&delivery, fs::Permissions::from_mode(0o000)).unwrap();
+    let mut restarted = TestService::spawn(&fixture.config, &socket);
+    wait_until_ready(&mut restarted, &socket).await;
+    let replay: TakerInitiationCommitV1 =
+        call_local_rpc(&socket, "taker_swap_initiate_v1", &request)
+            .await
+            .expect("the taken swap replays without Delivery");
+    assert!(replay.was_replay);
+    assert_eq!(replay.swap, first.swap);
+    let listed: TakerSwapListV1 = call_local_rpc(
+        &socket,
+        "taker_swap_list_v1",
+        &TakerSwapListRequestV1 { schema_version: 1 },
+    )
+    .await
+    .unwrap();
+    assert_eq!(listed.swaps.len(), 1);
+    assert_eq!(listed.swaps[0].swap_id, first.swap.swap_id);
+    let offers = TakerOfferListRequestV1 {
+        schema_version: 1,
+        route: None,
+    };
+    assert!(
+        call_local_rpc::<_, TakerOfferListV1>(&socket, "taker_offer_list_v1", &offers)
+            .await
+            .is_err(),
+        "discovery must fail closed while Delivery is unreadable"
+    );
+    fs::set_permissions(&delivery, fs::Permissions::from_mode(0o700)).unwrap();
+    call_local_rpc::<_, TakerOfferListV1>(&socket, "taker_offer_list_v1", &offers)
+        .await
+        .expect("discovery once Delivery is back");
+    assert!(restarted.terminate().await.success());
+}
+
+#[cfg(feature = "pair-zec")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn taker_cli_swap_commands_reach_the_running_node_owner_rpcs() {
     let fixture = ProcessInitiationFixture::new();
     let runtime = private_directory(fixture.root.join("cli-runtime"));
