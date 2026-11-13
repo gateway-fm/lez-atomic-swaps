@@ -4524,6 +4524,7 @@ dependencies = [
  "lez-bridge-adapter",
  "lez-bridge-client",
  "lez-bridge-protocol",
+ "lez-node-common",
  "lez-swap-core",
  "lez-swap-store",
  "lez-xmr-monero-adapter",

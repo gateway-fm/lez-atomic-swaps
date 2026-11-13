@@ -19,7 +19,9 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow, ensure};
-use lez_bridge_protocol::{Hex32, RuntimeDescriptor};
+use lez_bridge_protocol::{Hex32, RequestId, RuntimeDescriptor};
+use lez_node_common::{XmrReserveRequestV1, XmrReserveResponseV1};
+use lez_swap_store::MakerOfferId;
 use lez_xmr_monero_adapter::LoopbackRpcEndpoint;
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES,
@@ -44,6 +46,8 @@ use crate::{
 
 const ROLE_CONFIG_SCHEMA_VERSION: u16 = 1;
 const STAGE_A_PLAN_SCHEMA_VERSION: u16 = 1;
+/// The schema of `xmr_reserve_v1` and the ceremony rounds over Chat.
+pub(crate) const XMR_CHAT_SCHEMA_VERSION: u16 = 1;
 const MAX_ROLE_CONFIG_BYTES: u64 = 16 * 1024;
 const MAX_LOGIN_FILE_BYTES: u64 = 256;
 const MAX_WALLET_NAME_BYTES: usize = 64;
@@ -426,6 +430,74 @@ pub struct XmrMakerReservation {
     /// The Maker's monerod height at reserve time; the funding is later.
     pub monero_restore_height: u64,
     pub maker_owner_nonce: u128,
+}
+
+impl XmrTakerContribution {
+    /// The Taker's `xmr_reserve_v1` request (R1) carrying this contribution.
+    #[must_use]
+    pub fn reserve_request(
+        &self,
+        reservation_id: RequestId,
+        offer_id: MakerOfferId,
+        signed_offer_envelope: Vec<u8>,
+        foreign_units: u64,
+    ) -> XmrReserveRequestV1 {
+        XmrReserveRequestV1 {
+            schema_version: XMR_CHAT_SCHEMA_VERSION,
+            reservation_id,
+            offer_id,
+            signed_offer_envelope,
+            foreign_units,
+            taker_packet: self.taker_packet.clone(),
+            taker_private_view_key: *self.taker_private_view_key,
+        }
+    }
+}
+
+/// The Maker reads the Taker's contribution from its R1 request; the caller
+/// checks the schema and the offer.
+impl From<&XmrReserveRequestV1> for XmrTakerContribution {
+    fn from(request: &XmrReserveRequestV1) -> Self {
+        Self {
+            taker_packet: request.taker_packet.clone(),
+            taker_private_view_key: Zeroizing::new(request.taker_private_view_key),
+        }
+    }
+}
+
+impl XmrMakerReservation {
+    /// The Maker's `xmr_reserve_v1` answer (R1) for `swap_id`.
+    #[must_use]
+    pub fn reserve_response(&self, swap_id: &str, was_replay: bool) -> XmrReserveResponseV1 {
+        XmrReserveResponseV1 {
+            schema_version: XMR_CHAT_SCHEMA_VERSION,
+            was_replay,
+            swap_id: swap_id.into(),
+            maker_packet: self.maker_packet.clone(),
+            unsigned_stage_a_wire: self.unsigned_stage_a_wire.clone(),
+            maker_stage_a_signature: self.maker_stage_a_signature,
+            lez_anchor_unix_seconds: self.lez_anchor_unix_seconds,
+            monero_genesis: self.monero_genesis,
+            monero_restore_height: self.monero_restore_height,
+            maker_owner_nonce: self.maker_owner_nonce,
+        }
+    }
+}
+
+/// The Taker reads the Maker's reservation from its R1 answer; the caller
+/// checks the schema and the swap id, [`check_xmr_taker_role`] the rest.
+impl From<&XmrReserveResponseV1> for XmrMakerReservation {
+    fn from(response: &XmrReserveResponseV1) -> Self {
+        Self {
+            maker_packet: response.maker_packet.clone(),
+            unsigned_stage_a_wire: response.unsigned_stage_a_wire.clone(),
+            maker_stage_a_signature: response.maker_stage_a_signature,
+            lez_anchor_unix_seconds: response.lez_anchor_unix_seconds,
+            monero_genesis: response.monero_genesis,
+            monero_restore_height: response.monero_restore_height,
+            maker_owner_nonce: response.maker_owner_nonce,
+        }
+    }
 }
 
 /// What the Taker checks the Maker's answer against.

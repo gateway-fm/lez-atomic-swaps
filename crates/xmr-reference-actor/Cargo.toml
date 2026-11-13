@@ -18,6 +18,7 @@ sessions = [
     "dep:lez-bridge-adapter",
     "dep:lez-bridge-client",
     "dep:lez-bridge-protocol",
+    "dep:lez-node-common",
     "dep:lez-swap-core",
     "dep:lez-swap-store",
     "dep:lez-xmr-release-authority",
@@ -34,6 +35,7 @@ lez-adaptor-signature = { version = "=0.1.0", path = "../adaptor-signature", opt
 lez-bridge-adapter = { version = "=0.1.0", path = "../lez-bridge-adapter", optional = true }
 lez-bridge-client = { version = "=0.1.0", path = "../lez-bridge-client", optional = true }
 lez-bridge-protocol = { version = "=0.1.0", path = "../lez-bridge-protocol", optional = true }
+lez-node-common = { version = "=0.1.0", path = "../node-common", optional = true }
 lez-swap-core = { version = "=0.1.0", path = "../swap-core", optional = true }
 lez-swap-store = { version = "=0.1.0", path = "../swap-store", optional = true }
 lez-xmr-release-authority = { version = "=0.1.0", path = "../xmr-release-authority", optional = true }

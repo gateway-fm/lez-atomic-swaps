@@ -39,7 +39,10 @@ pub use application_provision::{
     validate_taker_manifest_config_bytes, validate_xmr_effect_manifest_v3_projection_bytes,
 };
 #[cfg(feature = "sessions")]
-pub use ceremony::{XmrCeremonyPackets, XmrMakerCeremony, XmrTakerCeremony, XmrTakerStageB};
+pub use ceremony::{
+    XmrCeremonyPackets, XmrMakerCeremony, XmrTakerCeremony, XmrTakerStageB,
+    xmr_ceremony_partial_answer, xmr_ceremony_partial_response,
+};
 #[cfg(feature = "sessions")]
 pub use effect_authority::{
     ValidatedXmrEffectAuthorityV1, XMR_EFFECT_AUTHORITY_MAX_BYTES, XmrEffectAuthenticatedRpcV1,

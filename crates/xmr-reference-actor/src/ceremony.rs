@@ -17,6 +17,8 @@ use std::{fs::File, path::Path};
 
 use anyhow::{Context as _, Result, ensure};
 use lez_adaptor_role_runner::{CeremonySeat, Role, ValidatedSession};
+use lez_bridge_protocol::RequestId;
+use lez_node_common::{XmrCeremonyPartialRequestV1, XmrCeremonyPartialResponseV1, XmrLegPacketsV1};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
     ValidatedXmrActivationBodyV1, XmrActivatedAgreementV1, XmrAgreementV1, XmrRoleV1,
@@ -28,8 +30,8 @@ use crate::{
     AGREEMENT_KEY_FILE, ActorRole, CLAIM_KEY_FILE, LoadedSecpKey, REFUND_KEY_FILE, VIEW_KEY_FILE,
     compose_activation_body, open_private_directory, read_private_manifest_at, read_secret_hex_at,
     reserve::{
-        XMR_ADAPTOR_JOURNAL_FILE, XMR_STAGE_A_FILE, XMR_STAGE_B_FILE, read_role_file,
-        sign_commitment, write_role_file,
+        XMR_ADAPTOR_JOURNAL_FILE, XMR_CHAT_SCHEMA_VERSION, XMR_STAGE_A_FILE, XMR_STAGE_B_FILE,
+        read_role_file, sign_commitment, write_role_file,
     },
 };
 
@@ -45,6 +47,86 @@ pub struct XmrCeremonyPackets {
 pub struct XmrTakerStageB {
     pub unsigned_stage_b_wire: Vec<u8>,
     pub taker_stage_b_signature: [u8; 64],
+}
+
+impl From<XmrCeremonyPackets> for XmrLegPacketsV1 {
+    fn from(packets: XmrCeremonyPackets) -> Self {
+        Self {
+            claim: packets.claim,
+            refund: packets.refund,
+        }
+    }
+}
+
+impl From<XmrLegPacketsV1> for XmrCeremonyPackets {
+    fn from(packets: XmrLegPacketsV1) -> Self {
+        Self {
+            claim: packets.claim,
+            refund: packets.refund,
+        }
+    }
+}
+
+impl XmrTakerStageB {
+    /// The Taker's `xmr_ceremony_partial_v1` request (R5): its refund partial
+    /// (from [`XmrTakerCeremony::sign`]) and this Stage B.
+    #[must_use]
+    pub fn partial_request(
+        self,
+        request_id: RequestId,
+        reservation_id: RequestId,
+        taker_refund_partial: Vec<u8>,
+    ) -> XmrCeremonyPartialRequestV1 {
+        XmrCeremonyPartialRequestV1 {
+            schema_version: XMR_CHAT_SCHEMA_VERSION,
+            request_id,
+            reservation_id,
+            taker_refund_partial,
+            unsigned_stage_b_wire: self.unsigned_stage_b_wire,
+            taker_stage_b_signature: self.taker_stage_b_signature,
+        }
+    }
+}
+
+/// The Maker reads the Taker's Stage B from its R5 request (the refund
+/// partial is `request.taker_refund_partial`).
+impl From<&XmrCeremonyPartialRequestV1> for XmrTakerStageB {
+    fn from(request: &XmrCeremonyPartialRequestV1) -> Self {
+        Self {
+            unsigned_stage_b_wire: request.unsigned_stage_b_wire.clone(),
+            taker_stage_b_signature: request.taker_stage_b_signature,
+        }
+    }
+}
+
+/// The Maker's R5 answer from [`XmrMakerCeremony::partial_round`]: the
+/// 65-byte refund presignature travels raw in the bounded packet field.
+#[must_use]
+pub fn xmr_ceremony_partial_response(
+    (refund_presignature, maker_stage_b_signature): ([u8; 65], [u8; 64]),
+    was_replay: bool,
+) -> XmrCeremonyPartialResponseV1 {
+    XmrCeremonyPartialResponseV1 {
+        schema_version: XMR_CHAT_SCHEMA_VERSION,
+        was_replay,
+        refund_presignature: refund_presignature.to_vec(),
+        maker_stage_b_signature,
+    }
+}
+
+/// The Taker reads the Maker's R5 answer as [`XmrTakerCeremony::activate`]
+/// takes it.
+///
+/// # Errors
+///
+/// Fails when the refund presignature is not exactly 65 bytes.
+pub fn xmr_ceremony_partial_answer(
+    response: &XmrCeremonyPartialResponseV1,
+) -> Result<([u8; 65], [u8; 64])> {
+    let presignature = <[u8; 65]>::try_from(response.refund_presignature.as_slice())
+        .ok()
+        .context("the Maker's refund presignature is not 65 bytes")?;
+    Ok((presignature, response.maker_stage_b_signature))
 }
 
 /// One role's countersigned Stage A and the private keys its ceremony uses,
@@ -550,6 +632,95 @@ mod tests {
             taker.swap.claim.phase().unwrap(),
             Some(AdaptorSessionPhase::PresignatureVerified)
         );
+    }
+
+    /// Every round as JSON over S2's Chat contracts: what each role reads is
+    /// what the other sent, and the conversions round-trip.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn the_rounds_round_trip_through_the_chat_contracts() {
+        use lez_node_common::{
+            XmrCeremonyNonceResponseV1, XmrReserveRequestV1, XmrReserveResponseV1,
+        };
+        use lez_swap_store::MakerOfferId;
+
+        use crate::{XmrMakerReservation, XmrTakerContribution, xmr_taker_contribution};
+
+        fn sent<T: serde::Serialize + serde::de::DeserializeOwned>(value: &T) -> T {
+            serde_json::from_slice(&serde_json::to_vec(value).unwrap()).unwrap()
+        }
+        let id = |value: &str| RequestId::new(value).unwrap();
+
+        // R1
+        let round = reserve();
+        let contribution = xmr_taker_contribution(&round.taker_root).unwrap();
+        let request: XmrReserveRequestV1 = sent(&contribution.reserve_request(
+            id("xmr-reservation-001"),
+            MakerOfferId::new("xmr-offer-001").unwrap(),
+            vec![1; 16],
+            1_000_000_000_000,
+        ));
+        let received = XmrTakerContribution::from(&request);
+        assert_eq!(received.taker_packet, contribution.taker_packet);
+        assert_eq!(
+            *received.taker_private_view_key,
+            *contribution.taker_private_view_key
+        );
+        let response: XmrReserveResponseV1 =
+            sent(&round.maker.reserve_response(&"ab".repeat(32), false));
+        let reservation = XmrMakerReservation::from(&response);
+        assert_eq!(reservation, round.maker);
+        let stage_a = round
+            .check(&reservation, &crate::reserve::tests::taker_check())
+            .unwrap();
+        accept_xmr_maker_stage_a(&round.maker_root, &stage_a).unwrap();
+        let mut taker = XmrTakerCeremony::open(&round.taker_root).unwrap();
+        let mut maker = XmrMakerCeremony::open(&round.maker_root).unwrap();
+
+        // R3
+        let commitments = taker.commitments().unwrap();
+        let wire: XmrLegPacketsV1 = sent(&XmrLegPacketsV1::from(commitments.clone()));
+        assert_eq!(XmrCeremonyPackets::from(wire.clone()), commitments);
+        let answer: XmrLegPacketsV1 = sent(&XmrLegPacketsV1::from(
+            maker.reserve_round(&wire.into()).unwrap(),
+        ));
+        taker.accept_maker_commitments(&answer.into()).unwrap();
+        // R4
+        let nonces: XmrLegPacketsV1 = sent(&XmrLegPacketsV1::from(taker.nonces().unwrap()));
+        let (maker_nonces, maker_partials) = maker.nonce_round(&nonces.into()).unwrap();
+        let answer: XmrCeremonyNonceResponseV1 = sent(&XmrCeremonyNonceResponseV1 {
+            schema_version: 1,
+            was_replay: false,
+            maker_nonces: maker_nonces.into(),
+            maker_partials: maker_partials.into(),
+        });
+        let refund_partial = taker.sign(&answer.maker_nonces.into()).unwrap();
+        let stage_b = taker.finish(&answer.maker_partials.into()).unwrap();
+        // R5
+        let request: XmrCeremonyPartialRequestV1 = sent(&stage_b.clone().partial_request(
+            id("xmr-ceremony-partial-001"),
+            id("xmr-reservation-001"),
+            refund_partial,
+        ));
+        let received = XmrTakerStageB::from(&request);
+        assert_eq!(received, stage_b);
+        let answer = maker
+            .partial_round(
+                &request.taker_refund_partial,
+                &received.unsigned_stage_b_wire,
+                received.taker_stage_b_signature,
+            )
+            .unwrap();
+        let response: XmrCeremonyPartialResponseV1 =
+            sent(&xmr_ceremony_partial_response(answer, false));
+        assert_eq!(xmr_ceremony_partial_answer(&response).unwrap(), answer);
+        let mut short = response.clone();
+        short.refund_presignature.pop();
+        assert!(xmr_ceremony_partial_answer(&short).is_err());
+        // R6
+        let (presignature, maker_signature) = xmr_ceremony_partial_answer(&response).unwrap();
+        let activated = taker.activate(presignature, maker_signature).unwrap();
+        maker.accept_activation(&activated).unwrap();
     }
 
     #[test]
