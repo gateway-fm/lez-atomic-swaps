@@ -3088,6 +3088,67 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 mod tests {
     use super::*;
 
+    /// One swap whose own state cannot be read (a corrupt Zcash role state:
+    /// its monitor answers `taker_monitor_unavailable`) must not hide the
+    /// other swaps from the list: it is listed as needing attention with that
+    /// reason. A dependency every swap fails on still fails the list.
+    #[test]
+    fn a_swap_whose_state_cannot_be_read_does_not_hide_the_others() {
+        use lez_swap_core::{Pair, SwapDirection, SwapId};
+        use lez_swap_store::MakerOfferId;
+        let row = |id: &str, state: TakerSwapStateV1| TakerSwapViewV1 {
+            schema_version: 1,
+            swap_id: SwapId::new(id).unwrap(),
+            offer_id: MakerOfferId::new(format!("{id}-offer")).unwrap(),
+            route: MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign).unwrap(),
+            foreign_units: 10_000,
+            lez_units: 25_000,
+            progress_generation: 0,
+            state,
+            available_action: None,
+            privacy_guidance: None,
+            attention_reason: None,
+            revealing_claim_held_by: None,
+            status_detail: None,
+            actor_phase: None,
+            claim_window_closed: None,
+            last_failure_class: None,
+            last_outcome: None,
+            observed_at: None,
+            terms: None,
+            effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
+        };
+        let healthy = row("m7-healthy", TakerSwapStateV1::ClaimAvailable);
+        let listed = list_rows(vec![
+            (
+                row("m7-healthy", TakerSwapStateV1::AttentionRequired),
+                Ok(healthy.clone()),
+            ),
+            (
+                row("m7-corrupt", TakerSwapStateV1::AttentionRequired),
+                Err(MonitoringError::DependencyUnavailable),
+            ),
+        ])
+        .expect("the healthy swap is listed");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0], healthy);
+        assert_eq!(listed[1].swap_id.as_str(), "m7-corrupt");
+        assert_eq!(listed[1].state, TakerSwapStateV1::AttentionRequired);
+        assert_eq!(listed[1].available_action, None);
+        assert_eq!(
+            listed[1].attention_reason.as_deref(),
+            Some("taker_monitor_unavailable")
+        );
+        assert!(matches!(
+            list_rows(vec![(
+                row("m7-corrupt", TakerSwapStateV1::AttentionRequired),
+                Err(MonitoringError::DependencyUnavailable),
+            )]),
+            Err(MonitoringError::DependencyUnavailable)
+        ));
+    }
+
     /// A Taker with nothing to fund Zcash from is told why (the address to
     /// pay) under the code and category every unavailable execution has.
     #[cfg(feature = "pair-zec")]
