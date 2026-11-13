@@ -183,6 +183,20 @@ impl MoneroChainIdentityAttestor {
         identity_from_observed_hash(self.network, hash_bytes(hash.as_ref()))
     }
 
+    /// The daemon's current tip height, as a take reads it beside the genesis.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed if the typed RPC fails.
+    pub async fn tip_height(&self) -> Result<u64, MoneroEvidenceError> {
+        let header = MoneroRpcPort::rpc(
+            "get_last_block_header",
+            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
+        )
+        .await?;
+        Ok(header.height)
+    }
+
     /// Non-secret exact daemon origin used for discovery.
     #[must_use]
     pub fn daemon_origin(&self) -> &str {
@@ -512,6 +526,39 @@ impl MoneroOutputVerifier {
         expected: &ExpectedMoneroOutput,
     ) -> Result<VerifiedMoneroOutputObservation, MoneroEvidenceError> {
         verify_with_port(&self.rpc, self.identity, expected).await
+    }
+    /// The transaction of the open wallet's first incoming output of exactly
+    /// `amount_piconero`, confirmed or not: a candidate for [`Self::verify`],
+    /// which alone decides. A party that did not send the output learns its
+    /// transaction this way.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on RPC failure or more outputs than the response bound.
+    pub async fn find_incoming(
+        &self,
+        amount_piconero: u64,
+    ) -> Result<Option<MoneroTransactionId>, MoneroEvidenceError> {
+        let response = MoneroRpcPort::rpc(
+            "incoming_transfers(all)",
+            self.rpc.wallet.incoming_transfers(
+                TransferType::All,
+                Some(SHARED_WALLET_ACCOUNT_INDEX),
+                None,
+            ),
+        )
+        .await?;
+        let outputs = response.transfers.unwrap_or_default();
+        if outputs.len() > MAX_AVAILABLE_OUTPUTS {
+            return Err(MoneroEvidenceError::SemanticResponseBound {
+                resource: "incoming outputs",
+                maximum: MAX_AVAILABLE_OUTPUTS,
+            });
+        }
+        Ok(outputs
+            .into_iter()
+            .find(|output| output.amount.as_pico() == amount_piconero)
+            .map(|output| output.tx_hash.0))
     }
 }
 

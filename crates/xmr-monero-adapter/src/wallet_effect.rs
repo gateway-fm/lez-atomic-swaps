@@ -288,6 +288,28 @@ impl MoneroRegtestWalletEffects {
         Ok(address)
     }
 
+    /// The role wallet's (or, without one, the open wallet's) primary address,
+    /// total and unlocked balance in piconero.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed if the typed wallet queries fail.
+    pub async fn role_wallet_balance(
+        &self,
+    ) -> Result<(Address, u64, u64), MoneroWalletEffectError> {
+        let address = self.primary_standard_address().await?;
+        let balance = self
+            .wallet
+            .get_balance(WALLET_ACCOUNT_INDEX, None)
+            .await
+            .map_err(|_| MoneroWalletEffectError::Rpc("role wallet balance"))?;
+        Ok((
+            address,
+            balance.balance.as_pico(),
+            balance.unlocked_balance.as_pico(),
+        ))
+    }
+
     /// Submits one exact transfer from the role wallet (or, without one, the
     /// currently open wallet) and locally generates ten confirmation blocks.
     ///
