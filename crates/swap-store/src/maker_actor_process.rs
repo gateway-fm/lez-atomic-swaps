@@ -2727,11 +2727,29 @@ fn validate_named_artifact(
         || opened.nlink() != 1
         || !valid_kind
         || maximum_bytes.is_some_and(|maximum| opened.len() == 0 || opened.len() > maximum)
-        || !same_artifact(&opened, &named)
+        || !same_named_artifact(kind, &opened, &named)
     {
         return Err(MakerActorProcessError::UnsafeArtifact);
     }
     Ok(())
+}
+
+/// Whether the opened descriptor and the name are still one artifact. Config
+/// and program must also keep their size and times. The state database is
+/// written in place by the Maker's other database users at any moment (the
+/// owner monitor's status reads migrate and checkpoint it), so it is held
+/// only to its inode, owner, mode and link count.
+fn same_named_artifact(
+    kind: MakerActorArtifactKind,
+    opened: &fs::Metadata,
+    named: &fs::Metadata,
+) -> bool {
+    match kind {
+        MakerActorArtifactKind::State => same_inode(opened, named),
+        MakerActorArtifactKind::Config | MakerActorArtifactKind::Program => {
+            same_artifact(opened, named)
+        }
+    }
 }
 
 fn bind_actor_state(path: &Path) -> Result<MakerActorStateBinding, MakerActorProcessError> {
@@ -3287,6 +3305,64 @@ fn rebuild_actor_kind_tables_for_monero(
          DROP TABLE maker_actor_processes_before_monero;",
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn named_state_may_be_written_in_place_but_not_replaced() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("artifact");
+        fs::write(&path, b"first").expect("write");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("mode");
+        let bound = fs::symlink_metadata(&path).expect("bound metadata");
+
+        // Written in place: same inode, new size and times.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| file.write_all(b" and more"))
+            .expect("write in place");
+        let written = fs::symlink_metadata(&path).expect("written metadata");
+        assert_eq!(written.ino(), bound.ino());
+        assert_ne!(
+            (written.mtime(), written.mtime_nsec(), written.len()),
+            (bound.mtime(), bound.mtime_nsec(), bound.len())
+        );
+        assert!(same_named_artifact(
+            MakerActorArtifactKind::State,
+            &bound,
+            &written
+        ));
+        assert!(!same_named_artifact(
+            MakerActorArtifactKind::Config,
+            &bound,
+            &written
+        ));
+        assert!(!same_named_artifact(
+            MakerActorArtifactKind::Program,
+            &bound,
+            &written
+        ));
+
+        // Replaced under the same name: another inode, refused for every kind.
+        let replacement = root.path().join("replacement");
+        fs::write(&replacement, b"first").expect("write replacement");
+        fs::set_permissions(&replacement, fs::Permissions::from_mode(0o600)).expect("mode");
+        fs::rename(&replacement, &path).expect("replace");
+        let replaced = fs::symlink_metadata(&path).expect("replaced metadata");
+        assert_ne!(replaced.ino(), bound.ino());
+        for kind in [
+            MakerActorArtifactKind::State,
+            MakerActorArtifactKind::Config,
+            MakerActorArtifactKind::Program,
+        ] {
+            assert!(!same_named_artifact(kind, &bound, &replaced));
+        }
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]
