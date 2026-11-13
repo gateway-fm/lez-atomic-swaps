@@ -1,0 +1,20 @@
+[09:29:15] code 35bd85de, tree dirty: 0
+[09:29:15] maker image sha256:65849bc6b3adb80b29ff90c250089d9d45a749f64e2015804fe9591ed55a957b 2026-11-13T07:45:01.826271888Z
+[09:29:15] taker image sha256:91528734db90b5078a6a54a4023b2a986528efddb03fa9cc979eb11ac3ae849e 2026-11-13T07:45:10.441470962Z
+[09:30:42] up.sh --fresh-lez with three lanes rc=0
+[09:30:42] after: maker image sha256:65849bc6b3adb80b29ff90c250089d9d45a749f64e2015804fe9591ed55a957b
+[09:30:42] lez-maker-node build source 35bd85de1e1daa185c3bd14227857c4468708548
+[09:30:42] lez-l2-maker-node build source 35bd85de1e1daa185c3bd14227857c4468708548
+[09:30:42] lez-l3-maker-node build source 35bd85de1e1daa185c3bd14227857c4468708548
+[09:30:42] after: taker image sha256:91528734db90b5078a6a54a4023b2a986528efddb03fa9cc979eb11ac3ae849e
+[09:30:42] lez-taker-node build source 35bd85de1e1daa185c3bd14227857c4468708548
+[09:30:42] lez-l2-taker-node build source 35bd85de1e1daa185c3bd14227857c4468708548
+[09:30:42] lez-l3-taker-node build source 35bd85de1e1daa185c3bd14227857c4468708548
+[09:30:42] regress.sh run node:btc:refund-then-maker-lock:TakerSellsLez, attempt 1, out runtime/regress/rerun-20261113T093042Z
+[09:35:40] regress.sh run rc=0
+[09:30:43] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[09:31:05] group refund
+[09:31:05]     [lane 1] node:btc:refund-then-maker-lock:TakerSellsLez (try 1) starts: LEZ finalized 67, tip 78
+[09:35:40] === node:btc:refund-then-maker-lock:TakerSellsLez (try 1, lane 1): PASSED in 268 s; LEZ finalized 297, tip 301
+[09:35:40] regression run: 1 of 1 passed in 4 min, 0 new chains, 0 profile switches,        0 frozen tries
+[09:35:40] DONE

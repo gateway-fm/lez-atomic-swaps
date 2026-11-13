@@ -1,0 +1,41 @@
+[15:06:41] === zec-claim-collision (stamp 179457880102)
+[15:06:41] preflight: indexer historical reads
+[15:06:41]   indexer serves historical reads at the tip (3452)
+[15:06:41] preflight: LEZ finality check waived by request
+[15:06:41]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[15:07:27]       taker: taker ZEC corridor zec-devnet-179457880102: sidecar listening on 127.0.0.1:19902
+[15:07:27]       taker: taker: 1 prepared ZEC entries configured
+[15:07:27]     [zec-provision 14:07:27]   maker sidecar answers on 127.0.0.1:19901
+[15:07:27]     [zec-provision 14:07:27]   taker sidecar answers on 127.0.0.1:19902
+[15:07:27]       maker_health: ready=True degraded=False
+[15:07:27]     [zec-provision 14:07:27]   Taker lists zec-devnet-offer-179457880102 ; corridor zec-devnet-179457880102 is live
+[15:07:27]   corridor zec-devnet-179457880102 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179457880102, zebra tip 499, Zcash refund height 508
+[15:07:28]   Taker took zec-devnet-offer-179457880102: swap zec-devnet-s (not_activated)
+[15:07:28]   receipt: swap zec-devnet-swap-179457880102, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179457880102/actor/taker/actor-config.json
+[15:07:28]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-devnet-swap-179457880102: Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 499 | LEZ finalized 3462, tip 3467 (5 unfinalized) [heartbeat]
+[15:07:32]   [3 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-devnet-swap-179457880102: Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 499 | LEZ finalized 3476, tip 3480 (4 unfinalized) [heartbeat]
+[15:07:35]   zebra: mined 1 block(s) → height 500 (mempool had ['08083673bad1'])
+[15:07:42]   [13 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-devnet-swap-179457880102: Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 500 | LEZ finalized 3476, tip 3480 (4 unfinalized) [heartbeat]
+[15:07:48]   zebra: mined 1 block(s) → height 501 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[15:08:08]   [40 s] waiting for the Taker's zec-devnet-s to reach claim_available (zec-devnet-swap-179457880102: Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 501 | LEZ finalized 3485, tip 3494 (9 unfinalized) [heartbeat]
+[15:08:08]   provisioning a ZEC corridor beside the live one (zec-provision.sh; this recreates both Nodes)
+[15:08:51]     [zec-provision 14:08:50]   maker sidecar answers on 127.0.0.1:19903
+[15:08:51]     [zec-provision 14:08:50]   taker sidecar answers on 127.0.0.1:19904
+[15:08:51]     [zec-provision 14:08:51]   maker sidecar answers on 127.0.0.1:19901
+[15:08:51]     [zec-provision 14:08:51]   taker sidecar answers on 127.0.0.1:19902
+[15:08:51]       maker_health: ready=True degraded=False
+[15:08:51]     [zec-provision 14:08:51]   Taker lists zec-devnet-offer-179457888902-b ; corridor zec-devnet-179457888902 is live
+[15:08:51]   corridor zec-devnet-179457888902 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179457880102, zebra tip 499, Zcash refund height 508
+[15:08:51]   corridor zec-devnet-179457888902 entry 1 (deterministic-local-devnet-v5): offer zec-devnet-offer-179457888902-b, zebra tip 501, Zcash refund height 510
+[15:08:51]   Taker took zec-devnet-offer-179457888902-b: swap zec-devnet-s (not_activated)
+[15:09:01]   zec-devnet-s's LEZ first lock submitted; A's claim admitted 0.3 s later (replay=False)
+[15:09:02]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (zec-devnet-swap-179457880102: the revealing LEZ claim, the Maker's follow-up Zcash claim): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 501 | LEZ finalized 3528, tip 3535 (7 unfinalized) [heartbeat]
+[15:09:15]   [14 s] waiting for the Taker's zec-devnet-s to reach completed (zec-devnet-swap-179457880102: the revealing LEZ claim, the Maker's follow-up Zcash claim): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 501 | LEZ finalized 3528, tip 3535 (7 unfinalized) [heartbeat]
+[15:09:22]   zebra: mined 1 block(s) → height 502 (mempool had ['a6239da0dc5f'])
+[15:09:26]   [24 s] waiting for the Taker's zec-devnet-s to reach completed (zec-devnet-swap-179457880102: the revealing LEZ claim, the Maker's follow-up Zcash claim): taker completed (gen 4) | actor at completed | maker claim_evidence_available | zebra 502 | LEZ finalized 3540, tip 3548 (8 unfinalized) [heartbeat]
+[15:09:26]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 3540, tip 3548 (8 unfinalized) [heartbeat]
+[15:09:26]   [0 s] waiting for the Maker to report zec-devnet-s completed and terminal: maker claim_evidence_available (schedule leased) | LEZ finalized 3540, tip 3548 (8 unfinalized) [heartbeat]
+[15:09:33]   both Nodes report zec-devnet-s completed
+[15:09:33]   node: actor claim: revealing LEZ claim superseded (planned nonce 42, live 43); re-plan 1 at nonce 43: b43fb38532d32c5a41c0b52d11be3f3710d29240ddeb75cb28af18843b9ab861 -> 2c69f9e05f65b3e7346bdcc718f0f2a54822f82bb6915ecd870ab891bdee0ddc; 584 s left before the LEZ refu
+[15:09:33]   node: taker actor zec-devnet-swap-179457888902-b: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez) re-planned [1 lez_fund nonce 43→44 tx 10d3f7857c5bf6cf9d766e9668a1c3133a22f841b94af8c60430636f57326ec8→b9eef729a3b658c295d5533a52845df4
+[15:09:33] === zec-claim-collision: passed in 172s

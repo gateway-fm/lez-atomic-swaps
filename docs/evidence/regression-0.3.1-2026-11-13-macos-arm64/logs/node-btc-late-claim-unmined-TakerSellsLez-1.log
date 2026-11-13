@@ -1,0 +1,29 @@
+[13:54:40] === late-claim-unmined (stamp 1794574480)
+[13:54:40] preflight: indexer historical reads
+[13:54:41]   indexer serves historical reads at the tip (223)
+[13:54:41] preflight: LEZ finality check waived by request
+[13:54:41]   Maker published offer-e2e-1794574480
+[13:54:42]   Taker took offer-e2e-1794574480: swap d759f7619ed2 (not_activated)
+[13:54:42]   Taker locked lez: cd1c14164a4a (replay=False)
+[13:54:42]   [0 s] waiting for the Taker's d759f7619ed2 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 210, tip 220 (10 unfinalized) [heartbeat]
+[13:54:54]   [11 s] waiting for the Taker's d759f7619ed2 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 210, tip 220 (10 unfinalized) [heartbeat]
+[13:55:00]   [17 s] waiting for the Taker's d759f7619ed2 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 232, tip 236 (4 unfinalized) [heartbeat]
+[13:55:00]   stopping the miner so the Taker's Bitcoin claim waits in the mempool
+[13:55:04]   stopping the Taker Node
+[13:55:05]   the claim c0ae2922071c waits in the mempool with the Taker down; mining empty blocks every 2s until the window closes (1794574901) and the Maker's refund opens at height 684
+[13:55:05]   [0 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 454, claim c0ae2922071c in the mempool | LEZ finalized 232, tip 236 (4 unfinalized) [heartbeat]
+[13:56:05]   [60 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 479, claim c0ae2922071c in the mempool | LEZ finalized 280, tip 283 (3 unfinalized) [heartbeat]
+[13:57:07]   [122 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 506, claim c0ae2922071c in the mempool | LEZ finalized 331, tip 334 (3 unfinalized) [heartbeat]
+[13:58:07]   [182 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 532, claim c0ae2922071c in the mempool | LEZ finalized 379, tip 385 (6 unfinalized) [heartbeat]
+[13:59:09]   [244 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 559, claim c0ae2922071c in the mempool | LEZ finalized 410, tip 419 (9 unfinalized) [heartbeat]
+[14:00:09]   [304 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 585, claim c0ae2922071c in the mempool | LEZ finalized 465, tip 470 (5 unfinalized) [heartbeat]
+[14:01:11]   [366 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 612, claim c0ae2922071c in the mempool | LEZ finalized 515, tip 521 (6 unfinalized) [heartbeat]
+[14:02:13]   [428 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 639, claim c0ae2922071c in the mempool | LEZ finalized 569, tip 572 (3 unfinalized) [heartbeat]
+[14:03:14]   [489 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 665, claim c0ae2922071c in the mempool | LEZ finalized 617, tip 623 (6 unfinalized) [heartbeat]
+[14:03:58]   the refund path is open at height 684; the claim was never mined; the Maker is at both_legs_locked
+[14:03:58]   the Maker's refund asked for: {"schema_version": 1, "swap_id": "d759f7619ed2fb5fc3ec0a8aef979534878e5d8519e0cb5f3a64f142c7864138", "action": "refund", "requested_after_generation": 136, "was_replay": false}
+[14:04:02]   [0 s] waiting for both Nodes to settle d759f7619ed2: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 645, tip 657 (12 unfinalized) [heartbeat]
+[14:04:14]   the held claim c0ae2922071c was mined after all, at height 685
+[14:04:14]   balances: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[14:04:14]   settled completed: both Nodes and both chains agree
+[14:04:14] === late-claim-unmined: passed in 573s

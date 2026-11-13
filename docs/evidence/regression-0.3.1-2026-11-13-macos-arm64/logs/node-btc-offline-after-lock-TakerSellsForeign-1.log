@@ -1,0 +1,23 @@
+[15:04:59] === offline-after-lock (stamp 179457869903)
+[15:04:59] preflight: indexer historical reads
+[15:05:00]   indexer serves historical reads at the tip (3380)
+[15:05:00] preflight: LEZ finality check waived by request
+[15:05:00]   Maker published offer-e2e-179457869903
+[15:05:01]   Taker took offer-e2e-179457869903: swap e8d060e21843 (not_activated)
+[15:05:01]   Taker locked bitcoin: 32ca5504fc58 (replay=False)
+[15:05:01]   cutting Logos Chat and Delivery, with the first lock already on chain
+[15:05:01]   the Taker's side (uid 4713) is refused: connect EACCES, list Delivery EACCES, 0 descriptors into it
+[15:05:01]   both Nodes report chat and delivery unavailable, and degraded; the Maker holds no Chat connection
+[15:05:02]   [0 s] waiting for the Taker's e8d060e21843 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 3372, tip 3381 (9 unfinalized) [heartbeat]
+[15:05:08]   [6 s] waiting for the Taker's e8d060e21843 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 3372, tip 3381 (9 unfinalized) [heartbeat]
+[15:05:34]   [32 s] waiting for the Taker's e8d060e21843 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 3390, tip 3397 (7 unfinalized) [heartbeat]
+[15:05:34]   Taker claimed LEZ (replay=False)
+[15:05:35]   [0 s] waiting for the Taker's e8d060e21843 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 3390, tip 3397 (7 unfinalized) [heartbeat]
+[15:05:55]   [20 s] waiting for the Taker's e8d060e21843 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 3409, tip 3413 (4 unfinalized) [heartbeat]
+[15:05:56]   [0 s] waiting for the Maker to report e8d060e21843 completed and terminal: maker claim_evidence_available (schedule leased) | LEZ finalized 3409, tip 3413 (4 unfinalized) [heartbeat]
+[15:06:03]   both Nodes report e8d060e21843 completed
+[15:06:03]   the cut held: 29 samples of the Maker's Chat socket, none with a connection; the Taker's side still refused
+[15:06:03]   the swap completed with both off-chain dependencies cut
+[15:06:04]   both dependencies are back and neither Node is degraded
+[15:06:04]   the Bitcoin claim 2bef163d9d93 is a Taproot key-path spend: one 64-byte signature, no script
+[15:06:04] === offline-after-lock: passed in 65s

@@ -1,0 +1,14 @@
+Maker Node of lane 3 (lez-l3-maker-node), first run on 35bd85de, 2026-11-13, times UTC.
+The lines as issue #142 quotes them from the container log; the container log itself is not
+kept in this set (the stack was wiped before the second run).
+
+09:08:20.432  maker actor c8024c4e…: recover → observed_then_projected (phase refunded, revision 4, next complete)
+09:08:20.449  Error: actor supervisor failed
+              maker actor scheduling operation failed
+              CHECK constraint failed: updated_at >= created_at   (error code 275)
+09:08:20.551  lez_swap_node: maker: Node ended (exit 1)
+09:08:22.552  Node started (pid 1502, start 3)
+
+The test's own log (node-btc-refund-then-maker-lock-TakerSellsLez-1.log, host local time,
+UTC+1) shows the refund request at 10:08:20 and, in the same second, the next call to the
+Maker Node refused: "Failed to connect to localhost port 80".
