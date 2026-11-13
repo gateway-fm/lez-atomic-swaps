@@ -1336,6 +1336,7 @@ fn maker_context(
                     .btc_role_config
                     .as_deref()
                     .context("ZEC reservations need --btc-role-config")?,
+                signing_file,
             )
             .context("configure ZEC reservations")?,
         None => context,

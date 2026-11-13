@@ -259,6 +259,14 @@ async fn agree_at_take_time(direction: SwapDirection) {
         assert!(side.join("sidecar.json").is_file());
     }
     assert!(taker_swap.join("zec-receipt.json").is_file());
+    // No swap holds a copy of a role's long-lived key: each actor template
+    // names the role's own Zcash key file, and the Maker's claim-recovery key
+    // stays the Node's.
+    for secret in [[maker_byte; 32], [taker_byte; 32], [0x7a; 32]] {
+        for tree in [&maker_swap, &taker_swap, &maker_bundle] {
+            assert_no_copy(tree, &secret);
+        }
+    }
 
     // Restart safety. The Taker reloads its take-time entry and answers the
     // same initiation as a replay; the Maker re-registers its template, so a
@@ -638,6 +646,26 @@ fn stop(daemon: &mut Daemon) {
 fn private_dir(path: &Path) -> PathBuf {
     fs::DirBuilder::new().mode(0o700).create(path).unwrap();
     fs::canonicalize(path).unwrap()
+}
+
+/// Fails if any file under `tree` holds `secret`, raw or as hex.
+fn assert_no_copy(tree: &Path, secret: &[u8; 32]) {
+    let hex_form = hex::encode(secret).into_bytes();
+    for entry in fs::read_dir(tree).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            assert_no_copy(&path, secret);
+        } else if let Ok(bytes) = fs::read(&path) {
+            assert!(
+                !bytes.windows(32).any(|window| window == secret)
+                    && !bytes
+                        .windows(64)
+                        .any(|window| window == hex_form.as_slice()),
+                "{} holds a role's long-lived secret",
+                path.display()
+            );
+        }
+    }
 }
 
 fn write_private(path: &Path, bytes: &[u8]) {

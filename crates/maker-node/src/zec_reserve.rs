@@ -46,6 +46,9 @@ const ROLE_DIRECTORY: &str = "zec";
 /// The Maker's take-time Zcash authority.
 pub struct ZecMakerReservations {
     config: ZecRoleConfigV1,
+    /// The Maker's own Zcash key file (its Delivery and Chat signing key),
+    /// which every take-time actor template names in place.
+    zcash_key_file: PathBuf,
     /// The Node's LEZ role (identity, signer, swaps root, sidecar recipe),
     /// read from the same role configuration as its Bitcoin lifecycle.
     runtime: BtcRoleRuntime,
@@ -112,9 +115,14 @@ impl ZecMakerReservations {
     /// # Errors
     ///
     /// Fails when either configuration is invalid.
-    pub fn load(config_file: &Path, role_config_file: &Path) -> anyhow::Result<Self> {
+    pub fn load(
+        config_file: &Path,
+        role_config_file: &Path,
+        zcash_key_file: &Path,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             config: ZecRoleConfigV1::load(config_file)?,
+            zcash_key_file: zcash_key_file.to_path_buf(),
             runtime: BtcRoleRuntime::load(Participant::Maker, role_config_file)?,
             rounds: tokio::sync::Mutex::new(()),
         })
@@ -247,6 +255,7 @@ impl ZecMakerReservations {
                     zebra_genesis: Hex32::from_bytes(record.response.zebra_genesis),
                     lez_discovery: discovery,
                     funding: record.response.maker_funding.as_ref().map(candidate),
+                    zcash_key_file: self.zcash_key_file.clone(),
                 },
             )
             .map_err(|error| internal(&error))?;

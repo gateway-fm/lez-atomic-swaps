@@ -330,12 +330,17 @@ impl MakerRpc {
         mut self,
         config_file: &Path,
         role_config_file: &Path,
+        zcash_key_file: &Path,
     ) -> anyhow::Result<Self> {
         let provisioner = self
             .zec_actor_provisioner
             .clone()
             .context("ZEC reservations need the ZEC actor authority")?;
-        let reservations = Arc::new(ZecMakerReservations::load(config_file, role_config_file)?);
+        let reservations = Arc::new(ZecMakerReservations::load(
+            config_file,
+            role_config_file,
+            zcash_key_file,
+        )?);
         reservations.restore(&provisioner);
         self.zec_reservations = Some(reservations);
         Ok(self)

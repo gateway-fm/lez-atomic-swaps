@@ -257,6 +257,11 @@ pub(super) async fn prepare(
     };
     let lez = dynamic.lez_role();
     let taker_secret = dynamic.config.zcash_key()?;
+    let taker_key_file = dynamic
+        .config
+        .zcash_key_file()
+        .context("the Taker's Zcash role names no zcash_key_file")?
+        .to_path_buf();
     let mut secret = SecretKey::from_slice(taker_secret.as_ref())?;
     let taker_public = PublicKey::from_secret_key(&Secp256k1::signing_only(), &secret);
     secret.non_secure_erase();
@@ -287,7 +292,7 @@ pub(super) async fn prepare(
                     )
                     .await
                     .map_err(|error| ZecFundingUnavailable(error.to_string()))?;
-                    let digest = begin_zec_taker_role(&role_root, &taker_secret)?;
+                    let digest = begin_zec_taker_role(&role_root)?;
                     (
                         Some(ZecOutpointV1 {
                             transaction_id: *funding.transaction_id().as_bytes(),
@@ -400,6 +405,7 @@ pub(super) async fn prepare(
                     runtime.config().lez.discovery_max_blocks,
                 )?,
                 funding: contribution.taker_funding.clone(),
+                zcash_key_file: taker_key_file.clone(),
             },
         )?;
     }
@@ -420,9 +426,10 @@ pub(super) async fn prepare(
             path: draft_file,
             sha256: Sha256::digest(&response.unsigned_draft_wire).into(),
         },
-        // The agreement key is the Taker's Zcash key (zec_taker_accept.rs).
+        // The agreement key is the Taker's Zcash key (zec_taker_accept.rs):
+        // its own role-level file, not a per-swap copy.
         signing_key: SecretPrivateFileV1 {
-            path: role_root.join("zcash.key"),
+            path: taker_key_file.clone(),
         },
         source_config: ImmutablePrivateFileV1 {
             path: template,

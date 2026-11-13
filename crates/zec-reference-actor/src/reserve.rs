@@ -153,6 +153,12 @@ impl ZecRoleConfigV1 {
         )
     }
 
+    /// The role's own Zcash key file, when this config names one.
+    #[must_use]
+    pub fn zcash_key_file(&self) -> Option<&Path> {
+        self.zcash_key_file.as_deref()
+    }
+
     /// The role's own Zcash key, read once.
     ///
     /// # Errors
@@ -488,13 +494,11 @@ where
     balance
 }
 
-/// Writes a role's own secrets into a new private `role_root`: its Zcash key,
-/// a fresh claim-recovery key and, when it funds Zcash, its claim preimage.
-fn write_role_secrets(
-    role_root: &Path,
-    zcash_secret: &[u8; 32],
-    preimage: Option<&[u8; 32]>,
-) -> Result<()> {
+/// Writes a swap's own secrets into a new private `role_root`: a fresh
+/// claim-recovery key and, when the role funds Zcash, its claim preimage. The
+/// role's long-lived Zcash key is not copied: the actor template names its
+/// own file ([`ZecRoleTemplate::zcash_key_file`]).
+fn write_role_secrets(role_root: &Path, preimage: Option<&[u8; 32]>) -> Result<()> {
     let paths = material_paths(role_root, &role_root.join("state"));
     create_private_directory(role_root)?;
     create_private_directory(&paths.state_root)?;
@@ -504,7 +508,6 @@ fn write_role_secrets(
             .map_err(|_| anyhow::anyhow!("claim recovery randomness unavailable"))?;
     }
     write_private_new(&paths.claim_recovery_key, recovery.as_ref())?;
-    write_private_new(&paths.zcash_key, zcash_secret)?;
     if let Some(preimage) = preimage {
         write_private_new(&paths.claim_preimage, preimage)?;
     }
@@ -513,14 +516,14 @@ fn write_role_secrets(
 
 /// Makes the Taker's claim preimage before it reserves (it funds Zcash in
 /// `TakerSellsForeign`): written into a new private `role_root`, with the
-/// Taker's own Zcash key and recovery key; returns its SHA-256.
+/// swap's recovery key; returns its SHA-256.
 ///
 /// # Errors
 ///
 /// Fails when `role_root` exists or cannot be written.
-pub fn begin_zec_taker_role(role_root: &Path, taker_zcash_secret: &[u8; 32]) -> Result<[u8; 32]> {
+pub fn begin_zec_taker_role(role_root: &Path) -> Result<[u8; 32]> {
     let preimage = fresh_claim_preimage()?;
-    write_role_secrets(role_root, taker_zcash_secret, Some(&preimage))?;
+    write_role_secrets(role_root, Some(&preimage))?;
     Ok(Sha256::digest(&preimage[..]).into())
 }
 
@@ -630,7 +633,7 @@ where
         .context("encode the reservation draft")?;
     ZecAgreementDraftV1::from_wire_at(&draft_wire, UnixSeconds::new(now))
         .context("the reservation draft does not validate")?;
-    write_role_secrets(role_root, maker_zcash_secret, preimage.as_deref())?;
+    write_role_secrets(role_root, preimage.as_deref())?;
     write_private_new(&role_root.join(ZEC_ROLE_DRAFT_FILE), &draft_wire)?;
     Ok(ZecMakerReservation {
         draft_wire,
@@ -785,7 +788,7 @@ where
     ZecAgreementDraftV1::from_wire_at(&maker.draft_wire, UnixSeconds::new(check.now))
         .context("the Maker's draft does not validate")?;
     if maker_funds {
-        write_role_secrets(role_root, taker_zcash_secret, None)?;
+        write_role_secrets(role_root, None)?;
     } else {
         ensure!(
             role_root.join("claim-preimage.key").is_file(),
@@ -809,6 +812,10 @@ pub struct ZecRoleTemplate {
     pub lez_discovery: DiscoveryWindow,
     /// The funder's committed outpoint; empty for the other role.
     pub funding: Option<CandidateOutpoint>,
+    /// The role's own long-lived Zcash key file, named by the template rather
+    /// than copied into the swap (the Maker's Delivery key, the Taker's
+    /// `zcash_key_file`).
+    pub zcash_key_file: PathBuf,
 }
 
 /// Writes the role's actor template into `role_root`, around its take-time
@@ -827,6 +834,7 @@ pub fn write_zec_role_template(
 ) -> Result<PathBuf> {
     let mut paths = material_paths(role_root, &role_root.join("state"));
     paths.capability.clone_from(&template.capability_file);
+    paths.zcash_key.clone_from(&template.zcash_key_file);
     let draft_file = role_root.join(ZEC_ROLE_DRAFT_FILE);
     let draft = fs::read(&draft_file).context("read the role's draft")?;
     let preimage_file = paths.claim_preimage.clone();
@@ -985,7 +993,7 @@ mod tests {
                 let funding = select_zec_funding(&config, &zebra, &public(FUNDER), PRINCIPAL, &[])
                     .await
                     .unwrap();
-                let digest = begin_zec_taker_role(&taker_root, &taker_secret).unwrap();
+                let digest = begin_zec_taker_role(&taker_root).unwrap();
                 (Some(funding), Some(digest))
             }
             SwapDirection::TakerSellsLez => (None, None),

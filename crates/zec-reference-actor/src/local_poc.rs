@@ -2836,8 +2836,10 @@ pub(crate) mod testnet_provision_tests {
         let role_root = root.join("maker");
         create_private_directory(&role_root).unwrap();
         create_private_directory(&role_root.join("state")).unwrap();
+        // The role's long-lived Zcash key lives outside the swap's role root.
+        let role_key = root.join("role-zcash.key");
+        write_private_new(&role_key, &[2_u8; 32]).unwrap();
         for (name, bytes) in [
-            ("zcash.key", vec![2_u8; 32]),
             ("claim-recovery.key", vec![3_u8; 32]),
             ("draft.borsh", vec![4_u8; 64]),
             (
@@ -2877,11 +2879,13 @@ pub(crate) mod testnet_provision_tests {
                 zebra_genesis: Hex32::from_bytes([6; 32]),
                 lez_discovery: discovery,
                 funding: None,
+                zcash_key_file: role_key.clone(),
             },
         )
         .unwrap();
         let mut paths = material_paths(&role_root, &role_root.join("state"));
         paths.capability = role_root.join("sidecar-capability");
+        paths.zcash_key = role_key;
         let dealer = encode_deterministic_local_v0_2_actor_config(actor_config_input(
             &RoleCorridor::of_spec(&spec, ActorRole::Maker),
             &swap_id,
