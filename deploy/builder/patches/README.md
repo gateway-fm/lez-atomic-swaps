@@ -103,4 +103,4 @@ inside Basecamp and serves that role's signer socket) is not an upstream patch.
 | logos-execution-zone-module/0001 wallet-ffi-sign | 120 | logos-execution-zone `9edf4a622fe9` | not yet offered (related: logos-execution-zone-module#73, message signing) |
 | logos-execution-zone-module/0001 darwin-metal-toolchain | 35 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | logos-execution-zone-module/0002 | 111 | logos-execution-zone-module `acf0cd501b26` | not yet offered |
-| logos-chat-module/0001 delivery-config | 66 | logos-chat-module `dfe8ccf3eff3` | not yet offered (upstream: the host owns Delivery's lifecycle) |
+| logos-chat-module/0001 delivery-config | 66 | logos-chat-module `dfe8ccf3eff3` | not yet offered (upstream: the host owns Delivery's lifecycle); draft issue with the `logos.test` measurements: [logos-chat-delivery-report.md](../../../docs/upstream/logos-chat-delivery-report.md) |
