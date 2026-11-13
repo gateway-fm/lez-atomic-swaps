@@ -65,6 +65,18 @@
 #                         (runtime/zec/testnet-funding-from); the principal is
 #                         LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS (0.01 TAZ). Exits
 #                         3 (blocked) when one of these is missing
+#     --native-home DIR   the Nodes run natively on this host, started from
+#                         their Logos packages with LEZ_NODE_HOME=DIR (the
+#                         launcher's macOS layout): the corridor is written to
+#                         DIR/zec/corridor, both roles' ZEC root (each role
+#                         reads its own half), the Taker catalog to
+#                         DIR/zec/prepared.json;
+#                         the identities are DIR/identity/<role>; the Nodes are
+#                         reached on DIR/run/<role>/node.sock and restarted by
+#                         ending them (their supervisor, lez_swap_node, starts
+#                         them again). The provisioners run from
+#                         LEZ_ZEC_NATIVE_TOOLS (default: this checkout's
+#                         target/release). Regtest only.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 set -a
@@ -85,6 +97,7 @@ ADD=0   # --add: a second corridor ("-b") beside the live one, with its own Zcas
 DIRECTION=TakerSellsLez   # --direction: who sells what; TakerSellsForeign funds the Taker's Zcash key first
 PROFILE=""   # --profile: the LEZ escrow's validity window ends at its refund time; per network below
 ZCASH_NETWORK=regtest   # --zcash-network: the chain the corridor is provisioned on
+NATIVE=""   # --native-home: native Nodes on this host (see above)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-restart) RESTART=0; shift ;;
@@ -94,12 +107,15 @@ while [[ $# -gt 0 ]]; do
     --direction) DIRECTION="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --zcash-network) ZCASH_NETWORK="$2"; shift 2 ;;
-    -h|--help) sed -n '2,56p' "$0"; exit 0 ;;
+    --native-home) NATIVE="$2"; shift 2 ;;
+    -h|--help) sed -n '2,78p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
 
 blocked() { echo "zec-provision.sh: blocked: $*" >&2; exit 3; }
+fail() { echo "zec-provision failed: $*" >&2; exit 1; }
+[[ -z "$NATIVE" || "$ZCASH_NETWORK" == regtest ]] || fail "--native-home provisions a Regtest corridor only"
 case "$ZCASH_NETWORK" in
   regtest) PROFILE="${PROFILE:-deterministic-local-devnet-v5}" ;;
   test)
@@ -144,6 +160,15 @@ TAKER_VOLUME="$VOLUME_PREFIX-zec-taker"
 DELIVERY_VOLUME="$VOLUME_PREFIX-delivery-dir"
 NODE_UID=4713
 ZEC_ROOT=/var/lib/lez/zec            # the volume, as the Node containers see it
+if [[ -n "$NATIVE" ]]; then
+  [[ -d "$NATIVE" ]] || fail "--native-home $NATIVE is not a directory"
+  NATIVE="$(cd "$NATIVE" && pwd -P)"   # the tools open key files without following symbolic links
+  ZEC_ROOT="$NATIVE/zec"             # the native Nodes' corridor root (both roles link it)
+  TOOLS="${LEZ_ZEC_NATIVE_TOOLS:-$(cd .. && pwd)/target/release}"
+  for tool in zec-local-poc-provision zec-local-poc-chat-draft zec-local-poc-transfer lez-maker-cli; do
+    [[ -x "$TOOLS/$tool" ]] || fail "$TOOLS/$tool is missing (cargo build --release -p zec-reference-actor -p lez-maker-node)"
+  done
+fi
 CORRIDOR="$ZEC_ROOT/corridor"        # the provisioner's output root
 ZEBRA_URL="${LEZ_ZEBRA_URL:-http://127.0.0.1:18232/}"
 INDEXER_URL="${LEZ_INDEXER_URL:-$LEZ_STACK_INDEXER_URL}"
@@ -176,6 +201,12 @@ esac
 # Maker's is also its Delivery signing key and zebra's miner address.
 MAKER_ZCASH_KEY_FILE="$LANE/lez/maker/zcash.key"
 TAKER_ZCASH_KEY_FILE="$LANE/lez/taker/zcash.key"
+IDENTITIES="$LANE/lez"   # <role>/identity.json, <role>/lez-signer.key
+if [[ -n "$NATIVE" ]]; then
+  IDENTITIES="$NATIVE/identity"
+  MAKER_ZCASH_KEY_FILE="$IDENTITIES/maker/zcash.key"
+  TAKER_ZCASH_KEY_FILE="$IDENTITIES/taker/zcash.key"
+fi
 if [[ "$ZCASH_NETWORK" == test ]]; then
   # The owner's Testnet keys; the Maker's must also be the testnet stack's
   # Maker key (its Delivery identity), checked in step 0.
@@ -195,13 +226,14 @@ MATURITY=100
 MAKER_IMAGE="${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}"
 
 log() { printf '[zec-provision %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
-fail() { echo "zec-provision failed: $*" >&2; exit 1; }
 
 # One owner-RPC call on a Node socket; prints the JSON-RPC envelope. No -i:
 # curl never reads stdin and an attached stream hangs a detached runner.
 rpc() { # rpc <maker|taker> <method> <params-json>
   local role="$1" method="$2" params="$3"
-  docker exec "$LEZ_CONTAINER_PREFIX-$role-node" curl -sS --max-time 120 --unix-socket "/run/lez/$role/node.sock" \
+  local via=(docker exec "$LEZ_CONTAINER_PREFIX-$role-node") socket="/run/lez/$role/node.sock"
+  [[ -z "$NATIVE" ]] || { via=(); socket="$NATIVE/run/$role/node.sock"; }
+  ${via[@]+"${via[@]}"} curl -sS --max-time 120 --unix-socket "$socket" \
     -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":[$params]}" http://localhost/ </dev/null
 }
@@ -269,7 +301,26 @@ wait_healthy() { # wait_healthy <container> <seconds>
 }
 # The Taker pins the Maker's Delivery identity when it starts, so the Maker
 # must be up (and have republished its identity) before the Taker is recreated.
+# A native Node is ended (SIGTERM); lez_swap_node, its supervisor, starts it
+# again two seconds later and its launcher loads the corridor anew.
+native_node_pid() { pgrep -f -- "--socket $NATIVE/run/$1/node.sock" | head -1; }
+restart_native_node() { # restart_native_node <role>
+  local role="$1" old new
+  old="$(native_node_pid "$role")" || true
+  [[ -n "$old" ]] || fail "no native $role Node runs with the socket $NATIVE/run/$role/node.sock"
+  kill -TERM "$old"
+  for _ in $(seq 1 120); do
+    new="$(native_node_pid "$role" || true)"
+    if [[ -n "$new" && "$new" != "$old" ]] && rpc "$role" "${role}_health" '{"schema_version":1}' 2>/dev/null |
+        python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("result",{}).get("ready") else 1)' 2>/dev/null; then
+      return 0
+    fi
+    sleep 3
+  done
+  fail "the native $role Node did not come back ready"
+}
 recreate_nodes() {
+  if [[ -n "$NATIVE" ]]; then restart_native_node maker; restart_native_node taker; return; fi
   "${compose[@]}" up -d --no-deps --force-recreate maker-node >/dev/null 2>&1
   wait_healthy "$MAKER_NODE"
   "${compose[@]}" up -d --no-deps --force-recreate taker-node >/dev/null 2>&1
@@ -329,19 +380,31 @@ swap_id="$(swap_id_of 0)"; offer_id="$(offer_id_of 0)"; reservation_id="$(reserv
 # ---- 0. the Maker's Delivery identity ------------------------------------------
 log "0/8 Maker Delivery identity"
 required_containers=("$MAKER_NODE" "$TAKER_NODE")
+[[ -z "$NATIVE" ]] || required_containers=()   # native Nodes: checked by their sockets below
 [[ "$ZCASH_NETWORK" == test ]] || required_containers+=("$LEZ_CONTAINER_PREFIX-zebra")   # Testnet: the route is remote or self-hosted
 for c in "${required_containers[@]}"; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
+done
+for role in ${NATIVE:+maker taker}; do
+  [[ -S "$NATIVE/run/$role/node.sock" && -n "$(native_node_pid "$role")" ]] || fail "the native $role Node is not running ($NATIVE/run/$role/node.sock)"
 done
 for f in "$MAKER_ZCASH_KEY_FILE" "$TAKER_ZCASH_KEY_FILE"; do
   [[ -s "$f" ]] || fail "$f is missing: run scripts/gen-config.sh runtime (it mints both roles' Zcash keys)"
 done
 # The CLI reads only an owner-owned 0600 file: copy the key into one first.
+if [[ -n "$NATIVE" ]]; then
+  expected_identity="$(key_copy="$(mktemp "$NATIVE/.maker-key.XXXXXX")"; install -m 0600 "$MAKER_ZCASH_KEY_FILE" "$key_copy"
+    "$TOOLS/lez-maker-cli" delivery-identity --signing-key-file "$key_copy" </dev/null; rm -f "$key_copy")"
+  expected_identity="$(tr -d ' \n' <<<"$expected_identity" | grep -o '0[23][0-9a-f]\{64\}')" ||
+    fail "lez-maker-cli delivery-identity failed on $MAKER_ZCASH_KEY_FILE"
+  current_identity="$(tr -d ' \n' <"$NATIVE/delivery/maker-delivery-identity.pub" 2>/dev/null || true)"
+else
 expected_identity="$(docker run --rm --user 0:0 -v "$PWD/$MAKER_ZCASH_KEY_FILE:/in/key:ro" --entrypoint bash "$MAKER_IMAGE" \
   -c 'umask 077; install -m 0600 /in/key /tmp/k && lez-maker-cli delivery-identity --signing-key-file /tmp/k' </dev/null |
   tr -d ' \n' | grep -o '0[23][0-9a-f]\{64\}')" ||
   fail "lez-maker-cli delivery-identity failed on $MAKER_ZCASH_KEY_FILE"
 current_identity="$(docker run --rm -v "$DELIVERY_VOLUME:/d:ro" --entrypoint cat "$TAKER_IMAGE" /d/maker-delivery-identity.pub </dev/null 2>/dev/null | tr -d ' \n')"
+fi
 if [[ "$current_identity" == "$expected_identity" ]]; then
   log "  Maker Delivery identity is its minted Zcash key ($expected_identity)"
 elif [[ "$ZCASH_NETWORK" == test ]]; then
@@ -350,6 +413,9 @@ elif [[ "$ZCASH_NETWORK" == test ]]; then
   fail "the Maker's Delivery identity ($current_identity) is not the Testnet Maker key's ($expected_identity): install $MAKER_ZCASH_KEY_FILE as $LANE/lez/maker/zcash.key (0600) and recreate the Nodes"
 else
   [[ "$RESTART" == 1 ]] || fail "the Maker's Delivery identity ($current_identity) is not the corridor key ($expected_identity); rerun without --no-restart to pin it"
+  # The native Maker installs its identity's zcash.key at every start: a
+  # different one is the operator's to fix, not this script's.
+  [[ -z "$NATIVE" ]] || fail "the native Maker's Delivery identity ($current_identity) is not its zcash.key's ($expected_identity)"
   log "  pinning the Maker Delivery identity $current_identity → $expected_identity (both Nodes recreated)"
   "${compose[@]}" stop maker-node taker-node >/dev/null 2>&1
   # Offer files signed by the previous identity would fail the Taker's
@@ -473,6 +539,7 @@ fi
 # ---- 2. spec ------------------------------------------------------------------
 log "2/8 spec"
 manifest=runtime/market-bootstrap.env
+[[ -z "$NATIVE" ]] || manifest="$NATIVE/market-bootstrap.env"   # the one the native Nodes load
 escrow="$(sed -n 's/^M3_POC_LEZ_ESCROW_PROGRAM_ID=//p' "$manifest" | head -1)"
 genesis="$(sed -n 's/^M3_POC_LEZ_GENESIS_BLOCK_HASH=//p' "$manifest" | head -1)"
 transfer="$(sed -n 's/^M3_POC_LEZ_AUTH_TRANSFER_PROGRAM_ID=//p' "$manifest" | head -1)"
@@ -501,15 +568,15 @@ print(json.dumps({"zebra_endpoint": url, "zebra_route": {"kind": kind, field: pa
 fi
 for (( k = 0; k < SWAPS; k++ )); do
 python3 - "$(out_of $k)/spec.json" "$(run_id_of $k)" "$(swap_id_of $k)" "$channel" "$genesis" "$escrow" "$transfer" \
-  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" "$scan_from" "$LANE" "$spec_extra" <<'PY'
+  "$(maker_port_of $k)" "$(taker_port_of $k)" "$discovery_start" "$(slot_of $k)" "$SPEC_DIRECTION" "$PROFILE" "$scan_from" "$IDENTITIES" "$spec_extra" <<'PY'
 import json, sys
-(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile, scan_from, lane, extra) = sys.argv[1:]
+(out, run_id, swap_id, channel, genesis, escrow, transfer, maker_port, taker_port, start, skip, direction, profile, scan_from, identities, extra) = sys.argv[1:]
 ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 def base58(raw: bytes) -> str:
     n = int.from_bytes(raw, "big"); text = ""
     while n: n, r = divmod(n, 58); text = ALPHABET[r] + text
     return "1" * (len(raw) - len(raw.lstrip(b"\0"))) + text
-ids = {r: json.load(open(f"{lane}/lez/{r}/identity.json"))["account_id"] for r in ("maker", "taker")}
+ids = {r: json.load(open(f"{identities}/{r}/identity.json"))["account_id"] for r in ("maker", "taker")}
 spec = {
     "schema_version": 1, "run_id": run_id, "swap_id": swap_id, "direction": direction,
     # The LEZ escrow's validity window ends at the agreement's LEZ refund time;
@@ -536,6 +603,38 @@ chmod 0600 "$(out_of $k)/spec.json"
 done
 
 # ---- 3. provision -------------------------------------------------------------
+# A provisioner or the transfer tool on the corridor root: in a throwaway
+# container of the Taker image on the staging volume, or, for native Nodes,
+# from LEZ_ZEC_NATIVE_TOOLS on this host (the same arguments either way).
+zec_tool() { # zec_tool <tool> <args...>
+  local tool="$1"; shift
+  if [[ -n "$NATIVE" ]]; then "$TOOLS/$tool" "$@"; return; fi
+  docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
+    --entrypoint "$tool" "$TAKER_IMAGE" "$@"
+}
+if [[ -n "$NATIVE" ]]; then
+  log "3/8 provision (native: $ZEC_ROOT)"
+  # The provisioner's output root must be new: the previous corridors are
+  # archived first (the containers archive theirs when distributing, step 4).
+  umask 077
+  mkdir -p "$ZEC_ROOT"; chmod 0700 "$ZEC_ROOT"
+  if [[ "$ADD" == 0 ]]; then
+    for c in "$ZEC_ROOT"/corridor "$ZEC_ROOT"/corridor-*; do
+      [[ -e "$c" ]] || continue
+      old="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "$c/maker/actor-config.json" 2>/dev/null || date +%s)"
+      mkdir -p "$ZEC_ROOT/archive" && mv "$c" "$ZEC_ROOT/archive/$old-$(basename "$c")"
+    done
+    rm -f "$ZEC_ROOT/prepared.json"
+  fi
+  # Both roles' keys side by side, for the provisioners only; removed below.
+  rm -rf "${ZEC_ROOT:?}/signers"; mkdir -m 0700 "$ZEC_ROOT/signers"
+  trap 'rm -rf "${ZEC_ROOT:?}/signers"' EXIT
+  for (( k = 0; k < SWAPS; k++ )); do install -m 0600 "$(out_of $k)/spec.json" "$ZEC_ROOT/spec${SUFFIX[$(slot_of $k)]}.json"; done
+  install -m 0600 "$IDENTITIES/maker/lez-signer.key" "$ZEC_ROOT/signers/maker.key"
+  install -m 0600 "$IDENTITIES/taker/lez-signer.key" "$ZEC_ROOT/signers/taker.key"
+  install -m 0600 "$MAKER_ZCASH_KEY_FILE" "$ZEC_ROOT/signers/maker-zcash.key"
+  install -m 0600 "$TAKER_ZCASH_KEY_FILE" "$ZEC_ROOT/signers/taker-zcash.key"
+else
 log "3/8 provision (staging volume $STAGING)"
 docker volume rm -f "$STAGING" >/dev/null 2>&1 || true
 docker volume create "$STAGING" >/dev/null
@@ -559,6 +658,7 @@ helper 0:0 -v "$STAGING:$ZEC_ROOT" "${spec_mounts[@]}" "${credential_mount[@]}" 
   install -m 0600 /in/taker-zcash.key $ZEC_ROOT/signers/taker-zcash.key
   $credential_install
   chown -R $NODE_UID:$NODE_UID $ZEC_ROOT && chmod 0700 $ZEC_ROOT $ZEC_ROOT/signers"
+fi
 if [[ "$ZCASH_NETWORK" == test && "$pay_taker" == 1 ]]; then
   # The Taker funds Zcash on Testnet: the Maker's owner-funded key pays the
   # Taker's once per swap, and the provisioner waits for Testnet to bury the
@@ -600,8 +700,7 @@ elif [[ "$DIRECTION" == TakerSellsForeign ]]; then
   payments=$(( payments + TAKER_POOL_AHEAD ))
   log "  TakerSellsForeign: paying the Taker's key $TAKER_FUNDING_ZATOSHIS zatoshis from the Maker's, $payments time(s), then 100 blocks"
   for (( p = 0; p < payments; p++ )); do
-    docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
-      --entrypoint zec-local-poc-transfer "$TAKER_IMAGE" \
+    zec_tool zec-local-poc-transfer \
       --zebra-endpoint http://127.0.0.1:18232 --from-zcash-key-file "$ZEC_ROOT/signers/maker-zcash.key" \
       --to-zcash-key-file "$ZEC_ROOT/signers/taker-zcash.key" --value-zatoshis "$TAKER_FUNDING_ZATOSHIS" </dev/null >"$out/taker-funding-$p.json" ||
       fail "zec-local-poc-transfer failed (see above)"
@@ -625,8 +724,7 @@ fi
 # --network host: the provisioner only accepts a loopback zebra endpoint, and
 # Compose publishes zebra on 127.0.0.1:18232 (a lane: its Taker's, zebra_net).
 for (( k = 0; k < SWAPS; k++ )); do
-docker run --rm "${zebra_net[@]}" --user "$NODE_UID:$NODE_UID" -v "$STAGING:$ZEC_ROOT" \
-  --entrypoint zec-local-poc-provision "$TAKER_IMAGE" \
+zec_tool zec-local-poc-provision \
   --spec-file "$ZEC_ROOT/spec${SUFFIX[$(slot_of $k)]}.json" --output-root "$(corridor_of $k)" \
   --maker-lez-signer-key-file "$ZEC_ROOT/signers/maker.key" \
   --taker-lez-signer-key-file "$ZEC_ROOT/signers/taker.key" \
@@ -648,6 +746,15 @@ if [[ "$ZCASH_NETWORK" == test && "$DIRECTION" == TakerSellsLez ]]; then
 fi
 
 # ---- 4. distribute ------------------------------------------------------------
+if [[ -n "$NATIVE" ]]; then
+  # Both native Nodes read the one corridor root (the launcher's macOS
+  # LEZ_ZEC_STATE_DIR), each its own half: nothing to distribute. The
+  # provisioners' copies of both roles' keys go.
+  log "4/8 the native Nodes read $ZEC_ROOT"
+  rm -rf "${ZEC_ROOT:?}/signers" "$ZEC_ROOT"/spec*.json
+  for r in $(for (( k = 0; k < SWAPS; k++ )); do run_id_of $k; done); do mkdir -p "$ZEC_ROOT/taker-swaps/$r"; done
+  chmod 0700 "$ZEC_ROOT/taker-swaps"
+else
 log "4/8 distribute into $MAKER_VOLUME / $TAKER_VOLUME"
 # The role Basecamps (maker-node, taker-node) created the volumes, with
 # Compose's labels; the copy below owns what it writes to the Node uid.
@@ -681,6 +788,7 @@ helper 0:0 -v "$STAGING:/stage:ro" -v "$MAKER_VOLUME:/maker" -v "$TAKER_VOLUME:/
   echo '  taker volume:'; find /taker/corridor* -type f | sort | sed 's|^|    |'"
 # The staging copy held both roles' secrets side by side; nothing reads it again.
 docker volume rm -f "$STAGING" >/dev/null
+fi
 
 # ---- 5. publish and discover the offer -----------------------------------------
 log "5/8 Zcash offer(s) $(for (( k = 0; k < SWAPS; k++ )); do offer_id_of $k; done | tr '\n' ' ')"
@@ -753,9 +861,10 @@ commitment="${COMMITMENT[0]}"; expires_at="${EXPIRES_AT[0]}"
 
 # ---- 6. chat draft -----------------------------------------------------------
 log "6/8 unsigned Chat draft(s)"
+draft_tool=(docker run --rm --user "$NODE_UID:$NODE_UID" -v "$TAKER_VOLUME:$ZEC_ROOT" --entrypoint zec-local-poc-chat-draft "$TAKER_IMAGE")
+[[ -z "$NATIVE" ]] || draft_tool=("$TOOLS/zec-local-poc-chat-draft")
 for (( k = 0; k < SWAPS; k++ )); do
-docker run --rm --user "$NODE_UID:$NODE_UID" -v "$TAKER_VOLUME:$ZEC_ROOT" \
-  --entrypoint zec-local-poc-chat-draft "$TAKER_IMAGE" \
+"${draft_tool[@]}" \
   --source-agreement-file "$(corridor_of $k)/shared/agreement-v2.borsh" --now-unix-seconds "$(date +%s)" \
   --reservation-id "$(reservation_id_of $k)" --offer-commitment "${COMMITMENT[$k]}" \
   --offer-expires-at-unix-seconds "${EXPIRES_AT[$k]}" \
@@ -777,10 +886,15 @@ rm -f "$out/prepared.json"
 if [[ "$ADD" == 1 ]]; then install -m 0600 "$LANE/zec/$previous_run/prepared.json" "$out/prepared.json"; fi
 for (( k = 0; k < SWAPS; k++ )); do
 this_corridor="$(corridor_of $k)"
+if [[ -n "$NATIVE" ]]; then
+  install -m 0600 "$NATIVE/delivery/$(offer_id_of $k).offer.json" "$this_corridor/taker/signed-envelope.offer.json"
+  sums="$(cd "$this_corridor/taker" && shasum -a 256 signed-envelope.offer.json unsigned-draft.borsh actor-config.json)"
+else
 sums="$(helper 0:0 -v "$DELIVERY_VOLUME:/delivery:ro" -v "$TAKER_VOLUME:$ZEC_ROOT" -- "
   set -e; umask 077
   install -m 0600 -o $NODE_UID -g $NODE_UID /delivery/$(offer_id_of $k).offer.json $this_corridor/taker/signed-envelope.offer.json
   cd $this_corridor/taker && sha256sum signed-envelope.offer.json unsigned-draft.borsh actor-config.json")"
+fi
 envelope_sha="$(awk '$2=="signed-envelope.offer.json"{print $1}' <<<"$sums")"
 draft_sha="$(awk '$2=="unsigned-draft.borsh"{print $1}' <<<"$sums")"
 config_sha="$(awk '$2=="actor-config.json"{print $1}' <<<"$sums")"
@@ -807,8 +921,14 @@ json.dump(entries, open(out, "w"), indent=2)
 PY
 done
 chmod 0600 "$out/prepared.json"
+if [[ -n "$NATIVE" ]]; then
+  install -m 0600 "$out/prepared.json" "$ZEC_ROOT/prepared.json"
+  # The harness reads the corridor where these Nodes see it.
+  echo "$ZEC_ROOT" >"$out/zec-root"
+else
 docker run --rm -i --user 0:0 -v "$TAKER_VOLUME:$ZEC_ROOT" --entrypoint bash "$TAKER_IMAGE" -c \
   "umask 077; cat >$ZEC_ROOT/prepared.json && chown $NODE_UID:$NODE_UID $ZEC_ROOT/prepared.json" <"$out/prepared.json"
+fi
 echo "$run_id" >"$LANE/zec/current"
 log "  catalog: $(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$out/prepared.json") entries; this run: $(for (( k = 0; k < SWAPS; k++ )); do echo -n "$(swap_id_of $k) / $(offer_id_of $k); "; done) swap files under $ZEC_ROOT/taker-swaps/<run id>"
 
@@ -820,14 +940,18 @@ fi
 # ---- 8. recreate the Nodes -----------------------------------------------------
 log "8/8 recreating maker-node, then taker-node"
 recreate_nodes
+# in_node <maker|taker> <bash -c script>: in the role's container, or here for native Nodes
+in_node() { if [[ -n "$NATIVE" ]]; then bash -c "$2" </dev/null; else docker exec "$LEZ_CONTAINER_PREFIX-$1-node" bash -c "$2" </dev/null; fi; }
+if [[ -z "$NATIVE" ]]; then
 docker logs "$MAKER_NODE" 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  maker: /'
 docker logs "$TAKER_NODE" 2>&1 | grep -E "ZEC|zec" | tail -3 | sed 's/^/  taker: /'
+fi
 for (( s = 1; s < SWAPS + ADD; s++ )); do
-  docker exec "$MAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( MAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  maker sidecar answers on 127.0.0.1:$(( MAKER_BRIDGE_PORT + 2 * s ))" || fail "maker sidecar for slot $s does not answer"
-  docker exec "$TAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$(( TAKER_BRIDGE_PORT + 2 * s )))" </dev/null && log "  taker sidecar answers on 127.0.0.1:$(( TAKER_BRIDGE_PORT + 2 * s ))" || fail "taker sidecar for slot $s does not answer"
+  in_node maker "(exec 3<>/dev/tcp/127.0.0.1/$(( MAKER_BRIDGE_PORT + 2 * s )))" && log "  maker sidecar answers on 127.0.0.1:$(( MAKER_BRIDGE_PORT + 2 * s ))" || fail "maker sidecar for slot $s does not answer"
+  in_node taker "(exec 3<>/dev/tcp/127.0.0.1/$(( TAKER_BRIDGE_PORT + 2 * s )))" && log "  taker sidecar answers on 127.0.0.1:$(( TAKER_BRIDGE_PORT + 2 * s ))" || fail "taker sidecar for slot $s does not answer"
 done
-docker exec "$MAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$MAKER_BRIDGE_PORT)" </dev/null && log "  maker sidecar answers on 127.0.0.1:$MAKER_BRIDGE_PORT" || fail "maker sidecar not listening"
-docker exec "$TAKER_NODE" bash -c "(exec 3<>/dev/tcp/127.0.0.1/$TAKER_BRIDGE_PORT)" </dev/null && log "  taker sidecar answers on 127.0.0.1:$TAKER_BRIDGE_PORT" || fail "taker sidecar not listening"
+in_node maker "(exec 3<>/dev/tcp/127.0.0.1/$MAKER_BRIDGE_PORT)" && log "  maker sidecar answers on 127.0.0.1:$MAKER_BRIDGE_PORT" || fail "maker sidecar not listening"
+in_node taker "(exec 3<>/dev/tcp/127.0.0.1/$TAKER_BRIDGE_PORT)" && log "  taker sidecar answers on 127.0.0.1:$TAKER_BRIDGE_PORT" || fail "taker sidecar not listening"
 rpc_result maker maker_health '{"schema_version":1}' | python3 -c 'import json,sys; h=json.load(sys.stdin); print("  maker_health: ready=%s degraded=%s" % (h.get("ready"), h.get("degraded")))'
 listed="$(rpc_result taker taker_offer_list_v1 "{\"schema_version\":1,\"route\":$ROUTE}" | python3 -c 'import json,sys; print(" ".join(e["offer"]["id"] for e in json.load(sys.stdin)["offers"]))')"
 for (( k = 0; k < SWAPS; k++ )); do

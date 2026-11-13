@@ -1,0 +1,4 @@
+aarch64: installs linux-arm64 (lez_maker_node_plugin.so)
+lez-btc-maker-actor
+lez-maker-cli
+lez-maker-node

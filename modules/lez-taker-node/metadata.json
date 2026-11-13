@@ -2,7 +2,7 @@
   "name": "lez_taker_node",
   "display_name": "LEZ Taker Node",
   "version": "0.3.0",
-  "description": "The Taker's Node (the swap engine) and everything it runs: the Taker Node, its CLI, its registry initialiser, its Bitcoin and Zcash actors and the LEZ v0.2 sidecar, with the launcher lez_swap_node starts it from. Linux only (linux-amd64, linux-arm64)",
+  "description": "The Taker's Node (the swap engine) and everything it runs: the Taker Node, its CLI, its registry initialiser, its Bitcoin and Zcash actors and the LEZ v0.2 sidecar, with the launcher lez_swap_node starts it from. Variants: linux-arm64 and linux-amd64 carry the Linux executables the role's container image runs; darwin-arm64 carries the same executables built for macOS on Apple silicon (release builds, ad-hoc signed, not notarised)",
   "type": "core",
   "interface": "universal",
   "category": "blockchain",

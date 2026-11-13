@@ -1,0 +1,17 @@
+LogosBasecamp version 0.2.3 (portable build)
+  - logos-basecamp aa237766baf61404e12da86b7303cb41065464c9
+  - logos-package-manager 202af6fa0f0f4493bc59c8a609dff9326f78a18d
+App launcher clicked: "lez_atomic_swap_maker"
+Loading UI module: "lez_atomic_swap_maker"
+Loading core dependency for "lez_atomic_swap_maker" : "chat_module"
+Loading core dependency for "lez_atomic_swap_maker" : "delivery_module"
+Loading core dependency for "lez_atomic_swap_maker" : "lez_core"
+Loading core dependency for "lez_atomic_swap_maker" : "lez_swap_node"
+Loading core dependency for "lez_atomic_swap_maker" : "lez_maker_node"
+App launcher clicked: "lez_atomic_swap_taker"
+Loading UI module: "lez_atomic_swap_taker"
+Loading core dependency for "lez_atomic_swap_taker" : "chat_module"
+Loading core dependency for "lez_atomic_swap_taker" : "delivery_module"
+Loading core dependency for "lez_atomic_swap_taker" : "lez_core"
+Loading core dependency for "lez_atomic_swap_taker" : "lez_swap_node"
+Loading core dependency for "lez_atomic_swap_taker" : "lez_taker_node"

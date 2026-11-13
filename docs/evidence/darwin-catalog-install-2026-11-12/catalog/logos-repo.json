@@ -1,0 +1,9 @@
+{
+ "schemaVersion": 1,
+ "name": "lez-atomic-swaps",
+ "displayName": "LEZ Atomic Swaps (local test)",
+ "description": "local test catalog: the v0.3.0 set with darwin-arm64",
+ "homepage": "https://github.com/gateway-fm/lez-atomic-swaps",
+ "indexUrl": "https://localhost:8443/index.json",
+ "trustedSigners": []
+}

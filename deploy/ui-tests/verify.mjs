@@ -11,7 +11,8 @@
 //   docker exec lez-taker-node node /ui-tests/verify.mjs taker
 import net from "node:net";
 
-const framework = "/opt/qt-mcp/test-framework/framework.mjs";
+// The qt-mcp test framework: the image's, or QT_MCP_FRAMEWORK (a native Basecamp).
+const framework = process.env.QT_MCP_FRAMEWORK || "/opt/qt-mcp/test-framework/framework.mjs";
 const { test, run } = await import(framework);
 
 const role = process.argv[2] === "taker" ? "taker" : "maker";
@@ -50,7 +51,7 @@ async function waitInspector(ms) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const ok = await new Promise((resolve) => {
-      const s = net.createConnection({ host: "127.0.0.1", port: inspectorPort });
+      const s = net.createConnection({ host: process.env.QML_INSPECTOR_HOST || "127.0.0.1", port: inspectorPort });
       s.once("connect", () => { s.destroy(); resolve(true); });
       s.once("error", () => resolve(false));
     });

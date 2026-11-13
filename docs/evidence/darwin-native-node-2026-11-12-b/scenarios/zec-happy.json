@@ -1,0 +1,49 @@
+{
+  "scenario": "zec-happy",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "1794509459",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "nodes": {
+    "native_run_root": "$LEZ_NODE_HOME/run"
+  },
+  "swap_id": "zec-devnet-swap-1794509460",
+  "corridor": "zec-devnet-1794509460",
+  "profile": "deterministic-local-devnet-v5",
+  "offer_id": "zec-devnet-offer-1794509460",
+  "maker_restart_after_completion": "completed",
+  "maker_funding_attempt_count": 2,
+  "maker_taker_lock_projections": 1,
+  "taker_lez_replans": [],
+  "zcash_funding": {
+    "transaction_id": "06a014b4f9957ed8e253d0eaa1b9125b2011c389c374430d27e09bb9b3af164a",
+    "height": 222
+  },
+  "zcash_claim": {
+    "transaction_id": "7dd92a74d0fad9c6e876a69bdf1aea5019cffd6bd4c73ad450727137c5379352",
+    "height": 224
+  },
+  "zcash_refund_height": 230,
+  "result": "passed",
+  "seconds": 65
+}
