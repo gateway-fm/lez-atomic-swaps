@@ -790,8 +790,8 @@ fn run_child(
 ) -> Result<Vec<u8>, ChildRunError> {
     ensure_invocation_admitted(invocation, config, cancellation)?;
     let actor_command = invocation.name();
-    let artifacts =
-        prepare_maker_actor(lease.record()).map_err(|error| classify_deployment(&error))?;
+    let deployment_failure = |error| classify_deployment(&error, lease, actor_command);
+    let artifacts = prepare_maker_actor(lease.record()).map_err(deployment_failure)?;
     let transfers_lock =
         lease.record().manifest().kind() == MakerActorKindV1::Monero && invocation.is_effect();
     let mut command = if transfers_lock {
@@ -799,7 +799,7 @@ fn run_child(
     } else {
         artifacts.into_command(held_lock)
     }
-    .map_err(|error| classify_deployment(&error))?;
+    .map_err(deployment_failure)?;
     ensure_invocation_admitted(invocation, config, cancellation)?;
     command
         .args(["--config-fd", "196", actor_command])
@@ -894,12 +894,24 @@ fn run_child(
     Ok(output)
 }
 
-fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
+fn classify_deployment(
+    error: &MakerActorProcessError,
+    lease: &MakerActorLeaseV1,
+    actor_command: &str,
+) -> ChildRunError {
     match error {
         MakerActorProcessError::ArtifactPreparation | MakerActorProcessError::LockInheritance => {
             ChildRunError::Retry("actor_spawn_failed")
         }
-        _ => ChildRunError::Fail("actor_deployment_invalid"),
+        _ => {
+            // A permanent failure says which check refused it: the class alone
+            // does not, and the schedule stays failed until an operator acts.
+            eprintln!(
+                "maker actor {}: {actor_command} attempt fails (actor_deployment_invalid: {error})",
+                lease.record().swap_id().as_str()
+            );
+            ChildRunError::Fail("actor_deployment_invalid")
+        }
     }
 }
 
