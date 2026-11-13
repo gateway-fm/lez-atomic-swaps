@@ -21,6 +21,8 @@ mod effect_input_custody;
 mod effect_route;
 #[cfg(feature = "sessions")]
 mod maker_refund_activation;
+#[cfg(feature = "sessions")]
+mod reserve;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
@@ -67,6 +69,15 @@ pub use effect_route::{
     XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverResultV1, XmrEffectObserverStateV1,
     XmrPreparedEffectInvocationV1, XmrPreparedEffectObservationV1,
     parse_xmr_effect_observer_result_v1,
+};
+#[cfg(feature = "sessions")]
+pub use reserve::{
+    MAX_ANCHOR_CLOCK_SKEW_SECONDS, MAX_RESTORE_HEIGHT_SKEW_BLOCKS, XMR_ADAPTOR_JOURNAL_FILE,
+    XMR_MAKER_PACKET_FILE, XMR_STAGE_A_FILE, XMR_STAGE_A_UNSIGNED_FILE, XMR_STAGE_B_FILE,
+    XMR_TAKER_PACKET_FILE, XmrLezRole, XmrMakerReservation, XmrMoneroChainView,
+    XmrProcessStageAPlanner, XmrReservationTerms, XmrRoleConfigV1, XmrStageAPlanInputV1,
+    XmrStageAPlanner, XmrTakerCheck, XmrTakerContribution, accept_xmr_maker_stage_a,
+    begin_xmr_taker_role, check_xmr_taker_role, reserve_xmr_maker_role, xmr_taker_contribution,
 };
 
 use std::{
