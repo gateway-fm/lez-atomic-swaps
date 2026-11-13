@@ -68,7 +68,7 @@ static XMR_CHAT_PROCESS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // The full user-visible ordering is intentionally one audit surface.
-async fn real_taker_and_daemon_activate_role_generated_xmr_agreement_atomically() {
+async fn taker_and_daemon_activate_role_generated_xmr_agreement_with_stub_effects() {
     let _process_test_guard = XMR_CHAT_PROCESS_TEST_LOCK.lock().await;
     let run = tempdir().expect("isolated XMR Chat process root");
     make_private_directory(run.path());
