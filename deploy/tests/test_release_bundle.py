@@ -17,7 +17,7 @@ import unittest
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'scripts'
 RELEASE_ENV = '''# written by scripts/package-dist.sh; read by scripts/start.sh
 LEZ_IMAGE_PREFIX=ghcr.io/gateway-fm/lez-atomic-swaps/lez
-LEZ_IMAGE_TAG=v0.3.0
+LEZ_IMAGE_TAG=v0.3.1
 LEZ_ESCROW_PROGRAM_ID={program}
 LEZ_RELEASE_COMMIT=0123456789abcdef0123456789abcdef01234567
 '''.format(program='ab' * 32)
@@ -39,7 +39,7 @@ class ReleaseBundle(unittest.TestCase):
     def deploy_dir(self, release_env):
         tmp = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp)
-        deploy = tmp / 'lez-swap-stack-v0.3.0-arm64'
+        deploy = tmp / 'lez-swap-stack-v0.3.1-arm64'
         (deploy / 'scripts').mkdir(parents=True)
         shutil.copy(SCRIPTS / 'lane.sh', deploy / 'scripts')
         shutil.copy(SCRIPTS / 'host.sh', deploy / 'scripts')
@@ -56,15 +56,15 @@ class ReleaseBundle(unittest.TestCase):
 
     def test_a_bundle_resolves_the_release_images_and_never_builds(self):
         seen = self.probe(self.deploy_dir(RELEASE_ENV))
-        self.assertEqual(seen['image'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.3.0')
-        self.assertEqual(seen['child'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.3.0')
+        self.assertEqual(seen['image'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:v0.3.1')
+        self.assertEqual(seen['child'], 'ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:v0.3.1')
         self.assertEqual(seen['LEZ_ESCROW_PROGRAM_ID'], 'ab' * 32)
         self.assertEqual(seen['LEZ_RELEASE_COMMIT'], '0123456789abcdef0123456789abcdef01234567')
         self.assertEqual(seen['images'], 'pull')
 
     def test_a_bundle_of_local_images_uses_them_as_they_are(self):
         local = RELEASE_ENV.replace('LEZ_IMAGE_PREFIX=ghcr.io/gateway-fm/lez-atomic-swaps/lez', 'LEZ_IMAGE_PREFIX=lez') \
-                           .replace('LEZ_IMAGE_TAG=v0.3.0', 'LEZ_IMAGE_TAG=local')
+                           .replace('LEZ_IMAGE_TAG=v0.3.1', 'LEZ_IMAGE_TAG=local')
         seen = self.probe(self.deploy_dir(local))
         self.assertEqual(seen['image'], 'lez-maker-node:local')
         self.assertEqual(seen['images'], 'present')

@@ -6,7 +6,7 @@ and the M6 product surface without claiming unrelated milestone completion.
 
 Milestone 2 (ZEC/LEZ) is release v0.3.0. Its deliverables are mapped in
 [the M2 section of the milestone map](MILESTONES.md#m2--zeclez-leg), its
-release record is [`docs/release-notes-0.3.0.md`](../docs/release-notes-0.3.0.md),
+release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0),
 and the module topology it runs on is traced in
 [`docs/submission-115.md`](../docs/submission-115.md). The deck, walkthrough
 and manifest below predate it and show the BTC pair.

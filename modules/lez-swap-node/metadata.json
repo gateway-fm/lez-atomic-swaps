@@ -1,7 +1,7 @@
 {
   "name": "lez_swap_node",
   "display_name": "LEZ Swap Node",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Launches and supervises a swap role's Node (the swap engine) inside Basecamp and relays its LEZ signing requests to Basecamp's wallet",
   "type": "core",
   "interface": "universal",

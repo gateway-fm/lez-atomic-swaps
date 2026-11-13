@@ -19,9 +19,9 @@ cargo metadata --locked --no-deps
 Implementation changes must edit this tree normally and include tests and
 documentation in the same pull request. Do not submit generated build outputs,
 private evidence roots, or a patch-only substitute for the changed source.
-The owner-process hardening uses Linux-only APIs; on macOS, use the isolated
-Docker wrapper above instead of expecting the complete workspace to compile
-natively.
+The owner-process hardening uses Linux-only APIs; on macOS the workspace
+builds natively with a weaker store, and the isolated Docker wrapper above runs
+the Linux hardening checks.
 
 ## Developer Certificate of Origin
 

@@ -8,6 +8,8 @@ as well (sign-off, tests with every behavioural change).
 - **Nothing that exists only once a release is made.** Image digests, the
   names of attached files, what the module catalog holds: these go on the
   GitHub release page, not into a file here.
+- **No release notes.** Release notes live on the GitHub release page, not
+  in a file here.
 - **No placeholders.** Do not commit `TBD`, "to be filled" or an empty table
   cell for a result that is not in. Say in a plain sentence what has run and
   what has not ("not run yet"), and replace it when the result exists.
