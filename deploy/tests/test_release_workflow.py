@@ -35,9 +35,12 @@ class ReleaseWorkflow(unittest.TestCase):
         roles = set(re.search(r'for role in ([a-z -]+); do', collect).group(1).split())
         for context in ('maker-node', 'taker-node', 'lez-services', 'zebra'):
             self.assertIn(context, roles, context)
-        taker = (ROOT / 'deploy/images/taker-node/Dockerfile').read_text()
-        for tool in re.findall(r'\bzec-local-poc-[a-z-]+', taker):
-            self.assertIn('zec-local-poc-*', collect, tool)
+        # the published Taker image carries zec-local-poc-identity and none of
+        # the dealer test fixture's tools
+        self.assertIn('zec-local-poc-identity', collect)
+        self.assertNotIn('zec-local-poc-*', WORKFLOW)
+        for tool in ('provision', 'chat-draft', 'chat-finalize', 'transfer'):
+            self.assertNotIn(f'zec-local-poc-{tool}', WORKFLOW, tool)
         self.assertIn('source-tree.txt', collect)
 
 

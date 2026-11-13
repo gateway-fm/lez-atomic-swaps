@@ -7,18 +7,20 @@
 # (lez_taker_node.lgx, scripts/package-role-node.sh) carries the Node, its
 # CLI, its actors, the LEZ sidecar and the launcher; this image installs it,
 # and compose.yaml configures it. Only the Taker's executables are here
-# (deploy/role-symmetry.json). The ZEC corridor provisioners are not part of
-# the package: tests/fixtures/zec-catalog-fixture.sh runs them from this image to build a
-# prepared ZEC swap from live chain facts.
+# (deploy/role-symmetry.json). The zec-local-poc tools are not part of the
+# package: whichever the context holds are copied. The devnet's context
+# (from-scratch.sh) holds the dealer test fixture's (feature dealer-fixture,
+# run by tests/fixtures/zec-catalog-fixture.sh and node-e2e.py) and -identity
+# (gen-config.sh: zebra's miner address); the published image's context only
+# -identity (release-images.yml).
 #
-# The staged provisioners are debug builds; their debug sections are most of
-# the bytes. Strip them here so the image ships only what runs.
+# The staged tools are debug builds; their debug sections are most of the
+# bytes. Strip them here so the image ships only what runs.
 FROM debian:bookworm-slim AS strip
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends binutils \
     && rm -rf /var/lib/apt/lists/*
-COPY zec-local-poc-provision zec-local-poc-identity zec-local-poc-transfer \
-     zec-local-poc-chat-draft zec-local-poc-chat-finalize /payload/
+COPY zec-local-poc-* /payload/
 RUN strip /payload/*
 
 # "basecamp" is a build context (compose.yaml: service:basecamp-ui), not a registry image.

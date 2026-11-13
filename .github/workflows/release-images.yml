@@ -108,15 +108,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _out/images _out/sidecar
-          # zebra: the health check its image carries; taker-node: the ZEC
-          # corridor provisioners (zec-local-poc-*) its image keeps beside the
-          # Node package (tests/fixtures/zec-catalog-fixture.sh, gen-config.sh run them).
+          # zebra: the health check its image carries; taker-node: beside the
+          # Node package, zec-local-poc-identity (gen-config.sh: zebra's miner
+          # address), never the dealer test fixture's tools (feature dealer-fixture).
           for role in maker-node taker-node lez-services zebra; do
             mkdir -p "_out/images/$role"
             cp deploy/images/$role/lez-* "_out/images/$role/"
             [[ ! -f deploy/images/$role/build-source.txt ]] || cp deploy/images/$role/build-source.txt "_out/images/$role/"
           done
-          cp deploy/images/taker-node/zec-local-poc-* _out/images/taker-node/
+          cp deploy/images/taker-node/zec-local-poc-identity _out/images/taker-node/
           # source-tree.txt: the sidecar tree it was built from, which the stage
           # phase compares with the checkout's before it stages the sidecar.
           cp "$LEZ_WORKSPACE"/provision/data/sidecar/{lez-v02-bridge-poc,lez-v02-local-actor-identity,source-commit.txt,source-tree.txt} _out/sidecar/
@@ -453,7 +453,7 @@ jobs:
             install -m 0755 _in/node/images/$role/lez-* "deploy/images/$role/"
             [[ ! -f _in/node/images/$role/build-source.txt ]] || cp _in/node/images/$role/build-source.txt "deploy/images/$role/"
           done
-          install -m 0755 _in/node/images/taker-node/zec-local-poc-* deploy/images/taker-node/
+          install -m 0755 _in/node/images/taker-node/zec-local-poc-identity deploy/images/taker-node/
       - name: Stage image contexts (Bitcoin Core, LEZ sequencer, LEZ modules, sidecars, tools)
         env:
           LEZ_STAGE_SKIP_BASECAMP_UI: "1"
