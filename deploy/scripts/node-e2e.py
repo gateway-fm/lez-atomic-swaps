@@ -1836,17 +1836,86 @@ def scenario_maker_cli(stamp: str) -> dict:
     if [entry["phase"] for entry in history] != ["Completed"]:
         raise Failure(f"lez-maker-cli history does not list {swap_id[:12]} Completed: {history}")
     log(f"  lez-maker-cli monitor reports {swap_id[:12]} completed and terminal; history lists it Completed")
-    container, socket = NODES["maker"]
-    denied = subprocess.run(["docker", "exec", "-u", "65534", container, "lez-maker-cli", "health"],
-                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    owner_before = {"pairs": maker_cli("pairs"), "prices": maker_cli("prices"), "history": maker_cli("history")}
+    denied = wrong_owner_matrix("maker", MAKER_CLI_OWNER_COMMANDS, {"stamp": stamp, "swap": swap_id, "offer": offer_id})
+    # What the refused writes would have left, read back as the owner: nothing.
+    owner_after = {"pairs": maker_cli("pairs"), "prices": maker_cli("prices"), "history": maker_cli("history")}
+    stray = [record["offer"]["id"] for record in maker_cli("offers") if record["offer"]["id"] == f"offer-e2e-other-{stamp}"]
+    if owner_after != owner_before or stray:
+        raise Failure(f"a refused command left a trace in the Maker Node: offers {stray}, pairs/prices/history "
+                      f"{'changed' if owner_after != owner_before else 'unchanged'}")
+    log("  as the owner afterwards: no offer, pair, price or swap from the refused commands")
+    return {"swap_id": swap_id, "offer_id": offer_id, "history": history, "wrong_owner": denied}
+
+
+# Every lez-maker-cli / lez-taker-cli command that calls its Node's owner RPC, with
+# arguments the CLI accepts (placeholders from the scenario). Not in the tables, as
+# they make no owner RPC: the Maker's delivery-identity (a key file only), both
+# CLIs' start and stop (systemd), and the Taker's top-level monitor, claim and
+# refund (the actor's own files).
+MAKER_CLI_OWNER_COMMANDS = (
+    ("pairs",), ("prices",), ("health",), ("quote", "--pair", "bitcoin"), ("offers",), ("history",),
+    ("configure-pair", "--request-id", "e2e-other-pair-{stamp}", "--pair", "bitcoin", "--enabled", "false",
+     "--minimum-foreign-units", "1", "--maximum-foreign-units", "1", "--offer-ttl-seconds", "60"),
+    ("set-local-price", "--request-id", "e2e-other-price-{stamp}", "--pair", "bitcoin",
+     "--lez-units-per-lot", "1", "--foreign-units-per-lot", "1"),
+    ("publish-offer", "--request-id", "e2e-other-publish-{stamp}", "--offer-id", "offer-e2e-other-{stamp}",
+     "--pair", "bitcoin"),
+    ("withdraw-offer", "--request-id", "e2e-other-withdraw-{stamp}", "--offer-id", "{offer}", "--expected-revision", "1"),
+    ("create-swap", "--id", "e2e-other-swap-{stamp}", "--pair", "bitcoin", "--confirmations", "1",
+     "--maker-refund-basis", "block-height", "--maker-refund-at", "100", "--taker-refund-at", "200",
+     "--earlier-refund-latest", "100", "--later-refund-earliest", "200", "--required-margin", "1"),
+    ("status", "--id", "{swap}"), ("alerts", "--id", "{swap}"), ("acknowledge-alert", "--id", "{swap}", "--alert", "1"),
+    ("monitor", "--id", "{swap}"),
+    ("claim", "--id", "{swap}", "--request-id", "e2e-other-claim-{stamp}", "--expected-generation", "0"),
+    ("refund", "--id", "{swap}", "--request-id", "e2e-other-refund-{stamp}", "--expected-generation", "0"),
+)
+TAKER_CLI_OWNER_COMMANDS = (
+    ("health",), ("balances",), ("swap", "offers"), ("swap", "list"),
+    ("swap", "take", "--request-id", "e2e-other-take-{stamp}", "--offer-id", "{offer}", "--foreign-units", "1"),
+    ("swap", "monitor", "--swap-id", "{swap}"), ("swap", "lock", "--swap-id", "{swap}"),
+    ("swap", "claim", "--swap-id", "{swap}", "--request-id", "e2e-other-claim-{stamp}", "--expected-generation", "0"),
+    ("swap", "refund", "--swap-id", "{swap}", "--request-id", "e2e-other-refund-{stamp}", "--expected-generation", "0"),
+)
+
+
+def wrong_owner_matrix(role: str, commands: tuple, values: dict) -> list[dict]:
+    """U3: every command of the table run as another user (nobody, 65534) in
+    the role's container must fail connecting to the Node's owner socket with
+    a permission error: the kernel refuses the connect, so no request reaches
+    the Node. The socket's mode and owner are recorded beside the table."""
+    container, socket = NODES[role]
+    cli = f"lez-{role}-cli"
     mode = subprocess.run(["docker", "exec", container, "stat", "-c", "%a %U", socket],
                           capture_output=True, text=True, check=False).stdout.strip()
-    if denied.returncode == 0 or "connect local RPC socket" not in denied.stderr or "Permission denied" not in denied.stderr:
-        raise Failure(f"lez-maker-cli health as uid 65534 was not refused at the socket: exit {denied.returncode}, "
-                      f"{denied.stdout.strip()[:200]} {denied.stderr.strip()[:200]}")
-    log(f"  as uid 65534 lez-maker-cli health is refused connecting to {socket} ({mode}): no request made")
-    return {"swap_id": swap_id, "offer_id": offer_id, "history": history,
-            "non_owner_health": {"exit": denied.returncode, "stderr": denied.stderr.strip()[-200:], "socket": mode}}
+    rows = []
+    for command in commands:
+        arguments = [argument.format(**values) for argument in command]
+        denied = subprocess.run(["docker", "exec", "-u", "65534", container, cli, *arguments],
+                                capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+        refused = (denied.returncode != 0 and f"connect local RPC socket {socket}" in denied.stderr
+                   and "Permission denied" in denied.stderr)
+        rows.append({"command": " ".join(command), "exit": denied.returncode, "refused_at_socket": refused,
+                     "stderr": denied.stderr.strip()[-160:]})
+        if not refused:
+            raise Failure(f"{cli} {' '.join(arguments)} as uid 65534 was not refused at {socket}: exit "
+                          f"{denied.returncode}, {denied.stdout.strip()[:160]} {denied.stderr.strip()[-200:]}")
+    log(f"  as uid 65534 all {len(rows)} owner-RPC commands of {cli} are refused connecting to {socket} ({mode})")
+    return [{"socket": mode}, *rows]
+
+
+def scenario_taker_cli(stamp: str) -> dict:
+    """The happy swap with the Taker driven by lez-taker-cli (through_taker_cli),
+    then the Taker's wrong-owner table (TAKER_CLI_OWNER_COMMANDS)."""
+    summary = through_taker_cli(scenario_happy)(stamp)
+    offer = next(swap.get("offer_id") for swap in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]
+                 if swap["swap_id"] == summary["swap_id"])
+    swaps_before = call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]
+    denied = wrong_owner_matrix("taker", TAKER_CLI_OWNER_COMMANDS,
+                                {"stamp": stamp, "swap": summary["swap_id"], "offer": offer})
+    if call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"] != swaps_before:
+        raise Failure("a refused command changed the Taker Node's swap list")
+    return {**summary, "wrong_owner": denied}
 
 
 # ---- the Taker's side through its operator CLI (taker-cli) --------------------------
@@ -5524,7 +5593,7 @@ SCENARIOS = {
     "restart-maker": lambda stamp: scenario_restart(stamp, "maker"),
     "kill-taker": lambda stamp: scenario_kill_walk(stamp, "taker"),
     "kill-maker": lambda stamp: scenario_kill_walk(stamp, "maker"),
-    "taker-cli": through_taker_cli(scenario_happy),
+    "taker-cli": scenario_taker_cli,
     "taker-cli-refund": through_taker_cli(scenario_taker_refund),
     "survivor": scenario_survivor,
     "late-claim-confirms": scenario_late_claim_confirms,
