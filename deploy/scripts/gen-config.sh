@@ -606,6 +606,20 @@ case "$timing_profile" in
   *) echo "LEZ_TIMING_PROFILE must be local, fast or refund" >&2; exit 1 ;;
 esac
 timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
+# The Monero leg's windows (XmrWindowsV1, seconds after the take), for the
+# take-time agreement on Monero: the Maker's XMR funding cutoff, the Taker's
+# LEZ refund, the Maker's punishment. The funding must stand at the
+# agreement's fixed ten confirmations (REQUIRED_MONERO_CONFIRMATIONS), which
+# the devnet's regtest mines on demand (ten blocks and a wallet's refresh took
+# under 2 s on 2026-11-13; xmr_depth allows 2 s a block), so the cutoff is the
+# Bitcoin Maker lock cutoff plus that depth; the refund opens once the Taker has seen the funding at depth and the
+# Maker's LEZ claim has had a LEZ step, plus the margin; the punishment once
+# the Taker's refund has had a step and a stall, plus the margin. Regtest
+# accepts any windows 10 s apart (agreement_v1.rs).
+xmr_depth=$(( 10 * 2 ))
+xmr_cutoff=$(( timing[1] + xmr_depth ))
+xmr_refund=$(( xmr_cutoff + xmr_depth + lez_step_seconds + timing[4] ))
+xmr_punish=$(( xmr_refund + lez_step_seconds + lez_stall_seconds + timing[4] ))
 # The Maker's actor supervisor observes a live swap's actor 5 s after each
 # attempt and retries a failed one after 30 s (the Node's defaults, kept on
 # `local`). On the devnet's own profiles a step it waits for (the Taker's lock,
@@ -673,6 +687,9 @@ printf '%s\n' \
   "LEZ_HEARTBEAT_SECONDS=$heartbeat_seconds" \
   "LEZ_HEARTBEAT_STALL_SECONDS=$heartbeat_stall_seconds" \
   "LEZ_MONERO=$monero" \
+  "LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS=$xmr_cutoff" \
+  "LEZ_XMR_REFUND_SECONDS=$xmr_refund" \
+  "LEZ_XMR_PUNISH_SECONDS=$xmr_punish" \
   >"$RUNTIME/runtime.env.tmp"
 chmod 0600 "$RUNTIME/runtime.env.tmp"
 # Replaced in one step: every harness script (and a running regression lane)
