@@ -202,7 +202,8 @@ consumed offers cannot be withdrawn to undo a swap. Keep recovery running when
 your strategy stops quoting.
 
 The legacy `maker_offer_publish` accepts `{request_id, offer_id, route}` and
-reads the currently selected local or Logos C API price source. It has no
+reads the currently selected local or Logos C API price source
+([writing a Logos price module](../price-module-guide.md)). It has no
 reviewed-revision guarantee. `maker_pair_configure` and `maker_local_price_set`
 remain available for separate configuration changes; external strategies
 should prefer the atomic route-save operation and guarded publication above.

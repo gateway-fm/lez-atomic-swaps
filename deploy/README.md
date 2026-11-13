@@ -597,7 +597,7 @@ A module that fails a check, answers unavailable or reports a price older than 3
 or publish closed; offers already out keep their price. The systemd package installs the worker as
 `/usr/bin/lez-logos-price-worker`; there the three `--logos-price-*` flags go in the Node's
 `arguments`. No Logos price module exists yet: `node:btc:maker-price-module:TakerSellsForeign` runs
-the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ units per 2 sat).
+the repository's TEST fixture (`tests/fixtures/logos_price_fixture.c`: 5 LEZ units per 2 sat). How to write and run a module: [docs/price-module-guide.md](../docs/price-module-guide.md).
 
 ## Services
 
