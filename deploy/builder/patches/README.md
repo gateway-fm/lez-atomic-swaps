@@ -12,6 +12,22 @@ Pins (`deploy/scripts/from-scratch.sh`): logos-execution-zone v0.2.4 at
 logos-execution-zone-module `acf0cd501b26` (lez_core 0.4.1). blockchain_module
 0.2.4 is the released lgx, unpatched.
 
+## lez-v0.2.4 (the sequencer, github.com/logos-blockchain/logos-execution-zone)
+
+`from-scratch.sh` applies these to its own LEZ checkout (`lez-source`, at
+`47eba256`) before `build:lez-services` builds `sequencer_service`; the
+build reruns when the set changes (`source-patches.stamp`).
+
+- `0001-lez-v0.2.4-sequencer-bound-wal.patch` — `lez/storage`, the
+  sequencer's store: `max_total_wal_size` = 256 MiB. Every block writes the
+  whole LEE state (~7 MB) to `cf_lee_state`, which flushes every ~10 s, but
+  the few small writes to `cf_block` and `cf_meta` stay in their memtables
+  and keep every write-ahead log file since alive. RocksDB's default bound
+  (0: four times all memtable budgets, 12.5 GiB with 16 buffers per family)
+  let a devnet chain's directory reach 13 GB of `.log` files against ~30 MB
+  of tables. Past the bound RocksDB flushes the families holding the oldest
+  log and drops it. Nothing else changes.
+
 ## lez-indexer-module (github.com/logos-blockchain/lez-indexer-module)
 
 Why: the module answers queries only as Logos calls, and it has no historical
@@ -97,6 +113,7 @@ inside Basecamp and serves that role's signer socket) is not an upstream patch.
 
 | patch | lines | applies to | upstream state |
 |---|---|---|---|
+| lez-v0.2.4/0001 sequencer-bound-wal | 40 | logos-execution-zone `47eba256` | not yet offered |
 | lez-indexer-module/0001 breakpoint-interval | 13 | logos-execution-zone `9edf4a622fe9` | not offered (upstream: make the interval configurable) |
 | lez-indexer-module/0001 ffi-rpc-serve | 177 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0002 | 52 | lez-indexer-module `5033da442a7f` | not yet offered |
