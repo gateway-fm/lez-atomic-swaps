@@ -19,7 +19,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow, ensure};
-use lez_bridge_protocol::RuntimeDescriptor;
+use lez_bridge_protocol::{Hex32, RuntimeDescriptor};
 use lez_xmr_monero_adapter::LoopbackRpcEndpoint;
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES,
@@ -282,21 +282,22 @@ fn file_sha256(path: &Path) -> Result<[u8; 32]> {
 
 /// Everything the Stage-A planner composes from: both canonical packets and
 /// the reservation's few public facts (the planner's stdin, as JSON). The
-/// claim, refund and punish message hashes it adds are derived from these.
+/// claim, refund and punish message hashes it adds are derived from these;
+/// the LEZ authenticated-transfer program is compiled into the planner.
+/// This is `lez-v02-xmr-stage-a-plan`'s input, field for field.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct XmrStageAPlanInputV1 {
     pub schema_version: u16,
-    /// Canonical packet bytes (JSON text with its final newline).
+    /// Lowercase hex of the canonical public packet bytes.
     pub maker_packet: String,
     pub taker_packet: String,
-    pub swap_id: [u8; 32],
-    pub amount_piconero: u64,
+    pub swap_id: Hex32,
+    pub monero_amount_piconero: u64,
     pub lez_amount: u128,
-    pub monero_genesis: [u8; 32],
-    pub lez_channel_id: [u8; 32],
-    pub lez_genesis_hash: [u8; 32],
-    pub authenticated_transfer_program_id: [u8; 32],
+    pub monero_genesis_hash: Hex32,
+    pub lez_channel_id: Hex32,
+    pub lez_genesis_hash: Hex32,
     pub maker_xmr_funding_cutoff_ms: u64,
     pub refund_at_ms: u64,
     pub punish_at_ms: u64,
@@ -366,12 +367,10 @@ impl XmrStageAPlanner for XmrProcessStageAPlanner {
 }
 
 /// One role's own LEZ facts: the descriptor its sidecar runs under (whose
-/// signer account is the role's LEZ owner account) and the chain's
-/// authenticated-transfer program.
+/// signer account is the role's LEZ owner account).
 #[derive(Clone, Debug)]
 pub struct XmrLezRole {
     pub runtime: RuntimeDescriptor,
-    pub authenticated_transfer_program_id: [u8; 32],
 }
 
 impl XmrLezRole {
@@ -539,7 +538,7 @@ pub fn reserve_xmr_maker_role(
         monero.genesis,
         config.windows(now)?,
         maker_owner_nonce,
-    )?;
+    );
     let wire = planner.plan(&input)?;
     let validated = validate_plan(&wire, &input, &packets)?;
     let maker_stage_a_signature = sign_commitment(agreement_key, validated.commitment())?;
@@ -633,7 +632,7 @@ pub fn check_xmr_taker_role(
         check.monero.genesis,
         config.windows(maker.lez_anchor_unix_seconds)?,
         maker.maker_owner_nonce,
-    )?;
+    );
     let expected = planner.plan(&input)?;
     ensure!(
         expected == maker.unsigned_stage_a_wire,
@@ -704,26 +703,22 @@ fn plan_input(
     monero_genesis: [u8; 32],
     windows: XmrWindowsV1,
     maker_owner_nonce: u128,
-) -> Result<XmrStageAPlanInputV1> {
-    let text = |bytes: &[u8]| {
-        String::from_utf8(bytes.to_vec()).map_err(|_| anyhow!("a role packet is not UTF-8"))
-    };
-    Ok(XmrStageAPlanInputV1 {
+) -> XmrStageAPlanInputV1 {
+    XmrStageAPlanInputV1 {
         schema_version: STAGE_A_PLAN_SCHEMA_VERSION,
-        maker_packet: text(maker_packet)?,
-        taker_packet: text(taker_packet)?,
-        swap_id: terms.swap_id,
-        amount_piconero: terms.amount_piconero,
+        maker_packet: hex::encode(maker_packet),
+        taker_packet: hex::encode(taker_packet),
+        swap_id: Hex32::from_bytes(terms.swap_id),
+        monero_amount_piconero: terms.amount_piconero,
         lez_amount: terms.lez_amount,
-        monero_genesis,
-        lez_channel_id: *lez.runtime.channel_id.as_bytes(),
-        lez_genesis_hash: *lez.runtime.genesis_block_hash.as_bytes(),
-        authenticated_transfer_program_id: lez.authenticated_transfer_program_id,
+        monero_genesis_hash: Hex32::from_bytes(monero_genesis),
+        lez_channel_id: lez.runtime.channel_id,
+        lez_genesis_hash: lez.runtime.genesis_block_hash,
         maker_xmr_funding_cutoff_ms: windows.maker_xmr_funding_cutoff_ms(),
         refund_at_ms: windows.refund_at_ms(),
         punish_at_ms: windows.punish_at_ms(),
         maker_owner_nonce,
-    })
+    }
 }
 
 /// The planner's wire must be valid Stage A over exactly these packets and
@@ -750,12 +745,12 @@ fn body_has_terms(
 ) -> bool {
     let maker = packets.maker.identity().lez_owner_account();
     let taker = packets.taker.identity().lez_owner_account();
-    body.swap_id() == input.swap_id
-        && body.monero().amount_piconero() == input.amount_piconero
-        && body.monero().genesis_hash() == input.monero_genesis
+    body.swap_id() == *input.swap_id.as_bytes()
+        && body.monero().amount_piconero() == input.monero_amount_piconero
+        && body.monero().genesis_hash() == *input.monero_genesis_hash.as_bytes()
         && body.lez().amount() == input.lez_amount
-        && body.lez().channel_id() == input.lez_channel_id
-        && body.lez().genesis_hash() == input.lez_genesis_hash
+        && body.lez().channel_id() == *input.lez_channel_id.as_bytes()
+        && body.lez().genesis_hash() == *input.lez_genesis_hash.as_bytes()
         && body.lez().depositor_account() == taker
         && body.lez().claimant_account() == maker
         && body
@@ -851,8 +846,8 @@ pub(crate) mod tests {
 
     impl XmrStageAPlanner for FixturePlanner {
         fn plan(&self, input: &XmrStageAPlanInputV1) -> Result<Vec<u8>> {
-            let maker = ValidatedRolePacket::from_bytes(input.maker_packet.as_bytes())?;
-            let taker = ValidatedRolePacket::from_bytes(input.taker_packet.as_bytes())?;
+            let maker = ValidatedRolePacket::from_bytes(&hex::decode(&input.maker_packet)?)?;
+            let taker = ValidatedRolePacket::from_bytes(&hex::decode(&input.taker_packet)?)?;
             let participants =
                 XmrParticipantsV1::new(maker.identity().clone(), taker.identity().clone());
             let claim_key = participants.claim_aggregate_x_only_key()?;
@@ -871,23 +866,16 @@ pub(crate) mod tests {
                     .finalize()
                     .into()
             };
-            let mut transfer = [0_u32; 8];
-            for (word, bytes) in transfer
-                .iter_mut()
-                .zip(input.authenticated_transfer_program_id.chunks_exact(4))
-            {
-                *word = u32::from_le_bytes(bytes.try_into()?);
-            }
             let profile = XmrNamedProfileV1::AcceleratedRegtest;
             let body = XmrAgreementBodyV1::new(
                 XmrSwapDirectionV1::TakerSellsLez,
                 profile,
-                input.swap_id,
+                *input.swap_id.as_bytes(),
                 participants,
                 XmrMoneroTermsV1::new(
                     MoneroAddressNetworkV1::Regtest,
-                    input.monero_genesis,
-                    input.amount_piconero,
+                    *input.monero_genesis_hash.as_bytes(),
+                    input.monero_amount_piconero,
                     profile.required_monero_confirmations(),
                     maker.proof().to_wire_bytes()?,
                     taker.proof().to_wire_bytes()?,
@@ -896,10 +884,10 @@ pub(crate) mod tests {
                     shared.address_string(),
                 ),
                 XmrLezTermsV1::new(
-                    input.lez_channel_id,
-                    input.lez_genesis_hash,
+                    *input.lez_channel_id.as_bytes(),
+                    *input.lez_genesis_hash.as_bytes(),
                     [42; 8],
-                    transfer,
+                    [43; 8],
                     profile.required_lez_finality_units(),
                     [44; 32],
                     [45; 32],
@@ -970,7 +958,6 @@ pub(crate) mod tests {
                 Hex32::from_bytes([3; 32]),
                 Hex32::from_bytes([account; 32]),
             ),
-            authenticated_transfer_program_id: [9; 32],
         }
     }
 
@@ -1367,8 +1354,7 @@ pub(crate) mod tests {
             GENESIS,
             loaded.windows(NOW).unwrap(),
             0,
-        )
-        .unwrap();
+        );
         assert_eq!(
             loaded.stage_a_planner().plan(&input).unwrap(),
             b"unsigned-stage-a"
