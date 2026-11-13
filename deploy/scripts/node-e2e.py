@@ -88,12 +88,14 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import io
 import json
 import os
 import pathlib
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
 import time
@@ -3773,6 +3775,81 @@ def scenario_zec_concurrent(stamp: str, kill: bool = False) -> dict:
             "corridor": corridors[0]["run_id"], "profile": corridors[0]["profile"], "killed": killed}
 
 
+# Bytes that are not SQLite, as crates/maker-node/tests/zec_chat_process.rs writes
+# over a Taker's Zcash role state to test that the Node fails closed on it.
+CORRUPT_STATE_BYTES = b"m6-corrupt-role-state-not-sqlite"
+
+
+def taker_file_facts(path: str) -> str:
+    """The inode and SHA-256 of a file in the Taker's container."""
+    facts = subprocess.run(["docker", "exec", NODES["taker"][0], "sh", "-c", f"stat -c %i {path}; sha256sum {path}"],
+                           capture_output=True, text=True, check=True).stdout.split()
+    return " ".join(facts[:2])
+
+
+def scenario_zec_corrupt_state(stamp: str) -> dict:
+    """R4 corruption: two take-time Zcash swaps both offering the Taker its
+    claim; with the Taker Node stopped one swap's Zcash role state (the
+    actor's role_state_db) is replaced by bytes that are not SQLite, owned by
+    the Node's user, and the Node started again. What the Node must then do is
+    what crates/maker-node/tests/zec_chat_process.rs pins for that file: the
+    swap's monitor answers -32010 taker_monitor_unavailable and never a
+    plausible state, and the file is left as it was (same inode, same bytes),
+    on every read until the end. The other swap must still be monitored,
+    claimed and completed on both Nodes. The Taker's swap list, which that
+    test also pins to the error with one swap, is recorded as it answers."""
+    zec_provision(swaps=2)
+    corridors = list(ZEC_CORRIDORS)
+    taken = [(zec_take_or_resume(corridor["offer_id"], stamp, f"-{tag}"), corridor)
+             for tag, corridor in zip("ab", corridors)]
+    swaps = [(swap_id, zec_taker_actor_config(corridor["receipt_output"]), corridor) for swap_id, corridor in taken]
+    zec_wait_all_until(swaps, {"claim_available"}, timeout=3000, describe="(two swaps: " + zec_flow() + ")")
+    (bad, bad_config, _), (good, good_config, good_corridor) = swaps
+    reader = "import json,sys; print(json.load(open(sys.argv[1]))['role_state_db'])"
+    state_dbs = [subprocess.run(["docker", "exec", NODES["taker"][0], "python3", "-c", reader, config],
+                                capture_output=True, text=True, check=True).stdout.strip()
+                 for config in (bad_config, good_config)]
+    if state_dbs[0] == state_dbs[1]:
+        raise Failure(f"both swaps keep their Zcash role state in one file {state_dbs[0]}")
+    state_db = state_dbs[0]
+    stop_taker()
+    try:
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w") as tar:
+            entry = tarfile.TarInfo(os.path.basename(state_db))
+            entry.size, entry.mode, entry.uid, entry.gid = len(CORRUPT_STATE_BYTES), 0o600, 4713, 4713
+            tar.addfile(entry, io.BytesIO(CORRUPT_STATE_BYTES))
+        subprocess.run(["docker", "cp", "-a", "-", f"{NODES['taker'][0]}:{os.path.dirname(state_db)}"],
+                       input=archive.getvalue(), capture_output=True, check=True)
+        log(f"  {bad[:12]}'s Zcash role state {state_db} replaced by {len(CORRUPT_STATE_BYTES)} bytes that are not SQLite")
+    finally:
+        start_taker()
+    corrupt = taker_file_facts(state_db)
+    expected = hashlib.sha256(CORRUPT_STATE_BYTES).hexdigest()
+    if expected not in corrupt:
+        raise Failure(f"the corrupt bytes are not what the Taker Node found at {state_db}: {corrupt}")
+
+    def assert_fails_closed(when: str) -> dict:
+        reply = rpc("taker", "taker_swap_monitor_v1", {"schema_version": 1, "swap_id": bad})
+        error = reply.get("error") or {}
+        category = (error.get("data") or {}).get("category") if isinstance(error.get("data"), dict) else None
+        if "result" in reply or error.get("code") != -32010 or category != "taker_monitor_unavailable":
+            raise Failure(f"{when}, the corrupt swap's monitor did not fail closed: {json.dumps(reply)[:300]}")
+        if taker_file_facts(state_db) != corrupt:
+            raise Failure(f"{when}, the Taker Node rewrote the corrupt role state {state_db}")
+        return {"when": when, "code": error.get("code"), "category": category}
+
+    closed = [assert_fails_closed("after the restart")]
+    listed = rpc("taker", "taker_swap_list_v1", {"schema_version": 1})
+    log(f"  {bad[:12]}: monitor -32010 taker_monitor_unavailable, the file untouched; the swap list answers "
+        f"{'an error ' + json.dumps(listed['error'])[:160] if 'error' in listed else str(len(listed['result']['swaps'])) + ' swaps'}")
+    zec_finish(good, good_config, good_corridor, stamp, "-b")
+    closed.append(assert_fails_closed("once the other swap completed"))
+    log(f"  the other swap {good[:12]} completed on both Nodes; {bad[:12]} still fails closed")
+    return {"corrupt_swap": bad, "role_state_db": state_db, "fails_closed": closed, "other_swap": good,
+            "swap_list_after_restart": listed.get("error") or {"swaps": len(listed["result"]["swaps"])}}
+
+
 def zec_wait_refused(swap_id: str, timeout: int) -> dict:
     """Polls until the Taker row reads attention_required with the balance reason."""
     wait = Wait(f"the Taker's balance refusal on {swap_id[:12]}", timeout)
@@ -5560,6 +5637,7 @@ ZEC_SCENARIOS = {
     "zec-maker-refund": scenario_zec_maker_refund,
     "zec-concurrent": scenario_zec_concurrent,
     "zec-concurrent-kill-maker": lambda stamp: scenario_zec_concurrent(stamp, kill=True),
+    "zec-corrupt-state": scenario_zec_corrupt_state,
     "zec-concurrent-staggered": scenario_zec_concurrent_staggered,
     "zec-claim-collision": scenario_zec_claim_collision,
     "zec-early-lock": scenario_zec_early_lock,

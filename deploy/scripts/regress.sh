@@ -82,7 +82,7 @@ tier_tests() { # tier_tests <tier>
       tier_tests refunds
       for d in "${directions[@]}"; do
         for s in zec-happy zec-dynamic-happy zec-replay zec-wrong-inputs zec-restart-taker zec-restart-maker zec-kill-taker zec-kill-maker \
-          zec-survivor zec-concurrent zec-concurrent-kill-maker zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock \
+          zec-survivor zec-concurrent zec-concurrent-kill-maker zec-corrupt-state zec-regenerated-catalog zec-tampered-catalog zec-early-lock zec-offline-after-lock \
           zec-offline-after-second-lock zec-offline-after-claim zec-bitcoin-down; do
           echo "node:zec:$s:$d"
         done
