@@ -24,8 +24,9 @@ if (!["TakerSellsForeign", "TakerSellsLez"].includes(uiDirection)) {
 }
 const reverseDirection = uiDirection === "TakerSellsLez";
 const wantedDirection = reverseDirection ? "taker_sells_lez" : "taker_sells_foreign";
-// Zcash rows come from a prepared corridor (scripts/zec-provision.sh), one lot
-// per corridor (amounts below), in either direction. The Taker's first lock
+// Zcash rows are the Maker's offers, agreed at take time (or, in the catalog
+// tests, a corridor of tests/fixtures/zec-catalog-fixture.sh), one lot each
+// (amounts below), in either direction. The Taker's first lock
 // (the LEZ escrow, or the Zcash HTLC when it sells ZEC) is driven by the
 // Taker Node's supervisor, so a fresh Zcash swap shows no button.
 const uiPair = process.env.M3_UI_PAIR || "Bitcoin";
@@ -150,7 +151,7 @@ const btcText = `${Number(btcAmount).toFixed(8)} BTC`;
 const btcShort = `${btcAmount} BTC`;
 // A Zcash row shows the prepared corridor's lot: ui-e2e.sh reads it from the
 // corridor's prepared.json and passes LEZ_UI_ZEC_AMOUNT (ZEC) and
-// LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), so a price change in zec-provision.sh
+// LEZ_UI_ZEC_LEZ_AMOUNT (LEZ units), so a price change in the lot
 // cannot silently break the journey.
 const zecAmount = process.env.LEZ_UI_ZEC_AMOUNT || "1";
 const zecLezAmount = process.env.LEZ_UI_ZEC_LEZ_AMOUNT || "50000";

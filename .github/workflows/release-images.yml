@@ -110,7 +110,7 @@ jobs:
           mkdir -p _out/images _out/sidecar
           # zebra: the health check its image carries; taker-node: the ZEC
           # corridor provisioners (zec-local-poc-*) its image keeps beside the
-          # Node package (scripts/zec-provision.sh, gen-config.sh run them).
+          # Node package (tests/fixtures/zec-catalog-fixture.sh, gen-config.sh run them).
           for role in maker-node taker-node lez-services zebra; do
             mkdir -p "_out/images/$role"
             cp deploy/images/$role/lez-* "_out/images/$role/"

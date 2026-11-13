@@ -253,7 +253,7 @@ else
 fi
 
 # ---- Zcash corridor (optional) ----------------------------------------------
-# scripts/zec-provision.sh fills /var/lib/lez/zec from the live chains with one
+# tests/fixtures/zec-catalog-fixture.sh fills /var/lib/lez/zec from the live chains with one
 # prepared ZEC swap under corridor/ (the provisioner's output root, which must
 # be new and is the prefix of every path inside its files): <role>/actor-config.json,
 # lez-runtime.json, lez-signer.key, sidecar.capability and the claim keys of
@@ -277,7 +277,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   chmod 0700 "$zec_state" 2>/dev/null || true
   zec_chain="$(jq -r '.bridge.runtime | "\(.channel_id) \(.genesis_block_hash) \(.escrow_program_id)"' "$zec_candidate")"
   if [[ "$zec_chain" != "$channel_id $lez_genesis_hash $escrow_program_id" ]]; then
-    echo "$role: ZEC corridor ${zec_candidate%/$role/actor-config.json} was provisioned for another chain; ignored (re-run scripts/zec-provision.sh)"
+    echo "$role: ZEC corridor ${zec_candidate%/$role/actor-config.json} was provisioned for another chain; ignored (re-run tests/fixtures/zec-catalog-fixture.sh)"
     continue
   fi
   zec_candidate_role="${zec_candidate%/actor-config.json}"
@@ -375,7 +375,7 @@ case "$role" in
     # together (crates/maker-node/src/zec_chat.rs,
     # crates/taker-node/src/zec_taker_accept.rs), and zebra mines to that same
     # key. Replacing it orphans offers signed by the previous identity;
-    # scripts/zec-provision.sh removes their Delivery files when it changes.
+    # tests/fixtures/zec-catalog-fixture.sh removes their Delivery files when it changes.
     pinned_delivery_key="$identity_src/zcash.key"
     if [[ -r "$pinned_delivery_key" ]] && ! cmp -s "$pinned_delivery_key" "$delivery_key"; then
       install -m 0600 "$pinned_delivery_key" "$delivery_key"
@@ -398,7 +398,7 @@ case "$role" in
       --actor-supervisor)
     if [[ "$btc_lifecycle_ready" == 1 ]]; then
       args+=(--btc-role-config "$btc_state/btc-role.json")
-      # Corridor templates when zec-provision.sh left some; the Zcash role
+      # Corridor templates when zec-catalog-fixture.sh left some; the Zcash role
       # (take-time agreements, zec_reserve_v1) in any case.
       if [[ "$zec_ready" == 1 || -s "$zec_role_config" ]]; then
         # The authority group of crates/maker-node/src/bin/lez-maker-node.rs:
@@ -499,7 +499,7 @@ PY
         then
           zec_catalog="$(jq -c '.' "$zec_state/prepared.json")"
         else
-          echo "taker: prepared ZEC catalog was built under another Maker identity; ignored (re-run scripts/zec-provision.sh)"
+          echo "taker: prepared ZEC catalog was built under another Maker identity; ignored (re-run tests/fixtures/zec-catalog-fixture.sh)"
         fi
       fi
       # The Zcash role only with the Taker's Zcash key: take-time agreements

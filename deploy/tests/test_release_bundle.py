@@ -90,7 +90,8 @@ class ReleaseBundle(unittest.TestCase):
         for name in NAMES[:4]:
             self.assertIn(f'{name}=${{', script, name)
         # Every harness script that resolves images sources lane.sh first.
-        for name in ('up.sh', 'ui-e2e.sh', 'zec-provision.sh', 'bootstrap-market.sh', 'start.sh', 'reset-swaps.sh'):
+        for name in ('up.sh', 'ui-e2e.sh', '../tests/fixtures/zec-catalog-fixture.sh', 'bootstrap-market.sh', 'start.sh',
+                     'reset-swaps.sh'):
             code = [line for line in (SCRIPTS / name).read_text().splitlines()
                     if not line.lstrip().startswith('#')]
             sourced = code.index('source scripts/lane.sh')

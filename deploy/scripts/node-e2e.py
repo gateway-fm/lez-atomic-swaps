@@ -40,7 +40,7 @@ direction (`--direction TakerSellsLez`, the default for Zcash: the Taker locks
 LEZ, the Maker funds Zcash; `--direction TakerSellsForeign`: the Taker funds
 the Zcash HTLC, the Maker locks LEZ, the Taker's LEZ claim reveals the secret
 and the Maker's Zcash claim completes the swap). A prepared corridor is
-provisioned with scripts/zec-provision.sh --direction …, which also recreates
+provisioned with tests/fixtures/zec-catalog-fixture.sh --direction …, which also recreates
 both Nodes, then
 
     node-e2e.py --pair Zcash zec-happy   take, the Taker Node drives its actor (activation,
@@ -63,7 +63,7 @@ both Nodes, then
 
 The ZEC refund windows come from the agreement, not the timing profile. The
 refund journeys provision their corridor under deterministic-local-devnet-v6
-(zec-provision.sh --profile), every other ZEC scenario under -v5 (both NU7, the
+(zec-catalog-fixture.sh --profile), every other ZEC scenario under -v5 (both NU7, the
 devnet Zebra 7's branch; -v3/-v4 are their NU6.2 namesakes): the Taker's
 LEZ refund opens the profile's LEZ refund delay (4 min under -v6, 12 min under
 -v5) after the corridor was provisioned and the Maker's Zcash refund at an
@@ -2844,7 +2844,7 @@ def scenario_tampered_config(stamp: str) -> dict:
 # ---- ZEC↔LEZ ------------------------------------------------------------------------
 # A ZEC swap is prepared, not composed: the Taker takes a Zcash offer only from a
 # static prepared_zec catalog entry, built from live chain facts by
-# scripts/zec-provision.sh (which publishes the offer, writes the catalog and
+# tests/fixtures/zec-catalog-fixture.sh (which publishes the offer, writes the catalog and
 # recreates both Nodes). The Taker Node supervises its ZEC actor itself (the
 # activation, the first LEZ lock and every observation up to claim_available);
 # the harness only polls the Nodes and reads the actor's phase with
@@ -2920,9 +2920,9 @@ def zec_profile_refund_delay(profile: str) -> int:
 
 # The ZEC profile of the refund journeys (zec-swap-sdk profile.rs): nobody claims
 # there, so the LEZ refund delay only has to outlast provisioning, the take and
-# both first locks. Every other scenario keeps zec-provision.sh's default (-v5).
+# both first locks. Every other scenario keeps zec-catalog-fixture.sh's default (-v5).
 # Both are NU7 profiles: the devnet's Zebra 7 runs NU7 from height 1.
-# The public lane has one profile for every scenario (zec-provision.sh
+# The public lane has one profile for every scenario (zec-catalog-fixture.sh
 # --zcash-network test: public-testnet-v2), refund journeys included.
 ZEC_REFUND_PROFILE = None if ZEC_PUBLIC else "deterministic-local-devnet-v6"
 # The profiles whose corridors sign for NU7, the branch every Zebra the
@@ -2931,7 +2931,7 @@ ZEC_NU7_PROFILES = {"deterministic-local-devnet-v5", "deterministic-local-devnet
 
 
 # How a Zcash scenario's agreement is made, read here only (LEZ_ZEC_AGREEMENT):
-# `dealer`, zec-provision.sh signs it for both parties and recreates the Nodes;
+# `dealer`, zec-catalog-fixture.sh signs it for both parties and recreates the Nodes;
 # `take-time`, the Maker publishes an offer on its running Node and the Nodes
 # compose the agreement when the scenario takes it (zec_reserve_v1). What the
 # take-time path cannot serve stays on the dealer, and the log says why: the
@@ -2951,13 +2951,13 @@ def zec_current_refund_delay() -> int:
 
 
 def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False, profile: str | None = None) -> dict:
-    """One fresh corridor run: zec-provision.sh end to end, Nodes recreated. With
+    """One fresh corridor run: zec-catalog-fixture.sh end to end, Nodes recreated. With
     `swaps` 2 the run holds two prepared entries at one Zcash anchor; with `add`
     a second corridor ("-b": its own root, agreement, offer, sidecar ports,
     funder output and Zcash anchor) is provisioned beside the live one and the
     catalog lists both — the concurrent fixture, whose second swap needs a
     refund window of its own. `profile` names the agreement's ZEC profile
-    (zec-provision.sh --profile; its default when None). Returns the first entry's corridor facts, or the
+    (zec-catalog-fixture.sh --profile; its default when None). Returns the first entry's corridor facts, or the
     entry of `swap_id` when the corridor is reused; every entry is kept in
     ZEC_CORRIDORS.
 
@@ -2992,8 +2992,8 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
                           "devnet's Zebra runs NU7: provision a new one (run without LEZ_ZEC_REUSE_CORRIDOR)")
     else:
         log(f"  provisioning a ZEC corridor {'beside the live one' if add else f'with {swaps} prepared swap(s)'} "
-            "(zec-provision.sh; this recreates both Nodes)")
-        result = subprocess.run(["bash", str(DEPLOY_ROOT / "scripts" / "zec-provision.sh"), "--skip-chain-check",
+            "(zec-catalog-fixture.sh; this recreates both Nodes)")
+        result = subprocess.run(["bash", str(DEPLOY_ROOT / "tests" / "fixtures" / "zec-catalog-fixture.sh"), "--skip-chain-check",
                                  "--direction", ROUTE["direction"], "--swaps", str(swaps), *(["--add"] if add else []),
                                  *(["--profile", profile] if profile else []),
                                  *(["--zcash-network", "test"] if ZEC_PUBLIC else [])],
@@ -3003,10 +3003,10 @@ def zec_provision(swaps: int = 1, swap_id: str | None = None, add: bool = False,
         if result.returncode == 3:
             # The provisioner cannot build a corridor for this network: not a
             # failed swap, a missing capability (public-zec-testnet.sh: blocked).
-            log(f"  zec-provision.sh: blocked: {result.stderr.strip()[-400:]}")
+            log(f"  zec-catalog-fixture.sh: blocked: {result.stderr.strip()[-400:]}")
             raise SystemExit(3)
         if result.returncode != 0:
-            raise Failure(f"zec-provision.sh failed: {result.stderr.strip()[-300:] or result.stdout.strip()[-300:]}")
+            raise Failure(f"zec-catalog-fixture.sh failed: {result.stderr.strip()[-300:] or result.stdout.strip()[-300:]}")
     run_id = (LANE_RUNTIME / "zec" / "current").read_text().strip()
     out = LANE_RUNTIME / "zec" / run_id
     entries = json.loads((out / "prepared.json").read_text())
@@ -3595,12 +3595,12 @@ ZEBRA_WORN_HEIGHT = 1500
 
 def zec_renew_worn_zebra() -> None:
     """Between tests (never beside a live swap): a lane's worn Zebra recreated
-    empty and mined past coinbase maturity, as zec-provision.sh does."""
+    empty and mined past coinbase maturity, as zec-catalog-fixture.sh does."""
     if ZEC_PUBLIC:
         return
     height = int(zebra("getblockcount"))
     if height < ZEBRA_WORN_HEIGHT:
-        # a renewed chain (here or by zec-provision.sh) mined past maturity
+        # a renewed chain (here or by zec-catalog-fixture.sh) mined past maturity
         if height < 110:
             zebra_mine(110 - height, "coinbase maturity on a new chain")
         return
@@ -4133,7 +4133,7 @@ def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     provisioned at one Zcash anchor share one four-block refund window, which
     two fundings, their depth and two claims do not fit. So swap A is provisioned,
     taken and brought to claim_available by the Nodes (its Maker claim final);
-    then corridor B is added beside it with its own anchor (zec-provision.sh
+    then corridor B is added beside it with its own anchor (zec-catalog-fixture.sh
     --add, Nodes recreated with both), taken and brought there likewise; the
     Zcash claims overlap."""
     first = zec_provision()
@@ -5600,7 +5600,7 @@ def scenario_zec_bitcoin_down(stamp: str) -> dict:
     the test's direction completes on both Nodes, both ready in health
     throughout; Core and the miner started again, a Bitcoin happy swap
     completes in the same direction. The corridor is provisioned before the
-    stop: zec-provision.sh recreates both Nodes, and a Node's first start reads
+    stop: zec-catalog-fixture.sh recreates both Nodes, and a Node's first start reads
     Bitcoin's genesis block (node-entrypoint.sh keeps it for later starts)."""
     chain = [f"{PREFIX}-btc-miner", f"{PREFIX}-bitcoin-core"]
     corridor = zec_provision()
@@ -5793,7 +5793,7 @@ def lez_finalized_height() -> int:
 def run(name: str) -> bool:
     stamp = str(int(time.time()))
     # Ids made from the stamp reach the one LEZ chain the lanes share
-    # (zec-provision.sh does the same): no two lanes may make the same one.
+    # (zec-catalog-fixture.sh does the same): no two lanes may make the same one.
     if os.environ.get("LEZ_LANE", "1") != "1":
         stamp += f"{int(os.environ['LEZ_LANE']):02d}"
     global SCENARIO

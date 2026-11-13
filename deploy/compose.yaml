@@ -381,7 +381,7 @@ services:
       - maker_state:/var/lib/lez/maker
       # The Node's sockets; the Taker Node reaches the Maker's Chat socket here.
       - maker_socket:/run/lez/maker
-      # The Maker half of the prepared ZEC corridor (scripts/zec-provision.sh).
+      # The Maker half of the prepared ZEC corridor (tests/fixtures/zec-catalog-fixture.sh).
       - zec_maker:/var/lib/lez/zec
       - delivery_dir:/delivery
       # The identity's public half; the key stays with Basecamp's wallet.

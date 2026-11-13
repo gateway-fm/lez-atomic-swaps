@@ -34,7 +34,7 @@
 #                  modules (Bitcoin, or Zcash TakerSellsLez from a desk-published
 #                  offer; not in `all`)
 #   zec-desk-offer the Maker desk's form publishes a Zcash offer, the Taker desk takes
-#                  it, the Nodes agree at take time (no zec-provision.sh); TakerSellsLez
+#                  it, the Nodes agree at take time (no zec-catalog-fixture.sh); TakerSellsLez
 #   all            every scenario in sequence (stops at the first failure)
 #
 # replay and wrong-inputs have no desk equivalent: a desk sends one request per
@@ -72,7 +72,7 @@ if [[ "$direction" == TakerSellsLez ]]; then
 else
   lock_action=lock_btc; claim_action=claim_lez; refund_action=refund_btc; lock_wallet=lez-taker
 fi
-# Zcash: a prepared corridor (scripts/zec-provision.sh --direction …) in either
+# Zcash: a prepared corridor (tests/fixtures/zec-catalog-fixture.sh --direction …) in either
 # direction, TakerSellsLez unless --direction says TakerSellsForeign. The
 # Taker's first lock (the LEZ escrow, or the Zcash HTLC when it sells ZEC) has
 # no desk button; the Taker Node drives its actor itself, and node-e2e.py
@@ -318,11 +318,11 @@ export_evidence() { # export_evidence <swap_id>
 # The refund journeys' ZEC profile (zec-swap-sdk profile.rs, node-e2e.py
 # ZEC_REFUND_PROFILE): a 4-minute LEZ refund delay, as nobody claims there.
 zec_refund_profile=deterministic-local-devnet-v6
-zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-provision.sh step 8)
+zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with that many prepared entries; recreates both Nodes (zec-catalog-fixture.sh step 8)
   if zec_take_time "${2:-}"; then zec_publish_offers --swaps "${1:-1}"; return; fi
-  log "provisioning a ZEC corridor with ${1:-1} prepared swap(s)${2:+ under $2} (zec-provision.sh: offer, draft, catalog, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" ${2:+--profile "$2"} 2>&1 | tail -4 | sed 's/^/   /'
-  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh"
+  log "provisioning a ZEC corridor with ${1:-1} prepared swap(s)${2:+ under $2} (zec-catalog-fixture.sh: offer, draft, catalog, Nodes recreated)"
+  bash tests/fixtures/zec-catalog-fixture.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --swaps "${1:-1}" ${2:+--profile "$2"} 2>&1 | tail -4 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-catalog-fixture.sh"
   wait_healthy "$maker_node"; wait_healthy "$taker_node"; wait_desk maker; wait_desk taker
   # The desk shows the corridor's lot; verify.mjs asserts the amounts it is given.
   local prepared; prepared="$LEZ_LANE_RUNTIME/zec/$(cat "$LEZ_LANE_RUNTIME/zec/current")/prepared.json"
@@ -333,9 +333,9 @@ zec_provision() { # zec_provision [swaps] [profile]: one fresh corridor run with
 }
 zec_provision_add() { # a second corridor beside the live one (its own Zcash anchor); recreates both Nodes with both
   if zec_take_time ""; then zec_publish_offers --swaps 1 --add; return; fi
-  log "adding a second ZEC corridor beside the live one (zec-provision.sh --add: offer, draft, catalog of both, Nodes recreated)"
-  bash scripts/zec-provision.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --add 2>&1 | tail -4 | sed 's/^/   /'
-  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-provision.sh --add"
+  log "adding a second ZEC corridor beside the live one (zec-catalog-fixture.sh --add: offer, draft, catalog of both, Nodes recreated)"
+  bash tests/fixtures/zec-catalog-fixture.sh ${LEZ_ZEC_SKIP_CHAIN_CHECK:+--skip-chain-check} --direction "$direction" --add 2>&1 | tail -4 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-catalog-fixture.sh --add"
   wait_healthy "$maker_node"; wait_healthy "$taker_node"; wait_desk maker; wait_desk taker
 }
 # LEZ_ZEC_AGREEMENT=take-time (node-e2e.py): the Maker publishes the offers on
@@ -667,7 +667,7 @@ scenario_zec_maker_refund() {
   python3 scripts/node-e2e.py --pair Zcash zec-wait --swap-id "$swap" --until-phase "both_legs_locked|awaiting_maker_confirmations" --mine-pending-only 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "zec-wait to both_legs_locked"
   # The stamp is its second in ten digits; lanes other than the first append
-  # their two-digit lane number (zec-provision.sh), which is not part of the time.
+  # their two-digit lane number (zec-catalog-fixture.sh), which is not part of the time.
   opens=$(( $(sed 's/.*-//' "$LEZ_LANE_RUNTIME/zec/current" | cut -c1-10) + $(zec_refund_delay) + 15 ))
   wait_until_unix "$opens" "for the agreement's LEZ refund time (the profile's delay after provisioning)"
   note "The LEZ refund time has passed and the Maker never claimed; the Taker desk offers Refund and the Maker desk watches its Zcash come back"
@@ -840,7 +840,7 @@ gateway() { # gateway <role> <method> <params>: the role's Chat gateway answers 
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null
 }
 # A Zcash offer published from the Maker desk's form and agreed at take time
-# (zec_reserve_v1): no zec-provision.sh, no corridor, no Node recreated.
+# (zec_reserve_v1): no zec-catalog-fixture.sh, no corridor, no Node recreated.
 # Selling ZEC the Taker funds from its own key: node-e2e.py zec-fund pays it
 # (and renews a worn Zebra) before the desk publishes.
 zec_publish() {

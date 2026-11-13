@@ -21,7 +21,8 @@
 # Nothing here mines. The Nodes must already run on the public networks
 # (docs/testnet-run.md: LEZ side services; this lane: the Zcash route), the
 # Maker under the owner-funded Testnet key: each corridor is provisioned by
-# zec-provision.sh --zcash-network test (profile public-testnet-v2, NU7),
+# zec-catalog-fixture.sh --zcash-network test (profile public-testnet-v2, NU7;
+# the dealer test fixture: this lane is pending conversion to take-time),
 # which spends an ordinary output of that key and reads the role keys from
 # LEZ_ZEC_TESTNET_KEY_DIR (outside the repository) and the funder search start
 # from LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT on its first run. Credentials are

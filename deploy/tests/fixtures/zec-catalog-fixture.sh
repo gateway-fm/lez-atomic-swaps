@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# zec-provision.sh — build one prepared ZEC<->LEZ swap on the running devnet,
-# in either direction (--direction, TakerSellsLez by default), and hand it to
-# both Nodes.
+# zec-catalog-fixture.sh — a TEST FIXTURE, not a way to run the product: it holds
+# BOTH parties' keys and signs one agreement for both; devnet only; used by the
+# catalog tests (zec-regenerated-catalog, zec-tampered-catalog) and nothing else.
 #
-# A ZEC swap is prepared, not composed: the Taker Node takes a Zcash offer only
-# from a static `prepared_zec` catalog entry whose files were provisioned from
-# live chain facts (crates/taker-node/src/taker_service_config/prepared.rs),
-# and the Maker daemon needs the corridor's Maker config as its actor template.
-# This script runs that ceremony with the provisioners staged in the Taker
-# image (zec-local-poc-provision, zec-local-poc-chat-draft):
+# A Zcash swap is set up at take time: the Maker publishes an offer and the
+# Taker takes it (zec_reserve_v1, docs/sdk-lez-zec.md). This fixture instead
+# fabricates the static `prepared_zec` catalog entry the Taker Node still
+# accepts (crates/taker-node/src/taker_service_config/prepared.rs), and the
+# Maker's actor template, on the running devnet in either direction
+# (--direction, TakerSellsLez by default), and hands both to the Nodes, with
+# the dealer tools staged in the Taker image (zec-local-poc-provision,
+# zec-local-poc-chat-draft):
 #
 #   0. the Maker's Delivery identity: the ZEC ceremony binds the Maker's
 #      Delivery identity, Chat signing key and Zcash key into one key
@@ -41,7 +43,7 @@
 # and runtime/zec/current names the run id. Every corridor is pinned to the
 # chain it was provisioned on: after `up.sh --fresh-lez`, run this again.
 #
-#   scripts/zec-provision.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add] [--direction TakerSellsLez|TakerSellsForeign] [--profile ID]
+#   tests/fixtures/zec-catalog-fixture.sh [--no-restart] [--skip-chain-check] [--swaps N] [--add] [--direction TakerSellsLez|TakerSellsForeign] [--profile ID]
 #     --no-restart        steps 1-7 only (the Nodes keep running; the material
 #                         is picked up on their next recreate)
 #     --skip-chain-check  do not call ensure-chain.sh (which may recreate the
@@ -64,9 +66,13 @@
 #                         or where the last Testnet corridor's did
 #                         (runtime/zec/testnet-funding-from); the principal is
 #                         LEZ_ZEC_TESTNET_PRINCIPAL_ZATOSHIS (0.01 TAZ). Exits
-#                         3 (blocked) when one of these is missing
+#                         3 (blocked) when one of these is missing. The
+#                         public lane's use is pending conversion to take-time.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+# A devnet fixture: it refuses to run anywhere but on the Compose devnet.
+[[ -s runtime/runtime.env && -f scripts/lane.sh ]] ||
+  { echo "zec-catalog-fixture.sh: a devnet test fixture; no devnet here (deploy/runtime/runtime.env from scripts/up.sh)" >&2; exit 64; }
 set -a
 # shellcheck source=/dev/null
 source runtime/runtime.env
@@ -74,7 +80,7 @@ set +a
 export BTC_RPC_PASSWORD
 # The pair of regression lane LEZ_LANE (lane 1, the stack itself, when unset):
 # its Nodes, volumes, Zebra and files under LEZ_LANE_RUNTIME.
-# shellcheck source=lane.sh
+# shellcheck source=../../scripts/lane.sh
 source scripts/lane.sh
 LANE="$LEZ_LANE_RUNTIME"
 
@@ -94,12 +100,12 @@ while [[ $# -gt 0 ]]; do
     --direction) DIRECTION="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --zcash-network) ZCASH_NETWORK="$2"; shift 2 ;;
-    -h|--help) sed -n '2,56p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,62p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
 
-blocked() { echo "zec-provision.sh: blocked: $*" >&2; exit 3; }
+blocked() { echo "zec-catalog-fixture.sh: blocked: $*" >&2; exit 3; }
 case "$ZCASH_NETWORK" in
   regtest) PROFILE="${PROFILE:-deterministic-local-devnet-v5}" ;;
   test)
@@ -160,7 +166,7 @@ ROUTE="{\"pair\":\"Zcash\",\"direction\":\"$DIRECTION\"}"
 case "$DIRECTION" in
   TakerSellsLez) SPEC_DIRECTION=taker_sells_lez ;;
   TakerSellsForeign) SPEC_DIRECTION=taker_sells_foreign ;;
-  *) echo "zec-provision failed: --direction must be TakerSellsLez or TakerSellsForeign" >&2; exit 64 ;;
+  *) echo "zec-catalog-fixture failed: --direction must be TakerSellsLez or TakerSellsForeign" >&2; exit 64 ;;
 esac
 # The devnet profiles a corridor may name (local_poc.rs LocalPocProfile); the
 # test lane's 60 s LEZ refund delay cannot be met on a chain that finalizes.
@@ -169,8 +175,8 @@ esac
 case "$ZCASH_NETWORK:$PROFILE" in
   regtest:deterministic-local-devnet-v5|regtest:deterministic-local-devnet-v6) ;;
   test:public-testnet-v2) ;;
-  regtest:*) echo "zec-provision failed: --profile must be deterministic-local-devnet-v5 or -v6 (NU7)" >&2; exit 64 ;;
-  test:*) echo "zec-provision failed: a Testnet corridor's --profile is public-testnet-v2" >&2; exit 64 ;;
+  regtest:*) echo "zec-catalog-fixture failed: --profile must be deterministic-local-devnet-v5 or -v6 (NU7)" >&2; exit 64 ;;
+  test:*) echo "zec-catalog-fixture failed: a Testnet corridor's --profile is public-testnet-v2" >&2; exit 64 ;;
 esac
 # Each role's Zcash key is minted beside its LEZ identity (gen-config.sh); the
 # Maker's is also its Delivery signing key and zebra's miner address.
@@ -194,8 +200,8 @@ MATURITY=100
 # minted Zcash key (the one zebra mines to); the running Maker must be it.
 MAKER_IMAGE="${LEZ_IMAGE_PREFIX:-lez}-maker-node:${LEZ_IMAGE_TAG:-local}"
 
-log() { printf '[zec-provision %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
-fail() { echo "zec-provision failed: $*" >&2; exit 1; }
+log() { printf '[zec-catalog-fixture %s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+fail() { echo "zec-catalog-fixture failed: $*" >&2; exit 1; }
 
 # One owner-RPC call on a Node socket; prints the JSON-RPC envelope. No -i:
 # curl never reads stdin and an attached stream hangs a detached runner.

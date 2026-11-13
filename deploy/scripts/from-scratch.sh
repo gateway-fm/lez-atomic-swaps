@@ -305,7 +305,7 @@ phase_rust() {
   PHASE=rust
   # Each role's Node and what it runs, packaged by the stage phase
   # (package-role-node.sh); the Taker image keeps the ZEC provisioners, which
-  # scripts/zec-provision.sh runs from it.
+  # tests/fixtures/zec-catalog-fixture.sh runs from it.
   local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway maker-node/lez-logos-price-worker
     maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
     taker-node/lez-taker-node taker-node/lez-taker-cli taker-node/lez-taker-chat-gateway

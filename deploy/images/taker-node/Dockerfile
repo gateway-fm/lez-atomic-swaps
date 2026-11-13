@@ -8,7 +8,7 @@
 # CLI, its actors, the LEZ sidecar and the launcher; this image installs it,
 # and compose.yaml configures it. Only the Taker's executables are here
 # (deploy/role-symmetry.json). The ZEC corridor provisioners are not part of
-# the package: scripts/zec-provision.sh runs them from this image to build a
+# the package: tests/fixtures/zec-catalog-fixture.sh runs them from this image to build a
 # prepared ZEC swap from live chain facts.
 #
 # The staged provisioners are debug builds; their debug sections are most of

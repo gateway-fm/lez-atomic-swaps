@@ -129,7 +129,7 @@ race_tries="${LEZ_REGRESS_RACE_TRIES:-8}"
 lane_count="${LEZ_LANES:-1}"
 [[ "$lane_count" =~ ^[1-9]$ ]] || { echo "LEZ_LANES must be 1 to 9" >&2; exit 64; }
 poll="${LEZ_REGRESS_POLL_SECONDS:-5}"
-# The runner owns the chain: a ZEC desk test's zec-provision.sh must not
+# The runner owns the chain: a ZEC desk test's zec-catalog-fixture.sh must not
 # recreate it from inside a test (ensure-chain.sh) behind the runner's back.
 export LEZ_ZEC_SKIP_CHAIN_CHECK=1
 log() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$out/regress.log"; }

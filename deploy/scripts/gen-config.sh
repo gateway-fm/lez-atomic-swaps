@@ -131,7 +131,7 @@ role_files() {
   # it; the ZEC ceremony binds Delivery identity, Chat key and Zcash key into one
   # key) and zebra mines to its transparent address, so the Maker owns the
   # coinbase the ZEC provisioner spends; the Taker's key funds Zcash in
-  # TakerSellsForeign (scripts/zec-provision.sh pays it once from the Maker's).
+  # TakerSellsForeign (tests/fixtures/zec-catalog-fixture.sh pays it once from the Maker's).
   # Nothing here is a constant: a fresh runtime mints fresh keys. The address
   # comes from zec-local-poc-identity, staged on the host by from-scratch.sh
   # --only rust or, once the stage is gone, run from the Taker image.

@@ -25,9 +25,8 @@ QString formatBtc(qint64 sats)
 }
 
 // The desks render the pairs the Nodes settle themselves: Bitcoin (offers
-// the Maker desk publishes) and Zcash (prepared corridors from
-// scripts/zec-provision.sh, 1 ZEC = 100 000 000 zatoshis, 8 decimals like
-// Bitcoin). Any other pair is left out of the rows.
+// the Maker desk publishes) and Zcash (offers agreed at take time, 1 ZEC =
+// 100 000 000 zatoshis, 8 decimals like Bitcoin). Any other pair is left out of the rows.
 bool nodePair(const QString& pair)
 {
     return pair == QStringLiteral("Bitcoin") || pair == QStringLiteral("Zcash");
