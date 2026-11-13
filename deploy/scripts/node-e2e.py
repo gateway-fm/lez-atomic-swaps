@@ -3796,8 +3796,10 @@ def scenario_zec_corrupt_state(stamp: str) -> dict:
     swap's monitor answers -32010 taker_monitor_unavailable and never a
     plausible state, and the file is left as it was (same inode, same bytes),
     on every read until the end. The other swap must still be monitored,
-    claimed and completed on both Nodes. The Taker's swap list, which that
-    test also pins to the error with one swap, is recorded as it answers."""
+    claimed and completed on both Nodes, and the Taker's swap list must show
+    it, with the corrupt swap as attention_required for
+    `taker_monitor_unavailable` (with one swap alone the list still answers the
+    error, as that test pins)."""
     zec_provision(swaps=2)
     corridors = list(ZEC_CORRIDORS)
     taken = [(zec_take_or_resume(corridor["offer_id"], stamp, f"-{tag}"), corridor)
@@ -3840,14 +3842,19 @@ def scenario_zec_corrupt_state(stamp: str) -> dict:
         return {"when": when, "code": error.get("code"), "category": category}
 
     closed = [assert_fails_closed("after the restart")]
-    listed = rpc("taker", "taker_swap_list_v1", {"schema_version": 1})
-    log(f"  {bad[:12]}: monitor -32010 taker_monitor_unavailable, the file untouched; the swap list answers "
-        f"{'an error ' + json.dumps(listed['error'])[:160] if 'error' in listed else str(len(listed['result']['swaps'])) + ' swaps'}")
+    rows = {swap["swap_id"]: swap for swap in call("taker", "taker_swap_list_v1", {"schema_version": 1})["swaps"]}
+    if (rows.get(bad) or {}).get("state") != "attention_required" \
+            or rows[bad].get("attention_reason") != "taker_monitor_unavailable" \
+            or (rows.get(good) or {}).get("state") in (None, "attention_required"):
+        raise Failure(f"the swap list does not show {good[:12]} and {bad[:12]} as attention_required for "
+                      f"taker_monitor_unavailable: { {k[:12]: (v['state'], v.get('attention_reason')) for k, v in rows.items()} }")
+    log(f"  {bad[:12]}: monitor -32010 taker_monitor_unavailable, the file untouched; the swap list shows it "
+        f"attention_required (taker_monitor_unavailable) and {good[:12]} {rows[good]['state']}")
     zec_finish(good, good_config, good_corridor, stamp, "-b")
     closed.append(assert_fails_closed("once the other swap completed"))
     log(f"  the other swap {good[:12]} completed on both Nodes; {bad[:12]} still fails closed")
     return {"corrupt_swap": bad, "role_state_db": state_db, "fails_closed": closed, "other_swap": good,
-            "swap_list_after_restart": listed.get("error") or {"swaps": len(listed["result"]["swaps"])}}
+            "swap_list_after_restart": {swap_id: rows[swap_id]["state"] for swap_id in (bad, good)}}
 
 
 def zec_wait_refused(swap_id: str, timeout: int) -> dict:
