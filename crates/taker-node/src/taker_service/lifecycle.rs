@@ -64,6 +64,10 @@ pub(super) enum RouteActor {
     },
     #[cfg(feature = "pair-zec")]
     Zec(zec_reference_actor::ActorConfig),
+    /// A Monero swap: its receipt-bound files; the Node's own supervisor
+    /// (`xmr_supervisor.rs`) drives it.
+    #[cfg(feature = "pair-xmr")]
+    Xmr(super::xmr_supervisor::XmrBoundSwap),
 }
 
 /// Typed, pair-neutral view of one actor's durable progress.
@@ -153,6 +157,16 @@ impl RouteActor {
                 inode,
             )
             .map(Self::Zec),
+            #[cfg(feature = "pair-xmr")]
+            Pair::Monero => super::xmr_supervisor::XmrBoundSwap::load(
+                receipt,
+                actor_root,
+                swap_id,
+                receipt_sha256,
+                device,
+                inode,
+            )
+            .map(Self::Xmr),
             #[allow(unreachable_patterns)]
             _ => Err(anyhow::anyhow!("pair has no Taker Node lifecycle route")),
         }
@@ -163,6 +177,18 @@ impl RouteActor {
             Self::Btc { swap_id, .. } => swap_id,
             #[cfg(feature = "pair-zec")]
             Self::Zec(config) => config.swap_id(),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => swap.swap_id(),
+        }
+    }
+
+    /// A Monero swap's files, for its supervisor.
+    #[cfg(feature = "pair-xmr")]
+    pub(super) const fn xmr_files(&self) -> Option<&super::xmr_supervisor::XmrSwapFiles> {
+        if let Self::Xmr(swap) = self {
+            Some(swap.files())
+        } else {
+            None
         }
     }
 
@@ -172,6 +198,8 @@ impl RouteActor {
             Self::Btc { config, .. } => config.agreement_terms(),
             #[cfg(feature = "pair-zec")]
             Self::Zec(_) => None,
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => None,
         }
     }
 
@@ -183,6 +211,8 @@ impl RouteActor {
             }
             #[cfg(feature = "pair-zec")]
             Self::Zec(_) => Vec::new(),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => Vec::new(),
         }
     }
 
@@ -198,6 +228,8 @@ impl RouteActor {
             Self::Btc { config, .. } => config.state_db(),
             #[cfg(feature = "pair-zec")]
             Self::Zec(config) => config.role_state_db(),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => swap.state_db(),
         }
     }
 
@@ -217,6 +249,8 @@ impl RouteActor {
                 config.bridge_journal_db().to_path_buf(),
                 config.signed_agreement_sha256(),
             ),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => swap.custody_identity(),
         }
     }
 
@@ -283,6 +317,9 @@ impl RouteActor {
                     }
                 })
             }
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(swap) => super::xmr_supervisor::lifecycle_status(swap.files())
+                .map_err(|error| report_actor_failure("status", &error)),
         }
     }
 
@@ -404,6 +441,21 @@ impl RouteActor {
                     }
                 }
             }
+            // A Monero refund is admitted durably and the Node's supervisor
+            // submits it on its next pass, under this same actor lock; the
+            // claim is not composed on the Taker Node, so it is never
+            // offered and never reaches here.
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => match action {
+                TakerTerminalActionV1::Refund => {
+                    let _ = outcomes;
+                    Ok(())
+                }
+                TakerTerminalActionV1::Claim => {
+                    report_actor_failure("effect", &"xmr_claim_not_composed");
+                    Err(())
+                }
+            },
         }
     }
 
@@ -425,6 +477,11 @@ impl RouteActor {
                 let _ = outcomes;
                 Ok(())
             }
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => {
+                let _ = outcomes;
+                Ok(())
+            }
         }
     }
 
@@ -440,6 +497,8 @@ impl RouteActor {
             }
             #[cfg(feature = "pair-zec")]
             Self::Zec(_) => Ok(()),
+            #[cfg(feature = "pair-xmr")]
+            Self::Xmr(_) => Ok(()),
         }
     }
 }
@@ -518,6 +577,8 @@ pub(super) fn register(
     spawn_dynamic_observer(Arc::clone(state));
     #[cfg(feature = "pair-zec")]
     super::zec_supervisor::spawn_zec_supervisor(Arc::clone(state));
+    #[cfg(feature = "pair-xmr")]
+    super::xmr_supervisor::spawn_xmr_supervisor(Arc::clone(state));
     let balances_state = Arc::clone(state);
     module.register_async_method("taker_wallet_balances_v1", move |params, _, _| {
         let state = Arc::clone(&balances_state);
@@ -539,15 +600,20 @@ pub(super) fn register(
                     "initiation_registry_unavailable",
                 )
             })?;
-            let (dynamic, dynamic_zec) = tokio::task::spawn_blocking(move || {
+            let (dynamic, dynamic_zec, dynamic_xmr) = tokio::task::spawn_blocking(move || {
                 let context = initiation.lock().ok();
                 #[cfg(feature = "pair-zec")]
                 let dynamic_zec = context.as_ref().and_then(|context| context.dynamic_zec());
                 #[cfg(not(feature = "pair-zec"))]
                 let dynamic_zec = None::<()>;
+                #[cfg(feature = "pair-xmr")]
+                let dynamic_xmr = context.as_ref().and_then(|context| context.dynamic_xmr());
+                #[cfg(not(feature = "pair-xmr"))]
+                let dynamic_xmr = None::<()>;
                 (
                     context.and_then(|context| context.dynamic_btc()),
                     dynamic_zec,
+                    dynamic_xmr,
                 )
             })
             .await
@@ -565,7 +631,10 @@ pub(super) fn register(
                     "balances_unavailable",
                 )
             })?;
-            #[cfg_attr(not(feature = "pair-zec"), allow(unused_mut))]
+            #[cfg_attr(
+                not(any(feature = "pair-zec", feature = "pair-xmr")),
+                allow(unused_mut)
+            )]
             let mut balances =
                 serde_json::to_value(dynamic.wallet_balances().await).map_err(|_| {
                     rpc_error(INTERNAL_ERROR_CODE, "Internal error", "balances_encoding")
@@ -581,6 +650,17 @@ pub(super) fn register(
             }
             #[cfg(not(feature = "pair-zec"))]
             let _ = dynamic_zec;
+            #[cfg(feature = "pair-xmr")]
+            if request.monero
+                && let Some(dynamic_xmr) = dynamic_xmr
+            {
+                balances["monero"] = serde_json::to_value(dynamic_xmr.wallet_balance().await)
+                    .map_err(|_| {
+                        rpc_error(INTERNAL_ERROR_CODE, "Internal error", "balances_encoding")
+                    })?;
+            }
+            #[cfg(not(feature = "pair-xmr"))]
+            let _ = dynamic_xmr;
             Ok::<_, ErrorObjectOwned>(balances)
         }
     })?;
@@ -1895,6 +1975,10 @@ async fn project_receipt_bound_swap(
         overlay_held_revealing_claim(&mut view, config.state_db());
         overlay_lez_first_lock_attempts(&mut view, config.state_db());
     }
+    #[cfg(feature = "pair-xmr")]
+    if let Some(files) = config.xmr_files() {
+        super::xmr_supervisor::overlay_view(&mut view, files);
+    }
     #[cfg(feature = "pair-zec")]
     if pair == Pair::Zcash {
         let record = super::zec_supervisor::schedule_record(initiation, config.swap_id()).await;
@@ -2163,6 +2247,7 @@ async fn refuse_unavailable_route(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 async fn initiate(
     state: Arc<TakerServiceState>,
     request: TakerSwapInitiateRequestV1,
@@ -2208,22 +2293,30 @@ async fn initiate(
     // before authenticated Delivery performs asynchronous I/O.
     let offer_id = request.offer_id.clone();
     let selection_context = Arc::clone(&initiation);
-    let (catalog_entry, dynamic, dynamic_zec) = tokio::task::spawn_blocking(move || {
-        let context = selection_context
-            .lock()
-            .map_err(|_| InitiationError::Internal)?;
-        #[cfg(feature = "pair-zec")]
-        let dynamic_zec = context.dynamic_zec();
-        #[cfg(not(feature = "pair-zec"))]
-        let dynamic_zec = None::<()>;
-        Ok::<_, InitiationError>((
-            context.prepared_for_offer(&offer_id).cloned(),
-            context.dynamic_btc(),
-            dynamic_zec,
-        ))
-    })
-    .await
-    .map_err(|_| InitiationError::Internal)??;
+    let (catalog_entry, dynamic, dynamic_zec, dynamic_xmr) =
+        tokio::task::spawn_blocking(move || {
+            let context = selection_context
+                .lock()
+                .map_err(|_| InitiationError::Internal)?;
+            #[cfg(feature = "pair-zec")]
+            let dynamic_zec = context.dynamic_zec();
+            #[cfg(not(feature = "pair-zec"))]
+            let dynamic_zec = None::<()>;
+            #[cfg(feature = "pair-xmr")]
+            let dynamic_xmr = context.dynamic_xmr();
+            #[cfg(not(feature = "pair-xmr"))]
+            let dynamic_xmr = None::<()>;
+            Ok::<_, InitiationError>((
+                context.prepared_for_offer(&offer_id).cloned(),
+                context.dynamic_btc(),
+                dynamic_zec,
+                dynamic_xmr,
+            ))
+        })
+        .await
+        .map_err(|_| InitiationError::Internal)??;
+    #[cfg(not(feature = "pair-xmr"))]
+    let _ = dynamic_xmr;
     let prepared = match (catalog_entry, dynamic, dynamic_zec) {
         (Some(prepared), _, _) => prepared,
         (None, Some(dynamic), _) if request.route.pair() == Pair::Bitcoin => {
@@ -2232,6 +2325,11 @@ async fn initiate(
         #[cfg(feature = "pair-zec")]
         (None, _, Some(dynamic)) if request.route.pair() == Pair::Zcash => {
             prepare_dynamic_zec(&state, &request, &initiation, &dynamic).await?
+        }
+        #[cfg(feature = "pair-xmr")]
+        (None, _, _) if request.route.pair() == Pair::Monero => {
+            let dynamic = dynamic_xmr.ok_or(InitiationError::SelectionMismatch)?;
+            prepare_dynamic_xmr(&state, &request, &initiation, &dynamic).await?
         }
         (None, _, _) => return Err(InitiationError::SelectionMismatch),
     };
@@ -2381,6 +2479,71 @@ async fn prepare_dynamic_zec(
                 Ok(reason) => InitiationError::ZecFundingUnavailable(reason.0),
                 Err(_) => InitiationError::ExecutionUnavailable,
             }
+        })?;
+    let entry = dynamic
+        .load_entry(&configured)
+        .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    let context = Arc::clone(initiation);
+    let inserted = entry.clone();
+    tokio::task::spawn_blocking(move || {
+        context
+            .lock()
+            .map_err(|_| InitiationError::Internal)?
+            .insert_prepared(inserted)
+            .map_err(|()| InitiationError::Conflict)
+    })
+    .await
+    .map_err(|_| InitiationError::Internal)??;
+    Ok(entry)
+}
+
+/// Prepares a Monero swap for any live offer at take time (`xmr_reserve_v1`
+/// and the ceremony) and registers it in the catalog, so the rest of the
+/// initiation is the prepared Monero take (`execute_prepared_xmr`).
+#[cfg(feature = "pair-xmr")]
+async fn prepare_dynamic_xmr(
+    state: &TakerServiceState,
+    request: &TakerSwapInitiateRequestV1,
+    initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
+    dynamic: &Arc<super::xmr_dynamic::DynamicXmrRole>,
+) -> Result<PreparedTakerInitiationV1, InitiationError> {
+    if request.route.direction() != SwapDirection::TakerSellsLez {
+        return Err(InitiationError::UnsupportedPair);
+    }
+    let (now, live_match) = selected_offer_is_live(state, request).await?;
+    if !live_match {
+        return Err(InitiationError::SelectionMismatch);
+    }
+    let announcement = match request.logos_offer_announcement_base64.as_deref() {
+        Some(proof_base64) => {
+            let encoded = BASE64_STANDARD
+                .decode(proof_base64.as_bytes())
+                .map_err(|_| InitiationError::SelectionMismatch)?;
+            Some(
+                verify_logos_offer_announcement(&encoded, now)
+                    .map_err(|_| InitiationError::SelectionMismatch)?
+                    .offer()
+                    .clone(),
+            )
+        }
+        None => None,
+    };
+    let take = btc_dynamic::TakeRequest {
+        request_id: request.request_id.clone(),
+        offer_id: request.offer_id.clone(),
+        route: request.route,
+        maker_identity: *request.maker_identity.as_bytes(),
+        signed_envelope_sha256: request.signed_envelope_sha256,
+        foreign_units: request.foreign_units,
+        expected_lez_units: request.expected_lez_units,
+        announcement,
+        funding_transaction_hex: None,
+    };
+    let configured = super::xmr_dynamic::prepare(dynamic, &take, now)
+        .await
+        .map_err(|error| {
+            eprintln!("taker XMR reservation failed: {error:#}");
+            InitiationError::ExecutionUnavailable
         })?;
     let entry = dynamic
         .load_entry(&configured)
@@ -2615,6 +2778,8 @@ const fn route_has_node_lifecycle(pair: Pair) -> bool {
         Pair::Bitcoin => true,
         #[cfg(feature = "pair-zec")]
         Pair::Zcash => true,
+        #[cfg(feature = "pair-xmr")]
+        Pair::Monero => true,
         #[allow(unreachable_patterns)]
         _ => false,
     }
@@ -2819,6 +2984,8 @@ async fn execute_prepared(
         Pair::Bitcoin => execute_prepared_btc(prepared, admitted_at).await,
         #[cfg(feature = "pair-zec")]
         Pair::Zcash => execute_prepared_zec(prepared, admitted_at).await,
+        #[cfg(feature = "pair-xmr")]
+        Pair::Monero => execute_prepared_xmr(prepared, admitted_at).await,
         #[allow(unreachable_patterns)]
         _ => Err(InitiationError::UnsupportedPair),
     }
@@ -2971,6 +3138,70 @@ async fn execute_prepared_zec(
     .await
     .map_err(|error| {
         eprintln!("taker ZEC take failed: {error:#}");
+        InitiationError::ExecutionUnavailable
+    })?;
+    Ok(())
+}
+
+/// Runs the prepared Monero take: provisions the Taker's actor bundle from
+/// the role root the negotiation filled, activates the Maker (R6) and
+/// publishes the acceptance receipt (`take_xmr`; Stage A was countersigned
+/// with the Maker at take time, so it is not resent).
+#[cfg(feature = "pair-xmr")]
+async fn execute_prepared_xmr(
+    prepared: &PreparedTakerInitiationV1,
+    admitted_at: u64,
+) -> Result<(), InitiationError> {
+    use xmr_reference_actor::{
+        XMR_ADAPTOR_JOURNAL_FILE, XMR_MAKER_PACKET_FILE, XMR_STAGE_A_FILE, XMR_STAGE_B_FILE,
+        XMR_TAKER_PACKET_FILE,
+    };
+    let execution = prepared.execution();
+    let stage_b = read_private_file_snapshot(
+        execution.unsigned_draft_path(),
+        MAXIMUM_PREPARED_INPUT_BYTES,
+        "prepared Taker Stage B",
+    )
+    .map_err(|_| InitiationError::ExecutionUnavailable)?;
+    let role_root = execution
+        .agreement_output()
+        .parent()
+        .ok_or(InitiationError::ExecutionUnavailable)?;
+    if stage_b.bytes() != execution.unsigned_draft()
+        || Sha256::digest(stage_b.bytes()).as_slice() != execution.unsigned_draft_sha256()
+        || execution.agreement_output() != role_root.join(XMR_STAGE_A_FILE)
+        || execution.unsigned_draft_path() != role_root.join(XMR_STAGE_B_FILE)
+    {
+        return Err(InitiationError::ExecutionUnavailable);
+    }
+    let paths = |name: &str| role_root.join(name);
+    let (stage_a, stage_b, taker_packet, maker_packet, journal) = (
+        paths(XMR_STAGE_A_FILE),
+        paths(XMR_STAGE_B_FILE),
+        paths(XMR_TAKER_PACKET_FILE),
+        paths(XMR_MAKER_PACKET_FILE),
+        paths(XMR_ADAPTOR_JOURNAL_FILE),
+    );
+    crate::xmr_taker_accept::take_xmr(crate::xmr_taker_accept::XmrTakeInput {
+        delivery: None,
+        now_unix_seconds: admitted_at,
+        offer_id: prepared.offer_id().as_str(),
+        chat_socket: execution.chat_socket(),
+        reservation_id: prepared.reservation_id().as_str(),
+        foreign_units: prepared.facts().foreign_units(),
+        stage_a_file: &stage_a,
+        activation_file: &stage_b,
+        source_taker_root: role_root,
+        taker_public_packet: &taker_packet,
+        maker_public_packet: &maker_packet,
+        taker_role_journal: &journal,
+        taker_actor_root: execution.actor_root(),
+        acceptance_receipt_file: execution.receipt_output(),
+        effect: None,
+    })
+    .await
+    .map_err(|error| {
+        eprintln!("taker XMR take failed: {error:#}");
         InitiationError::ExecutionUnavailable
     })?;
     Ok(())

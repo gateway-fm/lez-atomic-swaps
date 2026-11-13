@@ -65,7 +65,8 @@ pub struct TakerHealthRequestV1 {
 
 /// Parameters of `taker_wallet_balances_v1`. With `zcash` a Taker whose Zcash
 /// role is configured also reports what it can fund Zcash from, which costs a
-/// pass over its Zebra's recent blocks; without it, as before.
+/// pass over its Zebra's recent blocks; with `monero` one whose Monero role is
+/// configured also reports its Monero role wallet; without them, as before.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TakerWalletBalancesRequestV1 {
@@ -73,6 +74,8 @@ pub struct TakerWalletBalancesRequestV1 {
     pub schema_version: u16,
     #[serde(default)]
     pub zcash: bool,
+    #[serde(default)]
+    pub monero: bool,
 }
 
 /// Optional exact route filter for authenticated offer discovery.
@@ -645,12 +648,13 @@ impl TakerPairCapabilityV1 {
 /// unknown values rather than assuming a closed set.
 #[must_use]
 pub const fn taker_pair_capabilities_v1() -> [TakerPairCapabilityV1; 5] {
-    pair_capabilities(false, false)
+    pair_capabilities(false, false, false)
 }
 
 const fn pair_capabilities(
     zec_lifecycle_registered: bool,
     btc_lifecycle_registered: bool,
+    xmr_lifecycle_registered: bool,
 ) -> [TakerPairCapabilityV1; 5] {
     // Bitcoin: the Node runs the lifecycle only once its BTC route is
     // configured; until then the owner CLI or the demo runner does.
@@ -672,6 +676,21 @@ const fn pair_capabilities(
     } else {
         TakerMonitoringCapabilityV1::NotOnThisNode
     };
+    // Monero: the Node takes and monitors the swap, locks LEZ and refunds by
+    // itself once its Monero route is configured; the claim (tag 14, then
+    // the sweep) is not composed on the Node, so claim and refund stay the
+    // effect checkpoints they were.
+    let (xmr_initiation, xmr_monitoring) = if xmr_lifecycle_registered {
+        (
+            TakerInitiationCapabilityV1::PreparedPrivateMaterial,
+            TakerMonitoringCapabilityV1::ReceiptBound,
+        )
+    } else {
+        (
+            TakerInitiationCapabilityV1::OwnerCliOrDemo,
+            TakerMonitoringCapabilityV1::OwnerCliOrDemo,
+        )
+    };
     let zec_terminal = if zec_lifecycle_registered {
         TakerTerminalActionCapabilityV1::FullLifecycle
     } else {
@@ -691,8 +710,8 @@ const fn pair_capabilities(
             pair: Pair::Monero,
             supported_direction: SwapDirection::TakerSellsLez,
             authenticated_offer_browsing: true,
-            initiation: TakerInitiationCapabilityV1::OwnerCliOrDemo,
-            monitoring: TakerMonitoringCapabilityV1::OwnerCliOrDemo,
+            initiation: xmr_initiation,
+            monitoring: xmr_monitoring,
             claim: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
             refund: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
         },
@@ -821,7 +840,11 @@ impl TakerHealthV1 {
     #[must_use]
     pub const fn with_zec_lifecycle_registered(mut self) -> Self {
         self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
-        self.pair_capabilities = pair_capabilities(true, self.pair_capabilities[0].receipt_bound());
+        self.pair_capabilities = pair_capabilities(
+            true,
+            self.pair_capabilities[0].receipt_bound(),
+            self.pair_capabilities[1].receipt_bound(),
+        );
         self
     }
 
@@ -829,7 +852,23 @@ impl TakerHealthV1 {
     #[must_use]
     pub const fn with_btc_lifecycle_registered(mut self) -> Self {
         self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
-        self.pair_capabilities = pair_capabilities(self.pair_capabilities[2].receipt_bound(), true);
+        self.pair_capabilities = pair_capabilities(
+            self.pair_capabilities[2].receipt_bound(),
+            true,
+            self.pair_capabilities[1].receipt_bound(),
+        );
+        self
+    }
+
+    /// Reports that the service registered the receipt-bound Monero lifecycle.
+    #[must_use]
+    pub const fn with_xmr_lifecycle_registered(mut self) -> Self {
+        self.registered_methods = TakerRegisteredMethodsV1::full_lifecycle();
+        self.pair_capabilities = pair_capabilities(
+            self.pair_capabilities[2].receipt_bound(),
+            self.pair_capabilities[0].receipt_bound(),
+            true,
+        );
         self
     }
 

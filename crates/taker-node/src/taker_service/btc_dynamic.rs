@@ -147,13 +147,13 @@ impl DynamicBtcRole {
 
     /// The role runtime (LEZ identity, signer, swaps root, sidecar recipe)
     /// the Zcash take-time reservations share.
-    #[cfg(feature = "pair-zec")]
+    #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
     pub(super) const fn runtime(&self) -> &BtcRoleRuntime {
         &self.runtime
     }
 
     /// The Maker's Chat socket the take's rounds go through.
-    #[cfg(feature = "pair-zec")]
+    #[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
     pub(super) fn chat_socket(&self) -> &Path {
         &self.chat_socket
     }

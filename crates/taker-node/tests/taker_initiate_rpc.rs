@@ -179,7 +179,9 @@ async fn service_initiation_is_live_atomic_redacted_and_replays_before_delivery(
 async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry() {
     // Bitcoin has a Node lifecycle, so it passes the pair gate and fails only
     // against the prepared catalog (which holds a Zcash entry for this offer);
-    // Monero has no Node lifecycle and is refused before any lookup.
+    // Monero has a Node lifecycle only with `pair-xmr`: with it, a Node whose
+    // Monero role is not configured has nothing to select; without it, the
+    // pair is refused before any lookup.
     let fixture = Fixture::new();
     let module =
         taker_service_rpc_module(load_taker_service_context(&fixture.config).unwrap()).unwrap();
@@ -194,7 +196,11 @@ async fn bitcoin_and_monero_initiate_are_rejected_without_touching_the_registry(
             "m6-xmr-initiate-rejected-001",
             Pair::Monero,
             SwapDirection::TakerSellsLez,
-            "initiation_unsupported_pair",
+            if cfg!(feature = "pair-xmr") {
+                "initiation_selection_mismatch"
+            } else {
+                "initiation_unsupported_pair"
+            },
         ),
     ] {
         let mut request = fixture.request(label);

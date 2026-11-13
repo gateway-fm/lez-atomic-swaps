@@ -6,12 +6,18 @@
 
 mod btc_dynamic;
 mod lifecycle;
+#[cfg(feature = "pair-xmr")]
+mod xmr_dynamic;
+#[cfg(feature = "pair-xmr")]
+mod xmr_supervisor;
 #[cfg(feature = "pair-zec")]
 mod zec_dynamic;
 #[cfg(feature = "pair-zec")]
 mod zec_supervisor;
 
 pub(crate) use btc_dynamic::DynamicBtcRole;
+#[cfg(feature = "pair-xmr")]
+pub(crate) use xmr_dynamic::DynamicXmrRole;
 #[cfg(feature = "pair-zec")]
 pub(crate) use zec_dynamic::DynamicZecRole;
 
@@ -46,6 +52,7 @@ struct TakerServiceState {
     /// Which pairs the prepared catalog holds, fixed at startup.
     btc_registered: bool,
     zec_registered: bool,
+    xmr_registered: bool,
     /// How long the Bitcoin observer waits between two sweeps.
     observer_sweep_interval: Duration,
     /// The LEZ chain's progress for `taker_health`, from the Node-owned
@@ -125,11 +132,15 @@ pub fn taker_service_rpc_module_with_timing(
     let zec_registered = initiation
         .as_ref()
         .is_some_and(|context| context.has_pair(Pair::Zcash));
+    let xmr_registered = initiation
+        .as_ref()
+        .is_some_and(|context| context.has_pair(Pair::Monero));
     let state = Arc::new(TakerServiceState {
         backend,
         initiation: initiation.map(|value| Arc::new(Mutex::new(value))),
         btc_registered,
         zec_registered,
+        xmr_registered,
         observer_sweep_interval,
         lez_finality,
         last_outcomes: LastOutcomes::new(),
@@ -155,6 +166,9 @@ pub fn taker_service_rpc_module_with_timing(
             }
             if state.btc_registered {
                 health = health.with_btc_lifecycle_registered();
+            }
+            if state.xmr_registered {
+                health = health.with_xmr_lifecycle_registered();
             }
             // The LEZ chain's progress (#112); absent without the lifecycle.
             if let Some(watch) = state.lez_finality.as_ref() {
