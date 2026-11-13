@@ -12,6 +12,8 @@ compile_error!("xmr-reference-actor requires Unix file-permission semantics");
 #[cfg(feature = "sessions")]
 mod application_provision;
 #[cfg(feature = "sessions")]
+mod ceremony;
+#[cfg(feature = "sessions")]
 mod effect_authority;
 #[cfg(feature = "sessions")]
 mod effect_child_plan;
@@ -36,6 +38,8 @@ pub use application_provision::{
     publish_xmr_effect_manifest_v3, validate_maker_manifest_config_bytes,
     validate_taker_manifest_config_bytes, validate_xmr_effect_manifest_v3_projection_bytes,
 };
+#[cfg(feature = "sessions")]
+pub use ceremony::{XmrCeremonyPackets, XmrMakerCeremony, XmrTakerCeremony, XmrTakerStageB};
 #[cfg(feature = "sessions")]
 pub use effect_authority::{
     ValidatedXmrEffectAuthorityV1, XMR_EFFECT_AUTHORITY_MAX_BYTES, XmrEffectAuthenticatedRpcV1,
