@@ -53,7 +53,7 @@ pub use topology::{
 };
 pub use wallet_effect::{
     ConfirmedMoneroFunding, ConfirmedMoneroSweep, MoneroRegtestWalletEffects,
-    MoneroWalletEffectError, SubmittedMoneroSweep,
+    MoneroWalletEffectError, MoneroWalletRpcLock, SubmittedMoneroSweep,
 };
 
 /// Canonical Monero standard-address type used by exact output terms.
