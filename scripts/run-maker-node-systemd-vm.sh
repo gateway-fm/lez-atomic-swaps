@@ -270,6 +270,8 @@ step "Taker Node under its own unit"
 run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-taker-node-service.sh
 printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=lez-signer.key - /etc/lez/taker/credentials/lez-signer.key.cred\n'
 head -c 32 /dev/urandom | systemd-creds encrypt --name=lez-signer.key - /etc/lez/taker/credentials/lez-signer.key.cred 2>/dev/null
+printf '$ head -c 32 /dev/urandom | systemd-creds encrypt --name=zcash.key - /etc/lez/taker/credentials/zcash.key.cred\n'
+head -c 32 /dev/urandom | systemd-creds encrypt --name=zcash.key - /etc/lez/taker/credentials/zcash.key.cred 2>/dev/null
 # The Taker trusts the Maker's Delivery identity, derived here from the same credential.
 printf '$ maker_key=$(systemd-run ... lez-maker-cli delivery-identity --signing-key-file "$CREDENTIALS_DIRECTORY/delivery-signing.key")\n'
 identity="$(systemd-run --quiet --wait --pipe -p User=lez-swap \
@@ -379,9 +381,9 @@ run install -m 0644 /payload/stack/market-bootstrap.env /etc/lez/market-bootstra
 for role in maker taker; do
   run install -d -m 0755 "/etc/lez/$role/identity"
   run install -o lez-swap -g lez-swap -m 0400 "/payload/stack/$role/identity.json" "/etc/lez/$role/identity/"
-  # The Taker's own Zcash key, lane 1's: a file the launcher copies into its Zcash state.
-  [[ "$role" == taker ]] && run install -D -o lez-swap -g lez-swap -m 0400 /payload/stack/taker/zcash.key \
-    /etc/lez/taker/identity/taker/zcash.key
+  # The Taker's own Zcash key, lane 1's, as its credential (the launcher keeps one raw copy).
+  [[ "$role" == taker ]] && run systemd-creds encrypt --name=zcash.key /payload/stack/taker/zcash.key \
+    /etc/lez/taker/credentials/zcash.key.cred
   # The role's LEZ signer key exists on this machine only as its encrypted credential.
   run systemd-creds encrypt --name=lez-signer.key "/payload/stack/$role/lez-signer.key" \
     "/etc/lez/$role/credentials/lez-signer.key.cred"
@@ -512,18 +514,33 @@ done
 
 step "Per-swap files that hold private keys, while the swap runs"
 run sh -c "find /var/lib/lez -type f \( -name '*.key' -o -name '*.capability' \) -printf '%m %u:%g %p\n' | sort"
-# A per-swap zcash.key holds 32 raw bytes; the role's own key files hold them as hex.
-raw_key() { python3 -I -c 'import sys; print(bytes.fromhex(sys.stdin.read().strip()).hex())'; }
-maker_key="$(systemd-creds decrypt --name=delivery-signing.key /etc/lez/maker/credentials/delivery-signing.key.cred - | raw_key)"
-taker_key="$(raw_key </etc/lez/taker/identity/taker/zcash.key)"
-for copy in $(find /var/lib/lez -type f -name zcash.key); do
-  copied="$(od -An -tx1 -v "$copy" | tr -d ' \n')"
-  [[ ${#copied} -ne 64 ]] && copied="$(raw_key <"$copy")"
-  if [[ "$copied" == "$maker_key" ]]; then echo "$copy holds the Maker's long-lived Zcash (and Delivery) key"
-  elif [[ "$copied" == "$taker_key" ]]; then echo "$copy holds the Taker's long-lived Zcash key"
-  else echo "$copy holds neither role's long-lived Zcash key"; fi
-done
-unset maker_key taker_key copied
+# Where each long-lived role key's bytes appear under the state directories (raw or hex):
+# the Maker's Zcash/Delivery key and its claim-recovery key are credentials and should appear
+# nowhere; the Taker's Zcash key only in its role-level zec/zcash.key.
+scan_role_keys() {
+  printf '$ scan /var/lib/lez for the long-lived role keys\n'
+  {
+    systemd-creds decrypt --name=delivery-signing.key /etc/lez/maker/credentials/delivery-signing.key.cred -
+    echo
+    systemd-creds decrypt --name=maker-claim-recovery.key /etc/lez/maker/credentials/maker-claim-recovery.key.cred - | od -An -tx1 -v | tr -d ' \n'
+    echo
+    systemd-creds decrypt --name=zcash.key /etc/lez/taker/credentials/zcash.key.cred -
+  } | python3 -I -c '
+import os, sys
+names = ["the Maker'"'"'s Zcash and Delivery key", "the Maker'"'"'s claim-recovery key", "the Taker'"'"'s Zcash key"]
+keys = [bytes.fromhex(line.strip()) for line in sys.stdin.read().split("\n") if line.strip()]
+for name, key in zip(names, keys):
+    found = []
+    for top, _, files in os.walk("/var/lib/lez"):
+        for file in files:
+            path = os.path.join(top, file)
+            data = open(path, "rb").read()
+            if key in data or key.hex().encode() in data:
+                found.append(path)
+    print(f"{name}: " + (", ".join(sorted(found)) if found else "in no file"))
+'
+}
+scan_role_keys
 
 step "kill -9 of the Maker between the locks and the claim; systemd restarts it"
 pid="$(systemctl show -p MainPID --value lez-maker-node)"
@@ -559,6 +576,7 @@ run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli history"
 
 step "Per-swap files that hold private keys, after completion"
 run sh -c "find /var/lib/lez -type f \( -name '*.key' -o -name '*.capability' \) -printf '%m %u:%g %p\n' | sort"
+scan_role_keys
 
 fi
 
