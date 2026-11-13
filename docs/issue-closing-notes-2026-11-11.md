@@ -1,9 +1,12 @@
 # Notes for the open issues, 2026-11-11
 
-What PR #120 changed for each open issue Logos filed, with the commits and how
-each was checked. These were drafts for the issues. On 2026-11-11 each
-issue got a comment that says what was run since (#103, #112, #113, #114,
-#115); #106 is closed. Commit ids are those of `feat/split-lez-node-route`.
+What PR #120, and for #103 PR #131, changed for each issue Logos filed, with
+the commits and how each was checked. These were drafts for the issues. On
+2026-11-11 each issue got a comment that says what was run since (#103, #112,
+#113, #114, #115); #106 is closed. On 2026-11-12 #103 (PR #131), #113 (PR
+#127) and #114 were closed; #112 and #115 stay open. Commit ids are those of
+the branches before they were merged (`feat/split-lez-node-route` for PR #120,
+`fix/103-review-items` for PR #131).
 
 ## #103, items 1 and 16: latent paths in `swap-core`
 
@@ -177,7 +180,7 @@ a larger genesis and tip, `f0c88084`); the upstream cause
 
 The Logos-native acceptance (`docs/evidence/logos-native-2026-11-11-c/`) has
 13 failing steps per role left: 9 are unsigned packages (ours and upstream's
-alike; signing is not part of this PR) and 4 are `logosctl` behaviour with
+alike; signing is not part of this release) and 4 are `logosctl` behaviour with
 issue texts in `docs/evidence/logos-native-2026-11-11-b/README.md`. `module
 stats` showing the module host instead of the Node is recorded as an upstream
 request; the Node's own figures are judged through `node_stats`.
@@ -377,7 +380,8 @@ shrinks to the replayed claim on a completed swap, which `c75576ab` now
 refuses at the lock removal. What the new property shrinks to was not
 checked here, and the `v0.2.5` release text ("shrinks to exactly the
 reported shape") is unedited (release last updated 2026-09-28). Item 11
-moved to issue #134.
+moved to issue #134, closed on 2026-11-12 as superseded by the 0.3.x
+evidence; the correction is in `docs/release-notes-0.3.0.md`.
 
 **Item 12, regression evidence: the harness part fixed in `3f275a49`, the
 v0.2.5 provenance filled from its log in `97c99a30`; used by both full
@@ -396,16 +400,22 @@ recreations `RESULTS.txt` records (tests, times) and says plainly what that
 log does not hold: no finality or tip reading, no classifier, nothing on
 what a stopped try left open. Still open: the `v0.2.5` release text's "43 of
 43" (a release edit, outside the repository); that release-text part moved
-to issue #134.
+to issue #134, which the owner closed on 2026-11-12 as superseded by the
+0.3.x evidence; the correction is in `docs/release-notes-0.3.0.md`.
 
 **Item 13, videos: no longer applies to this release, not fixed for
-`v0.2.5`.** The recordings of the M2 run are by-products of passing tests at
-a stated source (`023c929e`) on recorded image ids; seven ZEC ones are in
-`videos/`, the other 25, the Bitcoin set included, are kept outside git for
-release attachments, and no release was built. The `v0.2.5` recordings were
+`v0.2.5`.** The recordings of the M2 runs are by-products of passing tests at
+a stated source on recorded image ids. The seven ZEC ones in git are in
+`docs/evidence/regression-2026-11-12/videos/` (tests `2b6569e0`, images
+`964cb8c8`, the two `zec-concurrent` ones from the rerun at `62cf95ca`); they
+replaced the seven first committed under `regression-m2-2026-11-11/videos/`
+(`023c929e`), which holds none now. The other recordings, the Bitcoin set
+included, are kept outside git for release attachments
+(`videos-kept-outside-git.sha256` in that set). The `v0.2.5` recordings were
 neither dated nor re-recorded. Whether the Taker's "Completed" is on screen
 in the happy-path recordings was not checked here. Item 13 moved to issue
-#134.
+#134, closed on 2026-11-12 as superseded by the 0.3.x evidence; the
+correction is in `docs/release-notes-0.3.0.md`.
 
 **Item 14, late-claim scenarios: added in `226244db` and `fcf9860e`
 (harness); on the stack they found two Bitcoin defects, fixed in `9579950b`

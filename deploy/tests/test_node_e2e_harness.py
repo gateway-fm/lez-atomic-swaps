@@ -4,6 +4,7 @@ evidence, the off-chain cut's commands, the settlement arithmetic.
 Docker, bitcoin-cli and the Nodes are never called: the module is loaded and
 its pure helpers are driven with fakes.
 """
+import datetime
 import importlib.util
 import json
 import os
@@ -345,6 +346,96 @@ class LateClaimSettlement(unittest.TestCase):
             self.settle(self.after(-4_000, 0, 0, 0), 'completed', 'completed')
         with self.assertRaises(e2e.Failure):
             self.settle(self.after(-4_000, 0, 0, 0), 'refunded', 'completed')
+
+
+
+class NativeNodes(unittest.TestCase):
+    """LEZ_E2E_NATIVE_RUN_ROOT: the Nodes run on this host, not in containers."""
+
+    def test_the_owner_socket_is_reached_with_this_hosts_curl(self):
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return unittest.mock.Mock(returncode=0, stdout='{"jsonrpc":"2.0","id":1,"result":{"ready":true}}', stderr='')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', '/home/lez/run'), patch.object(e2e.subprocess, 'run', fake_run):
+            self.assertEqual(e2e.call('taker', 'taker_health', {'schema_version': 1}), {'ready': True})
+            e2e.wait_healthy('maker', timeout=5)
+        self.assertEqual(ran[0][:6], ['curl', '-sS', '--max-time', '300', '--unix-socket', '/home/lez/run/taker/node.sock'])
+        self.assertIn('"method": "maker_health"', ran[1][ran[1].index('--data') + 1])
+        self.assertNotIn('docker', [part for command in ran for part in command])
+
+    def test_without_it_the_container_is_exec_d(self):
+        ran = []
+
+        def fake_run(command, **_):
+            ran.append(command)
+            return unittest.mock.Mock(returncode=0, stdout='{"jsonrpc":"2.0","id":1,"result":1}', stderr='')
+
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''), patch.object(e2e.subprocess, 'run', fake_run):
+            e2e.call('maker', 'maker_health', {})
+        self.assertEqual(ran[0][:7], ['docker', 'exec', 'lez-maker-node', 'curl', '-sS', '--max-time', '300'])
+        self.assertIn('/run/lez/maker/node.sock', ran[0])
+
+    def test_a_scenario_that_needs_the_containers_is_refused(self):
+        with tempfile.TemporaryDirectory() as runtime, \
+                patch.object(e2e, 'NATIVE_RUN_ROOT', '/home/lez/run'), \
+                patch.object(e2e, 'LANE_RUNTIME', pathlib.Path(runtime)), \
+                patch.object(e2e, 'timing_profile', lambda: {}), \
+                patch.object(e2e, 'wait_healthy', lambda *a, **k: self.fail('no Node may be asked')):
+            self.assertFalse(e2e.run('offline-after-lock'))
+            summary = json.loads((pathlib.Path(runtime) / 'e2e' / 'offline-after-lock.json').read_text())
+        self.assertEqual(summary['result'], 'failed')
+        self.assertIn('LEZ_E2E_NATIVE_RUN_ROOT', summary['error'])
+
+    def test_a_command_in_the_node_runs_beside_the_native_node(self):
+        files = {'maker': {'hold': '/home/lez/maker.hold', 'log': '/home/lez/maker.node.log'},
+                 'taker': {'hold': '/home/lez/taker.hold', 'log': '/home/lez/taker.node.log'}}
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', ''):
+            self.assertEqual(e2e.node_command('taker', ['cat', '/var/lib/lez/zec/corridor/x']),
+                             ['docker', 'exec', 'lez-taker-node', 'cat', '/var/lib/lez/zec/corridor/x'])
+        with patch.object(e2e, 'NATIVE_RUN_ROOT', '/home/lez/run'), \
+                patch.object(e2e, 'NATIVE_HOME', pathlib.Path('/home/lez')), \
+                patch.object(e2e, 'NATIVE_FILES', files), \
+                patch.object(e2e, 'native_bin', lambda role: f'/pkg/{role}/bin'):
+            self.assertEqual(e2e.node_command('taker', ['/usr/local/bin/lez-zec-taker-actor', '--config',
+                                                        '/var/lib/lez/zec/corridor/taker/actor-config.json', 'drive']),
+                             ['/pkg/taker/bin/lez-zec-taker-actor', '--config',
+                              '/home/lez/zec/corridor/taker/actor-config.json', 'drive'])
+            self.assertEqual(e2e.node_command('maker', ['cat', '/run/lez/maker/node.log']),
+                             ['cat', '/home/lez/maker.node.log'])
+            self.assertEqual(e2e.node_command('taker', ['python3', '-c', "glob('/var/lib/lez/taker/btc/swaps/*')"]),
+                             ['python3', '-c', "glob('/home/lez/taker/btc/swaps/*')"])
+
+    def test_a_native_node_is_stopped_by_its_hold_file_and_started_by_removing_it(self):
+        with tempfile.TemporaryDirectory() as home:
+            hold = pathlib.Path(home) / 'taker.hold'
+            files = {'maker': {'hold': str(pathlib.Path(home) / 'maker.hold'), 'log': ''},
+                     'taker': {'hold': str(hold), 'log': ''}}
+            pids = iter([4242, None])
+            killed = []
+            with patch.object(e2e, 'NATIVE_RUN_ROOT', home + '/run'), patch.object(e2e, 'NATIVE_FILES', files), \
+                    patch.object(e2e, 'native_pid', lambda role: next(pids, None)), \
+                    patch.object(e2e.os, 'kill', lambda pid, sig: killed.append((pid, sig))):
+                e2e.node_stop('taker')
+                self.assertTrue(hold.exists())
+                self.assertEqual(killed, [(4242, 15)])
+                e2e.node_start('taker')
+                self.assertFalse(hold.exists())
+
+    def test_a_native_log_is_read_from_where_it_stood_at_since(self):
+        with tempfile.TemporaryDirectory() as home:
+            log_file = pathlib.Path(home) / 'taker.node.log'
+            log_file.write_text('before\n')
+            files = {'maker': {'hold': '', 'log': ''}, 'taker': {'hold': '', 'log': str(log_file)}}
+            clock = e2e.LogClock()
+            clock.samples['taker'] = [(1000.0, 0), (2000.0, len('before\n'))]
+            log_file.write_text('before\nafter\n')
+            with patch.object(e2e, 'NATIVE_RUN_ROOT', home + '/run'), patch.object(e2e, 'NATIVE_FILES', files), \
+                    patch.object(e2e, 'LOG_CLOCK', clock):
+                since = datetime.datetime.fromtimestamp(2500, datetime.UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
+                self.assertEqual(e2e.node_log_since('taker', since), 'after\n')
 
 
 if __name__ == '__main__':

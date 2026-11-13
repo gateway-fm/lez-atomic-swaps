@@ -11,8 +11,15 @@
 # beside the executables it runs, which it finds next to itself. Basecamp's
 # lez_swap_node starts it with the role as its argument and owns the Node's
 # life: the Node is the process group's leader (this script execs it), and
-# the helpers started here (loopback forwards, ZEC sidecars) are signalled
-# when the Node goes (setpriv --pdeathsig), so none outlives it.
+# the helpers started here (loopback forwards, ZEC sidecars) are in its group,
+# which lez_swap_node ends when the Node goes; on Linux they are also
+# signalled when the Node goes (setpriv --pdeathsig), so none outlives it.
+#
+# It runs in the role's container image on Linux and natively on macOS, under
+# any bash from 3.2 (macOS's /bin/bash) on. Its inputs and the Node's files
+# are at the container's mount points on Linux and under
+# ~/Library/Application Support/LEZ on macOS; each can be named by its own
+# variable (below).
 set -euo pipefail
 
 # `probe-bitcoin <cookie file>`: the Nodes' route-health probe for Bitcoin
@@ -25,13 +32,75 @@ fi
 
 role="${1:?maker|taker}"
 bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Each setting below may be given for one role only: LEZ_MAKER_<NAME> or
+# LEZ_TAKER_<NAME> (LEZ_MAKER_SIDECAR_PORT_BASE for LEZ_SIDECAR_PORT_BASE)
+# takes precedence over LEZ_<NAME> for that role. One host can then start
+# both roles' Nodes from one environment (one Basecamp with both desks), where
+# the names both roles share would otherwise collide; a role's container sets
+# the shared names for its one role.
+role_prefix="LEZ_$(tr '[:lower:]' '[:upper:]' <<<"$role")_"
+for name in SIDECAR_PORT_BASE WALLET_SIGNER_SOCKET BTC_WALLET BTC_CLAIM_DESTINATION NODE_LOG_FILE \
+    NODE_STATE_DIR NODE_RUN_ROOT ZEC_STATE_DIR ZEC_SIDECAR_DIR NODE_IDENTITY_DIR MARKET_MANIFEST BTC_RPC_COOKIE_FILE DELIVERY_DIR \
+    SEQUENCER_URL INDEXER_URL LEZ_SEQUENCER_ROUTE BITCOIN_CORE_HOST SEQUENCER_HOST INDEXER_HOST ZEBRA_HOST \
+    V02_CHANNEL_ID AUTH_TRANSFER_PROGRAM_ID BTC_NETWORK LEZ_NETWORK \
+    BTC_REFUND_CSV_BLOCKS BTC_SECOND_LOCK_REFUND_CSV_BLOCKS BTC_BLOCK_SECONDS_FASTEST BTC_BLOCK_SECONDS_SLOWEST \
+    BTC_MAKER_LOCK_CUTOFF_SECONDS BTC_EARLIER_REFUND_SECONDS BTC_LATER_REFUND_SECONDS BTC_REFUND_MARGIN_SECONDS \
+    BTC_LOCK_FEE_CONFIRMATION_TARGET BTC_LOCK_FEE_FALLBACK_SAT_PER_VB BTC_LOCK_FEE_MAX_SAT_PER_VB \
+    BTC_LOCK_FEE_MAX_PERCENT LEZ_DISCOVERY_MAX_BLOCKS ZEC_CLAIM_KEY_ID NODE_FINALITY_STALL_SECONDS; do
+  specific="$role_prefix$name"
+  if [[ -n "${!specific+set}" ]]; then export "LEZ_$name=${!specific}"; fi
+done
 # A helper started here ends with the Node (its parent once this script execs
 # it): setpriv (util-linux) asks the kernel for that, where it is installed.
+# Elsewhere (macOS) the helper is ended with the Node's process group.
 with_node=()
 command -v setpriv >/dev/null && with_node=(setpriv --pdeathsig TERM)
-state="/var/lib/lez/$role"
-run="/run/lez/$role"
+# Run only in the background (`node_helper ... &`): it execs, so the helper
+# is this script's child (the Node's, once it execs) and not a subshell's.
+# ("${with_node[@]}" on an empty array is an unbound variable to bash < 4.4.)
+node_helper() { exec ${with_node[@]+"${with_node[@]}"} "$@"; }
+
+# Where things are. Linux: the role container's mounts and volumes. macOS: one
+# directory per installation (LEZ_NODE_HOME), both roles side by side in it,
+# the chains reached on loopback directly. Every path may be set on its own.
+if [[ "$(uname -s)" == Darwin ]]; then
+  home="${LEZ_NODE_HOME:-$HOME/Library/Application Support/LEZ}"
+  default_state="$home/$role"
+  default_run_root="$home/run"
+  # One corridor root for both roles, as zec-catalog-fixture.sh --native-home
+  # writes it; each role's ZEC sidecars keep their state apart.
+  default_zec_state="$home/zec"
+  default_zec_sidecar="$home/zec/sidecar-$role"
+  # ... and the role's take-time Zcash files (zec-role.json, the Taker's
+  # zcash.key) theirs; the Taker's Zcash key is in its identity directory.
+  default_zec_role="$home/zec/role-$role"
+  zcash_key_in_identity=zcash.key
+  default_identity="$home/identity/$role"
+  default_manifest="$home/market-bootstrap.env"
+  default_cookie="$home/btc-rpc-cookie"
+  default_delivery="$home/delivery"
+  default_chain_host=127.0.0.1
+else
+  default_state="/var/lib/lez/$role"
+  default_run_root=/run/lez
+  default_zec_state=/var/lib/lez/zec
+  default_zec_sidecar=
+  default_zec_role=
+  zcash_key_in_identity="$role/zcash.key"
+  default_identity=/run-lez-identity
+  default_manifest=/run-market/market-bootstrap.env
+  default_cookie=/run-config/btc-rpc-cookie
+  default_delivery=/delivery
+  default_chain_host=
+fi
+# The Node's state (0700), its sockets and ready file, the Maker's sockets the
+# Taker reaches (its Chat socket), the prepared ZEC corridor.
+state="${LEZ_NODE_STATE_DIR:-$default_state}"
+run_root="${LEZ_NODE_RUN_ROOT:-$default_run_root}"
+run="$run_root/$role"
 btc_state="$state/btc"
+# Unix socket paths are limited (104 bytes on macOS, 108 on Linux).
+(( ${#run} + 10 < 104 )) || { echo "$role: the socket directory $run is too long for a Unix socket path; set LEZ_NODE_RUN_ROOT" >&2; exit 2; }
 
 # The Node's own lines, also in a file of their own when LEZ_NODE_LOG_FILE names
 # one. Inside Basecamp the Node shares the container's output with every module
@@ -41,17 +110,21 @@ btc_state="$state/btc"
 node_log_file() {
   local file="${LEZ_NODE_LOG_FILE:-}"
   [[ -n "$file" ]] || return 0
-  if [[ -f "$file" ]] && (( $(stat -c %s "$file") > 16777216 )); then : >"$file"; fi
+  if [[ -f "$file" ]] && (( $(wc -c <"$file") > 16777216 )); then : >"$file"; fi
   exec > >(tee -a "$file") 2> >(tee -a "$file" >&2)
 }
-# The role's inputs: the container's read-only mounts, or where a systemd
-# deployment keeps them (packaging/systemd/lez-<role>-node.env.example).
-identity_src="${LEZ_IDENTITY_DIR:-/run-lez-identity}"
-manifest="${LEZ_MARKET_MANIFEST:-/run-market/market-bootstrap.env}"
-cookie_src="${LEZ_BTC_RPC_COOKIE_FILE:-/run-config/btc-rpc-cookie}"
-delivery="${LEZ_DELIVERY_DIR:-/delivery}"
+# The role's identity (identity.json; lez-signer.key without a signer socket;
+# the Maker's zcash.key), the market bootstrap manifest, Bitcoin Core's RPC
+# cookie, and the Delivery directory the Maker publishes into and the Taker
+# reads: the container's read-only mounts, the macOS layout, or where a
+# systemd deployment keeps them (packaging/systemd/lez-<role>-node.env.example,
+# which names the identity LEZ_IDENTITY_DIR).
+identity_src="${LEZ_NODE_IDENTITY_DIR:-${LEZ_IDENTITY_DIR:-$default_identity}}"
+manifest="${LEZ_MARKET_MANIFEST:-$default_manifest}"
+cookie_src="${LEZ_BTC_RPC_COOKIE_FILE:-$default_cookie}"
+delivery="${LEZ_DELIVERY_DIR:-$default_delivery}"
 sidecar_port_base="${LEZ_SIDECAR_PORT_BASE:?}"
-sequencer_url="${LEZ_SEQUENCER_URL:-http://sequencer:3040}"
+sequencer_url="${LEZ_SEQUENCER_URL:-http://${default_chain_host:-sequencer}:3040}"
 # How the Node and its sidecars reach the LEZ sequencer (LezSequencerRoute,
 # crates/btc-role-lifecycle/src/config.rs): "local", literal-loopback HTTP (the
 # devnet's forward below, or an operator's proxy), or "official_public", the
@@ -64,33 +137,46 @@ case "$sequencer_route" in
   official_public) sidecar_route_args=(--node-profile official_public --indexer-profile local) ;;
   *) echo "$role: LEZ_LEZ_SEQUENCER_ROUTE must be local or official_public, not $sequencer_route" >&2; exit 2 ;;
 esac
-indexer_url="${LEZ_INDEXER_URL:-http://indexer:8779}"
+indexer_url="${LEZ_INDEXER_URL:-http://${default_chain_host:-indexer}:8779}"
 channel_id="${LEZ_V02_CHANNEL_ID:?}"
 auth_transfer_program_id="${LEZ_AUTH_TRANSFER_PROGRAM_ID:-fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a}"
 
 umask 077
+mkdir -p "$state" "$run"
 chmod 0700 "$state" 2>/dev/null || true
+
+sha256_of() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1
+}
 
 # Literal-loopback routes to the chains: the Bitcoin Core adapter, the funding
 # wallet client and the LEZ sidecars accept only loopback endpoints, so this
 # container forwards 127.0.0.1 ports to the services by name. Each connection
 # is forwarded on its own, so a restarted service is reached again at once.
-# LEZ_CHAIN_FORWARDS=0 leaves them out where the chains already answer on
+# A service that is already on this host's loopback (macOS: the chains'
+# containers publish these ports on 127.0.0.1) is reached directly.
+# LEZ_CHAIN_FORWARDS=0 leaves them all out where the chains already answer on
 # loopback (a systemd deployment, where both roles share one network).
 chain_forwards="${LEZ_CHAIN_FORWARDS:-1}"
-bitcoin_host="${LEZ_BITCOIN_CORE_HOST:-bitcoin-core}"
-sequencer_host="${LEZ_SEQUENCER_HOST:-sequencer}"
-indexer_host="${LEZ_INDEXER_HOST:-indexer}"
+forward() {
+  case "$2" in
+    127.0.0.1|localhost) return 0 ;;
+  esac
+  node_helper socat "TCP-LISTEN:$1,bind=127.0.0.1,fork,reuseaddr" "TCP:$2:$1" &
+}
+bitcoin_host="${LEZ_BITCOIN_CORE_HOST:-${default_chain_host:-bitcoin-core}}"
+sequencer_host="${LEZ_SEQUENCER_HOST:-${default_chain_host:-sequencer}}"
+indexer_host="${LEZ_INDEXER_HOST:-${default_chain_host:-indexer}}"
 if [[ "$chain_forwards" == 1 ]]; then
-  "${with_node[@]}" socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr "TCP:${bitcoin_host}:18443" &
+  forward 18443 "$bitcoin_host"
   # (On the official_public route the sequencer is reached directly: no forward.)
   if [[ "$sequencer_route" == local ]]; then
-    "${with_node[@]}" socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr "TCP:${sequencer_host}:3040" &
+    forward 3040 "$sequencer_host"
   fi
-  "${with_node[@]}" socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr "TCP:${indexer_host}:8779" &
+  forward 8779 "$indexer_host"
   # The ZEC actors reach Zebra the same way (deterministic_local route).
-  zebra_host="${LEZ_ZEBRA_HOST:-zebra}"
-  "${with_node[@]}" socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr "TCP:${zebra_host}:18232" &
+  zebra_host="${LEZ_ZEBRA_HOST:-${default_chain_host:-zebra}}"
+  forward 18232 "$zebra_host"
 fi
 for _ in $(seq 1 60); do
   curl -sf --max-time 3 --user "$(cat "$cookie_src")" -H 'content-type: application/json' \
@@ -124,7 +210,7 @@ case "$transport" in
 esac
 start_chat_gateway() { # start_chat_gateway <gateway endpoint arguments...>
   rm -f "$gateway_socket" "$run/logos-chat-proxy.sock"
-  "${with_node[@]}" bash -c 'while :; do
+  node_helper bash -c 'while :; do
       rm -f "$1" "$2"; "${@:3}"
       echo "'"$role"': Chat gateway exited ($?); starting it again" >&2; sleep 1
     done' gateway "$gateway_socket" "$run/logos-chat-proxy.sock" \
@@ -184,7 +270,7 @@ if [[ "$btc_lifecycle_ready" == 1 ]]; then
     exit 1
   fi
   actor_program="$bin/lez-btc-$role-actor"
-  actor_sha="$(sha256sum "$actor_program" | cut -d' ' -f1)"
+  actor_sha="$(sha256_of "$actor_program")"
   wallet_json='null'
   [[ -n "${LEZ_BTC_WALLET:-}" ]] && wallet_json="\"${LEZ_BTC_WALLET}\""
   # "wallet" pays this role's claims into its own Core wallet, so the desk's
@@ -253,7 +339,7 @@ else
 fi
 
 # ---- Zcash corridor (optional) ----------------------------------------------
-# tests/fixtures/zec-catalog-fixture.sh fills /var/lib/lez/zec from the live chains with one
+# tests/fixtures/zec-catalog-fixture.sh fills /var/lib/lez/zec (LEZ_ZEC_STATE_DIR) from the live chains with one
 # prepared ZEC swap under corridor/ (the provisioner's output root, which must
 # be new and is the prefix of every path inside its files): <role>/actor-config.json,
 # lez-runtime.json, lez-signer.key, sidecar.capability and the claim keys of
@@ -263,7 +349,10 @@ fi
 # per-swap sidecars (crates/btc-role-lifecycle/src/sidecar.rs). Material
 # provisioned on another chain is ignored rather than loaded: a catalog whose
 # envelope no longer authenticates would keep the Taker from starting at all.
-zec_state="${LEZ_ZEC_STATE_DIR:-/var/lib/lez/zec}"
+zec_state="${LEZ_ZEC_STATE_DIR:-$default_zec_state}"
+# The ZEC sidecars' state (one directory per corridor run) and their log
+# (<dir>.log): in the role's own ZEC volume on Linux.
+zec_sidecar_root="${LEZ_ZEC_SIDECAR_DIR:-${default_zec_sidecar:-$zec_state/sidecar}}"
 zec_role="$zec_state/corridor/$role"
 zec_config="$zec_role/actor-config.json"
 zec_ready=0
@@ -286,9 +375,9 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   zec_listen="${zec_endpoint#http://}"
   zec_listen="${zec_listen%%/*}"
   [[ "$zec_listen" =~ ^127\.0\.0\.1:[0-9]+$ ]] || { echo "$role: ZEC bridge endpoint $zec_endpoint is not loopback" >&2; exit 1; }
-  zec_sidecar_state="$zec_state/sidecar/$zec_run_id"
-  mkdir -p "$zec_state/sidecar" "$zec_sidecar_state"
-  chmod 0700 "$zec_state/sidecar" "$zec_sidecar_state"
+  zec_sidecar_state="$zec_sidecar_root/$zec_run_id"
+  mkdir -p "$zec_sidecar_root" "$zec_sidecar_state"
+  chmod 0700 "$zec_sidecar_root" "$zec_sidecar_state"
   # The ZEC sidecar signs through the same LEZ wallet module when it is up; its
   # account is the one the prepared runtime names.
   if [[ -n "$lez_wallet_socket" ]]; then
@@ -301,12 +390,12 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   # three times; one that runs but does not listen within 90 s is left alone.
   zec_candidate_ready=0
   for zec_start in 1 2 3; do
-    "${with_node[@]}" "$bin/lez-v02-bridge-poc" --listen-address "$zec_listen" "${sidecar_route_args[@]}" \
+    node_helper "$bin/lez-v02-bridge-poc" --listen-address "$zec_listen" "${sidecar_route_args[@]}" \
       --sequencer-url "$sequencer_url" --indexer-url "$indexer_url" --run-id "$zec_run_id" \
       --runtime-file "$zec_candidate_role/lez-runtime.json" --capability-file "$zec_candidate_role/sidecar.capability" \
       "${zec_signer_args[@]}" --state-directory "$zec_sidecar_state" \
       --authenticated-transfer-program-id "$auth_transfer_program_id" \
-      </dev/null >>"$zec_state/sidecar.log" 2>&1 &
+      </dev/null >>"$zec_sidecar_root.log" 2>&1 &
     zec_sidecar_pid=$!
     for _ in $(seq 1 90); do
       if (exec 3<>"/dev/tcp/127.0.0.1/${zec_listen##*:}") 2>/dev/null; then zec_candidate_ready=1; break; fi
@@ -315,7 +404,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
     done
     [[ "$zec_candidate_ready" == 1 ]] && break
     kill -0 "$zec_sidecar_pid" 2>/dev/null && break
-    echo "$role ZEC corridor $zec_run_id: sidecar exited before listening (start $zec_start of 3, see $zec_state/sidecar.log)" >&2
+    echo "$role ZEC corridor $zec_run_id: sidecar exited before listening (start $zec_start of 3, see $zec_sidecar_root.log)" >&2
     sleep 2
   done
   if [[ "$zec_candidate_ready" == 1 ]]; then
@@ -323,7 +412,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
     zec_configs+=("$zec_candidate")
     [[ "$zec_candidate" == "$zec_config" ]] && zec_ready=1
   else
-    echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen; ZEC stays off for it (see $zec_state/sidecar.log)" >&2
+    echo "$role ZEC corridor $zec_run_id: sidecar did not answer on $zec_listen; ZEC stays off for it (see $zec_sidecar_root.log)" >&2
   fi
 done
 if [[ "$zec_ready" == 1 ]]; then
@@ -332,29 +421,32 @@ fi
 # The Zcash role a Node takes swaps under at take time (zec_reserve_v1,
 # crates/zec-reference-actor/src/reserve.rs): the devnet profile and the Zebra
 # forward above; the Taker's own Zcash key (the Maker's is its Delivery key).
-mkdir -p "$zec_state"
-chmod 0700 "$zec_state"
-zec_role_config="$zec_state/zec-role.json"
+# (The role's own directory: the ZEC volume on Linux; on macOS, where both
+# roles share the corridor root, a directory of the role's beside it.)
+zec_role_root="${default_zec_role:-$zec_state}"
+mkdir -p "$zec_state" "$zec_role_root"
+chmod 0700 "$zec_state" "$zec_role_root"
+zec_role_config="$zec_role_root/zec-role.json"
 zec_key_field='{}'
 # The Taker's Zcash key: the identity's file, or (a systemd deployment) its credential.
-zec_key_source="${LEZ_ZCASH_KEY_SOURCE:-$identity_src/$role/zcash.key}"
+zec_key_source="${LEZ_ZCASH_KEY_SOURCE:-$identity_src/$zcash_key_in_identity}"
 if [[ "$role" == taker && -s "$zec_key_source" ]]; then
   # One role-level copy as 32 raw bytes, which every take-time swap names in
   # place and binds by inode: rewritten only when the key itself changes.
-  if [[ "$(stat -c %s "$zec_key_source")" == 32 ]]; then
-    install -m 0600 "$zec_key_source" "$zec_state/.zcash.key.new"
+  if (( $(wc -c <"$zec_key_source") == 32 )); then
+    install -m 0600 "$zec_key_source" "$zec_role_root/.zcash.key.new"
   else
     zec_key_hex="$(tr -d ' \r\n' <"$zec_key_source")"
     [[ "$zec_key_hex" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "$role: $zec_key_source is not a Zcash key" >&2; exit 1; }
     # shellcheck disable=SC2059 # the format is the key's own \xHH escapes
-    printf "$(sed 's/../\\x&/g' <<<"$zec_key_hex")" >"$zec_state/.zcash.key.new"
+    printf "$(sed 's/../\\x&/g' <<<"$zec_key_hex")" >"$zec_role_root/.zcash.key.new"
   fi
-  if cmp -s "$zec_state/.zcash.key.new" "$zec_state/zcash.key"; then
-    rm -f "$zec_state/.zcash.key.new"
+  if cmp -s "$zec_role_root/.zcash.key.new" "$zec_role_root/zcash.key"; then
+    rm -f "$zec_role_root/.zcash.key.new"
   else
-    mv -f "$zec_state/.zcash.key.new" "$zec_state/zcash.key"
+    mv -f "$zec_role_root/.zcash.key.new" "$zec_role_root/zcash.key"
   fi
-  zec_key_field="$(jq -n --arg key "$zec_state/zcash.key" '{zcash_key_file:$key}')"
+  zec_key_field="$(jq -n --arg key "$zec_role_root/zcash.key" '{zcash_key_file:$key}')"
 fi
 jq -n --arg profile "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" --argjson key "$zec_key_field" '
   {schema_version:1, profile:$profile, zebra_endpoint:"http://127.0.0.1:18232"} + $key' >"$zec_role_config"
@@ -368,9 +460,9 @@ chmod 0600 "$zec_role_config"
 # (probe-bitcoin, above), Zcash with the package's health check; both are the
 # package's own files beside the Node.
 launcher="$bin/${BASH_SOURCE[0]##*/}"
-jq -n --arg launcher "$launcher" --arg launcher_sha "$(sha256sum "$launcher" | cut -d' ' -f1)" \
+jq -n --arg launcher "$launcher" --arg launcher_sha "$(sha256_of "$launcher")" \
   --arg cookie "$btc_state/btc-rpc-cookie" --arg check "$bin/lez-runtime-healthcheck" \
-  --arg check_sha "$(sha256sum "$bin/lez-runtime-healthcheck" | cut -d' ' -f1)" '
+  --arg check_sha "$(sha256_of "$bin/lez-runtime-healthcheck")" '
   [{pair:"Bitcoin", program:$launcher, program_sha256:$launcher_sha, args:["probe-bitcoin", $cookie]},
    {pair:"Zcash", program:$check, program_sha256:$check_sha, args:["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]}]
   | {schema_version:1, commands:[.[] as $probe | ("TakerSellsForeign", "TakerSellsLez") as $direction
@@ -445,7 +537,7 @@ case "$role" in
           --zec-role-config "$zec_role_config"
           --zec-maker-actor-root "$zec_state/actors"
           --zec-actor-program "$zec_actor_program"
-          --zec-actor-program-sha256 "$(sha256sum "$zec_actor_program" | cut -d' ' -f1)")
+          --zec-actor-program-sha256 "$(sha256_of "$zec_actor_program")")
         for zec_template in "${zec_configs[@]}"; do
           args+=(--zec-source-maker-config "$zec_template")
         done
@@ -512,7 +604,7 @@ case "$role" in
         [[ -z "$last" ]] || echo "taker: the Maker's Delivery identity changed from $last to $maker_identity"
         printf '%s\n' "$maker_identity" >"$pinned"
       fi
-      chat_socket=/run/lez/maker/chat.sock
+      chat_socket="$run_root/maker/chat.sock"
     fi
     [[ "$maker_identity" =~ ^(02|03)[0-9a-f]{64}$ ]] || { echo "maker public identity unavailable" >&2; exit 1; }
     [[ -s "$state/registry.sqlite3" ]] || "$bin/lez-taker-registry-init" --database "$state/registry.sqlite3"
@@ -543,7 +635,7 @@ PY
       # The Zcash role only with the Taker's Zcash key: take-time agreements
       # (zec_reserve_v1) need it, a Node without one takes catalog swaps only.
       zec_role_field='{}'
-      if [[ -s "$zec_state/zcash.key" ]]; then
+      if [[ -s "$zec_role_root/zcash.key" ]]; then
         zec_role_field="$(jq -n --arg config "$zec_role_config" '{zec_role_config:$config}')"
       fi
       jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" \

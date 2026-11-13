@@ -1,2 +1,7 @@
 # Preserve the immutable upstream BIP340 corpus byte-for-byte (including CRLF).
 crates/btc-swap-sdk/tests/vectors/bitcoin-bips-8c369ac8/bip-0340/test-vectors.csv binary
+# Captured command output in the evidence sets is kept byte-for-byte as the
+# tools printed it (docker compose pads its progress lines with spaces), so the
+# whitespace check does not apply to it.
+docs/evidence/**/*.log -whitespace
+docs/evidence/**/*.txt -whitespace

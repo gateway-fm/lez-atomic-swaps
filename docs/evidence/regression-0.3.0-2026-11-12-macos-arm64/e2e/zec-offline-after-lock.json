@@ -1,0 +1,42 @@
+{
+  "scenario": "zec-offline-after-lock",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179448104002",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-devnet-swap-179448104002",
+  "corridor": "zec-devnet-179448104002",
+  "profile": "deterministic-local-devnet-v5",
+  "cut": {
+    "chat_samples": 16,
+    "chat_connections_seen": 0,
+    "taker_probe_at_end": {
+      "chat": "EACCES",
+      "delivery": "EACCES",
+      "delivery_fds": 0,
+      "uid": 4713
+    }
+  },
+  "result": "passed",
+  "seconds": 74
+}

@@ -57,7 +57,7 @@ The `*-lgx-portable` outputs are the release packages (variant
 `linux-amd64`/`linux-arm64`, the libraries they need beside the plugin): what
 `logosctl package install` takes and what the devnet images install, after
 `deploy/scripts/pin-package-dependencies.sh` has given their dependencies
-version ranges. The `*-lgx` outputs and the `*-install` developer-install
+version requirements. The `*-lgx` outputs and the `*-install` developer-install
 trees (for an isolated Basecamp `--user-dir`) are the module builder's
 development builds: variant `<platform>-dev`, libraries from `/nix/store`;
 logosctl refuses them. `lez-network-ui-lgx-portable` is the LEZ network's
@@ -130,7 +130,8 @@ The desks' backends accept one thing: the absolute path of a Unix socket owned
 by the current user with mode `0600`, read from `LEZ_MAKER_RPC_SOCKET` or
 `LEZ_TAKER_RPC_SOCKET`, so a desk installed into another Basecamp (from the
 catalog) needs a Node of its own on the same host. Running the Node
-binaries natively on macOS is not supported: the Nodes' process hardening is
+binaries natively on macOS is not supported: they build and pass their tests
+there (PR #126), but there is no darwin package and the launcher is
 Linux-only.
 
 The LEZ network itself runs in a third Basecamp, `lez-network`

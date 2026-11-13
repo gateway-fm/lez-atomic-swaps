@@ -1,0 +1,31 @@
+lez_swap_node host 98569
+98590, taker Node 98589 (group 98589)
+  581 98589 98589      0 $SESSIONS/taker/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 1
+  931 98589 98589      0 $SESSIONS/taker/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 1
+98589 98569 98589      0 $SESSIONS/taker/modules/lez_taker_node/bin/lez-taker-node --socket $LEZ_NODE_HOME/…
+98641 98589 98589      0 bash $SESSIONS/taker/modules/lez_taker_node/bin/node-entrypoint.sh taker
+98642 98589 98589      0 bash $SESSIONS/taker/modules/lez_taker_node/bin/node-entrypoint.sh taker
+98643 98641 98589      0 tee -a $LEZ_NODE_HOME/taker.node.log
+98644 98642 98589      0 tee -a $LEZ_NODE_HOME/taker.node.log
+99303 98589 98589      0 $SESSIONS/taker/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 1
+99815 98589 98589      0 $SESSIONS/taker/modules/lez_taker_node/bin/lez-v02-bridge-poc --listen-address 1
+$ kill -KILL 98569
+98590
+(eval):kill:1: illegal pid: 98569\n98590
+after 30s: Node alive? yes; group members left: 9
+$ status
+{"name":"lez_taker_node","status":"loaded"}
+{"name":"lez_swap_node","status":"loaded"}
+{"name":"lez_core","status":"loaded"}
+watcher 98590: 98590 98589 98590      0 $HOME/tmp/logosctl-0.3.2-macos/x/logosctl-aa
+$ kill -KILL 98569   # the lez_swap_node logos_host
+after 2s: Node alive? no; group members left: 0; watcher alive? no
+$ status
+{"name":"lez_taker_node","status":"loaded"}
+{"name":"lez_swap_node","status":"not_loaded"}
+{"name":"lez_core","status":"loaded"}
+$ module load lez_swap_node
+{"dependencies_loaded":[],"module":"lez_swap_node","status":"ok","version":"0.3.0"}
+taker_health after reload: {"ready":true,"degraded":false,"delivery":"available","chat":"available"}
+$ call lez_swap_node node_status taker
+"{\"role\":\"taker\",\"state\":\"running\",\"pid\":1624,\"starts\":1,\"last_exit\":\"\"}"

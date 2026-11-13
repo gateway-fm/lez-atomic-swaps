@@ -1,0 +1,19 @@
+[12:10:08] === survivor (stamp 179448180802)
+[12:10:08] preflight: indexer historical reads
+[12:10:09]   indexer serves historical reads at the tip (3284)
+[12:10:09] preflight: LEZ finality check waived by request
+[12:10:09]   Maker published offer-e2e-179448180802
+[12:10:10]   Taker took offer-e2e-179448180802: swap 6458c219b4dd (not_activated)
+[12:10:10]   Taker locked bitcoin: 075cedcda1ef (replay=False)
+[12:10:11]   [0 s] waiting for the Taker's 6458c219b4dd to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 3276, tip 3285 (9 unfinalized) [heartbeat]
+[12:10:17]   [6 s] waiting for the Taker's 6458c219b4dd to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 3276, tip 3285 (9 unfinalized) [heartbeat]
+[12:10:48]   [37 s] waiting for the Taker's 6458c219b4dd to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 3313, tip 3315 (2 unfinalized) [heartbeat]
+[12:10:48]   Taker claimed LEZ (replay=False)
+[12:10:49]   [0 s] waiting for the Taker's 6458c219b4dd to reach both_legs_locked/claim_in_progress/completed: taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 3313, tip 3315 (2 unfinalized) [heartbeat]
+[12:10:49]   stopping the Taker Node right after its revealing claim
+[12:10:49]   [0 s] waiting for the Maker to complete without the Taker: maker both_legs_locked, the Taker Node stopped | LEZ finalized 3313, tip 3315 (2 unfinalized) [heartbeat]
+[12:11:05]   [15 s] waiting for the Maker to complete without the Taker: maker claim_evidence_available, the Taker Node stopped | LEZ finalized 3313, tip 3315 (2 unfinalized) [heartbeat]
+[12:11:22]   [0 s] waiting for the Taker's 6458c219b4dd to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker completed | LEZ finalized 3327, tip 3331 (4 unfinalized) [heartbeat]
+[12:11:26]   [3 s] waiting for the Taker's 6458c219b4dd to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3327, tip 3331 (4 unfinalized) [heartbeat]
+[12:11:26]   both Nodes report 6458c219b4dd completed
+[12:11:26] === survivor: passed in 78s

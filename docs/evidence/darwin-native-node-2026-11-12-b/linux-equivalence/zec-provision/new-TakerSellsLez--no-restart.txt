@@ -1,0 +1,124 @@
+== stdout
+[zec-provision 12:00:00] 0/8 Maker Delivery identity
+[zec-provision 12:00:00]   Maker Delivery identity is its minted Zcash key (02abababababababababababababababababababababababababababababababab)
+[zec-provision 12:00:00] 1/8 preconditions
+[zec-provision 12:00:00]   LEZ chain check skipped by the caller
+[zec-provision 12:00:00]   zebra height 200 (>= 110: at least 10 mature coinbase outputs)
+[zec-provision 12:00:00] 2/8 spec
+  spec zec-devnet-swap-1794500000: channel eeeeeeeeeeee… escrow cccccccccccc… discovery from 4968, funder output #1
+[zec-provision 12:00:00] 3/8 provision (staging volume lez-zec-staging)
+  provisioned run r: agreement sha256 aaaaaaaaaaaaaaaa…, zebra tip 200, zcash refund height 209, private_material_disclosed=False
+[zec-provision 12:00:00] 4/8 distribute into lez-zec-maker / lez-zec-taker
+[zec-provision 12:00:00] 5/8 Zcash offer(s) zec-devnet-offer-1794500000 
+[zec-provision 12:00:00]   Taker lists zec-devnet-offer-1794500000: commitment fb547ce4fe0cb294c480f291dfea672d44cd63f224626fd9961655baa8c577a9, expires at 1794586400
+[zec-provision 12:00:00] 6/8 unsigned Chat draft(s)
+  draft sha256 bbbbbbbbbbbbbbbb… for swap s (reservation zec-devnet-res-1794500000), offer commitment cccccccccccccccc…
+[zec-provision 12:00:00] 7/8 prepared.json
+[zec-provision 12:00:00]   catalog: 1 entries; this run: zec-devnet-swap-1794500000 / zec-devnet-offer-1794500000;  swap files under /var/lib/lez/zec/taker-swaps/<run id>
+[zec-provision 12:00:00] 8/8 skipped (--no-restart): recreate maker-node and taker-node to load corridor zec-devnet-1794500000
+exit 0
+== stderr
+== calls
+date ["+%s"]
+date ["-u", "+%H:%M:%S"]
+docker ["inspect", "-f", "{{.State.Running}}", "lez-maker-node"]
+docker ["inspect", "-f", "{{.State.Running}}", "lez-taker-node"]
+docker ["inspect", "-f", "{{.State.Running}}", "lez-zebra"]
+docker ["run", "--rm", "--user", "0:0", "-v", "<w>/deploy/runtime/lez/maker/zcash.key:/in/key:ro", "--entrypoint", "bash", "lez-maker-node:local", "-c", "umask 077; install -m 0600 /in/key /tmp/k && lez-maker-cli delivery-identity --signing-key-file /tmp/k"]
+docker ["run", "--rm", "-v", "lez-delivery-dir:/d:ro", "--entrypoint", "cat", "lez-taker-node:local", "/d/maker-delivery-identity.pub"]
+date ["-u", "+%H:%M:%S"]
+date ["-u", "+%H:%M:%S"]
+date ["-u", "+%H:%M:%S"]
+curl ["-sS", "--max-time", "30", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getblockhash\",\"params\":[0]}", "http://127.0.0.1:18299/"]
+curl ["-sS", "--max-time", "30", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getblockchaininfo\",\"params\":[]}", "http://127.0.0.1:18299/"]
+curl ["-sS", "--max-time", "30", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getblockcount\",\"params\":[]}", "http://127.0.0.1:18299/"]
+date ["-u", "+%H:%M:%S"]
+date ["-u", "+%H:%M:%S"]
+curl ["-sS", "--max-time", "10", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getLastFinalizedBlockId\",\"params\":[]}", "http://127.0.0.1:8846/"]
+date ["-u", "+%H:%M:%S"]
+docker ["volume", "rm", "-f", "lez-zec-staging"]
+docker ["volume", "create", "lez-zec-staging"]
+docker ["run", "--rm", "--user", "0:0", "--entrypoint", "bash", "-v", "lez-zec-staging:/var/lib/lez/zec", "-v", "<w>/deploy/runtime/zec/zec-devnet-1794500000/spec.json:/in/spec.json:ro", "-v", "<w>/deploy/runtime/lez/maker/lez-signer.key:/in/maker.key:ro", "-v", "<w>/deploy/runtime/lez/taker/lez-signer.key:/in/taker.key:ro", "-v", "<w>/deploy/runtime/lez/maker/zcash.key:/in/maker-zcash.key:ro", "-v", "<w>/deploy/runtime/lez/taker/zcash.key:/in/taker-zcash.key:ro", "lez-taker-node:local", "-c", "\n  set -e; umask 077\n  mkdir -p /var/lib/lez/zec/signers\n  for f in /in/spec*.json; do install -m 0600 $f /var/lib/lez/zec/$(basename $f); done\n  install -m 0600 /in/maker.key /var/lib/lez/zec/signers/maker.key\n  install -m 0600 /in/taker.key /var/lib/lez/zec/signers/taker.key\n  install -m 0600 /in/maker-zcash.key /var/lib/lez/zec/signers/maker-zcash.key\n  install -m 0600 /in/taker-zcash.key /var/lib/lez/zec/signers/taker-zcash.key\n  \n  chown -R 4713:4713 /var/lib/lez/zec && chmod 0700 /var/lib/lez/zec /var/lib/lez/zec/signers"]
+docker ["run", "--rm", "--network", "container:lez-taker-node", "--user", "4713:4713", "-v", "lez-zec-staging:/var/lib/lez/zec", "--entrypoint", "zec-local-poc-provision", "lez-taker-node:local", "--spec-file", "/var/lib/lez/zec/spec.json", "--output-root", "/var/lib/lez/zec/corridor", "--maker-lez-signer-key-file", "/var/lib/lez/zec/signers/maker.key", "--taker-lez-signer-key-file", "/var/lib/lez/zec/signers/taker.key", "--maker-zcash-key-file", "/var/lib/lez/zec/signers/maker-zcash.key", "--taker-zcash-key-file", "/var/lib/lez/zec/signers/taker-zcash.key"]
+date ["-u", "+%H:%M:%S"]
+docker ["volume", "inspect", "lez-zec-maker"]
+docker ["volume", "inspect", "lez-zec-taker"]
+docker ["run", "--rm", "--user", "0:0", "--entrypoint", "bash", "-v", "lez-zec-staging:/stage:ro", "-v", "lez-zec-maker:/maker", "-v", "lez-zec-taker:/taker", "lez-taker-node:local", "-c", "\n  set -e; umask 077\n  for role in maker taker; do\n    vol=/$role\n    if [[ 0 == 0 ]]; then\n      for c in $vol/corridor $vol/corridor-*; do\n        [[ -e $c ]] || continue\n        old=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"run_id\"])' $c/$role/actor-config.json 2>/dev/null || date +%s)\n        mkdir -p $vol/archive && mv $c $vol/archive/$old\n      done\n      rm -f $vol/prepared.json\n    fi\n    for c in /stage/corridor /stage/corridor-*; do\n      [[ -d $c ]] || continue\n      mkdir -m 0700 $vol/$(basename $c)\n      cp -a $c/shared $vol/$(basename $c)/\n      cp -a $c/$role $vol/$(basename $c)/\n    done\n    chown -R 4713:4713 $vol && chmod -R go-rwx $vol\n  done\n  for r in zec-devnet-1794500000 ; do\n    mkdir -p /taker/taker-swaps/$r && chown 4713:4713 /taker/taker-swaps /taker/taker-swaps/$r && chmod 0700 /taker/taker-swaps /taker/taker-swaps/$r\n  done\n  echo '  maker volume:'; find /maker/corridor* -type f | sort | sed 's|^|    |'\n  echo '  taker volume:'; find /taker/corridor* -type f | sort | sed 's|^|    |'"]
+docker ["volume", "rm", "-f", "lez-zec-staging"]
+date ["-u", "+%H:%M:%S"]
+docker ["exec", "lez-maker-node", "curl", "-sS", "--max-time", "120", "--unix-socket", "/run/lez/maker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"maker_offer_list\",\"params\":[{\"states\":[\"active\"]}]}", "http://localhost/"]
+docker ["exec", "lez-maker-node", "curl", "-sS", "--max-time", "120", "--unix-socket", "/run/lez/maker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"maker_pair_list\",\"params\":[{}]}", "http://localhost/"]
+docker ["exec", "lez-maker-node", "curl", "-sS", "--max-time", "120", "--unix-socket", "/run/lez/maker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"maker_local_price_list\",\"params\":[{}]}", "http://localhost/"]
+docker ["exec", "lez-maker-node", "curl", "-sS", "--max-time", "120", "--unix-socket", "/run/lez/maker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"maker_local_route_save_v1\",\"params\":[{\"request_id\": \"zec-devnet-route-1794500000\", \"configuration\": {\"route\": {\"pair\": \"Zcash\", \"direction\": \"TakerSellsLez\"}, \"enabled\": true, \"price_source\": \"local\", \"minimum_foreign_units\": 100000000, \"maximum_foreign_units\": 100000000, \"offer_ttl_seconds\": 86400}, \"price\": {\"route\": {\"pair\": \"Zcash\", \"direction\": \"TakerSellsLez\"}, \"lez_units_per_lot\": 1, \"foreign_units_per_lot\": 2000}}]}", "http://localhost/"]
+docker ["exec", "lez-maker-node", "curl", "-sS", "--max-time", "120", "--unix-socket", "/run/lez/maker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"maker_offer_publish\",\"params\":[{\"request_id\":\"zec-devnet-publish-1794500000\",\"offer_id\":\"zec-devnet-offer-1794500000\",\"route\":{\"pair\":\"Zcash\",\"direction\":\"TakerSellsLez\"}}]}", "http://localhost/"]
+docker ["exec", "lez-taker-node", "curl", "-sS", "--max-time", "120", "--unix-socket", "/run/lez/taker/node.sock", "-H", "content-type: application/json", "--data", "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"taker_offer_list_v1\",\"params\":[{\"schema_version\":1,\"route\":{\"pair\":\"Zcash\",\"direction\":\"TakerSellsLez\"}}]}", "http://localhost/"]
+date ["-u", "+%H:%M:%S"]
+date ["-u", "+%H:%M:%S"]
+date ["+%s"]
+docker ["run", "--rm", "--user", "4713:4713", "-v", "lez-zec-taker:/var/lib/lez/zec", "--entrypoint", "zec-local-poc-chat-draft", "lez-taker-node:local", "--source-agreement-file", "/var/lib/lez/zec/corridor/shared/agreement-v2.borsh", "--now-unix-seconds", "1794500000", "--reservation-id", "zec-devnet-res-1794500000", "--offer-commitment", "fb547ce4fe0cb294c480f291dfea672d44cd63f224626fd9961655baa8c577a9", "--offer-expires-at-unix-seconds", "1794586400", "--output-file", "/var/lib/lez/zec/corridor/taker/unsigned-draft.borsh"]
+date ["-u", "+%H:%M:%S"]
+docker ["run", "--rm", "--user", "0:0", "--entrypoint", "bash", "-v", "lez-delivery-dir:/delivery:ro", "-v", "lez-zec-taker:/var/lib/lez/zec", "lez-taker-node:local", "-c", "\n  set -e; umask 077\n  install -m 0600 -o 4713 -g 4713 /delivery/zec-devnet-offer-1794500000.offer.json /var/lib/lez/zec/corridor/taker/signed-envelope.offer.json\n  cd /var/lib/lez/zec/corridor/taker && sha256sum signed-envelope.offer.json unsigned-draft.borsh actor-config.json"]
+docker ["run", "--rm", "-i", "--user", "0:0", "-v", "lez-zec-taker:/var/lib/lez/zec", "--entrypoint", "bash", "lez-taker-node:local", "-c", "umask 077; cat >/var/lib/lez/zec/prepared.json && chown 4713:4713 /var/lib/lez/zec/prepared.json"]
+date ["-u", "+%H:%M:%S"]
+date ["-u", "+%H:%M:%S"]
+== files
+-- zec/current
+zec-devnet-1794500000
+-- zec/zec-devnet-1794500000/draft-summary.json
+{"draft_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "swap_id": "s", "offer_commitment": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+-- zec/zec-devnet-1794500000/prepared.json
+[
+  {
+    "source_id": "local-maker",
+    "swap_id": "zec-devnet-swap-1794500000",
+    "offer_id": "zec-devnet-offer-1794500000",
+    "reservation_id": "zec-devnet-res-1794500000",
+    "foreign_units": 100000000,
+    "lez_units": 50000,
+    "signed_envelope": {
+      "path": "/var/lib/lez/zec/corridor/taker/signed-envelope.offer.json",
+      "sha256": "fb547ce4fe0cb294c480f291dfea672d44cd63f224626fd9961655baa8c577a9"
+    },
+    "unsigned_draft": {
+      "path": "/var/lib/lez/zec/corridor/taker/unsigned-draft.borsh",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "signing_key": {
+      "path": "/var/lib/lez/zec/corridor/taker/zcash.key"
+    },
+    "source_config": {
+      "path": "/var/lib/lez/zec/corridor/taker/actor-config.json",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "agreement_output": "/var/lib/lez/zec/taker-swaps/zec-devnet-1794500000/agreement.borsh",
+    "actor_root": "/var/lib/lez/zec/taker-swaps/zec-devnet-1794500000/actor",
+    "receipt_output": "/var/lib/lez/zec/taker-swaps/zec-devnet-1794500000/receipt.json"
+  }
+]-- zec/zec-devnet-1794500000/provision-summary.json
+{"run_id": "r", "signed_agreement_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "zebra_tip_height": 200, "zcash_refund_height": 209, "private_material_disclosed": false}
+-- zec/zec-devnet-1794500000/spec.json
+{
+  "schema_version": 1,
+  "run_id": "zec-devnet-1794500000",
+  "swap_id": "zec-devnet-swap-1794500000",
+  "direction": "taker_sells_lez",
+  "profile": "deterministic-local-devnet-v5",
+  "lez_runtime": {
+    "chain_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "channel_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "genesis_block_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "escrow_program_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "authenticated_transfer_program_id_base58": "J8otq1J8Zpjhhpp6FPfhFtWKTCkLjthdk12cwHiMZCTB",
+    "maker_signer_account_id_base58": "Accmaker",
+    "taker_signer_account_id_base58": "Acctaker"
+  },
+  "bridge": {
+    "maker_endpoint": "http://127.0.0.1:19901",
+    "taker_endpoint": "http://127.0.0.1:19902"
+  },
+  "zebra_endpoint": "http://127.0.0.1:18232",
+  "lez_discovery_start_height": 4968,
+  "lez_discovery_max_blocks": 4096,
+  "zcash_funding_skip": 0,
+  "zcash_funding_scan_from_height": 0
+}

@@ -1,0 +1,23 @@
+# release Basecamp 0.2.3, profile with string-then-object manifests, both desks clicked (System Events)
+process chain: 44593:lez-maker-node 44457:logos_host 44375:LogosBasecamp.bin 75532:claude 74700:-zsh 74699:login 1865:iTermServer-3.7.7beta2 1540:iTerm2
+process chain: 44853:lez-taker-node 44457:logos_host 44375:LogosBasecamp.bin 75532:claude 74700:-zsh 74699:login 1865:iTermServer-3.7.7beta2 1540:iTerm2
+$ curl --unix-socket $LEZ_NODE_HOME/run/maker/node.sock maker_health
+{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params","data":"invalid type: map, expected an array of length 1 at line 1 column 0"}}
+$ curl --unix-socket $LEZ_NODE_HOME/run/taker/node.sock taker_health
+{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params","data":{"category":"invalid_params"}}}
+# launcher logs (last lines)
+==> $WORK/home/maker.out.log <==
+maker BTC lifecycle: sidecar for 55005fa08a7e8242569ccba41ba19395a7ac372bfff2b1da92d87e3b2c771293 unavailable: sidecar failed to start: LEZ v0.2 bridge PoC failed: official runtime health gate failed
+maker BTC lifecycle: sidecar for 0f3e36f7d9b549a0727ff7ab6f85fbab5f984c09ae75955c07b7a12fd66c5f05 unavailable: sidecar failed to start: LEZ v0.2 bridge PoC failed: official runtime health gate failed
+maker BTC lifecycle: sidecar for 1b5be65de87d14bf4379af5a8d9761d0831ae4e24ec2849c9bbf63d625131df8 unavailable: sidecar failed to start: LEZ v0.2 bridge PoC failed: official runtime health gate failed
+
+==> $WORK/home/taker.out.log <==
+taker observer: sidecar for 81629ebe925e2d38111b605f2f466d02fe95cbb64f26f5db08fdde7f0e1e3c91 unavailable: sidecar failed to start: LEZ v0.2 bridge PoC failed: official runtime health gate failed
+taker observer: sidecar for 26a1979e4bc6d2e5c94f8deab33f0709a6e4dbd7d0fb5ab6137151eae0afc39f unavailable: sidecar failed to start: LEZ v0.2 bridge PoC failed: official runtime health gate failed
+taker RPC connection ended with an error: error shutting down connection
+
+# health (the compose healthcheck's params)
+$ curl --unix-socket $LEZ_NODE_HOME/run/maker/node.sock maker_health [{}]
+{"ready":true,"degraded":true,"lez_chain":"lez_finality_stalled","delivery":"available","chat":"available"}
+$ curl --unix-socket $LEZ_NODE_HOME/run/taker/node.sock taker_health [{"schema_version":1}]
+{"ready":true,"degraded":false,"lez_chain":{"degraded":false,"finalized_block_id":2694,"finalized_advanced_at_unix_seconds":1794521939,"finalized_flat_seconds":59,"tip_block_id":null,"stall_threshold_seconds":60,"observed_at_unix_seconds":1794521998},"delivery":"available","chat":"available"}

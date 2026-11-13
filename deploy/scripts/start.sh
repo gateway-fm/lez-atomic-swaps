@@ -96,8 +96,10 @@ else
   # Maker's Zcash address zebra mines to) and the LEZ network image (regenesis,
   # each new chain's genesis time) and, with neither present yet, would give
   # the first chain upstream's fixed genesis and zebra the template miner.
+  # The explorers' images too: verify-all.sh starts them, and on a bundle it
+  # builds nothing.
   log "pulling ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}"
-  docker compose --profile tools pull --quiet
+  docker compose --profile tools --profile explorers pull --quiet
 fi
 for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   [[ -f "$LEZ_WALLET_IDENTITIES/$wallet/identity.json" ]] && continue
@@ -138,7 +140,10 @@ tail -4 runtime/market-bootstrap.log
 # so both roles restart with its public fields in the runtime.
 cat "$LEZ_MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
 chmod 0644 runtime/market-bootstrap.env
-docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
+# --no-build, as in up.sh: the role images name another service's image as a
+# build context (service:basecamp-ui), and for those `compose up` builds on
+# every call; a bundle has no images/ directory, so that build fails.
+docker compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
 # A recreated Node reports its container healthy before its owner socket
 # serves, and it reports itself degraded until Delivery and Chat are back; the
 # desk suites press "Check Node" once and expect "Node ready". Wait for both

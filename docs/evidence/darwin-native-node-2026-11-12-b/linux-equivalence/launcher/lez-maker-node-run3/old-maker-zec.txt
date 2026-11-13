@@ -1,0 +1,142 @@
+== maker stdout
+maker Bitcoin lifecycle configured (escrow cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+maker ZEC corridor zec-run-1: sidecar listening on 127.0.0.1:19901
+maker Delivery signing key is the minted Zcash key (/run-lez-identity/zcash.key)
+maker ZEC authority configured (corridor zec-run-1, 1 template(s))
+== maker stderr
+== maker node args
+arg --socket
+arg /run/lez/maker/node.sock
+arg --database
+arg /var/lib/lez/maker/maker.sqlite3
+arg --ready-file
+arg /run/lez/maker/ready
+arg --delivery-directory
+arg /delivery
+arg --delivery-signing-key-file
+arg /var/lib/lez/maker/delivery-signing.key
+arg --chat-socket
+arg /run/lez/maker/chat.sock
+arg --btc-maker-signing-key-file
+arg /var/lib/lez/maker/btc-chat-signing.key
+arg --actor-supervisor
+arg --btc-role-config
+arg /var/lib/lez/maker/btc/btc-role.json
+arg --maker-claim-key-id
+arg devnet-zec-claim-v1
+arg --maker-claim-key-file
+arg /var/lib/lez/maker/zec-claim-recovery.key
+arg --zec-maker-actor-root
+arg /var/lib/lez/zec/actors
+arg --zec-actor-program
+arg /payload/lez-zec-maker-actor
+arg --zec-actor-program-sha256
+arg 306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb
+arg --zec-source-maker-config
+arg /var/lib/lez/zec/corridor/maker/actor-config.json
+== maker helpers
+setpriv --pdeathsig TERM /payload/lez-v02-bridge-poc --listen-address 127.0.0.1:19901 --node-profile local --sequencer-url http://sequencer:3040 --indexer-url http://indexer:8779 --run-id zec-run-1 --runtime-file /var/lib/lez/zec/corridor/maker/lez-runtime.json --capability-file /var/lib/lez/zec/corridor/maker/sidecar.capability --wallet-signer-socket /run/lez-wallet/signer.sock --signer-account-id acc --state-directory /var/lib/lez/zec/sidecar/zec-run-1 --authenticated-transfer-program-id fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a
+setpriv --pdeathsig TERM socat TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+setpriv --pdeathsig TERM socat TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+setpriv --pdeathsig TERM socat TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+setpriv --pdeathsig TERM socat TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+sidecar --listen-address 127.0.0.1:19901 --node-profile local --sequencer-url http://sequencer:3040 --indexer-url http://indexer:8779 --run-id zec-run-1 --runtime-file /var/lib/lez/zec/corridor/maker/lez-runtime.json --capability-file /var/lib/lez/zec/corridor/maker/sidecar.capability --wallet-signer-socket /run/lez-wallet/signer.sock --signer-account-id acc --state-directory /var/lib/lez/zec/sidecar/zec-run-1 --authenticated-transfer-program-id fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a
+socat  TCP-LISTEN:18232,bind=127.0.0.1,fork,reuseaddr TCP:zebra:18232
+socat  TCP-LISTEN:18443,bind=127.0.0.1,fork,reuseaddr TCP:bitcoin-core:18443
+socat  TCP-LISTEN:3040,bind=127.0.0.1,fork,reuseaddr TCP:sequencer:3040
+socat  TCP-LISTEN:8779,bind=127.0.0.1,fork,reuseaddr TCP:indexer:8779
+== maker files
+755 delivery
+444 delivery/maker-delivery-identity.pub
+755 run/lez
+755 run/lez/maker
+600 run/lez/maker/node.log
+755 var/lib/lez
+700 var/lib/lez/maker
+700 var/lib/lez/maker/btc
+600 var/lib/lez/maker/btc-chat-signing.key
+600 var/lib/lez/maker/btc/btc-role.json
+600 var/lib/lez/maker/btc/btc-rpc-cookie
+600 var/lib/lez/maker/btc/claim-destination
+600 var/lib/lez/maker/btc/identity.json
+600 var/lib/lez/maker/btc/runtime.json
+700 var/lib/lez/maker/btc/swaps
+600 var/lib/lez/maker/delivery-signing.key
+600 var/lib/lez/maker/zec-claim-recovery.key
+700 var/lib/lez/zec
+700 var/lib/lez/zec/actors
+755 var/lib/lez/zec/corridor
+755 var/lib/lez/zec/corridor/maker
+644 var/lib/lez/zec/corridor/maker/actor-config.json
+644 var/lib/lez/zec/corridor/maker/lez-runtime.json
+644 var/lib/lez/zec/corridor/maker/lez-signer.key
+644 var/lib/lez/zec/corridor/maker/sidecar.capability
+700 var/lib/lez/zec/sidecar
+600 var/lib/lez/zec/sidecar.log
+700 var/lib/lez/zec/sidecar/zec-run-1
+== /var/lib/lez/maker/btc/btc-role.json
+{
+  "actor": {
+    "program": "/payload/lez-btc-maker-actor",
+    "program_sha256": "306c6ca7407560340797866e077e053627ad409277d1b9da58106fce4cf717cb"
+  },
+  "bitcoin": {
+    "block_seconds": {
+      "fastest": 120,
+      "slowest": 120
+    },
+    "claim_destination_address": "bcrt1p",
+    "claim_fee_sat": 1000,
+    "cookie_file": "/var/lib/lez/maker/btc/btc-rpc-cookie",
+    "endpoint": "http://127.0.0.1:18443/",
+    "genesis_block_hash": "0f91",
+    "lock_fee": {
+      "confirmation_target": 6,
+      "fallback_sat_per_vb": 20,
+      "max_percent_of_value": 5,
+      "max_sat_per_vb": 25
+    },
+    "network": "regtest",
+    "refund_csv_blocks": 60,
+    "required_confirmations": 1,
+    "second_lock_refund_csv_blocks": 33,
+    "wallet": "lez-maker"
+  },
+  "lez": {
+    "authenticated_transfer_program_id": "fe96c4228babbe8bc578e3e25b884cacb07f8c86541f27ed676789875eef875a",
+    "channel_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "discovery_max_blocks": 2048,
+    "escrow_program_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "genesis_block_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "indexer_url": "http://indexer:8779",
+    "network": "devnet",
+    "request_timeout_millis": 120000,
+    "sequencer_url": "http://sequencer:3040",
+    "sidecar_port_base": 19000,
+    "sidecar_port_count": 400,
+    "sidecar_program": "/payload/lez-v02-bridge-poc",
+    "signer_key_file": null,
+    "wallet_signer": {
+      "account_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "socket": "/run/lez-wallet/signer.sock"
+    }
+  },
+  "recovery": {
+    "earlier_refund_latest_seconds": 3600,
+    "later_refund_earliest_seconds": 7200,
+    "maker_second_lock_cutoff_seconds": 1800,
+    "required_margin_seconds": 300
+  },
+  "schema_version": 1,
+  "swaps_root": "/var/lib/lez/maker/btc/swaps"
+}
+== /var/lib/lez/maker/btc/runtime.json
+{
+  "chain_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "channel_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "compatibility": "lee_v0_2_0",
+  "escrow_program_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "genesis_block_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "sidecar_role": "maker",
+  "signer_account_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}

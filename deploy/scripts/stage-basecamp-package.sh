@@ -11,7 +11,13 @@
 # variant's files, the package's manifest.json and a `variant` file naming the
 # variant, which is what lgpm and logosctl write. The package is staged as it
 # is: these are the release packages (pin-package-dependencies.sh), the same
-# files a user installs with logosctl.
+# files a user installs with logosctl. One difference in the installed
+# manifest: each dependency is written as its bare name. The release packages
+# carry `{"name", "version"}` entries, and Basecamp 0.2.0 reads only string
+# entries from an installed manifest (logos-package-manager
+# package_manager_lib.cpp); with none it would open a desk without loading
+# its modules (Basecamp PluginLoader.cpp). The versions were checked when the
+# set was pinned.
 #
 # The variant must match the host the bundle will run on. Basecamp refuses a
 # foreign one ("installed for variant 'linux-arm64' which is not supported on
@@ -64,7 +70,8 @@ esac
 rm -rf "$dest"
 mkdir -p "$dest"
 cp -R "$unpacked/variants/$variant"/. "$dest"/
-cp "$manifest" "$dest/"
+jq 'if .dependencies then .dependencies |= map(if type == "object" then .name else . end) else . end' \
+  "$manifest" > "$dest/manifest.json"
 printf '%s\n' "$variant" > "$dest/variant"
 chmod -R u+w "$dest"
 echo "staged $name $(jq -r .version "$manifest") ($variant) -> $dest"

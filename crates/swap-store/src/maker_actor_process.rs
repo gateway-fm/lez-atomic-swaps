@@ -1929,6 +1929,8 @@ impl SqliteSwapStore {
         if changed != 1 {
             return Err(MakerActorProcessError::LeaseConflict);
         }
+        // `now` is read before the attempt runs, and an owner request admitted
+        // meanwhile is newer: action writes use max(now, created_at).
         let leased_action = load_open_manual_action(&transaction, lease.record.swap_id())?;
         if let Some(action) = leased_action {
             match action.state {
@@ -1940,7 +1942,7 @@ impl SqliteSwapStore {
                         MakerActorManualActionState::Failed => {
                             let changed = transaction.execute(
                                 "UPDATE maker_actor_manual_actions SET
-                                     state = 'failed', updated_at = ?1
+                                     state = 'failed', updated_at = max(?1, created_at)
                                  WHERE request_id = ?2 AND state = 'queued'",
                                 params![time_to_sql(now), action.request_id.as_str()],
                             )?;
@@ -1958,7 +1960,7 @@ impl SqliteSwapStore {
                     let changed = transaction.execute(
                         "UPDATE maker_actor_manual_actions SET
                              state = ?1, lease_owner = NULL, lease_generation = NULL,
-                             updated_at = ?2
+                             updated_at = max(?2, created_at)
                          WHERE request_id = ?3 AND state = 'leased'
                            AND lease_owner = ?4 AND lease_generation = ?5",
                         params![
@@ -2037,7 +2039,8 @@ impl SqliteSwapStore {
                 {
                     let changed = transaction.execute(
                         "UPDATE maker_actor_manual_actions SET
-                             lease_owner = ?1, lease_generation = ?2, updated_at = ?3
+                             lease_owner = ?1, lease_generation = ?2,
+                             updated_at = max(?3, created_at)
                          WHERE request_id = ?4 AND state = 'leased'
                            AND lease_owner = ?5 AND lease_generation = ?6",
                         params![

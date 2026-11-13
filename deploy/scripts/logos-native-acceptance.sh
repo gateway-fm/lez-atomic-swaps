@@ -320,12 +320,11 @@ section "Install the role package alone"
 step "$ok" "install $role_pkg as built" "$RUN" "$L package install ${file_of[$role_pkg]} --root-hash ${root_of[$role_pkg]:-none} -y"
 step '(( rc == 0 )) && ! grep -q not_installed "$o"' \
   "installing the role package pulled in its dependencies" "$RUN" "$L package deps $role_pkg --recursive"
-# Each dependency carries a version range (pin-package-dependencies.sh), so the
-# default catalog's other packages of the same names (lez_core 0.5.1,
-# chat_module 0.3.0, ...) do not satisfy it. The resolved view (--recursive)
-# takes the first entry of a name, the range; without --recursive logosctl
-# lists the manifest's entries as written, the bare names the v0.2 runtime
-# reads included.
+# Each dependency is declared once with a version requirement
+# (pin-package-dependencies.sh: exact for the patched modules and our own
+# packages, `~` for Logos's chat_module, delivery_module and
+# blockchain_module), so the default catalog's other packages of the same
+# names (lez_core 0.4.3 and 0.5.1, chat_module 0.3.0, ...) do not satisfy it.
 step '(( rc == 0 )) && jq -e "length > 0 and all(.[]; (.requiredVersion // \"\") != \"\")" "$o" >/dev/null' \
   "every dependency $role_pkg declares resolves with a version range" "$RUN" "$L --json package deps $role_pkg --recursive"
 # B3: the LEZ network is reached through the endpoints the role is configured
