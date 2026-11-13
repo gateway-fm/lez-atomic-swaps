@@ -39,6 +39,11 @@ int32_t lez_logos_price_quote_v1(
   response->source_revision = 7u;
   response->as_of_unix_seconds = request->now_unix_seconds - 5u;
 
+#if defined(FIXTURE_REVISION_FROM_TIME)
+  /* A source that observes anew every second: the revision moves with the
+     observation, as the Maker's quote history requires of one source. */
+  response->source_revision = request->now_unix_seconds;
+#endif
 #if defined(FIXTURE_STALE)
   response->as_of_unix_seconds = request->now_unix_seconds - 61u;
 #endif

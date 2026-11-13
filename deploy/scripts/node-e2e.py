@@ -1845,14 +1845,17 @@ def install_test_price_module(variant: str) -> tuple[str, str]:
     """The repository's TEST price module (crates/logos-price-c-api/tests/
     fixtures/logos_price_fixture.c), compiled as the crate's test compiles it,
     in the image the Nodes are built in, with its FIXTURE_<variant> mode ("" for
-    none), written into the Maker's container. Its path there and its sha256."""
+    none), written into the Maker's container. Its source revision is the
+    second it is asked in (FIXTURE_REVISION_FROM_TIME): the Maker keeps the
+    head of each source's quotes, also from earlier runs on the same state,
+    and refuses one revision with two observations. Its path there and its sha256."""
     crate = DEPLOY_ROOT.parent / "crates/logos-price-c-api"
     name = f"lez-test-price-fixture-{variant.lower() or 'ok'}.so"
     with tempfile.TemporaryDirectory() as out:
         subprocess.run(["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
                         "-v", f"{crate}:/crate:ro", "-v", f"{out}:/out", "rust:1.96.0-bookworm",
                         "cc", "-shared", "-fPIC", "-std=c11", "-Wall", "-Wextra", "-Werror", "-I", "/crate/include",
-                        *([f"-DFIXTURE_{variant}"] if variant else []),
+                        "-DFIXTURE_REVISION_FROM_TIME", *([f"-DFIXTURE_{variant}"] if variant else []),
                         "/crate/tests/fixtures/logos_price_fixture.c", "-o", f"/out/{name}"],
                        check=True, capture_output=True, stdin=subprocess.DEVNULL)
         module = (pathlib.Path(out) / name).read_bytes()
@@ -1883,7 +1886,7 @@ def scenario_maker_price_module(stamp: str) -> dict:
     repository's TEST fixture (no real Logos price module exists). The Maker
     runs it through its package's lez-logos-price-worker (LEZ_LOGOS_PRICE_MODULE
     and its sha256); configure-pair selects the logos-c-api source; quote
-    answers the module's price (5 LEZ units per 2 sat, source revision 7); two
+    answers the module's price (5 LEZ units per 2 sat, observed 5 s before its revision); two
     offers are published at it, carrying the module's sha256 as their source
     identity; the Taker takes one and the swap completes. Then the Maker runs
     the fixture's UNAVAILABLE build instead: quote and publish fail closed with
@@ -1903,8 +1906,9 @@ def scenario_maker_price_module(stamp: str) -> dict:
                   "--enabled", "true", "--price-source", "logos-c-api", "--minimum-foreign-units", str(FOREIGN_UNITS),
                   "--maximum-foreign-units", str(FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
         quote = maker_cli("quote", *route)
-        if (quote["price"]["lez_units_per_lot"], quote["price"]["foreign_units_per_lot"], quote["source_revision"]) != (5, 2, 7):
-            raise Failure(f"quote is not the module's 5/2 at source revision 7: {quote}")
+        if (quote["price"]["lez_units_per_lot"], quote["price"]["foreign_units_per_lot"],
+                quote["source_revision"] - quote["observed_at_unix_seconds"]) != (5, 2, 5):
+            raise Failure(f"quote is not the module's 5/2 observed 5 s before its revision: {quote}")
         log(f"  quote through the module: {quote['price']['lez_units_per_lot']} LEZ units per "
             f"{quote['price']['foreign_units_per_lot']} sat, source revision {quote['source_revision']}")
         offers = []
