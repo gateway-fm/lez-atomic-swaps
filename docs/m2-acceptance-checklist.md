@@ -60,7 +60,11 @@ stack and are kept as the record of that submission shape.
   (`docs/evidence/regression-2026-11-12-macos-arm64/`). The 97 on the v0.3.0
   candidate `b4e17cf0` (`main` after PR #135) on an Apple-silicon Mac: 97 of
   97, each on its first try, 97 minutes on three lanes
-  (`docs/evidence/regression-0.3.0-2026-11-12-macos-arm64/`).
+  (`docs/evidence/regression-0.3.0-2026-11-12-macos-arm64/`). The 97 at
+  `538530eb` (`main` after PR #143, the code of v0.3.1) on an Apple-silicon
+  Mac: 97 of 97, each on its first try, 99 minutes on three lanes; the first
+  run that day, on `35bd85de`, found #142
+  (`docs/evidence/regression-0.3.1-2026-11-13-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
