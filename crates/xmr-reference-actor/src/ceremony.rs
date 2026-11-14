@@ -19,6 +19,7 @@ use anyhow::{Context as _, Result, ensure};
 use lez_adaptor_role_runner::{CeremonySeat, Role, ValidatedSession};
 use lez_bridge_protocol::RequestId;
 use lez_node_common::{XmrCeremonyPartialRequestV1, XmrCeremonyPartialResponseV1, XmrLegPacketsV1};
+use lez_swap_store::{AdaptorSessionPhase, SqliteAdaptorSessionJournal};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
     ValidatedXmrActivationBodyV1, XmrActivatedAgreementV1, XmrAgreementV1, XmrRoleV1,
@@ -411,6 +412,31 @@ impl XmrTakerCeremony {
         Ok(wire)
     }
 
+    /// The claim partial the Taker withheld, for tag 14 to publish; only once
+    /// the claim presignature it belongs to is verified in the journal.
+    ///
+    /// # Errors
+    ///
+    /// Fails before the Maker's claim partial was accepted (R4 answer).
+    pub fn claim_partial(&self) -> Result<Zeroizing<[u8; 32]>> {
+        let identity = self.swap.claim.session().identity(Role::Taker);
+        let snapshot = SqliteAdaptorSessionJournal::open_existing(
+            self.role_root.join(XMR_ADAPTOR_JOURNAL_FILE),
+        )
+        .context("claim journal")?
+        .load(identity.session_id())
+        .context("claim journal")?
+        .filter(|snapshot| {
+            snapshot.identity() == &identity
+                && snapshot.phase() == AdaptorSessionPhase::PresignatureVerified
+        })
+        .context("the claim presignature is not verified")?;
+        let partial = snapshot
+            .own_partial()
+            .context("the claim partial is not durable")?;
+        Ok(Zeroizing::new(*partial.bytes()))
+    }
+
     fn stage_b(&self) -> Result<ValidatedXmrActivationBodyV1> {
         compose_activation_body(
             &self.swap.agreement,
@@ -576,6 +602,7 @@ mod tests {
             (maker_nonces.clone(), maker_partials.clone())
         );
         let taker_refund_partial = taker.sign(&maker_nonces).unwrap();
+        assert!(taker.claim_partial().is_err(), "no claim presignature yet");
         let stage_b = taker.finish(&maker_partials).unwrap();
         // R5
         let (presignature, maker_signature) = maker
@@ -617,6 +644,12 @@ mod tests {
         let claim_partial = taker.swap.claim.replay_partial().unwrap();
         let payload: serde_json::Value = serde_json::from_slice(&claim_partial).unwrap();
         let partial = hex::decode(payload["payload"].as_str().unwrap()).unwrap();
+        // What tag 14 publishes is that partial, and Stage B commits it.
+        let published = taker.claim_partial().unwrap();
+        assert_eq!(published[..], partial[..]);
+        activated
+            .verify_published_taker_claim_partial(&reopened.swap.agreement, *published)
+            .unwrap();
         for sent in [
             &taker_refund_partial,
             &stage_b.unsigned_stage_b_wire,
