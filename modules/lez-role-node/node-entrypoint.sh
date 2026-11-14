@@ -29,15 +29,17 @@ if [[ "${1:-}" == probe-bitcoin ]]; then
   exec curl -sf --max-time 4 --user "$(cat "${2:?cookie file}")" -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' -o /dev/null http://127.0.0.1:18443/
 fi
-# `probe-monero <monerod login> <wallet-rpc login>`: the same for Monero; it
-# succeeds while monerod and the role's wallet-rpc both answer over this
-# container's forwards, with the Digest logins the Monero adapter uses.
+# `probe-monero <monerod login>`: the same for Monero; it succeeds while
+# monerod answers over this container's forward, with the Digest login the
+# Monero adapter uses. The role's wallet-rpc is not asked: it serves one
+# request at a time and the Node's own tools hold it for seconds (each
+# open_wallet 2-4 s, refreshes, a transfer and its mining), so a probe there
+# read a busy wallet as down and the Maker withdrew its Monero offers for good.
 if [[ "${1:-}" == probe-monero ]]; then
   curl -sf --max-time 2 --digest --user "$(cat "${2:?monerod login}")" -H 'content-type: application/json' \
     --data '{"jsonrpc":"2.0","id":1,"method":"get_info"}' http://127.0.0.1:18081/json_rpc |
     jq -e '.result.status == "OK"' >/dev/null || exit 1
-  exec curl -sf --max-time 2 --digest --user "$(cat "${3:?wallet-rpc login}")" -H 'content-type: application/json' \
-    --data '{"jsonrpc":"2.0","id":1,"method":"get_version"}' -o /dev/null http://127.0.0.1:18083/json_rpc
+  exit 0
 fi
 
 role="${1:?maker|taker}"
@@ -524,14 +526,13 @@ launcher="$bin/${BASH_SOURCE[0]##*/}"
 jq -n --arg launcher "$launcher" --arg launcher_sha "$(sha256_of "$launcher")" \
   --arg cookie "$btc_state/btc-rpc-cookie" --arg check "$bin/lez-runtime-healthcheck" \
   --arg check_sha "$(sha256_of "$bin/lez-runtime-healthcheck")" \
-  --argjson monero "$monero_ready" --arg monerod_login "$monero_state/monerod.login" \
-  --arg wallet_login "$monero_state/monero-wallet-rpc.login" '
+  --argjson monero "$monero_ready" --arg monerod_login "$monero_state/monerod.login" '
   [{pair:"Bitcoin", program:$launcher, program_sha256:$launcher_sha, args:["probe-bitcoin", $cookie]},
    {pair:"Zcash", program:$check, program_sha256:$check_sha, args:["tcp", "127.0.0.1:18232", "getblockchaininfo", "[]"]}]
   | {schema_version:1, commands:([.[] as $probe | ("TakerSellsForeign", "TakerSellsLez") as $direction
       | {route:{pair:$probe.pair, direction:$direction}} + ($probe | del(.pair)) + {timeout_milliseconds:5000}]
       + if $monero == 1 then [{route:{pair:"Monero", direction:"TakerSellsLez"}, program:$launcher,
-          program_sha256:$launcher_sha, args:["probe-monero", $monerod_login, $wallet_login], timeout_milliseconds:5000}]
+          program_sha256:$launcher_sha, args:["probe-monero", $monerod_login], timeout_milliseconds:5000}]
         else [] end)}' \
   >"$state/route-health.json"
 

@@ -560,9 +560,10 @@ Maker, the six effect tools) and passes it to the Node: the Maker gets
 `lez-xmr-maker-actor`, the Taker `initiation.xmr_role_config`. The Node
 binaries are built with `pair-xmr` (`from-scratch.sh --only rust`). The route
 health carries a Monero probe for the one route, Monero `TakerSellsLez`
-(`probe-monero`: monerod's `get_info`, the role's wallet-rpc's `get_version`),
-so `maker_health` / `taker_health` read the Monero route unavailable, and the
-Node degraded, while either does not answer. Every Monero transfer the Nodes
+(`probe-monero`: monerod's `get_info`; not the role's wallet-rpc, which the
+Node's own tools keep busy for seconds at a time), so `maker_health` /
+`taker_health` read the Monero route unavailable, and the Node degraded, while
+monerod does not answer. Every Monero transfer the Nodes
 send (the Maker's funding, either role's sweep) is followed by the sender
 mining its own 10 confirmations; the harness mines only to fund the Maker.
 

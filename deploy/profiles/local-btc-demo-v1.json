@@ -138,7 +138,7 @@
         "Monero daemon RPC login"
       ],
       "public_identities": [],
-      "health": "none of its own (compose profile monero; off by default): the Maker's probe-monero get_version",
+      "health": "none of its own (compose profile monero; off by default)",
       "depends_on": [
         "monerod"
       ]
@@ -161,7 +161,7 @@
         "Monero daemon RPC login"
       ],
       "public_identities": [],
-      "health": "none of its own (compose profile monero; off by default): the Taker's probe-monero get_version",
+      "health": "none of its own (compose profile monero; off by default)",
       "depends_on": [
         "monerod"
       ]
