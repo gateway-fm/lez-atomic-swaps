@@ -1,0 +1,20 @@
+[16:51:38Z] Node home from <workspace>/deploy/runtime: btc-rpc-cookie identity market-bootstrap.env 
+[16:51:38Z] basecamp started
+clicked LEZ Maker at 2026-11-14T16:52:09.560Z
+clicked LEZ Taker at 2026-11-14T16:52:50.025Z
+[16:52:54Z] ready files: <scratch>/home/run/maker/ready <scratch>/home/run/taker/ready 
+[16:52:54Z] start btc-happy (happy --direction TakerSellsForeign)
+[16:53:35Z] btc-happy exit 0
+[16:53:35Z] start btc-happy-lez (happy --direction TakerSellsLez)
+[16:54:08Z] btc-happy-lez exit 0
+[16:54:08Z] start zec-happy-lez (zec-happy --pair Zcash --direction TakerSellsLez)
+[16:55:20Z] zec-happy-lez exit 0
+[16:55:20Z] start zec-happy-foreign (zec-happy --pair Zcash --direction TakerSellsForeign)
+[16:56:22Z] zec-happy-foreign exit 0
+SUITE-DONE
++2s remaining processes: 0
+chat decode failures (messageReceived payload missing or malformed): 0
+delivery message_received events: 1385
+App launcher clicked: "lez_atomic_swap_maker"
+[2026-11-14 17:52:30.784] [info] [logos] [chat_module] INFO: chat_module::actions: delivery is online
+App launcher clicked: "lez_atomic_swap_taker"

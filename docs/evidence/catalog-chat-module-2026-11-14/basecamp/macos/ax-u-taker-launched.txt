@@ -1,0 +1,102 @@
+AXWindow | Logos Basecamp | dialog | 
+  AXCheckBox | Workspace |  | 1
+  AXButton | LEZ Taker |  | 
+    AXButton | lez_atomic_swap_taker |  | 
+  AXButton | Applications |  | 
+  AXButton | Package Manager |  | 
+  AXButton | Settings |  | 
+  AXTextField |  |  | 0.3.2 · Portable
+    AXTabGroup | LEZ Taker |  | 
+      AXRadioButton | __tabbar_spacer__ | __tabbar_spacer__ | 
+      AXRadioButton | LEZ Taker | LEZ Taker | 
+    AXStaticText | LEZ — Taker Desk |  | LEZ — Taker Desk
+    AXStaticText | ACCOUNT |  | ACCOUNT
+    AXMenuButton | Zurich Wallet 01 · Taker Node |  | 
+      AXStaticText | ⌄ |  | ⌄
+      AXStaticText | Zurich Wallet 01 · Taker Node |  | Zurich Wallet 01 · Taker Node
+    AXStaticText | … BTC |  | … BTC
+    AXStaticText | … LEZ |  | … LEZ
+    AXStaticText | Node unavailable |  | Node unavailable
+    AXStaticText | ! |  | !
+    AXStaticText | Node unavailable |  | Node unavailable
+    AXStaticText | Owner-local Node endpoint is unavailable |  | Owner-local Node endpoint is unavailable
+    AXButton | Check Node |  | 
+      AXStaticText | Check Node |  | Check Node
+    AXButton | Refresh market |  | 
+      AXStaticText | Refresh market |  | Refresh market
+    AXStaticText | My orders |  | My orders
+    AXStaticText | NEEDS YOU |  | NEEDS YOU
+    AXStaticText | 0 |  | 0
+    AXStaticText | RUNNING |  | RUNNING
+    AXStaticText | 0 |  | 0
+    AXStaticText | DONE |  | DONE
+    AXStaticText | 0 |  | 0
+    AXStaticText | This wallet has not taken an offer yet. |  | This wallet has not taken an offer yet.
+    AXStaticText | Available orders |  | Available orders
+    AXStaticText | 0 |  | 0
+    AXStaticText | Loading the wallet market… |  | Loading the wallet market…
+    AXStaticText | Authenticated offers |  | Authenticated offers
+    AXStaticText | ASSET YOU RECEIVE |  | ASSET YOU RECEIVE
+    AXStaticText | YOUR SIDE |  | YOUR SIDE
+    AXMenuButton | Bitcoin |  | 
+      AXStaticText | ⌄ |  | ⌄
+      AXStaticText | Bitcoin |  | Bitcoin
+    AXMenuButton | TakerSellsForeign |  | 
+      AXStaticText | ⌄ |  | ⌄
+      AXStaticText | TakerSellsForeign |  | TakerSellsForeign
+    AXButton | Browse authenticated offers |  | 
+      AXStaticText | Browse authenticated offers |  | Browse authenticated offers
+    AXStaticText | No offer selected |  | No offer selected
+    AXStaticText | Private negotiation Chat |  | Private negotiation Chat
+    AXStaticText | NOT INITIALISED |  | NOT INITIALISED
+    AXButton | Status |  | 
+      AXStaticText | Status |  | Status
+    AXButton | Reset |  | 
+      AXStaticText | Reset |  | Reset
+    AXTextField |  | Maker Logos Chat session address | 
+    AXButton | Connect |  | 
+      AXStaticText | Connect |  | Connect
+    AXStaticText | Activity |  | Activity
+    AXButton | Copy |  | 
+      AXStaticText | Copy |  | Copy
+    AXButton | Clear |  | 
+      AXStaticText | Clear |  | Clear
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+     | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText |  |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+     | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText |  |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText |  |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+     | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText |  |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+     | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | 
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+     | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText | Raw last reply |  | Raw last reply
+    AXButton | Show |  | 
+      AXStaticText | Show |  | Show

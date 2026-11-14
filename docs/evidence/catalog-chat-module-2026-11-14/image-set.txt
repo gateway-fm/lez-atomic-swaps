@@ -1,0 +1,22 @@
+# The images' release set pinned by pin-package-dependencies.sh before (git
+# show 976f5f72:deploy/scripts/pin-package-dependencies.sh) and after this
+# change, on the same eleven inputs: the desks, lez_network, Chat and
+# Delivery from the module builder's lgx-portable outputs of the v0.3.1
+# package build (linux-arm64, Chat built from its flake at dfe8ccf3, version
+# 0.2.2), lez_core, lez_swap_node, lez_indexer_module and both role packages
+# from the merged v0.3.1 set, blockchain_module 0.2.4 (release asset).
+$ diff -r <old output> <new output>
+(no difference: every file, packages.tsv included, byte for byte)
+$ cut -f1,2,4 packages.tsv
+name	version	dependencies
+blockchain_module	0.2.4	
+chat_module	0.2.2	delivery_module
+delivery_module	0.2.0	
+lez_atomic_swap_maker	0.3.1	chat_module ~0.2.2; delivery_module ~0.2.0; lez_core 0.4.1-sign.4; lez_swap_node 0.3.1; lez_maker_node 0.3.1
+lez_atomic_swap_taker	0.3.1	chat_module ~0.2.2; delivery_module ~0.2.0; lez_core 0.4.1-sign.4; lez_swap_node 0.3.1; lez_taker_node 0.3.1
+lez_core	0.4.1-sign.4	
+lez_indexer_module	1.1.1-rpc.4	
+lez_maker_node	0.3.1	lez_swap_node 0.3.1
+lez_network	0.3.1	blockchain_module ~0.2.4; lez_indexer_module 1.1.1-rpc.4
+lez_swap_node	0.3.1	lez_core 0.4.1-sign.4
+lez_taker_node	0.3.1	lez_swap_node 0.3.1
