@@ -144,7 +144,7 @@ fn maker_actor_runs_both_recovery_branches_on_stub_effects_once_then_reconciles(
             .unwrap()
             .unwrap()
             .observation(),
-        &MakerActorProgressObservationV1::active("refunded", 2, "complete").unwrap()
+        &MakerActorProgressObservationV1::active("punished", 4, "complete").unwrap()
     );
 
     let refund = provision_maker_refund(&fixture, root.path());
@@ -229,7 +229,7 @@ fn maker_actor_runs_both_recovery_branches_on_stub_effects_once_then_reconciles(
             .unwrap()
             .unwrap()
             .observation(),
-        &MakerActorProgressObservationV1::active("refunded", 2, "complete").unwrap()
+        &MakerActorProgressObservationV1::active("refunded", 4, "complete").unwrap()
     );
 }
 
@@ -501,7 +501,7 @@ fn killed_tag15_actor_reconciles_durable_submission_without_resend() {
             .unwrap()
             .unwrap()
             .observation(),
-        &MakerActorProgressObservationV1::active("completed", 2, "complete").unwrap()
+        &MakerActorProgressObservationV1::active("completed", 4, "complete").unwrap()
     );
 }
 
