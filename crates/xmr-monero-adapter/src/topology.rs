@@ -79,8 +79,43 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         })
     }
 
+    /// Creates the verifier for a role with one wallet-rpc: that wallet is
+    /// both target and foreign, so [`Self::verify`] proves the daemon
+    /// profile, the empty peer set and the wallet's liveness, but not the
+    /// cross-wallet credential rejection (one wallet-rpc has no foreign
+    /// credentials to replay).
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-Regtest profiles, an aliased daemon, or HTTP-client failures.
+    pub fn for_one_wallet_rpc(
+        run_id: RunId,
+        identity: MoneroChainIdentity,
+        daemon: &'endpoint LoopbackRpcEndpoint,
+        wallet: &'endpoint LoopbackRpcEndpoint,
+    ) -> Result<Self, MoneroTopologyError> {
+        if identity.network() != MoneroNetwork::Regtest {
+            return Err(MoneroTopologyError::RequiresRegtest);
+        }
+        if daemon.base_url == wallet.base_url {
+            return Err(MoneroTopologyError::AliasedRpcOrigins);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(RPC_REQUEST_TIMEOUT)
+            .build()
+            .map_err(|_| MoneroTopologyError::HttpClientBuild)?;
+        Ok(Self {
+            run_id,
+            identity,
+            daemon,
+            target_wallet: wallet,
+            foreign_wallet: wallet,
+            client,
+        })
+    }
+
     /// Proves the exact daemon profile, empty peer set, wallet liveness, and
-    /// cross-wallet Digest authentication rejection.
+    /// (with two wallets) cross-wallet Digest authentication rejection.
     ///
     /// # Errors
     ///
@@ -128,13 +163,15 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             .await?;
         validate_wallet_version("foreign_wallet.get_version", &foreign_version)?;
 
-        let crossed = self
-            .send(self.target_wallet, self.foreign_wallet, GET_VERSION_REQUEST)
-            .await?;
-        if crossed.status() != StatusCode::UNAUTHORIZED {
-            return Err(MoneroTopologyError::ForeignCredentialNotRejected {
-                actual: crossed.status().as_u16(),
-            });
+        if self.target_wallet.base_url != self.foreign_wallet.base_url {
+            let crossed = self
+                .send(self.target_wallet, self.foreign_wallet, GET_VERSION_REQUEST)
+                .await?;
+            if crossed.status() != StatusCode::UNAUTHORIZED {
+                return Err(MoneroTopologyError::ForeignCredentialNotRejected {
+                    actual: crossed.status().as_u16(),
+                });
+            }
         }
 
         let genesis = self
