@@ -183,18 +183,14 @@ impl MoneroChainIdentityAttestor {
         identity_from_observed_hash(self.network, hash_bytes(hash.as_ref()))
     }
 
-    /// The daemon's current tip height, as a take reads it beside the genesis.
+    /// Reads the daemon's current tip height (its block count less one).
     ///
     /// # Errors
     ///
     /// Fails closed if the typed RPC fails.
     pub async fn tip_height(&self) -> Result<u64, MoneroEvidenceError> {
-        let header = MoneroRpcPort::rpc(
-            "get_last_block_header",
-            self.daemon.get_block_header(GetBlockHeaderSelector::Last),
-        )
-        .await?;
-        Ok(header.height)
+        let count = MoneroRpcPort::rpc("get_block_count", self.daemon.get_block_count()).await?;
+        Ok(count.get() - 1)
     }
 
     /// Non-secret exact daemon origin used for discovery.
