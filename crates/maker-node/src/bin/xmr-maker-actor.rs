@@ -993,9 +993,20 @@ fn accept_locks(
 }
 
 fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOutput> {
-    let maker = LiveMaker::open(config_fd)?;
+    let mut maker = LiveMaker::open(config_fd)?;
+    let recovery_step = selected_effect_step(&maker.execution, requested)?;
+    // The LEZ effect tools reach the swap's sidecar, which a Node started
+    // again respawns beside its actors: one not answering yet fails the
+    // attempt here, before the step's one invocation is consumed.
+    if matches!(
+        recovery_step,
+        XmrWorkflowStep::ClaimLezTag15 | XmrWorkflowStep::PunishLezTag17
+    ) {
+        maker
+            .finalized_clock()
+            .context("the swap's LEZ sidecar does not answer yet")?;
+    }
     let execution = &maker.execution;
-    let recovery_step = selected_effect_step(execution, requested)?;
     // The branch's observers read its activation summary: a crash between
     // the activation's journal commit and the summary's write leaves it to
     // be recorded here (activations replay exactly).
