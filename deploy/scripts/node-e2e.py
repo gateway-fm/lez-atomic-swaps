@@ -6232,6 +6232,13 @@ XMR_KILL_POINTS = {
         ("waiting for the Maker's claim", lambda at: at["taker"].get("actor_phase") == "awaiting_maker_claim"),
         ("sweeping", lambda at: at["taker"].get("actor_phase") == "sweeping"),
     ),
+    "maker": (
+        ("after the take", None),
+        ("lock observed", lambda at: at["maker"] == "taker_lock_confirmed"),
+        ("funding in flight", lambda at: at["funding_sent"]),
+        ("funded", lambda at: at["maker"] == "both_legs_locked"),
+        ("claim in flight", lambda at: at["maker"] == "claim_evidence_available"),
+    ),
 }
 # A Maker killed while its funding tool runs may never fund (its one funding is
 # then observe-only): the Taker refunds instead, and nothing may be lost.
@@ -6363,6 +6370,7 @@ XMR_SCENARIOS = {
     "xmr-punish": scenario_xmr_punish,
     "xmr-concurrent": scenario_xmr_concurrent,
     "xmr-kill-taker": lambda stamp: scenario_xmr_kill_walk(stamp, "taker"),
+    "xmr-kill-maker": lambda stamp: scenario_xmr_kill_walk(stamp, "maker"),
 }
 
 
