@@ -1581,11 +1581,31 @@ impl XmrClaimChains for LiveClaim {
     }
 }
 
-/// One supervision step of one swap, by its status.
+/// Whether the swap has a LEZ transaction of the Taker's owner account
+/// prepared and not yet final while it can still land: tag 13 (its
+/// initialisation and funding are prepared together) until the funding is
+/// final, tag 14, tag 16. Each is planned at the account's nonce when it is
+/// prepared, so another swap's prepare meanwhile would take the same nonce.
+fn lez_in_flight(progress: &XmrTakerProgressV1, windows: XmrWindows, now_ms: u64) -> bool {
+    (progress.scan_from.is_some()
+        && progress.funded.is_none()
+        && now_ms < windows.funding_cutoff_ms)
+        || (progress.claim_authorization.is_some()
+            && progress.claim_authorized.is_none()
+            && now_ms < windows.refund_ms)
+        || (progress.refund_submitted.is_some()
+            && progress.refunded.is_none()
+            && now_ms < windows.punish_ms)
+}
+
+/// One supervision step of one swap, by its status. While another of the
+/// Taker's Monero swaps has an owner transaction in flight (`owner_busy`),
+/// the swap prepares no new one of its own: it waits for the next sweep.
 async fn tick_swap(
     dynamic: &Arc<DynamicXmrRole>,
     files: &XmrSwapFiles,
     admitted: Option<TakerFacadeActionV1>,
+    owner_busy: bool,
 ) -> Result<()> {
     let facts = files.facts()?;
     let progress = files.progress()?;
@@ -1593,9 +1613,12 @@ async fn tick_swap(
     let status = xmr_taker_view(&progress, XmrWindows::of(&facts), now);
     let refund_admitted = admitted == Some(TakerFacadeActionV1::Refund);
     let claim_admitted = admitted == Some(TakerFacadeActionV1::Claim);
+    let refund_waits = owner_busy && progress.refund_submitted.is_none();
     match status.revision {
+        0 if owner_busy && progress.scan_from.is_none() => Ok(()),
         0 => drive_lez_lock(dynamic, files, &facts, &progress).await,
         2 => observe_monero(dynamic, files, &facts, &progress).await,
+        3 if claim_admitted && owner_busy => Ok(()),
         3 if claim_admitted => claim(dynamic, files, &facts, &progress, now, true).await,
         4 | 5 | 11 => claim(dynamic, files, &facts, &progress, now, claim_admitted).await,
         // Once tag 14 is out the Maker's claim is watched past R as well: a
@@ -1603,11 +1626,16 @@ async fn tick_swap(
         // The watch never holds the refund back.
         6..=8 | 10 if progress.claim_authorization.is_some() => {
             let watched = claim(dynamic, files, &facts, &progress, now, claim_admitted).await;
-            if refund_admitted && status.revision <= 8 && files.progress()?.maker_claim.is_none() {
+            if refund_admitted
+                && !refund_waits
+                && status.revision <= 8
+                && files.progress()?.maker_claim.is_none()
+            {
                 refund_step(dynamic, files).await?;
             }
             watched
         }
+        6..=8 if refund_admitted && refund_waits => Ok(()),
         6..=8 if refund_admitted => refund_step(dynamic, files).await,
         _ => Ok(()),
     }
@@ -1661,6 +1689,14 @@ async fn supervise_once(state: &TakerServiceState) {
     let Some(dynamic) = dynamic else {
         return;
     };
+    // The swaps with an owner transaction in flight, kept current through
+    // the sweep: all of them sign for the Taker's one LEZ account.
+    let mut in_flight = std::collections::BTreeSet::new();
+    for prepared in &swaps {
+        if let Some(Ok(true)) = swap_in_flight(prepared).await {
+            in_flight.insert(prepared.swap_id().as_str().to_owned());
+        }
+    }
     for prepared in swaps {
         let Some(binding) = prepared.execution().receipt_binding() else {
             continue;
@@ -1712,7 +1748,27 @@ async fn supervise_once(state: &TakerServiceState) {
         let Some(files) = actor.xmr_files() else {
             continue;
         };
-        if let Err(error) = tick_swap(&dynamic, files, admitted).await {
+        let owner_busy = in_flight
+            .iter()
+            .any(|swap| swap != prepared.swap_id().as_str());
+        let ticked = tick_swap(&dynamic, files, admitted, owner_busy).await;
+        let now = now_ms();
+        match files.facts().and_then(|facts| {
+            Ok(lez_in_flight(
+                &files.progress()?,
+                XmrWindows::of(&facts),
+                now,
+            ))
+        }) {
+            Ok(true) => {
+                in_flight.insert(prepared.swap_id().as_str().to_owned());
+            }
+            Ok(false) => {
+                in_flight.remove(prepared.swap_id().as_str());
+            }
+            Err(_) => {}
+        }
+        if let Err(error) = ticked {
             eprintln!(
                 "{}",
                 serde_json::json!({
@@ -1723,6 +1779,36 @@ async fn supervise_once(state: &TakerServiceState) {
             );
         }
     }
+}
+
+/// Whether a bound swap has an owner transaction in flight, read from its
+/// progress record without the swap's actor lock; `None` when it cannot be
+/// loaded.
+async fn swap_in_flight(prepared: &crate::PreparedTakerInitiationV1) -> Option<Result<bool>> {
+    let binding = prepared.execution().receipt_binding()?;
+    let receipt = prepared.execution().receipt_output().to_path_buf();
+    let actor_root = prepared.execution().actor_root().to_path_buf();
+    let swap_id = prepared.swap_id().clone();
+    tokio::task::spawn_blocking(move || {
+        let actor = RouteActor::load_for_monitor(
+            lez_swap_core::Pair::Monero,
+            &receipt,
+            &actor_root,
+            &swap_id,
+            binding.sha256(),
+            binding.identity().device(),
+            binding.identity().inode(),
+        )?;
+        let files = actor.xmr_files().context("not a Monero swap")?;
+        let facts = files.facts()?;
+        Ok(lez_in_flight(
+            &files.progress()?,
+            XmrWindows::of(&facts),
+            now_ms(),
+        ))
+    })
+    .await
+    .ok()
 }
 
 /// The status a monitor answers for a Monero swap.
@@ -1761,6 +1847,37 @@ mod tests {
             schema_version: 1,
             ..XmrTakerProgressV1::default()
         }
+    }
+
+    /// An owner transaction is in flight from its prepare until it is final,
+    /// and only while it can still land.
+    #[test]
+    fn an_owner_transaction_is_in_flight_from_its_prepare_to_its_finality() {
+        let mut progress = record();
+        assert!(!lez_in_flight(&progress, WINDOWS, 1));
+        progress.scan_from = Some(3);
+        assert!(lez_in_flight(&progress, WINDOWS, 1));
+        assert!(!lez_in_flight(
+            &progress,
+            WINDOWS,
+            WINDOWS.funding_cutoff_ms
+        ));
+        progress.initialized = effect(10_000);
+        assert!(lez_in_flight(&progress, WINDOWS, 1));
+        let mut progress = locked();
+        progress.scan_from = Some(3);
+        assert!(!lez_in_flight(&progress, WINDOWS, 1));
+        progress.claim_authorization = Some("ef".repeat(32));
+        assert!(lez_in_flight(&progress, WINDOWS, 1));
+        assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
+        progress.claim_authorized = effect(30_000);
+        assert!(!lez_in_flight(&progress, WINDOWS, 1));
+        let mut progress = locked();
+        progress.refund_submitted = Some("01".repeat(32));
+        assert!(lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
+        assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.punish_ms));
+        progress.refunded = effect(WINDOWS.refund_ms);
+        assert!(!lez_in_flight(&progress, WINDOWS, WINDOWS.refund_ms));
     }
 
     /// The design's status table, row by row (M4 nodes design §4.1).
