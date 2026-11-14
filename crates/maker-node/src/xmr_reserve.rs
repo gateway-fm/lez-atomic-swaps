@@ -333,6 +333,7 @@ impl XmrMakerReservations {
             fs::DirBuilder::new().mode(0o700).create(&effect)?;
         }
         let workflow = effect.join(WORKFLOW_JOURNAL_FILE);
+        let wallet_lock_file = self.wallet_lock_file()?;
         let authority = provision_xmr_maker_effect_authority(
             &self.config,
             &self.tools,
@@ -347,6 +348,7 @@ impl XmrMakerReservations {
                 // Where `SwapSidecar::spawn` writes the descriptor it runs under.
                 runtime_file: &layout.root().join("sidecar-state").join("runtime.json"),
                 capability_file: sidecar.capability_file(),
+                wallet_lock_file: &wallet_lock_file,
             },
             &effect,
         )?;
@@ -359,6 +361,26 @@ impl XmrMakerReservations {
             &effect.join(ACTOR_MANIFEST_FILE),
         )?;
         Ok(())
+    }
+
+    /// The one lock every Monero wallet-rpc user of this role holds
+    /// (`<node state>/monero-rpc/wallet.lock`, beside the swaps root), as
+    /// the Taker Node's.
+    fn wallet_lock_file(&self) -> anyhow::Result<PathBuf> {
+        let state = self
+            .runtime
+            .config()
+            .swaps_root
+            .parent()
+            .context("the swaps root has no parent")?
+            .join("monero-rpc");
+        if !state.is_dir() {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(&state)?;
+        }
+        Ok(state.join("wallet.lock"))
     }
 
     /// Keeps the sidecars of activated reservations running after a restart,

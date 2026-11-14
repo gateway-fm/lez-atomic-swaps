@@ -76,6 +76,17 @@ struct MoneroRpc {
     shared_wallet: AuthenticatedRpc,
     role_wallet: AuthenticatedRpc,
     shared_wallet_file_password_file: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    role_wallet_file: Option<RoleWalletFile>,
+}
+
+/// The role wallet a single per-role wallet-rpc reopens after an effect, and
+/// the lock every user of that wallet-rpc holds while it switches wallets.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RoleWalletFile {
+    filename: String,
+    lock_file: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -208,6 +219,7 @@ pub struct XmrEffectMoneroRpcV1 {
     shared_wallet: XmrEffectAuthenticatedRpcV1,
     role_wallet: XmrEffectAuthenticatedRpcV1,
     shared_wallet_file_password_file: PathBuf,
+    role_wallet_file: Option<(Box<str>, PathBuf)>,
 }
 
 impl XmrEffectMoneroRpcV1 {
@@ -231,6 +243,14 @@ impl XmrEffectMoneroRpcV1 {
     #[must_use]
     pub fn shared_wallet_file_password_file(&self) -> &Path {
         &self.shared_wallet_file_password_file
+    }
+    /// With one wallet-rpc per role: the role wallet's file name (its
+    /// password is empty) and the wallet-rpc lock file.
+    #[must_use]
+    pub fn role_wallet_file(&self) -> Option<(&str, &Path)> {
+        self.role_wallet_file
+            .as_ref()
+            .map(|(filename, lock_file)| (&**filename, lock_file.as_path()))
     }
 }
 
@@ -546,7 +566,14 @@ pub fn load_validated_xmr_effect_authority_bytes(
         &authority.monero.shared_wallet_file_password_file,
     ];
     ensure!(
-        paths.iter().all(|path| normalized_absolute(path)),
+        paths.iter().all(|path| normalized_absolute(path))
+            && authority
+                .monero
+                .role_wallet_file
+                .as_ref()
+                .is_none_or(|wallet| {
+                    normalized_absolute(&wallet.lock_file) && valid_label(&wallet.filename)
+                }),
         "XMR effect authority path is invalid"
     );
     ensure!(
@@ -641,6 +668,9 @@ fn validated_monero(monero: MoneroRpc) -> Result<XmrEffectMoneroRpcV1> {
         shared_wallet: validated_authenticated_rpc(monero.shared_wallet)?,
         role_wallet: validated_authenticated_rpc(monero.role_wallet)?,
         shared_wallet_file_password_file: monero.shared_wallet_file_password_file,
+        role_wallet_file: monero
+            .role_wallet_file
+            .map(|wallet| (wallet.filename.into_boxed_str(), wallet.lock_file)),
     })
 }
 
@@ -950,19 +980,27 @@ pub struct XmrMakerEffectFactsV1<'a> {
     pub sidecar_url: &'a str,
     pub runtime_file: &'a Path,
     pub capability_file: &'a Path,
+    /// The lock every user of the role's one wallet-rpc holds.
+    pub wallet_lock_file: &'a Path,
 }
 
 /// Writes one Maker swap's canonical schema-3 effect authority into the
 /// existing private `directory`, beside what it names there: one credential
 /// file per RPC field (split from the role config's `user:password` logins;
-/// all three wallet slots are the role's one wallet-rpc), a per-swap
-/// shared-wallet file password and the evidence root `evidence/`. A replay
-/// keeps the identical files; returns the authority's path.
+/// all three wallet slots are the role's one wallet-rpc, whose role wallet
+/// and lock the authority names), a per-swap shared-wallet file password and
+/// the evidence root `evidence/`. A replay keeps the identical files; returns
+/// the authority's path.
 ///
 /// # Errors
 ///
-/// Fails for an unreadable login or runtime file, an authority the validator
-/// refuses, or a file on disk that differs from the one composed.
+/// Fails for an unreadable login or runtime file, a role wallet with a
+/// password (the effect tools reopen it with none), an authority the
+/// validator refuses, or a file on disk that differs from the one composed.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one authority composition keeps every credential and path visible"
+)]
 pub fn provision_xmr_maker_effect_authority(
     config: &XmrRoleConfigV1,
     tools: &XmrMakerEffectToolPinsV1,
@@ -1011,6 +1049,10 @@ pub fn provision_xmr_maker_effect_authority(
             .create(&evidence_root)
             .context("create the Monero effect evidence root")?;
     }
+    ensure!(
+        config.wallet_password()?.is_empty(),
+        "the Maker's effect tools reopen the role wallet without a password"
+    );
     let runtime =
         std::fs::read(facts.runtime_file).context("the LEZ runtime file is unreadable")?;
     let authority = EffectAuthorityV1 {
@@ -1036,6 +1078,10 @@ pub fn provision_xmr_maker_effect_authority(
             shared_wallet: credentials("shared-wallet", config.wallet_rpc_route())?,
             role_wallet: credentials("role-wallet", config.wallet_rpc_route())?,
             shared_wallet_file_password_file: directory.join(SHARED_WALLET_FILE_PASSWORD_FILE),
+            role_wallet_file: Some(RoleWalletFile {
+                filename: config.wallet_name().to_owned(),
+                lock_file: facts.wallet_lock_file.to_path_buf(),
+            }),
         },
         maker_tools: Some(MakerTools {
             monero_fund: tools.tool("monero_fund")?,
