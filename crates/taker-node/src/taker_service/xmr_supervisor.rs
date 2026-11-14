@@ -688,7 +688,14 @@ impl SwapLez {
         mut cursor: u64,
     ) -> Result<std::result::Result<(FinalizedLezEffectV1, FinalizedNativeXmrEffectFactsV3), u64>>
     {
+        // The sidecar classifies only a window that is final to its end.
+        let tip = self.finalized_height().await?;
         for _ in 0..SCANS_PER_TICK {
+            if cursor > tip {
+                break;
+            }
+            let blocks =
+                u32::try_from((tip - cursor + 1).min(u64::from(self.discovery_max_blocks)))?;
             let request_id = RequestId::new(hex::encode(Sha256::digest(
                 format!("xmr-taker-scan/{effect:?}/{cursor}/{}", now_ms()).as_bytes(),
             )))?;
@@ -701,7 +708,7 @@ impl SwapLez {
                         *terms,
                         effect,
                         target.clone(),
-                        DiscoveryWindow::new(cursor, self.discovery_max_blocks)?,
+                        DiscoveryWindow::new(cursor, blocks)?,
                     ),
                 )
                 .await
