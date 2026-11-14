@@ -1003,9 +1003,9 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
             mut command,
             tool_plan_identity_sha256: _,
         } => {
-            if run_silent(&mut command, timeout).is_err() {
+            if let Err(error) = run_silent(&mut command, timeout) {
                 mark_unknown(execution, recovery_step)?;
-                return Err(anyhow!("XMR Maker recovery invocation is ambiguous"));
+                return Err(error.context("XMR Maker recovery invocation is ambiguous"));
             }
             #[cfg(feature = "test-crash-hooks")]
             pause_after_submitted_if_armed(execution, recovery_step, requested)?;
@@ -1120,10 +1120,11 @@ fn execute_preflight(
 }
 
 fn run_silent(command: &mut ProcessCommand, timeout: Duration) -> Result<()> {
+    // The tool's own error line reaches the Node's log beside the actor's.
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     let mut child = command.spawn().context("spawn XMR Maker effect child")?;
     let status = match child.wait_timeout(timeout) {
         Ok(Some(status)) => status,
