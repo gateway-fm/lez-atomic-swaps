@@ -26,14 +26,15 @@ use jsonrpsee::{RpcModule, server::ServerBuilder, types::ErrorObjectOwned};
 use lez_bridge_client::{BridgeClient, BridgeClientConfig, BridgeClientError, SidecarCapability};
 use lez_bridge_protocol::{
     AggregateBip340Signature, ClassifyFinalizedNativeXmrEffectV3Request,
-    CompleteNativeXmrClaimV3Request, CompleteNativeXmrRefundV3Request, DiscoveryWindow, ErrorCode,
-    FinalizedNativeXmrScanOutcomeV3, FinalizedNativeXmrTransactionTargetV3,
-    FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
-    PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimV3Request,
-    PrepareNativeXmrEscrowV3Request, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrRefundV3Request, RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor,
-    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    ClassifyFinalizedNativeXmrEffectV3Result, CompleteNativeXmrClaimV3Request,
+    CompleteNativeXmrRefundV3Request, DiscoveryWindow, ErrorCode, FinalizedNativeXmrScanOutcomeV3,
+    FinalizedNativeXmrTransactionTargetV3, FinalizedNativeXmrUnavailableReasonV3, Hex32,
+    MessageContext, Participant, PrepareNativeXmrClaimAuthorizationV3Request,
+    PrepareNativeXmrClaimV3Request, PrepareNativeXmrEscrowV3Request,
+    PrepareNativeXmrPunishV3Request, PrepareNativeXmrRefundV3Request, RequestId, RunId,
+    RuntimeCompatibility, RuntimeDescriptor, XmrClaimPartialV3, XmrNativeEffectV3,
+    XmrNativeEscrowMetadataFactsV3, XmrNativeEscrowStateV3, XmrNativeEscrowTermsV3,
+    XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
@@ -2461,4 +2462,213 @@ async fn tag_14_through_tag_17_are_classified_by_owner_and_counterparty() {
     assert_eq!(sends.load(Ordering::SeqCst), 0);
     node.stop().expect("node stops");
     node.stopped().await;
+}
+
+async fn classify_maker_punish(
+    state_root: &Path,
+    id: &str,
+    planner: &Arc<NativeEscrowPlanner>,
+    xmr_terms: &XmrNativeEscrowTermsV3,
+    target: FinalizedNativeXmrTransactionTargetV3,
+    indexer: Arc<FixtureIndexer>,
+) -> Result<ClassifyFinalizedNativeXmrEffectV3Result, BridgeClientError> {
+    let (node_endpoint, node, _) = start_node().await;
+    let descriptor = runtime_for(
+        Participant::Maker,
+        AccountId::new(*xmr_terms.to_input().claimant_account_id.as_bytes()),
+    );
+    let (client, bridge) = start_classifier_sidecar(
+        state_root,
+        &format!("{id}-idempotency.json"),
+        descriptor.clone(),
+        Arc::clone(planner),
+        &node_endpoint,
+        indexer,
+    )
+    .await;
+    let result = client
+        .classify_finalized_native_xmr_effect_v3(ClassifyFinalizedNativeXmrEffectV3Request::new(
+            MessageContext::new(
+                RunId::new(RUN_ID).expect("run id"),
+                RequestId::new(id).expect("request id"),
+                Participant::Maker,
+            ),
+            descriptor,
+            *xmr_terms,
+            XmrNativeEffectV3::Punish,
+            target,
+            DiscoveryWindow::new(FUNDING_BLOCK, 2).expect("window"),
+        ))
+        .await;
+    bridge.stop().await.expect("tag-17 sidecar stops");
+    node.stop().expect("node stops");
+    node.stopped().await;
+    result
+}
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one Maker sidecar keeps the live-nonce tag 17 and every drift case joined"
+)]
+async fn maker_classifies_its_own_tag_17_at_a_live_nonce_and_nothing_else() {
+    let directory = TempDir::new().expect("state root");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).expect("private root");
+    let planner_directory = directory.path().join("maker-planner");
+    fs::create_dir(&planner_directory).expect("planner directory");
+    fs::set_permissions(&planner_directory, fs::Permissions::from_mode(0o700))
+        .expect("private planner directory");
+    let (depositor, depositor_key, _) = account(21);
+    let (claimant, claimant_key, _) = account(22);
+    let maker_runtime = runtime_for(Participant::Maker, claimant);
+    // The terms commit the punish message at nonce 41; the shared Maker
+    // owner is at nonce 7 by the punish time.
+    let xmr_terms = terms(depositor, claimant);
+    let planner = Arc::new(
+        NativeEscrowPlanner::new_durable(
+            Participant::Maker,
+            PrivateKey::try_new([22; 32]).expect("Maker key"),
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            maker_runtime.clone(),
+            Arc::new(CountingNonce {
+                value: 7,
+                calls: AtomicUsize::new(0),
+            }),
+            &planner_directory,
+        )
+        .expect("maker planner"),
+    );
+    let punish = planner
+        .prepare_native_xmr_punish_v3(&PrepareNativeXmrPunishV3Request::new(
+            MessageContext::new(
+                RunId::new(RUN_ID).expect("run id"),
+                RequestId::new("tag17-live-nonce-prepare").expect("request id"),
+                Participant::Maker,
+            ),
+            maker_runtime,
+            xmr_terms,
+        ))
+        .await
+        .expect("tag 17 at the live nonce")
+        .punish;
+    let indexer = |prepared: &lez_bridge_protocol::PreparedTransaction, signer| {
+        finalized_effect_indexer_at(
+            prepared,
+            &xmr_terms,
+            signer,
+            EscrowStatus::Claimed,
+            0,
+            20_000,
+        )
+    };
+
+    for (id, target) in [
+        (
+            "tag17-live-nonce-discovery",
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
+        (
+            "tag17-live-nonce-exact",
+            FinalizedNativeXmrTransactionTargetV3::exact(punish.clone()),
+        ),
+    ] {
+        let classified = Box::pin(classify_maker_punish(
+            directory.path(),
+            id,
+            &planner,
+            &xmr_terms,
+            target,
+            indexer(&punish, claimant),
+        ))
+        .await
+        .expect("tag 17 at a live nonce classifies");
+        let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = classified.outcome else {
+            panic!("tag 17 at a live nonce must be found")
+        };
+        assert_eq!(facts.transaction.exact_bytes, punish.exact_bytes);
+        assert_ne!(
+            facts.instruction.message_hash,
+            xmr_terms.to_input().punish_message_hash
+        );
+        assert_eq!(facts.metadata.state, XmrNativeEscrowStateV3::Claimed);
+    }
+
+    let metadata = compute_metadata_pda(&ESCROW_PROGRAM, &SWAP_ID);
+    let custody = compute_custody_pda(&ESCROW_PROGRAM, &SWAP_ID);
+    let signed = |accounts, instruction, key: &PrivateKey| {
+        let message = Message::try_new(ESCROW_PROGRAM, accounts, vec![7_u128.into()], instruction)
+            .expect("generated message");
+        let witnesses = WitnessSet::for_message(&message, &[key]);
+        prepared_from_transaction(&PublicTransaction::new(message, witnesses))
+            .expect("bounded transaction")
+    };
+    let other_amount = XmrNativeEscrowTermsV3::new(XmrNativeEscrowTermsV3Input {
+        amount: 76,
+        ..xmr_terms.to_input()
+    })
+    .expect("valid XMR terms");
+    for (id, xmr_terms, prepared, signer) in [
+        (
+            "tag17-drift-accounts",
+            xmr_terms,
+            signed(
+                vec![metadata, custody, depositor],
+                ZecEscrowInstruction::PunishNativeXmr { swap_id: SWAP_ID },
+                &claimant_key,
+            ),
+            claimant,
+        ),
+        (
+            "tag17-drift-signer",
+            xmr_terms,
+            signed(
+                vec![metadata, custody, claimant],
+                ZecEscrowInstruction::PunishNativeXmr { swap_id: SWAP_ID },
+                &depositor_key,
+            ),
+            depositor,
+        ),
+        (
+            "tag17-drift-swap-id",
+            xmr_terms,
+            signed(
+                vec![metadata, custody, claimant],
+                ZecEscrowInstruction::PunishNativeXmr { swap_id: [52; 32] },
+                &claimant_key,
+            ),
+            claimant,
+        ),
+        (
+            "tag17-drift-instruction",
+            xmr_terms,
+            signed(
+                vec![metadata, custody, claimant],
+                ZecEscrowInstruction::ClaimNativeXmr { swap_id: SWAP_ID },
+                &claimant_key,
+            ),
+            claimant,
+        ),
+        ("tag17-drift-amount", other_amount, punish.clone(), claimant),
+    ] {
+        let result = Box::pin(classify_maker_punish(
+            directory.path(),
+            id,
+            &planner,
+            &xmr_terms,
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+            indexer(&prepared, signer),
+        ))
+        .await;
+        assert!(
+            !matches!(
+                result,
+                Ok(ClassifyFinalizedNativeXmrEffectV3Result {
+                    outcome: FinalizedNativeXmrScanOutcomeV3::Found { .. },
+                    ..
+                })
+            ),
+            "{id} must not classify as the Maker's tag 17: {result:?}"
+        );
+    }
 }
