@@ -96,12 +96,12 @@ QString LezAtomicSwapTakerBackend::resetChat()
     return chat_->resetSession();
 }
 
-// The Logos transport's offers, Bitcoin and Zcash: what the desk's Chat gateway
-// holds from Logos Delivery (none when the gateway is not configured).
+// The Logos transport's offers, Bitcoin, Zcash and Monero: what the desk's Chat
+// gateway holds from Logos Delivery (none when the gateway is not configured).
 QJsonArray LezAtomicSwapTakerBackend::logosOffers()
 {
     QJsonArray offers;
-    for (const QString pair : {QStringLiteral("Bitcoin"), QStringLiteral("Zcash")}) {
+    for (const QString pair : {QStringLiteral("Bitcoin"), QStringLiteral("Zcash"), QStringLiteral("Monero")}) {
         for (const QString direction : {QStringLiteral("TakerSellsForeign"), QStringLiteral("TakerSellsLez")}) {
             const QJsonObject reply = QJsonDocument::fromJson(chat_->listOffers(pair, direction).toUtf8()).object();
             for (const QJsonValue& offer : reply.value("result").toObject().value("offers").toArray())

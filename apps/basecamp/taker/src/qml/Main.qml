@@ -66,7 +66,7 @@ Item {
         clipboardHelper.copy()
     }
     function swapBucket(swap) {
-        if (swap.state === "completed" || swap.state === "refunded" || swap.state === "failed") return "done"
+        if (["completed", "refunded", "failed", "expired", "punished"].indexOf(swap.state) >= 0) return "done"  // the last two: Monero Maker
         if (swap.can_act === true) return "attention"
         return "running"
     }
@@ -90,16 +90,28 @@ Item {
     function btcAmount(sats) {
         return (Number(sats ?? 0) / 100000000).toFixed(8)
     }
+    // A foreign chain's atomic units per coin: 10^12 piconero per XMR,
+    // 10^8 satoshis or zatoshis per BTC or ZEC.
+    function foreignDecimals(pair) {
+        return pair === "Monero" ? 12 : 8
+    }
+    // A foreign amount with all its chain's decimals (Monero's in integers:
+    // a division by 10^12 would round them).
+    function foreignAmount(pair, units) {
+        if (pair !== "Monero") return root.btcAmount(units)
+        var value = Number(units ?? 0)
+        return String(Math.floor(value / 1e12)) + "." + String(value % 1e12).padStart(12, "0")
+    }
     function lezAmount(units) {
         return Number(units ?? 0).toLocaleString(Qt.locale("en_US"), "f", 0)
     }
     function formatBtcSats(value) {
         return root.btcAmount(value) + " BTC"
     }
-    // The foreign leg of an order-book row or swap: BTC, or ZEC for a
-    // prepared Zcash corridor (8 decimals either way).
+    // The foreign leg of an order-book row or swap: BTC, ZEC (8 decimals
+    // either way) or XMR (12).
     function formatForeign(pair, value) {
-        return root.btcAmount(value) + (pair === "Zcash" ? " ZEC" : " BTC")
+        return root.foreignAmount(pair, value) + (pair === "Monero" ? " XMR" : pair === "Zcash" ? " ZEC" : " BTC")
     }
     function formatLez(value) {
         return root.lezAmount(value) + " LEZ"
@@ -398,13 +410,13 @@ Item {
         var numerator = amount * lezLot
         return Number.isSafeInteger(numerator) && numerator % satsLot === 0 ? numerator / satsLot : NaN
     }
-    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ") for an offer's exact lot price.
+    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ", "1 XMR = 50,000 LEZ") for an offer's exact lot price.
     function offerRate(offer) {
-        return 100000000 * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
+        return Math.pow(10, root.foreignDecimals(offer.pair)) * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
     }
     function rateDisplay(offer) {
         var perCoin = root.offerRate(offer)
-        return "1 " + (offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
+        return "1 " + (offer.pair === "Monero" ? "XMR" : offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
     }
     // The best rate on the book for `direction`: most LEZ per BTC when you
     // pay BTC, fewest when you sell LEZ.

@@ -104,9 +104,11 @@ QString LezAtomicSwapMakerBackend::btcPublishOffer(
     // The desk forwards the Maker's own terms; the Node validates them.
     qulonglong minimum = 0, maximum = 0, ttl = 0, lezLot = 0, foreignLot = 0;
     if (!marketRequest(requestId) || !makerWallet(walletId)
-        || (pair != QStringLiteral("Bitcoin") && pair != QStringLiteral("Zcash"))
+        || (pair != QStringLiteral("Bitcoin") && pair != QStringLiteral("Zcash") && pair != QStringLiteral("Monero"))
         || (direction != QStringLiteral("taker_sells_foreign")
-            && direction != QStringLiteral("taker_sells_lez"))) {
+            && direction != QStringLiteral("taker_sells_lez"))
+        // A Monero offer sells Monero for LEZ only (the Taker sells LEZ).
+        || (pair == QStringLiteral("Monero") && direction != QStringLiteral("taker_sells_lez"))) {
         return invalidMarket(QStringLiteral("Review the pair, direction and wallet"));
     }
     if (!exactUnsigned(minimumForeignUnits, minimum) || !exactUnsigned(maximumForeignUnits, maximum)

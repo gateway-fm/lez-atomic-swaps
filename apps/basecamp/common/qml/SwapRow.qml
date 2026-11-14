@@ -16,7 +16,7 @@ Rectangle {
     property string divider: ""
     // Unix seconds, for the schedule's countdowns.
     property real now: 0
-    readonly property bool done: ["completed", "refunded", "failed"].indexOf(String(swapRow.modelData.state)) >= 0
+    readonly property bool done: ["completed", "refunded", "failed", "expired", "punished"].indexOf(String(swapRow.modelData.state)) >= 0
     signal act()
     // The owner wants the swap's on-chain transactions.
     signal details()

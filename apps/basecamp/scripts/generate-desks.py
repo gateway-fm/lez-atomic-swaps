@@ -79,7 +79,7 @@ Item {
         clipboardHelper.copy()
     }
     function swapBucket(swap) {
-        if (swap.state === "completed" || swap.state === "refunded" || swap.state === "failed") return "done"
+        if (["completed", "refunded", "failed", "expired", "punished"].indexOf(swap.state) >= 0) return "done"  // the last two: Monero Maker
         if (swap.can_act === true) return "attention"
         return "running"
     }
@@ -102,6 +102,18 @@ Item {
     }
     function btcAmount(sats) {
         return (Number(sats ?? 0) / 100000000).toFixed(8)
+    }
+    // A foreign chain's atomic units per coin: 10^12 piconero per XMR,
+    // 10^8 satoshis or zatoshis per BTC or ZEC.
+    function foreignDecimals(pair) {
+        return pair === "Monero" ? 12 : 8
+    }
+    // A foreign amount with all its chain's decimals (Monero's in integers:
+    // a division by 10^12 would round them).
+    function foreignAmount(pair, units) {
+        if (pair !== "Monero") return root.btcAmount(units)
+        var value = Number(units ?? 0)
+        return String(Math.floor(value / 1e12)) + "." + String(value % 1e12).padStart(12, "0")
     }
     function lezAmount(units) {
         return Number(units ?? 0).toLocaleString(Qt.locale("en_US"), "f", 0)
@@ -697,19 +709,23 @@ MAKER_FUNCTIONS = r'''
     // is derived from them and goes to the Node verbatim.
     property string sellSide: "lez"
     readonly property string offerDirection: root.sellSide === "lez" ? "taker_sells_foreign" : "taker_sells_lez"
-    // The foreign leg's chain: Bitcoin or Zcash (both count in 10^-8 units).
+    // The foreign leg's chain: Bitcoin or Zcash (10^-8 units), or Monero
+    // (10^-12 units), which the Maker only sells: the Taker sells LEZ.
     property string offerPair: "Bitcoin"
-    readonly property string foreignAsset: root.offerPair === "Zcash" ? "ZEC" : "BTC"
+    readonly property string foreignAsset: root.offerPair === "Monero" ? "XMR" : root.offerPair === "Zcash" ? "ZEC" : "BTC"
+    readonly property real foreignUnit: Math.pow(10, root.foreignDecimals(root.offerPair))
+    onOfferPairChanged: if (root.offerPair === "Monero") root.sellSide = "btc"
     property bool newOfferOpen: false
     function whole(text) {
         return /^[1-9][0-9]{0,15}$/.test(String(text)) ? Number(text) : NaN
     }
-    // "0.01" → 1000000 satoshis, exactly.
+    // "0.01" → 1000000 satoshis, exactly (or piconero for Monero).
     function sats(text) {
-        var m = /^([0-9]{1,8})(?:\.([0-9]{1,8}))?$/.exec(String(text))
+        var decimals = root.foreignDecimals(root.offerPair)
+        var m = new RegExp("^([0-9]{1,8})(?:\\.([0-9]{1," + decimals + "}))?$").exec(String(text))
         if (!m) return NaN
-        var value = Number(m[1]) * 100000000 + Number((m[2] ?? "").padEnd(8, "0"))
-        return value > 0 ? value : NaN
+        var value = Number(m[1]) * root.foreignUnit + Number((m[2] ?? "").padEnd(decimals, "0"))
+        return value > 0 && Number.isSafeInteger(value) ? value : NaN
     }
     function gcd(a, b) { while (b) { var t = a % b; a = b; b = t } return a }
     readonly property real offerSats: root.sats(root.sellSide === "lez" ? receiveAmount.amount : sellAmount.amount)
@@ -722,7 +738,7 @@ MAKER_FUNCTIONS = r'''
         && (root.minimumSats * root.lezPerLot) % root.satsPerLot === 0 && root.whole(termTtl.text) > 0
     readonly property string rate: {
         if (!(root.offerSats > 0) || !(root.offerLez > 0)) return "Set both amounts"
-        var perBitcoin = 100000000 * root.offerLez / root.offerSats
+        var perBitcoin = root.foreignUnit * root.offerLez / root.offerSats
         return "1 " + root.foreignAsset + " = " + perBitcoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perBitcoin) ? 0 : 2) + " LEZ"
     }
     // The Node's stored price for this direction, and how far the form's
@@ -944,12 +960,13 @@ MAKER_OVERLAYS = r'''
                 SideToggle {
                     objectName: "makerOfferPair"
                     value: root.offerPair
-                    options: [["Bitcoin", "BITCOIN", "#B997FF"], ["Zcash", "ZCASH", "#F4B728"]]
+                    options: [["Bitcoin", "BITCOIN", "#B997FF"], ["Zcash", "ZCASH", "#F4B728"], ["Monero", "MONERO", "#FF6600"]]
                     onPicked: function(pair) { root.offerPair = pair }
                 }
                 SideToggle {
                     value: root.sellSide
-                    options: [["lez", "SELL LEZ", "#7EE100"], ["btc", "SELL " + root.foreignAsset, "#B997FF"]]
+                    options: root.offerPair === "Monero" ? [["btc", "SELL XMR", "#B997FF"]]
+                        : [["lez", "SELL LEZ", "#7EE100"], ["btc", "SELL " + root.foreignAsset, "#B997FF"]]
                     onPicked: function(side) { root.sellSide = side }
                 }
             }
@@ -960,7 +977,7 @@ MAKER_OVERLAYS = r'''
                 label: "YOU SELL"
                 asset: root.sellSide === "lez" ? "LEZ" : root.foreignAsset
                 accent: root.sellSide === "lez" ? "#7EE100" : "#B997FF"
-                note: root.sellSide === "lez" ? "Locked in the LEZ escrow until settlement" : "Locked in the " + (root.offerPair === "Zcash" ? "Zcash HTLC" : "Bitcoin P2TR contract") + " until settlement"
+                note: root.sellSide === "lez" ? "Locked in the LEZ escrow until settlement" : "Locked in the " + (root.offerPair === "Monero" ? "Monero output shared with the Taker" : root.offerPair === "Zcash" ? "Zcash HTLC" : "Bitcoin P2TR contract") + " until settlement"
             }
             AmountLeg {
                 id: receiveAmount
@@ -969,7 +986,7 @@ MAKER_OVERLAYS = r'''
                 label: "YOU RECEIVE"
                 asset: root.sellSide === "lez" ? root.foreignAsset : "LEZ"
                 accent: root.sellSide === "lez" ? "#B997FF" : "#7EE100"
-                note: root.sellSide === "lez" ? "Claimed from the " + (root.offerPair === "Zcash" ? "Zcash HTLC" : "P2TR contract") + " once the secret is revealed" : "Claimed from the LEZ escrow once the secret is revealed"
+                note: root.sellSide === "lez" ? "Claimed from the " + (root.offerPair === "Zcash" ? "Zcash HTLC" : "P2TR contract") + " once the secret is revealed" : root.offerPair === "Monero" ? "Claimed from the LEZ escrow once the Taker authorises it" : "Claimed from the LEZ escrow once the secret is revealed"
             }
             RowLayout {
                 Layout.fillWidth: true; spacing: 10
@@ -989,7 +1006,7 @@ MAKER_OVERLAYS = r'''
             }
             GridLayout {
                 Layout.fillWidth: true; columns: 3; columnSpacing: 10; rowSpacing: 6
-                FieldLabel { text: "MINIMUM TAKER AMOUNT · " + (root.offerPair === "Zcash" ? "ZATOSHI" : "SATS") }
+                FieldLabel { text: "MINIMUM TAKER AMOUNT · " + (root.offerPair === "Monero" ? "PICONERO" : root.offerPair === "Zcash" ? "ZATOSHI" : "SATS") }
                 FieldLabel { text: "OFFER LIFETIME · SECONDS" }
                 FieldLabel { text: "SPREAD · %" }
                 LuxeField { id: minimumAmount; objectName: "makerMinimumSats"; placeholderText: "whole offer"; Layout.fillWidth: true }
@@ -1004,7 +1021,7 @@ MAKER_OVERLAYS = r'''
             }
             Label {
                 text: root.termsValid
-                    ? "The Taker may take any amount from " + root.btcAmount(root.minimumSats) + " to " + root.btcAmount(root.offerSats) + " " + root.foreignAsset + " at this exact rate. Indexed to " + makerWallet.currentText + " until taken or withdrawn."
+                    ? "The Taker may take any amount from " + root.foreignAmount(root.offerPair, root.minimumSats) + " to " + root.foreignAmount(root.offerPair, root.offerSats) + " " + root.foreignAsset + " at this exact rate. Indexed to " + makerWallet.currentText + " until taken or withdrawn."
                     : "Amounts must be whole units and the minimum must quote to whole LEZ at this rate."
                 color: root.termsValid ? "#68768A" : "#FF9FAF"; font.pixelSize: 10
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
@@ -1049,13 +1066,13 @@ TAKER_FUNCTIONS = r'''
         var numerator = amount * lezLot
         return Number.isSafeInteger(numerator) && numerator % satsLot === 0 ? numerator / satsLot : NaN
     }
-    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ") for an offer's exact lot price.
+    // "1 BTC = 100,000 LEZ" (or "1 ZEC = 50,000 LEZ", "1 XMR = 50,000 LEZ") for an offer's exact lot price.
     function offerRate(offer) {
-        return 100000000 * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
+        return Math.pow(10, root.foreignDecimals(offer.pair)) * Number(offer.lez_units_per_lot) / Number(offer.foreign_units_per_lot)
     }
     function rateDisplay(offer) {
         var perCoin = root.offerRate(offer)
-        return "1 " + (offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
+        return "1 " + (offer.pair === "Monero" ? "XMR" : offer.pair === "Zcash" ? "ZEC" : "BTC") + " = " + perCoin.toLocaleString(Qt.locale("en_US"), "f", Number.isInteger(perCoin) ? 0 : 2) + " LEZ"
     }
     // The best rate on the book for `direction`: most LEZ per BTC when you
     // pay BTC, fewest when you sell LEZ.
@@ -1462,12 +1479,12 @@ TAKER_CHAT_ADDRESS = r'''                            RowLayout {
                             }'''
 
 
-# The Taker's order book and swaps carry BTC or ZEC; the Maker desk keeps its
+# The Taker's order book and swaps carry BTC, ZEC or XMR; the Maker desk keeps its
 # own per-row wording.
-TAKER_FOREIGN_FORMAT = r'''    // The foreign leg of an order-book row or swap: BTC, or ZEC for a
-    // prepared Zcash corridor (8 decimals either way).
+TAKER_FOREIGN_FORMAT = r'''    // The foreign leg of an order-book row or swap: BTC, ZEC (8 decimals
+    // either way) or XMR (12).
     function formatForeign(pair, value) {
-        return root.btcAmount(value) + (pair === "Zcash" ? " ZEC" : " BTC")
+        return root.foreignAmount(pair, value) + (pair === "Monero" ? " XMR" : pair === "Zcash" ? " ZEC" : " BTC")
     }
 '''
 
