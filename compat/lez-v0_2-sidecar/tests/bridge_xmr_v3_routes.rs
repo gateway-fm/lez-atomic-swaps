@@ -27,19 +27,23 @@ use lez_bridge_protocol::{
     FinalizedNativeXmrUnavailableReasonV3, Hex32, MessageContext, Participant,
     PrepareNativeXmrClaimAuthorizationV3Request, PrepareNativeXmrClaimV3Request,
     PrepareNativeXmrEscrowV3Request, PrepareNativeXmrPunishV3Request,
-    PrepareNativeXmrRefundV3Request, PreparedTransaction, RequestId, RunId, RuntimeCompatibility,
-    RuntimeDescriptor, SubmissionOutcome, SubmitNativeXmrClaimAuthorizationV3Request,
-    SubmitTransactionRequest, TransactionId, XmrClaimPartialV3, XmrNativeEffectV3,
-    XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
+    PrepareNativeXmrPunishV3Result, PrepareNativeXmrRefundV3Request, PreparedTransaction,
+    RequestId, RunId, RuntimeCompatibility, RuntimeDescriptor, SubmissionOutcome,
+    SubmitNativeXmrClaimAuthorizationV3Request, SubmitTransactionRequest, TransactionId,
+    XmrClaimPartialV3, XmrNativeEffectV3, XmrNativeEscrowTermsV3, XmrNativeEscrowTermsV3Input,
 };
 use lez_v0_2_sidecar::{
     BridgeRuntime, BridgeRuntimeError, BridgeServerCapability, BridgeServerConfig,
     BridgeServerError, FinalizedIndexerApi, HistoricalAccount, M4StageAFinalizedNonces,
     M4StageAFutureMessageInput, NativeEscrowPlanner, NativePrepareError, NonceSource,
     OfficialNodeRpc, ZecEscrowInstruction, decode_official_public_transaction,
-    plan_m4_stage_a_future_messages, program_id_to_hex, start_bridge_server,
+    plan_m4_stage_a_future_messages, prepared_from_transaction, program_id_to_hex,
+    start_bridge_server,
 };
-use nssa::{AccountId, PrivateKey, PublicKey, Signature, public_transaction::Message};
+use nssa::{
+    AccountId, PrivateKey, PublicKey, PublicTransaction, Signature,
+    public_transaction::{Message, WitnessSet},
+};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 
@@ -1444,6 +1448,99 @@ async fn xmr_v3_routes_are_authenticated_bound_with_four_official_builders_enabl
     taker.server.stop().await.expect("taker stop");
     sequencer.stop().expect("sequencer stop");
     sequencer.stopped().await;
+}
+
+#[tokio::test]
+async fn xmr_punish_binds_the_committed_message_except_the_claimant_nonce() {
+    let (depositor, _) = account(31);
+    let (claimant, claimant_key) = account(32);
+    let xmr_terms = terms(depositor, claimant, 42);
+    let request = PrepareNativeXmrPunishV3Request::new(
+        context(Participant::Maker, "prepare-punish-live-nonce"),
+        runtime(Participant::Maker, claimant),
+        xmr_terms,
+    );
+    let planner = |nonce: u128| {
+        NativeEscrowPlanner::new(
+            Participant::Maker,
+            PrivateKey::try_new([32; 32]).expect("Maker key"),
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            runtime(Participant::Maker, claimant),
+            Arc::new(CountingNonce {
+                value: nonce,
+                calls: AtomicUsize::new(0),
+            }),
+        )
+        .expect("Maker planner")
+    };
+
+    // The fixture commits the message at nonce 41; the shared Maker owner
+    // may be at any nonce by the punish time, 0 included.
+    for nonce in [41, 0, 7] {
+        let maker = planner(nonce);
+        let prepared = maker
+            .prepare_native_xmr_punish_v3(&request)
+            .await
+            .expect("tag 17 at the claimant's live nonce");
+        let punish = decode_official_public_transaction(prepared.punish.exact_bytes.as_slice())
+            .expect("official punish transaction");
+        assert_eq!(punish.message().nonces, vec![nonce.into()]);
+        assert_eq!(
+            punish.message().hash() == *xmr_terms.to_input().punish_message_hash.as_bytes(),
+            nonce == 41
+        );
+        maker
+            .validate_prepared_native_xmr_punish_v3(&request, &prepared)
+            .expect("prepared tag 17 revalidates");
+    }
+
+    let maker = planner(7);
+    let swap_id = [1; 32];
+    let metadata = lez_v0_2_sidecar::compute_metadata_pda(&ESCROW_PROGRAM, &swap_id);
+    let custody = lez_v0_2_sidecar::compute_custody_pda(&ESCROW_PROGRAM, &swap_id);
+    let signed = |accounts: Vec<AccountId>, instruction: ZecEscrowInstruction| {
+        let message = Message::try_new(ESCROW_PROGRAM, accounts, vec![7_u128.into()], instruction)
+            .expect("generated message");
+        let witnesses = WitnessSet::for_message(&message, &[&claimant_key]);
+        PrepareNativeXmrPunishV3Result::new(
+            request.context.clone(),
+            xmr_terms,
+            prepared_from_transaction(&PublicTransaction::new(message, witnesses))
+                .expect("bounded transaction"),
+        )
+    };
+    let exact = signed(
+        vec![metadata, custody, claimant],
+        ZecEscrowInstruction::PunishNativeXmr { swap_id },
+    );
+    maker
+        .validate_prepared_native_xmr_punish_v3(&request, &exact)
+        .expect("hand-signed tag 17 at nonce 7");
+    for drift in [
+        signed(
+            vec![metadata, custody, depositor],
+            ZecEscrowInstruction::PunishNativeXmr { swap_id },
+        ),
+        signed(
+            vec![metadata, custody, claimant],
+            ZecEscrowInstruction::PunishNativeXmr { swap_id: [2; 32] },
+        ),
+        signed(
+            vec![metadata, custody, claimant],
+            ZecEscrowInstruction::ClaimNativeXmr { swap_id },
+        ),
+        PrepareNativeXmrPunishV3Result::new(
+            exact.context.clone(),
+            terms(depositor, claimant, 43),
+            exact.punish.clone(),
+        ),
+    ] {
+        assert_eq!(
+            maker.validate_prepared_native_xmr_punish_v3(&request, &drift),
+            Err(NativePrepareError::InvalidTransactionBytes)
+        );
+    }
 }
 
 #[tokio::test]

@@ -2040,8 +2040,9 @@ impl NativeEscrowPlanner {
     ///
     /// # Errors
     ///
-    /// Rejects role, runtime, terms, claimant, nonce, message-hash, ABI,
-    /// canonical-byte, signature, durable-state, or reservation drift.
+    /// Rejects role, runtime, terms, claimant, ABI, canonical-byte,
+    /// signature, durable-state, or reservation drift. The claimant's live
+    /// nonce is used, not the committed one.
     pub async fn prepare_native_xmr_punish_v3(
         &self,
         request: &PrepareNativeXmrPunishV3Request,
@@ -4214,10 +4215,18 @@ impl NativeEscrowPlanner {
 
     /// Revalidates one signed durable tag-17 reservation against its request.
     ///
+    /// The transaction must equal the tag-17 message rebuilt from the terms
+    /// (program, ordered accounts, swap instruction) at its own single nonce.
+    /// It is not compared with the committed `punish_message_hash`, which is
+    /// the same message at the nonce Stage A was planned with (0 from the
+    /// Maker Node): the claimant is the Maker's shared LEZ owner, whose nonce
+    /// at punish time cannot be known when Stage A is signed, and the guest
+    /// authorises tag 17 by its signer and the `punish_at` window only.
+    ///
     /// # Errors
     ///
-    /// Rejects role/runtime/terms, nonce, signer, ordered accounts, message
-    /// hash, generated instruction, signature, transaction ID, or byte drift.
+    /// Rejects role/runtime/terms, signer, ordered accounts, generated
+    /// instruction, signature, transaction ID, or byte drift.
     pub fn validate_prepared_native_xmr_punish_v3(
         &self,
         request: &PrepareNativeXmrPunishV3Request,
@@ -4232,9 +4241,7 @@ impl NativeEscrowPlanner {
             return Err(NativePrepareError::InvalidTransactionBytes);
         };
         let expected = self.xmr_punish_v3_message(request, u128::from(*nonce))?;
-        if transaction.message() != &expected
-            || expected.hash() != *request.terms.to_input().punish_message_hash.as_bytes()
-        {
+        if transaction.message() != &expected {
             return Err(NativePrepareError::InvalidTransactionBytes);
         }
         Ok(())
