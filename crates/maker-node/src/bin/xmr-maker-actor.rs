@@ -697,7 +697,9 @@ impl LiveMaker {
         let mut cursor = self.cursor()?;
         let start = match (cursor.get(watched), watched) {
             (Some(height), _) => height,
-            (None, Watched::TakerLock) => tip.saturating_sub(TAG13_LOOKBACK_BLOCKS),
+            // LEZ block ids start at 1: a chain younger than the lookback
+            // is scanned from its first block.
+            (None, Watched::TakerLock) => tip.saturating_sub(TAG13_LOOKBACK_BLOCKS).max(1),
             (None, _) => {
                 let lock = read_finalized(&self.evidence(TAG13_FILE))?
                     .context("the Taker's lock is not recorded")?;
