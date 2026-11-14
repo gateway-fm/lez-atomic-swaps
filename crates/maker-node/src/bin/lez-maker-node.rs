@@ -11,8 +11,8 @@ use anyhow::{Context as _, bail, ensure};
 use clap::{ArgGroup, Parser};
 use jsonrpsee::server::{ServerBuilder, serve_with_graceful_shutdown, stop_channel};
 #[cfg(feature = "pair-xmr")]
-use lez_maker_node::XmrMakerChatAuthority;
-#[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+use lez_maker_node::XmrMakerReservations;
+#[cfg(feature = "pair-zec")]
 use lez_maker_node::secure_file::load_raw_secret;
 use lez_maker_node::{
     BtcMakerActorProvisioner, BtcMakerLifecycle, BtcMakerRoleAgreementAuthority,
@@ -32,33 +32,19 @@ use lez_maker_node::{ZecMakerActorProvisioner, import_terminal_zec_maker_project
 use lez_node_common::shutdown_signal;
 #[cfg(feature = "pair-zec")]
 use lez_swap_core::Participant;
-#[cfg(any(feature = "pair-zec", feature = "pair-xmr"))]
+#[cfg(feature = "pair-zec")]
 use lez_swap_core::SwapId;
 #[cfg(feature = "pair-zec")]
 use lez_swap_store::SqliteZecRecoveryStore;
-#[cfg(feature = "pair-xmr")]
-use lez_swap_store::{MakerActorKindV1, MakerActorManifestV1, validate_maker_actor_program};
 use lez_swap_store::{
     MakerActorLeaseOwner, SqliteSwapStore, is_owner_private_regular_file, open_no_symlinks,
 };
-#[cfg(feature = "pair-xmr")]
-use lez_xmr_swap_sdk::MoneroPrivateViewKey;
 #[cfg(feature = "pair-zec")]
 use lez_zec_swap_sdk::ProtectedClaimKey;
 use rustix::fs::{FlockOperation, Mode, OFlags, flock};
 use sd_notify::NotifyState;
-#[cfg(feature = "pair-xmr")]
-use secp256k1::PublicKey;
 use secp256k1::SecretKey;
-#[cfg(feature = "pair-xmr")]
-use serde::Deserialize;
-#[cfg(feature = "pair-xmr")]
-use sha2::{Digest as _, Sha256};
 use tokio::{net::UnixListener, task::JoinSet};
-#[cfg(feature = "pair-xmr")]
-use xmr_reference_actor::{
-    XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, validate_maker_manifest_config_bytes,
-};
 /// How rarely a route-health reconciliation failure may be written. The reconciliation ticks
 /// every second, so an unthrottled line per failure is a way to fill a disk.
 const ROUTE_HEALTH_LOG_INTERVAL: Duration = Duration::from_mins(1);
@@ -70,26 +56,6 @@ type BtcChatAuthority = (
     Option<BtcMakerRoleAgreementAuthority>,
     Option<BtcMakerLifecycle>,
 );
-
-#[cfg(feature = "pair-xmr")]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct XmrActorManifestRegistryV1 {
-    schema_version: u16,
-    actors: Vec<XmrActorManifestEntryV1>,
-}
-
-#[cfg(feature = "pair-xmr")]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct XmrActorManifestEntryV1 {
-    swap_id: Box<str>,
-    config_path: PathBuf,
-    config_sha256: Box<str>,
-    program_path: PathBuf,
-    program_sha256: Box<str>,
-    state_database_path: PathBuf,
-}
 
 #[derive(Parser)]
 #[command(
@@ -304,42 +270,35 @@ struct ZecArguments {
     terminal_zec_claim_key_file: Option<PathBuf>,
 }
 
-/// Maker-owned Monero agreement, view-key, and actor-registry flags.
+/// Maker-owned Monero take-time agreement and actor-deployment flags.
 #[cfg(feature = "pair-xmr")]
 #[allow(clippy::struct_field_names)] // The field names are the public --xmr-* flags.
 #[derive(clap::Args)]
 struct XmrArguments {
-    /// Owner-only compressed secp256k1 Maker agreement public key.
-    #[arg(
-        long,
-        requires_all = [
-            "delivery_directory",
-            "xmr_private_view_key_file",
-            "xmr_actor_manifest_registry_file"
-        ]
-    )]
-    xmr_maker_agreement_public_key_file: Option<PathBuf>,
-    /// Owner-only raw 32-byte shared Monero private view key.
-    #[arg(
-        long,
-        requires_all = [
-            "delivery_directory",
-            "xmr_maker_agreement_public_key_file",
-            "xmr_actor_manifest_registry_file"
-        ]
-    )]
-    xmr_private_view_key_file: Option<PathBuf>,
-    /// Owner-only bounded JSON registry of Maker-only XMR actor manifests.
+    /// Owner-private Monero role config (monerod, wallet-rpc, windows,
+    /// Stage-A planner, effect tools): compose each Monero agreement at take
+    /// time (`xmr_reserve_v1`).
     #[arg(
         long,
         group = "pair_chat_authority",
         requires_all = [
             "delivery_directory",
-            "xmr_maker_agreement_public_key_file",
-            "xmr_private_view_key_file"
+            "btc_role_config",
+            "xmr_maker_actor_root",
+            "xmr_actor_program",
+            "xmr_actor_program_sha256"
         ]
     )]
-    xmr_actor_manifest_registry_file: Option<PathBuf>,
+    xmr_role_config: Option<PathBuf>,
+    /// Existing owner-private mode-0700 base for per-swap XMR actor bundles.
+    #[arg(long, requires = "xmr_role_config")]
+    xmr_maker_actor_root: Option<PathBuf>,
+    /// Absolute exact XMR Maker actor executable (`lez-xmr-maker-actor`).
+    #[arg(long, requires = "xmr_role_config")]
+    xmr_actor_program: Option<PathBuf>,
+    /// Exact 32-byte SHA-256 identity of the XMR actor executable.
+    #[arg(long, requires = "xmr_role_config")]
+    xmr_actor_program_sha256: Option<Box<str>>,
 }
 
 struct ActorSupervisorRuntime {
@@ -1043,98 +1002,35 @@ fn configured_btc_chat_authority(
 }
 
 #[cfg(feature = "pair-xmr")]
-fn configured_xmr_chat_authority(
+fn configured_xmr_reservations(
     arguments: &Arguments,
-) -> anyhow::Result<Option<XmrMakerChatAuthority>> {
+) -> anyhow::Result<Option<XmrMakerReservations>> {
     let configured = (
-        arguments.xmr.xmr_maker_agreement_public_key_file.as_deref(),
-        arguments.xmr.xmr_private_view_key_file.as_deref(),
-        arguments.xmr.xmr_actor_manifest_registry_file.as_deref(),
+        arguments.xmr.xmr_role_config.as_deref(),
+        arguments.xmr.xmr_maker_actor_root.as_deref(),
+        arguments.xmr.xmr_actor_program.as_deref(),
+        arguments.xmr.xmr_actor_program_sha256.as_deref(),
+        arguments.btc_role_config.as_deref(),
     );
-    let (public_key_file, view_key_file, registry_file) = match configured {
-        (None, None, None) => return Ok(None),
-        (Some(public_key), Some(view_key), Some(registry)) => (public_key, view_key, registry),
+    let (config, root, program, program_sha256, role_config) = match configured {
+        (None, None, None, None, _) => return Ok(None),
+        (Some(config), Some(root), Some(program), Some(sha256), Some(role)) => {
+            (config, root, program, sha256, role)
+        }
         _ => bail!(
-            "XMR Maker agreement key, private view key, and actor registry must be configured together"
+            "XMR role config, actor root, program, SHA-256 and --btc-role-config must be configured together"
         ),
     };
-    let maker_identity = load_compressed_public_key(public_key_file)?;
-    let view_key = load_raw_secret(view_key_file, "XMR private view key")?;
-    let private_view_key = MoneroPrivateViewKey::from_monero_little_endian(*view_key)
-        .context("validate XMR private view key")?;
-    let registry_bytes = read_private_file(registry_file, 1024 * 1024, "XMR actor registry")?;
-    let registry: XmrActorManifestRegistryV1 =
-        serde_json::from_slice(&registry_bytes).context("decode XMR actor registry")?;
+    validate_runtime_directory(root).context("validate XMR maker actor root")?;
     ensure!(
-        registry.schema_version == 1 && !registry.actors.is_empty(),
-        "XMR actor registry is empty or unsupported"
+        root.is_absolute()
+            && fs::canonicalize(root).context("canonicalize XMR maker actor root")? == *root,
+        "XMR maker actor root must be absolute and canonical"
     );
-    let actors = registry
-        .actors
-        .into_iter()
-        .map(|entry| {
-            let swap_id = SwapId::new(entry.swap_id).context("validate XMR actor swap ID")?;
-            let mut binary_swap_id = [0_u8; 32];
-            ensure!(
-                swap_id.as_str().len() == 64
-                    && hex::decode_to_slice(swap_id.as_str(), &mut binary_swap_id).is_ok()
-                    && hex::encode(binary_swap_id) == swap_id.as_str(),
-                "XMR actor swap ID must be exactly 32 lowercase hexadecimal bytes"
-            );
-            let config_sha256 = decode_sha256(&entry.config_sha256, "XMR actor config SHA-256")?;
-            let program_sha256 = decode_sha256(&entry.program_sha256, "XMR actor program SHA-256")?;
-            let config_bytes = read_private_file(
-                &entry.config_path,
-                XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES,
-                "XMR Maker actor config",
-            )?;
-            let observed_config_sha256: [u8; 32] = Sha256::digest(config_bytes.as_slice()).into();
-            ensure!(
-                observed_config_sha256 == config_sha256,
-                "XMR Maker actor config SHA-256 changed"
-            );
-            validate_maker_manifest_config_bytes(
-                config_bytes.as_slice(),
-                binary_swap_id,
-                &entry.state_database_path,
-            )
-            .context("validate XMR Maker-only actor config semantics")?;
-            validate_maker_actor_program(&entry.program_path, program_sha256)
-                .context("validate XMR Maker actor program")?;
-            MakerActorManifestV1::new(
-                swap_id,
-                MakerActorKindV1::Monero,
-                entry.config_path,
-                config_sha256,
-                entry.program_path,
-                program_sha256,
-                entry.state_database_path,
-            )
-            .context("validate XMR Maker actor manifest")
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    XmrMakerChatAuthority::new(maker_identity, private_view_key, actors)
-        .context("validate XMR Chat authority")
+    let program_sha256 = decode_sha256(program_sha256, "XMR actor program SHA-256")?;
+    XmrMakerReservations::load(config, role_config, root, program, program_sha256)
+        .context("configure XMR reservations")
         .map(Some)
-}
-
-#[cfg(feature = "pair-xmr")]
-fn load_compressed_public_key(path: &Path) -> anyhow::Result<[u8; 33]> {
-    let encoded = read_private_file(path, 66, "XMR Maker agreement public key")?;
-    let mut bytes = [0_u8; 33];
-    match encoded.len() {
-        33 => bytes.copy_from_slice(&encoded),
-        66 => hex::decode_to_slice(&encoded, &mut bytes)
-            .context("decode XMR Maker agreement public key")?,
-        _ => bail!("XMR Maker agreement public key must be 33 raw or 66 hexadecimal bytes"),
-    }
-    let parsed =
-        PublicKey::from_slice(&bytes).context("validate XMR Maker agreement public key")?;
-    ensure!(
-        parsed.serialize() == bytes,
-        "XMR Maker agreement public key must be compressed"
-    );
-    Ok(bytes)
 }
 
 #[cfg(feature = "pair-xmr")]
@@ -1155,7 +1051,7 @@ struct PairAuthorities {
     zec_actor_provisioner: Option<ZecMakerActorProvisioner>,
     btc_chat: Option<BtcChatAuthority>,
     #[cfg(feature = "pair-xmr")]
-    xmr_chat: Option<XmrMakerChatAuthority>,
+    xmr_chat: Option<XmrMakerReservations>,
 }
 
 impl PairAuthorities {
@@ -1165,7 +1061,7 @@ impl PairAuthorities {
             zec_actor_provisioner: configured_zec_actor_provisioner(arguments)?,
             btc_chat: configured_btc_chat_authority(arguments)?,
             #[cfg(feature = "pair-xmr")]
-            xmr_chat: configured_xmr_chat_authority(arguments)?,
+            xmr_chat: configured_xmr_reservations(arguments)?,
         })
     }
 
@@ -1346,7 +1242,7 @@ fn maker_context(
     };
     #[cfg(feature = "pair-xmr")]
     let context = match pairs.xmr_chat {
-        Some(authority) => context.with_xmr_chat_authority(authority),
+        Some(reservations) => context.with_xmr_reservations(reservations),
         None => context,
     };
     Ok(match logos_price_source {
@@ -1441,19 +1337,26 @@ mod tests {
             "/tmp/delivery.key",
             "--chat-socket",
             "/tmp/chat.sock",
-            "--xmr-maker-agreement-public-key-file",
-            "/tmp/xmr-maker.pub",
-            "--xmr-private-view-key-file",
-            "/tmp/xmr-view.key",
-            "--xmr-actor-manifest-registry-file",
-            "/tmp/xmr-actors.json",
+            "--btc-maker-signing-key-file",
+            "/tmp/btc.key",
+            "--btc-role-config",
+            "/tmp/btc-role.json",
+            "--xmr-role-config",
+            "/tmp/xmr-role.json",
+            "--xmr-maker-actor-root",
+            "/tmp/xmr-actors",
+            "--xmr-actor-program",
+            "/usr/bin/true",
+            "--xmr-actor-program-sha256",
+            "00f5ba0b54bda7a48c9380b740fc38a8710a23c0f3f948cdcc9b7d5e712d1f8f",
         ];
         Arguments::try_parse_from(complete.clone()).expect("complete XMR Chat authority parses");
 
         for omitted in [
-            "--xmr-maker-agreement-public-key-file",
-            "--xmr-private-view-key-file",
-            "--xmr-actor-manifest-registry-file",
+            "--btc-role-config",
+            "--xmr-maker-actor-root",
+            "--xmr-actor-program",
+            "--xmr-actor-program-sha256",
         ] {
             let index = complete
                 .iter()

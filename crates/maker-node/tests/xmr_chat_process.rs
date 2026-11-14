@@ -7,9 +7,11 @@
 //! Separate-process proof for the M5 XMR Chat application handoff.
 //!
 //! The test intentionally stops before chain effects: it uses only temporary
-//! Unix sockets, `SQLite`, and role-generated Regtest agreement material. This
-//! proves reservation, activation, actor handoff, replay, and restart behavior
-//! without hiding any Monero/LEZ RPC dependency behind a fake endpoint.
+//! Unix sockets, `SQLite`, and Regtest agreement material each role generates
+//! at take time (`xmr_reserve_v1` and the ceremony rounds, driven by the
+//! reference actor's Taker half). monerod, the swap's LEZ sidecar and the
+//! Stage-A planner are fakes serving only what those rounds read. This proves
+//! reservation, activation, actor handoff, replay, and restart behavior.
 
 #[path = "support/cross_role_binary.rs"]
 mod cross_role;
@@ -27,9 +29,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-#[path = "support/xmr_chat_fixture.rs"]
-mod xmr_chat_fixture;
-use xmr_chat_fixture::XmrChatFixture;
+#[path = "support/xmr_reserve_fixture.rs"]
+mod xmr_reserve_fixture;
+use xmr_reserve_fixture::{XmrChatFixture, XmrMakerDeployment, XmrTake, start_fake_monerod};
 
 use lez_bridge_protocol::{
     Hex32, Participant as BridgeParticipant, RequestId, RuntimeCompatibility, RuntimeDescriptor,
@@ -93,33 +95,33 @@ async fn taker_and_daemon_activate_role_generated_xmr_agreement_with_stub_effect
     let offer_id = MakerOfferId::new(OFFER_ID).unwrap();
     let reservation_id = request(RESERVATION_ID);
 
-    // Bootstrap only the Delivery projection. The XMR authority registry is
-    // necessarily keyed by the authenticated Delivery commitment plus the
-    // owner-chosen reservation, so it is introduced on the second start.
-    let mut bootstrap = start_delivery_only_daemon(&daemon);
-    wait_ready(&mut bootstrap, &daemon, false);
+    // The Maker composes each agreement at take time, so its Monero
+    // deployment is complete before any offer exists.
+    let monerod = start_fake_monerod();
+    let deployment = maker_deployment(run.path(), &monerod, 30);
+    let mut maker = start_xmr_daemon(&daemon, &deployment);
+    wait_ready(&mut maker, &daemon, true);
     configure_live_route(&socket, route).await;
     publish_offer(&socket, &offer_id);
     let delivery_maker = public_key(&key(8));
     let authenticated = discover_offer(&delivery, delivery_maker, route).await;
-    stop_daemon(&mut bootstrap, &daemon, false);
 
     let binary_swap_id = maker_xmr_chat_swap_id(&authenticated.commitment(), &reservation_id);
-    let fixture = XmrChatFixture::new(
+    let fixture = XmrChatFixture::reserve(
         run.path(),
-        binary_swap_id,
-        FOREIGN_UNITS_PICONERO,
-        LEZ_UNITS,
-        Path::new(env!("CARGO_BIN_EXE_lez-maker-cli")),
-    );
-    let role_journals = RoleJournalSnapshot::capture(&fixture);
-    let authority = XmrDaemonAuthority {
-        maker_public_key: &fixture.maker_public_key_file,
-        private_view_key: &fixture.maker_view_key_file,
-        actor_registry: &fixture.maker_registry_file,
-    };
-    let mut maker = start_xmr_daemon(&daemon, &authority);
-    wait_ready(&mut maker, &daemon, true);
+        &chat_socket,
+        &deployment,
+        &monerod,
+        &XmrTake {
+            offer: &authenticated,
+            offer_id: &offer_id,
+            reservation_id: &reservation_id,
+            maker_identity: delivery_maker.serialize(),
+            foreign_units: FOREIGN_UNITS_PICONERO,
+            lez_units: LEZ_UNITS,
+        },
+    )
+    .await;
 
     // A crossed reservation changes the derived public swap ID and therefore
     // fails before any offer, negotiation, coordinator, actor, or effect write.
@@ -143,7 +145,6 @@ async fn taker_and_daemon_activate_role_generated_xmr_agreement_with_stub_effect
         .is_err()
     );
     assert_zero_application_writes(&database, &offer_id);
-    role_journals.assert_unchanged(&fixture);
 
     // Stage A is an intentionally non-executable reservation. It advances the
     // offer to revision two but creates neither coordinator nor actor.
@@ -167,7 +168,8 @@ async fn taker_and_daemon_activate_role_generated_xmr_agreement_with_stub_effect
     assert!(!staged.was_replay);
     assert_eq!(staged.swap_id.as_ref(), hex::encode(binary_swap_id));
     assert_stage_a_only(&database, &offer_id, &reservation_id, &fixture);
-    role_journals.assert_unchanged(&fixture);
+
+    fixture.ceremony(&chat_socket, &reservation_id).await;
 
     // The real Taker process replays the already durable Stage A and submits
     // Stage B. The Maker commits activation, coordinator, and one Maker actor
@@ -190,7 +192,9 @@ async fn taker_and_daemon_activate_role_generated_xmr_agreement_with_stub_effect
         &authenticated,
         &fixture,
     );
-    role_journals.assert_unchanged(&fixture);
+    // Activation provisioned both actors over their completed journals;
+    // nothing after it changes them.
+    let role_journals = RoleJournalSnapshot::capture(&fixture);
 
     // Upgrade the exact accepted application without replacing its v1 receipt:
     // role-fixed effect authority and schema-v3 projection are new owner-private
@@ -486,7 +490,7 @@ async fn taker_and_daemon_activate_role_generated_xmr_agreement_with_stub_effect
     // Reopen the daemon against the same durable database with Delivery absent.
     // The real Taker detects its durable actor, bypasses discovery, and exact
     // replays both stages without replacing any published file or inode.
-    let mut reopened = start_xmr_daemon(&daemon, &authority);
+    let mut reopened = start_xmr_daemon(&daemon, &deployment);
     wait_ready(&mut reopened, &daemon, true);
     let replay = run_taker(
         &fixture,
@@ -537,29 +541,48 @@ async fn receipt_v2_refund_invokes_observes_and_completes_exact_tag16_once() {
     let offer_id = MakerOfferId::new(OFFER_ID).unwrap();
     let reservation_id = request(RESERVATION_ID);
 
-    let mut bootstrap = start_delivery_only_daemon(&daemon);
-    wait_ready(&mut bootstrap, &daemon, false);
+    let monerod = start_fake_monerod();
+    let deployment = maker_deployment(run.path(), &monerod, 40);
+    let mut maker = start_xmr_daemon(&daemon, &deployment);
+    wait_ready(&mut maker, &daemon, true);
     configure_live_route(&socket, route).await;
     publish_offer(&socket, &offer_id);
     let delivery_maker = public_key(&key(8));
     let authenticated = discover_offer(&delivery, delivery_maker, route).await;
-    stop_daemon(&mut bootstrap, &daemon, false);
 
-    let binary_swap_id = maker_xmr_chat_swap_id(&authenticated.commitment(), &reservation_id);
-    let fixture = XmrChatFixture::new(
+    let fixture = XmrChatFixture::reserve(
         run.path(),
-        binary_swap_id,
-        FOREIGN_UNITS_PICONERO,
-        LEZ_UNITS,
-        Path::new(env!("CARGO_BIN_EXE_lez-maker-cli")),
-    );
-    let authority = XmrDaemonAuthority {
-        maker_public_key: &fixture.maker_public_key_file,
-        private_view_key: &fixture.maker_view_key_file,
-        actor_registry: &fixture.maker_registry_file,
-    };
-    let mut maker = start_xmr_daemon(&daemon, &authority);
-    wait_ready(&mut maker, &daemon, true);
+        &chat_socket,
+        &deployment,
+        &monerod,
+        &XmrTake {
+            offer: &authenticated,
+            offer_id: &offer_id,
+            reservation_id: &reservation_id,
+            maker_identity: delivery_maker.serialize(),
+            foreign_units: FOREIGN_UNITS_PICONERO,
+            lez_units: LEZ_UNITS,
+        },
+    )
+    .await;
+    let staged: XmrChatStageAResponseV1 = call_local_chat_rpc(
+        &chat_socket,
+        "xmr_chat_stage_a_v1",
+        &XmrChatStageARequestV1 {
+            schema_version: 1,
+            request_id: chat_request(&reservation_id, b"stage-a"),
+            offer_id: offer_id.clone(),
+            expected_offer_revision: 1,
+            reservation_id: reservation_id.clone(),
+            foreign_units: FOREIGN_UNITS_PICONERO,
+            signed_offer_envelope: authenticated.signed_envelope().to_vec(),
+            stage_a_wire: fs::read(&fixture.stage_a).unwrap(),
+        },
+    )
+    .await
+    .expect("Maker durably reserves the take-time Stage A");
+    assert!(!staged.was_replay);
+    fixture.ceremony(&chat_socket, &reservation_id).await;
 
     let accepted_at = now();
     let accepted = run_taker(
@@ -1351,10 +1374,21 @@ struct DaemonPaths<'a> {
     delivery_key: &'a Path,
 }
 
-struct XmrDaemonAuthority<'a> {
-    maker_public_key: &'a Path,
-    private_view_key: &'a Path,
-    actor_registry: &'a Path,
+/// The Maker's take-time Monero deployment under the test root; its swap
+/// sidecars live while the root does.
+fn maker_deployment(root: &Path, monerod: &str, port_offset: u16) -> XmrMakerDeployment {
+    let home = root.join("maker-xmr");
+    make_private_directory(&home);
+    let home = fs::canonicalize(home).unwrap();
+    let alive = home.join("sidecars-alive");
+    fs::write(&alive, b"").unwrap();
+    XmrMakerDeployment::new(
+        &home,
+        &alive,
+        monerod,
+        &fs::canonicalize("/usr/bin/true").unwrap(),
+        20_000 + u16::try_from(std::process::id() % 400).unwrap() * 50 + port_offset,
+    )
 }
 
 fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
@@ -1373,23 +1407,12 @@ fn daemon_command(paths: &DaemonPaths<'_>) -> Command {
     command
 }
 
-fn start_delivery_only_daemon(paths: &DaemonPaths<'_>) -> Child {
-    daemon_command(paths)
-        .spawn()
-        .expect("start isolated Delivery-only Maker daemon")
-}
-
-fn start_xmr_daemon(paths: &DaemonPaths<'_>, authority: &XmrDaemonAuthority<'_>) -> Child {
+fn start_xmr_daemon(paths: &DaemonPaths<'_>, deployment: &XmrMakerDeployment) -> Child {
     let mut command = daemon_command(paths);
     command
         .arg("--chat-socket")
         .arg(paths.chat_socket)
-        .arg("--xmr-maker-agreement-public-key-file")
-        .arg(authority.maker_public_key)
-        .arg("--xmr-private-view-key-file")
-        .arg(authority.private_view_key)
-        .arg("--xmr-actor-manifest-registry-file")
-        .arg(authority.actor_registry);
+        .args(deployment.arguments());
     command.spawn().expect("start isolated XMR Maker daemon")
 }
 

@@ -10,6 +10,8 @@ mod price_source;
 mod rpc_contracts;
 #[cfg(feature = "pair-xmr")]
 mod xmr_chat;
+#[cfg(feature = "pair-xmr")]
+mod xmr_reserve;
 #[cfg(feature = "pair-zec")]
 mod zec_application;
 #[cfg(feature = "pair-zec")]
@@ -40,9 +42,9 @@ pub use rpc_contracts::{
     MakerWalletBalancesRequest,
 };
 #[cfg(feature = "pair-xmr")]
-pub use xmr_chat::XmrMakerChatAuthority;
-#[cfg(feature = "pair-xmr")]
 use xmr_chat::register_xmr_chat_methods;
+#[cfg(feature = "pair-xmr")]
+pub use xmr_reserve::XmrMakerReservations;
 #[cfg(feature = "pair-zec")]
 pub use zec_application::{
     AppliedZcashFundingEvent, ZcashFundingApplyError, ZcashFundingProjectionOutcome,
@@ -103,8 +105,8 @@ use lez_swap_store::{
 };
 #[cfg(feature = "pair-xmr")]
 use lez_xmr_swap_sdk::{
-    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey,
-    XmrActivatedAgreementV1, XmrAgreementV1, XmrRoleV1, XmrSwapDirectionV1,
+    MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrActivatedAgreementV1,
+    XmrAgreementV1, XmrSwapDirectionV1,
 };
 #[cfg(feature = "pair-zec")]
 use lez_zec_swap_sdk::{
@@ -149,8 +151,9 @@ pub struct MakerRpc {
     /// The LEZ chain's progress for `maker_health`, from the lifecycle's
     /// indexer and sequencer.
     lez_finality: Option<Arc<LezFinalityWatch>>,
+    /// Take-time Monero agreements (`xmr_reserve_v1`).
     #[cfg(feature = "pair-xmr")]
-    xmr_chat_authority: Option<Arc<XmrMakerChatAuthority>>,
+    xmr_reservations: Option<Arc<XmrMakerReservations>>,
     #[cfg(feature = "pair-zec")]
     zec_completion_store: Option<Arc<SqliteZecRecoveryStore>>,
     #[cfg(feature = "pair-zec")]
@@ -206,8 +209,8 @@ impl std::fmt::Debug for MakerRpc {
             .field("lez_finality", &self.lez_finality);
         #[cfg(feature = "pair-xmr")]
         debug.field(
-            "xmr_chat_authority",
-            &self.xmr_chat_authority.as_ref().map(|_| "configured"),
+            "xmr_reservations",
+            &self.xmr_reservations.as_ref().map(|_| "configured"),
         );
         #[cfg(feature = "pair-zec")]
         debug
@@ -247,7 +250,7 @@ impl MakerRpc {
             btc_lifecycle: None,
             lez_finality: None,
             #[cfg(feature = "pair-xmr")]
-            xmr_chat_authority: None,
+            xmr_reservations: None,
             #[cfg(feature = "pair-zec")]
             #[cfg(feature = "pair-zec")]
             zec_actor_provisioner: None,
@@ -277,7 +280,7 @@ impl MakerRpc {
             btc_lifecycle: None,
             lez_finality: None,
             #[cfg(feature = "pair-xmr")]
-            xmr_chat_authority: None,
+            xmr_reservations: None,
             #[cfg(feature = "pair-zec")]
             zec_completion_store: None,
             #[cfg(feature = "pair-zec")]
@@ -374,10 +377,13 @@ impl MakerRpc {
     }
 
     #[cfg(feature = "pair-xmr")]
-    /// Attaches daemon-owned Monero validation and actor authority.
+    /// Attaches the take-time Monero agreement (`xmr_reserve_v1`) and keeps
+    /// the sidecars of the swaps it activated before a restart running.
     #[must_use]
-    pub fn with_xmr_chat_authority(mut self, authority: XmrMakerChatAuthority) -> Self {
-        self.xmr_chat_authority = Some(Arc::new(authority));
+    pub fn with_xmr_reservations(mut self, reservations: XmrMakerReservations) -> Self {
+        let reservations = Arc::new(reservations);
+        reservations.restore();
+        self.xmr_reservations = Some(reservations);
         self
     }
 

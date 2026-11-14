@@ -2130,6 +2130,7 @@ dependencies = [
  "lez-swap-sdk-core",
  "lez-swap-store",
  "lez-taker-node",
+ "lez-xmr-monero-adapter",
  "lez-xmr-swap-sdk",
  "lez-zec-swap-sdk",
  "rusqlite",
