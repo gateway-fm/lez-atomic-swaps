@@ -509,44 +509,105 @@ when `LEZ_LANE=<k>` is set: `LEZ_LANE=2 bash scripts/ui-e2e.sh happy`.
 
 ### Monero (LEZ_MONERO=1)
 
-Monero regtest is off by default: a Bitcoin/Zcash run starts and waits for
-nothing of it, and a release bundle, which publishes no Monero image, never
-pulls one. `LEZ_MONERO=1` turns it on for the stack and every lane (Compose
-profile `monero`; `gen-config.sh` keeps the choice in `runtime.env`,
-`LEZ_MONERO=0` turns it off again):
+Monero swaps run on this devnet only: an offline Monero **regtest** chain on
+each lane, on **x86_64 hosts only** (the pinned release is `linux-x64`;
+`stage-assets.sh` refuses another architecture). No Monero stagenet, testnet or
+mainnet route exists: the Nodes' Monero role accepts only the
+`accelerated-regtest` profile. The protocol, its windows and the punish branch
+are in [protocol-design.md](../docs/milestone-1/protocol-design.md#xmrlez).
+
+Monero is off by default: a Bitcoin/Zcash run starts and waits for nothing of
+it, and a release bundle, which publishes no Monero image, never pulls one.
+`LEZ_MONERO=1` turns it on for the stack and every lane (Compose profile
+`monero`; `gen-config.sh` keeps the choice in `runtime.env`, so a later
+`up.sh --fresh-lez` keeps it, and `LEZ_MONERO=0` turns it off again):
 
 ```sh
 LEZ_MONERO=1 bash scripts/stage-assets.sh    # once: fetch and verify the pinned release
 LEZ_MONERO=1 bash scripts/up.sh              # builds lez-monerod:local, starts it on every lane
 python3 scripts/monero-lane.py fund --role maker   # mine, pay the Maker 10 XMR, read its balance
+python3 scripts/monero-lane.py balance --role taker
 ```
 
-Each lane runs `monerod` (an offline fakechain: no peers, no miner, blocks
-generated on demand; the Monero adapter mines its own ten confirmations) and
-three `monero-wallet-rpc`: `xmr-funding-wallet`, which the harness mines to and
-funds the roles from, and `maker-xmr-wallet` / `taker-xmr-wallet`, one per
-role. The image is the isolated lane's (`tests/e2e/monero`: Monero 0.18.5.1,
-its signed hash manifest checked against the pinned signer, the archive's
-sha256, the source tag; `scripts/verify-monero-release.sh`, run in a
-throwaway container by `stage-assets.sh`). Every RPC takes a Digest login that
-`gen-config.sh` mints once under `runtime[/lanes/<k>]/monero`; each role's
-Node gets monerod's and its own wallet-rpc's login beside its identity and
-forwards `127.0.0.1:18081` and `:18083` to them (the adapter accepts only
-literal-loopback endpoints). Where a role has those logins, its route health
-carries a Monero probe (`probe-monero`: monerod's `get_info`, its wallet-rpc's
-`get_version`), so `maker_health` / `taker_health` read the Monero route
-unavailable, and the Node degraded, while either does not answer. monerod and
-the funding wallet-rpc publish `127.0.0.1:18081+10(k-1)` and `18083+10(k-1)`.
-Like Zebra, Monero outlives `up.sh --fresh-lez` and `reset-swaps.sh`; `down.sh
---wipe` (and `lanes.sh down N --wipe`) remove its volumes. `runtime.env`
-also carries the Monero leg's windows for the timing profile
-(`LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS`, `LEZ_XMR_REFUND_SECONDS`,
-`LEZ_XMR_PUNISH_SECONDS`: the Bitcoin cutoff plus the ten-block depth, then a
-LEZ step, a stall and the margin), which nothing reads yet: no Monero swap
-runs through the Nodes. Public stagenet is out of scope. Footprint, measured
-on 2026-11-13: the image is 115 MB; after 190 blocks a lane's monerod volume
-holds 0.5 MB and each wallet's 0.4 MB; monerod uses about 270 MB of memory,
-each wallet-rpc about 13 MB.
+**The pinned release.** Monero 0.18.5.1 (`tests/e2e/monero/provenance.env`:
+tag `v0.18.5.1`, source commit `4f92268d…`, archive
+`monero-linux-x64-v0.18.5.1.tar.bz2` with its sha256 `22a7dda7…`, the signed
+`hashes.txt` checked against the pinned signer key, fingerprint
+`81AC591F…2A0BDF92`). `stage-assets.sh` runs `scripts/verify-monero-release.sh`
+in a throwaway container, keeps only `monerod` and `monero-wallet-rpc` and runs
+their `--version` there; the downloaded binaries never run on the host. The
+image `lez-monerod:local` (115 MB) runs them on a distroless base.
+
+**What runs per lane.** `monerod` (`--regtest --offline`, fixed difficulty: no
+peers, no miner; blocks are generated on demand) and three `monero-wallet-rpc`:
+`xmr-funding-wallet`, which the harness mines to and funds the roles from, and
+one per role, `maker-xmr-wallet` and `taker-xmr-wallet`. Each role's wallet is
+named after the role (`maker`, `taker`), has no password, and is created by
+`monero-lane.py` when its wallet-rpc has none open. Every RPC takes a Digest
+login that `gen-config.sh` mints once under `runtime[/lanes/<k>]/monero`; each
+role's Node gets monerod's and its own wallet-rpc's login and forwards
+`127.0.0.1:18081` and `:18083` to them (the Monero adapter accepts only
+literal-loopback endpoints). monerod and the funding wallet-rpc publish
+`127.0.0.1:18081+10(k-1)` and `18083+10(k-1)`. Like Zebra, Monero outlives
+`up.sh --fresh-lez` and `reset-swaps.sh`; `down.sh --wipe` (and
+`lanes.sh down N --wipe`) remove its volumes.
+
+**The Nodes.** Where a role has those logins, `node-entrypoint.sh` writes its
+Monero role configuration `xmr-role.json` (owner-private: the endpoints, the
+logins, the wallet name, the three windows, the Stage-A planner and, on the
+Maker, the six effect tools) and passes it to the Node: the Maker gets
+`--xmr-role-config`, `--xmr-maker-actor-root` and its pinned
+`lez-xmr-maker-actor`, the Taker `initiation.xmr_role_config`. The Node
+binaries are built with `pair-xmr` (`from-scratch.sh --only rust`). The route
+health carries a Monero probe for the one route, Monero `TakerSellsLez`
+(`probe-monero`: monerod's `get_info`, the role's wallet-rpc's `get_version`),
+so `maker_health` / `taker_health` read the Monero route unavailable, and the
+Node degraded, while either does not answer. Every Monero transfer the Nodes
+send (the Maker's funding, either role's sweep) is followed by the sender
+mining its own 10 confirmations; the harness mines only to fund the Maker.
+
+**The windows.** `runtime.env` carries the agreement's three offsets from the
+take, which both Nodes read and must have alike:
+`LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS` (C), `LEZ_XMR_REFUND_SECONDS` (R) and
+`LEZ_XMR_PUNISH_SECONDS` (P): the Bitcoin Maker cutoff plus 20 s for the ten
+confirmations, then a LEZ step and the margin, then a step, a stall and the
+margin. On `fast`, the profile every Monero scenario runs on, that is +260,
++360 and +480 s: the Taker may refund only in the 120 s between R and P, and
+from P a Maker can take the LEZ while the Monero stays locked. `refund` gives
++120, +175, +250 s and `local` +1820, +2160, +2520 s (default LEZ step 20 s,
+stall 40 s).
+
+**Scenarios.** `node-e2e.py --pair Monero <scenario>` drives both Nodes over
+their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over
+its owner RPC); `regress.sh` runs them as `node:xmr:<scenario>:TakerSellsLez`,
+on `fast`, and leaves them out with a line on a stack without `LEZ_MONERO=1`.
+All eight are in the `full` tier, none in `smoke`. A lot is 1 XMR for 50 000
+LEZ units.
+
+```sh
+bash scripts/regress.sh run node:xmr:xmr-happy:TakerSellsLez
+bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-maker:TakerSellsLez
+```
+
+| Scenario | What it asserts |
+|---|---|
+| `xmr-happy` | take over Chat, the Taker's LEZ lock, the Maker's Monero funding at depth, the Taker's claim, the Maker's LEZ claim, the Taker's sweep; LEZ to the unit, the Taker's one received transfer the lot less at most 0.01 XMR of fee, both Nodes completed |
+| `xmr-taker-refund` | the Maker funds, the Taker does not claim and refunds from R; the Maker sweeps its Monero back; the Taker's owner signs nothing for the refund |
+| `xmr-taker-refund-kill` | as `xmr-taker-refund`, the Taker's container killed with SIGKILL right after the refund's admission; started again it submits the refund |
+| `xmr-maker-never-funds` | the Maker Node is stopped right after the take and kept down until the Taker refunded from R; back up, the Maker ends `expired`; no Monero moved |
+| `xmr-punish` | the Maker funds, the Taker Node is stopped once it has verified the Monero; from P the Maker sends tag 17 at a live owner nonce other than 0 and ends `punished`; the LEZ moves to the Maker, the Monero stays at the shared address, the Taker back up reads `attention_required` (`xmr_refund_window_closed`) |
+| `xmr-concurrent` | two swaps of the same Nodes at once, one offer each; both complete; two fundings, two sweeps |
+| `xmr-kill-taker` | the Taker killed with SIGKILL at each of 7 steps (after the take, lock in flight, locked, Monero verified, claim authorised, waiting for the Maker's claim, sweeping), one fresh swap each; each completes with the owner accounts' LEZ transaction counts and the Monero moved once |
+| `xmr-kill-maker` | the Maker killed at each of 5 steps (after the take, the Taker's lock observed, its Monero funding in flight, funded, its LEZ claim in flight); each completes or, killed with the Taker's lock observed or its funding in flight, may end refunded with nothing lost (in the passing run all five completed) |
+
+These ran on lane 1 only; lanes 2 and up have Monero but no Monero scenario has
+run on them. Footprint, measured on 2026-11-13: after 190 blocks a lane's
+monerod volume holds 0.5 MB and each wallet's 0.4 MB; monerod uses about
+270 MB of memory, each wallet-rpc about 13 MB.
+
+Not on the devnet yet: the desks show no Monero (Monero runs through the Nodes'
+owner RPC and CLIs only), the systemd role packages configure no Monero role,
+and there is no macOS package for it.
 
 ### A second stack on the same host
 
