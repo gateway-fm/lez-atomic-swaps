@@ -7,7 +7,7 @@
 # Basecamp's log under logs/.
 set -u
 U="${1:?}" DESK="${2:?}" T="${3:?}"
-cd <scratch>
+cd "${SCRATCH:?}" || exit 1
 rm -rf "$U"; mkdir -p "$U"
 scripts/mac-bc-start.sh "$U" "logs/mac-bc-$T-first.log"; sleep 30; scripts/quit-basecamp.sh | tail -1
 D=$(ls -d "$U"/module_data/package_downloader/*)

@@ -5,16 +5,16 @@
 # signer and Node); wait for both Nodes' ready files; run the node-e2e
 # scenarios (run-suite.sh); quit Basecamp; count Chat's decode failures.
 set -u
-W=<scratch>
-export APP=<home>/tmp/lez-darwin-variant-work/basecamp-032/app/LogosBasecamp.app
-export USER_DIR=$W/bc/mac-both LEZ_NODE_HOME=$W/home DEPLOY=<workspace>/deploy
-export CA_BUNDLE=<scratch>/previous/tls/bundle.pem
+W=${SCRATCH:?}
+export APP=$HOME/tmp/lez-darwin-variant-work/basecamp-032/app/LogosBasecamp.app
+export USER_DIR=$W/bc/mac-both LEZ_NODE_HOME=$W/home DEPLOY=${WORKSPACE:?}/deploy
+export CA_BUNDLE=${SCRATCH:?}/previous/tls/bundle.pem
 LOG=$W/logs/swap-basecamp.log
 "$W/scripts/start-basecamp.sh" > "$LOG" 2>&1 < /dev/null &
 echo "[$(date -u +%TZ)] basecamp started"; sleep 30
 osascript -l JavaScript "$W/scripts/ax-click.js" "LEZ Maker"; sleep 40
 osascript -l JavaScript "$W/scripts/ax-click.js" "LEZ Taker"
-for i in $(seq 180); do [[ -e $LEZ_NODE_HOME/run/maker/ready && -e $LEZ_NODE_HOME/run/taker/ready ]] && break; sleep 2; done
+for _ in $(seq 180); do [[ -e $LEZ_NODE_HOME/run/maker/ready && -e $LEZ_NODE_HOME/run/taker/ready ]] && break; sleep 2; done
 echo "[$(date -u +%TZ)] ready files: $(ls $LEZ_NODE_HOME/run/maker/ready $LEZ_NODE_HOME/run/taker/ready 2>&1 | tr '\n' ' ')"
 printf '%s\n' "btc-happy happy --direction TakerSellsForeign" "btc-happy-lez happy --direction TakerSellsLez" \
   "zec-happy-lez zec-happy --pair Zcash --direction TakerSellsLez" "zec-happy-foreign zec-happy --pair Zcash --direction TakerSellsForeign" |

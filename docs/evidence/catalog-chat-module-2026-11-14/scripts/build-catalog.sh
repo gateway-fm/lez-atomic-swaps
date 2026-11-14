@@ -4,8 +4,8 @@
 # tool's index.py (lgx semver ordering), logos-repo.json naming <host:port>.
 set -euo pipefail
 P="${1:?pkg dir}" SRV="${2:?srv dir}" HP="${3:?host:port}"
-TOOL=<home>/tmp/lez-030-multiplatform/up/logos-modules-release-tool/index.py
-export PATH="<home>/tmp/lez-031-signed/src/build-HEAD:$PATH"
+TOOL=$HOME/tmp/lez-030-multiplatform/up/logos-modules-release-tool/index.py
+export PATH="$HOME/tmp/lez-031-signed/src/build-HEAD:$PATH"
 rm -rf "$SRV"; mkdir -p "$SRV"; urls="$SRV.urls.txt"; : > "$urls"
 for f in "$P"/*.lgx; do
   m="$(tar -xzOf "$f" manifest.json)"; n="$(jq -r .name <<<"$m")"; v="$(jq -r .version <<<"$m")"

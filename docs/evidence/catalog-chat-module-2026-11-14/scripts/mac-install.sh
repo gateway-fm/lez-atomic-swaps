@@ -5,8 +5,8 @@
 # `package deps --recursive`, and what is on disk.
 set -u
 S="${1:?session}" CAT="${2:?catalog url}" DESK="${3:?desk}"
-L=<home>/tmp/logosctl-0.3.2-macos/x/logosctl-aarch64-macos/bin/logosctl
-CA=<scratch>/previous/tls/bundle.pem
+L=$HOME/tmp/logosctl-0.3.2-macos/x/logosctl-aarch64-macos/bin/logosctl
+CA=${SCRATCH:?}/previous/tls/bundle.pem
 lc() { env -i HOME="$HOME" USER="$USER" TMPDIR="$TMPDIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin SSL_CERT_FILE="$CA" "$L" --config-dir "$S" "$@"; }
 run() { echo "[$(date -u +%H:%M:%SZ)] \$ logosctl $*"; lc "$@"; echo "[exit $?]"; echo; }
 rm -rf "$S"; mkdir -p "$S"
