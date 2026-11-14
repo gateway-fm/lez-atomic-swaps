@@ -5927,11 +5927,16 @@ def xmr_publish(stamp: str, offer_id: str) -> None:
     route = ["--pair", "monero", "--direction", "taker-sells-lez"]
     revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
                                      if r["value"]["route"] == ROUTE), [])
-    maker_cli("configure-pair", "--request-id", f"e2e-xmr-pair-{stamp}", *revision(maker_cli("pairs")), *route,
-              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(XMR_FOREIGN_UNITS),
-              "--maximum-foreign-units", str(XMR_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
-    maker_cli("set-local-price", "--request-id", f"e2e-xmr-price-{stamp}", *revision(maker_cli("prices")), *route,
-              "--lez-units-per-lot", "1", "--foreign-units-per-lot", str(XMR_FOREIGN_UNITS // XMR_LEZ_UNITS))
+    # A price needs its route configured and an enabled route needs its price:
+    # on a Maker that has never had Monero, the route is saved disabled first.
+    for enabled in ("false", "true"):
+        maker_cli("configure-pair", "--request-id", f"e2e-xmr-pair-{stamp}-{enabled}", *revision(maker_cli("pairs")),
+                  *route, "--enabled", enabled, "--price-source", "local", "--minimum-foreign-units",
+                  str(XMR_FOREIGN_UNITS), "--maximum-foreign-units", str(XMR_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+        if enabled == "false":
+            maker_cli("set-local-price", "--request-id", f"e2e-xmr-price-{stamp}", *revision(maker_cli("prices")),
+                      *route, "--lez-units-per-lot", "1", "--foreign-units-per-lot",
+                      str(XMR_FOREIGN_UNITS // XMR_LEZ_UNITS))
     maker_cli("publish-offer", "--request-id", f"e2e-xmr-publish-{stamp}", "--offer-id", offer_id, *route)
     log(f"  Maker CLI published {offer_id} on its running Node")
 
