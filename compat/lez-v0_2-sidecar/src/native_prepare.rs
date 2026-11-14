@@ -5277,7 +5277,9 @@ impl NativeEscrowPlanner {
             (self.role, effect),
             (
                 Participant::Maker,
-                XmrNativeEffectV3::AuthorizeClaim | XmrNativeEffectV3::Refund
+                XmrNativeEffectV3::Fund
+                    | XmrNativeEffectV3::AuthorizeClaim
+                    | XmrNativeEffectV3::Refund
             ) | (
                 Participant::Taker,
                 XmrNativeEffectV3::Claim | XmrNativeEffectV3::Punish

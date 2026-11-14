@@ -417,7 +417,8 @@ impl FinalizedNativeXmrEffectObserver {
                 XmrNativeEffectV3::AuthorizeClaim,
                 ZecEscrowInstruction::AuthorizeNativeXmrClaim { swap_id, .. },
             ) => swap_id == *input.swap_id.as_bytes(),
-            (XmrNativeEffectV3::Claim, ZecEscrowInstruction::ClaimNativeXmr { swap_id })
+            (XmrNativeEffectV3::Fund, ZecEscrowInstruction::FundNative { swap_id })
+            | (XmrNativeEffectV3::Claim, ZecEscrowInstruction::ClaimNativeXmr { swap_id })
             | (XmrNativeEffectV3::Refund, ZecEscrowInstruction::RefundNativeXmr { swap_id })
             | (XmrNativeEffectV3::Punish, ZecEscrowInstruction::PunishNativeXmr { swap_id }) => {
                 swap_id == *input.swap_id.as_bytes()
