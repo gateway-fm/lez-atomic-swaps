@@ -1,0 +1,188 @@
+taker BTC reservation failed: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory or lease file is unsafe
+taker BTC reservation failed: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory or lease file is unsafe
+taker BTC reservation failed: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory or lease file is unsafe
+taker BTC reservation failed: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory or lease file is unsafe
+taker BTC reservation failed: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory or lease file is unsafe
+taker BTC reservation failed: sidecar failed to start: LEZ v0.2 bridge PoC failed: acquire exclusive bridge sidecar state-directory lease: sidecar state directory or lease file is unsafe
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker BTC reservation failed: sidecar failed to start: LEZ v0.2 bridge PoC failed: official indexer finalized clock is not bound to the runtime genesis: official v0.2 sequencer tip moved during observation
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker BTC take failed: btc_ceremony_reserve_v1: local RPC error -32603: maker BTC lifecycle step failed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+{"class":"ObservationUnavailable","event":"taker_actor_command_failed","step":"effect"}
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656348: activate → activated - (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1794656348: attempt backs off (actor_drive_unavailable); retried every 30 s, logged again only when the class changes
+taker RPC connection ended with an error: connection closed before message completed
+{"class":"StatusMaterialUnavailable","event":"taker_actor_command_failed","step":"status"}
+{"class":"StatusMaterialUnavailable","event":"taker_actor_command_failed","step":"status"}
+{"class":"StatusMaterialUnavailable","event":"taker_actor_command_failed","step":"status"}
+{"class":"StatusMaterialUnavailable","event":"taker_actor_command_failed","step":"status"}
+taker RPC connection ended with an error: connection closed before message completed
+{"class":"StatusMaterialUnavailable","event":"taker_actor_command_failed","step":"status"}
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656398: activate → activated - (phase offered, revision 0, next fund_zcash)
+taker actor zec-devnet-swap-1794656398: drive → submitted zcash_fund (phase offered, revision 0, next fund_zcash)
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656398: drive → awaiting_observation zcash_fund (phase offered, revision 0, next fund_zcash)
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656398: attempt backs off (actor_drive_unavailable); retried every 30 s, logged again only when the class changes
+{"class":"StatusMaterialUnavailable","event":"taker_actor_command_failed","step":"status"}
+taker RPC connection ended with an error: connection closed before message completed
+{"class":"StatusStoreUnavailable","event":"taker_actor_command_failed","step":"status"}
+{"class":"StatusStoreUnavailable","event":"taker_actor_command_failed","step":"status"}
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656552: activate → activated - (phase offered, revision 0, next create_and_fund_lez)
+taker actor zec-devnet-swap-1794656552: drive → submitted lez_initialize (phase offered, revision 0, next create_and_fund_lez)
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656552: drive → submitted lez_fund (phase offered, revision 0, next create_and_fund_lez)
+actor drive unavailable: LezFirstLock(Adapter(Canonical(UnstableTip)))
+taker actor zec-devnet-swap-1794656552: drive refused: actor drive is unavailable
+taker actor zec-devnet-swap-1794656552: attempt backs off (actor_drive_unavailable); retried every 30 s, logged again only when the class changes
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor drive unavailable: LezFirstLock(Adapter(Canonical(UnstableTip)))
+taker actor zec-devnet-swap-1794656552: drive refused: actor drive is unavailable
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor drive unavailable: LezFirstLock(Adapter(Canonical(UnstableTip)))
+taker actor zec-devnet-swap-1794656552: drive refused: actor drive is unavailable
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor drive unavailable: LezFirstLock(Adapter(Canonical(UnstableTip)))
+taker actor zec-devnet-swap-1794656552: drive refused: actor drive is unavailable
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor drive unavailable: LezFirstLock(Adapter(Canonical(UnstableTip)))
+taker actor zec-devnet-swap-1794656552: drive refused: actor drive is unavailable
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor drive unavailable: LezFirstLock(Adapter(Canonical(UnstableTip)))
+taker actor zec-devnet-swap-1794656552: drive refused: actor drive is unavailable
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor drive unavailable: LezFirstLock(Adapter(Canonical(UnstableTip)))
+taker actor zec-devnet-swap-1794656552: drive refused: actor drive is unavailable
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656831: activate → activated - (phase offered, revision 0, next fund_zcash)
+taker actor zec-devnet-swap-1794656831: drive → submitted zcash_fund (phase offered, revision 0, next fund_zcash)
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656831: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+taker actor zec-devnet-swap-1794656831: drive → awaiting_observation maker_lock (phase taker_lock_confirmed, revision 1, next wait)
+taker RPC connection ended with an error: connection closed before message completed
+taker observer: sidecar for 425c4de2c2a56b71866394d34d3e23287b828f4cc865eaca9a84005a71d4c8c0 unavailable: sidecar failed to start: LEZ v0.2 bridge PoC failed: official indexer finalized clock is not bound to the runtime genesis: official v0.2 sequencer tip moved during observation
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656831: drive → projected maker_lock (phase both_legs_locked, revision 2, next claim_lez)
+actor claim unavailable: LezClaim(Adapter(Canonical(Chain(UnstableTip))))
+taker actor zec-devnet-swap-1794656831: claim refused: actor claim is not currently available
+taker actor zec-devnet-swap-1794656831: attempt backs off (actor_drive_unavailable); retried every 30 s, logged again only when the class changes
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor claim unavailable: LezClaim(Adapter(Canonical(Chain(UnstableTip))))
+taker actor zec-devnet-swap-1794656831: claim refused: actor claim is not currently available
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor claim unavailable: LezClaim(Adapter(Canonical(Chain(UnstableTip))))
+taker actor zec-devnet-swap-1794656831: claim refused: actor claim is not currently available
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+actor claim unavailable: LezClaim(Adapter(Canonical(Chain(UnstableTip))))
+taker actor zec-devnet-swap-1794656831: claim refused: actor claim is not currently available
+taker RPC connection ended with an error: connection closed before message completed
+actor claim unavailable: LezClaim(Adapter(Canonical(Chain(UnstableTip))))
+taker actor zec-devnet-swap-1794656831: claim refused: actor claim is not currently available
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+{"class":"ObservationUnavailable","event":"taker_actor_command_failed","step":"observe"}
+actor claim unavailable: LezClaim(Adapter(Canonical(Chain(UnstableTip))))
+taker actor zec-devnet-swap-1794656831: claim refused: actor claim is not currently available
+taker actor zec-devnet-swap-1794656831: attempt backs off (actor_drive_unavailable); retried every 30 s, logged again only when the class changes
+actor claim unavailable: LezClaim(Adapter(Canonical(Chain(UnstableTip))))
+taker actor zec-devnet-swap-1794656831: claim refused: actor claim is not currently available
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker actor zec-devnet-swap-1794656831: claim → projected lez_revealing_claim (phase claim_evidence_available, revision 3, next wait)
+taker actor zec-devnet-swap-1794656831: drive → awaiting_observation zcash_followup_claim (phase claim_evidence_available, revision 3, next wait)
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+taker RPC connection ended with an error: connection closed before message completed
+{"class":"ObservationUnavailable","event":"taker_actor_command_failed","step":"observe"}

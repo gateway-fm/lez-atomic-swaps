@@ -438,5 +438,77 @@ class NativeNodes(unittest.TestCase):
                 self.assertEqual(e2e.node_log_since('taker', since), 'after\n')
 
 
+class ChainsOverRpc(unittest.TestCase):
+    """Issue 152: native Nodes on Linux, and chains reached only over RPC."""
+
+    def test_a_native_node_s_bin_is_its_executable_s_directory_on_linux(self):
+        # Linux: `ps -o comm=` is the bare name; /proc/<pid>/exe is the program.
+        with tempfile.TemporaryDirectory() as root:
+            program = pathlib.Path(root) / 'modules/lez_taker_node/bin/lez-taker-node'
+            program.parent.mkdir(parents=True)
+            program.write_text('')
+            exe = pathlib.Path(root) / 'exe'
+            exe.symlink_to(program)
+            real_path = pathlib.Path
+
+            def proc(path):
+                return exe if str(path) == '/proc/4242/exe' else real_path(path)
+
+            with patch.object(e2e, 'NATIVE_RUN_ROOT', root + '/run'), \
+                    patch.object(e2e, 'native_pid', lambda role: 4242), \
+                    patch.object(e2e.pathlib, 'Path', proc), \
+                    patch.object(e2e.subprocess, 'run', lambda *a, **k: self.fail('ps is not asked on Linux')):
+                self.assertEqual(e2e.native_bin('taker'), str(program.parent))
+
+    def test_bitcoin_cli_becomes_json_rpc_with_the_cookie(self):
+        import http.server
+        import threading
+        seen = []
+
+        class Core(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers['content-length'])))
+                seen.append((self.path, self.headers['authorization'], body))
+                reply = ({'result': None, 'error': {'code': -5, 'message': 'No such mempool transaction'}}
+                         if body['method'] == 'getrawtransaction' else {'result': {'ok': body['params']}, 'error': None})
+                data = json.dumps({**reply, 'id': body['id']}).encode()
+                self.send_response(500 if reply['error'] else 200)
+                self.send_header('content-length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *_):
+                pass
+
+        server = http.server.HTTPServer(('127.0.0.1', 0), Core)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as root:
+            cookie = pathlib.Path(root) / 'cookie'
+            cookie.write_text('__cookie__:secret\n')
+            with patch.object(e2e, 'CHAINS_RPC_ONLY', True), \
+                    patch.object(e2e, 'BTC_RPC_URL', f'http://127.0.0.1:{server.server_port}/'), \
+                    patch.object(e2e, 'BTC_RPC_COOKIE', cookie), \
+                    patch.object(e2e.subprocess, 'run', lambda *a, **k: self.fail('no docker exec')):
+                self.assertEqual(e2e.bitcoin('generatetoaddress', '2', 'bcrt1qminer'), {'ok': [2, 'bcrt1qminer']})
+                self.assertEqual(e2e.bitcoin('-rpcwallet=lez-maker', '-named', 'send', 'outputs={"a":1}', 'fee_rate=2'),
+                                 {'ok': {'outputs': {'a': 1}, 'fee_rate': 2}})
+                with self.assertRaisesRegex(e2e.Failure, 'bitcoin-cli getrawtransaction failed: .*No such mempool'):
+                    e2e.bitcoin('getrawtransaction', 'ab' * 32)
+        self.assertEqual(seen[0][0], '/')
+        self.assertEqual(seen[1][0], '/wallet/lez-maker')
+        self.assertEqual(seen[0][1], 'Basic X19jb29raWVfXzpzZWNyZXQ=')
+
+    def test_a_scenario_that_stops_a_chain_container_fails_saying_so(self):
+        ran = []
+        with patch.object(e2e, 'CHAINS_RPC_ONLY', True), \
+                patch.object(e2e.subprocess, 'run', lambda command, **_: ran.append(command)):
+            with self.assertRaisesRegex(e2e.Failure, 'the chains are not containers here'):
+                e2e.docker('stop', e2e.MINER)
+            # A Node's own container is still this host's.
+            e2e.docker('restart', f'{e2e.PREFIX}-taker-node')
+        self.assertEqual(ran, [['docker', 'restart', f'{e2e.PREFIX}-taker-node']])
+
+
 if __name__ == '__main__':
     unittest.main()

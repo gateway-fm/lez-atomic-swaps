@@ -79,6 +79,13 @@ reads its log from <home>/<role>.node.log, and provisions ZEC corridors with
 zec-provision.sh --native-home. The scenarios that cut a loopback forward or
 the Chat socket inside a container are refused (NATIVE_REFUSED).
 
+With LEZ_CHAINS_RPC_ONLY=1, the chains are not containers on this host
+(they are another host's, reached over their RPC ports): the harness talks to
+Bitcoin Core over JSON-RPC (LEZ_E2E_BTC_RPC_URL, default
+http://127.0.0.1:18443/, with the cookie in LEZ_BTC_RPC_COOKIE_FILE, default
+runtime/secrets/btc-rpc-cookie) instead of `docker exec ... bitcoin-cli`, and a
+scenario that stops or starts a chain's container fails at once, saying so.
+
 The BTC refund scenarios need the `refund` (or the `fast`) timing profile
 (`LEZ_TIMING_PROFILE=refund scripts/up.sh`, which recreates the Nodes and the
 miner; regress.sh switches by itself); the harness refuses to start them under
@@ -87,6 +94,7 @@ the `local` profile.
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime
 import json
 import os
@@ -95,6 +103,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 DEPLOY_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -174,6 +183,10 @@ MAKER_WALLET = os.environ.get("LEZ_LANE_MAKER_WALLET", "maker-munich-01")
 TAKER_WALLET = os.environ.get("LEZ_LANE_TAKER_WALLET", "taker-zurich-01")
 BTC_CLI = ["docker", "exec", f"{PREFIX}-bitcoin-core", "bitcoin-cli",
            "-conf=/run-config/bitcoin.conf", "-datadir=/var/lib/bitcoin"]
+# The chains are another host's, reached only over their RPC ports.
+CHAINS_RPC_ONLY = os.environ.get("LEZ_CHAINS_RPC_ONLY") == "1"
+BTC_RPC_URL = os.environ.get("LEZ_E2E_BTC_RPC_URL", "http://127.0.0.1:18443/")
+BTC_RPC_COOKIE = pathlib.Path(os.environ.get("LEZ_BTC_RPC_COOKIE_FILE") or DEPLOY_ROOT / "runtime/secrets/btc-rpc-cookie")
 MINER_ADDRESS = "bcrt1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqc8gma6"
 TERMINAL = {"completed", "refunded", "attention_required"}
 
@@ -235,7 +248,51 @@ def expect_error(label: str, role: str, method: str, params: object, category: s
     log(f"  rejected as expected: {label} ({got or error.get('message')})")
 
 
+def bitcoin_rpc_argument(text: str) -> object:
+    # bitcoin-cli's own reading of an argument: JSON when it parses, else a string.
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def bitcoin_rpc(*command: str) -> object:
+    """A `bitcoin-cli [-rpcwallet=<w>] [-named] <method> <args>` call as JSON-RPC
+    to Bitcoin Core (LEZ_CHAINS_RPC_ONLY)."""
+    wallet, named, rest = None, False, list(command)
+    while rest and rest[0].startswith("-"):
+        option = rest.pop(0)
+        if option.startswith("-rpcwallet="):
+            wallet = option.split("=", 1)[1]
+        elif option == "-named":
+            named = True
+        else:
+            raise Failure(f"bitcoin-cli option {option} has no JSON-RPC equivalent here")
+    if not rest:
+        raise Failure("bitcoin-cli without a method")
+    method, arguments = rest[0], rest[1:]
+    params: object = ({key: bitcoin_rpc_argument(value) for key, value in (a.split("=", 1) for a in arguments)}
+                      if named else [bitcoin_rpc_argument(a) for a in arguments])
+    url = BTC_RPC_URL.rstrip("/") + "/" + (f"wallet/{wallet}" if wallet else "")
+    body = json.dumps({"jsonrpc": "1.0", "id": "node-e2e", "method": method, "params": params}).encode()
+    request = urllib.request.Request(url, body, {"content-type": "application/json"})
+    request.add_unredirected_header(
+        "Authorization", "Basic " + base64.b64encode(BTC_RPC_COOKIE.read_text().strip().encode()).decode())
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            reply = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        reply = json.loads(error.read() or b"{}")
+    except (OSError, ValueError) as error:
+        raise Failure(f"bitcoin-cli {method} failed: {error}") from error
+    if reply.get("error"):
+        raise Failure(f"bitcoin-cli {method} failed: {json.dumps(reply['error'])[:200]}")
+    return reply.get("result")
+
+
 def bitcoin(*command: str) -> object:
+    if CHAINS_RPC_ONLY:
+        return bitcoin_rpc(*command)
     result = subprocess.run(BTC_CLI + list(command), capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise Failure(f"bitcoin-cli {command[0]} failed: {result.stderr.strip()[:200]}")
@@ -251,6 +308,9 @@ def mine(blocks: int) -> None:
 
 
 def docker(*command: str) -> None:
+    if CHAINS_RPC_ONLY and command[-1].startswith(f"{PREFIX}-") and not command[-1].endswith(("-maker-node", "-taker-node")):
+        raise Failure(f"docker {' '.join(command)}: this scenario stops or starts a chain's container, "
+                      "and LEZ_CHAINS_RPC_ONLY says the chains are not containers here")
     subprocess.run(["docker", *command], check=True, capture_output=True)
 
 
@@ -268,6 +328,11 @@ def native_bin(role: str) -> str:
     pid = native_pid(role)
     if pid is None:
         raise Failure(f"no native {role} Node runs (socket {NATIVE_RUN_ROOT}/{role}/node.sock)")
+    # Linux: `comm` is the bare, truncated name; the executable is /proc/<pid>/exe.
+    # macOS has no /proc, and its `comm` is the full path.
+    exe = pathlib.Path(f"/proc/{pid}/exe")
+    if exe.exists():
+        return str(pathlib.Path(os.readlink(exe)).parent)
     program = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
     return str(pathlib.Path(program).parent)
 

@@ -2344,9 +2344,7 @@ impl BridgeRuntime {
             return Err(BridgeRuntimeError::MovingTip);
         }
         let block = self.node.block_at(pinned.height).await?;
-        if block.header.block_id != pinned.height
-            || block.header.hash.0 != *pinned.block_hash.as_bytes()
-        {
+        if !pinned_block_still_canonical(pinned, block.header.block_id, block.header.hash.0) {
             return Err(BridgeRuntimeError::MovingTip);
         }
         Ok(())
@@ -2677,6 +2675,12 @@ fn position_key(position: &ChainPosition) -> (u64, u32) {
     (position.height, position.transaction_index)
 }
 
+/// The block a later view holds at the pinned height is the pinned block: same
+/// height, same hash. Anything else means the pinned block was replaced.
+fn pinned_block_still_canonical(pinned: ChainTip, block_id: u64, block_hash: [u8; 32]) -> bool {
+    block_id == pinned.height && block_hash == *pinned.block_hash.as_bytes()
+}
+
 fn validate_block_range(
     blocks: &[Block],
     start: u64,
@@ -2991,6 +2995,22 @@ mod tests {
             reported(&empty),
             (None, None, true),
             "nothing found needs no finality"
+        );
+    }
+
+    // A later, higher tip is one view with the pinned one only while the block
+    // at the pinned height is still the pinned block (issue 149).
+    #[test]
+    fn a_later_tip_extends_the_pinned_one_only_while_the_pinned_block_stays() {
+        let pinned = ChainTip::new(Hex32::from_bytes([0x51; 32]), 40);
+        assert!(pinned_block_still_canonical(pinned, 40, [0x51; 32]));
+        assert!(
+            !pinned_block_still_canonical(pinned, 40, [0x52; 32]),
+            "pinned block replaced"
+        );
+        assert!(
+            !pinned_block_still_canonical(pinned, 41, [0x51; 32]),
+            "a block from another height"
         );
     }
 }

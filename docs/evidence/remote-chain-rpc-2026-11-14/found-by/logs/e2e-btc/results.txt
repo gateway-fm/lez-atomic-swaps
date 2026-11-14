@@ -1,0 +1,5 @@
+[12:05:23Z] start btc-happy (happy --direction TakerSellsForeign)
+[12:08:13Z] btc-happy exit 0
+[12:08:13Z] start btc-happy-lez (happy --direction TakerSellsLez)
+[12:10:01Z] btc-happy-lez exit 0
+SUITE-DONE

@@ -1,0 +1,1 @@
+[11:47:10Z] start zec-happy-foreign (zec-happy --pair Zcash --direction TakerSellsForeign)

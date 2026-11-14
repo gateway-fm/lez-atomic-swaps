@@ -1,0 +1,33 @@
+[12:11:13] === taker-refund (stamp 1794658273)
+[12:11:13] preflight: indexer historical reads
+[12:11:13]   indexer serves historical reads at the tip (5272)
+[12:11:13] preflight: the finality heartbeat saw finality move 0 s ago (finalized 5255)
+[12:11:13]   Maker published offer-e2e-1794658273
+[12:11:18]   Taker took offer-e2e-1794658273: swap abf2c6dbdc75 (not_activated)
+[12:11:18]   stopping the Maker Node so it never funds
+[12:11:21]   Taker locked bitcoin: 57251c06bc6c (replay=False)
+[12:11:23]   mined 421 blocks past the lock; the Maker cutoff is 240s after the take, the Taker's refund opens 240s after it
+[12:11:23]   [0 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker awaiting_first_lock (refund admitted) | maker unreachable | LEZ finalized 5255, tip 5258 (3 unfinalized) [heartbeat]
+[12:11:23]   refund not yet accepted (attempt 1: taker_action_unavailable); taker awaiting_first_lock | maker: unreachable
+[12:11:34]   [11 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 5272, tip 5275 (3 unfinalized) [heartbeat]
+[12:12:21]   refund not yet accepted (attempt 6: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[12:12:47]   [84 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 5323, tip 5326 (3 unfinalized) [heartbeat]
+[12:13:20]   refund not yet accepted (attempt 11: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[12:14:04]   [161 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 5391, tip 5394 (3 unfinalized) [heartbeat]
+[12:14:37]   refund not yet accepted (attempt 16: taker_action_unavailable); taker awaiting_second_lock | maker: unreachable
+[12:15:13]   [230 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker awaiting_second_lock (refund taker_action_unavailable) | maker unreachable | LEZ finalized 5456, tip 5459 (3 unfinalized) [heartbeat]
+[12:15:31]   refund request admitted (attempt 18, state awaiting_second_lock)
+[12:16:11]   [287 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 5490, tip 5493 (3 unfinalized) [heartbeat]
+[12:17:23]   [360 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 5558, tip 5561 (3 unfinalized) [heartbeat]
+[12:19:16]   [473 s] waiting for the Taker's refund of abf2c6dbdc75 to land: taker refund_in_progress (refund admitted) | maker unreachable | LEZ finalized 5643, tip 5646 (3 unfinalized) [heartbeat]
+[12:20:13]   refund request replayed (attempt 21, state refund_in_progress)
+[12:20:23]   Taker refunded; Taker Node balances {'btc_trusted_sat': 524998943600, 'lez_units': 2000000} → {'btc_trusted_sat': 524998939500, 'lez_units': 2000000}
+[12:20:27]   [0 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker leased (schedule leased) | LEZ finalized 5694, tip 5697 (3 unfinalized) [heartbeat]
+[12:21:31]   [63 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 5744, tip 5748 (4 unfinalized) [heartbeat]
+[12:22:35]   [127 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 5796, tip 5799 (3 unfinalized) [heartbeat]
+[12:23:39]   [191 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 5847, tip 5850 (3 unfinalized) [heartbeat]
+[12:24:43]   [255 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 5898, tip 5901 (3 unfinalized) [heartbeat]
+[12:25:47]   [319 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 5949, tip 5952 (3 unfinalized) [heartbeat]
+[12:26:51]   [383 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 6001, tip 6003 (2 unfinalized) [heartbeat]
+[12:27:54]   [447 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 6051, tip 6054 (3 unfinalized) [heartbeat]
+[12:28:59]   [511 s] waiting for the Maker to reconcile the refunded swap to a terminal state: maker taker_lock_confirmed (schedule leased) | LEZ finalized 6102, tip 6105 (3 unfinalized) [heartbeat]

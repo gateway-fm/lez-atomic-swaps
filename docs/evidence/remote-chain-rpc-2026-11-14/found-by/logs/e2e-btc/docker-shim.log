@@ -1,0 +1,2 @@
+12:08:13 bitcoin-cli getrawtransaction ["51246734ce3571f977ce7ddacd86b48750fd1f0923121204eb0bf12f0fe1e82c", 1] -> ok
+12:10:01 bitcoin-cli getrawtransaction ["154739ad5a1807fd03ee10f11ff712719aeff8cb0fc188d1609969f536046e51", 1] -> ok

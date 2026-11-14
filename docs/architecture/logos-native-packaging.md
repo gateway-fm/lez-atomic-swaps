@@ -662,6 +662,69 @@ container, ZEC `replay`/`wrong-inputs`/`concurrent`, the desk journeys other
 than `happy`, and anything beyond opening the desks in the release Basecamp
 0.2.3.
 
+### Chains on another host
+
+A native Node (Linux or macOS, outside the role's container) whose chains
+are another host's: an RPC provider, or the devnet's containers on another
+machine reached through an SSH tunnel.
+
+**Settings.** On Linux the launcher's defaults are the container's mounts
+(the table above), and `LEZ_NODE_HOME` is read on macOS only, so a native
+Linux host names every path. One host with both roles (one Basecamp with
+both desks) sets, for each role (`<ROLE>` is `MAKER` or `TAKER`):
+
+| for | settings |
+|---|---|
+| the desk | `LEZ_<ROLE>_SIGNER_SOCKET`, `LEZ_<ROLE>_SIGNER_IDENTITY`, `LEZ_WALLET_DIR`, `LEZ_WALLET_SEQUENCER_URL` |
+| the supervisor | `LEZ_<ROLE>_NODE_LAUNCHER=package`, `LEZ_<ROLE>_NODE_LOG`, `LEZ_<ROLE>_NODE_HOLD` (both required with a launcher; the hold file need not exist) |
+| the Node's files | `LEZ_<ROLE>_NODE_STATE_DIR`, `LEZ_NODE_RUN_ROOT`, `LEZ_<ROLE>_NODE_IDENTITY_DIR`, `LEZ_ZEC_STATE_DIR`, `LEZ_<ROLE>_ZEC_SIDECAR_DIR`, `LEZ_MARKET_MANIFEST`, `LEZ_BTC_RPC_COOKIE_FILE`, `LEZ_DELIVERY_DIR`, `LEZ_<ROLE>_NODE_LOG_FILE` |
+| the Node | `LEZ_<ROLE>_SIDECAR_PORT_BASE` (19000 and 19500), `LEZ_<ROLE>_WALLET_SIGNER_SOCKET`, `LEZ_<ROLE>_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`, `LEZ_V02_CHANNEL_ID`, and the timing profile's `LEZ_BTC_*` and `LEZ_MAKER_ACTOR_*` lines of the stack's `runtime.env` |
+| the chains | `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL`, `LEZ_BITCOIN_CORE_HOST`, `LEZ_SEQUENCER_HOST`, `LEZ_INDEXER_HOST`, `LEZ_ZEBRA_HOST` |
+
+The Bitcoin adapter, the sidecars and the ZEC actors accept only loopback
+endpoints, so the launcher forwards `127.0.0.1:{18443,3040,8779,18232}` to
+each chain host with `socat`. Where the chain ports already arrive on this
+host's loopback (a tunnel's end), every host is `127.0.0.1` and no forward
+starts.
+
+**Directory modes.** Every LEZ sidecar refuses a state directory with an
+ancestor that is a symbolic link, writable by its group or others (unless
+sticky, as `/tmp`), or owned by another user, and the Maker's actor
+supervisor refuses an actor whose directory others can write. Ubuntu's
+default umask is 002, so `logosctl package install` there leaves
+`modules/<package>/bin` 0775, and a working directory made by hand is 0775
+too. The launcher removes group and other write from its own package's
+directories and programs, and refuses to start, naming the directory and the
+fix, when a directory above the swaps' or the ZEC sidecars' state breaks the
+rule (exit 78; the line is in `LEZ_<ROLE>_NODE_LOG`). Keep the Node's files
+under directories only you can write (`chmod go-w`), or run `logosctl` and
+Basecamp under `umask 022`.
+
+**Latency.** With each chain RPC at 30–200 ms, as through the SSH tunnel of
+[remote-chain-rpc-2026-11-14](../evidence/remote-chain-rpc-2026-11-14/README.md):
+
+- A LEZ observation is several sequential RPCs and outlives a 1 s LEZ block.
+  It is accepted when the later tip extends the pinned one (the pinned block
+  still at its height, checked by hash), so the LEZ block interval need not
+  change.
+- The finalized observers read their window with `getBlocks`, 64 blocks per
+  call, so an actor attempt stays well inside its 30 s deadline over such a
+  link.
+- Use the `fast` timing profile. The `refund` profile's Maker second-lock
+  cutoff (100 s) is shorter than a Maker's funding took over a 100–190 ms
+  link (87 s, against 21 s on one machine), so a TakerSellsLez claim can
+  arrive after its window.
+- `deploy/scripts/rpc-delay-proxy.py` reproduces such a link on one machine:
+  it adds a fixed delay to every round trip on the chain ports and logs each
+  JSON-RPC method.
+
+**Harness.** With `LEZ_CHAINS_RPC_ONLY=1`, `node-e2e.py` sends its
+`bitcoin-cli` calls to Bitcoin Core as JSON-RPC (`LEZ_E2E_BTC_RPC_URL`, the
+cookie in `LEZ_BTC_RPC_COOKIE_FILE`), a scenario that stops or starts a
+chain's container fails saying so, and
+`zec-provision.sh` checks Zebra by its RPC. The harness finds a native
+Node's package through `/proc/<pid>/exe` on Linux.
+
 ### Catalog packages with darwin-arm64
 
 The catalog's installer (logosctl 0.3.x, Basecamp's package manager) picks a

@@ -2638,7 +2638,10 @@ pub(crate) enum LezSnapshotMutation {
     Environment,
     Channel,
     Genesis,
-    TipDrift,
+    TipAdvanced,
+    PinnedBlockReplaced,
+    TipWentBack,
+    TipHigherWithPinnedHash,
     InclusionBlock,
     InclusionAboveTip,
     Program,
@@ -2790,7 +2793,14 @@ pub(crate) fn canonical_lez_snapshot(
         },
     );
     let tip = match mutation {
-        LezSnapshotMutation::TipDrift => LezStableTipV1::new([0x42; 32], 102, [0x43; 32], 103),
+        LezSnapshotMutation::TipAdvanced => LezStableTipV1::new([0x42; 32], 102, [0x43; 32], 104),
+        LezSnapshotMutation::PinnedBlockReplaced => {
+            LezStableTipV1::new([0x42; 32], 102, [0x43; 32], 102)
+        }
+        LezSnapshotMutation::TipWentBack => LezStableTipV1::new([0x42; 32], 102, [0x41; 32], 101),
+        LezSnapshotMutation::TipHigherWithPinnedHash => {
+            LezStableTipV1::new([0x42; 32], 102, [0x42; 32], 103)
+        }
         LezSnapshotMutation::DeeperSafe | LezSnapshotMutation::DeeperFinalized => {
             LezStableTipV1::new([0x44; 32], 103, [0x44; 32], 103)
         }
