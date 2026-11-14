@@ -110,10 +110,8 @@ tier_tests() { # tier_tests <tier>
       echo "ui:zec:zec-desk-offer:TakerSellsLez"; echo "ui:zec:zec-desk-offer:TakerSellsForeign"
       # last: each makes its own chain, one no other test can run on
       # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
-      for s in xmr-happy xmr-taker-refund xmr-maker-never-funds; do echo "node:xmr:$s:TakerSellsLez"; done
-      # not yet in full: xmr-punish (tag 17 lands, but the sidecar refuses the
-      # Maker's finalized tag-17 classification, invalid_transaction)
-      # and xmr-concurrent (the Taker plans tag 14 at its stored tag-13 nonce + 1,
+      for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish; do echo "node:xmr:$s:TakerSellsLez"; done
+      # not yet in full: xmr-concurrent (the Taker plans tag 14 at its stored tag-13 nonce + 1,
       # which the other swap's tag 13 has taken: the first claim never lands)
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
     *) echo "unknown tier: $1 (smoke, refunds, full)" >&2; return 64 ;;
