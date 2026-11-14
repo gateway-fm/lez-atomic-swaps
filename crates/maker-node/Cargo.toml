@@ -16,7 +16,13 @@ workspace = true
 # the shipped Maker Node carries no actor code CI has not exercised.
 default = []
 pair-zec = ["dep:zec-reference-actor", "dep:lez-zec-swap-sdk"]
-pair-xmr = ["dep:xmr-reference-actor", "dep:lez-xmr-swap-sdk", "dep:lez-xmr-monero-adapter"]
+pair-xmr = [
+    "dep:xmr-reference-actor",
+    "dep:lez-xmr-swap-sdk",
+    "dep:lez-xmr-monero-adapter",
+    # The two-Node take test drives the real Taker service (a dev-dependency).
+    "lez-taker-node/pair-xmr",
+]
 test-crash-hooks = ["pair-zec", "zec-reference-actor/test-crash-hooks"]
 
 [[bin]]

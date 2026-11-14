@@ -115,7 +115,7 @@ jobs:
       # Nine Node test files are `#![cfg(feature = "pair-zec")]`, so the default
       # workspace run above compiles them to nothing and reports zero tests.
       # M2 is the ZEC leg, so they run here; the two Maker supervisor files
-      # gated on both pair-zec and pair-xmr run in the next step, the three
+      # gated on both pair-zec and pair-xmr run in the next step, the four
       # pair-xmr Maker files after it, and the ZEC actor's `test-crash-hooks`
       # file after that.
       - name: Run the pair-zec gated Node test files
@@ -127,7 +127,8 @@ jobs:
       - name: Run the pair-xmr gated Maker test files
         run: >-
           cargo test --locked -p lez-maker-node --features pair-xmr
-          --test xmr_chat_process --test xmr_reserve_process --test maker_xmr_tag17_supervisor
+          --test xmr_chat_process --test xmr_reserve_process --test xmr_take_process
+          --test maker_xmr_tag17_supervisor
       - name: Run the ZEC actor's crash-hook test file
         run: cargo test --locked -p zec-reference-actor --features test-crash-hooks --test crash_hook
       # The workspace runs above build the product without the dealer; the
