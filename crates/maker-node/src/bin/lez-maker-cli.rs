@@ -52,8 +52,10 @@ enum Command {
         enabled: bool,
         #[arg(long, value_enum, default_value_t = PriceSourceArgument::Local)]
         price_source: PriceSourceArgument,
+        /// Foreign-chain atomic units: sats, zatoshis or piconero (10^-12 XMR).
         #[arg(long)]
         minimum_foreign_units: u64,
+        /// Foreign-chain atomic units: sats, zatoshis or piconero (10^-12 XMR).
         #[arg(long)]
         maximum_foreign_units: u64,
         #[arg(long)]
@@ -70,6 +72,7 @@ enum Command {
         direction: DirectionArgument,
         #[arg(long)]
         lez_units_per_lot: u64,
+        /// Foreign-chain atomic units: sats, zatoshis or piconero (10^-12 XMR).
         #[arg(long)]
         foreign_units_per_lot: u64,
     },
@@ -299,7 +302,7 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
         }
         Command::Quote { pair, direction } => {
             let request = PriceQuoteRequest {
-                route: MakerRouteV1::new(pair.into(), direction.into())?,
+                route: maker_route(pair, direction)?,
             };
             let quote: PriceQuoteV1 = call_local_rpc(socket, "maker_price_quote", &request).await?;
             serde_json::to_value(quote).map_err(Into::into)
@@ -374,6 +377,18 @@ async fn execute(socket: &Path, command: Command) -> anyhow::Result<serde_json::
     }
 }
 
+/// One route as the Maker Node stores it; Monero's refusal names its one
+/// direction instead of the store's generic one.
+fn maker_route(pair: PairArgument, direction: DirectionArgument) -> anyhow::Result<MakerRouteV1> {
+    let (pair, direction): (Pair, SwapDirection) = (pair.into(), direction.into());
+    anyhow::ensure!(
+        pair != Pair::Monero || direction == SwapDirection::TakerSellsLez,
+        "Monero supports only --direction taker-sells-lez (the Taker locks LEZ first, the \
+         Maker locks XMR); the default taker-sells-foreign is refused"
+    );
+    MakerRouteV1::new(pair, direction).map_err(Into::into)
+}
+
 fn delivery_identity(signing_key_file: &Path) -> anyhow::Result<serde_json::Value> {
     let signing_key = load_secp256k1_secret(signing_key_file, "Delivery signing key")?;
     let public_key =
@@ -425,7 +440,7 @@ async fn configure_pair(socket: &Path, command: Command) -> anyhow::Result<serde
     else {
         unreachable!("configure_pair receives only its matching command")
     };
-    let route = MakerRouteV1::new(pair.into(), direction.into())?;
+    let route = maker_route(pair, direction)?;
     let configuration = MakerPairConfigurationV1::new(
         route,
         enabled,
@@ -456,7 +471,7 @@ async fn set_local_price(socket: &Path, command: Command) -> anyhow::Result<serd
     else {
         unreachable!("set_local_price receives only its matching command")
     };
-    let route = MakerRouteV1::new(pair.into(), direction.into())?;
+    let route = maker_route(pair, direction)?;
     let price = LocalPriceV1::new(route, lez_units_per_lot, foreign_units_per_lot)?;
     let request = LocalPriceSetRequest {
         request_id: RequestId::new(request_id)?,
@@ -481,7 +496,7 @@ async fn publish_offer(socket: &Path, command: Command) -> anyhow::Result<serde_
     let request = OfferPublishRequest {
         request_id: RequestId::new(request_id)?,
         offer_id: MakerOfferId::new(offer_id)?,
-        route: MakerRouteV1::new(pair.into(), direction.into())?,
+        route: maker_route(pair, direction)?,
     };
     let commit: MakerOfferCommit = call_local_rpc(socket, "maker_offer_publish", &request).await?;
     serde_json::to_value(commit).map_err(Into::into)
