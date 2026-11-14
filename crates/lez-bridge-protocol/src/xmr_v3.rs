@@ -1550,10 +1550,16 @@ fn validate_finalized_facts(
         )?,
     }
 
+    // Tag 17 is not held to the committed `punish_message_hash`. That hash is
+    // the message at the nonce Stage A was planned with (0 from the Maker
+    // Node), but the claimant is the Maker's shared LEZ owner, whose nonce at
+    // punish time cannot be known when Stage A is signed; the guest authorises
+    // tag 17 by its signer and the `punish_at` window only. Every other field
+    // of the tag-17 message (program, instruction and swap ID, ordered
+    // accounts) and its signer are checked above, so only the nonce is free.
     let expected_message_hash = match effect {
         XmrNativeEffectV3::Claim => Some(terms.0.claim_message_hash),
         XmrNativeEffectV3::Refund => Some(terms.0.refund_message_hash),
-        XmrNativeEffectV3::Punish => Some(terms.0.punish_message_hash),
         _ => None,
     };
     if let Some(expected) = expected_message_hash {
