@@ -6216,12 +6216,153 @@ def scenario_xmr_concurrent(stamp: str) -> dict:
             "maker_monero_fundings": funded, "taker_monero_sweeps": swept}
 
 
+# ---- xmr-kill-<role>: SIGKILL at each step of a happy Monero swap -------------------
+# The steps, one fresh swap each, read from the Taker's view, the Maker's phase
+# or its wallet-rpc's log while the swap runs (polled every half second); each swap
+# must complete with no chain effect repeated. A point a swap passes between
+# two polls is tried once more on a new swap.
+XMR_TAKER_LEZ_TRANSACTIONS = 3  # the Taker's owner signs tag 13's initialisation and funding, and tag 14
+XMR_KILL_POINTS = {
+    "taker": (
+        ("after the take", None),
+        ("lock in flight", lambda at: at["taker"].get("actor_phase") == "lez_locking" and at["since_take"] >= 5),
+        ("locked", lambda at: at["taker"].get("actor_phase") == "taker_lock_confirmed"),
+        ("Monero verified", lambda at: at["taker"]["state"] == "claim_available"),
+        ("claim authorised", lambda at: at["taker"].get("actor_phase") == "claim_authorizing"),
+        ("waiting for the Maker's claim", lambda at: at["taker"].get("actor_phase") == "awaiting_maker_claim"),
+        ("sweeping", lambda at: at["taker"].get("actor_phase") == "sweeping"),
+    ),
+}
+# A Maker killed while its funding tool runs may never fund (its one funding is
+# then observe-only): the Taker refunds instead, and nothing may be lost.
+XMR_KILL_MAY_REFUND = {"lock observed", "funding in flight"}
+
+
+def xmr_maker_transfer_since(unix_seconds: float) -> bool:
+    """Whether the Maker's wallet-rpc has been handed a transfer since then:
+    its funding tool has sent the Monero and is mining and recording it."""
+    since = datetime.datetime.fromtimestamp(unix_seconds, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = subprocess.run(["docker", "logs", "--since", since, f"{PREFIX}-maker-xmr-wallet"],
+                            capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    return "Calling RPC method transfer" in result.stdout + result.stderr
+
+
+def lez_nonces() -> dict:
+    return {role: lez_account_nonce(lez_owner_account(role)) for role in ("maker", "taker")}
+
+
+def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: bool) -> dict:
+    """One happy Monero swap, the role's container killed (kill_node) at
+    `point`; the harness claims once the Monero is verified (after the kill
+    when the kill point is that step), or refunds at the refund time where
+    the point allows it. Asserted: LEZ to the unit and the owner accounts'
+    transaction counts (the Taker's three, none of the Maker's), the Maker's
+    one funding of the lot, and the Monero swept to the Taker or, refunded,
+    back to the Maker or never sent."""
+    before = xmr_before()
+    nonces = lez_nonces()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    taken, killed, claimed, refunded = time.time(), None, False, False
+
+    def kill() -> dict:
+        log(f"  kill point '{point}': taker {view['state']} (actor {view.get('actor_phase')}), maker {maker}")
+        return {"point": point, "taker_state": view["state"], "taker_actor_phase": view.get("actor_phase"),
+                "maker_phase": maker, **kill_node(role)}
+
+    view, maker = taker_view(swap_id), maker_phase(swap_id)
+    if reached is None:
+        killed = kill()
+    wait = Wait(f"the Taker's {swap_id[:12]} to complete (kill point {point})", windows["LEZ_XMR_PUNISH_SECONDS"] + 300)
+    while wait.running():
+        view, maker = taker_view(swap_id), maker_phase(swap_id)
+        state = view["state"]
+        if killed is None and state not in TERMINAL:
+            sent = point == "funding in flight" and maker == "taker_lock_confirmed" and xmr_maker_transfer_since(taken)
+            if reached({"taker": view, "maker": maker, "since_take": time.time() - taken, "funding_sent": sent}):
+                killed = kill()
+                continue
+        if state == "claim_available" and not claimed and (killed or point not in {"Monero verified", "funded"}):
+            call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                  "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                 timeout=300)
+            claimed = True
+            log(f"  Taker claimed Monero on {swap_id[:12]}")
+        if state == "refund_available" and may_refund and not refunded:
+            call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                 timeout=300)
+            refunded = True
+            log(f"  the Maker never funded after its kill: Taker refund admitted on {swap_id[:12]}")
+        if state in {"completed", "refunded"}:
+            break
+        if state in TERMINAL:
+            raise Failure(f"swap {swap_id[:12]} ended in {state} ({view.get('attention_reason')}) after the kill at {point}")
+        wait.note((state, view.get("actor_phase"), maker),
+                  lambda: f"taker {state} (actor {view.get('actor_phase')}) | maker {maker}")
+        time.sleep(0.5 if killed is None else 3)
+    else:
+        raise wait.failure()
+    if killed is None:
+        log(f"  {swap_id[:12]} passed the kill point '{point}' between two polls")
+        return {"swap_id": swap_id, "kill": None}
+    funded = [t for t in xmr_lane("balance", "--role", "maker")["sent"] if t["txid"] not in before["sent"]["maker"]]
+    if state == "completed":
+        wait_completed(swap_id, timeout=600)
+        lez = assert_lez_settled(before["lez"], "completed", maker_phase(swap_id))
+        swept = xmr_assert_swept("taker", before, "a completed swap")
+        want = {"maker": 0, "taker": XMR_TAKER_LEZ_TRANSACTIONS}
+        monero = {"maker_funding": funded, "taker_sweep": swept}
+        if [t["amount"] for t in funded] != [XMR_FOREIGN_UNITS]:
+            raise Failure(f"the Maker sent {funded} during the swap, one funding of the lot expected")
+    else:
+        # refunded: the Taker's tag 13 (tag 16 is the refund authority's);
+        # the Maker's Monero never sent, or swept back once the refund
+        # revealed the Taker's share
+        if funded:
+            phase = wait_maker_terminal(swap_id, timeout=600, describe="(the Maker's Monero refund sweep)")
+            monero = {"maker_funding": funded, "maker_refund_sweep": xmr_assert_swept("maker", before, "a refunded swap")}
+        else:
+            phase = maker_phase(swap_id)
+            monero = {"maker_funding": []}
+        lez = assert_lez_settled(before["lez"], "refunded", phase)
+        if xmr_received_since("taker", before):
+            raise Failure("the Taker received Monero from a swap it refunded")
+        want = {"maker": 0, "taker": XMR_TAKER_LEZ_TRANSACTIONS - 1}
+        log(f"  killed at '{point}', the swap was refunded (the Maker's funding: {'sent and swept back' if funded else 'never sent'}; "
+            f"Maker {phase})")
+    moved = {role_: nonce - nonces[role_] for role_, nonce in lez_nonces().items()}
+    if moved != want:
+        raise Failure(f"the owner accounts signed {moved} LEZ transactions during the swap, {want} expected: "
+                      f"an effect was repeated or lost")
+    log(f"  LEZ transactions signed by the owner accounts: {moved}; Monero: {[(k, len(v) if isinstance(v, list) else 1) for k, v in monero.items()]}")
+    return {"swap_id": swap_id, "kill": killed, "outcome": state, **lez, "lez_transactions": moved, **monero}
+
+
+def scenario_xmr_kill_walk(stamp: str, role: str) -> dict:
+    """The role's container killed with SIGKILL at each of XMR_KILL_POINTS,
+    one fresh happy swap per point (xmr_kill_point_swap)."""
+    walked = []
+    for index, (point, reached) in enumerate(XMR_KILL_POINTS[role]):
+        for attempt in range(2):
+            result = xmr_kill_point_swap(f"{stamp}k{index}{attempt}", role, point, reached,
+                                         role == "maker" and point in XMR_KILL_MAY_REFUND)
+            if result["kill"] is not None:
+                break
+        else:
+            raise NotExercised(f"two swaps passed the kill point '{point}' between two polls")
+        walked.append(result)
+    log(f"  {role} killed at {len(walked)} points: " + "; ".join(f"{w['kill']['point']} → {w['outcome']}" for w in walked))
+    return {"role": role, "points": walked}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
     "xmr-maker-never-funds": scenario_xmr_maker_never_funds,
     "xmr-punish": scenario_xmr_punish,
     "xmr-concurrent": scenario_xmr_concurrent,
+    "xmr-kill-taker": lambda stamp: scenario_xmr_kill_walk(stamp, "taker"),
 }
 
 
