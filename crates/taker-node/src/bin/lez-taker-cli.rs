@@ -26,8 +26,9 @@ use lez_swap_store::{
     SqliteXmrWorkflowJournal, StoreError, XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
 use lez_taker_node::{
-    DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, TakerOfferListRequestV1,
-    TakerOfferListV1, TakerSwapInitiateRequestV1, call_local_rpc, control_taker_service,
+    DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, TakerInitiationCommitV1,
+    TakerOfferListRequestV1, TakerOfferListV1, TakerSwapInitiateRequestV1, TakerSwapListV1,
+    TakerSwapViewV1, TakerTerminalActionV1, call_local_rpc, control_taker_service,
     local_rpc::{LocalRpcTimeout, call_local_rpc_with_timeout},
 };
 use secp256k1::PublicKey;
@@ -232,6 +233,9 @@ enum LifecycleCommand {
         /// Also list what its Zcash role can fund from (reads its Zebra).
         #[arg(long)]
         zcash: bool,
+        /// Also read its Monero role wallet (piconero, 10^-12 XMR).
+        #[arg(long)]
+        monero: bool,
     },
 }
 
@@ -252,7 +256,8 @@ enum SwapCommand {
         request_id: String,
         #[arg(long)]
         offer_id: String,
-        /// Foreign-chain atomic units (sats or zatoshis) within the offer's bounds.
+        /// Foreign-chain atomic units (sats, zatoshis or piconero, 10^-12 XMR)
+        /// within the offer's bounds.
         #[arg(long)]
         foreign_units: u64,
         /// For a Node without a Bitcoin wallet: the signed, unsent lock paying
@@ -267,7 +272,8 @@ enum SwapCommand {
         #[arg(long)]
         swap_id: String,
     },
-    /// Send the Taker's first lock of a Bitcoin swap (`taker_swap_lock_v1`).
+    /// Send the Taker's first lock of a Bitcoin swap (`taker_swap_lock_v1`);
+    /// a Zcash or Monero swap's LEZ lock is sent by the Node itself.
     Lock {
         #[arg(long)]
         swap_id: String,
@@ -903,23 +909,27 @@ async fn execute_lifecycle(
             execute_actor_lifecycle(&arguments, LifecycleAction::Refund).await
         }
         LifecycleCommand::Swap(command) => execute_taker_swap(command, socket).await,
-        LifecycleCommand::Balances { zcash } => {
-            print_taker_rpc(
+        LifecycleCommand::Balances { zcash, monero } => {
+            let output = print_taker_rpc(
                 socket,
                 "taker_wallet_balances_v1",
-                if zcash {
-                    serde_json::json!({"schema_version": 1, "zcash": true})
-                } else {
-                    serde_json::json!({"schema_version": 1})
-                },
+                balances_request(zcash, monero),
                 NODE_READ_TIMEOUT,
             )
-            .await
+            .await?;
+            if monero {
+                eprintln!("{}", xmr_balance_words(output.get("monero")));
+            }
+            Ok(())
         }
     }
 }
 
 async fn execute_taker_swap(command: SwapCommand, socket: &std::path::Path) -> anyhow::Result<()> {
+    let lock_swap_id = match &command {
+        SwapCommand::Lock { swap_id } => Some(swap_id.clone()),
+        _ => None,
+    };
     let (method, parameters, timeout) = match command {
         SwapCommand::Offers { pair, direction } => {
             let route = match pair.zip(direction) {
@@ -985,7 +995,235 @@ async fn execute_taker_swap(command: SwapCommand, socket: &std::path::Path) -> a
             NODE_ACTION_TIMEOUT,
         ),
     };
-    print_taker_rpc(socket, method, parameters, timeout).await
+    let output = match print_taker_rpc(socket, method, parameters, timeout).await {
+        Ok(output) => output,
+        Err(error) => {
+            return Err(match lock_swap_id {
+                Some(swap_id) => explain_monero_lock(socket, &swap_id, error).await,
+                None => error,
+            });
+        }
+    };
+    // The JSON on stdout stays the Node's answer; Monero rows are also told
+    // in plain words on stderr.
+    for words in xmr_words(method, output) {
+        eprintln!("{words}");
+    }
+    Ok(())
+}
+
+/// The parameters of `taker_wallet_balances_v1`, naming only the roles asked for.
+fn balances_request(zcash: bool, monero: bool) -> serde_json::Value {
+    let mut request = serde_json::json!({"schema_version": 1});
+    if zcash {
+        request["zcash"] = true.into();
+    }
+    if monero {
+        request["monero"] = true.into();
+    }
+    request
+}
+
+/// A refused `swap lock` of a Monero swap says why: there is nothing to send.
+async fn explain_monero_lock(
+    socket: &std::path::Path,
+    swap_id: &str,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    let view: anyhow::Result<TakerSwapViewV1> = call_local_rpc_with_timeout(
+        socket,
+        "taker_swap_monitor_v1",
+        &serde_json::json!({"schema_version": 1, "swap_id": swap_id}),
+        NODE_READ_TIMEOUT,
+    )
+    .await;
+    match view {
+        Ok(view) if view.route.pair() == Pair::Monero => error.context(format!(
+            "a Monero swap has no `swap lock`: the Taker Node locks your LEZ by itself \
+             right after the take; follow it with `swap monitor --swap-id {swap_id}`"
+        )),
+        _ => error,
+    }
+}
+
+/// The plain-words lines for the Monero rows of one `swap` answer.
+fn xmr_words(method: &str, output: serde_json::Value) -> Vec<String> {
+    match method {
+        "taker_offer_list_v1" => serde_json::from_value::<TakerOfferListV1>(output)
+            .map(|list| {
+                list.offers
+                    .iter()
+                    .filter_map(|view| xmr_offer_words(&view.offer))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        "taker_swap_list_v1" => serde_json::from_value::<TakerSwapListV1>(output)
+            .map(|list| list.swaps.iter().filter_map(xmr_swap_words).collect())
+            .unwrap_or_default(),
+        "taker_swap_monitor_v1" => serde_json::from_value::<TakerSwapViewV1>(output)
+            .ok()
+            .as_ref()
+            .and_then(xmr_swap_words)
+            .into_iter()
+            .collect(),
+        "taker_swap_initiate_v1" => serde_json::from_value::<TakerInitiationCommitV1>(output)
+            .ok()
+            .and_then(|commit| xmr_swap_words(&commit.swap))
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Piconero as XMR with all 12 decimals: `1.000000000001 XMR`.
+fn xmr_amount(piconero: u64) -> String {
+    const PICONERO_PER_XMR: u64 = 1_000_000_000_000;
+    format!(
+        "{}.{:012} XMR",
+        piconero / PICONERO_PER_XMR,
+        piconero % PICONERO_PER_XMR
+    )
+}
+
+fn xmr_offer_words(offer: &lez_swap_store::MakerOfferV1) -> Option<String> {
+    let bounds = offer.pair_configuration();
+    if bounds.route().pair() != Pair::Monero {
+        return None;
+    }
+    let price = offer.price();
+    Some(format!(
+        "offer {id}: Monero, you sell LEZ for {min} to {max} ({min_units} to {max_units} \
+         piconero), {lez} LEZ units per {lot} ({lot_units} piconero); take with `swap take \
+         --offer-id {id} --foreign-units <piconero> --request-id <new id>`",
+        id = offer.id().as_str(),
+        min = xmr_amount(bounds.minimum_foreign_units()),
+        max = xmr_amount(bounds.maximum_foreign_units()),
+        min_units = bounds.minimum_foreign_units(),
+        max_units = bounds.maximum_foreign_units(),
+        lez = price.lez_units_per_lot(),
+        lot = xmr_amount(price.foreign_units_per_lot()),
+        lot_units = price.foreign_units_per_lot(),
+    ))
+}
+
+/// What a Monero swap's actor phase means for its Taker.
+fn xmr_phase_words(phase: &str) -> Option<&'static str> {
+    Some(match phase {
+        "lez_locking" => "the Node is locking your LEZ (automatic, no `swap lock`)",
+        "lez_lock_window_closed" => {
+            "your LEZ was not locked before the Maker's funding cutoff: nothing of yours is \
+             locked and this take is over"
+        }
+        "taker_lock_confirmed" => {
+            "your LEZ is locked; waiting for the Maker's Monero and its 10 confirmations"
+        }
+        "both_legs_locked" => "both legs are locked: you can claim the Monero",
+        "claim_authorizing" => "claiming: authorising the Maker's LEZ claim on LEZ (tag 14)",
+        "awaiting_maker_claim" => {
+            "claim authorised; waiting for the Maker to claim the LEZ (tag 15), which hands you \
+             the Monero key"
+        }
+        "sweeping" => "the Maker claimed the LEZ; sweeping the Monero into your wallet",
+        "completed" => "completed: the Monero is in your wallet",
+        "refund_available" => {
+            "the refund window is open: refund your LEZ (tag 16) before the punish time"
+        }
+        "refund_in_flight" => "your LEZ refund is sent; waiting for it to be final",
+        "refunded" => "refunded: your LEZ is back",
+        "punish_open" => {
+            "the refund window closed: the Maker may take your LEZ (punish); the Monero stays \
+             locked"
+        }
+        _ => return None,
+    })
+}
+
+/// Why a Monero swap needs its Taker, in plain words.
+fn xmr_attention_words(reason: &str) -> Option<&'static str> {
+    Some(match reason {
+        "xmr_lez_lock_window_closed" => "the LEZ lock window closed before your LEZ was locked",
+        "refund_window_closing" => {
+            "the refund window is half over: refund now, or from the punish time the Maker \
+             takes your LEZ and the Monero stays locked"
+        }
+        "xmr_maker_did_not_claim" => {
+            "Maker did not claim before the refund time: refund before the punish time"
+        }
+        "xmr_claim_sweep_in_doubt" => {
+            "the Monero sweep was started and not recorded, so it is never resent: recover it \
+             by hand from the wallet file named in the detail"
+        }
+        "xmr_refund_window_closed" => {
+            "the refund window closed without a refund: the Maker can punish and take your LEZ"
+        }
+        _ => return None,
+    })
+}
+
+fn xmr_swap_words(view: &TakerSwapViewV1) -> Option<String> {
+    use std::fmt::Write as _;
+    if view.route.pair() != Pair::Monero {
+        return None;
+    }
+    let state = serde_json::to_value(view.state)
+        .ok()
+        .and_then(|state| state.as_str().map(str::to_owned))
+        .unwrap_or_default();
+    let phase = view.actor_phase.as_deref().map_or_else(
+        || format!("state {state}"),
+        |phase| xmr_phase_words(phase).map_or_else(|| phase.to_owned(), str::to_owned),
+    );
+    let id = view.swap_id.as_str();
+    let mut words = format!(
+        "swap {id}: Monero, {} for {} LEZ units: {phase}",
+        xmr_amount(view.foreign_units),
+        view.lez_units
+    );
+    if let Some(reason) = view.attention_reason.as_deref() {
+        let reason = xmr_attention_words(reason).unwrap_or(reason);
+        words.push_str("\n  needs you: ");
+        words.push_str(reason);
+    }
+    if let Some(detail) = view.status_detail.as_deref() {
+        words.push_str("\n  detail: ");
+        words.push_str(detail);
+    }
+    if let Some(action) = view.available_action {
+        let action = match action {
+            TakerTerminalActionV1::Claim => "claim",
+            TakerTerminalActionV1::Refund => "refund",
+        };
+        let _ = write!(
+            words,
+            "\n  next: swap {action} --swap-id {id} --request-id <new id> \
+             --expected-generation {}",
+            view.progress_generation
+        );
+    }
+    Some(words)
+}
+
+/// The Monero role wallet of `taker_wallet_balances_v1 {monero:true}`.
+fn xmr_balance_words(monero: Option<&serde_json::Value>) -> String {
+    let Some(monero) = monero else {
+        return "monero: this Taker Node has no Monero role".to_owned();
+    };
+    let piconero = |field: &str| monero[field].as_u64();
+    match (
+        monero["state"].as_str(),
+        piconero("balance_piconero"),
+        piconero("unlocked_piconero"),
+    ) {
+        (Some("available"), Some(balance), Some(unlocked)) => format!(
+            "monero: {} ({balance} piconero), unlocked {} ({unlocked} piconero), \
+             address {}, monerod height {}",
+            xmr_amount(balance),
+            xmr_amount(unlocked),
+            monero["address"].as_str().unwrap_or("?"),
+            monero["daemon_height"],
+        ),
+        _ => "monero: unavailable (the role's wallet-rpc or monerod did not answer)".to_owned(),
+    }
 }
 
 /// The initiate request for one offer as the Node lists it.
@@ -1043,7 +1281,7 @@ async fn print_taker_rpc(
     method: &str,
     parameters: serde_json::Value,
     timeout: std::time::Duration,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<serde_json::Value> {
     let output: serde_json::Value =
         match call_local_rpc_with_timeout(socket, method, &parameters, timeout).await {
             Err(error) if error.is::<LocalRpcTimeout>() => anyhow::bail!(
@@ -1055,7 +1293,7 @@ async fn print_taker_rpc(
             result => result?,
         };
     println!("{}", serde_json::to_string(&output)?);
-    Ok(())
+    Ok(output)
 }
 
 async fn execute_taker_health(socket: &std::path::Path) -> anyhow::Result<()> {
@@ -1694,5 +1932,320 @@ mod xmr_cli_tests {
 
         std::fs::create_dir(&actor_root).expect("publish actor-root latch");
         assert!(xmr_actor_bundle_is_durable(&actor_root).expect("inspect durable actor"));
+    }
+}
+
+#[cfg(test)]
+mod xmr_words_tests {
+    use clap::Parser as _;
+    use lez_swap_core::{Pair, SwapDirection, SwapId};
+    use lez_swap_store::{MakerOfferId, MakerRouteV1};
+    use lez_taker_node::{TakerSwapStateV1, TakerSwapViewV1, TakerTerminalActionV1};
+
+    use super::{
+        Arguments, LifecycleCommand, SwapCommand, balances_request, xmr_amount, xmr_balance_words,
+        xmr_offer_words, xmr_swap_words,
+    };
+
+    fn view(
+        state: TakerSwapStateV1,
+        phase: &str,
+        reason: Option<&str>,
+        action: Option<TakerTerminalActionV1>,
+    ) -> TakerSwapViewV1 {
+        TakerSwapViewV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("xmr-swap-1").unwrap(),
+            offer_id: MakerOfferId::new("xmr-offer-1").unwrap(),
+            route: MakerRouteV1::new(Pair::Monero, SwapDirection::TakerSellsLez).unwrap(),
+            foreign_units: 1_500_000_000_000,
+            lez_units: 75_000,
+            progress_generation: 6,
+            state,
+            available_action: action,
+            privacy_guidance: None,
+            attention_reason: reason.map(str::to_owned),
+            revealing_claim_held_by: None,
+            status_detail: None,
+            actor_phase: Some(phase.to_owned()),
+            claim_window_closed: None,
+            last_failure_class: None,
+            last_outcome: None,
+            observed_at: None,
+            terms: None,
+            effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
+        }
+    }
+
+    fn words(view: &TakerSwapViewV1) -> String {
+        xmr_swap_words(view).expect("a Monero row has words")
+    }
+
+    #[test]
+    fn balances_monero_parses_and_asks_only_for_the_monero_wallet() {
+        let arguments = Arguments::try_parse_from(["lez-taker-cli", "balances", "--monero"])
+            .expect("balances --monero parses");
+        assert!(matches!(
+            arguments.command,
+            Some(LifecycleCommand::Balances {
+                zcash: false,
+                monero: true
+            })
+        ));
+        assert_eq!(
+            balances_request(false, true),
+            serde_json::json!({"schema_version": 1, "monero": true})
+        );
+        // Without the flag the request is the one sent before Monero.
+        assert_eq!(
+            balances_request(false, false),
+            serde_json::json!({"schema_version": 1})
+        );
+        assert_eq!(
+            balances_request(true, false),
+            serde_json::json!({"schema_version": 1, "zcash": true})
+        );
+    }
+
+    #[test]
+    fn swap_take_parses_a_monero_offer_in_piconero() {
+        let arguments = Arguments::try_parse_from([
+            "lez-taker-cli",
+            "swap",
+            "take",
+            "--request-id",
+            "take-1",
+            "--offer-id",
+            "xmr-offer-1",
+            "--foreign-units",
+            "18446744073709551615",
+        ])
+        .expect("swap take parses");
+        assert!(matches!(
+            arguments.command,
+            Some(LifecycleCommand::Swap(SwapCommand::Take {
+                foreign_units: u64::MAX,
+                ..
+            }))
+        ));
+        assert!(
+            Arguments::try_parse_from(["lez-taker-cli", "--plan-xmr-offer", "x"]).is_err(),
+            "the hand-material planning flag is gone"
+        );
+    }
+
+    #[test]
+    fn piconero_prints_as_xmr_with_twelve_decimals() {
+        for (piconero, xmr) in [
+            (0, "0.000000000000 XMR"),
+            (1, "0.000000000001 XMR"),
+            (999_999_999_999, "0.999999999999 XMR"),
+            (1_000_000_000_000, "1.000000000000 XMR"),
+            (1_000_000_000_001, "1.000000000001 XMR"),
+            (u64::MAX, "18446744.073709551615 XMR"),
+        ] {
+            assert_eq!(xmr_amount(piconero), xmr);
+        }
+    }
+
+    #[test]
+    fn the_monero_balance_prints_xmr_and_piconero() {
+        let balance = serde_json::json!({
+            "state": "available", "address": "4Abc", "balance_piconero": 2_000_000_000_001_u64,
+            "unlocked_piconero": 999_999_999_999_u64, "daemon_height": 321
+        });
+        assert_eq!(
+            xmr_balance_words(Some(&balance)),
+            "monero: 2.000000000001 XMR (2000000000001 piconero), unlocked \
+             0.999999999999 XMR (999999999999 piconero), address 4Abc, monerod height 321"
+        );
+        assert_eq!(
+            xmr_balance_words(Some(&serde_json::json!({"state": "unavailable"}))),
+            "monero: unavailable (the role's wallet-rpc or monerod did not answer)"
+        );
+        assert_eq!(
+            xmr_balance_words(None),
+            "monero: this Taker Node has no Monero role"
+        );
+    }
+
+    #[test]
+    fn every_monero_phase_prints_in_plain_words() {
+        use TakerSwapStateV1 as State;
+        for (state, phase, expected) in [
+            (
+                State::AwaitingFirstLock,
+                "lez_locking",
+                "the Node is locking your LEZ (automatic",
+            ),
+            (
+                State::AwaitingSecondLock,
+                "taker_lock_confirmed",
+                "waiting for the Maker's Monero",
+            ),
+            (
+                State::ClaimInProgress,
+                "claim_authorizing",
+                "authorising the Maker's LEZ claim",
+            ),
+            (
+                State::ClaimInProgress,
+                "awaiting_maker_claim",
+                "waiting for the Maker to claim",
+            ),
+            (
+                State::ClaimInProgress,
+                "sweeping",
+                "sweeping the Monero into your wallet",
+            ),
+            (
+                State::Completed,
+                "completed",
+                "completed: the Monero is in your wallet",
+            ),
+            (
+                State::RefundInProgress,
+                "refund_in_flight",
+                "your LEZ refund is sent",
+            ),
+            (State::Refunded, "refunded", "refunded: your LEZ is back"),
+        ] {
+            let printed = words(&view(state, phase, None, None));
+            assert!(
+                printed.starts_with(
+                    "swap xmr-swap-1: Monero, 1.500000000000 XMR for 75000 LEZ units: "
+                ),
+                "{printed}"
+            );
+            assert!(printed.contains(expected), "{phase}: {printed}");
+            assert!(!printed.contains('\n'), "{phase}: {printed}");
+        }
+    }
+
+    #[test]
+    fn claim_and_refund_rows_name_the_command() {
+        let claim = words(&view(
+            TakerSwapStateV1::ClaimAvailable,
+            "both_legs_locked",
+            None,
+            Some(TakerTerminalActionV1::Claim),
+        ));
+        assert!(claim.contains("both legs are locked: you can claim the Monero"));
+        assert!(claim.ends_with(
+            "\n  next: swap claim --swap-id xmr-swap-1 --request-id <new id> --expected-generation 6"
+        ));
+        let refund = words(&view(
+            TakerSwapStateV1::RefundAvailable,
+            "refund_available",
+            None,
+            Some(TakerTerminalActionV1::Refund),
+        ));
+        assert!(refund.contains("refund your LEZ (tag 16) before the punish time"));
+        assert!(refund.ends_with("--expected-generation 6"));
+        assert!(refund.contains("\n  next: swap refund --swap-id xmr-swap-1"));
+    }
+
+    #[test]
+    fn every_monero_attention_reason_prints_in_plain_words() {
+        use TakerSwapStateV1 as State;
+        let refund = Some(TakerTerminalActionV1::Refund);
+        for (phase, reason, action, expected) in [
+            (
+                "lez_lock_window_closed",
+                "xmr_lez_lock_window_closed",
+                None,
+                "needs you: the LEZ lock window closed before your LEZ was locked",
+            ),
+            (
+                "refund_available",
+                "refund_window_closing",
+                refund,
+                "needs you: the refund window is half over: refund now, or from the punish time \
+                 the Maker takes your LEZ and the Monero stays locked",
+            ),
+            (
+                "refund_available",
+                "xmr_maker_did_not_claim",
+                refund,
+                "needs you: Maker did not claim before the refund time: refund before the \
+                 punish time",
+            ),
+            (
+                "sweeping",
+                "xmr_claim_sweep_in_doubt",
+                None,
+                "needs you: the Monero sweep was started and not recorded, so it is never \
+                 resent: recover it by hand from the wallet file named in the detail",
+            ),
+            (
+                "punish_open",
+                "xmr_refund_window_closed",
+                None,
+                "needs you: the refund window closed without a refund: the Maker can punish",
+            ),
+        ] {
+            let printed = words(&view(State::AttentionRequired, phase, Some(reason), action));
+            assert!(
+                printed.contains(&format!("\n  {expected}")),
+                "{reason}: {printed}"
+            );
+        }
+        let mut in_doubt = view(
+            State::AttentionRequired,
+            "sweeping",
+            Some("xmr_claim_sweep_in_doubt"),
+            None,
+        );
+        in_doubt.status_detail = Some("wallet xmr-ab-claim-1 holds the shared spend key".into());
+        assert!(
+            words(&in_doubt)
+                .ends_with("\n  detail: wallet xmr-ab-claim-1 holds the shared spend key")
+        );
+        // A reason the CLI does not know prints as the Node named it.
+        let unknown = words(&view(
+            State::AttentionRequired,
+            "new_phase",
+            Some("new_reason"),
+            None,
+        ));
+        assert!(
+            unknown.contains(": new_phase\n  needs you: new_reason"),
+            "{unknown}"
+        );
+    }
+
+    #[test]
+    fn a_monero_offer_prints_its_bounds_and_price_in_xmr() {
+        use lez_swap_store::{LocalPriceV1, MakerPairConfigurationV1, MakerPriceSourceKind};
+        let route = MakerRouteV1::new(Pair::Monero, SwapDirection::TakerSellsLez).unwrap();
+        let offer: lez_swap_store::MakerOfferV1 = serde_json::from_value(serde_json::json!({
+            "id": "xmr-offer-1",
+            "pair_configuration": MakerPairConfigurationV1::new(
+                route, true, MakerPriceSourceKind::Local, 1_000_000_000, 2_000_000_000_000, 3600,
+            )
+            .unwrap(),
+            "price": LocalPriceV1::new(route, 50_001, 1_000_000_000_000).unwrap(),
+            "pair_configuration_revision": 1,
+            "price_source_revision": 1,
+            "price_observed_at_unix_seconds": 10,
+            "created_at_unix_seconds": 10,
+            "expires_at_unix_seconds": 3610,
+        }))
+        .expect("offer terms");
+        assert_eq!(
+            xmr_offer_words(&offer).unwrap(),
+            "offer xmr-offer-1: Monero, you sell LEZ for 0.001000000000 XMR to 2.000000000000 \
+             XMR (1000000000 to 2000000000000 piconero), 50001 LEZ units per 1.000000000000 XMR \
+             (1000000000000 piconero); take with `swap take --offer-id xmr-offer-1 \
+             --foreign-units <piconero> --request-id <new id>`"
+        );
+    }
+
+    #[test]
+    fn other_pairs_get_no_monero_words() {
+        let mut zcash = view(TakerSwapStateV1::Completed, "completed", None, None);
+        zcash.route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+        assert_eq!(xmr_swap_words(&zcash), None);
     }
 }
