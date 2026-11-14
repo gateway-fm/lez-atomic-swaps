@@ -1,0 +1,149 @@
+Full regression of 961b0fe9 (main after PRs #148 and #153) on macOS arm64 (Apple silicon,
+Docker Desktop), 2026-11-14 18:49Z -> 20:26Z, UTC
+
+One run of every test of `deploy/scripts/regress.sh full` (97: `regress.sh list full`) from
+961b0fe9 (main, the merge of PR #153; see PROVENANCE.md), on Node images built from the same
+commit, three lanes at a time (LEZ_LANES=3), every desk test recorded (LEZ_REGRESS_RECORD=1),
+on a chain made for the run. The packages read 0.3.1; the version alignment to 0.3.2
+(PR #154) is not in the tested commit.
+
+Result: 97 tests, 97 passed, each on its first try. 0 frozen tries, 0 NOT-EXERCISED, 0
+timeouts, 0 failures, 0 retries; 2 new LEZ chains (the two zec-balance-refusal tests make
+their own); 1 timing-profile switch (fast -> refund at 20:03Z).
+
+By kind: node:btc 32, node:zec 31, ui:btc 16, ui:zec 18. Test time summed over lanes:
+15323 s; wall time 97 min. ZEC profiles deterministic-local-devnet-v5 / -v6 (NU7, Zebra 7.0.0
+regtest); BTC profiles fast and refund. The smoke before it (6 tests) passed 6 of 6 in 3 min
+(logs/smoke-regress.log).
+
+Each row's log is logs/<kind>-<pair>-<scenario>-<direction>-<try>.log; logs/regress.log is the
+runner's own log; logs/run-summary.log is the wrapper's (what each image and container was
+built from, read before the run). results.tsv is the runner's table (test, try, verdict,
+seconds, finished at, lane, new chain); chain.tsv samples the LEZ finalized height and tip.
+
+What this run adds
+
+It is the first full regression of the PR #153 code: the ZEC LEZ observation pinned at the
+tip read before it, the sidecar's finalized observers reading their window in batches, the
+role Node launcher's directory checks, and the harness fixes. The chains ran on the same
+host as the Nodes, so the remote-link latency those fixes are for is not exercised here
+(docs/evidence/remote-chain-rpc-2026-11-14/). PR #148 changes the Chat package of the
+module catalog; the Docker stack still stages chat_module 0.2.2 and delivery_module 0.2.0.
+
+Compared with the 0.3.1 run (docs/evidence/regression-0.3.1-2026-11-13-macos-arm64/)
+
+The same 97 tests ran on the same host the day before from 538530eb (the code of v0.3.1):
+97 of 97, each on its first try, 99 min wall time, 15495 s summed (here 97 min and 15323 s).
+Summed by kind, here against there: node:btc 3939 against 4096 s, node:zec 4023 against
+4175 s, ui:btc 2837 against 2778 s, ui:zec 4524 against 4446 s. 54 tests took less time
+here, 36 more, 7 the same. The widest differences are
+node:zec:zec-claim-collision:TakerSellsForeign (69 s less: 104 s, against 173 s there and
+127 s in the v0.3.0 run; the test provokes a nonce race, and its length varies with how the
+race goes) and ui:zec:zec-concurrent:TakerSellsForeign (27 s more). No other test differs by
+more than 32 s. The widest finalized-to-tip gap in chain.tsv was 18 blocks (16 on the
+starting chain and 24 on the balance-refusal chains there).
+
+The per-test logs carry the same warning and retry lines as the 0.3.1 run's, in the same
+numbers: one "the supervisor's retry; no hand drive" line in a ZEC test and two "after the
+restart the Taker's schedule reports no failure class" lines. The start-up, chain and
+profile logs carry the same ten docker compose volume-label warnings each.
+
+Results (results.tsv; the last column is the same test's try-1 time in the 538530eb Mac run)
+
+node:zec:zec-taker-refund:TakerSellsLez                    try 1  PASSED     286 s  2026-11-14T18:54:29Z  lane 3             538530eb  287 s
+node:btc:late-claim-unmined:TakerSellsForeign              try 1  PASSED     465 s  2026-11-14T18:57:27Z  lane 2             538530eb  465 s
+node:zec:zec-maker-refund:TakerSellsLez                    try 1  PASSED     279 s  2026-11-14T18:59:15Z  lane 3             538530eb  282 s
+node:btc:late-claim-unmined:TakerSellsLez                  try 1  PASSED     578 s  2026-11-14T18:59:18Z  lane 1             538530eb  574 s
+node:zec:zec-refund-then-maker-lock:TakerSellsLez          try 1  PASSED     288 s  2026-11-14T19:02:22Z  lane 2             538530eb  295 s
+node:zec:zec-taker-refund:TakerSellsForeign                try 1  PASSED     279 s  2026-11-14T19:04:02Z  lane 1             538530eb  279 s
+ui:zec:zec-taker-refund:TakerSellsLez                      try 1  PASSED     306 s  2026-11-14T19:04:28Z  lane 3             538530eb  306 s
+node:zec:zec-maker-refund:TakerSellsForeign                try 1  PASSED     283 s  2026-11-14T19:07:12Z  lane 2             538530eb  294 s
+node:zec:zec-refund-then-maker-lock:TakerSellsForeign      try 1  PASSED     281 s  2026-11-14T19:08:50Z  lane 1             538530eb  282 s
+ui:zec:zec-taker-refund:TakerSellsForeign                  try 1  PASSED     289 s  2026-11-14T19:09:23Z  lane 3             538530eb  290 s
+ui:zec:zec-maker-refund:TakerSellsLez                      try 1  PASSED     336 s  2026-11-14T19:12:54Z  lane 2             538530eb  359 s
+ui:zec:zec-maker-refund:TakerSellsForeign                  try 1  PASSED     319 s  2026-11-14T19:14:16Z  lane 1             538530eb  319 s
+ui:zec:zec-stale-window:TakerSellsForeign                  try 1  PASSED     308 s  2026-11-14T19:14:37Z  lane 3             538530eb  309 s
+ui:zec:zec-happy:TakerSellsLez                             try 1  PASSED     201 s  2026-11-14T19:16:22Z  lane 2             538530eb  184 s
+ui:zec:zec-restart-taker:TakerSellsLez                     try 1  PASSED     209 s  2026-11-14T19:18:14Z  lane 3             538530eb  190 s
+ui:zec:zec-concurrent:TakerSellsLez                        try 1  PASSED     280 s  2026-11-14T19:19:03Z  lane 1             538530eb  263 s
+ui:zec:zec-restart-maker:TakerSellsLez                     try 1  PASSED     221 s  2026-11-14T19:20:11Z  lane 2             538530eb  207 s
+ui:zec:zec-survivor:TakerSellsLez                          try 1  PASSED     167 s  2026-11-14T19:21:08Z  lane 3             538530eb  162 s
+ui:btc:happy:TakerSellsLez                                 try 1  PASSED      97 s  2026-11-14T19:21:54Z  lane 2             538530eb   99 s
+ui:btc:restart-taker:TakerSellsLez                         try 1  PASSED     125 s  2026-11-14T19:23:19Z  lane 3             538530eb   99 s
+ui:zec:zec-node-offline:TakerSellsLez                      try 1  PASSED     279 s  2026-11-14T19:23:50Z  lane 1             538530eb  272 s
+ui:btc:restart-maker:TakerSellsLez                         try 1  PASSED     119 s  2026-11-14T19:24:02Z  lane 2             538530eb  115 s
+ui:btc:node-offline:TakerSellsLez                          try 1  PASSED      45 s  2026-11-14T19:24:53Z  lane 2             538530eb   45 s
+ui:btc:survivor:TakerSellsLez                              try 1  PASSED     131 s  2026-11-14T19:25:37Z  lane 3             538530eb  134 s
+ui:btc:concurrent:TakerSellsLez                            try 1  PASSED     168 s  2026-11-14T19:26:45Z  lane 1             538530eb  167 s
+ui:zec:zec-happy:TakerSellsForeign                         try 1  PASSED     191 s  2026-11-14T19:28:12Z  lane 2             538530eb  186 s
+ui:zec:zec-restart-taker:TakerSellsForeign                 try 1  PASSED     167 s  2026-11-14T19:29:39Z  lane 1             538530eb  161 s
+ui:zec:zec-concurrent:TakerSellsForeign                    try 1  PASSED     277 s  2026-11-14T19:30:22Z  lane 3             538530eb  250 s
+ui:zec:zec-restart-maker:TakerSellsForeign                 try 1  PASSED     175 s  2026-11-14T19:31:14Z  lane 2             538530eb  171 s
+ui:zec:zec-survivor:TakerSellsForeign                      try 1  PASSED     168 s  2026-11-14T19:32:33Z  lane 1             538530eb  167 s
+ui:btc:happy:TakerSellsForeign                             try 1  PASSED     140 s  2026-11-14T19:33:41Z  lane 2             538530eb  138 s
+ui:btc:restart-taker:TakerSellsForeign                     try 1  PASSED     135 s  2026-11-14T19:34:55Z  lane 1             538530eb  121 s
+ui:zec:zec-node-offline:TakerSellsForeign                  try 1  PASSED     279 s  2026-11-14T19:35:10Z  lane 3             538530eb  287 s
+ui:btc:restart-maker:TakerSellsForeign                     try 1  PASSED     140 s  2026-11-14T19:36:08Z  lane 2             538530eb  153 s
+ui:btc:node-offline:TakerSellsForeign                      try 1  PASSED      45 s  2026-11-14T19:37:00Z  lane 2             538530eb   46 s
+ui:btc:survivor:TakerSellsForeign                          try 1  PASSED     158 s  2026-11-14T19:37:40Z  lane 1             538530eb  164 s
+node:zec:zec-happy:TakerSellsLez                           try 1  PASSED      90 s  2026-11-14T19:39:17Z  lane 1             538530eb   92 s
+ui:btc:concurrent:TakerSellsForeign                        try 1  PASSED     282 s  2026-11-14T19:40:00Z  lane 3             538530eb  260 s
+node:zec:zec-replay:TakerSellsLez                          try 1  PASSED      76 s  2026-11-14T19:40:40Z  lane 1             538530eb   91 s
+node:zec:zec-wrong-inputs:TakerSellsLez                    try 1  PASSED      79 s  2026-11-14T19:41:27Z  lane 3             538530eb   80 s
+node:zec:zec-restart-taker:TakerSellsLez                   try 1  PASSED      98 s  2026-11-14T19:42:25Z  lane 1             538530eb   94 s
+ui:zec:zec-concurrent-staggered:TakerSellsLez              try 1  PASSED     352 s  2026-11-14T19:42:58Z  lane 2             538530eb  363 s
+node:zec:zec-restart-maker:TakerSellsLez                   try 1  PASSED      88 s  2026-11-14T19:43:03Z  lane 3             538530eb   91 s
+node:zec:zec-regenerated-catalog:TakerSellsLez             try 1  PASSED      77 s  2026-11-14T19:44:27Z  lane 3             538530eb   84 s
+node:zec:zec-survivor:TakerSellsLez                        try 1  PASSED     120 s  2026-11-14T19:44:32Z  lane 1             538530eb   97 s
+node:zec:zec-tampered-catalog:TakerSellsLez                try 1  PASSED      31 s  2026-11-14T19:45:04Z  lane 3             538530eb   32 s
+node:zec:zec-concurrent:TakerSellsLez                      try 1  PASSED     124 s  2026-11-14T19:45:11Z  lane 2             538530eb  116 s
+node:btc:happy:TakerSellsLez                               try 1  PASSED      48 s  2026-11-14T19:46:08Z  lane 2             538530eb   53 s
+node:zec:zec-offline-after-lock:TakerSellsLez              try 1  PASSED      74 s  2026-11-14T19:46:26Z  lane 3             538530eb   80 s
+node:btc:replay:TakerSellsLez                              try 1  PASSED      39 s  2026-11-14T19:46:54Z  lane 2             538530eb   51 s
+node:btc:wrong-inputs:TakerSellsLez                        try 1  PASSED      47 s  2026-11-14T19:47:21Z  lane 3             538530eb   48 s
+node:zec:zec-early-lock:TakerSellsLez                      try 1  PASSED     162 s  2026-11-14T19:47:22Z  lane 1             538530eb  177 s
+node:btc:restart-taker:TakerSellsLez                       try 1  PASSED      45 s  2026-11-14T19:47:48Z  lane 2             538530eb   59 s
+node:btc:survivor:TakerSellsLez                            try 1  PASSED      52 s  2026-11-14T19:48:20Z  lane 1             538530eb   62 s
+node:btc:restart-maker:TakerSellsLez                       try 1  PASSED      64 s  2026-11-14T19:48:32Z  lane 3             538530eb   50 s
+node:btc:late-claim-confirms:TakerSellsLez                 try 1  PASSED      66 s  2026-11-14T19:49:02Z  lane 2             538530eb   64 s
+node:btc:concurrent:TakerSellsLez                          try 1  PASSED      84 s  2026-11-14T19:49:51Z  lane 1             538530eb   78 s
+node:btc:offline-after-lock:TakerSellsLez                  try 1  PASSED      51 s  2026-11-14T19:50:03Z  lane 2             538530eb   52 s
+node:btc:tampered-config:TakerSellsLez                     try 1  PASSED       9 s  2026-11-14T19:50:22Z  lane 2             538530eb    9 s
+node:btc:regenerated-config:TakerSellsLez                  try 1  PASSED      39 s  2026-11-14T19:50:38Z  lane 1             538530eb   49 s
+node:btc:early-lock:TakerSellsLez                          try 1  PASSED     132 s  2026-11-14T19:50:51Z  lane 3             538530eb  157 s
+node:zec:zec-happy:TakerSellsForeign                       try 1  PASSED      78 s  2026-11-14T19:51:50Z  lane 2             538530eb   83 s
+node:zec:zec-replay:TakerSellsForeign                      try 1  PASSED      71 s  2026-11-14T19:51:56Z  lane 1             538530eb   72 s
+node:zec:zec-wrong-inputs:TakerSellsForeign                try 1  PASSED      70 s  2026-11-14T19:52:09Z  lane 3             538530eb   77 s
+node:zec:zec-restart-maker:TakerSellsForeign               try 1  PASSED      71 s  2026-11-14T19:53:14Z  lane 1             538530eb   78 s
+node:zec:zec-restart-taker:TakerSellsForeign               try 1  PASSED      78 s  2026-11-14T19:53:15Z  lane 2             538530eb   79 s
+node:zec:zec-survivor:TakerSellsForeign                    try 1  PASSED     111 s  2026-11-14T19:54:07Z  lane 3             538530eb  113 s
+node:zec:zec-regenerated-catalog:TakerSellsForeign         try 1  PASSED      65 s  2026-11-14T19:54:27Z  lane 2             538530eb   73 s
+node:zec:zec-tampered-catalog:TakerSellsForeign            try 1  PASSED      35 s  2026-11-14T19:54:49Z  lane 3             538530eb   32 s
+node:zec:zec-concurrent:TakerSellsForeign                  try 1  PASSED     116 s  2026-11-14T19:55:16Z  lane 1             538530eb  133 s
+node:zec:zec-offline-after-lock:TakerSellsForeign          try 1  PASSED      71 s  2026-11-14T19:56:08Z  lane 3             538530eb   78 s
+node:btc:happy:TakerSellsForeign                           try 1  PASSED      61 s  2026-11-14T19:56:25Z  lane 1             538530eb   57 s
+node:btc:replay:TakerSellsForeign                          try 1  PASSED      67 s  2026-11-14T19:57:23Z  lane 3             538530eb   72 s
+node:zec:zec-early-lock:TakerSellsForeign                  try 1  PASSED     173 s  2026-11-14T19:57:27Z  lane 2             538530eb  169 s
+node:btc:wrong-inputs:TakerSellsForeign                    try 1  PASSED      67 s  2026-11-14T19:57:40Z  lane 1             538530eb   64 s
+node:btc:restart-taker:TakerSellsForeign                   try 1  PASSED      53 s  2026-11-14T19:58:24Z  lane 3             538530eb   66 s
+node:btc:restart-maker:TakerSellsForeign                   try 1  PASSED      59 s  2026-11-14T19:58:34Z  lane 2             538530eb   91 s
+node:btc:survivor:TakerSellsForeign                        try 1  PASSED      61 s  2026-11-14T19:58:49Z  lane 1             538530eb   75 s
+node:btc:late-claim-confirms:TakerSellsForeign             try 1  PASSED      79 s  2026-11-14T19:59:50Z  lane 3             538530eb   67 s
+node:btc:concurrent:TakerSellsForeign                      try 1  PASSED     111 s  2026-11-14T20:00:32Z  lane 2             538530eb  118 s
+node:btc:offline-after-lock:TakerSellsForeign              try 1  PASSED      62 s  2026-11-14T20:00:59Z  lane 3             538530eb   65 s
+node:btc:tampered-config:TakerSellsForeign                 try 1  PASSED       9 s  2026-11-14T20:01:14Z  lane 3             538530eb   10 s
+node:btc:regenerated-config:TakerSellsForeign              try 1  PASSED      67 s  2026-11-14T20:01:46Z  lane 2             538530eb   75 s
+node:btc:early-lock:TakerSellsForeign                      try 1  PASSED     170 s  2026-11-14T20:01:47Z  lane 1             538530eb  201 s
+node:zec:zec-claim-collision:TakerSellsForeign             try 1  PASSED     104 s  2026-11-14T20:03:06Z  lane 3             538530eb  173 s
+node:btc:refund-then-maker-lock:TakerSellsLez              try 1  PASSED     273 s  2026-11-14T20:08:34Z  lane 3             538530eb  272 s
+node:btc:maker-refund:TakerSellsLez                        try 1  PASSED     287 s  2026-11-14T20:08:46Z  lane 2             538530eb  301 s
+node:btc:taker-refund:TakerSellsLez                        try 1  PASSED     291 s  2026-11-14T20:08:51Z  lane 1             538530eb  301 s
+node:btc:taker-refund:TakerSellsForeign                    try 1  PASSED     196 s  2026-11-14T20:12:15Z  lane 1             538530eb  187 s
+ui:btc:taker-refund:TakerSellsLez                          try 1  PASSED     315 s  2026-11-14T20:13:57Z  lane 3             538530eb  307 s
+ui:btc:maker-refund:TakerSellsLez                          try 1  PASSED     311 s  2026-11-14T20:14:04Z  lane 2             538530eb  304 s
+node:btc:maker-refund:TakerSellsForeign                    try 1  PASSED     157 s  2026-11-14T20:15:00Z  lane 1             538530eb  157 s
+node:btc:refund-then-maker-lock:TakerSellsForeign          try 1  PASSED     150 s  2026-11-14T20:16:36Z  lane 3             538530eb  146 s
+ui:btc:taker-refund:TakerSellsForeign                      try 1  PASSED     320 s  2026-11-14T20:19:31Z  lane 2             538530eb  318 s
+ui:btc:maker-refund:TakerSellsForeign                      try 1  PASSED     306 s  2026-11-14T20:20:14Z  lane 1             538530eb  308 s
+node:zec:zec-balance-refusal:TakerSellsLez                 try 1  PASSED     132 s  2026-11-14T20:23:29Z  lane 1 (own chain) 538530eb  133 s
+node:zec:zec-balance-refusal:TakerSellsForeign             try 1  PASSED     133 s  2026-11-14T20:26:40Z  lane 1 (own chain) 538530eb  129 s

@@ -1,0 +1,30 @@
+[20:52:04] === zec-restart-maker (stamp 1794685924)
+[20:52:04] preflight: indexer historical reads
+[20:52:04]   indexer serves historical reads at the tip (3036)
+[20:52:04] preflight: LEZ finality check waived by request
+[20:52:04]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[20:52:29]       taker: taker ZEC corridor zec-devnet-1794685924: sidecar listening on 127.0.0.1:19902
+[20:52:29]       taker: taker: 1 prepared ZEC entries configured
+[20:52:29]     [zec-provision 19:52:29]   maker sidecar answers on 127.0.0.1:19901
+[20:52:29]     [zec-provision 19:52:29]   taker sidecar answers on 127.0.0.1:19902
+[20:52:29]       maker_health: ready=True degraded=False
+[20:52:29]     [zec-provision 19:52:29]   Taker lists zec-devnet-offer-1794685924 ; corridor zec-devnet-1794685924 is live
+[20:52:29]   corridor zec-devnet-1794685924 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-1794685924, zebra tip 384, Zcash refund height 393
+[20:52:30]   Taker took zec-devnet-offer-1794685924: swap zec-devnet-s (not_activated)
+[20:52:30]   receipt: swap zec-devnet-swap-1794685924, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794685924/actor/taker/actor-config.json
+[20:52:30]   [0 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker not_activated (gen 0) | actor at - | maker leased | zebra 384 | LEZ finalized 3043, tip 3047 (4 unfinalized) [heartbeat]
+[20:52:33]   [3 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 384 | LEZ finalized 3054, tip 3063 (9 unfinalized) [heartbeat]
+[20:52:36]   zebra: mined 1 block(s) → height 385 (mempool had ['942439456162'])
+[20:52:43]   [13 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 385 | LEZ finalized 3054, tip 3063 (9 unfinalized) [heartbeat]
+[20:52:43]   restarting lez-maker-node
+[20:52:56]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 385 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:52:56]   zebra: mined 1 block(s) → height 386 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[20:53:02]   [6 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at taker_lock_confirmed | maker both_legs_locked | zebra 386 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:03]   Taker claimed LEZ on zec-devnet-s (replay=False)
+[20:53:03]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 386 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:10]   [6 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 386 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:10]   zebra: mined 1 block(s) → height 387 (mempool had ['d13c561feb18'])
+[20:53:13]   [10 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 387 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:13]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:14]   both Nodes report zec-devnet-s completed
+[20:53:14] === zec-restart-maker: passed in 70s
