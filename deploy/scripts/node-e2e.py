@@ -6590,7 +6590,7 @@ def run(name: str) -> bool:
 def main() -> int:
     global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "all"])
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "xmr-fund", "all"])
     parser.add_argument("--swap-id", action="append", default=[],
                         help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
     parser.add_argument("--mine-pending-only", action="store_true",
@@ -6613,6 +6613,14 @@ def main() -> int:
         if (args.direction or "TakerSellsLez") != "TakerSellsLez":
             parser.error("Monero swaps have the Taker sell LEZ only (--direction TakerSellsLez)")
         use_route("Monero", "TakerSellsLez")
+        if args.scenario == "xmr-fund":
+            # A desk journey's Monero wallets (ui-e2e.sh xmr-happy): the Maker funds the lot.
+            try:
+                xmr_fund()
+            except Failure as failure:
+                log(f"FAILED: {failure}")
+                return 1
+            return 0
         names = list(XMR_SCENARIOS) if args.scenario == "all" else [args.scenario]
         if any(n not in XMR_SCENARIOS for n in names):
             parser.error(f"with --pair Monero choose from {sorted(XMR_SCENARIOS)}")

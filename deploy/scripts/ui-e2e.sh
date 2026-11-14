@@ -35,6 +35,10 @@
 #                  offer; not in `all`)
 #   zec-desk-offer the Maker desk's form publishes a Zcash offer, the Taker desk takes
 #                  it, the Nodes agree at take time (no zec-catalog-fixture.sh); TakerSellsLez
+#   xmr-happy      --pair Monero (TakerSellsLez only, LEZ_MONERO=1 stack): the Maker desk's
+#                  form publishes a Monero offer, the Taker desk takes it, the Taker Node
+#                  locks its LEZ and the Maker Node funds Monero on their own, the Taker
+#                  desk claims, both desks show the swap completed
 #   all            every scenario in sequence (stops at the first failure)
 #
 # With LEZ_UI_NATIVE_RUN_ROOT set, both desks are in one Basecamp on this
@@ -104,7 +108,12 @@ case "$pair" in
     lock_action=""; lock_wallet=lez-maker
     if [[ "$direction" == TakerSellsLez ]]; then claim_action=claim_zec; refund_action=refund_lez
     else claim_action=claim_lez; refund_action=refund_zec; fi ;;
-  *) echo "--pair must be Bitcoin or Zcash" >&2; exit 64 ;;
+  # Monero: the Taker sells LEZ only; its LEZ lock is the Node's (no desk
+  # button), it claims Monero and refunds LEZ.
+  Monero)
+    [[ "$direction" == TakerSellsLez || "$zec_direction_given" == 0 ]] || { echo "Monero swaps have the Taker sell LEZ only" >&2; exit 64; }
+    direction=TakerSellsLez; lock_action=""; lock_wallet=lez-maker; claim_action=claim_xmr; refund_action=refund_lez ;;
+  *) echo "--pair must be Bitcoin, Zcash or Monero" >&2; exit 64 ;;
 esac
 
 log() { printf '\n[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -328,6 +337,8 @@ export_evidence() { # export_evidence <swap_id>
   [[ -z "$native_run" ]] || { log "evidence export skipped: native Nodes"; return 0; }
   if [[ "$pair" == Bitcoin ]]; then
     python3 scripts/export-node-evidence.py --swap "$1" || fail "evidence export"
+  elif [[ "$pair" == Monero ]]; then
+    log "evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)"
   else
     # export-node-evidence.py reads the Bitcoin swap stores; a ZEC swap's record
     # is the corridor, both Nodes' views, the Taker actor's status and the zebra
@@ -873,6 +884,31 @@ scenario_zec_desk_offer() {
   local swap; zec_publish; take swap
   zec_claim_and_complete "$swap"
 }
+# A Monero offer published from the Maker desk's form, taken from the Taker
+# desk (xmr_reserve_v1 at take time). The Nodes drive the rest themselves (the
+# Taker's LEZ lock, the Maker's Monero funding and its confirmations, the
+# Maker's LEZ claim, the Taker's sweep); the one press after the take is the
+# Taker's Claim. node-e2e.py xmr-fund funds the Maker's Monero wallet first.
+scenario_xmr_happy() {
+  local swap maker_pid taker_pid
+  python3 scripts/node-e2e.py --pair Monero xmr-fund 2>&1 | sed 's/^/   /'
+  [[ "${PIPESTATUS[0]}" == 0 ]] || fail "xmr-fund"
+  step "Maker desk publishes TakerSellsLez Monero offers from its form until two are pending" maker
+  take swap
+  note "The Taker Node locks its LEZ on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Monero"
+  # The Maker's funded row lasts only until the Taker's claim is final: the
+  # claim and the Maker's own LEZ claim count as past it.
+  step_bg maker_pid "Maker desk shows ${swap:0:12} funded" maker INTERACTIVE_ACTION=wait \
+    "INTERACTIVE_STATE=awaiting_taker_claim|claiming_lez|completed" "INTERACTIVE_SWAP_ID=$swap"
+  taker_act "$claim_action" "$swap"
+  wait "$maker_pid" || fail "Maker desk: Monero funded"
+  note "The Maker Node claims the LEZ, which hands the Taker the Monero key; the Taker Node sweeps the Monero, and both desks watch the swap complete"
+  maker_wait_bg maker_pid completed "$swap"
+  taker_wait_bg taker_pid completed "$swap"
+  wait "$maker_pid" || fail "Maker desk: completed"
+  wait "$taker_pid" || fail "Taker desk: completed"
+  export_evidence "$swap"
+}
 scenario_logos_happy() {
   local swap started route node
   transport logos
@@ -941,6 +977,7 @@ run_one() {
     zec-survivor) [[ "$pair" == Zcash ]] || fail "zec-survivor needs --pair Zcash"; scenario_zec_survivor ;;
     zec-node-offline) [[ "$pair" == Zcash ]] || fail "zec-node-offline needs --pair Zcash"; scenario_zec_node_offline ;;
     zec-stale-window) [[ "$pair" == Zcash ]] || fail "zec-stale-window needs --pair Zcash"; scenario_zec_stale_window ;;
+    xmr-happy) [[ "$pair" == Monero ]] || fail "xmr-happy needs --pair Monero"; scenario_xmr_happy ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video
@@ -949,6 +986,6 @@ run_one() {
 all=(happy restart-taker restart-maker survivor concurrent taker-refund maker-refund node-offline)
 case "$scenario" in
   all) for name in "${all[@]}"; do run_one "$name"; done ;;
-  "") echo "usage: scripts/ui-e2e.sh <scenario|all> [--direction TakerSellsForeign|TakerSellsLez] [--pair Bitcoin|Zcash] [--record]" >&2; exit 64 ;;
+  "") echo "usage: scripts/ui-e2e.sh <scenario|all> [--direction TakerSellsForeign|TakerSellsLez] [--pair Bitcoin|Zcash|Monero] [--record]" >&2; exit 64 ;;
   *) run_one "$scenario" ;;
 esac
