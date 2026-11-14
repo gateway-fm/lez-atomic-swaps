@@ -5921,9 +5921,9 @@ def xmr_taker_balance() -> dict:
     return monero
 
 
-def xmr_publish(stamp: str, offer_id: str) -> None:
+def xmr_publish(stamp: str, *offer_ids: str) -> None:
     """The Maker's CLI enables Monero TakerSellsLez at the lot's price and
-    publishes `offer_id` on its running Node."""
+    publishes each of `offer_ids` on its running Node."""
     route = ["--pair", "monero", "--direction", "taker-sells-lez"]
     revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
                                      if r["value"]["route"] == ROUTE), [])
@@ -5937,8 +5937,10 @@ def xmr_publish(stamp: str, offer_id: str) -> None:
             maker_cli("set-local-price", "--request-id", f"e2e-xmr-price-{stamp}", *revision(maker_cli("prices")),
                       *route, "--lez-units-per-lot", "1", "--foreign-units-per-lot",
                       str(XMR_FOREIGN_UNITS // XMR_LEZ_UNITS))
-    maker_cli("publish-offer", "--request-id", f"e2e-xmr-publish-{stamp}", "--offer-id", offer_id, *route)
-    log(f"  Maker CLI published {offer_id} on its running Node")
+    for index, offer_id in enumerate(offer_ids):
+        maker_cli("publish-offer", "--request-id", f"e2e-xmr-publish-{stamp}{f'-{index}' if index else ''}",
+                  "--offer-id", offer_id, *route)
+        log(f"  Maker CLI published {offer_id} on its running Node")
 
 
 def xmr_wait_until(swap_id: str, states: set[str], timeout: int, describe: str = "") -> dict:
@@ -6171,11 +6173,55 @@ def scenario_xmr_punish(stamp: str) -> dict:
             "taker_state": view["state"], "taker_attention_reason": view["attention_reason"]}
 
 
+def scenario_xmr_concurrent(stamp: str) -> dict:
+    """Two Monero swaps of the same Maker and Taker at once, one offer each:
+    both taken one after the other, the second while the first's LEZ lock
+    and Monero funding run; both Taker claims, both Maker LEZ claims and both
+    sweeps complete. The two LEZ legs share each party's LEZ owner account,
+    the two Monero legs each party's one wallet-rpc (its lock). Asserted: LEZ
+    moved twice the lot to the unit, the Maker sent two fundings of the lot,
+    the Taker received two transfers of the lot less the sweep's fee, both
+    swaps completed on both Nodes."""
+    before = xmr_before()
+    windows = xmr_windows()
+    offers = [f"offer-e2e-xmr-{stamp}-a", f"offer-e2e-xmr-{stamp}-b"]
+    xmr_publish(stamp, *offers)
+    swaps = [zec_take_or_resume(offer_id, stamp, f"-{offer_id[-1]}") for offer_id in offers]
+    log(f"  both taken: {swaps[0][:12]} and {swaps[1][:12]}")
+    for index, swap_id in enumerate(swaps):
+        view = xmr_wait_funded(swap_id, windows)
+        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-{index}",
+                                                       "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker claimed Monero on {swap_id[:12]} (replay={result.get('was_replay')})")
+    for swap_id in swaps:
+        xmr_wait_until(swap_id, {"completed"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
+                       describe="(tag 14 → the Maker's LEZ claim → the Taker's sweep)")
+        wait_completed(swap_id, timeout=300)
+    deltas = {role: balance - before["lez"][role] for role, balance in lez_balances().items()}
+    want = {role: 2 * amounts["lez_units"] for role, amounts in
+            expected_settlement("completed", REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
+    if deltas != want:
+        raise Failure(f"the LEZ balances moved {deltas}, two completed swaps move {want}")
+    log(f"  settled both: LEZ moved {deltas}")
+    funded = [t for t in xmr_lane("balance", "--role", "maker")["sent"] if t["txid"] not in before["sent"]["maker"]]
+    if [t["amount"] for t in funded] != [XMR_FOREIGN_UNITS] * 2:
+        raise Failure(f"the Maker sent {funded} during the swaps, two fundings of the lot expected")
+    swept = xmr_received_since("taker", before)
+    if len(swept) != 2 or not all(XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO <= t["amount"] <= XMR_FOREIGN_UNITS
+                                  for t in swept):
+        raise Failure(f"the Taker received {swept} during the swaps; two transfers of the lot less at most "
+                      f"{XMR_FEE_TOLERANCE_PICONERO} piconero of fee each expected")
+    return {"swaps": swaps, "offers": offers, "windows": windows, "lez_before": before["lez"], "lez_deltas": deltas,
+            "maker_monero_fundings": funded, "taker_monero_sweeps": swept}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
     "xmr-maker-never-funds": scenario_xmr_maker_never_funds,
     "xmr-punish": scenario_xmr_punish,
+    "xmr-concurrent": scenario_xmr_concurrent,
 }
 
 
