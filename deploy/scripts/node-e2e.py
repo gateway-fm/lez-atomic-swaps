@@ -6703,6 +6703,42 @@ def scenario_xmr_outage_before_take(stamp: str) -> dict:
     return {"swap_id": swap_id, "offer_id": offer_id, "outage": outage, **xmr_assert_completed(before, swap_id)}
 
 
+def scenario_xmr_cut_after_lock(stamp: str) -> dict:
+    """R2 for Monero: once the take is agreed (all six rounds over Chat) and
+    the Taker's first LEZ transaction (tag 13's initialisation) is on chain,
+    Chat and Delivery are cut (cut_delivery_and_chat) and stay cut until both
+    Nodes report the swap completed: the escrow's funding, the Maker's Monero
+    funding, the Taker's claim, the Maker's LEZ claim and the Taker's sweep
+    need only each Node's own state and the chains. The Maker's Chat socket
+    is sampled throughout and must never hold a connection (assert_cut_held)."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    taker_owner = lez_owner_account("taker")
+    nonce = lez_account_nonce(taker_owner)
+    swap_id, windows = xmr_take(stamp, offer_id)
+    wait = Wait("the Taker's first LEZ transaction of the swap on chain", 120)
+    while wait.running() and lez_account_nonce(taker_owner) == nonce:
+        wait.note(taker_view(swap_id).get("actor_phase"))
+        time.sleep(1)
+    if not wait.running():
+        raise wait.failure()
+    log(f"  the Taker's owner nonce moved {nonce} → {lez_account_nonce(taker_owner)}: its LEZ lock is out; "
+        f"cutting Logos Chat and Delivery (taker {taker_view(swap_id).get('actor_phase')}, maker {maker_phase(swap_id)})")
+    watch = None
+    try:
+        watch = cut_delivery_and_chat()
+        xmr_claim_and_complete(stamp, swap_id, windows)
+        wait_completed(swap_id, timeout=300)
+        held = assert_cut_held(watch)
+        log("  the Monero swap completed with both off-chain dependencies cut")
+    finally:
+        if watch is not None:
+            watch.stop()
+        restore_delivery_and_chat()
+    assert_restored()
+    return {"swap_id": swap_id, "offer_id": offer_id, "cut": held, **xmr_assert_completed(before, swap_id)}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
@@ -6715,6 +6751,7 @@ XMR_SCENARIOS = {
     "xmr-monerod-down": scenario_xmr_monerod_down,
     "xmr-wallet-restart": scenario_xmr_wallet_restart,
     "xmr-outage-before-take": scenario_xmr_outage_before_take,
+    "xmr-cut-after-lock": scenario_xmr_cut_after_lock,
 }
 
 
