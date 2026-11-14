@@ -1571,7 +1571,8 @@ strictly pre-cutoff current clock immediately before its role-local one-send
 CAS. The separate cutoff and admission proofs establish the fail-closed
 boundary, but genuinely concurrent cutoff/refund/late-admission chaos remains
 an open hardening item. The public ZEC SDK survivor branches shown below
-remain unimplemented or unproved; the XMR flow remains an M4 target.
+remain unimplemented or unproved; the XMR flow as built is in
+[protocol-design.md](../milestone-1/protocol-design.md#xmrlez).
 
 This is not a distributed transaction and there is no cross-chain atomic commit.
 Atomicity is a protocol property conditional on canonical chain validation,
@@ -2104,10 +2105,13 @@ or two-Zebra fork tests.
 
 ### LEZ and Monero
 
-Only `TakerSellsLez` is supported. The taker funds the scriptable LEZ leg first;
-after its canonical confirmation policy, the maker funds the agreed Monero
-output. XMR-first is rejected because the reviewed COMIT construction does not
-supply that direction's safe recovery path.
+Only `TakerSellsLez` is supported: the Taker locks LEZ first, the Maker funds
+Monero second. XMR-first is rejected because the COMIT construction does not
+supply that direction's safe recovery path. The full construction, the six
+take-time Chat rounds, the escrow's tags 13–17 and the punish branch are in
+[protocol-design.md](../milestone-1/protocol-design.md#xmrlez); this section
+gives the sequence as the two Nodes run it on the Docker devnet (Monero regtest
+only).
 
 <!-- atomic-sequence: lez-xmr/taker-sells-lez -->
 
@@ -2119,117 +2123,66 @@ sequenceDiagram
     participant LezIdx as LEZ indexer
     participant Monero as monerod and wallet RPC
 
-    Note over Maker,Taker: M4 requirement DLEQ and key share recovery data are durable
-    Note over Maker,Taker: Taker first lock starts the protocol
-    Taker->>LezSeq: Fund taker LEZ leg
-    LezIdx-->>Maker: Canonical LEZ confirmation policy reached
-    Note over Maker,Taker: Required invariant cutoff plus margin no later than earliest recovery
-    alt Cutoff passes with maker XMR lock canonically absent
-        Taker->>Monero: Freshly recheck exact maker XMR lock absent
-        Taker->>LezIdx: Freshly recheck taker LEZ lock canonical and unspent
-        Note over Maker,Taker: Cutoff admission and cross chain race enforcement required
-        Note over Maker,Taker: Required invariant late maker lock admission closes before refund authority
-        Taker->>LezSeq: Refund only funded LEZ leg at signed deadline
-        LezIdx-->>Taker: Exact first lock refund finalized
-        Note over Maker,Taker: Implementation status M4 cutoff and first lock evidence pending
-    else Required M4 target maker XMR lock admission succeeds before the cutoff
-        Maker->>Monero: Fund maker Monero output
-        Monero-->>Taker: Canonical Monero confirmation policy reached
-        Note over Maker,Taker: Both locks are proven before adaptor reveal
-        alt Canonical reveal path
-            Maker->>LezSeq: Claim LEZ with adaptor witness
-            LezIdx-->>Taker: Canonical claim reveals recovery share
-            alt Taker follows including after Maker disappears
-                Note over Maker,Taker: Revealer may disappear and follower uses canonical chain disclosure
-                Taker->>Monero: Spend maker Monero output
-                Monero-->>Taker: Exact spend confirmed
-            else Taker disappears after reveal
-                Note over Maker,Taker: Follower retains claim authority and ClaimEvidenceAvailable stays nonterminal
-            end
-        else No canonical reveal and both locks enter recovery
-            alt Both recovery owners are available
-                Taker->>LezSeq: Refund taker LEZ leg at its deadline
-                LezIdx-->>Maker: Canonical refund event reaches required depth
-                Maker->>Monero: Recover XMR with persisted key shares
-                Monero-->>Maker: Exact recovery spend confirmed
-            else Maker abandons
-                Taker->>LezSeq: Refund own LEZ leg at its signed deadline
-                LezIdx-->>Taker: Exact survivor refund finalized
-                Note over Maker,Taker: XMR recovery remains available only to maker
-                Note over Maker,Taker: Direct M4 survivor surface pending
-            else Taker abandons
-                Maker->>LezSeq: Permissionlessly trigger taker LEZ refund at signed LEZ deadline
-                LezIdx-->>Maker: Canonical refund event reaches required depth
-                Maker->>Monero: Recover own XMR with persisted key shares
-                Monero-->>Maker: Exact survivor recovery confirmed
-                Note over Maker,Taker: Direct M4 nonowner trigger surface pending
-            end
+    Note over Maker,Taker: Six Chat rounds fix Stage A, both MuSig2 sessions and Stage B; windows C < R < P
+    Taker->>LezSeq: Tag 13 and fund (Taker Node, automatic)
+    LezIdx-->>Maker: Taker lock final at a consensus time no later than C
+    alt Maker funds before C
+        Maker->>Monero: Fund the shared address, mine 10 confirmations
+        Monero-->>Taker: View-only wallet sees the exact output at depth
+        alt Taker owner claims before R
+            Taker->>LezSeq: Tag 14 publishes the Taker claim partial
+            LezIdx-->>Maker: Tag 14 final before R minus half of R minus C
+            Maker->>LezSeq: Tag 15 completes the claim with the Maker share
+            LezIdx-->>Taker: Final tag 15 reveals the Maker share
+            Taker->>Monero: Sweep with both shares to the Taker wallet
+        else Taker owner refunds in R to P
+            Taker->>LezSeq: Tag 16 completes the refund with the Taker share
+            LezIdx-->>Maker: Final tag 16 reveals the Taker share
+            Maker->>Monero: Sweep with both shares back to the Maker wallet
+        else No claim or refund before P
+            Maker->>LezSeq: Tag 17 punish, the Maker takes the LEZ
+            Note over Monero: The Monero stays locked, neither party holds both shares
         end
+    else Maker does not fund by C
+        Note over Maker: Maker actor ends expired
+        Taker->>LezSeq: Tag 16 refund in R to P on the owner's command
     end
 ```
 
 <!-- atomicity-argument: lez-xmr/taker-sells-lez -->
 
-For supported `TakerSellsLez`, the maker can receive LEZ only by publishing
-the adaptor witness that reveals the recovery share needed for the taker to
-spend XMR. If there is no reveal, the taker refunds LEZ; only that canonical
-refund event enables the maker to recover XMR with the persisted key shares.
+The Maker receives LEZ either by completing the claim signature (tag 15),
+which publishes the Maker's Monero share and so hands the Taker the Monero, or
+by the punish (tag 17) from P. The Taker recovers its LEZ only with tag 16 in
+[R, P), which publishes the Taker's share and so hands the Maker its Monero
+back. The cross-curve DLEQ proofs bind each share's secp256k1 adaptor point to
+its Ed25519 public spend share, so a completed LEZ signature is exactly the
+missing Monero key.
 
-**Economic safety:** there is no invented Monero timeout. A canonical LEZ claim
-reveals the taker's Monero spend share; without that reveal, the taker refunds
-LEZ and only the canonical refund event enables the maker's XMR recovery.
+**The punish path is not atomic by design**: a Taker that neither completes nor
+refunds before P loses its LEZ and the Monero stays locked for good. The
+escrow allows tag 17 whether or not the Maker funded Monero; the reference
+Maker Node punishes only swaps it funded. The Taker Node never refunds by
+itself; it warns (`refund_window_closing` from R + (P − R)/2) and its owner
+must send the refund.
 
-**Replay/idempotency:** durable shares, event projection, and one-attempt spend
-authority prevent duplicate effects and false terminal state. They do not
-replace the DLEQ and event-gated economic construction.
+**Replay/idempotency:** the Maker's actor consumes each effect's one
+invocation in its workflow journal before running it, so a restarted Maker
+observes instead of resending; the kill scenarios check that no LEZ
+transaction repeats (the owner accounts' transaction counts) and that the
+Monero moves once. An effect whose outcome is unknown is not retried: a Taker
+claim sweep in doubt needs manual recovery.
 
-**Conditional liveness:** the model assumes valid DLEQ proofs, retained shares,
-canonical LEZ events, usable Monero RPCs, and transaction inclusion. Lost
-authority may leave a safe nonterminal output indefinitely.
+**Conditional liveness:** the argument assumes a sound DLEQ construction,
+retained shares, final LEZ evidence, answering Monero RPCs on loopback and LEZ
+inclusion before each window closes; the devnet windows are seconds to minutes.
 
-**Implementation status:** this is an M4 normative target backed by the M1
-model and coordinator contracts, not an implemented monerod lifecycle or E2E.
-
-The XMR construction’s atomicity argument differs from the deadline-bearing
-pairs:
-
-- Taker-first funding and the LEZ confirmation gate prevent the maker from
-  creating the Monero lock before the taker's scriptable recovery path is
-  canonical. First-lock recovery additionally requires the signed maker-lock
-  cutoff, fresh canonical absence and unspent observations, and race-safe
-  late-lock admission. Those gates remain M4 work.
-  The Monero confirmation gate then protects the maker's LEZ reveal after both
-  locks exist.
-- The cross-curve secp256k1 and Ed25519 DLEQ transcript binds the LEZ adaptor
-  witness to the Monero spend-key share. The maker cannot claim LEZ without
-  publishing the evidence the taker needs to spend Monero.
-- Both locks and all DLEQ, encrypted-share, view-key, and recovery material must
-  be verified and durable before the maker reveals. After reveal, the taker
-  continues from canonical LEZ evidence and Monero RPC without Chat or maker
-  cooperation.
-- Monero has no script refund and no Monero deadline is invented. If the maker
-  abandons before claiming LEZ, the taker refunds LEZ at its typed deadline.
-  Only the canonical LEZ refund event at the signed confirmation policy enables
-  the maker's persisted key-share recovery of the Monero output. That event
-  gate replaces a two-deadline inequality for this pair.
-- With both locks, a surviving taker can recover the LEZ leg without maker
-  cooperation. A surviving maker can permissionlessly trigger the LEZ refund to
-  the immutable taker destination and then recover XMR from the canonical event.
-  These direct survivor surfaces and exact COMIT evidence remain M4 work.
-- Role-local persistence records the event, confirmation regression, recovery
-  availability, and terminal action idempotently. Before a recovery spend is
-  submitted or projected, a regressed LEZ refund event revokes recovery
-  authority until the required canonical depth returns.
-
-This is not a distributed transaction, and the safety claim depends on the
-reviewed DLEQ construction, secure share custody, exact Monero transaction
-validation, and canonical LEZ event observation. A deep LEZ reorg after Monero
-recovery, loss of a persisted share, or a malformed/subgroup-invalid proof can
-break the assumptions and must fail closed. Current evidence is the accepted
-M1 model, event-gated coordinator, persistence, RPC, and CLI contract. Exact
-COMIT vectors, production DLEQ and Ed25519 integration, real `monerod` and
-wallet-RPC actors, stagenet happy/refund/concurrent runs, reorg handling, and
-third-party review remain M4 and M7 work.
+**Implementation status:** implemented and run on the Docker devnet (regtest
+Monero, one lane): happy, Taker refund, Maker never funds, punish, two
+concurrent swaps, and SIGKILL of either Node at each step; the runs and the
+open items are in the
+[traceability matrix](../requirements-traceability.md) (F3). No public
+Monero network, no third-party review, and no third-party DLEQ vectors.
 
 ## Happy-path user flow
 
@@ -2268,6 +2221,7 @@ sequenceDiagram
         MakerLeg-->>Daemon: Claim witness reveals adaptor material
         Maker->>TakerLeg: Maker claims taker-funded leg
     else XMR pair, LEZ-first direction only
+        Taker->>TakerLeg: Taker authorises the Maker's LEZ claim (tag 14)
         Maker->>TakerLeg: Maker claims taker-funded LEZ
         TakerLeg-->>Taker: Canonical LEZ claim evidence reveals recovery material
         Taker->>MakerLeg: Taker spends maker-funded XMR output

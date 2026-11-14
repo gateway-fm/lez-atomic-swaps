@@ -74,6 +74,10 @@ compared.
 The XMR row intentionally does not instantiate a fictional Monero deadline.
 Its state model is `LEZ lock -> XMR fund -> LEZ claim/XMR spend` or `LEZ refund
 -> maker key-share recovery/XMR spend`, following the reviewed COMIT direction.
+As built (2026-11-14), all three XMR windows are LEZ times: the maker's funding
+cutoff C, the LEZ refund time R and a punish time P, after which the maker can
+take the LEZ and the Monero stays locked; only regtest profiles exist, no
+public one ([protocol design](protocol-design.md#xmrlez)).
 
 ## Margin budgets
 
