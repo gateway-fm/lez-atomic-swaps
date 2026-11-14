@@ -16,8 +16,8 @@ use lez_bridge_protocol::RunId;
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
     MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroRegtestWalletEffects,
-    MoneroTopologyVerifier, MoneroTransactionId, MoneroWalletRpcLock,
-    REQUIRED_MONERO_CONFIRMATIONS,
+    MoneroTopologyVerifier, MoneroTransactionId, MoneroWalletEffectError as MoneroEffectError,
+    MoneroWalletRpcLock, REQUIRED_MONERO_CONFIRMATIONS,
 };
 use lez_xmr_swap_sdk::{MoneroPrivateViewKey, XmrAgreementV1};
 
@@ -37,6 +37,39 @@ pub const XMR_MAKER_FUNDING_EVIDENCE_FILE: &str = "monero-funding.json";
 pub const XMR_MAKER_FUNDING_RECEIPT_FILE: &str = "monero-funding-receipt.json";
 /// The view-only wallets scan this chain from genesis (regtest only).
 const RESTORE_HEIGHT: u64 = 0;
+/// Goes at the funding while it fails before its transfer, and the pause
+/// between them: a wallet-rpc request can fail in transit (2026-11-14, a
+/// `get_address` that never reached the wallet-rpc).
+const FUNDING_ATTEMPTS: u32 = 3;
+const FUNDING_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The error context of a Maker funding that failed before its transfer was
+/// handed to the wallet-rpc: no Monero was sent. The funding tool's exit
+/// status tells the actor so.
+#[derive(Clone, Copy, Debug)]
+pub struct MoneroFundingNotSent;
+
+impl std::fmt::Display for MoneroFundingNotSent {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the Monero funding failed before its transfer: nothing was sent")
+    }
+}
+
+/// The funding tool's exit status for a [`MoneroFundingNotSent`] failure.
+pub const XMR_MONERO_FUNDING_NOT_SENT_EXIT: i32 = 3;
+
+/// Wallet-effect failures of the funding that come before its `transfer`.
+fn failed_before_transfer(error: &MoneroEffectError) -> bool {
+    matches!(
+        error,
+        MoneroEffectError::NonStandardAddress
+            | MoneroEffectError::ZeroAmount
+            | MoneroEffectError::InvalidSharedAddress
+            | MoneroEffectError::Rpc(
+                "open role wallet" | "refresh current wallet" | "funding wallet address"
+            )
+    )
+}
 
 /// One role's single wallet-rpc as an effect child reaches it: the daemon,
 /// the wallet-rpc, the role wallet every effect reopens (empty password) and
@@ -119,6 +152,9 @@ impl XmrRoleWalletRpcV1 {
 /// mines its confirmations and records the funding with its receipt. The
 /// caller holds the workflow's one `FundMonero` invocation.
 ///
+/// A failure before the transfer is retried; once the attempts are spent it
+/// carries [`MoneroFundingNotSent`].
+///
 /// # Errors
 ///
 /// Fails closed on any wallet, daemon or evidence failure; a failure after
@@ -137,19 +173,41 @@ pub async fn fund_maker_monero(
             .exists(),
         "the Monero funding is already recorded"
     );
-    let _lock = rpc.lock()?;
-    let role = rpc.role_effects()?;
-    // A prior swap may have mined after spending from this wallet: refresh
-    // so its unlocked change is visible to this one transfer.
-    role.open_role_wallet().await?;
-    role.refresh_from_height(RESTORE_HEIGHT).await?;
-    let funding = role
-        .fund_shared_exact_and_confirm(
-            agreement.shared_address(),
-            agreement.body().monero().amount_piconero(),
-        )
-        .await
-        .context("fund the exact Stage-A shared address")?;
+    let _lock = rpc.lock().context(MoneroFundingNotSent)?;
+    let role = rpc.role_effects().context(MoneroFundingNotSent)?;
+    let mut attempt = 1;
+    let funding = loop {
+        // A prior swap may have mined after spending from this wallet: refresh
+        // so its unlocked change is visible to this one transfer.
+        let result = async {
+            role.open_role_wallet().await?;
+            role.refresh_from_height(RESTORE_HEIGHT).await?;
+            role.fund_shared_exact_and_confirm(
+                agreement.shared_address(),
+                agreement.body().monero().amount_piconero(),
+            )
+            .await
+        }
+        .await;
+        match result {
+            Ok(funding) => break funding,
+            Err(error) if failed_before_transfer(&error) && attempt < FUNDING_ATTEMPTS => {
+                eprintln!(
+                    "Maker Monero funding: {error} before the transfer (attempt {attempt} of {FUNDING_ATTEMPTS}); trying again"
+                );
+                attempt += 1;
+                std::thread::sleep(FUNDING_RETRY_PAUSE);
+            }
+            Err(error) if failed_before_transfer(&error) => {
+                return Err(anyhow::Error::new(error)
+                    .context("fund the exact Stage-A shared address")
+                    .context(MoneroFundingNotSent));
+            }
+            Err(error) => {
+                return Err(error).context("fund the exact Stage-A shared address");
+            }
+        }
+    };
     let recorded = record_maker_monero_funding_locked(
         rpc,
         plan,

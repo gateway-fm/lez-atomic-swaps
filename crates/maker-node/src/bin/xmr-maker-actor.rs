@@ -45,8 +45,8 @@ use wait_timeout::ChildExt as _;
 use xmr_reference_actor::{
     ValidatedXmrEffectExecutionV3, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XMR_MAKER_ACTOR_ABI_V1,
     XMR_MAKER_ACTOR_NEXT_ACTION, XMR_MAKER_ACTOR_PROGRAM_ID, XMR_MAKER_FUNDING_EVIDENCE_FILE,
-    XMR_MAKER_FUNDING_RECEIPT_FILE, XmrEffectObserverStateV1, XmrMakerEffectSourcesV1,
-    XmrPreparedEffectInvocationV1, activate_maker_claim_workflow_bytes,
+    XMR_MAKER_FUNDING_RECEIPT_FILE, XMR_MONERO_FUNDING_NOT_SENT_EXIT, XmrEffectObserverStateV1,
+    XmrMakerEffectSourcesV1, XmrPreparedEffectInvocationV1, activate_maker_claim_workflow_bytes,
     activate_maker_punish_workflow_bytes, activate_maker_refund_workflow_bytes,
     complete_maker_claim_signature, ingest_maker_refund_signature,
     load_validated_xmr_maker_authority_fd, load_validated_xmr_maker_effect_execution_fd,
@@ -78,6 +78,8 @@ const REFUND_SIGNATURE_FILE: &str = "maker-refund-observed-signature.json";
 const CLAIM_ACTIVATION_FILE: &str = "maker-claim-activation.json";
 const REFUND_ACTIVATION_FILE: &str = "maker-refund-activation.json";
 const PUNISH_ACTIVATION_FILE: &str = "maker-punish-activation.json";
+/// The funding tool's account that it failed before its transfer.
+const FUNDING_NOT_SENT_FILE: &str = "monero-funding-not-sent.json";
 const MAX_EVIDENCE_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, clap::Parser)]
@@ -146,6 +148,8 @@ enum Funding {
     NotInvoked,
     /// The funding tool ran (or may have): only observation remains.
     Invoked,
+    /// The funding tool failed before its transfer: no Monero was sent.
+    NotSent,
     /// Funding and receipt are reconciled.
     Reconciled,
 }
@@ -180,7 +184,7 @@ impl Facts {
             + match self.funding {
                 Funding::NotInvoked => 0,
                 Funding::Invoked => 1,
-                Funding::Reconciled => 2,
+                Funding::NotSent | Funding::Reconciled => 2,
             }
             + u64::from(self.branch.is_some())
             + u64::from(self.branch_done)
@@ -217,6 +221,8 @@ fn derive_status(facts: &Facts, now_ms: u64) -> Status {
         (None, _) => match facts.funding {
             Funding::Reconciled => Status::new("both_legs_locked", "observe_claim_or_refund"),
             Funding::Invoked => Status::new("taker_lock_confirmed", "fund_monero"),
+            // Nothing of the Maker's is at stake, and its one funding is spent.
+            Funding::NotSent => Status::new("expired", "complete"),
             Funding::NotInvoked => match facts.tag13_final_ms {
                 Some(final_ms) if final_ms > facts.cutoff_ms => Status::new("expired", "complete"),
                 _ if now_ms >= facts.cutoff_ms => Status::new("expired", "complete"),
@@ -266,6 +272,7 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
         return Ok("unchanged");
     }
     match facts.funding {
+        Funding::NotSent => Ok("unchanged"),
         Funding::Invoked => Ok(if chains.observe_fund()? {
             "reconciled"
         } else {
@@ -419,6 +426,13 @@ fn read_facts(execution: &ValidatedXmrEffectExecutionV3) -> Result<Facts> {
                 .is_some()
             {
                 Funding::Reconciled
+            } else if execution
+                .effect_authority()
+                .evidence_root()
+                .join(FUNDING_NOT_SENT_FILE)
+                .exists()
+            {
+                Funding::NotSent
             } else {
                 Funding::Invoked
             }
@@ -899,11 +913,23 @@ impl MakerChains for LiveMaker {
             .context("prepare the Maker's Monero funding")?
         {
             XmrPreparedEffectInvocationV1::InvokeOnce { mut command, .. } => {
-                if let Err(error) = run_silent(&mut command, MONERO_EFFECT_TIMEOUT) {
-                    mark_unknown(&self.execution, XmrWorkflowStep::FundMonero)?;
-                    return Err(error.context("the Monero funding is in doubt"));
+                match run_silent(&mut command, MONERO_EFFECT_TIMEOUT) {
+                    Ok(()) => Ok(()),
+                    Err(error)
+                        if error.downcast_ref::<ChildExit>()
+                            == Some(&ChildExit(Some(XMR_MONERO_FUNDING_NOT_SENT_EXIT))) =>
+                    {
+                        write_once(
+                            &self.evidence(FUNDING_NOT_SENT_FILE),
+                            b"{\"schema_version\":1,\"step\":\"fund_monero\",\"sent\":false}\n",
+                        )?;
+                        Err(error.context("the Monero funding was not sent"))
+                    }
+                    Err(error) => {
+                        mark_unknown(&self.execution, XmrWorkflowStep::FundMonero)?;
+                        Err(error.context("the Monero funding is in doubt"))
+                    }
                 }
-                Ok(())
             }
             XmrPreparedEffectInvocationV1::ObserveOnly { .. }
             | XmrPreparedEffectInvocationV1::Complete { .. } => Ok(()),
@@ -1139,8 +1165,21 @@ fn run_silent(command: &mut ProcessCommand, timeout: Duration) -> Result<()> {
             return Err(error).context("wait for XMR Maker effect child");
         }
     };
-    ensure!(status.success(), "XMR Maker effect child failed");
+    ensure!(status.success(), ChildExit(status.code()));
     Ok(())
+}
+
+/// An effect child's unsuccessful exit, with its status code.
+#[derive(Debug, Eq, PartialEq)]
+struct ChildExit(Option<i32>);
+
+impl std::fmt::Display for ChildExit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(code) => write!(formatter, "XMR Maker effect child failed (exit {code})"),
+            None => formatter.write_str("XMR Maker effect child failed (signal)"),
+        }
+    }
 }
 
 fn run_observer_command(command: &mut ProcessCommand, timeout: Duration) -> Result<Vec<u8>> {
@@ -1301,9 +1340,12 @@ mod tests {
         swap.tag13_final_ms = Some(C);
         assert_eq!(status(swap, 1), ("taker_lock_confirmed", "fund_monero"));
         assert_eq!(status(swap, C), ("expired", "complete"));
-        // A consumed funding is observed whatever the clock says.
+        // A consumed funding is observed whatever the clock says; one that
+        // was not sent expires.
         swap.funding = Funding::Invoked;
         assert_eq!(status(swap, P), ("taker_lock_confirmed", "fund_monero"));
+        swap.funding = Funding::NotSent;
+        assert_eq!(status(swap, 1), ("expired", "complete"));
         swap.funding = Funding::Reconciled;
         assert_eq!(
             status(swap, P),

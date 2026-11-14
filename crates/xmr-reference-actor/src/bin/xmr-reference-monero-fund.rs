@@ -19,10 +19,11 @@ use lez_xmr_swap_sdk::{MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroPrivateViewKey, XmrAg
 #[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use xmr_reference_actor::{
-    ActorRole, XMR_EFFECT_DAEMON_PASSWORD_FD, XMR_EFFECT_DAEMON_USERNAME_FD,
+    ActorRole, MoneroFundingNotSent, XMR_EFFECT_DAEMON_PASSWORD_FD, XMR_EFFECT_DAEMON_USERNAME_FD,
     XMR_EFFECT_PRIVATE_VIEW_KEY_FD, XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD,
-    XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD, XMR_EFFECT_STAGE_A_FD, XmrEffectChildModeV1,
-    XmrRoleWalletRpcV1, fund_maker_monero, load_xmr_effect_child_plan_fd_for,
+    XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD, XMR_EFFECT_STAGE_A_FD,
+    XMR_MONERO_FUNDING_NOT_SENT_EXIT, XmrEffectChildModeV1, XmrRoleWalletRpcV1, fund_maker_monero,
+    load_xmr_effect_child_plan_fd_for,
 };
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -33,7 +34,13 @@ const MAX_SECRET_BYTES: usize = 256;
 async fn main() {
     if let Err(error) = execute().await {
         eprintln!("Maker Monero funding worker failed: {error:#}");
-        std::process::exit(1);
+        // The actor reads this status as "nothing was sent".
+        let not_sent = error.downcast_ref::<MoneroFundingNotSent>().is_some();
+        std::process::exit(if not_sent {
+            XMR_MONERO_FUNDING_NOT_SENT_EXIT
+        } else {
+            1
+        });
     }
 }
 

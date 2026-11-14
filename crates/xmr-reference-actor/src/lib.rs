@@ -139,8 +139,9 @@ pub use maker_refund_activation::{
 use monero::Address as MoneroAddress;
 #[cfg(feature = "sessions")]
 pub use monero_funding::{
-    XMR_MAKER_FUNDING_EVIDENCE_FILE, XMR_MAKER_FUNDING_RECEIPT_FILE, XmrRoleWalletRpcV1,
-    fund_maker_monero, observe_maker_monero_funding,
+    MoneroFundingNotSent, XMR_MAKER_FUNDING_EVIDENCE_FILE, XMR_MAKER_FUNDING_RECEIPT_FILE,
+    XMR_MONERO_FUNDING_NOT_SENT_EXIT, XmrRoleWalletRpcV1, fund_maker_monero,
+    observe_maker_monero_funding,
 };
 #[cfg(feature = "sessions")]
 use rustix::fs::Dir;
