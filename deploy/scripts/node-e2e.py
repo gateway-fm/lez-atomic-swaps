@@ -6739,6 +6739,87 @@ def scenario_xmr_cut_after_lock(stamp: str) -> dict:
     return {"swap_id": swap_id, "offer_id": offer_id, "cut": held, **xmr_assert_completed(before, swap_id)}
 
 
+def scenario_mixed_three_pair(stamp: str) -> dict:
+    """R5 with all three pairs: one Maker and one Taker run a Monero, a
+    Bitcoin and a Zcash swap at once, all TakerSellsLez, so the Taker's one
+    LEZ owner account signs each swap's LEZ lock while the others are in
+    flight. The Monero swap is taken first (its LEZ lock goes out by
+    itself), then the Bitcoin one taken and locked, then the Zcash one taken;
+    all three must be non-terminal once all are taken and again once the
+    Monero claim is sent, then the Bitcoin claim is sent, the Zcash swap is
+    finished, and all three complete on both Nodes, the Monero swept to the
+    Taker. Records the owner accounts' LEZ transactions.
+
+    Not in regress.sh's `full`: it fails. The Monero tag 13 is prepared as
+    an initialisation and a funding at consecutive nonces of the Taker's
+    owner (n, n + 1), and the funding goes out only once the initialisation
+    is final; the Bitcoin and Zcash LEZ locks signed meanwhile (their own
+    pairs at the live nonce) take n + 1 first. The sidecar keeps
+    resubmitting the stale funding, which can never be included; past the
+    funding cutoff the Taker reads attention_required
+    (xmr_lez_lock_window_closed) and the Maker expired, nothing of either
+    party's moved (the escrow initialised, not funded), while the Bitcoin
+    and Zcash swaps go on. Bitcoin and Zcash re-plan a superseded pair at
+    the live nonce; the Monero pair's durable reservation is fixed at
+    consecutive nonces (native_prepare.rs, m4_tag13_handoff.rs)."""
+    direction = ROUTE["direction"]
+    use_route("Zcash", direction)
+    try:
+        corridor = zec_provision()
+    finally:
+        use_route("Monero", direction)
+    nonces = lez_nonces()
+    before = xmr_before()
+    xmr_swap, windows = xmr_take(stamp, f"offer-e2e-xmr-{stamp}")
+    use_route("Bitcoin", direction)
+    try:
+        btc_swap, _ = take(publish_offer(stamp, "-btc"), stamp, "-btc")
+        lock(btc_swap)
+    finally:
+        use_route("Monero", direction)
+    use_route("Zcash", direction)
+    try:
+        zec_swap = zec_take_or_resume(corridor["offer_id"], stamp, "-zec")
+        config = zec_taker_actor_config(corridor["receipt_output"])
+    finally:
+        use_route("Monero", direction)
+    swaps = {"Monero": xmr_swap, "Bitcoin": btc_swap, "Zcash": zec_swap}
+    overlap = []
+
+    def all_in_flight(when: str) -> None:
+        states = {pair: taker_view(swap_id)["state"] for pair, swap_id in swaps.items()}
+        phases = {pair: maker_phase(swap_id) for pair, swap_id in swaps.items()}
+        if any(state in TERMINAL for state in states.values()):
+            raise NotExercised(f"{when} one swap was already terminal: Taker {states}")
+        overlap.append({"when": when, "taker": states, "maker": phases})
+        log(f"  {when}, all three in flight: Taker {states}, Maker {phases}")
+
+    all_in_flight("all three taken")
+    view = xmr_wait_funded(xmr_swap, windows)
+    call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                          "swap_id": xmr_swap, "expected_generation": view["progress_generation"]},
+         timeout=300)
+    all_in_flight("the Monero claim sent")
+    use_route("Bitcoin", direction)
+    try:
+        claim(btc_swap, stamp, "-btc")
+    finally:
+        use_route("Monero", direction)
+    use_route("Zcash", direction)
+    try:
+        zec_finish(zec_swap, config, corridor, stamp, "-zec")
+    finally:
+        use_route("Monero", direction)
+    xmr_wait_until(xmr_swap, {"completed"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
+                   describe="(tag 14 → the Maker's LEZ claim → the Taker's sweep)")
+    for swap_id in (xmr_swap, btc_swap):
+        wait_completed(swap_id, timeout=600)
+    swept = xmr_assert_swept("taker", before, "a completed swap")
+    moved = {role: nonce - nonces[role] for role, nonce in lez_nonces().items()}
+    log(f"  all three completed; LEZ transactions signed by the owner accounts meanwhile: {moved}")
+    return {"swaps": swaps, "overlap": overlap, "taker_monero_sweep": swept, "lez_transactions": moved}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
@@ -6752,6 +6833,7 @@ XMR_SCENARIOS = {
     "xmr-wallet-restart": scenario_xmr_wallet_restart,
     "xmr-outage-before-take": scenario_xmr_outage_before_take,
     "xmr-cut-after-lock": scenario_xmr_cut_after_lock,
+    "mixed-three-pair": scenario_mixed_three_pair,
 }
 
 

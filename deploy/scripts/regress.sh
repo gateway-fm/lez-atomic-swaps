@@ -112,6 +112,10 @@ tier_tests() { # tier_tests <tier>
       # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
       for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish xmr-concurrent xmr-kill-taker xmr-kill-maker xmr-taker-refund-kill \
         xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock; do echo "node:xmr:$s:TakerSellsLez"; done
+      # not node:xmr:mixed-three-pair: a Bitcoin or Zcash LEZ lock signed
+      # while the Monero swap's tag-13 funding waits for its initialisation
+      # takes that funding's nonce, which the Monero side cannot re-plan
+      # (node-e2e.py scenario_mixed_three_pair)
       # a Monero offer from the Maker desk's form, taken and claimed on the Taker desk
       echo "ui:xmr:xmr-happy:TakerSellsLez"
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
@@ -336,7 +340,7 @@ expected_seconds() { # expected_seconds <test>
       *late-claim-unmined*|*:kill-taker:*|*:kill-maker:*) seconds=1800 ;;
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
       node:xmr:xmr-kill-*) seconds=2400 ;;
-      node:xmr:xmr-monerod-down:*) seconds=1500 ;;
+      node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
       node:xmr:xmr-wallet-restart:*) seconds=1000 ;;
       node:xmr:*|ui:xmr:*) seconds=600 ;;
       *refund*|*stale-window*) seconds=1000 ;;
