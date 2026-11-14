@@ -4,7 +4,8 @@ Everything here ran on one Apple-silicon Mac (macOS 26) and, for Linux, in an
 arm64 container on it (Docker Desktop). Local paths are replaced by
 `<checkout>` (the repository), `<scratch>` (the run's working directory,
 `<scratch>/previous` an earlier run's), `<workspace>` (the devnet's deploy
-directory), `<home>` and `<tmp>`. No key, cookie, wallet or identity file is
+directory), `<home>` and `<tmp>`; in `scripts/` they are `${SCRATCH}`,
+`${CHECKOUT}`, `${WORKSPACE}` and `$HOME`. No key, cookie, wallet or identity file is
 included. Scanned before commit with gitleaks (the repository's
 `.gitleaks.toml`): no leaks found.
 
@@ -87,4 +88,5 @@ Settings by typing the URL, and "HTTP only" chosen there.
 - The Compose stack: its images were not rebuilt; `image-set.txt` shows their
   input set is unchanged.
 - Swaps: not run yet. The devnet's chains on this Mac were in use by another
-  run (a reverse tunnel to a remote host) for the whole session.
+  run (a reverse tunnel to a remote host) for the whole session, checked
+  from 11:13Z to 12:45Z.
