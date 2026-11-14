@@ -571,13 +571,22 @@ and, in `xmr-kill-maker`, for a funding whose tool it killed before it mined.
 **The windows.** `runtime.env` carries the agreement's three offsets from the
 take, which both Nodes read and must have alike:
 `LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS` (C), `LEZ_XMR_REFUND_SECONDS` (R) and
-`LEZ_XMR_PUNISH_SECONDS` (P): the Bitcoin Maker cutoff plus 20 s for the ten
-confirmations, then a LEZ step and the margin, then a step, a stall and the
-margin. On `fast`, the profile every Monero scenario runs on, that is +260,
-+360 and +480 s: the Taker may refund only in the 120 s between R and P, and
-from P a Maker can take the LEZ while the Monero stays locked. `refund` gives
-+120, +175, +250 s and `local` +1820, +2160, +2520 s (default LEZ step 20 s,
-stall 40 s).
+`LEZ_XMR_PUNISH_SECONDS` (P). C is the Bitcoin Maker cutoff plus 20 s for the
+ten confirmations. The Maker claims only on a claim authorization it sees final
+before R − (R − C)/2, and a Maker that does not act in that window forfeits
+the claim to the Taker's refund, so each half of R − C holds the 20 s depth, a
+LEZ step and two of the Maker's actor drives counted at 90 s each
+(`xmr_drive`: the Maker Node's one actor worker drives all its swaps in turn,
+and one Monero swap's drives came 37 to 84 s apart with three lanes busy on
+2026-11-14). P is R plus a step, a stall, the margin and two such drives. On
+`fast`, the profile every Monero scenario runs on, that is +260, +700 and
++1000 s: the Taker may refund only in the 300 s between R and P, and from P a
+Maker can take the LEZ while the Monero stays locked. `refund` gives +120,
++560, +815 s and `local` +1820, +2260, +2800 s (default LEZ step 20 s, stall
+40 s). On `local`, the profile closest to a real deployment, the rule adds
+100 s to R − C and 180 s to P − R over the earlier values; it holds only while
+the Maker Node is no busier than three devnet lanes: a Maker driving more swaps
+at once spaces each swap's drives further apart and needs wider windows.
 
 **Scenarios.** `node-e2e.py --pair Monero <scenario>` drives both Nodes over
 their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over

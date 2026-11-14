@@ -335,9 +335,11 @@ expected_seconds() { # expected_seconds <test>
     case "$1" in
       *late-claim-unmined*|*:kill-taker:*|*:kill-maker:*) seconds=1800 ;;
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
-      node:xmr:xmr-kill-*) seconds=2400 ;;
+      node:xmr:xmr-kill-*) seconds=2700 ;;
       node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
-      node:xmr:xmr-wallet-restart:*) seconds=1000 ;;
+      # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+700 s)
+      node:xmr:xmr-punish:*) seconds=1300 ;;
+      node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-maker-never-funds:*) seconds=1000 ;;
       node:xmr:*|ui:xmr:*) seconds=600 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;

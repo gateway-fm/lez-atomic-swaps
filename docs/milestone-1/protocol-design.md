@@ -188,13 +188,16 @@ roles configure alike (`funding_cutoff_seconds`, `refund_seconds`,
   while the finalized LEZ clock is still before C.
 - **R, the refund time.** Tags 13–15 are valid before R; tag 16 from R.
   The Maker claims (tag 15) only on a tag 14 it sees final before
-  R − (R − C)/2, so its claim lands before R.
+  R − (R − C)/2, so its claim lands before R. A Maker that does not act within
+  its claim window forfeits it and the swap falls back to the Taker's refund.
 - **P, the punish time.** Tag 16 is valid before P; tag 17 from P.
 
 The SDK requires R − C and P − R of at least 10 s on regtest. The devnet's
-`fast` profile, which every Monero scenario runs on, uses C, R, P = +260, +360,
-+480 s; `refund` +120, +175, +250 s; `local` +1820, +2160, +2520 s, all with
-the default LEZ step (20 s) and stall (40 s) (`deploy/scripts/gen-config.sh`).
+`fast` profile, which every Monero scenario runs on, uses C, R, P = +260, +700,
++1000 s; `refund` +120, +560, +815 s; `local` +1820, +2260, +2800 s, all with
+the default LEZ step (20 s) and stall (40 s) (`deploy/scripts/gen-config.sh`:
+each half of R − C and the refund window P − R hold two of the Maker's actor
+drives at 90 s apart, measured under three-lane devnet load).
 The Monero output must have 10 confirmations.
 
 ### Sequence

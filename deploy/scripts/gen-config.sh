@@ -615,14 +615,21 @@ timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
 # agreement's fixed ten confirmations (REQUIRED_MONERO_CONFIRMATIONS), which
 # the devnet's regtest mines on demand (ten blocks and a wallet's refresh took
 # under 2 s on 2026-11-13; xmr_depth allows 2 s a block), so the cutoff is the
-# Bitcoin Maker lock cutoff plus that depth; the refund opens once the Taker has seen the funding at depth and the
-# Maker's LEZ claim has had a LEZ step, plus the margin; the punishment once
-# the Taker's refund has had a step and a stall, plus the margin. Regtest
-# accepts any windows 10 s apart (agreement_v1.rs).
+# Bitcoin Maker lock cutoff plus that depth. The Maker claims only on a claim
+# authorization it sees final before R - (R - C)/2 (lez-xmr-maker-actor), and a
+# Maker that does not act in time forfeits the claim to the Taker's refund, so
+# each half of R - C holds the Taker's look at the funding at depth, a LEZ step
+# and two of the Maker's drives: the Maker Node's one actor worker drives all
+# its swaps in turn, a Monero drive runs a sidecar scan or a wallet tool, and
+# one swap's drives came 37 to 84 s apart under three-lane load on 2026-11-14
+# (xmr_drive rounds that up). The punishment opens once the Taker's refund has
+# had a step, a stall, the margin and two such drives. Regtest accepts any
+# windows 10 s apart (agreement_v1.rs).
 xmr_depth=$(( 10 * 2 ))
+xmr_drive=90
 xmr_cutoff=$(( timing[1] + xmr_depth ))
-xmr_refund=$(( xmr_cutoff + xmr_depth + lez_step_seconds + timing[4] ))
-xmr_punish=$(( xmr_refund + lez_step_seconds + lez_stall_seconds + timing[4] ))
+xmr_refund=$(( xmr_cutoff + 2 * (xmr_depth + lez_step_seconds + 2 * xmr_drive) ))
+xmr_punish=$(( xmr_refund + lez_step_seconds + lez_stall_seconds + timing[4] + 2 * xmr_drive ))
 # The Maker's actor supervisor observes a live swap's actor 5 s after each
 # attempt and retries a failed one after 30 s (the Node's defaults, kept on
 # `local`). On the devnet's own profiles a step it waits for (the Taker's lock,
