@@ -766,6 +766,40 @@ impl SwapLez {
     }
 }
 
+/// The value a Monero pair last raised the Node's LEZ lock gate to, and its
+/// swap. A pair that dies (the funding cutoff passes with the escrow not
+/// funded) leaves the gate ahead of the account, and every later lock, of
+/// either pair, would wait for a nonce nothing sends: the swap gives it back.
+static RAISED_LOCK_GATE: Mutex<Option<(String, u64)>> = Mutex::new(None);
+
+/// Past the funding cutoff with the escrow not funded: lowers the gate to
+/// the account's live nonce if it still holds what this swap's pair raised
+/// it to (no lock of either pair planned since) and the account is short of
+/// it. The pair's funding is never sent past the cutoff.
+async fn release_lock_gate(dynamic: &DynamicXmrRole, swap_id: &SwapId) -> Result<()> {
+    let raised = RAISED_LOCK_GATE
+        .lock()
+        .ok()
+        .and_then(|raised| raised.clone())
+        .filter(|(swap, _)| swap == swap_id.as_str());
+    let Some((_, value)) = raised else {
+        return Ok(());
+    };
+    let Ok(mut held) = super::btc_dynamic::LEZ_LOCK_GATE.try_lock() else {
+        return Ok(());
+    };
+    if *held == value {
+        let (_, nonce) =
+            lez_btc_role_lifecycle::balances::lez_owner_sequenced_balance(dynamic.btc().runtime())
+                .await?;
+        *held = (*held).min(nonce);
+    }
+    if let Ok(mut raised) = RAISED_LOCK_GATE.lock() {
+        *raised = None;
+    }
+    Ok(())
+}
+
 /// How long one step waits for the initialization to reach a block before
 /// it sends the funding, and how often it looks (a LEZ block is a second or
 /// two on the devnet).
@@ -852,6 +886,9 @@ async fn drive_lez_lock(
     if let Some((mut held, nonce)) = gate {
         // The next lock waits until the account has passed the pair.
         *held = nonce + 2;
+        if let Ok(mut raised) = RAISED_LOCK_GATE.lock() {
+            *raised = Some((facts.swap_id.as_str().to_owned(), *held));
+        }
     }
     if effect == XmrNativeEffectV3::Initialize {
         let runtime = dynamic.btc().runtime();
@@ -1722,6 +1759,7 @@ async fn tick_swap(
     match status.revision {
         0 if owner_busy && progress.scan_from.is_none() => Ok(()),
         0 => drive_lez_lock(dynamic, files, &facts, &progress).await,
+        1 => release_lock_gate(dynamic, &facts.swap_id).await,
         2 => observe_monero(dynamic, files, &facts, &progress).await,
         3 if claim_admitted && owner_busy => Ok(()),
         3 if claim_admitted => claim(dynamic, files, &facts, &progress, now, true).await,
