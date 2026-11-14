@@ -6026,6 +6026,13 @@ def scenario_xmr_happy(stamp: str) -> dict:
     before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}"
     swap_id, windows = xmr_take(stamp, offer_id)
+    xmr_claim_and_complete(stamp, swap_id, windows)
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **xmr_assert_completed(before, swap_id)}
+
+
+def xmr_claim_and_complete(stamp: str, swap_id: str, windows: dict) -> None:
+    """The Taker claims once the Monero is at depth; the Nodes finish the swap
+    by themselves (the Taker's view completed)."""
     view = xmr_wait_funded(swap_id, windows)
     result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
                                                    "swap_id": swap_id, "expected_generation": view["progress_generation"]},
@@ -6033,14 +6040,19 @@ def scenario_xmr_happy(stamp: str) -> dict:
     log(f"  Taker claimed Monero (replay={result.get('was_replay')})")
     xmr_wait_until(swap_id, {"completed"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
                    describe="(tag 14 → the Maker's LEZ claim → the Taker's sweep)")
+
+
+def xmr_assert_completed(before: dict, swap_id: str) -> dict:
+    """A completed Monero swap (xmr_before before its take): both Nodes
+    completed, LEZ to the unit, the Taker's Monero up by the lot less the
+    sweep's fee."""
     wait_completed(swap_id, timeout=300)
     lez = assert_lez_settled(before["lez"], "completed", maker_phase(swap_id))
     taker_xmr_after = xmr_taker_balance()
     log(f"  the Taker's Monero balance moved {(int(taker_xmr_after['balance_piconero']) - int(before['taker_monero']['balance_piconero'])) / 1e12:.6f} "
         f"XMR with coinbase")
     swept = xmr_assert_swept("taker", before, "a completed swap")
-    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez,
-            "taker_monero_before": before["taker_monero"], "taker_monero_after": taker_xmr_after,
+    return {**lez, "taker_monero_before": before["taker_monero"], "taker_monero_after": taker_xmr_after,
             "taker_monero_sweep": swept}
 
 
@@ -6463,6 +6475,137 @@ def scenario_xmr_kill_walk(stamp: str, role: str) -> dict:
     return {"role": role, "points": walked}
 
 
+# ---- xmr-monerod-down: the lane's monerod stopped (R3 for Monero) --------------------
+XMR_MONEROD_PORT = 18081  # each Node's loopback forward to monerod (node-entrypoint.sh)
+XMR_WALLET_RPC_PORT = 18083  # ... and to its role's wallet-rpc
+# How long monerod stays down once the Maker has seen the Taker's LEZ lock
+# final: past its funding tool's three attempts five seconds apart.
+XMR_MONEROD_OUTAGE_AFTER_LOCK_SECONDS = 60
+
+
+def wait_routes_available(pair: str, timeout: int = 120) -> None:
+    """Both Nodes read every route of `pair` available again."""
+    for role in ("maker", "taker"):
+        wait = Wait(f"the {role} Node to read the {pair} route available again", timeout)
+        while wait.running():
+            states = tuple(r["state"] for r in health(role).get("routes") or [] if r["route"]["pair"] == pair)
+            if states and all(state == "available" for state in states):
+                break
+            wait.note(states)
+            time.sleep(3)
+        else:
+            raise wait.failure()
+    log(f"  both Nodes read the {pair} route available again")
+
+
+def xmr_monerod_out_mid_swap(stamp: str) -> dict:
+    """monerod stopped right after the take, once the agreement is over and
+    the Taker's LEZ lock goes out, and kept down until the Maker has seen that
+    lock final and XMR_MONEROD_OUTAGE_AFTER_LOCK_SECONDS more, well inside the
+    funding cutoff; then started again. The Maker cannot fund while it is down.
+    Asserted: the swap ends completed (the Monero swept to the Taker) or
+    refunded with nothing lost (LEZ to the unit, the Maker's Monero never sent
+    or swept back, nothing received by the Taker); which one is the result."""
+    monerod = f"{PREFIX}-monerod"
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    taken = time.time()
+    cutoff = taken + windows["LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS"]
+    stop_chain([monerod], XMR_MONEROD_PORT)
+    stopped = time.time()
+    try:
+        wait = Wait(f"the Maker to see the Taker's LEZ lock of {swap_id[:12]} final with monerod down",
+                    cutoff - 90 - time.time())
+        while wait.running():
+            phase = maker_phase(swap_id)
+            if phase in {"taker_lock_confirmed", "expired", "maker_funding_in_doubt", "both_legs_locked"}:
+                break
+            wait.note(phase, lambda: f"maker {phase} | taker {taker_view(swap_id).get('actor_phase')}")
+            time.sleep(2)
+        else:
+            raise wait.failure()
+        log(f"  the Maker sees the lock final with monerod down ({phase}); monerod stays down "
+            f"{XMR_MONEROD_OUTAGE_AFTER_LOCK_SECONDS} s more")
+        time.sleep(max(0, min(XMR_MONEROD_OUTAGE_AFTER_LOCK_SECONDS, cutoff - 60 - time.time())))
+        down = {"maker": maker_phase(swap_id), "taker": taker_view(swap_id).get("actor_phase")}
+    finally:
+        start_chain([monerod])
+    outage = round(time.time() - stopped)
+    log(f"  monerod was down {outage} s (the funding cutoff is {round(cutoff - time.time())} s away); "
+        f"at its end maker {down['maker']}, taker {down['taker']}")
+    wait = Wait(f"the Taker's {swap_id[:12]} to complete or refund after the outage", windows["LEZ_XMR_PUNISH_SECONDS"] + 120)
+    claimed = refunded = False
+    while wait.running():
+        view = taker_view(swap_id)
+        state = view["state"]
+        if state == "claim_available" and not claimed:
+            call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                  "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                 timeout=300)
+            claimed = True
+            log(f"  Taker claimed Monero on {swap_id[:12]}")
+        if state == "refund_available" and not refunded:
+            call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                 timeout=300)
+            refunded = True
+            log(f"  Taker refund admitted on {swap_id[:12]} (the Maker did not fund)")
+        if state in {"completed", "refunded"}:
+            break
+        if state in TERMINAL:
+            raise Failure(f"swap {swap_id[:12]} ended in {state} ({view.get('attention_reason')}) after the monerod outage")
+        wait.note((state, view.get("actor_phase")), lambda: f"taker {state} (actor {view.get('actor_phase')}) | "
+                                                            f"maker {maker_phase(swap_id)}")
+        time.sleep(3)
+    else:
+        raise wait.failure()
+    funded = [t for t in xmr_lane("balance", "--role", "maker")["sent"] if t["txid"] not in before["sent"]["maker"]]
+    if state == "completed":
+        if [t["amount"] for t in funded] != [XMR_FOREIGN_UNITS]:
+            raise Failure(f"the Maker sent {funded} during the swap, one funding of the lot expected")
+        settled = xmr_assert_completed(before, swap_id)
+    else:
+        phase = wait_maker_terminal(swap_id, timeout=600, describe="(after the Taker's refund)")
+        settled = assert_lez_settled(before["lez"], "refunded", phase)
+        if funded:
+            settled["maker_monero_refund_sweep"] = xmr_assert_swept("maker", before, "a refunded swap")
+        if xmr_received_since("taker", before):
+            raise Failure("the Taker received Monero from a swap it refunded")
+        log(f"  refunded after the outage, nothing lost: the Maker's funding {'sent and swept back' if funded else 'never sent'} "
+            f"(Maker {phase})")
+    return {"swap_id": swap_id, "outage_seconds": outage, "at_outage_end": down, "outcome": state,
+            "maker_monero_fundings": funded, **settled}
+
+
+def scenario_xmr_monerod_down(stamp: str) -> dict:
+    """R3 for Monero: with the lane's monerod stopped (stop_chain: neither
+    Node reaches it), both Nodes are ready and read the Monero route
+    unavailable and the Bitcoin and Zcash routes available (ready_while_down);
+    the Maker withdraws its Monero offer published before the stop and refuses
+    to publish another, and the Taker refuses a take on Monero as
+    chain_unavailable (assert_offer_withdrawn_and_refused). monerod started
+    again, both read the route available and a happy Monero swap completes.
+    Then monerod stopped in the middle of a swap (xmr_monerod_out_mid_swap)."""
+    monerod = f"{PREFIX}-monerod"
+    xmr_fund()
+    down_offer = f"offer-e2e-xmr-{stamp}-down"
+    xmr_publish(f"{stamp}d", down_offer)
+    discover(down_offer)
+    stop_chain([monerod], XMR_MONEROD_PORT)
+    try:
+        seen = ready_while_down("Monero")
+        assert_offer_withdrawn_and_refused("Monero", down_offer, stamp)
+        log("  with monerod stopped the Monero route is unavailable on both Nodes, Bitcoin's and Zcash's available")
+    finally:
+        start_chain([monerod])
+    wait_routes_available("Monero")
+    happy = scenario_xmr_happy(f"{stamp}h")
+    mid_swap = xmr_monerod_out_mid_swap(f"{stamp}m")
+    return {"stopped": [monerod], "health_while_down": seen, "withdrawn_offer": down_offer,
+            "happy_after_restart": happy, "mid_swap": mid_swap}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
@@ -6472,6 +6615,7 @@ XMR_SCENARIOS = {
     "xmr-concurrent": scenario_xmr_concurrent,
     "xmr-kill-taker": lambda stamp: scenario_xmr_kill_walk(stamp, "taker"),
     "xmr-kill-maker": lambda stamp: scenario_xmr_kill_walk(stamp, "maker"),
+    "xmr-monerod-down": scenario_xmr_monerod_down,
 }
 
 
