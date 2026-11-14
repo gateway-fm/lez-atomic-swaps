@@ -309,7 +309,7 @@ phase_rust() {
   local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway maker-node/lez-logos-price-worker
     maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
     maker-node/lez-xmr-maker-actor maker-node/xmr-reference-monero-fund maker-node/xmr-reference-tag15
-    maker-node/xmr-reference-finalized-classifier maker-node/xmr-reference-monero-refund
+    maker-node/xmr-reference-tag15-finalized maker-node/xmr-reference-monero-refund
     maker-node/xmr-reference-monero-verify maker-node/xmr-reference-tag17
     taker-node/lez-taker-node taker-node/lez-taker-cli taker-node/lez-taker-chat-gateway
     taker-node/lez-taker-registry-init

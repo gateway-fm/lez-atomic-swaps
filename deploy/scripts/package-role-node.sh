@@ -24,7 +24,7 @@ plugin="${2:?the plugin package of modules/lez-<role>-node}"
 out="${3:?the package to write}"
 case "$role" in
   maker) bins=(lez-maker-node lez-maker-cli lez-maker-chat-gateway lez-logos-price-worker lez-btc-maker-actor lez-zec-maker-actor
-           lez-xmr-maker-actor xmr-reference-monero-fund xmr-reference-tag15 xmr-reference-finalized-classifier
+           lez-xmr-maker-actor xmr-reference-monero-fund xmr-reference-tag15 xmr-reference-tag15-finalized
            xmr-reference-monero-refund xmr-reference-monero-verify xmr-reference-tag17) ;;
   taker) bins=(lez-taker-node lez-taker-cli lez-taker-chat-gateway lez-taker-registry-init lez-btc-taker-actor lez-zec-taker-actor) ;;
   *) echo "role must be maker or taker" >&2; exit 64 ;;

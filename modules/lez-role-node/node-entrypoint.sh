@@ -494,7 +494,7 @@ if [[ "$monero_ready" == 1 ]]; then
   xmr_tools='{}'
   if [[ "$role" == maker ]]; then
     xmr_tools="$(jq -n --arg bin "$bin" '{monero_fund:"\($bin)/xmr-reference-monero-fund",
-      lez_claim:"\($bin)/xmr-reference-tag15", finalized_classifier:"\($bin)/xmr-reference-finalized-classifier",
+      lez_claim:"\($bin)/xmr-reference-tag15", finalized_classifier:"\($bin)/xmr-reference-tag15-finalized",
       monero_refund:"\($bin)/xmr-reference-monero-refund", monero_verify:"\($bin)/xmr-reference-monero-verify",
       lez_punish:"\($bin)/xmr-reference-tag17"}')"
   fi
