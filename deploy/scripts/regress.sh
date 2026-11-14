@@ -111,7 +111,7 @@ tier_tests() { # tier_tests <tier>
       # last: each makes its own chain, one no other test can run on
       # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
       for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish xmr-concurrent xmr-kill-taker xmr-kill-maker xmr-taker-refund-kill \
-        xmr-monerod-down; do echo "node:xmr:$s:TakerSellsLez"; done
+        xmr-monerod-down xmr-wallet-restart; do echo "node:xmr:$s:TakerSellsLez"; done
       # a Monero offer from the Maker desk's form, taken and claimed on the Taker desk
       echo "ui:xmr:xmr-happy:TakerSellsLez"
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
@@ -337,6 +337,7 @@ expected_seconds() { # expected_seconds <test>
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
       node:xmr:xmr-kill-*) seconds=2400 ;;
       node:xmr:xmr-monerod-down:*) seconds=1500 ;;
+      node:xmr:xmr-wallet-restart:*) seconds=1000 ;;
       node:xmr:*|ui:xmr:*) seconds=600 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;

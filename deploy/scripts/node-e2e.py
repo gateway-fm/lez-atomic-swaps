@@ -6606,6 +6606,87 @@ def scenario_xmr_monerod_down(stamp: str) -> dict:
             "happy_after_restart": happy, "mid_swap": mid_swap}
 
 
+# ---- xmr-wallet-restart: a role's wallet-rpc restarted mid-swap ----------------------
+
+def xmr_restart_wallet_rpc(role: str, swap_id: str, when: str) -> dict:
+    """The role's wallet-rpc container restarted (docker restart): it comes
+    back with no wallet open, so the role's next Monero effect has to open its
+    wallet again. Waits until its Node reaches it again; records what it
+    answers right then (no wallet open, unless the Node already reopened one)."""
+    container = f"{PREFIX}-{role}-xmr-wallet"
+    log(f"  restarting {container} ({when}): taker {taker_view(swap_id).get('actor_phase')}, maker {maker_phase(swap_id)}")
+    docker("restart", container)
+    wait = Wait(f"the {role} Node to reach its wallet-rpc again", 120)
+    while wait.running() and not node_reaches(role, XMR_WALLET_RPC_PORT):
+        wait.note("unreachable")
+        time.sleep(1)
+    if not wait.running():
+        raise wait.failure()
+    login = f"/var/lib/lez/{role}/monero-rpc/monero-wallet-rpc.login"
+    answer = subprocess.run(node_command(role, [
+        "sh", "-c", 'curl -s -m 10 --digest --user "$(cat "$1")" -H content-type:application/json '
+                    '--data \'{"jsonrpc":"2.0","id":1,"method":"get_address"}\' http://127.0.0.1:18083/json_rpc', "-",
+        login]), capture_output=True, text=True, check=False).stdout
+    error = (json.loads(answer).get("error") or {}).get("message") if answer else "no answer"
+    log(f"  {container} is back; asked for its open wallet's address it answers "
+        f"{error!r}" if error else f"  {container} is back, a wallet already open again")
+    return {"container": container, "when": when, "open_wallet_error": error,
+            "taker_actor_phase": taker_view(swap_id).get("actor_phase"), "maker_phase": maker_phase(swap_id)}
+
+
+def xmr_wallet_restart_swap(stamp: str, role: str, points: dict) -> dict:
+    """One happy Monero swap, the role's wallet-rpc restarted
+    (xmr_restart_wallet_rpc) at each of `points` (name → predicate on the
+    Taker's view, polled every half second); the swap must complete as
+    xmr-happy does. A point the swap passes between two polls is not
+    exercised."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    restarts, claimed = [], False
+    wait = Wait(f"the Taker's {swap_id[:12]} to complete ({role}'s wallet-rpc restarted)",
+                windows["LEZ_XMR_REFUND_SECONDS"] + 120)
+    while wait.running():
+        view = taker_view(swap_id)
+        state = view["state"]
+        for when, reached in points.items():
+            if when not in {r["when"] for r in restarts} and reached(view):
+                restarts.append(xmr_restart_wallet_rpc(role, swap_id, when))
+        if state == "claim_available" and not claimed:
+            call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                  "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                 timeout=300)
+            claimed = True
+            log(f"  Taker claimed Monero on {swap_id[:12]}")
+        if state == "completed":
+            break
+        if state in TERMINAL:
+            raise Failure(f"swap {swap_id[:12]} ended in {state} ({view.get('attention_reason')}) "
+                          f"after its {role}'s wallet-rpc restarted")
+        wait.note((state, view.get("actor_phase")), lambda: f"taker {state} (actor {view.get('actor_phase')}) | "
+                                                            f"maker {maker_phase(swap_id)}")
+        time.sleep(0.5)
+    else:
+        raise wait.failure()
+    missed = [when for when in points if when not in {r["when"] for r in restarts}]
+    if missed:
+        raise NotExercised(f"{swap_id[:12]} passed {missed} between two polls")
+    return {"swap_id": swap_id, "role": role, "restarts": restarts, **xmr_assert_completed(before, swap_id)}
+
+
+def scenario_xmr_wallet_restart(stamp: str) -> dict:
+    """A role's Monero wallet-rpc restarted in the middle of a swap, which
+    then completes (xmr_wallet_restart_swap): the Maker's right after the
+    take, before its funding (the funding opens the role wallet again); the
+    Taker's, on a second swap, while it watches for the Maker's Monero (its
+    view-only wallet) and again once its claim is authorised, before its sweep."""
+    maker = xmr_wallet_restart_swap(f"{stamp}m", "maker", {"after the take": lambda view: True})
+    taker = xmr_wallet_restart_swap(f"{stamp}t", "taker", {
+        "watching for the Monero": lambda view: view.get("actor_phase") == "taker_lock_confirmed",
+        "before the sweep": lambda view: view.get("actor_phase") == "awaiting_maker_claim"})
+    return {"maker": maker, "taker": taker}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
@@ -6616,6 +6697,7 @@ XMR_SCENARIOS = {
     "xmr-kill-taker": lambda stamp: scenario_xmr_kill_walk(stamp, "taker"),
     "xmr-kill-maker": lambda stamp: scenario_xmr_kill_walk(stamp, "maker"),
     "xmr-monerod-down": scenario_xmr_monerod_down,
+    "xmr-wallet-restart": scenario_xmr_wallet_restart,
 }
 
 
