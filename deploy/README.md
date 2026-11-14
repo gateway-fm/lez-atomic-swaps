@@ -616,6 +616,38 @@ In the full regression of 2026-11-14 they ran across lanes 1 to 3
 monerod volume holds 0.5 MB and each wallet's 0.4 MB; monerod uses about
 270 MB of memory, each wallet-rpc about 13 MB.
 
+**Owner nonces.** Each role signs its LEZ transactions of every pair with one
+owner account, at the account's live nonce, so two transactions prepared
+before the first is in a block carry the same nonce and the sequencer keeps
+one. What the Monero side does about it, and what is left:
+- The Taker's Monero LEZ lock (tag 13, a pair: initialisation and funding) is
+  planned under the Taker Node's LEZ lock gate, as a Bitcoin lock is, and only
+  at a nonce the gate saw stand still since the last look (a Zcash lock, which
+  is planned at the live nonce without the gate, moves it). Left open: a Zcash
+  lock sent within the same LEZ block as the Monero lock is planned. If the
+  Monero pair loses, nothing is locked and the swap ends
+  `xmr_lez_lock_window_closed` at C (it is not planned again); if the Zcash
+  lock loses, the Zcash actor plans it again. A Monero pair that dies gives the
+  gate back at C, so later locks of either pair do not wait for it.
+- The Taker's tag 14 (the claim authorization) is signed by its owner account
+  without the gate. If it loses its nonce the claim never starts: the Maker
+  does not claim, and from R the swap reads `xmr_maker_did_not_claim` and the
+  Taker refunds; nothing is lost. If the other transaction loses: a Bitcoin LEZ
+  lock is not planned again and that swap expires with nothing locked; a Zcash
+  lock or revealing LEZ claim is planned again; whether a Bitcoin swap's LEZ
+  claim is planned again was not checked (a claim that is not included reveals
+  nothing on chain, and the swap can still refund).
+- The Taker's tag 16 (the refund) is signed by the swap's own refund authority
+  account, not the owner: it cannot collide with another swap's transaction.
+- The Maker's tag 17 (the punishment) is signed by the Maker's owner account
+  without coordination. The Maker Node's actor attempts run one at a time, so
+  two owner transactions collide only if the second is prepared before the
+  first is in a block. If tag 17 loses, the Node never sends it again (the
+  swap's sidecar keeps one punishment per swap): the LEZ stays in the escrow,
+  which after P nobody else can move, and the Maker gets it only by a tag 17
+  at a fresh nonce sent by hand (no tool does that). This is a loss to the
+  Maker in the punish branch until then; it is not fixed.
+
 Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`; only the
 happy path has been run on a desk). Not on the devnet yet: the systemd role
 packages configure no Monero role, and there is no macOS package for it.
