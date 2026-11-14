@@ -78,8 +78,6 @@ impl Drop for Daemon {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "the Taker's initiation registry refuses Monero facts \
-            (swap-store TakerInitiationFactsV1 admits only Bitcoin and Zcash)"]
 #[allow(clippy::too_many_lines)] // One take, its replays and both roles' state are one audit surface.
 async fn the_taker_node_takes_a_monero_offer_from_the_maker_node_in_six_rounds() {
     let run = tempdir().unwrap();
