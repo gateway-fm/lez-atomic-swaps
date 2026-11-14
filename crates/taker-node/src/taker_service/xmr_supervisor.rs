@@ -795,6 +795,24 @@ async fn drive_lez_lock(
         .map_err(|error| anyhow::anyhow!("derive the LEZ escrow terms: {error:?}"))?
         .terms();
     let lez = SwapLez::connect(dynamic, &facts.reservation_id)?;
+    // The pair is planned at the owner's live nonce by the first preparation;
+    // it takes the Node's LEZ lock gate as a Bitcoin lock does, so that no
+    // Bitcoin lock is prepared while the pair is not yet in blocks (that
+    // lock is never re-planned) and the pair is not prepared while one is.
+    // Busy, or the last lock not yet in a block: a later step plans it.
+    let mut gate = None;
+    if progress.scan_from.is_none() {
+        let Ok(held) = super::btc_dynamic::LEZ_LOCK_GATE.try_lock() else {
+            return Ok(());
+        };
+        let (_, nonce) =
+            lez_btc_role_lifecycle::balances::lez_owner_sequenced_balance(dynamic.btc().runtime())
+                .await?;
+        if nonce < *held {
+            return Ok(());
+        }
+        gate = Some((held, nonce));
+    }
     let prepared = lez
         .client
         .prepare_native_xmr_escrow_v3(PrepareNativeXmrEscrowV3Request::new(
@@ -821,6 +839,10 @@ async fn drive_lez_lock(
         (XmrNativeEffectV3::Fund, &prepared.funding)
     };
     lez.submit(transaction).await?;
+    if let Some((mut held, nonce)) = gate {
+        // The next lock waits until the account has passed the pair.
+        *held = nonce + 2;
+    }
     if effect == XmrNativeEffectV3::Initialize {
         let runtime = dynamic.btc().runtime();
         submit_once_sequenced(

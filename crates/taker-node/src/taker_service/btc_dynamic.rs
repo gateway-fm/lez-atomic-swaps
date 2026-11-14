@@ -938,7 +938,7 @@ pub(super) async fn execute(
 /// its lock. The gate holds the nonce the account must reach before the next
 /// preparation; a lock waits for it, bounded, and past the bound it reports
 /// the dependency unavailable so the owner retries.
-static LEZ_LOCK_GATE: tokio::sync::Mutex<u64> = tokio::sync::Mutex::const_new(0);
+pub(super) static LEZ_LOCK_GATE: tokio::sync::Mutex<u64> = tokio::sync::Mutex::const_new(0);
 
 /// The Taker's Bitcoin lock: broadcasts the exact funding transaction once.
 /// Performs this Taker's first lock and returns the chain it landed on, its
