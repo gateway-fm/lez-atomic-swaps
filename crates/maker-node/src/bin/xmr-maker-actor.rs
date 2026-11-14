@@ -724,9 +724,11 @@ impl LiveMaker {
                     found = Some(result);
                     break;
                 }
-                // Uncertain cannot exclude a pending effect: rescan it.
-                FinalizedNativeXmrScanOutcomeV3::Uncertain { .. } => break,
-                FinalizedNativeXmrScanOutcomeV3::Absent { scanned_window, .. } => {
+                // Uncertain says only that the escrow's state at the window's
+                // end does not exclude the effect later: the window itself is
+                // final and holds none, so the scan moves past it either way.
+                FinalizedNativeXmrScanOutcomeV3::Absent { scanned_window, .. }
+                | FinalizedNativeXmrScanOutcomeV3::Uncertain { scanned_window, .. } => {
                     height = scanned_window
                         .start_height()
                         .saturating_add(u64::from(scanned_window.max_blocks()));
