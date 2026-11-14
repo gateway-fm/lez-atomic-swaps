@@ -6038,13 +6038,16 @@ def scenario_xmr_happy(stamp: str) -> dict:
             "taker_monero_sweep": swept}
 
 
-def scenario_xmr_taker_refund(stamp: str) -> dict:
+def scenario_xmr_taker_refund(stamp: str, kill: bool = False) -> dict:
     """The Maker funds the Monero, the Taker does not claim: from the
     agreement's refund time R its refund (tag 16) returns its LEZ, and the
     Maker, which learns the Taker's Monero share from the finalized refund,
     sweeps its Monero back to its role wallet. Asserted: LEZ to the unit
     (nothing moved), the Maker's Monero back less the sweep's fee, nothing
-    received by the Taker, both Nodes refunded."""
+    received by the Taker, both Nodes refunded. With `kill`
+    (xmr-taker-refund-kill) the Taker's container is killed with SIGKILL
+    right after the refund is admitted, before its supervisor submits it;
+    started again, it submits the refund, and its owner signs nothing more."""
     before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}"
     swap_id, windows = xmr_take(stamp, offer_id)
@@ -6052,11 +6055,22 @@ def scenario_xmr_taker_refund(stamp: str) -> dict:
     log("  the Maker's Monero is at depth; the Taker does not claim it")
     view = xmr_wait_until(swap_id, {"refund_available"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
                           describe="(the agreement's refund time)")
+    nonce = lez_account_nonce(lez_owner_account("taker"))
     result = call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
                                                     "swap_id": swap_id, "expected_generation": view["progress_generation"]},
                   timeout=300)
     log(f"  Taker refund admitted (replay={result.get('was_replay')})")
+    killed = None
+    if kill:
+        # the supervisor submits an admitted refund on its next sweep (3 s)
+        killed = kill_node("taker")
+        log(f"  the Taker was killed right after the admission, before its next sweep; back up: {taker_view(swap_id).get('actor_phase')}")
     xmr_wait_until(swap_id, {"refunded"}, timeout=300, describe="(tag 16 final)")
+    # tag 16 is signed by the swap's refund authority, not by the owner
+    # (whose transactions the refund must not repeat or add to)
+    moved = lez_account_nonce(lez_owner_account("taker")) - nonce
+    if moved != 0:
+        raise Failure(f"the Taker's owner signed {moved} LEZ transactions during its refund, none expected")
     phase = wait_maker_terminal(swap_id, timeout=600, describe="(the Maker's Monero refund sweep)")
     if phase != "refunded":
         raise Failure(f"the Maker ended in {phase}, not refunded")
@@ -6064,7 +6078,7 @@ def scenario_xmr_taker_refund(stamp: str) -> dict:
     swept = xmr_assert_swept("maker", before, "a refunded swap")
     if xmr_received_since("taker", before):
         raise Failure("the Taker received Monero from a swap it refunded")
-    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez,
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez, "killed": killed,
             "maker_terminal_phase": phase, "maker_monero_refund_sweep": swept}
 
 
@@ -6366,6 +6380,7 @@ def scenario_xmr_kill_walk(stamp: str, role: str) -> dict:
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
+    "xmr-taker-refund-kill": lambda stamp: scenario_xmr_taker_refund(stamp, kill=True),
     "xmr-maker-never-funds": scenario_xmr_maker_never_funds,
     "xmr-punish": scenario_xmr_punish,
     "xmr-concurrent": scenario_xmr_concurrent,
