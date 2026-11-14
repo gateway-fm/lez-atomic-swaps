@@ -1,11 +1,21 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    os::unix::fs::DirBuilderExt as _,
+    path::{Component, Path, PathBuf},
+};
 
 use anyhow::{Context as _, Result, ensure};
 use lez_swap_store::PinnedExecutable;
+use secp256k1::rand::{RngCore as _, rngs::OsRng};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use url::{Host, Url};
+use zeroize::Zeroizing;
 
-use crate::ActorRole;
+use crate::{
+    ActorRole,
+    reserve::{XmrRoleConfigV1, read_role_file, read_secret_line, write_role_file},
+};
 
 /// Maximum accepted canonical effect-authority byte length.
 pub const XMR_EFFECT_AUTHORITY_MAX_BYTES: u64 = 64 * 1024;
@@ -873,4 +883,186 @@ fn normalized_absolute(path: &Path) -> bool {
         && path
             .components()
             .all(|part| matches!(part, Component::RootDir | Component::Normal(_)))
+}
+
+/// The Maker's effect tool slots (role config `effect_tools` keys) and the
+/// ABI each must speak; schema 3 includes the punish slot.
+const MAKER_TOOL_SLOTS: [(&str, &str); 6] = [
+    ("monero_fund", "lez_xmr_monero_fund_v2"),
+    ("lez_claim", "lez_xmr_tag15_claim_v1"),
+    ("finalized_classifier", "lez_xmr_finalized_classifier_v1"),
+    ("monero_refund", "lez_xmr_monero_refund_sweep_v3"),
+    ("monero_verify", "lez_xmr_monero_verify_v2"),
+    ("lez_punish", "lez_xmr_tag17_punish_v1"),
+];
+const MAKER_EFFECT_AUTHORITY_FILE: &str = "effect-authority.json";
+const SHARED_WALLET_FILE_PASSWORD_FILE: &str = "shared-wallet-file.password";
+
+/// The Maker's effect tools, each pinned to the digest it had when the Node
+/// started.
+#[derive(Clone, Debug)]
+pub struct XmrMakerEffectToolPinsV1(BTreeMap<&'static str, (PathBuf, [u8; 32])>);
+
+impl XmrMakerEffectToolPinsV1 {
+    /// Pins every Maker slot of the role config's `effect_tools`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a Maker slot is missing or its program is unreadable.
+    pub fn pin(config: &XmrRoleConfigV1) -> Result<Self> {
+        let mut pins = BTreeMap::new();
+        for (slot, _) in MAKER_TOOL_SLOTS {
+            let program = config
+                .effect_tools()
+                .get(slot)
+                .with_context(|| format!("the Monero role config names no {slot} tool"))?;
+            let bytes = std::fs::read(program)
+                .with_context(|| format!("the Monero {slot} tool is unreadable"))?;
+            pins.insert(slot, (program.clone(), Sha256::digest(bytes).into()));
+        }
+        Ok(Self(pins))
+    }
+
+    fn tool(&self, slot: &str) -> Result<Tool> {
+        let (_, abi) = MAKER_TOOL_SLOTS
+            .iter()
+            .find(|(name, _)| *name == slot)
+            .context("unknown Monero tool slot")?;
+        let (program, sha256) = self.0.get(slot).context("unpinned Monero tool slot")?;
+        Ok(Tool {
+            program: program.clone(),
+            program_sha256: hex::encode(sha256),
+            abi: (*abi).to_owned(),
+        })
+    }
+}
+
+/// What a Maker Node holds of one activated swap when it provisions that
+/// swap's effect authority.
+#[derive(Clone, Copy, Debug)]
+pub struct XmrMakerEffectFactsV1<'a> {
+    pub swap_id: [u8; 32],
+    pub agreement_commitment: [u8; 32],
+    pub activation_commitment: [u8; 32],
+    pub run_id: &'a str,
+    pub workflow_journal: &'a Path,
+    pub adaptor_journal: &'a Path,
+    pub sidecar_url: &'a str,
+    pub runtime_file: &'a Path,
+    pub capability_file: &'a Path,
+}
+
+/// Writes one Maker swap's canonical schema-3 effect authority into the
+/// existing private `directory`, beside what it names there: one credential
+/// file per RPC field (split from the role config's `user:password` logins;
+/// all three wallet slots are the role's one wallet-rpc), a per-swap
+/// shared-wallet file password and the evidence root `evidence/`. A replay
+/// keeps the identical files; returns the authority's path.
+///
+/// # Errors
+///
+/// Fails for an unreadable login or runtime file, an authority the validator
+/// refuses, or a file on disk that differs from the one composed.
+pub fn provision_xmr_maker_effect_authority(
+    config: &XmrRoleConfigV1,
+    tools: &XmrMakerEffectToolPinsV1,
+    facts: &XmrMakerEffectFactsV1<'_>,
+    directory: &Path,
+) -> Result<PathBuf> {
+    let credentials = |name: &str, (url, login_file): (&str, &Path)| -> Result<AuthenticatedRpc> {
+        let login = read_secret_line(login_file, "Monero RPC login")?;
+        let (username, password) = login
+            .split_once(':')
+            .context("a Monero RPC login is not user:password")?;
+        let username_file = format!("{name}.username");
+        let password_file = format!("{name}.password");
+        write_role_file(
+            directory,
+            &username_file,
+            username.as_bytes(),
+            "RPC username",
+        )?;
+        write_role_file(
+            directory,
+            &password_file,
+            password.as_bytes(),
+            "RPC password",
+        )?;
+        Ok(AuthenticatedRpc {
+            url: url.to_owned(),
+            username_file: directory.join(username_file),
+            password_file: directory.join(password_file),
+        })
+    };
+    if read_role_file(directory, SHARED_WALLET_FILE_PASSWORD_FILE, 128, "password").is_err() {
+        let mut secret = Zeroizing::new([0_u8; 32]);
+        OsRng.fill_bytes(&mut *secret);
+        write_role_file(
+            directory,
+            SHARED_WALLET_FILE_PASSWORD_FILE,
+            hex::encode(*secret).as_bytes(),
+            "shared-wallet file password",
+        )?;
+    }
+    let evidence_root = directory.join("evidence");
+    if !evidence_root.is_dir() {
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&evidence_root)
+            .context("create the Monero effect evidence root")?;
+    }
+    let runtime =
+        std::fs::read(facts.runtime_file).context("the LEZ runtime file is unreadable")?;
+    let authority = EffectAuthorityV1 {
+        schema_version: 3,
+        pair: "monero".to_owned(),
+        role: ActorRole::Maker,
+        swap_id: hex::encode(facts.swap_id),
+        agreement_commitment: hex::encode(facts.agreement_commitment),
+        activation_commitment: hex::encode(facts.activation_commitment),
+        run_id: facts.run_id.to_owned(),
+        workflow_journal: facts.workflow_journal.to_path_buf(),
+        adaptor_journal: facts.adaptor_journal.to_path_buf(),
+        evidence_root,
+        lez: LezRpc {
+            sidecar_url: facts.sidecar_url.to_owned(),
+            runtime_file: facts.runtime_file.to_path_buf(),
+            runtime_sha256: hex::encode(Sha256::digest(runtime)),
+            capability_file: facts.capability_file.to_path_buf(),
+        },
+        monero: MoneroRpc {
+            daemon: credentials("daemon", config.monerod_route())?,
+            funding_wallet: credentials("funding-wallet", config.wallet_rpc_route())?,
+            shared_wallet: credentials("shared-wallet", config.wallet_rpc_route())?,
+            role_wallet: credentials("role-wallet", config.wallet_rpc_route())?,
+            shared_wallet_file_password_file: directory.join(SHARED_WALLET_FILE_PASSWORD_FILE),
+        },
+        maker_tools: Some(MakerTools {
+            monero_fund: tools.tool("monero_fund")?,
+            lez_claim: tools.tool("lez_claim")?,
+            finalized_classifier: tools.tool("finalized_classifier")?,
+            monero_refund: tools.tool("monero_refund")?,
+            monero_verify: tools.tool("monero_verify")?,
+            lez_punish: Some(tools.tool("lez_punish")?),
+        }),
+        taker_tools: None,
+        tag14_release: None,
+    };
+    let mut bytes = serde_json::to_vec(&authority)?;
+    bytes.push(b'\n');
+    let _ = load_validated_xmr_effect_authority_bytes(
+        &bytes,
+        ActorRole::Maker,
+        facts.swap_id,
+        facts.agreement_commitment,
+        facts.activation_commitment,
+        facts.run_id,
+    )?;
+    write_role_file(
+        directory,
+        MAKER_EFFECT_AUTHORITY_FILE,
+        &bytes,
+        "Monero effect authority",
+    )?;
+    Ok(directory.join(MAKER_EFFECT_AUTHORITY_FILE))
 }

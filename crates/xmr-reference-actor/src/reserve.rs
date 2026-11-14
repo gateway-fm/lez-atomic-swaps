@@ -255,6 +255,16 @@ impl XmrRoleConfigV1 {
             program_sha256: self.stage_a_planner_sha256,
         }
     }
+
+    /// monerod's root URL and its `user:password` login file.
+    pub(crate) fn monerod_route(&self) -> (&str, &Path) {
+        (&self.monerod_endpoint, &self.monerod_login_file)
+    }
+
+    /// The role wallet-rpc's root URL and its `user:password` login file.
+    pub(crate) fn wallet_rpc_route(&self) -> (&str, &Path) {
+        (&self.wallet_rpc_endpoint, &self.wallet_rpc_login_file)
+    }
 }
 
 fn endpoint(url: &str, login_file: &Path, label: &'static str) -> Result<LoopbackRpcEndpoint> {
@@ -266,7 +276,7 @@ fn endpoint(url: &str, login_file: &Path, label: &'static str) -> Result<Loopbac
         .with_context(|| format!("the {label} endpoint or login is invalid"))
 }
 
-fn read_secret_line(path: &Path, label: &'static str) -> Result<Zeroizing<String>> {
+pub(crate) fn read_secret_line(path: &Path, label: &'static str) -> Result<Zeroizing<String>> {
     let bytes = Zeroizing::new(read_bounded_file(
         open_path_no_symlinks(path, label)?,
         MAX_LOGIN_FILE_BYTES,
