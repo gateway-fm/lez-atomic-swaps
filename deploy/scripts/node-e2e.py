@@ -6687,6 +6687,22 @@ def scenario_xmr_wallet_restart(stamp: str) -> dict:
     return {"maker": maker, "taker": taker}
 
 
+# ---- Logos Chat and Delivery cut (R8, R2 for Monero) --------------------------------
+
+def scenario_xmr_outage_before_take(stamp: str) -> dict:
+    """R8 for Monero: the Maker's Monero offer taken under the outage of
+    take_after_outage, refused and left untaken on both Nodes, then taken with
+    the same request once Chat and Delivery are back; the swap completes as
+    xmr-happy does."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    windows = xmr_windows()
+    xmr_publish(stamp, offer_id)
+    swap_id, outage = take_after_outage(offer_id, stamp)
+    xmr_claim_and_complete(stamp, swap_id, windows)
+    return {"swap_id": swap_id, "offer_id": offer_id, "outage": outage, **xmr_assert_completed(before, swap_id)}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
@@ -6698,6 +6714,7 @@ XMR_SCENARIOS = {
     "xmr-kill-maker": lambda stamp: scenario_xmr_kill_walk(stamp, "maker"),
     "xmr-monerod-down": scenario_xmr_monerod_down,
     "xmr-wallet-restart": scenario_xmr_wallet_restart,
+    "xmr-outage-before-take": scenario_xmr_outage_before_take,
 }
 
 
