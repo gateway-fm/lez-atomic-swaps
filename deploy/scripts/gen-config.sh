@@ -207,8 +207,11 @@ role_files() {
     for name in daemon funding maker taker; do
       [[ -s "$dir/monero/$name.login" ]] || printf '%s:%s\n' "$name" "$(openssl rand -hex 16)" >"$dir/monero/$name.login"
     done
-    # (the settings of the isolated lane, scripts/run-monero-e2e.sh)
-    printf '%s\n' regtest=1 offline=1 fixed-difficulty=1 data-dir=/var/lib/monero \
+    # (the settings of the isolated lane, scripts/run-monero-e2e.sh; and
+    # keep-fakechain: a regtest monerod deletes its chain when it starts
+    # without it, so a restarted monerod would start a new one under the
+    # wallets and the swaps)
+    printf '%s\n' regtest=1 keep-fakechain=1 offline=1 fixed-difficulty=1 data-dir=/var/lib/monero \
       p2p-bind-ip=127.0.0.1 p2p-bind-port=18080 rpc-bind-ip=0.0.0.0 rpc-bind-port=18081 confirm-external-bind=1 \
       "rpc-login=$(cat "$dir/monero/daemon.login")" rpc-ssl=disabled no-zmq=1 disable-dns-checkpoints=1 \
       check-updates=disabled no-igd=1 max-concurrency=1 log-file=/dev/stdout log-level=1 >"$dir/monero/monerod.conf"
