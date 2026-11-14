@@ -321,10 +321,11 @@ step "$ok" "install $role_pkg as built" "$RUN" "$L package install ${file_of[$ro
 step '(( rc == 0 )) && ! grep -q not_installed "$o"' \
   "installing the role package pulled in its dependencies" "$RUN" "$L package deps $role_pkg --recursive"
 # Each dependency is declared once with a version requirement
-# (pin-package-dependencies.sh: exact for the patched modules and our own
-# packages, `~` for Logos's chat_module, delivery_module and
-# blockchain_module), so the default catalog's other packages of the same
-# names (lez_core 0.4.3 and 0.5.1, chat_module 0.3.0, ...) do not satisfy it.
+# (pin-package-dependencies.sh: exact for our own packages and every
+# pre-release, the patched modules and the catalog's chat_module; `~` for a
+# Logos module at a release version), so the default catalog's other
+# packages of the same names (lez_core 0.4.3 and 0.5.1, chat_module 0.3.0,
+# ...) do not satisfy it.
 step '(( rc == 0 )) && jq -e "length > 0 and all(.[]; (.requiredVersion // \"\") != \"\")" "$o" >/dev/null' \
   "every dependency $role_pkg declares resolves with a version range" "$RUN" "$L --json package deps $role_pkg --recursive"
 # B3: the LEZ network is reached through the endpoints the role is configured

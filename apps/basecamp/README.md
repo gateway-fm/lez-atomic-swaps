@@ -79,8 +79,9 @@ npm run test:m6:basecamp
 |---|---|---|
 | Logos Basecamp | `0.2.0` (commit `48b26c0`) | CI integration harness and the Compose Basecamp image (`basecamp-ui`, the base of each party's Basecamp) |
 | Logos Basecamp | `0.2.3` desktop (macOS arm64 portable build) | native install from the organization's module catalog (`gateway-fm/logos-modules-release-base`; its URL is in the top-level `README.md`) |
-| Logos Chat module | `0.2.2` | pinned by `flake.lock`; the catalog installs the same release |
-| Logos Delivery module | `0.2.0` as pinned by Chat `0.2.2`; `0.2.1` as resolved from the official catalog | Chat's transport dependency |
+| Logos Basecamp | `0.3.2` desktop; `logosctl` `0.3.2` | native install from the organization's module catalog beside the official one ([below](#install-a-desk-from-the-module-catalog)) |
+| Logos Chat module | `0.2.2` | pinned by `flake.lock` (the Compose images); the catalog installs the same release's files as `0.2.2-delivery.1`, its Delivery dependency pinned to `~0.2.0` |
+| Logos Delivery module | `0.2.0` as pinned by Chat `0.2.2`; `0.2.1` as resolved from the official catalog (`~0.2.0`) | Chat's transport dependency |
 
 ## Package layout
 
@@ -143,6 +144,78 @@ package `lez_network`) asks Basecamp's `blockchain_module` and
 (`common/lez_network_host.h`), and rebuilds the indexer's database on
 **Re-index** (`deploy/scripts/repair-indexer.sh`). It is not a role package:
 a Maker or a Taker does not install it.
+
+## Install a desk from the module catalog
+
+The organization's catalog (its URL is in the top-level `README.md`) is added
+beside Logos's official one; the desk is then installed by name, once. With
+`logosctl` 0.3.2:
+
+```sh
+logosctl daemon start --detach
+logosctl catalog add https://raw.githubusercontent.com/gateway-fm/logos-modules-release-base/main/logos-repo.json
+logosctl catalog source http
+logosctl catalog refresh
+logosctl package install lez_atomic_swap_maker -y    # or lez_atomic_swap_taker
+logosctl package deps lez_atomic_swap_maker --recursive
+```
+
+In Basecamp 0.3.2: **Settings → Package Repositories**, paste the same URL
+under **Add a repository** and set **Download source** to **HTTP only**; then
+**Applications**, the **LEZ Maker** (or **LEZ Taker**) tile under LEZ Atomic
+Swaps, **Install**, then **Launch**; the desk also appears in the sidebar.
+
+`catalog source http` (Basecamp: Download source "HTTP only") is optional. With the
+default source (`any`) a package the official catalog also lists on Logos
+Storage is asked for there first, and when no storage peer serves it the
+download goes over HTTP only after that request fails, half a minute or more
+per package; with HTTP every package downloads directly.
+
+One install plans each package once: the desk, its role's Node package
+(`lez_<role>_node`), `lez_swap_node` and `lez_core` 0.4.1-sign.4 from this
+catalog, `chat_module` 0.2.2-delivery.1 from this catalog, and
+`delivery_module` 0.2.1 from the official catalog. `package deps --recursive`
+then reports every dependency `installed` at a version its requirement
+accepts.
+
+**Why the catalog carries a Chat module.** The desks talk to each other over
+Logos Chat 0.2.2, which reads only Delivery 0.2.x events: Delivery 0.3.x adds
+an argument to `messageReceived`, and Chat 0.2.2 rejects every inbound message
+from it. Logos's chat_module 0.2.2 declares a bare `delivery_module`, and the
+installers plan each dependency entry on its own, so that bare name planned
+the newest Delivery (0.3.3) beside the desks' 0.2.x, into the same
+`modules/delivery_module` directory; whichever copy was written last stayed,
+and with 0.3.3 Basecamp refused to open the desk (issue #147). The catalog's
+`chat_module` 0.2.2-delivery.1 is that release's files unchanged, with its
+manifest requiring `delivery_module ~0.2.0`, the requirement the desks give
+their own entry (`deploy/scripts/package-chat-module.sh` cuts it from the
+release asset, pinned by sha256). A pre-release of 0.2.2 sorts below the
+official 0.2.2 and no range matches it, so no official package installs it
+in place of a Logos release; the desks require it exactly. It goes away when
+the desks move to Chat 0.3.x, with the port to LEZ 0.4 (issue #107).
+
+Logos's own Chat app (`chat_ui`) requires Chat and Delivery 0.3.x. Both
+cannot be installed beside a desk: one name has one directory, so installing
+`chat_ui` replaces the desk's Chat and Delivery with 0.3.x (the desk then
+reports `version_mismatch` and does not open), and installing a desk after
+`chat_ui` does the reverse.
+
+**Starting the role's Node.** An installed desk starts its signer and Node
+only from the environment Basecamp (or the `logosctl` daemon) was started
+with; without it the desk opens and reports the Node unavailable. One host
+that runs both roles sets the role-specific names (`LEZ_MAKER_…`,
+`LEZ_TAKER_…`); `docs/architecture/logos-native-packaging.md` ("The Node on
+macOS") lists every setting and its default under `LEZ_NODE_HOME`.
+
+| Setting | Value |
+|---|---|
+| `LEZ_<ROLE>_NODE_LAUNCHER` | `package`: the launcher of the installed `lez_<role>_node` |
+| `LEZ_<ROLE>_NODE_LOG`, `LEZ_<ROLE>_NODE_HOLD` | absolute paths, both required: `start_node` refuses the call without them. The Node is kept down while a file exists at the hold path |
+| `LEZ_<ROLE>_RPC_SOCKET` | the Node's owner socket (`<LEZ_NODE_HOME>/run/<role>/node.sock`), which the desk talks to |
+| `LEZ_<ROLE>_SIGNER_SOCKET`, `LEZ_<ROLE>_SIGNER_IDENTITY`, `LEZ_WALLET_DIR` | the role's LEZ signer in `lez_core` (`common/lez_role_signer.h`); `LEZ_<ROLE>_WALLET_SIGNER_SOCKET` names the same socket for the Node |
+| `LEZ_NODE_HOME` | the Node's inputs (identity, `market-bootstrap.env`, `btc-rpc-cookie`) and state |
+| `LEZ_SEQUENCER_URL`, `LEZ_WALLET_SEQUENCER_URL`, `LEZ_INDEXER_URL` | the LEZ chain the Node and the wallet use |
+| `LEZ_V02_CHANNEL_ID`, `LEZ_<ROLE>_SIDECAR_PORT_BASE`, `LEZ_<ROLE>_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`, the timing profile | as the devnet's `runtime/runtime.env` sets them |
 
 ## Install into isolated Basecamp user directories
 

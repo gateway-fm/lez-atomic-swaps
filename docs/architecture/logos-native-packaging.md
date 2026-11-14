@@ -326,9 +326,11 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   `requiredVersion` and `status: version_mismatch`).
   `deploy/scripts/pin-package-dependencies.sh` writes each of our packages'
   dependencies once, as `{"name": n, "version": <requirement>}` with the
-  version of n in the release set: exact (`0.4.1-sign.4`) for the patched
-  `lez_core` and `lez_indexer_module` and for our own packages, `~<version>`
-  for Logos's `chat_module`, `delivery_module` and `blockchain_module`. Two
+  version of n in the release set: exact (`0.4.1-sign.4`) for our own
+  packages and for every pre-release (the patched `lez_core` and
+  `lez_indexer_module`, the catalog's `chat_module` 0.2.2-delivery.1),
+  `~<version>` for a Logos module at a release version (`delivery_module`,
+  `blockchain_module`). Two
   properties of logosctl 0.3.2 decide this (tested against the default catalog,
   issue #139): a range on a patched module does not hold, because its
   prerelease tag sorts below the official release it is cut from
@@ -344,10 +346,17 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   images), the form Basecamp 0.2.0 reads. The manifest's root hash covers the
   variants' files, not the manifest, so it is unchanged. `metadata.json` keeps
   bare names: the builder generates one client per entry there
-  (`buildCppPlugin.nix`, `staticDeps`). Logos's `chat_module` 0.2.x itself
-  declares a bare `delivery_module`, so a catalog install of a desk also pulls
-  the newest `delivery_module` (0.3.3) beside the `~0.2.0` the desk requires; our
-  manifests cannot prevent that. A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
+  (`buildCppPlugin.nix`, `staticDeps`). Logos's `chat_module` 0.2.2 itself
+  declares a bare `delivery_module`, so a catalog install of a desk that
+  required it also planned the newest `delivery_module` (0.3.3) beside the
+  `~0.2.0` the desk requires, both into one directory (issue #147). The
+  catalog therefore publishes that release's files as `chat_module`
+  0.2.2-delivery.1 with `delivery_module ~0.2.0`
+  (`deploy/scripts/package-chat-module.sh`), and the desks require it
+  exactly; the pinning refuses a set in which two packages require one name
+  differently. logosctl 0.3.2 matches no range (`~0.2.0`, `~0.2.2`) against
+  a pre-release, only the exact version, so the official packages never
+  resolve to it. A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
   `lgx-portable`) is not pinned: it gets the bare names of `metadata.json`.
 - **B3.** The role packages declare no LEZ network module: the Node reaches the
   sequencer and indexer its configuration names (the public testnet's or an
@@ -658,9 +667,10 @@ without looking at platforms, and only then fails with "Package does not
 contain variant for platform" when that version has none for the host. So a
 desk installs on a platform only when every package it pulls in has a variant
 for that platform at the version it requires. For macOS on Apple silicon
-these are the desks, `lez_swap_node`, the role packages and `lez_core`; the
-official modules they take (chat_module, delivery_module, libp2p_module, the
-RLN modules) all have darwin-arm64 variants. `lez_network` and
+these are the desks, `lez_swap_node`, the role packages, `lez_core` and the
+catalog's `chat_module` (Logos's release, which carries darwin-arm64,
+linux-amd64 and linux-arm64); the official `delivery_module` 0.2.1 they take
+has darwin-arm64 too. `lez_network` and
 `lez_indexer_module` stay Linux-only: the LEZ network operator's desk is not
 installed in a party's Basecamp, and its indexer module has not been built or
 run on macOS.
