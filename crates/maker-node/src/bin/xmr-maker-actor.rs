@@ -861,14 +861,19 @@ impl MakerChains for LiveMaker {
     }
 
     fn scan(&mut self, watched: Watched) -> Result<Scan> {
-        let (found, to_tip) = self.classify(watched)?;
-        let Some(result) = found else {
-            return Ok(Scan::Absent(to_tip));
-        };
         let file = match watched {
             Watched::TakerLock => TAG13_FILE,
             Watched::ClaimAuthorization => TAG14_FILE,
             Watched::Refund => TAG16_FILE,
+        };
+        // Found once is found: a later scan's clock and window differ, so a
+        // drive that failed after recording the effect resumes from the record.
+        if let Some(recorded) = read_finalized(&self.evidence(file))? {
+            return Ok(Scan::Found(found_block(&recorded)?.1));
+        }
+        let (found, to_tip) = self.classify(watched)?;
+        let Some(result) = found else {
+            return Ok(Scan::Absent(to_tip));
         };
         write_once(&self.evidence(file), &canonical_line(&result)?)?;
         Ok(Scan::Found(found_block(&result)?.1))
