@@ -43,6 +43,15 @@ pub enum LezFundInstructionV1 {
 }
 
 /// Two tip reads bracketing all transaction, block, metadata, and custody RPCs.
+///
+/// The `before` tip pins the observation: transactions are searched in blocks
+/// up to it, and inclusion depth is counted from it. The `after` tip is read
+/// once every fact has been collected. It is either the pinned tip itself or a
+/// strictly higher tip that the producer has verified, by hash, to keep the
+/// pinned block at the pinned height (the sidecar's `confirm_extends`). A chain
+/// that only grew while the RPCs ran is therefore one consistent view; a
+/// different block at the pinned height or a lower tip is not, and is rejected
+/// as [`LezObservationError::UnstableTip`].
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LezStableTipV1 {
@@ -66,6 +75,19 @@ impl LezStableTipV1 {
             before_height,
             after_hash,
             after_height,
+        }
+    }
+
+    /// The bracket is one consistent view pinned at `before`: the chain is
+    /// unchanged, or it only grew past the pinned block. Equal heights with
+    /// different hashes mean the pinned block was replaced; a lower `after`
+    /// height means the tip went back; a higher one carrying the pinned
+    /// block's hash is no chain at all. All three are refused.
+    fn pinned_view_holds(&self) -> bool {
+        if self.after_height == self.before_height {
+            self.after_hash == self.before_hash
+        } else {
+            self.after_height > self.before_height && self.after_hash != self.before_hash
         }
     }
 }
@@ -298,8 +320,8 @@ impl CanonicalLezEscrowObservationV1 {
             transaction_id: transaction.transaction_id,
             inclusion_height: transaction.inclusion_height,
             inclusion_block_hash: transaction.inclusion_block_hash,
-            tip_height: tip.after_height,
-            tip_block_hash: tip.after_hash,
+            tip_height: tip.before_height,
+            tip_block_hash: tip.before_hash,
             confirmations,
             snapshot: Box::new(snapshot.clone()),
         })
@@ -335,13 +357,13 @@ impl CanonicalLezEscrowObservationV1 {
         &self.inclusion_block_hash
     }
 
-    /// Stable tip height used for validation.
+    /// Pinned tip height the observation was validated at.
     #[must_use]
     pub const fn tip_height(&self) -> u64 {
         self.tip_height
     }
 
-    /// Stable tip hash used for validation.
+    /// Pinned tip hash the observation was validated at.
     #[must_use]
     pub const fn tip_block_hash(&self) -> &[u8; 32] {
         &self.tip_block_hash
@@ -444,14 +466,17 @@ pub(crate) fn validate_lez_chain_position_parts(
     {
         return Err(LezObservationError::ChainIdentityMismatch);
     }
-    if tip.before_hash != tip.after_hash || tip.before_height != tip.after_height {
+    if !tip.pinned_view_holds() {
         return Err(LezObservationError::UnstableTip);
     }
-    if inclusion_block_hash != canonical_block_hash || inclusion_height > tip.after_height {
+    // The transaction was searched for in blocks up to the pinned tip, so its
+    // inclusion cannot lie above it, and depth is counted from the pinned tip
+    // (never from a later one the facts were not searched under).
+    if inclusion_block_hash != canonical_block_hash || inclusion_height > tip.before_height {
         return Err(LezObservationError::NoncanonicalInclusion);
     }
     let confirmations = tip
-        .after_height
+        .before_height
         .checked_sub(inclusion_height)
         .and_then(|depth| depth.checked_add(1))
         .and_then(|depth| u32::try_from(depth).ok())
@@ -645,10 +670,10 @@ impl CanonicalLezEscrowRemovalV1 {
             return Err(LezObservationError::ChainIdentityMismatch);
         }
         let tip = snapshot.tip;
-        if tip.before_hash != tip.after_hash || tip.before_height != tip.after_height {
+        if !tip.pinned_view_holds() {
             return Err(LezObservationError::UnstableTip);
         }
-        if tip.after_height < previous.tip_height {
+        if tip.before_height < previous.tip_height {
             return Err(LezObservationError::TipRegression);
         }
         if snapshot.canonical_block_hash_at_removed_height == previous.inclusion_block_hash {
@@ -660,8 +685,8 @@ impl CanonicalLezEscrowRemovalV1 {
         Ok(Self {
             previous: previous.clone(),
             canonical_block_hash_at_removed_height: snapshot.canonical_block_hash_at_removed_height,
-            tip_block_hash: tip.after_hash,
-            tip_height: tip.after_height,
+            tip_block_hash: tip.before_hash,
+            tip_height: tip.before_height,
             snapshot: Box::new(*snapshot),
         })
     }
@@ -873,7 +898,8 @@ pub enum LezObservationError {
     /// RPC chain environment or genesis differs from the signed agreement.
     #[error("LEZ chain identity does not match the signed agreement")]
     ChainIdentityMismatch,
-    /// The bracketing tip reads differ.
+    /// The later tip read does not extend the pinned one: the pinned block was
+    /// replaced at its height, or the tip went back.
     #[error("LEZ RPC snapshot changed while evidence was collected")]
     UnstableTip,
     /// Inclusion block is absent from the canonical chain.
