@@ -220,6 +220,11 @@ fn derive_status(facts: &Facts, now_ms: u64) -> Status {
         }
         (None, _) => match facts.funding {
             Funding::Reconciled => Status::new("both_legs_locked", "observe_claim_or_refund"),
+            // Still observed; past the cutoff a funding the observer has not
+            // found needs the owner (the tool's failure is in the Node log).
+            Funding::Invoked if now_ms >= facts.cutoff_ms => {
+                Status::new("maker_funding_in_doubt", "fund_monero")
+            }
             Funding::Invoked => Status::new("taker_lock_confirmed", "fund_monero"),
             // Nothing of the Maker's is at stake, and its one funding is spent.
             Funding::NotSent => Status::new("expired", "complete"),
@@ -1340,10 +1345,11 @@ mod tests {
         swap.tag13_final_ms = Some(C);
         assert_eq!(status(swap, 1), ("taker_lock_confirmed", "fund_monero"));
         assert_eq!(status(swap, C), ("expired", "complete"));
-        // A consumed funding is observed whatever the clock says; one that
-        // was not sent expires.
+        // A consumed funding is observed whatever the clock says; past the
+        // cutoff, unobserved, it is in doubt. One that was not sent expires.
         swap.funding = Funding::Invoked;
-        assert_eq!(status(swap, P), ("taker_lock_confirmed", "fund_monero"));
+        assert_eq!(status(swap, 1), ("taker_lock_confirmed", "fund_monero"));
+        assert_eq!(status(swap, P), ("maker_funding_in_doubt", "fund_monero"));
         swap.funding = Funding::NotSent;
         assert_eq!(status(swap, 1), ("expired", "complete"));
         swap.funding = Funding::Reconciled;

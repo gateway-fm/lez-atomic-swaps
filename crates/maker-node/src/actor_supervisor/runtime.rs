@@ -1422,7 +1422,9 @@ fn parse_active_progress(
     let phase = value.get("phase").and_then(Value::as_str).ok_or(())?;
     let revision = value.get("revision").and_then(Value::as_u64).ok_or(())?;
     let next_action = value.get("next_action").and_then(Value::as_str).ok_or(())?;
-    if !(known_phase(phase) || (kind == MakerActorKindV1::Monero && xmr_only_phase(phase)))
+    if !(known_phase(phase)
+        || (kind == MakerActorKindV1::Monero
+            && (xmr_only_phase(phase) || phase == "maker_funding_in_doubt")))
         || !known_next_action(kind, next_action)
     {
         return Err(());
