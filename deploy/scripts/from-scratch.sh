@@ -320,11 +320,13 @@ phase_rust() {
     lez-services/lez-runtime-healthcheck)
   # Always ask Cargo to validate the source; staged executables may belong to
   # a different checkout. Its dependency/target cache still makes reruns cheap.
+  # No incremental compilation: a throwaway container builds each checkout
+  # once, and the incremental directory would only grow in the cache volume.
   local b role
   for b in "${bins[@]}"; do mkdir -p "$DEPLOY_ROOT/images/${b%/*}"; done
   log "building the role Node binaries and Bitcoin actors in $RUST_IMAGE"
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
-    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
+    -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target -e CARGO_INCREMENTAL=0 "$RUST_IMAGE" bash -c '
       set -euo pipefail
       cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
       # the dealer test fixture tools, alone: built with the others, feature
