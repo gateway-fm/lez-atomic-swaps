@@ -6100,10 +6100,82 @@ def scenario_xmr_maker_never_funds(stamp: str) -> dict:
     return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez, "maker_terminal_phase": phase}
 
 
+def lez_account_nonce(account_id: str) -> int:
+    """The LEZ indexer's nonce of an account: the transactions it has signed."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getAccount", "params": [account_id]}).encode()
+    request = urllib.request.Request(STACK_INDEXER_URL, data=body, headers={"content-type": "application/json"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return int(json.load(response)["result"]["nonce"])
+
+
+def scenario_xmr_punish(stamp: str) -> dict:
+    """The Maker funds the Monero, the Taker neither claims nor refunds (its
+    Node is stopped once it has verified the Monero) and from the punish time
+    P the Maker takes the LEZ (tag 17); the Monero stays locked at the shared
+    address, which neither party can open alone. The Maker's LEZ owner has
+    signed another transaction first (a Bitcoin happy swap, where the Maker
+    locks LEZ, when its nonce is still 0), so tag 17 is signed at a live nonce
+    other than the nonce 0 Stage A commits to. Asserted: the LEZ lot moved to
+    the Maker to the unit, the Maker terminal at punished, no Monero received
+    by either party, and the Taker, back up, attention_required with its
+    refund window closed."""
+    maker_owner = lez_owner_account("maker")
+    nonce = lez_account_nonce(maker_owner)
+    if nonce == 0:
+        log("  the Maker's LEZ owner has nonce 0: a Bitcoin happy swap (the Maker locks LEZ) moves it first")
+        use_route("Bitcoin", "TakerSellsForeign")
+        try:
+            happy_swap(stamp, "-btc")
+        finally:
+            use_route("Monero", "TakerSellsLez")
+        nonce = lez_account_nonce(maker_owner)
+    log(f"  the Maker's LEZ owner {maker_owner[:12]}… has nonce {nonce} before the swap")
+    if nonce == 0:
+        raise Failure("the Maker's LEZ owner still has nonce 0")
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    xmr_wait_funded(swap_id, windows)
+    log("  the Taker has verified the Maker's Monero; stopping the Taker Node: it neither claims nor refunds")
+    node_stop("taker")
+    try:
+        phase = wait_maker_terminal(swap_id, timeout=windows["LEZ_XMR_PUNISH_SECONDS"] + 300,
+                                    describe="(the punish time, then the Maker's tag 17)")
+    finally:
+        node_start("taker")
+    if phase != "punished":
+        raise Failure(f"the Maker ended in {phase}, not punished")
+    punished_nonce = lez_account_nonce(maker_owner)
+    log(f"  the Maker punished; its LEZ owner's nonce moved {nonce} → {punished_nonce}")
+    wait_healthy("taker")
+    deltas = {role: balance - before["lez"][role] for role, balance in lez_balances().items()}
+    want = {role: amounts["lez_units"] for role, amounts in
+            expected_settlement("completed", REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
+    if deltas != want:
+        raise Failure(f"the LEZ balances moved {deltas}, a punished swap moves the lot to the Maker: {want}")
+    log(f"  LEZ moved {deltas}: the Taker's lot to the Maker")
+    funded = [t for t in xmr_lane("balance", "--role", "maker")["sent"] if t["txid"] not in before["sent"]["maker"]]
+    if [t["amount"] for t in funded] != [XMR_FOREIGN_UNITS]:
+        raise Failure(f"the Maker sent {funded} during the swap, one funding of the lot expected")
+    if xmr_received_since("maker", before) or xmr_received_since("taker", before):
+        raise Failure("Monero left the shared address of a punished swap")
+    log(f"  the Maker's Monero funding {funded[0]['txid'][:16]}… stays at the shared address: neither party received it")
+    view = taker_view(swap_id)
+    if (view["state"], view.get("attention_reason")) != ("attention_required", "xmr_refund_window_closed"):
+        raise Failure(f"the Taker, back up past the punish time, reads {view['state']} "
+                      f"({view.get('attention_reason')}), not attention_required (xmr_refund_window_closed)")
+    log(f"  the Taker, back up, reads {view['state']} ({view['attention_reason']}, actor {view.get('actor_phase')})")
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, "lez_before": before["lez"],
+            "lez_deltas": deltas, "maker_terminal_phase": phase, "maker_owner_nonce_before": nonce,
+            "maker_owner_nonce_after": punished_nonce, "maker_monero_funding": funded[0],
+            "taker_state": view["state"], "taker_attention_reason": view["attention_reason"]}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
     "xmr-maker-never-funds": scenario_xmr_maker_never_funds,
+    "xmr-punish": scenario_xmr_punish,
 }
 
 
