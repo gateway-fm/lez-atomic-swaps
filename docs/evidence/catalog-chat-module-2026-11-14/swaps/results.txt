@@ -1,0 +1,9 @@
+[16:52:54Z] start btc-happy (happy --direction TakerSellsForeign)
+[16:53:35Z] btc-happy exit 0
+[16:53:35Z] start btc-happy-lez (happy --direction TakerSellsLez)
+[16:54:08Z] btc-happy-lez exit 0
+[16:54:08Z] start zec-happy-lez (zec-happy --pair Zcash --direction TakerSellsLez)
+[16:55:20Z] zec-happy-lez exit 0
+[16:55:20Z] start zec-happy-foreign (zec-happy --pair Zcash --direction TakerSellsForeign)
+[16:56:22Z] zec-happy-foreign exit 0
+SUITE-DONE

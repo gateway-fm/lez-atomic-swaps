@@ -77,6 +77,27 @@ messages in a session (`basecamp/linux/u3-taker-excerpt.log`), and Chat's
 decode failures are 0 in every session. The run with Delivery 0.3.3 in
 place of 0.2.1 logged 10,831 of them.
 
+## Swaps with the fixed install
+
+`swaps/`: both desks in one native Basecamp 0.3.2 on macOS, on the user
+directory that received them from one `package install` each
+(`install/macos-both.log`: `chat_module` 0.2.2-delivery.1, `delivery_module`
+0.2.1). Opening LEZ Maker, then LEZ Taker, started both signers and both
+Nodes from the installed role packages; `node-e2e.py` then ran against the
+native Nodes on the devnet's chains (a fresh LEZ chain, fast timing profile).
+
+| scenario | direction | swap | result |
+|---|---|---|---|
+| BTC `happy` | TakerSellsForeign | `1c5dcc0be066` (Bitcoin claim `11e083094c10`, Taproot key path) | passed, 41 s |
+| BTC `happy` | TakerSellsLez | `9aa57ce70ece` (Bitcoin claim `148dc5296e1c`, Taproot key path) | passed, 32 s |
+| ZEC `zec-happy` | TakerSellsLez | `zec-devnet-swap-1794675248` (Maker funding `9c850875…` in Zebra block 717, Taker claim `c82604fc…` in block 719) | passed, 72 s |
+| ZEC `zec-happy` | TakerSellsForeign | `zec-devnet-swap-1794675320` (Taker funding `d8ad6eba…` in block 720, Maker claim `4da2f146…` in block 722) | passed, 62 s |
+
+Pass and fail are read from each scenario's last line (`=== <scenario>:
+passed`), not from `results.txt`. In that session (`swaps/basecamp-excerpt.log`)
+Delivery received 1,385 messages and Chat logged 0 decode failures; no desk
+was `blocked by deps`.
+
 ## Pre-releases and ranges
 
 `probe/`: a package published only as `0.2.2-delivery.1`, required four

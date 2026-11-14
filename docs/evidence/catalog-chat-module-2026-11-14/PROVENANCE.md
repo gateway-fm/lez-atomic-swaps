@@ -79,6 +79,19 @@ Settings by typing the URL, and "HTTP only" chosen there.
   Applications page, each desk, macOS and Linux arm64.
 - The pre-release probe and the `chat_ui` sequences (logosctl, macOS).
 - The images' set before and after (`image-set.txt`).
+- Swaps (`swaps/`, 16:51Z to 16:56Z): BTC `happy` and ZEC `zec-happy`, both
+  directions, between the native Nodes the two desks started in one
+  Basecamp 0.3.2 (user directory `bc/mac-both`, from `install/macos-both.log`).
+  Chains: the devnet's lane-1 containers of the `<workspace>` checkout,
+  freshly bootstrapped (`up.sh --fresh-lez`, fast timing profile) after the
+  Docker VM's disk had filled; the stack's own Node containers were
+  stopped for the run, the chains left running. The Node home was built
+  from that stack's `runtime/` (role identities, market manifest, Bitcoin
+  RPC cookie) with no prior state; `node-e2e.py` (this checkout) provisioned
+  each ZEC corridor (`zec-provision.sh --native-home`, tools from the v0.3.1
+  darwin build). The suite runner of the earlier run printed the exit code
+  of `date` instead of the scenario's; `scripts/run-suite.sh` keeps the
+  scenario's, and each scenario's log ends with its verdict.
 
 ## What did not run
 
@@ -87,6 +100,3 @@ Settings by typing the URL, and "HTTP only" chosen there.
 - Signed packages: everything here is unsigned.
 - The Compose stack: its images were not rebuilt; `image-set.txt` shows their
   input set is unchanged.
-- Swaps: not run yet. The devnet's chains on this Mac were in use by another
-  run (a reverse tunnel to a remote host) for the whole session, checked
-  from 11:13Z to 12:45Z.

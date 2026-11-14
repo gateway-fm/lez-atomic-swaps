@@ -358,7 +358,8 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   a pre-release, only the exact version, so the official packages never
   resolve to it. One install of either desk then plans one Chat and one
   Delivery (0.2.1), and the desk opens in Basecamp 0.3.2 on macOS and Linux
-  arm64 ([catalog-chat-module-2026-11-14](../evidence/catalog-chat-module-2026-11-14/README.md)). A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
+  arm64; native Nodes started by the two desks swap BTC and ZEC in both
+  directions ([catalog-chat-module-2026-11-14](../evidence/catalog-chat-module-2026-11-14/README.md)). A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
   `lgx-portable`) is not pinned: it gets the bare names of `metadata.json`.
 - **B3.** The role packages declare no LEZ network module: the Node reaches the
   sequencer and indexer its configuration names (the public testnet's or an
