@@ -24,7 +24,6 @@ use lez_swap_store::{ActorHeldLock, MakerRouteV1, maker_btc_chat_swap_id};
 #[cfg(feature = "pair-xmr")]
 use lez_swap_store::{
     SqliteXmrWorkflowJournal, StoreError, XmrWorkflowReconciliationV2, XmrWorkflowStep,
-    maker_xmr_chat_swap_id,
 };
 use lez_taker_node::{
     DeliveryOfferQueryV1, NodeServiceAction, RunLocalDelivery, TakerOfferListRequestV1,
@@ -100,10 +99,6 @@ struct Arguments {
     /// Plan this exact BTC offer before constructing its chain-complete draft.
     #[arg(long)]
     plan_btc_offer: Option<String>,
-    #[cfg(feature = "pair-xmr")]
-    /// Plan this exact XMR offer before composing role-separated Stage A/B.
-    #[arg(long)]
-    plan_xmr_offer: Option<String>,
     #[cfg(feature = "pair-zec")]
     /// Accept this exact ZEC offer instead of only listing discovery results.
     #[arg(long)]
@@ -364,19 +359,6 @@ struct BtcPlanOutput {
     private_material_disclosed: bool,
 }
 
-#[cfg(feature = "pair-xmr")]
-#[derive(Serialize)]
-struct XmrPlanOutput {
-    schema_version: u16,
-    offer_id: String,
-    reservation_id: String,
-    signed_envelope_sha256: String,
-    swap_id: String,
-    foreign_units: u64,
-    lez_units: u128,
-    private_material_disclosed: bool,
-}
-
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(error) = execute().await {
@@ -410,7 +392,6 @@ async fn execute() -> anyhow::Result<()> {
     let zec_take_requested = zec_take_was_requested(&arguments);
     let xmr_take_requested = xmr_take_was_requested(&arguments);
     let btc_plan_requested = arguments.plan_btc_offer.is_some();
-    let xmr_plan_requested = xmr_plan_was_requested(&arguments);
     ensure!(
         usize::from(btc_take_requested)
             + usize::from(zec_take_requested)
@@ -420,7 +401,6 @@ async fn execute() -> anyhow::Result<()> {
     );
     ensure!(
         usize::from(btc_plan_requested)
-            + usize::from(xmr_plan_requested)
             + usize::from(btc_take_requested || zec_take_requested || xmr_take_requested)
             <= 1,
         "planning and acceptance operations are mutually exclusive"
@@ -433,18 +413,6 @@ async fn execute() -> anyhow::Result<()> {
             now_unix_seconds,
         )
         .await;
-    }
-    #[cfg(feature = "pair-xmr")]
-    {
-        if xmr_plan_requested {
-            return execute_xmr_plan(
-                &arguments,
-                &expected_maker,
-                delivery_directory.context("XMR planning requires --delivery-directory")?,
-                now_unix_seconds,
-            )
-            .await;
-        }
     }
     if btc_take_requested {
         return execute_btc_take(
@@ -854,75 +822,6 @@ async fn execute_btc_plan(
         reservation_id: reservation_id.as_str().to_owned(),
         signed_envelope_sha256: hex::encode(commitment),
         swap_id: hex::encode(maker_btc_chat_swap_id(&commitment, &reservation_id)),
-        foreign_units,
-        lez_units,
-        private_material_disclosed: false,
-    };
-    println!("{}", serde_json::to_string(&output)?);
-    Ok(())
-}
-
-#[cfg(feature = "pair-xmr")]
-async fn execute_xmr_plan(
-    arguments: &Arguments,
-    expected_maker: &PublicKey,
-    delivery_directory: &std::path::Path,
-    now_unix_seconds: u64,
-) -> anyhow::Result<()> {
-    ensure!(
-        arguments
-            .pair
-            .is_none_or(|pair| matches!(pair, PairArgument::Monero))
-            && arguments
-                .direction
-                .is_none_or(|direction| matches!(direction, DirectionArgument::TakerSellsLez)),
-        "M5 XMR planning supports only monero/taker-sells-lez"
-    );
-    ensure!(
-        arguments.chat_socket.is_none()
-            && arguments.unsigned_draft_file.is_none()
-            && arguments.maker_contribution_file.is_none()
-            && arguments.taker_contribution_file.is_none()
-            && arguments.btc_role_root.is_none()
-            && arguments.taker_signing_key_file.is_none()
-            && arguments.agreement_output_file.is_none()
-            && !zec_actor_arguments_present(arguments)
-            && arguments.btc_source_taker_config.is_none()
-            && arguments.btc_taker_actor_root.is_none()
-            && arguments.btc_acceptance_receipt.is_none(),
-        "XMR planning accepts no Chat, signing, agreement, actor, or receipt authority"
-    );
-    let offer_id = arguments
-        .plan_xmr_offer
-        .as_deref()
-        .context("XMR planning requires --plan-xmr-offer")?;
-    let reservation_id = RequestId::new(
-        arguments
-            .reservation_id
-            .as_deref()
-            .context("XMR planning requires --reservation-id")?,
-    )?;
-    let foreign_units = arguments
-        .foreign_units
-        .context("XMR planning requires --foreign-units")?;
-    ensure!(foreign_units > 0, "XMR principal must be nonzero");
-    let route = MakerRouteV1::new(Pair::Monero, SwapDirection::TakerSellsLez)?;
-    let delivery =
-        RunLocalDelivery::subscriber(delivery_directory.to_path_buf(), expected_maker.to_owned())?;
-    let selected = delivery
-        .discover(&DeliveryOfferQueryV1::for_route(route, now_unix_seconds))
-        .await?
-        .into_iter()
-        .find(|candidate| candidate.offer().id().as_str() == offer_id)
-        .context("selected XMR offer is unavailable, expired, or not authentic")?;
-    let lez_units = selected.offer().quote_foreign_amount(foreign_units)?;
-    let commitment = selected.commitment();
-    let output = XmrPlanOutput {
-        schema_version: 1,
-        offer_id: offer_id.to_owned(),
-        reservation_id: reservation_id.as_str().to_owned(),
-        signed_envelope_sha256: hex::encode(commitment),
-        swap_id: hex::encode(maker_xmr_chat_swap_id(&commitment, &reservation_id)),
         foreign_units,
         lez_units,
         private_material_disclosed: false,
@@ -1752,16 +1651,6 @@ const fn zec_actor_arguments_present(_arguments: &Arguments) -> bool {
 
 #[cfg(not(feature = "pair-zec"))]
 const fn zec_take_was_requested(_arguments: &Arguments) -> bool {
-    false
-}
-
-#[cfg(feature = "pair-xmr")]
-fn xmr_plan_was_requested(arguments: &Arguments) -> bool {
-    arguments.plan_xmr_offer.is_some()
-}
-
-#[cfg(not(feature = "pair-xmr"))]
-const fn xmr_plan_was_requested(_arguments: &Arguments) -> bool {
     false
 }
 
