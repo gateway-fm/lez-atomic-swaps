@@ -288,13 +288,14 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
     if facts.branch.is_some() || derive_status(&facts, now_ms).next_action == "complete" {
         return Ok("unchanged");
     }
+    // The Taker authorizes its claim once it sees the funding at depth, about
+    // when the Maker reconciles it: the drive that reconciles the funding also
+    // looks for the claim authorization, so the claim window does not wait a
+    // drive more for it (one drive is tens of seconds on a loaded host).
+    let reconciled = facts.funding == Funding::Invoked && chains.observe_fund()?;
     match facts.funding {
         Funding::NotSent => Ok("unchanged"),
-        Funding::Invoked => Ok(if chains.observe_fund()? {
-            "reconciled"
-        } else {
-            "awaiting_observation"
-        }),
+        Funding::Invoked if !reconciled => Ok("awaiting_observation"),
         Funding::NotInvoked => {
             if facts.tag13_final_ms.is_none() {
                 return Ok(match chains.scan(Watched::TakerLock)? {
@@ -309,7 +310,7 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
             chains.invoke_fund()?;
             Ok("submitted")
         }
-        Funding::Reconciled => {
+        Funding::Invoked | Funding::Reconciled => {
             let lez_ms = chains.lez_clock()?;
             let mut refund_absent_to_tip = false;
             if lez_ms >= facts.refund_ms {
@@ -333,7 +334,11 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
                 chains.activate(XmrWorkflowBranch::Punish)?;
                 return Ok("activated");
             }
-            Ok("unchanged")
+            Ok(if reconciled {
+                "reconciled"
+            } else {
+                "unchanged"
+            })
         }
     }
 }
@@ -1624,6 +1629,23 @@ mod tests {
         // Once a branch is selected a drive changes nothing.
         assert_eq!(drive_once(&mut stub, 8_000).unwrap(), "unchanged");
         assert_eq!((stub.funds, stub.activations.len()), (1, 1));
+    }
+
+    #[test]
+    fn the_drive_that_reconciles_the_funding_claims_a_final_authorization() {
+        let mut stub = Stub::new();
+        stub.tag13 = Some(2_000);
+        stub.lez_ms = 2_000;
+        assert_eq!(drive_once(&mut stub, 2_000).unwrap(), "observed");
+        assert_eq!(drive_once(&mut stub, 3_000).unwrap(), "submitted");
+        stub.observed_funding = true;
+        stub.tag14 = true;
+        assert_eq!(drive_once(&mut stub, 4_000).unwrap(), "activated");
+        assert_eq!(stub.activations, [XmrWorkflowBranch::Claim]);
+        assert_eq!(
+            derive_status(&stub.facts().unwrap(), 4_000).next_action,
+            "claim_lez"
+        );
     }
 
     #[test]
