@@ -598,16 +598,16 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | `xmr-punish` | the Maker funds, the Taker Node is stopped once it has verified the Monero; from P the Maker sends tag 17 at a live owner nonce other than 0 and ends `punished`; the LEZ moves to the Maker, the Monero stays at the shared address, the Taker back up reads `attention_required` (`xmr_refund_window_closed`) |
 | `xmr-concurrent` | two swaps of the same Nodes at once, one offer each; both complete; two fundings, two sweeps |
 | `xmr-kill-taker` | the Taker killed with SIGKILL at each of 7 steps (after the take, lock in flight, locked, Monero verified, claim authorised, waiting for the Maker's claim, sweeping), one fresh swap each; each completes with the owner accounts' LEZ transaction counts and the Monero moved once |
-| `xmr-kill-maker` | the Maker killed at each of 5 steps (after the take, the Taker's lock observed, its Monero funding in flight, funded, its LEZ claim in flight); each completes or, killed with the Taker's lock observed or its funding in flight, may end refunded with nothing lost (in the passing run all five completed) |
+| `xmr-kill-maker` | the Maker killed at each of 6 steps (after the take, the Taker's lock observed, its Monero funding in flight, funded, its LEZ claim tool running, its LEZ claim in flight); each completes or, killed with the Taker's lock observed or its funding in flight, may end refunded with nothing lost |
 
-These ran on lane 1 only; lanes 2 and up have Monero but no Monero scenario has
-run on them. Footprint, measured on 2026-11-13: after 190 blocks a lane's
+In the full regression of 2026-11-14 they ran across lanes 1 to 3
+(`docs/evidence/regression-m4-2026-11-14/`). Footprint, measured on 2026-11-13: after 190 blocks a lane's
 monerod volume holds 0.5 MB and each wallet's 0.4 MB; monerod uses about
 270 MB of memory, each wallet-rpc about 13 MB.
 
-Not on the devnet yet: the desks show no Monero (Monero runs through the Nodes'
-owner RPC and CLIs only), the systemd role packages configure no Monero role,
-and there is no macOS package for it.
+Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`; only the
+happy path has been run on a desk). Not on the devnet yet: the systemd role
+packages configure no Monero role, and there is no macOS package for it.
 
 ### A second stack on the same host
 
