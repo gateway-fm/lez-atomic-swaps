@@ -1188,10 +1188,11 @@ impl std::fmt::Display for ChildExit {
 }
 
 fn run_observer_command(command: &mut ProcessCommand, timeout: Duration) -> Result<Vec<u8>> {
+    // As an effect tool's, an observer's error line reaches the Node's log.
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     let mut child = command.spawn().context("spawn XMR Maker observer")?;
     let Some(mut stdout) = child.stdout.take() else {
         let _ = child.kill();
