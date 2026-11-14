@@ -109,8 +109,8 @@ tier_tests() { # tier_tests <tier>
       # a Zcash offer from the Maker desk's form, taken from the Taker desk (no corridor)
       echo "ui:zec:zec-desk-offer:TakerSellsLez"; echo "ui:zec:zec-desk-offer:TakerSellsForeign"
       # last: each makes its own chain, one no other test can run on
-      # the first Monero swap through the two Nodes (only where LEZ_MONERO=1)
-      echo "node:xmr:xmr-happy:TakerSellsLez"
+      # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
+      for s in xmr-happy xmr-taker-refund; do echo "node:xmr:$s:TakerSellsLez"; done
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
     *) echo "unknown tier: $1 (smoke, refunds, full)" >&2; return 64 ;;
   esac

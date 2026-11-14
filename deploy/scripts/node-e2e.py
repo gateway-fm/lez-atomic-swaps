@@ -5961,6 +5961,52 @@ def xmr_wait_until(swap_id: str, states: set[str], timeout: int, describe: str =
     raise wait.failure()
 
 
+def xmr_before() -> dict:
+    """What a Monero scenario's assertions compare with, read before its take
+    (the Maker funded first, xmr_fund): both parties' LEZ, the Taker's Monero
+    balance, and the transfers each role wallet has received so far."""
+    xmr_fund()
+    return {"lez": lez_balances(), "taker_monero": xmr_taker_balance(),
+            "received": {role: {t["txid"] for t in xmr_lane("balance", "--role", role)["received"]}
+                         for role in ("maker", "taker")}}
+
+
+def xmr_take(stamp: str, offer_id: str) -> tuple[str, dict]:
+    """The Maker's CLI publishes `offer_id`, the Taker takes it; the swap and
+    the agreement's windows."""
+    windows = xmr_windows()
+    xmr_publish(stamp, offer_id)
+    swap_id = zec_take_or_resume(offer_id, stamp)
+    log(f"  windows: the Maker funds by +{windows['LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS']} s, the Taker refunds from "
+        f"+{windows['LEZ_XMR_REFUND_SECONDS']} s, the Maker punishes from +{windows['LEZ_XMR_PUNISH_SECONDS']} s")
+    return swap_id, windows
+
+
+def xmr_wait_funded(swap_id: str, windows: dict) -> dict:
+    """The Taker's LEZ lock and the Maker's Monero funding at depth: the Taker's claim_available view."""
+    return xmr_wait_until(swap_id, {"claim_available"}, timeout=windows["LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS"] + 120,
+                          describe="(Taker LEZ lock → Maker Monero funding at depth)")
+
+
+def xmr_received_since(role: str, before: dict) -> list[dict]:
+    """The transfers the role's wallet received after `before` (xmr_before),
+    coinbase aside: the role's tools mine their confirmations to it."""
+    received = [t for t in xmr_lane("balance", "--role", role)["received"] if t["txid"] not in before["received"][role]]
+    log(f"  the {role.capitalize()}'s Monero wallet received {[(t['txid'][:16], t['amount'] / 1e12) for t in received]} "
+        f"during the swap (lot {XMR_FOREIGN_UNITS / 1e12:.0f} XMR)")
+    return received
+
+
+def xmr_assert_swept(role: str, before: dict, why: str) -> dict:
+    """The swap's Monero reached the role's wallet: the one transfer it
+    received during the swap, the lot less at most the sweep's fee."""
+    swept = xmr_received_since(role, before)
+    if len(swept) != 1 or not XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO <= swept[0]["amount"] <= XMR_FOREIGN_UNITS:
+        raise Failure(f"the {role.capitalize()} received {swept} during the swap; one transfer of the lot less at most "
+                      f"{XMR_FEE_TOLERANCE_PICONERO} piconero of fee expected of {why}")
+    return swept[0]
+
+
 def scenario_xmr_happy(stamp: str) -> dict:
     """The first Monero swap through the two Nodes: the Maker's CLI publishes a
     Monero offer, the Taker takes it over its owner RPC and the Nodes agree it
@@ -5968,44 +6014,60 @@ def scenario_xmr_happy(stamp: str) -> dict:
     and its confirmations, the Taker's claim, the Maker's LEZ claim and the
     Taker's sweep follow, each Node by itself. Asserted: LEZ to the unit, the
     Taker's Monero up by the lot less the sweep's fee, both Nodes completed."""
-    windows = xmr_windows()
-    xmr_fund()
-    lez_before = lez_balances()
-    taker_xmr_before = xmr_taker_balance()
-    received_before = {t["txid"] for t in xmr_lane("balance", "--role", "taker")["received"]}
+    before = xmr_before()
     offer_id = f"offer-e2e-xmr-{stamp}"
-    xmr_publish(stamp, offer_id)
-    swap_id = zec_take_or_resume(offer_id, stamp)
-    cutoff, refund = windows["LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS"], windows["LEZ_XMR_REFUND_SECONDS"]
-    log(f"  windows: the Maker funds by +{cutoff} s, the Taker refunds from +{refund} s, "
-        f"the Maker punishes from +{windows['LEZ_XMR_PUNISH_SECONDS']} s")
-    view = xmr_wait_until(swap_id, {"claim_available"}, timeout=cutoff + 120,
-                          describe="(Taker LEZ lock → Maker Monero funding at depth)")
+    swap_id, windows = xmr_take(stamp, offer_id)
+    view = xmr_wait_funded(swap_id, windows)
     result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
                                                    "swap_id": swap_id, "expected_generation": view["progress_generation"]},
                   timeout=300)
     log(f"  Taker claimed Monero (replay={result.get('was_replay')})")
-    xmr_wait_until(swap_id, {"completed"}, timeout=refund + 120,
+    xmr_wait_until(swap_id, {"completed"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
                    describe="(tag 14 → the Maker's LEZ claim → the Taker's sweep)")
     wait_completed(swap_id, timeout=300)
-    lez = assert_lez_settled(lez_before, "completed", maker_phase(swap_id))
+    lez = assert_lez_settled(before["lez"], "completed", maker_phase(swap_id))
     taker_xmr_after = xmr_taker_balance()
-    # The Taker's tools mine their confirmations, coinbase to its own wallet:
-    # the swap's Monero is the one transfer it received during the swap.
-    swept = [t for t in xmr_lane("balance", "--role", "taker")["received"] if t["txid"] not in received_before]
-    log(f"  the Taker's Monero wallet received {[(t['txid'][:16], t['amount'] / 1e12) for t in swept]} "
-        f"(lot {XMR_FOREIGN_UNITS / 1e12:.0f} XMR); its balance moved "
-        f"{(int(taker_xmr_after['balance_piconero']) - int(taker_xmr_before['balance_piconero'])) / 1e12:.6f} XMR with coinbase")
-    if len(swept) != 1 or not XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO <= swept[0]["amount"] <= XMR_FOREIGN_UNITS:
-        raise Failure(f"the Taker received {swept} during the swap; one transfer of the lot less at most "
-                      f"{XMR_FEE_TOLERANCE_PICONERO} piconero of fee expected of a completed swap")
+    log(f"  the Taker's Monero balance moved {(int(taker_xmr_after['balance_piconero']) - int(before['taker_monero']['balance_piconero'])) / 1e12:.6f} "
+        f"XMR with coinbase")
+    swept = xmr_assert_swept("taker", before, "a completed swap")
     return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez,
-            "taker_monero_before": taker_xmr_before, "taker_monero_after": taker_xmr_after,
-            "taker_monero_sweep": swept[0]}
+            "taker_monero_before": before["taker_monero"], "taker_monero_after": taker_xmr_after,
+            "taker_monero_sweep": swept}
+
+
+def scenario_xmr_taker_refund(stamp: str) -> dict:
+    """The Maker funds the Monero, the Taker does not claim: from the
+    agreement's refund time R its refund (tag 16) returns its LEZ, and the
+    Maker, which learns the Taker's Monero share from the finalized refund,
+    sweeps its Monero back to its role wallet. Asserted: LEZ to the unit
+    (nothing moved), the Maker's Monero back less the sweep's fee, nothing
+    received by the Taker, both Nodes refunded."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    xmr_wait_funded(swap_id, windows)
+    log("  the Maker's Monero is at depth; the Taker does not claim it")
+    view = xmr_wait_until(swap_id, {"refund_available"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
+                          describe="(the agreement's refund time)")
+    result = call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+                                                    "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker refund admitted (replay={result.get('was_replay')})")
+    xmr_wait_until(swap_id, {"refunded"}, timeout=300, describe="(tag 16 final)")
+    phase = wait_maker_terminal(swap_id, timeout=600, describe="(the Maker's Monero refund sweep)")
+    if phase != "refunded":
+        raise Failure(f"the Maker ended in {phase}, not refunded")
+    lez = assert_lez_settled(before["lez"], "refunded", phase)
+    swept = xmr_assert_swept("maker", before, "a refunded swap")
+    if xmr_received_since("taker", before):
+        raise Failure("the Taker received Monero from a swap it refunded")
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez,
+            "maker_terminal_phase": phase, "maker_monero_refund_sweep": swept}
 
 
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
+    "xmr-taker-refund": scenario_xmr_taker_refund,
 }
 
 
