@@ -30,8 +30,11 @@ commit sit on top of it.
 
 - Workspace: `cargo fmt --all --check`; `cargo clippy --locked --workspace
   --all-targets` with CI's exclusions, `-D warnings`: clean. `cargo test
-  --locked --workspace --all-targets` with CI's exclusions, and the
-  `pair-zec` Node tests: passed. `cargo doc` with `-D warnings` for
+  --locked --workspace --all-targets` with CI's exclusions: passed. The
+  `pair-zec` Node tests: passed except `zec_chat_process`'s
+  `separate_taker_countersigns_and_maker_atomically_accepts_before_response`,
+  whose test proxy reads `WouldBlock` on macOS; it fails the same way with
+  `main`'s `crates/`. CI runs these tests on Linux. `cargo doc` with `-D warnings` for
   `lez-zec-swap-sdk` and `lez-bridge-adapter`: clean. On macOS a few tests
   that create Unix sockets or secure directories need `TMPDIR` to be a short
   directory without a symlinked ancestor; they ran with one.
