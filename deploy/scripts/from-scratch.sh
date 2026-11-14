@@ -308,6 +308,9 @@ phase_rust() {
   # tests/fixtures/zec-catalog-fixture.sh runs from it.
   local bins=(maker-node/lez-maker-node maker-node/lez-maker-cli maker-node/lez-maker-chat-gateway maker-node/lez-logos-price-worker
     maker-node/lez-runtime-healthcheck maker-node/lez-btc-maker-actor maker-node/lez-zec-maker-actor
+    maker-node/lez-xmr-maker-actor maker-node/xmr-reference-monero-fund maker-node/xmr-reference-tag15
+    maker-node/xmr-reference-finalized-classifier maker-node/xmr-reference-monero-refund
+    maker-node/xmr-reference-monero-verify maker-node/xmr-reference-tag17
     taker-node/lez-taker-node taker-node/lez-taker-cli taker-node/lez-taker-chat-gateway
     taker-node/lez-taker-registry-init
     taker-node/lez-runtime-healthcheck taker-node/lez-btc-taker-actor taker-node/lez-zec-taker-actor
@@ -323,7 +326,7 @@ phase_rust() {
   docker run --rm -v "$REPO_ROOT:/workspace" -v lez-rust-cache:/cache -w /workspace \
     -e CARGO_HOME=/cache/cargo-home -e CARGO_TARGET_DIR=/cache/target "$RUST_IMAGE" bash -c '
       set -euo pipefail
-      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor 2>&1 | tail -3
+      cargo build --locked --bins --features lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr,lez-taker-node/pair-xmr -p lez-maker-node -p lez-taker-node -p lez-logos-price-c-api -p lez-runtime-healthcheck -p btc-reference-actor -p zec-reference-actor -p xmr-reference-actor 2>&1 | tail -3
       # the dealer test fixture tools, alone: built with the others, feature
       # unification would put the dealer into the Node and actor binaries
       cargo build --locked -p zec-reference-actor --features dealer-fixture --bin zec-local-poc-provision --bin zec-local-poc-chat-draft \
@@ -586,8 +589,9 @@ sidecar_tree_stamp() {
 build_sidecar() {
   log "building the LEZ sidecar and the identity tool"
   builder_run -- "CARGO_TARGET_DIR=/cache/target/sidecar cargo +1.96.0 build --locked --manifest-path compat/lez-v0_2-sidecar/Cargo.toml \
-      --bin lez-v02-bridge-poc --example lez-v02-local-actor-identity 2>&1 | tail -2;
+      --bin lez-v02-bridge-poc --bin lez-v02-xmr-stage-a-plan --example lez-v02-local-actor-identity 2>&1 | tail -2;
     mkdir -p /provision/sidecar; install -m 0755 /cache/target/sidecar/debug/lez-v02-bridge-poc \
+      /cache/target/sidecar/debug/lez-v02-xmr-stage-a-plan \
       /cache/target/sidecar/debug/examples/lez-v02-local-actor-identity /provision/sidecar/"
   own_provision
   git -C "$REPO_ROOT" rev-parse HEAD > "$PROVISION/sidecar/source-commit.txt"
@@ -677,8 +681,10 @@ phase_stage() {
   expected="$(sidecar_tree_stamp)"
   staged="$(cat "$PROVISION/sidecar/source-tree.txt" 2>/dev/null || true)"
   [[ "$staged" == "$expected" ]] || fail "the staged sidecar ($PROVISION/sidecar/lez-v02-bridge-poc, tree ${staged:-unstamped}) was not built from this checkout's compat/lez-v0_2-sidecar ($expected); run from-scratch.sh --only build:sidecar first"
-  install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/maker-node/"
-  install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$DEPLOY_ROOT/images/taker-node/"
+  for role in maker taker; do
+    # the sidecar, and the Monero Stage-A planner both Nodes run (one-shot, chain-free)
+    install -m 0755 "$PROVISION/sidecar/lez-v02-bridge-poc" "$PROVISION/sidecar/lez-v02-xmr-stage-a-plan" "$DEPLOY_ROOT/images/$role-node/"
+  done
   for role in maker taker; do
     cp "$PROVISION/sidecar/source-commit.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-source.txt"
     cp "$PROVISION/sidecar/source-tree.txt" "$DEPLOY_ROOT/images/$role-node/sidecar-tree.txt"
