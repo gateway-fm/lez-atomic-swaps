@@ -111,11 +111,7 @@ tier_tests() { # tier_tests <tier>
       # last: each makes its own chain, one no other test can run on
       # the Monero swaps through the two Nodes (only where LEZ_MONERO=1)
       for s in xmr-happy xmr-taker-refund xmr-maker-never-funds xmr-punish xmr-concurrent xmr-kill-taker xmr-kill-maker xmr-taker-refund-kill \
-        xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock; do echo "node:xmr:$s:TakerSellsLez"; done
-      # not node:xmr:mixed-three-pair: a Bitcoin or Zcash LEZ lock signed
-      # while the Monero swap's tag-13 funding waits for its initialisation
-      # takes that funding's nonce, which the Monero side cannot re-plan
-      # (node-e2e.py scenario_mixed_three_pair)
+        xmr-monerod-down xmr-wallet-restart xmr-outage-before-take xmr-cut-after-lock mixed-three-pair; do echo "node:xmr:$s:TakerSellsLez"; done
       # a Monero offer from the Maker desk's form, taken and claimed on the Taker desk
       echo "ui:xmr:xmr-happy:TakerSellsLez"
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;

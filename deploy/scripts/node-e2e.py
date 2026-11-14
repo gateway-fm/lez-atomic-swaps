@@ -6750,18 +6750,13 @@ def scenario_mixed_three_pair(stamp: str) -> dict:
     finished, and all three complete on both Nodes, the Monero swept to the
     Taker. Records the owner accounts' LEZ transactions.
 
-    Not in regress.sh's `full`: it fails. The Monero tag 13 is prepared as
-    an initialisation and a funding at consecutive nonces of the Taker's
-    owner (n, n + 1), and the funding goes out only once the initialisation
-    is final; the Bitcoin and Zcash LEZ locks signed meanwhile (their own
-    pairs at the live nonce) take n + 1 first. The sidecar keeps
-    resubmitting the stale funding, which can never be included; past the
-    funding cutoff the Taker reads attention_required
-    (xmr_lez_lock_window_closed) and the Maker expired, nothing of either
-    party's moved (the escrow initialised, not funded), while the Bitcoin
-    and Zcash swaps go on. Bitcoin and Zcash re-plan a superseded pair at
-    the live nonce; the Monero pair's durable reservation is fixed at
-    consecutive nonces (native_prepare.rs, m4_tag13_handoff.rs)."""
+    The Taker's owner signs the Monero tag 13 as an initialisation and a
+    funding at consecutive nonces (n, n + 1), and the Bitcoin lock as its
+    own pair at the live nonce, never re-planned; the Zcash lock re-plans a
+    pair whose nonce was taken. The Monero pair is planned under the Taker
+    Node's LEZ lock gate, as a Bitcoin lock is, and its funding goes out as
+    soon as its initialisation is in a block (xmr_supervisor.rs
+    drive_lez_lock), so neither of the two takes the other's nonces."""
     direction = ROUTE["direction"]
     use_route("Zcash", direction)
     try:
