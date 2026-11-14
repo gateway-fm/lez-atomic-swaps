@@ -30,9 +30,8 @@ use crate::{
         XMR_EFFECT_FINALIZED_CLAIM_SIGNATURE_FILE, XMR_EFFECT_FINALIZED_REFUND_SIGNATURE_FILE,
         XMR_EFFECT_MAKER_CLAIM_SIGNATURE_FILE, parse_private_view_key_bytes,
     },
-    load_validated_xmr_effect_execution_v3_bytes, owner_exact_finalized_xmr_facts,
-    read_canonical_private_json, read_finalized_xmr_effect, read_private_input,
-    write_bounded_public_new,
+    load_validated_xmr_effect_execution_v3_bytes, maker_tag14_facts, read_canonical_private_json,
+    read_finalized_xmr_effect, read_private_input, write_bounded_public_new,
 };
 
 pub(crate) const FUNDING_SCHEMA: &str = "lez_v02_m4_actual_local_monero_funding_v2";
@@ -725,13 +724,7 @@ pub fn activate_maker_claim_workflow_bytes(
     let binding = XmrLezBridgeBindingV3::new(agreement, activation)
         .context("derive finalized authorization terms from Stage B")?;
     let finalized_result = read_finalized_xmr_effect(finalized_authorization)?;
-    let facts = owner_exact_finalized_xmr_facts(
-        &finalized_result,
-        run_id,
-        &binding.terms(),
-        XmrNativeEffectV3::AuthorizeClaim,
-        BridgeParticipant::Taker,
-    )?;
+    let facts = maker_tag14_facts(&finalized_result, run_id, &binding.terms())?;
     let partial = facts
         .instruction
         .published_claim_partial

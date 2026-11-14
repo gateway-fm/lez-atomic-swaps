@@ -1543,13 +1543,7 @@ fn complete_claim_from_finalized_authorization(
         activation_stage_b,
     )?;
     let result = read_finalized_xmr_effect(finalized_authorization)?;
-    let facts = owner_exact_finalized_xmr_facts(
-        &result,
-        run_id,
-        &lifecycle.binding.terms(),
-        XmrNativeEffectV3::AuthorizeClaim,
-        BridgeParticipant::Taker,
-    )?;
+    let facts = maker_tag14_facts(&result, run_id, &lifecycle.binding.terms())?;
     let partial = facts
         .instruction
         .published_claim_partial
@@ -1840,6 +1834,34 @@ fn discovered_finalized_xmr_facts<'result>(
         return Err(anyhow!("finalized XMR effect is not affirmative Found"));
     };
     Ok(facts)
+}
+
+/// The Taker's finalized tag 14 as the Maker holds it: the Taker sidecar's
+/// exact result (the reference flow hands it over), or the Maker sidecar's
+/// own discovery by the swap's terms (the Maker Node watches for it).
+#[cfg(feature = "sessions")]
+pub(crate) fn maker_tag14_facts<'result>(
+    result: &'result ClassifyFinalizedNativeXmrEffectV3Result,
+    expected_run_id: &str,
+    expected_terms: &XmrNativeEscrowTermsV3,
+) -> Result<&'result FinalizedNativeXmrEffectFactsV3> {
+    if result.context.sidecar_role == BridgeParticipant::Maker {
+        discovered_finalized_xmr_facts(
+            result,
+            expected_run_id,
+            expected_terms,
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Maker,
+        )
+    } else {
+        owner_exact_finalized_xmr_facts(
+            result,
+            expected_run_id,
+            expected_terms,
+            XmrNativeEffectV3::AuthorizeClaim,
+            BridgeParticipant::Taker,
+        )
+    }
 }
 
 #[cfg(feature = "sessions")]
