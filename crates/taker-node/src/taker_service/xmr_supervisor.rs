@@ -802,13 +802,23 @@ async fn drive_lez_lock(
     // Busy, or the last lock not yet in a block: a later step plans it.
     let mut gate = None;
     if progress.scan_from.is_none() {
-        let Ok(held) = super::btc_dynamic::LEZ_LOCK_GATE.try_lock() else {
+        let Ok(mut held) = super::btc_dynamic::LEZ_LOCK_GATE.try_lock() else {
             return Ok(());
         };
         let (_, nonce) =
             lez_btc_role_lifecycle::balances::lez_owner_sequenced_balance(dynamic.btc().runtime())
                 .await?;
         if nonce < *held {
+            return Ok(());
+        }
+        // Past the gate the account moved outside it: a claim, or a Zcash
+        // lock, which is a pair planned at the live nonce without the gate,
+        // and whose funding would take this pair's nonce once its
+        // initialisation is in a block. So the pair is planned only at a
+        // nonce that stood still for a step: the gate takes the live nonce
+        // (which any lock waiting on it has reached) and a later step plans.
+        if nonce > *held {
+            *held = nonce;
             return Ok(());
         }
         gate = Some((held, nonce));
