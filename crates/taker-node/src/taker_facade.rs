@@ -676,19 +676,21 @@ const fn pair_capabilities(
     } else {
         TakerMonitoringCapabilityV1::NotOnThisNode
     };
-    // Monero: the Node takes and monitors the swap, locks LEZ and refunds by
-    // itself once its Monero route is configured; the claim (tag 14, then
-    // the sweep) is not composed on the Node, so claim and refund stay the
-    // effect checkpoints they were.
-    let (xmr_initiation, xmr_monitoring) = if xmr_lifecycle_registered {
+    // Monero: once its Monero route is configured the Node takes and
+    // monitors the swap, locks LEZ, and claims (tag 14, the Maker's tag 15,
+    // the Monero sweep) or refunds (tag 16) on the owner's command; until
+    // then claim and refund stay the effect checkpoints they were.
+    let (xmr_initiation, xmr_monitoring, xmr_terminal) = if xmr_lifecycle_registered {
         (
             TakerInitiationCapabilityV1::PreparedPrivateMaterial,
             TakerMonitoringCapabilityV1::ReceiptBound,
+            TakerTerminalActionCapabilityV1::FullLifecycle,
         )
     } else {
         (
             TakerInitiationCapabilityV1::OwnerCliOrDemo,
             TakerMonitoringCapabilityV1::OwnerCliOrDemo,
+            TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
         )
     };
     let zec_terminal = if zec_lifecycle_registered {
@@ -712,8 +714,8 @@ const fn pair_capabilities(
             authenticated_offer_browsing: true,
             initiation: xmr_initiation,
             monitoring: xmr_monitoring,
-            claim: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
-            refund: TakerTerminalActionCapabilityV1::EffectCheckpointOnly,
+            claim: xmr_terminal,
+            refund: xmr_terminal,
         },
         TakerPairCapabilityV1 {
             pair: Pair::Zcash,

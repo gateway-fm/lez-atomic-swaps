@@ -441,21 +441,14 @@ impl RouteActor {
                     }
                 }
             }
-            // A Monero refund is admitted durably and the Node's supervisor
-            // submits it on its next pass, under this same actor lock; the
-            // claim is not composed on the Taker Node, so it is never
-            // offered and never reaches here.
+            // A Monero claim or refund is admitted durably and the Node's
+            // supervisor runs it from its next pass, under this same actor
+            // lock (xmr_supervisor.rs).
             #[cfg(feature = "pair-xmr")]
-            Self::Xmr(_) => match action {
-                TakerTerminalActionV1::Refund => {
-                    let _ = outcomes;
-                    Ok(())
-                }
-                TakerTerminalActionV1::Claim => {
-                    report_actor_failure("effect", &"xmr_claim_not_composed");
-                    Err(())
-                }
-            },
+            Self::Xmr(_) => {
+                let _ = (action, outcomes);
+                Ok(())
+            }
         }
     }
 

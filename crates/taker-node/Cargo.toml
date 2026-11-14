@@ -18,6 +18,7 @@ pair-zec = ["dep:zec-reference-actor", "dep:lez-zec-swap-sdk"]
 pair-xmr = [
     "dep:xmr-reference-actor",
     "dep:lez-xmr-swap-sdk",
+    "dep:lez-adaptor-role-runner",
     "dep:lez-adaptor-signature",
     "dep:lez-bridge-adapter",
     "dep:lez-xmr-monero-adapter",
@@ -64,6 +65,7 @@ lez-swap-core = { version = "0.1.0", path = "../swap-core" }
 lez-swap-sdk-core = { version = "0.1.0", path = "../swap-sdk-core" }
 lez-actor-supervision = { version = "0.1.0", path = "../actor-supervision" }
 lez-swap-store = { version = "0.1.0", path = "../swap-store" }
+lez-adaptor-role-runner = { version = "0.1.0", path = "../adaptor-role-runner", optional = true }
 lez-adaptor-signature = { version = "0.1.0", path = "../adaptor-signature", optional = true }
 lez-bridge-adapter = { version = "0.1.0", path = "../lez-bridge-adapter", optional = true }
 lez-xmr-monero-adapter = { version = "0.1.0", path = "../xmr-monero-adapter", optional = true }

@@ -673,7 +673,7 @@ pub(super) async fn prepare(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::{collections::BTreeMap, os::unix::fs::PermissionsExt as _, sync::Mutex};
 
     use lez_bridge_protocol::{Hex32, Participant, RuntimeCompatibility, RuntimeDescriptor};
@@ -832,9 +832,9 @@ mod tests {
 
     /// The Maker's side of the six rounds over the S3 library, in process:
     /// what S5's Chat methods do, minus the store and the reservation file.
-    struct FakeMaker {
+    pub(in crate::taker_service) struct FakeMaker {
         config: XmrRoleConfigV1,
-        root: PathBuf,
+        pub(in crate::taker_service) root: PathBuf,
         reserve: Mutex<Option<XmrReserveResponseV1>>,
         calls: Mutex<BTreeMap<&'static str, usize>>,
         /// Fails the first call of this method once (a lost answer).
@@ -936,14 +936,14 @@ mod tests {
         }
     }
 
-    struct Take {
+    pub(in crate::taker_service) struct Take {
         _directory: tempfile::TempDir,
         taker_config: XmrRoleConfigV1,
-        taker_swap: PathBuf,
-        maker: FakeMaker,
+        pub(in crate::taker_service) taker_swap: PathBuf,
+        pub(in crate::taker_service) maker: FakeMaker,
     }
 
-    fn take(tamper: Option<fn(&mut XmrReserveResponseV1)>) -> Take {
+    pub(in crate::taker_service) fn take(tamper: Option<fn(&mut XmrReserveResponseV1)>) -> Take {
         let directory = tempfile::TempDir::new().unwrap();
         let root = fs::canonicalize(directory.path()).unwrap();
         let taker_config = config(&private_dir(&root.join("taker-config")), "taker");
@@ -966,7 +966,7 @@ mod tests {
     }
 
     impl Take {
-        async fn negotiate(&self) -> Result<XmrNegotiated> {
+        pub(in crate::taker_service) async fn negotiate(&self) -> Result<XmrNegotiated> {
             let maker_identity = PublicKey::from_secret_key(
                 &Secp256k1::new(),
                 &SecretKey::from_slice(&MAKER_SECRET).unwrap(),
