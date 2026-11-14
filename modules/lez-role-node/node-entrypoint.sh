@@ -24,6 +24,55 @@ set -euo pipefail
 
 role="${1:?maker|taker}"
 bin="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Group- or other-writable directories (issue 151). The Maker's actor
+# supervisor refuses to run an actor from a directory others can write
+# (swap-store maker_actor_process.rs validate_program_parent), and every LEZ
+# sidecar refuses a state directory with a symlink or a group- or
+# other-writable, non-sticky ancestor, or one owned by another user
+# (lez-v0_2-sidecar durable_reservation.rs validate_trusted_parent_chain). Both
+# checks stay. A package manager running under umask 002 (Ubuntu's default)
+# leaves this package's own directories group-writable, so the launcher removes
+# group and other write from what it owns of its package; a directory it does
+# not own is reported, with the path and the fix, before the Node starts.
+owner_and_mode() { # owner_and_mode <path>: "<uid> <octal mode>", the path itself (no symlink followed)
+  stat -c '%u %a' -- "$1" 2>/dev/null || stat -f '%u %Lp' -- "$1"
+}
+unsafe_dir() { # unsafe_dir <dir>: why the sidecar's ancestor rule refuses <dir> and the fix, or nothing
+  local uid mode
+  if [[ -L "$1" ]]; then
+    echo "is a symbolic link. Fix: name the directory it points to ($(cd "$1" 2>/dev/null && pwd -P)) instead"; return
+  fi
+  [[ -d "$1" ]] || { echo "is not a directory"; return; }
+  read -r uid mode <<<"$(owner_and_mode "$1")"
+  if [[ "$uid" != 0 && "$uid" != "$(id -u)" ]]; then
+    echo "is owned by another user (uid $uid). Fix: keep the Node's files under a directory you own"; return
+  fi
+  # Sticky bit (BSD %Lp leaves it out of the mode; [[ -k ]] reads it on both).
+  if (( 8#$mode & 8#022 )) && [[ ! -k "$1" ]]; then
+    echo "is writable by its group or by others (mode $mode). Fix: chmod go-w '$1'"
+  fi
+}
+refuse_unsafe_ancestors() { # refuse_unsafe_ancestors <dir> <what>: every existing directory from <dir> up to /
+  local dir="$1" why
+  while :; do
+    if [[ -e "$dir" || -L "$dir" ]]; then
+      why="$(unsafe_dir "$dir")"
+      if [[ -n "$why" ]]; then
+        echo "$role: $dir $why. The Node's LEZ sidecars keep $2 below it, and they refuse a state directory with an ancestor that is a symbolic link, writable by its group or others, or owned by another user, so no swap could start. Another place for the Node's files: LEZ_NODE_HOME, or LEZ_${role_upper}_NODE_STATE_DIR and LEZ_${role_upper}_ZEC_SIDECAR_DIR." >&2
+        exit 78
+      fi
+    fi
+    [[ "$dir" == / ]] && return 0
+    dir="$(dirname "$dir")"
+  done
+}
+role_upper="$(tr '[:lower:]' '[:upper:]' <<<"$role")"
+for owned in "$bin/.." "$bin" "$bin"/*; do
+  if [[ -O "$owned" && ! -L "$owned" ]] && (( 8#$(owner_and_mode "$owned" | cut -d' ' -f2) & 8#022 )); then
+    chmod go-w "$owned" 2>/dev/null || true
+  fi
+done
 # Each setting below may be given for one role only: LEZ_MAKER_<NAME> or
 # LEZ_TAKER_<NAME> (LEZ_MAKER_SIDECAR_PORT_BASE for LEZ_SIDECAR_PORT_BASE)
 # takes precedence over LEZ_<NAME> for that role. One host can then start
@@ -163,6 +212,14 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 mkdir -p "$btc_state" "$btc_state/swaps"
+refuse_unsafe_ancestors "$btc_state/swaps" "each Bitcoin swap's state"
+if [[ "$role" == maker ]]; then
+  why="$(unsafe_dir "$bin")"
+  if [[ -n "$why" ]]; then
+    echo "$role: the package's program directory $bin $why. The Maker's actor supervisor refuses to run an actor from it (actor_deployment_invalid)." >&2
+    exit 78
+  fi
+fi
 rm -f "$run/node.sock" "$run/ready" "$run/chat.sock"
 
 # The role's LEZ signer: the LEZ wallet as the Logos lez_core module
@@ -310,6 +367,7 @@ for zec_candidate in "$zec_state"/corridor/"$role"/actor-config.json "$zec_state
   zec_sidecar_state="$zec_sidecar_root/$zec_run_id"
   mkdir -p "$zec_sidecar_root" "$zec_sidecar_state"
   chmod 0700 "$zec_sidecar_root" "$zec_sidecar_state"
+  refuse_unsafe_ancestors "$zec_sidecar_root" "each ZEC corridor's sidecar state"
   # The ZEC sidecar signs through the same LEZ wallet module when it is up; its
   # account is the one the prepared runtime names.
   if [[ -n "$lez_wallet_socket" ]]; then

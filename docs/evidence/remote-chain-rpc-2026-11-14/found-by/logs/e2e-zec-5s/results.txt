@@ -1,0 +1,5 @@
+[12:38:44Z] start zec-happy-lez (zec-happy --pair Zcash --direction TakerSellsLez)
+[12:41:12Z] zec-happy-lez exit 0
+[12:41:12Z] start zec-happy-foreign (zec-happy --pair Zcash --direction TakerSellsForeign)
+[12:49:03Z] zec-happy-foreign exit 0
+SUITE-DONE

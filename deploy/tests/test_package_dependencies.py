@@ -9,7 +9,10 @@ official release as well (lez_core 0.5.1). pin-package-dependencies.sh is run
 here on a set of small packages laid out as the module builder writes them
 (bare dependency names from metadata.json) and on the set as v0.3.0 pinned it
 (each name twice); stage-basecamp-package.sh then installs the bare names
-Basecamp 0.2.0 reads. Nothing here needs Docker; the staging test needs jq.
+Basecamp 0.2.0 reads. The catalog's set carries the Chat module of
+package-chat-module.sh instead of Logos's release (issue #147): a pre-release
+the desks require exactly, whose Delivery requirement is the desks' own.
+Nothing here needs Docker or the network; the staging test needs jq.
 """
 import hashlib
 import io
@@ -25,6 +28,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PIN = ROOT / 'deploy/scripts/pin-package-dependencies.sh'
 STAGE = ROOT / 'deploy/scripts/stage-basecamp-package.sh'
+CHAT = ROOT / 'deploy/scripts/package-chat-module.sh'
 
 OURS = {
     'lez_atomic_swap_maker': 'apps/basecamp/maker/metadata.json',
@@ -66,12 +70,27 @@ def read_manifest(path):
         return json.load(t.extractfile('manifest.json'))
 
 
-def release_set(directory, dependencies_of=None):
+def chat_module(what):
+    return subprocess.run(['bash', str(CHAT), '--print', what], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def catalog_chat(name, names, versions):
+    """The catalog's Chat module (package-chat-module.sh): Delivery pinned."""
+    if name == 'chat_module':
+        return [{'name': 'delivery_module', 'version': chat_module('delivery-requirement')}]
+    return list(names)
+
+
+def release_set(directory, dependencies_of=None, chat_version=None):
     """The release set's packages, each with the builder's bare names or with
-    dependencies_of(name, names, versions) when given."""
+    dependencies_of(name, names, versions) when given; chat_version replaces
+    the Chat release's version (the catalog's set)."""
     versions = {n: json.loads((ROOT / p).read_text())['version'] for n, p in OURS.items()}
     versions.update({n: lidl_version(p) for n, p in PATCHED.items()})
     versions.update({n: v for n, (v, _) in OFFICIAL.items()})
+    if chat_version:
+        versions['chat_module'] = chat_version
     pathlib.Path(directory).mkdir(parents=True, exist_ok=True)
     paths = []
     for name, version in versions.items():
@@ -97,9 +116,11 @@ def v030_pins(name, names, versions):
     return [{'name': n, 'version': '~' + versions[n]} for n in names] + list(names)
 
 
-def pin(paths, out):
-    subprocess.run(['bash', str(PIN), '--out', str(out), *map(str, paths)], check=True,
-                   capture_output=True, text=True)
+def pin(paths, out, check=True):
+    run = subprocess.run(['bash', str(PIN), '--out', str(out), *map(str, paths)], check=check,
+                         capture_output=True, text=True)
+    if not check:
+        return run
     return {p.stem: read_manifest(p) for p in pathlib.Path(out).glob('*.lgx')}
 
 
@@ -118,7 +139,7 @@ class PinnedDependencies(unittest.TestCase):
             self.assertEqual(len(listed), len(set(listed)), f'{name} lists a dependency twice: {listed}')
             self.assertEqual(listed, json.loads((ROOT / OURS[name]).read_text())['dependencies'], name)
             for d in deps:
-                if d['name'] in OFFICIAL:
+                if d['name'] in OFFICIAL and '-' not in versions[d['name']]:
                     # (4) the Logos modules we take unchanged: a patch release may stand in
                     self.assertEqual(d['version'], '~' + versions[d['name']], f'{name} -> {d}')
                 else:
@@ -157,6 +178,43 @@ class PinnedDependencies(unittest.TestCase):
             self.assertEqual(pinned[name]['hashes'], read_manifest(path)['hashes'], name)
         rows = {r.split('\t')[0]: r.split('\t') for r in (out / 'packages.tsv').read_text().splitlines()[1:]}
         self.assertEqual(rows['lez_swap_node'][3], 'lez_core 0.4.1-sign.4')
+
+    def test_the_catalogs_chat_module_is_required_exactly(self):
+        # issue #147: Logos's chat_module 0.2.2 names a bare delivery_module,
+        # which plans the newest Delivery (0.3.3) beside the desks' 0.2.x
+        version = chat_module('version')
+        self.assertTrue(version.startswith(OFFICIAL['chat_module'][0] + '-'), version)
+        versions, paths = release_set(self.tmp / 'in', catalog_chat, chat_version=version)
+        out = self.tmp / 'out'
+        pinned = pin(paths, out)
+        self.check_set(versions, pinned)
+        for desk in ('lez_atomic_swap_maker', 'lez_atomic_swap_taker'):
+            required = {d['name']: d['version'] for d in pinned[desk]['dependencies']}
+            self.assertEqual(required['chat_module'], version, desk)
+            # one Delivery requirement in the whole graph: the desk's is Chat's
+            self.assertEqual(required['delivery_module'], chat_module('delivery-requirement'), desk)
+        self.assertEqual((out / 'chat_module.lgx').read_bytes(), (self.tmp / 'in/chat_module.lgx').read_bytes())
+
+    def test_two_requirements_of_one_name_are_refused(self):
+        def chat_wants_another_delivery(name, names, versions):
+            if name == 'chat_module':
+                return [{'name': 'delivery_module', 'version': '>=0.3.0'}]
+            return list(names)
+        _, paths = release_set(self.tmp / 'in', chat_wants_another_delivery, chat_version='0.2.2-test.1')
+        run = pin(paths, self.tmp / 'out', check=False)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn('delivery_module is required in more than one way', run.stderr)
+
+    def test_the_chat_module_is_cut_from_the_pinned_release_only(self):
+        self.assertRegex(chat_module('source-sha256'), r'^[0-9a-f]{64}$')
+        fake = self.tmp / 'chat_module-0.2.2.lgx'
+        write_lgx(fake, {'name': 'chat_module', 'version': '0.2.2', 'dependencies': ['delivery_module'],
+                         'main': {'linux-arm64': 'chat_module_plugin.so'}})
+        run = subprocess.run(['bash', str(CHAT), '--from', str(fake), '--out', str(self.tmp / 'out.lgx')],
+                             capture_output=True, text=True)
+        self.assertEqual(run.returncode, 65, run.stderr)
+        self.assertIn('not the chat_module 0.2.2 release', run.stderr)
+        self.assertFalse((self.tmp / 'out.lgx').exists())
 
     @unittest.skipUnless(shutil.which('jq'), 'jq is required by stage-basecamp-package.sh')
     def test_the_images_install_the_bare_names_basecamp_0_2_reads(self):

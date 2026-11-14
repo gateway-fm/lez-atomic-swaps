@@ -1,0 +1,14 @@
+PackageCoordinator::runResolverAndOpenDialog "lez_atomic_swap_maker" repo= "https://localhost:8473/logos-repo.json" targetVersion= "" pins= 0 epoch= 1 requestOpen= true
+Downloaded "delivery_module" from "https://github.com/logos-co/logos-modules-release/releases/download/delivery_module-v0.2.1/delivery_module-0.2.1.lgx"
+Downloaded "chat_module" from "https://localhost:8473/chat_module-0.2.2-delivery.1.lgx"
+Downloaded "lez_core" from "https://localhost:8473/lez_core-0.4.1-sign.4.lgx"
+Downloaded "lez_swap_node" from "https://localhost:8473/lez_swap_node-0.3.1.lgx"
+Downloaded "lez_maker_node" from "https://localhost:8473/lez_maker_node-0.3.1.lgx"
+Downloaded "lez_atomic_swap_maker" from "https://localhost:8473/lez_atomic_swap_maker-0.3.1.lgx"
+App launcher clicked: "lez_atomic_swap_maker"
+Loading UI module: "lez_atomic_swap_maker"
+Loading core dependencies for "lez_atomic_swap_maker" : QList("chat_module", "delivery_module", "lez_core", "lez_swap_node", "lez_maker_node")
+logos.viewhost: ui-host lez_atomic_swap_maker : ui-host: loaded plugin "lez_atomic_swap_maker" from "<scratch>/bc/mac-u-maker/plugins/lez_atomic_swap_maker/lez_atomic_swap_maker_plugin.dylib"
+[2026-11-14 12:53:24.235] [info] [logos] [chat_module] INFO: chat_module: init: state installed, joining delivery preset logos.test
+[2026-11-14 12:53:33.862] [info] [logos] [chat_module] INFO: chat_module::actions: delivery is online
+# delivery message_received events: 100; chat decode failures (messageReceived payload missing or malformed): 0

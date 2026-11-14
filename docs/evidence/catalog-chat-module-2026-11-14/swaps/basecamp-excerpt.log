@@ -1,0 +1,8 @@
+App launcher clicked: "lez_atomic_swap_maker"
+Loading core dependencies for "lez_atomic_swap_maker" : QList("chat_module", "delivery_module", "lez_core", "lez_swap_node", "lez_maker_node")
+[2026-11-14 17:52:20.268] [info] [logos] [chat_module] INFO: chat_module: init: state installed, joining delivery preset logos.test
+[2026-11-14 17:52:30.784] [info] [logos] [chat_module] INFO: chat_module::actions: delivery is online
+App launcher clicked: "lez_atomic_swap_taker"
+Loading core dependencies for "lez_atomic_swap_taker" : QList("chat_module", "delivery_module", "lez_core", "lez_swap_node", "lez_taker_node")
+[2026-11-14 17:52:51.983] [warning] [logos] [chat_module] WARNING: chat_module: init: already initialised; any new arguments are ignored, call shutdown() first to reconfigure
+# delivery message_received events: 1385; chat decode failures (messageReceived payload missing or malformed): 0

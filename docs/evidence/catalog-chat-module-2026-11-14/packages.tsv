@@ -1,0 +1,12 @@
+name	version	variants	dependencies	sha256	root hash
+blockchain_module	0.2.4	darwin-arm64,linux-amd64,linux-arm64		31819f06aa0639874fa0257f58c24e1add6fce2b489c843b64905e28f59f0c84	2e57268c4ec1fdcf07e4b6bf1b33b5ac99705c071f879e6ca1c41b4e543cc674
+chat_module	0.2.2-delivery.1	darwin-arm64,linux-amd64,linux-arm64	delivery_module ~0.2.0	b2b0f12899792a69e60d709914a87d52266ccc3f3181dc4ab0c190ce796df29e	9f626b2139bbc86d10f8b49cfdcd81600e7b963d7eb7885022942c03f5e13366
+delivery_module	0.2.0	darwin-arm64,linux-amd64,linux-arm64		18f649b516492996079115d2b2a63c49c196e6fe054a0fd80e33caf6cd9d46cc	eb47c06575a6113f34a6d71e5e0b72d6d2db2ec7510b8be0ab9633b8385edd57
+lez_atomic_swap_maker	0.3.1	darwin-arm64,linux-amd64,linux-arm64	chat_module 0.2.2-delivery.1; delivery_module ~0.2.0; lez_core 0.4.1-sign.4; lez_swap_node 0.3.1; lez_maker_node 0.3.1	8974a83a5689f61746a3f6994a1849709f5bddddd1c0a95c694d3c0bcd7aaf6e	0dab514708001ca440368c24a827db6dba99f5a9d74bebd2e15a050e9d7e2af4
+lez_atomic_swap_taker	0.3.1	darwin-arm64,linux-amd64,linux-arm64	chat_module 0.2.2-delivery.1; delivery_module ~0.2.0; lez_core 0.4.1-sign.4; lez_swap_node 0.3.1; lez_taker_node 0.3.1	2c7473318656eeb1ed1c5d609eab03cf1df1efc609bc867c66022330ee27e0d9	0eafdb37b70f924d8b4cbe42517dc23bd2e4be97ef678e3b40070bbe3f1a9a74
+lez_core	0.4.1-sign.4	darwin-arm64,linux-amd64,linux-arm64		7e78f27c32bc36e09efff4de19f421e12186c58364e2559836ca760fe0438486	2bd34d17803a98b9c4e197a1c8d79b59f3a56b53d30fbe91f54cdfee8c00b287
+lez_indexer_module	1.1.1-rpc.4	linux-amd64,linux-arm64		cf0dc3ea6397cd90ad5fa2bade3b0dbeff577939aac2bce1464f8a89b07f121c	d761bc28b3fb659ba394da30575dc5042c51aa6923dbf1d8b8e09cd8596c9b29
+lez_maker_node	0.3.1	darwin-arm64,linux-amd64,linux-arm64	lez_swap_node 0.3.1	89872ec6c5534184bb85709fefa376d39127a781fb0b914cc45fc007e2b127ea	ac92792d524eb7cdf4764df179d7d8cbdebf52e3006e2d059aa61a137e69288e
+lez_network	0.3.1	linux-amd64,linux-arm64	blockchain_module ~0.2.4; lez_indexer_module 1.1.1-rpc.4	27a99aeadd6930997f1e565133a522f47e30e83a27debf034b402fedfc635d56	b7505e452a445282ff9e791e19041ef3e4a1bdd68dbc52b23b655df6a9f9b4d6
+lez_swap_node	0.3.1	darwin-arm64,linux-amd64,linux-arm64	lez_core 0.4.1-sign.4	570ae3bb9b4d76aa1f10a04b0712a4a57d51d05fad08338103f2a7e7cb95778d	6f8a10aa46171479b97344c78df735382be2c47494ee3be2b521bbde1b016d4e
+lez_taker_node	0.3.1	darwin-arm64,linux-amd64,linux-arm64	lez_swap_node 0.3.1	ca738f5fb5cc64bff131b03c7af46b2688980fb013199f59b16b92bd689a0496	4c9fea15cebb947ec13f091f9e56e5e2074ef275baa5359c074f5cf844853598

@@ -96,6 +96,19 @@ class PackagesWorkflow(unittest.TestCase):
         self.assertNotEqual(flake, 'ff93a0df15ceab255f27687d22d962ea2737efbe')
         self.assertIn(flake, (ROOT / 'apps/basecamp/flake.lock').read_text())
 
+    def test_the_catalogs_chat_module_enters_the_pinned_set(self):
+        # issue #147: the desks require package-chat-module.sh's Chat exactly;
+        # the Chat built from its flake is not published
+        merge = self.PACKAGES.split('\n  merge:\n', 1)[1]
+        self.assertIn('deploy/scripts/package-chat-module.sh --out "$RUNNER_TEMP/chat_module.lgx"', merge)
+        self.assertLess(merge.index('package-chat-module.sh'), merge.index('pin-package-dependencies.sh'))
+        pin = merge.split('pin-package-dependencies.sh --out _pinned', 1)[1].split('\n          cat ', 1)[0]
+        self.assertIn('"$RUNNER_TEMP/chat_module.lgx"', pin)
+        self.assertNotIn('one chat_module', self.PACKAGES)
+        for loop in re.findall(r'for name in (lez_atomic_swap_maker [a-z_ ]+); do', merge):
+            self.assertIn('chat_module', loop.split(), loop)
+        self.assertIn('requires a chat_module other than $chat', merge)
+
     def test_actions_are_pinned_by_commit(self):
         for ref in re.findall(r'uses: (\S+)', self.PACKAGES):
             self.assertRegex(ref, r'@[0-9a-f]{40}$', ref)

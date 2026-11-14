@@ -17,7 +17,7 @@ use lez_bridge_protocol::{
 use lez_zec_escrow_v02::{ClaimAuthority, EscrowMetadata, EscrowStatus};
 use nssa::{AccountId, PublicKey, public_transaction::Message};
 
-use crate::finalized_claim_observation::decode_indexed_public;
+use crate::finalized_claim_observation::{decode_indexed_public, read_finalized_run};
 use crate::{
     BridgeRuntimeError, FinalizedIndexerApi, NativeEscrowPlanner, ZecEscrowInstruction,
     compute_custody_pda, compute_metadata_pda, prepared_from_transaction, program_id_from_hex,
@@ -266,16 +266,13 @@ impl FinalizedWitnessedRefundObserver {
         let scan_end = finalized_height.min(window_end);
 
         let mut found = None;
-        let mut previous_hash = None;
-        for block_id in window.start_height()..=scan_end {
-            let block = self.read_finalized_block(block_id).await?;
-            if block_id == finalized_height && block != *finalized_tip {
+        let blocks =
+            read_finalized_run(self.indexer.as_ref(), window.start_height(), scan_end, None)
+                .await?;
+        for block in blocks {
+            if block.header.block_id == finalized_height && block != *finalized_tip {
                 return Err(BridgeRuntimeError::MovingTip);
             }
-            if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
-                return Err(BridgeRuntimeError::InvalidObservation);
-            }
-            previous_hash = Some(block.header.hash);
             for (transaction_index, transaction) in block.body.transactions.iter().enumerate() {
                 let public = match request.target {
                     NativeRefundObservationTarget::Exact {
@@ -624,14 +621,15 @@ impl FinalizedWitnessedRefundObserver {
         if &pinned_again != tip_before {
             return Err(BridgeRuntimeError::MovingTip);
         }
-        let mut previous = pinned_again;
-        for block_id in (finalized_before + 1)..=finalized_after {
-            let descendant = self.read_finalized_block(block_id).await?;
-            if descendant.header.prev_block_hash != previous.header.hash {
-                return Err(BridgeRuntimeError::InvalidObservation);
-            }
-            previous = descendant;
-        }
+        let previous = read_finalized_run(
+            self.indexer.as_ref(),
+            finalized_before + 1,
+            finalized_after,
+            Some(pinned_again.header.hash),
+        )
+        .await?
+        .pop()
+        .ok_or(BridgeRuntimeError::Unavailable)?;
 
         let tip_again = self.read_finalized_block(finalized_after).await?;
         if tip_again != previous {

@@ -381,7 +381,13 @@ swap_id="$(swap_id_of 0)"; offer_id="$(offer_id_of 0)"; reservation_id="$(reserv
 log "0/8 Maker Delivery identity"
 required_containers=("$MAKER_NODE" "$TAKER_NODE")
 [[ -z "$NATIVE" ]] || required_containers=()   # native Nodes: checked by their sockets below
-[[ "$ZCASH_NETWORK" == test ]] || required_containers+=("$LEZ_CONTAINER_PREFIX-zebra")   # Testnet: the route is remote or self-hosted
+# LEZ_CHAINS_RPC_ONLY=1: the chains are another host's, reached over their RPC
+# ports; the Regtest Zebra is checked by its RPC instead of its container.
+if [[ "$ZCASH_NETWORK" != test && "${LEZ_CHAINS_RPC_ONLY:-}" == 1 ]]; then
+  zebra getblockcount >/dev/null 2>&1 || fail "the Zebra at $ZEBRA_URL does not answer (LEZ_CHAINS_RPC_ONLY)"
+elif [[ "$ZCASH_NETWORK" != test ]]; then
+  required_containers+=("$LEZ_CONTAINER_PREFIX-zebra")   # Testnet: the route is remote or self-hosted
+fi
 for c in "${required_containers[@]}"; do
   [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]] || fail "$c is not running"
 done
