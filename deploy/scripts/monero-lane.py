@@ -5,7 +5,8 @@
     monero-lane.py fund [--role R] [--xmr N]     the funding wallet pays the role's wallet N XMR
                                                  (10 when not given); ten blocks confirm it; the
                                                  role's balance is read through its own wallet-rpc
-    monero-lane.py balance [--role R]            the role's balance, the same way
+    monero-lane.py balance [--role R]            the role's balance, the same way, and its
+                                                 incoming transfers other than coinbase
 
 The lane is LEZ_LANE (1, the stack itself, when unset; scripts/lane.sh names
 its containers, files and ports). monerod and the funding wallet-rpc are
@@ -121,9 +122,14 @@ def mine(blocks: int, why: str) -> int:
 
 
 def balance(role: str) -> dict:
+    """The role's balance, and what it received apart from coinbase (the
+    Node's own tools mine their confirmations, some of them to this wallet)."""
     open_wallet(role)
     call(role, "refresh")
-    return call(role, "get_balance", {"account_index": 0})
+    received = call(role, "get_transfers", {"in": True, "account_index": 0}).get("in", [])
+    return {**call(role, "get_balance", {"account_index": 0}),
+            "received": [{"txid": t["txid"], "amount": t["amount"], "height": t["height"]}
+                         for t in received if t.get("type") == "in"]}
 
 
 def fund(role: str, xmr: int) -> dict:

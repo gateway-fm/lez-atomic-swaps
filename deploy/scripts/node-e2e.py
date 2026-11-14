@@ -5972,6 +5972,7 @@ def scenario_xmr_happy(stamp: str) -> dict:
     xmr_fund()
     lez_before = lez_balances()
     taker_xmr_before = xmr_taker_balance()
+    received_before = {t["txid"] for t in xmr_lane("balance", "--role", "taker")["received"]}
     offer_id = f"offer-e2e-xmr-{stamp}"
     xmr_publish(stamp, offer_id)
     swap_id = zec_take_or_resume(offer_id, stamp)
@@ -5989,14 +5990,18 @@ def scenario_xmr_happy(stamp: str) -> dict:
     wait_completed(swap_id, timeout=300)
     lez = assert_lez_settled(lez_before, "completed", maker_phase(swap_id))
     taker_xmr_after = xmr_taker_balance()
-    gained = int(taker_xmr_after["balance_piconero"]) - int(taker_xmr_before["balance_piconero"])
-    log(f"  the Taker's Monero wallet gained {gained / 1e12:.6f} XMR (lot {XMR_FOREIGN_UNITS / 1e12:.0f} XMR)")
-    if gained < XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO:
-        raise Failure(f"the Taker's Monero balance moved {gained} piconero, at least "
-                      f"{XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO} expected of a completed swap")
+    # The Taker's tools mine their confirmations, coinbase to its own wallet:
+    # the swap's Monero is the one transfer it received during the swap.
+    swept = [t for t in xmr_lane("balance", "--role", "taker")["received"] if t["txid"] not in received_before]
+    log(f"  the Taker's Monero wallet received {[(t['txid'][:16], t['amount'] / 1e12) for t in swept]} "
+        f"(lot {XMR_FOREIGN_UNITS / 1e12:.0f} XMR); its balance moved "
+        f"{(int(taker_xmr_after['balance_piconero']) - int(taker_xmr_before['balance_piconero'])) / 1e12:.6f} XMR with coinbase")
+    if len(swept) != 1 or not XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO <= swept[0]["amount"] <= XMR_FOREIGN_UNITS:
+        raise Failure(f"the Taker received {swept} during the swap; one transfer of the lot less at most "
+                      f"{XMR_FEE_TOLERANCE_PICONERO} piconero of fee expected of a completed swap")
     return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez,
             "taker_monero_before": taker_xmr_before, "taker_monero_after": taker_xmr_after,
-            "taker_monero_gained_piconero": gained}
+            "taker_monero_sweep": swept[0]}
 
 
 XMR_SCENARIOS = {
