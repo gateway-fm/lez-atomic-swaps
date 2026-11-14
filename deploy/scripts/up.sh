@@ -109,7 +109,10 @@ wait_healthy() { # wait_healthy <seconds> <container>...
 }
 
 if [[ "$FRESH_LEZ" == 1 && -f runtime/runtime.env ]]; then
+  # (the caller's LEZ_MONERO, when given, wins over the one runtime.env recorded)
+  monero_asked="${LEZ_MONERO-}"
   load_env
+  [[ -z "$monero_asked" ]] || LEZ_MONERO="$monero_asked"
   stamp="$(date +%s)"
   echo "[lez] recreating the LEZ chain; old state → runtime/lez-broken-$stamp"
   # Forget the swaps that referenced the old chain first, while the Nodes still
