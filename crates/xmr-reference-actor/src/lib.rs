@@ -24,13 +24,15 @@ mod effect_route;
 #[cfg(feature = "sessions")]
 mod maker_refund_activation;
 #[cfg(feature = "sessions")]
+mod monero_funding;
+#[cfg(feature = "sessions")]
 mod reserve;
 
 #[cfg(feature = "sessions")]
 pub use application_provision::{
     ValidatedXmrEffectExecutionV3, ValidatedXmrMakerAuthorityV2, ValidatedXmrTakerAuthorityV2,
     XMR_ACTOR_PROVISION_MANIFEST_MAX_BYTES, XMR_MAKER_ACTOR_ABI_V1, XMR_MAKER_ACTOR_NEXT_ACTION,
-    XMR_MAKER_ACTOR_PROGRAM_ID, XmrActorProvisionV1, XmrEffectProvisionV3,
+    XMR_MAKER_ACTOR_PROGRAM_ID, XmrActorProvisionV1, XmrEffectProvisionV3, XmrMakerEffectSourcesV1,
     load_validated_xmr_effect_execution_v3_bytes, load_validated_xmr_effect_manifest_v3_bytes,
     load_validated_xmr_maker_authority_fd, load_validated_xmr_maker_effect_execution_fd,
     load_validated_xmr_taker_authority_bytes, provision_xmr_effect_manifest_v3,
@@ -127,11 +129,19 @@ use lez_xmr_swap_sdk::{
 };
 #[cfg(feature = "sessions")]
 pub use maker_refund_activation::{
-    activate_maker_claim_workflow, activate_maker_refund_workflow,
-    activate_taker_claim_sweep_workflow, activate_taker_claim_workflow,
+    activate_maker_claim_workflow, activate_maker_claim_workflow_bytes,
+    activate_maker_punish_workflow_bytes, activate_maker_refund_workflow,
+    activate_maker_refund_workflow_bytes, activate_taker_claim_sweep_workflow,
+    activate_taker_claim_workflow, maker_monero_funding_evidence_sha256,
+    reconcile_maker_monero_funding_bytes,
 };
 #[cfg(feature = "sessions")]
 use monero::Address as MoneroAddress;
+#[cfg(feature = "sessions")]
+pub use monero_funding::{
+    XMR_MAKER_FUNDING_EVIDENCE_FILE, XMR_MAKER_FUNDING_RECEIPT_FILE, XmrRoleWalletRpcV1,
+    fund_maker_monero, observe_maker_monero_funding,
+};
 #[cfg(feature = "sessions")]
 use rustix::fs::Dir;
 #[cfg(target_os = "linux")]
@@ -1559,6 +1569,56 @@ fn complete_claim_from_finalized_authorization(
     )
     .context("complete Maker claim from finalized tag 14")?;
     destination.revalidate()
+}
+
+/// Completes the Maker's claim final signature from finalized Tag-14
+/// evidence, on the role material its schema-3 manifest names.
+///
+/// # Errors
+///
+/// Fails for an existing output, invalid role material or Tag-14 evidence.
+#[cfg(feature = "sessions")]
+pub fn complete_maker_claim_signature(
+    sources: &XmrMakerEffectSourcesV1,
+    finalized_authorization: &Path,
+    output_final_signature: &Path,
+) -> Result<()> {
+    complete_claim_from_finalized_authorization(
+        sources.private_root(),
+        sources.own_public_packet(),
+        sources.peer_public_packet(),
+        sources.stage_a(),
+        sources.stage_b(),
+        sources.role_journal(),
+        sources.run_id(),
+        finalized_authorization,
+        output_final_signature,
+    )
+}
+
+/// Ingests the Taker's finalized Tag-16 refund signature into the Maker's
+/// refund session, on the role material its schema-3 manifest names.
+///
+/// # Errors
+///
+/// Fails for an existing output, invalid role material or Tag-16 evidence.
+#[cfg(feature = "sessions")]
+pub fn ingest_maker_refund_signature(
+    sources: &XmrMakerEffectSourcesV1,
+    finalized_refund: &Path,
+    output_final_signature: &Path,
+) -> Result<()> {
+    ingest_finalized_refund_signature(
+        sources.private_root(),
+        sources.own_public_packet(),
+        sources.peer_public_packet(),
+        sources.stage_a(),
+        sources.stage_b(),
+        sources.role_journal(),
+        sources.run_id(),
+        finalized_refund,
+        output_final_signature,
+    )
 }
 
 #[cfg(feature = "sessions")]

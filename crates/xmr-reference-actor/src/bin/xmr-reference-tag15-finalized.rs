@@ -1,4 +1,4 @@
-//! Sealed read-only Maker observer for finalized Tag15.
+//! Sealed read-only Maker observer for finalized Tag15 and Tag17.
 
 #![forbid(unsafe_code)]
 
@@ -40,6 +40,8 @@ use zeroize::{Zeroize as _, Zeroizing};
 const ABI: &str = "lez_xmr_finalized_classifier_v1";
 const ACTIVATION_FILE: &str = "maker-claim-activation.json";
 const FINAL_EVIDENCE_FILE: &str = "tag15-finalized.json";
+const PUNISH_ACTIVATION_FILE: &str = "maker-punish-activation.json";
+const TAG17_FINAL_EVIDENCE_FILE: &str = "tag17-finalized.json";
 const MAX_SECRET_BYTES: usize = 256;
 const MAX_CAPABILITY_FILE_BYTES: usize = 130;
 const MAX_RUNTIME_BYTES: usize = 16 * 1024;
@@ -66,6 +68,22 @@ struct ActivationEvidenceV1 {
     private_material_disclosed: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PunishActivationEvidenceV1 {
+    schema: String,
+    role: String,
+    run_id: String,
+    monero_run_id: String,
+    swap_id: String,
+    selected_branch: String,
+    funding_effect_evidence_sha256: String,
+    funding_tool_plan_identity_sha256: String,
+    tag17_scan_start_height: u64,
+    prepared_step: String,
+    private_material_disclosed: bool,
+}
+
 #[tokio::main]
 async fn main() {
     if let Err(error) = execute().await {
@@ -74,12 +92,16 @@ async fn main() {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one observer boundary validates every sealed input before any RPC"
+)]
 async fn execute() -> Result<()> {
-    validate_args()?;
+    let step = validate_args()?;
     let plan = load_xmr_effect_child_plan_fd_for(
         ActorRole::Maker,
         XmrEffectChildModeV1::Observe,
-        XmrWorkflowStep::ClaimLezTag15,
+        step,
         ABI,
     )
     .context("load Tag15 observer child plan")?;
@@ -123,6 +145,9 @@ async fn execute() -> Result<()> {
     );
     let binding = XmrLezBridgeBindingV3::new(&agreement, &activation)
         .context("derive Tag15 observer terms")?;
+    if step == XmrWorkflowStep::PunishLezTag17 {
+        return observe_tag17(&plan, &runtime, &binding.terms()).await;
+    }
     let exact_transaction_bytes = read_sealed_fd(
         XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
         usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
@@ -156,7 +181,10 @@ async fn execute() -> Result<()> {
         &run_id,
         &runtime,
         &terms,
-        &exact_transaction,
+        (
+            XmrNativeEffectV3::Claim,
+            &FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction),
+        ),
         activation_evidence.tag15_scan_start_height,
         nonce,
     )
@@ -165,8 +193,9 @@ async fn execute() -> Result<()> {
         println!("{{\"schema_version\":1,\"step\":\"claim_lez_tag15\",\"state\":\"pending\"}}");
         return Ok(());
     };
-    let evidence_sha256 = persist_finalized_result(&result, plan.evidence_root())?
-        .context("found Tag15 result did not produce finality evidence")?;
+    let evidence_sha256 =
+        persist_finalized_result(&result, &plan.evidence_root().join(FINAL_EVIDENCE_FILE))?
+            .context("found Tag15 result did not produce finality evidence")?;
     println!(
         "{{\"schema_version\":1,\"step\":\"claim_lez_tag15\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{evidence_sha256}\"}}"
     );
@@ -178,7 +207,7 @@ async fn classify_finalized_tag15_pages(
     run_id: &RunId,
     runtime: &RuntimeDescriptor,
     terms: &XmrNativeEscrowTermsV3,
-    exact_transaction: &PreparedTransaction,
+    (effect, target): (XmrNativeEffectV3, &FinalizedNativeXmrTransactionTargetV3),
     initial_scan_height: u64,
     nonce: u128,
 ) -> Result<Option<ClassifyFinalizedNativeXmrEffectV3Result>> {
@@ -219,8 +248,8 @@ async fn classify_finalized_tag15_pages(
                     context,
                     runtime.clone(),
                     *terms,
-                    XmrNativeEffectV3::Claim,
-                    FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction.clone()),
+                    effect,
+                    target.clone(),
                     window,
                 ),
             )
@@ -254,6 +283,70 @@ async fn classify_finalized_tag15_pages(
         }
     }
     Ok(None)
+}
+
+/// The Maker's Tag-17 punishment, discovered from the terms: its exact
+/// bytes stay in the sidecar's durable reservation. Scans from the height
+/// the punish activation recorded.
+async fn observe_tag17(
+    plan: &XmrEffectChildPlanV1,
+    runtime: &RuntimeDescriptor,
+    terms: &XmrNativeEscrowTermsV3,
+) -> Result<()> {
+    let activation: PunishActivationEvidenceV1 = read_canonical_private_json(
+        &plan.evidence_root().join(PUNISH_ACTIVATION_FILE),
+        "Maker punish activation evidence",
+    )?;
+    ensure!(
+        activation.schema == "lez_v02_m7_maker_punish_activation_v1"
+            && activation.role == "maker"
+            && activation.run_id == plan.run_id()
+            && activation.swap_id == hex::encode(plan.swap_id())
+            && activation.selected_branch == "punish"
+            && activation.prepared_step == XmrWorkflowStep::PunishLezTag17.name()
+            && !activation.private_material_disclosed,
+        "Tag17 observer activation evidence differs from the exact plan"
+    );
+    let run_id = RunId::new(plan.run_id().to_owned()).context("invalid Tag17 observer run ID")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock predates the Unix epoch")?
+        .as_nanos();
+    let client = BridgeClient::connect(BridgeClientConfig::new(
+        plan.lez_sidecar_url().as_str(),
+        read_sidecar_capability_fd(XMR_EFFECT_CAPABILITY_FD)?,
+        run_id.clone(),
+        runtime.clone(),
+        REQUEST_TIMEOUT,
+    ))
+    .context("authenticated Maker sidecar client is unavailable")?;
+    let step = XmrWorkflowStep::PunishLezTag17.name();
+    let Some(result) = classify_finalized_tag15_pages(
+        &client,
+        &run_id,
+        runtime,
+        terms,
+        (
+            XmrNativeEffectV3::Punish,
+            &FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
+        activation.tag17_scan_start_height,
+        nonce,
+    )
+    .await?
+    else {
+        println!("{{\"schema_version\":1,\"step\":\"{step}\",\"state\":\"pending\"}}");
+        return Ok(());
+    };
+    let evidence_sha256 = persist_finalized_result(
+        &result,
+        &plan.evidence_root().join(TAG17_FINAL_EVIDENCE_FILE),
+    )?
+    .context("found Tag17 result did not produce finality evidence")?;
+    println!(
+        "{{\"schema_version\":1,\"step\":\"{step}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{evidence_sha256}\"}}"
+    );
+    Ok(())
 }
 
 fn scan_page_blocks(start_height: u64, finalized_height: u64) -> Result<Option<u32>> {
@@ -308,25 +401,29 @@ fn load_activation_evidence(plan: &XmrEffectChildPlanV1) -> Result<ActivationEvi
 
 fn persist_finalized_result(
     result: &ClassifyFinalizedNativeXmrEffectV3Result,
-    evidence_root: &Path,
+    path: &Path,
 ) -> Result<Option<String>> {
     let FinalizedNativeXmrScanOutcomeV3::Found { .. } = &result.outcome else {
         return Ok(None);
     };
     let evidence_bytes = canonical_line(result).context("encode finalized Tag15 evidence")?;
-    persist_or_validate(&evidence_root.join(FINAL_EVIDENCE_FILE), &evidence_bytes)?;
+    persist_or_validate(path, &evidence_bytes)?;
     Ok(Some(hex::encode(Sha256::digest(&evidence_bytes))))
 }
 
-fn validate_args() -> Result<()> {
+fn validate_args() -> Result<XmrWorkflowStep> {
     let args = std::env::args_os().collect::<Vec<_>>();
     ensure!(
-        args.len() == 3
-            && args[1] == "--xmr-workflow-step"
-            && args[2] == XmrWorkflowStep::ClaimLezTag15.name(),
-        "finalized classifier requires the parent-selected Tag15 step"
+        args.len() == 3 && args[1] == "--xmr-workflow-step",
+        "finalized classifier requires the parent-selected Tag15 or Tag17 step"
     );
-    Ok(())
+    [
+        XmrWorkflowStep::ClaimLezTag15,
+        XmrWorkflowStep::PunishLezTag17,
+    ]
+    .into_iter()
+    .find(|step| args[2] == step.name())
+    .context("finalized classifier requires the parent-selected Tag15 or Tag17 step")
 }
 
 fn parse_view_key(bytes: &[u8]) -> Result<MoneroPrivateViewKey> {

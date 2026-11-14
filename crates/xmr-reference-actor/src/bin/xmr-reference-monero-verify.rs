@@ -14,8 +14,9 @@ use lez_bridge_protocol::RunId;
 use lez_swap_store::XmrWorkflowStep;
 use lez_xmr_monero_adapter::{
     ExpectedMoneroOutput, LoopbackRpcEndpoint, MoneroAddress, MoneroChainIdentity,
-    MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroTopologyVerifier,
-    MoneroTransactionId, REQUIRED_MONERO_CONFIRMATIONS, VerifiedMoneroOutputObservation,
+    MoneroEvidenceError, MoneroNetwork, MoneroOutputVerifier, MoneroRegtestWalletEffects,
+    MoneroTopologyVerifier, MoneroTransactionId, MoneroWalletRpcLock,
+    REQUIRED_MONERO_CONFIRMATIONS, VerifiedMoneroOutputObservation,
 };
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroAddressNetworkV1,
@@ -29,9 +30,10 @@ use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
     ActorRole, XMR_EFFECT_DAEMON_PASSWORD_FD, XMR_EFFECT_DAEMON_USERNAME_FD,
     XMR_EFFECT_FUNDING_PASSWORD_FD, XMR_EFFECT_FUNDING_USERNAME_FD, XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
-    XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD, XMR_EFFECT_STAGE_A_FD,
-    XMR_EFFECT_STAGE_B_FD, XmrEffectChildModeV1, XmrEffectChildPlanV1,
-    load_xmr_effect_child_plan_fd,
+    XMR_EFFECT_ROLE_PASSWORD_FD, XMR_EFFECT_ROLE_USERNAME_FD,
+    XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD, XMR_EFFECT_STAGE_A_FD, XMR_EFFECT_STAGE_B_FD,
+    XmrEffectChildModeV1, XmrEffectChildPlanV1, XmrRoleWalletRpcV1, load_xmr_effect_child_plan_fd,
+    observe_maker_monero_funding,
 };
 use zeroize::Zeroizing;
 
@@ -191,7 +193,13 @@ async fn main() {
 async fn execute() -> Result<()> {
     validate_args()?;
     reject_forbidden_invocation_secrets()?;
-    let inputs = validate_inputs()?;
+    let plan = load_xmr_effect_child_plan_fd().context("load Monero observer child plan")?;
+    if (plan.role(), plan.step(), plan.executable_abi())
+        == (ActorRole::Maker, XmrWorkflowStep::FundMonero, ABI)
+    {
+        return observe_funding(&plan).await;
+    }
+    let inputs = validate_inputs(plan)?;
     let identity = MoneroChainIdentity::new(
         monero_network(inputs.agreement.body().monero().network()),
         inputs.agreement.body().monero().genesis_hash(),
@@ -203,6 +211,19 @@ async fn execute() -> Result<()> {
         inputs.submission.received_amount_piconero,
     )
     .context("refund submission output terms are invalid")?;
+    // With one wallet-rpc per role, the role wallet is opened under the
+    // role's wallet-rpc lock and the topology has no foreign wallet.
+    let one_wallet_rpc = inputs.plan.monero_role_wallet_file();
+    let _lock = one_wallet_rpc
+        .map(|(_, lock_file)| MoneroWalletRpcLock::acquire(lock_file))
+        .transpose()
+        .context("lock the role's Monero wallet-rpc")?;
+    if let Some((role_wallet, _)) = one_wallet_rpc {
+        MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)?
+            .with_role_wallet(role_wallet.to_owned(), String::new())?
+            .open_role_wallet()
+            .await?;
+    }
     let verifier = MoneroOutputVerifier::new(identity, &inputs.daemon, &inputs.role_wallet)
         .context("Maker refund observation boundary is invalid")?;
     let observation = match verifier.verify(&expected).await {
@@ -213,13 +234,23 @@ async fn execute() -> Result<()> {
         }
         Err(error) => return Err(error).context("settlement finality proof failed closed"),
     };
-    let topology = MoneroTopologyVerifier::new(
-        RunId::new(inputs.plan.run_id()).context("settlement run ID is invalid")?,
-        identity,
-        &inputs.daemon,
-        &inputs.role_wallet,
-        &inputs.foreign_wallet,
-    )
+    let run_id = RunId::new(inputs.plan.run_id()).context("settlement run ID is invalid")?;
+    let topology = if one_wallet_rpc.is_some() {
+        MoneroTopologyVerifier::for_one_wallet_rpc(
+            run_id,
+            identity,
+            &inputs.daemon,
+            &inputs.role_wallet,
+        )
+    } else {
+        MoneroTopologyVerifier::new(
+            run_id,
+            identity,
+            &inputs.daemon,
+            &inputs.role_wallet,
+            &inputs.foreign_wallet,
+        )
+    }
     .context("construct settlement topology verifier")?
     .verify()
     .await
@@ -250,7 +281,8 @@ fn validate_args() -> Result<()> {
         args.len() == 3
             && args[1] == "--xmr-workflow-step"
             && (args[2] == XmrWorkflowStep::SweepMoneroClaim.name()
-                || args[2] == XmrWorkflowStep::SweepMoneroRefund.name()),
+                || args[2] == XmrWorkflowStep::SweepMoneroRefund.name()
+                || args[2] == XmrWorkflowStep::FundMonero.name()),
         "Monero finality observer requires one parent-selected settlement step"
     );
     Ok(())
@@ -279,8 +311,67 @@ fn reject_forbidden_invocation_secrets() -> Result<()> {
     )
 }
 
-fn validate_inputs() -> Result<ValidatedInputs> {
-    let plan = load_xmr_effect_child_plan_fd().context("load Monero observer child plan")?;
+/// The Maker's `FundMonero` observation: the recorded funding, or, after a
+/// crash, the exact shared output found in the swap's view-only wallet.
+async fn observe_funding(plan: &XmrEffectChildPlanV1) -> Result<()> {
+    ensure!(
+        plan.mode() == XmrEffectChildModeV1::Observe,
+        "XMR effect child plan differs from the Monero funding observer route"
+    );
+    validate_evidence_root(plan.evidence_root())?;
+    let agreement = XmrAgreementV1::from_wire(&read_sealed_fd(
+        XMR_EFFECT_STAGE_A_FD,
+        MAX_XMR_AGREEMENT_WIRE_BYTES,
+        "Stage-A agreement",
+    )?)
+    .context("Stage-A agreement is invalid")?;
+    ensure!(
+        agreement.body().swap_id() == plan.swap_id()
+            && agreement.agreement_commitment() == plan.agreement_commitment(),
+        "Monero funding observer application identity changed"
+    );
+    let view_key = parse_view_key(&read_sealed_fd(
+        XMR_EFFECT_PRIVATE_VIEW_KEY_FD,
+        MAX_SECRET_BYTES,
+        "Monero view key",
+    )?)?;
+    let rpc = XmrRoleWalletRpcV1::new(
+        plan,
+        endpoint_from_fds(
+            plan.monero_daemon_url().as_str(),
+            XMR_EFFECT_DAEMON_USERNAME_FD,
+            XMR_EFFECT_DAEMON_PASSWORD_FD,
+            "daemon",
+        )?,
+        endpoint_from_fds(
+            plan.monero_role_wallet_url().as_str(),
+            XMR_EFFECT_ROLE_USERNAME_FD,
+            XMR_EFFECT_ROLE_PASSWORD_FD,
+            "role wallet",
+        )?,
+    )?;
+    let password = Zeroizing::new(
+        String::from_utf8(read_sealed_fd(
+            XMR_EFFECT_SHARED_WALLET_FILE_PASSWORD_FD,
+            MAX_SECRET_BYTES,
+            "shared-wallet file password",
+        )?)
+        .context("shared-wallet file password is not UTF-8")?,
+    );
+    let step = XmrWorkflowStep::FundMonero.name();
+    match observe_maker_monero_funding(&rpc, plan, &agreement, view_key, password.trim_end())
+        .await?
+    {
+        Some(digest) => println!(
+            "{{\"schema_version\":1,\"step\":\"{step}\",\"state\":\"finalized\",\"effect_evidence_sha256\":\"{}\"}}",
+            hex::encode(digest)
+        ),
+        None => println!("{{\"schema_version\":1,\"step\":\"{step}\",\"state\":\"pending\"}}"),
+    }
+    Ok(())
+}
+
+fn validate_inputs(plan: XmrEffectChildPlanV1) -> Result<ValidatedInputs> {
     let route = SettlementRoute::from_plan(&plan)?;
     ensure!(
         plan.mode() == XmrEffectChildModeV1::Observe,

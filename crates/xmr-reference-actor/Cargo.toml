@@ -72,6 +72,11 @@ path = "src/bin/xmr-reference-monero-refund.rs"
 required-features = ["sessions"]
 
 [[bin]]
+name = "xmr-reference-monero-fund"
+path = "src/bin/xmr-reference-monero-fund.rs"
+required-features = ["sessions"]
+
+[[bin]]
 name = "xmr-reference-monero-verify"
 path = "src/bin/xmr-reference-monero-verify.rs"
 required-features = ["sessions"]
