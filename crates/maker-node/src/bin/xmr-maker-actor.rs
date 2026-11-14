@@ -20,6 +20,8 @@
 //! claim whose tool stopped before recording its submission is driven again
 //! before `R` under its fixed sidecar request ids, which replay what was
 //! prepared and asked for.
+//! A claim not final by `R` gives way to the Taker's finalized refund or,
+//! past `P`, to the punishment.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -340,7 +342,10 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
 /// terms when its tool stopped before recording the exact bytes), or, a
 /// claim whose tool stopped before recording its submission, driven again
 /// before `R` under the same sidecar request ids (`prepare_effect_redrive`).
-/// Returns "completed" once reconciled.
+/// A claim the finalized clock left behind gives way to the branch the chain
+/// proves: the Taker's refund (the Maker then sweeps its Monero back) or,
+/// past `P` with no refund to the tip, the punishment. Returns "completed"
+/// once reconciled.
 fn settle_spent_effect(
     chains: &mut impl MakerChains,
     facts: &Facts,
@@ -351,9 +356,24 @@ fn settle_spent_effect(
     if chains.observe_effect(step, plan)? {
         return Ok("completed");
     }
-    // Tag 15 is valid only before `R`: from then what was sent is observed.
-    if step == XmrWorkflowStep::ClaimLezTag15 && unwritten && chains.lez_clock()? < facts.refund_ms
-    {
+    if step != XmrWorkflowStep::ClaimLezTag15 {
+        return Ok("awaiting_observation");
+    }
+    let lez_ms = chains.lez_clock()?;
+    if lez_ms >= facts.refund_ms {
+        let refund = chains.scan(Watched::Refund)?;
+        if let Some(branch) = match refund {
+            Scan::Found(_) => Some(XmrWorkflowBranch::Refund),
+            Scan::Absent(true) if lez_ms >= facts.punish_ms => Some(XmrWorkflowBranch::Punish),
+            Scan::Absent(_) => None,
+        } {
+            chains.activate(branch)?;
+            return Ok("activated");
+        }
+        // Tag 15 is valid only before `R`: what was sent is observed.
+        return Ok("awaiting_observation");
+    }
+    if unwritten {
         chains.redrive(step)?;
         return Ok("resubmitted");
     }
@@ -1536,8 +1556,15 @@ mod tests {
         }
 
         fn activate(&mut self, branch: XmrWorkflowBranch) -> Result<()> {
-            assert!(self.durable().branch.is_none());
-            self.durable().branch = Some(branch);
+            // Only an unreconciled claim gives way (the journal's rule).
+            let durable = self.durable();
+            assert!(
+                durable.branch.is_none()
+                    || (durable.branch == Some(XmrWorkflowBranch::Claim)
+                        && branch != XmrWorkflowBranch::Claim
+                        && !durable.branch_done)
+            );
+            durable.branch = Some(branch);
             self.activations.push(branch);
             Ok(())
         }
@@ -1743,6 +1770,47 @@ mod tests {
         assert_eq!(
             derive_status(&stub.facts().unwrap(), R).next_action,
             "claim_lez"
+        );
+    }
+
+    #[test]
+    fn a_claim_stopped_mid_tool_gives_way_to_the_takers_finalized_refund() {
+        // Whatever the claim step was left in: a written or unwritten
+        // submission, both lead to the Monero refund sweep.
+        for unwritten in [true, false] {
+            let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, R);
+            stub.unwritten = unwritten;
+            stub.tag16 = true;
+            assert_eq!(
+                settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+                "activated"
+            );
+            assert_eq!(stub.activations, [XmrWorkflowBranch::Refund]);
+            assert_eq!(stub.redrives, 0);
+            assert_eq!(
+                derive_status(&stub.facts().unwrap(), R).next_action,
+                "refund_monero"
+            );
+        }
+    }
+
+    #[test]
+    fn a_claim_never_final_by_p_gives_way_to_the_punishment() {
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, P);
+        stub.refund_scan_to_tip = false;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "awaiting_observation"
+        );
+        stub.refund_scan_to_tip = true;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "activated"
+        );
+        assert_eq!(stub.activations, [XmrWorkflowBranch::Punish]);
+        assert_eq!(
+            derive_status(&stub.facts().unwrap(), P).next_action,
+            "punish_lez"
         );
     }
 }

@@ -8,6 +8,10 @@ use lez_swap_store::{
 use tempfile::tempdir;
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one workflow's whole claim life, its reopen and its replacement"
+)]
 fn started_or_unknown_xmr_workflow_step_is_never_reauthorized_after_reopen() {
     let root = tempdir().expect("isolated XMR workflow root");
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700))
@@ -102,14 +106,113 @@ fn started_or_unknown_xmr_workflow_step_is_never_reauthorized_after_reopen() {
     );
     assert!(
         journal
-            .select_branch(&identity, XmrWorkflowBranch::Refund)
-            .is_err(),
-        "the losing refund branch must not replace the durable claim branch"
-    );
-    assert!(
-        journal
             .prepare_step(&identity, XmrWorkflowStep::RefundLezTag16)
             .is_err(),
         "Maker authority must not prepare the Taker-only tag-16 refund step"
     );
+    // The chain proved the Taker's refund: the unreconciled claim gives way,
+    // once, and nothing brings it back.
+    journal
+        .select_branch(&identity, XmrWorkflowBranch::Refund)
+        .expect("an unreconciled Maker claim gives way to the proved refund");
+    assert_eq!(
+        journal.selected_branch(&identity).unwrap(),
+        Some(XmrWorkflowBranch::Refund)
+    );
+    journal
+        .prepare_step(&identity, XmrWorkflowStep::SweepMoneroRefund)
+        .expect("the refund sweep follows the funding");
+    for branch in [XmrWorkflowBranch::Claim, XmrWorkflowBranch::Punish] {
+        assert!(
+            journal.select_branch(&identity, branch).is_err(),
+            "the refund branch never gives way"
+        );
+    }
+    assert!(
+        journal
+            .authorize_once(&identity, XmrWorkflowStep::ClaimLezTag15)
+            .is_err(),
+        "the replaced claim step is out of the workflow's scope"
+    );
+    drop(journal);
+    SqliteXmrWorkflowJournal::open_existing(&database)
+        .expect("a replaced branch reopens")
+        .validate_initialized(&identity)
+        .expect("a replaced branch validates");
+}
+
+#[test]
+fn a_reconciled_maker_claim_and_a_taker_claim_never_give_way() {
+    let root = tempdir().expect("isolated XMR workflow root");
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    for (role, step) in [
+        (Participant::Maker, XmrWorkflowStep::ClaimLezTag15),
+        (Participant::Taker, XmrWorkflowStep::AuthorizeLezTag14),
+    ] {
+        let identity = XmrWorkflowIdentityV1::new(
+            SwapId::new("12".repeat(32)).unwrap(),
+            role,
+            "m5-xmr-workflow-run-002".into(),
+            [0x22; 32],
+            [0x33; 32],
+            [0x44; 32],
+        )
+        .unwrap();
+        let database = root.path().join(format!("{role:?}.sqlite3"));
+        let mut journal = SqliteXmrWorkflowJournal::create_new(&database).unwrap();
+        journal.initialize(&identity).unwrap();
+        let common: &[XmrWorkflowStep] = match role {
+            Participant::Maker => &[XmrWorkflowStep::FundMonero],
+            Participant::Taker => &[
+                XmrWorkflowStep::InitializeLezTag13,
+                XmrWorkflowStep::FundLezTag13,
+            ],
+        };
+        for (index, common) in common.iter().enumerate() {
+            journal.prepare_step(&identity, *common).unwrap();
+            let _ = journal.authorize_once(&identity, *common).unwrap();
+            let source = if *common == XmrWorkflowStep::FundMonero {
+                XmrWorkflowReconciliationSource::MoneroWalletTransaction
+            } else {
+                XmrWorkflowReconciliationSource::LezFinalizedEvent
+            };
+            let evidence = u8::try_from(index).unwrap() + 0x55;
+            journal
+                .reconcile_succeeded(
+                    &identity,
+                    *common,
+                    &XmrWorkflowReconciliationV2::new([evidence; 32], [0x56; 32], source).unwrap(),
+                )
+                .unwrap();
+        }
+        journal
+            .select_branch(&identity, XmrWorkflowBranch::Claim)
+            .unwrap();
+        journal.prepare_step(&identity, step).unwrap();
+        let _ = journal.authorize_once(&identity, step).unwrap();
+        if role == Participant::Maker {
+            journal
+                .reconcile_succeeded(
+                    &identity,
+                    step,
+                    &XmrWorkflowReconciliationV2::new(
+                        [0x57; 32],
+                        [0x58; 32],
+                        XmrWorkflowReconciliationSource::LezFinalizedEvent,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        for branch in [XmrWorkflowBranch::Refund, XmrWorkflowBranch::Punish] {
+            assert!(
+                journal.select_branch(&identity, branch).is_err(),
+                "{role:?}: the claim branch keeps its place"
+            );
+        }
+        assert_eq!(
+            journal.selected_branch(&identity).unwrap(),
+            Some(XmrWorkflowBranch::Claim)
+        );
+    }
 }

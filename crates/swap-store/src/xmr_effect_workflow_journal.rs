@@ -615,7 +615,9 @@ impl SqliteXmrWorkflowJournal {
         Ok(selected)
     }
 
-    /// Selects one branch with a durable compare-and-set.
+    /// Selects one branch with a durable compare-and-set. A Maker's selected
+    /// Claim branch may be replaced once by Refund or Punish while its
+    /// `ClaimLezTag15` step has not succeeded.
     ///
     /// # Errors
     ///
@@ -633,7 +635,29 @@ impl SqliteXmrWorkflowJournal {
         let (durable, selected, revision) =
             load_identity(&transaction)?.ok_or(StoreError::MissingXmrWorkflowIdentity)?;
         ensure_identity(identity, &durable)?;
+        // A Maker's Claim branch whose tag 15 never reconciled gives way,
+        // once, to the branch the chain proved instead: the Taker's finalized
+        // refund, or the punish time passed with neither. The caller holds
+        // that proof; the guest admits tags 16 and 17 only while no tag 15
+        // has landed, and neither branch gives way again.
+        let claim_gives_way = selected == Some(XmrWorkflowBranch::Claim)
+            && branch != XmrWorkflowBranch::Claim
+            && identity.local_role == Participant::Maker
+            && load_step(&transaction, XmrWorkflowStep::ClaimLezTag15)?
+                .is_none_or(|claim| claim.state != StepState::Succeeded);
         match (selected, revision) {
+            (Some(_), 1) if claim_gives_way => {
+                let changed = transaction.execute(
+                    "UPDATE xmr_workflow_identity
+                     SET selected_branch = ?1
+                     WHERE singleton_id = 1
+                       AND selected_branch = 'claim' AND revision = 1",
+                    [branch.name()],
+                )?;
+                if changed != 1 {
+                    return Err(StoreError::XmrWorkflowConflict);
+                }
+            }
             (None, 0) => {
                 ensure_common_prepared(&transaction, identity.local_role)?;
                 let changed = transaction.execute(
