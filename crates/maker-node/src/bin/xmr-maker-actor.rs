@@ -17,11 +17,11 @@
 //! past the punish time `P` and the finalized history to that tip holds no
 //! refund. Every effect consumes its one invocation in the workflow journal
 //! before it runs, so a crash resumes with observation, never a new send: a
-//! claim whose tool stopped before recording its submission is driven again
-//! before `R` under its fixed sidecar request ids, which replay what was
-//! prepared and asked for.
-//! A claim not final by `R` gives way to the Taker's finalized refund or,
-//! past `P`, to the punishment.
+//! claim, punishment or refund sweep whose tool stopped before recording its
+//! submission is driven again: a LEZ tool under its fixed sidecar request
+//! ids, which replay what was prepared and asked for, a sweep against the
+//! one shared output the chain lets be spent once. A claim not final by `R`
+//! gives way to the Taker's finalized refund or, past `P`, to the punishment.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -338,14 +338,12 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
     }
 }
 
-/// A branch effect whose one invocation is spent: observed (a tag 15 by its
-/// terms when its tool stopped before recording the exact bytes), or, a
-/// claim whose tool stopped before recording its submission, driven again
-/// before `R` under the same sidecar request ids (`prepare_effect_redrive`).
-/// A claim the finalized clock left behind gives way to the branch the chain
-/// proves: the Taker's refund (the Maker then sweeps its Monero back) or,
-/// past `P` with no refund to the tip, the punishment. Returns "completed"
-/// once reconciled.
+/// A branch effect whose one invocation is spent: observed, or, when its
+/// tool stopped before recording its submission, driven again under the same
+/// sidecar request ids (`prepare_effect_redrive`). A claim the finalized
+/// clock left behind gives way to the branch the chain proves: the Taker's
+/// refund (the Maker then sweeps its Monero back) or, past `P` with no
+/// refund to the tip, the punishment. Returns "completed" once reconciled.
 fn settle_spent_effect(
     chains: &mut impl MakerChains,
     facts: &Facts,
@@ -353,25 +351,28 @@ fn settle_spent_effect(
     plan: [u8; 32],
 ) -> Result<&'static str> {
     let unwritten = chains.submission_unwritten(step)?;
-    if chains.observe_effect(step, plan)? {
+    // A sweep's observer needs its submission; the LEZ observers discover by
+    // terms without one.
+    if !(unwritten && step == XmrWorkflowStep::SweepMoneroRefund)
+        && chains.observe_effect(step, plan)?
+    {
         return Ok("completed");
     }
-    if step != XmrWorkflowStep::ClaimLezTag15 {
-        return Ok("awaiting_observation");
-    }
-    let lez_ms = chains.lez_clock()?;
-    if lez_ms >= facts.refund_ms {
-        let refund = chains.scan(Watched::Refund)?;
-        if let Some(branch) = match refund {
-            Scan::Found(_) => Some(XmrWorkflowBranch::Refund),
-            Scan::Absent(true) if lez_ms >= facts.punish_ms => Some(XmrWorkflowBranch::Punish),
-            Scan::Absent(_) => None,
-        } {
-            chains.activate(branch)?;
-            return Ok("activated");
+    if step == XmrWorkflowStep::ClaimLezTag15 {
+        let lez_ms = chains.lez_clock()?;
+        if lez_ms >= facts.refund_ms {
+            let refund = chains.scan(Watched::Refund)?;
+            if let Some(branch) = match refund {
+                Scan::Found(_) => Some(XmrWorkflowBranch::Refund),
+                Scan::Absent(true) if lez_ms >= facts.punish_ms => Some(XmrWorkflowBranch::Punish),
+                Scan::Absent(_) => None,
+            } {
+                chains.activate(branch)?;
+                return Ok("activated");
+            }
+            // Tag 15 is valid only before `R`: what was sent is observed.
+            return Ok("awaiting_observation");
         }
-        // Tag 15 is valid only before `R`: what was sent is observed.
-        return Ok("awaiting_observation");
     }
     if unwritten {
         chains.redrive(step)?;
@@ -1812,5 +1813,53 @@ mod tests {
             derive_status(&stub.facts().unwrap(), P).next_action,
             "punish_lez"
         );
+    }
+
+    #[test]
+    fn a_punishment_stopped_mid_tool_reconciles_or_is_driven_again() {
+        // Tag 17 is discovered by its terms: final, it reconciles.
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Punish, P);
+        stub.effect_final = true;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::PunishLezTag17),
+            "completed"
+        );
+        assert_eq!(stub.redrives, 0);
+        // Not final: the same punishment is driven again, once recorded only
+        // observed. A Taker refund cannot follow: tag 16 is invalid from `P`.
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Punish, P);
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::PunishLezTag17),
+            "resubmitted"
+        );
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::PunishLezTag17),
+            "awaiting_observation"
+        );
+        assert_eq!((stub.observations, stub.redrives), (2, 1));
+        assert!(stub.activations.is_empty());
+    }
+
+    #[test]
+    fn a_refund_sweep_stopped_mid_tool_is_driven_again_and_then_observed() {
+        // Unrecorded, the sweep has nothing to observe: driven again (a spent
+        // shared output is never spent twice), then observed until final.
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Refund, R);
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::SweepMoneroRefund),
+            "resubmitted"
+        );
+        assert_eq!((stub.observations, stub.redrives), (0, 1));
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::SweepMoneroRefund),
+            "awaiting_observation"
+        );
+        stub.effect_final = true;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::SweepMoneroRefund),
+            "completed"
+        );
+        assert_eq!((stub.observations, stub.redrives), (2, 1));
+        assert_eq!(derive_status(&stub.facts().unwrap(), P).phase, "refunded");
     }
 }

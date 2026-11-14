@@ -509,13 +509,40 @@ impl MoneroRegtestWalletEffects {
         })
     }
 
+    /// Restores the shared wallet from its keys, or reopens the file of the
+    /// same name a stopped earlier run restored (a sweep driven again); returns
+    /// the wallet's primary address. What the stopped run sent, if anything,
+    /// spent the one output: the exact-balance check after it, or the
+    /// daemon's key-image check, refuses a second spend of it.
+    async fn generate_or_reopen_shared(
+        &self,
+        arguments: GenerateFromKeysArgs,
+    ) -> Result<Address, MoneroWalletEffectError> {
+        let (filename, password) = (arguments.filename.clone(), arguments.password.clone());
+        if let Ok(created) = self.wallet.generate_from_keys(arguments).await {
+            return Ok(created.address);
+        }
+        self.wallet
+            .open_wallet(filename, Some(password))
+            .await
+            .map_err(|_| MoneroWalletEffectError::Rpc("generate shared wallet from keys"))?;
+        Ok(self
+            .wallet
+            .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
+            .await
+            .map_err(|_| MoneroWalletEffectError::Rpc("restored wallet primary address"))?
+            .address)
+    }
+
     /// Restores the point-checked shared wallet and submits exactly one sweep.
     ///
     /// Unlike [`Self::restore_shared_and_sweep`], this method never mines or
     /// waits for confirmation. It is the sending half of the durable actor
     /// boundary: callers persist the returned transaction identity, then mine
     /// with [`Self::mine_confirmations`] in the same run, and restart through a
-    /// separate read-only finality observer rather than retrying.
+    /// separate read-only finality observer. Only a run stopped before it
+    /// persisted the identity runs again; it reopens the wallet file of the
+    /// same name if one exists, and a spent output is never spent again.
     ///
     /// # Errors
     ///
@@ -556,8 +583,7 @@ impl MoneroRegtestWalletEffects {
             .await
             .map_err(|_| MoneroWalletEffectError::Rpc("close current wallet"))?;
         let created = self
-            .wallet
-            .generate_from_keys(GenerateFromKeysArgs {
+            .generate_or_reopen_shared(GenerateFromKeysArgs {
                 restore_height: Some(restore_height),
                 filename: wallet_filename,
                 address,
@@ -566,9 +592,8 @@ impl MoneroRegtestWalletEffects {
                 password: wallet_password,
                 autosave_current: Some(true),
             })
-            .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("generate shared wallet from keys"))?;
-        if created.address != address {
+            .await?;
+        if created != address {
             return Err(MoneroWalletEffectError::RestoredAddressMismatch);
         }
 
