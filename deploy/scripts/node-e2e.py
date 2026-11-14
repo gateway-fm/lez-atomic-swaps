@@ -5964,11 +5964,12 @@ def xmr_wait_until(swap_id: str, states: set[str], timeout: int, describe: str =
 def xmr_before() -> dict:
     """What a Monero scenario's assertions compare with, read before its take
     (the Maker funded first, xmr_fund): both parties' LEZ, the Taker's Monero
-    balance, and the transfers each role wallet has received so far."""
+    balance, and the transfers each role wallet has received and sent so far."""
     xmr_fund()
+    wallets = {role: xmr_lane("balance", "--role", role) for role in ("maker", "taker")}
     return {"lez": lez_balances(), "taker_monero": xmr_taker_balance(),
-            "received": {role: {t["txid"] for t in xmr_lane("balance", "--role", role)["received"]}
-                         for role in ("maker", "taker")}}
+            **{kind: {role: {t["txid"] for t in wallet[kind]} for role, wallet in wallets.items()}
+               for kind in ("received", "sent")}}
 
 
 def xmr_take(stamp: str, offer_id: str) -> tuple[str, dict]:
@@ -6065,9 +6066,44 @@ def scenario_xmr_taker_refund(stamp: str) -> dict:
             "maker_terminal_phase": phase, "maker_monero_refund_sweep": swept}
 
 
+def scenario_xmr_maker_never_funds(stamp: str) -> dict:
+    """The Maker never funds the Monero: its Node is stopped as soon as the
+    take is agreed, before it can see the Taker's LEZ lock final, and stays
+    down until the Taker has refunded its LEZ (tag 16) from the agreement's
+    refund time. Back up, the Maker's actor, past the funding cutoff with
+    nothing funded, ends expired. Asserted: LEZ unchanged to the unit, no
+    Monero sent by the Maker nor received by the Taker."""
+    before = xmr_before()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    swap_id, windows = xmr_take(stamp, offer_id)
+    log("  stopping the Maker Node before its Monero funding (it needs the Taker's LEZ lock final first)")
+    node_stop("maker")
+    try:
+        view = xmr_wait_until(swap_id, {"refund_available"}, timeout=windows["LEZ_XMR_REFUND_SECONDS"] + 120,
+                              describe="(Taker LEZ lock, no Monero, the agreement's refund time)")
+        result = call("taker", "taker_swap_refund_v1", {"schema_version": 1, "request_id": f"e2e-refund-{stamp}",
+                                                        "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                      timeout=300)
+        log(f"  Taker refund admitted with the Maker down (replay={result.get('was_replay')})")
+        xmr_wait_until(swap_id, {"refunded"}, timeout=300, describe="(tag 16 final)")
+    finally:
+        node_start("maker")
+    wait_healthy("maker")
+    phase = wait_maker_terminal(swap_id, timeout=300, describe="(back up past the funding cutoff)")
+    if phase != "expired":
+        raise Failure(f"the Maker ended in {phase}, not expired")
+    lez = assert_lez_settled(before["lez"], "refunded", phase)
+    sent = [t for t in xmr_lane("balance", "--role", "maker")["sent"] if t["txid"] not in before["sent"]["maker"]]
+    if sent or xmr_received_since("taker", before):
+        raise Failure(f"Monero moved in a swap the Maker never funded: the Maker sent {sent}")
+    log("  no Monero moved: the Maker's wallet sent nothing, the Taker's received nothing")
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez, "maker_terminal_phase": phase}
+
+
 XMR_SCENARIOS = {
     "xmr-happy": scenario_xmr_happy,
     "xmr-taker-refund": scenario_xmr_taker_refund,
+    "xmr-maker-never-funds": scenario_xmr_maker_never_funds,
 }
 
 

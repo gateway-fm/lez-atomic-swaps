@@ -5,8 +5,9 @@
     monero-lane.py fund [--role R] [--xmr N]     the funding wallet pays the role's wallet N XMR
                                                  (10 when not given); ten blocks confirm it; the
                                                  role's balance is read through its own wallet-rpc
-    monero-lane.py balance [--role R]            the role's balance, the same way, and its
-                                                 incoming transfers other than coinbase
+    monero-lane.py balance [--role R]            the role's balance, the same way, its
+                                                 incoming transfers other than coinbase and
+                                                 its outgoing ones
 
 The lane is LEZ_LANE (1, the stack itself, when unset; scripts/lane.sh names
 its containers, files and ports). monerod and the funding wallet-rpc are
@@ -122,14 +123,16 @@ def mine(blocks: int, why: str) -> int:
 
 
 def balance(role: str) -> dict:
-    """The role's balance, and what it received apart from coinbase (the
-    Node's own tools mine their confirmations, some of them to this wallet)."""
+    """The role's balance, what it received apart from coinbase (the Node's
+    own tools mine their confirmations, some of them to this wallet), and
+    what it sent."""
     open_wallet(role)
     call(role, "refresh")
-    received = call(role, "get_transfers", {"in": True, "account_index": 0}).get("in", [])
+    transfers = call(role, "get_transfers", {"in": True, "out": True, "account_index": 0})
     return {**call(role, "get_balance", {"account_index": 0}),
             "received": [{"txid": t["txid"], "amount": t["amount"], "height": t["height"]}
-                         for t in received if t.get("type") == "in"]}
+                         for t in transfers.get("in", []) if t.get("type") == "in"],
+            "sent": [{"txid": t["txid"], "amount": t["amount"], "height": t["height"]} for t in transfers.get("out", [])]}
 
 
 def fund(role: str, xmr: int) -> dict:
