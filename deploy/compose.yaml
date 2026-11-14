@@ -461,6 +461,11 @@ services:
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
       # The ZEC profile take-time swaps are agreed under (zec-role.json).
       LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
+      # The Monero windows take-time swaps are agreed under (xmr-role.json, only
+      # where the role has Monero logins: LEZ_MONERO=1).
+      LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
+      LEZ_XMR_REFUND_SECONDS: ${LEZ_XMR_REFUND_SECONDS:-}
+      LEZ_XMR_PUNISH_SECONDS: ${LEZ_XMR_PUNISH_SECONDS:-}
       # The actor supervisor's polling (gen-config.sh, per timing profile);
       # empty = the Node's defaults (5 s requeue, 30 s failure backoff).
       LEZ_MAKER_ACTOR_REQUEUE_SECONDS: ${LEZ_MAKER_ACTOR_REQUEUE_SECONDS:-}
@@ -569,6 +574,11 @@ services:
       LEZ_LEZ_DISCOVERY_MAX_BLOCKS: ${LEZ_LEZ_DISCOVERY_MAX_BLOCKS:-2048}
       # The ZEC profile take-time swaps are agreed under (zec-role.json).
       LEZ_ZEC_PROFILE: ${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}
+      # The Monero windows take-time swaps are agreed under (xmr-role.json, only
+      # where the role has Monero logins: LEZ_MONERO=1).
+      LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS: ${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:-}
+      LEZ_XMR_REFUND_SECONDS: ${LEZ_XMR_REFUND_SECONDS:-}
+      LEZ_XMR_PUNISH_SECONDS: ${LEZ_XMR_PUNISH_SECONDS:-}
       # The Bitcoin observer's pause between sweeps (gen-config.sh, per timing
       # profile); empty = the Node's default (15 s).
       LEZ_TAKER_OBSERVER_SWEEP_SECONDS: ${LEZ_TAKER_OBSERVER_SWEEP_SECONDS:-}

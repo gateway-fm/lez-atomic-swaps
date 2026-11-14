@@ -482,6 +482,36 @@ jq -n --arg profile "${LEZ_ZEC_PROFILE:-deterministic-local-devnet-v5}" --argjso
   {schema_version:1, profile:$profile, zebra_endpoint:"http://127.0.0.1:18232"} + $key' >"$zec_role_config"
 chmod 0600 "$zec_role_config"
 
+# The Monero role a Node takes swaps under at take time (xmr_reserve_v1,
+# crates/xmr-reference-actor/src/reserve.rs), only where the role has its
+# Monero logins: monerod and the role's wallet-rpc over the forwards above,
+# the role's own wallet (monero-lane.py creates it without a password), the
+# recovery windows of gen-config.sh (both roles take the same), the Stage-A
+# planner and, for the Maker, its six effect tools, all beside the Node.
+xmr_role_config="$state/xmr-role.json"
+rm -f "$xmr_role_config"
+if [[ "$monero_ready" == 1 ]]; then
+  xmr_tools='{}'
+  if [[ "$role" == maker ]]; then
+    xmr_tools="$(jq -n --arg bin "$bin" '{monero_fund:"\($bin)/xmr-reference-monero-fund",
+      lez_claim:"\($bin)/xmr-reference-tag15", finalized_classifier:"\($bin)/xmr-reference-finalized-classifier",
+      monero_refund:"\($bin)/xmr-reference-monero-refund", monero_verify:"\($bin)/xmr-reference-monero-verify",
+      lez_punish:"\($bin)/xmr-reference-tag17"}')"
+  fi
+  jq -n --arg role "$role" --arg monerod_login "$monero_state/monerod.login" \
+    --arg wallet_login "$monero_state/monero-wallet-rpc.login" --arg planner "$bin/lez-v02-xmr-stage-a-plan" \
+    --argjson cutoff "${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:?the Monero role needs LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS}" \
+    --argjson refund "${LEZ_XMR_REFUND_SECONDS:?the Monero role needs LEZ_XMR_REFUND_SECONDS}" \
+    --argjson punish "${LEZ_XMR_PUNISH_SECONDS:?the Monero role needs LEZ_XMR_PUNISH_SECONDS}" \
+    --argjson tools "$xmr_tools" '
+    {schema_version:1, profile:"accelerated-regtest",
+     monerod_endpoint:"http://127.0.0.1:18081/", monerod_login_file:$monerod_login,
+     wallet_rpc_endpoint:"http://127.0.0.1:18083/", wallet_rpc_login_file:$wallet_login, wallet_name:$role,
+     funding_cutoff_seconds:$cutoff, refund_seconds:$refund, punish_seconds:$punish,
+     stage_a_planner:$planner, effect_tools:$tools}' >"$xmr_role_config"
+  chmod 0600 "$xmr_role_config"
+fi
+
 # Route health (packaging/systemd/README.md): a Bitcoin or Zcash route reads
 # unavailable while its chain does not answer over this container's
 # forward; the Maker then withdraws its offers there and refuses to quote or
@@ -581,6 +611,19 @@ case "$role" in
         # agreement's own pinned template (each corridor entry carries one).
         echo "maker ZEC authority configured (corridor ${zec_run_id:-none}, ${#zec_configs[@]} template(s))"
       fi
+      # The Monero role (xmr_reserve_v1) and its actor. A Monero attempt runs
+      # a tool that sends and then mines its ten confirmations, or restores a
+      # shared wallet: longer than the Node's default 30 s attempt.
+      if [[ -s "$xmr_role_config" ]]; then
+        mkdir -p "$state/xmr-actors"
+        chmod 0700 "$state/xmr-actors"
+        args+=(--xmr-role-config "$xmr_role_config"
+          --xmr-maker-actor-root "$state/xmr-actors"
+          --xmr-actor-program "$bin/lez-xmr-maker-actor"
+          --xmr-actor-program-sha256 "$(sha256_of "$bin/lez-xmr-maker-actor")"
+          --actor-attempt-timeout-milliseconds 120000)
+        echo "maker XMR authority configured"
+      fi
     else
       # Without the lifecycle the Chat socket still needs a pair authority: a
       # static role root is the legacy shape; keep Chat off until bootstrap.
@@ -674,14 +717,19 @@ PY
       if [[ -s "$zec_role_root/zcash.key" ]]; then
         zec_role_field="$(jq -n --arg config "$zec_role_config" '{zec_role_config:$config}')"
       fi
+      # ... and the Monero role where the role has its Monero logins.
+      xmr_role_field='{}'
+      if [[ -s "$xmr_role_config" ]]; then
+        xmr_role_field="$(jq -n --arg config "$xmr_role_config" '{xmr_role_config:$config}')"
+      fi
       jq -n --arg identity "$maker_identity" --arg registry "$state/registry.sqlite3" --arg role_config "$btc_state/btc-role.json" \
         --arg delivery "$delivery" --arg chat_socket "$chat_socket" --argjson prepared "$zec_catalog" \
-        --argjson zec_role "$zec_role_field" '
+        --argjson zec_role "$zec_role_field" --argjson xmr_role "$xmr_role_field" '
         {schema_version:1,
          delivery_sources:[{directory:$delivery, maker_public_key:$identity, source_id:"local-maker"}],
          chat_socket:$chat_socket, maximum_offers:16,
          initiation:({execute_prepared:true, registry_database:$registry, btc_role_config:$role_config}
-                     + (if ($prepared|length) > 0 then {prepared_zec:$prepared} else {} end) + $zec_role)}' >"$state/role.json"
+                     + (if ($prepared|length) > 0 then {prepared_zec:$prepared} else {} end) + $zec_role + $xmr_role)}' >"$state/role.json"
       echo "taker: $(jq length <<<"$zec_catalog") prepared ZEC entries configured"
     else
       jq -n --arg identity "$maker_identity" --arg delivery "$delivery" '
