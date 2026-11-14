@@ -1,0 +1,92 @@
+AXWindow | Logos Basecamp | dialog | 
+  AXCheckBox | Workspace |  | 1
+  AXButton | LEZ Maker |  | 
+    AXButton | lez_atomic_swap_maker |  | 
+  AXButton | Applications |  | 
+  AXButton | Package Manager |  | 
+  AXButton | Settings |  | 
+  AXTextField |  |  | 0.3.2 · Portable
+    AXTabGroup | LEZ Maker |  | 
+      AXRadioButton | __tabbar_spacer__ | __tabbar_spacer__ | 
+      AXRadioButton | LEZ Maker | LEZ Maker | 
+    AXStaticText | LEZ — Maker Desk |  | LEZ — Maker Desk
+    AXStaticText | ACCOUNT |  | ACCOUNT
+    AXMenuButton | Munich Vault 01 · Maker Node |  | 
+      AXStaticText | ⌄ |  | ⌄
+      AXStaticText | Munich Vault 01 · Maker Node |  | Munich Vault 01 · Maker Node
+    AXStaticText | … BTC |  | … BTC
+    AXStaticText | … LEZ |  | … LEZ
+    AXStaticText | Node unavailable |  | Node unavailable
+    AXStaticText | ! |  | !
+    AXStaticText | Node unavailable |  | Node unavailable
+    AXStaticText | Owner-local Node endpoint is unavailable |  | Owner-local Node endpoint is unavailable
+    AXButton | Check Node |  | 
+      AXStaticText | Check Node |  | Check Node
+    AXButton | Refresh market |  | 
+      AXStaticText | Refresh market |  | Refresh market
+    AXStaticText | Compose an offer |  | Compose an offer
+    AXStaticText | Set what you sell and what you receive; the Node signs exactly those terms. |  | Set what you sell and what you receive; the Node signs exactly those terms.
+    AXButton | New offer |  | 
+      AXStaticText | New offer |  | New offer
+    AXStaticText | Open offers |  | Open offers
+    AXStaticText | 0 |  | 0
+    AXStaticText | Loading the wallet market… |  | Loading the wallet market…
+    AXStaticText | My orders |  | My orders
+    AXStaticText | NEEDS YOU |  | NEEDS YOU
+    AXStaticText | 0 |  | 0
+    AXStaticText | RUNNING |  | RUNNING
+    AXStaticText | 0 |  | 0
+    AXStaticText | DONE |  | DONE
+    AXStaticText | 0 |  | 0
+    AXStaticText | No swap has taken one of your offers yet. |  | No swap has taken one of your offers yet.
+    AXStaticText | Private negotiation Chat |  | Private negotiation Chat
+    AXStaticText | NOT INITIALISED |  | NOT INITIALISED
+    AXButton | Status |  | 
+      AXStaticText | Status |  | Status
+    AXButton | Reset |  | 
+      AXStaticText | Reset |  | Reset
+    AXTextField |  | Press Status once Logos Chat is online; share this address with the Taker | 
+    AXStaticText | Activity |  | Activity
+    AXButton | Copy |  | 
+      AXStaticText | Copy |  | Copy
+    AXButton | Clear |  | 
+      AXStaticText | Clear |  | Clear
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+     | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+     | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+     | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    null | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText | Market · Error: Owner-local Node endpoint is unavailable |  | Market · Error: Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | 
+    AXStaticText | error |  | error
+    AXStaticText |  |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText | error |  | error
+    AXStaticText | Node channel unavailable · Owner-local Node endpoint is unavailable |  | Node channel unavailable · Owner-local Node endpoint is unavailable
+    AXStaticText | Raw last reply |  | Raw last reply
+    AXButton | Show |  | 
+      AXStaticText | Show |  | Show

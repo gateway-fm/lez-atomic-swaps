@@ -1,0 +1,348 @@
+{
+  "schemaVersion": 2,
+  "repositoryName": "lez-atomic-swaps",
+  "generatedAt": "2026-11-14T11:23:49Z",
+  "packages": [
+    {
+      "name": "chat_module",
+      "versions": [
+        {
+          "releasedAt": "2026-11-14T11:23:46Z",
+          "publisherRef": "chat_module-v0.2.2-delivery.1",
+          "url": "https://localhost:8473/chat_module-0.2.2-delivery.1.lgx",
+          "size": 47817861,
+          "sha256": "b2b0f12899792a69e60d709914a87d52266ccc3f3181dc4ab0c190ce796df29e",
+          "rootHash": "9f626b2139bbc86d10f8b49cfdcd81600e7b963d7eb7885022942c03f5e13366",
+          "manifest": {
+            "author": "Logos Core Team",
+            "category": "chat",
+            "dependencies": [
+              {
+                "name": "delivery_module",
+                "version": "~0.2.0"
+              }
+            ],
+            "description": "Chat module for Logos",
+            "display_name": "Chat Module",
+            "hashes": {
+              "root": "9f626b2139bbc86d10f8b49cfdcd81600e7b963d7eb7885022942c03f5e13366",
+              "variants": "696651b890dff72d7f27489453e7621aa04459b251fb23d6a37aacdc5351a314",
+              "variants/darwin-arm64": "9e5c5c6c242cc1e78c26140d73abd54e3658770015337004c4b5c4667c286e69",
+              "variants/linux-amd64": "9ddc53dadf3d2a3edf2a87d3eeaca93edac4bc779261ce56364e59c7748116db",
+              "variants/linux-arm64": "757e6ade935f533cf8ccf52bc78062ba5acc637bc02e55fabd4f630a08dc6a99"
+            },
+            "icon": "",
+            "main": {
+              "darwin-arm64": "chat_module_plugin.dylib",
+              "linux-amd64": "chat_module_plugin.so",
+              "linux-arm64": "chat_module_plugin.so"
+            },
+            "manifestVersion": "0.3.0",
+            "name": "chat_module",
+            "type": "core",
+            "version": "0.2.2-delivery.1"
+          },
+          "urls": [
+            "https://localhost:8473/chat_module-0.2.2-delivery.1.lgx"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lez_atomic_swap_maker",
+      "versions": [
+        {
+          "releasedAt": "2026-11-14T11:23:46Z",
+          "publisherRef": "lez_atomic_swap_maker-v0.3.1",
+          "url": "https://localhost:8473/lez_atomic_swap_maker-0.3.1.lgx",
+          "size": 11840678,
+          "sha256": "8974a83a5689f61746a3f6994a1849709f5bddddd1c0a95c694d3c0bcd7aaf6e",
+          "rootHash": "0dab514708001ca440368c24a827db6dba99f5a9d74bebd2e15a050e9d7e2af4",
+          "manifest": {
+            "author": "",
+            "category": "finance",
+            "dependencies": [
+              {
+                "name": "chat_module",
+                "version": "0.2.2-delivery.1"
+              },
+              {
+                "name": "delivery_module",
+                "version": "~0.2.0"
+              },
+              {
+                "name": "lez_core",
+                "version": "0.4.1-sign.4"
+              },
+              {
+                "name": "lez_swap_node",
+                "version": "0.3.1"
+              },
+              {
+                "name": "lez_maker_node",
+                "version": "0.3.1"
+              }
+            ],
+            "description": "Publish wallet-owned BTC/LEZ offers and perform Maker settlement actions.",
+            "display_name": "LEZ Maker",
+            "icon": "maker-console.svg",
+            "manifestVersion": "0.3.0",
+            "name": "lez_atomic_swap_maker",
+            "type": "ui_qml",
+            "version": "0.3.1",
+            "view": "qml/Main.qml",
+            "main": {
+              "darwin-arm64": "lez_atomic_swap_maker_plugin.dylib",
+              "linux-amd64": "lez_atomic_swap_maker_plugin.so",
+              "linux-arm64": "lez_atomic_swap_maker_plugin.so"
+            },
+            "hashes": {
+              "root": "0dab514708001ca440368c24a827db6dba99f5a9d74bebd2e15a050e9d7e2af4",
+              "variants": "08ba1010fa268ffc6a64aa865dda6f89d7d77ab6f53be6fe569c713b331c534b",
+              "variants/darwin-arm64": "eb9be4fcb7a98b6821284cb8262dabba2e4d41de35204fea30277bdd95d8e780",
+              "variants/linux-amd64": "54f302c8aaa49c6c28757767d5b1b50e34bc59b4071e4d198702be0e5c716143",
+              "variants/linux-arm64": "01645eb266203bfd89e02c10164f179be12949f4e6027bc9b2299388285facdd"
+            }
+          },
+          "urls": [
+            "https://localhost:8473/lez_atomic_swap_maker-0.3.1.lgx"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lez_atomic_swap_taker",
+      "versions": [
+        {
+          "releasedAt": "2026-11-14T11:23:46Z",
+          "publisherRef": "lez_atomic_swap_taker-v0.3.1",
+          "url": "https://localhost:8473/lez_atomic_swap_taker-0.3.1.lgx",
+          "size": 11855828,
+          "sha256": "2c7473318656eeb1ed1c5d609eab03cf1df1efc609bc867c66022330ee27e0d9",
+          "rootHash": "0eafdb37b70f924d8b4cbe42517dc23bd2e4be97ef678e3b40070bbe3f1a9a74",
+          "manifest": {
+            "author": "",
+            "category": "finance",
+            "dependencies": [
+              {
+                "name": "chat_module",
+                "version": "0.2.2-delivery.1"
+              },
+              {
+                "name": "delivery_module",
+                "version": "~0.2.0"
+              },
+              {
+                "name": "lez_core",
+                "version": "0.4.1-sign.4"
+              },
+              {
+                "name": "lez_swap_node",
+                "version": "0.3.1"
+              },
+              {
+                "name": "lez_taker_node",
+                "version": "0.3.1"
+              }
+            ],
+            "description": "Take wallet-indexed BTC/LEZ offers and perform Taker settlement actions.",
+            "display_name": "LEZ Taker",
+            "icon": "taker-route.svg",
+            "manifestVersion": "0.3.0",
+            "name": "lez_atomic_swap_taker",
+            "type": "ui_qml",
+            "version": "0.3.1",
+            "view": "qml/Main.qml",
+            "main": {
+              "darwin-arm64": "lez_atomic_swap_taker_plugin.dylib",
+              "linux-amd64": "lez_atomic_swap_taker_plugin.so",
+              "linux-arm64": "lez_atomic_swap_taker_plugin.so"
+            },
+            "hashes": {
+              "root": "0eafdb37b70f924d8b4cbe42517dc23bd2e4be97ef678e3b40070bbe3f1a9a74",
+              "variants": "33cb04bbd8ec7ffd3028ee8f316a92fde8891afac6c3964f2ee1621cc91ecbd3",
+              "variants/darwin-arm64": "78e53f5c9479e42f973dafd1d8a0a428c05a385cbef79a3e8c21d23b0fa4be9c",
+              "variants/linux-amd64": "8a14bbce61cca973b490173d04524d8a50d7bcabbe142ef07f76cb0a295eda73",
+              "variants/linux-arm64": "4b7dd155bc7709c759dd40626acf5dade15232365f275edbb87b55147783c494"
+            }
+          },
+          "urls": [
+            "https://localhost:8473/lez_atomic_swap_taker-0.3.1.lgx"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lez_core",
+      "versions": [
+        {
+          "releasedAt": "2026-11-14T11:23:47Z",
+          "publisherRef": "lez_core-v0.4.1-sign.4",
+          "url": "https://localhost:8473/lez_core-0.4.1-sign.4.lgx",
+          "size": 219779279,
+          "sha256": "7e78f27c32bc36e09efff4de19f421e12186c58364e2559836ca760fe0438486",
+          "rootHash": "2bd34d17803a98b9c4e197a1c8d79b59f3a56b53d30fbe91f54cdfee8c00b287",
+          "manifest": {
+            "author": "Logos Blockchain Team",
+            "category": "blockchain",
+            "dependencies": [],
+            "description": "Logos Execution Zone Core Module for Logos Core",
+            "display_name": "LEZ Core Module",
+            "icon": "",
+            "manifestVersion": "0.3.0",
+            "name": "lez_core",
+            "type": "core",
+            "version": "0.4.1-sign.4",
+            "main": {
+              "darwin-arm64": "lez_core_plugin.dylib",
+              "linux-amd64": "lez_core_plugin.so",
+              "linux-arm64": "lez_core_plugin.so"
+            },
+            "hashes": {
+              "root": "2bd34d17803a98b9c4e197a1c8d79b59f3a56b53d30fbe91f54cdfee8c00b287",
+              "variants": "7f1a13cbee9608f065e15c4512e323ff2293249c246d46daf4915a82c4bd9f3c",
+              "variants/darwin-arm64": "d2cf59c602c14a4947f13c7eef66152ff85948642f1aed34d4a63d1f9c13ebde",
+              "variants/linux-amd64": "74e1b70967803120410ef05b80efb88265a88b24138d7f7545f7f8733fc40858",
+              "variants/linux-arm64": "9c32a8e58fc1d7efc07ae8edd85b2f26051bfa79318f96e101aa09787ce17868"
+            }
+          },
+          "urls": [
+            "https://localhost:8473/lez_core-0.4.1-sign.4.lgx"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lez_maker_node",
+      "versions": [
+        {
+          "releasedAt": "2026-11-14T11:23:48Z",
+          "publisherRef": "lez_maker_node-v0.3.1",
+          "url": "https://localhost:8473/lez_maker_node-0.3.1.lgx",
+          "size": 128772798,
+          "sha256": "89872ec6c5534184bb85709fefa376d39127a781fb0b914cc45fc007e2b127ea",
+          "rootHash": "ac92792d524eb7cdf4764df179d7d8cbdebf52e3006e2d059aa61a137e69288e",
+          "manifest": {
+            "author": "",
+            "category": "blockchain",
+            "dependencies": [
+              {
+                "name": "lez_swap_node",
+                "version": "0.3.1"
+              }
+            ],
+            "description": "The Maker's Node (the swap engine) and everything it runs: the Maker Node, its CLI, its Bitcoin and Zcash actors and the LEZ v0.2 sidecar, with the launcher lez_swap_node starts it from. Variants: linux-arm64 and linux-amd64 carry the Linux executables the role's container image runs; darwin-arm64 carries the same executables built for macOS on Apple silicon (release builds, ad-hoc signed, not notarised)",
+            "icon": "",
+            "manifestVersion": "0.2.0",
+            "name": "lez_maker_node",
+            "type": "core",
+            "version": "0.3.1",
+            "main": {
+              "darwin-arm64": "lez_maker_node_plugin.dylib",
+              "linux-amd64": "lez_maker_node_plugin.so",
+              "linux-arm64": "lez_maker_node_plugin.so"
+            },
+            "hashes": {
+              "root": "ac92792d524eb7cdf4764df179d7d8cbdebf52e3006e2d059aa61a137e69288e",
+              "variants": "90433ce9d5a5e3bd9ccc793747f99280c548b4182199a4ad7d74038fd0948d7e",
+              "variants/darwin-arm64": "2016747ef60e79a1b18e83ef25856f7653b1e62b21410e692fee47f2d3bd47e4",
+              "variants/linux-amd64": "fccff4a8d7dafa36cdeb8ca89f0b3aa37eb9b08347069a3f9fb662489377045a",
+              "variants/linux-arm64": "35967c07a947e0e1f1a30e347da7ee04903ccb6a3fa900d673877975b5dd56af"
+            }
+          },
+          "urls": [
+            "https://localhost:8473/lez_maker_node-0.3.1.lgx"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lez_swap_node",
+      "versions": [
+        {
+          "releasedAt": "2026-11-14T11:23:48Z",
+          "publisherRef": "lez_swap_node-v0.3.1",
+          "url": "https://localhost:8473/lez_swap_node-0.3.1.lgx",
+          "size": 11421417,
+          "sha256": "570ae3bb9b4d76aa1f10a04b0712a4a57d51d05fad08338103f2a7e7cb95778d",
+          "rootHash": "6f8a10aa46171479b97344c78df735382be2c47494ee3be2b521bbde1b016d4e",
+          "manifest": {
+            "author": "",
+            "category": "blockchain",
+            "dependencies": [
+              {
+                "name": "lez_core",
+                "version": "0.4.1-sign.4"
+              }
+            ],
+            "description": "Launches and supervises a swap role's Node (the swap engine) inside Basecamp and relays its LEZ signing requests to Basecamp's wallet",
+            "icon": "",
+            "manifestVersion": "0.2.0",
+            "name": "lez_swap_node",
+            "type": "core",
+            "version": "0.3.1",
+            "main": {
+              "darwin-arm64": "lez_swap_node_plugin.dylib",
+              "linux-amd64": "lez_swap_node_plugin.so",
+              "linux-arm64": "lez_swap_node_plugin.so"
+            },
+            "hashes": {
+              "root": "6f8a10aa46171479b97344c78df735382be2c47494ee3be2b521bbde1b016d4e",
+              "variants": "35fa84b0203d027d364d37e36f81e9e5f67e050ed4116bb61b1a9a0f8b72f1bc",
+              "variants/darwin-arm64": "db87bcd0d591824be86eb522c3c223e08d03a3fa42052d001f0f6dc927eb58a1",
+              "variants/linux-amd64": "27a8b201beb98708280d77d3c5fd48164065b148ce024ee634fe6c2616873593",
+              "variants/linux-arm64": "0b4662349b1b48dced2776d116269e49f01be8efd3236c49b58b22dec5030a52"
+            }
+          },
+          "urls": [
+            "https://localhost:8473/lez_swap_node-0.3.1.lgx"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "lez_taker_node",
+      "versions": [
+        {
+          "releasedAt": "2026-11-14T11:23:49Z",
+          "publisherRef": "lez_taker_node-v0.3.1",
+          "url": "https://localhost:8473/lez_taker_node-0.3.1.lgx",
+          "size": 172141404,
+          "sha256": "ca738f5fb5cc64bff131b03c7af46b2688980fb013199f59b16b92bd689a0496",
+          "rootHash": "4c9fea15cebb947ec13f091f9e56e5e2074ef275baa5359c074f5cf844853598",
+          "manifest": {
+            "author": "",
+            "category": "blockchain",
+            "dependencies": [
+              {
+                "name": "lez_swap_node",
+                "version": "0.3.1"
+              }
+            ],
+            "description": "The Taker's Node (the swap engine) and everything it runs: the Taker Node, its CLI, its registry initialiser, its Bitcoin and Zcash actors and the LEZ v0.2 sidecar, with the launcher lez_swap_node starts it from. Variants: linux-arm64 and linux-amd64 carry the Linux executables the role's container image runs; darwin-arm64 carries the same executables built for macOS on Apple silicon (release builds, ad-hoc signed, not notarised)",
+            "icon": "",
+            "manifestVersion": "0.2.0",
+            "name": "lez_taker_node",
+            "type": "core",
+            "version": "0.3.1",
+            "main": {
+              "darwin-arm64": "lez_taker_node_plugin.dylib",
+              "linux-amd64": "lez_taker_node_plugin.so",
+              "linux-arm64": "lez_taker_node_plugin.so"
+            },
+            "hashes": {
+              "root": "4c9fea15cebb947ec13f091f9e56e5e2074ef275baa5359c074f5cf844853598",
+              "variants": "f56d81e0d2c760d6b5883757f418be9b1e0683f14c5b26e9f5e22ace04bb558e",
+              "variants/darwin-arm64": "a8ce610c84e0455f481f8234d7e2a3ae715d10eb2786876753db4c686d146fbf",
+              "variants/linux-amd64": "40dd75e6ed79c0f1f9d1b022f4f8710cd24df37e7e22d153fc42605e3fe3d217",
+              "variants/linux-arm64": "7f1df52beb06ea4841b265de1fb18ab46cdf1fa77e9644a839c38df8661d3763"
+            }
+          },
+          "urls": [
+            "https://localhost:8473/lez_taker_node-0.3.1.lgx"
+          ]
+        }
+      ]
+    }
+  ]
+}

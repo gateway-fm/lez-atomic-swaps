@@ -1,0 +1,12 @@
+## probe_exact requires [{"name":"probe_dep","version":"0.2.2-delivery.1"}]
+install exit 0: ["probe_dep 0.2.2-delivery.1","probe_exact 1.0.0"]
+[{"installType":"user","name":"probe_dep","requiredVersion":"0.2.2-delivery.1","status":"installed","version":"0.2.2-delivery.1"}]
+## probe_tilde requires [{"name":"probe_dep","version":"~0.2.0"}]
+install exit 1: {"code":"RESOLVE_FAILED","message":"Cannot resolve 'probe_dep': no candidate matches 'probe_dep' @ ~0.2.0","status":"error"}
+[]
+## probe_tilde22 requires [{"name":"probe_dep","version":"~0.2.2"}]
+install exit 1: {"code":"RESOLVE_FAILED","message":"Cannot resolve 'probe_dep': no candidate matches 'probe_dep' @ ~0.2.2","status":"error"}
+[]
+## probe_bare requires ["probe_dep"]
+install exit 0: ["probe_dep 0.2.2-delivery.1","probe_bare 1.0.0"]
+[{"installType":"user","name":"probe_dep","status":"installed","version":"0.2.2-delivery.1"}]
