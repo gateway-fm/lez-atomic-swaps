@@ -2457,7 +2457,8 @@ async fn tag_14_through_tag_17_are_classified_by_owner_and_counterparty() {
         bridge.stop().await.expect("boundary sidecar stops");
     }
 
-    assert_eq!(taker_nonce.calls.load(Ordering::SeqCst), 2);
+    // Tag 14 reads the Taker's live nonce too.
+    assert_eq!(taker_nonce.calls.load(Ordering::SeqCst), 3);
     assert_eq!(maker_nonce.calls.load(Ordering::SeqCst), 2);
     assert_eq!(sends.load(Ordering::SeqCst), 0);
     node.stop().expect("node stops");

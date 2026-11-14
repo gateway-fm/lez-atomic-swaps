@@ -1451,9 +1451,12 @@ impl NativeEscrowPlanner {
     /// Prepares and durably reserves the exact Taker claim-partial publication.
     ///
     /// The transaction is derived only from an exact durable XMR escrow
-    /// reservation. Its nonce is the reserved funding nonce plus one, so this
-    /// method performs no node read and no submission. Exact replay returns the
-    /// same signed bytes after restart.
+    /// reservation. Its nonce is the signer's live nonce, read once, and at
+    /// least the reserved funding nonce plus one (while the funding is not
+    /// yet included, the live nonce is still its own): no agreement commits
+    /// tag 14's message, and the Taker's LEZ owner is a Node's signer, which
+    /// its other swaps use between tag 13 and tag 14. This method performs no
+    /// submission. Exact replay returns the same signed bytes after restart.
     ///
     /// # Errors
     ///
@@ -1495,7 +1498,12 @@ impl NativeEscrowPlanner {
             return Ok(recovered);
         }
 
-        let authorization_nonce = self.xmr_claim_authorization_nonce(request)?;
+        let lowest = self.xmr_claim_authorization_lowest_nonce(request)?;
+        let authorization_nonce = self
+            .nonce_source
+            .account_nonce(self.signer_account_id)
+            .await?
+            .max(lowest);
         let result = self.plan_xmr_claim_authorization_v3(request, authorization_nonce)?;
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(store) = self.durable_store.as_ref()
@@ -4190,6 +4198,10 @@ impl NativeEscrowPlanner {
 
     /// Validates one recovered XMR claim authorization against its request and ABI.
     ///
+    /// The transaction must equal the tag-14 message rebuilt from the terms
+    /// and the claim partial at its own single nonce, which must be past the
+    /// swap's durable tag-13 funding nonce.
+    ///
     /// # Errors
     ///
     /// Rejects request, partial, durable escrow, nonce, account order, signer,
@@ -4205,7 +4217,13 @@ impl NativeEscrowPlanner {
         }
         let authorization =
             decode_prepared_for_signer(&result.authorization, self.signer_account_id)?;
-        let authorization_nonce = self.xmr_claim_authorization_nonce(request)?;
+        let [authorization_nonce] = authorization.message().nonces.as_slice() else {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        };
+        let authorization_nonce = u128::from(*authorization_nonce);
+        if authorization_nonce < self.xmr_claim_authorization_lowest_nonce(request)? {
+            return Err(NativePrepareError::InvalidTransactionBytes);
+        }
         let expected = self.xmr_claim_authorization_message(request, authorization_nonce)?;
         if authorization.message() != &expected {
             return Err(NativePrepareError::InvalidTransactionBytes);
@@ -4977,7 +4995,9 @@ impl NativeEscrowPlanner {
         Ok(())
     }
 
-    fn xmr_claim_authorization_nonce(
+    /// The lowest nonce tag 14 may carry: one past the swap's exact durable
+    /// tag-13 funding.
+    fn xmr_claim_authorization_lowest_nonce(
         &self,
         request: &PrepareNativeXmrClaimAuthorizationV3Request,
     ) -> Result<u128, NativePrepareError> {

@@ -286,7 +286,8 @@ async fn authenticated_route_recovers_after_fresh_server_and_never_submits() {
         .prepare_native_xmr_claim_authorization_v3(authorize.clone())
         .await
         .expect("first exact authorization");
-    assert_eq!(first_nonce.calls.load(Ordering::SeqCst), 1);
+    // Tag 13 and tag 14 each read the live nonce once.
+    assert_eq!(first_nonce.calls.load(Ordering::SeqCst), 2);
     assert_eq!(sends.load(Ordering::SeqCst), 0);
     server.stop().await.expect("first server stops");
 

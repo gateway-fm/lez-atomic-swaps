@@ -350,7 +350,8 @@ async fn xmr_native_pair_is_exact_durable_and_recovered_without_nonce_or_submiss
         .prepare_native_xmr_claim_authorization_v3(&claim_authorization_request)
         .await
         .expect("exact durable authorization");
-    assert_eq!(first_nonce.calls.load(Ordering::SeqCst), 1);
+    // One live read; 41 is behind the reserved funding, so tag 14 follows it.
+    assert_eq!(first_nonce.calls.load(Ordering::SeqCst), 2);
     assert!(authorization_path.is_file());
     planner
         .validate_prepared_native_xmr_claim_authorization_v3(
@@ -382,14 +383,15 @@ async fn xmr_native_pair_is_exact_durable_and_recovered_without_nonce_or_submiss
             .expect("same-process exact replay"),
         prepared_authorization
     );
-    assert_eq!(first_nonce.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(first_nonce.calls.load(Ordering::SeqCst), 2);
 
     for index in 0..3 {
         let mut changed = authorization.clone();
         match index {
             0 => changed.message.account_ids.swap(0, 1),
             1 => changed.message.instruction_data.push(0xff),
-            _ => changed.message.nonces = vec![99_u128.into()],
+            // The funding's own nonce.
+            _ => changed.message.nonces = vec![42_u128.into()],
         }
         changed.witness_set = WitnessSet::for_message(&changed.message, &[&depositor_key]);
         let mut drifted = prepared_authorization.clone();
@@ -566,6 +568,92 @@ async fn authorization_requires_durable_escrow_and_reserves_nothing_on_nonce_ove
             .join("xmr-native-claim-authorization-reservation.v3.json")
             .exists()
     );
+}
+
+/// The Taker's LEZ owner is the Node's signer: its other swaps' transactions
+/// between tag 13 and tag 14 move its nonce, and tag 14 is planned at the
+/// live one, then replayed from its reservation after a restart.
+#[tokio::test]
+async fn authorization_after_another_transaction_of_the_owner_carries_the_live_nonce() {
+    let (depositor, depositor_key, _) = account(41);
+    let (claimant, _, _) = account(42);
+    let (claim_authority, _, claim_key) = account(43);
+    let (refund_authority, _, refund_key) = account(44);
+    let descriptor = runtime(depositor);
+    let xmr_terms = terms(
+        depositor,
+        claimant,
+        claim_authority,
+        &claim_key,
+        refund_authority,
+        &refund_key,
+        95,
+    );
+    let directory = private_directory();
+    let planner = |nonce: &Arc<CountingNonce>| {
+        NativeEscrowPlanner::new_durable(
+            Participant::Taker,
+            depositor_key.clone(),
+            ESCROW_PROGRAM,
+            TRANSFER_PROGRAM,
+            descriptor.clone(),
+            Arc::clone(nonce),
+            directory.path(),
+        )
+        .expect("planner")
+    };
+    let lock_nonce = Arc::new(CountingNonce {
+        value: 41,
+        calls: AtomicUsize::new(0),
+    });
+    let prepared = planner(&lock_nonce)
+        .prepare_native_xmr_escrow_v3(&request(descriptor.clone(), &xmr_terms))
+        .await
+        .expect("tag 13 at 41 and 42");
+    let funding = decode_prepared_for_signer(&prepared.funding, depositor).expect("funding");
+    assert_eq!(funding.message().nonces, vec![42_u128.into()]);
+
+    // The funding (42) and two transactions of another swap (43, 44) landed.
+    let live_nonce = Arc::new(CountingNonce {
+        value: 45,
+        calls: AtomicUsize::new(0),
+    });
+    let claim_request = authorization_request(
+        descriptor.clone(),
+        &xmr_terms,
+        [77; 32],
+        "xmr-native-authorization-live",
+    );
+    let live_planner = planner(&live_nonce);
+    let authorization = live_planner
+        .prepare_native_xmr_claim_authorization_v3(&claim_request)
+        .await
+        .expect("tag 14 at the live nonce");
+    assert_eq!(live_nonce.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        decode_prepared_for_signer(&authorization.authorization, depositor)
+            .expect("authorization")
+            .message()
+            .nonces,
+        vec![45_u128.into()]
+    );
+    live_planner
+        .validate_prepared_native_xmr_claim_authorization_v3(&claim_request, &authorization)
+        .expect("a live-nonce authorization validates");
+    drop(live_planner);
+
+    let restart_nonce = Arc::new(CountingNonce {
+        value: 99,
+        calls: AtomicUsize::new(0),
+    });
+    assert_eq!(
+        planner(&restart_nonce)
+            .prepare_native_xmr_claim_authorization_v3(&claim_request)
+            .await
+            .expect("byte-identical recovery"),
+        authorization
+    );
+    assert_eq!(restart_nonce.calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
