@@ -5670,8 +5670,9 @@ def use_route(pair: str, direction: str) -> None:
     global REVERSE, FOREIGN_UNITS, LEZ_UNITS
     ROUTE.update({"pair": pair, "direction": direction})
     REVERSE = direction == "TakerSellsLez"
-    # the Zcash corridor's lot, or the Bitcoin lot the module starts with
-    FOREIGN_UNITS, LEZ_UNITS = (ZEC_FOREIGN_UNITS, ZEC_LEZ_UNITS) if pair == "Zcash" else (1_000_000, 1_000)
+    # the Zcash corridor's lot, the Monero lot, or the Bitcoin lot the module starts with
+    FOREIGN_UNITS, LEZ_UNITS = {"Zcash": (ZEC_FOREIGN_UNITS, ZEC_LEZ_UNITS),
+                                "Monero": (XMR_FOREIGN_UNITS, XMR_LEZ_UNITS)}.get(pair, (1_000_000, 1_000))
 
 
 def node_reaches(role: str, port: int) -> bool:
@@ -5867,6 +5868,137 @@ def scenario_zec_bitcoin_down(stamp: str) -> dict:
             "bitcoin_after_restart": {"swap_id": bitcoin_swap, "bitcoin_claim": bitcoin_claim}}
 
 
+# ---- Monero (LEZ_MONERO=1; the take-time agreement xmr_reserve_v1) ------------------
+# TakerSellsLez only: the Taker locks LEZ (tag 13, by itself), the Maker funds
+# the shared Monero address and mines its ten confirmations, the Taker's one
+# claim authorizes the Maker's LEZ claim (tags 14, 15), whose signature lets
+# the Taker sweep the Monero. Both Nodes' tools mine their own confirmations;
+# the harness mines only to fund the Maker's wallet (monero-lane.py).
+XMR_FOREIGN_UNITS = 1_000_000_000_000  # 1 XMR in piconero
+XMR_LEZ_UNITS = 50_000
+XMR_FEE_TOLERANCE_PICONERO = 10_000_000_000  # 0.01 XMR: the sweep's fee
+
+
+def xmr_lane(*argv: str) -> dict:
+    """One monero-lane.py command (this lane's monerod and wallets); its JSON answer."""
+    result = subprocess.run([sys.executable, str(DEPLOY_ROOT / "scripts" / "monero-lane.py"), *argv],
+                            cwd=DEPLOY_ROOT, capture_output=True, text=True, check=False, stdin=subprocess.DEVNULL)
+    lines = result.stdout.strip().splitlines()
+    for line in lines[:-1]:
+        log(f"  {line}")
+    if result.returncode != 0 or not lines:
+        raise Failure(f"monero-lane.py {' '.join(argv)} failed: {(result.stdout + result.stderr).strip()[-300:]}")
+    return json.loads(lines[-1])
+
+
+def xmr_windows() -> dict:
+    """The agreement's windows the Nodes take under (gen-config.sh), seconds after the take."""
+    keys = ("LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS", "LEZ_XMR_REFUND_SECONDS", "LEZ_XMR_PUNISH_SECONDS")
+    values = dict(line.split("=", 1) for line in (RUNTIME / "runtime.env").read_text().splitlines()
+                  if line.startswith(keys))
+    return {key: int(values[key]) for key in keys}
+
+
+def xmr_fund() -> None:
+    """Both role wallets exist (monero-lane.py creates one without a password
+    where none is), and the Maker, which funds the Monero leg from its own,
+    gets 10 XMR more when it holds less than two unlocked."""
+    xmr_lane("balance", "--role", "taker")
+    held = xmr_lane("balance", "--role", "maker")
+    if held["unlocked_balance"] >= 2 * XMR_FOREIGN_UNITS:
+        log(f"  the Maker's Monero wallet holds {held['unlocked_balance'] / 1e12:.3f} XMR unlocked")
+        return
+    funded = xmr_lane("fund", "--role", "maker", "--xmr", "10")
+    log(f"  funded the Maker's Monero wallet: {funded['txid'][:16]}…, "
+        f"{funded['unlocked_balance_piconero'] / 1e12:.3f} XMR unlocked")
+
+
+def xmr_taker_balance() -> dict:
+    """The Taker's Monero role wallet, as its Node reads it (under its wallet lock)."""
+    monero = call("taker", "taker_wallet_balances_v1", {"schema_version": 1, "monero": True}).get("monero") or {}
+    if monero.get("state") != "available":
+        raise Failure(f"the Taker Node reads no Monero balance: {json.dumps(monero)[:200]}")
+    return monero
+
+
+def xmr_publish(stamp: str, offer_id: str) -> None:
+    """The Maker's CLI enables Monero TakerSellsLez at the lot's price and
+    publishes `offer_id` on its running Node."""
+    route = ["--pair", "monero", "--direction", "taker-sells-lez"]
+    revision = lambda records: next((["--expected-revision", str(r["revision"])] for r in records
+                                     if r["value"]["route"] == ROUTE), [])
+    maker_cli("configure-pair", "--request-id", f"e2e-xmr-pair-{stamp}", *revision(maker_cli("pairs")), *route,
+              "--enabled", "true", "--price-source", "local", "--minimum-foreign-units", str(XMR_FOREIGN_UNITS),
+              "--maximum-foreign-units", str(XMR_FOREIGN_UNITS), "--offer-ttl-seconds", "3600")
+    maker_cli("set-local-price", "--request-id", f"e2e-xmr-price-{stamp}", *revision(maker_cli("prices")), *route,
+              "--lez-units-per-lot", "1", "--foreign-units-per-lot", str(XMR_FOREIGN_UNITS // XMR_LEZ_UNITS))
+    maker_cli("publish-offer", "--request-id", f"e2e-xmr-publish-{stamp}", "--offer-id", offer_id, *route)
+    log(f"  Maker CLI published {offer_id} on its running Node")
+
+
+def xmr_wait_until(swap_id: str, states: set[str], timeout: int, describe: str = "") -> dict:
+    """Polls both Nodes until the Taker's state is in `states`; both Nodes drive
+    the swap themselves meanwhile, the harness mines nothing."""
+    wait = Wait(f"the Taker's {swap_id[:12]} to reach {'/'.join(sorted(states))} {describe}".rstrip(), timeout)
+    while wait.running():
+        view = taker_view(swap_id)
+        state = view["state"]
+        reason = view.get("attention_reason") or view.get("last_failure_class")
+        wait.note((state, view.get("actor_phase"), reason),
+                  lambda: f"taker {state} (actor {view.get('actor_phase') or '-'}, gen {view.get('progress_generation')}"
+                          f"{', ' + reason if reason else ''}) | maker {maker_phase(swap_id)}")
+        if state in states:
+            return view
+        if state in TERMINAL:
+            raise Failure(f"swap {swap_id[:12]} ended in {state}{' (' + reason + ')' if reason else ''} "
+                          f"while waiting for {sorted(states)} {describe}")
+        time.sleep(3)
+    raise wait.failure()
+
+
+def scenario_xmr_happy(stamp: str) -> dict:
+    """The first Monero swap through the two Nodes: the Maker's CLI publishes a
+    Monero offer, the Taker takes it over its owner RPC and the Nodes agree it
+    over Chat (xmr_reserve_v1); the Taker's LEZ lock, the Maker's Monero funding
+    and its confirmations, the Taker's claim, the Maker's LEZ claim and the
+    Taker's sweep follow, each Node by itself. Asserted: LEZ to the unit, the
+    Taker's Monero up by the lot less the sweep's fee, both Nodes completed."""
+    windows = xmr_windows()
+    xmr_fund()
+    lez_before = lez_balances()
+    taker_xmr_before = xmr_taker_balance()
+    offer_id = f"offer-e2e-xmr-{stamp}"
+    xmr_publish(stamp, offer_id)
+    swap_id = zec_take_or_resume(offer_id, stamp)
+    cutoff, refund = windows["LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS"], windows["LEZ_XMR_REFUND_SECONDS"]
+    log(f"  windows: the Maker funds by +{cutoff} s, the Taker refunds from +{refund} s, "
+        f"the Maker punishes from +{windows['LEZ_XMR_PUNISH_SECONDS']} s")
+    view = xmr_wait_until(swap_id, {"claim_available"}, timeout=cutoff + 120,
+                          describe="(Taker LEZ lock → Maker Monero funding at depth)")
+    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
+                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
+                  timeout=300)
+    log(f"  Taker claimed Monero (replay={result.get('was_replay')})")
+    xmr_wait_until(swap_id, {"completed"}, timeout=refund + 120,
+                   describe="(tag 14 → the Maker's LEZ claim → the Taker's sweep)")
+    wait_completed(swap_id, timeout=300)
+    lez = assert_lez_settled(lez_before, "completed", maker_phase(swap_id))
+    taker_xmr_after = xmr_taker_balance()
+    gained = int(taker_xmr_after["balance_piconero"]) - int(taker_xmr_before["balance_piconero"])
+    log(f"  the Taker's Monero wallet gained {gained / 1e12:.6f} XMR (lot {XMR_FOREIGN_UNITS / 1e12:.0f} XMR)")
+    if gained < XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO:
+        raise Failure(f"the Taker's Monero balance moved {gained} piconero, at least "
+                      f"{XMR_FOREIGN_UNITS - XMR_FEE_TOLERANCE_PICONERO} expected of a completed swap")
+    return {"swap_id": swap_id, "offer_id": offer_id, "windows": windows, **lez,
+            "taker_monero_before": taker_xmr_before, "taker_monero_after": taker_xmr_after,
+            "taker_monero_gained_piconero": gained}
+
+
+XMR_SCENARIOS = {
+    "xmr-happy": scenario_xmr_happy,
+}
+
+
 ZEC_SCENARIOS = {
     "zec-happy": scenario_zec_happy,
     "zec-taker-refund": scenario_zec_taker_refund,
@@ -6048,7 +6180,7 @@ def run(name: str) -> bool:
         for role in ("maker", "taker"):
             wait_healthy(role, timeout=60)
         preflight()
-        summary.update({**SCENARIOS, **ZEC_SCENARIOS}[name](stamp))
+        summary.update({**SCENARIOS, **ZEC_SCENARIOS, **XMR_SCENARIOS}[name](stamp))
         summary["result"] = "passed"
     except Failure as failure:
         summary["result"] = "not_exercised" if isinstance(failure, NotExercised) else "failed"
@@ -6068,7 +6200,7 @@ def run(name: str) -> bool:
 def main() -> int:
     global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "all"])
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "all"])
     parser.add_argument("--swap-id", action="append", default=[],
                         help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
     parser.add_argument("--mine-pending-only", action="store_true",
@@ -6082,11 +6214,19 @@ def main() -> int:
     parser.add_argument("--direction", choices=["TakerSellsForeign", "TakerSellsLez"], default=None,
                         help="which side the Taker sells; TakerSellsLez locks LEZ first and claims the foreign coin "
                              "(Bitcoin defaults to TakerSellsForeign, Zcash to TakerSellsLez)")
-    parser.add_argument("--pair", choices=["Bitcoin", "Zcash"], default="Bitcoin",
-                        help="Zcash runs the zec-* scenarios on a prepared corridor, in either direction")
+    parser.add_argument("--pair", choices=["Bitcoin", "Zcash", "Monero"], default="Bitcoin",
+                        help="Zcash runs the zec-* scenarios on a prepared corridor, in either direction; "
+                             "Monero the xmr-* scenarios, the Taker selling LEZ")
     args = parser.parse_args()
     global REVERSE, FOREIGN_UNITS, LEZ_UNITS
-    if args.pair == "Zcash":
+    if args.pair == "Monero":
+        if (args.direction or "TakerSellsLez") != "TakerSellsLez":
+            parser.error("Monero swaps have the Taker sell LEZ only (--direction TakerSellsLez)")
+        use_route("Monero", "TakerSellsLez")
+        names = list(XMR_SCENARIOS) if args.scenario == "all" else [args.scenario]
+        if any(n not in XMR_SCENARIOS for n in names):
+            parser.error(f"with --pair Monero choose from {sorted(XMR_SCENARIOS)}")
+    elif args.pair == "Zcash":
         ROUTE.update({"pair": "Zcash", "direction": args.direction or "TakerSellsLez"})
         REVERSE = ROUTE["direction"] == "TakerSellsLez"
         FOREIGN_UNITS, LEZ_UNITS = ZEC_FOREIGN_UNITS, ZEC_LEZ_UNITS
@@ -6147,6 +6287,8 @@ def main() -> int:
         names = list(SCENARIOS) if args.scenario == "all" else [args.scenario]
         if any(n in ZEC_SCENARIOS for n in names):
             parser.error("zec-* scenarios need --pair Zcash")
+        if any(n in XMR_SCENARIOS for n in names):
+            parser.error("xmr-* scenarios need --pair Monero")
     for name in names:
         if not run(name):
             return NOT_EXERCISED_EXIT if name in NOT_EXERCISED else 1

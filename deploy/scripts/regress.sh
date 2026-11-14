@@ -8,7 +8,7 @@
 #   scripts/regress.sh list <tier>       print the tier's tests, one per line
 #   scripts/regress.sh run <test>...     the named tests, e.g.  ui:btc:happy:TakerSellsLez
 #
-# A test is <node|ui>:<btc|zec>:<scenario>:<direction>. Each one runs on a chain
+# A test is <node|ui>:<btc|zec|xmr>:<scenario>:<direction>. Each one runs on a chain
 # that is finalizing (a new one is made when it is not), after reset-swaps.sh.
 # While it runs, the finalized height is read every 30 s; when it has stood
 # still for LEZ_REGRESS_FLAT_SECONDS (60; it moves every ~2 s) the chain is frozen, the test is
@@ -30,7 +30,9 @@
 # `refund`, every other Bitcoin test on `fast` (gen-config.sh); before a test
 # that wants the other one, up.sh switches the profile (runtime.env, both Nodes
 # and the miner recreated, the chain kept). A ZEC test runs on either: its
-# windows come from the corridor's agreement.
+# windows come from the corridor's agreement. A Monero test runs on `fast`, and
+# only on a stack with Monero (LEZ_MONERO=1 in runtime.env); elsewhere it is
+# left out with a line that says so.
 #
 # A test that exits 98 could not produce the situation it tests (node-e2e.py,
 # NotExercised: zec-claim-collision's provoked nonce race went the other way).
@@ -107,6 +109,8 @@ tier_tests() { # tier_tests <tier>
       # a Zcash offer from the Maker desk's form, taken from the Taker desk (no corridor)
       echo "ui:zec:zec-desk-offer:TakerSellsLez"; echo "ui:zec:zec-desk-offer:TakerSellsForeign"
       # last: each makes its own chain, one no other test can run on
+      # the first Monero swap through the two Nodes (only where LEZ_MONERO=1)
+      echo "node:xmr:xmr-happy:TakerSellsLez"
       for d in "${directions[@]}"; do echo "node:zec:zec-balance-refusal:$d"; done ;;
     *) echo "unknown tier: $1 (smoke, refunds, full)" >&2; return 64 ;;
   esac
@@ -219,6 +223,7 @@ profile_of() { # profile_of <kind:pair:scenario:direction>: the timing profile t
     case "$scenario" in zec-taker-refund|zec-taker-refund-offline|zec-maker-refund|zec-refund-then-maker-lock|zec-stale-window) echo zec-v6 ;; *) echo fast ;; esac
     return 0
   fi
+  [[ "$pair" != xmr ]] || { echo fast; return 0; }
   [[ "$pair" == btc ]] || return 0
   case "$scenario" in taker-refund|taker-refund-offline|maker-refund|refund-then-maker-lock) echo refund ;; *) echo fast ;; esac
 }
@@ -242,7 +247,7 @@ use_profile() { # use_profile <profile>: switch the standing stack to it unless 
   [[ "$LEZ_TIMING_PROFILE" == "$timing" ]] || { log "    runtime.env still names profile $LEZ_TIMING_PROFILE"; return 1; }
 }
 command_of() { # command_of <kind> <pair> <scenario> <direction>
-  local pair=() record=(); [[ "$2" == zec ]] && pair=(--pair Zcash)
+  local pair=() record=(); [[ "$2" == zec ]] && pair=(--pair Zcash); [[ "$2" == xmr ]] && pair=(--pair Monero)
   [[ "${LEZ_REGRESS_RECORD:-0}" != 1 ]] || record=(--record)
   if [[ "$1" == node ]]; then echo python3 scripts/node-e2e.py "${pair[@]}" --direction "$4" "$3"
   else echo bash scripts/ui-e2e.sh "$3" "${pair[@]}" --direction "$4" "${record[@]}"; fi
@@ -263,8 +268,8 @@ keep() { cp runtime/e2e/*.json "$out/e2e/" 2>/dev/null; cp runtime/evidence/zec/
 run_test() { # run_test <kind:pair:scenario:direction>
   local kind pair scenario direction try rc prepared started logfile verdict price
   IFS=: read -r kind pair scenario direction <<<"$1"
-  [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
-    { log "=== $1: not a test (<node|ui>:<btc|zec>:<scenario>:<direction>)"; return 64; }
+  [[ "$kind" =~ ^(node|ui)$ && "$pair" =~ ^(btc|zec|xmr)$ && -n "$scenario" && "$direction" =~ ^TakerSells(Lez|Foreign)$ ]] ||
+    { log "=== $1: not a test (<node|ui>:<btc|zec|xmr>:<scenario>:<direction>)"; return 64; }
   use_profile "$(profile_of "$1")" || return 2
   for (( try = 1; try <= (tries > race_tries ? tries : race_tries); try++ )); do
     fresh=0; prepared="$(date +%s)"
@@ -327,6 +332,7 @@ expected_seconds() { # expected_seconds <test>
     case "$1" in
       *late-claim-unmined*|*:kill-taker:*|*:kill-maker:*) seconds=1800 ;;
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
+      node:xmr:*) seconds=600 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;
       *) seconds=250 ;;
@@ -527,6 +533,14 @@ lanes_main() {
 }
 
 load_env
+if [[ "${LEZ_MONERO:-0}" != 1 ]]; then
+  kept=()
+  for t in "${tests[@]}"; do
+    if [[ "$t" == *:xmr:* ]]; then log "=== $t: not run (Monero is off on this stack; LEZ_MONERO=1 scripts/up.sh starts it)"
+    else kept+=("$t"); fi
+  done
+  tests=(${kept[@]+"${kept[@]}"})
+fi
 [[ "${LEZ_TIMING_PROFILE:-local}" =~ ^(fast|refund)$ ]] || { echo "the regression needs the fast or the refund timing profile: LEZ_TIMING_PROFILE=fast scripts/up.sh" >&2; exit 1; }
 began="$(date +%s)"; failed=()
 log "regression ${mode}: ${#tests[@]} tests at $(git rev-parse --short HEAD 2>/dev/null || echo '?') (tree dirty: $(git status --short 2>/dev/null | wc -l)), results in $out"

@@ -93,12 +93,15 @@ def wait_ready(where: str, timeout: int = 120) -> None:
 
 def open_wallet(where: str) -> str:
     """The address of the wallet open in `where`'s wallet-rpc; its own wallet (named
-    after it) is opened, or created, when none is."""
+    after it) is opened, or created, when none is. A role's own wallet is always
+    opened by name: its Node's Monero tools open a swap's wallets in the same
+    wallet-rpc and may leave one open (call this only while no swap is live)."""
     wait_ready(where)
-    try:
-        return call(where, "get_address", {"account_index": 0})["address"]
-    except Failure:
-        pass
+    if where == "funding":
+        try:
+            return call(where, "get_address", {"account_index": 0})["address"]
+        except Failure:
+            pass
     try:
         call(where, "open_wallet", {"filename": where, "password": ""})
     except Failure:
