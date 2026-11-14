@@ -565,7 +565,8 @@ Node's own tools keep busy for seconds at a time), so `maker_health` /
 `taker_health` read the Monero route unavailable, and the Node degraded, while
 monerod does not answer. Every Monero transfer the Nodes
 send (the Maker's funding, either role's sweep) is followed by the sender
-mining its own 10 confirmations; the harness mines only to fund the Maker.
+mining its own 10 confirmations; the harness mines only to fund the Maker
+and, in `xmr-kill-maker`, for a funding whose tool it killed before it mined.
 
 **The windows.** `runtime.env` carries the agreement's three offsets from the
 take, which both Nodes read and must have alike:

@@ -5877,8 +5877,10 @@ def scenario_zec_bitcoin_down(stamp: str) -> dict:
 # the shared Monero address and mines its ten confirmations, the Taker's one
 # claim authorizes the Maker's LEZ claim (tags 14, 15), whose signature lets
 # the Taker sweep the Monero. Both Nodes' tools mine their own confirmations;
-# the harness mines only to fund the Maker's wallet (monero-lane.py).
+# the harness mines only to fund the Maker's wallet (monero-lane.py) and, in
+# xmr-kill-maker, a funding whose tool it killed before that tool mined.
 XMR_FOREIGN_UNITS = 1_000_000_000_000  # 1 XMR in piconero
+XMR_CONFIRMATIONS = 10  # the agreement's fixed depth (REQUIRED_MONERO_CONFIRMATIONS)
 XMR_LEZ_UNITS = 50_000
 XMR_FEE_TOLERANCE_PICONERO = 10_000_000_000  # 0.01 XMR: the sweep's fee
 
@@ -6395,6 +6397,9 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
     if killed is None:
         log(f"  {swap_id[:12]} passed the kill point '{point}' between two polls")
         return {"swap_id": swap_id, "kill": None}
+    # This swap's sends: `before` (at its take) holds every earlier send, also
+    # one still unmined, as an earlier swap's whose funding tool was killed
+    # before it mined (it is mined into the next swap's first block).
     funded = [t for t in xmr_lane("balance", "--role", "maker")["sent"] if t["txid"] not in before["sent"]["maker"]]
     if state == "completed":
         wait_completed(swap_id, timeout=600)
@@ -6414,6 +6419,13 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
         # refunded: the Taker's tag 13 (tag 16 is the refund authority's);
         # the Maker's Monero never sent, or swept back once the refund
         # revealed the Taker's share
+        if any(not t["height"] for t in funded):
+            # Its funding tool was killed after the transfer, before it mined
+            # the confirmations; nobody else mines this regtest, so the
+            # harness does, as the network would, and the Maker's observer
+            # then records the funding and sweeps it back.
+            log(f"  the Maker's funding {[t['txid'][:16] for t in funded]} is still in the pool; mining it")
+            xmr_lane("mine", str(XMR_CONFIRMATIONS))
         if funded:
             phase = wait_maker_terminal(swap_id, timeout=600, describe="(the Maker's Monero refund sweep)")
             monero = {"maker_funding": funded, "maker_refund_sweep": xmr_assert_swept("maker", before, "a refunded swap")}

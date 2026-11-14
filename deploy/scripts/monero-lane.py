@@ -125,14 +125,17 @@ def mine(blocks: int, why: str) -> int:
 def balance(role: str) -> dict:
     """The role's balance, what it received apart from coinbase (the Node's
     own tools mine their confirmations, some of them to this wallet), and
-    what it sent."""
+    what it sent, also what is not yet mined (height 0: a sender killed after
+    its transfer, before it mined), with the addresses it paid."""
     open_wallet(role)
     call(role, "refresh")
-    transfers = call(role, "get_transfers", {"in": True, "out": True, "account_index": 0})
+    transfers = call(role, "get_transfers", {"in": True, "out": True, "pending": True, "account_index": 0})
     return {**call(role, "get_balance", {"account_index": 0}),
             "received": [{"txid": t["txid"], "amount": t["amount"], "height": t["height"]}
                          for t in transfers.get("in", []) if t.get("type") == "in"],
-            "sent": [{"txid": t["txid"], "amount": t["amount"], "height": t["height"]} for t in transfers.get("out", [])]}
+            "sent": [{"txid": t["txid"], "amount": t["amount"], "height": t["height"],
+                      "destinations": [d["address"] for d in t.get("destinations", [])]}
+                     for t in transfers.get("out", []) + transfers.get("pending", [])]}
 
 
 def fund(role: str, xmr: int) -> dict:
@@ -178,7 +181,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "mine":
-            mine(args.blocks, "by hand")
+            print(json.dumps({"lane": LANE["LEZ_LANE"], "height": mine(args.blocks, "by hand")}))
         elif args.command == "fund":
             print(json.dumps(fund(args.role, args.xmr)))
         else:
