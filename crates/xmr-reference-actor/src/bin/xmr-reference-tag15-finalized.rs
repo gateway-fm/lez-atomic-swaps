@@ -148,18 +148,32 @@ async fn execute() -> Result<()> {
     if step == XmrWorkflowStep::PunishLezTag17 {
         return observe_tag17(&plan, &runtime, &binding.terms()).await;
     }
-    let exact_transaction_bytes = read_sealed_fd(
-        XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
-        usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
-        "exact Tag15 transaction",
-    )?;
-    let exact_transaction: PreparedTransaction = serde_json::from_slice(&exact_transaction_bytes)
-        .context("exact Tag15 transaction is malformed")?;
-    ensure!(
-        serde_json::to_vec(&exact_transaction).context("re-encode exact Tag15 transaction")?
-            == exact_transaction_bytes,
-        "exact Tag15 transaction is noncanonical"
-    );
+    // The parent pins the exact transaction from the tool's submission
+    // evidence; a tool stopped before it wrote that evidence leaves none, and
+    // the swap's one tag 15 (the escrow is claimed once) is discovered by its
+    // terms instead.
+    let target = if Path::new(&format!(
+        "/proc/self/fd/{XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD}"
+    ))
+    .exists()
+    {
+        let exact_transaction_bytes = read_sealed_fd(
+            XMR_EFFECT_TAG15_EXACT_TRANSACTION_FD,
+            usize::try_from(MAX_EVIDENCE_BYTES).unwrap_or(usize::MAX),
+            "exact Tag15 transaction",
+        )?;
+        let exact_transaction: PreparedTransaction =
+            serde_json::from_slice(&exact_transaction_bytes)
+                .context("exact Tag15 transaction is malformed")?;
+        ensure!(
+            serde_json::to_vec(&exact_transaction).context("re-encode exact Tag15 transaction")?
+                == exact_transaction_bytes,
+            "exact Tag15 transaction is noncanonical"
+        );
+        FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction)
+    } else {
+        FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {}
+    };
     let activation_evidence = load_activation_evidence(&plan)?;
     let run_id = RunId::new(plan.run_id().to_owned()).context("invalid Tag15 observer run ID")?;
     let nonce = SystemTime::now()
@@ -181,10 +195,7 @@ async fn execute() -> Result<()> {
         &run_id,
         &runtime,
         &terms,
-        (
-            XmrNativeEffectV3::Claim,
-            &FinalizedNativeXmrTransactionTargetV3::exact(exact_transaction),
-        ),
+        (XmrNativeEffectV3::Claim, &target),
         activation_evidence.tag15_scan_start_height,
         nonce,
     )

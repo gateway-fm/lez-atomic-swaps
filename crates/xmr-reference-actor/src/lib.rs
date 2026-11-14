@@ -78,7 +78,7 @@ pub use effect_input_custody::{
 pub use effect_route::{
     XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XmrEffectObserverResultV1, XmrEffectObserverStateV1,
     XmrPreparedEffectInvocationV1, XmrPreparedEffectObservationV1,
-    parse_xmr_effect_observer_result_v1,
+    parse_xmr_effect_observer_result_v1, xmr_maker_submission_unwritten,
 };
 #[cfg(feature = "sessions")]
 pub use reserve::{

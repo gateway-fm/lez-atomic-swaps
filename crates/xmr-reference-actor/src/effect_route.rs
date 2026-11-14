@@ -321,6 +321,94 @@ impl ValidatedXmrEffectExecutionV3 {
         actor_lock: &ActorHeldLock,
         workflow_lock: &ActorHeldLock,
     ) -> Result<XmrPreparedEffectInvocationV1> {
+        let (command, digest) = self.invocation_command(step, actor_lock, workflow_lock)?;
+        let identity = self.workflow_identity();
+        let mut workflow =
+            SqliteXmrWorkflowJournal::open_existing(self.effect_authority().workflow_journal())
+                .context("open XMR effect workflow")?;
+        workflow
+            .validate_initialized(identity)
+            .context("bind XMR effect workflow identity")?;
+        match workflow
+            .authorize_once(identity, step)
+            .context("consume XMR effect invocation authority")?
+        {
+            XmrWorkflowDecision::InvokeOnce => Ok(XmrPreparedEffectInvocationV1::InvokeOnce {
+                command,
+                tool_plan_identity_sha256: digest,
+            }),
+            XmrWorkflowDecision::ObserveOnly => {
+                drop(command);
+                Ok(XmrPreparedEffectInvocationV1::ObserveOnly {
+                    tool_plan_identity_sha256: digest,
+                })
+            }
+            XmrWorkflowDecision::Complete => {
+                drop(command);
+                Ok(XmrPreparedEffectInvocationV1::Complete {
+                    tool_plan_identity_sha256: digest,
+                })
+            }
+        }
+    }
+
+    /// Pins the sending tool of a Maker LEZ claim (tag 15), punishment
+    /// (tag 17) or Monero refund sweep again, for a step whose one invocation
+    /// is spent (Started or Unknown) while its tool's submission evidence is
+    /// missing or reserved but empty: the tool was stopped, or failed, before
+    /// it recorded what it sent. An empty reservation is removed, so the tool
+    /// reserves it anew. The journal is not changed.
+    ///
+    /// The tool sends nothing new: the LEZ tools ask the swap's sidecar under
+    /// their fixed request ids, which replays the one durable preparation and
+    /// completion (it refuses any other) and the journaled outcome of a
+    /// submission already asked for (an in-flight one is never sent again);
+    /// a Monero sweep spends the one shared output, which the chain lets be
+    /// spent once.
+    ///
+    /// # Errors
+    ///
+    /// Rejects every other role or step, a Prepared or Succeeded step,
+    /// written submission evidence, and every invocation-composition failure.
+    pub fn prepare_effect_redrive(
+        &self,
+        step: XmrWorkflowStep,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
+    ) -> Result<Command> {
+        ensure!(
+            self.effect_authority().role() == ActorRole::Maker,
+            "only a Maker effect is driven again"
+        );
+        let evidence_root = self.effect_authority().evidence_root();
+        let file = maker_submission_file(step)
+            .context("XMR workflow step has no Maker submission evidence")?;
+        ensure!(
+            xmr_maker_submission_unwritten(evidence_root, step)?,
+            "the XMR effect's submission evidence is written: it is only observed"
+        );
+        let (command, _) = self.invocation_command(step, actor_lock, workflow_lock)?;
+        SqliteXmrWorkflowJournal::open_existing(self.effect_authority().workflow_journal())
+            .context("open XMR effect workflow for a redrive")?
+            .validate_observation_eligible(self.workflow_identity(), step)
+            .context("validate XMR effect redrive eligibility")?;
+        match std::fs::remove_file(evidence_root.join(file)) {
+            Ok(()) => std::fs::File::open(evidence_root)
+                .and_then(|directory| directory.sync_all())
+                .context("sync the XMR effect evidence root")?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("remove the empty XMR submission evidence"),
+        }
+        Ok(command)
+    }
+
+    /// Pins one role-fixed sending tool, its inputs and both held locks.
+    fn invocation_command(
+        &self,
+        step: XmrWorkflowStep,
+        actor_lock: &ActorHeldLock,
+        workflow_lock: &ActorHeldLock,
+    ) -> Result<(Command, [u8; 32])> {
         let tool = select_tool(self.effect_authority(), step)?;
         let digest = tool_plan_identity(self, step, tool);
         let executable = tool
@@ -371,34 +459,7 @@ impl ValidatedXmrEffectExecutionV3 {
                 .into_command(executable, actor_lock, workflow_lock)
                 .context("compose role-fixed XMR effect child")?
         };
-
-        let mut workflow =
-            SqliteXmrWorkflowJournal::open_existing(self.effect_authority().workflow_journal())
-                .context("open XMR effect workflow")?;
-        workflow
-            .validate_initialized(identity)
-            .context("bind XMR effect workflow identity")?;
-        match workflow
-            .authorize_once(identity, step)
-            .context("consume XMR effect invocation authority")?
-        {
-            XmrWorkflowDecision::InvokeOnce => Ok(XmrPreparedEffectInvocationV1::InvokeOnce {
-                command,
-                tool_plan_identity_sha256: digest,
-            }),
-            XmrWorkflowDecision::ObserveOnly => {
-                drop(command);
-                Ok(XmrPreparedEffectInvocationV1::ObserveOnly {
-                    tool_plan_identity_sha256: digest,
-                })
-            }
-            XmrWorkflowDecision::Complete => {
-                drop(command);
-                Ok(XmrPreparedEffectInvocationV1::Complete {
-                    tool_plan_identity_sha256: digest,
-                })
-            }
-        }
+        Ok((command, digest))
     }
 
     /// Pins one role-fixed non-sending observer for a Started or Unknown effect.
@@ -486,6 +547,45 @@ impl ValidatedXmrEffectExecutionV3 {
             tool_plan_identity_sha256: digest,
             reconciliation_source,
         })
+    }
+}
+
+/// The submission evidence the Maker's LEZ claim, punishment and Monero
+/// refund sweep tools reserve before their first send and write after it.
+const fn maker_submission_file(step: XmrWorkflowStep) -> Option<&'static str> {
+    match step {
+        XmrWorkflowStep::ClaimLezTag15 => Some("tag15-claim-submission.json"),
+        XmrWorkflowStep::PunishLezTag17 => Some("tag17-punishment-submission.json"),
+        XmrWorkflowStep::SweepMoneroRefund => Some("monero-refund-submission.json"),
+        _ => None,
+    }
+}
+
+/// Whether a Maker tool's submission evidence for `step` is missing or
+/// reserved but empty: its tool stopped before it recorded what it sent,
+/// if anything. Its write is one small write and a sync, so a stop leaves
+/// it empty or complete.
+///
+/// # Errors
+///
+/// Rejects a step without Maker submission evidence, an evidence path that
+/// is not a regular file, and an unreadable evidence root.
+pub fn xmr_maker_submission_unwritten(
+    evidence_root: &std::path::Path,
+    step: XmrWorkflowStep,
+) -> Result<bool> {
+    let file = maker_submission_file(step)
+        .context("XMR workflow step has no Maker submission evidence")?;
+    match std::fs::symlink_metadata(evidence_root.join(file)) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.file_type().is_file(),
+                "XMR submission evidence is not a regular file"
+            );
+            Ok(metadata.len() == 0)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error).context("inspect XMR submission evidence"),
     }
 }
 
@@ -578,4 +678,27 @@ fn tool_plan_identity(
     digest.update(tool.program_sha256());
     digest.update(execution.effect_authority_sha256());
     digest.finalize().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_submission_missing_or_reserved_empty_is_unwritten() {
+        let root = tempfile::tempdir().unwrap();
+        let step = XmrWorkflowStep::ClaimLezTag15;
+        let file = root.path().join("tag15-claim-submission.json");
+        assert!(xmr_maker_submission_unwritten(root.path(), step).unwrap());
+        std::fs::write(&file, b"").unwrap();
+        assert!(xmr_maker_submission_unwritten(root.path(), step).unwrap());
+        std::fs::write(&file, b"{}\n").unwrap();
+        assert!(!xmr_maker_submission_unwritten(root.path(), step).unwrap());
+        std::fs::create_dir(root.path().join("monero-refund-submission.json")).unwrap();
+        assert!(
+            xmr_maker_submission_unwritten(root.path(), XmrWorkflowStep::SweepMoneroRefund)
+                .is_err()
+        );
+        assert!(xmr_maker_submission_unwritten(root.path(), XmrWorkflowStep::FundMonero).is_err());
+    }
 }

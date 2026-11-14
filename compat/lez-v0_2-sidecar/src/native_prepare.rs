@@ -5291,11 +5291,13 @@ impl NativeEscrowPlanner {
     /// # Errors
     ///
     /// Rejects invalid bindings and all role/effect pairs except Maker reading
-    /// tag 14, tag 16 or its own tag 17 and Taker reading tag 15 or tag 17.
-    /// The Maker discovers its tag 17 by terms because the transaction is
-    /// signed at the claimant's live nonce, so its bytes are not part of any
+    /// tag 14, tag 16 or its own tag 15 or tag 17 and Taker reading tag 15 or
+    /// tag 17. The Maker discovers its tag 17 by terms because the transaction
+    /// is signed at the claimant's live nonce, so its bytes are not part of any
     /// agreement; a match must still be signed by the claimant and carry the
-    /// exact tag-17 accounts and instruction.
+    /// exact tag-17 accounts and instruction. It discovers its own tag 15 when
+    /// its claim tool stopped before recording the exact bytes: the escrow is
+    /// claimed once, by the claim aggregate authority.
     pub(crate) fn validate_xmr_effect_discovery_v3(
         &self,
         context: &MessageContext,
@@ -5310,6 +5312,7 @@ impl NativeEscrowPlanner {
                 Participant::Maker,
                 XmrNativeEffectV3::Fund
                     | XmrNativeEffectV3::AuthorizeClaim
+                    | XmrNativeEffectV3::Claim
                     | XmrNativeEffectV3::Refund
                     | XmrNativeEffectV3::Punish
             ) | (

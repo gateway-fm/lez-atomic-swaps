@@ -2004,6 +2004,13 @@ async fn tag_14_through_tag_17_are_classified_by_owner_and_counterparty() {
             Arc::clone(&taker_planner),
             FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
         ),
+        // The Maker whose claim tool stopped before recording the bytes.
+        (
+            "tag15-owner-discovery",
+            maker_runtime.clone(),
+            Arc::clone(&maker_planner),
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
     ] {
         let indexer = finalized_effect_indexer(
             &claim,

@@ -16,7 +16,10 @@
 //! refund (tag 16); it punishes (tag 17) only once the finalized clock is
 //! past the punish time `P` and the finalized history to that tip holds no
 //! refund. Every effect consumes its one invocation in the workflow journal
-//! before it runs, so a crash resumes with observation, never a resend.
+//! before it runs, so a crash resumes with observation, never a new send: a
+//! claim whose tool stopped before recording its submission is driven again
+//! before `R` under its fixed sidecar request ids, which replay what was
+//! prepared and asked for.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -51,6 +54,7 @@ use xmr_reference_actor::{
     complete_maker_claim_signature, ingest_maker_refund_signature,
     load_validated_xmr_maker_authority_fd, load_validated_xmr_maker_effect_execution_fd,
     parse_xmr_effect_observer_result_v1, reconcile_maker_monero_funding_bytes,
+    xmr_maker_submission_unwritten,
 };
 #[cfg(feature = "test-crash-hooks")]
 use zec_reference_actor::arm_test_crash_hook;
@@ -268,6 +272,12 @@ trait MakerChains {
     fn observe_fund(&mut self) -> Result<bool>;
     /// Activates `branch` from the recorded evidence.
     fn activate(&mut self, branch: XmrWorkflowBranch) -> Result<()>;
+    /// Observes a spent branch effect sent under `plan`; true once reconciled.
+    fn observe_effect(&mut self, step: XmrWorkflowStep, plan: [u8; 32]) -> Result<bool>;
+    /// Whether the effect's tool stopped before recording its submission.
+    fn submission_unwritten(&self, step: XmrWorkflowStep) -> Result<bool>;
+    /// Runs the effect's tool again (`prepare_effect_redrive`).
+    fn redrive(&mut self, step: XmrWorkflowStep) -> Result<()>;
 }
 
 /// One drive step; returns its outcome.
@@ -324,6 +334,30 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
             Ok("unchanged")
         }
     }
+}
+
+/// A branch effect whose one invocation is spent: observed (a tag 15 by its
+/// terms when its tool stopped before recording the exact bytes), or, a
+/// claim whose tool stopped before recording its submission, driven again
+/// before `R` under the same sidecar request ids (`prepare_effect_redrive`).
+/// Returns "completed" once reconciled.
+fn settle_spent_effect(
+    chains: &mut impl MakerChains,
+    facts: &Facts,
+    step: XmrWorkflowStep,
+    plan: [u8; 32],
+) -> Result<&'static str> {
+    let unwritten = chains.submission_unwritten(step)?;
+    if chains.observe_effect(step, plan)? {
+        return Ok("completed");
+    }
+    // Tag 15 is valid only before `R`: from then what was sent is observed.
+    if step == XmrWorkflowStep::ClaimLezTag15 && unwritten && chains.lez_clock()? < facts.refund_ms
+    {
+        chains.redrive(step)?;
+        return Ok("resubmitted");
+    }
+    Ok("awaiting_observation")
 }
 
 fn main() {
@@ -968,6 +1002,53 @@ impl MakerChains for LiveMaker {
     fn activate(&mut self, branch: XmrWorkflowBranch) -> Result<()> {
         self.record_activation(branch)
     }
+
+    fn observe_effect(&mut self, step: XmrWorkflowStep, plan: [u8; 32]) -> Result<bool> {
+        let timeout = effect_timeout(step);
+        let Some((evidence, observed_plan, source)) = self.run_observer(step, timeout)? else {
+            return Ok(false);
+        };
+        ensure!(observed_plan == plan, "XMR Maker recovery plan changed");
+        let reconciliation = XmrWorkflowReconciliationV2::new(evidence, plan, source)
+            .context("validate XMR Maker recovery evidence")?;
+        let mut workflow = SqliteXmrWorkflowJournal::open_existing(
+            self.execution.effect_authority().workflow_journal(),
+        )
+        .context("open XMR Maker recovery workflow")?;
+        workflow
+            .validate_initialized(self.execution.workflow_identity())
+            .context("validate XMR Maker recovery workflow")?;
+        workflow
+            .reconcile_succeeded(self.execution.workflow_identity(), step, &reconciliation)
+            .context("reconcile XMR Maker recovery")?;
+        Ok(true)
+    }
+
+    fn submission_unwritten(&self, step: XmrWorkflowStep) -> Result<bool> {
+        xmr_maker_submission_unwritten(self.execution.effect_authority().evidence_root(), step)
+    }
+
+    fn redrive(&mut self, step: XmrWorkflowStep) -> Result<()> {
+        let mut command = self
+            .execution
+            .prepare_effect_redrive(step, &self.actor_lock, &self.workflow_lock)
+            .context("prepare the XMR Maker effect's redrive")?;
+        run_silent(&mut command, effect_timeout(step)).map_err(|error| {
+            error.context("the XMR Maker effect's redrive failed; it is observed and driven again")
+        })
+    }
+}
+
+/// A Monero effect mines its confirmations; a LEZ effect asks the sidecar.
+fn effect_timeout(step: XmrWorkflowStep) -> Duration {
+    if matches!(
+        step,
+        XmrWorkflowStep::FundMonero | XmrWorkflowStep::SweepMoneroRefund
+    ) {
+        MONERO_EFFECT_TIMEOUT
+    } else {
+        EFFECT_TIMEOUT
+    }
 }
 
 /// Accepts the supervisor's transferred actor lock and takes the workflow's.
@@ -1025,11 +1106,7 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
     {
         maker.record_activation(branch)?;
     }
-    let timeout = if recovery_step == XmrWorkflowStep::SweepMoneroRefund {
-        MONERO_EFFECT_TIMEOUT
-    } else {
-        EFFECT_TIMEOUT
-    };
+    let timeout = effect_timeout(recovery_step);
 
     if recovery_requires_preflight(recovery_step) {
         execute_preflight(
@@ -1057,32 +1134,11 @@ fn execute_effect(config_fd: i32, requested: RequestedEffect) -> Result<EffectOu
         }
         XmrPreparedEffectInvocationV1::ObserveOnly {
             tool_plan_identity_sha256,
-        } => match maker.run_observer(recovery_step, timeout)? {
-            None => false,
-            Some((evidence, plan, source)) => {
-                ensure!(
-                    plan == tool_plan_identity_sha256,
-                    "XMR Maker recovery plan changed"
-                );
-                let reconciliation = XmrWorkflowReconciliationV2::new(evidence, plan, source)
-                    .context("validate XMR Maker recovery evidence")?;
-                let mut workflow = SqliteXmrWorkflowJournal::open_existing(
-                    execution.effect_authority().workflow_journal(),
-                )
-                .context("open XMR Maker recovery workflow")?;
-                workflow
-                    .validate_initialized(execution.workflow_identity())
-                    .context("validate XMR Maker recovery workflow")?;
-                workflow
-                    .reconcile_succeeded(
-                        execution.workflow_identity(),
-                        recovery_step,
-                        &reconciliation,
-                    )
-                    .context("reconcile XMR Maker recovery")?;
-                true
-            }
-        },
+        } => {
+            let facts = maker.facts()?;
+            settle_spent_effect(&mut maker, &facts, recovery_step, tool_plan_identity_sha256)?
+                == "completed"
+        }
         XmrPreparedEffectInvocationV1::Complete {
             tool_plan_identity_sha256: _,
         } => true,
@@ -1415,6 +1471,12 @@ mod tests {
         observed_funding: bool,
         activations: Vec<XmrWorkflowBranch>,
         crash_after_fund: bool,
+        /// The branch effect is final on its chain.
+        effect_final: bool,
+        /// Its tool stopped before recording its submission.
+        unwritten: bool,
+        observations: u32,
+        redrives: u32,
     }
 
     impl Stub {
@@ -1477,6 +1539,28 @@ mod tests {
             assert!(self.durable().branch.is_none());
             self.durable().branch = Some(branch);
             self.activations.push(branch);
+            Ok(())
+        }
+
+        fn observe_effect(&mut self, _: XmrWorkflowStep, _: [u8; 32]) -> Result<bool> {
+            self.observations += 1;
+            if self.effect_final {
+                self.durable().branch_done = true;
+            }
+            Ok(self.effect_final)
+        }
+
+        fn submission_unwritten(&self, _: XmrWorkflowStep) -> Result<bool> {
+            Ok(self.unwritten)
+        }
+
+        fn redrive(&mut self, _: XmrWorkflowStep) -> Result<()> {
+            assert!(
+                self.unwritten,
+                "only an unrecorded submission is driven again"
+            );
+            self.redrives += 1;
+            self.unwritten = false;
             Ok(())
         }
     }
@@ -1606,5 +1690,59 @@ mod tests {
         assert_eq!(drive_once(&mut stub, 5_000).unwrap(), "activated");
         assert_eq!(drive_once(&mut stub, 6_000).unwrap(), "unchanged");
         assert_eq!((stub.funds, stub.activations.len()), (1, 1));
+    }
+
+    /// A Maker in `branch` whose effect's tool was stopped after it reserved
+    /// its submission evidence and before it wrote it.
+    fn stopped_mid_effect(branch: XmrWorkflowBranch, lez_ms: u64) -> Stub {
+        let mut stub = Stub::new();
+        walk_to_both_legs_locked(&mut stub);
+        stub.durable().branch = Some(branch);
+        stub.lez_ms = lez_ms;
+        stub.unwritten = true;
+        stub
+    }
+
+    fn settle(stub: &mut Stub, step: XmrWorkflowStep) -> &'static str {
+        let facts = stub.facts().unwrap();
+        settle_spent_effect(stub, &facts, step, [7; 32]).unwrap()
+    }
+
+    #[test]
+    fn a_claim_stopped_mid_tool_reconciles_a_final_tag15_found_by_its_terms() {
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, R - 1);
+        stub.effect_final = true;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "completed"
+        );
+        assert_eq!((stub.observations, stub.redrives), (1, 0));
+        assert_eq!(derive_status(&stub.facts().unwrap(), R).phase, "completed");
+    }
+
+    #[test]
+    fn a_claim_stopped_mid_tool_is_driven_again_only_before_r() {
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, R - 1);
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "resubmitted"
+        );
+        // Recorded now: observed, never driven again.
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "awaiting_observation"
+        );
+        assert_eq!(stub.redrives, 1);
+        // From `R` a tag 15 is invalid: nothing is driven, the refund awaited.
+        let mut stub = stopped_mid_effect(XmrWorkflowBranch::Claim, R);
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::ClaimLezTag15),
+            "awaiting_observation"
+        );
+        assert_eq!((stub.redrives, stub.activations.len()), (0, 0));
+        assert_eq!(
+            derive_status(&stub.facts().unwrap(), R).next_action,
+            "claim_lez"
+        );
     }
 }
