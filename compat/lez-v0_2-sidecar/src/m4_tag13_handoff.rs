@@ -226,20 +226,20 @@ struct VerifiedState {
     funding_transaction_id: TransactionId,
 }
 
-/// Reports whether the leased directory contains any fixed tag-13 state.
+/// Reports whether the leased directory contains fixed tag-13 state: the
+/// evidence a tag-13 tool hands over.
+///
+/// The native-XMR reservation alone is a sidecar's own durable state (a Node
+/// runs tag 13 through its swap's sidecar and restarts that sidecar on the
+/// same directory); its planner revalidates it on every replay.
 ///
 /// # Errors
 ///
 /// Rejects unsafe directory entries or a lease that no longer names its original inode.
 pub fn m4_tag13_state_present(lease: &StateDirectoryLease) -> Result<bool, M4Tag13HandoffError> {
-    let store = store_for_lease(lease)?;
-    let evidence = store
+    store_for_lease(lease)?
         .contains_fixed_file(EVIDENCE_FILE)
-        .map_err(map_state)?;
-    let reservation = store
-        .contains_fixed_file(RESERVATION_FILE)
-        .map_err(map_state)?;
-    Ok(evidence || reservation)
+        .map_err(map_state)
 }
 
 /// Verifies exact finalized state and creates all four owner-private artifacts.

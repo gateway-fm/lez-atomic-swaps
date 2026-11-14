@@ -482,7 +482,7 @@ mod tests {
         Arguments, NodeRouteProfile, acquire_state_directory_lease, load_runtime_before_secrets,
         read_secret_text, validate_node_routes,
     };
-    use lez_bridge_protocol::{Hex32, RunId};
+    use lez_bridge_protocol::{Hex32, Participant, RunId, RuntimeCompatibility, RuntimeDescriptor};
 
     const LOCAL_SEQUENCER: &str = "http://127.0.0.1:3040/";
     const LOCAL_INDEXER: &str = "http://127.0.0.1:8779/";
@@ -646,5 +646,86 @@ mod tests {
         )
         .expect_err("receipt omission must fail before missing runtime or secrets");
         assert!(format!("{error:#}").contains("receipt is required"));
+    }
+
+    /// A Node restarts a Monero swap's sidecar on the state its planner kept,
+    /// with no handoff receipt: the Taker's from the reserved tag 13 through
+    /// the claim authorization (tag 14) or the refund (tag 16) and its
+    /// completion; the Maker's through its claim (tag 15) or punish (tag 17).
+    #[test]
+    fn a_restarted_node_sidecar_starts_on_its_own_native_xmr_reservations() {
+        let taker = [
+            "bridge-requests.v1.json",
+            "xmr-native-escrow-reservation.v3.json",
+            "xmr-native-claim-authorization-reservation.v3.json",
+            "xmr-native-refund-reservation.v3.json",
+            "xmr-native-refund-completion.v3.json",
+        ];
+        let maker = [
+            "bridge-requests.v1.json",
+            "xmr-native-claim-reservation.v3.json",
+            "xmr-native-claim-completion.v3.json",
+            "xmr-native-punish-reservation.v3.json",
+        ];
+        for (role, kept) in [
+            (Participant::Taker, taker.as_slice()),
+            (Participant::Maker, maker.as_slice()),
+        ] {
+            let directory = tempfile::tempdir().expect("temporary public directory");
+            let state = tempfile::tempdir().expect("temporary state directory");
+            fs::set_permissions(state.path(), fs::Permissions::from_mode(0o700))
+                .expect("owner-only state directory");
+            let descriptor = RuntimeDescriptor::new(
+                role,
+                RuntimeCompatibility::LeeV0_2_0,
+                Hex32::from_bytes([40; 32]),
+                Hex32::from_bytes([41; 32]),
+                Hex32::from_bytes([42; 32]),
+                Hex32::from_bytes([43; 32]),
+                Hex32::from_bytes([44; 32]),
+            );
+            let runtime_file = directory.path().join("runtime.json");
+            fs::write(
+                &runtime_file,
+                serde_json::to_vec(&descriptor).expect("runtime"),
+            )
+            .expect("runtime file");
+            let arguments = Arguments {
+                listen_address: "127.0.0.1:39002".parse().expect("listen address"),
+                sequencer_url: LOCAL_SEQUENCER.to_owned(),
+                indexer_url: LOCAL_INDEXER.to_owned(),
+                node_profile: NodeRouteProfile::Local,
+                indexer_profile: None,
+                run_id: "swap-m4-restart-test".to_owned(),
+                runtime_file,
+                terms_file: None,
+                capability_file: directory.path().join("capability"),
+                private_key_file: Some(directory.path().join("key")),
+                wallet_signer_socket: None,
+                signer_account_id: None,
+                state_directory: state.path().to_path_buf(),
+                tag13_handoff_receipt: None,
+                authenticated_transfer_program_id:
+                    "0101010101010101010101010101010101010101010101010101010101010101".to_owned(),
+                shutdown_on_stdin: true,
+            };
+            let lease = acquire_state_directory_lease(state.path()).expect("state lease");
+            for file in kept {
+                let path = state.path().join(file);
+                fs::write(&path, b"{}").expect("planner state");
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+                    .expect("owner-only planner state");
+                assert_eq!(
+                    load_runtime_before_secrets(
+                        &arguments,
+                        &lease,
+                        &RunId::new("swap-m4-restart-test").expect("run"),
+                        Hex32::from_bytes([1; 32]),
+                    )
+                    .unwrap_or_else(|error| panic!("{role:?} start with {file}: {error:#}")),
+                    descriptor
+                );
+            }
+        }
     }
 }
