@@ -766,10 +766,24 @@ impl SwapLez {
     }
 }
 
+/// How long one step waits for the initialization to reach a block before
+/// it sends the funding, and how often it looks (a LEZ block is a second or
+/// two on the devnet).
+const FUNDING_AFTER_INITIALIZATION_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+const FUNDING_AFTER_INITIALIZATION_POLL: std::time::Duration =
+    std::time::Duration::from_millis(200);
+
 /// Tag 13: prepares the escrow's initialization and funding once (the
 /// sidecar replays its durable preparation), submits the exact bytes and
-/// records each step once finalized; the funding goes out only after the
-/// initialization is final within the funding cutoff.
+/// records each step once finalized, within the funding cutoff. The funding
+/// goes out as soon as the initialization is in a block, not once it is
+/// final: the pair is signed at consecutive nonces of the owner account the
+/// Taker's swaps of the other pairs sign for at the live nonce, and a lock
+/// of theirs signed in between would take the funding's nonce. Not before:
+/// the sidecar refuses a funding whose initialization is not included and
+/// keeps that answer for the funding's request, and the classifier needs
+/// the two in separate blocks (the initialization's block must end with the
+/// escrow empty).
 async fn drive_lez_lock(
     dynamic: &DynamicXmrRole,
     files: &XmrSwapFiles,
@@ -807,6 +821,16 @@ async fn drive_lez_lock(
         (XmrNativeEffectV3::Fund, &prepared.funding)
     };
     lez.submit(transaction).await?;
+    if effect == XmrNativeEffectV3::Initialize {
+        let runtime = dynamic.btc().runtime();
+        submit_once_sequenced(
+            || sequenced(runtime, &prepared.initialization),
+            || lez.submit(&prepared.funding),
+            FUNDING_AFTER_INITIALIZATION_WAIT,
+            FUNDING_AFTER_INITIALIZATION_POLL,
+        )
+        .await?;
+    }
     match lez.find_final(&terms, effect, transaction, cursor).await? {
         Ok(finalized) => {
             let next = finalized.block_id.saturating_add(1);
@@ -824,6 +848,55 @@ async fn drive_lez_lock(
         }
     }
     Ok(())
+}
+
+/// Submits once `sequenced` says the predecessor is in a block, looking
+/// every `poll` for up to `wait`; a failed look counts as not yet. Not sent
+/// within `wait`, it is sent on a later step (at the latest once the
+/// predecessor is final).
+async fn submit_once_sequenced<S, SF, F, FF>(
+    mut sequenced: S,
+    submit: F,
+    wait: std::time::Duration,
+    poll: std::time::Duration,
+) -> Result<()>
+where
+    S: FnMut() -> SF,
+    SF: std::future::Future<Output = Result<bool>>,
+    F: FnOnce() -> FF,
+    FF: std::future::Future<Output = Result<()>>,
+{
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        if sequenced().await.unwrap_or(false) {
+            return submit().await;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(());
+        }
+        tokio::time::sleep(poll).await;
+    }
+}
+
+/// Whether the configured sequencer holds the exact transaction in a block
+/// (the sidecar's own check before it sends a funding).
+async fn sequenced(
+    runtime: &lez_btc_role_lifecycle::BtcRoleRuntime,
+    transaction: &PreparedTransaction,
+) -> Result<bool> {
+    use jsonrpsee::core::client::ClientT as _;
+    let client = jsonrpsee_http_client::HttpClientBuilder::default()
+        .request_timeout(runtime.request_timeout())
+        .build(&runtime.config().lez.sequencer_url)
+        .context("sequencer client")?;
+    let found: Option<serde_json::Value> = client
+        .request(
+            "getTransaction",
+            jsonrpsee::rpc_params![hex::encode(transaction.transaction_id.as_bytes())],
+        )
+        .await
+        .context("sequencer getTransaction")?;
+    Ok(found.is_some())
 }
 
 impl SwapLez {
@@ -1948,6 +2021,58 @@ mod tests {
             xmr_taker_view(&progress, WINDOWS, WINDOWS.refund_ms).state,
             State::RefundAvailable
         );
+    }
+
+    /// Runs `submit_once_sequenced` against the answers of the sequencer
+    /// look, in order (then "not in a block"); returns how many looks it
+    /// made, how many funding submissions, and its result.
+    async fn sequence(looks: Vec<Result<bool>>, submitted: Result<()>) -> (usize, u32, Result<()>) {
+        let looks = std::cell::RefCell::new(looks.into_iter());
+        let made = std::cell::Cell::new(0);
+        let sent = std::cell::Cell::new(0);
+        let result = submit_once_sequenced(
+            || {
+                made.set(made.get() + 1);
+                let look = looks.borrow_mut().next().unwrap_or(Ok(false));
+                async move { look }
+            },
+            || {
+                sent.set(sent.get() + 1);
+                async move { submitted }
+            },
+            std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        (made.get(), sent.get(), result)
+    }
+
+    /// The funding goes out on the first look that finds the initialization
+    /// in a block (a failed look counts as not yet), once, and its failure is
+    /// the step's.
+    #[tokio::test]
+    async fn the_funding_goes_out_once_the_initialization_is_in_a_block() {
+        let (looks, sent, result) = sequence(
+            vec![Ok(false), Err(anyhow::anyhow!("sequencer down")), Ok(true)],
+            Ok(()),
+        )
+        .await;
+        assert_eq!((looks, sent), (3, 1));
+        result.expect("funding submitted");
+        let (_, sent, result) =
+            sequence(vec![Ok(true)], Err(anyhow::anyhow!("sidecar refused"))).await;
+        assert_eq!(sent, 1);
+        assert!(result.is_err());
+    }
+
+    /// While the initialization is not in a block nothing is sent: the step
+    /// gives up after its wait and leaves the funding to a later step.
+    #[tokio::test]
+    async fn no_funding_goes_out_before_the_initialization_is_in_a_block() {
+        let (looks, sent, result) = sequence(Vec::new(), Ok(())).await;
+        assert!(looks > 1);
+        assert_eq!(sent, 0);
+        result.expect("a step without the funding is no failure");
     }
 
     /// The revision only grows along every path, so an owner's action admitted

@@ -58,6 +58,7 @@ getrandom = "=0.3.4"
 hyper = { version = "1.10.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 jsonrpsee = { version = "0.26.0", features = ["client-core", "server"] }
+jsonrpsee-http-client = { version = "0.26.0", default-features = false }
 lez-node-common = { version = "0.1.0", path = "../node-common" }
 lez-bridge-protocol = { version = "0.1.0", path = "../lez-bridge-protocol" }
 lez-logos-price-c-api = { version = "0.1.0", path = "../logos-price-c-api", default-features = false }
