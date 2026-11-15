@@ -65,9 +65,10 @@ fn failed_before_transfer(error: &MoneroEffectError) -> bool {
         MoneroEffectError::NonStandardAddress
             | MoneroEffectError::ZeroAmount
             | MoneroEffectError::InvalidSharedAddress
-            | MoneroEffectError::Rpc(
-                "open role wallet" | "refresh current wallet" | "funding wallet address"
-            )
+            | MoneroEffectError::Rpc {
+                operation: "open role wallet" | "refresh current wallet" | "funding wallet address",
+                ..
+            }
     )
 }
 

@@ -261,7 +261,7 @@ impl MoneroRegtestWalletEffects {
                 Some(role_wallet.password.clone()),
             )
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("open role wallet"))
+            .map_err(rpc_error("open role wallet"))
     }
 
     /// Returns the role wallet's (or, without one, the currently open
@@ -282,7 +282,7 @@ impl MoneroRegtestWalletEffects {
             .wallet
             .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("current wallet primary address"))?
+            .map_err(rpc_error("current wallet primary address"))?
             .address;
         validate_standard_address(&address)?;
         Ok(address)
@@ -302,7 +302,7 @@ impl MoneroRegtestWalletEffects {
             .wallet
             .get_balance(WALLET_ACCOUNT_INDEX, None)
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("role wallet balance"))?;
+            .map_err(rpc_error("role wallet balance"))?;
         Ok((
             address,
             balance.balance.as_pico(),
@@ -332,7 +332,7 @@ impl MoneroRegtestWalletEffects {
             .wallet
             .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("funding wallet address"))?
+            .map_err(rpc_error("funding wallet address"))?
             .address;
 
         let mut destinations = HashMap::with_capacity(1);
@@ -349,7 +349,7 @@ impl MoneroRegtestWalletEffects {
                 },
             )
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("fund exact transfer"))?;
+            .map_err(rpc_error("fund exact transfer"))?;
         if transfer.amount.as_pico() != amount.get() {
             return Err(MoneroWalletEffectError::FundingAmountMismatch);
         }
@@ -423,7 +423,7 @@ impl MoneroRegtestWalletEffects {
         self.wallet
             .close_wallet()
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("close current wallet"))?;
+            .map_err(rpc_error("close current wallet"))?;
         let created = self
             .wallet
             .generate_from_keys(GenerateFromKeysArgs {
@@ -436,7 +436,7 @@ impl MoneroRegtestWalletEffects {
                 autosave_current: Some(true),
             })
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("generate shared view-only wallet"))?;
+            .map_err(rpc_error("generate shared view-only wallet"))?;
         if created.address != address {
             return Err(MoneroWalletEffectError::RestoredAddressMismatch);
         }
@@ -458,7 +458,7 @@ impl MoneroRegtestWalletEffects {
         self.wallet
             .refresh(Some(restore_height))
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("refresh current wallet"))?;
+            .map_err(rpc_error("refresh current wallet"))?;
         Ok(())
     }
 
@@ -525,12 +525,12 @@ impl MoneroRegtestWalletEffects {
         self.wallet
             .open_wallet(filename, Some(password))
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("generate shared wallet from keys"))?;
+            .map_err(rpc_error("generate shared wallet from keys"))?;
         Ok(self
             .wallet
             .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("restored wallet primary address"))?
+            .map_err(rpc_error("restored wallet primary address"))?
             .address)
     }
 
@@ -581,7 +581,7 @@ impl MoneroRegtestWalletEffects {
         self.wallet
             .close_wallet()
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("close current wallet"))?;
+            .map_err(rpc_error("close current wallet"))?;
         let created = self
             .generate_or_reopen_shared(GenerateFromKeysArgs {
                 restore_height: Some(restore_height),
@@ -600,12 +600,12 @@ impl MoneroRegtestWalletEffects {
         self.wallet
             .refresh(Some(restore_height))
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("refresh restored wallet"))?;
+            .map_err(rpc_error("refresh restored wallet"))?;
         let balance = self
             .wallet
             .get_balance(WALLET_ACCOUNT_INDEX, Some(vec![0]))
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("read restored wallet balance"))?;
+            .map_err(rpc_error("read restored wallet balance"))?;
         if balance.balance.as_pico() != expected_amount.get()
             || balance.unlocked_balance.as_pico() != expected_amount.get()
         {
@@ -629,7 +629,7 @@ impl MoneroRegtestWalletEffects {
                 get_tx_metadata: None,
             })
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("sweep reconstructed wallet"))?;
+            .map_err(rpc_error("sweep reconstructed wallet"))?;
         if sweep.tx_hash_list.is_empty() || sweep.tx_hash_list.len() > MAX_SWEEP_TRANSACTIONS {
             return Err(MoneroWalletEffectError::InvalidSweepTransactionCount);
         }
@@ -668,7 +668,7 @@ impl MoneroRegtestWalletEffects {
             .daemon
             .generate_blocks(REQUIRED_MONERO_CONFIRMATIONS, mining_address)
             .await
-            .map_err(|_| MoneroWalletEffectError::Rpc("generate confirmation blocks"))?;
+            .map_err(rpc_error("generate confirmation blocks"))?;
         let block_count = generated.blocks.as_ref().map_or(0, Vec::len);
         if block_count != usize::try_from(REQUIRED_MONERO_CONFIRMATIONS).unwrap_or(usize::MAX) {
             return Err(MoneroWalletEffectError::ConfirmationBlockCountMismatch);
@@ -693,7 +693,7 @@ impl fmt::Debug for MoneroRegtestWalletEffects {
 }
 
 /// Fail-closed configuration and typed effect errors.
-#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum MoneroWalletEffectError {
     /// Daemon and wallet trust roles cannot share one origin.
     #[error("Monero daemon and wallet RPC origins must be distinct")]
@@ -701,9 +701,16 @@ pub enum MoneroWalletEffectError {
     /// The maintained typed RPC client could not be built.
     #[error("failed to build typed Monero wallet-effect RPC client")]
     RpcClientBuild,
-    /// One redacted typed RPC operation failed.
-    #[error("typed Monero wallet-effect operation `{0}` failed")]
-    Rpc(&'static str),
+    /// One typed RPC operation failed; `cause` is the client's error text
+    /// (transport, HTTP or the wallet-rpc's own error), which carries no
+    /// credential: the login travels in a Digest header, never in a URL.
+    #[error("typed Monero wallet-effect operation `{operation}` failed: {cause}")]
+    Rpc {
+        /// The operation, a fixed name.
+        operation: &'static str,
+        /// The underlying error, bounded.
+        cause: String,
+    },
     /// Funding or destination amount cannot be zero.
     #[error("Monero wallet-effect amount must be nonzero")]
     ZeroAmount,
@@ -752,6 +759,21 @@ pub enum MoneroWalletEffectError {
     /// The role's wallet-rpc lock file could not be opened or locked.
     #[error("Monero wallet-rpc lock could not be acquired")]
     WalletRpcLock,
+}
+
+/// The longest underlying RPC error text an [`MoneroWalletEffectError::Rpc`] keeps.
+const MAX_RPC_CAUSE_CHARS: usize = 400;
+
+/// Maps a typed client failure of `operation` to [`MoneroWalletEffectError::Rpc`],
+/// keeping its error chain.
+fn rpc_error(operation: &'static str) -> impl FnOnce(anyhow::Error) -> MoneroWalletEffectError {
+    move |error| MoneroWalletEffectError::Rpc {
+        operation,
+        cause: format!("{error:#}")
+            .chars()
+            .take(MAX_RPC_CAUSE_CHARS)
+            .collect(),
+    }
 }
 
 fn validate_sweep_accounting(
@@ -956,6 +978,15 @@ mod tests {
 
     impl FakeRpc {
         async fn spawn(answer: fn(&str) -> serde_json::Value) -> Self {
+            Self::spawn_slow(answer, "", std::time::Duration::ZERO).await
+        }
+
+        /// As [`Self::spawn`], answering `slow_method` only after `delay`.
+        async fn spawn_slow(
+            answer: fn(&str) -> serde_json::Value,
+            slow_method: &'static str,
+            delay: std::time::Duration,
+        ) -> Self {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -996,6 +1027,9 @@ mod tests {
                         serde_json::from_slice(&body).expect("JSON-RPC request");
                     let method = request["method"].as_str().unwrap_or_default().to_owned();
                     recorded.lock().expect("requests").push(request);
+                    if method == slow_method {
+                        tokio::time::sleep(delay).await;
+                    }
                     let mut response = answer(&method);
                     response["jsonrpc"] = "2.0".into();
                     response["id"] = "0".into();
@@ -1039,6 +1073,9 @@ mod tests {
                 "address": address(AddressType::Standard).to_string(),
                 "addresses": [],
             }}),
+            "get_balance" => serde_json::json!({ "result": {
+                "balance": 7_000, "unlocked_balance": 5_000, "multisig_import_needed": false,
+            }}),
             "transfer" => serde_json::json!({ "result": {
                 "amount": 5_000, "fee": 10, "tx_blob": "", "tx_hash": "07".repeat(32),
                 "tx_key": "", "tx_metadata": "", "unsigned_txset": "",
@@ -1050,6 +1087,13 @@ mod tests {
     fn wallet_without_role_wallet_file(method: &str) -> serde_json::Value {
         if method == "open_wallet" {
             return serde_json::json!({ "error": { "code": -1, "message": "Failed to open wallet" } });
+        }
+        wallet_answer(method)
+    }
+
+    fn wallet_without_balance(method: &str) -> serde_json::Value {
+        if method == "get_balance" {
+            return serde_json::json!({ "error": { "code": -1, "message": "wallet is busy" } });
         }
         wallet_answer(method)
     }
@@ -1137,10 +1181,55 @@ mod tests {
             effects
                 .fund_exact_and_confirm(address(AddressType::Standard), 5_000)
                 .await,
-            Err(MoneroWalletEffectError::Rpc("open role wallet"))
+            Err(MoneroWalletEffectError::Rpc {
+                operation: "open role wallet",
+                cause: "Server error: Failed to open wallet".to_owned(),
+            })
         );
         assert_eq!(wallet.methods(), ["open_wallet"]);
         assert!(daemon.methods().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_slow_role_wallet_open_still_reads_the_balance() {
+        // The devnet's wallet-rpc took 4.3 s to open a role wallet under load.
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let wallet = FakeRpc::spawn_slow(
+            wallet_answer,
+            "open_wallet",
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+        let effects = effects(&daemon, &wallet)
+            .with_role_wallet("taker".to_owned(), String::new())
+            .expect("role wallet");
+
+        assert_eq!(
+            effects.role_wallet_balance().await,
+            Ok((address(AddressType::Standard), 7_000, 5_000))
+        );
+        assert_eq!(
+            wallet.methods(),
+            ["open_wallet", "get_address", "get_balance"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_balance_read_names_its_cause() {
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let wallet = FakeRpc::spawn(wallet_without_balance).await;
+        let effects = effects(&daemon, &wallet)
+            .with_role_wallet("taker".to_owned(), String::new())
+            .expect("role wallet");
+
+        let error = effects.role_wallet_balance().await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "typed Monero wallet-effect operation `role wallet balance` failed: \
+             Server error: wallet is busy"
+        );
+        // The login travels in a header: no credential reaches the text.
+        assert!(!error.to_string().contains("rpc-secret"));
     }
 
     #[tokio::test]

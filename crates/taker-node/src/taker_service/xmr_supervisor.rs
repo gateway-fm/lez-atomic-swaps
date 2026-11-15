@@ -1454,7 +1454,7 @@ fn claim_wallet_password(share: &[u8; 32]) -> Zeroizing<String> {
 
 /// Whether a sweep error proves the transfer never reached the wallet: the
 /// adapter failed before `sweep_all`. Anything else may have been sent.
-fn sweep_not_sent(error: MoneroWalletEffectError) -> bool {
+fn sweep_not_sent(error: &MoneroWalletEffectError) -> bool {
     use MoneroWalletEffectError as Error;
     matches!(
         error,
@@ -1468,13 +1468,14 @@ fn sweep_not_sent(error: MoneroWalletEffectError) -> bool {
             | Error::RestoredAddressMismatch
             | Error::RestoredBalanceMismatch
             | Error::WalletRpcLock
-            | Error::Rpc(
-                "open role wallet"
+            | Error::Rpc {
+                operation: "open role wallet"
                     | "close current wallet"
                     | "generate shared wallet from keys"
                     | "refresh restored wallet"
-                    | "read restored wallet balance"
-            )
+                    | "read restored wallet balance",
+                ..
+            }
     )
 }
 
@@ -1667,7 +1668,7 @@ impl XmrClaimChains for LiveClaim {
                 received_piconero: sweep.received_amount_piconero(),
                 mined: false,
             }),
-            Ok(Err(error)) if sweep_not_sent(error) => Err(SweepFailure::NotSent(error.into())),
+            Ok(Err(error)) if sweep_not_sent(&error) => Err(SweepFailure::NotSent(error.into())),
             Ok(Err(error)) => Err(SweepFailure::InDoubt(error.into())),
             // Nothing reached the wallet: the key, the lock or the role wallet failed.
             Err(error) => Err(SweepFailure::NotSent(error)),

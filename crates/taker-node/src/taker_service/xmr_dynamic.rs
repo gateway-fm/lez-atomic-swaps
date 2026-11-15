@@ -247,6 +247,11 @@ pub(crate) enum XmrWalletBalanceV1 {
     Unavailable,
 }
 
+/// Reads of the role wallet one balance request makes: one that fails is
+/// read once more (the read changes nothing), as a first read right after a
+/// restart under load has failed on the devnet and the next one succeeded.
+const XMR_BALANCE_READ_ATTEMPTS: u32 = 2;
+
 impl DynamicXmrRole {
     /// Reads the role wallet under the role's wallet-rpc lock, which blocks,
     /// so on a blocking thread.
@@ -257,23 +262,17 @@ impl DynamicXmrRole {
             let _lock =
                 lez_xmr_monero_adapter::MoneroWalletRpcLock::acquire(&role.wallet_lock_file()?)?;
             handle.block_on(async {
-                let effects = lez_xmr_monero_adapter::MoneroRegtestWalletEffects::new(
-                    &role.config.monerod()?,
-                    &role.config.wallet_rpc()?,
-                )?
-                .with_role_wallet(
-                    role.config.wallet_name().to_owned(),
-                    role.config.wallet_password()?.to_string(),
-                )?;
-                let (address, balance_piconero, unlocked_piconero) =
-                    effects.role_wallet_balance().await?;
-                let daemon_height = role.chain_view().await?.tip_height;
-                Ok::<_, anyhow::Error>(XmrWalletBalanceV1::Available {
-                    address: address.to_string(),
-                    balance_piconero,
-                    unlocked_piconero,
-                    daemon_height,
-                })
+                let mut attempt = 1;
+                loop {
+                    match role.read_wallet_balance().await {
+                        Err(error) if attempt < XMR_BALANCE_READ_ATTEMPTS => {
+                            eprintln!("taker XMR balance read failed, reading again: {error:#}");
+                            attempt += 1;
+                            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                        }
+                        read => break read,
+                    }
+                }
             })
         })
         .await;
@@ -285,6 +284,27 @@ impl DynamicXmrRole {
             }
             Err(_) => XmrWalletBalanceV1::Unavailable,
         }
+    }
+
+    /// One read of the role wallet and the daemon's tip; the caller holds
+    /// the wallet-rpc lock.
+    async fn read_wallet_balance(&self) -> anyhow::Result<XmrWalletBalanceV1> {
+        let effects = lez_xmr_monero_adapter::MoneroRegtestWalletEffects::new(
+            &self.config.monerod()?,
+            &self.config.wallet_rpc()?,
+        )?
+        .with_role_wallet(
+            self.config.wallet_name().to_owned(),
+            self.config.wallet_password()?.to_string(),
+        )?;
+        let (address, balance_piconero, unlocked_piconero) = effects.role_wallet_balance().await?;
+        let daemon_height = self.chain_view().await?.tip_height;
+        Ok(XmrWalletBalanceV1::Available {
+            address: address.to_string(),
+            balance_piconero,
+            unlocked_piconero,
+            daemon_height,
+        })
     }
 }
 
