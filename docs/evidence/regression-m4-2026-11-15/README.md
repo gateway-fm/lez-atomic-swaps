@@ -62,8 +62,11 @@ LEZ devnet (logos-blockchain#3643 in the deployment guide; it struck at random, 
 in runs before the Monero scenarios existed), and the runner exists to void and retry a frozen
 try. A change that holds the claim tool on the Maker's own sequencer forwarder instead of
 pausing the shared sequencer (`test(node-e2e): xmr-kill-maker holds the claim tool on the
-Maker's own sequencer forwarder`, branch `agent/m4-hold`) was written during this run and is not in it;
-when this note was written it had not landed (its test on the stack had started after this run).
+Maker's own sequencer forwarder`) was written during this run and is not in it. It landed after
+this run: the three tests the freeze voided, run together on three lanes with that change, passed
+three times in a row with all six Maker kill points reached and no frozen try (runs
+`20261115T213634Z`, `20261115T221718Z`, `20261115T225347Z`; their results are not committed).
+Three runs do not show that the freeze cannot recur.
 
 ## The NOT-EXERCISED try
 
