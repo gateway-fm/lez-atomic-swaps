@@ -5949,24 +5949,50 @@ def xmr_publish(stamp: str, *offer_ids: str) -> None:
         log(f"  Maker CLI published {offer_id} on its running Node")
 
 
-def xmr_wait_until(swap_id: str, states: set[str], timeout: int, describe: str = "") -> dict:
+# How long a wait for the Maker's funding goes on once the Maker reads
+# maker_funding_in_doubt: on regtest its observer mines a funding it sees,
+# so a funding still in doubt after a few drives was not seen at all.
+XMR_FUNDING_IN_DOUBT_GRACE_SECONDS = 90
+
+
+def xmr_wait_until(swap_id: str, states: set[str], timeout: int, describe: str = "",
+                   funding_needed: bool = False) -> dict:
     """Polls both Nodes until the Taker's state is in `states`; both Nodes drive
-    the swap themselves meanwhile, the harness mines nothing."""
+    the swap themselves meanwhile, the harness mines nothing. With
+    `funding_needed`, a Maker whose funding stays in doubt fails the wait."""
     wait = Wait(f"the Taker's {swap_id[:12]} to reach {'/'.join(sorted(states))} {describe}".rstrip(), timeout)
+    in_doubt_since = None
     while wait.running():
         view = taker_view(swap_id)
         state = view["state"]
         reason = view.get("attention_reason") or view.get("last_failure_class")
-        wait.note((state, view.get("actor_phase"), reason),
+        maker = maker_phase(swap_id) if funding_needed else None
+        wait.note((state, view.get("actor_phase"), reason, maker),
                   lambda: f"taker {state} (actor {view.get('actor_phase') or '-'}, gen {view.get('progress_generation')}"
-                          f"{', ' + reason if reason else ''}) | maker {maker_phase(swap_id)}")
+                          f"{', ' + reason if reason else ''}) | maker {maker or maker_phase(swap_id)}")
         if state in states:
             return view
         if state in TERMINAL:
             raise Failure(f"swap {swap_id[:12]} ended in {state}{' (' + reason + ')' if reason else ''} "
                           f"while waiting for {sorted(states)} {describe}")
+        in_doubt_since = xmr_funding_in_doubt_since(swap_id, maker, in_doubt_since, f"reach {sorted(states)} {describe}")
         time.sleep(3)
     raise wait.failure()
+
+
+def xmr_funding_in_doubt_since(swap_id: str, maker: str | None, since: float | None, expected: str) -> float | None:
+    """When the Maker was first read maker_funding_in_doubt (None while it is
+    not); fails the scenario, which needs the funding, once that has lasted
+    XMR_FUNDING_IN_DOUBT_GRACE_SECONDS, instead of waiting out its windows."""
+    if maker != "maker_funding_in_doubt":
+        return None
+    since = since or time.time()
+    if time.time() - since >= XMR_FUNDING_IN_DOUBT_GRACE_SECONDS:
+        raise Failure(f"the Maker's Monero funding of {swap_id[:12]} has been in doubt for "
+                      f"{XMR_FUNDING_IN_DOUBT_GRACE_SECONDS} s: its funding tool failed after it may have sent "
+                      f"(the cause is in the Maker Node's log) and its observer has not found the funding, "
+                      f"so the swap cannot {expected}")
+    return since
 
 
 def xmr_before() -> dict:
@@ -5994,7 +6020,7 @@ def xmr_take(stamp: str, offer_id: str) -> tuple[str, dict]:
 def xmr_wait_funded(swap_id: str, windows: dict) -> dict:
     """The Taker's LEZ lock and the Maker's Monero funding at depth: the Taker's claim_available view."""
     return xmr_wait_until(swap_id, {"claim_available"}, timeout=windows["LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS"] + 120,
-                          describe="(Taker LEZ lock → Maker Monero funding at depth)")
+                          describe="(Taker LEZ lock → Maker Monero funding at depth)", funding_needed=True)
 
 
 def xmr_received_since(role: str, before: dict) -> list[dict]:
@@ -6373,9 +6399,13 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
     if reached is None:
         killed = kill()
     wait = Wait(f"the Taker's {swap_id[:12]} to complete (kill point {point})", windows["LEZ_XMR_PUNISH_SECONDS"] + 300)
+    in_doubt_since = None
     while wait.running():
         view, maker = taker_view(swap_id), maker_phase(swap_id)
         state = view["state"]
+        if not may_refund:
+            in_doubt_since = xmr_funding_in_doubt_since(swap_id, maker, in_doubt_since,
+                                                        f"complete after the kill at {point}")
         if killed is None and state not in TERMINAL:
             sent = point == "funding in flight" and maker == "taker_lock_confirmed" and xmr_maker_transfer_since(taken)
             held = False
