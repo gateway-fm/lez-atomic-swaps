@@ -240,7 +240,9 @@ write-ahead-log bound patches (`deploy/builder/patches/README.md`).
 
 - Monero beyond an offline regtest chain: no stagenet or mainnet; x86_64 (linux/amd64) only.
 - No systemd packaging, macOS package or desk recordings for Monero.
-- Compute units for the five Monero escrow instructions (tags 13–17) were not measured.
+- Compute units for the five Monero escrow instructions (tags 13–17) were not measured in this
+  run; they were measured afterwards against the deployed program, outside the stack, in
+  [docs/lez-compute-units.md](../../lez-compute-units.md#the-xmr-path-tags-1317).
 - On a real desk only the Monero happy journey is clicked through; the refund, punish and
   in-doubt rows were not seen on a desk.
 - Proven by unit tests only, not on the stack: the lost-nonce punish re-plan (no scenario makes

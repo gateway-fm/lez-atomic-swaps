@@ -114,7 +114,9 @@ which does not show that the races are gone.
 - On a real desk: only the Monero happy journey is clicked through; the refund, punish and
   in-doubt rows were not seen on a desk.
 - No systemd packaging, macOS package or desk recordings for Monero.
-- Compute units for the five Monero escrow instructions (tags 13–17) were not measured.
+- Compute units for the five Monero escrow instructions (tags 13–17) were not measured in this
+  run; they were measured afterwards against the deployed program, outside the stack, in
+  [docs/lez-compute-units.md](../../lez-compute-units.md#the-xmr-path-tags-1317).
 - The Maker's funding retry (a funding tool failing before its transfer) was not seen live.
   `maker_funding_in_doubt` was reached once, in `xmr-kill-maker` at "funding in flight", with
   the funding never sent; an in-doubt funding that did reach the chain was not seen.

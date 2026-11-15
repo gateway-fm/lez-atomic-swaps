@@ -86,6 +86,40 @@ cost more here, because their cost depends on the state they run against: the
 witnessed escrow's metadata holds an aggregate key and an authority account id
 where the preimage escrow holds a 32-byte digest.
 
+## The XMR path: tags 13–17
+
+The Monero pair (TakerSellsLez only) runs on the same deployed program, with
+its own instructions for every step except funding, which is the shared
+`FundNative`. Measured by the second test in `escrow_cycles.rs`, with the same
+executor, the same embedded ELF and the same deployed-program-id assertion:
+
+| Operation | Instruction (tag) | User cycles | Segments | Share of the 32M limit |
+|---|---|---:|---:|---:|
+| Initialise escrow | `InitializeNativeXmr` (13) | 515,358 | 1 | 1.54% |
+| Fund escrow | `FundNative` (2), on the XMR escrow | 473,022 | 1 | 1.41% |
+| Publish the claim partial | `AuthorizeNativeXmrClaim` (14) | 414,151 | 1 | 1.23% |
+| Claim | `ClaimNativeXmr` (15) | 536,362 | 1 | 1.60% |
+| Refund | `RefundNativeXmr` (16) | 536,837 | 1 | 1.60% |
+| Punish | `PunishNativeXmr` (17) | 488,403 | 1 | 1.46% |
+
+`FundNative` is the same instruction as in the BTC table but costs more here
+(473,022 against 378,913 cycles), for the reason given above: it reads and
+rewrites the escrow's metadata, and the XMR metadata (version 3) carries two
+aggregate keys and accounts, two DLEQ transcript commitments, the claim-partial
+binding and commitment and the punish time.
+
+Locking LEZ is initialise then fund (988,380 cycles). The happy path adds the
+Taker's `AuthorizeNativeXmrClaim` and the Maker's `ClaimNativeXmr`; the other
+endings are `RefundNativeXmr` (the Taker, from the refund time) and
+`PunishNativeXmr` (the Maker, from the punish time). Claim runs on the
+authorised state; refund and punish each run on the funded state, as the swap
+can submit them. The inputs are the ones the escrow's guest tests
+(`recursive_witnessed_claim.rs`) and the sidecar's native-XMR planners build:
+account orders, signers, a claim-partial commitment that matches the published
+partial, and distinct claim and refund MuSig2 aggregates whose two-party
+signatures authorise tags 15 and 16. Every input is a local state the test
+builds; none needs a chain.
+
 The program is named `zec_escrow_v02` for historical reasons — ZEC was the first
 pair implemented against it, and the BTC and XMR paths were added to the same
 program rather than to new ones.
@@ -100,7 +134,7 @@ program rather than to new ones.
 | LEZ | v0.2.4, commit `47eba256479f6f785acbd138834340703cd03401` |
 | spel | commit `7f13e71f91372a32e26b71d19dbbb60532711048` |
 | RISC Zero | 3.0.5 (`r0vm` 3.0.5, guest builder `r0.1.94.1@sha256:c2f63fdd…`) |
-| Measured on | rustc 1.96.0, Darwin arm64 |
+| Measured on | rustc 1.96.0, Darwin arm64 (BTC rows); rustc 1.96.0, Linux x86_64 (XMR rows, 2026-11-15; the BTC rows reproduced exactly in the same run) |
 
 The benchmark runs against the **same ELF that is deployed**, not a rebuild:
 `methods/build.rs` takes the binary through `LEZ_V02_PREBUILT_GUEST_ELF`, runs
@@ -144,9 +178,19 @@ matching how the state machine fills pre-states:
 | `FundNative` | 3 | depositor |
 | `ClaimNativeWitnessed` | 4 | the aggregate authority |
 | `RefundNative` | 3 | none — permissionless at the boundary |
+| `InitializeNativeXmr` | 6 | depositor (the Taker) |
+| `FundNative` (XMR escrow) | 3 | depositor |
+| `AuthorizeNativeXmrClaim` | 2 | depositor |
+| `ClaimNativeXmr` | 4 | the claim aggregate authority |
+| `RefundNativeXmr` | 4 | the refund aggregate authority |
+| `PunishNativeXmr` | 3 | claimant (the Maker) |
 
 The claim's aggregate signature is produced by a real two-party MuSig2 signing
-session over the claim message, as Maker and Taker do in a live swap.
+session over the claim message, as Maker and Taker do in a live swap; so are
+the XMR claim's and refund's, each under its own aggregate. Each measured
+instruction is then applied to the state with `transition_from_public_transaction`
+at a timestamp inside its window, so an input the program would reject fails
+the test instead of being measured.
 
 ## Why these are not read back from the testnet
 
