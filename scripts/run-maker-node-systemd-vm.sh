@@ -25,7 +25,14 @@
 # Zebra mines to. The VM then also reaches Zebra :18232 and mines on it, one block at a time,
 # only for a transaction in its mempool or for the Maker's funding depth, as node-e2e.py does.
 #
-# SIDECAR_PROGRAM names the LEZ sidecar from the builder image (provision/data/sidecar).
+# LEZ_SWAP_PAIR=monero gives the Maker unit a Monero role instead (the monero.conf drop-in,
+# lane 1's monerod and Maker wallet-rpc logins as credentials) and stops once the Maker reports
+# the Monero route healthy and has published a Monero offer, before and after a kill -9: no
+# Monero swap is executed. The VM then also reaches monerod :18081 and the Maker's wallet-rpc
+# :18083.
+#
+# SIDECAR_PROGRAM names the LEZ sidecar from the builder image (provision/data/sidecar), and
+# STAGE_A_PLANNER_PROGRAM the Monero Stage-A planner built beside it (by default next to it).
 # The transcript and the console log land in OUTPUT_DIR (default target/maker-systemd-vm).
 set -euo pipefail
 
@@ -36,6 +43,7 @@ readonly output_dir="${OUTPUT_DIR:-target/maker-systemd-vm}"
 readonly image_base="${UBUNTU_IMAGE_BASE:-https://cloud-images.ubuntu.com/releases/noble/release}"
 readonly image_name="ubuntu-24.04-server-cloudimg-amd64.img"
 readonly sidecar_program="${SIDECAR_PROGRAM:?SIDECAR_PROGRAM must name the LEZ sidecar (lez-v02-bridge-poc)}"
+readonly planner_program="${STAGE_A_PLANNER_PROGRAM:-$(dirname "$sidecar_program")/lez-v02-xmr-stage-a-plan}"
 readonly stack="${LEZ_STACK_DEPLOY_DIR:-}"
 readonly stack_network="${LEZ_STACK_NETWORK:-lez-swap-chains}"
 readonly lane_nodes=(lez-maker-node lez-taker-node)
@@ -52,12 +60,15 @@ command -v docker >/dev/null || {
 }
 
 if [[ -z "${SOURCE_BIN_DIR:-}" ]]; then
-  cargo build --locked -p lez-maker-node --features pair-zec --bins
+  cargo build --locked -p lez-maker-node --features pair-zec,pair-xmr --bins
   cargo build --locked -p lez-taker-node --features pair-zec --bins
   cargo build --locked -p zec-reference-actor --bin lez-zec-maker-actor --bin lez-zec-taker-actor
   cargo build --locked -p lez-logos-price-c-api --bin lez-logos-price-worker
   cargo build --locked -p btc-reference-actor --bins
   cargo build --locked -p lez-runtime-healthcheck
+  cargo build --locked -p xmr-reference-actor --bin xmr-reference-monero-fund --bin xmr-reference-tag15 \
+    --bin xmr-reference-tag15-finalized --bin xmr-reference-monero-refund --bin xmr-reference-monero-verify \
+    --bin xmr-reference-tag17
 fi
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/lez-maker-systemd-vm.XXXXXX")"
@@ -75,6 +86,8 @@ trap cleanup EXIT
 payload="$work/payload"
 install -d "$payload/scripts" "$payload/bin" "$payload/modules/lez-role-node"
 readonly binaries=(lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker lez-btc-maker-actor lez-runtime-healthcheck
+  lez-xmr-maker-actor xmr-reference-monero-fund xmr-reference-tag15 xmr-reference-tag15-finalized
+  xmr-reference-monero-refund xmr-reference-monero-verify xmr-reference-tag17
   lez-taker-node lez-taker-cli lez-btc-taker-actor lez-zec-taker-actor lez-taker-registry-init)
 cp scripts/install-maker-node-service.sh scripts/install-taker-node-service.sh "$payload/scripts/"
 cp -r packaging "$payload/"
@@ -83,9 +96,10 @@ for binary in "${binaries[@]}"; do
   cp "$source_bin_dir/$binary" "$payload/bin/"
 done
 cp "$sidecar_program" "$payload/bin/lez-v02-bridge-poc"
+cp "$planner_program" "$payload/bin/lez-v02-xmr-stage-a-plan"
 {
   echo "source commit: $(git rev-parse HEAD)"
-  (cd "$payload/bin" && sha256sum "${binaries[@]}" lez-v02-bridge-poc)
+  (cd "$payload/bin" && sha256sum "${binaries[@]}" lez-v02-bridge-poc lez-v02-xmr-stage-a-plan)
   sha256sum modules/lez-role-node/node-entrypoint.sh
 } >"$payload/build-info"
 
@@ -146,11 +160,17 @@ if [[ -n "$stack" ]]; then
   done
   cp "$stack/runtime/market-bootstrap.env" "$stack/runtime/secrets/btc-rpc-cookie" "$payload/stack/"
   echo "$swap_pair" >"$payload/stack/pair"
-  grep -E '^(LEZ_V02_CHANNEL_ID|LEZ_BTC_|LEZ_LEZ_DISCOVERY_MAX_BLOCKS|LEZ_MAKER_ACTOR_|LEZ_TAKER_OBSERVER_|LEZ_NODE_FINALITY_)' \
+  stack_containers=(lez-bitcoin-core lez-sequencer lez-network lez-zebra)
+  # The Maker's Monero logins (gen-config.sh, LEZ_MONERO=1): monerod's and its wallet-rpc's.
+  if [[ "$swap_pair" == monero ]]; then
+    cp "$stack/runtime/lez/maker/monerod.login" "$stack/runtime/lez/maker/monero-wallet-rpc.login" "$payload/stack/maker/"
+    stack_containers+=(lez-monerod lez-maker-xmr-wallet)
+  fi
+  grep -E '^(LEZ_V02_CHANNEL_ID|LEZ_BTC_|LEZ_LEZ_DISCOVERY_MAX_BLOCKS|LEZ_MAKER_ACTOR_|LEZ_TAKER_OBSERVER_|LEZ_NODE_FINALITY_|LEZ_XMR_)' \
     "$stack/runtime/runtime.env" >"$payload/stack/profile.env"
   {
     echo "stack: $(git -C "$stack" rev-parse HEAD)"
-    for container in lez-bitcoin-core lez-sequencer lez-network lez-zebra "${lane_nodes[@]}"; do
+    for container in "${stack_containers[@]}" "${lane_nodes[@]}"; do
       echo "$container image $(docker inspect -f '{{.Image}}' "$container")"
     done
   } >>"$payload/build-info"
@@ -360,7 +380,10 @@ run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-maker-node-service.
 run env SOURCE_BIN_DIR=/payload/bin /payload/scripts/install-taker-node-service.sh
 
 step "The chains on loopback: QEMU forwards 10.0.2.100 to the devnet, socat to 127.0.0.1"
-for port in 18443 3040 8779 18232; do
+ports=(18443 3040 8779 18232)
+# Monero: monerod and the Maker's wallet-rpc.
+[[ "$(cat /payload/stack/pair)" == monero ]] && ports+=(18081 18083)
+for port in "${ports[@]}"; do
   run systemd-run --quiet --unit="lez-chain-$port" -p Restart=always \
     socat "TCP-LISTEN:$port,bind=127.0.0.1,fork,reuseaddr" "TCP:10.0.2.100:$port"
 done
@@ -457,6 +480,68 @@ done
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-taker-cli swap monitor --swap-id $swap_id"
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli monitor --id $swap_id"
 run sh -c "runuser -u lez-swap -- /usr/bin/lez-maker-cli history"
+
+elif [[ "$(cat /payload/stack/pair)" == monero ]]; then
+step "The Maker's Node without a Monero role (the unit as installed)"
+node_args() { tr '\0' '\n' <"/proc/$(systemctl show -p MainPID --value lez-maker-node)/cmdline"; }
+printf '$ tr "\\0" "\\n" </proc/<MainPID>/cmdline >/root/node-args-without-monero\n'
+node_args >/root/node-args-without-monero
+run cat /root/node-args-without-monero
+run ls /var/lib/lez/maker
+
+step "Give the Maker its Monero role (docs/maker-systemd-install.md, \"Monero\")"
+# Its two logins as credentials and the drop-in that loads them; the windows came with the
+# profile above.
+for name in monerod.login monero-wallet-rpc.login; do
+  run systemd-creds encrypt --name="$name" "/payload/stack/maker/$name" "/etc/lez/maker/credentials/$name.cred"
+done
+run install -D -m 0644 /etc/lez/maker/monero.conf.example /etc/systemd/system/lez-maker-node.service.d/monero.conf
+run cat /etc/systemd/system/lez-maker-node.service.d/monero.conf
+run systemctl daemon-reload
+run systemctl restart lez-maker-node
+run systemctl show -p ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+
+step "The Maker's Monero role under the unit"
+printf '$ diff /root/node-args-without-monero <(tr "\\0" "\\n" </proc/<MainPID>/cmdline)\n'
+diff /root/node-args-without-monero <(node_args)
+run sh -c 'journalctl -u lez-maker-node --no-pager -o cat | grep -E "XMR|Monero|monero"'
+run stat -c '%n %F %U:%G %a' /var/lib/lez/maker/xmr-role.json /var/lib/lez/maker/monero-rpc \
+  /var/lib/lez/maker/monero-rpc/monerod.login /var/lib/lez/maker/monero-rpc/monero-wallet-rpc.login \
+  /var/lib/lez/maker/xmr-actors
+run jq . /var/lib/lez/maker/xmr-role.json
+run jq '.commands[] | select(.route.pair == "Monero")' /var/lib/lez/maker/route-health.json
+
+step "The Maker prices and advertises Monero, Taker sells LEZ (1 XMR for 50 000 LEZ)"
+route=(--pair monero --direction taker-sells-lez)
+bounds=(--minimum-foreign-units 1000000000000 --maximum-foreign-units 1000000000000 --offer-ttl-seconds 3600)
+retry maker configure-pair --request-id systemd-pair-1 "${route[@]}" --enabled false --price-source local "${bounds[@]}"
+retry maker set-local-price --request-id systemd-price-1 "${route[@]}" --lez-units-per-lot 1 --foreign-units-per-lot 20000000
+retry maker configure-pair --request-id systemd-pair-2 --expected-revision 1 "${route[@]}" --enabled true --price-source local "${bounds[@]}"
+retry maker quote "${route[@]}"
+retry maker health
+retry maker publish-offer --request-id systemd-offer-1 --offer-id systemd-offer-1 "${route[@]}"
+retry maker offers
+run find /var/lib/lez/maker/delivery -type f
+
+step "kill -9 of the Maker; systemd restarts it with its Monero role, and it publishes again"
+pid="$(systemctl show -p MainPID --value lez-maker-node)"
+[[ "$pid" -gt 0 ]] && run kill -9 "$pid"
+for _ in $(seq 60); do
+  [[ "$(systemctl show -p NRestarts --value lez-maker-node)" == 1 \
+    && "$(systemctl show -p ActiveState --value lez-maker-node)" == active ]] && break
+  sleep 1
+done
+run systemctl show -p ActiveState,SubState,MainPID,NRestarts,StatusText lez-maker-node
+retry maker health
+retry maker publish-offer --request-id systemd-offer-2 --offer-id systemd-offer-2 "${route[@]}"
+retry maker offers
+
+step "Monero logins on disk: the credentials, and the launcher's owner-private copies"
+run sh -c "find /etc/lez /var/lib/lez -name '*.login*' -printf '%m %u:%g %p\\n' | sort"
+
+step "Why a drop-in: a credential the unit names must exist, and an empty default fails the start"
+run systemd-run --quiet --wait --pipe -p LoadCredential=probe.login:/nonexistent/probe.login true
+run systemd-run --quiet --wait --pipe -p SetCredential=probe.login: -p LoadCredential=probe.login:/nonexistent/probe.login true
 
 else
 step "The Maker prices and advertises Zcash, Taker sells LEZ (1 ZEC for 50 000 LEZ)"
@@ -602,7 +687,9 @@ CLOUD
 nic=user,restrict=on
 docker_network=()
 if [[ -n "$stack" ]]; then
-  for forward in bitcoin-core:18443 sequencer:3040 indexer:8779 zebra:18232; do
+  forwards=(bitcoin-core:18443 sequencer:3040 indexer:8779 zebra:18232)
+  [[ "$swap_pair" == monero ]] && forwards+=(monerod:18081 maker-xmr-wallet:18083)
+  for forward in "${forwards[@]}"; do
     nic+=",guestfwd=tcp:10.0.2.100:${forward#*:}-cmd:socat - TCP:$forward"
   done
   docker_network=(--network "$stack_network")
