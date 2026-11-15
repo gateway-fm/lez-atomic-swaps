@@ -31,6 +31,41 @@ fund — so locking costs the sum of the first two rows (747,831 cycles). Claim
 and refund are the two mutually exclusive endings, each measured on the same
 funded state.
 
+## The ZEC path: tags 0, 2, 3 and 5
+
+The ZEC↔LEZ pair locks LEZ under a SHA-256 hash/time lock on the same deployed
+program, with the same four instructions in both directions: the role selling
+LEZ initialises (`InitializeNative`) and funds (`FundNative`), the LEZ buyer
+claims by revealing the preimage (`ClaimNative`), and `RefundNative` is the
+other ending. The sidecar builds exactly these in `prepare_native_escrow`,
+`prepare_revealing_claim` and `prepare_native_refund`. Measured by a second test
+in `escrow_cycles.rs`, with the same executor, the same embedded ELF and the
+same deployed-program-id assertion, on rustc 1.96.0, Linux x86_64 (2026-11-15;
+the BTC rows above reproduced exactly in the same run):
+
+| Operation | Instruction (tag) | User cycles | Segments | Share of the 32M limit |
+|---|---|---:|---:|---:|
+| Initialise escrow | `InitializeNative` (0) | 315,903 | 1 | 0.94% |
+| Fund escrow | `FundNative` (2), on the preimage escrow | 363,909 | 1 | 1.08% |
+| Claim | `ClaimNative` (3) | 397,746 | 1 | 1.19% |
+| Refund | `RefundNative` (5), on the preimage escrow | 378,119 | 1 | 1.13% |
+
+Locking costs 679,812 cycles. `FundNative` and `RefundNative` are the
+instructions the BTC table lists too, measured again here because their cost
+depends on the metadata they rewrite (see below).
+
+| Operation | Accounts | Signer |
+|---|---:|---|
+| `InitializeNative` | 4 | depositor |
+| `FundNative` | 3 | depositor |
+| `ClaimNative` | 3 | claimant, revealing the preimage |
+| `RefundNative` | 3 | none — permissionless at the boundary |
+
+The inputs are the ones the escrow's guest test `recursive_atomicity.rs` and the
+sidecar's planners build. Each measured instruction is also applied to the state
+with `transition_from_public_transaction` at a timestamp inside its window, so an
+input the program would reject fails the test instead of being measured.
+
 ## Why these instruction variants
 
 One escrow program serves every pair, and its `ClaimAuthority` has three arms:

@@ -59,7 +59,7 @@ requires a corresponding test—not merely a row—for every F, U, R, and P item
 
 | ID | Contract | Acceptance evidence | Status / milestone |
 |---|---|---|---|
-| P1 | Compute units documented for initialise, claim, and refund against a named LEZ testnet version | Executor cycles for the BTC pair's `InitializeNativeWitnessed`/`FundNative`/`ClaimNativeWitnessed`/`RefundNative` measured against the deployed v0.2.4 escrow (ImageID `c22d61fc…`) in `escrow_cycles.rs`, which fails if the binary drifts; recorded in [docs/lez-compute-units.md](lez-compute-units.md) | Done for the BTC pair; XMR/ZEC variants M4 |
+| P1 | Compute units documented for initialise, claim, and refund against a named LEZ testnet version | Executor cycles for the BTC pair's `InitializeNativeWitnessed`/`FundNative`/`ClaimNativeWitnessed`/`RefundNative` and for the ZEC pair's `InitializeNative`/`FundNative`/`ClaimNative`/`RefundNative` (tags 0, 2, 3, 5) measured against the deployed v0.2.4 escrow (ImageID `c22d61fc…`) in `escrow_cycles.rs`, which fails if the binary drifts; recorded in [docs/lez-compute-units.md](lez-compute-units.md) | Done for the BTC and ZEC pairs; XMR instructions are M4 |
 
 ## Supportability
 
