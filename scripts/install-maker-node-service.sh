@@ -13,8 +13,12 @@ readonly launcher="modules/lez-role-node/node-entrypoint.sh"
 # The LEZ sidecar links Python and is built in the builder image
 # (deploy/scripts/from-scratch.sh --only build -> provision/data/sidecar).
 readonly sidecar="${SIDECAR_PROGRAM:-$source_bin_dir/lez-v02-bridge-poc}"
+# The Monero Stage-A planner is built beside it (from-scratch.sh --only build:sidecar).
+readonly planner="${STAGE_A_PLANNER_PROGRAM:-$(dirname "$sidecar")/lez-v02-xmr-stage-a-plan}"
+readonly monero_dropin="packaging/systemd/lez-maker-node-monero.conf"
 readonly binaries=(lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker lez-btc-maker-actor
-  lez-runtime-healthcheck)
+  lez-runtime-healthcheck lez-xmr-maker-actor xmr-reference-monero-fund xmr-reference-tag15
+  xmr-reference-tag15-finalized xmr-reference-monero-refund xmr-reference-monero-verify xmr-reference-tag17)
 
 if [[ -n "$destination_root" && "$destination_root" != /* ]]; then
   echo "DESTDIR must be empty or an absolute staging root" >&2
@@ -25,7 +29,7 @@ if [[ ! -d "$source_bin_dir" ]]; then
   exit 1
 fi
 
-for source_path in "${binaries[@]/#/$source_bin_dir/}" "$sidecar" "$launcher"; do
+for source_path in "${binaries[@]/#/$source_bin_dir/}" "$sidecar" "$planner" "$launcher"; do
   if [[ ! -f "$source_path" || ! -x "$source_path" || -L "$source_path" ]]; then
     echo "required built executable is missing, non-executable, or a symlink: $source_path" >&2
     exit 1
@@ -41,6 +45,7 @@ for binary in "${binaries[@]}"; do
     "$destination_root/usr/bin/$binary"
 done
 install -D -m 0755 "$sidecar" "$destination_root/usr/bin/lez-v02-bridge-poc"
+install -D -m 0755 "$planner" "$destination_root/usr/bin/lez-v02-xmr-stage-a-plan"
 install -D -m 0755 "$launcher" "$destination_root/usr/bin/lez-role-node-launcher"
 install -D -m 0644 "$unit_source" \
   "$destination_root/usr/lib/systemd/system/lez-maker-node.service"
@@ -48,6 +53,8 @@ install -D -m 0600 "$config_example" \
   "$destination_root/etc/lez/maker/node.json.example"
 install -D -m 0600 packaging/systemd/lez-maker-node.env.example \
   "$destination_root/etc/lez/maker/env.example"
+# A Monero role is optional: this drop-in, copied into lez-maker-node.service.d/, loads its logins.
+install -D -m 0644 "$monero_dropin" "$destination_root/etc/lez/maker/monero.conf.example"
 # Chain outages are only reported when a route-health configuration names a probe per route;
 # packaging/systemd/README.md says how to fill these in and why leaving a route out fails closed.
 install -D -m 0600 "$route_health_example" \

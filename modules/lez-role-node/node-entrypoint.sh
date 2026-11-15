@@ -195,8 +195,10 @@ if [[ "$chain_forwards" == 1 ]]; then
 fi
 # Monero, only where the role has the RPC logins beside its identity
 # (gen-config.sh, LEZ_MONERO=1): monerod and the role's own wallet-rpc, which
-# the Monero adapter likewise reaches on literal loopback only.
-monero_logins="$identity_src/$monero_logins_in_identity"
+# the Monero adapter likewise reaches on literal loopback only. A systemd
+# deployment names the directory of its two login credentials instead
+# (LEZ_MONERO_LOGIN_DIR); empty credentials leave Monero off.
+monero_logins="${LEZ_MONERO_LOGIN_DIR:-$identity_src/$monero_logins_in_identity}"
 monero_ready=0
 [[ -s "$monero_logins/monerod.login" && -s "$monero_logins/monero-wallet-rpc.login" ]] && monero_ready=1
 if [[ "$chain_forwards" == 1 && "$monero_ready" == 1 ]]; then
