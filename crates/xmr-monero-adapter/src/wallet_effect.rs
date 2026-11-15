@@ -4,7 +4,8 @@
 //! observes protocol eligibility nor authorizes release: callers must first
 //! satisfy the Stage-B, finalized-LEZ, and adaptor-extraction gates. Each method
 //! makes one wallet submission and then mines the agreement's fixed confirmation
-//! count on a project-owned Regtest daemon. There is no automatic retry.
+//! count on a project-owned Regtest daemon. No submission is retried; only
+//! the mining call is, a bounded number of times.
 //!
 //! A Node runs one wallet-rpc per role and switches its open wallet between
 //! the role wallet and per-swap shared wallets. An effect built with
@@ -36,6 +37,11 @@ use super::{
 const WALLET_ACCOUNT_INDEX: u32 = 0;
 const MAX_WALLET_FILENAME_BYTES: usize = 96;
 const MAX_SWEEP_TRANSACTIONS: usize = 16;
+/// Goes at `generateblocks`: one call can fail in the client although the
+/// daemon is healthy (2026-11-15, a non-JSON body decoded as the answer), and
+/// on Regtest nothing else mines. Blocks a failed call did mine are harmless:
+/// confirmation checks ask for at least the fixed count.
+const MINING_ATTEMPTS: u32 = 3;
 
 /// A submitted exact funding transfer followed by local Regtest confirmations.
 #[derive(Debug, Eq, PartialEq)]
@@ -657,18 +663,26 @@ impl MoneroRegtestWalletEffects {
     ///
     /// # Errors
     ///
-    /// Fails before mining for a non-standard address, and fails closed on a
-    /// typed daemon failure or a block count other than the fixed one.
+    /// Fails before mining for a non-standard address, and fails closed when
+    /// each of [`MINING_ATTEMPTS`] typed daemon calls fails or the one that
+    /// succeeds reports a block count other than the fixed one.
     pub async fn mine_confirmations(
         &self,
         mining_address: Address,
     ) -> Result<u64, MoneroWalletEffectError> {
         validate_standard_address(&mining_address)?;
-        let generated = self
-            .daemon
-            .generate_blocks(REQUIRED_MONERO_CONFIRMATIONS, mining_address)
-            .await
-            .map_err(rpc_error("generate confirmation blocks"))?;
+        let mut attempt = 1;
+        let generated = loop {
+            match self
+                .daemon
+                .generate_blocks(REQUIRED_MONERO_CONFIRMATIONS, mining_address)
+                .await
+            {
+                Ok(generated) => break generated,
+                Err(_) if attempt < MINING_ATTEMPTS => attempt += 1,
+                Err(error) => return Err(rpc_error("generate confirmation blocks")(error)),
+            }
+        };
         let block_count = generated.blocks.as_ref().map_or(0, Vec::len);
         if block_count != usize::try_from(REQUIRED_MONERO_CONFIRMATIONS).unwrap_or(usize::MAX) {
             return Err(MoneroWalletEffectError::ConfirmationBlockCountMismatch);
@@ -987,6 +1001,36 @@ mod tests {
             slow_method: &'static str,
             delay: std::time::Duration,
         ) -> Self {
+            Self::spawn_with(answer, slow_method, delay, "", 0).await
+        }
+
+        /// As [`Self::spawn`], answering the first `failures` requests of
+        /// `failing_method` with monero's HTML 401 page: what the answering
+        /// leg of a Digest call sent on another connection than its challenge
+        /// gets, and the client decodes as the JSON answer. (Sent without a
+        /// challenge, so the client takes the first leg's answer as final.)
+        async fn spawn_failing(
+            answer: fn(&str) -> serde_json::Value,
+            failing_method: &'static str,
+            failures: usize,
+        ) -> Self {
+            Self::spawn_with(
+                answer,
+                "",
+                std::time::Duration::ZERO,
+                failing_method,
+                failures,
+            )
+            .await
+        }
+
+        async fn spawn_with(
+            answer: fn(&str) -> serde_json::Value,
+            slow_method: &'static str,
+            delay: std::time::Duration,
+            failing_method: &'static str,
+            mut failures: usize,
+        ) -> Self {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1029,6 +1073,17 @@ mod tests {
                     recorded.lock().expect("requests").push(request);
                     if method == slow_method {
                         tokio::time::sleep(delay).await;
+                    }
+                    if method == failing_method && failures > 0 {
+                        failures -= 1;
+                        let page = "<html><head><title>Unauthorized Access</title></head><body><h1>401 Unauthorized</h1></body></html>";
+                        let reply = format!(
+                            "HTTP/1.1 401 Unauthorized\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+                            page.len()
+                        );
+                        let _ = stream.write_all(reply.as_bytes()).await;
+                        let _ = stream.shutdown().await;
+                        continue;
                     }
                     let mut response = answer(&method);
                     response["jsonrpc"] = "2.0".into();
@@ -1295,6 +1350,40 @@ mod tests {
                 .await,
             Err(MoneroWalletEffectError::ConfirmationBlockCountMismatch)
         );
+    }
+
+    #[tokio::test]
+    async fn a_failed_mining_call_is_made_again_a_bounded_number_of_times() {
+        let wallet = FakeRpc::spawn(wallet_answer).await;
+        let mine = async |daemon: &FakeRpc| {
+            effects(daemon, &wallet)
+                .mine_confirmations(address(AddressType::Standard))
+                .await
+        };
+
+        let flaky = FakeRpc::spawn_failing(daemon_answer, "generateblocks", 2).await;
+        assert_eq!(mine(&flaky).await, Ok(120));
+        assert_eq!(flaky.methods(), ["generateblocks"; 3]);
+
+        let down = FakeRpc::spawn_failing(daemon_answer, "generateblocks", 3).await;
+        let Err(MoneroWalletEffectError::Rpc { operation, cause }) = mine(&down).await else {
+            panic!("three failed mining calls fail the effect");
+        };
+        assert_eq!(operation, "generate confirmation blocks");
+        // The 2026-11-15 failure, word for word.
+        assert!(
+            cause.contains("expected value at line 1 column 1"),
+            "{cause}"
+        );
+        assert_eq!(down.methods().len(), 3);
+
+        // The block count is checked on the call that succeeded.
+        let short = FakeRpc::spawn_failing(daemon_short_of_blocks, "generateblocks", 1).await;
+        assert_eq!(
+            mine(&short).await,
+            Err(MoneroWalletEffectError::ConfirmationBlockCountMismatch)
+        );
+        assert_eq!(short.methods().len(), 2);
     }
 
     #[test]
