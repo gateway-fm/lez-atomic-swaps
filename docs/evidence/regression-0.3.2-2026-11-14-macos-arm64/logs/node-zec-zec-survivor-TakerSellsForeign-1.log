@@ -1,0 +1,30 @@
+[20:52:17] === zec-survivor (stamp 179468593703)
+[20:52:17] preflight: indexer historical reads
+[20:52:17]   indexer serves historical reads at the tip (3046)
+[20:52:17] preflight: LEZ finality check waived by request
+[20:52:17]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[20:52:39]       taker: taker ZEC corridor zec-devnet-179468593703: sidecar listening on 127.0.0.1:19902
+[20:52:39]       taker: taker: 1 prepared ZEC entries configured
+[20:52:39]     [zec-provision 19:52:39]   maker sidecar answers on 127.0.0.1:19901
+[20:52:39]     [zec-provision 19:52:39]   taker sidecar answers on 127.0.0.1:19902
+[20:52:39]       maker_health: ready=True degraded=False
+[20:52:39]     [zec-provision 19:52:39]   Taker lists zec-devnet-offer-179468593703 ; corridor zec-devnet-179468593703 is live
+[20:52:39]   corridor zec-devnet-179468593703 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179468593703, zebra tip 381, Zcash refund height 390
+[20:52:39]   Taker took zec-devnet-offer-179468593703: swap zec-devnet-s (not_activated)
+[20:52:39]   receipt: swap zec-devnet-swap-179468593703, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179468593703/actor/taker/actor-config.json
+[20:52:39]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker not_activated (gen 0) | actor at - | maker leased | zebra 381 | LEZ finalized 3054, tip 3063 (9 unfinalized) [heartbeat]
+[20:52:43]   [3 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 381 | LEZ finalized 3054, tip 3063 (9 unfinalized) [heartbeat]
+[20:52:46]   zebra: mined 1 block(s) → height 382 (mempool had ['c105070412ab'])
+[20:52:52]   [13 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 382 | LEZ finalized 3054, tip 3063 (9 unfinalized) [heartbeat]
+[20:52:52]   zebra: mined 1 block(s) → height 383 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[20:53:13]   [33 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at taker_lock_confirmed | maker both_legs_locked | zebra 383 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:13]   stopping the Taker Node right after its LEZ claim
+[20:53:14]   [0 s] waiting for the Maker to complete without the Taker: maker both_legs_locked | zebra mempool 0 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:34]   [20 s] waiting for the Maker to complete without the Taker: maker claim_evidence_available | zebra mempool 1 | LEZ finalized 3090, tip 3095 (5 unfinalized) [heartbeat]
+[20:53:34]   zebra: mined 1 block(s) → height 384 (mempool had ['2f93e6aa0333'])
+[20:54:00]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Taker back): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker completed | zebra 384 | LEZ finalized 3121, tip 3128 (7 unfinalized) [heartbeat]
+[20:54:04]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (Taker back): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker completed | zebra 384 | LEZ finalized 3121, tip 3128 (7 unfinalized) [heartbeat]
+[20:54:07]   [6 s] waiting for the Taker's zec-devnet-s to reach completed (Taker back): taker completed (gen 4) | actor at completed | maker completed | zebra 384 | LEZ finalized 3121, tip 3128 (7 unfinalized) [heartbeat]
+[20:54:07]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3121, tip 3128 (7 unfinalized) [heartbeat]
+[20:54:07]   both Nodes report zec-devnet-s completed
+[20:54:07] === zec-survivor: passed in 111s

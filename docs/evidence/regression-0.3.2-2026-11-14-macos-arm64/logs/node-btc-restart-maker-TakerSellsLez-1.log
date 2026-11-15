@@ -1,0 +1,15 @@
+[20:47:28] === restart-maker (stamp 179468564803)
+[20:47:28] preflight: indexer historical reads
+[20:47:28]   indexer serves historical reads at the tip (2838)
+[20:47:28] preflight: LEZ finality check waived by request
+[20:47:29]   Maker published offer-e2e-179468564803
+[20:47:30]   Taker took offer-e2e-179468564803: swap 7d0f8db098b0 (not_activated)
+[20:47:30]   Taker locked lez: 715e6b6c13b7 (replay=False)
+[20:47:30]   restarting lez-l3-maker-node
+[20:47:43]   [0 s] waiting for the Taker's 7d0f8db098b0 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 2841, tip 2844 (3 unfinalized) [heartbeat]
+[20:47:59]   [15 s] waiting for the Taker's 7d0f8db098b0 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 2855, tip 2860 (5 unfinalized) [heartbeat]
+[20:47:59]   Taker claimed Bitcoin (replay=False)
+[20:47:59]   [0 s] waiting for the Taker's 7d0f8db098b0 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 2855, tip 2860 (5 unfinalized) [heartbeat]
+[20:48:32]   [32 s] waiting for the Taker's 7d0f8db098b0 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2869, tip 2876 (7 unfinalized) [heartbeat]
+[20:48:32]   both Nodes report 7d0f8db098b0 completed
+[20:48:32] === restart-maker: passed in 64s
