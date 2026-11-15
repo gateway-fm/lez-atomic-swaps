@@ -85,10 +85,16 @@ trap cleanup EXIT
 # files and the three binaries. It reaches the VM as a raw read-only disk holding a tar.
 payload="$work/payload"
 install -d "$payload/scripts" "$payload/bin" "$payload/modules/lez-role-node"
-readonly binaries=(lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker lez-btc-maker-actor lez-runtime-healthcheck
-  lez-xmr-maker-actor xmr-reference-monero-fund xmr-reference-tag15 xmr-reference-tag15-finalized
-  xmr-reference-monero-refund xmr-reference-monero-verify xmr-reference-tag17
+binaries=(lez-maker-node lez-maker-cli lez-zec-maker-actor lez-logos-price-worker lez-btc-maker-actor lez-runtime-healthcheck
   lez-taker-node lez-taker-cli lez-btc-taker-actor lez-zec-taker-actor lez-taker-registry-init)
+builder_programs=(lez-v02-bridge-poc)
+# The Maker's Monero role, only for the Monero run (the installer takes it when it is there).
+if [[ "$swap_pair" == monero ]]; then
+  binaries+=(lez-xmr-maker-actor xmr-reference-monero-fund xmr-reference-tag15 xmr-reference-tag15-finalized
+    xmr-reference-monero-refund xmr-reference-monero-verify xmr-reference-tag17)
+  builder_programs+=(lez-v02-xmr-stage-a-plan)
+fi
+readonly binaries builder_programs
 cp scripts/install-maker-node-service.sh scripts/install-taker-node-service.sh "$payload/scripts/"
 cp -r packaging "$payload/"
 cp modules/lez-role-node/node-entrypoint.sh "$payload/modules/lez-role-node/"
@@ -96,10 +102,10 @@ for binary in "${binaries[@]}"; do
   cp "$source_bin_dir/$binary" "$payload/bin/"
 done
 cp "$sidecar_program" "$payload/bin/lez-v02-bridge-poc"
-cp "$planner_program" "$payload/bin/lez-v02-xmr-stage-a-plan"
+[[ "$swap_pair" != monero ]] || cp "$planner_program" "$payload/bin/lez-v02-xmr-stage-a-plan"
 {
   echo "source commit: $(git rev-parse HEAD)"
-  (cd "$payload/bin" && sha256sum "${binaries[@]}" lez-v02-bridge-poc lez-v02-xmr-stage-a-plan)
+  (cd "$payload/bin" && sha256sum "${binaries[@]}" "${builder_programs[@]}")
   sha256sum modules/lez-role-node/node-entrypoint.sh
 } >"$payload/build-info"
 

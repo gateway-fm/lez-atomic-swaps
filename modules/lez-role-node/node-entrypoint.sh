@@ -502,6 +502,16 @@ if [[ "$monero_ready" == 1 ]]; then
       monero_refund:"\($bin)/xmr-reference-monero-refund", monero_verify:"\($bin)/xmr-reference-monero-verify",
       lez_punish:"\($bin)/xmr-reference-tag17"}')"
   fi
+  # A package without the Monero programs (a build without pair-xmr) cannot take the role.
+  xmr_missing=()
+  for xmr_program in "$bin/lez-v02-xmr-stage-a-plan" $(jq -r '.[]' <<<"$xmr_tools") \
+      $([[ "$role" != maker ]] || echo "$bin/lez-xmr-maker-actor"); do
+    [[ -x "$xmr_program" ]] || xmr_missing+=("${xmr_program##*/}")
+  done
+  if (( ${#xmr_missing[@]} > 0 )); then
+    echo "$role: the Monero role needs ${xmr_missing[*]} in $bin: install the $role from a build with pair-xmr and the Monero Stage-A planner, or remove its Monero logins" >&2
+    exit 1
+  fi
   jq -n --arg role "$role" --arg monerod_login "$monero_state/monerod.login" \
     --arg wallet_login "$monero_state/monero-wallet-rpc.login" --arg planner "$bin/lez-v02-xmr-stage-a-plan" \
     --argjson cutoff "${LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS:?the Monero role needs LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS}" \
