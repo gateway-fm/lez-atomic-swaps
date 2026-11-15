@@ -33,6 +33,7 @@ use nssa::{
 use nssa_core::account::AccountWithMetadata;
 use risc0_zkvm::{ExecutorEnv, default_executor};
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use spel_framework_core::pda::{compute_pda, seed_from_str};
 
 /// The program id the escrow was deployed under on LEZ testnet 0.2, as the
@@ -203,6 +204,147 @@ fn cycles<T: Serialize>(
     (info.cycles(), info.segments.len())
 }
 
+/// The ZEC pair's SHA-256 hash/time lock on the same deployed program, in
+/// either direction: the role that sells LEZ locks it with `InitializeNative`
+/// and `FundNative`, the LEZ buyer claims with `ClaimNative` by revealing the
+/// preimage, and `RefundNative` is the other ending.
+/// Inputs and account orders are the ones `recursive_atomicity.rs` and the
+/// sidecar's `prepare_native_escrow`, `prepare_revealing_claim` and
+/// `prepare_native_refund` build.
+#[test]
+fn zec_escrow_operations_report_executor_cycles_for_the_deployed_program() {
+    const PREIMAGE: [u8; 32] = [12; 32];
+
+    let escrow = Program::new(ZEC_ESCROW_V02_ELF.into()).expect("canonical guest ELF");
+    assert_eq!(escrow.id(), ZEC_ESCROW_V02_ID);
+    assert_eq!(
+        ZEC_ESCROW_V02_ID, DEPLOYED_PROGRAM_ID_WORDS,
+        "these cycles must describe the program deployed on testnet"
+    );
+
+    let authenticated_transfer = programs::authenticated_transfer();
+    let authenticated_transfer_id = authenticated_transfer.id();
+    let (depositor, depositor_key) = actor([1; 32]);
+    let (claimant, claimant_key) = actor([2; 32]);
+    let mut state = V03State::new()
+        .with_public_accounts([
+            (
+                depositor,
+                Account {
+                    program_owner: authenticated_transfer_id,
+                    balance: 200,
+                    ..Account::default()
+                },
+            ),
+            (
+                claimant,
+                Account {
+                    program_owner: authenticated_transfer_id,
+                    balance: 10,
+                    ..Account::default()
+                },
+            ),
+        ])
+        .with_programs([escrow, authenticated_transfer]);
+    let (metadata_id, custody) = escrow_ids();
+
+    // Initialise (0): four accounts, the depositor signs.
+    let initialize = EscrowInstruction::InitializeNative {
+        swap_id: SWAP_ID,
+        terms_hash: [31; 32],
+        secret_digest: Sha256::digest(PREIMAGE).into(),
+        amount: AMOUNT,
+        refund_at: REFUND_AT,
+        authenticated_transfer_program: authenticated_transfer_id,
+    };
+    let initialize_accounts = vec![metadata_id, custody, depositor, claimant];
+    let (initialize_cycles, initialize_segments) =
+        cycles(&state, &initialize_accounts, &[depositor], &initialize);
+    state
+        .transition_from_public_transaction(
+            &transaction(
+                &state,
+                initialize_accounts,
+                &[(depositor, &depositor_key)],
+                initialize,
+            ),
+            1,
+            100,
+        )
+        .expect("preimage escrow initializes recursively");
+    assert_eq!(
+        metadata(&state, metadata_id).claim_authority,
+        ClaimAuthority::Sha256Preimage {
+            secret_digest: Sha256::digest(PREIMAGE).into(),
+        }
+    );
+
+    // Fund (2, shared with the other pairs): three accounts, the depositor signs.
+    let fund = EscrowInstruction::FundNative { swap_id: SWAP_ID };
+    let fund_accounts = vec![metadata_id, custody, depositor];
+    let (fund_cycles, fund_segments) = cycles(&state, &fund_accounts, &[depositor], &fund);
+    state
+        .transition_from_public_transaction(
+            &transaction(&state, fund_accounts, &[(depositor, &depositor_key)], fund),
+            2,
+            101,
+        )
+        .expect("preimage escrow funds recursively");
+    assert_eq!(metadata(&state, metadata_id).status, EscrowStatus::Funded);
+
+    // Claim (3) and refund (5) are alternative endings, each on the funded state.
+    let claim = EscrowInstruction::ClaimNative {
+        swap_id: SWAP_ID,
+        preimage: PREIMAGE,
+    };
+    let claim_accounts = vec![metadata_id, custody, claimant];
+    let (claim_cycles, claim_segments) = cycles(&state, &claim_accounts, &[claimant], &claim);
+    let mut claim_state = state.clone();
+    claim_state
+        .transition_from_public_transaction(
+            &transaction(
+                &claim_state,
+                claim_accounts,
+                &[(claimant, &claimant_key)],
+                claim,
+            ),
+            3,
+            REFUND_AT - 1,
+        )
+        .expect("the revealed preimage claims recursively");
+    assert_eq!(
+        metadata(&claim_state, metadata_id).status,
+        EscrowStatus::Claimed
+    );
+
+    // Permissionless at the boundary: no signer authorises it.
+    let refund = EscrowInstruction::RefundNative { swap_id: SWAP_ID };
+    let refund_accounts = vec![metadata_id, custody, depositor];
+    let (refund_cycles, refund_segments) = cycles(&state, &refund_accounts, &[], &refund);
+    let mut refund_state = state.clone();
+    refund_state
+        .transition_from_public_transaction(
+            &transaction(&refund_state, refund_accounts, &[], refund),
+            3,
+            REFUND_AT,
+        )
+        .expect("fixed-destination refund is permissionless at the boundary");
+    assert_eq!(
+        metadata(&refund_state, metadata_id).status,
+        EscrowStatus::Refunded
+    );
+
+    report(
+        "ZEC escrow",
+        &[
+            ("InitializeNative", initialize_cycles, initialize_segments),
+            ("FundNative", fund_cycles, fund_segments),
+            ("ClaimNative", claim_cycles, claim_segments),
+            ("RefundNative", refund_cycles, refund_segments),
+        ],
+    );
+}
+
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -338,21 +480,28 @@ fn escrow_operations_report_executor_cycles_for_the_deployed_program() {
         EscrowStatus::Refunded
     );
 
-    println!("\nescrow executor cycles (ImageID {DEPLOYED_IMAGE_ID})");
+    report(
+        "escrow",
+        &[
+            (
+                "InitializeNativeWitnessed",
+                initialize_cycles,
+                initialize_segments,
+            ),
+            ("FundNative", fund_cycles, fund_segments),
+            ("ClaimNativeWitnessed", claim_cycles, claim_segments),
+            ("RefundNative", refund_cycles, refund_segments),
+        ],
+    );
+}
+
+fn report(title: &str, rows: &[(&str, u64, usize)]) {
+    println!("\n{title} executor cycles (ImageID {DEPLOYED_IMAGE_ID})");
     println!(
         "{:<26} {:>12} {:>10}",
         "operation", "user cycles", "segments"
     );
-    for (name, count, segments) in [
-        (
-            "InitializeNativeWitnessed",
-            initialize_cycles,
-            initialize_segments,
-        ),
-        ("FundNative", fund_cycles, fund_segments),
-        ("ClaimNativeWitnessed", claim_cycles, claim_segments),
-        ("RefundNative", refund_cycles, refund_segments),
-    ] {
+    for &(name, count, segments) in rows {
         let share = count as f64 * 100.0 / MAX_NUM_CYCLES_PUBLIC_EXECUTION as f64;
         println!("{name:<26} {count:>12} {segments:>10}   {share:.2}% of the limit");
         assert!(
