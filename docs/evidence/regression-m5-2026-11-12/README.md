@@ -80,6 +80,34 @@ run's chain was made, 21 GB after the last test).
 Both are rare races in code older than this branch, and neither fix is in this commit. This run
 passing does not show that they are gone.
 
+## After this run
+
+Two commits on this branch came after this run and its note (`88d00005`). Both defects were found
+by a full regression of the Monero branch (`feat/m4-monero`) stacked on this one, run
+`20261115T033448Z` at `7068b323`, 154 of 157 (diagnosed from its per-test and Node logs, which
+are not committed):
+
+- `f766c9d0` `test(e2e): a Zcash swap's LEZ settlement is read once LEZ is final through the tip`.
+  A harness defect: `zec-kill-maker:TakerSellsLez` read the LEZ balances from the indexer, which
+  serves finalized state, right after both Nodes said completed, which on the devnet they say on
+  inclusion; it read "{'maker': 0, 'taker': -50000}" although the Maker's claim had landed one
+  block later. The check now waits until LEZ is final through the sequencer's tip.
+- `a6d24501` `fix(zec-actor): a bound database is checked by its inode, not its size and times`.
+  The Zcash actor bound the role state database and the bridge journal by size and times, which
+  a legitimate writer changes between two `lstat`s: the Zcash swap of `mixed-three-pair` (a
+  Monero, a Bitcoin and a Zcash swap at once) read `actor_deployment_invalid`, and
+  `zec-offline-after-lock:TakerSellsForeign` read `attention_required` once. It compares device
+  and inode now; the Bitcoin actor is untouched.
+
+What has run on them: the unit tests, clippy and fmt of `zec-reference-actor` and
+`lez-taker-node`. There is NOT a full run on this branch's head alone. The Monero branch contains
+this head, and on it the 143 Bitcoin and Zcash tests passed in two full runs, each after the
+smoke tier passed 6 of 6 on the same images: `20261115T091025Z` at `48105e1d` (156 of 157; the
+one failure was a Monero test) and `20261115T161735Z` at `305b32e0` (157 of 157). Those images
+were built from the Monero branch, which also changes both Nodes, so they are not images of this
+head. The second run's results, with the first run's totals, are committed on the Monero branch
+(`docs/evidence/regression-m4-2026-11-15/`), not here.
+
 ## Not covered
 
 - Two hosts: the Logos-transport tests (`logos-happy`, Bitcoin and Zcash) run both Basecamps on
