@@ -219,6 +219,12 @@ case "${LEZ_IMAGES:-build}" in
     else
       echo "  all images present (use --build to rebuild)"
     fi
+    # Monero's image is outside the default profile: built here, once it is staged.
+    if (( ${#monero_services[@]} )) &&
+       { [[ "$BUILD" == 1 ]] || ! docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1; }; then
+      [[ -x images/monerod/bin/monerod ]] || { echo "Monero is not staged: LEZ_MONERO=1 scripts/stage-assets.sh" >&2; exit 1; }
+      docker compose --profile monero build monerod
+    fi
     ;;
   pull)
     echo "  pulling ${LEZ_IMAGE_PREFIX:-lez}-*:${LEZ_IMAGE_TAG:-local}…"
@@ -233,12 +239,6 @@ case "${LEZ_IMAGES:-build}" in
     ;;
   *) echo "LEZ_IMAGES must be build, pull or present" >&2; exit 64 ;;
 esac
-# Monero's image is outside the default profile: built here, once it is staged.
-if (( ${#monero_services[@]} )) && [[ "${LEZ_IMAGES:-build}" == build ]] &&
-   { [[ "$BUILD" == 1 ]] || ! docker image inspect "${LEZ_IMAGE_PREFIX:-lez}-monerod:${LEZ_IMAGE_TAG:-local}" >/dev/null 2>&1; }; then
-  [[ -x images/monerod/bin/monerod ]] || { echo "Monero is not staged: LEZ_MONERO=1 scripts/stage-assets.sh" >&2; exit 1; }
-  docker compose --profile monero build monerod
-fi
 
 # The images exist from here on (built above, pulled, or present). The role and
 # LEZ Basecamp images are built on the basecamp-ui service (additional_contexts
