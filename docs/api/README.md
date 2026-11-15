@@ -572,7 +572,9 @@ the LEZ and the Monero stays locked".
 On the Maker, `maker_actor_monitor_v1`'s `progress.observation.phase` is the
 Monero actor's phase: `offered`, `taker_lock_confirmed` (funding Monero),
 `maker_funding_in_doubt` (a funding past C the observer has not found; the
-tool's failure is in the Node log), `both_legs_locked`,
+tool's failure is in the Node log; on regtest the observer mines a funding it
+finds in the pool or short of its confirmations, so this means none was
+seen), `both_legs_locked`,
 `claim_evidence_available` (claiming LEZ), `maker_recovery_available`
 (sweeping its Monero back after a refund, or punishing after P), and the
 terminal `completed`, `refunded`, `punished` and `expired` (nothing funded,

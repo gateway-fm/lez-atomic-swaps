@@ -41,6 +41,7 @@
 mod topology;
 mod wallet_effect;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -52,8 +53,8 @@ use monero_rpc::monero::cryptonote::subaddress::Index as SubaddressIndex;
 use monero_rpc::monero::util::address::AddressType;
 use monero_rpc::{
     BlockHeaderResponse, DaemonJsonRpcClient, DaemonRpcClient, GetBlockHeaderSelector,
-    GetTransfersCategory, GotTransfer, IncomingTransfer, RpcAuthentication, RpcClient,
-    RpcClientBuilder, Transaction, TransactionsResponse, TransferHeight, TransferType,
+    GetTransfersCategory, GetTransfersSelector, GotTransfer, IncomingTransfer, RpcAuthentication,
+    RpcClient, RpcClientBuilder, Transaction, TransactionsResponse, TransferHeight, TransferType,
     WalletClient,
 };
 use thiserror::Error;
@@ -567,6 +568,42 @@ impl MoneroOutputVerifier {
             .find(|output| output.amount.as_pico() == amount_piconero)
             .map(|output| output.tx_hash.0))
     }
+
+    /// The transaction of the open wallet's first incoming transfer of
+    /// exactly `amount_piconero` still in the pool, which
+    /// [`Self::find_incoming`] does not list until it is mined.
+    ///
+    /// # Errors
+    ///
+    /// Fails closed on RPC failure or more transfers than the response bound.
+    pub async fn find_incoming_in_pool(
+        &self,
+        amount_piconero: u64,
+    ) -> Result<Option<MoneroTransactionId>, MoneroEvidenceError> {
+        let mut response = MoneroRpcPort::rpc("get_transfers(pool)", || {
+            self.rpc.wallet.get_transfers(GetTransfersSelector {
+                category_selector: HashMap::from([(GetTransfersCategory::Pool, true)]),
+                account_index: Some(SHARED_WALLET_ACCOUNT_INDEX),
+                subaddr_indices: None,
+                block_height_filter: None,
+            })
+        })
+        .await?;
+        let pool = response
+            .remove(&GetTransfersCategory::Pool)
+            .unwrap_or_default();
+        if pool.len() > MAX_AVAILABLE_OUTPUTS {
+            return Err(MoneroEvidenceError::SemanticResponseBound {
+                resource: "pool transfers",
+                maximum: MAX_AVAILABLE_OUTPUTS,
+            });
+        }
+        Ok(pool
+            .into_iter()
+            .filter(|transfer| transfer.amount.as_pico() == amount_piconero)
+            .find_map(|transfer| <[u8; 32]>::try_from(transfer.txid.0.as_slice()).ok())
+            .map(MoneroTransactionId))
+    }
 }
 
 impl fmt::Debug for MoneroOutputVerifier {
@@ -731,6 +768,23 @@ pub enum MoneroEvidenceError {
     /// Wallet output reports a nonzero remaining unlock distance.
     #[error("Monero wallet output still reports a nonzero unlock distance")]
     NonzeroUnlockDistance,
+}
+
+impl MoneroEvidenceError {
+    /// Whether the exact output was seen on its way to its confirmations: in
+    /// the pool, or in a block with fewer than the required confirmations
+    /// (and so not yet unlocked). Mining is what it waits for.
+    #[must_use]
+    pub const fn awaits_confirmations(&self) -> bool {
+        matches!(
+            self,
+            Self::WalletTransferInPool
+                | Self::DaemonTransactionInPool
+                | Self::NonzeroUnlockDistance
+                | Self::OutputNotUnlocked
+                | Self::InsufficientConfirmations
+        )
+    }
 }
 
 fn identity_from_observed_hash(

@@ -225,7 +225,9 @@ pub async fn fund_maker_monero(
 /// Returns the funding observer's evidence digest once the Maker's funding is
 /// recorded with its receipt: from the files when present, else from the
 /// shared output found in the swap's view-only wallet (a crash after the
-/// transfer). `None` while no confirmed exact output is visible.
+/// transfer). `None` while no confirmed exact output is visible; one seen in
+/// the pool or short of its confirmations it mines first (regtest,
+/// `mine_unconfirmed_funding`).
 ///
 /// # Errors
 ///
@@ -310,12 +312,17 @@ async fn record_maker_monero_funding_locked(
         agreement.body().monero().genesis_hash(),
     )?;
     let verifier = MoneroOutputVerifier::new(identity, rpc.daemon(), rpc.wallet())?;
-    let transaction = match transaction {
-        Some(transaction) => transaction,
-        None => match verifier.find_incoming(amount).await? {
-            Some(transaction) => transaction,
-            None => return Ok(None),
-        },
+    let observing = transaction.is_none();
+    let transaction = if let Some(transaction) = transaction {
+        transaction
+    } else {
+        let Some(transaction) = verifier.find_incoming(amount).await? else {
+            if verifier.find_incoming_in_pool(amount).await?.is_some() {
+                mine_unconfirmed_funding(rpc).await?;
+            }
+            return Ok(None);
+        };
+        transaction
     };
     let destination = MoneroAddress::from_str(&agreement.shared_address().address_string())
         .context("the Stage-A shared address")?;
@@ -328,7 +335,12 @@ async fn record_maker_monero_funding_locked(
         .await
     {
         Ok(observation) => observation,
-        Err(error) if pending(&error) => return Ok(None),
+        Err(error) if pending(&error) => {
+            if observing && error.awaits_confirmations() {
+                mine_unconfirmed_funding(rpc).await?;
+            }
+            return Ok(None);
+        }
         Err(error) => return Err(error).context("verify the exact shared Monero output"),
     };
     let run_id = RunId::new(plan.run_id().to_owned()).context("the run identity")?;
@@ -397,6 +409,25 @@ async fn record_maker_monero_funding_locked(
         &evidence_bytes,
         &receipt_bytes,
     )))
+}
+
+/// A regtest duty, here only: on a real network miners confirm the funding,
+/// on this regtest nothing does but the funding tool, which mines its
+/// confirmations right after its transfer. When that tool stopped in between
+/// (killed, or a failed mining call), the observer that finds the Maker's
+/// exact funding in the pool or short of its confirmations mines them,
+/// paying the coinbase to the role wallet; the next observation records the
+/// funding. (The adapter, and this module, admit regtest only.)
+async fn mine_unconfirmed_funding(rpc: &XmrRoleWalletRpcV1) -> Result<()> {
+    eprintln!(
+        "Maker Monero funding observer: the funding is in the pool or short of its \
+         confirmations; mining them (regtest)"
+    );
+    let role = rpc.role_effects()?;
+    role.mine_confirmations(role.primary_standard_address().await?)
+        .await
+        .context("mine the unconfirmed Monero funding's confirmations")?;
+    Ok(())
 }
 
 const fn pending(error: &MoneroEvidenceError) -> bool {

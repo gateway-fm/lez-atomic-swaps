@@ -229,6 +229,25 @@ async fn execute() -> Result<()> {
     let observation = match verifier.verify(&expected).await {
         Ok(observation) => observation,
         Err(error) if is_pending(&error) => {
+            // A regtest duty, as for the Maker's funding: the sweep's tool
+            // mines its confirmations right after the sweep (one wallet-rpc
+            // per role), and nothing else mines; a sweep its tool left in the
+            // pool or short of them (killed, or a failed mining call) is
+            // mined here, to its destination as the tool would.
+            if one_wallet_rpc.is_some()
+                && identity.network() == MoneroNetwork::Regtest
+                && error.awaits_confirmations()
+            {
+                eprintln!(
+                    "Monero {} sweep observer: the sweep is in the pool or short of its \
+                     confirmations; mining them (regtest)",
+                    inputs.route.role()
+                );
+                MoneroRegtestWalletEffects::new(&inputs.daemon, &inputs.role_wallet)?
+                    .mine_confirmations(inputs.destination)
+                    .await
+                    .context("mine the unconfirmed sweep's confirmations")?;
+            }
             write_pending(inputs.route);
             return Ok(());
         }

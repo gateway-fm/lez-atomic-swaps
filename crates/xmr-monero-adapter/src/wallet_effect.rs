@@ -1131,6 +1131,19 @@ mod tests {
                 "amount": 5_000, "fee": 10, "tx_blob": "", "tx_hash": "07".repeat(32),
                 "tx_key": "", "tx_metadata": "", "unsigned_txset": "",
             }}),
+            "get_transfers" => {
+                let pool = |amount: u64, txid: &str| {
+                    serde_json::json!({
+                        "address": address(AddressType::Standard).to_string(), "amount": amount,
+                        "confirmations": 0, "double_spend_seen": false, "fee": 0, "height": 0,
+                        "note": "", "destinations": [], "payment_id": "0000000000000000",
+                        "subaddr_index": {"major": 0, "minor": 0},
+                        "suggested_confirmations_threshold": 10, "timestamp": 1_700_000_000,
+                        "txid": txid.repeat(32), "type": "pool", "unlock_time": 0,
+                    })
+                };
+                serde_json::json!({ "result": { "pool": [pool(4_000, "06"), pool(5_000, "07")] } })
+            }
             _ => serde_json::json!({ "error": { "code": -1, "message": "unexpected" } }),
         }
     }
@@ -1381,6 +1394,49 @@ mod tests {
             Err(MoneroWalletEffectError::ConfirmationBlockCountMismatch)
         );
         assert_eq!(short.methods().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_exact_incoming_pool_transfer_is_found_and_awaits_its_confirmations() {
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let wallet = FakeRpc::spawn(wallet_answer).await;
+        let verifier = crate::MoneroOutputVerifier::new(
+            crate::MoneroChainIdentity::new(crate::MoneroNetwork::Regtest, [1; 32])
+                .expect("identity"),
+            &daemon.endpoint,
+            &wallet.endpoint,
+        )
+        .expect("verifier");
+        assert_eq!(
+            verifier.find_incoming_in_pool(5_000).await.expect("pool"),
+            Some(MoneroTransactionId([7; 32]))
+        );
+        assert_eq!(
+            verifier.find_incoming_in_pool(6_000).await.expect("pool"),
+            None
+        );
+        assert_eq!(wallet.methods(), ["get_transfers"; 2]);
+        assert_eq!(wallet.request(0)["params"]["pool"], true);
+
+        // In the pool or short of its depth: mining is what it waits for.
+        for seen in [
+            crate::MoneroEvidenceError::WalletTransferInPool,
+            crate::MoneroEvidenceError::DaemonTransactionInPool,
+            crate::MoneroEvidenceError::NonzeroUnlockDistance,
+            crate::MoneroEvidenceError::OutputNotUnlocked,
+            crate::MoneroEvidenceError::InsufficientConfirmations,
+        ] {
+            assert!(seen.awaits_confirmations(), "{seen}");
+        }
+        // Not seen, or seen wrong: mining is not the answer.
+        for other in [
+            crate::MoneroEvidenceError::MissingWalletTransfer,
+            crate::MoneroEvidenceError::DaemonMissedTransaction,
+            crate::MoneroEvidenceError::AmountMismatch,
+            crate::MoneroEvidenceError::DoubleSpendSeen,
+        ] {
+            assert!(!other.awaits_confirmations(), "{other}");
+        }
     }
 
     #[tokio::test]
