@@ -4565,9 +4565,20 @@ def lez_balances() -> dict:
 def assert_lez_settled(before: dict, taker_state: str, maker_phase_end: str) -> dict:
     """A Zcash swap's LEZ leg to the unit: the lot moved when both Nodes say
     completed, nothing moved when they say refunded."""
-    deltas = {role: balance - before[role] for role, balance in lez_balances().items()}
     if taker_state not in {"completed", "refunded"} or (maker_phase_end == "completed") != (taker_state == "completed"):
         raise Failure(f"the Nodes disagree: Taker {taker_state}, Maker {maker_phase_end}")
+    # The balances are the indexer's, which serves finalized state only, while
+    # the Nodes conclude on sequencer inclusion (lez_claim_observation.rs): a
+    # claim included just before the read can still be unfinalized. Wait until
+    # LEZ is final through the sequencer's tip as of now.
+    tip = lez_rpc_number(STACK_SEQUENCER_URL, "getLastBlockId")
+    if isinstance(tip, int):
+        started = time.time()
+        wait_lez_final_through(tip, timing_profile(), "the swap's last LEZ transaction")
+        log(f"  LEZ is final through block {tip} after {time.time() - started:.0f}s")
+    else:
+        log("  the sequencer's tip is unreadable; reading the balances without waiting")
+    deltas = {role: balance - before[role] for role, balance in lez_balances().items()}
     want = {role: amounts["lez_units"] for role, amounts in
             expected_settlement(taker_state, REVERSE, FOREIGN_UNITS, LEZ_UNITS).items()}
     if deltas != want:
