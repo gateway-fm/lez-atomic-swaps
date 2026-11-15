@@ -16,6 +16,8 @@
 //! built-ins the same way, so these numbers are comparable to the ones behind
 //! the fee model.
 //!
+//! The XMR path's tags 13–17 are measured the same way in a second test.
+//!
 //!   cargo test -p lez-zec-escrow-v02-methods --test escrow_cycles -- --nocapture
 
 use borsh::BorshDeserialize as _;
@@ -51,6 +53,12 @@ const AMOUNT: u128 = 75;
 const REFUND_AT: u64 = 10_000;
 const MAKER_SECRET: [u8; 32] = [0x31; 32];
 const TAKER_SECRET: [u8; 32] = [0x42; 32];
+const PUNISH_AT: u64 = 12_000;
+const REFUND_MAKER_SECRET: [u8; 32] = [0x53; 32];
+const REFUND_TAKER_SECRET: [u8; 32] = [0x64; 32];
+const CLAIM_PARTIAL_CONTEXT_BINDING: [u8; 32] = [0x85; 32];
+const CLAIM_PARTIAL: [u8; 32] = [0x96; 32];
+const CLAIM_PARTIAL_DOMAIN: &[u8] = b"logos.gateway.lez-xmr.claim-partial-commitment.v1\0";
 
 struct Aggregate {
     maker_secret: Scalar,
@@ -68,8 +76,12 @@ fn actor(secret: [u8; 32]) -> (AccountId, PrivateKey) {
 
 /// The two-party MuSig2 key whose account authorises the witnessed claim.
 fn aggregate() -> Aggregate {
-    let maker_secret = Scalar::from_slice(&MAKER_SECRET).expect("maker scalar");
-    let taker_secret = Scalar::from_slice(&TAKER_SECRET).expect("taker scalar");
+    aggregate_from(MAKER_SECRET, TAKER_SECRET)
+}
+
+fn aggregate_from(maker_secret: [u8; 32], taker_secret: [u8; 32]) -> Aggregate {
+    let maker_secret = Scalar::from_slice(&maker_secret).expect("maker scalar");
+    let taker_secret = Scalar::from_slice(&taker_secret).expect("taker scalar");
     let context =
         KeyAggContext::new([maker_secret.base_point_mul(), taker_secret.base_point_mul()])
             .expect("BIP-327 two-party key aggregation");
@@ -509,4 +521,245 @@ fn report(title: &str, rows: &[(&str, u64, usize)]) {
             "{name} exceeds the public execution cycle limit"
         );
     }
+}
+
+fn claim_partial_commitment() -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(CLAIM_PARTIAL_DOMAIN);
+    hasher.update(CLAIM_PARTIAL_CONTEXT_BINDING);
+    hasher.update(CLAIM_PARTIAL);
+    hasher.finalize().into()
+}
+
+/// One aggregate-authority transaction, signed by both halves.
+fn aggregate_transaction<T: Serialize>(
+    state: &V03State,
+    account_ids: Vec<AccountId>,
+    aggregate: &Aggregate,
+    instruction: T,
+) -> PublicTransaction {
+    let message = Message::try_new(
+        ZEC_ESCROW_V02_ID,
+        account_ids,
+        vec![state.get_account_by_id(aggregate.authority).nonce],
+        instruction,
+    )
+    .expect("serialize exact XMR aggregate-authority instruction");
+    let witness = aggregate_witness(aggregate, &message);
+    PublicTransaction::new(message, witness)
+}
+
+/// The XMR path (tags 13–17) of the same deployed program: the Taker locks
+/// LEZ with `InitializeNativeXmr` and the shared `FundNative`, publishes its
+/// committed claim partial with `AuthorizeNativeXmrClaim`, and the escrow
+/// ends in `ClaimNativeXmr` (claim aggregate), `RefundNativeXmr` (the distinct
+/// refund aggregate) or `PunishNativeXmr` (the Maker, after the punish time).
+/// Inputs and account orders are the ones `recursive_witnessed_claim.rs` and
+/// the sidecar's native-XMR planners build.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear measurement per operation"
+)]
+fn xmr_escrow_operations_report_executor_cycles_for_the_deployed_program() {
+    let escrow = Program::new(ZEC_ESCROW_V02_ELF.into()).expect("canonical guest ELF");
+    assert_eq!(escrow.id(), ZEC_ESCROW_V02_ID);
+    assert_eq!(
+        ZEC_ESCROW_V02_ID, DEPLOYED_PROGRAM_ID_WORDS,
+        "these cycles must describe the program deployed on testnet"
+    );
+
+    let claim_aggregate = aggregate();
+    let refund_aggregate = aggregate_from(REFUND_MAKER_SECRET, REFUND_TAKER_SECRET);
+    let authenticated_transfer = programs::authenticated_transfer();
+    let authenticated_transfer_id = authenticated_transfer.id();
+    // The Taker deposits LEZ; the Maker is the claimant.
+    let (depositor, depositor_key) = actor([1; 32]);
+    let (claimant, claimant_key) = actor([2; 32]);
+    let mut state = V03State::new()
+        .with_public_accounts([
+            (
+                depositor,
+                Account {
+                    program_owner: authenticated_transfer_id,
+                    balance: 200,
+                    ..Account::default()
+                },
+            ),
+            (
+                claimant,
+                Account {
+                    program_owner: authenticated_transfer_id,
+                    balance: 10,
+                    ..Account::default()
+                },
+            ),
+            (claim_aggregate.authority, Account::default()),
+            (refund_aggregate.authority, Account::default()),
+        ])
+        .with_programs([escrow, authenticated_transfer]);
+    let (metadata_id, custody) = escrow_ids();
+
+    // Initialise (13): six accounts, the depositor signs.
+    let initialize = EscrowInstruction::InitializeNativeXmr {
+        swap_id: SWAP_ID,
+        terms_hash: [31; 32],
+        claim_aggregate_x_only_public_key: *claim_aggregate.public_key.value(),
+        refund_aggregate_x_only_public_key: *refund_aggregate.public_key.value(),
+        maker_dleq_transcript_commitment: [0xa7; 32],
+        taker_dleq_transcript_commitment: [0xb8; 32],
+        claim_partial_context_binding: CLAIM_PARTIAL_CONTEXT_BINDING,
+        claim_partial_commitment: claim_partial_commitment(),
+        amount: AMOUNT,
+        refund_at: REFUND_AT,
+        punish_at: PUNISH_AT,
+        authenticated_transfer_program: authenticated_transfer_id,
+    };
+    let initialize_accounts = vec![
+        metadata_id,
+        custody,
+        depositor,
+        claimant,
+        claim_aggregate.authority,
+        refund_aggregate.authority,
+    ];
+    let (initialize_cycles, initialize_segments) =
+        cycles(&state, &initialize_accounts, &[depositor], &initialize);
+    state
+        .transition_from_public_transaction(
+            &transaction(
+                &state,
+                initialize_accounts,
+                &[(depositor, &depositor_key)],
+                initialize,
+            ),
+            1,
+            100,
+        )
+        .expect("version-3 XMR escrow initializes recursively");
+    assert_eq!(metadata(&state, metadata_id).version, 3);
+
+    // Fund (2, shared with the other pairs): three accounts, the depositor signs.
+    let fund = EscrowInstruction::FundNative { swap_id: SWAP_ID };
+    let fund_accounts = vec![metadata_id, custody, depositor];
+    let (fund_cycles, fund_segments) = cycles(&state, &fund_accounts, &[depositor], &fund);
+    state
+        .transition_from_public_transaction(
+            &transaction(&state, fund_accounts, &[(depositor, &depositor_key)], fund),
+            2,
+            101,
+        )
+        .expect("version-3 XMR escrow funds recursively");
+    assert_eq!(metadata(&state, metadata_id).status, EscrowStatus::Funded);
+
+    // Authorise the claim (14): two accounts, the depositor signs.
+    let authorize = EscrowInstruction::AuthorizeNativeXmrClaim {
+        swap_id: SWAP_ID,
+        claim_partial: CLAIM_PARTIAL,
+    };
+    let authorize_accounts = vec![metadata_id, depositor];
+    let (authorize_cycles, authorize_segments) =
+        cycles(&state, &authorize_accounts, &[depositor], &authorize);
+    let mut authorized_state = state.clone();
+    authorized_state
+        .transition_from_public_transaction(
+            &transaction(
+                &authorized_state,
+                authorize_accounts,
+                &[(depositor, &depositor_key)],
+                authorize,
+            ),
+            3,
+            102,
+        )
+        .expect("the committed claim partial authorizes the claim branch");
+    assert_eq!(
+        metadata(&authorized_state, metadata_id).status,
+        EscrowStatus::XmrClaimAuthorized
+    );
+
+    // Claim (15) on the authorised state: four accounts, the claim aggregate signs.
+    let claim = EscrowInstruction::ClaimNativeXmr { swap_id: SWAP_ID };
+    let claim_accounts = vec![metadata_id, custody, claimant, claim_aggregate.authority];
+    let (claim_cycles, claim_segments) = cycles(
+        &authorized_state,
+        &claim_accounts,
+        &[claim_aggregate.authority],
+        &claim,
+    );
+    let mut claim_state = authorized_state.clone();
+    claim_state
+        .transition_from_public_transaction(
+            &aggregate_transaction(&claim_state, claim_accounts, &claim_aggregate, claim),
+            4,
+            REFUND_AT - 1,
+        )
+        .expect("authorized aggregate claim commits recursively");
+    assert_eq!(
+        metadata(&claim_state, metadata_id).status,
+        EscrowStatus::Claimed
+    );
+
+    // Refund (16) and punish (17) are the other endings, each on the funded state.
+    let refund = EscrowInstruction::RefundNativeXmr { swap_id: SWAP_ID };
+    let refund_accounts = vec![metadata_id, custody, depositor, refund_aggregate.authority];
+    let (refund_cycles, refund_segments) = cycles(
+        &state,
+        &refund_accounts,
+        &[refund_aggregate.authority],
+        &refund,
+    );
+    let mut refund_state = state.clone();
+    refund_state
+        .transition_from_public_transaction(
+            &aggregate_transaction(&refund_state, refund_accounts, &refund_aggregate, refund),
+            3,
+            REFUND_AT,
+        )
+        .expect("the distinct refund aggregate refunds at the boundary");
+    assert_eq!(
+        metadata(&refund_state, metadata_id).status,
+        EscrowStatus::Refunded
+    );
+
+    let punish = EscrowInstruction::PunishNativeXmr { swap_id: SWAP_ID };
+    let punish_accounts = vec![metadata_id, custody, claimant];
+    let (punish_cycles, punish_segments) = cycles(&state, &punish_accounts, &[claimant], &punish);
+    let mut punish_state = state.clone();
+    punish_state
+        .transition_from_public_transaction(
+            &transaction(
+                &punish_state,
+                punish_accounts,
+                &[(claimant, &claimant_key)],
+                punish,
+            ),
+            3,
+            PUNISH_AT,
+        )
+        .expect("the Maker punishes at the punish boundary");
+    assert_eq!(
+        metadata(&punish_state, metadata_id).status,
+        EscrowStatus::Claimed
+    );
+
+    report(
+        "XMR escrow",
+        &[
+            (
+                "InitializeNativeXmr",
+                initialize_cycles,
+                initialize_segments,
+            ),
+            ("FundNative", fund_cycles, fund_segments),
+            (
+                "AuthorizeNativeXmrClaim",
+                authorize_cycles,
+                authorize_segments,
+            ),
+            ("ClaimNativeXmr", claim_cycles, claim_segments),
+            ("RefundNativeXmr", refund_cycles, refund_segments),
+            ("PunishNativeXmr", punish_cycles, punish_segments),
+        ],
+    );
 }
