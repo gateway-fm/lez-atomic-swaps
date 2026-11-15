@@ -580,7 +580,15 @@ async fn load_supervised_actor(
                 receipt_identity.device(),
                 receipt_identity.inode(),
             )
-            .map_err(|_| LoadFailure::Bundle)
+            .map_err(|error| {
+                // A permanent failure says which check refused it: the class
+                // alone does not, and the swap stays failed.
+                eprintln!(
+                    "{ROLE} {}: attempt fails (actor_deployment_invalid: {error:#})",
+                    swap_id.as_str()
+                );
+                LoadFailure::Bundle
+            })
         };
         let before = load()?;
         let held_lock =

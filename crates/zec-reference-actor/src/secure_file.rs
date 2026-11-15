@@ -62,6 +62,21 @@ impl FileLocation {
         true
     }
 
+    /// The same path still names the same file (device and inode), whatever
+    /// was written to it: a database rewritten in place keeps this, a file
+    /// replaced by a rename does not. Content reads use [`Self::unchanged`].
+    pub(crate) fn same_file(&self, current: &Self) -> bool {
+        if self.canonical != current.canonical {
+            return false;
+        }
+        #[cfg(unix)]
+        if let (Some(expected_device), Some(expected_inode)) = (self.device, self.inode) {
+            return current.device == Some(expected_device)
+                && current.inode == Some(expected_inode);
+        }
+        true
+    }
+
     fn existing(canonical: PathBuf, metadata: &fs::Metadata) -> Self {
         #[cfg(unix)]
         {
@@ -252,7 +267,12 @@ pub(crate) fn canonical_location(path: &Path) -> Result<FileLocation, SecureFile
             }
             let expected = FileLocation::existing(canonical.clone(), &before);
             let current = FileLocation::existing(canonical, &after);
-            if !expected.unchanged(&current) {
+            // The pair of lstats catches the path being swapped while it is
+            // canonicalised. The role state and bridge journal databases are
+            // written in place at any time (every store open migrates and
+            // checkpoints), so size and times are not compared here; files
+            // whose content is read compare them in read_bounded_identified.
+            if !expected.same_file(&current) {
                 return Err(SecureFileError::Unsafe);
             }
             Ok(current)

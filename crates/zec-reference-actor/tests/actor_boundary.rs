@@ -875,6 +875,86 @@ fn late_public_agreement_cannot_alias_new_role_state_or_bridge_journal() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn bound_databases_may_be_written_in_place_but_not_replaced() {
+    let earlier = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+    for mutable_name in ["maker-state", "maker-journal"] {
+        let fixture = PairFixture::new();
+        private_bytes(&fixture.path(mutable_name), b"database");
+        let maker = fixture.load("maker");
+        // A store open migrates and checkpoints in place: same inode, new
+        // size and times.
+        let mut database = fs::OpenOptions::new()
+            .append(true)
+            .open(fixture.path(mutable_name))
+            .unwrap();
+        database.write_all(b" page").unwrap();
+        database.set_modified(earlier).unwrap();
+        drop(database);
+        assert!(
+            maker.load_status_material().is_ok(),
+            "in-place write of {mutable_name} must stay bound"
+        );
+        replace_inode(&fixture.path(mutable_name), b"database");
+        assert!(
+            maker.load_status_material().is_err(),
+            "replaced {mutable_name} must fail"
+        );
+    }
+
+    // A file whose content is read still compares size and times.
+    let fixture = PairFixture::new();
+    let maker = fixture.load("maker");
+    File::options()
+        .write(true)
+        .open(fixture.path("maker-claim-key"))
+        .unwrap()
+        .set_modified(earlier)
+        .unwrap();
+    assert!(maker.load_status_material().is_err());
+}
+
+/// The race of 2026-11-15: the Taker's supervisor and monitor load the actor
+/// while another open of the same role state migrates and checkpoints it. A
+/// load that overlaps writes in place must succeed every time.
+#[cfg(unix)]
+#[test]
+fn a_config_loads_while_its_bound_database_is_written_in_place() {
+    use std::{
+        os::unix::fs::FileExt as _,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    };
+
+    let fixture = PairFixture::new();
+    private_bytes(&fixture.path("maker-state"), b"database");
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer = {
+        let stop = Arc::clone(&stop);
+        let database = fs::OpenOptions::new()
+            .write(true)
+            .open(fixture.path("maker-state"))
+            .unwrap();
+        std::thread::spawn(move || {
+            let mut length = 8_u64;
+            while !stop.load(Ordering::Relaxed) {
+                length = if length == 8 { 4_096 } else { 8 };
+                database.set_len(length).unwrap();
+                database.write_all_at(b"page", 0).unwrap();
+            }
+        })
+    };
+    let failures = (0..500)
+        .filter(|_| ActorConfig::load_private(fixture.config("maker")).is_err())
+        .count();
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+    assert_eq!(failures, 0, "loads refused during in-place writes");
+}
+
 #[test]
 fn real_binary_reads_only_the_fully_sealed_inherited_config() {
     let fixture = PairFixture::new();

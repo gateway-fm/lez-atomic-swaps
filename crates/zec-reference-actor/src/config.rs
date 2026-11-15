@@ -1146,7 +1146,7 @@ impl ActorConfig {
         ];
         let unsafe_mutable_location =
             mutable_locations.iter().any(|(mutable, expected_mutable)| {
-                !expected_mutable.unchanged(mutable)
+                !expected_mutable.same_file(mutable)
                     || current.aliases(mutable)
                     || self
                         .bindings
