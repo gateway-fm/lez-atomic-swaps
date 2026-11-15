@@ -4,8 +4,9 @@
 //! observes protocol eligibility nor authorizes release: callers must first
 //! satisfy the Stage-B, finalized-LEZ, and adaptor-extraction gates. Each method
 //! makes one wallet submission and then mines the agreement's fixed confirmation
-//! count on a project-owned Regtest daemon. No submission is retried; only
-//! the mining call is, a bounded number of times.
+//! count on a project-owned Regtest daemon. No submission is retried: a read
+//! is made once more after a transport failure (see the crate documentation),
+//! the mining call a bounded number of times.
 //!
 //! A Node runs one wallet-rpc per role and switches its open wallet between
 //! the role wallet and per-swap shared wallets. An effect built with
@@ -31,7 +32,8 @@ use monero_rpc::{
 use thiserror::Error;
 
 use super::{
-    LoopbackRpcEndpoint, MoneroTransactionId, REQUIRED_MONERO_CONFIRMATIONS, valid_credential,
+    LoopbackRpcEndpoint, MoneroTransactionId, REQUIRED_MONERO_CONFIRMATIONS, read_with_one_retry,
+    valid_credential,
 };
 
 const WALLET_ACCOUNT_INDEX: u32 = 0;
@@ -261,13 +263,14 @@ impl MoneroRegtestWalletEffects {
         let Some(role_wallet) = &self.role_wallet else {
             return Ok(());
         };
-        self.wallet
-            .open_wallet(
+        read_with_one_retry(|| {
+            self.wallet.open_wallet(
                 role_wallet.filename.clone(),
                 Some(role_wallet.password.clone()),
             )
-            .await
-            .map_err(rpc_error("open role wallet"))
+        })
+        .await
+        .map_err(rpc_error("open role wallet"))
     }
 
     /// Returns the role wallet's (or, without one, the currently open
@@ -284,12 +287,11 @@ impl MoneroRegtestWalletEffects {
     /// non-standard primary address.
     pub async fn primary_standard_address(&self) -> Result<Address, MoneroWalletEffectError> {
         self.open_role_wallet().await?;
-        let address = self
-            .wallet
-            .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
-            .await
-            .map_err(rpc_error("current wallet primary address"))?
-            .address;
+        let address =
+            read_with_one_retry(|| self.wallet.get_address(WALLET_ACCOUNT_INDEX, Some(vec![0])))
+                .await
+                .map_err(rpc_error("current wallet primary address"))?
+                .address;
         validate_standard_address(&address)?;
         Ok(address)
     }
@@ -304,9 +306,7 @@ impl MoneroRegtestWalletEffects {
         &self,
     ) -> Result<(Address, u64, u64), MoneroWalletEffectError> {
         let address = self.primary_standard_address().await?;
-        let balance = self
-            .wallet
-            .get_balance(WALLET_ACCOUNT_INDEX, None)
+        let balance = read_with_one_retry(|| self.wallet.get_balance(WALLET_ACCOUNT_INDEX, None))
             .await
             .map_err(rpc_error("role wallet balance"))?;
         Ok((
@@ -334,12 +334,11 @@ impl MoneroRegtestWalletEffects {
         validate_standard_address(&destination)?;
         let amount = NonZeroU64::new(amount_piconero).ok_or(MoneroWalletEffectError::ZeroAmount)?;
         self.open_role_wallet().await?;
-        let mining_address = self
-            .wallet
-            .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
-            .await
-            .map_err(rpc_error("funding wallet address"))?
-            .address;
+        let mining_address =
+            read_with_one_retry(|| self.wallet.get_address(WALLET_ACCOUNT_INDEX, Some(vec![0])))
+                .await
+                .map_err(rpc_error("funding wallet address"))?
+                .address;
 
         let mut destinations = HashMap::with_capacity(1);
         destinations.insert(destination, Amount::from_pico(amount.get()));
@@ -461,8 +460,7 @@ impl MoneroRegtestWalletEffects {
         &self,
         restore_height: u64,
     ) -> Result<(), MoneroWalletEffectError> {
-        self.wallet
-            .refresh(Some(restore_height))
+        read_with_one_retry(|| self.wallet.refresh(Some(restore_height)))
             .await
             .map_err(rpc_error("refresh current wallet"))?;
         Ok(())
@@ -532,12 +530,12 @@ impl MoneroRegtestWalletEffects {
             .open_wallet(filename, Some(password))
             .await
             .map_err(rpc_error("generate shared wallet from keys"))?;
-        Ok(self
-            .wallet
-            .get_address(WALLET_ACCOUNT_INDEX, Some(vec![0]))
-            .await
-            .map_err(rpc_error("restored wallet primary address"))?
-            .address)
+        Ok(
+            read_with_one_retry(|| self.wallet.get_address(WALLET_ACCOUNT_INDEX, Some(vec![0])))
+                .await
+                .map_err(rpc_error("restored wallet primary address"))?
+                .address,
+        )
     }
 
     /// Restores the point-checked shared wallet and submits exactly one sweep.
@@ -603,15 +601,13 @@ impl MoneroRegtestWalletEffects {
             return Err(MoneroWalletEffectError::RestoredAddressMismatch);
         }
 
-        self.wallet
-            .refresh(Some(restore_height))
+        read_with_one_retry(|| self.wallet.refresh(Some(restore_height)))
             .await
             .map_err(rpc_error("refresh restored wallet"))?;
-        let balance = self
-            .wallet
-            .get_balance(WALLET_ACCOUNT_INDEX, Some(vec![0]))
-            .await
-            .map_err(rpc_error("read restored wallet balance"))?;
+        let balance =
+            read_with_one_retry(|| self.wallet.get_balance(WALLET_ACCOUNT_INDEX, Some(vec![0])))
+                .await
+                .map_err(rpc_error("read restored wallet balance"))?;
         if balance.balance.as_pico() != expected_amount.get()
             || balance.unlocked_balance.as_pico() != expected_amount.get()
         {
@@ -1162,6 +1158,7 @@ mod tests {
     fn daemon_answer(method: &str) -> serde_json::Value {
         match method {
             "generateblocks" => generated_blocks(10),
+            "get_block_count" => serde_json::json!({ "result": { "status": "OK", "count": 121 } }),
             _ => serde_json::json!({ "error": { "code": -1, "message": "unexpected" } }),
         }
     }
@@ -1384,6 +1381,66 @@ mod tests {
             Err(MoneroWalletEffectError::ConfirmationBlockCountMismatch)
         );
         assert_eq!(short.methods().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_read_failed_in_transport_is_made_once_more_and_a_transfer_never() {
+        let daemon = FakeRpc::spawn(daemon_answer).await;
+        let role = |wallet: &FakeRpc| {
+            effects(&daemon, wallet)
+                .with_role_wallet("taker".to_owned(), String::new())
+                .expect("role wallet")
+        };
+
+        let flaky = FakeRpc::spawn_failing(wallet_answer, "get_balance", 1).await;
+        assert_eq!(
+            role(&flaky).role_wallet_balance().await,
+            Ok((address(AddressType::Standard), 7_000, 5_000))
+        );
+        assert_eq!(
+            flaky.methods(),
+            ["open_wallet", "get_address", "get_balance", "get_balance"]
+        );
+
+        // Once more only.
+        let down = FakeRpc::spawn_failing(wallet_answer, "open_wallet", 2).await;
+        let Err(MoneroWalletEffectError::Rpc { operation, .. }) =
+            role(&down).role_wallet_balance().await
+        else {
+            panic!("a read failed twice fails the effect");
+        };
+        assert_eq!(operation, "open role wallet");
+        assert_eq!(down.methods(), ["open_wallet", "open_wallet"]);
+
+        // An error the wallet-rpc answered is its answer.
+        let busy = FakeRpc::spawn(wallet_without_balance).await;
+        assert!(role(&busy).role_wallet_balance().await.is_err());
+        assert_eq!(
+            busy.methods(),
+            ["open_wallet", "get_address", "get_balance"]
+        );
+
+        // A transfer is sent once: a second could pay twice.
+        let lost = FakeRpc::spawn_failing(wallet_answer, "transfer", 1).await;
+        let Err(MoneroWalletEffectError::Rpc { operation, .. }) = role(&lost)
+            .fund_exact_and_confirm(address(AddressType::Standard), 5_000)
+            .await
+        else {
+            panic!("a failed transfer fails the funding");
+        };
+        assert_eq!(operation, "fund exact transfer");
+        assert_eq!(lost.methods(), ["open_wallet", "get_address", "transfer"]);
+        assert!(daemon.methods().is_empty());
+
+        // The verifier's and the attestor's daemon reads take the same path.
+        let flaky_daemon = FakeRpc::spawn_failing(daemon_answer, "get_block_count", 1).await;
+        let attestor = crate::MoneroChainIdentityAttestor::new(
+            crate::MoneroNetwork::Regtest,
+            &flaky_daemon.endpoint,
+        )
+        .expect("attestor");
+        assert_eq!(attestor.tip_height().await.expect("tip height"), 120);
+        assert_eq!(flaky_daemon.methods(), ["get_block_count"; 2]);
     }
 
     #[test]
