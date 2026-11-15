@@ -344,8 +344,9 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
 }
 
 /// A branch effect whose one invocation is spent: observed, or, when its
-/// tool stopped before recording its submission, driven again under the same
-/// sidecar request ids (`prepare_effect_redrive`). A claim the finalized
+/// tool stopped before recording its submission (a punishment: whenever it is
+/// not final), driven again under the same sidecar request ids
+/// (`prepare_effect_redrive`). A claim the finalized
 /// clock left behind gives way to the branch the chain proves: the Taker's
 /// refund (the Maker then sweeps its Monero back) or, past `P` with no
 /// refund to the tip, the punishment. Returns "completed" once reconciled.
@@ -379,7 +380,11 @@ fn settle_spent_effect(
             return Ok("awaiting_observation");
         }
     }
-    if unwritten {
+    // A punishment not final is driven again even once recorded: the swap's
+    // sidecar re-plans it at the live nonce when the Maker owner's account
+    // passed its nonce without it (it can then never land, and after `P`
+    // nothing else moves the escrow), and otherwise replays it unchanged.
+    if unwritten || step == XmrWorkflowStep::PunishLezTag17 {
         chains.redrive(step)?;
         return Ok("resubmitted");
     }
@@ -1587,10 +1592,10 @@ mod tests {
             Ok(self.unwritten)
         }
 
-        fn redrive(&mut self, _: XmrWorkflowStep) -> Result<()> {
+        fn redrive(&mut self, step: XmrWorkflowStep) -> Result<()> {
             assert!(
-                self.unwritten,
-                "only an unrecorded submission is driven again"
+                self.unwritten || step == XmrWorkflowStep::PunishLezTag17,
+                "only an unrecorded submission or a punishment is driven again"
             );
             self.redrives += 1;
             self.unwritten = false;
@@ -1847,19 +1852,29 @@ mod tests {
             "completed"
         );
         assert_eq!(stub.redrives, 0);
-        // Not final: the same punishment is driven again, once recorded only
-        // observed. A Taker refund cannot follow: tag 16 is invalid from `P`.
+        // Not final: the punishment is driven again, also once recorded (its
+        // sidecar re-plans one whose nonce the Maker's owner passed without
+        // it), until it is final. A Taker refund cannot follow: tag 16 is
+        // invalid from `P`.
         let mut stub = stopped_mid_effect(XmrWorkflowBranch::Punish, P);
         assert_eq!(
             settle(&mut stub, XmrWorkflowStep::PunishLezTag17),
             "resubmitted"
         );
+        assert!(!stub.unwritten);
         assert_eq!(
             settle(&mut stub, XmrWorkflowStep::PunishLezTag17),
-            "awaiting_observation"
+            "resubmitted"
         );
-        assert_eq!((stub.observations, stub.redrives), (2, 1));
+        assert_eq!((stub.observations, stub.redrives), (2, 2));
+        stub.effect_final = true;
+        assert_eq!(
+            settle(&mut stub, XmrWorkflowStep::PunishLezTag17),
+            "completed"
+        );
+        assert_eq!((stub.observations, stub.redrives), (3, 2));
         assert!(stub.activations.is_empty());
+        assert_eq!(derive_status(&stub.facts().unwrap(), P).phase, "punished");
     }
 
     #[test]

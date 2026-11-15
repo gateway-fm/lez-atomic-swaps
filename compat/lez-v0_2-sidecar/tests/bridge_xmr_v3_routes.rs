@@ -1609,8 +1609,12 @@ async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable(
     assert_eq!(fixture.send_count(), 1);
 
     maker.server.stop().await.expect("stop first Maker sidecar");
+    // The owner's nonce has not passed the punishment's (41): the restart
+    // answers the same bytes after one nonce read (a punishment is decided
+    // again; one whose nonce was passed is re-planned, see
+    // bridge_xmr_punish_replan.rs), without an inclusion lookup.
     let restarted_nonce = Arc::new(CountingNonce {
-        value: 999,
+        value: 41,
         calls: AtomicUsize::new(0),
     });
     let (restarted_client, restarted_server) = try_start_sidecar_at(
@@ -1637,7 +1641,7 @@ async fn durable_xmr_punish_is_transaction_bound_one_attempt_and_restart_stable(
             .expect("restart replays accepted one-attempt release"),
         submitted
     );
-    assert_eq!(restarted_nonce.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(restarted_nonce.calls.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.lookup_count(), 1);
     assert_eq!(fixture.send_count(), 1);
 

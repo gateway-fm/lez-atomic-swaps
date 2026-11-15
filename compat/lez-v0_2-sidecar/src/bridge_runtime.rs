@@ -771,16 +771,58 @@ impl BridgeRuntime {
 
     /// Prepares one exact signed tag-17 punishment without submission.
     ///
+    /// The Maker's LEZ owner signs every pair's transactions at its live
+    /// nonce, so another one may take the punishment's nonce first; the
+    /// punishment can then never be included, and after the punish time
+    /// nobody else can move the escrow. A reserved punishment the node has not
+    /// included while the account's sequenced nonce is above its own is
+    /// therefore re-planned at that nonce (the nonce is the one part of the
+    /// message nothing commits). The nonce is read before the inclusion, so a
+    /// punishment included in between is seen and kept.
+    ///
     /// # Errors
     ///
     /// Preserves strict Maker role, runtime, terms, claimant, nonce, message
-    /// hash, ABI, signature, and durable-reservation failures from the planner.
+    /// hash, ABI, signature, re-plan bound and durable-reservation failures
+    /// from the planner; `Unavailable` for node facts.
     pub async fn prepare_native_xmr_punish_v3(
         &self,
         request: &lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
     ) -> Result<lez_bridge_protocol::PrepareNativeXmrPunishV3Result, BridgeRuntimeError> {
+        let prepared = self.planner.prepare_native_xmr_punish_v3(request).await?;
+        let live_nonce = self
+            .planner
+            .live_signer_nonce()
+            .await
+            .map_err(|_| BridgeRuntimeError::Unavailable)?;
+        if !self
+            .planner
+            .native_xmr_punish_nonce_passed(&prepared.punish, live_nonce)?
+            || self
+                .node
+                .prepared_transaction_is_included(&prepared.punish)
+                .await?
+        {
+            return Ok(prepared);
+        }
         self.planner
-            .prepare_native_xmr_punish_v3(request)
+            .supersede_native_xmr_punish_v3(request, prepared.punish.transaction_id, live_nonce)
+            .await
+            .map_err(Into::into)
+    }
+
+    /// Restores the durable tag-17 lineage at startup without a node call.
+    ///
+    /// # Errors
+    ///
+    /// Preserves the planner's durable-state and drift failures.
+    pub async fn restore_native_xmr_punish_v3(
+        &self,
+        request: &lez_bridge_protocol::PrepareNativeXmrPunishV3Request,
+        expected: &lez_bridge_protocol::PrepareNativeXmrPunishV3Result,
+    ) -> Result<(), BridgeRuntimeError> {
+        self.planner
+            .restore_native_xmr_punish_v3(request, expected)
             .await
             .map_err(Into::into)
     }

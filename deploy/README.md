@@ -642,11 +642,14 @@ one. What the Monero side does about it, and what is left:
 - The Maker's tag 17 (the punishment) is signed by the Maker's owner account
   without coordination. The Maker Node's actor attempts run one at a time, so
   two owner transactions collide only if the second is prepared before the
-  first is in a block. If tag 17 loses, the Node never sends it again (the
-  swap's sidecar keeps one punishment per swap): the LEZ stays in the escrow,
-  which after P nobody else can move, and the Maker gets it only by a tag 17
-  at a fresh nonce sent by hand (no tool does that). This is a loss to the
-  Maker in the punish branch until then; it is not fixed.
+  first is in a block. Until it is final the Node drives tag 17 again on every
+  attempt; the swap's sidecar answers with the same bytes unless the node has
+  not included them while the owner's nonce is above theirs (they can then
+  never land), and then plans the same punishment at that nonce, kept beside
+  the first in a re-plan slot of its own (at most five). The escrow is
+  punished once: a second tag 17 cannot execute, and the Maker finds the one
+  that landed by its terms. Not run on the devnet: no scenario makes another
+  owner transaction take tag 17's nonce.
 
 Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`; only the
 happy path has been run on a desk). Not on the devnet yet: the systemd role

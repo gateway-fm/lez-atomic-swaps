@@ -1109,13 +1109,10 @@ async fn restore_runtime_requests(
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
     }
     if let Some((request, expected)) = restored_xmr_punish_v3 {
-        let observed = runtime
-            .prepare_native_xmr_punish_v3(&request)
+        runtime
+            .restore_native_xmr_punish_v3(&request, &expected)
             .await
             .map_err(|_| BridgeServerError::InvalidDurableState)?;
-        if observed != expected {
-            return Err(BridgeServerError::InvalidDurableState);
-        }
     }
     Ok(())
 }
@@ -2108,13 +2105,18 @@ impl ServerState {
         Operation: FnOnce() -> Fut,
         Fut: Future<Output = Result<Value, OperationFailure>>,
     {
-        // The XMR claim authorization's node facts move: its journaled
-        // success is decided again. Everything else replays.
+        // The XMR claim authorization's node facts move, and a tag-17
+        // punishment whose nonce was taken is re-planned: their journaled
+        // successes are decided again. Everything else replays.
         self.execute_with_policy(
             method,
             context,
             request,
-            method == METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3,
+            matches!(
+                method,
+                METHOD_PREPARE_NATIVE_XMR_CLAIM_AUTHORIZATION_V3
+                    | METHOD_PREPARE_NATIVE_XMR_PUNISH_V3
+            ),
             operation,
         )
         .await
@@ -2139,14 +2141,20 @@ impl ServerState {
         self.validate_context(context)?;
         let (request_sha256, replay_request) =
             encode_request(method, request).map_err(|failure| protocol_error(context, failure))?;
+        let mut decided_before = None;
         {
             let mut store = self.store.lock().await;
             if let Some(outcome) = store
                 .replay(context.request_id.as_str(), method, &request_sha256)
                 .map_err(|failure| protocol_error(context, failure))?
-                && !(decide_success_again && matches!(outcome, PersistedOutcome::Success(_)))
             {
-                return outcome.into_rpc_result();
+                let PersistedOutcome::Success(value) = &outcome else {
+                    return outcome.into_rpc_result();
+                };
+                if !decide_success_again {
+                    return outcome.into_rpc_result();
+                }
+                decided_before = Some(value.clone());
             }
             if is_submission_method(method) {
                 store
@@ -2161,6 +2169,14 @@ impl ServerState {
                 PersistedOutcome::Error(protocol_reply(context, failure))
             }
         };
+        // A preparation decided again that answers as before changes nothing
+        // durable (a punishment is decided again on every drive of it).
+        if let (Some(before), PersistedOutcome::Success(value)) = (&decided_before, &outcome)
+            && before == value
+            && !is_submission_method(method)
+        {
+            return outcome.into_rpc_result();
+        }
         let prepare = matches!(
             method,
             METHOD_PREPARE_CURRENT_PROFILE_CLOCK

@@ -357,19 +357,25 @@ impl ValidatedXmrEffectExecutionV3 {
     /// is spent (Started or Unknown) while its tool's submission evidence is
     /// missing or reserved but empty: the tool was stopped, or failed, before
     /// it recorded what it sent. An empty reservation is removed, so the tool
-    /// reserves it anew. The journal is not changed.
+    /// reserves it anew. The journal is not changed. A punishment is driven
+    /// again also once its submission is recorded (that record is removed
+    /// too): it may have lost its nonce to another transaction of the Maker's
+    /// shared LEZ owner, which nothing else can repair after the punish time.
     ///
     /// The tool sends nothing new: the LEZ tools ask the swap's sidecar under
     /// their fixed request ids, which replays the one durable preparation and
     /// completion (it refuses any other) and the journaled outcome of a
     /// submission already asked for (an in-flight one is never sent again);
     /// a Monero sweep spends the one shared output, which the chain lets be
-    /// spent once.
+    /// spent once. The one exception is a punishment the sidecar re-planned
+    /// because the owner's account passed its nonce without it: that one can
+    /// never land, and the re-plan at the live nonce is sent instead.
     ///
     /// # Errors
     ///
     /// Rejects every other role or step, a Prepared or Succeeded step,
-    /// written submission evidence, and every invocation-composition failure.
+    /// written submission evidence of a claim or sweep, and every
+    /// invocation-composition failure.
     pub fn prepare_effect_redrive(
         &self,
         step: XmrWorkflowStep,
@@ -384,7 +390,8 @@ impl ValidatedXmrEffectExecutionV3 {
         let file = maker_submission_file(step)
             .context("XMR workflow step has no Maker submission evidence")?;
         ensure!(
-            xmr_maker_submission_unwritten(evidence_root, step)?,
+            step == XmrWorkflowStep::PunishLezTag17
+                || xmr_maker_submission_unwritten(evidence_root, step)?,
             "the XMR effect's submission evidence is written: it is only observed"
         );
         let (command, _) = self.invocation_command(step, actor_lock, workflow_lock)?;
@@ -397,7 +404,7 @@ impl ValidatedXmrEffectExecutionV3 {
                 .and_then(|directory| directory.sync_all())
                 .context("sync the XMR effect evidence root")?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error).context("remove the empty XMR submission evidence"),
+            Err(error) => return Err(error).context("remove the XMR submission evidence"),
         }
         Ok(command)
     }

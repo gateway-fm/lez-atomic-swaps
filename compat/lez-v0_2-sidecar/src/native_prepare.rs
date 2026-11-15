@@ -338,11 +338,17 @@ struct ActiveXmrRefundCompletionV3 {
     result: CompleteNativeXmrRefundV3Result,
 }
 
+/// The current tag-17 punishment: the original reservation or its latest
+/// re-plan, and how many re-plans its lineage holds.
 #[derive(Clone)]
 struct ActiveXmrPunishPrepareV3 {
     request: PrepareNativeXmrPunishV3Request,
     result: PrepareNativeXmrPunishV3Result,
+    replans: u32,
 }
+
+/// The most re-plans of one tag-17 punishment (its lineage slots).
+const MAX_XMR_PUNISH_REPLANS: u32 = 5;
 
 #[derive(Clone)]
 struct ActiveClaimPrepare {
@@ -2044,7 +2050,9 @@ impl NativeEscrowPlanner {
     ///
     /// The Maker process signs the generated official transaction, but never
     /// submits it during preparation. The guest program remains authoritative
-    /// for the funded-state and inclusive `punish_at` boundary.
+    /// for the funded-state and inclusive `punish_at` boundary. A repeated
+    /// request answers the lineage's current punishment: the original, or
+    /// its latest re-plan ([`Self::supersede_native_xmr_punish_v3`]).
     ///
     /// # Errors
     ///
@@ -2068,11 +2076,9 @@ impl NativeEscrowPlanner {
 
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(recovered) = self.recover_durable_xmr_punish_v3(request)? {
-            state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
-                request: request.clone(),
-                result: recovered.clone(),
-            });
-            return Ok(recovered);
+            let result = recovered.result.clone();
+            state.active_xmr_punish_v3 = Some(recovered);
+            return Ok(result);
         }
 
         let nonce = self
@@ -2093,19 +2099,148 @@ impl NativeEscrowPlanner {
                 let recovered = self
                     .recover_durable_xmr_punish_v3(request)?
                     .ok_or(DurableReservationError::Filesystem)?;
-                state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
-                    request: request.clone(),
-                    result: recovered.clone(),
-                });
-                return Ok(recovered);
+                let result = recovered.result.clone();
+                state.active_xmr_punish_v3 = Some(recovered);
+                return Ok(result);
             }
             return Err(error.into());
         }
         state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
             request: request.clone(),
             result: result.clone(),
+            replans: 0,
         });
         Ok(result)
+    }
+
+    /// Whether the signer's sequenced nonce `live_nonce` has passed the
+    /// nonce `punish` is signed at: it can then never be included.
+    ///
+    /// # Errors
+    ///
+    /// Rejects bytes that do not decode for the isolated signer.
+    pub fn native_xmr_punish_nonce_passed(
+        &self,
+        punish: &PreparedTransaction,
+        live_nonce: u128,
+    ) -> Result<bool, NativePrepareError> {
+        Ok(prepared_signer_nonce(punish, self.signer_account_id)? < live_nonce)
+    }
+
+    /// Re-plans the current tag-17 punishment `superseded` at `live_nonce`,
+    /// once the runtime saw the Maker owner's account pass its nonce without
+    /// it being included (another transaction of the shared owner took the
+    /// nonce: the punishment can never land). The same message with the new
+    /// nonce is reserved in the next lineage slot before it is exposed; the
+    /// superseded bytes are no longer the current punishment, so they are
+    /// never admitted for submission again. A `superseded` the lineage has
+    /// already moved past answers the current punishment.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a request other than the reserved one, a nonce the account
+    /// has not passed, an exhausted lineage, and durable-reservation failures.
+    pub async fn supersede_native_xmr_punish_v3(
+        &self,
+        request: &PrepareNativeXmrPunishV3Request,
+        superseded: TransactionId,
+        live_nonce: u128,
+    ) -> Result<PrepareNativeXmrPunishV3Result, NativePrepareError> {
+        self.validate_xmr_punish_v3_request(request)?;
+        let mut state = self.state.lock().await;
+        let active = state
+            .active_xmr_punish_v3
+            .as_ref()
+            .ok_or(NativePrepareError::MissingPrepare)?;
+        if &active.request != request {
+            return Err(NativePrepareError::ActiveXmrPunishPrepare);
+        }
+        if active.result.punish.transaction_id != superseded {
+            return Ok(active.result.clone());
+        }
+        if !self.native_xmr_punish_nonce_passed(&active.result.punish, live_nonce)? {
+            return Err(NativePrepareError::SupersededNonceStillLive);
+        }
+        let index = active
+            .replans
+            .checked_add(1)
+            .filter(|index| *index <= MAX_XMR_PUNISH_REPLANS)
+            .ok_or(NativePrepareError::ReplanExhausted)?;
+        let result = PrepareNativeXmrPunishV3Result::new(
+            request.context.clone(),
+            request.terms,
+            self.prepare_message(self.xmr_punish_v3_message(request, live_nonce)?)?,
+        );
+        self.validate_prepared_native_xmr_punish_v3(request, &result)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if let Some(store) = self.durable_store.as_ref() {
+            let kind = ReservationKind::xmr_native_punish_supersession(index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            match store.create(kind, request, &result) {
+                Ok(()) => {}
+                Err(DurableReservationError::AlreadyReserved) => {
+                    // Another process of this signer re-planned first.
+                    let recovered = self
+                        .recover_durable_xmr_punish_v3(request)?
+                        .ok_or(DurableReservationError::Filesystem)?;
+                    let result = recovered.result.clone();
+                    state.active_xmr_punish_v3 = Some(recovered);
+                    return Ok(result);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        state.active_xmr_punish_v3 = Some(ActiveXmrPunishPrepareV3 {
+            request: request.clone(),
+            result: result.clone(),
+            replans: index,
+        });
+        Ok(result)
+    }
+
+    /// Restores the tag-17 lineage from durable state at startup, without a
+    /// node call. The request journal holds the last punishment it answered,
+    /// which a re-plan reserved after that answer leaves behind: any member
+    /// of the lineage is accepted, the current one becomes active.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing or invalid durable state, request drift, and an
+    /// `expected` punishment the lineage does not hold.
+    pub async fn restore_native_xmr_punish_v3(
+        &self,
+        request: &PrepareNativeXmrPunishV3Request,
+        expected: &PrepareNativeXmrPunishV3Result,
+    ) -> Result<(), NativePrepareError> {
+        self.validate_prepared_native_xmr_punish_v3(request, expected)?;
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        return Err(NativePrepareError::InvalidTransactionBytes);
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let mut state = self.state.lock().await;
+            let store = self
+                .durable_store
+                .as_ref()
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            let (stored_request, lineage) = self
+                .load_durable_xmr_punish_lineage(store)?
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            if &stored_request != request || !lineage.contains(expected) {
+                return Err(NativePrepareError::InvalidTransactionBytes);
+            }
+            let recovered = self
+                .recover_durable_xmr_punish_v3(request)?
+                .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+            if let Some(active) = state.active_xmr_punish_v3.as_ref()
+                && (active.request != recovered.request || active.result != recovered.result)
+            {
+                return Err(NativePrepareError::ActiveXmrPunishPrepare);
+            }
+            state.active_xmr_punish_v3 = Some(recovered);
+            Ok(())
+        }
     }
 
     /// Prepares and durably reserves one witnessed initialization/funding pair.
@@ -3371,10 +3506,13 @@ impl NativeEscrowPlanner {
                     .durable_store
                     .as_ref()
                     .ok_or(NativePrepareError::InvalidTransactionBytes)?;
-                let (stored_request, stored_result) = store
-                    .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(
-                        ReservationKind::XmrNativePunishV3,
-                    )?
+                // Only the lineage's current punishment is admitted: a
+                // superseded one can never land and is never sent again.
+                let (stored_request, mut lineage) = self
+                    .load_durable_xmr_punish_lineage(store)?
+                    .ok_or(NativePrepareError::InvalidTransactionBytes)?;
+                let stored_result = lineage
+                    .pop()
                     .ok_or(NativePrepareError::InvalidTransactionBytes)?;
                 if active.request != stored_request
                     || active.result != stored_result
@@ -3826,26 +3964,82 @@ impl NativeEscrowPlanner {
         Ok(Some(stored_result))
     }
 
+    /// The durable tag-17 lineage, current punishment last.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recover_durable_xmr_punish_v3(
         &self,
         request: &PrepareNativeXmrPunishV3Request,
-    ) -> Result<Option<PrepareNativeXmrPunishV3Result>, NativePrepareError> {
+    ) -> Result<Option<ActiveXmrPunishPrepareV3>, NativePrepareError> {
         let Some(store) = self.durable_store.as_ref() else {
             return Ok(None);
         };
-        let Some((stored_request, stored_result)) = store
+        let Some((stored_request, mut lineage)) = self.load_durable_xmr_punish_lineage(store)?
+        else {
+            return Ok(None);
+        };
+        if &stored_request != request {
+            return Err(NativePrepareError::ActiveXmrPunishPrepare);
+        }
+        let replans = u32::try_from(lineage.len() - 1)
+            .map_err(|_| DurableReservationError::CorruptReservation)?;
+        let result = lineage
+            .pop()
+            .ok_or(DurableReservationError::CorruptReservation)?;
+        Ok(Some(ActiveXmrPunishPrepareV3 {
+            request: stored_request,
+            result,
+            replans,
+        }))
+    }
+
+    /// Loads the original tag-17 reservation and its re-plan slots 1..k in
+    /// order, each revalidated, for the same request and at a nonce above
+    /// its predecessor's; a slot after an absent one is corrupt state.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn load_durable_xmr_punish_lineage(
+        &self,
+        store: &DurableReservationStore,
+    ) -> Result<
+        Option<(
+            PrepareNativeXmrPunishV3Request,
+            Vec<PrepareNativeXmrPunishV3Result>,
+        )>,
+        NativePrepareError,
+    > {
+        let Some((stored_request, original)) = store
             .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(
                 ReservationKind::XmrNativePunishV3,
             )?
         else {
             return Ok(None);
         };
-        self.validate_prepared_native_xmr_punish_v3(&stored_request, &stored_result)?;
-        if &stored_request != request {
-            return Err(NativePrepareError::ActiveXmrPunishPrepare);
+        self.validate_prepared_native_xmr_punish_v3(&stored_request, &original)?;
+        let mut lineage = vec![original];
+        let mut absent = false;
+        for index in 1..=MAX_XMR_PUNISH_REPLANS {
+            let kind = ReservationKind::xmr_native_punish_supersession(index)
+                .ok_or(NativePrepareError::ReplanExhausted)?;
+            let loaded = store
+                .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(kind)?;
+            match (loaded, absent) {
+                (None, _) => absent = true,
+                (Some(_), true) => return Err(DurableReservationError::CorruptReservation.into()),
+                (Some((slot_request, slot_result)), false) => {
+                    self.validate_prepared_native_xmr_punish_v3(&slot_request, &slot_result)?;
+                    let predecessor = lineage
+                        .last()
+                        .ok_or(DurableReservationError::CorruptReservation)?;
+                    if slot_request != stored_request
+                        || prepared_signer_nonce(&slot_result.punish, self.signer_account_id)?
+                            <= prepared_signer_nonce(&predecessor.punish, self.signer_account_id)?
+                    {
+                        return Err(DurableReservationError::CorruptReservation.into());
+                    }
+                    lineage.push(slot_result);
+                }
+            }
         }
-        Ok(Some(stored_result))
+        Ok(Some((stored_request, lineage)))
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -5187,17 +5381,15 @@ impl NativeEscrowPlanner {
                     self.validate_owned_xmr_refund_v3(store, context, runtime, terms, target)?;
                 }
                 XmrNativeEffectV3::Punish => {
-                    let (stored_request, stored_result) = store
-                        .load::<PrepareNativeXmrPunishV3Request, PrepareNativeXmrPunishV3Result>(
-                            ReservationKind::XmrNativePunishV3,
-                        )?
+                    // Any punishment of the lineage (original or re-plan).
+                    let (stored_request, lineage) = self
+                        .load_durable_xmr_punish_lineage(store)?
                         .ok_or(NativePrepareError::InvalidTransactionBytes)?;
-                    self.validate_prepared_native_xmr_punish_v3(&stored_request, &stored_result)?;
                     if stored_request.context.run_id != context.run_id
                         || stored_request.context.sidecar_role != context.sidecar_role
                         || &stored_request.runtime != runtime
                         || &stored_request.terms != terms
-                        || &stored_result.punish != target
+                        || !lineage.iter().any(|result| &result.punish == target)
                     {
                         return Err(NativePrepareError::InvalidTransactionBytes);
                     }

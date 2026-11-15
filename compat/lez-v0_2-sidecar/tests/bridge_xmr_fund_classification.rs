@@ -2547,16 +2547,17 @@ async fn maker_classifies_its_own_tag_17_at_a_live_nonce_and_nothing_else() {
         )
         .expect("maker planner"),
     );
+    let punish_request = PrepareNativeXmrPunishV3Request::new(
+        MessageContext::new(
+            RunId::new(RUN_ID).expect("run id"),
+            RequestId::new("tag17-live-nonce-prepare").expect("request id"),
+            Participant::Maker,
+        ),
+        maker_runtime,
+        xmr_terms,
+    );
     let punish = planner
-        .prepare_native_xmr_punish_v3(&PrepareNativeXmrPunishV3Request::new(
-            MessageContext::new(
-                RunId::new(RUN_ID).expect("run id"),
-                RequestId::new("tag17-live-nonce-prepare").expect("request id"),
-                Participant::Maker,
-            ),
-            maker_runtime,
-            xmr_terms,
-        ))
+        .prepare_native_xmr_punish_v3(&punish_request)
         .await
         .expect("tag 17 at the live nonce")
         .punish;
@@ -2600,6 +2601,39 @@ async fn maker_classifies_its_own_tag_17_at_a_live_nonce_and_nothing_else() {
             xmr_terms.to_input().punish_message_hash
         );
         assert_eq!(facts.metadata.state, XmrNativeEscrowStateV3::Claimed);
+    }
+
+    // Re-planned after another transaction of the owner took nonce 7: the
+    // re-plan is found by its terms, and owned as an exact target.
+    let replanned = planner
+        .supersede_native_xmr_punish_v3(&punish_request, punish.transaction_id, 8)
+        .await
+        .expect("tag 17 re-planned at nonce 8")
+        .punish;
+    for (id, target) in [
+        (
+            "tag17-replanned-discovery",
+            FinalizedNativeXmrTransactionTargetV3::DiscoverByTerms {},
+        ),
+        (
+            "tag17-replanned-exact",
+            FinalizedNativeXmrTransactionTargetV3::exact(replanned.clone()),
+        ),
+    ] {
+        let classified = Box::pin(classify_maker_punish(
+            directory.path(),
+            id,
+            &planner,
+            &xmr_terms,
+            target,
+            indexer(&replanned, claimant),
+        ))
+        .await
+        .expect("the re-planned tag 17 classifies");
+        let FinalizedNativeXmrScanOutcomeV3::Found { facts, .. } = classified.outcome else {
+            panic!("the re-planned tag 17 must be found")
+        };
+        assert_eq!(facts.transaction.exact_bytes, replanned.exact_bytes);
     }
 
     let metadata = compute_metadata_pda(&ESCROW_PROGRAM, &SWAP_ID);
