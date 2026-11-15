@@ -141,7 +141,6 @@ PREFIX = os.environ.get("LEZ_CONTAINER_PREFIX", "lez")
 # The stack's indexer and sequencer on the host (scripts/lane.sh: its port offset).
 STACK_INDEXER_URL = os.environ.get("LEZ_STACK_INDEXER_URL", "http://127.0.0.1:8779/")
 STACK_SEQUENCER_URL = f"http://127.0.0.1:{os.environ.get('LEZ_SEQUENCER_PORT', '3040')}/"
-SEQUENCER_CONTAINER = f"{os.environ.get('LEZ_STACK_PREFIX', 'lez')}-sequencer"
 # The lane's own files: role identities and keys (lez/), corridors (zec/),
 # summaries (e2e/) and exported evidence (evidence/). runtime.env and the
 # heartbeat's status stay in RUNTIME.
@@ -913,14 +912,13 @@ def scenario_wrong_inputs(stamp: str) -> dict:
     return {"swap_id": swap_id}
 
 
-def kill_node(role: str, after_kill=None) -> dict:
+def kill_node(role: str) -> dict:
     """R4: the role's container killed with SIGKILL, not stopped. The container
     is the party's Basecamp, and the Node runs in it as a child of Basecamp's
     lez_swap_node module (modules/lez-role-node/node-entrypoint.sh), so the
     kill takes Basecamp, the Node and its helpers down together, none of them
     given a chance to clean up. Asserts the container exited by the signal
-    (exit code 137, not killed for memory), runs `after_kill` if given, then
-    starts it again."""
+    (exit code 137, not killed for memory), then starts it again."""
     container, _ = NODES[role]
     log(f"  killing {container} with SIGKILL")
     docker("kill", "--signal", "KILL", container)
@@ -929,8 +927,6 @@ def kill_node(role: str, after_kill=None) -> dict:
     if state.get("Running") or state.get("ExitCode") != 137 or state.get("OOMKilled"):
         raise Failure(f"{container} did not exit by SIGKILL: running {state.get('Running')}, exit code "
                       f"{state.get('ExitCode')}, OOMKilled {state.get('OOMKilled')}")
-    if after_kill:
-        after_kill()
     log(f"  {container} exited by SIGKILL (exit code 137, not OOM-killed); starting it again")
     docker("start", container)
     wait_healthy(role)
@@ -6324,36 +6320,56 @@ def xmr_maker_claim_evidence_size(swap_id: str) -> int | None:
     return int(size) if size and int(size) >= 0 else None
 
 
+# The Maker container's loopback forwarder to the LEZ sequencer (node-entrypoint.sh):
+# the one way its Node, the swap's sidecar and the claim tool reach the sequencer.
+# The sequencer itself is shared by every lane and is never paused: a paused
+# sequencer has left the devnet's finality frozen for good.
+SEQUENCER_FORWARDER = "TCP-LISTEN:3040"
+
+
 def xmr_hold_maker_claim_tool(swap_id: str) -> bool:
     """Holds the Maker's LEZ claim tool between its reserved-empty evidence and
-    its write, so the kill lands there: the sequencer is paused (docker pause)
-    once the claim is the Maker's next step, which leaves the tool's first
-    sidecar call (the claim's preparation reads the claim authority's nonce
-    from the sequencer) waiting, while the finalized clock the actor checks
-    first comes from the indexer. True with the sequencer left paused and the
-    evidence reserved but empty; False, unpaused, when the tool had already
+    its write, so the kill lands there: the Maker container's sequencer
+    forwarder is stopped (SIGSTOP) once the claim is the Maker's next step,
+    which leaves the tool's first sidecar call (the claim's preparation reads
+    the claim authority's nonce from the sequencer) waiting, while the
+    finalized clock the actor checks first comes from the indexer, whose
+    forwarder keeps running. True with the forwarder left stopped and the
+    evidence reserved but empty; False, resumed, when the tool had already
     written it (the point passed)."""
-    docker("pause", SEQUENCER_CONTAINER)
+    xmr_signal_maker_sequencer_forwarder("STOP")
     try:
         wait = Wait("the Maker's claim tool to reserve its evidence", 90)
         while wait.running():
             size = xmr_maker_claim_evidence_size(swap_id)
             if size == 0:
-                log(f"  the Maker's claim tool reserved {XMR_CLAIM_EVIDENCE} and waits on the paused sequencer")
+                log(f"  the Maker's claim tool reserved {XMR_CLAIM_EVIDENCE} and waits on its stopped sequencer forwarder")
                 return True
             if size:
                 break
             time.sleep(0.5)
     except BaseException:
-        xmr_unpause_sequencer()
+        xmr_resume_maker_sequencer_forwarder()
         raise
-    xmr_unpause_sequencer()
+    xmr_resume_maker_sequencer_forwarder()
     return False
 
 
-def xmr_unpause_sequencer() -> None:
-    """Resumes the sequencer xmr_hold_maker_claim_tool paused (a no-op once resumed)."""
-    subprocess.run(["docker", "unpause", SEQUENCER_CONTAINER], capture_output=True, check=False)
+def xmr_signal_maker_sequencer_forwarder(name: str) -> None:
+    """Sends SIG<name> (STOP or CONT) to the Maker container's sequencer
+    forwarder, its listener and the connections it forked (pkill -f matches
+    them all), in two passes so a connection forked during the first is
+    caught too. Only this lane's Maker container is touched."""
+    found = [subprocess.run(["docker", "exec", "-u", "root", NODES["maker"][0], "pkill", f"-{name}", "-f",
+                             SEQUENCER_FORWARDER], check=False, capture_output=True).returncode == 0 for _ in range(2)]
+    if name == "STOP" and not any(found):
+        raise Failure(f"no sequencer forwarder ({SEQUENCER_FORWARDER}) runs in {NODES['maker'][0]}")
+
+
+def xmr_resume_maker_sequencer_forwarder() -> None:
+    """Resumes the forwarder xmr_hold_maker_claim_tool stopped (a no-op once
+    resumed, or in a container started again, whose forwarder is new)."""
+    xmr_signal_maker_sequencer_forwarder("CONT")
 
 
 def xmr_maker_transfer_since(unix_seconds: float) -> bool:
@@ -6385,13 +6401,13 @@ def xmr_kill_point_swap(stamp: str, role: str, point: str, reached, may_refund: 
 
     def kill() -> dict:
         log(f"  kill point '{point}': taker {view['state']} (actor {view.get('actor_phase')}), maker {maker}")
-        # The held claim tool dies with its Node; the sequencer resumes before the Node starts again.
-        resume = xmr_unpause_sequencer if point == "claim tool running" else None
+        # The held claim tool and the stopped forwarder die with the Maker's
+        # container, which starts again with a forwarder of its own.
         try:
-            killed_node = kill_node(role, after_kill=resume)
+            killed_node = kill_node(role)
         finally:
-            if resume:
-                resume()
+            if point == "claim tool running":
+                xmr_resume_maker_sequencer_forwarder()
         return {"point": point, "taker_state": view["state"], "taker_actor_phase": view.get("actor_phase"),
                 "maker_phase": maker, **killed_node}
 
