@@ -596,7 +596,7 @@ at once spaces each swap's drives further apart and needs wider windows.
 their owner sockets (the Maker's offer through `lez-maker-cli`, the Taker over
 its owner RPC); `regress.sh` runs them as `node:xmr:<scenario>:TakerSellsLez`,
 on `fast`, and leaves them out with a line on a stack without `LEZ_MONERO=1`.
-All eight are in the `full` tier, none in `smoke`. A lot is 1 XMR for 50 000
+All thirteen are in the `full` tier, none in `smoke`. A lot is 1 XMR for 50 000
 LEZ units.
 
 ```sh
@@ -614,9 +614,14 @@ bash scripts/regress.sh run node:xmr:xmr-punish:TakerSellsLez node:xmr:xmr-kill-
 | `xmr-concurrent` | two swaps of the same Nodes at once, one offer each; both complete; two fundings, two sweeps |
 | `xmr-kill-taker` | the Taker killed with SIGKILL at each of 7 steps (after the take, lock in flight, locked, Monero verified, claim authorised, waiting for the Maker's claim, sweeping), one fresh swap each; each completes with the owner accounts' LEZ transaction counts and the Monero moved once |
 | `xmr-kill-maker` | the Maker killed at each of 6 steps (after the take, the Taker's lock observed, its Monero funding in flight, funded, its LEZ claim tool running, its LEZ claim in flight); each completes or, killed with the Taker's lock observed or its funding in flight, may end refunded with nothing lost |
+| `xmr-monerod-down` | the lane's monerod stopped before a take: both Nodes read the Monero route unavailable (the Maker withdraws and refuses Monero offers, the Taker refuses a take), Bitcoin's and Zcash's available; started again, a swap completes; then stopped right after a take until the Maker has seen the Taker's lock final and 60 s more, within the funding cutoff: the swap completes, or ends refunded with nothing lost (it completed in the 2026-11-15 run, monerod down 113 s) |
+| `xmr-wallet-restart` | a role's `monero-wallet-rpc` restarted mid-swap: the Maker's after the take, the Taker's while it watches for the Monero and before its sweep; both swaps complete |
+| `xmr-outage-before-take` | Logos Chat and Delivery cut before a take: both Nodes degraded, the take refused, no swap on either Node; restored, the same request takes the offer and the swap completes |
+| `xmr-cut-after-lock` | Chat and Delivery cut once the Taker's LEZ lock is out, until the swap completes under the cut |
+| `mixed-three-pair` | a Monero, a Bitcoin and a Zcash swap of the same Nodes at once, all TakerSellsLez; all three complete |
 
-In the full regression of 2026-11-14 they ran across lanes 1 to 3
-(`docs/evidence/regression-m4-2026-11-14/`). Footprint, measured on 2026-11-13: after 190 blocks a lane's
+In the full regression of 2026-11-15 they ran across lanes 1 to 3
+(`docs/evidence/regression-m4-2026-11-15/`). Footprint, measured on 2026-11-13: after 190 blocks a lane's
 monerod volume holds 0.5 MB and each wallet's 0.4 MB; monerod uses about
 270 MB of memory, each wallet-rpc about 13 MB.
 
