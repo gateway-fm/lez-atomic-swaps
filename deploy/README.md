@@ -651,6 +651,25 @@ one. What the Monero side does about it, and what is left:
   that landed by its terms. Not run on the devnet: no scenario makes another
   owner transaction take tag 17's nonce.
 
+**Scan distances.** Every finalized-LEZ scan on the Monero paths keeps a
+durable cursor, so a scan of any distance ends however short its attempts
+are (a LEZ block a second: on `local` up to about 2800 blocks from the
+Taker's lock to P, more on a real network's longer windows):
+- Maker actor (tags 13, 14, 16, in process): 64 pages of 16 blocks per drive,
+  cursor `maker-lez-scan.json` written at the end of each drive. Tag 13
+  starts 256 blocks before the first drive's finalized tip (a Maker Node that
+  first drives a swap more than 256 blocks after the Taker's lock misses it,
+  never funds, and the swap ends refunded with nothing lost), tags 14 and 16
+  after the Taker's lock.
+- Maker observer (tags 15, 17, `xmr-reference-tag15-finalized`): 16-block
+  pages within the actor's 30 s observer timeout (about 800 blocks on the
+  devnet), from the block after tag 14 (tag 15) or the refund scan's cursor
+  (tag 17), resuming at `tag15-scan-cursor.json` / `tag17-scan-cursor.json`.
+- Taker supervisor (tags 13, 14, 15, 16, in process): 8 windows of
+  `discovery_max_blocks` (2048) per step, cursors in `xmr-taker-progress.json`.
+  Tag 16 starts after the funding, about R − lock blocks before the refund can
+  land (two windows on `local`).
+
 Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`; only the
 happy path has been run on a desk). Not on the devnet yet: the systemd role
 packages configure no Monero role, and there is no macOS package for it.
