@@ -896,17 +896,21 @@ impl LiveMaker {
                 )
             }
             XmrWorkflowBranch::Punish => {
-                let lock = read_finalized(&self.evidence(TAG13_FILE))?
-                    .context("the Taker's lock is not recorded")?;
+                // Tag 17 is sent only after this activation, which follows
+                // a refund scan to the finalized tip, so it lands past that
+                // scan's cursor: its observer scans from there, not from the
+                // Taker's lock, a whole `[C, P)` before (hundreds of blocks,
+                // more than one observer run scans on the fast profile).
+                let start = if let Some(height) = self.cursor()?.refund {
+                    height
+                } else {
+                    let lock = read_finalized(&self.evidence(TAG13_FILE))?
+                        .context("the Taker's lock is not recorded")?;
+                    found_block(&lock)?.0.saturating_add(1)
+                };
                 (
                     activate_maker_punish_workflow_bytes(
-                        manifest,
-                        authority,
-                        run_id,
-                        run_id,
-                        &funding,
-                        &receipt,
-                        found_block(&lock)?.0.saturating_add(1),
+                        manifest, authority, run_id, run_id, &funding, &receipt, start,
                     )?,
                     PUNISH_ACTIVATION_FILE,
                 )
