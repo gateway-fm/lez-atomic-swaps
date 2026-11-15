@@ -1,6 +1,6 @@
 # Installing the Maker and Taker Nodes as systemd services
 
-Every command below ran as root in an Ubuntu 24.04 VM (systemd 255) under
+Every command below except the Monero section ran as root in an Ubuntu 24.04 VM (systemd 255) under
 `scripts/run-maker-node-systemd-vm.sh`, which also executed a Bitcoin and a Zcash swap between the
 two units against the devnet's chains; record: `docs/evidence/maker-systemd-2026-11-12/`.
 
@@ -12,11 +12,13 @@ and `:18232`
 (local nodes, or a loopback forward such as `socat TCP-LISTEN:18443,bind=127.0.0.1,fork
 TCP:<core>:18443`); a funded LEZ account and Core wallet per role. Binaries built from this
 checkout (`cargo build --locked -p lez-maker-node -p lez-taker-node --features
-lez-maker-node/pair-zec,lez-taker-node/pair-zec --bins`, `-p btc-reference-actor --bins`,
+lez-maker-node/pair-zec,lez-taker-node/pair-zec,lez-maker-node/pair-xmr --bins`, `-p btc-reference-actor --bins`,
 `-p zec-reference-actor --bin lez-zec-maker-actor --bin lez-zec-taker-actor`,
+`-p xmr-reference-actor --bins`,
 `-p lez-logos-price-c-api --bins`,
-`-p lez-runtime-healthcheck`) and the LEZ sidecar of the same tree, built in the builder image
-(`deploy/scripts/from-scratch.sh --only build` → `provision/data/sidecar/lez-v02-bridge-poc`).
+`-p lez-runtime-healthcheck`) and the LEZ sidecar and Monero Stage-A planner of the same tree, built in
+the builder image (`deploy/scripts/from-scratch.sh --only build` →
+`provision/data/sidecar/lez-v02-bridge-poc`, `lez-v02-xmr-stage-a-plan` beside it).
 
 ## Install
 
@@ -68,6 +70,32 @@ credential only when the key changes: every swap binds that file); and in each s
 `btc/swaps/<id>/zec/` the swap's own `claim-recovery.key` and the funder's `claim-preimage.key`,
 kept after completion (the Maker reads its own again for a replayed completion). No swap
 directory holds a role's long-lived key.
+
+## Monero (Maker only, optional)
+
+A packaging proof, not a production recipe: the Monero lane is regtest-only today (the role
+configuration accepts only the `accelerated-regtest` profile), and these steps were checked
+statically and with stub programs only, not in the VM. The Maker unit as installed has no
+Monero role. To give it one, with `monerod` on `127.0.0.1:18081` and the Maker's own
+`monero-wallet-rpc` on `127.0.0.1:18083` (loopback only: the Monero adapter refuses any other
+endpoint; a `socat` forward as above for a daemon elsewhere), its wallet named `maker` and
+opened without a password:
+
+```sh
+systemd-creds encrypt --name=monerod.login monerod.login /etc/lez/maker/credentials/monerod.login.cred
+systemd-creds encrypt --name=monero-wallet-rpc.login monero-wallet-rpc.login /etc/lez/maker/credentials/monero-wallet-rpc.login.cred
+install -D -m 0644 /etc/lez/maker/monero.conf.example /etc/systemd/system/lez-maker-node.service.d/monero.conf
+```
+
+Each login is the RPC's `user:password` (its `--rpc-login`). The drop-in loads both credentials
+and names their directory to the launcher (`LEZ_MONERO_LOGIN_DIR`); in `env`, uncomment the three
+windows `LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS`, `LEZ_XMR_REFUND_SECONDS` and
+`LEZ_XMR_PUNISH_SECONDS` (the Taker must use the same). The launcher then writes
+`xmr-role.json`, the actor root `xmr-actors/` (0700) and owner-private copies of both logins in
+`monero-rpc/` under `/var/lib/lez/maker/`, and the Node keeps its wallet lock in
+`btc/monero-rpc/`; every swap's effect authority holds the logins again, split into user and
+password files. The Node reports the Monero route (Taker sells LEZ only) by asking `monerod`.
+The Taker unit has no Monero packaging.
 
 ## Start and check
 

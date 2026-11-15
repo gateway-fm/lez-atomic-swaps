@@ -680,8 +680,10 @@ Taker's lock to P, more on a real network's longer windows):
   land (two windows on `local`).
 
 Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`; only the
-happy path has been run on a desk). Not on the devnet yet: the systemd role
-packages configure no Monero role, and there is no macOS package for it.
+happy path has been run on a desk). Not on the devnet yet: there is no macOS
+package for it. The Maker's systemd unit takes a Monero role from an optional
+drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
+stub programs, not run in the VM; the Taker unit has none.
 
 ### A second stack on the same host
 

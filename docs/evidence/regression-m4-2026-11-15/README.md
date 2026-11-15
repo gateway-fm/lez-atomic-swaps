@@ -239,7 +239,9 @@ write-ahead-log bound patches (`deploy/builder/patches/README.md`).
 ## Not covered
 
 - Monero beyond an offline regtest chain: no stagenet or mainnet; x86_64 (linux/amd64) only.
-- No systemd packaging, macOS package or desk recordings for Monero.
+- No systemd packaging, macOS package or desk recordings for Monero. (Since this run the Maker's
+  systemd unit takes a Monero role from an optional drop-in, checked statically and with stub
+  programs, not run in a VM; the Taker unit has none.)
 - Compute units for the five Monero escrow instructions (tags 13–17) were not measured in this
   run; they were measured afterwards against the deployed program, outside the stack, in
   [docs/lez-compute-units.md](../../lez-compute-units.md#the-xmr-path-tags-1317).
