@@ -28,7 +28,9 @@ class ReleaseWorkflow(unittest.TestCase):
     def test_every_compose_image_is_pushed(self):
         named = set(re.findall(r'image: \$\{LEZ_IMAGE_PREFIX:-lez\}-([a-z0-9-]+):', COMPOSE))
         self.assertTrue(named)
-        self.assertEqual(named - pushed_images(), set())
+        # Monero runs on the devnet only (profile `monero`): a bundle neither
+        # pulls nor publishes its image.
+        self.assertEqual(named - pushed_images() - {'monerod'}, set())
 
     def test_rust_job_uploads_what_the_contexts_copy(self):
         collect = WORKFLOW.split('name: node-payloads')[0].rsplit('- name: Collect payloads', 1)[1]
