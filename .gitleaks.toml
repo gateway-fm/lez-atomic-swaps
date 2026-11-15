@@ -23,6 +23,10 @@ paths = [
   '''^scripts/test-m3-actor-local-poc-contract\.sh$''',
   '''^scripts/test-m3-f7-token-fixture-contract\.sh$''',
   '''^tests/e2e/monero/provenance\.env$''',
+  # Self-generated Monero regression vectors and fuzz seeds from fixed test scalars.
+  '''^crates/xmr-swap-sdk/tests/vectors/cross_curve_dleq_v1\.txt$''',
+  '''^crates/xmr-swap-sdk/tests/cross_curve_vectors\.rs$''',
+  '''^fuzz/corpus/xmr_reserve_wire/reserve-(?:request|response)\.json$''',
 ]
 regexes = [
   '''aggregate_internal_key["'':= .]+[0-9a-f]{64}''',
@@ -36,4 +40,7 @@ regexes = [
   '''\.(?:internal_key|refund_key|output_key)["'':= .]+[0-9a-f]{64}''',
   '''lez_token_program_id["'':= .]+[0-9a-f]{64}''',
   '''token_program_id["'':= .]+[0-9a-f]{64}''',
+  '''(?:view_key_le|shared_public_spend_key|reconstructed_spend_key_le)=[0-9a-f]{64}''',
+  '''public key: libsecp256k1 on the big-endian scalar''',
+  '''public_view_key":"[0-9a-f]{64}"''',
 ]
