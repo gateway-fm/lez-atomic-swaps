@@ -35,14 +35,3 @@ eae01e88bf88471250a8d5762052d771368fca50:deploy/scripts/market-bootstrap.sh:gene
 88fcabbf2b5d4027b28981322b9360ce732d02f1:deploy/scripts/gen-config.sh:generic-api-key:252
 9daa7fcdc576d6890ccfb758252603e00fd87bc0:deploy/scripts/gen-config.sh:generic-api-key:251
 9daa7fcdc576d6890ccfb758252603e00fd87bc0:deploy/scripts/gen-config.sh:generic-api-key:252
-
-# Monero work on the branch feat/m4-delivery, which the full-history scan also
-# covers: self-generated deterministic regression vectors for the cross-curve
-# DLEQ proof (their header says how they are produced) and two fuzz corpus
-# seeds. Test data, no key that guards anything.
-29b9c3cf891cc717907c824a3c58ab62c508d913:crates/xmr-swap-sdk/tests/vectors/cross_curve_dleq_v1.txt:generic-api-key:39
-29b9c3cf891cc717907c824a3c58ab62c508d913:crates/xmr-swap-sdk/tests/vectors/cross_curve_dleq_v1.txt:generic-api-key:40
-29b9c3cf891cc717907c824a3c58ab62c508d913:crates/xmr-swap-sdk/tests/vectors/cross_curve_dleq_v1.txt:generic-api-key:41
-29b9c3cf891cc717907c824a3c58ab62c508d913:crates/xmr-swap-sdk/tests/cross_curve_vectors.rs:generic-api-key:123
-46997898f454ada33b4d8feefc4db8c24db5a820:fuzz/corpus/xmr_reserve_wire/reserve-request.json:generic-api-key:1
-46997898f454ada33b4d8feefc4db8c24db5a820:fuzz/corpus/xmr_reserve_wire/reserve-response.json:generic-api-key:1
