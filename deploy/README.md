@@ -668,8 +668,11 @@ one. What the Monero side does about it, and what is left:
 durable cursor, so a scan of any distance ends however short its attempts
 are (a LEZ block a second: on `local` up to about 2800 blocks from the
 Taker's lock to P, more on a real network's longer windows):
-- Maker actor (tags 13, 14, 16, in process): 64 pages of 16 blocks per drive,
-  cursor `maker-lez-scan.json` written at the end of each drive. Tag 13
+- Maker actor (tags 13, 14, 16, in process): 8 pages of 16 blocks per drive
+  (a page takes the swap's sidecar 0.4 to 5 s on the devnet, and the Node's
+  one actor worker drives every swap in turn), cursor `maker-lez-scan.json`
+  written at the end of each drive; a drive that stops short of the
+  finalized tip concludes nothing absent. Tag 13
   starts at the finalized height the Maker Node read when it activated the
   swap (the Taker locks only once activated); without that seed (the sidecar
   did not answer then) 256 blocks before the first drive's finalized tip (a

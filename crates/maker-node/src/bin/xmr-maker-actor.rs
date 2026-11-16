@@ -67,9 +67,13 @@ const EFFECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// A Monero effect mines its confirmations and restores a wallet.
 const MONERO_EFFECT_TIMEOUT: Duration = Duration::from_mins(2);
 const LEZ_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-/// Finalized blocks one classification request scans, and pages per drive.
+/// Finalized blocks one classification request scans, and pages per drive:
+/// a page takes the swap's sidecar 0.5 to 3 s, and the Node's one actor
+/// worker drives every swap of every pair in turn, so a drive scans at most
+/// 128 blocks (a few minutes of LEZ blocks, more than one swap's drives are
+/// apart) and the next one resumes from its cursor.
 const SCAN_PAGE_BLOCKS: u32 = 16;
-const SCAN_PAGES_PER_DRIVE: u32 = 64;
+const SCAN_PAGES_PER_DRIVE: u32 = 8;
 /// Without the cursor the Node seeds at activation (a swap provisioned
 /// before it was, or a lost file), blocks before the first drive's finalized
 /// tip where the search for the Taker's lock starts: the Taker locks right
@@ -251,6 +255,35 @@ enum Watched {
     TakerLock,
     ClaimAuthorization,
     Refund,
+}
+
+/// One classification page: the effect found, or the height after the
+/// finalized window it scanned.
+enum Page<T> {
+    Found(T),
+    Next(u64),
+}
+
+/// Pages through finalized history from `height` to `tip`, at most
+/// `SCAN_PAGES_PER_DRIVE` pages, until `page` finds the effect. Returns it,
+/// the height where the next scan resumes, and whether this one reached the
+/// tip: an effect not found short of the tip may still be there.
+fn scan_pages<T>(
+    mut height: u64,
+    tip: u64,
+    mut page: impl FnMut(u64, u32) -> Result<Page<T>>,
+) -> Result<(Option<T>, u64, bool)> {
+    for _ in 0..SCAN_PAGES_PER_DRIVE {
+        if height > tip {
+            break;
+        }
+        let blocks = u32::try_from((tip - height + 1).min(u64::from(SCAN_PAGE_BLOCKS)))?;
+        match page(height, blocks)? {
+            Page::Found(found) => return Ok((Some(found), height, false)),
+            Page::Next(next) => height = next,
+        }
+    }
+    Ok((None, height, height > tip))
 }
 
 /// The outcome of one bounded finalized scan.
@@ -794,18 +827,10 @@ impl LiveMaker {
             Watched::Refund => XmrNativeEffectV3::Refund,
         };
         let terms = self.terms;
-        let mut height = start;
-        let mut found = None;
-        let mut to_tip = false;
-        for _ in 0..SCAN_PAGES_PER_DRIVE {
-            if height > tip {
-                to_tip = true;
-                break;
-            }
-            let blocks = u32::try_from((tip - height + 1).min(u64::from(SCAN_PAGE_BLOCKS)))?;
-            let Some((client, runtime, run_id)) = &self.lez else {
-                return Err(anyhow!("the swap's LEZ sidecar is not connected"));
-            };
+        let Some((client, runtime, run_id)) = &self.lez else {
+            return Err(anyhow!("the swap's LEZ sidecar is not connected"));
+        };
+        let (found, height, to_tip) = scan_pages(start, tip, |height, blocks| {
             let request = ClassifyFinalizedNativeXmrEffectV3Request::new(
                 Self::context(run_id, "scan")?,
                 runtime.clone(),
@@ -824,23 +849,24 @@ impl LiveMaker {
                         facts.instruction.effect == effect,
                         "the classifier found another effect"
                     );
-                    found = Some(result);
-                    break;
+                    Ok(Page::Found(result))
                 }
                 // Uncertain says only that the escrow's state at the window's
                 // end does not exclude the effect later: the window itself is
                 // final and holds none, so the scan moves past it either way.
                 FinalizedNativeXmrScanOutcomeV3::Absent { scanned_window, .. }
                 | FinalizedNativeXmrScanOutcomeV3::Uncertain { scanned_window, .. } => {
-                    height = scanned_window
-                        .start_height()
-                        .saturating_add(u64::from(scanned_window.max_blocks()));
+                    Ok(Page::Next(
+                        scanned_window
+                            .start_height()
+                            .saturating_add(u64::from(scanned_window.max_blocks())),
+                    ))
                 }
                 FinalizedNativeXmrScanOutcomeV3::Unavailable { reason } => {
-                    return Err(anyhow!("finalized LEZ history unavailable: {reason:?}"));
+                    Err(anyhow!("finalized LEZ history unavailable: {reason:?}"))
                 }
             }
-        }
+        })?;
         if found.is_none() {
             cursor.set(watched, height);
             replace_private(
@@ -848,7 +874,7 @@ impl LiveMaker {
                 &serde_json::to_vec(&cursor)?,
             )?;
         }
-        Ok((found, to_tip || height > tip))
+        Ok((found, to_tip))
     }
 
     fn manifest_inputs(&self) -> (&[u8], &[u8], &str) {
@@ -1433,6 +1459,47 @@ mod tests {
             branch: None,
             branch_done: false,
         }
+    }
+
+    #[test]
+    fn one_drive_scans_a_bounded_number_of_pages_and_the_next_resumes() {
+        // 300 finalized blocks behind: one drive scans 128 and stops short of
+        // the tip, so a watched effect not found there is not yet absent.
+        let mut pages = Vec::new();
+        let (found, next, to_tip) = scan_pages::<()>(1, 300, |height, blocks| {
+            pages.push((height, blocks));
+            Ok(Page::Next(height + u64::from(blocks)))
+        })
+        .unwrap();
+        assert_eq!((found, next, to_tip), (None, 129, false));
+        assert_eq!(pages.len(), 8);
+        assert_eq!(pages[7], (113, 16));
+        // The next drive resumes there and reaches the tip.
+        pages.clear();
+        let (found, next, to_tip) = scan_pages::<()>(next, 300, |height, blocks| {
+            pages.push((height, blocks));
+            Ok(Page::Next(height + u64::from(blocks)))
+        })
+        .unwrap();
+        assert_eq!((found, next, to_tip), (None, 257, false));
+        let (found, next, to_tip) = scan_pages::<()>(next, 300, |height, blocks| {
+            Ok(Page::Next(height + u64::from(blocks)))
+        })
+        .unwrap();
+        assert_eq!((found, next, to_tip), (None, 301, true));
+        // At the tip already: nothing to ask, and the tip is reached.
+        let (found, _, to_tip) = scan_pages::<()>(301, 300, |_, _| unreachable!()).unwrap();
+        assert_eq!((found, to_tip), (None, true));
+        // A found effect ends the scan where it was found.
+        let (found, at, to_tip) = scan_pages(1, 300, |height, blocks| {
+            Ok(if height == 33 {
+                Page::Found(height)
+            } else {
+                Page::Next(height + u64::from(blocks))
+            })
+        })
+        .unwrap();
+        assert_eq!((found, at, to_tip), (Some(33), 33, false));
     }
 
     #[test]
