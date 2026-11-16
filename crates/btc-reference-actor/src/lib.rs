@@ -1544,13 +1544,23 @@ trait MakerLockExecutionPort: Send + Sync {
         &self,
         agreement: &BtcAgreementV1,
         step: &PublicEffectStepV1,
-    ) -> Result<BtcMakerLockSubmissionResult, ActorCommandError>;
+    ) -> Result<MakerLockStepSubmission, ActorCommandError>;
 
     /// Reads complete canonical maker-lock lifecycle evidence after every step is exact.
     async fn observe_complete(
         &self,
         agreement: &BtcAgreementV1,
     ) -> Result<ActorFundingObservation, ActorCommandError>;
+}
+
+/// What one authorized maker-lock step call came back with.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MakerLockStepSubmission {
+    /// The call was made; its result is journaled and never rearmed.
+    Submitted(BtcMakerLockSubmissionResult),
+    /// The node refused its readiness check before the step was offered to
+    /// it (#156): nothing is in flight and the step's authority is given back.
+    NotAttempted { reason: &'static str },
 }
 
 fn bitcoin_step_is_exact(step: &PublicEffectStepV1, transaction: &bitcoin::Transaction) -> bool {
@@ -2085,7 +2095,7 @@ async fn submit_live_bitcoin_maker_step<R>(
     adapter: &BitcoinCoreAdapter<R>,
     agreement: &BtcAgreementV1,
     step: &PublicEffectStepV1,
-) -> Result<BtcMakerLockSubmissionResult, ActorCommandError>
+) -> Result<MakerLockStepSubmission, ActorCommandError>
 where
     R: BitcoinCoreRpc + Send + Sync,
 {
@@ -2107,11 +2117,18 @@ where
             AuthorizedFundingSubmission::Accepted { transaction_id, .. }
                 if transaction_id == expected_transaction_id =>
             {
-                BtcMakerLockSubmissionResult::Accepted(step.expected_public_id().as_str().into())
+                MakerLockStepSubmission::Submitted(BtcMakerLockSubmissionResult::Accepted(
+                    step.expected_public_id().as_str().into(),
+                ))
             }
             AuthorizedFundingSubmission::Accepted { .. }
             | AuthorizedFundingSubmission::Rejected
-            | AuthorizedFundingSubmission::Unknown => BtcMakerLockSubmissionResult::Unknown,
+            | AuthorizedFundingSubmission::Unknown => {
+                MakerLockStepSubmission::Submitted(BtcMakerLockSubmissionResult::Unknown)
+            }
+            AuthorizedFundingSubmission::NotAttempted { reason } => {
+                MakerLockStepSubmission::NotAttempted { reason }
+            }
         },
     )
 }
@@ -2389,10 +2406,15 @@ impl MakerLockExecutionPort for LiveMakerLockExecutionPort<'_> {
         &self,
         agreement: &BtcAgreementV1,
         step: &PublicEffectStepV1,
-    ) -> Result<BtcMakerLockSubmissionResult, ActorCommandError> {
+    ) -> Result<MakerLockStepSubmission, ActorCommandError> {
         match agreement.coordinator().funded_chain(Participant::Maker) {
             Chain::Bitcoin => submit_live_bitcoin_maker_step(&self.bitcoin, agreement, step).await,
-            Chain::Lez => submit_live_lez_maker_step(&self.lez, self.config, agreement, step).await,
+            // A LEZ step is handed to the sidecar, which owns the send: any
+            // failure after that cannot prove the sequencer never saw it, so it
+            // stays journaled as submitted.
+            Chain::Lez => submit_live_lez_maker_step(&self.lez, self.config, agreement, step)
+                .await
+                .map(MakerLockStepSubmission::Submitted),
             Chain::Zcash | Chain::Monero => Err(ActorCommandError::AgreementBindingInvalid),
         }
     }
@@ -4479,11 +4501,28 @@ async fn drive_maker_lock_with_port(
             .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
         match decision {
             BtcMakerLockStepDecision::SubmitOnce(snapshot) => {
-                let result = port.submit_step(&agreement, snapshot.step()).await?;
-                let _ = journal
-                    .record_submission_result(&expected_intent, snapshot.step().step(), &result)
-                    .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
-                return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+                match port.submit_step(&agreement, snapshot.step()).await? {
+                    MakerLockStepSubmission::Submitted(result) => {
+                        let _ = journal
+                            .record_submission_result(
+                                &expected_intent,
+                                snapshot.step().step(),
+                                &result,
+                            )
+                            .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+                        return Ok(maker_lock_awaiting_output(config, &before, maker_chain));
+                    }
+                    MakerLockStepSubmission::NotAttempted { reason } => {
+                        // Nothing reached the node: the step goes back to
+                        // Prepared and the next attempt sends it (#156). The
+                        // attempt itself still fails, so it is retried.
+                        let _ = journal
+                            .release_not_attempted_step(&expected_intent, snapshot.step().step())
+                            .map_err(|_| ActorCommandError::ProjectionUnavailable)?;
+                        trace_note("maker_lock_not_attempted", reason);
+                        return Err(ActorCommandError::ObservationUnavailable);
+                    }
+                }
             }
             BtcMakerLockStepDecision::ObserveOnly(_) => {}
         }
@@ -6192,6 +6231,9 @@ where
             Ok(AuthorizedRefundSubmission::Unknown) => {
                 (PublicEffectSubmissionResult::Unknown, None)
             }
+            Ok(AuthorizedRefundSubmission::NotAttempted { reason }) => {
+                return release_not_attempted_effect(&self.state_db, effect.effect.key(), reason);
+            }
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
         trace_note(
@@ -7506,6 +7548,24 @@ fn decode_finalized_lez_refund_evidence(
     Ok(evidence)
 }
 
+/// A Bitcoin claim or refund whose single authorized send was refused before
+/// it was offered to Core (#156): the journal row goes back to `Prepared`, so
+/// the next drive sends it once, and this attempt fails as unavailable so the
+/// caller retries. Any outcome after an offer stays journaled as before.
+fn release_not_attempted_effect(
+    state_db: &Path,
+    key: &PublicEffectKey,
+    reason: &'static str,
+) -> Result<(), ActorCommandError> {
+    let mut journal = SqlitePublicEffectJournal::open(state_db)
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    let _ = journal
+        .release_not_attempted(key)
+        .map_err(|_| ActorCommandError::StateUnavailable)?;
+    trace_note("effect_not_attempted", reason);
+    Err(ActorCommandError::ObservationUnavailable)
+}
+
 struct BitcoinClaimObserver<P> {
     chain: P,
     effect: Option<PreparedBitcoinClaimEffect>,
@@ -7622,6 +7682,10 @@ where
                 (PublicEffectSubmissionResult::Rejected, None)
             }
             Ok(AuthorizedClaimSubmission::Unknown) => (PublicEffectSubmissionResult::Unknown, None),
+            Ok(AuthorizedClaimSubmission::NotAttempted { reason }) => {
+                drop(journal);
+                return release_not_attempted_effect(&self.state_db, effect.effect.key(), reason);
+            }
             Err(error) => (PublicEffectSubmissionResult::Unknown, Some(error)),
         };
         let _ = journal
