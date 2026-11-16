@@ -39,7 +39,12 @@
 #                  form publishes a Monero offer, the Taker desk takes it, the Taker Node
 #                  locks its LEZ and the Maker Node funds Monero on their own, the Taker
 #                  desk claims, both desks show the swap completed
-#   all            every scenario in sequence (stops at the first failure)
+#   xmr-taker-refund  --pair Monero: the Maker funds, the Taker never claims; both desks
+#                  show the refund window open, then closing, the Taker desk refunds its
+#                  LEZ, the Maker desk shows its Monero refund sweep; both show refunded
+#   xmr-concurrent --pair Monero: two Monero offers from the Maker desk's form taken from
+#                  the Taker desk one after the other, both claimed, both completed
+#   all           every scenario in sequence (stops at the first failure)
 #
 # With LEZ_UI_NATIVE_RUN_ROOT set, both desks are in one Basecamp on this
 # host (its QML inspector at QML_INSPECTOR_HOST/QML_INSPECTOR_PORT, the
@@ -889,17 +894,34 @@ scenario_zec_desk_offer() {
 # Taker's LEZ lock, the Maker's Monero funding and its confirmations, the
 # Maker's LEZ claim, the Taker's sweep); the one press after the take is the
 # Taker's Claim. node-e2e.py xmr-fund funds the Maker's Monero wallet first.
-scenario_xmr_happy() {
-  local swap maker_pid taker_pid
+xmr_publish() {
   python3 scripts/node-e2e.py --pair Monero xmr-fund 2>&1 | sed 's/^/   /'
   [[ "${PIPESTATUS[0]}" == 0 ]] || fail "xmr-fund"
   step "Maker desk publishes TakerSellsLez Monero offers from its form until two are pending" maker
+}
+# The Maker's funded row lasts only until the Taker's claim is final: the
+# claim and the Maker's own LEZ claim count as past it.
+xmr_maker_funded_bg() { # xmr_maker_funded_bg <pid-var> <swap_id>
+  step_bg "$1" "Maker desk shows ${2:0:12} funded" maker INTERACTIVE_ACTION=wait \
+    "INTERACTIVE_STATE=awaiting_taker_claim|claiming_lez|completed" "INTERACTIVE_SWAP_ID=$2"
+}
+xmr_wait() { # xmr_wait <swap_id> <Taker Node state> <timeout s>: the Nodes drive the swap, the host only reads the Taker's view
+  local deadline=$(( $(date -u +%s) + $3 )) state
+  log "waiting for the Taker Node to read ${1:0:12} $2 (the Nodes drive the swap themselves)"
+  while :; do
+    state="$(taker_swaps | awk -v s="$1" '$1 == s {print $2}')"
+    [[ "$state" == "$2" ]] && return 0
+    [[ "$state" != completed && "$state" != refunded ]] || fail "${1:0:12} ended $state while waiting for $2"
+    (( $(date -u +%s) < deadline )) || fail "${1:0:12} reads ${state:-nothing}, not $2, after $3 s"
+    sleep 5
+  done
+}
+scenario_xmr_happy() {
+  local swap maker_pid taker_pid
+  xmr_publish
   take swap
   note "The Taker Node locks its LEZ on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Monero"
-  # The Maker's funded row lasts only until the Taker's claim is final: the
-  # claim and the Maker's own LEZ claim count as past it.
-  step_bg maker_pid "Maker desk shows ${swap:0:12} funded" maker INTERACTIVE_ACTION=wait \
-    "INTERACTIVE_STATE=awaiting_taker_claim|claiming_lez|completed" "INTERACTIVE_SWAP_ID=$swap"
+  xmr_maker_funded_bg maker_pid "$swap"
   taker_act "$claim_action" "$swap"
   wait "$maker_pid" || fail "Maker desk: Monero funded"
   note "The Maker Node claims the LEZ, which hands the Taker the Monero key; the Taker Node sweeps the Monero, and both desks watch the swap complete"
@@ -908,6 +930,72 @@ scenario_xmr_happy() {
   wait "$maker_pid" || fail "Maker desk: completed"
   wait "$taker_pid" || fail "Taker desk: completed"
   export_evidence "$swap"
+}
+# The Maker funds the Monero and the Taker never claims it. From the
+# agreement's refund time R (LEZ_XMR_REFUND_SECONDS after the take) the Taker
+# desk offers Refund; halfway to the punish time P it warns that the window is
+# closing. The Taker presses Refund once (tag 16, before P); the Maker Node
+# learns the Taker's Monero share from the final refund and sweeps its Monero
+# back, which its desk shows; both desks end refunded. The waits up to R and
+# up to the warning are the host's, so the recording holds no idle minutes.
+scenario_xmr_taker_refund() {
+  local swap maker_pid taker_pid
+  require_fast
+  xmr_publish
+  take swap
+  note "The Taker Node locks its LEZ on its own and the Maker Node funds Monero; the Taker will not claim it"
+  xmr_maker_funded_bg maker_pid "$swap"
+  step "Taker desk shows ${swap:0:12} claimable (not pressed)" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=claim_ready \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Your Monero claim is ready"
+  wait "$maker_pid" || fail "Maker desk: Monero funded"
+  xmr_wait "$swap" refund_available "$(( LEZ_XMR_REFUND_SECONDS + 120 ))"
+  note "The Taker never claimed: the refund time (${LEZ_XMR_REFUND_SECONDS} s after the take) has passed, the Maker can no longer claim and the Taker desk offers Refund"
+  step "Taker desk shows ${swap:0:12} with its refund window open" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=refund_ready \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Refund window open"
+  xmr_wait "$swap" attention_required "$(( (LEZ_XMR_PUNISH_SECONDS - LEZ_XMR_REFUND_SECONDS) / 2 + 60 ))"
+  note "Halfway to the punish time (${LEZ_XMR_PUNISH_SECONDS} s after the take) with no refund, the Taker desk warns that its refund window is closing"
+  step "Taker desk warns that ${swap:0:12}'s refund window is closing" taker INTERACTIVE_ACTION=wait INTERACTIVE_STATE=attention_required \
+    "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Refund window closing"
+  # recovering is also the punish row's state: the label names the refund sweep
+  step_bg maker_pid "Maker desk shows ${swap:0:12} sweeping its Monero back" maker INTERACTIVE_ACTION=wait \
+    INTERACTIVE_STATE=recovering "INTERACTIVE_SWAP_ID=$swap" "INTERACTIVE_EXPECT_LABEL=Refund sweep: recovering your Monero"
+  taker_act "$refund_action" "$swap"
+  wait "$maker_pid" || fail "Maker desk: Monero refund sweep"
+  note "The Taker's LEZ refund is final; the Maker Node has swept its Monero back, and both desks show the swap refunded"
+  maker_wait_bg maker_pid refunded "$swap"
+  taker_wait_bg taker_pid refunded "$swap"
+  wait "$maker_pid" || fail "Maker desk: refunded"
+  wait "$taker_pid" || fail "Taker desk: refunded"
+  export_evidence "$swap"
+}
+# Two Monero swaps at once: both offers from the Maker desk's form, both taken
+# from the Taker desk one after the other (the second while the first's LEZ
+# lock and Monero funding run), both claimed, both completed on both desks.
+# The two LEZ legs share the Taker's owner account (its Node sends one owner
+# transaction at a time) and the two Monero legs each party's one wallet-rpc.
+scenario_xmr_concurrent() {
+  local swap_a swap_b maker_pid taker_pid
+  xmr_publish
+  take swap_a
+  note "A second Monero row is on the book: the Taker takes it too while the first swap's LEZ lock runs"
+  take swap_b
+  note "The Taker Node locks both swaps' LEZ on its own, one owner transaction at a time; the Maker Node funds Monero for each while the Maker desk watches the rows"
+  # One driver on the Maker desk at a time (as zec-concurrent).
+  xmr_maker_funded_bg maker_pid "$swap_a"
+  taker_act "$claim_action" "$swap_a"
+  wait "$maker_pid" || fail "Maker desk: Monero funded ($swap_a)"
+  xmr_maker_funded_bg maker_pid "$swap_b"
+  taker_act "$claim_action" "$swap_b"
+  wait "$maker_pid" || fail "Maker desk: Monero funded ($swap_b)"
+  note "Both claims are authorised: the Maker Node claims both LEZ legs, the Taker Node sweeps both Monero outputs, and both desks watch the two swaps complete"
+  maker_wait_bg maker_pid completed "$swap_a"
+  taker_wait_bg taker_pid completed "$swap_a"
+  wait "$maker_pid" || fail "Maker desk: completed ($swap_a)"
+  wait "$taker_pid" || fail "Taker desk: completed ($swap_a)"
+  maker_wait completed "$swap_b"
+  taker_wait completed "$swap_b"
+  export_evidence "$swap_a"
+  export_evidence "$swap_b"
 }
 scenario_logos_happy() {
   local swap started route node
@@ -978,6 +1066,8 @@ run_one() {
     zec-node-offline) [[ "$pair" == Zcash ]] || fail "zec-node-offline needs --pair Zcash"; scenario_zec_node_offline ;;
     zec-stale-window) [[ "$pair" == Zcash ]] || fail "zec-stale-window needs --pair Zcash"; scenario_zec_stale_window ;;
     xmr-happy) [[ "$pair" == Monero ]] || fail "xmr-happy needs --pair Monero"; scenario_xmr_happy ;;
+    xmr-taker-refund) [[ "$pair" == Monero ]] || fail "xmr-taker-refund needs --pair Monero"; scenario_xmr_taker_refund ;;
+    xmr-concurrent) [[ "$pair" == Monero ]] || fail "xmr-concurrent needs --pair Monero"; scenario_xmr_concurrent ;;
     *) echo "unknown scenario: $name" >&2; exit 64 ;;
   esac
   join_video

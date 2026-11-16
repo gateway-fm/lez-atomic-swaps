@@ -455,7 +455,11 @@ function makerNarration(state) {
       return `Nothing to click here: the Maker Node locks ${mine} on its own once the Taker's ${theirs} lock is final; the desk waits for "awaiting the Taker's claim"`;
     case "completed":
       return `The Maker Node claims ${theirs} with the secret the Taker revealed; the desk waits for "completed"`;
+    case "recovering":
+      if (monero) return `The Taker refunded its LEZ: the Maker Node learns the Taker's Monero share from the final refund and sweeps its Monero back; the desk waits for the refund sweep`;
+      return `The Maker desk waits for the swap to reach "recovering"`;
     case "refunded":
+      if (monero) return `The Maker Node sweeps its Monero back once the Taker's LEZ refund is final; the desk waits for "refunded"`;
       return `The Maker Node refunds its ${mine} lock once its deadline passes; the desk waits for "refunded"`;
     default:
       return `The Maker desk waits for the swap to reach "${state.replace(/_/g, " ")}"`;
