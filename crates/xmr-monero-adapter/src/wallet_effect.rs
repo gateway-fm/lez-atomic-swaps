@@ -526,10 +526,12 @@ impl MoneroRegtestWalletEffects {
         if let Ok(created) = self.wallet.generate_from_keys(arguments).await {
             return Ok(created.address);
         }
-        self.wallet
-            .open_wallet(filename, Some(password))
-            .await
-            .map_err(rpc_error("generate shared wallet from keys"))?;
+        read_with_one_retry(|| {
+            self.wallet
+                .open_wallet(filename.clone(), Some(password.clone()))
+        })
+        .await
+        .map_err(rpc_error("generate shared wallet from keys"))?;
         Ok(
             read_with_one_retry(|| self.wallet.get_address(WALLET_ACCOUNT_INDEX, Some(vec![0])))
                 .await
@@ -1497,6 +1499,45 @@ mod tests {
         .expect("attestor");
         assert_eq!(attestor.tip_height().await.expect("tip height"), 120);
         assert_eq!(flaky_daemon.methods(), ["get_block_count"; 2]);
+    }
+
+    fn daemon_with_block(method: &str) -> serde_json::Value {
+        if method == "get_block" {
+            let blob = monero_rpc::monero::consensus::encode::serialize_hex(
+                &monero_rpc::monero::blockdata::block::Block::default(),
+            );
+            return serde_json::json!({ "result": { "blob": blob, "status": "OK" } });
+        }
+        daemon_answer(method)
+    }
+
+    #[tokio::test]
+    async fn the_verifiers_block_read_is_made_once_more_although_its_error_is_text() {
+        // `get_block` hands back its client's decode error of the 401 page as
+        // text ("Can not fetch block: error decoding response body").
+        let read = |daemon: &FakeRpc| {
+            let client = daemon.endpoint.client().expect("client").daemon();
+            async move {
+                crate::MoneroRpcPort::rpc("get_block_by_hash", || {
+                    client.get_block(monero_rpc::GetBlockHeaderSelector::Last)
+                })
+                .await
+                .map(|block| block.tx_hashes.len())
+            }
+        };
+        let flaky = FakeRpc::spawn_failing(daemon_with_block, "get_block", 1).await;
+        assert_eq!(read(&flaky).await.expect("block on the second call"), 0);
+        assert_eq!(flaky.methods(), ["get_block"; 2]);
+
+        let down = FakeRpc::spawn_failing(daemon_with_block, "get_block", 2).await;
+        assert!(matches!(
+            read(&down).await,
+            Err(crate::MoneroEvidenceError::Rpc {
+                operation: "get_block_by_hash",
+                ..
+            })
+        ));
+        assert_eq!(down.methods(), ["get_block"; 2]);
     }
 
     #[test]

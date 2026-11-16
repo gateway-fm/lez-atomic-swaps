@@ -819,9 +819,13 @@ where
 }
 
 /// Whether a typed call failed in the HTTP client (sending, timing out, or
-/// decoding the body), not in a server's JSON-RPC answer.
+/// decoding the body), not in a server's JSON-RPC answer. `monero-rpc`
+/// 0.5.1's `get_block` alone turns its client's error into text ("Can not
+/// fetch block: …"), so that read is made once more on any failure.
 fn failed_in_transport(error: &anyhow::Error) -> bool {
-    error.is::<reqwest::Error>() || error.is::<diqwest::error::Error>()
+    error.is::<reqwest::Error>()
+        || error.is::<diqwest::error::Error>()
+        || error.to_string().starts_with("Can not fetch block: ")
 }
 
 #[derive(Clone, Debug)]

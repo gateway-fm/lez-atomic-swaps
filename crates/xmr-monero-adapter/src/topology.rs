@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use super::{
     LoopbackRpcEndpoint, MoneroChainIdentity, MoneroNetwork, RPC_REQUEST_TIMEOUT,
-    VerifiedMoneroOutputObservation,
+    VerifiedMoneroOutputObservation, read_with_one_retry,
 };
 
 const RPC_ID: &str = "lez-m4-topology-v1";
@@ -174,12 +174,12 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
             }
         }
 
-        let genesis = self
+        let daemon = self
             .daemon
             .client()
             .map_err(|_| MoneroTopologyError::TypedDaemonClientBuild)?
-            .daemon()
-            .on_get_block_hash(0)
+            .daemon();
+        let genesis = read_with_one_retry(|| daemon.on_get_block_hash(0))
             .await
             .map_err(|_| MoneroTopologyError::GenesisRpc)?;
         if genesis.as_ref() != self.identity.genesis_hash() {
@@ -209,6 +209,30 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
         credentials: &LoopbackRpcEndpoint,
         body: &'static str,
     ) -> Result<T, MoneroTopologyError> {
+        // A Digest answer sent on another pooled connection than its
+        // challenge gets a 401 (see the crate documentation): a transport
+        // failure or a 401 starts the exchange once more, with a fresh
+        // challenge. Credentials the server refuses are refused twice.
+        let bytes = match self.exchange(operation, target, credentials, body).await {
+            Err(
+                MoneroTopologyError::HttpTransport
+                | MoneroTopologyError::BodyRead { .. }
+                | MoneroTopologyError::UnexpectedHttpStatus { actual: 401, .. },
+            ) => self.exchange(operation, target, credentials, body).await?,
+            result => result?,
+        };
+        let envelope: RpcEnvelope<T> = serde_json::from_slice(&bytes)
+            .map_err(|_| MoneroTopologyError::MalformedRpcEnvelope { operation })?;
+        envelope.into_result(operation)
+    }
+
+    async fn exchange(
+        &self,
+        operation: &'static str,
+        target: &LoopbackRpcEndpoint,
+        credentials: &LoopbackRpcEndpoint,
+        body: &'static str,
+    ) -> Result<Vec<u8>, MoneroTopologyError> {
         let response = self.send(target, credentials, body).await?;
         if response.status() != StatusCode::OK {
             return Err(MoneroTopologyError::UnexpectedHttpStatus {
@@ -216,10 +240,7 @@ impl<'endpoint> MoneroTopologyVerifier<'endpoint> {
                 actual: response.status().as_u16(),
             });
         }
-        let bytes = read_bounded(operation, response).await?;
-        let envelope: RpcEnvelope<T> = serde_json::from_slice(&bytes)
-            .map_err(|_| MoneroTopologyError::MalformedRpcEnvelope { operation })?;
-        envelope.into_result(operation)
+        read_bounded(operation, response).await
     }
 
     async fn send(
@@ -682,6 +703,12 @@ mod tests {
         version: String,
         bad_auth_status: u16,
         authorized_status: u16,
+        /// Answers the first `lost_answers` authorized requests for
+        /// `lost_method` with monero's HTML 401 page, as monero's server
+        /// does when a Digest answer arrives on another connection than its
+        /// challenge.
+        lost_method: &'static str,
+        lost_answers: usize,
     }
 
     impl RpcBehavior {
@@ -692,6 +719,8 @@ mod tests {
                 version: success(r#"{"release":true,"version":65567}"#),
                 bad_auth_status: 401,
                 authorized_status: 200,
+                lost_method: "",
+                lost_answers: 0,
             }
         }
     }
@@ -745,7 +774,21 @@ mod tests {
             .authorization
             .as_deref()
             .is_some_and(|header| verify_digest(header, username, password, &request.body));
-        let behavior = behavior.lock().await.clone();
+        let behavior = {
+            let mut shared = behavior.lock().await;
+            if authorized
+                && shared.lost_answers > 0
+                && request
+                    .body
+                    .contains(&format!(r#""method":"{}""#, shared.lost_method))
+            {
+                shared.lost_answers -= 1;
+                drop(shared);
+                let page = "<html><head><title>Unauthorized Access</title></head><body><h1>401 Unauthorized</h1></body></html>";
+                return write_response(&mut stream, 401, "Content-Type: text/html\r\n", page).await;
+            }
+            shared.clone()
+        };
         if !authorized {
             let (status, challenge) = if has_authorization {
                 (behavior.bad_auth_status, String::new())
@@ -921,6 +964,60 @@ mod tests {
         assert_eq!(attestation.peer_count(), 0);
         assert_eq!(attestation.target_wallet_version(), 65567);
         assert_eq!(attestation.foreign_wallet_version(), 65567);
+    }
+
+    async fn verify_with_lost_answers(
+        method: &'static str,
+        lost_answers: usize,
+    ) -> Result<VerifiedMoneroTopologyAttestation, MoneroTopologyError> {
+        let (_daemon, target, foreign) = valid_servers().await;
+        let mut lossy = RpcBehavior::valid();
+        lossy.lost_method = method;
+        lossy.lost_answers = lost_answers;
+        let daemon = spawn_server("daemon-user", "daemon-secret", lossy).await;
+        MoneroTopologyVerifier::new(
+            run("topology-lost-answer"),
+            identity(),
+            &daemon.endpoint,
+            &target.endpoint,
+            &foreign.endpoint,
+        )
+        .expect("distinct verifier")
+        .verify()
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_digest_answer_refused_with_the_401_page_is_made_once_more() {
+        // The bounded reads start their exchange again with a fresh challenge.
+        assert!(
+            verify_with_lost_answers("get_info", 1).await.is_ok(),
+            "get_info answered on its second exchange"
+        );
+        assert!(
+            verify_with_lost_answers("get_connections", 1).await.is_ok(),
+            "get_connections answered on its second exchange"
+        );
+        // The typed genesis read decodes the page as its answer and retries.
+        assert!(
+            verify_with_lost_answers("on_get_block_hash", 1)
+                .await
+                .is_ok(),
+            "genesis answered on its second call"
+        );
+
+        // Once more only.
+        assert_eq!(
+            verify_with_lost_answers("get_info", 2).await,
+            Err(MoneroTopologyError::UnexpectedHttpStatus {
+                operation: "daemon.get_info",
+                actual: 401
+            })
+        );
+        assert_eq!(
+            verify_with_lost_answers("on_get_block_hash", 2).await,
+            Err(MoneroTopologyError::GenesisRpc)
+        );
     }
 
     #[tokio::test]
