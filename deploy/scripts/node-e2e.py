@@ -2000,10 +2000,13 @@ def kill_under_cut(role: str) -> dict:
     return {**killed, "taker_probe_after_restart": assert_taker_side_cut()}
 
 
-def assert_taker_side_cut() -> dict:
-    """The Taker's side still refused both channels (taker_offchain_probe)."""
+def assert_taker_side_cut(maker_stopped: bool = False) -> dict:
+    """The Taker's side still refused both channels (taker_offchain_probe).
+    With the Maker stopped its Node may have removed its Chat socket on the
+    way down: no socket at all (ENOENT) is no Chat either."""
     probe = taker_offchain_probe()
-    if probe.get("chat") != "EACCES" or probe.get("delivery") != "EACCES" or probe.get("delivery_fds"):
+    chat_refused = {"EACCES", "ENOENT"} if maker_stopped else {"EACCES"}
+    if probe.get("chat") not in chat_refused or probe.get("delivery") != "EACCES" or probe.get("delivery_fds"):
         raise Failure(f"the cut does not hold on the Taker's side: {probe}")
     log(f"  the Taker's side is still refused: connect {probe['chat']}, list Delivery {probe['delivery']}")
     return probe
@@ -2630,7 +2633,7 @@ def scenario_taker_refund(stamp: str, cut: bool = False) -> dict:
         after = node_balances("taker")
         log(f"  Taker refunded; Taker Node balances {before} → {after}")
         if cut:
-            held = assert_taker_side_cut()
+            held = assert_taker_side_cut(maker_stopped=True)
     finally:
         start_maker_after_cut(cut)
     if cut:
@@ -5086,7 +5089,7 @@ def scenario_zec_taker_refund(stamp: str, cut: bool = False) -> dict:
         log("  the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed")
         zec_refund_until_terminal(swap_id, stamp, timeout=1800)
         log("  Taker refunded its LEZ escrow")
-        held = assert_taker_side_cut() if cut else None
+        held = assert_taker_side_cut(maker_stopped=True) if cut else None
     finally:
         start_maker_after_cut(cut)
     if cut:
@@ -5146,7 +5149,7 @@ def scenario_zec_taker_refund_foreign(stamp: str, cut: bool = False) -> dict:
         log("  the Taker's Zcash funding is confirmed, the Maker is down and the refund height is reached")
         zec_refund_until_terminal(swap_id, stamp, timeout=1800, mine_pending=True)
         log("  Taker refunded its Zcash HTLC")
-        held = assert_taker_side_cut() if cut else None
+        held = assert_taker_side_cut(maker_stopped=True) if cut else None
     finally:
         start_maker_after_cut(cut)
     if cut:
