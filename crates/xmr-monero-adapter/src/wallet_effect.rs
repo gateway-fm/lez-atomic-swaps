@@ -662,7 +662,7 @@ impl MoneroRegtestWalletEffects {
     /// # Errors
     ///
     /// Fails before mining for a non-standard address, and fails closed when
-    /// each of [`MINING_ATTEMPTS`] typed daemon calls fails or the one that
+    /// each of `MINING_ATTEMPTS` typed daemon calls fails or the one that
     /// succeeds reports a block count other than the fixed one.
     pub async fn mine_confirmations(
         &self,
