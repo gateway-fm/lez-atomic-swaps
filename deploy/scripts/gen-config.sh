@@ -615,9 +615,15 @@ timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
 # agreement's fixed ten confirmations (REQUIRED_MONERO_CONFIRMATIONS), which
 # the devnet's regtest mines on demand (ten blocks and a wallet's refresh took
 # under 2 s on 2026-11-13; xmr_depth allows 2 s a block), so the cutoff is the
-# Bitcoin Maker lock cutoff plus that depth. The Maker claims only on a claim
-# authorization it sees final before R - (R - C)/2 (lez-xmr-maker-actor), and a
-# Maker that does not act in time forfeits the claim to the Taker's refund, so
+# Bitcoin Maker lock cutoff plus that depth, and at least what the second of
+# two swaps taken one after the other needs: the windows start when the take
+# does, and its funding drive must start before C after the take (33 to 50 s
+# under three-lane load on 2026-11-16, xmr_take rounds that up) and three of
+# its drives' spacing (the worker finishing the first swap's drive, the drive
+# that records the Taker's lock, the one that funds: the two swaps' drives
+# alternate, 69 to 103 s apart for one swap that day). The Maker claims only on
+# a claim authorization it sees final before R - (R - C)/2 (lez-xmr-maker-actor),
+# and a Maker that does not act in time forfeits the claim to the Taker's refund, so
 # each half of R - C holds the Taker's look at the funding at depth, a LEZ step
 # and two of the Maker's drives: the Maker Node's one actor worker drives all
 # its swaps in turn, a Monero drive runs a sidecar scan or a wallet tool, and
@@ -627,7 +633,9 @@ timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
 # windows 10 s apart (agreement_v1.rs).
 xmr_depth=$(( 10 * 2 ))
 xmr_drive=90
+xmr_take=60
 xmr_cutoff=$(( timing[1] + xmr_depth ))
+(( xmr_cutoff >= xmr_take + 3 * xmr_drive + xmr_depth )) || xmr_cutoff=$(( xmr_take + 3 * xmr_drive + xmr_depth ))
 xmr_refund=$(( xmr_cutoff + 2 * (xmr_depth + lez_step_seconds + 2 * xmr_drive) ))
 xmr_punish=$(( xmr_refund + lez_step_seconds + lez_stall_seconds + timing[4] + 2 * xmr_drive ))
 # The Maker's actor supervisor observes a live swap's actor 5 s after each
