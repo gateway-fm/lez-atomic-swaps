@@ -1554,6 +1554,7 @@ struct FixedMakerLockPort {
     eligibility: FreshMakerLockEligibilityV1,
     complete: ActorFundingObservation,
     submission_result: BtcMakerLockSubmissionResult,
+    not_attempted: Option<&'static str>,
     submissions: AtomicUsize,
     eligibility_checks: AtomicUsize,
     events: Mutex<Vec<&'static str>>,
@@ -1571,6 +1572,7 @@ impl FixedMakerLockPort {
             eligibility,
             complete,
             submission_result: BtcMakerLockSubmissionResult::Unknown,
+            not_attempted: None,
             submissions: AtomicUsize::new(0),
             eligibility_checks: AtomicUsize::new(0),
             events: Mutex::new(Vec::new()),
@@ -1580,6 +1582,12 @@ impl FixedMakerLockPort {
 
     fn with_submission_result(mut self, result: BtcMakerLockSubmissionResult) -> Self {
         self.submission_result = result;
+        self
+    }
+
+    /// The node refuses its readiness check before the step is offered (#156).
+    fn with_not_attempted(mut self, reason: &'static str) -> Self {
+        self.not_attempted = Some(reason);
         self
     }
 
@@ -1631,10 +1639,13 @@ impl MakerLockExecutionPort for FixedMakerLockPort {
         &self,
         _agreement: &BtcAgreementV1,
         _step: &PublicEffectStepV1,
-    ) -> Result<BtcMakerLockSubmissionResult, ActorCommandError> {
+    ) -> Result<MakerLockStepSubmission, ActorCommandError> {
         self.events.lock().expect("event log").push("submit_step");
         self.submissions.fetch_add(1, Ordering::SeqCst);
-        Ok(self.submission_result.clone())
+        Ok(match self.not_attempted {
+            Some(reason) => MakerLockStepSubmission::NotAttempted { reason },
+            None => MakerLockStepSubmission::Submitted(self.submission_result.clone()),
+        })
     }
 
     async fn observe_complete(
@@ -9911,3 +9922,6 @@ fn every_actor_error_has_a_distinct_failure_class_in_the_shared_alphabet() {
             .all(|class| lez_actor_supervision::validate_failure_class(class))
     );
 }
+
+#[path = "issue156_tests.rs"]
+mod issue156;

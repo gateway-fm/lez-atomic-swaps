@@ -782,3 +782,55 @@ fn invalid_public_material_shapes_are_rejected_before_persistence() {
         Err(StoreError::InvalidPublicEffect)
     ));
 }
+
+#[test]
+fn only_a_started_row_gives_its_authority_back_and_then_rearms_exactly_once() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("effects.sqlite3");
+    let mut journal = SqlitePublicEffectJournal::open(&path).unwrap();
+    let candidate = prepared();
+    let _ = journal.record_prepared(&candidate).unwrap();
+
+    // Prepared has no authority to give back.
+    assert!(matches!(
+        journal.release_not_attempted(&key()),
+        Err(StoreError::PublicEffectConflict)
+    ));
+
+    assert!(matches!(
+        journal
+            .reconcile(&key(), PublicEffectObservation::Absent)
+            .unwrap(),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+    let released = journal.release_not_attempted(&key()).unwrap();
+    assert_eq!(released.state(), PublicEffectState::Prepared);
+    assert_eq!(released.attempt_count(), 0);
+
+    // Released, the next absence authorizes one fresh send, exactly once.
+    assert!(matches!(
+        journal
+            .reconcile(&key(), PublicEffectObservation::Absent)
+            .unwrap(),
+        PublicEffectDecision::SubmitOnce(_)
+    ));
+    let _ = journal
+        .record_submission_result(&key(), &PublicEffectSubmissionResult::Unknown)
+        .unwrap();
+    assert!(matches!(
+        journal
+            .reconcile(&key(), PublicEffectObservation::Absent)
+            .unwrap(),
+        PublicEffectDecision::ObserveOnly(_)
+    ));
+
+    // A recorded outcome is never given back.
+    assert!(matches!(
+        journal.release_not_attempted(&key()),
+        Err(StoreError::PublicEffectConflict)
+    ));
+    assert_eq!(
+        journal.current(&key()).unwrap().unwrap().state(),
+        PublicEffectState::Unknown
+    );
+}
