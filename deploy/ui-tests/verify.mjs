@@ -454,6 +454,7 @@ function makerNarration(state) {
     case "awaiting_taker_claim":
       return `Nothing to click here: the Maker Node locks ${mine} on its own once the Taker's ${theirs} lock is final; the desk waits for "awaiting the Taker's claim"`;
     case "completed":
+      if (monero) return `The Taker authorised the claim on LEZ (it released its withheld claim signature share): the Maker Node claims the LEZ, and its claim signature lets the Taker recover the Monero spend key; the desk waits for "completed"`;
       return `The Maker Node claims ${theirs} with the secret the Taker revealed; the desk waits for "completed"`;
     case "recovering":
       if (monero) return `The Taker refunded its LEZ: the Maker Node learns the Taker's Monero share from the final refund and sweeps its Monero back; the desk waits for the refund sweep`;
@@ -733,7 +734,7 @@ if (role === "maker") {
                   "Zcash claim broadcast; once it is in a block the swap completes. The claim is transparent: move the funds to a shielded address afterwards"],
       refund_zec: ["The desk offers Refund for the Zcash HTLC; pressing it admits the refund, which the Node drives on the transparent pool once the HTLC's refund height is reached",
                    "Refund admitted; the Taker Node broadcasts the HTLC refund when the height allows and follows it to a block"],
-      claim_xmr: [`Claim ${xmrText}: the Taker authorises the Maker's LEZ claim; the Maker's claim hands the Taker the Monero key`,
+      claim_xmr: [`Claim ${xmrText}: the Taker authorises the Maker's LEZ claim (it releases its withheld claim signature share); the Maker's claim signature then lets the Taker recover the Monero spend key`,
                   "Claim admitted; once the Maker claims the LEZ the Taker Node sweeps the Monero into its wallet"],
     };
     // Selling ZEC the Taker's LEZ claim is the revealing one of a hashlock, not of an adaptor signature.

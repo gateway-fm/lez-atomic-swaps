@@ -924,7 +924,7 @@ scenario_xmr_happy() {
   xmr_maker_funded_bg maker_pid "$swap"
   taker_act "$claim_action" "$swap"
   wait "$maker_pid" || fail "Maker desk: Monero funded"
-  note "The Maker Node claims the LEZ, which hands the Taker the Monero key; the Taker Node sweeps the Monero, and both desks watch the swap complete"
+  note "The Maker Node claims the LEZ; its claim signature lets the Taker recover the Monero spend key, the Taker Node sweeps the Monero, and both desks watch the swap complete"
   maker_wait_bg maker_pid completed "$swap"
   taker_wait_bg taker_pid completed "$swap"
   wait "$maker_pid" || fail "Maker desk: completed"
