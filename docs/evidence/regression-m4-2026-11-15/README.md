@@ -1,5 +1,8 @@
 # Full regression of `feat/m4-monero`, 2026-11-15
 
+A newer full run, 158 of 159 at `39e60679` with 16 Monero tests, is in
+[regression-m4-2026-11-16](../regression-m4-2026-11-16/).
+
 One run of every test of `deploy/scripts/regress.sh full` (157: `regress.sh list full`) on the
 Docker devnet with the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time
 (`LEZ_LANES=3`), without desk recordings. 2026-11-15 16:17:35Z to 21:36:05Z (UTC). It
