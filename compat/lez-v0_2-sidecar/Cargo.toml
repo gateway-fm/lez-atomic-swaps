@@ -72,3 +72,19 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+
+# The Monero Stage-A planner verifies both role packets' cross-curve DLEQ
+# proofs. As in the root workspace, optimize only those portable crypto
+# kernels in development builds: unoptimized, one planner run took 17 s of
+# CPU on the devnet, and a take's Chat round runs it within a 30 s deadline.
+[profile.dev.package.lez-xmr-swap-sdk]
+opt-level = 3
+
+[profile.dev.package.sigma_fun]
+opt-level = 3
+
+[profile.dev.package.secp256kfun]
+opt-level = 3
+
+[profile.dev.package.curve25519-dalek-ng]
+opt-level = 3
