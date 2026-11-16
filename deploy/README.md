@@ -679,8 +679,12 @@ Taker's lock to P, more on a real network's longer windows):
   Tag 16 starts after the funding, about R − lock blocks before the refund can
   land (two windows on `local`).
 
-Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`; only the
-happy path has been run on a desk). Not on the devnet yet: there is no macOS
+Both desks publish, take and settle Monero swaps (`ui:xmr:xmr-happy`), refund
+one the Maker funded and the Taker never claimed (`ui:xmr:xmr-taker-refund`: the
+refund window open, then closing, the Refund button, the Maker's refund sweep) and
+run two at once (`ui:xmr:xmr-concurrent`), recorded in
+`docs/evidence/regression-m4-desks-2026-11-16/videos/`; the punish rows have not
+been seen on a desk. Not on the devnet yet: there is no macOS
 package for it. The Maker's systemd unit takes a Monero role from an optional
 drop-in (`docs/maker-systemd-install.md`, "Monero"), checked statically and with
 stub programs, not run in the VM; the Taker unit has none.

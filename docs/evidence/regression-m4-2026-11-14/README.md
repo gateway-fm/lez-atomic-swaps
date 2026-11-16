@@ -112,8 +112,10 @@ which does not show that the races are gone.
 - Monero outages: no scenario with `monerod` down or a `monero-wallet-rpc` restarted, and no
   three-pair mixed test (Bitcoin, Zcash and Monero swaps at once).
 - On a real desk: only the Monero happy journey is clicked through; the refund, punish and
-  in-doubt rows were not seen on a desk.
-- No systemd packaging, macOS package or desk recordings for Monero.
+  in-doubt rows were not seen on a desk. (Since: the Taker's refund and two swaps at once, see
+  [regression-m4-desks-2026-11-16](../regression-m4-desks-2026-11-16/); punish still unseen.)
+- No systemd packaging, macOS package or desk recordings for Monero. (Since: the three Monero desk
+  journeys are recorded, [regression-m4-desks-2026-11-16](../regression-m4-desks-2026-11-16/videos/).)
 - Compute units for the five Monero escrow instructions (tags 13–17) were not measured in this
   run; they were measured afterwards against the deployed program, outside the stack, in
   [docs/lez-compute-units.md](../../lez-compute-units.md#the-xmr-path-tags-1317).

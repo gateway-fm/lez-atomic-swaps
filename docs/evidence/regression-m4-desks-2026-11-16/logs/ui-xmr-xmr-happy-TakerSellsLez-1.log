@@ -1,0 +1,83 @@
+
+[01:04:19] === xmr-happy (TakerSellsLez)
+   [01:04:25]   the Maker's Monero wallet holds 17536.664 XMR unlocked
+
+[01:04:25] Maker desk publishes TakerSellsLez Monero offers from its form until two are pending
+  » Maker desk publishes TakerSellsLez Monero offers from its form until two are pending
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory: 2 open sell-XMR offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+
+[01:04:37] Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » Taker desk takes an offer (the Taker Node reserves, plans, signs and activates)
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Available orders: the Maker's offers arrived over Delivery and are listed for this Taker
+  ✓ taker: wallet-indexed BTC order book is ready
+  ✓ taker: real Node health
+  » Take offer on the Monero row: the Taker Node agrees the swap with the Maker over Chat (xmr_reserve_v1 and the signing ceremony) and locks its LEZ on its own
+  » Swap 45d6c92b3063 is in "My orders"; the Taker Node locks its LEZ on its own, there is no Lock button
+  ✓ taker: taking one offer prepares the real Taker BTC action
+4 passed, 0 failed
+   45d6c92b306353fa600452aef39b75c5d8e39f1c8a0adad919e8dad964ec3e07 awaiting_first_lock 0 -
+
+[01:06:02] The Taker Node locks its LEZ on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Monero
+
+[01:06:02] Maker desk shows 45d6c92b3063 funded
+
+[01:06:02] Taker desk: claim_xmr on 45d6c92b3063
+  » Taker desk: claim_xmr on 45d6c92b3063
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » Claim 1.000000000000 XMR: the Taker authorises the Maker's LEZ claim; the Maker's claim hands the Taker the Monero key
+  » Claim admitted; once the Maker claims the LEZ the Taker Node sweeps the Monero into its wallet
+  ✓ taker: perform claim_xmr
+2 passed, 0 failed
+  » The Taker Node locks its LEZ on its own, straight after the take; the Maker desk watches its row while the Maker Node funds Monero · Maker desk shows 45d6c92b3063 funded
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » New offer: the Maker sells 1 XMR for 50,000 LEZ; Publish sends it to the Maker Node, which signs and announces it over Delivery
+  » Inventory: 2 open sell-XMR offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+  » The Maker desk waits for the swap to reach "awaiting taker claim|claiming lez|completed"
+  Node-owned swap: Maker reached awaiting_taker_claim|claiming_lez|completed (awaiting_taker_claim|claiming_lez|completed)
+  » Maker desk now shows the swap as: awaiting taker claim|claiming lez|completed
+  ✓ maker: wait awaiting_taker_claim|claiming_lez|completed reached by the Node
+4 passed, 0 failed
+
+[01:09:09] The Maker Node claims the LEZ, which hands the Taker the Monero key; the Taker Node sweeps the Monero, and both desks watch the swap complete
+
+[01:09:09] Maker desk shows 45d6c92b3063 at completed
+
+[01:09:09] Taker desk shows 45d6c92b3063 at completed
+  » The Maker Node claims the LEZ, which hands the Taker the Monero key; the Taker Node sweeps the Monero, and both desks watch the swap complete · Maker desk shows 45d6c92b3063 at completed
+  » The Maker's own Basecamp shows its Maker desk; it talks to the real Maker Node over its owner-only socket
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  » Check Node: the Maker Node reports ready
+  ✓ maker: real Node health
+  » Inventory: 2 open sell-XMR offers indexed by the Maker Node
+  ✓ maker: Node-indexed BTC offer inventory
+  » The Maker Node claims LEZ with the secret the Taker revealed; the desk waits for "completed"
+  Node-owned swap: Maker reached completed (completed)
+  » Maker desk now shows the swap as: completed
+  ✓ maker: wait completed reached by the Node
+4 passed, 0 failed
+  » Taker desk shows 45d6c92b3063 at completed
+  » The Taker's own Basecamp shows its Taker desk; it talks to the real Taker Node over its owner-only socket
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+  » The Taker desk waits for the swap to show "completed"
+  » Taker desk now shows the swap as: completed
+  ✓ taker: swap reaches completed
+2 passed, 0 failed
+
+[01:10:40] evidence export skipped: a Monero swap's record is node-e2e.py's (node:xmr tests)
+
+[01:11:35] video: runtime/lanes/3/evidence/videos/TakerSellsLez-xmr-happy.mp4
+
+[01:11:35] === xmr-happy (TakerSellsLez): passed in 436s

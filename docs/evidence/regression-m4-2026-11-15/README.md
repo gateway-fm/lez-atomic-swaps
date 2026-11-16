@@ -239,14 +239,19 @@ write-ahead-log bound patches (`deploy/builder/patches/README.md`).
 ## Not covered
 
 - Monero beyond an offline regtest chain: no stagenet or mainnet; x86_64 (linux/amd64) only.
-- No systemd packaging, macOS package or desk recordings for Monero. (Since this run the Maker's
+- No systemd packaging, macOS package or desk recordings for Monero. (Since this run the three
+  Monero desk journeys are recorded,
+  [regression-m4-desks-2026-11-16](../regression-m4-desks-2026-11-16/videos/), and the Maker's
   systemd unit takes a Monero role from an optional drop-in, checked statically and with stub
   programs, not run in a VM; the Taker unit has none.)
 - Compute units for the five Monero escrow instructions (tags 13–17) were not measured in this
   run; they were measured afterwards against the deployed program, outside the stack, in
   [docs/lez-compute-units.md](../../lez-compute-units.md#the-xmr-path-tags-1317).
 - On a real desk only the Monero happy journey is clicked through; the refund, punish and
-  in-doubt rows were not seen on a desk.
+  in-doubt rows were not seen on a desk. (Since this run the Taker's refund and two swaps at once
+  run on the desks too, recorded with the happy journey in
+  [regression-m4-desks-2026-11-16](../regression-m4-desks-2026-11-16/); the punish rows and the
+  Taker's in-doubt row are still unseen, the Maker's funding-in-doubt row was seen transiently.)
 - Proven by unit tests only, not on the stack: the lost-nonce punish re-plan (no scenario makes
   another owner transaction take tag 17's nonce); the switch of a Maker's stopped claim to the
   refund or the punishment (Claim → Refund, Claim → Punish); a claim submitted but not recorded;
