@@ -189,8 +189,8 @@ roles configure alike (`funding_cutoff_seconds`, `refund_seconds`,
   LEZ clock (which runs behind it) still before C
   (`crates/maker-node/src/bin/xmr-maker-actor.rs`, `derive_status` and
   `drive_once`). The funding tool runs after that check, so the transfer can
-  leave after C: by the tool's own run time (in the desk recording of
-  2026-11-16 the transfer was handed to the wallet-rpc 0.3 s before C and
+  leave after C: by the tool's own run time (in a desk run of 2026-11-16,
+  20261116T010314Z, the transfer was handed to the wallet-rpc 0.3 s before C and
   reached monerod's pool 0.4 s after it), at most the Maker's two-minute
   attempt deadline. That is by design: only the Maker enforces C, and only for
   its own sake. The Taker takes the exact output at 10 confirmations whenever

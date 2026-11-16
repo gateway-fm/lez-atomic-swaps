@@ -1,11 +1,11 @@
-[01:03:14] regression run: 3 tests at 20f8972a (tree dirty: 0), results in runtime/regress/20261116T010314Z
-[01:03:14] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
-[01:03:14] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
-[01:03:56] group fast
-[01:03:56]     [lane 1] ui:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 1578, tip 1585
-[01:03:56]     [lane 2] ui:xmr:xmr-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 1578, tip 1585
-[01:03:56]     [lane 3] ui:xmr:xmr-happy:TakerSellsLez (try 1) starts: LEZ finalized 1578, tip 1585
-[01:11:35] === ui:xmr:xmr-happy:TakerSellsLez (try 1, lane 3): PASSED in 436 s; LEZ finalized 1797, tip 1800
-[01:15:05] === ui:xmr:xmr-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 646 s; LEZ finalized 1912, tip 1915
-[01:21:00] === ui:xmr:xmr-taker-refund:TakerSellsLez (try 1, lane 1): PASSED in 1002 s; LEZ finalized 2145, tip 2150
-[01:21:00] regression run: 3 of 3 passed in 17 min, 0 new chains, 0 profile switches, 0 frozen tries
+[06:41:12] regression run: 3 tests at 363df3cf (tree dirty: 0), results in runtime/regress/20261116T064112Z
+[06:41:12] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[06:41:12] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[06:42:06] group fast
+[06:42:06]     [lane 1] ui:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 110, tip 115
+[06:42:06]     [lane 2] ui:xmr:xmr-happy:TakerSellsLez (try 1) starts: LEZ finalized 110, tip 115
+[06:42:06]     [lane 3] ui:xmr:xmr-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 110, tip 115
+[06:50:54] === ui:xmr:xmr-happy:TakerSellsLez (try 1, lane 2): PASSED in 500 s; LEZ finalized 327, tip 329
+[06:55:05] === ui:xmr:xmr-concurrent:TakerSellsLez (try 1, lane 3): PASSED in 750 s; LEZ finalized 447, tip 452
+[07:01:07] === ui:xmr:xmr-taker-refund:TakerSellsLez (try 1, lane 1): PASSED in 1113 s; LEZ finalized 675, tip 677
+[07:01:07] regression run: 3 of 3 passed in 19 min, 0 new chains, 0 profile switches, 0 frozen tries

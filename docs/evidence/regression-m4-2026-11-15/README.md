@@ -251,7 +251,8 @@ write-ahead-log bound patches (`deploy/builder/patches/README.md`).
   in-doubt rows were not seen on a desk. (Since this run the Taker's refund and two swaps at once
   run on the desks too, recorded with the happy journey in
   [regression-m4-desks-2026-11-16](../regression-m4-desks-2026-11-16/); the punish rows and the
-  Taker's in-doubt row are still unseen, the Maker's funding-in-doubt row was seen transiently.)
+  Taker's in-doubt row are still unseen, the Maker's funding-in-doubt row was seen transiently
+  in an earlier recording, not in the one kept.)
 - Proven by unit tests only, not on the stack: the lost-nonce punish re-plan (no scenario makes
   another owner transaction take tag 17's nonce); the switch of a Maker's stopped claim to the
   refund or the punishment (Claim → Refund, Claim → Punish); a claim submitted but not recorded;
