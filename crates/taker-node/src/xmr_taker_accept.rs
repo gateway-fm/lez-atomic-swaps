@@ -10,13 +10,14 @@ use crate::{
 };
 use anyhow::{Context as _, ensure};
 use lez_bridge_protocol::{RequestId, RunId};
+use lez_node_common::local_rpc::LocalRpcTimeout;
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_sdk_core::OfferDiscovery as _;
 use lez_swap_store::{MakerOfferId, MakerRouteV1, maker_xmr_chat_swap_id};
 use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, XmrAgreementV1, XmrSwapDirectionV1,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
@@ -32,6 +33,25 @@ use crate::acceptance_files::{
     MAX_TAKER_RECEIPT_BYTES, decode_sha256, derived_request_id, normalized_absolute,
     publish_exact_new, resolved_new_path,
 };
+
+/// One round of a Monero take over the Maker's Chat socket, sent once more
+/// when the Maker has not answered within the socket's deadline: every round
+/// is a replay for the Maker once it has answered it, and on a loaded host the
+/// Maker's activation (its sidecar and actor provisioning) has taken longer
+/// than one deadline while it went on and activated the swap.
+pub(crate) async fn call_maker_xmr_round<P: Serialize, R: DeserializeOwned>(
+    chat_socket: &Path,
+    method: &str,
+    parameter: &P,
+) -> anyhow::Result<R> {
+    match call_local_chat_rpc(chat_socket, method, parameter).await {
+        Err(error) if error.is::<LocalRpcTimeout>() => {
+            eprintln!("taker XMR {method}: the Maker did not answer in time; sending it once more");
+            call_local_chat_rpc(chat_socket, method, parameter).await
+        }
+        answer => answer,
+    }
+}
 
 #[derive(Debug)]
 pub struct XmrTakeInput<'a> {
@@ -562,7 +582,7 @@ pub async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAcceptanceOu
                 && agreement.body().lez().amount() == lez_units,
             "XMR Stage A is not bound to the selected Delivery offer and quote"
         );
-        let staged: XmrChatStageAResponseV1 = call_local_chat_rpc(
+        let staged: XmrChatStageAResponseV1 = call_maker_xmr_round(
             input.chat_socket,
             "xmr_chat_stage_a_v1",
             &XmrChatStageARequestV1 {
@@ -604,7 +624,7 @@ pub async fn take_xmr(input: XmrTakeInput<'_>) -> anyhow::Result<XmrAcceptanceOu
         u64::try_from(MAX_XMR_ACTIVATION_WIRE_BYTES).unwrap_or(u64::MAX),
         "signed XMR Stage B",
     )?;
-    let activated: XmrChatActivateResponseV1 = call_local_chat_rpc(
+    let activated: XmrChatActivateResponseV1 = call_maker_xmr_round(
         input.chat_socket,
         "xmr_chat_activate_v1",
         &XmrChatActivateRequestV1 {

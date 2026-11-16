@@ -26,7 +26,7 @@ use lez_btc_role_lifecycle::{
 use lez_node_common::{
     XmrCeremonyNonceRequestV1, XmrCeremonyNonceResponseV1, XmrCeremonyPartialResponseV1,
     XmrCeremonyReserveRequestV1, XmrCeremonyReserveResponseV1, XmrChatStageARequestV1,
-    XmrChatStageAResponseV1, XmrReserveResponseV1, local_rpc::call_local_chat_rpc,
+    XmrChatStageAResponseV1, XmrReserveResponseV1,
 };
 use lez_swap_core::{Pair, SwapDirection, SwapId};
 use lez_swap_store::{MakerOfferId, maker_xmr_chat_swap_id};
@@ -328,7 +328,7 @@ impl XmrMakerChat for SocketChat<'_> {
         method: &'static str,
         request: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        call_local_chat_rpc(self.0, method, &request)
+        crate::xmr_taker_accept::call_maker_xmr_round(self.0, method, &request)
             .await
             .context(method)
     }
