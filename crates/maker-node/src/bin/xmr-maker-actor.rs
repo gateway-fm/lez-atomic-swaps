@@ -45,6 +45,7 @@ use lez_swap_store::{
     ActorHeldLock, MAKER_ACTOR_CONFIG_FD, SqliteXmrWorkflowJournal, StoreError, XmrWorkflowBranch,
     XmrWorkflowReconciliationV2, XmrWorkflowStep,
 };
+use lez_xmr_swap_sdk::XmrAgreementV1;
 use serde::{Deserialize, Serialize};
 use wait_timeout::ChildExt as _;
 use xmr_reference_actor::{
@@ -443,7 +444,8 @@ fn status(config_fd: i32) -> Result<StatusOutput> {
             chain_effect_executed: false,
         });
     };
-    let facts = read_facts(&execution)?;
+    let (agreement, _) = execution.agreement_and_terms()?;
+    let facts = read_facts(&execution, windows_ms(&agreement))?;
     let status = derive_status(&facts, now_ms());
     Ok(StatusOutput {
         schema_version: 1,
@@ -477,10 +479,23 @@ fn drive(config_fd: i32) -> Result<EffectOutput> {
     Ok(effect_output("drive", outcome, &maker.facts()?))
 }
 
-/// The Maker's journal, evidence and the clock windows of Stage A.
-fn read_facts(execution: &ValidatedXmrEffectExecutionV3) -> Result<Facts> {
-    let (agreement, _) = execution.agreement_and_terms()?;
+/// Stage A's funding cutoff, refund and punish times. Validating Stage A
+/// verifies both cross-curve proofs (about a second of CPU), so an actor
+/// process does it once.
+fn windows_ms(agreement: &XmrAgreementV1) -> [u64; 3] {
     let windows = agreement.body().windows();
+    [
+        windows.maker_xmr_funding_cutoff_ms(),
+        windows.refund_at_ms(),
+        windows.punish_at_ms(),
+    ]
+}
+
+/// The Maker's journal and evidence, with the clock windows of Stage A.
+fn read_facts(
+    execution: &ValidatedXmrEffectExecutionV3,
+    [cutoff_ms, refund_ms, punish_ms]: [u64; 3],
+) -> Result<Facts> {
     let identity = execution.workflow_identity();
     let workflow =
         SqliteXmrWorkflowJournal::open_existing(execution.effect_authority().workflow_journal())
@@ -521,9 +536,9 @@ fn read_facts(execution: &ValidatedXmrEffectExecutionV3) -> Result<Facts> {
         .map(|result| found_block(&result).map(|(_, timestamp)| timestamp))
         .transpose()?;
     Ok(Facts {
-        cutoff_ms: windows.maker_xmr_funding_cutoff_ms(),
-        refund_ms: windows.refund_at_ms(),
-        punish_ms: windows.punish_at_ms(),
+        cutoff_ms,
+        refund_ms,
+        punish_ms,
         tag13_final_ms,
         funding,
         branch,
@@ -661,6 +676,7 @@ struct LiveMaker {
     execution: ValidatedXmrEffectExecutionV3,
     sources: XmrMakerEffectSourcesV1,
     terms: XmrNativeEscrowTermsV3,
+    windows: [u64; 3],
     actor_lock: ActorHeldLock,
     workflow_lock: ActorHeldLock,
     runtime: tokio::runtime::Runtime,
@@ -672,12 +688,13 @@ impl LiveMaker {
         let execution = load_validated_xmr_maker_effect_execution_fd(config_fd)
             .context("validate XMR Maker effect execution")?;
         let sources = XmrMakerEffectSourcesV1::load_fd(config_fd)?;
-        let (_, terms) = execution.agreement_and_terms()?;
+        let (agreement, terms) = execution.agreement_and_terms()?;
         let (actor_lock, workflow_lock) = accept_locks(&execution)?;
         Ok(Self {
             execution,
             sources,
             terms,
+            windows: windows_ms(&agreement),
             actor_lock,
             workflow_lock,
             runtime: tokio::runtime::Builder::new_current_thread()
@@ -943,7 +960,7 @@ impl LiveMaker {
 
 impl MakerChains for LiveMaker {
     fn facts(&self) -> Result<Facts> {
-        read_facts(&self.execution)
+        read_facts(&self.execution, self.windows)
     }
 
     fn lez_clock(&mut self) -> Result<u64> {
