@@ -1,0 +1,38 @@
+[03:40:29] === zec-wrong-inputs (stamp 1794451229)
+[03:40:30] preflight: indexer historical reads
+[03:40:30]   indexer serves historical reads at the tip (2448)
+[03:40:30] preflight: LEZ finality check waived by request
+[03:40:30]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[03:40:49]       taker: taker ZEC corridor zec-devnet-1794451230: sidecar listening on 127.0.0.1:19902
+[03:40:49]       taker: taker: 1 prepared ZEC entries configured
+[03:40:49]     [zec-provision 02:40:49]   maker sidecar answers on 127.0.0.1:19901
+[03:40:49]     [zec-provision 02:40:49]   taker sidecar answers on 127.0.0.1:19902
+[03:40:49]       maker_health: ready=True degraded=False
+[03:40:49]     [zec-provision 02:40:49]   Taker lists zec-devnet-offer-1794451230 ; corridor zec-devnet-1794451230 is live
+[03:40:49]   corridor zec-devnet-1794451230 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-1794451230, zebra tip 362, Zcash refund height 371
+[03:40:49]   rejected as expected: reusing a publish request id for another offer (maker offer request ID conflicts with its durable mutation)
+[03:40:49]   rejected as expected: withdrawing with a stale revision (stale maker offer revision: expected 6, actual 1)
+[03:40:49]   rejected as expected: taking with a mismatched envelope hash (initiation_selection_mismatch)
+[03:40:49]   rejected as expected: taking an off-preset amount (initiation_selection_mismatch)
+[03:40:49]   rejected as expected: taking with a wrong LEZ quote (initiation_selection_mismatch)
+[03:40:49]   rejected as expected: claiming an unknown swap (swap_not_found)
+[03:40:49]   rejected as expected: refunding an unknown swap (swap_not_found)
+[03:40:50]   Taker took zec-devnet-offer-1794451230: swap zec-devnet-s (not_activated)
+[03:40:50]   rejected as expected: claiming before the Maker funded (taker_action_unavailable)
+[03:40:52]   rejected as expected: taking the consumed lot again (initiation_selection_mismatch)
+[03:40:52]   consumed lot left Delivery and cannot be taken again
+[03:40:52]   receipt: swap zec-devnet-swap-1794451230, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794451230/actor/taker/actor-config.json
+[03:40:52]   taker zec-devnet-swap-1794451230: awaiting_first_lock (gen 0) | actor at offered | maker: leased | zebra 362
+[03:41:08]   taker zec-devnet-swap-1794451230: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 362
+[03:41:12]   zebra: mined 1 block(s) → height 363 (mempool had ['5858f9912ef5'])
+[03:41:18]   taker zec-devnet-swap-1794451230: refund_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 363
+[03:41:18]   zebra: mined 1 block(s) → height 364 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[03:41:31]   zebra: mined 1 block(s) → height 365 (Taker waits for Zcash funding depth (actor at both_legs_locked))
+[03:41:34]   taker zec-devnet-swap-1794451230: claim_available (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 365
+[03:41:34]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[03:41:35]   taker zec-devnet-swap-1794451230: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 365
+[03:41:35]   zebra: mined 1 block(s) → height 366 (mempool had ['42150a4c8aa5'])
+[03:41:38]   taker zec-devnet-swap-1794451230: completed (gen 4) | actor at completed | maker: completed | zebra 366
+[03:41:38]   taker zec-devnet-s: completed (gen 4) | maker: completed
+[03:41:38]   both Nodes report zec-devnet-s completed
+[03:41:38] === zec-wrong-inputs: passed in 69s

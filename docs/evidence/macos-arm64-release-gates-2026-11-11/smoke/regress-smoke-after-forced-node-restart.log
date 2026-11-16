@@ -1,0 +1,17 @@
+[21:22:16] regression smoke: 6 tests at 2ab39a39 (tree dirty:        0), results in runtime/regress/20261111T212216Z
+[21:22:16] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[21:22:36] === node:btc:happy:TakerSellsLez (try 1): FAILED in 11 s (+9 s before it)
+      [22:22:34] FAILED: taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: curl: (7) Failed to connect to localhost port 80 after 0 ms: Could not connect to server"}
+[21:22:53] === node:zec:zec-happy:TakerSellsLez (try 1): FAILED in 7 s (+10 s before it)
+      [22:22:50] FAILED: zec-provision.sh failed: ^^^^^^^^^^^^
+          raise JSONDecodeError("Expecting value", s, err.value) from None
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+[21:23:57] === node:btc:happy:TakerSellsForeign (try 1): FAILED in 55 s (+9 s before it)
+      [22:23:54] FAILED: taker taker_swap_monitor_v1 failed: {"code": -1, "message": "transport: curl: (7) Failed to connect to localhost port 80 after 0 ms: Could not connect to server"}
+[21:25:24] === node:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 77 s (+10 s before it)
+[21:26:32] === ui:btc:happy:TakerSellsLez (try 1): PASSED in 58 s (+10 s before it)
+[21:28:30] === ui:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 104 s (+14 s before it)
+[21:28:30] regression smoke: 3 of 6 passed in 6 min, 0 new chains, 0 profile switches,        0 frozen tries
+[21:28:30]   not passed: node:btc:happy:TakerSellsLez
+[21:28:31]   not passed: node:zec:zec-happy:TakerSellsLez
+[21:28:31]   not passed: node:btc:happy:TakerSellsForeign

@@ -49,10 +49,16 @@ time.sleep(plan.get("sleep", 0.5))
 note("end")
 sys.exit(plan.get("rc", 0))
 '''
+# The chain's height, one higher at every read unless frozen. The watcher and
+# every lane read it at once, so the read and the write are one step under a
+# lock: without it a reader met the file empty mid-write and started again at
+# 1, and a height that went back read as a frozen chain.
 FAKE_CURL = '''#!/bin/sh
-h="$STATE/height"; [ -s "$h" ] || echo 1 >"$h"
-n="$(cat "$h")"
-[ -e "$STATE/frozen" ] || { n=$((n + 1)); echo "$n" >"$h"; }
+h="$STATE/height"; lock="$STATE/height.lock"; tries=0
+until mkdir "$lock" 2>/dev/null; do tries=$((tries + 1)); [ "$tries" -lt 500 ] || break; sleep 0.01; done
+n="$(cat "$h" 2>/dev/null)"; n="${n:-1}"
+[ -e "$STATE/frozen" ] || { n=$((n + 1)); echo "$n" >"$h.$$" && mv "$h.$$" "$h"; }
+rmdir "$lock" 2>/dev/null
 echo "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":1,\\"result\\":$n}"
 '''
 FAKE_LOGGER = '''#!/bin/sh
@@ -231,13 +237,73 @@ class LaneGroups(Runner):
         self.assertLess(max(refund_ends), min(fast_starts), 'no refund test still ran at the switch')
 
 
+class ChainEvidence(Runner):
+    """#103 item 12: each try's start and verdict carry the finalized height and
+    the sequencer's tip, and a freeze names the tip it froze under."""
+    def test_each_try_logs_finality_and_the_tip(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        log = (self.out / 'regress.log').read_text()
+        self.assertRegex(log, r'node:btc:happy:TakerSellsLez \(try 1\) starts: LEZ finalized \d+, tip \d+')
+        self.assertRegex(log, r'=== node:btc:happy:TakerSellsLez \(try 1\): PASSED .*; LEZ finalized \d+, tip \d+')
+
+    def test_lanes_log_finality_and_the_tip_too(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez', 'node:btc:replay:TakerSellsLez', LEZ_LANES='2')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        log = (self.out / 'regress.log').read_text()
+        self.assertRegex(log, r'\[lane \d\] node:btc:happy:TakerSellsLez \(try 1\) starts: LEZ finalized \d+, tip \d+')
+        self.assertRegex(log, r'=== node:btc:replay:TakerSellsLez \(try 1, lane \d\): PASSED in \d+ s; '
+                              r'LEZ finalized \d+, tip \d+')
+
+    def test_a_freeze_names_the_tip(self):
+        run, _ = self.regress('node:btc:happy:TakerSellsLez', plan={'happy': {'freeze_once': True}},
+                              LEZ_LANES='2')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertRegex((self.out / 'regress.log').read_text(), r'for 3 s \(sequencer tip \d+\): the chain is frozen')
+        rows = [line.split('\t') for line in (self.out / 'chain.tsv').read_text().splitlines()]
+        self.assertTrue(rows and all(len(row) == 4 and row[1] == 'lanes' for row in rows), rows)
+
+
+class Tiers(unittest.TestCase):
+    """#103 item 14: the late-claim scenarios run in `full`, both directions;
+    `smoke` is the six happy swaps it was."""
+    def tier(self, name):
+        return subprocess.run(['bash', str(SCRIPTS / 'regress.sh'), 'list', name], capture_output=True, text=True,
+                              check=True).stdout.split()
+
+    def test_full_has_both_late_claim_cases_in_both_directions(self):
+        full = self.tier('full')
+        for scenario in ('late-claim-confirms', 'late-claim-unmined'):
+            for direction in ('TakerSellsLez', 'TakerSellsForeign'):
+                self.assertIn(f'node:btc:{scenario}:{direction}', full)
+        self.assertEqual(len(full), len(set(full)))
+
+    def test_smoke_is_unchanged(self):
+        self.assertEqual(self.tier('smoke'), [
+            'node:btc:happy:TakerSellsLez', 'node:zec:zec-happy:TakerSellsLez',
+            'node:btc:happy:TakerSellsForeign', 'node:zec:zec-happy:TakerSellsForeign',
+            'ui:btc:happy:TakerSellsLez', 'ui:zec:zec-happy:TakerSellsForeign'])
+
+
 class LaneNames(unittest.TestCase):
+    # lane.sh reads the stack its deploy directory runs from runtime/runtime.env
+    # and release.env beside it. The names are checked on a copy in a directory
+    # that has neither, so a stack that ran in this checkout does not decide them.
+    @classmethod
+    def setUpClass(cls):
+        cls.deploy = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.deploy.cleanup)
+        os.mkdir(os.path.join(cls.deploy.name, 'scripts'))
+        for name in ('lane.sh', 'host.sh'):
+            shutil.copy(SCRIPTS / name, os.path.join(cls.deploy.name, 'scripts', name))
+        cls.lane_sh = os.path.join(cls.deploy.name, 'scripts', 'lane.sh')
+
     def names(self, lane, **env):
         script = ('source "$1"; echo "$LEZ_CONTAINER_PREFIX $LEZ_LANE_RUNTIME $LEZ_ZEBRA_URL $LEZ_ZEBRA_HOST '
                   '$LEZ_MAKER_VNC_PORT $LEZ_TAKER_VNC_PORT $LEZ_LANE_MAKER_WALLET $LEZ_LANE_TAKER_WALLET '
                   '${LEZ_VOLUME_PREFIX:-unset} ${lane_compose[*]}"')
         clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
-        return subprocess.run(['bash', '-c', script, '-', str(SCRIPTS / 'lane.sh')],
+        return subprocess.run(['bash', '-c', script, '-', self.lane_sh],
                               env={**clean, **({'LEZ_LANE': lane} if lane else {}), **env},
                               capture_output=True, text=True, check=True).stdout.split()
 
@@ -259,7 +325,7 @@ class LaneNames(unittest.TestCase):
     def test_a_lane_prefix_is_not_stacked_when_sourced_twice(self):
         clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
         out = subprocess.run(['bash', '-c', 'source "$1"; source "$1"; echo "$LEZ_VOLUME_PREFIX"', '-',
-                              str(SCRIPTS / 'lane.sh')], env={**clean, 'LEZ_LANE': '3', 'LEZ_VOLUME_PREFIX': 'lez'},
+                              self.lane_sh], env={**clean, 'LEZ_LANE': '3', 'LEZ_VOLUME_PREFIX': 'lez'},
                              capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(out, 'lez-l3')
 
@@ -286,7 +352,7 @@ class LaneNames(unittest.TestCase):
                   '$LEZ_SEQUENCER_PORT $LEZ_INDEXER_PORT $LEZ_BTC_EXPLORER_PORT $LEZ_LEZ_EXPLORER_PORT '
                   '$LEZ_STACK_INDEXER_URL"')
         clean = {k: v for k, v in os.environ.items() if not k.startswith('LEZ_')}
-        lane = (deploy / 'scripts' / 'lane.sh') if deploy else (SCRIPTS / 'lane.sh')
+        lane = (deploy / 'scripts' / 'lane.sh') if deploy else self.lane_sh
         return subprocess.run(['bash', '-c', script, '-', str(lane)], env={**clean, **env},
                               capture_output=True, text=True, check=True).stdout.split()
 
@@ -329,7 +395,7 @@ class LaneNames(unittest.TestCase):
                 self.stack(**env)
 
     def test_not_a_lane(self):
-        run = subprocess.run(['bash', '-c', 'source "$1"', '-', str(SCRIPTS / 'lane.sh')],
+        run = subprocess.run(['bash', '-c', 'source "$1"', '-', self.lane_sh],
                              env={**os.environ, 'LEZ_LANE': 'two'}, capture_output=True, text=True)
         self.assertEqual(run.returncode, 64)
 

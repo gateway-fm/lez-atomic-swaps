@@ -1,0 +1,7 @@
+   1 maker actor zec-devnet-swap-1794445437: activate → activated - (phase offered, revision 0, next wait)
+  11 maker actor zec-devnet-swap-1794445437: drive → awaiting_observation taker_first_lock (phase offered, revision 0, next wait)
+   1 maker actor zec-devnet-swap-1794445437: drive → projected taker_first_lock (phase taker_lock_confirmed, revision 1, next wait)
+   1 maker actor zec-devnet-swap-1794445437: drive → submitted lez_initialize (phase taker_lock_confirmed, revision 1, next wait)
+   1 maker actor zec-devnet-swap-1794445437: drive → submitted lez_fund (phase taker_lock_confirmed, revision 1, next wait)
+   1 maker actor zec-devnet-swap-1794445437: drive → projected maker_lock (phase both_legs_locked, revision 2, next wait)
+ 104 maker actor zec-devnet-swap-1794445437: drive → awaiting_observation lez_revealing_claim (phase both_legs_locked, revision 2, next wait)

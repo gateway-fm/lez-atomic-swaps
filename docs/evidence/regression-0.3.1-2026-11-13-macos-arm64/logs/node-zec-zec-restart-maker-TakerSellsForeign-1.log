@@ -1,0 +1,30 @@
+[14:56:45] === zec-restart-maker (stamp 1794578205)
+[14:56:45] preflight: indexer historical reads
+[14:56:45]   indexer serves historical reads at the tip (3023)
+[14:56:45] preflight: LEZ finality check waived by request
+[14:56:45]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[14:57:12]       taker: taker ZEC corridor zec-devnet-1794578205: sidecar listening on 127.0.0.1:19902
+[14:57:12]       taker: taker: 1 prepared ZEC entries configured
+[14:57:12]     [zec-provision 13:57:12]   maker sidecar answers on 127.0.0.1:19901
+[14:57:12]     [zec-provision 13:57:12]   taker sidecar answers on 127.0.0.1:19902
+[14:57:12]       maker_health: ready=True degraded=False
+[14:57:12]     [zec-provision 13:57:12]   Taker lists zec-devnet-offer-1794578205 ; corridor zec-devnet-1794578205 is live
+[14:57:12]   corridor zec-devnet-1794578205 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-1794578205, zebra tip 363, Zcash refund height 372
+[14:57:12]   Taker took zec-devnet-offer-1794578205: swap zec-devnet-s (not_activated)
+[14:57:12]   receipt: swap zec-devnet-swap-1794578205, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794578205/actor/taker/actor-config.json
+[14:57:13]   [0 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker not_activated (gen 0) | actor at - | maker leased | zebra 363 | LEZ finalized 3038, tip 3043 (5 unfinalized) [heartbeat]
+[14:57:16]   [3 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 363 | LEZ finalized 3038, tip 3043 (5 unfinalized) [heartbeat]
+[14:57:19]   zebra: mined 1 block(s) → height 364 (mempool had ['87064439099c'])
+[14:57:26]   [13 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 364 | LEZ finalized 3038, tip 3043 (5 unfinalized) [heartbeat]
+[14:57:26]   restarting lez-maker-node
+[14:57:38]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 364 | LEZ finalized 3055, tip 3059 (4 unfinalized) [heartbeat]
+[14:57:39]   zebra: mined 1 block(s) → height 365 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[14:57:45]   [7 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 365 | LEZ finalized 3055, tip 3059 (4 unfinalized) [heartbeat]
+[14:57:46]   Taker claimed LEZ on zec-devnet-s (replay=False)
+[14:57:46]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 365 | LEZ finalized 3055, tip 3059 (4 unfinalized) [heartbeat]
+[14:57:53]   [6 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 365 | LEZ finalized 3071, tip 3074 (3 unfinalized) [heartbeat]
+[14:57:59]   zebra: mined 1 block(s) → height 366 (mempool had ['c5bbc878815e'])
+[14:58:02]   [16 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 366 | LEZ finalized 3071, tip 3074 (3 unfinalized) [heartbeat]
+[14:58:03]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3071, tip 3074 (3 unfinalized) [heartbeat]
+[14:58:03]   both Nodes report zec-devnet-s completed
+[14:58:03] === zec-restart-maker: passed in 78s

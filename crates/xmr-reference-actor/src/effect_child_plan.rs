@@ -1,15 +1,14 @@
 //! Canonical secret-free execution plan for one role-fixed XMR effect child.
 
-use std::{
-    fs::File,
-    io::Read as _,
-    os::unix::fs::PermissionsExt as _,
-    path::{Component, Path, PathBuf},
-};
+// Only the Linux sealed-plan loader reads a descriptor.
+use std::path::{Component, Path, PathBuf};
+#[cfg_attr(target_os = "macos", allow(unused_imports))]
+use std::{fs::File, io::Read as _, os::unix::fs::PermissionsExt as _};
 
 use anyhow::{Context as _, Result, ensure};
 use lez_swap_core::Participant;
 use lez_swap_store::XmrWorkflowStep;
+#[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -275,6 +274,7 @@ pub fn parse_xmr_effect_child_plan_v1(bytes: &[u8]) -> Result<XmrEffectChildPlan
 ///
 /// Rejects a missing/non-file descriptor, incomplete memfd seals, wrong mode,
 /// oversized bytes, or any semantic/canonical child-plan error.
+#[cfg(target_os = "linux")]
 pub fn load_xmr_effect_child_plan_fd() -> Result<XmrEffectChildPlanV1> {
     let path = format!("/proc/self/fd/{XMR_EFFECT_CHILD_PLAN_FD}");
     let mut file = File::open(path).context("open sealed XMR effect child plan")?;
@@ -301,6 +301,19 @@ pub fn load_xmr_effect_child_plan_fd() -> Result<XmrEffectChildPlanV1> {
         "XMR effect child plan descriptor is oversized or changed"
     );
     parse_xmr_effect_child_plan_v1(&bytes)
+}
+
+/// Not ported to macOS: the plan arrives as a write-sealed memfd and macOS has
+/// no seal to check, so the descriptor is never trusted and loading fails.
+///
+/// # Errors
+///
+/// Always.
+#[cfg(target_os = "macos")]
+pub fn load_xmr_effect_child_plan_fd() -> Result<XmrEffectChildPlanV1> {
+    anyhow::bail!(
+        "XMR effect child plan descriptor {XMR_EFFECT_CHILD_PLAN_FD} needs Linux memfd seals; XMR effects are not supported on macOS"
+    )
 }
 
 /// Loads FD 217 and binds it to one worker's compiled route.

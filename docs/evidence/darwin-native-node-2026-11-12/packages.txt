@@ -1,0 +1,4 @@
+packaged lez_maker_node 0.3.0 (darwin-arm64) -> $OUT/lez_maker_node.lgx ( 31M)
+packaged lez_taker_node 0.3.0 (darwin-arm64) -> $OUT/lez_taker_node.lgx ( 44M)
+33d1ed7c95d64b3ef45c556c42ad8d58ba90f2b88d24c0122c8a559780c958b8  $OUT/lez_maker_node.lgx
+93136a5ca8b0e532b2f6ecfa80d9688f6da7d72d880ad0f294c4734e055783c0  $OUT/lez_taker_node.lgx

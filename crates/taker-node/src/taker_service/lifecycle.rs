@@ -15,6 +15,7 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
+use lez_actor_supervision::{ActorLastOutcomeV1, LastOutcomes};
 use lez_bridge_protocol::RequestId;
 use lez_swap_core::{Pair, Phase, SwapDirection, SwapId};
 use lez_swap_store::{
@@ -338,9 +339,14 @@ impl RouteActor {
     }
 
     /// Runs one terminal effect: the pair decides which actor command it is.
-    async fn effect(&self, action: TakerTerminalActionV1) -> Result<(), ()> {
+    /// What it came back with is kept as the swap's last outcome.
+    async fn effect(
+        &self,
+        action: TakerTerminalActionV1,
+        outcomes: &LastOutcomes,
+    ) -> Result<(), ()> {
         match self {
-            Self::Btc { config, .. } => {
+            Self::Btc { config, swap_id } => {
                 use btc_reference_actor::{
                     ActorCommand, ActorCommandOutputV1, execute_actor_command,
                 };
@@ -350,7 +356,9 @@ impl RouteActor {
                     TakerTerminalActionV1::Claim => ActorCommand::Drive,
                     TakerTerminalActionV1::Refund => ActorCommand::Recover,
                 };
-                match execute_actor_command(config, command).await {
+                let result = execute_actor_command(config, command).await;
+                record_btc_outcome(outcomes, swap_id, command, &result);
+                match result {
                     Ok(ActorCommandOutputV1::Effect(_)) => Ok(()),
                     Ok(ActorCommandOutputV1::Status(_)) => Err(()),
                     Err(error) => {
@@ -368,7 +376,26 @@ impl RouteActor {
                     TakerTerminalActionV1::Claim => ActorCommand::Claim,
                     TakerTerminalActionV1::Refund => ActorCommand::Recover,
                 };
-                match execute_actor_command(config, command).await {
+                let name = match action {
+                    TakerTerminalActionV1::Claim => "claim",
+                    TakerTerminalActionV1::Refund => "recover",
+                };
+                let result = execute_actor_command(config, command).await;
+                match &result {
+                    Ok(ActorCommandOutputV1::Effect(effect)) => {
+                        if let Ok(effect) = serde_json::to_value(effect) {
+                            record_effect_outcome(outcomes, config.swap_id(), name, &effect);
+                        }
+                    }
+                    Ok(ActorCommandOutputV1::Status(_)) => {}
+                    Err(error) => record_failed_outcome(
+                        outcomes,
+                        config.swap_id(),
+                        name,
+                        super::zec_supervisor::failure_of(*error).class(),
+                    ),
+                }
+                match result {
                     Ok(ActorCommandOutputV1::Effect(_)) => Ok(()),
                     Ok(ActorCommandOutputV1::Status(_)) => Err(()),
                     Err(error) => {
@@ -383,17 +410,21 @@ impl RouteActor {
     /// One bounded observation drive of the BTC actor in a phase where the
     /// Taker has no effect to make (its own lock, the Maker's lock). Never
     /// called at `BothLegsLocked`, where a drive would be the revealing claim.
-    async fn observe(&self) -> Result<(), ()> {
+    async fn observe(&self, outcomes: &LastOutcomes) -> Result<(), ()> {
         match self {
-            Self::Btc { config, .. } => {
+            Self::Btc { config, swap_id } => {
                 use btc_reference_actor::{ActorCommand, execute_actor_command};
-                execute_actor_command(config, ActorCommand::Drive)
-                    .await
+                let result = execute_actor_command(config, ActorCommand::Drive).await;
+                record_btc_outcome(outcomes, swap_id, ActorCommand::Drive, &result);
+                result
                     .map(|_| ())
                     .map_err(|error| report_actor_failure("observe", &error))
             }
             #[cfg(feature = "pair-zec")]
-            Self::Zec(_) => Ok(()),
+            Self::Zec(_) => {
+                let _ = outcomes;
+                Ok(())
+            }
         }
     }
 
@@ -538,7 +569,7 @@ pub(super) fn register(
             let request: TakerSwapListRequestV1 = params
                 .one()
                 .map_err(|_| rpc_error(INVALID_PARAMS_CODE, "Invalid params", "invalid_params"))?;
-            list_swaps(state, request)
+            Box::pin(list_swaps(state, request))
                 .await
                 .map_err(|error| map_monitoring_error(&error))
         }
@@ -646,6 +677,10 @@ pub(super) enum ActionError {
     RegistryUnavailable,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one admission read in order: replay, supersession, status, first attempt"
+)]
 async fn terminal_action(
     state: Arc<TakerServiceState>,
     request_id: RequestId,
@@ -653,6 +688,7 @@ async fn terminal_action(
     expected_generation: u64,
     action: TakerTerminalActionV1,
 ) -> Result<TakerActionCommitV1, ActionError> {
+    let outcomes = &state.last_outcomes;
     let initiation = state
         .initiation
         .clone()
@@ -687,7 +723,7 @@ async fn terminal_action(
             let effect_config =
                 reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock)
                     .await?;
-            execute_terminal_actor_command(&effect_config, &held_lock, action).await?;
+            execute_terminal_actor_command(&effect_config, &held_lock, action, outcomes).await?;
             revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock)
                 .await?;
         } else {
@@ -758,8 +794,15 @@ async fn terminal_action(
     let effect_config =
         reload_action_actor_custody(&prepared, receipt_binding, &config, &held_lock).await?;
     let gate_open = admission_claim_gate_open(&initiation, &prepared);
-    let first_attempt =
-        gated_first_attempt(&effect_config, &held_lock, action, phase, gate_open).await;
+    let first_attempt = gated_first_attempt(
+        &effect_config,
+        &held_lock,
+        action,
+        phase,
+        gate_open,
+        outcomes,
+    )
+    .await;
     first_attempt_reply(effect_config.is_zec(), first_attempt)?;
     revalidate_action_custody(&prepared, receipt_binding, &effect_config, &held_lock).await?;
     Ok(action_commit(&admission))
@@ -1167,6 +1210,7 @@ async fn gated_first_attempt(
     action: TakerTerminalActionV1,
     phase: Phase,
     gate_open: bool,
+    outcomes: &LastOutcomes,
 ) -> Result<(), ActionError> {
     let lez_claim =
         config.is_zec() && action == TakerTerminalActionV1::Claim && phase == Phase::BothLegsLocked;
@@ -1177,16 +1221,17 @@ async fn gated_first_attempt(
         );
         return Ok(());
     }
-    execute_terminal_actor_command(config, held_lock, action).await
+    execute_terminal_actor_command(config, held_lock, action, outcomes).await
 }
 
 async fn execute_terminal_actor_command(
     config: &RouteActor,
     held_lock: &ActorHeldLock,
     action: TakerTerminalActionV1,
+    outcomes: &LastOutcomes,
 ) -> Result<(), ActionError> {
     config
-        .effect(action)
+        .effect(action, outcomes)
         .await
         .inspect(|()| {
             if action == TakerTerminalActionV1::Claim {
@@ -1339,6 +1384,90 @@ pub(super) fn mark_claim_submitted(state_db: &Path) {
             .create(true)
             .truncate(false)
             .open(marker);
+    }
+}
+
+/// The swap's last outcome on its row (#103 item 6): what the actor last
+/// did or why it did not act, and what it waits for. Not on a finished swap,
+/// nor once the actor's revision moved past the attempt (its wait was about
+/// a step that is over). A Bitcoin row also names the class of a failed last
+/// attempt in `last_failure_class`; a Zcash row has its supervisor's.
+fn overlay_last_outcome(view: &mut TakerSwapViewV1, outcome: Option<ActorLastOutcomeV1>) {
+    let Some(outcome) = outcome else {
+        return;
+    };
+    if matches!(
+        view.state,
+        TakerSwapStateV1::Completed | TakerSwapStateV1::Refunded
+    ) || outcome
+        .revision
+        .is_some_and(|revision| revision != view.progress_generation)
+    {
+        return;
+    }
+    if view.route.pair() == Pair::Bitcoin && view.last_failure_class.is_none() {
+        view.last_failure_class.clone_from(&outcome.failure_class);
+    }
+    view.last_outcome = Some(outcome);
+}
+
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Keeps one effect's JSON output as the swap's last outcome.
+pub(super) fn record_effect_outcome(
+    outcomes: &LastOutcomes,
+    swap_id: &SwapId,
+    command: &str,
+    effect: &serde_json::Value,
+) {
+    if let Some(outcome) = ActorLastOutcomeV1::from_effect(command, effect, now_unix_seconds()) {
+        outcomes.record(swap_id.as_str(), outcome);
+    }
+}
+
+/// Keeps a failed attempt, by its class, as the swap's last outcome.
+pub(super) fn record_failed_outcome(
+    outcomes: &LastOutcomes,
+    swap_id: &SwapId,
+    command: &str,
+    failure_class: &str,
+) {
+    outcomes.record(
+        swap_id.as_str(),
+        ActorLastOutcomeV1::failed(command, failure_class, now_unix_seconds()),
+    );
+}
+
+/// Keeps what one Bitcoin actor command came back with as the swap's last
+/// outcome: its effect, with the wait the actor named, or its failure class.
+fn record_btc_outcome(
+    outcomes: &LastOutcomes,
+    swap_id: &SwapId,
+    command: btc_reference_actor::ActorCommand,
+    result: &Result<
+        btc_reference_actor::ActorCommandOutputV1,
+        btc_reference_actor::ActorCommandError,
+    >,
+) {
+    use btc_reference_actor::{ActorCommand, ActorCommandOutputV1};
+    let name = match command {
+        ActorCommand::Activate => "activate",
+        ActorCommand::Drive => "drive",
+        ActorCommand::Recover => "recover",
+        ActorCommand::Status => return,
+    };
+    match result {
+        Ok(ActorCommandOutputV1::Effect(effect)) => {
+            if let Ok(effect) = serde_json::to_value(effect) {
+                record_effect_outcome(outcomes, swap_id, name, &effect);
+            }
+        }
+        Ok(ActorCommandOutputV1::Status(_)) => {}
+        Err(error) => record_failed_outcome(outcomes, swap_id, name, error.failure_class()),
     }
 }
 
@@ -1495,7 +1624,10 @@ async fn list_swaps(
     let mut swaps = Vec::with_capacity(swap_ids.len());
     for facts in swap_ids {
         match project_swap(&initiation, facts.swap_id()).await {
-            Ok(view) => swaps.push(view),
+            Ok(mut view) => {
+                overlay_last_outcome(&mut view, state.last_outcomes.get(facts.swap_id().as_str()));
+                swaps.push(view);
+            }
             Err(MonitoringError::NotFound) => swaps
                 .push(commit_from_facts(&facts, false, TakerSwapStateV1::AttentionRequired).swap),
             Err(error) => return Err(error),
@@ -1518,7 +1650,9 @@ async fn monitor_swap(
         .initiation
         .clone()
         .ok_or(MonitoringError::RegistryUnavailable)?;
-    project_swap(&initiation, &request.swap_id).await
+    let mut view = project_swap(&initiation, &request.swap_id).await?;
+    overlay_last_outcome(&mut view, state.last_outcomes.get(request.swap_id.as_str()));
+    Ok(view)
 }
 
 async fn project_swap(
@@ -1831,6 +1965,7 @@ fn view_from_actor_status(
         actor_phase: None,
         claim_window_closed: None,
         last_failure_class: None,
+        last_outcome: None,
         observed_at: None,
         terms: None,
         effects: Vec::new(),
@@ -2217,6 +2352,7 @@ const fn taker_observation_phase(phase: Phase) -> bool {
 /// Drives every Node-owned Bitcoin swap that is waiting on a chain
 /// observation, once per pass, under the same held lock the monitor uses.
 async fn observe_dynamic_swaps(state: &TakerServiceState) {
+    let outcomes = &state.last_outcomes;
     let Some(initiation) = state.initiation.clone() else {
         return;
     };
@@ -2284,9 +2420,9 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
             // timely maker lock stayed at revision one forever (public testnet,
             // swap 54184a0e).
             if taker_observation_phase(phase) {
-                let _ = config.observe().await;
+                let _ = config.observe(outcomes).await;
             }
-            let _ = config.effect(TakerTerminalActionV1::Refund).await;
+            let _ = config.effect(TakerTerminalActionV1::Refund, outcomes).await;
             drop(held_lock);
             continue;
         }
@@ -2299,7 +2435,7 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
             claim_submitted_marker(config.state_db()).is_some_and(|marker| marker.is_file());
         let claim_pending = phase == Phase::BothLegsLocked && claim_submitted;
         if taker_observation_phase(phase) || claim_pending {
-            let _ = config.observe().await;
+            let _ = config.observe(outcomes).await;
         }
         if phase == Phase::BothLegsLocked
             && (!claim_submitted || state != TakerSwapStateV1::ClaimAvailable)
@@ -2308,7 +2444,7 @@ async fn observe_dynamic_swaps(state: &TakerServiceState) {
             // closed: a drive here would be a revealing claim, so the Maker's
             // leg is watched through the recovery command instead. Once the
             // Maker has refunded, the swap moves to `refund_available`.
-            let _ = config.effect(TakerTerminalActionV1::Refund).await;
+            let _ = config.effect(TakerTerminalActionV1::Refund, outcomes).await;
         }
         drop(held_lock);
     }
@@ -2740,6 +2876,7 @@ fn commit_from_facts(
             actor_phase: None,
             claim_window_closed: None,
             last_failure_class: None,
+            last_outcome: None,
             observed_at: None,
             terms: None,
             effects: Vec::new(),
@@ -2841,6 +2978,7 @@ mod tests {
             actor_phase: Some(phase.to_owned()),
             claim_window_closed: window_closed,
             last_failure_class: None,
+            last_outcome: None,
             observed_at: None,
             terms: None,
             effects: Vec::new(),
@@ -2900,6 +3038,7 @@ mod tests {
             actor_phase: None,
             claim_window_closed: None,
             last_failure_class: None,
+            last_outcome: None,
             observed_at: None,
             terms: None,
             effects: Vec::new(),
@@ -2963,6 +3102,7 @@ mod tests {
             actor_phase: None,
             claim_window_closed: None,
             last_failure_class: None,
+            last_outcome: None,
             observed_at: None,
             terms: None,
             effects: Vec::new(),
@@ -3320,5 +3460,179 @@ mod tests {
             map_action_store_error(TakerFacadeStoreError::ActionGenerationConflict),
             ActionError::Conflict
         ));
+    }
+
+    /// A Bitcoin row as the monitor projects it before the last outcome.
+    fn btc_row(state: TakerSwapStateV1, generation: u64) -> TakerSwapViewV1 {
+        use lez_swap_store::{MakerOfferId, MakerRouteV1};
+        TakerSwapViewV1 {
+            schema_version: 1,
+            swap_id: SwapId::new("r103-outcome-swap").unwrap(),
+            offer_id: MakerOfferId::new("r103-outcome-offer").unwrap(),
+            route: MakerRouteV1::new(Pair::Bitcoin, SwapDirection::TakerSellsForeign).unwrap(),
+            foreign_units: 10_000,
+            lez_units: 25_000,
+            progress_generation: generation,
+            state,
+            available_action: None,
+            privacy_guidance: None,
+            attention_reason: None,
+            revealing_claim_held_by: None,
+            status_detail: None,
+            actor_phase: None,
+            claim_window_closed: None,
+            last_failure_class: None,
+            last_outcome: None,
+            observed_at: None,
+            terms: None,
+            effects: Vec::new(),
+            bitcoin_lock_fee_sat: None,
+        }
+    }
+
+    fn recorded(swap: &str, command: &str, effect: &serde_json::Value) -> ActorLastOutcomeV1 {
+        let outcomes = LastOutcomes::new();
+        record_effect_outcome(&outcomes, &SwapId::new(swap).unwrap(), command, effect);
+        outcomes.get(swap).expect("recorded")
+    }
+
+    /// #103 item 6: a refund held until finalized LEZ time passes the cutoff
+    /// reads as that wait, with both times, beside `refund_in_progress`.
+    #[test]
+    fn a_held_refund_row_names_its_wait_and_both_times() {
+        let outcome = recorded(
+            "r103-outcome-swap",
+            "recover",
+            &serde_json::json!({
+                "schema_version": 1, "role": "taker", "command": "recover",
+                "outcome": "awaiting_observation", "chain": "bitcoin",
+                "phase": "taker_lock_confirmed", "revision": 1, "next_action": "recover_taker_leg",
+                "wait": {"kind": "lez_finality_past_cutoff", "chain": "lez",
+                         "until_unix_seconds": 1_762_877_100_u64,
+                         "chain_unix_seconds": 1_762_876_680_u64}
+            }),
+        );
+        let mut row = btc_row(TakerSwapStateV1::RefundInProgress, 1);
+        overlay_last_outcome(&mut row, Some(outcome));
+        let value = serde_json::to_value(&row).unwrap();
+        assert_eq!(value["state"], "refund_in_progress");
+        assert_eq!(value["last_outcome"]["step"], "recover");
+        assert_eq!(value["last_outcome"]["outcome"], "awaiting_observation");
+        assert_eq!(
+            value["last_outcome"]["waiting_for"]["kind"],
+            "lez_finality_past_cutoff"
+        );
+        assert_eq!(
+            value["last_outcome"]["waiting_for"]["until_unix_seconds"],
+            1_762_877_100_u64
+        );
+        assert_eq!(
+            value["last_outcome"]["waiting_for"]["chain_unix_seconds"],
+            1_762_876_680_u64
+        );
+        // A wait is not a failure: no class, so the desk offers no Resubmit.
+        assert!(value.get("last_failure_class").is_none(), "{value}");
+    }
+
+    /// The other bounded waits the actor names reach the row unchanged.
+    #[test]
+    fn each_kind_of_wait_reaches_the_row_with_its_bound() {
+        for wait in [
+            serde_json::json!({"kind": "bitcoin_refund_maturity", "chain": "bitcoin",
+                               "until_height": 1234, "chain_height": 1229}),
+            serde_json::json!({"kind": "bitcoin_refund_confirmations", "chain": "bitcoin",
+                               "confirmations": 1, "required_confirmations": 3}),
+            serde_json::json!({"kind": "bitcoin_time_past_cutoff", "chain": "bitcoin",
+                               "until_unix_seconds": 900, "chain_unix_seconds": 840,
+                               "chain_height": 77}),
+            serde_json::json!({"kind": "lez_finality_past_refund_time", "chain": "lez",
+                               "until_unix_seconds": 900, "chain_unix_seconds": 840}),
+            serde_json::json!({"kind": "maker_lock", "chain": "lez", "until_unix_seconds": 900}),
+            serde_json::json!({"kind": "counterparty_claim", "chain": "bitcoin"}),
+        ] {
+            let outcome = recorded(
+                "r103-outcome-swap",
+                "recover",
+                &serde_json::json!({"outcome": "awaiting_observation", "revision": 2,
+                                    "wait": wait.clone()}),
+            );
+            let mut row = btc_row(TakerSwapStateV1::RefundInProgress, 2);
+            overlay_last_outcome(&mut row, Some(outcome));
+            let value = serde_json::to_value(&row).unwrap();
+            assert_eq!(value["last_outcome"]["waiting_for"], wait);
+        }
+    }
+
+    /// An outcome with no wait is still the last outcome; nothing is invented.
+    #[test]
+    fn an_outcome_without_a_wait_is_shown_without_one() {
+        let outcome = recorded(
+            "r103-outcome-swap",
+            "drive",
+            &serde_json::json!({"outcome": "observed_then_projected", "revision": 2,
+                                "chain": "lez", "was_replay": false}),
+        );
+        let mut row = btc_row(TakerSwapStateV1::ClaimAvailable, 2);
+        overlay_last_outcome(&mut row, Some(outcome));
+        let last = row.last_outcome.expect("kept");
+        assert_eq!(last.outcome, "observed_then_projected");
+        assert_eq!(last.waiting_for, None);
+        assert_eq!(row.last_failure_class, None);
+    }
+
+    /// A failed Bitcoin attempt names its class on the row, as the Zcash
+    /// schedule names its own; a Zcash row keeps its supervisor's class.
+    #[test]
+    fn a_failed_bitcoin_attempt_names_its_failure_class() {
+        let outcomes = LastOutcomes::new();
+        let swap = SwapId::new("r103-outcome-swap").unwrap();
+        let result = Err(btc_reference_actor::ActorCommandError::ObservationUnavailable);
+        record_btc_outcome(
+            &outcomes,
+            &swap,
+            btc_reference_actor::ActorCommand::Recover,
+            &result,
+        );
+        let mut row = btc_row(TakerSwapStateV1::RefundInProgress, 1);
+        overlay_last_outcome(&mut row, outcomes.get(swap.as_str()));
+        assert_eq!(
+            row.last_failure_class.as_deref(),
+            Some("actor_observation_unavailable")
+        );
+        let last = row.last_outcome.expect("kept");
+        assert_eq!(last.outcome, "failed");
+        assert_eq!(last.step, "recover");
+
+        let mut zcash = btc_row(TakerSwapStateV1::RefundInProgress, 1);
+        zcash.route =
+            lez_swap_store::MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsForeign)
+                .unwrap();
+        zcash.last_failure_class = Some("actor_timeout".to_owned());
+        overlay_last_outcome(&mut zcash, outcomes.get(swap.as_str()));
+        assert_eq!(zcash.last_failure_class.as_deref(), Some("actor_timeout"));
+    }
+
+    /// A finished swap carries no outcome, nor does a row whose actor moved
+    /// past the attempt (its wait was about a step that is over).
+    #[test]
+    fn a_finished_or_advanced_swap_drops_the_outcome() {
+        let outcome = recorded(
+            "r103-outcome-swap",
+            "recover",
+            &serde_json::json!({"outcome": "awaiting_observation", "revision": 1,
+                                "wait": {"kind": "maker_lock", "chain": "lez",
+                                         "until_unix_seconds": 900}}),
+        );
+        for state in [TakerSwapStateV1::Completed, TakerSwapStateV1::Refunded] {
+            let mut row = btc_row(state, 1);
+            overlay_last_outcome(&mut row, Some(outcome.clone()));
+            assert_eq!(row.last_outcome, None);
+        }
+        let mut advanced = btc_row(TakerSwapStateV1::BothLegsLocked, 2);
+        overlay_last_outcome(&mut advanced, Some(outcome));
+        assert_eq!(advanced.last_outcome, None);
+        let mut none = btc_row(TakerSwapStateV1::AwaitingSecondLock, 1);
+        overlay_last_outcome(&mut none, None);
+        assert_eq!(none.last_outcome, None);
     }
 }

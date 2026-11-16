@@ -1,0 +1,48 @@
+[03:16:48] lanes down --wipe rc=0; runtime/lanes: 
+[03:16:48] lez-maker-node:local a57e350769e8 build source af3ac978c49f9fd2266bc2b7dd7ec12c7d55643a
+[03:16:48] lez-taker-node:local 67553262903a build source af3ac978c49f9fd2266bc2b7dd7ec12c7d55643a
+[03:16:48] code adffc106 dirty: 
+[03:16:48] START 01-recreate-nodes
+[03:17:01] END   01-recreate-nodes rc=0
+[03:17:01] START 02-up-resume
+[03:17:10] END   02-up-resume rc=0
+[03:17:10] manifest in containers after up.sh resume: 392 / 392 bytes
+[03:17:10] START 03-restart-nodes
+[03:17:59] END   03-restart-nodes rc=0
+[03:17:59] START 04-smoke
+[03:25:04] END   04-smoke rc=0
+[03:17:59] regression smoke: 6 tests at adffc106 (tree dirty:        1), results in runtime/regress/20261112T031759Z
+[03:18:41] === node:btc:happy:TakerSellsLez (try 1): PASSED in 34 s (+8 s before it)
+[03:20:01] === node:zec:zec-happy:TakerSellsLez (try 1): PASSED in 69 s (+11 s before it)
+[03:21:17] === node:btc:happy:TakerSellsForeign (try 1): PASSED in 66 s (+10 s before it)
+[03:22:28] === node:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 63 s (+8 s before it)
+[03:23:43] === ui:btc:happy:TakerSellsLez (try 1): PASSED in 65 s (+10 s before it)
+[03:25:04] === ui:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 69 s (+12 s before it)
+[03:25:04] regression smoke: 6 of 6 passed in 7 min, 0 new chains, 0 profile switches,        0 frozen tries
+[03:25:04] START 05-finality-stall
+[03:26:53] END   05-finality-stall rc=0
+1 passed, 0 failed
+
+[03:26:53] === lez-finality-stall (TakerSellsForeign): passed in 109s
+[03:26:53] START 06-wipe
+[03:27:25] END   06-wipe rc=0
+[03:27:25] START 07-start-after-wipe
+[03:28:31] END   07-start-after-wipe rc=0
+ logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
+ a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
+──────────────────────────────────────────────────────────────────
+  [time 03:28:31] desk suites: 5 s (66 s since up.sh started)
+[03:28:31] START 08-trade-after-wipe
+[03:29:47] END   08-trade-after-wipe rc=0
+
+[03:29:47] === happy (TakerSellsLez): passed in 76s
+[03:29:47] START 09-zec-trade-after-wipe
+[03:30:57] END   09-zec-trade-after-wipe rc=0
+
+[03:30:57] === zec-happy (TakerSellsForeign): passed in 70s
+[03:30:57] DONE
+[03:30:57] after sections 1-4: lez-maker-node runs build source af3ac978c49f9fd2266bc2b7dd7ec12c7d55643a
+[03:30:57] after sections 1-4: lez-taker-node runs build source af3ac978c49f9fd2266bc2b7dd7ec12c7d55643a
+[03:39:19] after start path: lez-maker-node runs build source af3ac978c49f9fd2266bc2b7dd7ec12c7d55643a, image a57e350769e8
+[03:39:19] after start path: lez-taker-node runs build source af3ac978c49f9fd2266bc2b7dd7ec12c7d55643a, image 67553262903a
+ALL-DONE

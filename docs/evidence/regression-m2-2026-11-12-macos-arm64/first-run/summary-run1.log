@@ -1,0 +1,20 @@
+[22:52:22] code 18a440f1, tree dirty: 0
+[22:52:56] down.sh --wipe rc=0
+[22:53:57] up.sh (fast) rc=0
+[22:53:57] lanes.sh mint 3 rc=0
+[22:55:11] up.sh --fresh-lez with three lanes rc=0
+[22:55:11] starting regress.sh full (LEZ_LANES=3, LEZ_REGRESS_RECORD=1)
+[00:47:20] regress.sh full rc=1
+[00:41:02] === node:btc:regenerated-config:TakerSellsForeign (try 1, lane 3): PASSED in 76 s
+[00:41:03] === node:btc:early-lock:TakerSellsForeign (try 1, lane 2): PASSED in 160 s
+[00:41:03] lanes: 2 test(s) on a chain of their own, lane 1 alone
+[00:41:08]     new LEZ chain (1) LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+[00:44:26] === node:zec:zec-balance-refusal:TakerSellsLez (try 1): PASSED in 130 s (+68 s before it, a new chain among them)
+[00:44:26]     new LEZ chain (2) LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01
+[00:47:20] === node:zec:zec-balance-refusal:TakerSellsForeign (try 1): PASSED in 117 s (+57 s before it, a new chain among them)
+[00:47:20] regression full: 89 of 93 passed in 112 min, 2 new chains, 2 profile switches,        0 frozen tries
+[00:47:20]   not passed: ui:zec:zec-concurrent:TakerSellsLez
+[00:47:20]   not passed: ui:zec:zec-concurrent:TakerSellsForeign
+[00:47:20]   not passed: ui:zec:zec-survivor:TakerSellsForeign
+[00:47:20]   not passed: ui:zec:zec-maker-refund:TakerSellsLez
+[00:47:20] DONE

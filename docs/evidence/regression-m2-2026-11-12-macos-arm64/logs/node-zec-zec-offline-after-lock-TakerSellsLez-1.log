@@ -1,0 +1,33 @@
+[03:44:29] === zec-offline-after-lock (stamp 1794451469)
+[03:44:29] preflight: indexer historical reads
+[03:44:29]   indexer serves historical reads at the tip (2635)
+[03:44:29] preflight: LEZ finality check waived by request
+[03:44:29]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[03:44:48]       taker: taker ZEC corridor zec-devnet-1794451469: sidecar listening on 127.0.0.1:19902
+[03:44:48]       taker: taker: 1 prepared ZEC entries configured
+[03:44:48]     [zec-provision 02:44:48]   maker sidecar answers on 127.0.0.1:19901
+[03:44:48]     [zec-provision 02:44:48]   taker sidecar answers on 127.0.0.1:19902
+[03:44:48]       maker_health: ready=True degraded=False
+[03:44:48]     [zec-provision 02:44:48]   Taker lists zec-devnet-offer-1794451469 ; corridor zec-devnet-1794451469 is live
+[03:44:48]   corridor zec-devnet-1794451469 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-1794451469, zebra tip 372, Zcash refund height 381
+[03:44:48]   Taker took zec-devnet-offer-1794451469: swap zec-devnet-s (not_activated)
+[03:44:49]   receipt: swap zec-devnet-swap-1794451469, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794451469/actor/taker/actor-config.json
+[03:44:49]   taker zec-devnet-s: not_activated | actor at - | maker: leased | zebra 372
+[03:44:52]   taker zec-devnet-s: awaiting_first_lock | actor at offered | maker: leased | zebra 372
+[03:45:05]   zebra: mined 1 block(s) → height 373 (mempool had ['306a583e6504'])
+[03:45:08]   taker zec-devnet-s: refund_available | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 373
+[03:45:08]   cutting Logos Chat and Delivery, with the first lock confirmed
+[03:45:08]   the Maker reports chat and delivery unavailable, and degraded
+[03:45:08]   taker zec-devnet-swap-1794451469: refund_available (gen 1) | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 373
+[03:45:08]   zebra: mined 1 block(s) → height 374 (Taker waits for Zcash funding depth (actor at taker_lock_confirmed))
+[03:45:12]   taker zec-devnet-swap-1794451469: refund_available (gen 2) | actor at both_legs_locked | maker: both_legs_locked | zebra 374
+[03:45:18]   taker zec-devnet-swap-1794451469: claim_available (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 374
+[03:45:18]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[03:45:19]   taker zec-devnet-swap-1794451469: claim_in_progress (gen 3) | actor at claim_evidence_available | maker: claim_evidence_available | zebra 374
+[03:45:19]   zebra: mined 1 block(s) → height 375 (mempool had ['bb7decdc9e6e'])
+[03:45:22]   taker zec-devnet-swap-1794451469: completed (gen 4) | actor at completed | maker: completed | zebra 375
+[03:45:22]   taker zec-devnet-s: completed (gen 4) | maker: completed
+[03:45:22]   both Nodes report zec-devnet-s completed
+[03:45:22]   the swap completed with both off-chain dependencies down
+[03:45:22]   both dependencies are back and the Maker is no longer degraded
+[03:45:22] === zec-offline-after-lock: passed in 54s

@@ -880,7 +880,7 @@ impl crate::native_prepare::NonceSource for OfficialNodeRpc {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[async_trait]
 impl crate::effect_submission::SequencerSubmitApi for OfficialNodeRpc {
     async fn send_transaction(

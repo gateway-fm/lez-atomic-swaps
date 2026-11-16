@@ -1,0 +1,16 @@
+[04:48:57] === replay (stamp 179445893703)
+[04:48:57] preflight: indexer historical reads
+[04:48:58]   indexer serves historical reads at the tip (2721)
+[04:48:58] preflight: LEZ finality check waived by request
+[04:48:59]   Maker published offer-e2e-179445893703
+[04:49:01]   take replayed for f1a7850457ed
+[04:49:02]   Taker locked lez: a0da895a5f9f (replay=False)
+[04:49:02]   Taker locked lez: a0da895a5f9f (replay=True)
+[04:49:03]   [0 s] waiting for the Taker's f1a7850457ed to reach claim_available: taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 2722, tip 2725 (3 unfinalized) [heartbeat]
+[04:49:17]   [14 s] waiting for the Taker's f1a7850457ed to reach claim_available: taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 2722, tip 2725 (3 unfinalized) [heartbeat]
+[04:49:34]   [30 s] waiting for the Taker's f1a7850457ed to reach claim_available: taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 2729, tip 2735 (6 unfinalized) [heartbeat]
+[04:49:35]   claim replayed
+[04:49:35]   [0 s] waiting for the Taker's f1a7850457ed to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker taker_lock_confirmed | LEZ finalized 2729, tip 2735 (6 unfinalized) [heartbeat]
+[04:50:20]   [45 s] waiting for the Taker's f1a7850457ed to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2758, tip 2761 (3 unfinalized) [heartbeat]
+[04:50:21]   both Nodes report f1a7850457ed completed
+[04:50:21] === replay: passed in 84s

@@ -1,0 +1,26 @@
+[04:06:44] === concurrent (stamp 179445280403)
+[04:06:44] preflight: indexer historical reads
+[04:06:45]   indexer serves historical reads at the tip (3674)
+[04:06:45] preflight: LEZ finality check waived by request
+[04:06:45]   Maker published offer-e2e-179445280403-a
+[04:06:45]   Maker published offer-e2e-179445280403-b
+[04:06:47]   Taker took offer-e2e-179445280403-a: swap d06331cb74b1 (not_activated)
+[04:06:47]   rejected as expected: second Taker-sells-BTC swap while the Maker's LEZ lock is owed (initiation_execution_unavailable)
+[04:06:47]   Taker locked bitcoin: 9e7a927ea06a (replay=False)
+[04:06:47]   taker d06331cb74b1: awaiting_first_lock (gen 0) | maker: leased
+[04:06:50]   taker d06331cb74b1: awaiting_second_lock (gen 1) | maker: leased
+[04:07:19]   taker d06331cb74b1: claim_available (gen 2) | maker: taker_lock_confirmed
+[04:07:27]   Taker took offer-e2e-179445280403-b: swap 83e1bf7a6ad2 (not_activated)
+[04:07:27]   Taker locked bitcoin: 55e6b414ca42 (replay=False)
+[04:07:27]   taker d06331cb74b1: claim_available (gen 2) | maker: both_legs_locked
+[04:07:28]   Taker claimed LEZ (replay=False)
+[04:07:28]   taker 83e1bf7a6ad2: awaiting_first_lock (gen 0) | maker: queued
+[04:07:31]   taker 83e1bf7a6ad2: awaiting_second_lock (gen 1) | maker: queued
+[04:08:19]   taker 83e1bf7a6ad2: claim_available (gen 2) | maker: taker_lock_confirmed
+[04:08:19]   Taker claimed LEZ (replay=False)
+[04:08:19]   taker d06331cb74b1: completed (gen 4) | maker: completed
+[04:08:20]   both Nodes report d06331cb74b1 completed
+[04:08:20]   taker 83e1bf7a6ad2: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[04:08:36]   taker 83e1bf7a6ad2: completed (gen 4) | maker: claim_evidence_available
+[04:08:39]   both Nodes report 83e1bf7a6ad2 completed
+[04:08:39] === concurrent: passed in 115s

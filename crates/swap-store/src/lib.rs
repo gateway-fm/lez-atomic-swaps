@@ -1,8 +1,8 @@
 //! Persistent swap repository.
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 compile_error!(
-    "lez-swap-store runtime authority is Linux-only: it requires memfd seals and openat2; run scripts/check-linux-runtime.sh"
+    "lez-swap-store runtime authority needs Linux (memfd seals, openat2) or macOS (O_NOFOLLOW_ANY, owner-private pinned copies); run scripts/check-linux-runtime.sh"
 );
 
 use std::{path::Path, time::Duration};

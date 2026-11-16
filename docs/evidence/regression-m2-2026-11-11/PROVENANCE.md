@@ -16,7 +16,11 @@ configuration and for key, cookie, password and preimage patterns.
 
 ## Source
 
-Tests ran from `023c929e` (branch `feat/split-lez-node-route`, PR #120), tree
+Tests ran from `023c929e` (branch `feat/split-lez-node-route`, PR #120; the
+branch was squashed into `main` as `4528d46f`, so this id is reachable only
+through the closed PR; its trees are `crates` `0a61b23d7b33`, `compat`
+`9edbcd6b94d3`, `apps` `71223e2cd51b`, `modules` `e001fe73b339`, `deploy`
+`ead18f91fb1a`, by `git rev-parse 023c929e:<directory>`), tree
 clean: `regress.log` prints the commit and "tree dirty: 0" at its start. That
 is 307 commits after `27ecee2f` (M2 on the Docker devnet, PR #119, the code of
 `regression-m2-2026-11-02`). What changed in that range, by theme
@@ -95,10 +99,14 @@ commits and `34b8a169` change only `deploy/scripts/regress.sh` and
 Every desk test was recorded on its lane's two Basecamp displays
 (`ui-e2e.sh --record`); a recording is a by-product of the test that passed.
 32 recordings were made; the two Bitcoin `node-offline` desk tests have no
-recorded desk step and produced none. Seven are in `videos/`, the ZEC demo
-set: `zec-happy`, `zec-maker-refund` and `zec-concurrent` in both directions
-and `zec-stale-window` selling ZEC. The other 25 (the Bitcoin set and the
-remaining ZEC journeys) are kept for the release's attachments, not in git.
+recorded desk step and produced none. Seven were committed in `videos/`, the ZEC
+demo set: `zec-happy`, `zec-maker-refund` and `zec-concurrent` in both
+directions and `zec-stale-window` selling ZEC. They were superseded on
+2026-11-12 by the same seven from the full run of `fix/103-review-items`
+(`../regression-2026-11-12/videos/`) and removed from this folder; they stay
+in the repository's history (`git log -- docs/evidence/regression-m2-2026-11-11/videos`).
+The other 25 (the Bitcoin set and the remaining ZEC journeys) are kept for
+the release's attachments, not in git.
 
 ## Not covered by this set
 

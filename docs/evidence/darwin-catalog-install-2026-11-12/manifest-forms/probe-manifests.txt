@@ -1,0 +1,4 @@
+probe_object_only [{"name":"lez_core","version":"0.4.1-sign.4"}]
+probe_string_only ["lez_core"]
+probe_string_then_object ["lez_core",{"name":"lez_core","version":"0.4.1-sign.4"}]
+probe_object_then_string [{"name":"lez_core","version":"0.4.1-sign.4"},"lez_core"]

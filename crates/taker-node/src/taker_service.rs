@@ -17,6 +17,7 @@ use std::{
 };
 
 use jsonrpsee::{RpcModule, core::RegisterMethodError, types::ErrorObjectOwned};
+use lez_actor_supervision::LastOutcomes;
 use lez_btc_role_lifecycle::{DEFAULT_LEZ_FINALITY_STALL_SECONDS, LezFinalityWatch};
 use lez_swap_core::Pair;
 use serde_json::json;
@@ -43,6 +44,9 @@ struct TakerServiceState {
     /// The LEZ chain's progress for `taker_health`, from the Node-owned
     /// lifecycle's indexer and sequencer.
     lez_finality: Option<LezFinalityWatch>,
+    /// What each swap's actor last did or waits for, from the observer's,
+    /// the Zcash supervisor's and the owner's attempts (`last_outcome`).
+    last_outcomes: LastOutcomes,
 }
 
 /// The Taker observer's production pause between two sweeps of the Node-owned
@@ -114,6 +118,7 @@ pub fn taker_service_rpc_module_with_timing(
         zec_registered,
         observer_sweep_interval,
         lez_finality,
+        last_outcomes: LastOutcomes::new(),
     });
     let mut module = RpcModule::new(());
 

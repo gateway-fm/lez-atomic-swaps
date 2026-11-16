@@ -1,0 +1,16 @@
+[04:00:31] === replay (stamp 1794452431)
+[04:00:31] preflight: indexer historical reads
+[04:00:31]   indexer serves historical reads at the tip (3383)
+[04:00:31] preflight: LEZ finality check waived by request
+[04:00:31]   Maker published offer-e2e-1794452431
+[04:00:33]   take replayed for 7665fd0af16a
+[04:00:33]   Taker locked lez: 959365385789 (replay=False)
+[04:00:33]   Taker locked lez: 959365385789 (replay=True)
+[04:00:33]   taker 7665fd0af16a: awaiting_first_lock (gen 0) | maker: leased
+[04:00:43]   taker 7665fd0af16a: awaiting_second_lock (gen 1) | maker: taker_lock_confirmed
+[04:00:49]   taker 7665fd0af16a: claim_available (gen 2) | maker: taker_lock_confirmed
+[04:00:50]   claim replayed
+[04:00:50]   taker 7665fd0af16a: claim_in_progress (gen 2) | maker: taker_lock_confirmed
+[04:01:15]   taker 7665fd0af16a: completed (gen 4) | maker: claim_evidence_available
+[04:01:18]   both Nodes report 7665fd0af16a completed
+[04:01:19] === replay: passed in 48s

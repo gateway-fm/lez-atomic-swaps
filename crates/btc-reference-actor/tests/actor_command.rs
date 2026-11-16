@@ -1,5 +1,8 @@
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
+#[cfg(target_os = "macos")]
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::{
-    ffi::CString,
     fs,
     fs::File,
     io::Write as _,
@@ -31,6 +34,7 @@ use lez_swap_store::{
     AdaptorSessionIdentity, AdaptorSessionReservation, AdaptorSessionRole, MAKER_ACTOR_CONFIG_FD,
     SecretNonceBytes, SqliteAdaptorSessionJournal,
 };
+#[cfg(target_os = "linux")]
 use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -445,6 +449,7 @@ fn binary_repeats_offline_status_and_idempotent_activation_from_disk() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn real_binary_reads_only_commitment_bound_fully_sealed_config() {
     let fixture = ActorFixture::new(BridgeParticipant::Taker, BridgeParticipant::Taker);
@@ -513,6 +518,7 @@ fn assert_config_fd_rejected(output: &std::process::Output) {
     assert_eq!(output.stderr, b"actor configuration is unavailable\n");
 }
 
+#[cfg(target_os = "linux")]
 fn config_memfd(bytes: &[u8], seals: SealFlags) -> OwnedFd {
     let name = CString::new("lez-btc-actor-test-config").expect("memfd name");
     let descriptor = memfd_create(
@@ -525,6 +531,72 @@ fn config_memfd(bytes: &[u8], seals: SealFlags) -> OwnedFd {
     file.write_all(bytes).expect("write config memfd");
     fcntl_add_seals(&file, seals).expect("seal config memfd");
     file.into()
+}
+
+/// The macOS form of the sealed-config contract: the supervisor hands over an
+/// unlinked 0600 copy on a read-only descriptor. A writable descriptor to the
+/// same unlinked copy, or a descriptor of a file that still has a name, is
+/// refused.
+#[cfg(target_os = "macos")]
+#[test]
+fn real_binary_reads_only_commitment_bound_unlinked_read_only_config() {
+    let fixture = ActorFixture::new(BridgeParticipant::Taker, BridgeParticipant::Taker);
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&fixture.config_path).expect("config bytes"))
+            .expect("config JSON");
+    let agreement_path = PathBuf::from(config["agreement_file"].as_str().expect("agreement path"));
+    config["schema_version"] = Value::from(6);
+    config["agreement_sha256"] = Value::from(hex::encode(Sha256::digest(
+        fs::read(agreement_path).expect("agreement bytes"),
+    )));
+    write_private_json(&fixture.config_path, &config);
+    let supervised_bytes = fs::read(&fixture.config_path).expect("supervised config bytes");
+    let pinned = unlinked_config_fd(fixture.directory.path(), &supervised_bytes, false);
+    write_private_json(&fixture.config_path, &json!({}));
+
+    let output = run_with_config_fd(pinned, "status");
+    assert!(
+        output.status.success(),
+        "pinned actor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let status: Value = serde_json::from_slice(&output.stdout).expect("one actor response");
+    assert_eq!(status["role"], "taker");
+    assert_eq!(status["state"], "not_activated");
+
+    let writable = unlinked_config_fd(fixture.directory.path(), &supervised_bytes, true);
+    assert_config_fd_rejected(&run_with_config_fd(writable, "status"));
+
+    let ordinary = File::open(&fixture.config_path).expect("ordinary config file");
+    assert_config_fd_rejected(&run_with_config_fd(ordinary.into(), "status"));
+
+    let mut legacy = config;
+    legacy["schema_version"] = Value::from(3);
+    legacy.as_object_mut().unwrap().remove("agreement_sha256");
+    let legacy_bytes = serde_json::to_vec(&legacy).expect("legacy config JSON");
+    let legacy = unlinked_config_fd(fixture.directory.path(), &legacy_bytes, false);
+    assert_config_fd_rejected(&run_with_config_fd(legacy, "status"));
+}
+
+#[cfg(target_os = "macos")]
+fn unlinked_config_fd(directory: &Path, bytes: &[u8], writable: bool) -> OwnedFd {
+    let path = directory.join("pinned-config");
+    let mut writer = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .expect("create pinned config");
+    writer.write_all(bytes).expect("write pinned config");
+    let handed_over = if writable {
+        writer
+    } else {
+        File::open(&path).expect("reopen pinned config read-only")
+    };
+    fs::remove_file(&path).expect("unlink pinned config");
+    handed_over.into()
 }
 
 #[test]

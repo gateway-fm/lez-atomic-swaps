@@ -1,0 +1,21 @@
+[09:20:40] === maker-refund (stamp 1794471640)
+[09:20:41] preflight: indexer historical reads
+[09:20:41]   indexer serves historical reads at the tip (4006)
+[09:20:41] preflight: LEZ finality check waived by request
+[09:20:41]   Maker published offer-e2e-1794471640
+[09:20:42]   Taker took offer-e2e-1794471640: swap 6796ce4eda9a (not_activated)
+[09:20:42]   Taker locked bitcoin: b8ee2cbc44e9 (replay=False)
+[09:20:43]   [0 s] waiting for the Taker's 6796ce4eda9a to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 3989, tip 3999 (10 unfinalized) [heartbeat]
+[09:20:49]   [6 s] waiting for the Taker's 6796ce4eda9a to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4006, tip 4014 (8 unfinalized) [heartbeat]
+[09:21:17]   [34 s] waiting for the Taker's 6796ce4eda9a to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 4022, tip 4029 (7 unfinalized) [heartbeat]
+[09:21:17]   Maker locked; the Taker never claims. Waiting for the Maker's refund deadline (115s after the take)
+[09:21:17]   waiting 108s for the Maker's refund deadline
+[09:21:17]   [0 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 4022, tip 4029 (7 unfinalized) [heartbeat]
+[09:22:17]   [60 s] waiting for for the Maker's refund deadline: sleeping | LEZ finalized 4071, tip 4076 (5 unfinalized) [heartbeat]
+[09:23:06]   Maker refund queued: {"schema_version": 1, "swap_id": "6796ce4eda9afd051dc384195951fdcee4476cd358d622b2355765ef64c9f923", "action": "refund", "requested_after_generation": 30, "was_
+[09:23:06]   [0 s] waiting for the Maker to refund its leg: maker both_legs_locked | LEZ finalized 4100, tip 4107 (7 unfinalized) [heartbeat]
+[09:23:17]   [0 s] waiting for the Taker's refund of 6796ce4eda9a to land: taker refund_available (refund admitted) | maker maker_leg_refunded | LEZ finalized 4115, tip 4123 (8 unfinalized) [heartbeat]
+[09:23:17]   refund request admitted (attempt 1, state refund_available)
+[09:23:27]   both legs refunded
+[09:23:27]   the Bitcoin refund 35245b3e559c is a script-path spend: three witness items
+[09:23:27] === maker-refund: passed in 167s

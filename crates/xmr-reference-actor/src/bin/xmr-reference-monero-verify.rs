@@ -21,7 +21,9 @@ use lez_xmr_swap_sdk::{
     MAX_XMR_ACTIVATION_WIRE_BYTES, MAX_XMR_AGREEMENT_WIRE_BYTES, MoneroAddressNetworkV1,
     MoneroPrivateViewKey, XmrActivatedAgreementV1, XmrAgreementV1,
 };
-use rustix::fs::{CWD, OFlags, RenameFlags, SealFlags, fcntl_get_seals, open, renameat_with};
+use rustix::fs::{CWD, OFlags, RenameFlags, open, renameat_with};
+#[cfg(target_os = "linux")]
+use rustix::fs::{SealFlags, fcntl_get_seals};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use xmr_reference_actor::{
@@ -254,6 +256,7 @@ fn validate_args() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn reject_forbidden_invocation_secrets() -> Result<()> {
     for (fd, label) in [(218, "private XMR share"), (219, "finalized LEZ signature")] {
         match fs::metadata(format!("/proc/self/fd/{fd}")) {
@@ -265,6 +268,15 @@ fn reject_forbidden_invocation_secrets() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Not ported to macOS: there is no /proc, and a missing path must not read as
+/// an absent descriptor, so the check refuses outright.
+#[cfg(target_os = "macos")]
+fn reject_forbidden_invocation_secrets() -> Result<()> {
+    bail!(
+        "Monero finality observer forbidden-FD check needs Linux /proc; XMR effects are not supported on macOS"
+    )
 }
 
 fn validate_inputs() -> Result<ValidatedInputs> {
@@ -507,6 +519,7 @@ fn decode_nonzero_hex32(value: &str, label: &'static str) -> Result<[u8; 32]> {
     Ok(decoded)
 }
 
+#[cfg(target_os = "linux")]
 fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8>> {
     let mut file =
         File::open(format!("/proc/self/fd/{fd}")).with_context(|| format!("open {label} FD"))?;
@@ -532,6 +545,14 @@ fn read_sealed_fd(fd: i32, maximum: usize, label: &'static str) -> Result<Vec<u8
         "{label} FD is oversized or changed"
     );
     Ok(bytes)
+}
+
+/// Not ported to macOS: this input arrives as a write-sealed memfd and macOS
+/// has no seal to check, so the descriptor is never trusted. The parent
+/// cannot produce one there either (`effect_input_custody`).
+#[cfg(target_os = "macos")]
+fn read_sealed_fd(fd: i32, _maximum: usize, label: &'static str) -> Result<Vec<u8>> {
+    anyhow::bail!("{label} FD {fd} needs Linux memfd seals; XMR effects are not supported on macOS")
 }
 
 fn validate_evidence_root(path: &Path) -> Result<()> {

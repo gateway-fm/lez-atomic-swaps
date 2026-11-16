@@ -8,6 +8,7 @@ rust-version.workspace = true
 description = "The schedule vocabulary both Nodes supervise their swap actors with: states, attempt resolutions, failure classes, the per-effect log line"
 
 [dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 
 [lints]

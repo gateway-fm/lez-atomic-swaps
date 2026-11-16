@@ -30,17 +30,23 @@ RUN groupadd -r -g 4713 lez && useradd -r -u 4713 -g lez -d /var/lib/lez -s /usr
     && chmod 0700 /var/lib/lez/maker /var/lib/lez/zec /run/lez/maker /run/lez-wallet/maker /delivery
 
 # The package, installed where Basecamp installs a user's modules (<user
-# dir>/modules, which Basecamp scans beside its own): the package's one
-# platform variant, its manifest and the variant's name, as Basecamp's package
-# manager lays a module out. The tools the stack calls by their usual names
-# (the health check, the CLI, scripts/record-evidence.py, ...) link to the
-# installed files.
+# dir>/modules, which Basecamp scans beside its own): the package's variant
+# for this image's architecture (a catalog package carries darwin-arm64 and
+# the Linux variants side by side), its manifest and the variant's name, as Basecamp's package
+# manager lays a module out (the manifest's dependencies as bare names, the
+# form Basecamp 0.2.0 reads: scripts/stage-basecamp-package.sh). The tools the
+# stack calls by their usual names (the health check, the CLI,
+# scripts/record-evidence.py, ...) link to the installed files.
 COPY --chmod=0444 lez_maker_node.lgx /tmp/lez_maker_node.lgx
 RUN set -eu; module=/var/lez/basecamp-maker-user/modules/lez_maker_node; unpacked="$(mktemp -d)"; \
     tar -xzf /tmp/lez_maker_node.lgx -C "$unpacked"; \
-    variant="$(jq -r '.main | keys[0]' "$unpacked/manifest.json")"; \
+    case "$(uname -m)" in aarch64|arm64) variant=linux-arm64 ;; x86_64|amd64) variant=linux-amd64 ;; \
+      *) echo "no package variant for $(uname -m)" >&2; exit 1 ;; esac; \
+    jq -e --arg v "$variant" '.main[$v] | strings' "$unpacked/manifest.json" >/dev/null \
+      || { echo "lez_maker_node.lgx has no $variant variant" >&2; exit 1; }; \
     mkdir -p "$module"; cp -R "$unpacked/variants/$variant/." "$module/"; \
-    cp "$unpacked/manifest.json" "$module/"; printf '%s\n' "$variant" > "$module/variant"; \
+    jq 'if .dependencies then .dependencies |= map(if type == "object" then .name else . end) else . end' \
+      "$unpacked/manifest.json" > "$module/manifest.json"; printf '%s\n' "$variant" > "$module/variant"; \
     rm -rf "$unpacked" /tmp/lez_maker_node.lgx; \
     test -x "$module/bin/node-entrypoint.sh"; test -x "$module/bin/lez-maker-node"; \
     for tool in "$module"/bin/*; do \

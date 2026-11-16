@@ -75,9 +75,13 @@ pub fn arm_test_crash_hook(
         return Err(TestCrashHookError::UnsafeMarker);
     }
     let metadata = fs::symlink_metadata(parent).map_err(|_| TestCrashHookError::UnsafeMarker)?;
+    #[cfg(target_os = "linux")]
     let current_uid = fs::metadata("/proc/self")
         .map_err(|_| TestCrashHookError::UnsafeMarker)?
         .uid();
+    // macOS has no /proc; /proc/self is owned by the effective user.
+    #[cfg(target_os = "macos")]
+    let current_uid = rustix::process::geteuid().as_raw();
     if !metadata.file_type().is_dir()
         || metadata.permissions().mode() & 0o7777 != 0o700
         || metadata.uid() != current_uid

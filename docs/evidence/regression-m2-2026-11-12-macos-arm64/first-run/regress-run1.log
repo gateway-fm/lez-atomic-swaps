@@ -1,0 +1,209 @@
+[22:55:11] regression full: 93 tests at 9fba9da9 (tree dirty:        0), results in runtime/regress/20261111T225511Z
+[22:55:11] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[22:55:11] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[22:55:24] group refund
+[22:55:24]     timing profile fast -> refund (logs/profile-1.log)
+[22:55:46]     [lane 1] node:zec:zec-taker-refund:TakerSellsLez (try 1)
+[22:55:46]     [lane 2] node:zec:zec-maker-refund:TakerSellsLez (try 1)
+[22:55:46]     [lane 3] node:zec:zec-refund-then-maker-lock:TakerSellsLez (try 1)
+[23:00:27] === node:zec:zec-maker-refund:TakerSellsLez (try 1, lane 2): PASSED in 277 s
+[23:00:27]     [lane 2] ui:zec:zec-taker-refund:TakerSellsLez (try 1)
+[23:00:32] === node:zec:zec-refund-then-maker-lock:TakerSellsLez (try 1, lane 3): PASSED in 282 s
+[23:00:32]     [lane 3] node:btc:taker-refund:TakerSellsLez (try 1)
+[23:00:36] === node:zec:zec-taker-refund:TakerSellsLez (try 1, lane 1): PASSED in 286 s
+[23:00:36]     [lane 1] node:btc:maker-refund:TakerSellsLez (try 1)
+[23:05:30] === node:btc:maker-refund:TakerSellsLez (try 1, lane 1): PASSED in 287 s
+[23:05:30]     [lane 1] node:btc:refund-then-maker-lock:TakerSellsLez (try 1)
+[23:05:38] === node:btc:taker-refund:TakerSellsLez (try 1, lane 3): PASSED in 299 s
+[23:05:38]     [lane 3] ui:btc:taker-refund:TakerSellsLez (try 1)
+[23:05:44] === ui:zec:zec-taker-refund:TakerSellsLez (try 1, lane 2): PASSED in 310 s
+[23:05:44]     [lane 2] ui:btc:maker-refund:TakerSellsLez (try 1)
+[23:10:04] === node:btc:refund-then-maker-lock:TakerSellsLez (try 1, lane 1): PASSED in 267 s
+[23:10:04]     [lane 1] node:zec:zec-taker-refund:TakerSellsForeign (try 1)
+[23:10:52] === ui:btc:taker-refund:TakerSellsLez (try 1, lane 3): PASSED in 307 s
+[23:10:52]     [lane 3] node:zec:zec-maker-refund:TakerSellsForeign (try 1)
+[23:10:52] === ui:btc:maker-refund:TakerSellsLez (try 1, lane 2): PASSED in 302 s
+[23:10:52]     [lane 2] node:zec:zec-refund-then-maker-lock:TakerSellsForeign (try 1)
+[23:14:57] === node:zec:zec-taker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 286 s
+[23:14:57]     [lane 1] ui:zec:zec-taker-refund:TakerSellsForeign (try 1)
+[23:15:48] === node:zec:zec-refund-then-maker-lock:TakerSellsForeign (try 1, lane 2): PASSED in 289 s
+[23:15:48]     [lane 2] node:btc:taker-refund:TakerSellsForeign (try 1)
+[23:15:54] === node:zec:zec-maker-refund:TakerSellsForeign (try 1, lane 3): PASSED in 295 s
+[23:15:54]     [lane 3] node:btc:maker-refund:TakerSellsForeign (try 1)
+[23:18:37] === node:btc:maker-refund:TakerSellsForeign (try 1, lane 3): PASSED in 157 s
+[23:18:37]     [lane 3] node:btc:refund-then-maker-lock:TakerSellsForeign (try 1)
+[23:18:57] === node:btc:taker-refund:TakerSellsForeign (try 1, lane 2): PASSED in 182 s
+[23:18:57]     [lane 2] ui:btc:taker-refund:TakerSellsForeign (try 1)
+[23:19:50] === ui:zec:zec-taker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 287 s
+[23:19:50]     [lane 1] ui:btc:maker-refund:TakerSellsForeign (try 1)
+[23:21:15] === node:btc:refund-then-maker-lock:TakerSellsForeign (try 1, lane 3): PASSED in 152 s
+[23:21:15]     [lane 3] ui:zec:zec-maker-refund:TakerSellsLez (try 1)
+[23:24:23] === ui:btc:taker-refund:TakerSellsForeign (try 1, lane 2): PASSED in 320 s
+[23:24:23]     [lane 2] ui:zec:zec-maker-refund:TakerSellsForeign (try 1)
+[23:25:06] === ui:btc:maker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 310 s
+[23:25:06]     [lane 1] ui:zec:zec-stale-window:TakerSellsForeign (try 1)
+[23:29:47] === ui:zec:zec-maker-refund:TakerSellsForeign (try 1, lane 2): PASSED in 317 s
+[23:29:47]     [lane 2] ui:zec:zec-happy:TakerSellsLez (try 1)
+[23:30:13] === ui:zec:zec-stale-window:TakerSellsForeign (try 1, lane 1): PASSED in 301 s
+[23:30:13]     [lane 1] ui:zec:zec-concurrent:TakerSellsLez (try 1)
+[23:32:31] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 1): FAILED in 131 s
+        ✗ maker: real Node health
+      [23:32:29] FAILED: step failed
+      [23:32:29] FAILED: Maker desk: awaiting_taker_claim (zec-devnet-swap-1794439826)
+[23:32:31]     [lane 1] ui:zec:zec-restart-taker:TakerSellsLez (try 1)
+[23:33:09] === ui:zec:zec-happy:TakerSellsLez (try 1, lane 2): PASSED in 196 s
+[23:33:09]     [lane 2] ui:zec:zec-restart-maker:TakerSellsLez (try 1)
+[23:35:59] === ui:zec:zec-restart-taker:TakerSellsLez (try 1, lane 1): PASSED in 199 s
+[23:35:59]     [lane 1] ui:zec:zec-survivor:TakerSellsLez (try 1)
+[23:36:30] === ui:zec:zec-restart-maker:TakerSellsLez (try 1, lane 2): PASSED in 195 s
+[23:36:30]     [lane 2] ui:zec:zec-node-offline:TakerSellsLez (try 1)
+[23:38:44] === ui:zec:zec-survivor:TakerSellsLez (try 1, lane 1): PASSED in 159 s
+[23:38:44]     [lane 1] ui:zec:zec-happy:TakerSellsForeign (try 1)
+[23:41:06] === ui:zec:zec-node-offline:TakerSellsLez (try 1, lane 2): PASSED in 270 s
+[23:41:06]     [lane 2] ui:zec:zec-concurrent:TakerSellsForeign (try 1)
+[23:41:49] === ui:zec:zec-happy:TakerSellsForeign (try 1, lane 1): PASSED in 179 s
+[23:41:49]     [lane 1] ui:zec:zec-restart-taker:TakerSellsForeign (try 1)
+[23:43:28] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 2): FAILED in 135 s
+        ✗ maker: real Node health
+      [23:43:25] FAILED: step failed
+      [23:43:26] FAILED: Maker desk: awaiting_taker_claim (zec-devnet-swap-179444047902-b)
+[23:43:28]     [lane 2] ui:zec:zec-restart-maker:TakerSellsForeign (try 1)
+[23:44:54] === ui:zec:zec-restart-taker:TakerSellsForeign (try 1, lane 1): PASSED in 178 s
+[23:44:54]     [lane 1] ui:zec:zec-survivor:TakerSellsForeign (try 1)
+[23:46:37] === ui:zec:zec-restart-maker:TakerSellsForeign (try 1, lane 2): PASSED in 181 s
+[23:46:37]     [lane 2] ui:zec:zec-node-offline:TakerSellsForeign (try 1)
+[23:51:14] === ui:zec:zec-node-offline:TakerSellsForeign (try 1, lane 2): PASSED in 270 s
+[23:51:14]     [lane 2] ui:zec:zec-concurrent-staggered:TakerSellsLez (try 1)
+[23:56:47] === ui:zec:zec-concurrent-staggered:TakerSellsLez (try 1, lane 2): PASSED in 327 s
+[23:56:47]     [lane 2] node:zec:zec-happy:TakerSellsLez (try 1)
+[23:58:25] === node:zec:zec-happy:TakerSellsLez (try 1, lane 2): PASSED in 91 s
+[23:58:25]     [lane 2] node:zec:zec-replay:TakerSellsLez (try 1)
+[23:59:34] === node:zec:zec-replay:TakerSellsLez (try 1, lane 2): PASSED in 62 s
+[23:59:34]     [lane 2] node:zec:zec-wrong-inputs:TakerSellsLez (try 1)
+[00:00:45] === node:zec:zec-wrong-inputs:TakerSellsLez (try 1, lane 2): PASSED in 65 s
+[00:00:45]     [lane 2] node:zec:zec-restart-taker:TakerSellsLez (try 1)
+[00:02:24] === node:zec:zec-restart-taker:TakerSellsLez (try 1, lane 2): PASSED in 93 s
+[00:02:24]     [lane 2] node:zec:zec-restart-maker:TakerSellsLez (try 1)
+[00:03:46] === node:zec:zec-restart-maker:TakerSellsLez (try 1, lane 2): PASSED in 75 s
+[00:03:46]     [lane 2] node:zec:zec-survivor:TakerSellsLez (try 1)
+[00:05:15] === node:zec:zec-survivor:TakerSellsLez (try 1, lane 2): PASSED in 83 s
+[00:05:15]     [lane 2] node:zec:zec-concurrent:TakerSellsLez (try 1)
+[00:07:01] === node:zec:zec-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 100 s
+[00:07:01]     [lane 2] node:zec:zec-regenerated-catalog:TakerSellsLez (try 1)
+[00:08:21] === node:zec:zec-regenerated-catalog:TakerSellsLez (try 1, lane 2): PASSED in 73 s
+[00:08:22]     [lane 2] node:zec:zec-tampered-catalog:TakerSellsLez (try 1)
+[00:08:55] === node:zec:zec-tampered-catalog:TakerSellsLez (try 1, lane 2): PASSED in 27 s
+[00:08:55]     [lane 2] node:zec:zec-early-lock:TakerSellsLez (try 1)
+[00:11:55] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): FAILED in 1615 s
+         [01:11:53] FAILED: the Maker did not complete zec-devnet-s on its own within 1500s
+      [00:11:53] FAILED: zec-step maker-completes
+[00:11:55]     [lane 1] node:zec:zec-offline-after-lock:TakerSellsLez (try 1)
+[00:12:01] === node:zec:zec-early-lock:TakerSellsLez (try 1, lane 2): PASSED in 179 s
+[00:12:01]     [lane 2] node:zec:zec-happy:TakerSellsForeign (try 1)
+[00:13:08] === node:zec:zec-happy:TakerSellsForeign (try 1, lane 2): PASSED in 61 s
+[00:13:08]     [lane 2] node:zec:zec-replay:TakerSellsForeign (try 1)
+[00:13:12] === node:zec:zec-offline-after-lock:TakerSellsLez (try 1, lane 1): PASSED in 70 s
+[00:13:12]     [lane 1] node:zec:zec-wrong-inputs:TakerSellsForeign (try 1)
+[00:14:09] === node:zec:zec-replay:TakerSellsForeign (try 1, lane 2): PASSED in 55 s
+[00:14:09]     [lane 2] node:zec:zec-restart-taker:TakerSellsForeign (try 1)
+[00:14:28] === node:zec:zec-wrong-inputs:TakerSellsForeign (try 1, lane 1): PASSED in 69 s
+[00:14:28]     [lane 1] node:zec:zec-restart-maker:TakerSellsForeign (try 1)
+[00:15:37] === node:zec:zec-restart-maker:TakerSellsForeign (try 1, lane 1): PASSED in 63 s
+[00:15:37]     [lane 1] node:zec:zec-survivor:TakerSellsForeign (try 1)
+[00:16:01] === node:zec:zec-restart-taker:TakerSellsForeign (try 1, lane 2): PASSED in 105 s
+[00:16:01]     [lane 2] node:zec:zec-concurrent:TakerSellsForeign (try 1)
+[00:17:19] === node:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): PASSED in 96 s
+[00:17:19]     [lane 1] node:zec:zec-regenerated-catalog:TakerSellsForeign (try 1)
+[00:17:47] === node:zec:zec-concurrent:TakerSellsForeign (try 1, lane 2): PASSED in 100 s
+[00:17:47]     [lane 2] node:zec:zec-tampered-catalog:TakerSellsForeign (try 1)
+[00:18:22] === node:zec:zec-tampered-catalog:TakerSellsForeign (try 1, lane 2): PASSED in 28 s
+[00:18:22]     [lane 2] node:zec:zec-early-lock:TakerSellsForeign (try 1)
+[00:18:27] === node:zec:zec-regenerated-catalog:TakerSellsForeign (try 1, lane 1): PASSED in 62 s
+[00:18:27]     [lane 1] node:zec:zec-offline-after-lock:TakerSellsForeign (try 1)
+[00:19:40] === node:zec:zec-offline-after-lock:TakerSellsForeign (try 1, lane 1): PASSED in 66 s
+[00:19:40]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 1)
+[00:21:04] === node:zec:zec-early-lock:TakerSellsForeign (try 1, lane 2): PASSED in 155 s
+[00:21:16] === node:zec:zec-claim-collision:TakerSellsForeign (try 1, lane 1): NOT-EXERCISED in 90 s
+[00:21:16]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 2)
+[00:21:24] === ui:zec:zec-maker-refund:TakerSellsLez (try 1, lane 3): TIMEOUT in 3602 s
+[00:23:02] === node:zec:zec-claim-collision:TakerSellsForeign (try 2, lane 1): PASSED in 98 s
+[00:23:02] group fast
+[00:23:02]     timing profile refund -> fast (logs/profile-2.log)
+[00:23:40]     [lane 1] ui:btc:happy:TakerSellsLez (try 1)
+[00:23:40]     [lane 2] ui:btc:restart-taker:TakerSellsLez (try 1)
+[00:23:40]     [lane 3] ui:btc:restart-maker:TakerSellsLez (try 1)
+[00:25:38] === ui:btc:restart-taker:TakerSellsLez (try 1, lane 2): PASSED in 112 s
+[00:25:38]     [lane 2] ui:btc:survivor:TakerSellsLez (try 1)
+[00:25:48] === ui:btc:happy:TakerSellsLez (try 1, lane 1): PASSED in 120 s
+[00:25:48]     [lane 1] ui:btc:concurrent:TakerSellsLez (try 1)
+[00:25:54] === ui:btc:restart-maker:TakerSellsLez (try 1, lane 3): PASSED in 127 s
+[00:25:54]     [lane 3] ui:btc:node-offline:TakerSellsLez (try 1)
+[00:26:44] === ui:btc:node-offline:TakerSellsLez (try 1, lane 3): PASSED in 44 s
+[00:26:44]     [lane 3] ui:btc:happy:TakerSellsForeign (try 1)
+[00:27:38] === ui:btc:survivor:TakerSellsLez (try 1, lane 2): PASSED in 114 s
+[00:27:38]     [lane 2] ui:btc:restart-taker:TakerSellsForeign (try 1)
+[00:28:31] === ui:btc:concurrent:TakerSellsLez (try 1, lane 1): PASSED in 156 s
+[00:28:31]     [lane 1] ui:btc:restart-maker:TakerSellsForeign (try 1)
+[00:28:45] === ui:btc:happy:TakerSellsForeign (try 1, lane 3): PASSED in 115 s
+[00:28:45]     [lane 3] ui:btc:survivor:TakerSellsForeign (try 1)
+[00:29:49] === ui:btc:restart-taker:TakerSellsForeign (try 1, lane 2): PASSED in 123 s
+[00:29:49]     [lane 2] ui:btc:concurrent:TakerSellsForeign (try 1)
+[00:30:59] === ui:btc:restart-maker:TakerSellsForeign (try 1, lane 1): PASSED in 141 s
+[00:30:59]     [lane 1] ui:btc:node-offline:TakerSellsForeign (try 1)
+[00:31:08] === ui:btc:survivor:TakerSellsForeign (try 1, lane 3): PASSED in 137 s
+[00:31:08]     [lane 3] node:btc:happy:TakerSellsLez (try 1)
+[00:31:51] === ui:btc:node-offline:TakerSellsForeign (try 1, lane 1): PASSED in 44 s
+[00:31:51]     [lane 1] node:btc:replay:TakerSellsLez (try 1)
+[00:31:58] === node:btc:happy:TakerSellsLez (try 1, lane 3): PASSED in 44 s
+[00:31:58]     [lane 3] node:btc:wrong-inputs:TakerSellsLez (try 1)
+[00:32:43] === node:btc:replay:TakerSellsLez (try 1, lane 1): PASSED in 45 s
+[00:32:43]     [lane 1] node:btc:restart-taker:TakerSellsLez (try 1)
+[00:32:44] === node:btc:wrong-inputs:TakerSellsLez (try 1, lane 3): PASSED in 39 s
+[00:32:44]     [lane 3] node:btc:restart-maker:TakerSellsLez (try 1)
+[00:33:47] === node:btc:restart-taker:TakerSellsLez (try 1, lane 1): PASSED in 56 s
+[00:33:47]     [lane 1] node:btc:survivor:TakerSellsLez (try 1)
+[00:33:48] === node:btc:restart-maker:TakerSellsLez (try 1, lane 3): PASSED in 58 s
+[00:33:48]     [lane 3] node:btc:concurrent:TakerSellsLez (try 1)
+[00:33:52] === ui:btc:concurrent:TakerSellsForeign (try 1, lane 2): PASSED in 236 s
+[00:33:52]     [lane 2] node:btc:early-lock:TakerSellsLez (try 1)
+[00:34:52] === node:btc:survivor:TakerSellsLez (try 1, lane 1): PASSED in 57 s
+[00:34:52]     [lane 1] node:btc:offline-after-lock:TakerSellsLez (try 1)
+[00:35:16] === node:btc:concurrent:TakerSellsLez (try 1, lane 3): PASSED in 82 s
+[00:35:16]     [lane 3] node:btc:regenerated-config:TakerSellsLez (try 1)
+[00:35:43] === node:btc:offline-after-lock:TakerSellsLez (try 1, lane 1): PASSED in 43 s
+[00:35:43]     [lane 1] node:btc:tampered-config:TakerSellsLez (try 1)
+[00:36:00] === node:btc:tampered-config:TakerSellsLez (try 1, lane 1): PASSED in 8 s
+[00:36:00]     [lane 1] node:btc:happy:TakerSellsForeign (try 1)
+[00:36:05] === node:btc:early-lock:TakerSellsLez (try 1, lane 2): PASSED in 126 s
+[00:36:05]     [lane 2] node:btc:replay:TakerSellsForeign (try 1)
+[00:36:09] === node:btc:regenerated-config:TakerSellsLez (try 1, lane 3): PASSED in 46 s
+[00:36:09]     [lane 3] node:btc:wrong-inputs:TakerSellsForeign (try 1)
+[00:37:06] === node:btc:happy:TakerSellsForeign (try 1, lane 1): PASSED in 58 s
+[00:37:06]     [lane 1] node:btc:restart-taker:TakerSellsForeign (try 1)
+[00:37:16] === node:btc:replay:TakerSellsForeign (try 1, lane 2): PASSED in 64 s
+[00:37:16]     [lane 2] node:btc:restart-maker:TakerSellsForeign (try 1)
+[00:37:21] === node:btc:wrong-inputs:TakerSellsForeign (try 1, lane 3): PASSED in 66 s
+[00:37:21]     [lane 3] node:btc:survivor:TakerSellsForeign (try 1)
+[00:38:14] === node:btc:restart-taker:TakerSellsForeign (try 1, lane 1): PASSED in 61 s
+[00:38:14]     [lane 1] node:btc:concurrent:TakerSellsForeign (try 1)
+[00:38:17] === node:btc:restart-maker:TakerSellsForeign (try 1, lane 2): PASSED in 55 s
+[00:38:17]     [lane 2] node:btc:early-lock:TakerSellsForeign (try 1)
+[00:38:35] === node:btc:survivor:TakerSellsForeign (try 1, lane 3): PASSED in 67 s
+[00:38:35]     [lane 3] node:btc:offline-after-lock:TakerSellsForeign (try 1)
+[00:39:39] === node:btc:offline-after-lock:TakerSellsForeign (try 1, lane 3): PASSED in 58 s
+[00:39:40]     [lane 3] node:btc:regenerated-config:TakerSellsForeign (try 1)
+[00:39:52] === node:btc:concurrent:TakerSellsForeign (try 1, lane 1): PASSED in 91 s
+[00:39:52]     [lane 1] node:btc:tampered-config:TakerSellsForeign (try 1)
+[00:40:08] === node:btc:tampered-config:TakerSellsForeign (try 1, lane 1): PASSED in 8 s
+[00:41:02] === node:btc:regenerated-config:TakerSellsForeign (try 1, lane 3): PASSED in 76 s
+[00:41:03] === node:btc:early-lock:TakerSellsForeign (try 1, lane 2): PASSED in 160 s
+[00:41:03] lanes: 2 test(s) on a chain of their own, lane 1 alone
+[00:41:08]     new LEZ chain (1) LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+[00:44:26] === node:zec:zec-balance-refusal:TakerSellsLez (try 1): PASSED in 130 s (+68 s before it, a new chain among them)
+[00:44:26]     new LEZ chain (2) LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01
+[00:47:20] === node:zec:zec-balance-refusal:TakerSellsForeign (try 1): PASSED in 117 s (+57 s before it, a new chain among them)
+[00:47:20] regression full: 89 of 93 passed in 112 min, 2 new chains, 2 profile switches,        0 frozen tries
+[00:47:20]   not passed: ui:zec:zec-concurrent:TakerSellsLez
+[00:47:20]   not passed: ui:zec:zec-concurrent:TakerSellsForeign
+[00:47:20]   not passed: ui:zec:zec-survivor:TakerSellsForeign
+[00:47:20]   not passed: ui:zec:zec-maker-refund:TakerSellsLez

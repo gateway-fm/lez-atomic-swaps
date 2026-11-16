@@ -203,8 +203,7 @@ embedding the protocol in your own binary, this crate is.
 
 ## Scope
 
-This document describes the ZEC/LEZ pair on `feat/m2-zec-on-docker` at the
-M2 tag. Conditional atomicity holds as the M6 service certificates state it:
+This document describes the ZEC/LEZ pair at the M2 tag, `v0.3.0`. Conditional atomicity holds as the M6 service certificates state it:
 under canonical local-chain observations, secret-gated claiming, durable
 one-winner authorization, and actor/sidecar at-most-once journals; it is not a
 distributed atomic commit and not a future-reorg proof. `lez-btc-swap-sdk` and

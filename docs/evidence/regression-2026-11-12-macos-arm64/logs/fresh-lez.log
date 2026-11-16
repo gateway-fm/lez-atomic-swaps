@@ -1,0 +1,107 @@
+[lez] recreating the LEZ chain; old state → runtime/lez-broken-1794466308
+  forgetting swaps that referenced the old chain
+[reset 06:51:50] done: swaps forgotten; the Nodes stay stopped
+  [time 06:51:50] forget the old chain's swaps (reset-swaps.sh --offline): 2 s (2 s since up.sh started)
+[lanes 06:51:51] lane 2 stopped
+[lanes 06:51:51] lane 3 stopped
+  [time 06:51:55] stop the old chain: 5 s (7 s since up.sh started)
+  [time 06:51:56] move the old chain's state aside: 1 s (8 s since up.sh started)
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1794466316 (2026-11-12T06:51:56Z), root 9bc6b8bfc63da737e3a85cea54f74b07fdc13b937dedfc6f04e15ee64eb1a140
+reusing existing bitcoin RPC password
+zebra mines to the Maker's Zcash key (tmCN22mkmyhGDM8evUfRjTc79AWPBGdrLPF): runtime/zebra/zebrad.toml
+runtime generated at runtime
+  [time 06:51:57] runtime config: 1 s (9 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 06:51:58] images: 1 s (10 s since up.sh started)
+[3/6] starting chains…
+time="2026-11-12T07:51:58+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-zebra Running 
+ Container lez-btc-miner Running 
+ Container lez-bitcoin-core Running 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Starting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 06:52:03] start the chains (compose up): 5 s (15 s since up.sh started)
+  [time 06:52:09] chains healthy: 6 s (21 s since up.sh started)
+  the new LEZ chain finalizes (1 -> 4)
+  [time 06:52:15] the new chain finalizes: 6 s (27 s since up.sh started)
+  [time 06:52:17] indexer check (repair-indexer.sh): 2 s (29 s since up.sh started)
+Regtest wallets ready; Maker 2300.0 BTC, Taker 5250.0 BTC spendable.
+  [time 06:52:17] Bitcoin Core wallets (seed-btc-wallets.py): 0 s (29 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+taker-lane03: claimed 2000000 into 4ZS52TjyLddB47WBwj29duP8zeKU5GHc5MnoLgXrFVmj (b43584c5f516dda1a6ba8b0cc18621b831563552f7e69cb35a0d09723ed519b6)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 06:52:41] market bootstrap: 24 s (53 s since up.sh started)
+[5/6] Nodes…
+time="2026-11-12T07:52:42+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:52:42+01:00" level=warning msg="volume \"lez-20260910222044-delivery-dir\" carries the compose label \"delivery_dir\" but does not match the compose file (using \"lez-delivery-dir\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:52:42+01:00" level=warning msg="volume \"lez-20260910222044-maker-socket\" carries the compose label \"maker_socket\" but does not match the compose file (using \"lez-maker-socket\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:52:42+01:00" level=warning msg="volume \"lez-20260910222044-maker-state\" carries the compose label \"maker_state\" but does not match the compose file (using \"lez-maker-state\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-sequencer Running 
+ Container lez-network Running 
+ Container lez-bitcoin-core Running 
+ Container lez-maker-node Recreate 
+ Container lez-maker-node Recreated 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Waiting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-bitcoin-core Healthy 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+time="2026-11-12T07:52:43+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:52:43+01:00" level=warning msg="volume \"lez-20260910222044-delivery-dir\" carries the compose label \"delivery_dir\" but does not match the compose file (using \"lez-delivery-dir\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:52:43+01:00" level=warning msg="volume \"lez-20260910222044-maker-socket\" carries the compose label \"maker_socket\" but does not match the compose file (using \"lez-maker-socket\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:52:43+01:00" level=warning msg="volume \"lez-20260910222044-maker-state\" carries the compose label \"maker_state\" but does not match the compose file (using \"lez-maker-state\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T07:52:43+01:00" level=warning msg="volume \"lez-20260910222044-taker-state\" carries the compose label \"taker_state\" but does not match the compose file (using \"lez-taker-state\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-taker-node Recreate 
+ Container lez-taker-node Recreated 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+  [time 06:52:43] start the Nodes (compose up): 2 s (55 s since up.sh started)
+  [time 06:52:50] Nodes healthy: 7 s (62 s since up.sh started)
+  [time 06:52:50] Nodes answer owner health: 0 s (62 s since up.sh started)
+[lanes 06:53:11] lane 2 up: lez-l2-{maker,taker}-node (maker-basel-02, taker-limmat-02), Zebra on 127.0.0.1:18242, VNC 5911/5912
+[lanes 06:53:11] lane 3 up: lez-l3-{maker,taker}-node (maker-lane03, taker-lane03), Zebra on 127.0.0.1:18252, VNC 5921/5922
+  [time 06:53:11] lanes 2..3 (lanes.sh up): 21 s (83 s since up.sh started)
+15/15 market checks passed
+  [time 06:53:12] market check (verify-market.py): 1 s (84 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-network Running 
+ Container lez-sequencer Running 
+ Container lez-heartbeat Running 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+  [time 06:53:13] finality heartbeat: 1 s (85 s since up.sh started)
+[6/6] the parties' desks…
+
+──────────────────────────────────────────────────────────────────
+ LEZ swap stack is up (volumes: lez-*)
+
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / 2 s)
+   LEZ indexer RPC       http://127.0.0.1:8779
+   explorers             off (LEZ_EXPLORERS=1 ./scripts/up.sh starts them)
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: lezswap; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: lezswap; the Taker desk)
+   Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
+
+ logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
+ a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
+──────────────────────────────────────────────────────────────────
+  [time 06:53:13] desk suites: 0 s (85 s since up.sh started)

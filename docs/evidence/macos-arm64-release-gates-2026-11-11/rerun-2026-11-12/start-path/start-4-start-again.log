@@ -1,0 +1,262 @@
+
+[03:33:20 start] runtime config, image pull, stack start
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1794454400 (2026-11-12T03:33:20Z), root 4a226aaa048cd4ce0ad1729a598c26bb526ed140395c9a78ee7b880b1391f438
+minted the maker Zcash key: runtime/lez/maker/zcash.key
+minted the taker Zcash key: runtime/lez/taker/zcash.key
+zebra mines to the Maker's Zcash key (tmQFDXqL8gGbHDMGjtK8BBoqR42rwTX8eN2): runtime/zebra/zebrad.toml
+runtime generated at runtime
+  [time 03:33:21] runtime config: 1 s (1 s since up.sh started)
+[2/6] images…
+  [time 03:33:21] images: 0 s (1 s since up.sh started)
+[3/6] starting chains…
+ Volume lez-zebra-data Creating 
+ Volume lez-zebra-data Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Network lez-swap-chains Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Network lez-swap-chains Creating 
+ Volume lez-zebra-data Created 
+ Volume lez-zebra-data Created 
+ Volume lez-bitcoin-core-data Created 
+ Volume lez-bitcoin-core-data Created 
+ Network lez-swap-chains Created 
+ Network lez-swap-chains Created 
+ Container lez-zebra Creating 
+ Container lez-bitcoin-core Creating 
+ Container lez-network Creating 
+ Container lez-bitcoin-core Created 
+ Container lez-btc-miner Creating 
+ Container lez-zebra Created 
+ Container lez-network Created 
+ Container lez-sequencer Creating 
+ Container lez-btc-miner Created 
+ Container lez-sequencer Created 
+ Container lez-zebra Starting 
+ Container lez-bitcoin-core Starting 
+ Container lez-network Starting 
+ Container lez-zebra Started 
+ Container lez-bitcoin-core Started 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+ Container lez-bitcoin-core Healthy 
+ Container lez-btc-miner Starting 
+ Container lez-btc-miner Started 
+  [time 03:33:27] start the chains (compose up): 6 s (7 s since up.sh started)
+  [time 03:33:30] chains healthy: 3 s (10 s since up.sh started)
+  [time 03:33:42] indexer check (repair-indexer.sh): 12 s (22 s since up.sh started)
+Regtest wallets ready; Maker 250.0 BTC, Taker 5250.0 BTC spendable.
+[4/6] market: bootstrapped by start.sh from the tools image after this
+  [time 03:33:44] Bitcoin Core wallets (seed-btc-wallets.py): 2 s (24 s since up.sh started)
+[5/6] Nodes…
+time="2026-11-12T04:33:44+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-bitcoin-core Running 
+ Container lez-network Running 
+ Container lez-sequencer Running 
+ Volume lez-taker-wallet Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-delivery-dir Creating 
+ Volume lez-delivery-dir Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-maker-state Creating 
+ Volume lez-maker-state Creating 
+ Volume lez-taker-wallet Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-zec-maker Created 
+ Volume lez-zec-maker Created 
+ Volume lez-zec-taker Created 
+ Volume lez-zec-taker Created 
+ Volume lez-maker-state Created 
+ Volume lez-maker-state Created 
+ Volume lez-maker-wallet Created 
+ Volume lez-maker-wallet Created 
+ Volume lez-taker-state Created 
+ Volume lez-taker-state Created 
+ Volume lez-taker-wallet Created 
+ Volume lez-taker-wallet Created 
+ Volume lez-maker-socket Created 
+ Volume lez-maker-socket Created 
+ Volume lez-delivery-dir Created 
+ Volume lez-delivery-dir Created 
+ Container lez-maker-node Creating 
+ Container lez-maker-node Created 
+ Container lez-taker-node Creating 
+ Container lez-taker-node Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Waiting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Waiting 
+ Container lez-bitcoin-core Healthy 
+ Container lez-network Healthy 
+ Container lez-sequencer Healthy 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-sequencer Waiting 
+ Container lez-maker-node Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+  [time 03:33:48] start the Nodes (compose up): 4 s (28 s since up.sh started)
+  [time 03:33:51] Nodes healthy: 3 s (31 s since up.sh started)
+  [time 03:33:51] Nodes answer owner health: 0 s (31 s since up.sh started)
+  [time 03:33:52] market check (verify-market.py): 1 s (32 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-sequencer Running 
+ Container lez-network Running 
+ Container lez-heartbeat Creating 
+ Container lez-heartbeat Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-heartbeat Starting 
+ Container lez-heartbeat Started 
+  [time 03:33:53] finality heartbeat: 1 s (33 s since up.sh started)
+[6/6] the parties' desks…
+  [time 03:33:53] desk suites: 0 s (33 s since up.sh started)
+indexer serves historical reads at the tip (17)
+
+[03:33:53 start] market bootstrap (idempotent)
+heartbeat-pulse-01: claimed 100000 into 76GaHmfdNzu6C1CDzAD5Xw35CUbGcnieCNJCipzr2fRF (cdbe223bd3e73b49e3d6ed183e1555181a084dfa834408507d3b538c35994aaa)
+heartbeat-echo-02: claimed 100000 into 45cUE2HPivCt9AvcohKTzz8y27Zs8cggF5BYSJy7pM6S (2d25d780c34bdf1795500ebc37a5064687d044439b399ceb8e1a7cc142050208)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+ Image lez-basecamp-ui:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.71kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.40kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:trixie-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/11] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 599.69kB 0.2s done
+#6 DONE 0.2s
+
+#7 [ 3/11] COPY assets/bundle /opt/basecamp
+#7 CACHED
+
+#8 [ 5/11] COPY assets/taker-user /var/lez-assets/taker-user
+#8 CACHED
+
+#9 [ 8/11] COPY entrypoint.sh /entrypoint.sh
+#9 CACHED
+
+#10 [ 9/11] COPY open-desks.mjs /opt/lez-open-desks.mjs
+#10 CACHED
+
+#11 [ 6/11] COPY assets/network-user /var/lez-assets/network-user
+#11 CACHED
+
+#12 [ 2/11] RUN apt-get update && apt-get install -y --no-install-recommends         xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg         ca-certificates nodejs         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1         libgles2 libgl1-mesa-dri     && rm -rf /var/lib/apt/lists/*
+#12 CACHED
+
+#13 [ 7/11] COPY assets/qt-mcp /opt/qt-mcp
+#13 CACHED
+
+#14 [10/11] COPY signer-health.sh /usr/local/bin/lez-signer-health
+#14 CACHED
+
+#15 [ 4/11] COPY assets/maker-user /var/lez-assets/maker-user
+#15 CACHED
+
+#16 [11/11] RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui     && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui     && mkdir -p /var/lez     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user     && chown -R 4713:4713 /var/lez /var/lez-assets     && chmod -R u+rwX /var/lez /var/lez-assets
+#16 CACHED
+
+#17 exporting to image
+#17 exporting layers done
+#17 writing image sha256:2bd8c372985929e0ac40f3870b09c00ac55091c66486f2951cd74d9b3a6a60fb done
+#17 naming to docker.io/library/lez-basecamp-ui:local done
+#17 DONE 0.0s
+
+#18 resolving provenance for metadata file
+#18 DONE 0.0s
+ Image lez-basecamp-ui:local Built 
+time="2026-11-12T04:34:14+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:34:14+01:00" level=warning msg="volume \"lez-20260910222044-delivery-dir\" carries the compose label \"delivery_dir\" but does not match the compose file (using \"lez-delivery-dir\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:34:14+01:00" level=warning msg="volume \"lez-20260910222044-maker-socket\" carries the compose label \"maker_socket\" but does not match the compose file (using \"lez-maker-socket\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:34:14+01:00" level=warning msg="volume \"lez-20260910222044-maker-state\" carries the compose label \"maker_state\" but does not match the compose file (using \"lez-maker-state\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:34:14+01:00" level=warning msg="volume \"lez-20260910222044-taker-state\" carries the compose label \"taker_state\" but does not match the compose file (using \"lez-taker-state\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-maker-node Recreate 
+ Container lez-maker-node Recreated 
+ Container lez-taker-node Recreate 
+ Container lez-taker-node Recreated 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-maker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+ Container lez-taker-node Waiting 
+ Container lez-maker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Healthy 
+
+[03:34:20 start] waiting for both Nodes to report ready
+
+[03:34:20 start] desk suites in each party's Basecamp (the Maker suite also seeds the order book)
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+1 passed, 0 failed
+  [32mOK[0m   all services up
+  [32mOK[0m   Bitcoin chain at height 211
+  [32mOK[0m   Bitcoin spender index present (actor lock observation)
+  [32mOK[0m   LEZ chain finalized at block 35
+15/15 checks passed
+  [32mOK[0m   explorer transaction display
+15/15 market checks passed
+  [32mOK[0m   Node market behaviour
+  [32m✓[0m maker: the Maker's Basecamp shows its desk with a live Node
+  [32m✓[0m maker: real Node health
+  [32m✓[0m maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+  [32mOK[0m   desk suite: maker
+  [32m✓[0m taker: the Taker's Basecamp shows its desk with a live Node
+1 passed, 0 failed
+  [32mOK[0m   desk suite: taker
+
+──────────────────────────────────────────────────────────────────
+ LEZ swap stack is up from lez-*:local
+
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: lezswap; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: lezswap; the Taker desk)
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining)
+   explorers             BTC http://127.0.0.1:3002, LEZ + proof http://127.0.0.1:3003/#/evidence
+                         (off unless verify-all.sh ran; docker compose --env-file runtime/runtime.env --profile explorers up -d)
+   swap                  ./scripts/swap-through-ui.sh   (or click through the two desks)
+   verify                ./scripts/verify-all.sh
+   logs                  docker compose --env-file runtime/runtime.env logs -f <service>
+   stop                  ./scripts/down.sh            (--wipe removes chains and Node state)
+
+ wallet identities and the escrow deployment live in <checkout>/deploy/market
+──────────────────────────────────────────────────────────────────

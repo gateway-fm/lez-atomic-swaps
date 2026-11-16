@@ -1,0 +1,64 @@
+[21:43:25Z] $ logosctl --version
+logosctl version 0.3.2
+commit: 96e704df1a8140f069bbf6d5a1cdeab8886c6e41
+dependency commits:
+  logos-liblogos 00f19ef8e2ffd54e2cf97616a960cd19232ad4ba
+  logos-cpp-sdk 3bf5365c5412f89bbbf30e3f46237cd68cff0599
+  logos-protocol 9d59f5de526624b120d42f4c422a3d83c0b9d64f
+  logos-plugin-qt 2d36a08819b8df36094036d02d130aa4bd3a6132
+  logos-capability-module 1a1b8b5a1167931afbf41ebaafbe76034e6357a0
+  logos-modules-state-module c70da49aa56e48f867d50b9ff58679749f09dbcf
+  logos-package-manager-module 4c5fa074489f1977f57d6ae0b0538b379c4428d4
+  logos-package-downloader-module 6e8883b6918e086183f797d522c32032a55d2354
+  logos-storage-module 7548f41ae189917d58c37f0fb6d3a2700b99f59b
+[exit 0]
+
+[21:43:25Z] $ logosctl daemon start --detach
+Daemon started (pid 2761)
+Logs: /tmp/s/logs/daemon.log
+[exit 0]
+
+[21:43:25Z] $ logosctl catalog add https://localhost:8443/logos-repo.json
+{"success":true}
+[exit 0]
+
+[21:43:25Z] $ logosctl catalog refresh
+{"success":true}
+[exit 0]
+
+{"name":"logos-modules-official","enabled":true,"isDefault":true,"indexUrl":"https://github.com/logos-co/logos-modules-release/releases/download/index/index.json","resolveError":""}
+{"name":"lez-atomic-swaps","enabled":true,"isDefault":false,"indexUrl":"https://localhost:8443/index.json","resolveError":""}
+[21:43:26Z] $ logosctl package install lez_atomic_swap_maker -y
+{"affected_loaded":[],"changes":[{"action":"install","fromVersion":"","name":"delivery_module","optional":false,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":[],"rootHash":"cedad8c730106f80fb962fb4d99079ba5f97b4a21a8deb0438561a095ccd5fc0","toVersion":"0.3.3","topLevel":false},{"action":"install","fromVersion":"","name":"delivery_module","optional":false,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":[],"rootHash":"0bccd85b4702c01a2c227df8aa55b3f5159a9fe009d57ae8bb8b3a7c20dfcbbe","toVersion":"0.2.1","topLevel":false},{"action":"install","fromVersion":"","name":"chat_module","optional":false,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":[],"rootHash":"9f626b2139bbc86d10f8b49cfdcd81600e7b963d7eb7885022942c03f5e13366","toVersion":"0.2.2","topLevel":false},{"action":"install","fromVersion":"","name":"lez_core","optional":false,"repository":"https://localhost:8443/logos-repo.json","requiredFor":[],"rootHash":"c7cae13afe5bf932ddd21cead84b81ac18ba5681243693814b03802c7c1a3e03","toVersion":"0.4.1-sign.4","topLevel":false},{"action":"install","fromVersion":"","name":"lez_swap_node","optional":false,"repository":"https://localhost:8443/logos-repo.json","requiredFor":[],"rootHash":"33becb829cfeebe8f4e9168173c01aaa185cc5c6cdb0404dfda16aa7a4499d50","toVersion":"0.3.0","topLevel":false},{"action":"install","fromVersion":"","name":"lez_maker_node","optional":false,"repository":"https://localhost:8443/logos-repo.json","requiredFor":[],"rootHash":"5d9a4b1f643a22237beddda0c3fd9c80bb4b660d83c1021f29d1b30f4fc87ce8","toVersion":"0.3.0","topLevel":false},{"action":"install","fromVersion":"","name":"lez_atomic_swap_maker","optional":false,"repository":"https://localhost:8443/logos-repo.json","requiredFor":[],"rootHash":"e894ea86643a1a4404beb365e2b79264f336319ccf5c6dce0d8a3de1dddb05a7","toVersion":"0.3.0","topLevel":true},{"action":"install","fromVersion":"","name":"libp2p_module","optional":true,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":[],"rootHash":"1cb26d9cfef290a2c7cfe59ef6fa7996afed90b614fe2a166b35fbb347ca7798","toVersion":"1.1.0","topLevel":true},{"action":"install","fromVersion":"","name":"liblogos_lez_rln_module","optional":false,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":["liblogos_rln_module"],"rootHash":"01f25d7a3b9c0efb5405b887b57e8f58f4fbf54123573798dca9db61065e4da6","toVersion":"5.1.0","topLevel":false},{"action":"install","fromVersion":"","name":"liblogos_rln_module","optional":true,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":[],"rootHash":"926a52653af7b096a538d9b58f1dfa710cd11a7a09c4252b8d0cf6791fe50cf1","toVersion":"0.12.0","topLevel":true}],"installed":["delivery_module","delivery_module","chat_module","lez_core","lez_swap_node","lez_maker_node","lez_atomic_swap_maker","libp2p_module","liblogos_lez_rln_module","liblogos_rln_module"],"op":"install","optional_packages":[{"name":"liblogos_rln_module","requiredBy":"delivery_module","status":"install","version":"0.12.0"},{"name":"libp2p_module","requiredBy":"delivery_module","status":"install","version":"1.1.0"}],"reloaded":[],"status":"ok","stopped_dependents":[]}
+[exit 0]
+
+[21:47:25Z] $ logosctl --json package deps lez_atomic_swap_maker --recursive
+[{"installType":"user","name":"chat_module","requiredVersion":"~0.2.2","status":"installed","version":"0.2.2"},{"installType":"user","name":"delivery_module","requiredVersion":"~0.2.0","signerDid":"did:jwk:eyJjcnYiOiJFZDI1NTE5Iiwia3R5IjoiT0tQIiwieCI6IlpUdEIzaU9FYVZDWFVLUWw0Sm9sR3V1MkhMb19iOUhSQ2V2RjRINm81aUkifQ","status":"version_mismatch","version":"0.3.3"},{"installType":"user","name":"lez_core","requiredVersion":"0.4.1-sign.4","status":"installed","version":"0.4.1-sign.4"},{"installType":"user","name":"lez_swap_node","requiredVersion":"0.3.0","status":"installed","version":"0.3.0"},{"installType":"user","name":"lez_maker_node","requiredVersion":"0.3.0","status":"installed","version":"0.3.0"},{"installType":"user","name":"libp2p_module","optional":true,"status":"installed","version":"1.1.0"},{"installType":"user","name":"liblogos_rln_module","optional":true,"status":"installed","version":"0.12.0"},{"installType":"user","name":"liblogos_lez_rln_module","optional":true,"status":"installed","version":"5.1.0"}]
+[exit 0]
+
+[21:47:25Z] $ logosctl package install lez_atomic_swap_taker -y
+{"affected_loaded":[],"changes":[{"action":"upgrade","fromVersion":"0.3.3","name":"delivery_module","optional":false,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":[],"rootHash":"0bccd85b4702c01a2c227df8aa55b3f5159a9fe009d57ae8bb8b3a7c20dfcbbe","toVersion":"0.2.1","topLevel":false},{"action":"install","fromVersion":"","name":"lez_taker_node","optional":false,"repository":"https://localhost:8443/logos-repo.json","requiredFor":[],"rootHash":"cfd14f5846e07dc7ab8aec91c96c5fd05d4c09c70095f87dd00d6df47679ed49","toVersion":"0.3.0","topLevel":false},{"action":"install","fromVersion":"","name":"lez_atomic_swap_taker","optional":false,"repository":"https://localhost:8443/logos-repo.json","requiredFor":[],"rootHash":"093034aa6388519ac181af4d36bb3622cc04b5d47a1f3f4b2e07dc1e47121966","toVersion":"0.3.0","topLevel":true}],"installed":["delivery_module","lez_taker_node","lez_atomic_swap_taker"],"op":"install","optional_packages":[],"reloaded":[],"status":"ok","stopped_dependents":[]}
+[exit 0]
+
+[21:47:40Z] $ logosctl --json package deps lez_atomic_swap_taker --recursive
+[{"installType":"user","name":"chat_module","requiredVersion":"~0.2.2","status":"installed","version":"0.2.2"},{"installType":"user","name":"delivery_module","requiredVersion":"~0.2.0","status":"installed","version":"0.2.1"},{"installType":"user","name":"lez_core","requiredVersion":"0.4.1-sign.4","status":"installed","version":"0.4.1-sign.4"},{"installType":"user","name":"lez_swap_node","requiredVersion":"0.3.0","status":"installed","version":"0.3.0"},{"installType":"user","name":"lez_taker_node","requiredVersion":"0.3.0","status":"installed","version":"0.3.0"}]
+[exit 0]
+
+[21:47:40Z] $ logosctl --json package deps lez_atomic_swap_maker --recursive
+[{"installType":"user","name":"chat_module","requiredVersion":"~0.2.2","status":"installed","version":"0.2.2"},{"installType":"user","name":"delivery_module","requiredVersion":"~0.2.0","status":"installed","version":"0.2.1"},{"installType":"user","name":"lez_core","requiredVersion":"0.4.1-sign.4","status":"installed","version":"0.4.1-sign.4"},{"installType":"user","name":"lez_swap_node","requiredVersion":"0.3.0","status":"installed","version":"0.3.0"},{"installType":"user","name":"lez_maker_node","requiredVersion":"0.3.0","status":"installed","version":"0.3.0"}]
+[exit 0]
+
+# installed: name variant version root hash
+chat_module linux-arm64 0.2.2 9f626b2139bbc86d10f8b49cfdcd81600e7b963d7eb7885022942c03f5e13366
+delivery_module linux-arm64 0.2.1 0bccd85b4702c01a2c227df8aa55b3f5159a9fe009d57ae8bb8b3a7c20dfcbbe
+lez_core linux-arm64 0.4.1-sign.4 c7cae13afe5bf932ddd21cead84b81ac18ba5681243693814b03802c7c1a3e03
+lez_maker_node linux-arm64 0.3.0 5d9a4b1f643a22237beddda0c3fd9c80bb4b660d83c1021f29d1b30f4fc87ce8
+lez_swap_node linux-arm64 0.3.0 33becb829cfeebe8f4e9168173c01aaa185cc5c6cdb0404dfda16aa7a4499d50
+lez_taker_node linux-arm64 0.3.0 cfd14f5846e07dc7ab8aec91c96c5fd05d4c09c70095f87dd00d6df47679ed49
+liblogos_lez_rln_module linux-arm64 5.1.0 01f25d7a3b9c0efb5405b887b57e8f58f4fbf54123573798dca9db61065e4da6
+liblogos_rln_module linux-arm64 0.12.0 926a52653af7b096a538d9b58f1dfa710cd11a7a09c4252b8d0cf6791fe50cf1
+libp2p_module linux-arm64 1.1.0 1cb26d9cfef290a2c7cfe59ef6fa7996afed90b614fe2a166b35fbb347ca7798
+lez_atomic_swap_maker linux-arm64 0.3.0 e894ea86643a1a4404beb365e2b79264f336319ccf5c6dce0d8a3de1dddb05a7
+lez_atomic_swap_taker linux-arm64 0.3.0 093034aa6388519ac181af4d36bb3622cc04b5d47a1f3f4b2e07dc1e47121966
+# lez_maker_node payload
+{"build_source":"14ebc3e5572853e2e863bad1021953b9bc10c334","variant":"linux-arm64"}

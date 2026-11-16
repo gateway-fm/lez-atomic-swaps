@@ -1,0 +1,20 @@
+[03:06:50] === late-claim-confirms (stamp 179445281002)
+[03:06:50] preflight: indexer historical reads
+[03:06:51]   indexer serves historical reads at the tip (111)
+[03:06:51] preflight: LEZ finality check waived by request
+[03:06:53]   Maker published offer-e2e-179445281002
+[03:06:54]   Taker took offer-e2e-179445281002: swap 798aa845e05c (not_activated)
+[03:06:55]   Taker locked lez: 487f41b6eeac (replay=False)
+[03:06:55]   [0 s] waiting for the Taker's 798aa845e05c to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 115, tip 117 (2 unfinalized) [heartbeat]
+[03:07:17]   [22 s] waiting for the Taker's 798aa845e05c to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 124, tip 128 (4 unfinalized) [heartbeat]
+[03:07:34]   [39 s] waiting for the Taker's 798aa845e05c to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 124, tip 128 (4 unfinalized) [heartbeat]
+[03:07:34]   stopping the miner so the Taker's Bitcoin claim waits in the mempool
+[03:07:46]   stopping the Taker Node
+[03:07:47]   the claim a2a13e14e14c confirmed in 77c9c0ab13da with the Taker Node down
+[03:07:48]   [0 s] waiting for the Maker to complete with the Taker down: maker both_legs_locked, the Taker Node stopped | LEZ finalized 139, tip 143 (4 unfinalized) [heartbeat]
+[03:07:58]   [10 s] waiting for the Maker to complete with the Taker down: maker claim_evidence_available, the Taker Node stopped | LEZ finalized 139, tip 143 (4 unfinalized) [heartbeat]
+[03:08:30]   the Maker completed alone from the claim on chain
+[03:08:43]   [2 s] waiting for the Taker's 798aa845e05c to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 160, tip 167 (7 unfinalized) [heartbeat]
+[03:08:43]   both Nodes report 798aa845e05c completed
+[03:08:44]   balances after the late claim: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[03:08:44] === late-claim-confirms: passed in 114s

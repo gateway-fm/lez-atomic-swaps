@@ -555,7 +555,11 @@ fn verified_artifact_fds_survive_path_replacement_before_exec() {
     let program_path = root.path().join("zec-artifact-actor");
     let state_path = root.path().join("zec-artifact-state.sqlite3");
     let config = b"trusted-config\n";
+    #[cfg(target_os = "linux")]
     let program = b"#!/bin/sh\ncat /proc/self/fd/196\n";
+    // macOS has no /proc; /dev/fd/N is the same inherited descriptor.
+    #[cfg(target_os = "macos")]
+    let program = b"#!/bin/sh\ncat /dev/fd/196\n";
     write_mode(&config_path, config, 0o600);
     write_mode(&program_path, program, 0o700);
 
@@ -713,6 +717,8 @@ fn unexpected_state_creation_after_binding_fails_closed() {
     ));
 }
 
+// Reads the child's descriptor table through /proc/<pid>/fd.
+#[cfg(target_os = "linux")]
 #[test]
 fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
     let root = tempdir().unwrap();
@@ -763,6 +769,70 @@ fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
     assert_ne!(executable_identity, child_actor_identity);
     assert_ne!(executable_identity, child_workflow_identity);
     assert_ne!(child_actor_identity, child_workflow_identity);
+    assert!(matches!(
+        ActorHeldLock::acquire_for(&swap_id, &actor_state),
+        Err(MakerActorProcessError::LockUnavailable)
+    ));
+    assert!(matches!(
+        ActorHeldLock::acquire_for(&swap_id, &workflow_state),
+        Err(MakerActorProcessError::LockUnavailable)
+    ));
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    drop(ActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap());
+    drop(ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap());
+}
+
+/// macOS form of the test above: there is no /proc/<pid>/fd, so the child
+/// reports the identity of its own descriptors 197-199 (`stat` without a path
+/// argument uses `fstat` on its standard input).
+#[cfg(target_os = "macos")]
+#[test]
+fn pinned_executable_child_holds_distinct_actor_and_workflow_locks() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let program_path = root.path().join("dual-lock-probe");
+    let program = b"#!/bin/sh\nfor fd in 197 198 199; do /usr/bin/stat -f '%d %i' <&$fd; done\nread inherited_lock_probe\n";
+    write_mode(&program_path, program, 0o700);
+    let swap_id = SwapId::new("xmr-dual-lock").unwrap();
+    let actor_state = root.path().join("actor-state.sqlite3");
+    let workflow_state = root.path().join("workflow.sqlite3");
+    let actor_lock = ActorHeldLock::acquire_for(&swap_id, &actor_state).unwrap();
+    let workflow_lock = ActorHeldLock::acquire_for(&swap_id, &workflow_state).unwrap();
+    let actor_identity = identity(&fs::metadata(lock_path(&actor_state)).unwrap());
+    let workflow_identity = identity(&fs::metadata(lock_path(&workflow_state)).unwrap());
+    assert_ne!(actor_identity, workflow_identity);
+
+    let executable = PinnedExecutable::open(&program_path, digest(program)).unwrap();
+    let mut command = executable
+        .into_command_with_locks(&actor_lock, &workflow_lock)
+        .unwrap();
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().unwrap();
+    drop(command);
+    drop(actor_lock);
+    drop(workflow_lock);
+
+    assert_eq!(PINNED_EXECUTABLE_FD, 197);
+    assert_eq!(MAKER_ACTOR_LOCK_FD, 198);
+    assert_eq!(PINNED_EXECUTABLE_WORKFLOW_LOCK_FD, 199);
+    let mut lines = std::io::BufRead::lines(std::io::BufReader::new(child.stdout.take().unwrap()));
+    let mut next_identity = || -> (u64, u64) {
+        let line = lines.next().unwrap().unwrap();
+        let (device, inode) = line.split_once(' ').unwrap();
+        (device.parse().unwrap(), inode.parse().unwrap())
+    };
+    let executable_identity = next_identity();
+    let child_actor_identity = next_identity();
+    let child_workflow_identity = next_identity();
+    assert_eq!(child_actor_identity, actor_identity);
+    assert_eq!(child_workflow_identity, workflow_identity);
+    assert_ne!(executable_identity, child_actor_identity);
+    assert_ne!(executable_identity, child_workflow_identity);
     assert!(matches!(
         ActorHeldLock::acquire_for(&swap_id, &actor_state),
         Err(MakerActorProcessError::LockUnavailable)

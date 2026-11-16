@@ -1,0 +1,3 @@
+node:zec:zec-early-lock:TakerSellsLez	1	PASSED	219	2026-11-12T02:15:57Z	2	0
+node:zec:zec-early-lock:TakerSellsForeign	1	PASSED	221	2026-11-12T02:16:01Z	3	0
+node:btc:early-lock:TakerSellsLez	1	PASSED	165	2026-11-12T02:18:52Z	2	0

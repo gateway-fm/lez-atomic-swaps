@@ -1,3 +1,7 @@
+// The effect-child tests are Linux-only (write-sealed memfd inputs); on macOS
+// their helpers and imports are compiled but unused.
+#![cfg_attr(target_os = "macos", allow(dead_code, unused_imports))]
+
 use std::{
     fs::{self, OpenOptions},
     io::Write as _,
@@ -510,6 +514,8 @@ fn write_executable(path: &Path, bytes: &[u8], mode: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set executable mode");
 }
 
+// XMR effect inputs are write-sealed memfds; not ported to macOS.
+#[cfg(target_os = "linux")]
 #[test]
 fn composed_effect_command_hands_off_exact_fds_and_locks() {
     const PROGRAM: &[u8] = br#"#!/bin/sh
@@ -641,6 +647,8 @@ fn assert_effect_child_output(output: std::process::Output, secret_values: Vec<V
     assert_eq!(lines[11], "fd211=absent");
 }
 
+// XMR effect inputs are write-sealed memfds; not ported to macOS.
+#[cfg(target_os = "linux")]
 #[test]
 fn effect_inputs_pin_runtime_and_all_trailing_newline_secrets_before_name_replacement() {
     let root = tempfile::tempdir().expect("isolated effect-input root");

@@ -1,0 +1,66 @@
+{
+  "scenario": "zec-concurrent",
+  "pair": "Zcash",
+  "direction": "TakerSellsLez",
+  "stamp": "179441568302",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "refund",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "123",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "65",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "100",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "115",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "245",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "15",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "130",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": ""
+  },
+  "swaps": [
+    {
+      "swap_id": "zec-devnet-swap-179441568502",
+      "offer_id": "zec-devnet-offer-179441568502",
+      "entry": 0,
+      "zcash_funding": {
+        "transaction_id": "c4506202ace915a03cd7d1e974fa0f7ba538e68031097875d70c29a114c0449f",
+        "height": 425
+      },
+      "zcash_claim": {
+        "transaction_id": "17d2564bc813fae7b508d74c01ca385cbd93cb033f7db0d6f353524ae52e66b6",
+        "height": 433
+      },
+      "taker_lez_replans": []
+    },
+    {
+      "swap_id": "zec-devnet-swap-179441568502-b",
+      "offer_id": "zec-devnet-offer-179441568502-b",
+      "entry": 1,
+      "zcash_funding": {
+        "transaction_id": "b70bef7bb416c04d12b3a350454faef7d9fe80548ecdf07dd5e63735e9eff53b",
+        "height": 426
+      },
+      "zcash_claim": {
+        "transaction_id": "856f332e8506598a95e30896cc09911e02ea821cfa8fb3ed6e1d3702e3018402",
+        "height": 433
+      },
+      "taker_lez_replans": [
+        {
+          "replan_index": 1,
+          "step": "lez_initialize",
+          "superseded_nonce": 20,
+          "replanned_nonce": 22,
+          "superseded_transaction_id": "c17a91099a15827cef897119cbc4cc181730c991579202570e716151f7f82f38",
+          "replanned_transaction_id": "1002a120e46f5db6061c5efa1aa7372c9478dfa472a365475048ce2eea4e51a3"
+        }
+      ]
+    }
+  ],
+  "corridor": "zec-devnet-179441568502",
+  "profile": "deterministic-local-devnet-v5",
+  "result": "passed",
+  "seconds": 245
+}

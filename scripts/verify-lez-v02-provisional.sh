@@ -357,7 +357,19 @@ expected_root_advisories="$(printf '%s\n' \
   RUSTSEC-2026-0487 \
   RUSTSEC-2026-0489 \
   RUSTSEC-2026-0490 \
-  RUSTSEC-2026-0491)"
+  RUSTSEC-2026-0491 \
+  RUSTSEC-2026-0505 \
+  RUSTSEC-2026-0511 \
+  RUSTSEC-2026-0512 \
+  RUSTSEC-2026-0514 \
+  RUSTSEC-2026-0525 \
+  RUSTSEC-2026-0530 \
+  RUSTSEC-2026-0531 \
+  RUSTSEC-2026-0534 \
+  RUSTSEC-2026-0535 \
+  RUSTSEC-2026-0536 \
+  RUSTSEC-2026-0537 \
+  RUSTSEC-2026-0538)"
 actual_root_advisories="$(rg -o 'RUSTSEC-[0-9]{4}-[0-9]{4}' compat/lez-v0.2-provisional/deny.toml | sort -u)"
 if [[ "$actual_root_advisories" != "$expected_root_advisories" ]]; then
   echo "provisional root advisory exceptions changed; review scope and reachability" >&2
@@ -406,7 +418,19 @@ check_policy_advisories \
   RUSTSEC-2026-0487 \
   RUSTSEC-2026-0489 \
   RUSTSEC-2026-0490 \
-  RUSTSEC-2026-0491
+  RUSTSEC-2026-0491 \
+  RUSTSEC-2026-0505 \
+  RUSTSEC-2026-0511 \
+  RUSTSEC-2026-0512 \
+  RUSTSEC-2026-0514 \
+  RUSTSEC-2026-0525 \
+  RUSTSEC-2026-0530 \
+  RUSTSEC-2026-0531 \
+  RUSTSEC-2026-0534 \
+  RUSTSEC-2026-0535 \
+  RUSTSEC-2026-0536 \
+  RUSTSEC-2026-0537 \
+  RUSTSEC-2026-0538
 
 rsa_tree="$(cargo tree --locked --manifest-path "$root_manifest" -e features -i rsa@0.9.10)"
 for dependency in "rzup v0.5.1" "risc0-zkvm v3.0.5" "lee_core v0.1.0"; do

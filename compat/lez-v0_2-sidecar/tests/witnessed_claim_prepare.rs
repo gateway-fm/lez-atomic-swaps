@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{
     fs,
     os::unix::fs::PermissionsExt as _,
@@ -310,14 +310,14 @@ async fn rejects_role_authority_and_transcript_drift_before_reserving_completion
     let _ = planner.complete_witnessed_claim(&valid).await.unwrap();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 static DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Debug)]
 struct SecureDirectory(PathBuf);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl SecureDirectory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -335,14 +335,14 @@ impl SecureDirectory {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for SecureDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test]
 async fn fresh_process_loads_exact_preparation_before_completion_and_never_rereads_nonce() {
     let directory = SecureDirectory::new();

@@ -227,7 +227,7 @@ async fn daemon_periodically_withdraws_without_a_health_request() {
                 "program": worker,
                 "program_sha256": hex::encode(worker_sha256),
                 "args": [dependency],
-                "timeout_milliseconds": 100
+                "timeout_milliseconds": PROBE_TIMEOUT_MILLISECONDS
             }]
         }))
         .unwrap(),
@@ -343,14 +343,14 @@ async fn a_missing_probe_executable_degrades_its_route_and_the_daemon_still_star
                     "program": worker,
                     "program_sha256": hex::encode(worker_sha256),
                     "args": [],
-                    "timeout_milliseconds": 100
+                    "timeout_milliseconds": PROBE_TIMEOUT_MILLISECONDS
                 },
                 {
                     "route": {"pair": "Zcash", "direction": "TakerSellsForeign"},
                     "program": absent,
                     "program_sha256": hex::encode([7_u8; 32]),
                     "args": [],
-                    "timeout_milliseconds": 100
+                    "timeout_milliseconds": PROBE_TIMEOUT_MILLISECONDS
                 }
             ]
         }))
@@ -429,3 +429,12 @@ async fn a_missing_probe_executable_degrades_its_route_and_the_daemon_still_star
     kill_process(Pid::from_child(&daemon.0), Signal::TERM).expect("stop Maker daemon");
     assert!(daemon.0.wait().unwrap().success());
 }
+
+/// Probe deadline for these tests. macOS assesses every newly written
+/// executable on its first `execve` (about 0.2 s here), which alone overruns
+/// the 100 ms Linux budget; the probes under test do not depend on the value.
+const PROBE_TIMEOUT_MILLISECONDS: u64 = if cfg!(target_os = "macos") {
+    2_000
+} else {
+    100
+};

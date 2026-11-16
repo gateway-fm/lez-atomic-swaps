@@ -1,7 +1,8 @@
 //! What the Maker Node's actor supervisor and the Taker Node's Zcash actor
 //! supervisor say in the same words: the durable schedule states, how one
 //! bounded attempt resolves, the failure-class alphabet, which actor phases
-//! are absorbing, and the one secret-free line logged per supervised effect.
+//! are absorbing, the one secret-free line logged per supervised effect, and
+//! what a swap's actor last did or waits for ([`ActorLastOutcomeV1`]).
 //!
 //! The process mechanics differ by Node (the Maker runs its actors as sealed
 //! child processes, the Taker runs its Zcash actor in-process under the swap's
@@ -11,6 +12,12 @@
 //! until the Maker adopts these shared types (a follow-up, not M2); each Node
 //! keeps a test that every failure class it emits is in this alphabet
 //! ([`validate_failure_class`]), so the two cannot drift apart in their words.
+
+mod last_outcome;
+
+pub use last_outcome::{
+    ActorLastOutcomeV1, ActorWaitV1, FAILED_OUTCOME, LastOutcomes, MAX_LAST_OUTCOMES,
+};
 
 /// The failure-class literals a source file emits as `Retry("…")`,
 /// `Fail("…")` or `failure_class: "…"`, for the per-Node alphabet tests.

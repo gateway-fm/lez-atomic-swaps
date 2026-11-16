@@ -1,0 +1,10 @@
+[01:35:37] regression run: 3 tests at 9fba9da9 (tree dirty:        2), results in <checkout>/deploy/runtime/regress/rerun-b3
+[01:35:37] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[01:35:37] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[01:35:59]     [lane 1] ui:zec:zec-survivor:TakerSellsForeign (try 1)
+[01:35:59]     [lane 2] ui:zec:zec-concurrent:TakerSellsLez (try 1)
+[01:35:59]     [lane 3] ui:zec:zec-concurrent:TakerSellsForeign (try 1)
+[01:38:47] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): PASSED in 161 s
+[01:40:12] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 245 s
+[01:40:14] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 247 s
+[01:40:14] regression run: 3 of 3 passed in 4 min, 0 new chains, 0 profile switches,        0 frozen tries

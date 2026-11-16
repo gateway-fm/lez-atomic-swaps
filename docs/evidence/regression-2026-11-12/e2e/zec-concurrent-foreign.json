@@ -1,0 +1,61 @@
+{
+  "scenario": "zec-concurrent",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "179445972103",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "fast",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "420",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "240",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "240",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "420",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "840",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "60",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "300",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swaps": [
+    {
+      "swap_id": "zec-devnet-swap-179445972203",
+      "offer_id": "zec-devnet-offer-179445972203",
+      "entry": 0,
+      "zcash_funding": {
+        "transaction_id": "8bc1fc85a0820e8ae34cc22e61226c6d5217f8a4184bc0e686e481c4ac356c28",
+        "height": 1191
+      },
+      "zcash_claim": {
+        "transaction_id": "8c6ccb583756d71a29beac058d88d34a1d76864e4ce7f344e182a89814073a3d",
+        "height": 1194
+      },
+      "taker_lez_replans": []
+    },
+    {
+      "swap_id": "zec-devnet-swap-179445972203-b",
+      "offer_id": "zec-devnet-offer-179445972203-b",
+      "entry": 1,
+      "zcash_funding": {
+        "transaction_id": "40542fa818c96b76bdf9ca45e2d3c085494067b18037cec9d9fd26bbae55d166",
+        "height": 1191
+      },
+      "zcash_claim": {
+        "transaction_id": "5cef2ab3fc9d5678b0eb0ac4b2ec77b1ed05e9e3b2ac4811757bd2b7bd9288b5",
+        "height": 1193
+      },
+      "taker_lez_replans": []
+    }
+  ],
+  "corridor": "zec-devnet-179445972203",
+  "profile": "deterministic-local-devnet-v5",
+  "result": "passed",
+  "seconds": 214
+}

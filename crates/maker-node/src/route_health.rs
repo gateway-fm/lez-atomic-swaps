@@ -211,6 +211,15 @@ mod tests {
 
     use super::*;
 
+    /// Probe deadline for these tests. macOS assesses every newly written
+    /// executable on its first `execve` (about 0.2 s here), which alone overruns
+    /// the 100 ms Linux budget; the probes under test do not depend on the value.
+    const PROBE_TIMEOUT_MILLISECONDS: u64 = if cfg!(target_os = "macos") {
+        2_000
+    } else {
+        100
+    };
+
     fn config(program: &std::path::Path, digest: [u8; 32], args: &[&str]) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({
             "schema_version": 1,
@@ -219,7 +228,7 @@ mod tests {
                 "program": program,
                 "program_sha256": hex::encode(digest),
                 "args": args,
-                "timeout_milliseconds": 100
+                "timeout_milliseconds": PROBE_TIMEOUT_MILLISECONDS
             }]
         }))
         .unwrap()

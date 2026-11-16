@@ -1,0 +1,6 @@
+App launcher clicked: "lez_atomic_swap_maker"
+Loading UI module: "lez_atomic_swap_maker"
+Failed to load UI module "lez_atomic_swap_maker" : "Timeout waiting for ui-host for lez_atomic_swap_maker"
+App launcher clicked: "lez_atomic_swap_taker"
+Loading UI module: "lez_atomic_swap_taker"
+Failed to load UI module "lez_atomic_swap_taker" : "Timeout waiting for ui-host for lez_atomic_swap_taker"

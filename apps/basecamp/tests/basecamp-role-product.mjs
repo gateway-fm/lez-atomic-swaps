@@ -135,7 +135,16 @@ test(`${role}: pinned Basecamp discovers and loads the role package`, async (app
     description: `${role} package discovery`,
   });
   await app.click(expected.launcher);
-  await app.waitFor(async () => app.expectTexts([expected.heading, "Backend connected"]), {
+  // The header badge names the Node's own state once the view module and its
+  // backend are loaded, and "Desk loading" until then (#103 item 7: it read
+  // "Backend connected" whether or not the Node answered). With a Node the
+  // badge must say it is connected; without one, only that the desk loaded.
+  await app.waitFor(async () => {
+    await app.expectTexts([expected.heading]);
+    const badge = String(await property(app, `${role}Connection`, "text"));
+    const loaded = expectService ? /^Node (connected|degraded)/.test(badge) : badge !== "Desk loading";
+    if (!loaded) throw new Error(`${role} header badge reads ${JSON.stringify(badge)}`);
+  }, {
     timeout: 20000,
     interval: 500,
     description: `${role} package and process backend load`,

@@ -113,7 +113,7 @@ required unless marked optional. `null` revisions on insertion are intentional.
 | `maker_offer_list` | `{}` or `{states:[…]}` | Array of `{revision, status, offer, reservation_id, swap_id}`; statuses are `active`, `expired`, `reserved`, `consumed`, `withdrawn`. `states` keeps only offers in those statuses, judged after expiry is projected; a Node keeps every offer it ever published, so a caller that renders only open offers should ask for them (the desks ask for `active`, `reserved`, `consumed`). History is durable; lists are not a transactional balance snapshot. |
 | `maker_offer_withdraw` | `{request_id, offer_id, expected_revision}` | `{revision, was_replay}`. Withdraws an unreserved offer. A reservation that wins the race prevents withdrawal. |
 | `swap_history` | `{}` | Array of `{id, pair, direction, phase, requires_attention, pending_alerts, highest_alert_severity}`. Use each opaque `id` to monitor its actor. |
-| `maker_actor_monitor_v1` | `{id}` | Actor snapshot with `schema_version`, `swap_id`, `actor_kind`, `lease_generation`, `schedule_state`, `attempt_count`, `last_failure_class` (why the supervisor last backed off or gave up; a `failed` actor is never polled again until an action is queued), `attention_reason` (why the row needs the owner, when the actor said so by name: `lez_depositor_balance_insufficient` while the Node's account holds less LEZ than a Zcash swap's lot; the next attempt funds the escrow by itself once the account is funded; or `lez_revealing_claim_held_near_refund` with `revealing_claim_held_by` naming the swap whose revealing LEZ claim is in flight: the Node sends one revealing LEZ claim at a time until it is final, and a held swap within a third of its LEZ refund delay of its own refund time (4 minutes on the devnet profile, 10 under a 30-minute delay) says so; it claims by itself once the holder's claim is final. To find the actor's marker the Node re-reads and re-hashes the actor's pinned configuration on every poll of a Zcash swap; fine on a devnet, a cached read on a busy Node), `progress`, `manual_action` and, once the Node holds the countersigned BTC agreement, `terms` (see below). See the linked DTO for complete fields. This method can reconcile a terminal actor into the operator projection. |
+| `maker_actor_monitor_v1` | `{id}` | Actor snapshot with `schema_version`, `swap_id`, `actor_kind`, `lease_generation`, `schedule_state`, `attempt_count`, `last_failure_class` (why the supervisor last backed off or gave up; a `failed` actor is never polled again until an action is queued), `last_outcome` (the supervisor's last attempt and what it waits for, as on the Taker's view: [The actor's last outcome](#the-actors-last-outcome)), `attention_reason` (why the row needs the owner, when the actor said so by name: `lez_depositor_balance_insufficient` while the Node's account holds less LEZ than a Zcash swap's lot; the next attempt funds the escrow by itself once the account is funded; or `lez_revealing_claim_held_near_refund` with `revealing_claim_held_by` naming the swap whose revealing LEZ claim is in flight: the Node sends one revealing LEZ claim at a time until it is final, and a held swap within a third of its LEZ refund delay of its own refund time (4 minutes on the devnet profile, 10 under a 30-minute delay) says so; it claims by itself once the holder's claim is final. To find the actor's marker the Node re-reads and re-hashes the actor's pinned configuration on every poll of a Zcash swap; fine on a devnet, a cached read on a busy Node), `progress`, `manual_action` and, once the Node holds the countersigned BTC agreement, `terms` (see below). See the linked DTO for complete fields. This method can reconcile a terminal actor into the operator projection. |
 | `maker_actor_claim_v1`, `maker_actor_refund_v1` | `{request_id, id, expected_generation}` | `{schema_version, swap_id, action, requested_after_generation, was_replay}`. Use the monitor’s `lease_generation` as `expected_generation`. Admission is generation-fenced; it requests node-owned actor work, not arbitrary transaction construction. |
 | `maker_actor_repin_v1` | `{request_id, id, expected_generation}` | `{schema_version, swap_id, actor_program_sha256, was_replay}`. Each swap pins the SHA-256 of the actor executable it was created with, so a changed binary never acts on it unnoticed; after a Node upgrade an open swap therefore stops as `failed: actor_deployment_invalid`. This is the owner's explicit decision to move that one swap to the actor the Node runs now, and it queues the swap again. Refused while the actor is leased or terminal. Recorded in the Maker's mutation journal under its `request_id`. |
 
@@ -257,6 +257,77 @@ as precise as health is asked (the desks ask every 10 s), and a Node started on
 a chain that is already frozen reports the stall one threshold after its first
 sample.
 
+### The actor's last outcome
+
+A step the actor holds on purpose used to read like a dead Node: a Taker's
+Bitcoin refund held until finalized LEZ time passed the Maker's lock cutoff
+showed `refund_in_progress` and nothing else for hours (#103 item 6). The
+Taker's swap view and `maker_actor_monitor_v1` therefore carry `last_outcome`,
+an additive field of schema 1 (absent on older Nodes; a client that does not
+know it ignores it):
+
+```text
+"last_outcome": {
+  "at_unix_seconds": 1762876700,
+  "step": "recover",
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "waiting_for": {
+    "kind": "lez_finality_past_cutoff",
+    "chain": "lez",
+    "until_unix_seconds": 1762877100,
+    "chain_unix_seconds": 1762876680
+  }
+}
+```
+
+- `at_unix_seconds`: when the Node got the outcome; `step`: the actor step
+  that ran (`activate`, `drive`, `claim`, `recover`, or `status` when the
+  actor could not be read); `revision`: the actor's revision after it.
+- `outcome`: the actor's own word (`awaiting_observation`,
+  `observed_then_projected`, `converged_on_existing_projection`, `submitted`,
+  `awaiting_deadline`, …), or `failed` with `failure_class` (the shared
+  failure classes; a Bitcoin actor's are `actor_observation_unavailable`,
+  `actor_agreement_binding_invalid`, `actor_store_unavailable`,
+  `actor_projection_unavailable`, `actor_not_activated`,
+  `actor_material_unavailable`, `actor_configuration_unavailable`,
+  `actor_agreement_unavailable`). `operation` names the step a Zcash outcome
+  is about (`lez_refund`, `zcash_refund`, …).
+- `waiting_for`, when the actor held a step for a reason it can name: `kind`,
+  the `chain` whose progress ends the wait, and the bounds it read. Every
+  `chain_*` value is the chain's own reading at that attempt (finalized LEZ
+  time, Bitcoin median time or stable-tip height), never the Node's clock.
+  Kinds: `lez_finality_past_cutoff` (a first-lock refund is held until
+  finalized LEZ time passes the Maker's lock cutoff `until_unix_seconds`, the
+  only proof its LEZ lock can no longer land; `chain_unix_seconds` is the
+  finalized LEZ time), `bitcoin_time_past_cutoff` (the same on Bitcoin, by
+  the stable tip's median time, with `chain_height`),
+  `bitcoin_lock_confirmations` (the Maker's Bitcoin lock is seen with
+  `confirmations` of `required_confirmations`), `bitcoin_refund_maturity` (the
+  Bitcoin refund's relative timelock: first valid height `until_height`, stable
+  tip `chain_height`), `bitcoin_refund_confirmations` (the refund is sent and
+  confirming), `lez_finality_past_refund_time` (a LEZ refund held until
+  finalized LEZ time passes the agreement's LEZ refund time), `maker_lock` (the
+  Taker waits for the Maker's lock until its cutoff), `counterparty_claim` (the
+  other party's claim, until the claim window closes when the agreement bounds
+  it), and for Zcash `lez_refund_time` and `zcash_refund_height` (no bound:
+  the actor does not report the height). Kinds are additive `snake_case`
+  strings: show one you do not know by its bounds.
+
+The facts are the actor's: the Bitcoin actor names the wait beside the
+decision that holds the step (its effect output gains an optional `wait`),
+and the Zcash supervisor bounds `awaiting_deadline` by the LEZ refund time in
+the actor's status. Nothing decides on them; the Node only reports them. The
+Node keeps the last outcome per swap in memory from its own attempts (the
+Taker's Bitcoin observer every `--observer-sweep-seconds`, the Zcash
+supervisor every 5 s, the Maker's supervisor on each attempt, and an owner's
+claim or refund), so it is absent after a restart until the next attempt, on a
+finished swap, and once the actor's revision moved past the attempt. The
+desks show the wait in plain words ("Waiting for LEZ finality to pass the lock
+cutoff 16:05 (now 15:58)", "Refund matures at Bitcoin height 1234 (now
+1229)") and, while the outcome is under 5 minutes old and a bound it names is
+not reached, offer no Resubmit.
+
 ## Taker method reference
 
 | Method | Request object | Result / behavior |
@@ -272,7 +343,7 @@ sample.
 
 `swap` contains `schema_version`, `swap_id`, `offer_id`, `route`,
 `foreign_units`, `lez_units`, `progress_generation`, `state`,
-`available_action` (`claim`, `refund`, or `null`), `attention_reason` (`lez_depositor_balance_insufficient` while the account cannot fund a Zcash swap's LEZ lot, the supervisor's next attempt locks by itself once it can; or the failure class of a Zcash swap whose supervision stopped, `actor_deployment_invalid`, `lez_first_lock_replan_exhausted` (the LEZ lock's signer nonce was taken by another swap of the same account five re-plans in a row; nothing is on the chain) or `lez_escrow_already_initialized` (the swap's LEZ escrow account already exists, initialized by a transaction that is not this swap's, e.g. another swap with the same swap id: the escrow initialization can never execute, and once the sidecar refused it five times over at least 60 s it is no longer submitted; also the Maker's `last_failure_class` when it is the LEZ depositor) or `lez_revealing_claim_replan_exhausted` (the revealing LEZ claim's nonce was taken five re-plans in a row; the claim is never given up for a refund), until a claim or refund is queued; or `lez_revealing_claim_held_near_refund` with `revealing_claim_held_by` naming the holding swap, while this swap's revealing LEZ claim waits behind that swap's (one in flight per Node until it is final) within a third of its LEZ refund delay of its own refund time (4 minutes on the devnet profile); the supervisor still attempts it every 5 s and claims once the holder's claim is final), `last_failure_class` (why the Node's supervisor last backed off on a Zcash swap's actor), `status_detail` (a Zcash swap: one human-readable sentence on what holds its LEZ lock back, when the Node knows: the escrow initialization that can never execute, with `lez_escrow_already_initialized`; or a LEZ lock step submitted at least 10 times over at least 120 s and not included yet, for no reason the chain shows, while the Node keeps submitting it), `actor_phase` (a Zcash swap's Taker actor phase, e.g. `both_legs_locked`), `claim_window_closed` (selling ZEC: `true` once the Taker's revealing LEZ claim window closed with nothing sent; the row then offers `refund` and never the claim, and a desk names the state "Claim window closed"), `observed_at` (present only when the row was answered from the supervisor's last status snapshot because the actor was busy; a snapshot older than 60 s is not served), `privacy_guidance` and,
+`available_action` (`claim`, `refund`, or `null`), `attention_reason` (`lez_depositor_balance_insufficient` while the account cannot fund a Zcash swap's LEZ lot, the supervisor's next attempt locks by itself once it can; or the failure class of a Zcash swap whose supervision stopped, `actor_deployment_invalid`, `lez_first_lock_replan_exhausted` (the LEZ lock's signer nonce was taken by another swap of the same account five re-plans in a row; nothing is on the chain) or `lez_escrow_already_initialized` (the swap's LEZ escrow account already exists, initialized by a transaction that is not this swap's, e.g. another swap with the same swap id: the escrow initialization can never execute, and once the sidecar refused it five times over at least 60 s it is no longer submitted; also the Maker's `last_failure_class` when it is the LEZ depositor) or `lez_revealing_claim_replan_exhausted` (the revealing LEZ claim's nonce was taken five re-plans in a row; the claim is never given up for a refund), until a claim or refund is queued; or `lez_revealing_claim_held_near_refund` with `revealing_claim_held_by` naming the holding swap, while this swap's revealing LEZ claim waits behind that swap's (one in flight per Node until it is final) within a third of its LEZ refund delay of its own refund time (4 minutes on the devnet profile); the supervisor still attempts it every 5 s and claims once the holder's claim is final), `last_failure_class` (why the Node's supervisor last backed off on a Zcash swap's actor; for a Bitcoin swap, the class of the actor's last attempt when it failed, e.g. `actor_observation_unavailable`), `last_outcome` (what the actor last did or why it did not act, and what it waits for: see [The actor's last outcome](#the-actors-last-outcome)), `status_detail` (a Zcash swap: one human-readable sentence on what holds its LEZ lock back, when the Node knows: the escrow initialization that can never execute, with `lez_escrow_already_initialized`; or a LEZ lock step submitted at least 10 times over at least 120 s and not included yet, for no reason the chain shows, while the Node keeps submitting it), `actor_phase` (a Zcash swap's Taker actor phase, e.g. `both_legs_locked`), `claim_window_closed` (selling ZEC: `true` once the Taker's revealing LEZ claim window closed with nothing sent; the row then offers `refund` and never the claim, and a desk names the state "Claim window closed"), `observed_at` (present only when the row was answered from the supervisor's last status snapshot because the actor was busy; a snapshot older than 60 s is not served), `privacy_guidance` and,
 once the swap's BTC agreement is bound, `terms`: the countersigned schedule
 and amounts, so an application can show deadlines without parsing the
 agreement itself. `terms` is absent (not `null`) before the agreement exists

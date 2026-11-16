@@ -4,7 +4,7 @@ mod runtime;
 
 pub use runtime::{
     MakerActorSupervisorCancellation, MakerActorSupervisorConfig, MakerActorSupervisorError,
-    MakerActorSupervisorOutcome, MakerActorSupervisorResolution,
+    MakerActorSupervisorOutcome, MakerActorSupervisorResolution, maker_actor_last_outcome,
     supervise_one_abandoned_maker_actor, supervise_one_abandoned_maker_actor_until,
     supervise_one_due_maker_actor, supervise_one_due_maker_actor_until,
 };

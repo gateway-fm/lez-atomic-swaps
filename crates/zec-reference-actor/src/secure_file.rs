@@ -6,6 +6,9 @@ use std::{
 };
 
 use lez_swap_store::MAKER_ACTOR_CONFIG_FD;
+#[cfg(target_os = "macos")]
+use rustix::fs::{OFlags, fcntl_getfl};
+#[cfg(target_os = "linux")]
 use rustix::fs::{SealFlags, fcntl_get_seals};
 use zeroize::Zeroizing;
 
@@ -155,7 +158,11 @@ pub(crate) fn read_bounded_sealed_memfd(
     if fd != MAKER_ACTOR_CONFIG_FD {
         return Err(SecureFileError::Unsafe);
     }
+    #[cfg(target_os = "linux")]
     let descriptor_path = PathBuf::from(format!("/proc/self/fd/{fd}"));
+    // macOS has no /proc; /dev/fd/N duplicates the inherited descriptor.
+    #[cfg(target_os = "macos")]
+    let descriptor_path = PathBuf::from(format!("/dev/fd/{fd}"));
     let mut file = File::open(&descriptor_path).map_err(|_| SecureFileError::Unavailable)?;
     let before = file.metadata().map_err(|_| SecureFileError::Unavailable)?;
     validate_sealed_memfd_metadata(&before, maximum)?;
@@ -204,10 +211,25 @@ fn validate_sealed_memfd_metadata(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn validate_seals(file: &File) -> Result<(), SecureFileError> {
     let required = SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW | SealFlags::WRITE;
     let actual = fcntl_get_seals(file).map_err(|_| SecureFileError::Unsafe)?;
     if actual.contains(required) {
+        Ok(())
+    } else {
+        Err(SecureFileError::Unsafe)
+    }
+}
+
+/// macOS has no seals. The supervisor hands over an unlinked owner-private
+/// copy on a read-only descriptor (`lez-swap-store`, `sealed_artifact`); what
+/// can be checked here is that this descriptor cannot write. That is weaker
+/// than a seal, which binds every descriptor of the file.
+#[cfg(target_os = "macos")]
+fn validate_seals(file: &File) -> Result<(), SecureFileError> {
+    let flags = fcntl_getfl(file).map_err(|_| SecureFileError::Unsafe)?;
+    if flags & OFlags::RWMODE == OFlags::RDONLY {
         Ok(())
     } else {
         Err(SecureFileError::Unsafe)

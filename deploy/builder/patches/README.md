@@ -54,6 +54,17 @@ wrap the wallet FFI's own key import.
   logos-execution-zone, `lez/wallet-ffi`: `wallet_ffi_sign_public_message_hash`,
   a signature over a 32-byte hash with a public account the wallet holds (the
   `lee::Signature` a public transaction's witness carries).
+- `0001-lez-darwin-metal-toolchain-for-nix-build-users.patch` — upstream
+  logos-execution-zone, `flake.nix`, macOS only (inside the existing
+  `metalStub`, used only when `stdenv.isDarwin`): risc0 compiles its Metal
+  kernels with `xcrun metal`, and xcrun finds Xcode's downloadable Metal
+  Toolchain through a per-user mapping that a nix build user (`_nixbldN`,
+  HOME `/var/empty`) does not have, so the build fails with "missing Metal
+  Toolchain" although it is installed. The stub now runs `metal`/`metallib`
+  from the toolchain's cryptex mount, with xcrun's SDK as `-isysroot`, and
+  falls back to xcrun when there is no mount. On Linux the stub is never used;
+  the flake source changes, so lez_core rebuilds once, into a byte-identical
+  `lez_core.lgx`.
 - `0002-module-import-and-sign-public-account.patch` — lez_core:
   `import_public_account(private key hex)` over the FFI's existing import and
   `sign_public_message_hash(account, hash)` over the call above (version
@@ -69,5 +80,6 @@ inside Basecamp and serves that role's signer socket) is not an upstream patch.
 | lez-indexer-module/0001 breakpoint-interval | 13 | logos-execution-zone `9edf4a622fe9` | not offered (upstream: make the interval configurable) |
 | lez-indexer-module/0001 ffi-rpc-serve | 177 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | lez-indexer-module/0002 | 52 | lez-indexer-module `5033da442a7f` | not yet offered |
-| logos-execution-zone-module/0001 | 120 | logos-execution-zone `9edf4a622fe9` | not yet offered (related: logos-execution-zone-module#73, message signing) |
+| logos-execution-zone-module/0001 wallet-ffi-sign | 120 | logos-execution-zone `9edf4a622fe9` | not yet offered (related: logos-execution-zone-module#73, message signing) |
+| logos-execution-zone-module/0001 darwin-metal-toolchain | 35 | logos-execution-zone `9edf4a622fe9` | not yet offered |
 | logos-execution-zone-module/0002 | 111 | logos-execution-zone-module `acf0cd501b26` | not yet offered |

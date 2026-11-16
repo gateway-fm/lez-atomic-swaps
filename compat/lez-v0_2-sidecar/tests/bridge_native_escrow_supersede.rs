@@ -2,7 +2,7 @@
 //! is named `Superseded`, never broadcast; the pair is re-planned through
 //! `supersede_native_escrow_prepare` into a durable lineage that survives a
 //! restart and answers a replay with the same bytes.
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::{
     fs,

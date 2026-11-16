@@ -1,0 +1,49 @@
+[01:27:32] === late-claim-unmined (stamp 1794446852)
+[01:27:32] preflight: indexer historical reads
+[01:27:33]   indexer serves historical reads at the tip (149)
+[01:27:33] preflight: LEZ finality check waived by request
+[01:27:35]   Maker published offer-e2e-1794446852
+[01:27:37]   Taker took offer-e2e-1794446852: swap fd0bf19dfc83 (not_activated)
+[01:27:38]   Taker locked lez: 254c655f5aca (replay=False)
+[01:27:38]   [0 s] waiting for the Taker's fd0bf19dfc83 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 153, tip 156 (3 unfinalized) [heartbeat]
+[01:27:52]   [14 s] waiting for the Taker's fd0bf19dfc83 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker leased | LEZ finalized 153, tip 156 (3 unfinalized) [heartbeat]
+[01:28:17]   [38 s] waiting for the Taker's fd0bf19dfc83 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 164, tip 166 (2 unfinalized) [heartbeat]
+[01:28:18]   stopping the miner so the Taker's Bitcoin claim waits in the mempool
+[01:28:30]   stopping the Taker Node
+[01:28:31]   the claim c6e5863543c6 waits in the mempool with the Taker down; mining empty blocks every 2s until the window closes (1794447275) and the Maker's refund opens at height 67542
+[01:28:32]   [0 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67325, claim c6e5863543c6 in the mempool | LEZ finalized 174, tip 177 (3 unfinalized) [heartbeat]
+[01:29:34]   [62 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67346, claim c6e5863543c6 in the mempool | LEZ finalized 206, tip 209 (3 unfinalized) [heartbeat]
+[01:30:37]   [125 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67367, claim c6e5863543c6 in the mempool | LEZ finalized 226, tip 231 (5 unfinalized) [heartbeat]
+[01:31:38]   [186 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67387, claim c6e5863543c6 in the mempool | LEZ finalized 261, tip 263 (2 unfinalized) [heartbeat]
+[01:32:38]   [246 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67407, claim c6e5863543c6 in the mempool | LEZ finalized 293, tip 298 (5 unfinalized) [heartbeat]
+[01:33:40]   [308 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67428, claim c6e5863543c6 in the mempool | LEZ finalized 315, tip 318 (3 unfinalized) [heartbeat]
+[01:34:40]   [368 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67448, claim c6e5863543c6 in the mempool | LEZ finalized 347, tip 351 (4 unfinalized) [heartbeat]
+[01:35:41]   [429 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67470, claim c6e5863543c6 in the mempool | LEZ finalized 385, tip 388 (3 unfinalized) [heartbeat]
+[01:36:43]   [491 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67493, claim c6e5863543c6 in the mempool | LEZ finalized 425, tip 428 (3 unfinalized) [heartbeat]
+[01:37:44]   [552 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67515, claim c6e5863543c6 in the mempool | LEZ finalized 463, tip 466 (3 unfinalized) [heartbeat]
+[01:38:46]   [614 s] waiting for the refund path to open with the claim unmined: maker both_legs_locked, height 67536, claim c6e5863543c6 in the mempool | LEZ finalized 488, tip 491 (3 unfinalized) [heartbeat]
+[01:39:04]   the refund path is open at height 67542; the claim was never mined; the Maker is at both_legs_locked
+[01:39:05]   the Maker's refund asked for: {"schema_version": 1, "swap_id": "fd0bf19dfc836755fc9ff93b4d4a97ec28674892929d6572c404d5a86630fd93", "action": "refund", "requested_after_generation": 69, "was_replay": false}
+[01:39:17]   [1 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker both_legs_locked (schedule leased) | LEZ finalized 500, tip 502 (2 unfinalized) [heartbeat]
+[01:39:41]   [25 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 509, tip 513 (4 unfinalized) [heartbeat]
+[01:40:45]   [89 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 538, tip 541 (3 unfinalized) [heartbeat]
+[01:41:47]   [152 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 578, tip 581 (3 unfinalized) [heartbeat]
+[01:42:50]   [214 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 618, tip 621 (3 unfinalized) [heartbeat]
+[01:43:51]   [275 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 659, tip 664 (5 unfinalized) [heartbeat]
+[01:44:56]   [341 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 702, tip 706 (4 unfinalized) [heartbeat]
+[01:46:02]   [406 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 747, tip 750 (3 unfinalized) [heartbeat]
+[01:47:03]   [468 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 789, tip 792 (3 unfinalized) [heartbeat]
+[01:48:04]   [528 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 818, tip 821 (3 unfinalized) [heartbeat]
+[01:49:05]   [589 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 862, tip 864 (2 unfinalized) [heartbeat]
+[01:50:06]   [650 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 902, tip 905 (3 unfinalized) [heartbeat]
+[01:51:11]   [715 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 944, tip 950 (6 unfinalized) [heartbeat]
+[01:52:11]   [776 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 986, tip 994 (8 unfinalized) [heartbeat]
+[01:53:15]   [839 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1018, tip 1020 (2 unfinalized) [heartbeat]
+[01:54:17]   [901 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1057, tip 1061 (4 unfinalized) [heartbeat]
+[01:55:20]   [964 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1098, tip 1100 (2 unfinalized) [heartbeat]
+[01:56:20]   [1025 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1138, tip 1144 (6 unfinalized) [heartbeat]
+[01:57:23]   [1087 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1174, tip 1182 (8 unfinalized) [heartbeat]
+[01:58:27]   [1152 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1219, tip 1222 (3 unfinalized) [heartbeat]
+[01:59:29]   [1213 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1259, tip 1263 (4 unfinalized) [heartbeat]
+[02:00:30]   [1274 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1286, tip 1289 (3 unfinalized) [heartbeat]
+[02:01:33]   [1337 s] waiting for both Nodes to settle fd0bf19dfc83: taker claim_in_progress offering None | maker claim_evidence_available (schedule leased) | LEZ finalized 1321, tip 1331 (10 unfinalized) [heartbeat]

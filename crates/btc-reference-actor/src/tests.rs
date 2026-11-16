@@ -5999,6 +5999,32 @@ fn exact_lez_claim_presence(
     let request = finalized_lez_claim_request(config, agreement, transition, &prepared, effect)
         .expect("finalized LEZ claim request");
     let block_height = request.window.start_height() + 1;
+    let finalized_tip = finalized_lez_tip(request.window);
+    exact_lez_claim_presence_at(
+        agreement,
+        &request,
+        prepared,
+        transaction,
+        aggregate_signature,
+        block_height,
+        finalized_tip,
+        request.window,
+    )
+}
+
+/// A finalized claim found by `request` in block `block_height`, read at
+/// `finalized_tip`, with `scanned_window` scanned.
+#[allow(clippy::too_many_arguments)]
+fn exact_lez_claim_presence_at(
+    agreement: &BtcAgreementV1,
+    request: &ObserveFinalizedWitnessedClaimRequest,
+    prepared: PreparedWitnessedClaim,
+    transaction: PreparedTransaction,
+    aggregate_signature: [u8; 64],
+    block_height: u64,
+    finalized_tip: ChainTip,
+    scanned_window: DiscoveryWindow,
+) -> lez_bridge_client::FinalizedWitnessedClaimPresence {
     let block_hash = Hex32::from_bytes([93; 32]);
     let authority = request.terms.aggregate_authority_account_id();
     let metadata_account = Hex32::from_bytes(*agreement.lez_terms().metadata_account());
@@ -6045,9 +6071,9 @@ fn exact_lez_claim_presence(
         custody,
     );
     lez_bridge_client::FinalizedWitnessedClaimPresence::PresentExact {
-        context: request.context,
-        finalized_tip: finalized_lez_tip(request.window),
-        scanned_window: request.window,
+        context: request.context.clone(),
+        finalized_tip,
+        scanned_window,
         claim: Box::new(claim),
     }
 }
@@ -6898,6 +6924,168 @@ async fn lez_claim_owner_submits_once_then_projects_exact_finalized_presence() {
             .lock()
             .expect("exact request lock");
         assert_ne!(exact_requests[0].context.request_id, first_request_id);
+    }
+}
+
+/// A finalized LEZ chain holding one claim in block `claim_height`, finalized
+/// up to `tip`, answering classifications as the real sidecar does.
+#[derive(Clone)]
+struct LateLezClaimPort {
+    agreement: BtcAgreementV1,
+    prepared: PreparedWitnessedClaim,
+    transaction: PreparedTransaction,
+    aggregate_signature: [u8; 64],
+    claim_height: u64,
+    tip: u64,
+    classify_requests: Arc<Mutex<Vec<ObserveFinalizedWitnessedClaimRequest>>>,
+}
+
+#[async_trait]
+impl LezClaimChainPort for LateLezClaimPort {
+    async fn complete_witnessed_claim(
+        &self,
+        _request: CompleteWitnessedClaimRequest,
+    ) -> Result<CompleteWitnessedClaimResult, ActorCommandError> {
+        Err(ActorCommandError::ObservationUnavailable)
+    }
+
+    async fn classify_finalized_witnessed_claim(
+        &self,
+        request: ObserveFinalizedWitnessedClaimRequest,
+    ) -> Result<lez_bridge_client::FinalizedWitnessedClaimPresence, ActorCommandError> {
+        self.classify_requests
+            .lock()
+            .expect("classify request lock")
+            .push(request.clone());
+        // As the sidecar answers (`read_stable_finalized_prefix`): it scans
+        // the requested window up to the finalized tip, and the tip it reports
+        // is the last block it scanned, never one beyond the window. A window
+        // reaching past the tip is a prefix, never definitive absence.
+        let start = request.window.start_height();
+        let requested_end = start + u64::from(request.window.max_blocks() - 1);
+        let end = requested_end.min(self.tip);
+        let scanned = DiscoveryWindow::new(start, u32::try_from(end - start + 1).unwrap())
+            .expect("scanned window");
+        let tip = ChainTip::new(Hex32::from_bytes([95; 32]), end);
+        if (start..=end).contains(&self.claim_height) {
+            return Ok(exact_lez_claim_presence_at(
+                &self.agreement,
+                &request,
+                self.prepared.clone(),
+                self.transaction.clone(),
+                self.aggregate_signature,
+                self.claim_height,
+                tip,
+                scanned,
+            ));
+        }
+        Ok(if end == requested_end {
+            lez_bridge_client::FinalizedWitnessedClaimPresence::NotFound {
+                context: request.context,
+                finalized_tip: tip,
+                scanned_window: scanned,
+            }
+        } else {
+            lez_bridge_client::FinalizedWitnessedClaimPresence::PrefixUncertain {
+                context: request.context,
+                finalized_tip: tip,
+                scanned_window: scanned,
+            }
+        })
+    }
+
+    async fn submit_transaction(
+        &self,
+        _request: SubmitTransactionRequest,
+    ) -> Result<SubmitTransactionResult, ActorCommandError> {
+        Err(ActorCommandError::ObservationUnavailable)
+    }
+}
+
+/// #103 item 14, late-claim-unmined selling LEZ (2026-11-12, swap fd0bf19d):
+/// the Taker's Bitcoin claim was mined after the claim window, the Maker
+/// projected it and sent its follow-up LEZ claim, which was final in LEZ
+/// block 525, before the Taker's refund time. The discovery window, the
+/// swap's start plus 300 blocks, ended near block 455, so neither the Maker
+/// (exact lookup) nor the Taker (discovery by terms) ever found it: both
+/// waited at `claim_evidence_available` for good, the LEZ already paid out. A
+/// claim can land until the LEZ refund time, past the window that bounds
+/// the Maker's lock, so a lookup that finds nothing in that window looks
+/// again over the span since the start. The first fix widened only when the
+/// absence reported a finalized tip past the window, which the real sidecar
+/// never does (its tip is the last block it scanned): the same hang again on
+/// the next run (swap 66fe1b77, claim in block 540). This fake port answers
+/// as the sidecar does.
+#[tokio::test(flavor = "current_thread")]
+async fn a_lez_claim_final_past_the_discovery_window_is_still_found() {
+    for (role, own) in [(ActorRole::Taker, false), (ActorRole::Maker, true)] {
+        let transition = ClaimTransition::FollowupClaim;
+        let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, role);
+        activate_and_project_both_locks(&fixture).await;
+        project_revealing_claim(&fixture).await;
+        let effect = if own {
+            prepare_lez_claim_effect(
+                &fixture.config,
+                &fixture.agreement,
+                transition,
+                &durable_status(&fixture),
+                &placeholder_lez_port(),
+            )
+            .await
+            .expect("prepare the Maker's follow-up claim")
+        } else {
+            None
+        };
+        let (transaction, signature) = effect.as_ref().map_or_else(
+            || {
+                (
+                    PreparedTransaction::new(
+                        TransactionId::from_bytes([103; 32]),
+                        ExactTransactionBytes::new(vec![104; 128]).expect("late claim bytes"),
+                    ),
+                    valid_lez_claim_signature(&fixture, transition),
+                )
+            },
+            |effect| (effect.transaction.clone(), effect.aggregate_signature),
+        );
+        let window = fixture.config.discovery_window().expect("discovery window");
+        let window_end = window.start_height() + u64::from(window.max_blocks() - 1);
+        let port = LateLezClaimPort {
+            agreement: fixture.agreement.clone(),
+            prepared: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            transaction,
+            aggregate_signature: signature,
+            claim_height: window_end + 70,
+            tip: window_end + 334,
+            classify_requests: Arc::new(Mutex::new(Vec::new())),
+        };
+        let observer = LezClaimObserver {
+            config: &fixture.config,
+            chain: port.clone(),
+            effect,
+            prepared_claim: prepared_lez_claim(&fixture.config, &fixture.agreement),
+            state_db: fixture.config.state_db.clone(),
+        };
+        let projected = output_json(
+            drive_claim_with_observer(
+                &fixture.config,
+                fixture.agreement.clone(),
+                fixture.agreement_wire.clone(),
+                &observer,
+            )
+            .await
+            .expect("drive the follow-up claim"),
+        );
+        assert_eq!(
+            projected["outcome"], "observed_then_projected",
+            "{role:?}: a claim final past the discovery window must be found: {projected}"
+        );
+        assert_eq!(projected["revision"], transition.revision());
+        let requests = port.classify_requests.lock().expect("request lock");
+        assert_eq!(
+            requests[0].window, window,
+            "the discovery window is read first"
+        );
     }
 }
 
@@ -9508,4 +9696,218 @@ fn late_maker_lock_admits_first_lock_recovery() {
             "{direction:?}: only reads 1 and 2 are admissible"
         );
     }
+}
+
+/// A first-lock safety read that holds the refund the way the live LEZ read
+/// does when the Maker's lock is absent but finalized LEZ time is before the
+/// cutoff: it notes the wait, then answers uncertain.
+struct FinalityBeforeCutoffSafety {
+    finalized_unix_seconds: u64,
+}
+
+#[async_trait]
+impl FirstLockRecoverySafetyPort for FinalityBeforeCutoffSafety {
+    async fn observe(
+        &self,
+        agreement: &BtcAgreementV1,
+        _read_ordinal: u8,
+    ) -> Result<FirstLockRecoverySafetyObservation, ActorCommandError> {
+        let cutoff = agreement
+            .body()
+            .recovery_plan()
+            .maker_second_lock_cutoff_unix_seconds();
+        note_wait(
+            ActorWaitV1::new("lez_finality_past_cutoff", "lez")
+                .until_time(cutoff, Some(self.finalized_unix_seconds)),
+        );
+        Ok(FirstLockRecoverySafetyObservation::Uncertain {
+            maker_chain: agreement.coordinator().funded_chain(Participant::Maker),
+        })
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_refund_held_for_lez_finality_reports_the_cutoff_and_the_finalized_time() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&fixture).await;
+    let cutoff = fixture
+        .agreement
+        .body()
+        .recovery_plan()
+        .maker_second_lock_cutoff_unix_seconds();
+    let safety = FinalityBeforeCutoffSafety {
+        finalized_unix_seconds: cutoff - 420,
+    };
+    let refund = FixedRefundObserver::new(ready_refund_observation(
+        &fixture.agreement,
+        RefundTransition::FirstLockRecovery,
+    ));
+    let output = Box::pin(with_reported_wait(
+        &fixture.config,
+        drive_first_lock_refund_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &safety,
+            &refund,
+        ),
+    ))
+    .await
+    .expect("a held refund only observes");
+    // The decision is unchanged: nothing projected, no refund observed.
+    assert_eq!(output.revision, 1);
+    assert_eq!(refund.transitions(), Vec::new());
+    let wait = output.wait().expect("the hold is named").clone();
+    assert_eq!(wait.kind, "lez_finality_past_cutoff");
+    assert_eq!(wait.chain, "lez");
+    assert_eq!(wait.until_unix_seconds, Some(cutoff));
+    assert_eq!(wait.chain_unix_seconds, Some(cutoff - 420));
+    let value = output_json(ActorCommandOutputV1::Effect(output));
+    assert_eq!(value["outcome"], "awaiting_observation");
+    assert_eq!(value["wait"]["kind"], "lez_finality_past_cutoff");
+    assert_eq!(value["wait"]["until_unix_seconds"], cutoff);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_noted_wait_is_dropped_once_the_step_projects_and_a_bare_output_has_no_wait_key() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Maker);
+    activate_and_project_both_locks(&fixture).await;
+    let ready = FixedRefundObserver::new(ready_refund_observation(
+        &fixture.agreement,
+        RefundTransition::MakerLeg,
+    ));
+    let projected = Box::pin(with_reported_wait(&fixture.config, async {
+        note_wait(ActorWaitV1::new("bitcoin_refund_maturity", "bitcoin").until_height(9, Some(8)));
+        Box::pin(drive_refund_with_observer(
+            &fixture.config,
+            fixture.agreement.clone(),
+            fixture.agreement_wire.clone(),
+            &ready,
+        ))
+        .await
+    }))
+    .await
+    .expect("the refund projects");
+    assert!(projected.changed_durable_state());
+    assert_eq!(projected.wait(), None);
+    let value = output_json(ActorCommandOutputV1::Effect(projected));
+    assert!(value.get("wait").is_none(), "{value}");
+
+    // Outside the reporting scope a note is dropped and nothing is attached.
+    note_wait(ActorWaitV1::new("bitcoin_refund_maturity", "bitcoin"));
+    let pending = FixedRefundObserver::new(ActorRefundObservation::Pending {
+        chain: Chain::Bitcoin,
+    });
+    let bare = drive_refund_with_observer(
+        &fixture.config,
+        fixture.agreement.clone(),
+        fixture.agreement_wire.clone(),
+        &pending,
+    )
+    .await
+    .expect("pending");
+    assert_eq!(bare.wait(), None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn without_a_noted_wait_the_takers_wait_for_the_makers_lock_names_the_cutoff() {
+    freeze_wall_clock_before_maker_cutoff();
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsForeign, ActorRole::Taker);
+    activate_and_project_taker_lock(&fixture).await;
+    let (_, status) = open_projection(
+        &fixture.config,
+        &fixture.agreement,
+        fixture.agreement_wire.clone(),
+    )
+    .expect("projection");
+    let maker_chain = fixture
+        .agreement
+        .coordinator()
+        .funded_chain(Participant::Maker);
+    let output = with_reported_wait(&fixture.config, async {
+        Ok(effect_output(
+            &fixture.config,
+            ActorEffectCommandV1::Drive,
+            ActorEffectOutcomeV1::AwaitingObservation {
+                chain: maker_chain.into(),
+            },
+            &status,
+        ))
+    })
+    .await
+    .expect("awaiting");
+    assert_eq!(
+        output.next_action,
+        ActorNextActionV1::ObserveMakerSecondLockOrRecoverTakerLeg
+    );
+    let wait = output.wait().expect("phase wait").clone();
+    assert_eq!(wait.kind, "maker_lock");
+    assert_eq!(wait.chain, chain_label(maker_chain));
+    assert_eq!(
+        wait.until_unix_seconds,
+        Some(FIXTURE_MAKER_CUTOFF_UNIX_SECONDS)
+    );
+    assert_eq!(wait.chain_unix_seconds, None);
+
+    // A projected step is reported as it was, with no phase wait.
+    let projected = with_reported_wait(&fixture.config, async {
+        Ok(effect_output(
+            &fixture.config,
+            ActorEffectCommandV1::Drive,
+            ActorEffectOutcomeV1::NotYetComposed {
+                durable_revision: 1,
+            },
+            &status,
+        ))
+    })
+    .await
+    .expect("not yet composed");
+    assert_eq!(projected.wait(), None);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_lez_refund_before_its_refund_time_notes_the_refund_time_and_the_finalized_time() {
+    let fixture = ActorFixture::for_direction(SwapDirection::TakerSellsLez, ActorRole::Taker);
+    let refund_at_ms = fixture.agreement.lez_terms().refund_at_ms();
+    let noted = NOTED_WAIT
+        .scope(std::cell::RefCell::new(None), async {
+            note_lez_refund_time_wait(&fixture.agreement, refund_at_ms - 61_000);
+            NOTED_WAIT.with(|noted| noted.borrow_mut().take())
+        })
+        .await
+        .expect("noted before the refund time");
+    assert_eq!(noted.kind, "lez_finality_past_refund_time");
+    assert_eq!(noted.until_unix_seconds, Some(refund_at_ms / 1_000));
+    assert_eq!(
+        noted.chain_unix_seconds,
+        Some((refund_at_ms - 61_000) / 1_000)
+    );
+    let after = NOTED_WAIT
+        .scope(std::cell::RefCell::new(None), async {
+            note_lez_refund_time_wait(&fixture.agreement, refund_at_ms);
+            NOTED_WAIT.with(|noted| noted.borrow_mut().take())
+        })
+        .await;
+    assert_eq!(after, None, "nothing is held once finality passed it");
+}
+
+#[test]
+fn every_actor_error_has_a_distinct_failure_class_in_the_shared_alphabet() {
+    let errors = [
+        ActorCommandError::ConfigurationUnavailable,
+        ActorCommandError::AgreementUnavailable,
+        ActorCommandError::AgreementBindingInvalid,
+        ActorCommandError::StateUnavailable,
+        ActorCommandError::NotActivated,
+        ActorCommandError::ActivationMaterialUnavailable,
+        ActorCommandError::ObservationUnavailable,
+        ActorCommandError::ProjectionUnavailable,
+    ];
+    let classes: HashSet<_> = errors.iter().map(|error| error.failure_class()).collect();
+    assert_eq!(classes.len(), errors.len());
+    assert!(
+        classes
+            .iter()
+            .all(|class| lez_actor_supervision::validate_failure_class(class))
+    );
 }

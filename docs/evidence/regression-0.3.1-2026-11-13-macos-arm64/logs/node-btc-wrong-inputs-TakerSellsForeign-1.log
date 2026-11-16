@@ -1,0 +1,25 @@
+[15:01:35] === wrong-inputs (stamp 1794578495)
+[15:01:35] preflight: indexer historical reads
+[15:01:35]   indexer serves historical reads at the tip (3234)
+[15:01:35] preflight: LEZ finality check waived by request
+[15:01:36]   Maker published offer-e2e-1794578495
+[15:01:36]   rejected as expected: reusing a publish request id for another offer (maker offer request ID conflicts with its durable mutation)
+[15:01:36]   rejected as expected: withdrawing with a stale revision (stale maker offer revision: expected 6, actual 1)
+[15:01:36]   rejected as expected: taking with a mismatched envelope hash (initiation_selection_mismatch)
+[15:01:36]   rejected as expected: taking an off-preset amount (initiation_selection_mismatch)
+[15:01:36]   rejected as expected: taking with a wrong LEZ quote (initiation_selection_mismatch)
+[15:01:36]   rejected as expected: locking an unknown swap (lock_swap_unknown)
+[15:01:36]   rejected as expected: claiming an unknown swap (swap_not_found)
+[15:01:37]   Taker took offer-e2e-1794578495: swap 8845fd0c90e7 (not_activated)
+[15:01:38]   rejected as expected: claiming before the Maker funded (taker_action_unavailable)
+[15:01:38]   rejected as expected: taking the consumed lot again (initiation_selection_mismatch)
+[15:01:38]   consumed lot left Delivery and cannot be taken again
+[15:01:38]   Taker locked bitcoin: 387c8a343322 (replay=False)
+[15:01:38]   [0 s] waiting for the Taker's 8845fd0c90e7 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 3224, tip 3227 (3 unfinalized) [heartbeat]
+[15:01:44]   [6 s] waiting for the Taker's 8845fd0c90e7 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 3241, tip 3243 (2 unfinalized) [heartbeat]
+[15:02:16]   [38 s] waiting for the Taker's 8845fd0c90e7 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 3254, tip 3257 (3 unfinalized) [heartbeat]
+[15:02:17]   Taker claimed LEZ (replay=False)
+[15:02:17]   [0 s] waiting for the Taker's 8845fd0c90e7 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 3254, tip 3257 (3 unfinalized) [heartbeat]
+[15:02:39]   [21 s] waiting for the Taker's 8845fd0c90e7 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 3266, tip 3271 (5 unfinalized) [heartbeat]
+[15:02:39]   both Nodes report 8845fd0c90e7 completed
+[15:02:39] === wrong-inputs: passed in 64s

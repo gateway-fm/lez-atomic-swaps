@@ -1,0 +1,6 @@
+28753 28406 $LOGOSCTL/bin/logos_host --name lez_core --path $WORK/session/modules/lez_core/lez_core_plugin.dylib --instance-persistence-path $WORK/session/data/lez_core/9afb402a55ea --token-source stdin
+28757 28406 $LOGOSCTL/bin/logos_host --name lez_swap_node --path $WORK/session/modules/lez_swap_node/lez_swap_node_plugin.dylib --instance-persistence-path $WORK/session/data/lez_swap_node/3b99cd58240a --token-source std
+29801 28757 $WORK/session/modules/lez_taker_node/bin/lez-taker-node --socket $WORK/home/run/taker/node.sock --ready-file $WORK/home/run/taker/ready --role-config $WORK/home/taker/role.json --observer-sweep-seconds 3 --le
+29802 29801 $LOGOSCTL/bin/logos_host --name lez_swap_node --path $WORK/session/modules/lez_swap_node/lez_swap_node_plugin.dylib --instance-persistence-path $WORK/session/data/lez_swap_node/3b99cd58240a --token-source std
+30170 28757 $WORK/session/modules/lez_maker_node/bin/lez-maker-node --socket $WORK/home/run/maker/node.sock --database $WORK/home/maker/maker.sqlite3 --ready-file $WORK/home/run/maker/ready --delivery-directory $WORK/hom
+30171 30170 $LOGOSCTL/bin/logos_host --name lez_swap_node --path $WORK/session/modules/lez_swap_node/lez_swap_node_plugin.dylib --instance-persistence-path $WORK/session/data/lez_swap_node/3b99cd58240a --token-source std

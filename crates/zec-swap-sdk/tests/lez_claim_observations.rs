@@ -45,6 +45,18 @@ fn canonical_snapshot_constructs_evidence_only_after_every_node_fact_is_bound() 
 }
 
 #[test]
+fn a_tip_that_only_grew_during_the_observation_is_accepted_at_the_pinned_depth() {
+    let agreement = agreement();
+    let evidence = RevealingClaimEvidenceV1::from_lez_claim_snapshot(
+        &agreement,
+        claim_snapshot(&agreement, Mutation::TipAdvanced),
+    )
+    .expect("a chain that only grew past the pinned block is one consistent view");
+    // Depth counts from the pinned tip (101), not the later one (103).
+    assert_eq!(evidence.confirmations(), 2);
+}
+
+#[test]
 fn prepared_observation_requires_the_exact_durable_submission_identity() {
     let agreement = agreement();
     let prepared = PreparedClaimSubmissionV1::new(
@@ -110,7 +122,18 @@ fn negative_matrix_rejects_each_independent_node_or_agreement_deviation() {
             Mutation::Genesis,
             chain(LezObservationError::ChainIdentityMismatch),
         ),
-        (Mutation::TipDrift, chain(LezObservationError::UnstableTip)),
+        (
+            Mutation::PinnedBlockReplaced,
+            chain(LezObservationError::UnstableTip),
+        ),
+        (
+            Mutation::TipWentBack,
+            chain(LezObservationError::UnstableTip),
+        ),
+        (
+            Mutation::InclusionAbovePinnedTip,
+            chain(LezObservationError::NoncanonicalInclusion),
+        ),
         (
             Mutation::InclusionBlock,
             chain(LezObservationError::NoncanonicalInclusion),
@@ -216,7 +239,10 @@ enum Mutation {
     Environment,
     Channel,
     Genesis,
-    TipDrift,
+    TipAdvanced,
+    PinnedBlockReplaced,
+    TipWentBack,
+    InclusionAbovePinnedTip,
     InclusionBlock,
     InclusionAboveTip,
     CanonicalHash,
@@ -359,10 +385,24 @@ fn claim_snapshot(agreement: &ZecAgreementV1, mutation: Mutation) -> LezClaimNod
             LezEscrowStatusV1::Claimed
         },
     );
-    let tip = if matches!(mutation, Mutation::TipDrift) {
-        LezStableTipV1::new([0x51; 32], tip_height, [0x52; 32], tip_height + 1)
-    } else {
-        LezStableTipV1::new([0x51; 32], tip_height, [0x51; 32], tip_height)
+    let tip = match mutation {
+        // The chain grew while the facts were read: a later tip the sidecar
+        // has checked still holds the pinned block at the pinned height.
+        Mutation::TipAdvanced => {
+            LezStableTipV1::new([0x51; 32], tip_height, [0x52; 32], tip_height + 2)
+        }
+        Mutation::PinnedBlockReplaced => {
+            LezStableTipV1::new([0x51; 32], tip_height, [0x52; 32], tip_height)
+        }
+        Mutation::TipWentBack => {
+            LezStableTipV1::new([0x51; 32], tip_height, [0x50; 32], tip_height - 1)
+        }
+        // The inclusion is below the later tip but above the pinned one the
+        // transaction was searched under.
+        Mutation::InclusionAbovePinnedTip => {
+            LezStableTipV1::new([0x51; 32], 99, [0x52; 32], tip_height)
+        }
+        _ => LezStableTipV1::new([0x51; 32], tip_height, [0x51; 32], tip_height),
     };
     LezClaimNodeSnapshotV1::new(
         if matches!(mutation, Mutation::Environment) {

@@ -1,0 +1,273 @@
+[21:48:28]   Maker published offer-e2e-r103held214828
+[21:48:30]   Taker took offer-e2e-r103held214828: swap e52c31e1357b (not_activated)
+[21:48:30] swap e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc; Maker lock cutoff 1794433948 (21:52:28 local)
+[21:48:30]   Taker locked bitcoin: 7888a31bdb2e (replay=False)
+[21:48:30] $ docker stop lez-sequencer   (right after the Taker's Bitcoin lock: no Maker LEZ lock, LEZ finality frozen)
+[21:48:32]   waiting for the cutoff: taker awaiting_first_lock, 276 s left
+[21:48:52]   waiting for the cutoff: taker awaiting_second_lock, 256 s left
+[21:49:13]   waiting for the cutoff: taker awaiting_second_lock, 235 s left
+[21:49:33]   waiting for the cutoff: taker awaiting_second_lock, 215 s left
+[21:49:53]   waiting for the cutoff: taker awaiting_second_lock, 195 s left
+[21:50:14]   waiting for the cutoff: taker awaiting_second_lock, 174 s left
+[21:50:34]   waiting for the cutoff: taker awaiting_second_lock, 154 s left
+[21:50:55]   waiting for the cutoff: taker awaiting_second_lock, 133 s left
+[21:51:15]   waiting for the cutoff: taker awaiting_second_lock, 113 s left
+[21:51:35]   waiting for the cutoff: taker awaiting_second_lock, 93 s left
+[21:51:56]   waiting for the cutoff: taker awaiting_second_lock, 72 s left
+[21:52:16]   waiting for the cutoff: taker awaiting_second_lock, 52 s left
+[21:52:36]   waiting for the cutoff: taker awaiting_second_lock, 32 s left
+[21:52:57]   waiting for the cutoff: taker awaiting_second_lock, 11 s left
+--- taker view past the cutoff [2026-11-11T21:53:17Z]
+{
+ "available_action": "refund",
+ "last_outcome": {
+  "at_unix_seconds": 1794433996,
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "step": "drive"
+ },
+ "progress_generation": 1,
+ "state": "awaiting_second_lock"
+}
+--- $ taker_swap_refund_v1 [2026-11-11T21:53:17Z]
+{
+ "id": 1,
+ "jsonrpc": "2.0",
+ "result": {
+  "action": "refund",
+  "requested_after_generation": 1,
+  "schema_version": 1,
+  "swap_id": "e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc",
+  "was_replay": false
+ }
+}
+--- taker_swap_monitor_v1 (state, available_action, last_failure_class, last_outcome, terms) [2026-11-11T21:53:43Z]
+{
+ "available_action": null,
+ "last_failure_class": null,
+ "last_outcome": {
+  "at_unix_seconds": 1794434022,
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "step": "recover"
+ },
+ "progress_generation": 1,
+ "state": "refund_in_progress",
+ "terms": {
+  "bitcoin_refund_height": 60897,
+  "bitcoin_value_sat": 1000000,
+  "earlier_refund_latest_unix_seconds": 1794434128,
+  "later_refund_earliest_unix_seconds": 1794434548,
+  "lez_amount": 1000,
+  "maker_second_lock_cutoff_unix_seconds": 1794433948,
+  "required_bitcoin_confirmations": 1
+ }
+}
+--- taker_swap_list_v1 row last_outcome [2026-11-11T21:53:43Z]
+{
+ "at_unix_seconds": 1794434022,
+ "outcome": "awaiting_observation",
+ "revision": 1,
+ "step": "recover"
+}
+--- maker_actor_monitor_v1 [2026-11-11T21:53:43Z]
+{
+ "attempt_count": 48,
+ "error": null,
+ "last_failure_class": null,
+ "last_outcome": {
+  "at_unix_seconds": 1794434020,
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "step": "recover"
+ },
+ "progress": {
+  "observation": {
+   "next_action": "recover_taker_leg",
+   "phase": "taker_lock_confirmed",
+   "revision": 1,
+   "state": "active"
+  },
+  "observed_at": 1794434013,
+  "source_generation": 47
+ },
+ "schedule_state": "leased"
+}
+ROW 2026-11-11T21:53:47.875Z taker [{"ui_swap_id":"e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc","state":"refunding","state_label":"Refund submitted","progress_detail":"Your Node follows the refund; it lands once its timelock allows","can_act":false,"action_label":null}]
+ROW 2026-11-11T21:53:52.185Z maker [{"ui_swap_id":"e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc","state":"recovering","state_label":"Lock window missed","progress_detail":"Your Node could not lock in time; it recovers once the Taker's refund is final","can_act":false,"action_label":null}]
+--- taker_swap_monitor_v1 (state, available_action, last_failure_class, last_outcome, terms) [2026-11-11T21:54:17Z]
+{
+ "available_action": null,
+ "last_failure_class": null,
+ "last_outcome": {
+  "at_unix_seconds": 1794434054,
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "step": "recover"
+ },
+ "progress_generation": 1,
+ "state": "refund_in_progress",
+ "terms": {
+  "bitcoin_refund_height": 60897,
+  "bitcoin_value_sat": 1000000,
+  "earlier_refund_latest_unix_seconds": 1794434128,
+  "later_refund_earliest_unix_seconds": 1794434548,
+  "lez_amount": 1000,
+  "maker_second_lock_cutoff_unix_seconds": 1794433948,
+  "required_bitcoin_confirmations": 1
+ }
+}
+--- taker_swap_list_v1 row last_outcome [2026-11-11T21:54:17Z]
+{
+ "at_unix_seconds": 1794434054,
+ "outcome": "awaiting_observation",
+ "revision": 1,
+ "step": "recover"
+}
+--- maker_actor_monitor_v1 [2026-11-11T21:54:17Z]
+{
+ "attempt_count": 53,
+ "error": null,
+ "last_failure_class": null,
+ "last_outcome": {
+  "at_unix_seconds": 1794434052,
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "step": "recover"
+ },
+ "progress": {
+  "observation": {
+   "next_action": "recover_taker_leg",
+   "phase": "taker_lock_confirmed",
+   "revision": 1,
+   "state": "active"
+  },
+  "observed_at": 1794434045,
+  "source_generation": 52
+ },
+ "schedule_state": "leased"
+}
+ROW 2026-11-11T21:54:22.252Z taker [{"ui_swap_id":"e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc","state":"refunding","state_label":"Refund submitted","progress_detail":"Your Node follows the refund; it lands once its timelock allows","can_act":false,"action_label":null}]
+ROW 2026-11-11T21:54:26.612Z maker [{"ui_swap_id":"e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc","state":"recovering","state_label":"Lock window missed","progress_detail":"Your Node could not lock in time; it recovers once the Taker's refund is final","can_act":false,"action_label":null}]
+--- taker_swap_monitor_v1 (state, available_action, last_failure_class, last_outcome, terms) [2026-11-11T21:54:51Z]
+{
+ "available_action": null,
+ "last_failure_class": null,
+ "last_outcome": {
+  "at_unix_seconds": 1794434090,
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "step": "recover"
+ },
+ "progress_generation": 1,
+ "state": "refund_in_progress",
+ "terms": {
+  "bitcoin_refund_height": 60897,
+  "bitcoin_value_sat": 1000000,
+  "earlier_refund_latest_unix_seconds": 1794434128,
+  "later_refund_earliest_unix_seconds": 1794434548,
+  "lez_amount": 1000,
+  "maker_second_lock_cutoff_unix_seconds": 1794433948,
+  "required_bitcoin_confirmations": 1
+ }
+}
+--- taker_swap_list_v1 row last_outcome [2026-11-11T21:54:52Z]
+{
+ "at_unix_seconds": 1794434090,
+ "outcome": "awaiting_observation",
+ "revision": 1,
+ "step": "recover"
+}
+--- maker_actor_monitor_v1 [2026-11-11T21:54:52Z]
+{
+ "attempt_count": 58,
+ "error": null,
+ "last_failure_class": null,
+ "last_outcome": {
+  "at_unix_seconds": 1794434088,
+  "outcome": "awaiting_observation",
+  "revision": 1,
+  "step": "recover"
+ },
+ "progress": {
+  "observation": {
+   "next_action": "recover_taker_leg",
+   "phase": "taker_lock_confirmed",
+   "revision": 1,
+   "state": "active"
+  },
+  "observed_at": 1794434082,
+  "source_generation": 57
+ },
+ "schedule_state": "leased"
+}
+ROW 2026-11-11T21:54:56.626Z taker [{"ui_swap_id":"e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc","state":"refunding","state_label":"Refund submitted","progress_detail":"Your Node follows the refund; it lands once its timelock allows","can_act":false,"action_label":null}]
+ROW 2026-11-11T21:55:00.986Z maker [{"ui_swap_id":"e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc","state":"recovering","state_label":"Lock window missed","progress_detail":"Your Node could not lock in time; it recovers once the Taker's refund is final","can_act":false,"action_label":null}]
+[21:55:01] $ docker start lez-sequencer
+[21:55:01]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434100, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:55:17]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434116, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:55:32]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434129, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:55:47]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434146, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:56:03]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434163, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:56:18]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434176, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:56:34]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434194, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:56:49]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434208, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:57:04]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434222, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:57:20]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434240, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:57:35]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434255, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:57:51]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434269, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:58:06]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434285, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:58:22]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434300, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:58:37]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434316, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:58:52]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434332, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:59:08]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434347, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:59:24]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434363, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:59:41]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434380, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[21:59:57]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434397, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:00:13]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434410, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:00:28]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434427, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:00:44]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434441, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:00:59]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434459, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:01:15]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434474, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:01:30]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434490, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:01:46]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434505, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:02:03]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434523, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+[22:02:19]   taker refund_in_progress | last_outcome {"at_unix_seconds": 1794434539, "step": "recover", "outcome": "awaiting_observation", "revision": 1}
+--- taker_swap_monitor_v1 (state, available_action, last_failure_class, last_outcome, terms) [2026-11-11T22:02:35Z]
+{
+ "available_action": null,
+ "last_failure_class": null,
+ "last_outcome": null,
+ "progress_generation": 2,
+ "state": "refunded",
+ "terms": {
+  "bitcoin_refund_height": 60897,
+  "bitcoin_value_sat": 1000000,
+  "earlier_refund_latest_unix_seconds": 1794434128,
+  "later_refund_earliest_unix_seconds": 1794434548,
+  "lez_amount": 1000,
+  "maker_second_lock_cutoff_unix_seconds": 1794433948,
+  "required_bitcoin_confirmations": 1
+ }
+}
+--- taker_swap_list_v1 row last_outcome [2026-11-11T22:02:35Z]
+null
+--- maker_actor_monitor_v1 [2026-11-11T22:02:35Z]
+{
+ "attempt_count": 117,
+ "error": null,
+ "last_failure_class": null,
+ "last_outcome": null,
+ "progress": {
+  "observation": {
+   "next_action": "complete",
+   "phase": "refunded",
+   "revision": 2,
+   "state": "active"
+  },
+  "observed_at": 1794434536,
+  "source_generation": 117
+ },
+ "schedule_state": "terminal"
+}
+ROW 2026-11-11T22:02:40.388Z taker [{"ui_swap_id":"e52c31e1357b1c15928418129850cce443066fa0767f060bb5e10e922573e1bc","state":"refunded","state_label":"Refunded","progress_detail":"Your Bitcoin came back","can_act":false,"action_label":null}]

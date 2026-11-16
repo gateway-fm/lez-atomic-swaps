@@ -1,0 +1,10 @@
+lez-bitcoin-core ghcr.io/gateway-fm/lez-atomic-swaps/lez-bitcoin-core:sha-b6b1c273da53
+lez-btc-explorer ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-explorer:sha-b6b1c273da53
+lez-btc-miner ghcr.io/gateway-fm/lez-atomic-swaps/lez-btc-miner:sha-b6b1c273da53
+lez-heartbeat ghcr.io/gateway-fm/lez-atomic-swaps/lez-wallet-module:sha-b6b1c273da53
+lez-lez-explorer ghcr.io/gateway-fm/lez-atomic-swaps/lez-explorer:sha-b6b1c273da53
+lez-maker-node ghcr.io/gateway-fm/lez-atomic-swaps/lez-maker-node:sha-b6b1c273da53
+lez-network ghcr.io/gateway-fm/lez-atomic-swaps/lez-network-module:sha-b6b1c273da53
+lez-sequencer ghcr.io/gateway-fm/lez-atomic-swaps/lez-services:sha-b6b1c273da53
+lez-taker-node ghcr.io/gateway-fm/lez-atomic-swaps/lez-taker-node:sha-b6b1c273da53
+lez-zebra ghcr.io/gateway-fm/lez-atomic-swaps/lez-zebra:sha-b6b1c273da53

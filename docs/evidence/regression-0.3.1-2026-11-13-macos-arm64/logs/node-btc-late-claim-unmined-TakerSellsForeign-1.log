@@ -1,0 +1,27 @@
+[13:54:44] === late-claim-unmined (stamp 179457448402)
+[13:54:44] preflight: indexer historical reads
+[13:54:44]   indexer serves historical reads at the tip (223)
+[13:54:44] preflight: LEZ finality check waived by request
+[13:54:45]   Maker published offer-e2e-179457448402
+[13:54:46]   Taker took offer-e2e-179457448402: swap 40a3cdbac212 (not_activated)
+[13:54:47]   Taker locked bitcoin: 690f5841cd6f (replay=False)
+[13:54:47]   [0 s] waiting for the Taker's 40a3cdbac212 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 210, tip 220 (10 unfinalized) [heartbeat]
+[13:54:50]   [3 s] waiting for the Taker's 40a3cdbac212 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker leased | LEZ finalized 210, tip 220 (10 unfinalized) [heartbeat]
+[13:55:21]   [34 s] waiting for the Taker's 40a3cdbac212 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 249, tip 252 (3 unfinalized) [heartbeat]
+[13:55:21]   cutting the Taker's sequencer forwarder so the claim it sends is never included
+[13:55:23]   claim request admitted: {"code": -32010, "message": "Taker dependency unavailable", "data": {"category": "taker_action_execution_unavailable"}}; taker claim_in_progress, claim effect {"revision": 0, "kind": "revealing_claim", "chain": "Lez", "transaction_id": "614e8d190fb84725046d0332c669522890bf7178ac
+[13:55:23]   stopping the Taker Node
+[13:55:23]   waiting 412s for the claim window to close with the claim never included
+[13:55:23]   [0 s] waiting for for the claim window to close with the claim never included: maker both_legs_locked, claim 614e8d190fb8 included: None | LEZ finalized 249, tip 252 (3 unfinalized) [heartbeat]
+[13:56:24]   [60 s] waiting for for the claim window to close with the claim never included: maker both_legs_locked, claim 614e8d190fb8 included: None | LEZ finalized 294, tip 300 (6 unfinalized) [heartbeat]
+[13:57:24]   [120 s] waiting for for the claim window to close with the claim never included: maker both_legs_locked, claim 614e8d190fb8 included: None | LEZ finalized 331, tip 334 (3 unfinalized) [heartbeat]
+[13:58:24]   [180 s] waiting for for the claim window to close with the claim never included: maker both_legs_locked, claim 614e8d190fb8 included: None | LEZ finalized 379, tip 385 (6 unfinalized) [heartbeat]
+[13:59:24]   [240 s] waiting for for the claim window to close with the claim never included: maker both_legs_locked, claim 614e8d190fb8 included: None | LEZ finalized 434, tip 436 (2 unfinalized) [heartbeat]
+[14:00:25]   [301 s] waiting for for the claim window to close with the claim never included: maker both_legs_locked, claim 614e8d190fb8 included: None | LEZ finalized 482, tip 487 (5 unfinalized) [heartbeat]
+[14:01:25]   [361 s] waiting for for the claim window to close with the claim never included: maker both_legs_locked, claim 614e8d190fb8 included: None | LEZ finalized 525, tip 538 (13 unfinalized) [heartbeat]
+[14:02:16]   the claim window closed with the claim never included; the Maker is at maker_leg_refunded
+[14:02:16]   the Maker's refund asked for: {"schema_version": 1, "swap_id": "40a3cdbac212bf58853244ef7206be62c8ea06630f4ed4e338bfaf3b00a67915", "action": "refund", "requested_after_generation": 104, "was_replay": false}
+[14:02:23]   [0 s] waiting for both Nodes to settle 40a3cdbac212: taker refund_available offering refund | maker maker_leg_refunded (schedule leased) | LEZ finalized 579, tip 589 (10 unfinalized) [heartbeat]
+[14:02:29]   balances: maker BTC +0 sat, LEZ +0; taker BTC -4100 sat, LEZ +0
+[14:02:29]   settled refunded: both Nodes and both chains agree
+[14:02:29] === late-claim-unmined: passed in 465s

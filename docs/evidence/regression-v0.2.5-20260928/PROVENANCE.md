@@ -71,4 +71,24 @@ abandoned runs earlier in this release.
 
 ## Chain recreations during the run
 
-<!-- filled in as the run proceeds -->
+Filled in on 2026-11-11 (#103 item 12) from the one log of this run that is committed,
+`RESULTS.txt` beside this file, and from nothing else. Its times carry no date or time
+zone; the run is of 2026-09-28. Four tries were stopped as a stalled chain and the LEZ
+chain was recreated four times; each test then passed on its second try:
+
+| Test | Try 1 started | Called | Chain recreated | Try 2 started | Try 2 passed |
+|---|---|---|---|---|---|
+| node, TakerSellsLez, `offline-after-lock` | 10:35:26 | "the chain stalled" | 11:10:50 | 11:19:21 | 11:25:19 |
+| node, TakerSellsLez, `refund-then-maker-lock` | 12:31:41 | "the chain stalled" | 13:35:11 | 13:40:49 | 14:12:12 |
+| desk, TakerSellsForeign, `happy` | 14:21:41 | "the chain stalled during the scenario" | 14:54:21 ("finality frozen") | 14:56:38 | 15:00:27 |
+| desk, TakerSellsLez, `restart-maker` | 16:41:42 | "the chain stalled during the scenario" | 17:16:53 ("finality frozen") | 17:19:26 | 17:25:01 |
+
+What the committed log does **not** hold, and so cannot be stated here: the finalized
+height and the sequencer's tip at any point of the run (no reading of either was logged,
+before, during or after a stalled try), the rule that classified a try as a stalled chain
+(the runner of this run was not committed; `deploy/scripts/regress.sh`, committed later,
+is a different runner), why a stalled try ran between 32 and 64 minutes before the chain was
+recreated, and what each stopped try left behind (the swap a stopped try had open is not
+recorded). The finality evidence Logos asked for exists only from `regress.sh` on: each
+try's start and verdict line carry `LEZ finalized N, tip M`, `chain.tsv` holds a reading
+every 30 s, and `node-e2e.py`'s waits log both at least once a minute.

@@ -1,0 +1,5 @@
+count	method (rpc-delay-proxy.py log, both reads of the window)
+283	getBlockByHash
+282	getBlockById
+5	getBlocks
+2	getLastFinalizedBlockId

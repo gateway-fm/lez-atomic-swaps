@@ -1,0 +1,13 @@
+[01:03:24] regression run: 3 tests at 9fba9da9 (tree dirty:        1), results in <checkout>/deploy/runtime/regress/rerun-b1
+[01:03:24] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[01:03:24] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[01:03:49]     [lane 1] ui:zec:zec-survivor:TakerSellsForeign (try 1)
+[01:03:49]     [lane 2] ui:zec:zec-concurrent:TakerSellsLez (try 1)
+[01:03:49]     [lane 3] ui:zec:zec-concurrent:TakerSellsForeign (try 1)
+[01:08:00] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 245 s
+[01:08:12] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 255 s
+[01:30:55] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): FAILED in 1618 s
+         [02:30:53] FAILED: the Maker did not complete zec-devnet-s on its own within 1500s
+      [01:30:53] FAILED: zec-step maker-completes
+[01:30:55] regression run: 2 of 3 passed in 27 min, 0 new chains, 0 profile switches,        0 frozen tries
+[01:30:55]   not passed: ui:zec:zec-survivor:TakerSellsForeign

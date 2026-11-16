@@ -1,4 +1,7 @@
 #![cfg(feature = "sessions")]
+// XMR effect children take write-sealed memfd inputs; they refuse to run on
+// macOS, where XMR effects are not ported.
+#![cfg(target_os = "linux")]
 
 use std::{
     ffi::CString,

@@ -1,0 +1,12 @@
+btc-happy exit 0
+btc-restart-taker exit 0
+btc-restart-maker exit 0
+btc-survivor exit 0
+btc-taker-refund exit 0
+btc-maker-refund exit 0
+zec-happy-lez exit 0
+zec-happy-foreign exit 0
+zec-restart-taker exit 0
+zec-restart-maker exit 0
+zec-survivor exit 0
+zec-maker-refund exit 0

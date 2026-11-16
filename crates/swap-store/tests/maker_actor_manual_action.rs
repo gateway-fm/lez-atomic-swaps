@@ -265,6 +265,129 @@ fn request_during_a_live_lease_waits_for_the_next_generation() {
     );
 }
 
+fn manual_action_times(database: &Path, id: &SwapId) -> (i64, i64) {
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .query_row(
+            "SELECT created_at, updated_at FROM maker_actor_manual_actions
+              WHERE swap_id = ?1 ORDER BY sequence DESC LIMIT 1",
+            [id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+}
+
+/// The supervisor reads the clock before an attempt and resolves it with
+/// that reading. A request that arrives while the attempt runs is newer, and
+/// resolving must not write its `updated_at` below its `created_at`.
+#[test]
+fn request_during_a_lease_survives_resolution_with_the_attempts_older_clock() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let id = SwapId::new("zec-refund-during-attempt").unwrap();
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    register(&mut store, root.path(), id.as_str(), 13);
+    let attempt_now = 10;
+    let live = store
+        .claim_maker_actor(
+            &id,
+            MakerActorLeaseOwner::new([13; 16]).unwrap(),
+            attempt_now,
+        )
+        .unwrap()
+        .unwrap();
+    store
+        .queue_maker_actor_manual_action(
+            &RequestId::new("manual-refund-during-attempt").unwrap(),
+            &id,
+            MakerActorManualAction::Refund,
+            live.generation(),
+            attempt_now + 5,
+        )
+        .unwrap();
+
+    store
+        .resolve_maker_actor_attempt_with_progress(
+            &live,
+            MakerActorAttemptResolution::Terminal,
+            &MakerActorProgressObservationV1::active("refunded", 4, "complete").unwrap(),
+            attempt_now,
+        )
+        .expect("an older attempt clock must not violate the request's timestamps");
+
+    let action = store.maker_actor_manual_action(&id).unwrap().unwrap();
+    assert_eq!(action.state(), MakerActorManualActionState::Failed);
+    assert_eq!(manual_action_times(&database, &id), (15, 15));
+    assert_eq!(
+        store
+            .maker_actor_process(&id)
+            .unwrap()
+            .unwrap()
+            .schedule_state(),
+        MakerActorScheduleState::Terminal
+    );
+}
+
+/// A leased action keeps `updated_at >= created_at` on resolution and on
+/// abandoned-lease recovery even when the caller's clock reads earlier than
+/// the request, for example after a wall-clock step back.
+#[test]
+fn leased_action_writes_never_go_below_the_request_time() {
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let database = root.path().join("maker.sqlite3");
+    let id = SwapId::new("zec-refund-clock-step").unwrap();
+    let mut store = SqliteSwapStore::open(&database).unwrap();
+    register(&mut store, root.path(), id.as_str(), 14);
+    store
+        .queue_maker_actor_manual_action(
+            &RequestId::new("manual-refund-clock-step").unwrap(),
+            &id,
+            MakerActorManualAction::Refund,
+            0,
+            30,
+        )
+        .unwrap();
+    let old_lease = store
+        .claim_maker_actor(&id, MakerActorLeaseOwner::new([14; 16]).unwrap(), 30)
+        .unwrap()
+        .unwrap();
+    store
+        .claim_maker_actor_manual_action(&old_lease)
+        .unwrap()
+        .unwrap();
+    drop(store);
+
+    let mut reopened = SqliteSwapStore::open(&database).unwrap();
+    let held = ActorHeldLock::acquire(old_lease.record()).unwrap();
+    let recovered = reopened
+        .recover_abandoned_maker_actor(
+            &old_lease,
+            &held,
+            MakerActorLeaseOwner::new([15; 16]).unwrap(),
+            29,
+        )
+        .expect("recovery with an earlier clock must keep the action's timestamps valid");
+    assert_eq!(manual_action_times(&database, &id), (30, 30));
+    reopened
+        .resolve_maker_actor_attempt(
+            &recovered,
+            MakerActorAttemptResolution::ManualActionCompleted,
+            29,
+        )
+        .expect("resolution with an earlier clock must keep the action's timestamps valid");
+    assert_eq!(
+        reopened
+            .maker_actor_manual_action(&id)
+            .unwrap()
+            .unwrap()
+            .state(),
+        MakerActorManualActionState::Completed
+    );
+    assert_eq!(manual_action_times(&database, &id), (30, 30));
+}
+
 #[test]
 fn abandoned_action_transfers_only_with_the_exact_kernel_locked_lease() {
     let root = tempdir().unwrap();

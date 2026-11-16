@@ -1,0 +1,81 @@
+ Image lez-basecamp-ui:local Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.71kB done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.40kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:trixie-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/11] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 599.69kB 0.2s done
+#6 DONE 0.2s
+
+#7 [ 7/11] COPY assets/qt-mcp /opt/qt-mcp
+#7 CACHED
+
+#8 [ 9/11] COPY open-desks.mjs /opt/lez-open-desks.mjs
+#8 CACHED
+
+#9 [ 2/11] RUN apt-get update && apt-get install -y --no-install-recommends         xvfb fluxbox x11vnc xdotool x11-apps imagemagick procps fonts-dejavu-core ffmpeg         ca-certificates nodejs         libopengl0 libgl1 libegl1 libxkbcommon-x11-0 libvulkan1         libgles2 libgl1-mesa-dri     && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [ 8/11] COPY entrypoint.sh /entrypoint.sh
+#10 CACHED
+
+#11 [10/11] COPY signer-health.sh /usr/local/bin/lez-signer-health
+#11 CACHED
+
+#12 [ 4/11] COPY assets/maker-user /var/lez-assets/maker-user
+#12 CACHED
+
+#13 [ 5/11] COPY assets/taker-user /var/lez-assets/taker-user
+#13 CACHED
+
+#14 [ 3/11] COPY assets/bundle /opt/basecamp
+#14 CACHED
+
+#15 [ 6/11] COPY assets/network-user /var/lez-assets/network-user
+#15 CACHED
+
+#16 [11/11] RUN chmod 0755 /entrypoint.sh /opt/basecamp/bin/LogosBasecamp     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' maker > /usr/local/bin/lez-maker-ui     && printf '#!/bin/sh\nexec /opt/basecamp/bin/LogosBasecamp --user-dir "${BASECAMP_USER_DIR:-/var/lez/basecamp-%s-user}" "$@"\n' taker > /usr/local/bin/lez-taker-ui     && chmod 0755 /usr/local/bin/lez-maker-ui /usr/local/bin/lez-taker-ui     && mkdir -p /var/lez     && cp -a /var/lez-assets/maker-user /var/lez/basecamp-maker-user     && cp -a /var/lez-assets/taker-user /var/lez/basecamp-taker-user     && chown -R 4713:4713 /var/lez /var/lez-assets     && chmod -R u+rwX /var/lez /var/lez-assets
+#16 CACHED
+
+#17 exporting to image
+#17 exporting layers done
+#17 writing image sha256:2bd8c372985929e0ac40f3870b09c00ac55091c66486f2951cd74d9b3a6a60fb done
+#17 naming to docker.io/library/lez-basecamp-ui:local done
+#17 DONE 0.0s
+
+#18 resolving provenance for metadata file
+#18 DONE 0.0s
+ Image lez-basecamp-ui:local Built 
+time="2026-11-12T04:16:49+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:16:49+01:00" level=warning msg="volume \"lez-20260910222044-delivery-dir\" carries the compose label \"delivery_dir\" but does not match the compose file (using \"lez-delivery-dir\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:16:49+01:00" level=warning msg="volume \"lez-20260910222044-maker-socket\" carries the compose label \"maker_socket\" but does not match the compose file (using \"lez-maker-socket\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:16:49+01:00" level=warning msg="volume \"lez-20260910222044-maker-state\" carries the compose label \"maker_state\" but does not match the compose file (using \"lez-maker-state\"); it is left untouched — remove it manually if it is no longer needed"
+time="2026-11-12T04:16:49+01:00" level=warning msg="volume \"lez-20260910222044-taker-state\" carries the compose label \"taker_state\" but does not match the compose file (using \"lez-taker-state\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-maker-node Recreate 
+ Container lez-maker-node Recreated 
+ Container lez-taker-node Recreate 
+ Container lez-taker-node Recreated 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-maker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+ Container lez-maker-node Waiting 
+ Container lez-taker-node Waiting 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Healthy 

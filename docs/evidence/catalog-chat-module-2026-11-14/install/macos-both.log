@@ -1,0 +1,66 @@
+[12:04:12Z] $ logosctl --version
+logosctl version 0.3.2
+commit: 96e704df1a8140f069bbf6d5a1cdeab8886c6e41
+dependency commits:
+  logos-liblogos 00f19ef8e2ffd54e2cf97616a960cd19232ad4ba
+  logos-cpp-sdk 3bf5365c5412f89bbbf30e3f46237cd68cff0599
+  logos-protocol 9d59f5de526624b120d42f4c422a3d83c0b9d64f
+  logos-plugin-qt 2d36a08819b8df36094036d02d130aa4bd3a6132
+  logos-capability-module 1a1b8b5a1167931afbf41ebaafbe76034e6357a0
+  logos-modules-state-module c70da49aa56e48f867d50b9ff58679749f09dbcf
+  logos-package-manager-module 4c5fa074489f1977f57d6ae0b0538b379c4428d4
+  logos-package-downloader-module 6e8883b6918e086183f797d522c32032a55d2354
+  logos-storage-module 7548f41ae189917d58c37f0fb6d3a2700b99f59b
+[exit 0]
+
+[12:04:13Z] $ logosctl daemon start --detach
+Daemon started (pid 37983)
+Logs: <scratch>/sess/mac-both/logs/daemon.log
+[exit 0]
+
+[12:04:13Z] $ logosctl catalog add https://localhost:8473/logos-repo.json
+{"success":true}
+[exit 0]
+
+[12:04:13Z] $ logosctl catalog source http
+{"downloadSource":"http","success":true}
+[exit 0]
+
+[12:04:13Z] $ logosctl catalog refresh
+{"success":true}
+[exit 0]
+
+[12:04:14Z] $ logosctl package install lez_atomic_swap_maker -y
+{"affected_loaded":[],"changes":[{"action":"install","fromVersion":"","name":"delivery_module","optional":false,"repository":"https://raw.githubusercontent.com/logos-co/logos-modules-release/refs/heads/main/logos-repo.json","requiredFor":[],"rootHash":"0bccd85b4702c01a2c227df8aa55b3f5159a9fe009d57ae8bb8b3a7c20dfcbbe","toVersion":"0.2.1","topLevel":false},{"action":"install","fromVersion":"","name":"chat_module","optional":false,"repository":"https://localhost:8473/logos-repo.json","requiredFor":[],"rootHash":"9f626b2139bbc86d10f8b49cfdcd81600e7b963d7eb7885022942c03f5e13366","toVersion":"0.2.2-delivery.1","topLevel":false},{"action":"install","fromVersion":"","name":"lez_core","optional":false,"repository":"https://localhost:8473/logos-repo.json","requiredFor":[],"rootHash":"2bd34d17803a98b9c4e197a1c8d79b59f3a56b53d30fbe91f54cdfee8c00b287","toVersion":"0.4.1-sign.4","topLevel":false},{"action":"install","fromVersion":"","name":"lez_swap_node","optional":false,"repository":"https://localhost:8473/logos-repo.json","requiredFor":[],"rootHash":"6f8a10aa46171479b97344c78df735382be2c47494ee3be2b521bbde1b016d4e","toVersion":"0.3.1","topLevel":false},{"action":"install","fromVersion":"","name":"lez_maker_node","optional":false,"repository":"https://localhost:8473/logos-repo.json","requiredFor":[],"rootHash":"ac92792d524eb7cdf4764df179d7d8cbdebf52e3006e2d059aa61a137e69288e","toVersion":"0.3.1","topLevel":false},{"action":"install","fromVersion":"","name":"lez_atomic_swap_maker","optional":false,"repository":"https://localhost:8473/logos-repo.json","requiredFor":[],"rootHash":"0dab514708001ca440368c24a827db6dba99f5a9d74bebd2e15a050e9d7e2af4","toVersion":"0.3.1","topLevel":true}],"installed":["delivery_module","chat_module","lez_core","lez_swap_node","lez_maker_node","lez_atomic_swap_maker"],"op":"install","optional_packages":[],"reloaded":[],"status":"ok","stopped_dependents":[]}
+[exit 0]
+
+[12:04:47Z] $ logosctl --json package deps lez_atomic_swap_maker --recursive
+[{"installType":"user","name":"chat_module","requiredVersion":"0.2.2-delivery.1","status":"installed","version":"0.2.2-delivery.1"},{"installType":"user","name":"delivery_module","requiredVersion":"~0.2.0","status":"installed","version":"0.2.1"},{"installType":"user","name":"lez_core","requiredVersion":"0.4.1-sign.4","status":"installed","version":"0.4.1-sign.4"},{"installType":"user","name":"lez_swap_node","requiredVersion":"0.3.1","status":"installed","version":"0.3.1"},{"installType":"user","name":"lez_maker_node","requiredVersion":"0.3.1","status":"installed","version":"0.3.1"}]
+[exit 0]
+
+[12:04:47Z] $ logosctl package install lez_atomic_swap_taker -y
+{"affected_loaded":[],"changes":[{"action":"install","fromVersion":"","name":"lez_taker_node","optional":false,"repository":"https://localhost:8473/logos-repo.json","requiredFor":[],"rootHash":"4c9fea15cebb947ec13f091f9e56e5e2074ef275baa5359c074f5cf844853598","toVersion":"0.3.1","topLevel":false},{"action":"install","fromVersion":"","name":"lez_atomic_swap_taker","optional":false,"repository":"https://localhost:8473/logos-repo.json","requiredFor":[],"rootHash":"0eafdb37b70f924d8b4cbe42517dc23bd2e4be97ef678e3b40070bbe3f1a9a74","toVersion":"0.3.1","topLevel":true}],"installed":["lez_taker_node","lez_atomic_swap_taker"],"op":"install","optional_packages":[],"reloaded":[],"status":"ok","stopped_dependents":[]}
+[exit 0]
+
+[12:05:02Z] $ logosctl --json package deps lez_atomic_swap_taker --recursive
+[{"installType":"user","name":"chat_module","requiredVersion":"0.2.2-delivery.1","status":"installed","version":"0.2.2-delivery.1"},{"installType":"user","name":"delivery_module","requiredVersion":"~0.2.0","status":"installed","version":"0.2.1"},{"installType":"user","name":"lez_core","requiredVersion":"0.4.1-sign.4","status":"installed","version":"0.4.1-sign.4"},{"installType":"user","name":"lez_swap_node","requiredVersion":"0.3.1","status":"installed","version":"0.3.1"},{"installType":"user","name":"lez_taker_node","requiredVersion":"0.3.1","status":"installed","version":"0.3.1"}]
+[exit 0]
+
+[12:05:02Z] $ logosctl --json package deps lez_atomic_swap_maker --recursive
+[{"installType":"user","name":"chat_module","requiredVersion":"0.2.2-delivery.1","status":"installed","version":"0.2.2-delivery.1"},{"installType":"user","name":"delivery_module","requiredVersion":"~0.2.0","status":"installed","version":"0.2.1"},{"installType":"user","name":"lez_core","requiredVersion":"0.4.1-sign.4","status":"installed","version":"0.4.1-sign.4"},{"installType":"user","name":"lez_swap_node","requiredVersion":"0.3.1","status":"installed","version":"0.3.1"},{"installType":"user","name":"lez_maker_node","requiredVersion":"0.3.1","status":"installed","version":"0.3.1"}]
+[exit 0]
+
+# installed: name variant version
+chat_module darwin-arm64 0.2.2-delivery.1
+delivery_module darwin-arm64 0.2.1
+lez_core darwin-arm64 0.4.1-sign.4
+lez_maker_node darwin-arm64 0.3.1
+lez_swap_node darwin-arm64 0.3.1
+lez_taker_node darwin-arm64 0.3.1
+lez_atomic_swap_maker darwin-arm64 0.3.1
+lez_atomic_swap_taker darwin-arm64 0.3.1
+[12:05:02Z] $ logosctl daemon stop
+{"message":"Daemon shutting down.","status":"ok"}
+[exit 0]
+
+copied modules/ plugins/ to the Basecamp user dir

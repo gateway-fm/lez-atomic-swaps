@@ -1,0 +1,9 @@
+[08:56:21] === tampered-config (stamp 179447018102)
+[08:56:21] preflight: indexer historical reads
+[08:56:22]   indexer serves historical reads at the tip (2968)
+[08:56:22] preflight: LEZ finality check waived by request
+[08:56:22]   Maker published offer-e2e-179447018102
+[08:56:23]   Taker took offer-e2e-179447018102: swap 65aa726cb699 (not_activated)
+[08:56:23]   appended one byte to the swap's copied taker-role-config.json
+[08:56:30]   swap 65aa726cb699 after the tamper: attention_required; lock refused (lock_swap_unknown)
+[08:56:30] === tampered-config: passed in 9s

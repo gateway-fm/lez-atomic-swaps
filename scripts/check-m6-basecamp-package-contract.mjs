@@ -358,7 +358,7 @@ for (const pkg of packages) {
     const expected = {
       name: pkg.name,
       display_name: pkg.displayName,
-      version: "0.2.5",
+      version: "0.3.2",
       type: "ui_qml",
       category: "finance",
       interface: "universal",
@@ -647,6 +647,42 @@ requirePattern(
   }
 }
 
+// Issue #147: Logos's chat_module 0.2.2 declares a bare delivery_module, so an
+// install of a desk that required it also planned the newest Delivery (0.3.3),
+// which Chat 0.2.2 cannot read. The catalog publishes that release with its
+// Delivery pinned (deploy/scripts/package-chat-module.sh), under a pre-release
+// of 0.2.2 the desks require exactly; its Delivery requirement is the one the
+// desks give their own delivery_module entry (Chat's pinned Delivery v0.2.0).
+{
+  const chatPackageFile = resolve(repositoryRoot, "deploy/scripts/package-chat-module.sh");
+  const chatPackage = read(chatPackageFile, "catalog Chat module script");
+  if (chatPackage !== null) {
+    const value = (name) => chatPackage.match(new RegExp(`^readonly ${name}=(\\S+)$`, "m"))?.[1];
+    if (value("CHAT_MODULE_SOURCE_VERSION") !== "0.2.2") {
+      report(chatPackageFile, "must cut the catalog's Chat module from the Chat v0.2.2 release the desks are built against");
+    }
+    if (!/^[0-9a-f]{64}$/.test(value("CHAT_MODULE_SOURCE_SHA256") ?? "")) {
+      report(chatPackageFile, "must pin the Chat release asset by sha256");
+    }
+    if (!/^0\.2\.2-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$/.test(value("CHAT_MODULE_VERSION") ?? "")) {
+      report(chatPackageFile, "must publish a pre-release of 0.2.2, which no official release equals or outranks in a range");
+    }
+    if (value("DELIVERY_REQUIREMENT") !== "'~0.2.0'") {
+      report(chatPackageFile, "must require the Delivery 0.2.x the desks require (Chat v0.2.2 pins Delivery v0.2.0)");
+    }
+    requirePattern(chatPackageFile, chatPackage, /releases\/download\/chat_module-v\$CHAT_MODULE_SOURCE_VERSION\//, "must fetch the official release asset");
+  }
+  const workflowFile = resolve(repositoryRoot, ".github/workflows/release-packages.yml");
+  const workflow = read(workflowFile, "catalog package workflow");
+  requirePattern(workflowFile, workflow, /deploy\/scripts\/package-chat-module\.sh --out "\$RUNNER_TEMP\/chat_module\.lgx"/, "must build the catalog's Chat module");
+  requirePattern(workflowFile, workflow, /pin-package-dependencies\.sh --out _pinned[^\n]*\\\n[^\n]*"\$RUNNER_TEMP\/chat_module\.lgx"/, "must pin the desks to the catalog's Chat module");
+  rejectPattern(workflowFile, workflow, /one chat_module /, "must not publish the Chat module built from its flake");
+  const pinFile = resolve(repositoryRoot, "deploy/scripts/pin-package-dependencies.sh");
+  const pinScript = read(pinFile, "dependency pinning script");
+  requirePattern(pinFile, pinScript, /return version if name in OURS or "-" in version/, "must require every pre-release (patched build) exactly");
+  requirePattern(pinFile, pinScript, /is required in more than one way in the set/, "must refuse two requirements of one name in the set");
+}
+
 if (errors.length > 0) {
   process.stderr.write(
     `M6 Basecamp package contract: RED (${errors.length} defect${errors.length === 1 ? "" : "s"})\n`,
@@ -655,6 +691,6 @@ if (errors.length > 0) {
   process.exitCode = 1;
 } else {
   process.stdout.write(
-    "M6 Basecamp package contract: GREEN (2 ui_qml swap packages and the LEZ Network desk, 19 typed slots, pinned E2EE Chat plus signed Delivery discovery)\n",
+    "M6 Basecamp package contract: GREEN (2 ui_qml swap packages and the LEZ Network desk, 19 typed slots, pinned E2EE Chat plus signed Delivery discovery, the catalog Chat module pinned to Delivery 0.2.x)\n",
   );
 }

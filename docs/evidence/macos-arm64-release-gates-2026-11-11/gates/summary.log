@@ -1,0 +1,40 @@
+[21:20:54] code af3ac978 dirty:  M scripts/bootstrap-market.sh 
+[21:20:54] START 01-recreate-nodes
+[21:21:14] END   01-recreate-nodes rc=0
+[21:21:14] START 02-up-resume
+[21:21:26] END   02-up-resume rc=0
+[21:21:26] manifest in containers after up.sh resume: 392 / 392 bytes
+[21:21:26] START 03-restart-nodes
+[21:22:15] END   03-restart-nodes rc=0
+[21:22:15] START 04-smoke
+[21:28:31] END   04-smoke rc=1
+[21:22:16] regression smoke: 6 tests at 2ab39a39 (tree dirty:        0), results in runtime/regress/20261111T212216Z
+[21:22:36] === node:btc:happy:TakerSellsLez (try 1): FAILED in 11 s (+9 s before it)
+[21:22:53] === node:zec:zec-happy:TakerSellsLez (try 1): FAILED in 7 s (+10 s before it)
+[21:23:57] === node:btc:happy:TakerSellsForeign (try 1): FAILED in 55 s (+9 s before it)
+[21:25:24] === node:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 77 s (+10 s before it)
+[21:26:32] === ui:btc:happy:TakerSellsLez (try 1): PASSED in 58 s (+10 s before it)
+[21:28:30] === ui:zec:zec-happy:TakerSellsForeign (try 1): PASSED in 104 s (+14 s before it)
+[21:28:30] regression smoke: 3 of 6 passed in 6 min, 0 new chains, 0 profile switches,        0 frozen tries
+[21:28:31] START 05-finality-stall
+[21:38:03] END   05-finality-stall rc=0
+1 passed, 0 failed
+
+[21:38:03] === lez-finality-stall (TakerSellsForeign): passed in 572s
+[21:38:03] START 06-wipe
+[21:38:43] END   06-wipe rc=0
+[21:38:43] START 07-start-after-wipe
+[21:40:26] END   07-start-after-wipe rc=0
+ logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
+ a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
+──────────────────────────────────────────────────────────────────
+  [time 21:40:26] desk suites: 5 s (103 s since up.sh started)
+[21:40:26] START 08-trade-after-wipe
+[21:41:32] END   08-trade-after-wipe rc=0
+
+[21:41:32] === happy (TakerSellsLez): passed in 66s
+[21:41:32] START 09-zec-trade-after-wipe
+[21:42:51] END   09-zec-trade-after-wipe rc=0
+
+[21:42:51] === zec-happy (TakerSellsForeign): passed in 79s
+[21:42:51] DONE

@@ -82,6 +82,108 @@ pub trait FinalizedIndexerApi: Send + Sync + fmt::Debug {
         account_id: [u8; 32],
         block_id: u64,
     ) -> Result<HistoricalAccount, BridgeRuntimeError>;
+
+    /// Reads up to `limit` blocks below numeric ID `before` in one call, newest
+    /// first (the pinned indexer's `getBlocks`). `None` when this boundary has
+    /// no such read; callers then read block by block. Nothing returned here is
+    /// trusted until `read_finalized_run` has checked it.
+    async fn blocks_before(
+        &self,
+        _before: u64,
+        _limit: u64,
+    ) -> Result<Option<Vec<Block>>, BridgeRuntimeError> {
+        Ok(None)
+    }
+}
+
+/// Most blocks asked for in one `getBlocks` call. An empty devnet block is a
+/// few hundred bytes of JSON; 64 keeps a run of full blocks well inside the
+/// indexer client's response limit, and a run that does not fit is read block
+/// by block instead.
+const FINALIZED_RUN_BATCH_BLOCKS: u64 = 64;
+
+/// Reads the finalized blocks `start..=end` in height order.
+///
+/// Every block is checked as [`read_finalized_block`] checks it, except that
+/// the second, by-hash read of each block is replaced by the hash link: each
+/// block's `prev_block_hash` must be the hash of the block before it (and of
+/// `linked_to`, when given, for the first one), and the last block is read
+/// again by its hash. The run is therefore one hash-linked finalized chain
+/// ending at a block the indexer serves by hash, as before; it costs one call
+/// per [`FINALIZED_RUN_BATCH_BLOCKS`] blocks plus one, instead of two per
+/// block. A boundary without the batch read, or a batch the indexer does not
+/// answer, falls back to [`read_finalized_block`] for each block.
+pub(crate) async fn read_finalized_run(
+    indexer: &dyn FinalizedIndexerApi,
+    start: u64,
+    end: u64,
+    linked_to: Option<IndexedHash>,
+) -> Result<Vec<Block>, BridgeRuntimeError> {
+    if end < start {
+        return Ok(Vec::new());
+    }
+    let capacity = usize::try_from(end - start + 1).map_err(|_| BridgeRuntimeError::Unavailable)?;
+    let mut blocks: Vec<Block> = Vec::with_capacity(capacity);
+    let mut previous_hash = linked_to;
+    let mut next = start;
+    let mut batched = false;
+    while next <= end {
+        let chunk_end = end.min(next.saturating_add(FINALIZED_RUN_BATCH_BLOCKS - 1));
+        let chunk = if let Some(chunk) = read_finalized_batch(indexer, next, chunk_end).await {
+            batched = true;
+            chunk
+        } else {
+            let mut single = Vec::new();
+            for block_id in next..=chunk_end {
+                single.push(read_finalized_block(indexer, block_id).await?);
+            }
+            single
+        };
+        for (expected_id, block) in (next..=chunk_end).zip(chunk) {
+            if block.header.block_id != expected_id
+                || block.bedrock_status != BedrockStatus::Finalized
+                || previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash)
+            {
+                return Err(BridgeRuntimeError::InvalidObservation);
+            }
+            previous_hash = Some(block.header.hash);
+            blocks.push(block);
+        }
+        next = chunk_end + 1;
+    }
+    if blocks.len() != capacity {
+        return Err(BridgeRuntimeError::Unavailable);
+    }
+    if batched {
+        let last = blocks.last().ok_or(BridgeRuntimeError::Unavailable)?;
+        let by_hash = indexer
+            .block_by_hash(last.header.hash.0)
+            .await?
+            .ok_or(BridgeRuntimeError::Unavailable)?;
+        if &by_hash != last {
+            return Err(BridgeRuntimeError::InvalidObservation);
+        }
+    }
+    Ok(blocks)
+}
+
+/// One `getBlocks` read of `start..=end`, in height order, or `None` when the
+/// boundary has no batch read or did not answer with exactly that run.
+async fn read_finalized_batch(
+    indexer: &dyn FinalizedIndexerApi,
+    start: u64,
+    end: u64,
+) -> Option<Vec<Block>> {
+    let limit = end - start + 1;
+    let mut blocks = indexer
+        .blocks_before(end.checked_add(1)?, limit)
+        .await
+        .ok()??;
+    if u64::try_from(blocks.len()).ok()? != limit {
+        return None;
+    }
+    blocks.reverse();
+    Some(blocks)
 }
 
 pub(crate) struct StableFinalizedWindow {
@@ -281,18 +383,7 @@ pub(crate) async fn read_fixed_finalized_window(
         return Err(BridgeRuntimeError::Unavailable);
     }
 
-    let capacity =
-        usize::try_from(window.max_blocks()).map_err(|_| BridgeRuntimeError::Unavailable)?;
-    let mut blocks = Vec::with_capacity(capacity);
-    let mut previous_hash = None;
-    for block_id in window.start_height()..=requested_end {
-        let block = read_finalized_block(indexer, block_id).await?;
-        if previous_hash.is_some_and(|hash| block.header.prev_block_hash != hash) {
-            return Err(BridgeRuntimeError::InvalidObservation);
-        }
-        previous_hash = Some(block.header.hash);
-        blocks.push(block);
-    }
+    let blocks = read_finalized_run(indexer, window.start_height(), requested_end, None).await?;
     let requested_end_block = blocks
         .last()
         .cloned()
@@ -314,7 +405,7 @@ pub(crate) async fn read_fixed_finalized_window(
     })
 }
 
-async fn read_finalized_block(
+pub(crate) async fn read_finalized_block(
     indexer: &dyn FinalizedIndexerApi,
     block_id: u64,
 ) -> Result<Block, BridgeRuntimeError> {
@@ -426,6 +517,18 @@ impl FinalizedIndexerApi for OfficialIndexerRpc {
         self.client
             .get_block_by_hash(IndexedHash(block_hash))
             .await
+            .map_err(|_| BridgeRuntimeError::Unavailable)
+    }
+
+    async fn blocks_before(
+        &self,
+        before: u64,
+        limit: u64,
+    ) -> Result<Option<Vec<Block>>, BridgeRuntimeError> {
+        self.client
+            .get_blocks(Some(before), limit)
+            .await
+            .map(Some)
             .map_err(|_| BridgeRuntimeError::Unavailable)
     }
 
@@ -1760,6 +1863,398 @@ mod tests {
             fast_read.await.expect("scaled fast account task"),
             Err(jsonrpsee::core::ClientError::RequestTimeout)
         ));
+        handle.stop().expect("mock indexer stops");
+    }
+
+    // ---- issue 150: finalized runs in batches ---------------------------------
+
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    use indexer_service_protocol::{BlockBody, Signature as IndexedSignature};
+
+    fn run_block(block_id: u64) -> Block {
+        let byte = |id: u64| u8::try_from(id % 251).expect("bounded") ^ 0x5a;
+        let mut hash = [byte(block_id); 32];
+        hash[..8].copy_from_slice(&block_id.to_be_bytes());
+        let mut prev = [byte(block_id - 1); 32];
+        prev[..8].copy_from_slice(&(block_id - 1).to_be_bytes());
+        Block {
+            header: BlockHeader {
+                block_id,
+                prev_block_hash: IndexedHash(prev),
+                hash: IndexedHash(hash),
+                timestamp: 1_850_000_000_000 + block_id,
+                signature: IndexedSignature([0x11; 64]),
+            },
+            body: BlockBody {
+                transactions: Vec::new(),
+            },
+            bedrock_status: BedrockStatus::Finalized,
+        }
+    }
+
+    /// The indexer as the walk sees it, counting every call by method.
+    #[derive(Debug)]
+    struct CountingIndexer {
+        blocks: Mutex<BTreeMap<u64, Block>>,
+        finalized: u64,
+        batch: bool,
+        calls: Mutex<BTreeMap<&'static str, usize>>,
+    }
+
+    impl CountingIndexer {
+        fn new(finalized: u64, batch: bool) -> Self {
+            Self {
+                blocks: Mutex::new((1..=finalized).map(|id| (id, run_block(id))).collect()),
+                finalized,
+                batch,
+                calls: Mutex::new(BTreeMap::new()),
+            }
+        }
+
+        fn count(&self, method: &'static str) {
+            *self.calls.lock().expect("calls").entry(method).or_default() += 1;
+        }
+
+        fn calls(&self) -> BTreeMap<&'static str, usize> {
+            self.calls.lock().expect("calls").clone()
+        }
+
+        fn total(&self) -> usize {
+            self.calls().values().sum()
+        }
+
+        fn replace(&self, block: Block) {
+            self.blocks
+                .lock()
+                .expect("blocks")
+                .insert(block.header.block_id, block);
+        }
+    }
+
+    #[async_trait]
+    impl FinalizedIndexerApi for CountingIndexer {
+        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+            self.count("getLastFinalizedBlockId");
+            Ok(Some(self.finalized))
+        }
+
+        async fn block_by_id(&self, block_id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+            self.count("getBlockById");
+            Ok(self.blocks.lock().expect("blocks").get(&block_id).cloned())
+        }
+
+        async fn block_by_hash(
+            &self,
+            block_hash: [u8; 32],
+        ) -> Result<Option<Block>, BridgeRuntimeError> {
+            self.count("getBlockByHash");
+            Ok(self
+                .blocks
+                .lock()
+                .expect("blocks")
+                .values()
+                .find(|block| block.header.hash.0 == block_hash)
+                .cloned())
+        }
+
+        async fn account_at_block(
+            &self,
+            _account_id: [u8; 32],
+            _block_id: u64,
+        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+            Err(BridgeRuntimeError::Unavailable)
+        }
+
+        // The pinned indexer's getBlocks: `limit` blocks from `before - 1`
+        // down, stopping at the first missing one.
+        async fn blocks_before(
+            &self,
+            before: u64,
+            limit: u64,
+        ) -> Result<Option<Vec<Block>>, BridgeRuntimeError> {
+            if !self.batch {
+                return Ok(None);
+            }
+            self.count("getBlocks");
+            let blocks = self.blocks.lock().expect("blocks");
+            Ok(Some(
+                (0..limit)
+                    .map(|offset| before - 1 - offset)
+                    .take_while(|id| *id > 0)
+                    .map_while(|id| blocks.get(&id).cloned())
+                    .collect(),
+            ))
+        }
+    }
+
+    fn window(start: u64, blocks: u32) -> DiscoveryWindow {
+        DiscoveryWindow::new(start, blocks).expect("window")
+    }
+
+    // The devnet's `fast` profile walks about 280 finalized blocks per attempt.
+    #[tokio::test]
+    async fn a_280_block_window_costs_nine_indexer_calls_instead_of_563() {
+        let per_block = CountingIndexer::new(400, false);
+        let old = read_fixed_finalized_window(&per_block, window(100, 280))
+            .await
+            .expect("per-block window");
+        assert_eq!(per_block.calls()["getBlockById"], 281);
+        assert_eq!(per_block.calls()["getBlockByHash"], 281);
+        assert_eq!(per_block.total(), 563);
+
+        let batched = CountingIndexer::new(400, true);
+        let new = read_fixed_finalized_window(&batched, window(100, 280))
+            .await
+            .expect("batched window");
+        // 1 finalized id + 5 getBlocks (64 each) + 1 by-hash of the run's end
+        // + the end confirmed again by id and by hash.
+        assert_eq!(batched.calls()["getBlocks"], 5);
+        assert_eq!(batched.calls()["getBlockById"], 1);
+        assert_eq!(batched.calls()["getBlockByHash"], 2);
+        assert_eq!(batched.total(), 9);
+        assert_eq!(new.blocks, old.blocks);
+        assert_eq!(new.finalized_tip, old.finalized_tip);
+        assert_eq!(new.blocks.len(), 280);
+    }
+
+    #[tokio::test]
+    async fn a_batched_run_is_checked_block_by_block() {
+        // A broken hash link inside one batch.
+        let indexer = CountingIndexer::new(200, true);
+        let mut forked = run_block(150);
+        forked.header.prev_block_hash = IndexedHash([0xee; 32]);
+        indexer.replace(forked);
+        assert!(matches!(
+            read_finalized_run(&indexer, 100, 199, None).await,
+            Err(BridgeRuntimeError::InvalidObservation)
+        ));
+
+        // A block the indexer has not finalized.
+        let indexer = CountingIndexer::new(200, true);
+        let mut pending = run_block(120);
+        pending.bedrock_status = BedrockStatus::Safe;
+        indexer.replace(pending);
+        assert!(matches!(
+            read_finalized_run(&indexer, 100, 199, None).await,
+            Err(BridgeRuntimeError::InvalidObservation)
+        ));
+
+        // A run that does not continue from the block it must follow.
+        let indexer = CountingIndexer::new(200, true);
+        assert!(matches!(
+            read_finalized_run(&indexer, 100, 120, Some(IndexedHash([0xee; 32]))).await,
+            Err(BridgeRuntimeError::InvalidObservation)
+        ));
+        let linked = read_finalized_run(&indexer, 100, 120, Some(run_block(99).header.hash))
+            .await
+            .expect("linked to its predecessor");
+        assert_eq!(linked.len(), 21);
+    }
+
+    #[tokio::test]
+    async fn a_run_whose_end_the_indexer_does_not_serve_by_hash_is_refused() {
+        #[derive(Debug)]
+        struct NoHashIndex(CountingIndexer);
+        #[async_trait]
+        impl FinalizedIndexerApi for NoHashIndex {
+            async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+                self.0.last_finalized_block_id().await
+            }
+            async fn block_by_id(&self, id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+                self.0.block_by_id(id).await
+            }
+            async fn block_by_hash(
+                &self,
+                _hash: [u8; 32],
+            ) -> Result<Option<Block>, BridgeRuntimeError> {
+                let mut other = run_block(199);
+                other.header.timestamp += 1;
+                Ok(Some(other))
+            }
+            async fn account_at_block(
+                &self,
+                account_id: [u8; 32],
+                block_id: u64,
+            ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+                self.0.account_at_block(account_id, block_id).await
+            }
+            async fn blocks_before(
+                &self,
+                before: u64,
+                limit: u64,
+            ) -> Result<Option<Vec<Block>>, BridgeRuntimeError> {
+                self.0.blocks_before(before, limit).await
+            }
+        }
+        assert!(matches!(
+            read_finalized_run(
+                &NoHashIndex(CountingIndexer::new(200, true)),
+                100,
+                199,
+                None
+            )
+            .await,
+            Err(BridgeRuntimeError::InvalidObservation)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_short_batch_falls_back_to_reading_block_by_block() {
+        // The indexer has only 150 of the 199 blocks asked for: the batch is
+        // short, the run is read block by block and the missing block is
+        // unavailable, as before.
+        let indexer = CountingIndexer::new(150, true);
+        assert!(matches!(
+            read_finalized_run(&indexer, 100, 199, None).await,
+            Err(BridgeRuntimeError::Unavailable)
+        ));
+    }
+
+    // The binding to the pinned indexer's wire method: getBlocks(before, limit)
+    // answered by a JSON-RPC server with the upstream semantics.
+    #[tokio::test]
+    async fn the_official_indexer_client_reads_a_run_with_get_blocks() {
+        let state = Arc::new(CountingIndexer::new(300, true));
+        let server = ServerBuilder::default()
+            .build("127.0.0.1:0")
+            .await
+            .expect("mock indexer binds loopback");
+        let address = server.local_addr().expect("mock indexer address");
+        let mut module = RpcModule::new(Arc::clone(&state));
+        module
+            .register_async_method("getBlocks", |params, state, _| async move {
+                let (before, limit): (Option<u64>, u64) = params.parse()?;
+                let blocks = state
+                    .blocks_before(before.expect("before"), limit)
+                    .await
+                    .expect("blocks")
+                    .expect("batch");
+                Ok::<_, ErrorObjectOwned>(blocks)
+            })
+            .expect("getBlocks");
+        module
+            .register_async_method("getBlockByHash", |params, state, _| async move {
+                let (hash,): (IndexedHash,) = params.parse()?;
+                Ok::<_, ErrorObjectOwned>(state.block_by_hash(hash.0).await.expect("hash"))
+            })
+            .expect("getBlockByHash");
+        let handle = server.start(module);
+        let rpc = OfficialIndexerRpc::connect_local(&format!("http://{address}"))
+            .expect("loopback indexer client");
+        let blocks = read_finalized_run(&rpc, 10, 289, None)
+            .await
+            .expect("run over the wire");
+        assert_eq!(blocks.len(), 280);
+        assert_eq!(blocks.first().map(|b| b.header.block_id), Some(10));
+        assert_eq!(blocks.last().map(|b| b.header.block_id), Some(289));
+        assert_eq!(state.calls()["getBlocks"], 5);
+        assert_eq!(state.calls()["getBlockByHash"], 1);
+        handle.stop().expect("mock indexer stops");
+    }
+
+    /// The pinned indexer's read methods over JSON-RPC, upstream semantics.
+    fn indexer_module(state: Arc<CountingIndexer>) -> RpcModule<Arc<CountingIndexer>> {
+        let mut module = RpcModule::new(state);
+        module
+            .register_async_method("getLastFinalizedBlockId", |_params, state, _| async move {
+                Ok::<_, ErrorObjectOwned>(state.last_finalized_block_id().await.expect("tip"))
+            })
+            .expect("getLastFinalizedBlockId");
+        module
+            .register_async_method("getBlockById", |params, state, _| async move {
+                let (id,): (u64,) = params.parse()?;
+                Ok::<_, ErrorObjectOwned>(state.block_by_id(id).await.expect("id"))
+            })
+            .expect("getBlockById");
+        module
+            .register_async_method("getBlockByHash", |params, state, _| async move {
+                let (hash,): (IndexedHash,) = params.parse()?;
+                Ok::<_, ErrorObjectOwned>(state.block_by_hash(hash.0).await.expect("hash"))
+            })
+            .expect("getBlockByHash");
+        module
+            .register_async_method("getBlocks", |params, state, _| async move {
+                let (before, limit): (Option<u64>, u64) = params.parse()?;
+                Ok::<_, ErrorObjectOwned>(
+                    state
+                        .blocks_before(before.expect("before"), limit)
+                        .await
+                        .expect("blocks")
+                        .expect("batch"),
+                )
+            })
+            .expect("getBlocks");
+        module
+    }
+
+    /// The official client with its batch read switched off: the block-by-block
+    /// walk the observers made before `read_finalized_run`.
+    #[derive(Debug)]
+    struct PerBlock(OfficialIndexerRpc);
+
+    #[async_trait]
+    impl FinalizedIndexerApi for PerBlock {
+        async fn last_finalized_block_id(&self) -> Result<Option<u64>, BridgeRuntimeError> {
+            self.0.last_finalized_block_id().await
+        }
+        async fn block_by_id(&self, id: u64) -> Result<Option<Block>, BridgeRuntimeError> {
+            self.0.block_by_id(id).await
+        }
+        async fn block_by_hash(&self, hash: [u8; 32]) -> Result<Option<Block>, BridgeRuntimeError> {
+            self.0.block_by_hash(hash).await
+        }
+        async fn account_at_block(
+            &self,
+            account_id: [u8; 32],
+            block_id: u64,
+        ) -> Result<HistoricalAccount, BridgeRuntimeError> {
+            self.0.account_at_block(account_id, block_id).await
+        }
+    }
+
+    // A measurement, not a check: one 280-block finalized window (the devnet
+    // `fast` profile's) read with the official client, block by block and in
+    // batches, through a delayed link. Start the mock indexer's delay proxy
+    // first, e.g.
+    //   deploy/scripts/rpc-delay-proxy.py --delay-ms 100 --log calls.tsv 18780=127.0.0.1:18779
+    // and run with LEZ_LATENCY_INDEXER_URL=http://127.0.0.1:18780 and
+    // `cargo test --lib -- --ignored --nocapture a_finalized_window_over_a_delayed_link`.
+    #[tokio::test]
+    #[ignore = "a timing measurement through deploy/scripts/rpc-delay-proxy.py"]
+    async fn a_finalized_window_over_a_delayed_link() {
+        let url = std::env::var("LEZ_LATENCY_INDEXER_URL").expect("LEZ_LATENCY_INDEXER_URL");
+        let state = Arc::new(CountingIndexer::new(400, true));
+        let server = ServerBuilder::default()
+            .build("127.0.0.1:18779")
+            .await
+            .expect("mock indexer binds 127.0.0.1:18779");
+        let handle = server.start(indexer_module(Arc::clone(&state)));
+        for (label, batched) in [("block by block", false), ("batched", true)] {
+            let before = state.calls();
+            let rpc = OfficialIndexerRpc::connect_local(&url).expect("loopback indexer client");
+            let started = std::time::Instant::now();
+            let window = if batched {
+                read_fixed_finalized_window(&rpc, window(100, 280)).await
+            } else {
+                read_fixed_finalized_window(&PerBlock(rpc), window(100, 280)).await
+            }
+            .expect("window over the delayed link");
+            let elapsed = started.elapsed();
+            let after = state.calls();
+            let calls: BTreeMap<_, _> = after
+                .iter()
+                .map(|(method, count)| (*method, count - before.get(method).copied().unwrap_or(0)))
+                .filter(|(_, count)| *count > 0)
+                .collect();
+            println!(
+                "{label}: {} blocks, {} indexer calls {calls:?}, {:.1} s",
+                window.blocks.len(),
+                calls.values().sum::<usize>(),
+                elapsed.as_secs_f64()
+            );
+        }
         handle.stop().expect("mock indexer stops");
     }
 }

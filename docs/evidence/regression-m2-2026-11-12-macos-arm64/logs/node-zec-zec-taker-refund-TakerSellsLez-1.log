@@ -1,0 +1,32 @@
+[02:50:36] === zec-taker-refund (stamp 1794448236)
+[02:50:36] preflight: indexer historical reads
+[02:50:37]   indexer serves historical reads at the tip (70)
+[02:50:37] preflight: LEZ finality check waived by request
+[02:50:37]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[02:50:58]       taker: taker ZEC corridor zec-devnet-1794448237: sidecar listening on 127.0.0.1:19902
+[02:50:58]       taker: taker: 1 prepared ZEC entries configured
+[02:50:58]     [zec-provision 01:50:57]   maker sidecar answers on 127.0.0.1:19901
+[02:50:58]     [zec-provision 01:50:58]   taker sidecar answers on 127.0.0.1:19902
+[02:50:58]       maker_health: ready=True degraded=False
+[02:50:58]     [zec-provision 01:50:58]   Taker lists zec-devnet-offer-1794448237 ; corridor zec-devnet-1794448237 is live
+[02:50:58]   corridor zec-devnet-1794448237 entry 0 (deterministic-local-devnet-v6): offer zec-devnet-offer-1794448237, zebra tip 110, Zcash refund height 119
+[02:50:58]   Taker took zec-devnet-offer-1794448237: swap zec-devnet-s (not_activated)
+[02:50:58]   receipt: swap zec-devnet-swap-1794448237, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-1794448237/actor/taker/actor-config.json
+[02:50:58]   cutting the Maker Node's zebra route: it will observe the Taker's lock but cannot fund Zcash
+[02:50:58]   taker zec-devnet-s: not_activated | actor at - | maker: leased | zebra 110
+[02:51:02]   taker zec-devnet-s: awaiting_first_lock | actor at offered | maker: leased | zebra 110
+[02:51:18]   taker zec-devnet-s: refund_available | actor at taker_lock_confirmed | maker: taker_lock_confirmed | zebra 110
+[02:51:18]   maker zec-devnet-s: taker_lock_confirmed (schedule backoff)
+[02:51:18]   the Maker observed the Taker's LEZ lock; stopping the Maker Node so it never funds Zcash
+[02:51:18]   waiting 213s for the agreement's LEZ refund time (the profile's delay after provisioning)
+[02:54:52]   the Taker's LEZ lock is confirmed, the Maker is down and the LEZ refund time has passed
+[02:54:52]   taker zec-devnet-s: refund_available (generation 1)
+[02:54:54]   refund request admitted (attempt 1, taker refund_available | maker: unreachable)
+[02:54:59]   taker zec-devnet-s: refund_in_progress (generation 1)
+[02:55:10]   taker zec-devnet-s: refunded (generation 2)
+[02:55:10]   Taker refunded its LEZ escrow
+[02:55:17]   Maker refund queued: {"schema_version": 1, "swap_id": "zec-devnet-swap-1794448237", "action": "refund", "requested_after_generation": 5, "was_replay": false}
+[02:55:17]   maker zec-devnet-s: taker_lock_confirmed (schedule leased)
+[02:55:33]   maker zec-devnet-s: refunded (schedule terminal)
+[02:55:33]   zebra: the provisioned coinbase outpoint c2f2b57d0b48:0 is still unspent; Maker ended refunded
+[02:55:33] === zec-taker-refund: passed in 296s

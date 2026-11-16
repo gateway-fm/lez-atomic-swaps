@@ -61,4 +61,11 @@ docker run --rm --network "$LEZ_STACK_NETWORK" --user "$(id -u):$(id -g)" \
     sleep 1; bash /scripts/market-bootstrap.sh'
 
 # The Nodes read the manifest once at start; up.sh recreates them when it changed.
-install -m 0644 "$market_root/market-bootstrap.env" runtime/market-bootstrap.env
+# Written in place, and only when it differs: Compose mounts this one file into
+# the Node containers, and replacing it (a new inode, as `install` makes) takes
+# it away from a running container on Docker Desktop for Mac. The Node then
+# exits 2 on its next start, reading /run-market/market-bootstrap.env.
+if ! cmp -s "$market_root/market-bootstrap.env" runtime/market-bootstrap.env; then
+  cat "$market_root/market-bootstrap.env" > runtime/market-bootstrap.env
+  chmod 0644 runtime/market-bootstrap.env
+fi

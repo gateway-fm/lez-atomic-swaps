@@ -1,0 +1,7 @@
+[03:10:43] regression run: 1 tests at 964cb8c8 (tree dirty: 0), results in runtime/regress/20261112T031043Z
+[03:10:43] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[03:10:43] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[03:11:18] group fast
+[03:11:18]     [lane 1] node:btc:late-claim-unmined:TakerSellsLez (try 1) starts: LEZ finalized 277, tip 281
+[03:22:39] === node:btc:late-claim-unmined:TakerSellsLez (try 1, lane 1): PASSED in 673 s; LEZ finalized 730, tip 734
+[03:22:39] regression run: 1 of 1 passed in 11 min, 0 new chains, 0 profile switches, 0 frozen tries

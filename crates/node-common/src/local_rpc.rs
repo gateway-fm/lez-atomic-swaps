@@ -222,11 +222,19 @@ where
         .map_err(|error| anyhow::anyhow!("read bounded local RPC response: {error}"))?
         .to_bytes();
     drop(sender);
+    #[cfg(target_os = "linux")]
     connection
         .join()
         .await
         .context("join local RPC connection")?
         .context("finish local RPC connection")?;
+    #[cfg(target_os = "macos")]
+    finish_local_rpc_connection(
+        connection
+            .join()
+            .await
+            .context("join local RPC connection")?,
+    )?;
 
     let response: RpcResponse<R> =
         serde_json::from_slice(&body).context("decode local JSON-RPC response")?;
@@ -238,6 +246,26 @@ where
         (RpcResultField::Present(result), None) => Ok(result),
         (RpcResultField::Missing, Some(error)) => Err(error.into()),
         _ => bail!("local RPC response must contain exactly one result or error"),
+    }
+}
+
+/// Accepts the one connection outcome macOS adds over Linux: `shutdown(2)`
+/// on a socket whose peer has already closed fails with `ENOTCONN` there, and
+/// a `Connection: close` server closes right after its response. The bounded
+/// body has been read in full before this point, so only that exact error is
+/// tolerated; every other connection error still fails the call.
+#[cfg(target_os = "macos")]
+fn finish_local_rpc_connection(outcome: Result<(), hyper::Error>) -> anyhow::Result<()> {
+    match outcome {
+        Err(error)
+            if error.is_shutdown()
+                && std::error::Error::source(&error)
+                    .and_then(|source| source.downcast_ref::<std::io::Error>())
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotConnected) =>
+        {
+            Ok(())
+        }
+        outcome => outcome.context("finish local RPC connection"),
     }
 }
 

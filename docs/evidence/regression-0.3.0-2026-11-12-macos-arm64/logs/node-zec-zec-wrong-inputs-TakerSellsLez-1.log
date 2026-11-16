@@ -1,0 +1,38 @@
+[11:52:04] === zec-wrong-inputs (stamp 179448072402)
+[11:52:04] preflight: indexer historical reads
+[11:52:04]   indexer serves historical reads at the tip (2478)
+[11:52:04] preflight: LEZ finality check waived by request
+[11:52:04]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[11:52:28]       taker: taker ZEC corridor zec-devnet-179448072402: sidecar listening on 127.0.0.1:19902
+[11:52:28]       taker: taker: 1 prepared ZEC entries configured
+[11:52:28]     [zec-provision 10:52:28]   maker sidecar answers on 127.0.0.1:19901
+[11:52:28]     [zec-provision 10:52:28]   taker sidecar answers on 127.0.0.1:19902
+[11:52:28]       maker_health: ready=True degraded=False
+[11:52:28]     [zec-provision 10:52:28]   Taker lists zec-devnet-offer-179448072402 ; corridor zec-devnet-179448072402 is live
+[11:52:28]   corridor zec-devnet-179448072402 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179448072402, zebra tip 266, Zcash refund height 275
+[11:52:29]   rejected as expected: reusing a publish request id for another offer (maker offer request ID conflicts with its durable mutation)
+[11:52:29]   rejected as expected: withdrawing with a stale revision (stale maker offer revision: expected 6, actual 1)
+[11:52:29]   rejected as expected: taking with a mismatched envelope hash (initiation_selection_mismatch)
+[11:52:29]   rejected as expected: taking an off-preset amount (initiation_selection_mismatch)
+[11:52:29]   rejected as expected: taking with a wrong LEZ quote (initiation_selection_mismatch)
+[11:52:29]   rejected as expected: claiming an unknown swap (swap_not_found)
+[11:52:29]   rejected as expected: refunding an unknown swap (swap_not_found)
+[11:52:29]   Taker took zec-devnet-offer-179448072402: swap zec-devnet-s (not_activated)
+[11:52:29]   rejected as expected: claiming before the Maker funded (taker_action_unavailable)
+[11:52:34]   rejected as expected: taking the consumed lot again (initiation_selection_mismatch)
+[11:52:34]   consumed lot left Delivery and cannot be taken again
+[11:52:34]   receipt: swap zec-devnet-swap-179448072402, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179448072402/actor/taker/actor-config.json
+[11:52:34]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim): taker awaiting_first_lock (gen 0) | actor at offered | maker offered | zebra 266 | LEZ finalized 2499, tip 2503 (4 unfinalized) [heartbeat]
+[11:52:47]   [13 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker offered | zebra 266 | LEZ finalized 2509, tip 2518 (9 unfinalized) [heartbeat]
+[11:52:47]   zebra at 266: not mining, the Maker's Zcash funding is not out yet
+[11:53:00]   zebra: mined 1 block(s) → height 267 (mempool had ['43bdc53d92c1'])
+[11:53:03]   [29 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim): taker refund_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 267 | LEZ finalized 2509, tip 2518 (9 unfinalized) [heartbeat]
+[11:53:13]   zebra: mined 1 block(s) → height 268 (Maker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[11:53:23]   [48 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker LEZ lock → Maker Zcash funding → Maker LEZ claim): taker claim_available (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 268 | LEZ finalized 2525, tip 2534 (9 unfinalized) [heartbeat]
+[11:53:23]   Taker claimed Zcash on zec-devnet-s (replay=False)
+[11:53:23]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 268 | LEZ finalized 2525, tip 2534 (9 unfinalized) [heartbeat]
+[11:53:23]   zebra: mined 1 block(s) → height 269 (mempool had ['19718f3b8b6b'])
+[11:53:30]   [6 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 269 | LEZ finalized 2547, tip 2550 (3 unfinalized) [heartbeat]
+[11:53:30]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2547, tip 2550 (3 unfinalized) [heartbeat]
+[11:53:30]   both Nodes report zec-devnet-s completed
+[11:53:30] === zec-wrong-inputs: passed in 86s

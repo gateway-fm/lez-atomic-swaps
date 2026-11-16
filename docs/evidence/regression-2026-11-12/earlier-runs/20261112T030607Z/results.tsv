@@ -1,0 +1,3 @@
+node:btc:late-claim-unmined:TakerSellsLez	1	FAILED	67	2026-11-12T03:07:58Z	1	0
+node:btc:late-claim-confirms:TakerSellsLez	1	PASSED	114	2026-11-12T03:08:44Z	2	0
+node:zec:zec-early-lock:TakerSellsLez	1	PASSED	215	2026-11-12T03:10:25Z	3	0

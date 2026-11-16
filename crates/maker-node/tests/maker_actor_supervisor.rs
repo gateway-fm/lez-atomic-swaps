@@ -49,7 +49,11 @@ use support::actor_deployment;
 use xmr_chat_fixture::XmrChatFixture;
 
 fn boottime_milliseconds() -> u64 {
+    #[cfg(target_os = "linux")]
     let now = clock_gettime(ClockId::Boottime);
+    // The supervisor's macOS clock: CLOCK_MONOTONIC counts across sleep there.
+    #[cfg(target_os = "macos")]
+    let now = clock_gettime(ClockId::Monotonic);
     u64::try_from(now.tv_sec)
         .unwrap()
         .saturating_mul(1_000)
@@ -250,6 +254,7 @@ fn one_bounded_cycle_runs_exact_sealed_actor_and_durably_requeues() {
          esac\n",
         invocation_log.display()
     );
+    let program = actor_script(program);
     write_private(&program_path, program.as_bytes(), 0o700);
     let config_bytes = fs::read(&deployment.source_config).unwrap();
     let program_sha256: [u8; 32] = Sha256::digest(program.as_bytes()).into();
@@ -553,7 +558,7 @@ fn assert_manual_action_case(root: &Path, case: ManualActionMatrixCase) {
     fs::set_permissions(&case_root, fs::Permissions::from_mode(0o700)).unwrap();
     let invocation_log = case_root.join("invocations");
     let program_path = case_root.join("actor");
-    let program = matrix_actor_program(case, &invocation_log);
+    let program = actor_script(matrix_actor_program(case, &invocation_log));
     write_private(&program_path, program.as_bytes(), 0o700);
 
     let database = case_root.join("maker.sqlite3");
@@ -876,6 +881,7 @@ fn abandoned_lease_is_generation_transferred_and_run_without_an_unleased_gap() {
           activate) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"activate\",\"outcome\":\"activated\",\"phase\":\"offered\",\"revision\":0,\"next_action\":\"create_and_fund_lez\"}' ;;\n\
           *) exit 95 ;;\n\
         esac\n";
+    let program: &[u8] = &actor_script_bytes(program);
     let mut store = registered_store(root.path(), swap_id, program);
     let swap_id = SwapId::new(swap_id).unwrap();
     let stale_owner = MakerActorLeaseOwner::new([0x61; 16]).unwrap();
@@ -1061,6 +1067,7 @@ fn timed_out_actor_is_reaped_cleared_and_durably_backed_off() {
         test -r /proc/self/fd/198 || exit 94\n\
         while :; do :; done &\n\
         wait\n";
+    let program: &[u8] = &actor_script_bytes(program);
     let mut store = registered_store(root.path(), swap_id, program);
     let config = MakerActorSupervisorConfig::new(Duration::from_millis(50), 5, 30, 8_192)
         .expect("bounded timeout config");
@@ -1145,6 +1152,7 @@ fn cancellation_kills_descendants_clears_identity_and_durably_backs_off() {
         test -r /proc/self/fd/198 || exit 94\n\
         while :; do :; done &\n\
         wait\n";
+    let program: &[u8] = &actor_script_bytes(program);
     let mut store = registered_store(root.path(), swap_id, program);
     let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192)
         .expect("bounded cancellation config");
@@ -1441,4 +1449,22 @@ fn write_private(path: &std::path::Path, bytes: &[u8], mode: u32) {
         .unwrap();
     file.write_all(bytes).unwrap();
     file.sync_all().unwrap();
+}
+
+/// Test actor scripts probe their inherited descriptors through the platform's
+/// descriptor directory (`/proc/self/fd` on Linux, `/dev/fd` on macOS) and
+/// call `sleep` where the platform keeps it.
+fn actor_script(script: String) -> String {
+    if cfg!(target_os = "macos") {
+        script
+            .replace("/proc/self/fd/", "/dev/fd/")
+            .replace("/usr/bin/sleep", "/bin/sleep")
+    } else {
+        script
+    }
+}
+
+/// [`actor_script`] for a script given as bytes.
+fn actor_script_bytes(script: &[u8]) -> Vec<u8> {
+    actor_script(String::from_utf8(script.to_vec()).expect("UTF-8 actor script")).into_bytes()
 }

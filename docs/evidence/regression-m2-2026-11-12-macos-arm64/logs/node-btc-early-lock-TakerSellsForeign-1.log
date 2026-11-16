@@ -1,0 +1,17 @@
+[04:07:13] === early-lock (stamp 1794452833)
+[04:07:13] preflight: indexer historical reads
+[04:07:13]   indexer serves historical reads at the tip (3697)
+[04:07:13] preflight: LEZ finality check waived by request
+[04:07:14]   Maker published offer-e2e-1794452833
+[04:07:17]   Taker took offer-e2e-1794452833: swap ed570cc786bd (not_activated)
+[04:07:17]   stopping the miner so the Taker's lock stays unconfirmed
+[04:07:20]   Taker locked bitcoin: 64585447e5bb (replay=False)
+[04:08:54]   the Maker stayed at offered for 90s with the lock unconfirmed
+[04:08:54]   the Taker's lock is confirmed; the Maker may now lock
+[04:09:32]   taker ed570cc786bd: claim_available (gen 2) | maker: both_legs_locked
+[04:09:33]   Taker claimed LEZ (replay=False)
+[04:09:33]   taker ed570cc786bd: claim_in_progress (gen 2) | maker: both_legs_locked
+[04:09:50]   taker ed570cc786bd: completed (gen 4) | maker: claim_evidence_available
+[04:09:53]   both Nodes report ed570cc786bd completed
+[04:09:53]   the Bitcoin claim 482d556f1f09 is a Taproot key-path spend: one 64-byte signature, no script
+[04:09:53] === early-lock: passed in 160s

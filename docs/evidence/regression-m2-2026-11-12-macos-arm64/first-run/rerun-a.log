@@ -1,0 +1,16 @@
+[00:52:26] regression run: 6 tests at 9fba9da9 (tree dirty:        1), results in <checkout>/deploy/runtime/regress/rerun-a
+[00:52:26] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[00:52:26] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[00:52:43]     [lane 1] ui:zec:zec-maker-refund:TakerSellsLez (try 1)
+[00:52:43]     [lane 2] ui:zec:zec-maker-refund:TakerSellsLez (try 2)
+[00:52:43]     [lane 3] ui:zec:zec-maker-refund:TakerSellsLez (try 3)
+[00:58:41] === ui:zec:zec-maker-refund:TakerSellsLez (try 1, lane 1): PASSED in 351 s
+[00:58:41]     [lane 1] ui:zec:zec-concurrent:TakerSellsLez (try 1)
+[00:58:41] === ui:zec:zec-maker-refund:TakerSellsLez (try 2, lane 2): PASSED in 351 s
+[00:58:41]     [lane 2] ui:zec:zec-concurrent:TakerSellsForeign (try 1)
+[00:58:41] === ui:zec:zec-maker-refund:TakerSellsLez (try 3, lane 3): PASSED in 351 s
+[00:58:41]     [lane 3] ui:zec:zec-survivor:TakerSellsForeign (try 1)
+[01:01:30] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 3): PASSED in 162 s
+[01:02:52] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 2): PASSED in 244 s
+[01:03:24] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 1): PASSED in 276 s
+[01:03:24] regression run: 6 of 6 passed in 10 min, 0 new chains, 0 profile switches,        0 frozen tries

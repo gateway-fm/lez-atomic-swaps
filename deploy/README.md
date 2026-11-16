@@ -29,7 +29,7 @@ that `regress.sh` uses); `scripts/host.sh` refuses an older bash at the start
 of every script and names that command.
 
 ```sh
-tar -xzf lez-swap-stack-v0.2.5-arm64.tar.gz && cd lez-swap-stack-v0.2.5-arm64
+tar -xzf lez-swap-stack-v0.3.2-arm64.tar.gz && cd lez-swap-stack-v0.3.2-arm64
 ./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → desk suites
 ./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two desks
 ```
@@ -54,6 +54,12 @@ attached to that release only after a fresh runner has started the stack from
 it (ADR 0215). Publish the release with its notes first; the assets follow
 about 2.5 hours later. `scripts/package-dist.sh <prefix> <tag>` produces the bundle
 locally from a committed tree.
+
+Upgrading from one release to the next is not supported before 1.0.0. Drain
+the old release first: withdraw every offer, let each open swap reach
+`completed` or `refunded` (a refund waits for its refund time), then install
+the new release on fresh state. The work to
+support upgrades is issue #133 and starts after 1.0.0.
 
 ## From scratch
 
@@ -319,9 +325,19 @@ self-hosted `lez-stack` runner).
 | `wrong-inputs` | stale revisions, mismatched envelope hash, off-preset amount, wrong quote, unknown swap, early claim, taking a consumed lot: all rejected fail-closed |
 | `restart-taker`, `restart-maker` | a Node restarted between lock and claim resumes and completes |
 | `survivor` | the Taker Node is stopped right after its revealing claim; the Maker completes alone; the Taker catches up on restart |
+| `late-claim-confirms` | the revealing claim is sent and the Taker Node stopped before it has seen it confirmed; the claim confirms while the Taker is down (selling LEZ: a Bitcoin claim held in the mempool, the miner stopped, then mined; selling Bitcoin: the Taker's indexer forwarder cut as its LEZ claim goes out, then the Node stopped); the Maker completes alone, the Taker on restart, and both chains show the lots traded |
+| `late-claim-unmined` | the revealing claim is sent but never mined, the Taker Node stopped, until the refund path is open (selling LEZ: empty blocks at the profile's pace mature the Maker's Bitcoin refund with the claim still in the mempool; selling Bitcoin: the Taker's sequencer forwarder cut so its LEZ claim is never included, through the claim window); then the Maker asks for its refund, the Taker comes back and both Nodes settle on their own: either outcome passes, but both chains' balances must fit it and agree with both Nodes (no party with both lots or neither) |
 | `concurrent` | two swaps interleaved end to end (one sidecar per swap) |
+| `early-lock` | the Taker's lock is in front of the Maker unconfirmed (selling Bitcoin: in the mempool; selling LEZ: included at the sequencer, its finality source, the indexer, cut); the Maker must not lock: its phase, its own record and the chain (its LEZ balance, or its Core wallet's sends) stay clean |
+| `offline-after-lock` | after the first lock Chat and Delivery are denied to both Nodes' user (socket and directory to mode 0000, refused with EACCES from the Taker's container); the Maker holds no Chat connection until the swap completes; both Nodes report both dependencies unavailable; the restore is checked from both sides |
 | `taker-refund` | the Maker never funds; after the cutoff and CSV maturity the Taker refunds its Bitcoin; the Maker reconciles |
 | `maker-refund` | the Taker never claims; the Maker refunds LEZ after `refund_at`, then the Taker refunds Bitcoin |
+| `refund-then-maker-lock` | the Taker's refund is admitted with the Maker's lock on chain but unobserved (asserted on the Taker's view), then the lock appears; the Taker's observer refunds unaided, the Maker refunds too, and both parties' balances on both chains are back less the locker's Bitcoin fees |
+
+Each long wait logs its state, LEZ's finalized height and the sequencer's tip when
+the state changes and at least once a minute, and a timeout names what it waited
+for and what it saw last; `regress.sh` writes both heights on each try's start and
+verdict line and every 30 s into `chain.tsv`.
 
 The refund scenarios need the `refund` timing profile (they also run on `fast`,
 only slower); `regress.sh` switches to it by itself and back to `fast` for the
@@ -599,7 +615,8 @@ scripts/up.sh              one-command bring-up (+ desk verification); LEZ_IMAGE
 scripts/swap-through-ui.sh one complete swap driven through the two desks
 scripts/node-hold.sh       hold a Node down inside its running Basecamp, or release it
 scripts/market-bootstrap.sh one-time settlement-chain bootstrap (one throwaway builder container)
-scripts/pin-package-dependencies.sh write the release set: our packages' dependencies with version ranges
+scripts/pin-package-dependencies.sh write the release set: our packages' dependencies pinned, each once
+scripts/package-chat-module.sh the catalog's chat_module: Logos's 0.2.2 release with Delivery pinned to 0.2.x
 scripts/stage-basecamp-package.sh install one release package (desk or module) into the Basecamp image
 scripts/export-node-evidence.py publish a completed swap's public evidence from the Nodes
 scripts/reset-swaps.sh     forget every persisted swap on both Nodes (after an actor rebuild)

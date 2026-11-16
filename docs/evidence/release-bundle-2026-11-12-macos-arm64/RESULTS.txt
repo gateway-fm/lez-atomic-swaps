@@ -1,0 +1,28 @@
+A release bundle started from nothing on macOS arm64, 2026-11-12 11:41Z -> 11:44Z, UTC
+
+What ran. After the full regression of b4e17cf0 the development stack was removed
+(`lanes.sh down 3 --wipe`, `down.sh --wipe`; 0 lez containers left). A bundle was packaged
+as the release workflow's smoke job packages it, `deploy/scripts/package-dist.sh
+ghcr.io/gateway-fm/lez-atomic-swaps/lez sha-b6b1c273da53`, from 49ab8ecc (PR #136's branch:
+main b4e17cf0 plus the two commits that fix the bundle's start.sh), unpacked into an empty
+directory, and `./scripts/start.sh` was run there with an environment of HOME, PATH and TERM
+only. The bundle has 71 files and no images/ directory.
+
+Result: start.sh exit 0, in 3 minutes. The images were pulled from GHCR at the tag the
+release workflow's rehearsal published (run 43189324839, built from b6b1c273), the two
+explorers among them; nothing was built (`logs/start.log` has no build step;
+`logs/containers.txt` is the image of every container afterwards). The market bootstrap, the
+restart of both Nodes after it (where the rehearsal's smoke job had failed), both desk suites
+(Maker 3 of 3, Taker 1 of 1) and verify-all.sh with no failed stage: all services up, both
+chains, 15 of 15 explorer checks, 15 of 15 market checks, both desk suites again.
+
+What this shows and what it does not. It shows the fixed scripts on a bundle's layout with
+pulled images. The images are the rehearsal's, built from b6b1c273, before the components
+were aligned on 0.3.0 (PR #135): the 0.3.0 packages are covered by the regression of
+b4e17cf0 (`docs/evidence/regression-0.3.0-2026-11-12-macos-arm64/`), not by this run. The
+host is Docker Desktop on Apple silicon, not the workflow's Linux runner. The release
+workflow has not run with these scripts.
+
+Host: MacBook Pro, Apple M1 Max, macOS 26.7.3, Docker Desktop (engine 29.9.2). Local paths
+in the logs are replaced by `<bundle>`, `<checkout>`, `<scratch>` and `<home>`. The VNC
+password in the banner is the devnet's documented one (`deploy/README.md`).

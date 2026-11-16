@@ -96,8 +96,10 @@ else
   # Maker's Zcash address zebra mines to) and the LEZ network image (regenesis,
   # each new chain's genesis time) and, with neither present yet, would give
   # the first chain upstream's fixed genesis and zebra the template miner.
+  # The explorers' images too: verify-all.sh starts them, and on a bundle it
+  # builds nothing.
   log "pulling ${LEZ_IMAGE_PREFIX}-*:${LEZ_IMAGE_TAG}"
-  docker compose --profile tools pull --quiet
+  docker compose --profile tools --profile explorers pull --quiet
 fi
 for wallet in maker-munich-01 maker-basel-02 taker-zurich-01 taker-limmat-02 heartbeat-pulse-01 heartbeat-echo-02; do
   [[ -f "$LEZ_WALLET_IDENTITIES/$wallet/identity.json" ]] && continue
@@ -138,7 +140,10 @@ tail -4 runtime/market-bootstrap.log
 # so both roles restart with its public fields in the runtime.
 cat "$LEZ_MARKET_ROOT/market-bootstrap.env" > runtime/market-bootstrap.env
 chmod 0644 runtime/market-bootstrap.env
-docker compose up -d --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
+# --no-build, as in up.sh: the role images name another service's image as a
+# build context (service:basecamp-ui), and for those `compose up` builds on
+# every call; a bundle has no images/ directory, so that build fails.
+docker compose up -d --no-build --no-deps --force-recreate --wait --wait-timeout 180 maker-node taker-node
 # A recreated Node reports its container healthy before its owner socket
 # serves, and it reports itself degraded until Delivery and Chat are back; the
 # desk suites press "Check Node" once and expect "Node ready". Wait for both
@@ -159,21 +164,31 @@ wait_nodes_ready() { # wait_nodes_ready <seconds>
 }
 log "waiting for both Nodes to report ready"
 wait_nodes_ready 300
-# A Maker without the market's routes is ready and not degraded, and can make
-# no offer: the routes come from the bootstrap manifest it just rendered.
-maker_routes="$(docker exec "$LEZ_CONTAINER_PREFIX-maker-node" curl -sS --max-time 120 --unix-socket /run/lez/maker/node.sock \
-  -H 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"maker_health","params":[{}]}' http://localhost/ 2>/dev/null |
-  jq -r '.result.routes // [] | length' 2>/dev/null || echo 0)"
-[[ "$maker_routes" =~ ^[1-9][0-9]*$ ]] ||
-  fail "the Maker lists no routes after the market bootstrap (maker_health.routes is empty): check runtime/market-bootstrap.log and runtime/market-bootstrap.env"
-
 # ---- verification --------------------------------------------------------------------
 if [[ "$QUICK" != 1 ]]; then
   log "desk suites in each party's Basecamp (the Maker suite also seeds the order book)"
   for role in maker taker; do
     docker exec "$LEZ_CONTAINER_PREFIX-$role-node" node /ui-tests/verify.mjs "$role" 2>&1 | grep -E '✓|✗|passed|^    [A-Za-z]' || fail "$role desk suite failed"
   done
+  # The Maker lists a route once it has an offer on it, not before: a freshly
+  # bootstrapped Maker answers `routes: []` until its desk suite, just above,
+  # has seeded the order book (so this cannot be asked right after the
+  # bootstrap, where it failed every start, nor with --quick). A Maker that
+  # still lists none after publishing has no market on this chain (#113).
+  maker_route_count() {
+    docker exec "$LEZ_CONTAINER_PREFIX-maker-node" curl -sS --max-time 120 --unix-socket /run/lez/maker/node.sock \
+      -H 'content-type: application/json' \
+      --data '{"jsonrpc":"2.0","id":1,"method":"maker_health","params":[{}]}' http://localhost/ 2>/dev/null |
+      jq -r '.result.routes // [] | length' 2>/dev/null || echo 0
+  }
+  maker_routes="$(maker_route_count)"
+  routes_deadline=$(( $(date +%s) + 60 ))
+  until [[ "$maker_routes" =~ ^[1-9][0-9]*$ ]] || (( $(date +%s) >= routes_deadline )); do
+    sleep 3
+    maker_routes="$(maker_route_count)"
+  done
+  [[ "$maker_routes" =~ ^[1-9][0-9]*$ ]] ||
+    fail "the Maker lists no routes after its desk published an offer (maker_health.routes is empty): check runtime/market-bootstrap.log and runtime/market-bootstrap.env"
   bash scripts/verify-all.sh 2>&1 | grep -E 'OK|FAIL|checks|failed|✓|✗|^    [A-Za-z]' || fail "verify-all.sh reported a failed stage"
 fi
 if [[ "$RUN_SWAP" == 1 ]]; then

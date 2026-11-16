@@ -1,0 +1,156 @@
+[1/6] generating runtime config…
+runtime root: runtime
+LEZ genesis time 1794433124 (2026-11-11T21:38:44Z), root b34c642c0cccf43c652913f3764bb2f255618b4ecb3d5d97ffe39cd7953fa22d
+minted the maker Zcash key: runtime/lez/maker/zcash.key
+minted the taker Zcash key: runtime/lez/taker/zcash.key
+zebra mines to the Maker's Zcash key (tmEW5Vo5yLGkMNmYLLDs1PcaquTHhiB9KwL): runtime/zebra/zebrad.toml
+runtime generated at runtime
+  [time 21:38:46] runtime config: 3 s (3 s since up.sh started)
+[2/6] images…
+  all images present (use --build to rebuild)
+  [time 21:38:48] images: 2 s (5 s since up.sh started)
+[3/6] starting chains…
+ Network lez-swap-chains Creating 
+ Network lez-swap-chains Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Volume lez-bitcoin-core-data Creating 
+ Volume lez-zebra-data Creating 
+ Volume lez-zebra-data Creating 
+ Volume lez-zebra-data Created 
+ Volume lez-zebra-data Created 
+ Volume lez-bitcoin-core-data Created 
+ Volume lez-bitcoin-core-data Created 
+ Network lez-swap-chains Created 
+ Network lez-swap-chains Created 
+ Container lez-zebra Creating 
+ Container lez-network Creating 
+ Container lez-bitcoin-core Creating 
+ Container lez-network Created 
+ Container lez-sequencer Creating 
+ Container lez-bitcoin-core Created 
+ Container lez-zebra Created 
+ Container lez-btc-miner Creating 
+ Container lez-sequencer Created 
+ Container lez-btc-miner Created 
+ Container lez-bitcoin-core Starting 
+ Container lez-network Starting 
+ Container lez-zebra Starting 
+ Container lez-bitcoin-core Started 
+ Container lez-bitcoin-core Waiting 
+ Container lez-network Started 
+ Container lez-network Waiting 
+ Container lez-zebra Started 
+ Container lez-bitcoin-core Healthy 
+ Container lez-btc-miner Starting 
+ Container lez-btc-miner Started 
+ Container lez-network Healthy 
+ Container lez-sequencer Starting 
+ Container lez-sequencer Started 
+  [time 21:38:59] start the chains (compose up): 11 s (16 s since up.sh started)
+  [time 21:39:05] chains healthy: 6 s (22 s since up.sh started)
+  [time 21:39:17] indexer check (repair-indexer.sh): 12 s (34 s since up.sh started)
+Regtest wallets ready; Maker 250.0 BTC, Taker 5250.0 BTC spendable.
+  [time 21:39:33] Bitcoin Core wallets (seed-btc-wallets.py): 16 s (50 s since up.sh started)
+[4/6] market (escrow program, vault claims, bootstrap manifest)…
+heartbeat-echo-02: claimed 100000 into AnnkYe4ZDJ8ANaBunmeQEugxW3Lyr9LkesopsJn9M9hs (62e54c53a53b220b4542f8c44a93669ff76c98d2b4434b52b5e3f2e89522aec7)
+market bootstrap complete
+  bootstrap manifest: /market/market-bootstrap.env
+  [time 21:40:09] market bootstrap: 36 s (86 s since up.sh started)
+[5/6] Nodes…
+time="2026-11-11T22:40:09+01:00" level=warning msg="volume \"lez-20260910222044-bitcoin-core-data\" carries the compose label \"bitcoin_core_data\" but does not match the compose file (using \"lez-bitcoin-core-data\"); it is left untouched — remove it manually if it is no longer needed"
+ Container lez-bitcoin-core Running 
+ Container lez-sequencer Running 
+ Container lez-network Running 
+ Volume lez-delivery-dir Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-maker-wallet Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-taker-state Creating 
+ Volume lez-maker-socket Creating 
+ Volume lez-delivery-dir Creating 
+ Volume lez-zec-taker Creating 
+ Volume lez-zec-maker Creating 
+ Volume lez-maker-state Creating 
+ Volume lez-maker-state Creating 
+ Volume lez-taker-wallet Creating 
+ Volume lez-taker-wallet Creating 
+ Volume lez-maker-state Created 
+ Volume lez-maker-state Created 
+ Volume lez-taker-state Created 
+ Volume lez-taker-state Created 
+ Volume lez-maker-socket Created 
+ Volume lez-maker-socket Created 
+ Volume lez-taker-wallet Created 
+ Volume lez-taker-wallet Created 
+ Volume lez-zec-maker Created 
+ Volume lez-zec-maker Created 
+ Volume lez-delivery-dir Created 
+ Volume lez-delivery-dir Created 
+ Volume lez-maker-wallet Created 
+ Volume lez-maker-wallet Created 
+ Container lez-maker-node Creating 
+ Volume lez-zec-taker Created 
+ Volume lez-zec-taker Created 
+ Container lez-maker-node Created 
+ Container lez-taker-node Creating 
+ Container lez-taker-node Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-network Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-bitcoin-core Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-bitcoin-core Healthy 
+ Container lez-maker-node Starting 
+ Container lez-maker-node Started 
+ Container lez-maker-node Waiting 
+ Container lez-sequencer Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-maker-node Healthy 
+ Container lez-taker-node Starting 
+ Container lez-taker-node Started 
+  [time 21:40:15] start the Nodes (compose up): 6 s (92 s since up.sh started)
+  [time 21:40:18] Nodes healthy: 3 s (95 s since up.sh started)
+  [time 21:40:18] Nodes answer owner health: 0 s (95 s since up.sh started)
+15/15 market checks passed
+  [time 21:40:20] market check (verify-market.py): 2 s (97 s since up.sh started)
+[5/6] finality heartbeat (one unit every 20 s)…
+ Container lez-network Running 
+ Container lez-sequencer Running 
+ Container lez-heartbeat Creating 
+ Container lez-heartbeat Created 
+ Container lez-network Waiting 
+ Container lez-network Healthy 
+ Container lez-sequencer Waiting 
+ Container lez-network Waiting 
+ Container lez-sequencer Healthy 
+ Container lez-network Healthy 
+ Container lez-heartbeat Starting 
+ Container lez-heartbeat Started 
+  [time 21:40:21] finality heartbeat: 1 s (98 s since up.sh started)
+[6/6] the parties' desks…
+  ✓ maker: the Maker's Basecamp shows its desk with a live Node
+  ✓ maker: real Node health
+  ✓ maker: Node-indexed BTC offer inventory
+3 passed, 0 failed
+  ✓ taker: the Taker's Basecamp shows its desk with a live Node
+1 passed, 0 failed
+
+──────────────────────────────────────────────────────────────────
+ LEZ swap stack is up (volumes: lez-*)
+
+   Bitcoin regtest RPC   http://127.0.0.1:18443   (auto-mining, 1 block / 2 s)
+   LEZ indexer RPC       http://127.0.0.1:8779
+   explorers             off (LEZ_EXPLORERS=1 ./scripts/up.sh starts them)
+   Maker's Basecamp      vnc://127.0.0.1:5901     (VNC password: lezswap; the Maker desk)
+   Taker's Basecamp      vnc://127.0.0.1:5902     (VNC password: lezswap; the Taker desk)
+   Maker Node            docker exec lez-maker-node lez-maker-cli --socket /run/lez/maker/node.sock health
+
+ logs:  docker compose logs -f <service>      down:  ./scripts/down.sh [--wipe]
+ a swap looks stuck?  ./scripts/verify-all.sh, then ./scripts/up.sh --fresh-lez if Bedrock's slot is frozen
+──────────────────────────────────────────────────────────────────
+  [time 21:40:26] desk suites: 5 s (103 s since up.sh started)

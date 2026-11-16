@@ -3,7 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::{
     fs,
     os::unix::fs::PermissionsExt as _,
@@ -577,14 +577,14 @@ async fn rejects_program_definition_ata_authority_order_and_conflict_drift_fail_
     assert!(!debug.contains(&hex::encode([102; 32])));
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 static DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Debug)]
 struct SecureDirectory(PathBuf);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl SecureDirectory {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -602,14 +602,14 @@ impl SecureDirectory {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for SecureDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test]
 async fn exact_token_plan_is_durable_before_exposure_and_restart_never_regenerates() {
     let directory = SecureDirectory::new();
@@ -668,7 +668,7 @@ async fn exact_token_plan_is_durable_before_exposure_and_restart_never_regenerat
     assert_eq!(restarted_nonce.calls.load(Ordering::SeqCst), 0);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[allow(
     clippy::too_many_lines,
     reason = "one restart corridor proves all distinct v2 files without sharing process state"

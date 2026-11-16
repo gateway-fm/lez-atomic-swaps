@@ -1,0 +1,27 @@
+$ deploy/scripts/package-chat-module.sh --out <scratch>/pkg/chat_module.lgx   (downloads the release asset)
+chat_module 0.2.2-delivery.1 (darwin-arm64, linux-amd64, linux-arm64; delivery_module ~0.2.0; root 9f626b2139bbc86d10f8b49cfdcd81600e7b963d7eb7885022942c03f5e13366) -> <scratch>/pkg/chat_module.lgx
+sha256 b2b0f12899792a69e60d709914a87d52266ccc3f3181dc4ab0c190ce796df29e
+
+$ lgx verify <scratch>/pkg/chat_module.lgx   (logos-package 4bdd904)
+Package structure is valid: <scratch>/pkg/chat_module.lgx
+Package is unsigned
+
+# release asset vs output, member by member (name, mode, owner, mtime, type, bytes)
+DIFFERS  manifest.json
+same     variants
+same     variants/darwin-arm64
+same     variants/darwin-arm64/chat_module_plugin.dylib
+same     variants/darwin-arm64/libboost_system.dylib
+same     variants/darwin-arm64/libcrypto.3.dylib
+same     variants/darwin-arm64/libssl.3.dylib
+same     variants/linux-amd64
+same     variants/linux-amd64/chat_module_plugin.so
+same     variants/linux-amd64/libboost_system.so.1.87.0
+same     variants/linux-amd64/libcrypto.so.3
+same     variants/linux-amd64/libssl.so.3
+same     variants/linux-arm64
+same     variants/linux-arm64/chat_module_plugin.so
+same     variants/linux-arm64/libboost_system.so.1.87.0
+same     variants/linux-arm64/libcrypto.so.3
+same     variants/linux-arm64/libssl.so.3
+# manifest fields that differ: {'version': ['0.2.2', '0.2.2-delivery.1'], 'dependencies': [['delivery_module'], [{'name': 'delivery_module', 'version': '~0.2.0'}]]}

@@ -1,0 +1,21 @@
+[08:54:11] === late-claim-confirms (stamp 179447005103)
+[08:54:11] preflight: indexer historical reads
+[08:54:11]   indexer serves historical reads at the tip (2873)
+[08:54:11] preflight: LEZ finality check waived by request
+[08:54:12]   Maker published offer-e2e-179447005103
+[08:54:13]   Taker took offer-e2e-179447005103: swap 8709146e7403 (not_activated)
+[08:54:13]   Taker locked lez: 511b585de88e (replay=False)
+[08:54:14]   [0 s] waiting for the Taker's 8709146e7403 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 2871, tip 2875 (4 unfinalized) [heartbeat]
+[08:54:22]   [8 s] waiting for the Taker's 8709146e7403 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 2871, tip 2875 (4 unfinalized) [heartbeat]
+[08:54:32]   [18 s] waiting for the Taker's 8709146e7403 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 2887, tip 2891 (4 unfinalized) [heartbeat]
+[08:54:32]   stopping the miner so the Taker's Bitcoin claim waits in the mempool
+[08:54:36]   [0 s] waiting for the Maker's record of its Bitcoin lock for 8709146e7403: maker taker_lock_confirmed, no Bitcoin lock on record yet | LEZ finalized 2887, tip 2891 (4 unfinalized) [heartbeat]
+[08:54:38]   stopping the Taker Node
+[08:54:38]   the claim fb781e1c08fc confirmed in 0a3e1d974335 with the Taker Node down
+[08:54:39]   [0 s] waiting for the Maker to complete with the Taker down: maker both_legs_locked, the Taker Node stopped | LEZ finalized 2887, tip 2891 (4 unfinalized) [heartbeat]
+[08:54:44]   [5 s] waiting for the Maker to complete with the Taker down: maker claim_evidence_available, the Taker Node stopped | LEZ finalized 2887, tip 2891 (4 unfinalized) [heartbeat]
+[08:54:54]   the Maker completed alone from the claim on chain
+[08:55:01]   [0 s] waiting for the Taker's 8709146e7403 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2902, tip 2907 (5 unfinalized) [heartbeat]
+[08:55:01]   both Nodes report 8709146e7403 completed
+[08:55:01]   balances after the late claim: maker BTC -1003100 sat, LEZ +1000; taker BTC +999000 sat, LEZ -1000
+[08:55:01] === late-claim-confirms: passed in 51s

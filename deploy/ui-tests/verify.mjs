@@ -11,7 +11,8 @@
 //   docker exec lez-taker-node node /ui-tests/verify.mjs taker
 import net from "node:net";
 
-const framework = "/opt/qt-mcp/test-framework/framework.mjs";
+// The qt-mcp test framework: the image's, or QT_MCP_FRAMEWORK (a native Basecamp).
+const framework = process.env.QT_MCP_FRAMEWORK || "/opt/qt-mcp/test-framework/framework.mjs";
 const { test, run } = await import(framework);
 
 const role = process.argv[2] === "taker" ? "taker" : "maker";
@@ -50,7 +51,7 @@ async function waitInspector(ms) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const ok = await new Promise((resolve) => {
-      const s = net.createConnection({ host: "127.0.0.1", port: inspectorPort });
+      const s = net.createConnection({ host: process.env.QML_INSPECTOR_HOST || "127.0.0.1", port: inspectorPort });
       s.once("connect", () => { s.destroy(); resolve(true); });
       s.once("error", () => resolve(false));
     });
@@ -452,11 +453,22 @@ if (role === "maker") {
     // controls under the offscreen platform once the inventory has rendered.
     const check = await app.findByProperty("objectName", "makerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
-    await evaluateIn(app, check.matches[0].id, "clicked()");
+    // The strip shows the last reply: a market reply still on its way when
+    // the health reply lands replaces "Node ready" inside one poll interval
+    // (seen with two swaps on the desk), so the check is pressed again.
+    let lastError = null;
+    for (let press = 0; press < 4; press += 1) {
+      await evaluateIn(app, check.matches[0].id, "clicked()");
+      try {
+        await app.waitFor(async () => app.expectTexts(["Node ready"]), {
+          timeout: press < 3 ? 12000 : 45000, interval: 300, description: "Maker health status",
+        });
+        lastError = null;
+        break;
+      } catch (error) { lastError = error; }
+    }
     try {
-      await app.waitFor(async () => app.expectTexts(["Node ready"]), {
-        timeout: 45000, interval: 300, description: "Maker health status",
-      });
+      if (lastError) throw lastError;
     } catch (error) {
       const desk = await evaluateIn(app, check.matches[0].id,
         "JSON.stringify({ready: root.ready, busy: root.busy, status: root.statusTitle, detail: root.statusDetail, output: String(root.output).slice(0, 300)})");
@@ -575,11 +587,22 @@ if (role === "maker") {
     // controls under the offscreen platform once the order book has grown.
     const check = await app.findByProperty("objectName", "takerHealth");
     if (check.error || check.matches?.length !== 1) throw new Error("Check Node button is unavailable");
-    await evaluateIn(app, check.matches[0].id, "clicked()");
+    // The strip shows the last reply: a market reply still on its way when
+    // the health reply lands replaces "Node ready" inside one poll interval
+    // (seen with two swaps on the desk), so the check is pressed again.
+    let lastError = null;
+    for (let press = 0; press < 4; press += 1) {
+      await evaluateIn(app, check.matches[0].id, "clicked()");
+      try {
+        await app.waitFor(async () => app.expectTexts(["Node ready"]), {
+          timeout: press < 3 ? 12000 : 45000, interval: 300, description: "Taker health status",
+        });
+        lastError = null;
+        break;
+      } catch (error) { lastError = error; }
+    }
     try {
-      await app.waitFor(async () => app.expectTexts(["Node ready"]), {
-        timeout: 45000, interval: 300, description: "Taker health status",
-      });
+      if (lastError) throw lastError;
     } catch (error) {
       const desk = await evaluateIn(app, check.matches[0].id,
         "JSON.stringify({ready: root.ready, busy: root.busy, status: root.statusTitle, detail: root.statusDetail, output: String(root.output).slice(0, 300)})");

@@ -1,0 +1,26 @@
+Daemon started (pid 98527)
+Logs: $SESSIONS/taker/logs/daemon.log
+$ package install $CORE/core/logos-lez_core-module-lib.lgx -y
+{"installed":["lez_core"],"status":"ok"}
+$ package install $MODULES/swap-node/logos-lez_swap_node-module-lib.lgx -y
+{"installed":["lez_swap_node"],"status":"ok"}
+$ package install $OUT/lez_taker_node.lgx -y
+{"installed":["lez_taker_node"],"status":"ok"}
+$ module load lez_taker_node
+{"dependencies_loaded":["lez_swap_node","lez_core"],"module":"lez_taker_node","status":"ok","version":"0.3.0"}
+$ call lez_core create_new <config> <storage> <statistics> <password>
+{"method":"create_new","module":"lez_core","result":"<redacted>","status":"ok"}
+$ call lez_core import_public_account <key>
+{"method":"import_public_account","module":"lez_core","result":0,"status":"ok"}
+$ call lez_swap_node serve_signer $LEZ_NODE_HOME/wallet/taker/signer.sock 36a196d1b705f1d0cded05107c37b92537295868f3ce06f4d7ec194eff3ae54c
+{"method":"serve_signer","module":"lez_swap_node","result":0,"status":"ok"}
+$ call lez_taker_node launcher
+{"method":"launcher","module":"lez_taker_node","result":"$SESSIONS/taker/modules/lez_taker_node/bin/node-entrypoint.sh","status":"ok"}
+$ call lez_swap_node start_node taker $SESSIONS/taker/modules/lez_taker_node/bin/node-entrypoint.sh $LEZ_NODE_HOME/taker.out.log $LEZ_NODE_HOME/taker.hold
+{"method":"start_node","module":"lez_swap_node","result":0,"status":"ok"}
+$ curl --unix-socket run/taker/node.sock taker_health
+{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params","data":{"category":"invalid_params"}}}
+$ call lez_swap_node node_stats taker
+{"role":"taker","state":"running","pid":98589,"uptime_seconds":8.8,"starts":1,"processes":[{"pid":98589,"ppid":98569,"name":"lez-taker-node","memory_mb":12.344},{"pid":98641,"ppid":98589,"name":"bash","memory_mb":1.672},{"pid":98642,"ppid":98589,"name":"bash","memory_mb":1.672},{"pid":98643,"ppid":98641,"name":"tee","memory_mb":1.141},{"pid":98644,"ppid":98642,"name":"tee","memory_mb":1.141}],"host":{"pid":98569,"name":"logos_host"}}
+$ curl --unix-socket run/taker/node.sock taker_health {"schema_version":1}
+{"jsonrpc":"2.0","id":1,"result":{"schema_version":1,"ready":true,"degraded":false,"delivery":"available","chat":"available","pair_capabilities":[{"pair":"Bitcoin","supported_direction":"TakerSellsForeign","authenticated_offer_browsing":true,"initiation":"prepared_private_material","monitoring":"receipt_bound","claim":"full_lifecycle","refund":"full_lifecycle"},{"pair":"Monero","supported_direction":"TakerSellsLez","authenticated_offer_browsing":true,"initiation":"owner_cli_or_demo","monitoring":"owner_cli_or_demo","claim":"effect_checkpoint_only","refund":"effect_checkpoint_only"},{"pair":"Zcash","supported_direction":"TakerSellsLez","authenticated_offer_browsing":true,"initiation":"prepared_private_material","monitoring":"not_on_this_node","claim":"not_on_this_node","refund":"not_on_this_node"},{"pair":"Zcash","supported_direction":"TakerSellsForeign","authenticated_offer_browsing":true,"initiation":"prepared_private_material","monitoring":"not_on_this_node","claim":"not_on_this_node","refund":"not_on_this_node"},{"pair":"Bitcoin","supported_direction":"TakerSellsLez","authenticated_offer_browsing":true,"initiation":"prepared_private_material","monitoring":"receipt_bound","claim":"full_lifecycle","refund":"full_lifecycle"}],"registered_methods":{"health":true,"offer_list":true,"swap_list":true,"initiate":true,"monitor":true,"claim":true,"refund":true,"lock":true},"lez_chain":{"degraded":false,"finalized_block_id":10898,"finalized_advanced_at_unix_seconds":1794506284,"finalized_flat_seconds":0,"tip_block_id":10901,"stall_threshold_seconds":60,"observed_at_unix_seconds":1794506284}}}

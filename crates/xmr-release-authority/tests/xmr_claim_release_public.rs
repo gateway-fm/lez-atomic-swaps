@@ -1,7 +1,14 @@
 //! Public-boundary happy path for the M4 XMR claim-release issuer.
-use std::{ffi::CString, fs::File, io::Write as _, os::unix::fs::PermissionsExt as _};
+// The release-worker process path takes write-sealed memfd inputs and is
+// Linux-only; on macOS its process helpers are compiled out and the rest of
+// the fixture is partly unused.
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+use std::os::unix::fs::PermissionsExt as _;
+#[cfg(target_os = "linux")]
+use std::{ffi::CString, fs::File, io::Write as _};
 
 use async_trait::async_trait;
+#[cfg(target_os = "linux")]
 use command_fds::{CommandFdExt as _, FdMapping};
 use std::str::FromStr as _;
 use std::sync::{
@@ -51,6 +58,7 @@ use lez_xmr_swap_sdk::{
 };
 use monero_rpc::monero::{Block, Hash as MoneroHash, consensus::encode::serialize_hex};
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng as _};
+#[cfg(target_os = "linux")]
 use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use secp256k1::{Keypair, Message as SecpMessage, PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
@@ -1232,6 +1240,7 @@ async fn run_release_worker(
         .expect("spawn isolated release worker")
 }
 
+#[cfg(target_os = "linux")]
 fn sealed_process_input(label: &str, bytes: &[u8]) -> File {
     let name = CString::new(label).expect("sealed release label");
     let descriptor = memfd_create(
@@ -1252,6 +1261,7 @@ fn sealed_process_input(label: &str, bytes: &[u8]) -> File {
     file
 }
 
+#[cfg(target_os = "linux")]
 fn unsealed_process_input(label: &str, bytes: &[u8]) -> File {
     let name = CString::new(label).expect("unsealed release label");
     let descriptor = memfd_create(
@@ -1267,6 +1277,7 @@ fn unsealed_process_input(label: &str, bytes: &[u8]) -> File {
     file
 }
 
+#[cfg(target_os = "linux")]
 async fn run_sealed_release_worker(
     worker: std::ffi::OsString,
     public_config: Value,
@@ -1275,6 +1286,7 @@ async fn run_sealed_release_worker(
     run_release_worker_with_sealed_descriptors(worker, public_config, state_directory, true).await
 }
 
+#[cfg(target_os = "linux")]
 async fn run_sealed_release_preflight_worker(
     worker: std::ffi::OsString,
     public_config: Value,
@@ -1290,6 +1302,7 @@ async fn run_sealed_release_preflight_worker(
     .await
 }
 
+#[cfg(target_os = "linux")]
 async fn run_release_worker_with_sealed_descriptors(
     worker: std::ffi::OsString,
     public_config: Value,
@@ -1306,6 +1319,7 @@ async fn run_release_worker_with_sealed_descriptors(
     .await
 }
 
+#[cfg(target_os = "linux")]
 async fn run_release_worker_with_sealed_descriptors_and_mode(
     worker: std::ffi::OsString,
     public_config: Value,
@@ -1379,6 +1393,7 @@ fn assert_process_output_redacted(output: &std::process::Output, private_root: &
     }
 }
 
+#[cfg(target_os = "linux")]
 #[tokio::test]
 #[ignore = "needs a live Monero release worker process; run by hand"]
 #[allow(

@@ -1,0 +1,39 @@
+AXWindow | Logos Basecamp | dialog | 
+  AXCheckBox | Workspace |  | 0
+  AXButton | Applications |  | 
+  AXButton | Package Manager |  | 
+  AXButton | Settings |  | 
+  AXTextField |  |  | 0.3.2 · Portable
+      AXRadioButton | All |  | 1
+      AXRadioButton | Installed |  | 0
+      AXRadioButton | Not Installed |  | 0
+    AXButton | Reload |  | 
+    AXButton | Manage Repositories |  | 
+      AXButton | blockchain_ui |  | 
+      AXButton | token_ui |  | 
+      AXButton | amm_ui |  | 
+      AXButton | eth_rpc_ui |  | 
+      AXButton | lez_wallet_ui |  | 
+      AXButton | lez_explorer_ui |  | 
+      AXButton | monerod_ui |  | 
+      AXButton | monero_wallet_ui |  | 
+      AXButton | storage_ui |  | 
+      AXButton | delivery_demo |  | 
+      AXButton | verified_proxy_ui |  | 
+      AXButton | chat_ui |  | 
+      AXButton | uniswap_ui |  | 
+      AXButton | token_list_ui |  | 
+      AXButton | evm_signer_ui |  | 
+      AXButton | evm_keystore_ui |  | 
+      AXButton | eth_wallet_ui |  | 
+      AXButton | accounts_ui |  | 
+      AXButton | lez_atomic_swap_maker |  | 
+      AXButton | lez_atomic_swap_taker |  | 
+  AXButton | LEZ Taker |  | 
+  AXButton | Install |  | 
+    AXMenuButton | v.0.3.1 |  | 
+    AXMenuButton | v.0.2.1 |  | 
+    AXMenuButton | v.0.2.2-delivery.1 |  | 
+    AXMenuButton | v.0.4.1-sign.4 |  | 
+    AXMenuButton | v.0.3.1 |  | 
+    AXMenuButton | v.0.3.1 |  | 

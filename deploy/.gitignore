@@ -1,1 +1,4 @@
 runtime/
+# start.sh in a checkout keeps the wallet identities (signing keys) and the
+# chain's escrow deployment here; never commit them
+market/

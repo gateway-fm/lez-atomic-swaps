@@ -249,6 +249,7 @@ fn response_shapes_are_versioned_and_never_carry_paths_keys_or_raw_effect_materi
         actor_phase: None,
         claim_window_closed: None,
         last_failure_class: None,
+        last_outcome: None,
         observed_at: None,
         terms: None,
         effects: Vec::new(),
@@ -532,4 +533,68 @@ fn lez_chain_progress_is_additive_and_a_stalled_finality_degrades_health() {
         serde_json::from_value::<TakerHealthV1>(value).unwrap(),
         degraded
     );
+}
+
+/// #103 item 6: `last_outcome` is an optional field of schema 1. A reply
+/// without it (every Node before it) still parses through the strict
+/// decoder, a reply with it round-trips, and a client that reads only the
+/// fields it knows reads the new reply.
+#[test]
+fn last_outcome_is_additive_and_carries_the_wait_with_its_bound() {
+    use lez_actor_supervision::ActorLastOutcomeV1;
+
+    /// A client that knows only the fields it reads.
+    #[derive(Deserialize)]
+    #[allow(dead_code)]
+    struct OldClientView {
+        swap_id: String,
+        state: String,
+        progress_generation: u64,
+    }
+
+    let old = json!({
+        "schema_version": 1,
+        "swap_id": "r103-btc-swap-001",
+        "offer_id": "r103-btc-offer-001",
+        "route": {"pair": "Bitcoin", "direction": "TakerSellsForeign"},
+        "foreign_units": 100_000,
+        "lez_units": 2_300,
+        "progress_generation": 1,
+        "state": "refund_in_progress",
+        "available_action": null,
+        "privacy_guidance": null
+    });
+    let parsed: TakerSwapViewV1 = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(parsed.last_outcome, None);
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), old);
+
+    let outcome = ActorLastOutcomeV1::from_effect(
+        "recover",
+        &json!({"outcome": "awaiting_observation", "revision": 1,
+                "wait": {"kind": "lez_finality_past_cutoff", "chain": "lez",
+                         "until_unix_seconds": 1_762_877_100_u64,
+                         "chain_unix_seconds": 1_762_876_680_u64}}),
+        1_762_876_700,
+    )
+    .unwrap();
+    let mut held = parsed;
+    held.last_outcome = Some(outcome);
+    let value = serde_json::to_value(&held).unwrap();
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(
+        value["last_outcome"],
+        json!({"at_unix_seconds": 1_762_876_700_u64, "step": "recover",
+               "outcome": "awaiting_observation", "revision": 1,
+               "waiting_for": {"kind": "lez_finality_past_cutoff", "chain": "lez",
+                               "until_unix_seconds": 1_762_877_100_u64,
+                               "chain_unix_seconds": 1_762_876_680_u64}})
+    );
+    assert_eq!(
+        serde_json::from_value::<TakerSwapViewV1>(value.clone()).unwrap(),
+        held
+    );
+    assert_secret_and_authority_free(&value);
+
+    let read: OldClientView = serde_json::from_value(value).unwrap();
+    assert_eq!(read.state, "refund_in_progress");
 }

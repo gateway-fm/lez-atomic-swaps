@@ -1,5 +1,6 @@
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
 use std::{
-    ffi::CString,
     fs,
     fs::File,
     io::Write as _,
@@ -13,6 +14,7 @@ use command_fds::{CommandFdExt as _, FdMapping};
 use lez_swap_core::Participant;
 use lez_swap_store::{MAKER_ACTOR_CONFIG_FD, SqliteZecRecoveryStore};
 use lez_zec_swap_sdk::ProtectedClaimKey;
+#[cfg(target_os = "linux")]
 use rustix::fs::{MemfdFlags, Mode, SealFlags, fchmod, fcntl_add_seals, memfd_create};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -899,10 +901,7 @@ fn real_binary_reads_only_the_fully_sealed_inherited_config() {
     assert_eq!(response["role"], "maker");
     assert_eq!(response["state"], "not_activated");
 
-    let incomplete = config_memfd(
-        &config_bytes,
-        SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW,
-    );
+    let incomplete = incompletely_sealed_config(&config_bytes);
     let mut command = Command::new(env!("CARGO_BIN_EXE_lez-zec-maker-actor"));
     command.args(["--config-fd", "196", "status"]);
     command
@@ -931,6 +930,7 @@ fn real_binary_reads_only_the_fully_sealed_inherited_config() {
     assert_eq!(rejected.stderr, b"actor configuration is unavailable\n");
 }
 
+#[cfg(target_os = "linux")]
 fn fully_sealed_config(bytes: &[u8]) -> OwnedFd {
     config_memfd(
         bytes,
@@ -938,6 +938,12 @@ fn fully_sealed_config(bytes: &[u8]) -> OwnedFd {
     )
 }
 
+#[cfg(target_os = "linux")]
+fn incompletely_sealed_config(bytes: &[u8]) -> OwnedFd {
+    config_memfd(bytes, SealFlags::SEAL | SealFlags::SHRINK | SealFlags::GROW)
+}
+
+#[cfg(target_os = "linux")]
 fn config_memfd(bytes: &[u8], seals: SealFlags) -> OwnedFd {
     let name = CString::new("lez-zec-actor-test-config").expect("memfd name");
     let descriptor = memfd_create(
@@ -950,6 +956,43 @@ fn config_memfd(bytes: &[u8], seals: SealFlags) -> OwnedFd {
     file.write_all(bytes).expect("write config memfd");
     fcntl_add_seals(&file, seals).expect("seal config memfd");
     file.into()
+}
+
+/// macOS stand-in for a sealed memfd, as the supervisor makes it: an unlinked
+/// 0600 copy handed over on a read-only descriptor.
+#[cfg(target_os = "macos")]
+fn fully_sealed_config(bytes: &[u8]) -> OwnedFd {
+    unlinked_config(bytes, false)
+}
+
+/// macOS analogue of a missing write seal: the same unlinked copy on a
+/// descriptor that can still write.
+#[cfg(target_os = "macos")]
+fn incompletely_sealed_config(bytes: &[u8]) -> OwnedFd {
+    unlinked_config(bytes, true)
+}
+
+#[cfg(target_os = "macos")]
+fn unlinked_config(bytes: &[u8], writable: bool) -> OwnedFd {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let directory = tempfile::tempdir().expect("pinned config root");
+    let path = directory.path().join("pinned-config");
+    let mut writer = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .expect("create pinned config");
+    writer.write_all(bytes).expect("write pinned config");
+    let handed_over = if writable {
+        writer
+    } else {
+        File::open(&path).expect("reopen pinned config read-only")
+    };
+    fs::remove_file(&path).expect("unlink pinned config");
+    handed_over.into()
 }
 
 #[test]

@@ -1,0 +1,30 @@
+[20:51:57] === zec-restart-taker (stamp 179468591702)
+[20:51:57] preflight: indexer historical reads
+[20:51:57]   indexer serves historical reads at the tip (3032)
+[20:51:57] preflight: LEZ finality check waived by request
+[20:51:57]   provisioning a ZEC corridor with 1 prepared swap(s) (zec-provision.sh; this recreates both Nodes)
+[20:52:20]       taker: taker ZEC corridor zec-devnet-179468591702: sidecar listening on 127.0.0.1:19902
+[20:52:20]       taker: taker: 1 prepared ZEC entries configured
+[20:52:20]     [zec-provision 19:52:20]   maker sidecar answers on 127.0.0.1:19901
+[20:52:20]     [zec-provision 19:52:20]   taker sidecar answers on 127.0.0.1:19902
+[20:52:20]       maker_health: ready=True degraded=False
+[20:52:20]     [zec-provision 19:52:20]   Taker lists zec-devnet-offer-179468591702 ; corridor zec-devnet-179468591702 is live
+[20:52:20]   corridor zec-devnet-179468591702 entry 0 (deterministic-local-devnet-v5): offer zec-devnet-offer-179468591702, zebra tip 383, Zcash refund height 392
+[20:52:20]   Taker took zec-devnet-offer-179468591702: swap zec-devnet-s (not_activated)
+[20:52:21]   receipt: swap zec-devnet-swap-179468591702, actor config /var/lib/lez/zec/taker-swaps/zec-devnet-179468591702/actor/taker/actor-config.json
+[20:52:21]   [0 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker not_activated (gen 0) | actor at - | maker leased | zebra 383 | LEZ finalized 3043, tip 3047 (4 unfinalized) [heartbeat]
+[20:52:24]   [3 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker awaiting_first_lock (gen 0) | actor at offered | maker leased | zebra 383 | LEZ finalized 3043, tip 3047 (4 unfinalized) [heartbeat]
+[20:52:28]   zebra: mined 1 block(s) → height 384 (mempool had ['54cb8e293700'])
+[20:52:34]   [13 s] waiting for the Taker's zec-devnet-s to reach refund_available (Taker first lock final): taker refund_available (gen 1) | actor at taker_lock_confirmed | maker taker_lock_confirmed | zebra 384 | LEZ finalized 3054, tip 3063 (9 unfinalized) [heartbeat]
+[20:52:34]   restarting lez-l2-taker-node
+[20:53:01]   after the restart the Taker's schedule reports no failure class; the supervisor resumes
+[20:53:02]   [0 s] waiting for the Taker's zec-devnet-s to reach claim_available (Taker Zcash funding → Maker LEZ lock → the Taker's revealing LEZ claim offered): taker claim_available (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 384 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:02]   zebra: mined 1 block(s) → height 385 (Taker's funding has 1 confirmation(s); the pre-reveal gate wants 2)
+[20:53:02]   Taker claimed LEZ on zec-devnet-s (replay=False)
+[20:53:02]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 2) | actor at both_legs_locked | maker both_legs_locked | zebra 385 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:05]   [3 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker claim_in_progress (gen 3) | actor at claim_evidence_available | maker claim_evidence_available | zebra 385 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:09]   zebra: mined 1 block(s) → height 386 (mempool had ['e618d1691c15'])
+[20:53:15]   [13 s] waiting for the Taker's zec-devnet-s to reach completed (claim inclusion): taker completed (gen 4) | actor at completed | maker completed | zebra 386 | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:15]   [0 s] waiting for the Taker's zec-devnet-s to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3075, tip 3079 (4 unfinalized) [heartbeat]
+[20:53:15]   both Nodes report zec-devnet-s completed
+[20:53:15] === zec-restart-taker: passed in 78s
