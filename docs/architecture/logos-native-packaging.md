@@ -723,8 +723,8 @@ Basecamp under `umask 022`.
 **Harness.** With `LEZ_CHAINS_RPC_ONLY=1`, `node-e2e.py` sends its
 `bitcoin-cli` calls to Bitcoin Core as JSON-RPC (`LEZ_E2E_BTC_RPC_URL`, the
 cookie in `LEZ_BTC_RPC_COOKIE_FILE`), a scenario that stops or starts a
-chain's container fails saying so, and
-`zec-provision.sh` checks Zebra by its RPC. The harness finds a native
+chain's container fails saying so, and the dealer test fixture
+`tests/fixtures/zec-catalog-fixture.sh` checks Zebra by its RPC. The harness finds a native
 Node's package through `/proc/<pid>/exe` on Linux.
 
 ### Catalog packages with darwin-arm64
