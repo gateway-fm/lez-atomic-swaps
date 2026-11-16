@@ -185,7 +185,20 @@ roles configure alike (`funding_cutoff_seconds`, `refund_seconds`,
 
 - **C, the Maker's funding cutoff** (not on chain). The Maker funds Monero only
   if the Taker's lock is final at a LEZ consensus time no later than C, and only
-  while the finalized LEZ clock is still before C.
+  from a drive that starts before C by the wall clock and reads the finalized
+  LEZ clock (which runs behind it) still before C
+  (`crates/maker-node/src/bin/xmr-maker-actor.rs`, `derive_status` and
+  `drive_once`). The funding tool runs after that check, so the transfer can
+  leave after C: by the tool's own run time (in the desk recording of
+  2026-11-16 the transfer was handed to the wallet-rpc 0.3 s before C and
+  reached monerod's pool 0.4 s after it), at most the Maker's two-minute
+  attempt deadline. That is by design: only the Maker enforces C, and only for
+  its own sake. The Taker takes the exact output at 10 confirmations whenever
+  it appears before R, authorises its claim (tag 14) only before R by its own
+  clock, and the escrow admits tags 14 and 15 only before R by block time, so
+  a late funding shortens only the Maker's claim window (at most 120 s of the
+  220 s from C to R − (R − C)/2 on `fast`); the Taker's refund window [R, P)
+  is untouched.
 - **R, the refund time.** Tags 13–15 are valid before R; tag 16 from R.
   The Maker claims (tag 15) only on a tag 14 it sees final before
   R − (R − C)/2, so its claim lands before R. A Maker that does not act within
