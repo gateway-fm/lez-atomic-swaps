@@ -1,0 +1,24 @@
+[14:16:33] === refund-then-maker-lock (stamp 179483499303)
+[14:16:33] preflight: indexer historical reads
+[14:16:33]   indexer serves historical reads at the tip (3630)
+[14:16:33] preflight: LEZ finality check waived by request
+[14:16:34]   Maker published offer-e2e-179483499303
+[14:16:35]   Taker took offer-e2e-179483499303: swap 04a1dd302a95 (not_activated)
+[14:16:35]   stopping the miner so the Maker's lock is broadcast on time but not yet confirmed
+[14:16:39]   Taker locked lez: 17dff748cf07 (replay=False)
+[14:16:39]   [0 s] waiting for the Maker's Bitcoin lock in the mempool (the miner held): Bitcoin mempool empty | LEZ finalized 3628, tip 3631 (3 unfinalized) [heartbeat]
+[14:16:58]   Maker's Bitcoin lock 4da49b9edc81 is broadcast (in mempool), unconfirmed
+[14:16:58]   waiting 105s for the cutoff to pass with the maker lock still unconfirmed
+[14:16:58]   [0 s] waiting for for the cutoff to pass with the maker lock still unconfirmed: taker awaiting_second_lock | maker taker_lock_confirmed | LEZ finalized 3641, tip 3646 (5 unfinalized) [heartbeat]
+[14:17:58]   [60 s] waiting for for the cutoff to pass with the maker lock still unconfirmed: taker awaiting_second_lock | maker taker_lock_confirmed | LEZ finalized 3692, tip 3697 (5 unfinalized) [heartbeat]
+[14:18:44]   refund admitted at generation 1 (awaiting_second_lock → refund_in_progress); the Taker's view lists no maker lock it could rely on
+[14:18:44]   maker lock confirmed; block median 1794834988 vs cutoff 1794835094 (timely by median)
+[14:18:44]   waiting 119s for the Taker's LEZ refund window to open
+[14:18:45]   [0 s] waiting for for the Taker's LEZ refund window to open: taker refund_in_progress | maker taker_lock_confirmed | LEZ finalized 3721, tip 3730 (9 unfinalized) [heartbeat]
+[14:19:45]   [60 s] waiting for for the Taker's LEZ refund window to open: taker both_legs_locked | maker both_legs_locked | LEZ finalized 3773, tip 3779 (6 unfinalized) [heartbeat]
+[14:20:44]   [0 s] waiting for the Taker's observer to carry the admitted refund of 04a1dd302a95 to refunded: taker both_legs_locked | maker both_legs_locked | LEZ finalized 3823, tip 3827 (4 unfinalized) [heartbeat]
+[14:20:50]   [5 s] waiting for the Taker's observer to carry the admitted refund of 04a1dd302a95 to refunded: taker refund_available | maker both_legs_locked | LEZ finalized 3823, tip 3827 (4 unfinalized) [heartbeat]
+[14:21:00]   observer recovered the swap unaided; the Maker refunds its Bitcoin lock
+[14:21:01]   Maker refund queued: {"schema_version": 1, "swap_id": "04a1dd302a95049432a09fd74bbb0926893b60aa9028f059365cb38840bb2577", "action": "refund", "requested_after_generation": 61, "was_
+[14:21:02]   balances both legs refunded: maker BTC -4100 sat, LEZ +0; taker BTC +0 sat, LEZ +0
+[14:21:02] === refund-then-maker-lock: passed in 269s

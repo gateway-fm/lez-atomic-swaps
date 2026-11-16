@@ -637,6 +637,62 @@ impl SqlitePublicEffectJournal {
         })
     }
 
+    /// Gives back the send authority of one `Started` row whose single
+    /// authorized call was refused before anything was offered to the chain
+    /// (the node failed its readiness check; no transaction left this
+    /// process). The row returns to `Prepared`, so the next reconcile against
+    /// an absent effect authorizes exactly one fresh send again.
+    ///
+    /// Only the caller that holds the swap's actor lock and received the
+    /// `NotAttempted` outcome of that call may use this: a `Started` row left
+    /// by a crash, or any call that may have reached the node, stays `Started`
+    /// and is never rearmed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects any row that is not exactly `Started`, corrupt state, or
+    /// storage failure without partially changing the row.
+    pub fn release_not_attempted(
+        &mut self,
+        key: &PublicEffectKey,
+    ) -> Result<PublicEffectSnapshot, StoreError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut snapshot =
+            load_snapshot(&transaction, key)?.ok_or(StoreError::MissingPublicEffect)?;
+        if snapshot.state != PublicEffectState::Started {
+            return Err(StoreError::PublicEffectConflict);
+        }
+        let updated = transaction.execute(
+            "UPDATE public_effect_journal
+             SET state = 'prepared', attempt_count = 0, revision = 0
+             WHERE swap_id = ?1 AND local_role = ?2 AND chain = ?3
+               AND operation = ?4 AND predecessor_revision = ?5
+               AND state = 'started' AND attempt_count = 1 AND revision = 1",
+            params![
+                key.swap_id.as_str(),
+                participant_name(key.local_role),
+                key.chain.as_str(),
+                key.operation.as_str(),
+                revision_to_sql(key.predecessor_revision)?,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::PublicEffectConflict);
+        }
+        snapshot.state = PublicEffectState::Prepared;
+        snapshot.attempt_count = 0;
+        snapshot.revision = 0;
+        let postcondition =
+            load_snapshot(&transaction, key)?.ok_or(StoreError::CorruptPublicEffectState)?;
+        if postcondition != snapshot {
+            return Err(StoreError::CorruptPublicEffectState);
+        }
+        transaction.commit()?;
+        Ok(snapshot)
+    }
+
     /// Loads and fully validates one exact durable row.
     ///
     /// # Errors

@@ -58,7 +58,9 @@ Later full runs of the same suite with the #103 scenarios added (97 tests):
 [`regression-0.3.1-2026-11-13-macos-arm64`](../docs/evidence/regression-0.3.1-2026-11-13-macos-arm64/RESULTS.txt)
 (Apple silicon, `538530eb`, the code of v0.3.1, 97 of 97),
 [`regression-0.3.2-2026-11-14-macos-arm64`](../docs/evidence/regression-0.3.2-2026-11-14-macos-arm64/RESULTS.txt)
-(Apple silicon, `961b0fe9`, `main` after PRs #148 and #153, 97 of 97); and the 93 tests on Apple silicon,
+(Apple silicon, `961b0fe9`, `main` after PRs #148 and #153, 97 of 97),
+[`regression-0.3.3-2026-11-16-macos-arm64`](../docs/evidence/regression-0.3.3-2026-11-16-macos-arm64/RESULTS.txt)
+(Apple silicon, `0a42823f`, the fix for #156 and version 0.3.3, 97 of 97); and the 93 tests on Apple silicon,
 [`regression-m2-2026-11-12-macos-arm64`](../docs/evidence/regression-m2-2026-11-12-macos-arm64/RESULTS.txt)
 (`af3ac978`, 93 of 93). Each set's `PROVENANCE.md` names its commits. The
 release record is the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).

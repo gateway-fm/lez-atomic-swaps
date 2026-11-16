@@ -505,6 +505,57 @@ impl SqliteBtcMakerLockJournal {
         }
     }
 
+    /// Gives back the send authority of one `Started` step whose sole
+    /// authorized node call was refused before anything was offered to the
+    /// chain (the node failed its readiness check; no transaction left this
+    /// process). The step returns to `Prepared`, so the next reconcile against
+    /// an absent step authorizes exactly one fresh send again.
+    ///
+    /// Only the caller that holds the swap's actor lock and received the
+    /// not-attempted outcome of that call may use this: a `Started` step left
+    /// by a crash, or any call that may have reached the node, stays `Started`
+    /// and is never rearmed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a closed intent, a step that is not exactly `Started`, corrupt
+    /// state, or storage failure without partially changing the row.
+    pub fn release_not_attempted_step(
+        &mut self,
+        intent: &BtcMakerLockIntentV1,
+        step_id: &PublicEffectStepId,
+    ) -> Result<BtcMakerLockStepSnapshot, StoreError> {
+        intent.validate()?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let durable = require_matching_intent(&transaction, intent)?;
+        if durable.closed_revision.is_some() {
+            return Err(StoreError::BtcMakerLockConflict);
+        }
+        let index = step_index(&durable, step_id)?;
+        let mut step = durable.steps[index].clone();
+        if step.state != BtcMakerLockStepState::Started {
+            return Err(StoreError::BtcMakerLockConflict);
+        }
+        update_step(
+            &transaction,
+            intent,
+            index,
+            &mut step,
+            BtcMakerLockStepState::Prepared,
+            0,
+            0,
+            None,
+        )?;
+        let post = load_step_snapshot(&transaction, intent, index)?;
+        if post != step {
+            return Err(StoreError::CorruptBtcMakerLockIntent);
+        }
+        transaction.commit()?;
+        Ok(step)
+    }
+
     /// Records the immediate outcome of the sole authorized node call.
     ///
     /// # Errors

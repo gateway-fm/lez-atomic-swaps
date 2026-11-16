@@ -68,7 +68,10 @@ stack and are kept as the record of that submission shape.
   `961b0fe9` (`main` after PRs #148 and #153) on an Apple-silicon Mac: 97 of
   97, each on its first try, 97 minutes on three lanes, the first full run
   of the PR #153 code
-  (`docs/evidence/regression-0.3.2-2026-11-14-macos-arm64/`).
+  (`docs/evidence/regression-0.3.2-2026-11-14-macos-arm64/`). The 97 at
+  `0a42823f` (the fix for #156, version 0.3.3) on an Apple-silicon Mac: 97
+  of 97, each on its first try, 98 minutes on three lanes
+  (`docs/evidence/regression-0.3.3-2026-11-16-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.

@@ -789,3 +789,65 @@ fn taker_can_project_observed_maker_lock_through_generic_recovery_api() {
     assert_eq!(commit.revision(), 2);
     assert_eq!(recovery.status().expect("taker status").revision(), 2);
 }
+
+#[test]
+fn only_a_started_step_gives_its_authority_back_and_then_rearms_exactly_once() {
+    let directory = tempdir().expect("temporary store");
+    let path = directory.path().join("maker.sqlite3");
+    let candidate = intent("btc-maker-not-attempted", bitcoin_plan());
+    let durable_step = candidate.plan().steps()[0].clone();
+    let mut journal = SqliteBtcMakerLockJournal::open(&path).expect("open journal");
+    let _ = journal.create_intent(&candidate).expect("create intent");
+
+    assert!(matches!(
+        journal.release_not_attempted_step(&candidate, durable_step.step()),
+        Err(StoreError::BtcMakerLockConflict)
+    ));
+    assert!(matches!(
+        journal
+            .reconcile_step(
+                &candidate,
+                durable_step.step(),
+                BtcMakerLockStepObservation::Absent,
+            )
+            .expect("start once"),
+        BtcMakerLockStepDecision::SubmitOnce(_)
+    ));
+    let released = journal
+        .release_not_attempted_step(&candidate, durable_step.step())
+        .expect("give the authority back");
+    assert_eq!(released.state(), BtcMakerLockStepState::Prepared);
+    assert_eq!(released.attempt_count(), 0);
+
+    assert!(matches!(
+        journal
+            .reconcile_step(
+                &candidate,
+                durable_step.step(),
+                BtcMakerLockStepObservation::Absent,
+            )
+            .expect("start once again"),
+        BtcMakerLockStepDecision::SubmitOnce(_)
+    ));
+    let _ = journal
+        .record_submission_result(
+            &candidate,
+            durable_step.step(),
+            &BtcMakerLockSubmissionResult::Unknown,
+        )
+        .expect("record the send");
+    assert!(matches!(
+        journal
+            .reconcile_step(
+                &candidate,
+                durable_step.step(),
+                BtcMakerLockStepObservation::Absent,
+            )
+            .expect("observe only"),
+        BtcMakerLockStepDecision::ObserveOnly(_)
+    ));
+    assert!(matches!(
+        journal.release_not_attempted_step(&candidate, durable_step.step()),
+        Err(StoreError::BtcMakerLockConflict)
+    ));
+}
