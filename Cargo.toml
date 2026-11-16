@@ -58,3 +58,16 @@ opt-level = 3
 
 [profile.dev.package.curve25519-dalek-ng]
 opt-level = 3
+
+# The devnet images run development builds of the Nodes. A Maker Node reads,
+# SHA-256-checks and zeroizes an actor program (22 to 27 MB) before every child
+# it starts, two per attempt, and every program when it starts. Optimize the
+# hash, the wipe and the store that calls them; what they compute is unchanged.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.dev.package.zeroize]
+opt-level = 3
+
+[profile.dev.package.lez-swap-store]
+opt-level = 3
