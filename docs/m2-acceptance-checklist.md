@@ -60,7 +60,15 @@ stack and are kept as the record of that submission shape.
   (`docs/evidence/regression-2026-11-12-macos-arm64/`). The 97 on the v0.3.0
   candidate `b4e17cf0` (`main` after PR #135) on an Apple-silicon Mac: 97 of
   97, each on its first try, 97 minutes on three lanes
-  (`docs/evidence/regression-0.3.0-2026-11-12-macos-arm64/`).
+  (`docs/evidence/regression-0.3.0-2026-11-12-macos-arm64/`). The 97 at
+  `538530eb` (`main` after PR #143, the code of v0.3.1) on an Apple-silicon
+  Mac: 97 of 97, each on its first try, 99 minutes on three lanes; the first
+  run that day, on `35bd85de`, found #142
+  (`docs/evidence/regression-0.3.1-2026-11-13-macos-arm64/`). The 97 at
+  `961b0fe9` (`main` after PRs #148 and #153) on an Apple-silicon Mac: 97 of
+  97, each on its first try, 97 minutes on three lanes, the first full run
+  of the PR #153 code
+  (`docs/evidence/regression-0.3.2-2026-11-14-macos-arm64/`).
 - **The module catalog** is under the organisation (#106):
   `gateway-fm/logos-modules-release-base`. The address under a personal
   account keeps serving until the next release.
@@ -133,8 +141,8 @@ State on 2026-11-03: items 1 to 6 done (4, the CI gate, on 2026-11-03); 7 done i
    scoped — update it rather than leave it contradicting the tree.
 8. **No tag until everything is done and the evidence is in** (owner,
    2026-10-28). The release is `0.3.0`. The M2 work reached `main` through
-   PRs #119, #120, #124, #131, #126 and #127; the release notes are drafted
-   in `docs/release-notes-0.3.0.md`.
+   PRs #119, #120, #124, #131, #126 and #127; the release notes are on
+   the [v0.3.0 release page](https://github.com/gateway-fm/lez-atomic-swaps/releases/tag/v0.3.0).
 9. The rfp#122 comment, in the shape of the accepted rfp#123 one: point at
    the tag, map the six deliverables to links, state the direction and
    desk-lock scope in the body, do not tick Logos's boxes.

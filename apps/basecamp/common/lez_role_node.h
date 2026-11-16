@@ -10,8 +10,14 @@
 //   LEZ_<ROLE>_NODE_LAUNCHER   "package": the launcher the role's package
 //                              installed; an absolute path: that launcher
 //                              instead (tests); unset: no Node
-//   LEZ_<ROLE>_NODE_LOG        the file the Node's output is appended to
-//   LEZ_<ROLE>_NODE_HOLD       while this file exists the Node is kept down
+//   LEZ_<ROLE>_NODE_LOG        required with a launcher: the absolute path of
+//                              the file the Node's output is appended to
+//   LEZ_<ROLE>_NODE_HOLD       required with a launcher: an absolute path;
+//                              while a file exists there the Node is kept
+//                              down (it need not exist)
+//
+// lez_swap_node.start_node refuses the call ("start_node: invalid arguments",
+// nothing started) when the log or the hold path is unset or relative.
 //
 // Call it after the role's signer is serving (lez_role_signer.h): the Node's
 // sidecars ask that signer for every LEZ witness.

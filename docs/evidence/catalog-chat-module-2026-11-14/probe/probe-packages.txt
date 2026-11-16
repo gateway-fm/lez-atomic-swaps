@@ -1,0 +1,5 @@
+probe_bare-1.0.0.lgx {"version":"1.0.0","dependencies":["probe_dep"]}
+probe_dep-0.2.2-delivery.1.lgx {"version":"0.2.2-delivery.1","dependencies":[]}
+probe_exact-1.0.0.lgx {"version":"1.0.0","dependencies":[{"name":"probe_dep","version":"0.2.2-delivery.1"}]}
+probe_tilde-1.0.0.lgx {"version":"1.0.0","dependencies":[{"name":"probe_dep","version":"~0.2.0"}]}
+probe_tilde22-1.0.0.lgx {"version":"1.0.0","dependencies":[{"name":"probe_dep","version":"~0.2.2"}]}

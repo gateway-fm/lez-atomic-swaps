@@ -1,0 +1,17 @@
+[14:54:20] === regenerated-config (stamp 179457806002)
+[14:54:20] preflight: indexer historical reads
+[14:54:21]   indexer serves historical reads at the tip (2923)
+[14:54:21] preflight: LEZ finality check waived by request
+[14:54:21]   Maker published offer-e2e-179457806002
+[14:54:23]   Taker took offer-e2e-179457806002: swap ad2a63bc9da0 (not_activated)
+[14:54:23]   Taker locked lez: 1fde96adca7f (replay=False)
+[14:54:24]   runtime configuration rendered again (chain and identities unchanged)
+[14:54:24]   restarting the Taker Node onto the re-rendered configuration
+[14:54:32]   swap ad2a63bc9da0 reloaded as awaiting_second_lock
+[14:54:32]   [0 s] waiting for the Taker's ad2a63bc9da0 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 2917, tip 2921 (4 unfinalized) [heartbeat]
+[14:54:45]   [13 s] waiting for the Taker's ad2a63bc9da0 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 2931, tip 2936 (5 unfinalized) [heartbeat]
+[14:54:46]   Taker claimed Bitcoin (replay=False)
+[14:54:46]   [0 s] waiting for the Taker's ad2a63bc9da0 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 2931, tip 2936 (5 unfinalized) [heartbeat]
+[14:55:08]   [22 s] waiting for the Taker's ad2a63bc9da0 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2949, tip 2951 (2 unfinalized) [heartbeat]
+[14:55:09]   both Nodes report ad2a63bc9da0 completed
+[14:55:09] === regenerated-config: passed in 48s

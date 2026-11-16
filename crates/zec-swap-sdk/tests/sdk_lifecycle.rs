@@ -2012,6 +2012,56 @@ fn canonical_lez_observation_uses_the_direction_derived_depositor() {
 }
 
 #[test]
+fn canonical_lez_observation_is_pinned_and_accepts_only_a_tip_that_grew() {
+    let agreement = lez_zec_swap_sdk::ZecAgreementV1::from_wire_at(
+        &agreement_wire(
+            "canonical-lez-pinned-tip",
+            SwapDirection::TakerSellsLez,
+            FixtureVariant::Local,
+        ),
+        ACCEPTED_AT,
+    )
+    .expect("valid reverse agreement");
+    let still = CanonicalLezEscrowObservationV1::validate(
+        &agreement,
+        &canonical_lez_snapshot(&agreement, LezSnapshotMutation::Pending),
+    )
+    .expect("unchanged tip");
+    // Blocks landed while the facts were read (1 s blocks, remote RPC): one
+    // consistent view, validated at the pinned tip.
+    let grew = CanonicalLezEscrowObservationV1::validate(
+        &agreement,
+        &canonical_lez_snapshot(&agreement, LezSnapshotMutation::TipAdvanced),
+    )
+    .expect("a tip that only grew past the pinned block");
+    assert_eq!(grew.tip_height(), 102);
+    assert_eq!(grew.tip_block_hash(), &[0x42; 32]);
+    assert_eq!(grew.tip_height(), still.tip_height());
+    assert_eq!(grew.confirmations(), still.confirmations());
+    assert_eq!(grew.inclusion_block_hash(), still.inclusion_block_hash());
+    for (name, mutation) in [
+        (
+            "pinned block replaced",
+            LezSnapshotMutation::PinnedBlockReplaced,
+        ),
+        ("tip went back", LezSnapshotMutation::TipWentBack),
+        (
+            "higher tip with the pinned hash",
+            LezSnapshotMutation::TipHigherWithPinnedHash,
+        ),
+    ] {
+        assert_eq!(
+            CanonicalLezEscrowObservationV1::validate(
+                &agreement,
+                &canonical_lez_snapshot(&agreement, mutation)
+            ),
+            Err(lez_zec_swap_sdk::LezObservationError::UnstableTip),
+            "{name}",
+        );
+    }
+}
+
+#[test]
 fn canonical_lez_observation_rejects_each_changed_chain_transaction_and_account_binding() {
     let agreement = lez_zec_swap_sdk::ZecAgreementV1::from_wire_at(
         &agreement_wire(
@@ -2026,7 +2076,9 @@ fn canonical_lez_observation_rejects_each_changed_chain_transaction_and_account_
         LezSnapshotMutation::Environment,
         LezSnapshotMutation::Channel,
         LezSnapshotMutation::Genesis,
-        LezSnapshotMutation::TipDrift,
+        LezSnapshotMutation::PinnedBlockReplaced,
+        LezSnapshotMutation::TipWentBack,
+        LezSnapshotMutation::TipHigherWithPinnedHash,
         LezSnapshotMutation::InclusionBlock,
         LezSnapshotMutation::InclusionAboveTip,
         LezSnapshotMutation::Program,

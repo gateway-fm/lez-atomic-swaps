@@ -1,0 +1,20 @@
+## install lez_atomic_swap_maker, then chat_ui
+$ logosctl package install lez_atomic_swap_maker -y
+["install delivery_module  -> 0.2.1","install chat_module  -> 0.2.2-delivery.1","install lez_core  -> 0.4.1-sign.4","install lez_swap_node  -> 0.3.1","install lez_maker_node  -> 0.3.1","install lez_atomic_swap_maker  -> 0.3.1"]
+$ logosctl package install chat_ui -y
+["upgrade delivery_module 0.2.1 -> 0.3.3","upgrade chat_module 0.2.2-delivery.1 -> 0.3.0","install chat_ui  -> 0.3.0","install libp2p_module  -> 1.1.0","install liblogos_lez_rln_module  -> 5.1.0","install liblogos_rln_module  -> 0.12.0"]
+$ logosctl package deps lez_atomic_swap_maker --recursive
+["chat_module 0.2.2-delivery.1 -> 0.3.0 version_mismatch","delivery_module ~0.2.0 -> 0.3.3 version_mismatch","lez_core 0.4.1-sign.4 -> 0.4.1-sign.4 installed","lez_swap_node 0.3.1 -> 0.3.1 installed","lez_maker_node 0.3.1 -> 0.3.1 installed","libp2p_module * -> 1.1.0 installed","liblogos_rln_module * -> 0.12.0 installed","liblogos_lez_rln_module * -> 5.1.0 installed"]
+$ logosctl package deps chat_ui --recursive
+["chat_module >=0.3.0 -> 0.3.0 installed","delivery_module >=0.3.0 -> 0.3.3 installed","libp2p_module * -> 1.1.0 installed","liblogos_rln_module * -> 0.12.0 installed","liblogos_lez_rln_module * -> 5.1.0 installed"]
+installed: chat_module 0.3.0; delivery_module 0.3.3; 
+## install chat_ui, then lez_atomic_swap_maker
+$ logosctl package install chat_ui -y
+["install delivery_module  -> 0.3.3","install chat_module  -> 0.3.0","install chat_ui  -> 0.3.0","install libp2p_module  -> 1.1.0","install liblogos_lez_rln_module  -> 5.1.0","install liblogos_rln_module  -> 0.12.0"]
+$ logosctl package install lez_atomic_swap_maker -y
+["upgrade delivery_module 0.3.3 -> 0.2.1","upgrade chat_module 0.3.0 -> 0.2.2-delivery.1","install lez_core  -> 0.4.1-sign.4","install lez_swap_node  -> 0.3.1","install lez_maker_node  -> 0.3.1","install lez_atomic_swap_maker  -> 0.3.1"]
+$ logosctl package deps chat_ui --recursive
+["chat_module >=0.3.0 -> 0.2.2-delivery.1 version_mismatch","delivery_module >=0.3.0 -> 0.2.1 version_mismatch"]
+$ logosctl package deps lez_atomic_swap_maker --recursive
+["chat_module 0.2.2-delivery.1 -> 0.2.2-delivery.1 installed","delivery_module ~0.2.0 -> 0.2.1 installed","lez_core 0.4.1-sign.4 -> 0.4.1-sign.4 installed","lez_swap_node 0.3.1 -> 0.3.1 installed","lez_maker_node 0.3.1 -> 0.3.1 installed"]
+installed: chat_module 0.2.2-delivery.1; delivery_module 0.2.1; 

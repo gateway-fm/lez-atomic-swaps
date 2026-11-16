@@ -29,7 +29,7 @@ that `regress.sh` uses); `scripts/host.sh` refuses an older bash at the start
 of every script and names that command.
 
 ```sh
-tar -xzf lez-swap-stack-v0.3.0-arm64.tar.gz && cd lez-swap-stack-v0.3.0-arm64
+tar -xzf lez-swap-stack-v0.3.2-arm64.tar.gz && cd lez-swap-stack-v0.3.2-arm64
 ./scripts/start.sh            # pull → wallet identities → config → stack → market bootstrap → desk suites
 ./scripts/start.sh --swap     # …and one full BTC → LEZ swap through the two desks
 ```
@@ -853,6 +853,7 @@ scripts/swap-through-ui.sh one complete swap driven through the two desks
 scripts/node-hold.sh       hold a Node down inside its running Basecamp, or release it
 scripts/market-bootstrap.sh one-time settlement-chain bootstrap (one throwaway builder container)
 scripts/pin-package-dependencies.sh write the release set: our packages' dependencies pinned, each once
+scripts/package-chat-module.sh the catalog's chat_module: Logos's 0.2.2 release with Delivery pinned to 0.2.x
 scripts/stage-basecamp-package.sh install one release package (desk or module) into the Basecamp image
 scripts/export-node-evidence.py publish a completed swap's public evidence from the Nodes
 scripts/reset-swaps.sh     forget every persisted swap on both Nodes (after an actor rebuild)

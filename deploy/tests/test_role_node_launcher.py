@@ -29,7 +29,7 @@ MAKER_KEY = '02' + 'ab' * 32
 # What the launcher needs from the host besides the fakes.
 TOOLS = ('env', 'dirname', 'cat', 'mkdir', 'chmod', 'rm', 'install', 'jq', 'sed', 'head', 'cut',
          'tr', 'grep', 'od', 'cmp', 'mv', 'seq', 'sleep', 'wc', 'tee', 'python3', 'sha256sum',
-         'shasum', 'ls', 'true')
+         'shasum', 'ls', 'true', 'stat', 'id')
 
 
 def executable(path, text):
@@ -51,7 +51,9 @@ class Launcher(unittest.TestCase):
     def setUp(self):
         # A short root: macOS gives TMPDIR under /var/folders/…, and a Unix
         # socket path below it is longer than the launcher (and the kernel) allows.
-        self.tmp = pathlib.Path(tempfile.mkdtemp(dir='/tmp' if sys.platform == 'darwin' else None))
+        # Resolved: macOS's /tmp is a symlink, and the launcher (as the
+        # sidecars) refuses a state directory below one.
+        self.tmp = pathlib.Path(os.path.realpath(tempfile.mkdtemp(dir='/tmp' if sys.platform == 'darwin' else None)))
         self.addCleanup(shutil.rmtree, self.tmp)
         self.calls = self.tmp / 'calls.log'
         self.record = self.tmp / 'node.json'
@@ -262,6 +264,62 @@ class Launcher(unittest.TestCase):
             capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 2)
         self.assertIn('too long for a Unix socket path', result.stderr)
+
+    # Issue 151: a package installed under umask 002 and a state directory
+    # below a directory others can write, or below a symlink.
+    def linux_maker(self, root, **env):
+        self.host('Linux', setpriv=False)
+        if not (root / 'identity').exists():
+            self.inputs(root / 'identity', root / 'manifest.env', root / 'cookie')
+        return subprocess.run(
+            [shutil.which('bash'), str(self.payload / 'node-entrypoint.sh'), 'maker'],
+            env={'PATH': f'{self.fakes}:{self.tools}', 'HOME': str(self.tmp / 'home'),
+                 'CALLS': str(self.calls), 'RECORD': str(self.record),
+                 'LEZ_SIDECAR_PORT_BASE': '19000', 'LEZ_V02_CHANNEL_ID': CHANNEL,
+                 'LEZ_NODE_RUN_ROOT': str(root / 'run'), 'LEZ_ZEC_STATE_DIR': str(root / 'zec'),
+                 'LEZ_NODE_IDENTITY_DIR': str(root / 'identity'), 'LEZ_MARKET_MANIFEST': str(root / 'manifest.env'),
+                 'LEZ_BTC_RPC_COOKIE_FILE': str(root / 'cookie'), 'LEZ_DELIVERY_DIR': str(root / 'delivery'),
+                 'LEZ_BITCOIN_CORE_HOST': '127.0.0.1', 'LEZ_SEQUENCER_HOST': '127.0.0.1',
+                 'LEZ_INDEXER_HOST': '127.0.0.1', 'LEZ_ZEBRA_HOST': '127.0.0.1', **env},
+            capture_output=True, text=True, timeout=60)
+
+    def test_the_package_s_own_group_writable_directories_are_made_private(self):
+        # What logosctl leaves under umask 002: bin/ and its programs 0775.
+        self.payload.chmod(0o775)
+        for program in self.payload.iterdir():
+            program.chmod(0o775)
+        root = self.tmp / 'linux'
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(root / 'state'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(stat.S_IMODE(self.payload.stat().st_mode), 0o755)
+        for program in self.payload.iterdir():
+            self.assertEqual(stat.S_IMODE(program.stat().st_mode), 0o755, program.name)
+        self.assertEqual(self.record.read_text().splitlines()[1], str(self.payload / 'lez-maker-node'))
+
+    def test_a_state_directory_below_a_group_writable_directory_is_refused_by_name(self):
+        root = self.tmp / 'linux'
+        shared = root / 'shared'
+        shared.mkdir(parents=True)
+        shared.chmod(0o775)
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(shared / 'state'))
+        self.assertEqual(result.returncode, 78, result.stderr)
+        self.assertIn(f"{shared} is writable by its group or by others (mode 775). Fix: chmod go-w '{shared}'",
+                      result.stderr)
+        self.assertFalse(self.record.exists(), 'the Node must not start')
+        # A sticky shared directory (as /tmp) is one the sidecars accept.
+        shared.chmod(0o1777)
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(shared / 'state'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_state_directory_below_a_symlink_is_refused_by_name(self):
+        root = self.tmp / 'linux'
+        (root / 'real').mkdir(parents=True)
+        (root / 'link').symlink_to(root / 'real')
+        result = self.linux_maker(root, LEZ_NODE_STATE_DIR=str(root / 'link/state'))
+        self.assertEqual(result.returncode, 78, result.stderr)
+        self.assertIn(f'{root / "link"} is a symbolic link. Fix: name the directory it points to ({root / "real"})',
+                      result.stderr)
+        self.assertFalse(self.record.exists(), 'the Node must not start')
 
 
 if __name__ == '__main__':

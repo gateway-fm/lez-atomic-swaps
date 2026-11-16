@@ -1,0 +1,22 @@
+[20:48:27] === concurrent (stamp 1794685707)
+[20:48:27] preflight: indexer historical reads
+[20:48:28]   indexer serves historical reads at the tip (2875)
+[20:48:28] preflight: LEZ finality check waived by request
+[20:48:28]   Maker published offer-e2e-1794685707-a
+[20:48:29]   Taker took offer-e2e-1794685707-a: swap 071526cd0268 (not_activated)
+[20:48:29]   Maker published offer-e2e-1794685707-b
+[20:48:31]   Taker took offer-e2e-1794685707-b: swap 8d55b1147180 (not_activated)
+[20:48:31]   Taker locked lez: 296cc5db4a53 (replay=False)
+[20:48:34]   Taker locked lez: d28dc12a3be9 (replay=False)
+[20:48:35]   [0 s] waiting for the Taker's 071526cd0268 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker offered | LEZ finalized 2869, tip 2876 (7 unfinalized) [heartbeat]
+[20:48:49]   [14 s] waiting for the Taker's 071526cd0268 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 2885, tip 2891 (6 unfinalized) [heartbeat]
+[20:49:14]   [39 s] waiting for the Taker's 071526cd0268 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 2898, tip 2907 (9 unfinalized) [heartbeat]
+[20:49:14]   Taker claimed Bitcoin (replay=False)
+[20:49:15]   [0 s] waiting for the Taker's 8d55b1147180 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 2898, tip 2907 (9 unfinalized) [heartbeat]
+[20:49:15]   Taker claimed Bitcoin (replay=False)
+[20:49:15]   [0 s] waiting for the Taker's 071526cd0268 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 2898, tip 2907 (9 unfinalized) [heartbeat]
+[20:49:51]   [35 s] waiting for the Taker's 071526cd0268 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2937, tip 2939 (2 unfinalized) [heartbeat]
+[20:49:51]   both Nodes report 071526cd0268 completed
+[20:49:51]   [0 s] waiting for the Taker's 8d55b1147180 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 2937, tip 2939 (2 unfinalized) [heartbeat]
+[20:49:51]   both Nodes report 8d55b1147180 completed
+[20:49:51] === concurrent: passed in 84s

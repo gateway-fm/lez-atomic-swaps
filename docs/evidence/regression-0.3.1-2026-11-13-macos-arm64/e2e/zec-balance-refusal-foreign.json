@@ -1,0 +1,46 @@
+{
+  "scenario": "zec-balance-refusal",
+  "pair": "Zcash",
+  "direction": "TakerSellsForeign",
+  "stamp": "1794580274",
+  "timing": {
+    "LEZ_TIMING_PROFILE": "refund",
+    "LEZ_BTC_REFUND_CSV_BLOCKS": "123",
+    "LEZ_BTC_SECOND_LOCK_REFUND_CSV_BLOCKS": "65",
+    "MINE_INTERVAL": "2",
+    "LEZ_BTC_BLOCK_SECONDS_FASTEST": "2",
+    "LEZ_BTC_BLOCK_SECONDS_SLOWEST": "2",
+    "LEZ_BTC_MAKER_LOCK_CUTOFF_SECONDS": "100",
+    "LEZ_BTC_EARLIER_REFUND_SECONDS": "115",
+    "LEZ_BTC_LATER_REFUND_SECONDS": "245",
+    "LEZ_BTC_REFUND_MARGIN_SECONDS": "15",
+    "LEZ_LEZ_DISCOVERY_MAX_BLOCKS": "130",
+    "LEZ_LEZ_BLOCK_SECONDS": "1",
+    "LEZ_LEZ_STEP_SECONDS": "20",
+    "LEZ_LEZ_STALL_SECONDS": "40",
+    "LEZ_BTC_BLOCK_SECONDS": "2",
+    "LEZ_BTC_ACTOR_TRACE": "",
+    "LEZ_MAKER_ACTOR_REQUEUE_SECONDS": "2",
+    "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS": "10",
+    "LEZ_TAKER_OBSERVER_SWEEP_SECONDS": "3"
+  },
+  "swap_id": "zec-devnet-swap-1794580275",
+  "corridor": "zec-devnet-1794580275",
+  "profile": "deterministic-local-devnet-v5",
+  "offer_id": "zec-devnet-offer-1794580275",
+  "lez_lot": 50000,
+  "maker_lez_balance_before": 0,
+  "maker_lez_balance_after_claim": 2000000,
+  "refusal": {
+    "role": "maker",
+    "attention_reason": "lez_depositor_balance_insufficient",
+    "schedule_state": "backoff"
+  },
+  "funding": {
+    "vault_claim_transaction_id": "2698b575c51b4e65646c412287866ced2e13c6ead99f4d6b92a388bf6d4babaa",
+    "allocation": 2000000
+  },
+  "recovery": "the Maker Node's supervisor locked LEZ on its retry after funding; the swap completed",
+  "result": "passed",
+  "seconds": 129
+}

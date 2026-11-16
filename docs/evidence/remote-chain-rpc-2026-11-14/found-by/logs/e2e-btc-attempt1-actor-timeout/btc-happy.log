@@ -1,0 +1,14 @@
+[11:56:05] === happy (stamp 1794657365)
+[11:56:05] preflight: indexer historical reads
+[11:56:06]   indexer serves historical reads at the tip (4555)
+[11:56:06] preflight: the finality heartbeat saw finality move 0 s ago (finalized 4533)
+[11:56:06]   Maker published offer-e2e-1794657365
+[11:56:17]   Taker took offer-e2e-1794657365: swap 6d3e75450ea6 (not_activated)
+[11:56:17]   Taker locked bitcoin: 4f7b0e36d085 (replay=False)
+[11:56:17]   [0 s] waiting for the Taker's 6d3e75450ea6 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker queued | LEZ finalized 4549, tip 4552 (3 unfinalized) [heartbeat]
+[11:56:58]   [40 s] waiting for the Taker's 6d3e75450ea6 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker queued | LEZ finalized 4583, tip 4586 (3 unfinalized) [heartbeat]
+[11:57:58]   [101 s] waiting for the Taker's 6d3e75450ea6 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4634, tip 4637 (3 unfinalized) [heartbeat]
+[11:59:01]   [163 s] waiting for the Taker's 6d3e75450ea6 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4684, tip 4687 (3 unfinalized) [heartbeat]
+[12:00:27]   [249 s] waiting for the Taker's 6d3e75450ea6 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4751, tip 4754 (3 unfinalized) [heartbeat]
+[12:01:33]   [316 s] waiting for the Taker's 6d3e75450ea6 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4801, tip 4804 (3 unfinalized) [heartbeat]
+[12:02:35]   [378 s] waiting for the Taker's 6d3e75450ea6 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 4851, tip 4853 (2 unfinalized) [heartbeat]

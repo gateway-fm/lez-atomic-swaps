@@ -1,0 +1,17 @@
+[12:50:03] regression smoke: 6 tests at 538530eb (tree dirty:        0), results in runtime/regress/20261113T125003Z
+[12:50:03] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[12:50:03] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[12:50:18] group fast
+[12:50:19]     [lane 1] ui:btc:happy:TakerSellsLez (try 1) starts: LEZ finalized 38, tip 77
+[12:50:19]     [lane 2] ui:zec:zec-happy:TakerSellsForeign (try 1) starts: LEZ finalized 38, tip 77
+[12:50:19]     [lane 3] node:btc:happy:TakerSellsLez (try 1) starts: LEZ finalized 38, tip 77
+[12:52:02] === node:btc:happy:TakerSellsLez (try 1, lane 3): PASSED in 99 s; LEZ finalized 123, tip 126
+[12:52:05]     [lane 3] node:zec:zec-happy:TakerSellsLez (try 1) starts: LEZ finalized 123, tip 127
+[12:52:18] === ui:btc:happy:TakerSellsLez (try 1, lane 1): PASSED in 116 s; LEZ finalized 128, tip 131
+[12:52:19]     [lane 1] node:btc:happy:TakerSellsForeign (try 1) starts: LEZ finalized 128, tip 131
+[12:52:56] === ui:zec:zec-happy:TakerSellsForeign (try 1, lane 2): PASSED in 154 s; LEZ finalized 143, tip 146
+[12:52:56]     [lane 2] node:zec:zec-happy:TakerSellsForeign (try 1) starts: LEZ finalized 143, tip 146
+[12:53:38] === node:btc:happy:TakerSellsForeign (try 1, lane 1): PASSED in 64 s; LEZ finalized 172, tip 176
+[12:54:10] === node:zec:zec-happy:TakerSellsLez (try 1, lane 3): PASSED in 110 s; LEZ finalized 191, tip 201
+[12:54:16] === node:zec:zec-happy:TakerSellsForeign (try 1, lane 2): PASSED in 72 s; LEZ finalized 199, tip 206
+[12:54:16] regression smoke: 6 of 6 passed in 4 min, 0 new chains, 0 profile switches,        0 frozen tries

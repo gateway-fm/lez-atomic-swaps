@@ -327,9 +327,11 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   `requiredVersion` and `status: version_mismatch`).
   `deploy/scripts/pin-package-dependencies.sh` writes each of our packages'
   dependencies once, as `{"name": n, "version": <requirement>}` with the
-  version of n in the release set: exact (`0.4.1-sign.4`) for the patched
-  `lez_core` and `lez_indexer_module` and for our own packages, `~<version>`
-  for Logos's `chat_module`, `delivery_module` and `blockchain_module`. Two
+  version of n in the release set: exact (`0.4.1-sign.4`) for our own
+  packages and for every pre-release (the patched `lez_core` and
+  `lez_indexer_module`, the catalog's `chat_module` 0.2.2-delivery.1),
+  `~<version>` for a Logos module at a release version (`delivery_module`,
+  `blockchain_module`). Two
   properties of logosctl 0.3.2 decide this (tested against the default catalog,
   issue #139): a range on a patched module does not hold, because its
   prerelease tag sorts below the official release it is cut from
@@ -345,10 +347,20 @@ Evidence: [docs/evidence/logos-native-2026-11-11-b](../evidence/logos-native-202
   images), the form Basecamp 0.2.0 reads. The manifest's root hash covers the
   variants' files, not the manifest, so it is unchanged. `metadata.json` keeps
   bare names: the builder generates one client per entry there
-  (`buildCppPlugin.nix`, `staticDeps`). Logos's `chat_module` 0.2.x itself
-  declares a bare `delivery_module`, so a catalog install of a desk also pulls
-  the newest `delivery_module` (0.3.3) beside the `~0.2.0` the desk requires; our
-  manifests cannot prevent that. A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
+  (`buildCppPlugin.nix`, `staticDeps`). Logos's `chat_module` 0.2.2 itself
+  declares a bare `delivery_module`, so a catalog install of a desk that
+  required it also planned the newest `delivery_module` (0.3.3) beside the
+  `~0.2.0` the desk requires, both into one directory (issue #147). The
+  catalog therefore publishes that release's files as `chat_module`
+  0.2.2-delivery.1 with `delivery_module ~0.2.0`
+  (`deploy/scripts/package-chat-module.sh`), and the desks require it
+  exactly; the pinning refuses a set in which two packages require one name
+  differently. logosctl 0.3.2 matches no range (`~0.2.0`, `~0.2.2`) against
+  a pre-release, only the exact version, so the official packages never
+  resolve to it. One install of either desk then plans one Chat and one
+  Delivery (0.2.1), and the desk opens in Basecamp 0.3.2 on macOS and Linux
+  arm64; native Nodes started by the two desks swap BTC and ZEC in both
+  directions ([catalog-chat-module-2026-11-14](../evidence/catalog-chat-module-2026-11-14/README.md)). A catalog build of the per-role flakes (`apps/basecamp/<role>/flake.nix`,
   `lgx-portable`) is not pinned: it gets the bare names of `metadata.json`.
 - **B3.** The role packages declare no LEZ network module: the Node reaches the
   sequencer and indexer its configuration names (the public testnet's or an
@@ -652,6 +664,69 @@ container, ZEC `replay`/`wrong-inputs`/`concurrent`, the desk journeys other
 than `happy`, and anything beyond opening the desks in the release Basecamp
 0.2.3.
 
+### Chains on another host
+
+A native Node (Linux or macOS, outside the role's container) whose chains
+are another host's: an RPC provider, or the devnet's containers on another
+machine reached through an SSH tunnel.
+
+**Settings.** On Linux the launcher's defaults are the container's mounts
+(the table above), and `LEZ_NODE_HOME` is read on macOS only, so a native
+Linux host names every path. One host with both roles (one Basecamp with
+both desks) sets, for each role (`<ROLE>` is `MAKER` or `TAKER`):
+
+| for | settings |
+|---|---|
+| the desk | `LEZ_<ROLE>_SIGNER_SOCKET`, `LEZ_<ROLE>_SIGNER_IDENTITY`, `LEZ_WALLET_DIR`, `LEZ_WALLET_SEQUENCER_URL` |
+| the supervisor | `LEZ_<ROLE>_NODE_LAUNCHER=package`, `LEZ_<ROLE>_NODE_LOG`, `LEZ_<ROLE>_NODE_HOLD` (both required with a launcher; the hold file need not exist) |
+| the Node's files | `LEZ_<ROLE>_NODE_STATE_DIR`, `LEZ_NODE_RUN_ROOT`, `LEZ_<ROLE>_NODE_IDENTITY_DIR`, `LEZ_ZEC_STATE_DIR`, `LEZ_<ROLE>_ZEC_SIDECAR_DIR`, `LEZ_MARKET_MANIFEST`, `LEZ_BTC_RPC_COOKIE_FILE`, `LEZ_DELIVERY_DIR`, `LEZ_<ROLE>_NODE_LOG_FILE` |
+| the Node | `LEZ_<ROLE>_SIDECAR_PORT_BASE` (19000 and 19500), `LEZ_<ROLE>_WALLET_SIGNER_SOCKET`, `LEZ_<ROLE>_BTC_WALLET`, `LEZ_BTC_CLAIM_DESTINATION`, `LEZ_V02_CHANNEL_ID`, and the timing profile's `LEZ_BTC_*` and `LEZ_MAKER_ACTOR_*` lines of the stack's `runtime.env` |
+| the chains | `LEZ_SEQUENCER_URL`, `LEZ_INDEXER_URL`, `LEZ_BITCOIN_CORE_HOST`, `LEZ_SEQUENCER_HOST`, `LEZ_INDEXER_HOST`, `LEZ_ZEBRA_HOST` |
+
+The Bitcoin adapter, the sidecars and the ZEC actors accept only loopback
+endpoints, so the launcher forwards `127.0.0.1:{18443,3040,8779,18232}` to
+each chain host with `socat`. Where the chain ports already arrive on this
+host's loopback (a tunnel's end), every host is `127.0.0.1` and no forward
+starts.
+
+**Directory modes.** Every LEZ sidecar refuses a state directory with an
+ancestor that is a symbolic link, writable by its group or others (unless
+sticky, as `/tmp`), or owned by another user, and the Maker's actor
+supervisor refuses an actor whose directory others can write. Ubuntu's
+default umask is 002, so `logosctl package install` there leaves
+`modules/<package>/bin` 0775, and a working directory made by hand is 0775
+too. The launcher removes group and other write from its own package's
+directories and programs, and refuses to start, naming the directory and the
+fix, when a directory above the swaps' or the ZEC sidecars' state breaks the
+rule (exit 78; the line is in `LEZ_<ROLE>_NODE_LOG`). Keep the Node's files
+under directories only you can write (`chmod go-w`), or run `logosctl` and
+Basecamp under `umask 022`.
+
+**Latency.** With each chain RPC at 30–200 ms, as through the SSH tunnel of
+[remote-chain-rpc-2026-11-14](../evidence/remote-chain-rpc-2026-11-14/README.md):
+
+- A LEZ observation is several sequential RPCs and outlives a 1 s LEZ block.
+  It is accepted when the later tip extends the pinned one (the pinned block
+  still at its height, checked by hash), so the LEZ block interval need not
+  change.
+- The finalized observers read their window with `getBlocks`, 64 blocks per
+  call, so an actor attempt stays well inside its 30 s deadline over such a
+  link.
+- Use the `fast` timing profile. The `refund` profile's Maker second-lock
+  cutoff (100 s) is shorter than a Maker's funding took over a 100–190 ms
+  link (87 s, against 21 s on one machine), so a TakerSellsLez claim can
+  arrive after its window.
+- `deploy/scripts/rpc-delay-proxy.py` reproduces such a link on one machine:
+  it adds a fixed delay to every round trip on the chain ports and logs each
+  JSON-RPC method.
+
+**Harness.** With `LEZ_CHAINS_RPC_ONLY=1`, `node-e2e.py` sends its
+`bitcoin-cli` calls to Bitcoin Core as JSON-RPC (`LEZ_E2E_BTC_RPC_URL`, the
+cookie in `LEZ_BTC_RPC_COOKIE_FILE`), a scenario that stops or starts a
+chain's container fails saying so, and
+`zec-provision.sh` checks Zebra by its RPC. The harness finds a native
+Node's package through `/proc/<pid>/exe` on Linux.
+
 ### Catalog packages with darwin-arm64
 
 The catalog's installer (logosctl 0.3.x, Basecamp's package manager) picks a
@@ -660,9 +735,10 @@ without looking at platforms, and only then fails with "Package does not
 contain variant for platform" when that version has none for the host. So a
 desk installs on a platform only when every package it pulls in has a variant
 for that platform at the version it requires. For macOS on Apple silicon
-these are the desks, `lez_swap_node`, the role packages and `lez_core`; the
-official modules they take (chat_module, delivery_module, libp2p_module, the
-RLN modules) all have darwin-arm64 variants. `lez_network` and
+these are the desks, `lez_swap_node`, the role packages, `lez_core` and the
+catalog's `chat_module` (Logos's release, which carries darwin-arm64,
+linux-amd64 and linux-arm64); the official `delivery_module` 0.2.1 they take
+has darwin-arm64 too. `lez_network` and
 `lez_indexer_module` stay Linux-only: the LEZ network operator's desk is not
 installed in a party's Basecamp, and its indexer module has not been built or
 run on macOS.

@@ -1,11 +1,13 @@
 name: release-packages
 
-# The eight Logos packages this project publishes to the module catalog, with
-# one platform variant per Linux architecture and, for the six a party's desk
+# The nine Logos packages this project publishes to the module catalog, with
+# one platform variant per Linux architecture and, for the seven a party's desk
 # installs, one for macOS on Apple silicon: the desks lez_atomic_swap_maker,
 # lez_atomic_swap_taker and lez_network, lez_swap_node, the role Node
-# packages lez_maker_node and lez_taker_node, and the patched upstream
-# modules lez_core and lez_indexer_module.
+# packages lez_maker_node and lez_taker_node, the patched upstream
+# modules lez_core and lez_indexer_module, and chat_module: Logos's Chat
+# 0.2.2 release with its Delivery dependency pinned to 0.2.x
+# (package-chat-module.sh, issue #147).
 #
 #   variant   builds every package natively on that architecture's runner
 #             (linux-arm64 on ubuntu-24.04-arm, linux-amd64 on ubuntu-24.04),
@@ -20,7 +22,8 @@ name: release-packages
 #             signed ad hoc, not with a Developer ID, and not notarised.
 #   merge     merges each package's variants with lgx (the builder's
 #             manifests are identical across variants), puts back the
-#             manifest fields lgx merge drops, pins the merged set
+#             manifest fields lgx merge drops, adds the Chat module cut from
+#             Logos's release (all three variants already), pins the set
 #             once (pin-package-dependencies.sh, so every variant carries the
 #             same requirements), verifies it, and writes what the catalog's
 #             _logos-release.yml publishes for a module: <name>-<version>.lgx
@@ -135,7 +138,6 @@ jobs:
           one lez_atomic_swap_maker "$(ls "$nix_out"/maker-lgx-portable/*.lgx)"
           one lez_atomic_swap_taker "$(ls "$nix_out"/taker-lgx-portable/*.lgx)"
           one lez_network "$(ls "$nix_out"/network-lgx-portable/*.lgx)"
-          one chat_module "$(ls "$nix_out"/chat_module-lgx-portable/*.lgx)"
           one delivery_module "$(ls "$nix_out"/delivery_module-lgx-portable/*.lgx)"
           for name in lez_core lez_indexer_module lez_swap_node; do one "$name" "$p/$name/$name.lgx"; done
           for role in maker taker; do one "lez_${role}_node" "deploy/images/$role-node/lez_${role}_node.lgx"; done
@@ -225,6 +227,12 @@ jobs:
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/merge.sh:/merge.sh:ro" \
             -e LGX_FLAKE "$NIX_IMAGE" sh /merge.sh
           sudo chown -R "$(id -u):$(id -g)" _merged
+      # Logos's chat_module 0.2.2 release asset (checked against its sha256),
+      # its Delivery dependency pinned to the desks' 0.2.x: the desks require
+      # this version exactly, so no install plans the official Chat with its
+      # bare delivery_module, which plans Delivery 0.3.3 (issue #147)
+      - name: chat_module
+        run: deploy/scripts/package-chat-module.sh --out "$RUNNER_TEMP/chat_module.lgx"
       # lgx merge drops the manifest fields its model does not know
       # (display_name: the desks would show their package names in Basecamp)
       - name: Restore the merged manifests
@@ -237,7 +245,8 @@ jobs:
       - name: Pin the merged set
         run: |
           set -euo pipefail
-          deploy/scripts/pin-package-dependencies.sh --out _pinned _merged/*.lgx "$RUNNER_TEMP/blockchain_module.lgx"
+          deploy/scripts/pin-package-dependencies.sh --out _pinned _merged/*.lgx \
+            "$RUNNER_TEMP/blockchain_module.lgx" "$RUNNER_TEMP/chat_module.lgx"
           cat _pinned/packages.tsv
       - name: Verify and lay out the catalog's release assets
         env:
@@ -248,7 +257,7 @@ jobs:
           cat >"$RUNNER_TEMP/verify.sh" <<'SH'
           set -eu
           nix --extra-experimental-features "nix-command flakes" build "$LGX_FLAKE" --out-link /tmp/lgx-tool
-          for name in lez_atomic_swap_maker lez_atomic_swap_taker lez_network lez_swap_node lez_maker_node lez_taker_node lez_core lez_indexer_module; do
+          for name in lez_atomic_swap_maker lez_atomic_swap_taker lez_network lez_swap_node lez_maker_node lez_taker_node lez_core lez_indexer_module chat_module; do
             /tmp/lgx-tool/bin/lgx verify "/w/_pinned/$name.lgx"
             /tmp/lgx-tool/bin/lgx manifest "/w/_pinned/$name.lgx" --json > "/w/_pinned/$name.manifest.json"
           done
@@ -256,7 +265,9 @@ jobs:
           docker run --rm -v lgx-nix:/nix -v "$PWD:/w" -v "$RUNNER_TEMP/verify.sh:/verify.sh:ro" \
             -e LGX_FLAKE "$NIX_IMAGE" sh /verify.sh
           sudo chown -R "$(id -u):$(id -g)" _pinned
-          for name in lez_atomic_swap_maker lez_atomic_swap_taker lez_network lez_swap_node lez_maker_node lez_taker_node lez_core lez_indexer_module; do
+          chat="$(jq -r .version _pinned/chat_module.manifest.json)"
+          delivery="$(jq -r '.dependencies[] | select(.name == "delivery_module") | .version' _pinned/chat_module.manifest.json)"
+          for name in lez_atomic_swap_maker lez_atomic_swap_taker lez_network lez_swap_node lez_maker_node lez_taker_node lez_core lez_indexer_module chat_module; do
             manifest="$(cat "_pinned/$name.manifest.json")"
             case "$name" in lez_network|lez_indexer_module) requested="$LINUX" ;; *) requested="$ALL" ;; esac
             version="$(jq -r .version <<<"$manifest")"
@@ -267,6 +278,10 @@ jobs:
             jq -e '[.dependencies[] | objects | .name] as $n
                    | (.dependencies | all(type == "object")) and ($n | length) == ($n | unique | length)' <<<"$manifest" >/dev/null \
               || { echo "$name: a dependency is bare or listed twice" >&2; exit 1; }
+            # the catalog's Chat exactly, and the Delivery requirement Chat declares
+            jq -e --arg c "$chat" --arg d "$delivery" '[.dependencies[] | select(.name == "chat_module" and .version != $c),
+                   select(.name == "delivery_module" and .version != $d)] == []' <<<"$manifest" >/dev/null \
+              || { echo "$name: requires a chat_module other than $chat or a delivery_module other than $delivery" >&2; exit 1; }
             dir="catalog/$name"
             mkdir -p "$dir"
             cp "_pinned/$name.lgx" "$dir/$name-$version.lgx"

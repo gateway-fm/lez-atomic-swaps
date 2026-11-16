@@ -1,0 +1,32 @@
+[18:34:07] code 961b0fe9, tree dirty: 0
+[18:34:08] lanes.sh down 3 --wipe rc=0
+[18:34:43] down.sh --wipe rc=0
+[18:43:52] from-scratch.sh rc=0
+[18:43:53] maker image sha256:01cf64c1dee5e8d09e2955a81b7f3d803fe5bdaea7ca0b897f14331d4f35767a 2026-11-14T18:41:40.254744876Z build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:43:53] taker image sha256:f01fe4e182f7bacd8db25ed41ddd3b5828d6e37af50aad5821b92a50dfada457 2026-11-14T18:41:47.092964629Z build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:43:53] lanes.sh mint 3 rc=0
+[18:45:48] up.sh --fresh-lez with three lanes rc=0
+[18:45:48] before: lez-maker-node build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae, package source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:45:48] before: lez-l2-maker-node build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae, package source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:45:48] before: lez-l3-maker-node build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae, package source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:45:48] before: lez-taker-node build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae, package source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:45:48] before: lez-l2-taker-node build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae, package source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:45:48] before: lez-l3-taker-node build source 961b0fe92d0fe4f8122148e866f0def52ebd3eae, package source 961b0fe92d0fe4f8122148e866f0def52ebd3eae
+[18:49:17] regress.sh smoke rc=0
+[18:48:47] === node:btc:happy:TakerSellsForeign (try 1, lane 1): PASSED in 67 s; LEZ finalized 183, tip 190
+[18:48:54] === node:zec:zec-happy:TakerSellsLez (try 1, lane 3): PASSED in 92 s; LEZ finalized 191, tip 195
+[18:49:17] === node:zec:zec-happy:TakerSellsForeign (try 1, lane 2): PASSED in 75 s; LEZ finalized 208, tip 214
+[18:49:17] regression smoke: 6 of 6 passed in 3 min, 0 new chains, 0 profile switches,        0 frozen tries
+[18:49:17] starting regress.sh full (LEZ_LANES=3, LEZ_REGRESS_RECORD=1): 97 tests
+[20:26:40] regress.sh full rc=0
+[20:19:31] === ui:btc:taker-refund:TakerSellsForeign (try 1, lane 2): PASSED in 320 s; LEZ finalized 4296, tip 4299
+[20:20:14] === ui:btc:maker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 306 s; LEZ finalized 4327, tip 4333
+[20:20:14] lanes: 2 test(s) on a chain of their own, lane 1 alone
+[20:20:19]     new LEZ chain (1) LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+[20:21:17]     node:zec:zec-balance-refusal:TakerSellsLez (try 1) starts: LEZ finalized 28, tip 37
+[20:23:29] === node:zec:zec-balance-refusal:TakerSellsLez (try 1): PASSED in 131 s (+58 s before it, a new chain among them); LEZ finalized 137, tip 145
+[20:23:29]     new LEZ chain (2) LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01
+[20:24:27]     node:zec:zec-balance-refusal:TakerSellsForeign (try 1) starts: LEZ finalized 29, tip 37
+[20:26:40] === node:zec:zec-balance-refusal:TakerSellsForeign (try 1): PASSED in 133 s (+58 s before it, a new chain among them); LEZ finalized 142, tip 145
+[20:26:40] regression full: 97 of 97 passed in 97 min, 2 new chains, 1 profile switches,        0 frozen tries
+[20:26:40] DONE
