@@ -1,0 +1,28 @@
+[14:11:25] === concurrent (stamp 179483468503)
+[14:11:25] preflight: indexer historical reads
+[14:11:26]   indexer serves historical reads at the tip (3396)
+[14:11:26] preflight: LEZ finality check waived by request
+[14:11:27]   Maker published offer-e2e-179483468503-a
+[14:11:27]   Maker published offer-e2e-179483468503-b
+[14:11:28]   Taker took offer-e2e-179483468503-a: swap be02a4ce0eb0 (not_activated)
+[14:11:28]   rejected as expected: second Taker-sells-BTC swap while the Maker's LEZ lock is owed (initiation_execution_unavailable)
+[14:11:28]   Taker locked bitcoin: 7a619102d177 (replay=False)
+[14:11:28]   [0 s] waiting for the Taker's be02a4ce0eb0 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 3388, tip 3391 (3 unfinalized) [heartbeat]
+[14:11:32]   [3 s] waiting for the Taker's be02a4ce0eb0 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 3388, tip 3391 (3 unfinalized) [heartbeat]
+[14:12:01]   [32 s] waiting for the Taker's be02a4ce0eb0 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 3417, tip 3422 (5 unfinalized) [heartbeat]
+[14:12:01]   [0 s] waiting for the Maker's own lock record for be02a4ce0eb0: maker taker_lock_confirmed, no maker_lock effect | LEZ finalized 3417, tip 3422 (5 unfinalized) [heartbeat]
+[14:12:05]   Taker took offer-e2e-179483468503-b: swap 6ce897f511b5 (not_activated)
+[14:12:05]   Taker locked bitcoin: f834056c0217 (replay=False)
+[14:12:06]   [0 s] waiting for the Taker's be02a4ce0eb0 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker both_legs_locked | LEZ finalized 3417, tip 3422 (5 unfinalized) [heartbeat]
+[14:12:06]   Taker claimed LEZ (replay=False)
+[14:12:06]   [0 s] waiting for the Taker's 6ce897f511b5 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker queued | LEZ finalized 3417, tip 3422 (5 unfinalized) [heartbeat]
+[14:12:09]   [3 s] waiting for the Taker's 6ce897f511b5 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker queued | LEZ finalized 3417, tip 3422 (5 unfinalized) [heartbeat]
+[14:13:01]   [54 s] waiting for the Taker's 6ce897f511b5 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 3465, tip 3470 (5 unfinalized) [heartbeat]
+[14:13:02]   Taker claimed LEZ (replay=False)
+[14:13:02]   [0 s] waiting for the Taker's be02a4ce0eb0 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 3465, tip 3470 (5 unfinalized) [heartbeat]
+[14:13:02]   both Nodes report be02a4ce0eb0 completed
+[14:13:02]   [0 s] waiting for the Taker's 6ce897f511b5 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker both_legs_locked | LEZ finalized 3465, tip 3470 (5 unfinalized) [heartbeat]
+[14:13:19]   [16 s] waiting for the Taker's 6ce897f511b5 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker claim_evidence_available | LEZ finalized 3465, tip 3470 (5 unfinalized) [heartbeat]
+[14:13:19]   [0 s] waiting for the Maker to report 6ce897f511b5 completed and terminal: maker claim_evidence_available (schedule leased) | LEZ finalized 3465, tip 3470 (5 unfinalized) [heartbeat]
+[14:13:23]   both Nodes report 6ce897f511b5 completed
+[14:13:23] === concurrent: passed in 117s
