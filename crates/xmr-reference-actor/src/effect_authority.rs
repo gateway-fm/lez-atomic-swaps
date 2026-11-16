@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    os::unix::fs::DirBuilderExt as _,
+    os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _},
     path::{Component, Path, PathBuf},
 };
 
@@ -1111,4 +1111,38 @@ pub fn provision_xmr_maker_effect_authority(
         "Monero effect authority",
     )?;
     Ok(directory.join(MAKER_EFFECT_AUTHORITY_FILE))
+}
+
+/// The Maker actor's advisory LEZ scan cursor in the evidence root: where
+/// the search for each finalized effect it watches resumes.
+pub const XMR_MAKER_LEZ_SCAN_FILE: &str = "maker-lez-scan.json";
+
+/// Starts the Maker actor's search for the Taker's LEZ lock (tag 13) at
+/// `finalized_height`, the finalized LEZ height when the swap is activated:
+/// the Taker locks only once activated, so its lock lands above it. Keeps a
+/// cursor already in the evidence root of the provisioned `directory` (one an
+/// earlier provisioning of the same swap seeded lower, or a drive moved on).
+///
+/// # Errors
+///
+/// Fails if the cursor cannot be written.
+pub fn seed_xmr_maker_lez_scan(directory: &Path, finalized_height: u64) -> Result<()> {
+    let cursor = directory.join("evidence").join(XMR_MAKER_LEZ_SCAN_FILE);
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&cursor)
+    {
+        Ok(mut file) => {
+            serde_json::to_writer(
+                &mut file,
+                &serde_json::json!({ "taker_lock": finalized_height }),
+            )?;
+            file.sync_all()?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error).context("seed the Maker's LEZ scan cursor"),
+    }
 }

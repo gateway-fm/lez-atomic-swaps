@@ -31,7 +31,8 @@ use xmr_reference_actor::{
     XmrMakerEffectToolPinsV1, XmrMoneroChainView, XmrReservationTerms, XmrRoleConfigV1,
     XmrTakerContribution, XmrTakerStageB, accept_xmr_maker_stage_a,
     provision_xmr_effect_manifest_v3, provision_xmr_maker_actor_from_material,
-    provision_xmr_maker_effect_authority, reserve_xmr_maker_role, xmr_ceremony_partial_response,
+    provision_xmr_maker_effect_authority, reserve_xmr_maker_role, seed_xmr_maker_lez_scan,
+    xmr_ceremony_partial_response,
 };
 use zeroize::Zeroizing;
 
@@ -352,6 +353,19 @@ impl XmrMakerReservations {
             },
             &effect,
         )?;
+        // The actor's search for the Taker's lock starts at the finalized
+        // height now (the Taker locks once activated), not a fixed lookback
+        // from its first drive's tip: one sidecar page per 16 blocks, seconds
+        // each under load. Best effort: without it the actor looks back.
+        match sidecar.client(&self.runtime).and_then(|client| {
+            tokio::runtime::Handle::current().block_on(client.finalized_height())
+        }) {
+            Ok(height) => seed_xmr_maker_lez_scan(&effect, height)?,
+            Err(error) => eprintln!(
+                "maker XMR reservation {}: no finalized LEZ height to seed the lock search: {error:#}",
+                reservation_id.as_str()
+            ),
+        }
         let _ = provision_xmr_effect_manifest_v3(
             bundle.manifest_file(),
             ActorRole::Maker,

@@ -51,13 +51,13 @@ use wait_timeout::ChildExt as _;
 use xmr_reference_actor::{
     ValidatedXmrEffectExecutionV3, XMR_EFFECT_OBSERVER_RESULT_MAX_BYTES, XMR_MAKER_ACTOR_ABI_V1,
     XMR_MAKER_ACTOR_NEXT_ACTION, XMR_MAKER_ACTOR_PROGRAM_ID, XMR_MAKER_FUNDING_EVIDENCE_FILE,
-    XMR_MAKER_FUNDING_RECEIPT_FILE, XMR_MONERO_FUNDING_NOT_SENT_EXIT, XmrEffectObserverStateV1,
-    XmrMakerEffectSourcesV1, XmrPreparedEffectInvocationV1, activate_maker_claim_workflow_bytes,
-    activate_maker_punish_workflow_bytes, activate_maker_refund_workflow_bytes,
-    complete_maker_claim_signature, ingest_maker_refund_signature,
-    load_validated_xmr_maker_authority_fd, load_validated_xmr_maker_effect_execution_fd,
-    parse_xmr_effect_observer_result_v1, reconcile_maker_monero_funding_bytes,
-    xmr_maker_submission_unwritten,
+    XMR_MAKER_FUNDING_RECEIPT_FILE, XMR_MAKER_LEZ_SCAN_FILE, XMR_MONERO_FUNDING_NOT_SENT_EXIT,
+    XmrEffectObserverStateV1, XmrMakerEffectSourcesV1, XmrPreparedEffectInvocationV1,
+    activate_maker_claim_workflow_bytes, activate_maker_punish_workflow_bytes,
+    activate_maker_refund_workflow_bytes, complete_maker_claim_signature,
+    ingest_maker_refund_signature, load_validated_xmr_maker_authority_fd,
+    load_validated_xmr_maker_effect_execution_fd, parse_xmr_effect_observer_result_v1,
+    reconcile_maker_monero_funding_bytes, xmr_maker_submission_unwritten,
 };
 #[cfg(feature = "test-crash-hooks")]
 use zec_reference_actor::arm_test_crash_hook;
@@ -70,16 +70,16 @@ const LEZ_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 /// Finalized blocks one classification request scans, and pages per drive.
 const SCAN_PAGE_BLOCKS: u32 = 16;
 const SCAN_PAGES_PER_DRIVE: u32 = 64;
-/// Blocks before the first drive's finalized tip where the search for the
-/// Taker's lock starts: the Taker locks right after activation, which the
-/// supervisor follows within seconds.
+/// Without the cursor the Node seeds at activation (a swap provisioned
+/// before it was, or a lost file), blocks before the first drive's finalized
+/// tip where the search for the Taker's lock starts: the Taker locks right
+/// after activation, which the supervisor follows within seconds.
 const TAG13_LOOKBACK_BLOCKS: u64 = 256;
 
 /// The finalized LEZ evidence `drive` records in the evidence root.
 const TAG13_FILE: &str = "tag13-funding-finalized.json";
 const TAG14_FILE: &str = "tag14-finalized.json";
 const TAG16_FILE: &str = "tag16-finalized.json";
-const SCAN_CURSOR_FILE: &str = "maker-lez-scan.json";
 const CLAIM_SIGNATURE_FILE: &str = "maker-claim-completed-signature.json";
 const REFUND_SIGNATURE_FILE: &str = "maker-refund-observed-signature.json";
 const CLAIM_ACTIVATION_FILE: &str = "maker-claim-activation.json";
@@ -764,7 +764,7 @@ impl LiveMaker {
     }
 
     fn cursor(&self) -> Result<ScanCursor> {
-        Ok(read_private_file(&self.evidence(SCAN_CURSOR_FILE))?
+        Ok(read_private_file(&self.evidence(XMR_MAKER_LEZ_SCAN_FILE))?
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default())
     }
@@ -844,7 +844,7 @@ impl LiveMaker {
         if found.is_none() {
             cursor.set(watched, height);
             replace_private(
-                &self.evidence(SCAN_CURSOR_FILE),
+                &self.evidence(XMR_MAKER_LEZ_SCAN_FILE),
                 &serde_json::to_vec(&cursor)?,
             )?;
         }
@@ -1433,6 +1433,28 @@ mod tests {
             branch: None,
             branch_done: false,
         }
+    }
+
+    #[test]
+    fn the_lock_search_starts_at_the_height_the_node_seeded_at_activation() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("evidence")).unwrap();
+        xmr_reference_actor::seed_xmr_maker_lez_scan(directory.path(), 700).unwrap();
+        // A provisioning run again keeps the lower height it seeded first.
+        xmr_reference_actor::seed_xmr_maker_lez_scan(directory.path(), 900).unwrap();
+        let cursor: ScanCursor = serde_json::from_slice(
+            &fs::read(
+                directory
+                    .path()
+                    .join("evidence")
+                    .join(XMR_MAKER_LEZ_SCAN_FILE),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cursor.get(Watched::TakerLock), Some(700));
+        assert_eq!(cursor.get(Watched::ClaimAuthorization), None);
+        assert_eq!(cursor.get(Watched::Refund), None);
     }
 
     #[test]

@@ -670,10 +670,12 @@ are (a LEZ block a second: on `local` up to about 2800 blocks from the
 Taker's lock to P, more on a real network's longer windows):
 - Maker actor (tags 13, 14, 16, in process): 64 pages of 16 blocks per drive,
   cursor `maker-lez-scan.json` written at the end of each drive. Tag 13
-  starts 256 blocks before the first drive's finalized tip (a Maker Node that
-  first drives a swap more than 256 blocks after the Taker's lock misses it,
-  never funds, and the swap ends refunded with nothing lost), tags 14 and 16
-  after the Taker's lock.
+  starts at the finalized height the Maker Node read when it activated the
+  swap (the Taker locks only once activated); without that seed (the sidecar
+  did not answer then) 256 blocks before the first drive's finalized tip (a
+  Maker Node that first drives such a swap more than 256 blocks after the
+  Taker's lock misses it, never funds, and the swap ends refunded with
+  nothing lost). Tags 14 and 16 start after the Taker's lock.
 - Maker observer (tags 15, 17, `xmr-reference-tag15-finalized`): 16-block
   pages within the actor's 30 s observer timeout (about 800 blocks on the
   devnet), from the block after tag 14 (tag 15) or the refund scan's cursor
