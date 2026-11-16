@@ -341,6 +341,9 @@ expected_seconds() { # expected_seconds <test>
       node:xmr:xmr-punish:*) seconds=1400 ;;
       node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-maker-never-funds:*|ui:xmr:xmr-taker-refund:*) seconds=1100 ;;
       node:xmr:*|ui:xmr:*) seconds=600 ;;
+      # ~2 min a try, and its provoked race may need several (NOT-EXERCISED):
+      # started early, its tries do not hold one lane while the others idle
+      *:zec-claim-collision:*) seconds=600 ;;
       *refund*|*stale-window*) seconds=1000 ;;
       ui:*) seconds=350 ;;
       *) seconds=250 ;;
