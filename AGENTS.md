@@ -35,11 +35,15 @@ as well (sign-off, tests with every behavioural change).
 - Every component this project ships carries the release version: both
   desks, `lez_network`, `lez_swap_node`, the role packages and the sidecar,
   with the `.lidl` files that name them. Bump them together.
+- The first pull request that changes something after a release carries the
+  bump to the next version; there is no separate version pull request.
 - Upstream components keep their own versions. Protocol, schema and profile
   identifiers are not release versions.
 
 ## Pull requests and issues
 
+- The evidence of a full regression is committed to the pull request the
+  regression ran on, not to a pull request of its own.
 - A pull request description says what the change does, what was run and
   what was not. It carries no questions for the owner and no "to confirm"
   section; ask in the conversation or in a review comment.
