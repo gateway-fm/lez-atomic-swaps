@@ -1,0 +1,339 @@
+[09:27:10] regression full: 159 tests at 39e60679 (tree dirty: 0), results in runtime/regress/20261116T092710Z
+[09:27:10] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[09:27:10] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[09:27:56] group fast
+[09:27:56]     [lane 1] node:xmr:xmr-kill-taker:TakerSellsLez (try 1) starts: LEZ finalized 132, tip 136
+[09:27:56]     [lane 2] node:xmr:xmr-kill-maker:TakerSellsLez (try 1) starts: LEZ finalized 132, tip 136
+[09:27:56]     [lane 3] node:btc:kill-taker:TakerSellsLez (try 1) starts: LEZ finalized 132, tip 136
+[09:52:30] === node:btc:kill-taker:TakerSellsLez (try 1, lane 3): PASSED in 1442 s; LEZ finalized 874, tip 877
+[09:52:30]     [lane 3] node:btc:kill-maker:TakerSellsLez (try 1) starts: LEZ finalized 875, tip 877
+[10:01:15] === node:xmr:xmr-kill-taker:TakerSellsLez (try 1, lane 1): PASSED in 1970 s; LEZ finalized 1134, tip 1136
+[10:01:16]     [lane 1] node:btc:late-claim-unmined:TakerSellsLez (try 1) starts: LEZ finalized 1134, tip 1136
+[10:01:59] === node:xmr:xmr-kill-maker:TakerSellsLez (try 1, lane 2): PASSED in 2014 s; LEZ finalized 1153, tip 1157
+[10:01:59]     [lane 2] node:btc:kill-taker:TakerSellsForeign (try 1) starts: LEZ finalized 1153, tip 1157
+[10:16:18] === node:btc:late-claim-unmined:TakerSellsLez (try 1, lane 1): PASSED in 868 s; LEZ finalized 1587, tip 1591
+[10:16:18]     [lane 1] node:btc:kill-maker:TakerSellsForeign (try 1) starts: LEZ finalized 1589, tip 1591
+[10:20:57] === node:btc:kill-maker:TakerSellsLez (try 1, lane 3): PASSED in 1671 s; LEZ finalized 1710, tip 1714
+[10:20:57]     [lane 3] node:btc:late-claim-unmined:TakerSellsForeign (try 1) starts: LEZ finalized 1711, tip 1714
+[10:21:49] === node:btc:kill-taker:TakerSellsForeign (try 1, lane 2): PASSED in 1164 s; LEZ finalized 1736, tip 1739
+[10:21:49]     [lane 2] node:xmr:xmr-monerod-down:TakerSellsLez (try 1) starts: LEZ finalized 1736, tip 1739
+[10:32:26] === node:xmr:xmr-monerod-down:TakerSellsLez (try 1, lane 2): PASSED in 604 s; LEZ finalized 2058, tip 2060
+[10:32:26]     [lane 2] node:xmr:mixed-three-pair:TakerSellsLez (try 1) starts: LEZ finalized 2058, tip 2060
+[10:33:07] === node:btc:late-claim-unmined:TakerSellsForeign (try 1, lane 3): PASSED in 695 s; LEZ finalized 2077, tip 2081
+[10:33:07]     [lane 3] node:xmr:xmr-punish:TakerSellsLez (try 1) starts: LEZ finalized 2077, tip 2081
+[10:39:25] === node:xmr:mixed-three-pair:TakerSellsLez (try 1, lane 2): PASSED in 388 s; LEZ finalized 2264, tip 2267
+[10:39:25]     [lane 2] node:zec:zec-kill-taker:TakerSellsLez (try 1) starts: LEZ finalized 2264, tip 2267
+[10:39:30] === node:btc:kill-maker:TakerSellsForeign (try 1, lane 1): PASSED in 1356 s; LEZ finalized 2265, tip 2270
+[10:39:30]     [lane 1] node:zec:zec-kill-maker:TakerSellsLez (try 1) starts: LEZ finalized 2265, tip 2270
+[10:47:25] === node:zec:zec-kill-taker:TakerSellsLez (try 1, lane 2): PASSED in 453 s; LEZ finalized 2536, tip 2539
+[10:47:25]     [lane 2] node:zec:zec-kill-taker:TakerSellsForeign (try 1) starts: LEZ finalized 2536, tip 2539
+[10:49:59] === node:zec:zec-kill-maker:TakerSellsLez (try 1, lane 1): PASSED in 599 s; LEZ finalized 2625, tip 2628
+[10:49:59]     [lane 1] node:zec:zec-kill-maker:TakerSellsForeign (try 1) starts: LEZ finalized 2625, tip 2628
+[10:53:38] === node:xmr:xmr-punish:TakerSellsLez (try 1, lane 3): PASSED in 1206 s; LEZ finalized 2751, tip 2755
+[10:53:38]     [lane 3] node:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 2751, tip 2755
+[10:54:47] === node:zec:zec-kill-taker:TakerSellsForeign (try 1, lane 2): PASSED in 418 s; LEZ finalized 2788, tip 2791
+[10:54:47]     [lane 2] node:xmr:xmr-maker-never-funds:TakerSellsLez (try 1) starts: LEZ finalized 2788, tip 2791
+[11:00:21] === node:zec:zec-kill-maker:TakerSellsForeign (try 1, lane 1): PASSED in 593 s; LEZ finalized 2965, tip 2975
+[11:00:22]     [lane 1] node:xmr:xmr-taker-refund-kill:TakerSellsLez (try 1) starts: LEZ finalized 2965, tip 2976
+[11:10:01] === node:xmr:xmr-maker-never-funds:TakerSellsLez (try 1, lane 2): PASSED in 886 s; LEZ finalized 3320, tip 3322
+[11:10:02]     [lane 2] node:xmr:xmr-wallet-restart:TakerSellsLez (try 1) starts: LEZ finalized 3320, tip 3322
+[11:10:46] === node:xmr:xmr-taker-refund:TakerSellsLez (try 1, lane 3): PASSED in 1000 s; LEZ finalized 3341, tip 3346
+[11:10:46]     [lane 3] ui:xmr:xmr-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 3341, tip 3346
+[11:17:25] === node:xmr:xmr-taker-refund-kill:TakerSellsLez (try 1, lane 1): PASSED in 993 s; LEZ finalized 3552, tip 3557
+[11:17:25]     [lane 1] node:btc:taker-cli-refund:TakerSellsForeign (try 1) starts: LEZ finalized 3552, tip 3557
+[11:18:57] === node:xmr:xmr-wallet-restart:TakerSellsLez (try 1, lane 2): PASSED in 507 s; LEZ finalized 3605, tip 3611
+[11:18:57]     [lane 2] node:xmr:xmr-happy:TakerSellsLez (try 1) starts: LEZ finalized 3609, tip 3611
+[11:23:21] === node:xmr:xmr-happy:TakerSellsLez (try 1, lane 2): PASSED in 239 s; LEZ finalized 3754, tip 3764
+[11:23:22]     [lane 2] node:xmr:xmr-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 3754, tip 3764
+[11:27:58] === node:btc:taker-cli-refund:TakerSellsForeign (try 1, lane 1): PASSED in 610 s; LEZ finalized 3907, tip 3910
+[11:27:59]     [lane 1] node:xmr:xmr-outage-before-take:TakerSellsLez (try 1) starts: LEZ finalized 3907, tip 3910
+[11:28:55] === ui:xmr:xmr-taker-refund:TakerSellsLez (try 1, lane 3): PASSED in 1058 s; LEZ finalized 3933, tip 3941
+[11:28:55]     [lane 3] node:xmr:xmr-cut-after-lock:TakerSellsLez (try 1) starts: LEZ finalized 3933, tip 3941
+[11:29:37] === node:xmr:xmr-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 350 s; LEZ finalized 3958, tip 3967
+[11:29:37]     [lane 2] ui:xmr:xmr-happy:TakerSellsLez (try 1) starts: LEZ finalized 3958, tip 3967
+[11:32:49] === node:xmr:xmr-outage-before-take:TakerSellsLez (try 1, lane 1): PASSED in 262 s; LEZ finalized 4050, tip 4052
+[11:32:49]     [lane 1] ui:xmr:xmr-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 4050, tip 4052
+[11:34:01] === node:xmr:xmr-cut-after-lock:TakerSellsLez (try 1, lane 3): PASSED in 282 s; LEZ finalized 4086, tip 4089
+[11:34:01]     [lane 3] ui:zec:zec-happy:TakerSellsLez (try 1) starts: LEZ finalized 4086, tip 4089
+[11:34:28] === ui:xmr:xmr-happy:TakerSellsLez (try 1, lane 2): PASSED in 266 s; LEZ finalized 4092, tip 4104
+[11:34:28]     [lane 2] ui:zec:zec-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 4092, tip 4104
+[11:37:44] === ui:zec:zec-happy:TakerSellsLez (try 1, lane 3): PASSED in 197 s; LEZ finalized 4182, tip 4184
+[11:37:45]     [lane 3] ui:zec:zec-restart-taker:TakerSellsLez (try 1) starts: LEZ finalized 4182, tip 4185
+[11:41:10] === ui:zec:zec-restart-taker:TakerSellsLez (try 1, lane 3): PASSED in 166 s; LEZ finalized 4271, tip 4273
+[11:41:10]     [lane 3] ui:zec:zec-restart-maker:TakerSellsLez (try 1) starts: LEZ finalized 4271, tip 4273
+[11:41:12] === ui:xmr:xmr-concurrent:TakerSellsLez (try 1, lane 1): PASSED in 470 s; LEZ finalized 4271, tip 4274
+[11:41:13]     [lane 1] ui:zec:zec-survivor:TakerSellsLez (try 1) starts: LEZ finalized 4273, tip 4274
+[11:41:48] === ui:zec:zec-concurrent:TakerSellsLez (try 1, lane 2): PASSED in 407 s; LEZ finalized 4289, tip 4293
+[11:41:48]     [lane 2] ui:zec:zec-node-offline:TakerSellsLez (try 1) starts: LEZ finalized 4289, tip 4293
+[11:44:06] === ui:zec:zec-restart-maker:TakerSellsLez (try 1, lane 3): PASSED in 146 s; LEZ finalized 4354, tip 4359
+[11:44:06]     [lane 3] ui:btc:happy:TakerSellsLez (try 1) starts: LEZ finalized 4354, tip 4359
+[11:44:17] === ui:zec:zec-survivor:TakerSellsLez (try 1, lane 1): PASSED in 154 s; LEZ finalized 4361, tip 4365
+[11:44:17]     [lane 1] ui:btc:restart-taker:TakerSellsLez (try 1) starts: LEZ finalized 4362, tip 4365
+[11:45:55] === ui:zec:zec-node-offline:TakerSellsLez (try 1, lane 2): PASSED in 214 s; LEZ finalized 4413, tip 4415
+[11:45:55]     [lane 2] ui:btc:restart-maker:TakerSellsLez (try 1) starts: LEZ finalized 4413, tip 4415
+[11:46:26] === ui:btc:happy:TakerSellsLez (try 1, lane 3): PASSED in 113 s; LEZ finalized 4429, tip 4431
+[11:46:27]     [lane 3] ui:btc:survivor:TakerSellsLez (try 1) starts: LEZ finalized 4429, tip 4431
+[11:46:40] === ui:btc:restart-taker:TakerSellsLez (try 1, lane 1): PASSED in 114 s; LEZ finalized 4435, tip 4438
+[11:46:41]     [lane 1] ui:btc:concurrent:TakerSellsLez (try 1) starts: LEZ finalized 4435, tip 4439
+[11:49:44] === ui:btc:restart-maker:TakerSellsLez (try 1, lane 2): PASSED in 202 s; LEZ finalized 4514, tip 4520
+[11:49:45]     [lane 2] ui:btc:node-offline:TakerSellsLez (try 1) starts: LEZ finalized 4514, tip 4520
+[11:49:51] === ui:btc:survivor:TakerSellsLez (try 1, lane 3): PASSED in 174 s; LEZ finalized 4520, tip 4523
+[11:49:51]     [lane 3] ui:zec:zec-happy:TakerSellsForeign (try 1) starts: LEZ finalized 4520, tip 4523
+[11:51:20] === ui:btc:concurrent:TakerSellsLez (try 1, lane 1): PASSED in 246 s; LEZ finalized 4559, tip 4562
+[11:51:20]     [lane 1] ui:zec:zec-concurrent:TakerSellsForeign (try 1) starts: LEZ finalized 4559, tip 4562
+[11:52:03] === ui:btc:node-offline:TakerSellsLez (try 1, lane 2): PASSED in 95 s; LEZ finalized 4580, tip 4583
+[11:52:03]     [lane 2] ui:zec:zec-restart-taker:TakerSellsForeign (try 1) starts: LEZ finalized 4580, tip 4583
+[11:52:49] === ui:zec:zec-happy:TakerSellsForeign (try 1, lane 3): PASSED in 138 s; LEZ finalized 4599, tip 4603
+[11:52:50]     [lane 3] ui:zec:zec-restart-maker:TakerSellsForeign (try 1) starts: LEZ finalized 4600, tip 4603
+[11:54:35] === ui:zec:zec-restart-taker:TakerSellsForeign (try 1, lane 2): PASSED in 115 s; LEZ finalized 4649, tip 4655
+[11:54:35]     [lane 2] ui:zec:zec-survivor:TakerSellsForeign (try 1) starts: LEZ finalized 4652, tip 4655
+[11:55:36] === ui:zec:zec-concurrent:TakerSellsForeign (try 1, lane 1): PASSED in 224 s; LEZ finalized 4682, tip 4688
+[11:55:36]     [lane 1] ui:zec:zec-node-offline:TakerSellsForeign (try 1) starts: LEZ finalized 4684, tip 4688
+[11:55:46] === ui:zec:zec-restart-maker:TakerSellsForeign (try 1, lane 3): PASSED in 143 s; LEZ finalized 4689, tip 4693
+[11:55:46]     [lane 3] ui:btc:happy:TakerSellsForeign (try 1) starts: LEZ finalized 4690, tip 4693
+[11:57:33] === ui:zec:zec-survivor:TakerSellsForeign (try 1, lane 2): PASSED in 155 s; LEZ finalized 4739, tip 4745
+[11:57:33]     [lane 2] ui:btc:restart-taker:TakerSellsForeign (try 1) starts: LEZ finalized 4739, tip 4745
+[11:59:00] === ui:btc:happy:TakerSellsForeign (try 1, lane 3): PASSED in 166 s; LEZ finalized 4780, tip 4782
+[11:59:00]     [lane 3] ui:btc:restart-maker:TakerSellsForeign (try 1) starts: LEZ finalized 4780, tip 4782
+[11:59:46] === ui:zec:zec-node-offline:TakerSellsForeign (try 1, lane 1): PASSED in 223 s; LEZ finalized 4797, tip 4802
+[11:59:47]     [lane 1] ui:btc:survivor:TakerSellsForeign (try 1) starts: LEZ finalized 4797, tip 4802
+[12:00:40] === ui:btc:restart-taker:TakerSellsForeign (try 1, lane 2): PASSED in 154 s; LEZ finalized 4824, tip 4828
+[12:00:40]     [lane 2] ui:btc:concurrent:TakerSellsForeign (try 1) starts: LEZ finalized 4824, tip 4828
+[12:03:14] === ui:btc:restart-maker:TakerSellsForeign (try 1, lane 3): PASSED in 222 s; LEZ finalized 4894, tip 4896
+[12:03:15]     [lane 3] ui:btc:node-offline:TakerSellsForeign (try 1) starts: LEZ finalized 4894, tip 4896
+[12:03:45] === ui:btc:survivor:TakerSellsForeign (try 1, lane 1): PASSED in 209 s; LEZ finalized 4907, tip 4911
+[12:03:45]     [lane 1] ui:zec:zec-concurrent-staggered:TakerSellsLez (try 1) starts: LEZ finalized 4908, tip 4911
+[12:05:32] === ui:btc:node-offline:TakerSellsForeign (try 1, lane 3): PASSED in 101 s; LEZ finalized 4958, tip 4961
+[12:05:32]     [lane 3] ui:btc:logos-happy:TakerSellsForeign (try 1) starts: LEZ finalized 4959, tip 4961
+[12:08:06] === ui:btc:concurrent:TakerSellsForeign (try 1, lane 2): PASSED in 405 s; LEZ finalized 5027, tip 5030
+[12:08:06]     [lane 2] ui:zec:logos-happy:TakerSellsLez (try 1) starts: LEZ finalized 5027, tip 5030
+[12:09:37] === ui:zec:zec-concurrent-staggered:TakerSellsLez (try 1, lane 1): PASSED in 316 s; LEZ finalized 5072, tip 5077
+[12:09:37]     [lane 1] ui:zec:logos-happy:TakerSellsForeign (try 1) starts: LEZ finalized 5072, tip 5077
+[12:09:59] === ui:btc:logos-happy:TakerSellsForeign (try 1, lane 3): PASSED in 231 s; LEZ finalized 5086, tip 5089
+[12:10:00]     [lane 3] ui:zec:zec-desk-offer:TakerSellsLez (try 1) starts: LEZ finalized 5086, tip 5089
+[12:11:46] === ui:zec:logos-happy:TakerSellsLez (try 1, lane 2): PASSED in 188 s; LEZ finalized 5138, tip 5141
+[12:11:46]     [lane 2] ui:zec:zec-desk-offer:TakerSellsForeign (try 1) starts: LEZ finalized 5139, tip 5141
+[12:12:42] === ui:zec:zec-desk-offer:TakerSellsLez (try 1, lane 3): PASSED in 129 s; LEZ finalized 5163, tip 5166
+[12:12:43]     [lane 3] node:zec:zec-happy:TakerSellsLez (try 1) starts: LEZ finalized 5163, tip 5166
+[12:13:57] === ui:zec:logos-happy:TakerSellsForeign (try 1, lane 1): PASSED in 230 s; LEZ finalized 5194, tip 5198
+[12:13:57]     [lane 1] node:zec:zec-dynamic-happy:TakerSellsLez (try 1) starts: LEZ finalized 5195, tip 5198
+[12:15:11] === ui:zec:zec-desk-offer:TakerSellsForeign (try 1, lane 2): PASSED in 173 s; LEZ finalized 5227, tip 5230
+[12:15:11]     [lane 2] node:zec:zec-replay:TakerSellsLez (try 1) starts: LEZ finalized 5227, tip 5230
+[12:16:00] === node:zec:zec-happy:TakerSellsLez (try 1, lane 3): PASSED in 156 s; LEZ finalized 5250, tip 5253
+[12:16:01]     [lane 3] node:zec:zec-wrong-inputs:TakerSellsLez (try 1) starts: LEZ finalized 5251, tip 5253
+[12:16:56] === node:zec:zec-dynamic-happy:TakerSellsLez (try 1, lane 1): PASSED in 139 s; LEZ finalized 5277, tip 5279
+[12:16:56]     [lane 1] node:zec:zec-restart-taker:TakerSellsLez (try 1) starts: LEZ finalized 5277, tip 5279
+[12:17:32] === node:zec:zec-replay:TakerSellsLez (try 1, lane 2): PASSED in 108 s; LEZ finalized 5291, tip 5297
+[12:17:32]     [lane 2] node:zec:zec-restart-maker:TakerSellsLez (try 1) starts: LEZ finalized 5295, tip 5297
+[12:18:38] === node:zec:zec-wrong-inputs:TakerSellsLez (try 1, lane 3): PASSED in 126 s; LEZ finalized 5328, tip 5330
+[12:18:38]     [lane 3] node:zec:zec-survivor:TakerSellsLez (try 1) starts: LEZ finalized 5328, tip 5330
+[12:19:25] === node:zec:zec-restart-taker:TakerSellsLez (try 1, lane 1): PASSED in 114 s; LEZ finalized 5350, tip 5353
+[12:19:25]     [lane 1] node:zec:zec-concurrent:TakerSellsLez (try 1) starts: LEZ finalized 5350, tip 5353
+[12:20:17] === node:zec:zec-restart-maker:TakerSellsLez (try 1, lane 2): PASSED in 136 s; LEZ finalized 5372, tip 5378
+[12:20:17]     [lane 2] node:zec:zec-concurrent-kill-maker:TakerSellsLez (try 1) starts: LEZ finalized 5372, tip 5378
+[12:21:17] === node:zec:zec-survivor:TakerSellsLez (try 1, lane 3): PASSED in 125 s; LEZ finalized 5405, tip 5409
+[12:21:17]     [lane 3] node:zec:zec-corrupt-state:TakerSellsLez (try 1) starts: LEZ finalized 5405, tip 5409
+[12:23:08] === node:zec:zec-concurrent:TakerSellsLez (try 1, lane 1): PASSED in 195 s; LEZ finalized 5463, tip 5466
+[12:23:08]     [lane 1] node:zec:zec-regenerated-catalog:TakerSellsLez (try 1) starts: LEZ finalized 5463, tip 5466
+[12:24:43] === node:zec:zec-concurrent-kill-maker:TakerSellsLez (try 1, lane 2): PASSED in 236 s; LEZ finalized 5509, tip 5515
+[12:24:43]     [lane 2] node:zec:zec-tampered-catalog:TakerSellsLez (try 1) starts: LEZ finalized 5510, tip 5515
+[12:24:53] === node:zec:zec-corrupt-state:TakerSellsLez (try 1, lane 3): PASSED in 190 s; LEZ finalized 5517, tip 5520
+[12:24:53]     [lane 3] node:zec:zec-early-lock:TakerSellsLez (try 1) starts: LEZ finalized 5517, tip 5520
+[12:26:34] === node:zec:zec-regenerated-catalog:TakerSellsLez (try 1, lane 1): PASSED in 180 s; LEZ finalized 5559, tip 5569
+[12:26:35]     [lane 1] node:zec:zec-offline-after-lock:TakerSellsLez (try 1) starts: LEZ finalized 5559, tip 5570
+[12:26:40] === node:zec:zec-tampered-catalog:TakerSellsLez (try 1, lane 2): PASSED in 85 s; LEZ finalized 5568, tip 5572
+[12:26:40]     [lane 2] node:zec:zec-offline-after-second-lock:TakerSellsLez (try 1) starts: LEZ finalized 5568, tip 5572
+[12:29:07] === node:zec:zec-offline-after-second-lock:TakerSellsLez (try 1, lane 2): PASSED in 109 s; LEZ finalized 5636, tip 5638
+[12:29:07]     [lane 2] node:zec:zec-offline-after-claim:TakerSellsLez (try 1) starts: LEZ finalized 5636, tip 5638
+[12:29:31] === node:zec:zec-early-lock:TakerSellsLez (try 1, lane 3): PASSED in 238 s; LEZ finalized 5644, tip 5649
+[12:29:31]     [lane 3] node:zec:zec-bitcoin-down:TakerSellsLez (try 1) starts: LEZ finalized 5644, tip 5649
+[12:29:33] === node:zec:zec-offline-after-lock:TakerSellsLez (try 1, lane 1): PASSED in 142 s; LEZ finalized 5645, tip 5650
+[12:29:33]     [lane 1] node:btc:happy:TakerSellsLez (try 1) starts: LEZ finalized 5645, tip 5650
+[12:32:01] === node:btc:happy:TakerSellsLez (try 1, lane 1): PASSED in 114 s; LEZ finalized 5719, tip 5725
+[12:32:01]     [lane 1] node:btc:replay:TakerSellsLez (try 1) starts: LEZ finalized 5719, tip 5725
+[12:33:05] === node:zec:zec-offline-after-claim:TakerSellsLez (try 1, lane 2): PASSED in 206 s; LEZ finalized 5755, tip 5761
+[12:33:06]     [lane 2] node:btc:wrong-inputs:TakerSellsLez (try 1) starts: LEZ finalized 5755, tip 5762
+[12:33:55] === node:btc:replay:TakerSellsLez (try 1, lane 1): PASSED in 83 s; LEZ finalized 5782, tip 5787
+[12:33:56]     [lane 1] node:btc:restart-taker:TakerSellsLez (try 1) starts: LEZ finalized 5783, tip 5787
+[12:35:16] === node:btc:wrong-inputs:TakerSellsLez (try 1, lane 2): PASSED in 102 s; LEZ finalized 5821, tip 5824
+[12:35:16]     [lane 2] node:btc:restart-maker:TakerSellsLez (try 1) starts: LEZ finalized 5821, tip 5825
+[12:36:04] === node:btc:restart-taker:TakerSellsLez (try 1, lane 1): PASSED in 97 s; LEZ finalized 5842, tip 5847
+[12:36:04]     [lane 1] node:btc:survivor:TakerSellsLez (try 1) starts: LEZ finalized 5843, tip 5847
+[12:36:30] === node:zec:zec-bitcoin-down:TakerSellsLez (try 1, lane 3): PASSED in 391 s; LEZ finalized 5856, tip 5860
+[12:36:31]     [lane 3] node:btc:late-claim-confirms:TakerSellsLez (try 1) starts: LEZ finalized 5857, tip 5860
+[12:38:05] === node:btc:restart-maker:TakerSellsLez (try 1, lane 2): PASSED in 139 s; LEZ finalized 5899, tip 5902
+[12:38:06]     [lane 2] node:btc:concurrent:TakerSellsLez (try 1) starts: LEZ finalized 5900, tip 5902
+[12:38:37] === node:btc:survivor:TakerSellsLez (try 1, lane 1): PASSED in 119 s; LEZ finalized 5914, tip 5918
+[12:38:37]     [lane 1] node:btc:concurrent-kill-maker:TakerSellsLez (try 1) starts: LEZ finalized 5914, tip 5918
+[12:39:20] === node:btc:late-claim-confirms:TakerSellsLez (try 1, lane 3): PASSED in 127 s; LEZ finalized 5936, tip 5937
+[12:39:20]     [lane 3] node:btc:mixed-pair:TakerSellsLez (try 1) starts: LEZ finalized 5936, tip 5937
+[12:42:10] === node:btc:concurrent:TakerSellsLez (try 1, lane 2): PASSED in 213 s; LEZ finalized 6010, tip 6012
+[12:42:11]     [lane 2] node:btc:early-lock:TakerSellsLez (try 1) starts: LEZ finalized 6010, tip 6012
+[12:43:50] === node:btc:concurrent-kill-maker:TakerSellsLez (try 1, lane 1): PASSED in 279 s; LEZ finalized 6055, tip 6058
+[12:43:50]     [lane 1] node:btc:offline-after-lock:TakerSellsLez (try 1) starts: LEZ finalized 6055, tip 6058
+[12:44:06] === node:btc:mixed-pair:TakerSellsLez (try 1, lane 3): PASSED in 251 s; LEZ finalized 6062, tip 6067
+[12:44:07]     [lane 3] node:btc:offline-after-second-lock:TakerSellsLez (try 1) starts: LEZ finalized 6062, tip 6067
+[12:46:12] === node:btc:offline-after-lock:TakerSellsLez (try 1, lane 1): PASSED in 109 s; LEZ finalized 6121, tip 6124
+[12:46:13]     [lane 1] node:btc:offline-after-claim:TakerSellsLez (try 1) starts: LEZ finalized 6121, tip 6124
+[12:46:13] === node:btc:early-lock:TakerSellsLez (try 1, lane 2): PASSED in 204 s; LEZ finalized 6121, tip 6124
+[12:46:13]     [lane 2] node:btc:regenerated-config:TakerSellsLez (try 1) starts: LEZ finalized 6122, tip 6124
+[12:46:38] === node:btc:offline-after-second-lock:TakerSellsLez (try 1, lane 3): PASSED in 120 s; LEZ finalized 6134, tip 6137
+[12:46:38]     [lane 3] node:btc:tampered-config:TakerSellsLez (try 1) starts: LEZ finalized 6134, tip 6137
+[12:47:32] === node:btc:tampered-config:TakerSellsLez (try 1, lane 3): PASSED in 22 s; LEZ finalized 6162, tip 6166
+[12:47:32]     [lane 3] node:btc:zebra-down:TakerSellsLez (try 1) starts: LEZ finalized 6162, tip 6166
+[12:48:31] === node:btc:regenerated-config:TakerSellsLez (try 1, lane 2): PASSED in 104 s; LEZ finalized 6193, tip 6195
+[12:48:31]     [lane 2] node:zec:zec-happy:TakerSellsForeign (try 1) starts: LEZ finalized 6193, tip 6195
+[12:49:22] === node:btc:offline-after-claim:TakerSellsLez (try 1, lane 1): PASSED in 157 s; LEZ finalized 6217, tip 6219
+[12:49:22]     [lane 1] node:zec:zec-dynamic-happy:TakerSellsForeign (try 1) starts: LEZ finalized 6217, tip 6219
+[12:51:50] === node:zec:zec-happy:TakerSellsForeign (try 1, lane 2): PASSED in 166 s; LEZ finalized 6294, tip 6300
+[12:51:50]     [lane 2] node:zec:zec-replay:TakerSellsForeign (try 1) starts: LEZ finalized 6294, tip 6300
+[12:52:00] === node:zec:zec-dynamic-happy:TakerSellsForeign (try 1, lane 1): PASSED in 130 s; LEZ finalized 6296, tip 6307
+[12:52:00]     [lane 1] node:zec:zec-wrong-inputs:TakerSellsForeign (try 1) starts: LEZ finalized 6296, tip 6307
+[12:52:28] === node:btc:zebra-down:TakerSellsLez (try 1, lane 3): PASSED in 270 s; LEZ finalized 6320, tip 6322
+[12:52:28]     [lane 3] node:zec:zec-restart-taker:TakerSellsForeign (try 1) starts: LEZ finalized 6320, tip 6322
+[12:54:08] === node:zec:zec-replay:TakerSellsForeign (try 1, lane 2): PASSED in 113 s; LEZ finalized 6368, tip 6371
+[12:54:08]     [lane 2] node:zec:zec-restart-maker:TakerSellsForeign (try 1) starts: LEZ finalized 6368, tip 6371
+[12:54:21] === node:zec:zec-wrong-inputs:TakerSellsForeign (try 1, lane 1): PASSED in 113 s; LEZ finalized 6374, tip 6376
+[12:54:22]     [lane 1] node:zec:zec-survivor:TakerSellsForeign (try 1) starts: LEZ finalized 6374, tip 6377
+[12:54:52] === node:zec:zec-restart-taker:TakerSellsForeign (try 1, lane 3): PASSED in 112 s; LEZ finalized 6386, tip 6392
+[12:54:52]     [lane 3] node:zec:zec-concurrent:TakerSellsForeign (try 1) starts: LEZ finalized 6388, tip 6392
+[12:57:07] === node:zec:zec-survivor:TakerSellsForeign (try 1, lane 1): PASSED in 136 s; LEZ finalized 6450, tip 6459
+[12:57:08]     [lane 1] node:zec:zec-concurrent-kill-maker:TakerSellsForeign (try 1) starts: LEZ finalized 6450, tip 6459
+[12:57:42] === node:zec:zec-restart-maker:TakerSellsForeign (try 1, lane 2): PASSED in 181 s; LEZ finalized 6474, tip 6476
+[12:57:42]     [lane 2] node:zec:zec-corrupt-state:TakerSellsForeign (try 1) starts: LEZ finalized 6474, tip 6476
+[12:59:27] === node:zec:zec-concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 239 s; LEZ finalized 6520, tip 6526
+[12:59:28]     [lane 3] node:zec:zec-regenerated-catalog:TakerSellsForeign (try 1) starts: LEZ finalized 6520, tip 6527
+[13:02:00] === node:zec:zec-concurrent-kill-maker:TakerSellsForeign (try 1, lane 1): PASSED in 264 s; LEZ finalized 6601, tip 6603
+[13:02:00]     [lane 1] node:zec:zec-tampered-catalog:TakerSellsForeign (try 1) starts: LEZ finalized 6601, tip 6603
+[13:02:10] === node:zec:zec-corrupt-state:TakerSellsForeign (try 1, lane 2): PASSED in 233 s; LEZ finalized 6605, tip 6608
+[13:02:10]     [lane 2] node:zec:zec-early-lock:TakerSellsForeign (try 1) starts: LEZ finalized 6605, tip 6608
+[13:03:02] === node:zec:zec-regenerated-catalog:TakerSellsForeign (try 1, lane 3): PASSED in 189 s; LEZ finalized 6635, tip 6637
+[13:03:03]     [lane 3] node:zec:zec-offline-after-lock:TakerSellsForeign (try 1) starts: LEZ finalized 6635, tip 6638
+[13:03:47] === node:zec:zec-tampered-catalog:TakerSellsForeign (try 1, lane 1): PASSED in 80 s; LEZ finalized 6654, tip 6665
+[13:03:47]     [lane 1] node:zec:zec-offline-after-second-lock:TakerSellsForeign (try 1) starts: LEZ finalized 6654, tip 6666
+[13:04:55] === node:zec:zec-offline-after-lock:TakerSellsForeign (try 1, lane 3): PASSED in 89 s; LEZ finalized 6703, tip 6706
+[13:04:55]     [lane 3] node:zec:zec-offline-after-claim:TakerSellsForeign (try 1) starts: LEZ finalized 6703, tip 6706
+[13:05:36] === node:zec:zec-early-lock:TakerSellsForeign (try 1, lane 2): PASSED in 178 s; LEZ finalized 6719, tip 6728
+[13:05:36]     [lane 2] node:zec:zec-bitcoin-down:TakerSellsForeign (try 1) starts: LEZ finalized 6719, tip 6728
+[13:05:44] === node:zec:zec-offline-after-second-lock:TakerSellsForeign (try 1, lane 1): PASSED in 94 s; LEZ finalized 6730, tip 6732
+[13:05:45]     [lane 1] node:btc:happy:TakerSellsForeign (try 1) starts: LEZ finalized 6730, tip 6733
+[13:07:05] === node:zec:zec-offline-after-claim:TakerSellsForeign (try 1, lane 3): PASSED in 100 s; LEZ finalized 6775, tip 6778
+[13:07:05]     [lane 3] node:btc:replay:TakerSellsForeign (try 1) starts: LEZ finalized 6775, tip 6778
+[13:07:42] === node:btc:happy:TakerSellsForeign (try 1, lane 1): PASSED in 95 s; LEZ finalized 6791, tip 6801
+[13:07:42]     [lane 1] node:btc:wrong-inputs:TakerSellsForeign (try 1) starts: LEZ finalized 6791, tip 6801
+[13:09:24] === node:btc:replay:TakerSellsForeign (try 1, lane 3): PASSED in 114 s; LEZ finalized 6852, tip 6856
+[13:09:26]     [lane 3] node:btc:restart-taker:TakerSellsForeign (try 1) starts: LEZ finalized 6852, tip 6857
+[13:09:52] === node:btc:wrong-inputs:TakerSellsForeign (try 1, lane 1): PASSED in 106 s; LEZ finalized 6867, tip 6870
+[13:09:52]     [lane 1] node:btc:restart-maker:TakerSellsForeign (try 1) starts: LEZ finalized 6867, tip 6870
+[13:12:00] === node:btc:restart-taker:TakerSellsForeign (try 1, lane 3): PASSED in 123 s; LEZ finalized 6926, tip 6932
+[13:12:01]     [lane 3] node:btc:survivor:TakerSellsForeign (try 1) starts: LEZ finalized 6927, tip 6932
+[13:13:28] === node:zec:zec-bitcoin-down:TakerSellsForeign (try 1, lane 2): PASSED in 448 s; LEZ finalized 6966, tip 6971
+[13:13:29]     [lane 2] node:btc:late-claim-confirms:TakerSellsForeign (try 1) starts: LEZ finalized 6967, tip 6971
+[13:15:24] === node:btc:survivor:TakerSellsForeign (try 1, lane 3): PASSED in 168 s; LEZ finalized 7017, tip 7020
+[13:15:24]     [lane 3] node:btc:concurrent:TakerSellsForeign (try 1) starts: LEZ finalized 7018, tip 7020
+[13:16:43] === node:btc:late-claim-confirms:TakerSellsForeign (try 1, lane 2): PASSED in 152 s; LEZ finalized 7053, tip 7056
+[13:16:43]     [lane 2] node:btc:concurrent-kill-maker:TakerSellsForeign (try 1) starts: LEZ finalized 7053, tip 7056
+[13:20:40] === node:btc:concurrent:TakerSellsForeign (try 1, lane 3): PASSED in 281 s; LEZ finalized 7157, tip 7159
+[13:20:40]     [lane 3] node:btc:mixed-pair:TakerSellsForeign (try 1) starts: LEZ finalized 7157, tip 7159
+[13:24:15] === node:btc:concurrent-kill-maker:TakerSellsForeign (try 1, lane 2): PASSED in 409 s; LEZ finalized 7258, tip 7264
+[13:24:15]     [lane 2] node:btc:early-lock:TakerSellsForeign (try 1) starts: LEZ finalized 7258, tip 7264
+[13:24:42] === node:btc:mixed-pair:TakerSellsForeign (try 1, lane 3): PASSED in 209 s; LEZ finalized 7275, tip 7278
+[13:24:42]     [lane 3] node:btc:offline-after-lock:TakerSellsForeign (try 1) starts: LEZ finalized 7275, tip 7278
+[13:27:02] === node:btc:offline-after-lock:TakerSellsForeign (try 1, lane 3): PASSED in 110 s; LEZ finalized 7349, tip 7351
+[13:27:02]     [lane 3] node:btc:offline-after-second-lock:TakerSellsForeign (try 1) starts: LEZ finalized 7350, tip 7351
+[13:28:40] === node:btc:early-lock:TakerSellsForeign (try 1, lane 2): PASSED in 236 s; LEZ finalized 7398, tip 7402
+[13:28:40]     [lane 2] node:btc:offline-after-claim:TakerSellsForeign (try 1) starts: LEZ finalized 7400, tip 7402
+[13:29:30] === node:btc:offline-after-second-lock:TakerSellsForeign (try 1, lane 3): PASSED in 122 s; LEZ finalized 7426, tip 7428
+[13:29:30]     [lane 3] node:btc:regenerated-config:TakerSellsForeign (try 1) starts: LEZ finalized 7426, tip 7428
+[13:31:53] === node:btc:regenerated-config:TakerSellsForeign (try 1, lane 3): PASSED in 119 s; LEZ finalized 7500, tip 7502
+[13:31:54]     [lane 3] node:btc:tampered-config:TakerSellsForeign (try 1) starts: LEZ finalized 7500, tip 7503
+[13:31:59] === node:btc:offline-after-claim:TakerSellsForeign (try 1, lane 2): PASSED in 170 s; LEZ finalized 7502, tip 7506
+[13:32:00]     [lane 2] node:btc:zebra-down:TakerSellsForeign (try 1) starts: LEZ finalized 7503, tip 7506
+[13:32:35] === node:btc:tampered-config:TakerSellsForeign (try 1, lane 3): PASSED in 16 s; LEZ finalized 7524, tip 7527
+[13:32:35]     [lane 3] node:btc:maker-cli:TakerSellsForeign (try 1) starts: LEZ finalized 7526, tip 7527
+[13:34:54] === node:btc:maker-cli:TakerSellsForeign (try 1, lane 3): PASSED in 114 s; LEZ finalized 7597, tip 7601
+[13:34:54]     [lane 3] node:btc:maker-price-module:TakerSellsForeign (try 1) starts: LEZ finalized 7597, tip 7601
+[13:37:26] === node:btc:zebra-down:TakerSellsForeign (try 1, lane 2): PASSED in 302 s; LEZ finalized 7673, tip 7676
+[13:37:26]     [lane 2] node:btc:taker-cli:TakerSellsForeign (try 1) starts: LEZ finalized 7673, tip 7676
+[13:39:31] === node:btc:maker-price-module:TakerSellsForeign (try 1, lane 3): PASSED in 244 s; LEZ finalized 7730, tip 7735
+[13:39:31]     [lane 3] node:zec:zec-taker-cli:TakerSellsLez (try 1) starts: LEZ finalized 7730, tip 7735
+[13:40:05] === node:btc:taker-cli:TakerSellsForeign (try 1, lane 2): PASSED in 129 s; LEZ finalized 7750, tip 7752
+[13:40:05]     [lane 2] node:btc:outage-before-take:TakerSellsForeign (try 1) starts: LEZ finalized 7750, tip 7752
+[13:42:30] === node:btc:restart-maker:TakerSellsForeign (try 1, lane 1): FAILED in 1925 s; LEZ finalized 7825, tip 7828
+      [13:42:27] FAILED: timed out after 1800 s waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim); last seen: taker claim_in_progress (gen 3) | maker claim_evidence_available; LEZ finalized 7815, 
+[13:42:30]     [lane 1] node:zec:zec-outage-before-take:TakerSellsLez (try 1) starts: LEZ finalized 7826, tip 7828
+[13:42:43] === node:zec:zec-taker-cli:TakerSellsLez (try 1, lane 3): PASSED in 162 s; LEZ finalized 7830, tip 7835
+[13:42:43]     [lane 3] node:zec:zec-claim-collision:TakerSellsForeign (try 1) starts: LEZ finalized 7830, tip 7835
+[13:42:55] === node:btc:outage-before-take:TakerSellsForeign (try 1, lane 2): PASSED in 135 s; LEZ finalized 7837, tip 7842
+[13:44:44] === node:zec:zec-outage-before-take:TakerSellsLez (try 1, lane 1): PASSED in 98 s; LEZ finalized 7899, tip 7903
+[13:45:07] === node:zec:zec-claim-collision:TakerSellsForeign (try 1, lane 3): NOT-EXERCISED in 119 s; LEZ finalized 7914, tip 7916
+[13:45:07]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 2) starts: LEZ finalized 7914, tip 7916
+[13:47:21] === node:zec:zec-claim-collision:TakerSellsForeign (try 2, lane 1): NOT-EXERCISED in 109 s; LEZ finalized 7991, tip 7994
+[13:47:21]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 3) starts: LEZ finalized 7991, tip 7994
+[13:50:03] === node:zec:zec-claim-collision:TakerSellsForeign (try 3, lane 1): NOT-EXERCISED in 132 s; LEZ finalized 8076, tip 8080
+[13:50:03]     [lane 1] node:zec:zec-claim-collision:TakerSellsForeign (try 4) starts: LEZ finalized 8076, tip 8080
+[13:52:40] === node:zec:zec-claim-collision:TakerSellsForeign (try 4, lane 1): PASSED in 129 s; LEZ finalized 8170, tip 8173
+[13:52:40] group zec-v6
+[13:52:41]     timing profile fast -> fast, ZEC profile deterministic-local-devnet-v6 (logs/profile-1.log)
+[13:54:36]     [lane 1] node:zec:zec-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 8235, tip 8239
+[13:54:36]     [lane 2] node:zec:zec-taker-refund-offline:TakerSellsLez (try 1) starts: LEZ finalized 8235, tip 8239
+[13:54:36]     [lane 3] node:zec:zec-maker-refund:TakerSellsLez (try 1) starts: LEZ finalized 8235, tip 8239
+[14:00:16] === node:zec:zec-maker-refund:TakerSellsLez (try 1, lane 3): PASSED in 309 s; LEZ finalized 8438, tip 8442
+[14:00:16]     [lane 3] node:zec:zec-refund-then-maker-lock:TakerSellsLez (try 1) starts: LEZ finalized 8438, tip 8442
+[14:00:59] === node:zec:zec-taker-refund-offline:TakerSellsLez (try 1, lane 2): PASSED in 354 s; LEZ finalized 8460, tip 8465
+[14:00:59]     [lane 2] ui:zec:zec-taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 8460, tip 8465
+[14:01:17] === node:zec:zec-taker-refund:TakerSellsLez (try 1, lane 1): PASSED in 367 s; LEZ finalized 8469, tip 8473
+[14:01:17]     [lane 1] node:zec:zec-taker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 8469, tip 8473
+[14:05:49] === node:zec:zec-refund-then-maker-lock:TakerSellsLez (try 1, lane 3): PASSED in 300 s; LEZ finalized 8624, tip 8629
+[14:05:49]     [lane 3] node:zec:zec-taker-refund-offline:TakerSellsForeign (try 1) starts: LEZ finalized 8625, tip 8629
+[14:06:36] === node:zec:zec-taker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 286 s; LEZ finalized 8652, tip 8658
+[14:06:36]     [lane 1] node:zec:zec-maker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 8653, tip 8658
+[14:07:33] === ui:zec:zec-taker-refund:TakerSellsLez (try 1, lane 2): PASSED in 359 s; LEZ finalized 8684, tip 8688
+[14:07:33]     [lane 2] node:zec:zec-refund-then-maker-lock:TakerSellsForeign (try 1) starts: LEZ finalized 8684, tip 8688
+[14:10:57] === node:zec:zec-taker-refund-offline:TakerSellsForeign (try 1, lane 3): PASSED in 282 s; LEZ finalized 8796, tip 8808
+[14:10:57]     [lane 3] ui:zec:zec-taker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 8801, tip 8809
+[14:12:17] === node:zec:zec-maker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 311 s; LEZ finalized 8853, tip 8857
+[14:12:17]     [lane 1] ui:zec:zec-maker-refund:TakerSellsLez (try 1) starts: LEZ finalized 8853, tip 8857
+[14:13:29] === node:zec:zec-refund-then-maker-lock:TakerSellsForeign (try 1, lane 2): PASSED in 327 s; LEZ finalized 8890, tip 8895
+[14:13:29]     [lane 2] ui:zec:zec-maker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 8890, tip 8895
+[14:16:13] === ui:zec:zec-taker-refund:TakerSellsForeign (try 1, lane 3): PASSED in 290 s; LEZ finalized 8976, tip 8980
+[14:16:13]     [lane 3] ui:zec:zec-stale-window:TakerSellsForeign (try 1) starts: LEZ finalized 8976, tip 8980
+[14:17:54] === ui:zec:zec-maker-refund:TakerSellsLez (try 1, lane 1): PASSED in 312 s; LEZ finalized 9033, tip 9035
+[14:19:22] === ui:zec:zec-maker-refund:TakerSellsForeign (try 1, lane 2): PASSED in 325 s; LEZ finalized 9086, tip 9088
+[14:21:54] === ui:zec:zec-stale-window:TakerSellsForeign (try 1, lane 3): PASSED in 311 s; LEZ finalized 9186, tip 9189
+[14:21:54] group refund
+[14:21:54]     timing profile fast -> refund, ZEC profile deterministic-local-devnet-v5 (logs/profile-2.log)
+[14:23:30]     [lane 1] node:btc:taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 9241, tip 9249
+[14:23:30]     [lane 2] node:btc:taker-refund-offline:TakerSellsLez (try 1) starts: LEZ finalized 9241, tip 9249
+[14:23:30]     [lane 3] node:btc:maker-refund:TakerSellsLez (try 1) starts: LEZ finalized 9241, tip 9249
+[14:29:06] === node:btc:maker-refund:TakerSellsLez (try 1, lane 3): PASSED in 312 s; LEZ finalized 9447, tip 9450
+[14:29:07]     [lane 3] node:btc:refund-then-maker-lock:TakerSellsLez (try 1) starts: LEZ finalized 9447, tip 9451
+[14:29:44] === node:btc:taker-refund-offline:TakerSellsLez (try 1, lane 2): PASSED in 351 s; LEZ finalized 9469, tip 9471
+[14:29:44]     [lane 2] ui:btc:taker-refund:TakerSellsLez (try 1) starts: LEZ finalized 9469, tip 9471
+[14:30:02] === node:btc:taker-refund:TakerSellsLez (try 1, lane 1): PASSED in 368 s; LEZ finalized 9476, tip 9479
+[14:30:03]     [lane 1] ui:btc:maker-refund:TakerSellsLez (try 1) starts: LEZ finalized 9476, tip 9480
+[14:34:31] === node:btc:refund-then-maker-lock:TakerSellsLez (try 1, lane 3): PASSED in 295 s; LEZ finalized 9623, tip 9626
+[14:34:31]     [lane 3] node:btc:taker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 9623, tip 9626
+[14:35:29] === ui:btc:taker-refund:TakerSellsLez (try 1, lane 2): PASSED in 314 s; LEZ finalized 9653, tip 9657
+[14:35:30]     [lane 2] node:btc:taker-refund-offline:TakerSellsForeign (try 1) starts: LEZ finalized 9653, tip 9657
+[14:35:44] === ui:btc:maker-refund:TakerSellsLez (try 1, lane 1): PASSED in 309 s; LEZ finalized 9663, tip 9666
+[14:35:44]     [lane 1] node:btc:maker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 9663, tip 9666
+[14:39:33] === node:btc:taker-refund:TakerSellsForeign (try 1, lane 3): PASSED in 275 s; LEZ finalized 9791, tip 9797
+[14:39:33]     [lane 3] node:btc:refund-then-maker-lock:TakerSellsForeign (try 1) starts: LEZ finalized 9791, tip 9797
+[14:39:33] === node:btc:maker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 205 s; LEZ finalized 9791, tip 9797
+[14:39:33]     [lane 1] ui:btc:taker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 9791, tip 9797
+[14:40:49] === node:btc:taker-refund-offline:TakerSellsForeign (try 1, lane 2): PASSED in 294 s; LEZ finalized 9832, tip 9836
+[14:40:49]     [lane 2] ui:btc:maker-refund:TakerSellsForeign (try 1) starts: LEZ finalized 9832, tip 9836
+[14:43:59] === node:btc:refund-then-maker-lock:TakerSellsForeign (try 1, lane 3): PASSED in 234 s; LEZ finalized 9921, tip 9925
+[14:46:11] === ui:btc:taker-refund:TakerSellsForeign (try 1, lane 1): PASSED in 364 s; LEZ finalized 9987, tip 9991
+[14:47:11] === ui:btc:maker-refund:TakerSellsForeign (try 1, lane 2): PASSED in 354 s; LEZ finalized 10021, tip 10023
+[14:47:11] lanes: 2 test(s) on a chain of their own, lane 1 alone
+[14:47:26]     timing profile refund -> fast, ZEC profile deterministic-local-devnet-v5 (logs/profile-3.log)
+[14:48:09]     new LEZ chain (1) LEZ_BOOTSTRAP_DEFER_CLAIM=taker-zurich-01
+[14:50:24]     node:zec:zec-balance-refusal:TakerSellsLez (try 1) starts: LEZ finalized 68, tip 77
+[14:52:34] === node:zec:zec-balance-refusal:TakerSellsLez (try 1): PASSED in 130 s (+135 s before it, a new chain among them); LEZ finalized 161, tip 166
+[14:52:34]     new LEZ chain (2) LEZ_BOOTSTRAP_DEFER_CLAIM=maker-munich-01
+[14:54:49]     node:zec:zec-balance-refusal:TakerSellsForeign (try 1) starts: LEZ finalized 68, tip 77
+[14:57:02] === node:zec:zec-balance-refusal:TakerSellsForeign (try 1): PASSED in 134 s (+134 s before it, a new chain among them); LEZ finalized 164, tip 169
+[14:57:02] regression full: 158 of 159 passed in 329 min, 2 new chains, 3 profile switches, 0 frozen tries
+[14:57:02]   not passed: node:btc:restart-maker:TakerSellsForeign

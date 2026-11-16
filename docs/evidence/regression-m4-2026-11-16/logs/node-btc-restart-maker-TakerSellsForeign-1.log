@@ -1,0 +1,43 @@
+[13:10:24] === restart-maker (stamp 1794834624)
+[13:10:24] preflight: indexer historical reads
+[13:10:25]   indexer serves historical reads at the tip (6884)
+[13:10:25] preflight: LEZ finality check waived by request
+[13:10:25]   Maker published offer-e2e-1794834624
+[13:10:28]   Taker took offer-e2e-1794834624: swap 990e4f748028 (not_activated)
+[13:10:28]   Taker locked bitcoin: bb79d9060287 (replay=False)
+[13:10:28]   restarting lez-maker-node
+[13:11:15]   [0 s] waiting for the Taker's 990e4f748028 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker taker_lock_confirmed | LEZ finalized 6896, tip 6901 (5 unfinalized) [heartbeat]
+[13:12:23]   [68 s] waiting for the Taker's 990e4f748028 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 6931, tip 6934 (3 unfinalized) [heartbeat]
+[13:12:25]   Taker claimed LEZ (replay=False)
+[13:12:26]   [0 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 6931, tip 6934 (3 unfinalized) [heartbeat]
+[13:13:26]   [60 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 6962, tip 6966 (4 unfinalized) [heartbeat]
+[13:14:26]   [120 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 6981, tip 6985 (4 unfinalized) [heartbeat]
+[13:15:27]   [181 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7014, tip 7017 (3 unfinalized) [heartbeat]
+[13:16:27]   [242 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7044, tip 7048 (4 unfinalized) [heartbeat]
+[13:17:28]   [302 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7065, tip 7067 (2 unfinalized) [heartbeat]
+[13:18:28]   [363 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7091, tip 7097 (6 unfinalized) [heartbeat]
+[13:19:31]   [425 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7124, tip 7127 (3 unfinalized) [heartbeat]
+[13:20:33]   [487 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7143, tip 7147 (4 unfinalized) [heartbeat]
+[13:21:34]   [549 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7175, tip 7177 (2 unfinalized) [heartbeat]
+[13:22:36]   [610 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7209, tip 7211 (2 unfinalized) [heartbeat]
+[13:23:38]   [672 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7238, tip 7245 (7 unfinalized) [heartbeat]
+[13:24:39]   [733 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7265, tip 7268 (3 unfinalized) [heartbeat]
+[13:25:40]   [794 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7300, tip 7304 (4 unfinalized) [heartbeat]
+[13:26:41]   [856 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7334, tip 7338 (4 unfinalized) [heartbeat]
+[13:27:43]   [917 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7357, tip 7362 (5 unfinalized) [heartbeat]
+[13:28:44]   [979 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7394, tip 7398 (4 unfinalized) [heartbeat]
+[13:29:47]   [1042 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7431, tip 7434 (3 unfinalized) [heartbeat]
+[13:30:48]   [1102 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7464, tip 7470 (6 unfinalized) [heartbeat]
+[13:31:51]   [1166 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7489, tip 7492 (3 unfinalized) [heartbeat]
+[13:32:54]   [1228 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7526, tip 7529 (3 unfinalized) [heartbeat]
+[13:33:57]   [1291 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7566, tip 7568 (2 unfinalized) [heartbeat]
+[13:34:58]   [1353 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7591, tip 7593 (2 unfinalized) [heartbeat]
+[13:36:00]   [1414 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7624, tip 7627 (3 unfinalized) [heartbeat]
+[13:37:02]   [1476 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7657, tip 7661 (4 unfinalized) [heartbeat]
+[13:38:04]   [1538 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7690, tip 7693 (3 unfinalized) [heartbeat]
+[13:39:05]   [1599 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7711, tip 7715 (4 unfinalized) [heartbeat]
+[13:40:08]   [1662 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7745, tip 7749 (4 unfinalized) [heartbeat]
+[13:41:09]   [1723 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7781, tip 7784 (3 unfinalized) [heartbeat]
+[13:42:10]   [1785 s] waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker claim_evidence_available | LEZ finalized 7805, tip 7809 (4 unfinalized) [heartbeat]
+[13:42:27] FAILED: timed out after 1800 s waiting for the Taker's 990e4f748028 to reach completed (Maker follow-up claim); last seen: taker claim_in_progress (gen 3) | maker claim_evidence_available; LEZ finalized 7815, tip 7820 (5 unfinalized) [heartbeat]
+[13:42:27] === restart-maker: failed in 1923s
