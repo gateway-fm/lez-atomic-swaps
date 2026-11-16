@@ -176,6 +176,11 @@ pub async fn fund_maker_monero(
     );
     let _lock = rpc.lock().context(MoneroFundingNotSent)?;
     let role = rpc.role_effects().context(MoneroFundingNotSent)?;
+    // The role wallet is open from here on, under the lock: the transfer and
+    // the shared wallet's restore do not open it once more (an open takes the
+    // wallet-rpc two to seven seconds on the devnet).
+    let open = MoneroRegtestWalletEffects::new(rpc.daemon(), rpc.wallet())
+        .context(MoneroFundingNotSent)?;
     let mut attempt = 1;
     let funding = loop {
         // A prior swap may have mined after spending from this wallet: refresh
@@ -183,7 +188,7 @@ pub async fn fund_maker_monero(
         let result = async {
             role.open_role_wallet().await?;
             role.refresh_from_height(RESTORE_HEIGHT).await?;
-            role.fund_shared_exact_and_confirm(
+            open.fund_shared_exact_and_confirm(
                 agreement.shared_address(),
                 agreement.body().monero().amount_piconero(),
             )
@@ -289,10 +294,16 @@ async fn record_maker_monero_funding_locked(
     let password = shared_wallet_password.to_owned();
     let shared = MoneroRegtestWalletEffects::new(rpc.daemon(), rpc.wallet())?
         .with_role_wallet(name.clone(), password.clone())?;
-    // A crash after the view-only wallet was made leaves its file: it is
-    // opened instead of made again.
-    if rpc
-        .role_effects()?
+    // Right after its transfer the funding tool holds the role wallet open;
+    // an observer reopens it first, so that a restarted wallet-rpc has one to
+    // close. A crash after the view-only wallet was made leaves its file: it
+    // is opened instead of made again.
+    let restorer = if transaction.is_some() {
+        MoneroRegtestWalletEffects::new(rpc.daemon(), rpc.wallet())?
+    } else {
+        rpc.role_effects()?
+    };
+    if restorer
         .restore_shared_view_only(
             agreement.shared_address(),
             view_key,
