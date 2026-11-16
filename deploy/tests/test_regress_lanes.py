@@ -39,7 +39,8 @@ lane = os.environ.get("LEZ_LANE", "-")
 def note(what):
     with open(os.environ["CALLS"], "a") as f:
         f.write(f"{what} {scenario}:{direction} lane={lane} prefix={os.environ.get('LEZ_CONTAINER_PREFIX', '-')} "
-                f"runtime={os.environ.get('LEZ_LANE_RUNTIME', '-')} at={time.time():.2f}\\n")
+                f"runtime={os.environ.get('LEZ_LANE_RUNTIME', '-')} defer={os.environ.get('LEZ_BOOTSTRAP_DEFER_CLAIM', '-')} "
+                f"at={time.time():.2f}\\n")
 note("start")
 marker = state / f"froze-{scenario}-{direction}"
 if plan.get("freeze_once") and not marker.exists():
@@ -211,7 +212,31 @@ class Lanes(Runner):
         self.assertTrue(self.calls_of('lanes')[-1].endswith('stop 2'))
         ups = self.calls_of('up')
         self.assertEqual(len(ups), 1)
-        self.assertIn('LEZ_LANES=1 DEFER=taker-zurich-01', ups[0])
+        self.assertIn('LEZ_LANES=1 DEFER=taker-zurich-01 ', ups[0])
+
+    def test_the_two_balance_refusals_run_last_at_once_on_one_chain(self):
+        plan = {'happy': {'sleep': 1}, 'zec-balance-refusal': {'sleep': 1.5}}
+        run, _ = self.regress('node:zec:zec-balance-refusal:TakerSellsLez', 'node:zec:zec-balance-refusal:TakerSellsForeign',
+                              'node:btc:happy:TakerSellsLez', plan=plan, LEZ_LANES='3')
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        starts = self.calls_of('start')
+        refusals = [line for line in starts if 'refusal' in line]
+        self.assertEqual(len(refusals), 2, starts)
+        self.assertEqual(starts[-2:], refusals)
+        # one chain defers lane 1's Taker wallet and lane 2's Maker wallet; lanes 2..3 stop first
+        self.assertTrue(self.calls_of('lanes')[-1].endswith('stop 3'))
+        ups = self.calls_of('up')
+        self.assertEqual(len(ups), 1, ups)
+        self.assertIn('LEZ_LANES=2 DEFER=taker-zurich-01 maker-basel-02 ', ups[0])
+        self.assertIn('--fresh-lez', ups[0])
+        # each on its own lane, with the other's wallet still deferred for its own bootstrap run, at once
+        lsl = next(line for line in refusals if 'TakerSellsLez' in line)
+        lsf = next(line for line in refusals if 'TakerSellsForeign' in line)
+        self.assertIn('lane=1 ', lsl); self.assertIn('defer=maker-basel-02 ', lsl)
+        self.assertIn('lane=2 ', lsf); self.assertIn('defer=taker-zurich-01 ', lsf)
+        first_end = min(float(line.split('at=')[1]) for line in self.calls_of('end') if 'refusal' in line)
+        self.assertLess(max(float(line.split('at=')[1]) for line in refusals), first_end)
+        self.assertTrue(all(row[2] == 'PASSED' for row in self.results()))
 
 
 class LaneGroups(Runner):

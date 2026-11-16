@@ -51,7 +51,8 @@
 # frozen every lane's test is void: all are stopped, put back first in line,
 # and one new chain serves every lane. A worn chain is replaced, and the timing
 # profile switched, once every lane is idle. The zec-balance-refusal tests need
-# a chain of their own and run last, on lane 1 alone. results.tsv gains the
+# a chain of their own and run last, both at once on lanes 1 and 2 of one chain
+# (one after the other on lane 1 when that cannot be). results.tsv gains the
 # lane and the chain each try ran on. Unset or 1: one test at a time, as above.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -532,6 +533,52 @@ lanes_main() {
   done
   kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
   (( ${#serial[@]} > 0 )) || return 0
+  # The two zec-balance-refusal tests at once, on one chain that defers the
+  # vault claim of lane 1's Taker wallet and of lane 2's Maker wallet: each
+  # test's own bootstrap-market.sh run keeps the other's deferred. What does
+  # not pass that way (a frozen chain) runs alone below, as before.
+  if (( lane_count >= 2 )) && [[ "${serial[*]}" == "node:zec:zec-balance-refusal:TakerSellsLez node:zec:zec-balance-refusal:TakerSellsForeign" ]]; then
+    local wallets taker_1 maker_2
+    wallets="$(for k in 1 2; do LEZ_LANE="$k" bash -c 'source scripts/lane.sh && echo "$LEZ_LANE_MAKER_WALLET $LEZ_LANE_TAKER_WALLET"'; done)"
+    read -r _ taker_1 maker_2 _ <<<"$(tr '\n' ' ' <<<"$wallets")"
+    log "lanes: ${#serial[@]} tests on one chain of their own, lanes 1 and 2 ($taker_1 and $maker_2 unfunded)"
+    bash scripts/lanes.sh stop "$lane_count" >"$out/logs/lanes-stop.log" 2>&1 || log "    lanes.sh stop failed (logs/lanes-stop.log)"
+    export LEZ_LANES=2
+    if ! use_profile fast || ! fresh_chain LEZ_BOOTSTRAP_DEFER_CLAIM="$taker_1 $maker_2"; then
+      log "no LEZ chain could be started; stopping"; failed+=("${serial[@]}"); return 2
+    fi
+    deferred_chain=1
+    for k in 1 2; do
+      t="${serial[k - 1]}"; try=1; tries_of[$t]=1
+      rm -f "$out/lanes/$k/verdict" "$out/lanes/$k/void" "$out/lanes/$k/pgid"
+      log "    [lane $k] $t (try $try) starts: $(chain_state)"
+      if (( k == 1 )); then LEZ_BOOTSTRAP_DEFER_CLAIM="$maker_2" lane_job "$k" "$t" "$try" 1 &
+      else LEZ_BOOTSTRAP_DEFER_CLAIM="$taker_1" lane_job "$k" "$t" "$try" 1 &
+      fi
+      busy[$k]=$!; busy_test[$k]="$t"; busy_try[$k]="$try"
+    done
+    chain_watch & watcher=$!
+    while (( ${#busy[@]} > 0 )); do
+      wait -n -p done_pid
+      if [[ "$done_pid" == "$watcher" ]]; then
+        for k in "${!busy[@]}"; do
+          touch "$out/lanes/$k/void"
+          [[ ! -s "$out/lanes/$k/pgid" ]] || kill -TERM -- "-$(cat "$out/lanes/$k/pgid")" 2>/dev/null
+        done
+        sleep "${LEZ_REGRESS_KILL_GRACE:-20}"
+        for k in "${!busy[@]}"; do
+          [[ ! -s "$out/lanes/$k/pgid" ]] || kill -KILL -- "-$(cat "$out/lanes/$k/pgid")" 2>/dev/null
+          kill -KILL "${busy[$k]}" 2>/dev/null; wait "${busy[$k]}" 2>/dev/null
+          finish_try "$k"
+        done
+        break
+      fi
+      for k in "${!busy[@]}"; do [[ "${busy[$k]}" != "$done_pid" ]] || finish_try "$k"; done
+    done
+    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+    serial=(${requeue[@]+"${requeue[@]}"}); requeue=()
+    (( ${#serial[@]} > 0 )) || return 0
+  fi
   # the tests that need a chain of their own: lane 1 alone, one after another
   log "lanes: ${#serial[@]} test(s) on a chain of their own, lane 1 alone"
   bash scripts/lanes.sh stop "$lane_count" >"$out/logs/lanes-stop.log" 2>&1 || log "    lanes.sh stop failed (logs/lanes-stop.log)"

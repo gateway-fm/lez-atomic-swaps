@@ -134,11 +134,12 @@ for entry in "${WALLETS[@]}"; do
   fi
   [[ "$vault_balance" == "$allocation" ]] ||
     fail "$wallet vault balance unexpected: $vault_balance"
-  # A wallet named here keeps its allocation in the vault: its owner account
-  # holds nothing, which is how the LEZ depositor's balance refusal is shown
-  # on a devnet. Running this script again without the variable claims it,
-  # and a swap refused for the balance then funds its lock on the next drive.
-  if [[ "$wallet" == "${LEZ_BOOTSTRAP_DEFER_CLAIM:-}" ]]; then
+  # A wallet named here (one, or several separated by spaces) keeps its
+  # allocation in the vault: its owner account holds nothing, which is how the
+  # LEZ depositor's balance refusal is shown on a devnet. Running this script
+  # again without it named claims it, and a swap refused for the balance then
+  # funds its lock on the next drive.
+  if [[ " ${LEZ_BOOTSTRAP_DEFER_CLAIM:-} " == *" $wallet "* ]]; then
     echo "$wallet: vault claim deferred (LEZ_BOOTSTRAP_DEFER_CLAIM); its owner account holds nothing until the bootstrap runs again"
     continue
   fi

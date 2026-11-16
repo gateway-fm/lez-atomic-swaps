@@ -66,6 +66,8 @@ lane_up() {
   for wallet in "$LEZ_LANE_MAKER_WALLET" "$LEZ_LANE_TAKER_WALLET"; do
     identity="$market_root/identities/$wallet/identity.json"
     [[ -s "$identity" ]] || { log "lane $LEZ_LANE: no $wallet identity in the market root (scripts/lanes.sh mint $LEZ_LANE, then up.sh --fresh-lez funds it)"; return 1; }
+    # a wallet whose vault claim this chain deferred holds nothing, on purpose (regress.sh)
+    [[ " ${LEZ_BOOTSTRAP_DEFER_CLAIM:-} " != *" $wallet "* ]] || continue
     balance="$(curl -s --max-time 60 -H 'content-type: application/json' \
       --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getAccount\",\"params\":[\"$(jq -r .account_id "$identity")\"]}" \
       "$LEZ_STACK_INDEXER_URL" | jq -r '.result.balance // 0')"
