@@ -576,25 +576,25 @@ before it mined.
 take, which both Nodes read and must have alike:
 `LEZ_XMR_MAKER_FUNDING_CUTOFF_SECONDS` (C), `LEZ_XMR_REFUND_SECONDS` (R) and
 `LEZ_XMR_PUNISH_SECONDS` (P). C is the Bitcoin Maker cutoff plus 20 s for the
-ten confirmations, and at least 290 s: the windows start with the take, and
+ten confirmations, and at least 320 s: the windows start with the take, and
 the second of two swaps taken one after the other has its funding drive start
-only after the take (33 to 50 s with three lanes busy on 2026-11-16, counted
-at 60 s) and three of its drives' spacing (counted at 70 s each), plus the
+only after the take (at most 44 s with three lanes busy on 2026-11-17, counted
+at 60 s) and three of its drives' spacing (counted at 80 s each), plus the
 20 s depth. The Maker claims only on a claim authorization it sees final
 before R − (R − C)/2, and a Maker that does not act in that window forfeits
 the claim to the Taker's refund, so each half of R − C holds the 20 s depth, a
-LEZ step and two of the Maker's actor drives counted at 70 s each
+LEZ step and two of the Maker's actor drives counted at 80 s each
 (`xmr_drive`: the Maker Node's one actor worker drives all its swaps in turn,
-and one Monero swap's drives came at most 49 s apart with the three heaviest
-Monero tests on three lanes on 2026-11-16, since the development builds
-optimize the actor program's hash; 37 to 84 s before that). P is R plus a
-step, a stall, the margin and two such drives. On `fast`, the profile every
-Monero scenario runs on, that is +290, +650 and +910 s: the Taker may refund
-only in the 260 s between R and P, and from P a Maker can take the LEZ while
-the Monero stays locked. `refund` gives +290, +650, +865 s and `local` +1820,
-+2180, +2680 s (default LEZ step 20 s, stall 40 s). On `local`, the profile
-closest to a real deployment, the rule adds 20 s to R − C and 140 s to P − R
-over the values before it; it holds only while the Maker Node is no busier
+and one Monero swap's drives started at most 50 s apart with the three
+heaviest Monero tests on three lanes, five times on 2026-11-17; a swap's
+funding stood at depth at most 143 s after its take started, and C is 2.2
+times that). P is R plus a step, a stall, the margin and two such drives. On
+`fast`, the profile every Monero scenario runs on, that is +320, +720 and
++1000 s: the Taker may refund only in the 280 s between R and P, and from P a
+Maker can take the LEZ while the Monero stays locked. `refund` gives +320,
++720, +955 s and `local` +1820, +2220, +2740 s (default LEZ step 20 s, stall
+40 s). On `local`, the profile closest to a real deployment, the rule adds
+40 s to R − C and 20 s to P − R over the values before it; it holds only while the Maker Node is no busier
 than three devnet lanes: a Maker driving more swaps at once spaces each swap's
 drives further apart and needs wider windows.
 

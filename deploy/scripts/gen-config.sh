@@ -628,15 +628,16 @@ timing[5]=$(( (timing[5] + lez_block_seconds - 1) / lez_block_seconds ))
 # and two of the Maker's drives: the Maker Node's one actor worker drives all
 # its swaps in turn, a Monero drive runs a sidecar scan or a wallet tool, and
 # one swap's drives came 37 to 84 s apart under three-lane load on 2026-11-14.
-# Since the development builds optimize the actor program's hash (Cargo.toml),
-# the drives came at most 49 s apart, and the second of two swaps stood funded
-# at depth 107 s after its take returned, with the three heaviest Monero tests
-# at once on three lanes (2026-11-16); xmr_drive allows 70 s, about 1.4 times
-# that. The punishment opens once the Taker's refund has
-# had a step, a stall, the margin and two such drives. Regtest accepts any
-# windows 10 s apart (agreement_v1.rs).
+# With the three heaviest Monero tests at once on three lanes, five times on
+# 2026-11-17 (the Maker's attempts also run the Bitcoin and Zcash swaps of
+# node:xmr:mixed-three-pair), one swap's drives started at most 50 s apart, a
+# take took at most 44 s and a swap's funding stood at depth at most 143 s
+# after its take started: xmr_drive allows 80 s, 1.5 times that spacing rounded
+# up, and C on `fast` (+320 s) is 2.2 times the latest funding. The
+# punishment opens once the Taker's refund has had a step, a stall, the margin
+# and two such drives. Regtest accepts any windows 10 s apart (agreement_v1.rs).
 xmr_depth=$(( 10 * 2 ))
-xmr_drive=70
+xmr_drive=80
 xmr_take=60
 xmr_cutoff=$(( timing[1] + xmr_depth ))
 (( xmr_cutoff >= xmr_take + 3 * xmr_drive + xmr_depth )) || xmr_cutoff=$(( xmr_take + 3 * xmr_drive + xmr_depth ))

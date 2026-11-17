@@ -78,9 +78,9 @@ As built (2026-11-14), all three XMR windows are LEZ times: the maker's funding
 cutoff C, the LEZ refund time R and a punish time P, after which the maker can
 take the LEZ and the Monero stays locked; only regtest profiles exist, no
 public one ([protocol design](protocol-design.md#xmrlez)). The devnet's `fast`
-profile uses C, R, P = +290, +650, +910 s: C holds a take and three of the
+profile uses C, R, P = +320, +720, +1000 s: C holds a take and three of the
 maker's drives for the second of two swaps taken at once, and each half of R − C and P − R hold
-two of the maker's actor drives at 70 s apart (measured with three devnet lanes
+two of the maker's actor drives at 80 s apart (measured with three devnet lanes
 busy), since a maker that does not claim before R − (R − C)/2 forfeits the
 claim to the taker's refund.
 

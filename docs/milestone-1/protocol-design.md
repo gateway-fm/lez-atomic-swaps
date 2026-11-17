@@ -206,12 +206,12 @@ roles configure alike (`funding_cutoff_seconds`, `refund_seconds`,
 - **P, the punish time.** Tag 16 is valid before P; tag 17 from P.
 
 The SDK requires R − C and P − R of at least 10 s on regtest. The devnet's
-`fast` profile, which every Monero scenario runs on, uses C, R, P = +290, +650,
-+910 s; `refund` +290, +650, +865 s; `local` +1820, +2180, +2680 s, all with
+`fast` profile, which every Monero scenario runs on, uses C, R, P = +320, +720,
++1000 s; `refund` +320, +720, +955 s; `local` +1820, +2220, +2740 s, all with
 the default LEZ step (20 s) and stall (40 s) (`deploy/scripts/gen-config.sh`:
 C holds a take and three of the Maker's drives for the second of two swaps
 taken one after the other; each half of R − C and the refund window P − R
-hold two of the Maker's actor drives at 70 s apart, measured under three-lane
+hold two of the Maker's actor drives at 80 s apart, measured under three-lane
 devnet load).
 The Monero output must have 10 confirmations.
 

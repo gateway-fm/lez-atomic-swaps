@@ -338,9 +338,9 @@ expected_seconds() { # expected_seconds <test>
       *:zec-kill-taker:*|*:zec-kill-maker:*) seconds=1200 ;;
       node:xmr:xmr-kill-*) seconds=2700 ;;
       node:xmr:xmr-monerod-down:*|node:xmr:mixed-three-pair:*) seconds=1500 ;;
-      # waits for the agreement's punish time P (+910 s on fast), or its refund time R (+650 s)
-      node:xmr:xmr-punish:*) seconds=1250 ;;
-      node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-maker-never-funds:*|ui:xmr:xmr-taker-refund:*) seconds=950 ;;
+      # waits for the agreement's punish time P (+1000 s on fast), or its refund time R (+720 s)
+      node:xmr:xmr-punish:*) seconds=1340 ;;
+      node:xmr:xmr-wallet-restart:*|node:xmr:xmr-taker-refund*|node:xmr:xmr-maker-never-funds:*|ui:xmr:xmr-taker-refund:*) seconds=1020 ;;
       node:xmr:*|ui:xmr:*) seconds=600 ;;
       # ~2 min a try, and its provoked race may need several (NOT-EXERCISED):
       # started early, its tries do not hold one lane while the others idle
