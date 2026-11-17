@@ -229,15 +229,19 @@ else
   "${compose[@]}" up -d --no-build --no-deps maker-node taker-node >/dev/null
 fi
 # The Node's own owner call, not the container's health status: that one is
-# read on an interval and still shows the Node that was just stopped.
+# read on an interval and still shows the Node that was just stopped. Ready
+# is not enough: a restarted Taker answers ready with Chat unavailable for
+# about a second while the Maker it reaches still starts, and a test's first
+# calls need both Delivery and Chat.
 owner_ready() { # owner_ready <role> <method> <params>
   docker exec "$(node_of "$1")" curl -sS --max-time 30 --unix-socket "/run/lez/$1/node.sock" \
     -H 'content-type: application/json' \
-    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null | grep -q '"result"'
+    --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$2\",\"params\":[$3]}" http://localhost/ 2>/dev/null |
+    grep -q '"delivery":"available","chat":"available"'
 }
 deadline=$(( $(date +%s) + 600 ))
 until owner_ready maker maker_health '{}' && owner_ready taker taker_health '{"schema_version":1}'; do
-  (( $(date +%s) < deadline )) || { log "the Nodes did not answer their owner health calls within 600 s"; exit 1; }
+  (( $(date +%s) < deadline )) || { log "the Nodes did not report Delivery and Chat available within 600 s"; exit 1; }
   sleep 1
 done
 taker_swaps="$(docker exec "$(node_of taker)" curl -sS --unix-socket /run/lez/taker/node.sock \
