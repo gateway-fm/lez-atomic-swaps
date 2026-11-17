@@ -1,0 +1,11 @@
+[18:26:15] regression run: 3 tests at 32c8bfb4 (tree dirty: 0), results in runtime/regress/20261117T182615Z
+[18:26:15] profile fast: a Bitcoin block every 2 s; Maker cutoff 240 s, refunds at 420 and 840 s
+[18:26:15] lanes: 3 (lane 1 is the stack; lanes 2..3: scripts/lanes.sh up)
+[18:26:47] group fast
+[18:26:47]     [lane 1] node:btc:survivor:TakerSellsForeign (try 1) starts: LEZ finalized 295, tip 299
+[18:26:47]     [lane 2] node:btc:survivor:TakerSellsLez (try 1) starts: LEZ finalized 295, tip 299
+[18:26:47]     [lane 3] node:zec:zec-survivor:TakerSellsForeign (try 1) starts: LEZ finalized 295, tip 299
+[18:28:15] === node:btc:survivor:TakerSellsForeign (try 1, lane 1): PASSED in 77 s; LEZ finalized 341, tip 346
+[18:28:34] === node:btc:survivor:TakerSellsLez (try 1, lane 2): PASSED in 96 s; LEZ finalized 354, tip 356
+[18:28:43] === node:zec:zec-survivor:TakerSellsForeign (try 1, lane 3): PASSED in 107 s; LEZ finalized 358, tip 361
+[18:28:43] regression run: 3 of 3 passed in 2 min, 0 new chains, 0 profile switches, 0 frozen tries

@@ -1,5 +1,8 @@
 # Full regression of `7d09351a`, 2026-11-17
 
+A later full run of the same day, 158 of 159 at `32c8bfb4` (the one failure a known Maker actor
+defect, diagnosed there), is in [regression-m4-2026-11-17-rc](../regression-m4-2026-11-17-rc/).
+
 One run of every test of `deploy/scripts/regress.sh full` (159: `regress.sh list full`) on the
 Docker devnet with the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time
 (`LEZ_LANES=3`), without desk recordings: run `runtime/regress/20261117T000855Z`, 2026-11-17

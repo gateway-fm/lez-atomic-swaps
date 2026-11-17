@@ -1,0 +1,20 @@
+[18:26:57] === survivor (stamp 179494001702)
+[18:26:57] preflight: indexer historical reads
+[18:26:59]   indexer serves historical reads at the tip (299)
+[18:26:59] preflight: LEZ finality check waived by request
+[18:26:59]   Maker published offer-e2e-179494001702
+[18:27:01]   Taker took offer-e2e-179494001702: swap b89041e938e0 (not_activated)
+[18:27:03]   Taker locked lez: 7a38cb0ed426 (replay=False)
+[18:27:03]   [0 s] waiting for the Taker's b89041e938e0 to reach claim_available (Maker funding): taker awaiting_first_lock (gen 0) | maker leased | LEZ finalized 297, tip 303 (6 unfinalized) [heartbeat]
+[18:27:21]   [18 s] waiting for the Taker's b89041e938e0 to reach claim_available (Maker funding): taker awaiting_second_lock (gen 1) | maker offered | LEZ finalized 308, tip 314 (6 unfinalized) [heartbeat]
+[18:27:35]   [31 s] waiting for the Taker's b89041e938e0 to reach claim_available (Maker funding): taker claim_available (gen 2) | maker taker_lock_confirmed | LEZ finalized 308, tip 314 (6 unfinalized) [heartbeat]
+[18:27:36]   Taker claimed Bitcoin (replay=False)
+[18:27:36]   [0 s] waiting for the Taker's b89041e938e0 to reach both_legs_locked/claim_in_progress/completed: taker claim_in_progress (gen 2) | maker taker_lock_confirmed | LEZ finalized 308, tip 314 (6 unfinalized) [heartbeat]
+[18:27:36]   stopping the Taker Node right after its revealing claim
+[18:27:37]   [0 s] waiting for the Maker to complete without the Taker: maker taker_lock_confirmed, the Taker Node stopped | LEZ finalized 308, tip 314 (6 unfinalized) [heartbeat]
+[18:27:42]   [5 s] waiting for the Maker to complete without the Taker: maker both_legs_locked, the Taker Node stopped | LEZ finalized 322, tip 325 (3 unfinalized) [heartbeat]
+[18:27:47]   [10 s] waiting for the Maker to complete without the Taker: maker claim_evidence_available, the Taker Node stopped | LEZ finalized 322, tip 325 (3 unfinalized) [heartbeat]
+[18:28:24]   [0 s] waiting for the Taker's b89041e938e0 to reach completed (Maker follow-up claim): taker claim_in_progress (gen 3) | maker completed | LEZ finalized 334, tip 338 (4 unfinalized) [heartbeat]
+[18:28:33]   [9 s] waiting for the Taker's b89041e938e0 to reach completed (Maker follow-up claim): taker completed (gen 4) | maker completed | LEZ finalized 346, tip 352 (6 unfinalized) [heartbeat]
+[18:28:33]   both Nodes report b89041e938e0 completed
+[18:28:33] === survivor: passed in 96s
