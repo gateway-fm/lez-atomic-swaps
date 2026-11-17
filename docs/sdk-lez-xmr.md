@@ -65,8 +65,10 @@ canonical on secp256k1 and on Ed25519 without reduction. `prove` creates and
 self-verifies a proof that the secp256k1 point (the adaptor point) and the
 Ed25519 point (the Monero public spend share) have the same discrete
 logarithm; `verify` rejects malformed or torsion points, trailing proof bytes
-and a changed transcript commitment. `MoneroSharedAddressV1::derive` verifies
-both proofs and adds the two Ed25519 shares into the address's spend key.
+and a changed transcript commitment. A proof exists only verified (`prove` and
+`from_wire_bytes` both verify it), so `MoneroSharedAddressV1::derive` does not
+verify the two proofs again; it adds their Ed25519 shares into the address's
+spend key.
 `ReconstructedMoneroSpendKey::reconstruct` takes the scalar extracted from a
 completed LEZ adaptor signature (big-endian, as `musig2` gives it), checks it
 opens both points of the revealing role's proof, adds the retained share and
