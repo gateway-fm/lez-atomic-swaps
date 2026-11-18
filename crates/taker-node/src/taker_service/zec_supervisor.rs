@@ -8,9 +8,9 @@
 //! the supervisor never drives an actor whose next action is a claim.
 //! An open admission is read before the phase table, so a phase where the
 //! table drives must also drive with the admission open when the admitted
-//! action is done: selling ZEC, a finished revealing LEZ claim leaves
-//! (`ClaimEvidenceAvailable`, `Wait`), where a drive observes the Maker's Zcash
-//! follow-up claim (FINDINGS 22 of the M2 devnet run).
+//! action is done: the Taker's finished revealing claim (LEZ selling ZEC,
+//! Zcash selling LEZ) leaves (`ClaimEvidenceAvailable`, `Wait`), where a drive
+//! observes the Maker's follow-up claim (FINDINGS 22 of the M2 devnet run).
 //!
 //! The actor runs in-process under the swap's lock, as the Node's status,
 //! claim and recover calls always did; the Maker's child-process mechanics
@@ -96,23 +96,32 @@ pub(super) fn peer_revealing_claim_in_flight<'a>(
 
 /// The gate for `prepared`'s revealing claim over every bound Zcash swap:
 /// `Ok(None)` open, `Ok(Some(holder))` held behind that swap's claim, `Err`
-/// held with the holder unknown (the context could not be read).
+/// held with the holder unknown (the context could not be read). Only a
+/// revealing LEZ claim (`TakerSellsForeign`) takes the Taker's LEZ nonce:
+/// selling LEZ the Taker's revealing claim is on Zcash, so it is never held
+/// and never holds another swap's.
 pub(super) fn lez_claim_holder(
     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     prepared: &PreparedTakerInitiationV1,
 ) -> Result<Option<String>, ()> {
+    if !claims_lez_first(prepared) {
+        return Ok(None);
+    }
     let Ok(context) = initiation.lock() else {
         return Err(());
     };
     let bound = context.zec_bound_swaps();
     Ok(peer_revealing_claim_holder(
         prepared.execution().actor_root(),
-        bound.iter().map(|swap| {
-            (
-                swap.execution().actor_root(),
-                swap.swap_id().as_str().to_owned(),
-            )
-        }),
+        bound
+            .iter()
+            .filter(|swap| claims_lez_first(swap))
+            .map(|swap| {
+                (
+                    swap.execution().actor_root(),
+                    swap.swap_id().as_str().to_owned(),
+                )
+            }),
     ))
 }
 
@@ -124,10 +133,23 @@ pub(super) fn lez_claim_gate_open(
     matches!(lez_claim_holder(initiation, prepared), Ok(None))
 }
 
-/// A Zcash claim at both legs locked is the Taker's revealing LEZ claim
-/// (`TakerSellsForeign`); selling LEZ the Taker's claim is on Zcash.
-const fn submits_lez_claim(phase: Phase, command: ActorCommand) -> bool {
-    matches!(command, ActorCommand::Claim) && matches!(phase, Phase::BothLegsLocked)
+/// Whether the Taker's revealing claim of `prepared` is on LEZ: selling ZEC
+/// (`TakerSellsForeign`) it claims the Maker's LEZ; selling LEZ it claims the
+/// Maker's Zcash.
+fn claims_lez_first(prepared: &PreparedTakerInitiationV1) -> bool {
+    prepared.facts().route().direction() == lez_swap_core::SwapDirection::TakerSellsForeign
+}
+
+/// A Zcash claim at both legs locked is the Taker's revealing claim: on LEZ
+/// selling ZEC (the one the gate serializes), on Zcash selling LEZ.
+const fn submits_lez_claim(
+    direction: lez_swap_core::SwapDirection,
+    phase: Phase,
+    command: ActorCommand,
+) -> bool {
+    matches!(direction, lez_swap_core::SwapDirection::TakerSellsForeign)
+        && matches!(command, ActorCommand::Claim)
+        && matches!(phase, Phase::BothLegsLocked)
 }
 
 /// How often the supervisor looks for due swaps.
@@ -408,9 +430,10 @@ pub(super) fn decide(
     decide_with(status, admitted, false)
 }
 
-/// The decision table. `claim_submitted`: this swap's actor has submitted a
-/// revealing LEZ claim (its marker exists); a refund admitted in the claim
-/// window is then never run (FINDINGS 24: the secret may be public).
+/// The decision table. `claim_submitted`: this swap's actor has submitted its
+/// revealing claim (LEZ selling ZEC, Zcash selling LEZ; its marker exists); a
+/// refund admitted in the claim window is then never run (FINDINGS 24: the
+/// secret may be public).
 pub(super) fn decide_with(
     status: ZecActorStatus,
     admitted: Option<(TakerTerminalActionV1, u64)>,
@@ -434,13 +457,17 @@ pub(super) fn decide_with(
     }
     if let Some((action, expected_generation)) = admitted {
         // A claim admitted inside the claim window but never sent when it
-        // closed (the actor now reports the Zcash refund for its role): the
-        // claim can no longer land, so the admission runs as the swap's
-        // recovery, the only settlement left (FINDINGS 26). A claim that did
-        // leave inside the window is still followed (`claim_submitted`).
+        // closed (the actor now reports the Taker's own refund: its Zcash
+        // selling ZEC, its LEZ selling LEZ): the claim can no longer land, so
+        // the admission runs as the swap's recovery, the only settlement left
+        // (FINDINGS 26). A claim that did leave inside the window is still
+        // followed (`claim_submitted`).
         if action == TakerTerminalActionV1::Claim
             && phase == Phase::BothLegsLocked
-            && next_action == ZecLifecycleAction::RefundZcash
+            && matches!(
+                next_action,
+                ZecLifecycleAction::RefundZcash | ZecLifecycleAction::RefundLez
+            )
             && !claim_submitted
         {
             return Decision::Recover;
@@ -461,10 +488,10 @@ pub(super) fn decide_with(
                     TakerTerminalActionV1::Refund => Decision::Recover,
                 };
             }
-            // Selling ZEC, the admitted claim is the Taker's revealing LEZ
-            // claim; once it is final (ClaimEvidenceAvailable, next action
-            // Wait) the admission is done, but the swap completes only when
-            // a drive observes the Maker's Zcash follow-up claim.
+            // The admitted claim is the Taker's revealing claim (LEZ selling
+            // ZEC, Zcash selling LEZ); once it is final (ClaimEvidenceAvailable,
+            // next action Wait) the admission is done, but the swap completes
+            // only when a drive observes the Maker's follow-up claim.
             Ok(false) | Err(_)
                 if action == TakerTerminalActionV1::Claim
                     && phase == Phase::ClaimEvidenceAvailable
@@ -480,12 +507,11 @@ pub(super) fn decide_with(
     match next_action {
         // The Taker's own first lock (LEZ, or Zcash in the reverse direction).
         ZecLifecycleAction::CreateAndFundLez | ZecLifecycleAction::FundZcash => Decision::Drive,
-        // Observation phases: the Taker's lock confirming, the Maker's lock,
-        // the Maker's revealing claim. A drive there only observes (the
-        // non-claimant's `drive_claim` at BothLegsLocked is an observation).
-        // In the reverse direction the Taker is the LEZ claimant: once its
-        // revealing claim is final (ClaimEvidenceAvailable, next action Wait)
-        // a drive only observes the Maker's Zcash follow-up claim.
+        // Observation phases: the Taker's lock confirming, the Maker's lock.
+        // The Taker claims first in both directions: once its revealing claim
+        // is final (ClaimEvidenceAvailable, next action Wait) a drive only
+        // observes the Maker's follow-up claim (Zcash selling ZEC, LEZ
+        // selling LEZ).
         ZecLifecycleAction::Wait => match phase {
             Phase::Offered
             | Phase::TakerLockConfirmed
@@ -494,10 +520,11 @@ pub(super) fn decide_with(
             _ => Decision::Observe,
         },
         // The owner's boundary: never driven without an admission (a drive at
-        // ClaimEvidenceAvailable would be the Zcash claim).
+        // BothLegsLocked would be the Taker's revealing claim).
         ZecLifecycleAction::ClaimZcash
         | ZecLifecycleAction::ClaimLez
-        | ZecLifecycleAction::RefundZcash => Decision::Observe,
+        | ZecLifecycleAction::RefundZcash
+        | ZecLifecycleAction::RefundLez => Decision::Observe,
         ZecLifecycleAction::Complete => Decision::Terminal,
     }
 }
@@ -514,8 +541,9 @@ pub(super) fn failure_of(error: ActorCommandError) -> AttemptFailure {
         ActorCommandError::RevealingClaimReplanExhausted => {
             AttemptFailure::Fail("lez_revealing_claim_replan_exhausted")
         }
-        // The actor refused a claim after the window closed (nothing sent);
-        // its next status names the refund and the admission recovers.
+        // The actor refused a revealing claim after the window closed (nothing
+        // sent; LEZ selling ZEC, Zcash selling LEZ); its next status names the
+        // Taker's refund and the admission recovers.
         ActorCommandError::ClaimWindowClosed => AttemptFailure::Retry("lez_claim_window_closed"),
         ActorCommandError::FirstLockReplanExhausted => {
             AttemptFailure::Fail("lez_first_lock_replan_exhausted")
@@ -620,6 +648,10 @@ async fn observe(
 }
 
 /// One attempt: status, decision, at most one effect.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one attempt read in order: status, decision, the LEZ claim gate, effect, and its last outcome kept"
+)]
 async fn attempt(
     initiation: &Arc<Mutex<ConfiguredTakerInitiationContext>>,
     prepared: &PreparedTakerInitiationV1,
@@ -664,7 +696,8 @@ async fn attempt(
         Decision::Claim => ActorCommand::Claim,
         Decision::Recover => ActorCommand::Recover,
     };
-    let lez_claim = phase_before.is_some_and(|phase| submits_lez_claim(phase, command));
+    let direction = prepared.facts().route().direction();
+    let lez_claim = phase_before.is_some_and(|phase| submits_lez_claim(direction, phase, command));
     let holder = if lez_claim {
         match lez_claim_holder(initiation, prepared) {
             Ok(holder) => holder,
@@ -939,6 +972,7 @@ pub(super) const fn action_name(action: ZecLifecycleAction) -> &'static str {
         ZecLifecycleAction::ClaimLez => "claim_lez",
         ZecLifecycleAction::ClaimZcash => "claim_zcash",
         ZecLifecycleAction::RefundZcash => "refund_zcash",
+        ZecLifecycleAction::RefundLez => "refund_lez",
         ZecLifecycleAction::Complete => "complete",
     }
 }
@@ -951,6 +985,7 @@ pub(super) fn action_from_name(name: &str) -> Option<ZecLifecycleAction> {
         ZecLifecycleAction::ClaimLez,
         ZecLifecycleAction::ClaimZcash,
         ZecLifecycleAction::RefundZcash,
+        ZecLifecycleAction::RefundLez,
         ZecLifecycleAction::Complete,
     ]
     .into_iter()
@@ -1087,7 +1122,7 @@ pub(super) fn view_from_snapshot(
 #[cfg(test)]
 mod tests {
     use lez_actor_supervision::AttemptFailure;
-    use lez_swap_core::Phase;
+    use lez_swap_core::{Phase, SwapDirection};
     use lez_zec_swap_sdk::ZecLifecycleAction;
     use zec_reference_actor::ActorCommandError;
 
@@ -1202,6 +1237,72 @@ mod tests {
     }
 
     #[test]
+    fn selling_lez_the_taker_claims_zcash_first_on_admission_and_observes_the_makers_lez_claim() {
+        // TakerSellsLez: the Taker's first lock is its LEZ escrow.
+        assert_eq!(
+            decide(
+                active(Phase::Offered, 0, ZecLifecycleAction::CreateAndFundLez),
+                None
+            ),
+            Decision::Drive
+        );
+        // Both legs locked the Taker holds the preimage and its revealing
+        // claim is the Maker's Zcash: the owner's action, never driven;
+        // admitted at this generation it runs.
+        let claimable = active(Phase::BothLegsLocked, 4, ZecLifecycleAction::ClaimZcash);
+        assert_eq!(decide(claimable, None), Decision::Observe);
+        assert_eq!(
+            decide(claimable, Some((TakerTerminalActionV1::Claim, 4))),
+            Decision::Claim
+        );
+        // The claim window also admits the owner's refund (its LEZ, the later
+        // refund, through the recovery) until the claim was submitted.
+        assert_eq!(
+            decide_with(claimable, Some((TakerTerminalActionV1::Refund, 4)), false),
+            Decision::Recover
+        );
+        assert_eq!(
+            decide_with(claimable, Some((TakerTerminalActionV1::Refund, 4)), true),
+            Decision::Observe
+        );
+        // Its Zcash claim final, the admission is done and a drive observes
+        // the Maker's LEZ follow-up claim, with or without the admission open.
+        let followed = active(Phase::ClaimEvidenceAvailable, 6, ZecLifecycleAction::Wait);
+        assert_eq!(decide(followed, None), Decision::Drive);
+        for generation in [4, 6] {
+            assert_eq!(
+                decide(followed, Some((TakerTerminalActionV1::Claim, generation))),
+                Decision::Drive
+            );
+        }
+        // FINDINGS 26 selling LEZ: past the window with nothing sent the actor
+        // names the Taker's LEZ refund; an unsent admitted claim recovers, a
+        // sent one is still followed, nothing runs without an admission.
+        let closed = active(Phase::BothLegsLocked, 4, ZecLifecycleAction::RefundLez);
+        assert_eq!(
+            decide_with(closed, Some((TakerTerminalActionV1::Claim, 4)), false),
+            Decision::Recover
+        );
+        assert_ne!(
+            decide_with(closed, Some((TakerTerminalActionV1::Claim, 4)), true),
+            Decision::Recover
+        );
+        assert_eq!(
+            decide_with(closed, Some((TakerTerminalActionV1::Refund, 4)), false),
+            Decision::Recover
+        );
+        assert_eq!(decide_with(closed, None, false), Decision::Observe);
+        // The Maker's Zcash refund came first: the Taker's LEZ refund is the
+        // owner's, run once admitted.
+        let refundable = active(Phase::MakerLegRefunded, 5, ZecLifecycleAction::RefundLez);
+        assert_eq!(decide(refundable, None), Decision::Observe);
+        assert_eq!(
+            decide(refundable, Some((TakerTerminalActionV1::Refund, 5))),
+            Decision::Recover
+        );
+    }
+
+    #[test]
     fn one_revealing_lez_claim_is_in_flight_per_node_until_it_is_final() {
         // The marker each actor writes beside its state (<actor root>/taker/)
         // is the gate: durable, released only when the actor removes it.
@@ -1248,16 +1349,25 @@ mod tests {
             zec_reference_actor::revealing_claim_in_flight_marker(&state_db).unwrap(),
             marker
         );
-        // Only a claim at both legs locked is a LEZ claim.
+        // Only a claim at both legs locked selling ZEC is a LEZ claim; selling
+        // LEZ the Taker's revealing claim is on Zcash.
         assert!(submits_lez_claim(
+            SwapDirection::TakerSellsForeign,
             Phase::BothLegsLocked,
             ActorCommand::Claim
         ));
         assert!(!submits_lez_claim(
+            SwapDirection::TakerSellsLez,
+            Phase::BothLegsLocked,
+            ActorCommand::Claim
+        ));
+        assert!(!submits_lez_claim(
+            SwapDirection::TakerSellsForeign,
             Phase::ClaimEvidenceAvailable,
             ActorCommand::Claim
         ));
         assert!(!submits_lez_claim(
+            SwapDirection::TakerSellsForeign,
             Phase::BothLegsLocked,
             ActorCommand::Drive
         ));
@@ -1265,8 +1375,8 @@ mod tests {
 
     #[test]
     fn after_the_claim_window_the_row_offers_refund_and_an_unsent_admitted_claim_recovers() {
-        // FINDINGS 26: the actor reports the Zcash refund for the LEZ claimant
-        // once its claim window closed with nothing sent.
+        // FINDINGS 26 selling ZEC: the actor reports the Taker's Zcash refund
+        // once its revealing LEZ claim window closed with nothing sent.
         let closed = active(Phase::BothLegsLocked, 4, ZecLifecycleAction::RefundZcash);
         // The row offers Refund, not the stale claim, so a new claim request
         // is not admissible (the admission follows the offered action).
@@ -1321,12 +1431,9 @@ mod tests {
 
     #[test]
     fn claims_and_refunds_wait_for_the_owner_and_run_only_when_admitted() {
-        // claim_available: never driven (a drive would be the Zcash claim).
-        let claimable = active(
-            Phase::ClaimEvidenceAvailable,
-            5,
-            ZecLifecycleAction::ClaimZcash,
-        );
+        // claim_available: never driven (a drive would be the revealing
+        // claim; selling LEZ it is the Taker's Zcash claim at both legs locked).
+        let claimable = active(Phase::BothLegsLocked, 5, ZecLifecycleAction::ClaimZcash);
         assert_eq!(decide(claimable, None), Decision::Observe);
         assert_eq!(
             decide(claimable, Some((TakerTerminalActionV1::Claim, 5))),
@@ -1461,10 +1568,19 @@ mod tests {
         for action in [
             ZecLifecycleAction::Wait,
             ZecLifecycleAction::CreateAndFundLez,
+            ZecLifecycleAction::FundZcash,
+            ZecLifecycleAction::ClaimLez,
+            ZecLifecycleAction::ClaimZcash,
+            ZecLifecycleAction::RefundZcash,
+            ZecLifecycleAction::RefundLez,
             ZecLifecycleAction::Complete,
         ] {
             assert_eq!(action_from_name(action_name(action)), Some(action));
         }
+        assert_eq!(
+            action_from_name("refund_lez"),
+            Some(ZecLifecycleAction::RefundLez)
+        );
         assert_eq!(phase_from_name("locked"), None);
     }
 

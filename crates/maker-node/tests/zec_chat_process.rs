@@ -46,8 +46,8 @@ use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, Bip199Contract, ExpectedBip199Output, LezAssetV1, LezChainIdentityV1,
     LezEnvironmentV1, NegotiationTranscriptV1, ProtectedClaimKey, ZcashTransparentDestinationV1,
     ZecAgreementBodyV1, ZecAgreementDraftV1, ZecLezTermsV1, ZecLifecycleAction, ZecPairSdk,
-    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileId, ZecProfileRecordV1, ZecRefundPlanV1,
-    ZecSwapBinding, ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
+    ZecParticipantIdentityV1, ZecParticipantsV1, ZecProfileRecordV1, ZecSwapBinding,
+    ZecSwapBindingRecordV1, ZecTransactionPolicyV1, derive_lez_metadata_account_v1,
     derive_lez_native_custody_account_v1, derive_lez_swap_id_v1,
 };
 use rusqlite::{Connection, params};
@@ -55,12 +55,9 @@ use rustix::process::{Pid, Signal, kill_process};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use support::{actor_deployment, actor_deployment_with_direction};
+use support::{actor_deployment, actor_deployment_with_direction, profile_for, refund_plan_for};
 use tempfile::tempdir;
-use zcash_protocol::{
-    consensus::{BranchId, NetworkType},
-    value::Zatoshis,
-};
+use zcash_protocol::{consensus::NetworkType, value::Zatoshis};
 use zcash_transparent::address::TransparentAddress;
 
 use zec_reference_actor::{ActorConfig, ActorRole};
@@ -1506,9 +1503,8 @@ fn prepare_taker_actor_source(
     let preimage = root.join("actor-claim-preimage.key");
     write_raw_key(&claim_key, 0x7b);
     write_raw_key(&zcash_key, 2);
-    if direction == SwapDirection::TakerSellsForeign {
-        write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
-    }
+    // The Taker holds the claim preimage in both directions.
+    write_raw_key(&preimage, CLAIM_PREIMAGE[0]);
     write_private(&capability, b"m5_taker_actor_capability_0123456789");
 
     let mut config: Value =
@@ -1517,11 +1513,7 @@ fn prepare_taker_actor_source(
     config["role_state_db"] = json!(root.join("unused-taker-source-state.sqlite3"));
     config["claim_recovery"]["key_id"] = json!("m5-chat-taker-claim-v1");
     config["claim_recovery"]["key_file"] = json!(claim_key);
-    config["claim_preimage_file"] = if direction == SwapDirection::TakerSellsForeign {
-        json!(preimage)
-    } else {
-        Value::Null
-    };
+    config["claim_preimage_file"] = json!(preimage);
     config["zcash_key_file"] = json!(zcash_key);
     config["bridge"]["endpoint"] = json!("http://127.0.0.1:19002");
     config["bridge"]["journal_db"] = json!(root.join("unused-taker-source-bridge.sqlite3"));
@@ -1597,6 +1589,8 @@ fn assert_fresh_taker_artifacts(
         config.is_local_zcash_funder(),
         taker.direction == SwapDirection::TakerSellsForeign
     );
+    // The Taker reveals first in both directions, so it holds the preimage.
+    assert!(config.owns_claim_preimage());
     let config_inode = fs::symlink_metadata(&config_path).unwrap().ino();
     let config_bytes = fs::read(&config_path).unwrap();
     let agreement_inode = fs::symlink_metadata(&agreement_path).unwrap().ino();
@@ -2176,18 +2170,19 @@ fn unsigned_draft(
         SwapDirection::TakerSellsForeign => (taker_hash, maker_hash),
         SwapDirection::TakerSellsLez => (maker_hash, taker_hash),
     };
+    let (profile, _, branch, _) = profile_for(direction);
     let contract = Bip199Contract::new(120, zcash_funder_hash, secret_digest, zcash_claimant_hash);
     let output = ExpectedBip199Output::new(
         NetworkType::Regtest,
-        BranchId::Nu6_2,
+        branch,
         Zatoshis::from_u64(10_000).unwrap(),
         contract,
     );
-    let binding = ZecSwapBinding::new(ZecProfileId::DeterministicLocalV1, output).unwrap();
+    let binding = ZecSwapBinding::new(profile, output).unwrap();
     let body = ZecAgreementBodyV1::new(
         application_swap_id.to_owned(),
         direction,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(profile),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_public.serialize()),
             ZecParticipantIdentityV1::new([4; 32], taker_public.serialize()),
@@ -2215,12 +2210,7 @@ fn unsigned_draft(
             1,
             40,
         ),
-        ZecRefundPlanV1::new(
-            agreement_basis_time,
-            116,
-            (agreement_basis_time + 60) * 1_000,
-            agreement_basis_time + 90,
-        ),
+        refund_plan_for(direction, agreement_basis_time),
         NegotiationTranscriptV1::new(
             maker_zec_chat_session_id(reservation_id),
             authenticated.commitment(),

@@ -137,14 +137,19 @@ fn complete_zec_chat(
         .zec_actor_provisioner
         .as_ref()
         .ok_or_else(|| rpc_error(INTERNAL_ERROR, "maker actor provisioning is unavailable"))?;
-    // One claim secret per swap: the pinned template of this agreement owns
-    // its preimage. Read before the replay check, which compares it with the
-    // stored one, and without the transcript's expiry, so a replay answers
-    // after it (8f01a687 applied the expiry here and broke such replays).
-    let template_preimage = provisioner
-        .template_claim_preimage(&request.final_agreement_wire)
-        .map_err(|_| rpc_error(INTERNAL_ERROR, "maker claim authority is unavailable"))?;
-    let claim_preimage = template_preimage.as_ref();
+    // The Taker holds the swap secret in both directions and reveals it with
+    // its claim of the Maker-funded leg; the Maker reads it from that claim.
+    // A pinned template that carries a preimage is refused before the replay
+    // check, and without the transcript's expiry, so a replay is refused for
+    // the same reason after it.
+    if provisioner
+        .template_carries_claim_preimage(&request.final_agreement_wire)
+        .map_err(|_| rpc_error(INTERNAL_ERROR, "maker claim authority is unavailable"))?
+    {
+        return Err(invalid_request(
+            "maker template carries a claim preimage; the Taker holds the swap secret",
+        ));
+    }
     if let Some(replay) = completion_store
         .preflight_maker_zec_scheduled_completion_replay_for_role(
             &request.request_id,
@@ -152,7 +157,7 @@ fn complete_zec_chat(
             request.expected_offer_revision,
             &request.reservation_id,
             &request.final_agreement_wire,
-            claim_preimage,
+            None,
         )
         .map_err(application_store_error)?
     {
@@ -170,14 +175,6 @@ fn complete_zec_chat(
         0,
     )
     .map_err(invalid_request)?;
-    let maker_preimage = if accepted.agreement().lez_claimant() == Participant::Maker {
-        Some(
-            claim_preimage
-                .ok_or_else(|| invalid_request("maker claim authority is unavailable"))?,
-        )
-    } else {
-        None
-    };
     let actor = provisioner
         .provision(&request.final_agreement_wire, now_unix_seconds)
         .map_err(|_| rpc_error(INTERNAL_ERROR, "maker actor provisioning failed"))?;
@@ -189,7 +186,7 @@ fn complete_zec_chat(
             request.expected_offer_revision,
             &request.reservation_id,
             &accepted,
-            maker_preimage,
+            None,
             &actor,
             now_unix_seconds,
         )
@@ -315,9 +312,10 @@ impl ZecMakerActorProvisioner {
         self.source_maker_configs.len()
     }
 
-    /// The claim preimage of the pinned template for this agreement, when the
-    /// template owns one (the Maker funds Zcash and claims LEZ). Each
-    /// provisioned swap carries its own secret.
+    /// Whether the pinned template for this agreement carries a claim
+    /// preimage. None may: the Taker holds the swap secret in both directions
+    /// (the preparation gives it to the Taker's half only), and the Maker
+    /// learns it from the Taker's revealing claim.
     ///
     /// The agreement is decoded and checked here only to find its template,
     /// so the transcript's expiry is not applied (the wire is validated at
@@ -329,10 +327,10 @@ impl ZecMakerActorProvisioner {
     /// # Errors
     ///
     /// Returns the agreement decoding or the material loading failure.
-    pub fn template_claim_preimage(
+    pub fn template_carries_claim_preimage(
         &self,
         final_agreement_wire: &[u8],
-    ) -> anyhow::Result<Option<ClaimPreimage>> {
+    ) -> anyhow::Result<bool> {
         let accepted = AcceptedZecAgreementV1::accept_wire_at(
             final_agreement_wire,
             lez_swap_core::UnixSeconds::new(0),
@@ -344,13 +342,13 @@ impl ZecMakerActorProvisioner {
             .iter()
             .find(|source| source.swap_id().as_str() == accepted.agreement().application_swap_id())
         else {
-            return Ok(None);
+            return Ok(false);
         };
         Ok(source
             .load_activate_material()
             .context("load the template's activation material")?
             .claim_preimage()
-            .map(|preimage| ClaimPreimage::new(*preimage.expose_secret())))
+            .is_some())
     }
 
     fn provision(

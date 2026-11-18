@@ -104,10 +104,10 @@ use lez_xmr_swap_sdk::{
 };
 #[cfg(feature = "pair-zec")]
 use lez_zec_swap_sdk::{
-    AcceptedZecAgreementV1, ClaimPreimage, HistoricalReplayError, ProtectedClaimKey,
-    ValidatedZecAgreementDraftV1, ZcashObservationEvent, ZcashObservationEventRecordV1,
-    ZcashObservationTracker, ZecAgreementDraftV1, ZecBindingRecordError, ZecPairSdk,
-    ZecRefundProfile, ZecSwapBinding, replay_zcash_observation_history,
+    AcceptedZecAgreementV1, HistoricalReplayError, ProtectedClaimKey, ValidatedZecAgreementDraftV1,
+    ZcashObservationEvent, ZcashObservationEventRecordV1, ZcashObservationTracker,
+    ZecAgreementDraftV1, ZecBindingRecordError, ZecPairSdk, ZecRefundProfile, ZecSwapBinding,
+    replay_zcash_observation_history,
 };
 use secp256k1::{Keypair, Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
@@ -288,9 +288,9 @@ impl MakerRpc {
     #[cfg(feature = "pair-zec")]
     /// Attaches direction-aware ZEC agreement and Maker actor authority.
     ///
-    /// The claim preimage of a swap whose LEZ claimant is the Maker comes from
-    /// that swap's pinned template at completion; the Node holds no secret of
-    /// its own, so one swap's claim cannot reveal another's.
+    /// The Maker holds no claim preimage in either direction: the Taker holds
+    /// the swap secret and reveals it with its claim of the Maker-funded leg.
+    /// A completion whose pinned template carries a preimage is refused.
     #[must_use]
     pub fn with_directional_zec_chat_authority(
         mut self,
@@ -754,9 +754,9 @@ pub struct MakerActorMonitorV1 {
     /// itself once the account is funded).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attention_reason: Option<String>,
-    /// With `lez_revealing_claim_held_near_refund`: the swap whose revealing
-    /// LEZ claim is in flight and holds this one's back (one per Node, until
-    /// it is final) while this swap's own LEZ refund time is near.
+    /// With `lez_revealing_claim_held_near_refund`: the swap whose Maker LEZ
+    /// claim is in flight and holds this one's back (one per Node, until it
+    /// is final) while this swap's own LEZ refund time is near.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revealing_claim_held_by: Option<String>,
     /// What the swap's actor last did, or why it did not act, and when; with
@@ -958,7 +958,7 @@ fn register_application_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Res
 }
 
 /// Why a Zcash row needs its owner, by name, and the holding swap for a
-/// revealing claim held behind another's: a Zcash actor short of LEZ for its
+/// Maker LEZ claim held behind another's: a Zcash actor short of LEZ for its
 /// lot leaves a marker beside its state
 /// (`zec_reference_actor::lez_depositor_balance_marker`), and the supervisor's
 /// one-claim gate names the holder beside it as the swap's own LEZ refund time
@@ -1848,9 +1848,10 @@ fn recovery_schedule(request: &CreateSwapRequest) -> Result<RecoverySchedule, Er
                 SwapDirection::TakerSellsForeign => [Chain::Lez, foreign],
                 SwapDirection::TakerSellsLez => [foreign, Chain::Lez],
             };
+            // The Maker-funded leg refunds first for every deadline pair: the
+            // Taker claims that leg first (swap-core `RecoverySchedule::new`).
             let safety_chains = match pair {
-                Pair::Bitcoin => role_chains,
-                Pair::Zcash => [Chain::Lez, Chain::Zcash],
+                Pair::Bitcoin | Pair::Zcash => role_chains,
                 Pair::Monero => unreachable!("Monero uses event-gated recovery"),
             };
             RecoverySchedule::new(

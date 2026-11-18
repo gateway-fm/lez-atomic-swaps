@@ -261,7 +261,8 @@ struct ZecArguments {
     /// Owner-only file containing one raw 32-byte claim-recovery key.
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id"])]
     maker_claim_key_file: Option<PathBuf>,
-    /// Owner-only file containing the maker-owned 32-byte claim preimage.
+    /// Deprecated and ignored: the Maker holds no claim preimage (the Taker
+    /// holds the swap secret in both directions).
     #[arg(long, requires_all = ["delivery_directory", "maker_claim_key_id", "maker_claim_key_file"])]
     maker_claim_preimage_file: Option<PathBuf>,
     /// Existing owner-private per-swap Maker configs used as authority templates.
@@ -1204,19 +1205,19 @@ fn configured_zec_authority(
         (None, None, None, None) => Ok(None),
         (Some(claim_key_id), Some(claim_key_file), preimage_file, Some(provisioner)) => {
             // A Node-wide claim preimage was one secret for the whole catalog:
-            // every swap's LEZ claim would reveal every other open swap's. A
-            // completion takes the secret from the agreement's own template;
-            // the flag is deprecated, ignored for one template and refused
-            // for more.
+            // every swap's LEZ claim would reveal every other open swap's. The
+            // Maker holds no claim preimage at all (the Taker holds the swap
+            // secret in both directions); the flag is deprecated, ignored for
+            // one template and refused for more.
             if preimage_file.is_some() {
                 if provisioner.template_count() > 1 {
                     bail!(
-                        "--maker-claim-preimage-file is one secret for a catalog of {} templates; drop the flag, each template carries its own claim preimage",
+                        "--maker-claim-preimage-file is one secret for a catalog of {} templates; drop the flag, the Maker holds no claim preimage",
                         provisioner.template_count()
                     );
                 }
                 eprintln!(
-                    "maker: --maker-claim-preimage-file is deprecated and ignored; the completion takes the claim preimage from the agreement's own template"
+                    "maker: --maker-claim-preimage-file is deprecated and ignored; the Maker holds no claim preimage (the Taker holds the swap secret)"
                 );
             }
             let claim_key_material = load_raw_secret(claim_key_file, "maker claim-recovery key")?;

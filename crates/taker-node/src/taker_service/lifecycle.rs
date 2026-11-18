@@ -957,17 +957,18 @@ async fn replay_actor_effect_is_required(
     }
 }
 
-/// Selling ZEC, both legs locked is the Taker's claim window: the Node offers
-/// the revealing LEZ claim. A Taker that does not claim must still reach its
-/// Zcash refund, and the supervisor never drives there (a drive would be the
-/// claim), so a refund request is admitted at this shape too and runs the
-/// agreement-ordered recovery: the actor waits for the Maker's LEZ refund and
-/// the Zcash refund height before it submits. Zcash route only; in ZEC the
-/// pair (`BothLegsLocked`, `ClaimAvailable`) occurs only in `TakerSellsForeign`.
+/// Both legs locked is the Taker's claim window in both directions: the Node
+/// offers its revealing claim of the Maker-funded leg (LEZ selling ZEC, Zcash
+/// selling LEZ). A Taker that does not claim must still reach its own refund,
+/// and the supervisor never drives there (a drive would be the claim), so a
+/// refund request is admitted at this shape too and runs the agreement-ordered
+/// recovery: the actor waits for its refund's deadline (selling ZEC its Zcash
+/// refund after the Maker's LEZ refund; selling LEZ its LEZ refund time, after
+/// the Maker's Zcash refund opens) before it submits. Zcash route only.
 /// Never once a revealing claim of this swap was submitted (`claim_submitted`:
 /// its marker exists): the secret may be public and the Maker could take the
-/// Zcash, so the claim must be pursued (re-planned if its nonce was taken),
-/// never traded for the refund (FINDINGS 24).
+/// Taker's leg, so the claim must be pursued (re-planned if its nonce was
+/// taken), never traded for the refund (FINDINGS 24).
 pub(super) const fn zec_claim_window_admits_refund(
     phase: Phase,
     state: TakerSwapStateV1,
@@ -997,7 +998,8 @@ fn route_admits_claim_window_refund(
         )
 }
 
-/// Whether this swap's actor has ever submitted a revealing LEZ claim.
+/// Whether this swap's actor has ever submitted its revealing claim (LEZ
+/// selling ZEC, Zcash selling LEZ).
 pub(super) fn revealing_claim_was_submitted(state_db: &Path) -> bool {
     revealing_claim_submitted_marker(state_db).is_some_and(|marker| marker.is_file())
 }
@@ -1214,7 +1216,8 @@ const fn admission_claim_gate_open(
 /// The admission's first attempt. Selling ZEC the claim at both legs locked
 /// is a revealing LEZ claim: while another swap's is in flight it is not
 /// attempted here (the admission is answered and the Node's supervisor
-/// submits it once the first is final, FINDINGS 24).
+/// submits it once the first is final, FINDINGS 24). Selling LEZ the claim is
+/// on Zcash and the gate is always open for it.
 async fn gated_first_attempt(
     config: &RouteActor,
     held_lock: &ActorHeldLock,
@@ -1275,17 +1278,16 @@ fn revealing_claim_holder(_state_db: &Path) -> Option<String> {
 /// swap's as its own LEZ refund time nears: the row needs attention and names
 /// the holder (the marker is removed when the claim goes ahead). The admissible
 /// action stays: the owner may still refund in the claim window.
-/// A Zcash row's actor phase, and selling ZEC whether the Taker's revealing
-/// claim window has closed: the Taker is the LEZ claimant, and at both legs
+/// A Zcash row's actor phase, and whether the Taker's revealing claim window
+/// has closed: the Taker claims first in both directions, and at both legs
 /// locked its row offers the claim while the window is open and Refund once
-/// it closed with nothing sent (the actor reports its Zcash refund then;
-/// FINDINGS 26). Read before an admission overlay rewrites the action.
+/// it closed with nothing sent (the actor reports the Taker's own refund then:
+/// its Zcash selling ZEC, its LEZ selling LEZ; FINDINGS 26). Read before an
+/// admission overlay rewrites the action.
 #[cfg(feature = "pair-zec")]
 pub(super) fn overlay_zec_progress(view: &mut TakerSwapViewV1, phase: Phase) {
     view.actor_phase = Some(super::zec_supervisor::phase_name(phase).to_owned());
-    view.claim_window_closed = (view.route.direction()
-        == lez_swap_core::SwapDirection::TakerSellsForeign
-        && phase == Phase::BothLegsLocked
+    view.claim_window_closed = (phase == Phase::BothLegsLocked
         && view.available_action == Some(TakerTerminalActionV1::Refund))
     .then_some(true);
 }
@@ -1996,13 +1998,21 @@ pub(super) fn zec_actor_progress(
 ) {
     match phase {
         Phase::Offered => (TakerSwapStateV1::AwaitingFirstLock, None, None),
-        // TakerSellsForeign: the Taker is the LEZ claimant, and its revealing
-        // LEZ claim is the owner's action once both legs are locked.
-        Phase::BothLegsLocked if next_action == ZecLifecycleAction::ClaimLez => (
-            TakerSwapStateV1::ClaimAvailable,
-            Some(TakerTerminalActionV1::Claim),
-            None,
-        ),
+        // The Taker claims first in both directions: its revealing claim of
+        // the Maker-funded leg (LEZ in TakerSellsForeign, Zcash in
+        // TakerSellsLez) is the owner's action once both legs are locked.
+        Phase::BothLegsLocked
+            if matches!(
+                next_action,
+                ZecLifecycleAction::ClaimLez | ZecLifecycleAction::ClaimZcash
+            ) =>
+        {
+            (
+                TakerSwapStateV1::ClaimAvailable,
+                Some(TakerTerminalActionV1::Claim),
+                None,
+            )
+        }
         Phase::AwaitingTakerConfirmations
         | Phase::TakerLockConfirmed
         | Phase::AwaitingMakerConfirmations
@@ -2013,30 +2023,14 @@ pub(super) fn zec_actor_progress(
             Some(TakerTerminalActionV1::Refund),
             None,
         ),
-        // The Taker's claim, whichever leg it is: the Zcash follow-up claim
-        // (TakerSellsLez) or the revealing LEZ claim as first claimant
-        // (TakerSellsForeign); the actor's Claim runs the agreement-ordered
-        // claim for either role.
-        Phase::ClaimEvidenceAvailable
-            if matches!(
-                next_action,
-                ZecLifecycleAction::ClaimZcash | ZecLifecycleAction::ClaimLez
-            ) =>
-        {
-            (
-                TakerSwapStateV1::ClaimAvailable,
-                Some(TakerTerminalActionV1::Claim),
-                None,
-            )
-        }
         Phase::Completed => (
             TakerSwapStateV1::Completed,
             None,
             Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
         ),
         Phase::Refunded => (TakerSwapStateV1::Refunded, None, None),
-        // The Taker's LEZ leg is back; the Maker's Zcash refund is still owed.
-        // The refund stays offered: a replay of the admitted request (or a new
+        // The Taker's leg is back; the Maker's refund of its own leg is still
+        // owed (both orders are admitted). The refund stays offered: a replay of the admitted request (or a new
         // one at this generation) re-drives the recovery until the Taker has
         // observed that refund, as the BTC projection reads the same phase.
         Phase::TakerLegRefunded => (
@@ -2044,17 +2038,32 @@ pub(super) fn zec_actor_progress(
             Some(TakerTerminalActionV1::Refund),
             None,
         ),
-        // The Maker's leg is back first and the Taker owns the next refund.
-        Phase::MakerLegRefunded if next_action == ZecLifecycleAction::RefundZcash => (
-            TakerSwapStateV1::RefundAvailable,
-            Some(TakerTerminalActionV1::Refund),
-            None,
-        ),
-        // TakerSellsForeign: the Taker's revealing LEZ claim is final and the
-        // Maker's Zcash follow-up claim completes the swap; nothing to press.
-        Phase::ClaimEvidenceAvailable if next_action == ZecLifecycleAction::Wait => {
-            (TakerSwapStateV1::ClaimInProgress, None, None)
+        // The Maker's leg is back first and the Taker owns the next refund:
+        // its Zcash (TakerSellsForeign) or its LEZ (TakerSellsLez).
+        Phase::MakerLegRefunded
+            if matches!(
+                next_action,
+                ZecLifecycleAction::RefundZcash | ZecLifecycleAction::RefundLez
+            ) =>
+        {
+            (
+                TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None,
+            )
         }
+        // The Taker's revealing claim is final and the Maker's follow-up claim
+        // completes the swap; nothing to press. Selling LEZ the Taker already
+        // holds its transparent ZEC, so the shielding guidance is shown now
+        // (the view keeps it for TakerSellsLez only).
+        Phase::ClaimEvidenceAvailable if next_action == ZecLifecycleAction::Wait => (
+            TakerSwapStateV1::ClaimInProgress,
+            None,
+            Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
+        ),
+        // The Taker never claims after claim evidence (it claims first in
+        // both directions); such a pair, like the Maker-only phases, reads as
+        // needing attention.
         Phase::ClaimEvidenceAvailable | Phase::MakerLegRefunded | Phase::MakerRecoveryAvailable => {
             (TakerSwapStateV1::AttentionRequired, None, None)
         }
@@ -3099,11 +3108,12 @@ mod tests {
         assert_eq!(not_admitted.state, TakerSwapStateV1::RefundAvailable);
     }
 
-    /// FINDINGS 26 / REVIEW 08:59Z: selling ZEC, a row that offers Refund at
-    /// both legs locked is a closed claim window; the desk reads the flag.
+    /// FINDINGS 26 / REVIEW 08:59Z: a row that offers Refund at both legs
+    /// locked is a closed claim window in either direction (the Taker claims
+    /// first in both); the desk reads the flag.
     #[cfg(feature = "pair-zec")]
     #[test]
-    fn a_closed_claim_window_is_flagged_on_the_selling_zec_row_only() {
+    fn a_closed_claim_window_is_flagged_on_both_directions_rows() {
         use lez_swap_core::{Pair, SwapDirection, SwapId};
         use lez_swap_store::{MakerOfferId, MakerRouteV1};
         let row = |direction, action| TakerSwapViewV1 {
@@ -3153,10 +3163,14 @@ mod tests {
             pre_lock.actor_phase.as_deref(),
             Some("taker_lock_confirmed")
         );
-        // Selling LEZ the Taker is not the LEZ claimant: no window of its own.
+        // Selling LEZ the Taker's revealing claim is on Zcash, with its own
+        // window: closed once the row offers Refund at both legs locked.
         let mut sells_lez = row(SwapDirection::TakerSellsLez, TakerTerminalActionV1::Refund);
         overlay_zec_progress(&mut sells_lez, Phase::BothLegsLocked);
-        assert_eq!(sells_lez.claim_window_closed, None);
+        assert_eq!(sells_lez.claim_window_closed, Some(true));
+        let mut sells_lez_open = row(SwapDirection::TakerSellsLez, TakerTerminalActionV1::Claim);
+        overlay_zec_progress(&mut sells_lez_open, Phase::BothLegsLocked);
+        assert_eq!(sells_lez_open.claim_window_closed, None);
     }
 
     /// REVIEW 16:33Z: a revealing claim held behind another swap's as its own
@@ -3420,46 +3434,74 @@ mod tests {
                 None,
             )
         );
+        // The Taker claims first in both directions and never after claim
+        // evidence: a claim named there reads as needing attention.
         assert_eq!(
             zec_actor_progress(
                 Phase::ClaimEvidenceAvailable,
                 ZecLifecycleAction::ClaimZcash,
             ),
-            (
-                TakerSwapStateV1::ClaimAvailable,
-                Some(TakerTerminalActionV1::Claim),
-                None,
-            )
+            (TakerSwapStateV1::AttentionRequired, None, None)
         );
-        // The reverse direction's Taker is the first claimant: the SDK offers
-        // its revealing LEZ claim at BothLegsLocked (next_action claim_lez), and
-        // once that claim is final (ClaimEvidenceAvailable, next_action wait)
-        // only the Maker's Zcash follow-up claim is left to observe.
-        assert_eq!(
-            zec_actor_progress(Phase::BothLegsLocked, ZecLifecycleAction::ClaimLez),
-            (
-                TakerSwapStateV1::ClaimAvailable,
-                Some(TakerTerminalActionV1::Claim),
-                None,
-            )
-        );
+        // The SDK offers the Taker's revealing claim at BothLegsLocked: LEZ
+        // (claim_lez) selling ZEC, Zcash (claim_zcash) selling LEZ. Once that
+        // claim is final (ClaimEvidenceAvailable, next_action wait) only the
+        // Maker's follow-up claim is left to observe; selling LEZ the Taker
+        // holds its transparent ZEC already, so the shielding guidance shows
+        // (the view drops it selling ZEC).
+        for revealing in [ZecLifecycleAction::ClaimLez, ZecLifecycleAction::ClaimZcash] {
+            assert_eq!(
+                zec_actor_progress(Phase::BothLegsLocked, revealing),
+                (
+                    TakerSwapStateV1::ClaimAvailable,
+                    Some(TakerTerminalActionV1::Claim),
+                    None,
+                )
+            );
+        }
         assert_eq!(
             zec_actor_progress(Phase::ClaimEvidenceAvailable, ZecLifecycleAction::Wait),
-            (TakerSwapStateV1::ClaimInProgress, None, None)
+            (
+                TakerSwapStateV1::ClaimInProgress,
+                None,
+                Some(TakerPrivacyGuidanceV1::ShieldReceivedTransparentZecSeparately),
+            )
         );
+        // Past the claim window the Taker's own refund is offered: its Zcash
+        // selling ZEC, its LEZ selling LEZ.
+        for refund in [
+            ZecLifecycleAction::RefundZcash,
+            ZecLifecycleAction::RefundLez,
+        ] {
+            assert_eq!(
+                zec_actor_progress(Phase::BothLegsLocked, refund),
+                (
+                    TakerSwapStateV1::RefundAvailable,
+                    Some(TakerTerminalActionV1::Refund),
+                    None,
+                )
+            );
+        }
         // A Maker-only pair the Taker never produces reads as needing attention.
         assert_eq!(
             zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::Wait),
             (TakerSwapStateV1::AttentionRequired, None, None)
         );
-        assert_eq!(
-            zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::RefundZcash),
-            (
-                TakerSwapStateV1::RefundAvailable,
-                Some(TakerTerminalActionV1::Refund),
-                None,
-            )
-        );
+        // After the Maker's earlier refund the Taker refunds its own leg:
+        // Zcash selling ZEC, LEZ selling LEZ.
+        for refund in [
+            ZecLifecycleAction::RefundZcash,
+            ZecLifecycleAction::RefundLez,
+        ] {
+            assert_eq!(
+                zec_actor_progress(Phase::MakerLegRefunded, refund),
+                (
+                    TakerSwapStateV1::RefundAvailable,
+                    Some(TakerTerminalActionV1::Refund),
+                    None,
+                )
+            );
+        }
         assert_eq!(
             zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::Wait),
             (TakerSwapStateV1::AttentionRequired, None, None)

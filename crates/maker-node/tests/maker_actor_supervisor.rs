@@ -341,7 +341,7 @@ fn manual_claim_invokes_only_claim_and_atomically_completes_action() {
          test \"$2\" = \"196\" || exit 92\n\
          printf '%s\\n' \"$3\" >> '{}'\n\
          case \"$3\" in\n\
-           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
            claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":5,\"next_action\":\"complete\"}}' ;;\n\
            *) exit 95 ;;\n\
          esac\n",
@@ -404,6 +404,170 @@ fn manual_claim_invokes_only_claim_and_atomically_completes_action() {
 }
 
 #[test]
+fn a_makers_earlier_zcash_refund_first_observes_the_takers_zcash_claim() {
+    // TakerSellsLez past the claim window: the actor names the Maker's Zcash
+    // refund (the earlier one) with both legs locked. A Taker claim sent in
+    // the window can still be mined and only a drive reads its preimage, so
+    // the supervisor observes before it recovers.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let swap_id = "m5-supervisor-earlier-zcash-refund";
+    let invocation_log = root.path().join("earlier-refund-invocations");
+    let program = format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         printf '%s\\n' \"$3\" >> '{}'\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"refund_zcash\"}}' ;;\n\
+           drive) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"drive\",\"outcome\":\"awaiting_observation\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"refund_zcash\"}}' ;;\n\
+           recover) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"recover\",\"outcome\":\"awaiting_deadline\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"refund_zcash\"}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        invocation_log.display()
+    );
+    let mut store = registered_store(root.path(), swap_id, program.as_bytes());
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+
+    for now in [10, 20] {
+        let outcome = supervise_one_due_maker_actor(
+            &mut store,
+            MakerActorLeaseOwner::new([0x73; 16]).unwrap(),
+            now,
+            &config,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            outcome.resolution(),
+            MakerActorSupervisorResolution::Requeued
+        );
+    }
+    let invocations = fs::read_to_string(invocation_log).unwrap();
+    let effects: Vec<_> = invocations
+        .lines()
+        .filter(|command| *command != "status")
+        .collect();
+    assert_eq!(effects.len(), 2, "{invocations}");
+    assert!(
+        effects.contains(&"drive") && effects.contains(&"recover"),
+        "the earlier refund must alternate with observing the claim: {invocations}"
+    );
+}
+
+/// A Zcash Maker actor script that logs each command and reports `status`
+/// with `next_action` in `phase`; its claim is submitted.
+fn claim_logging_program(log: &Path, phase: &str, next_action: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         printf '%s\\n' \"$3\" >> '{}'\n\
+         case \"$3\" in\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"{phase}\",\"revision\":4,\"next_action\":\"{next_action}\"}}' ;;\n\
+           claim) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"submitted\",\"phase\":\"{phase}\",\"revision\":4,\"next_action\":\"{next_action}\"}}' ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        log.display()
+    )
+}
+
+#[test]
+fn a_makers_followup_lez_claim_waits_behind_another_swaps_lez_claim_in_flight() {
+    // TakerSellsLez: the Maker's follow-up LEZ claim is planned at its one
+    // LEZ account's nonce, so it waits while another swap's LEZ claim is in
+    // flight (its marker written on submission). Its Zcash claim
+    // (TakerSellsForeign) spends no LEZ nonce and goes ahead.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("gate-maker.sqlite3")).unwrap();
+    let holder_root = root.path().join("holder");
+    fs::create_dir(&holder_root).unwrap();
+    fs::set_permissions(&holder_root, fs::Permissions::from_mode(0o700)).unwrap();
+    let holder_log = root.path().join("holder-invocations");
+    register_actor(
+        &mut store,
+        &holder_root,
+        "m5-gate-holder",
+        claim_logging_program(&holder_log, "claim_evidence_available", "wait").as_bytes(),
+    );
+    let holder_state =
+        ActorConfig::load_private(&actor_deployment(&holder_root, "m5-gate-holder").source_config)
+            .unwrap()
+            .role_state_db()
+            .to_path_buf();
+    let marker = zec_reference_actor::revealing_claim_in_flight_marker(&holder_state).unwrap();
+    fs::write(&marker, b"").unwrap();
+    // The holder is mid-attempt elsewhere: leased, not terminal, not due here.
+    store
+        .claim_maker_actor(
+            &SwapId::new("m5-gate-holder").unwrap(),
+            MakerActorLeaseOwner::new([0x74; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .expect("holder lease");
+
+    for (swap_id, next_action, expected_class, expected_log) in [
+        (
+            "m5-gate-followup-lez",
+            "claim_lez",
+            Some("lez_revealing_claim_in_flight"),
+            "status\n",
+        ),
+        (
+            "m5-gate-followup-zcash",
+            "claim_zcash",
+            None,
+            "status\nclaim\n",
+        ),
+    ] {
+        let swap_root = root.path().join(swap_id);
+        fs::create_dir(&swap_root).unwrap();
+        fs::set_permissions(&swap_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let log = root.path().join(format!("{swap_id}-invocations"));
+        register_actor(
+            &mut store,
+            &swap_root,
+            swap_id,
+            claim_logging_program(&log, "claim_evidence_available", next_action).as_bytes(),
+        );
+        let id = SwapId::new(swap_id).unwrap();
+        let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+        let outcome = supervise_one_due_maker_actor(
+            &mut store,
+            MakerActorLeaseOwner::new([0x75; 16]).unwrap(),
+            10,
+            &config,
+        )
+        .unwrap()
+        .expect("the due actor runs");
+        assert_eq!(outcome.swap_id(), &id);
+        let record = store
+            .list_maker_actor_processes()
+            .unwrap()
+            .into_iter()
+            .find(|record| record.swap_id() == &id)
+            .unwrap();
+        match expected_class {
+            Some(class) => {
+                assert_eq!(
+                    outcome.resolution(),
+                    MakerActorSupervisorResolution::Backoff
+                );
+                assert_eq!(record.last_failure_class(), Some(class));
+            }
+            None => assert_eq!(
+                outcome.resolution(),
+                MakerActorSupervisorResolution::Requeued
+            ),
+        }
+        assert_eq!(fs::read_to_string(&log).unwrap(), expected_log, "{swap_id}");
+    }
+    assert!(!holder_log.exists(), "the holder itself is not run here");
+}
+
+#[test]
 fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
     let root = tempdir().unwrap();
     fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
@@ -415,7 +579,7 @@ fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
          test \"$2\" = \"196\" || exit 92\n\
          printf '%s\\n' \"$3\" >> '{}'\n\
          case \"$3\" in\n\
-           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"refund_zcash\"}}' ;;\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"wait\"}}' ;;\n\
            recover) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"recover\",\"outcome\":\"refunded\",\"phase\":\"refunded\",\"revision\":5,\"next_action\":\"complete\"}}' ;;\n\
            *) exit 95 ;;\n\
          esac\n",
@@ -1020,7 +1184,7 @@ fn effect_cutoff_kills_inflight_actor_and_clears_child_identity() {
          test \"$1\" = \"--config-fd\" || exit 91\n\
          test \"$2\" = \"196\" || exit 92\n\
          case \"$3\" in\n\
-           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
+           status) printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":3,\"next_action\":\"claim_lez\"}}' ;;\n\
            claim) printf started > '{}'; sleep 5; printf completed > '{}'; printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":4,\"next_action\":\"complete\"}}' ;;\n\
            *) exit 93 ;;\n\
          esac\n",
@@ -1274,8 +1438,8 @@ fn regressing_effect_revision_fails_and_preserves_valid_status_progress() {
         test \"$1\" = \"--config-fd\" || exit 91\n\
         test \"$2\" = \"196\" || exit 92\n\
         case \"$3\" in\n\
-          status) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"both_legs_locked\",\"revision\":3,\"next_action\":\"claim_lez\"}' ;;\n\
-          claim) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"submitted\",\"phase\":\"both_legs_locked\",\"revision\":2,\"next_action\":\"claim_lez\"}' ;;\n\
+          status) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":3,\"next_action\":\"claim_lez\"}' ;;\n\
+          claim) printf '%s\\n' '{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"submitted\",\"phase\":\"claim_evidence_available\",\"revision\":2,\"next_action\":\"claim_lez\"}' ;;\n\
           *) exit 93 ;;\n\
         esac\n";
     let mut store = registered_store(root.path(), swap_id, program);
@@ -1300,7 +1464,8 @@ fn regressing_effect_revision_fails_and_preserves_valid_status_progress() {
             .unwrap()
             .unwrap()
             .observation(),
-        &MakerActorProgressObservationV1::active("both_legs_locked", 3, "claim_lez").unwrap()
+        &MakerActorProgressObservationV1::active("claim_evidence_available", 3, "claim_lez")
+            .unwrap()
     );
 }
 

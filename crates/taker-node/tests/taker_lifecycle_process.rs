@@ -258,7 +258,7 @@ impl LifecycleFixture {
                 b"user:password\n",
             );
         }
-        private_file(&root.path().join("maker-preimage"), &[0x73; 32]);
+        private_file(&root.path().join("taker-preimage"), &[0x73; 32]);
 
         let maker_config = root.path().join("maker-config.json");
         let taker_config = root.path().join("taker-config.json");
@@ -317,7 +317,9 @@ fn actor_config(root: &Path, role: &str, funder: bool) -> Value {
             "key_id": format!("{role}-claim-recovery-v1"),
             "key_file": root.join(format!("{role}-claim-key"))
         },
-        "claim_preimage_file": funder.then(|| root.join("maker-preimage")),
+        // The Taker holds the claim preimage in both directions; the Zcash
+        // funder (here the Maker, selling LEZ) names the funding outpoints.
+        "claim_preimage_file": (role == "taker").then(|| root.join("taker-preimage")),
         "zcash_key_file": root.join(format!("{role}-zcash-key")),
         "bridge": {
             "endpoint": format!("http://127.0.0.1:{bridge_port}"),

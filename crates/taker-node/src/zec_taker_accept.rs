@@ -196,6 +196,9 @@ async fn take_zec_inner(
         &validated_draft,
         &taker_public,
     )?;
+    // Before the Maker is asked to sign: the Taker's template must hold the
+    // swap secret (its digest is checked once the agreement is countersigned).
+    require_taker_claim_preimage(&input, source_actor_config, None)?;
 
     let propose_request_id = derived_request_id(&reservation_id, "zec", b"propose")?;
     let proposal: ZecChatProposalV1 = call_local_chat_rpc(
@@ -236,6 +239,40 @@ async fn take_zec_inner(
         source_actor_config,
     )
     .await
+}
+
+/// The Taker holds the swap secret in both directions: it locks first and
+/// claims the Maker-funded leg first, revealing the preimage (the preparation
+/// gives it to the Taker's half only). A source template without the claim
+/// preimage, or with one that does not hash to the agreement's digest, is
+/// refused before anything is signed or provisioned.
+fn require_taker_claim_preimage(
+    input: &ZecTakeInput<'_>,
+    source_actor_config: Option<&ActorConfig>,
+    secret_digest: Option<&[u8; 32]>,
+) -> anyhow::Result<()> {
+    let loaded;
+    let source = if let Some(source) = source_actor_config {
+        source
+    } else {
+        loaded = ActorConfig::load_private(input.source_taker_config_file)
+            .context("load the Taker's actor template")?;
+        &loaded
+    };
+    let material = source
+        .load_activate_material()
+        .context("load the Taker template's activation material")?;
+    let preimage = material.claim_preimage().context(
+        "the Taker's actor template carries no claim preimage; the Taker holds the swap secret in both directions",
+    )?;
+    if let Some(secret_digest) = secret_digest {
+        let digest: [u8; 32] = Sha256::digest(preimage.expose_secret()).into();
+        ensure!(
+            &digest == secret_digest,
+            "the Taker's claim preimage does not match the agreement's secret digest"
+        );
+    }
+    Ok(())
 }
 
 fn selected_zec_route(
@@ -385,6 +422,7 @@ async fn complete_zec(
     let agreement = maker_proposal
         .complete_at(taker_signature, UnixSeconds::new(input.now_unix_seconds))
         .context("countersign maker ZEC proposal")?;
+    require_taker_claim_preimage(input, source_actor_config, Some(agreement.secret_digest()))?;
     let final_wire = agreement.encode_wire()?;
     let agreement_file_was_replay = publish_exact_new(
         input.agreement_output_file,

@@ -961,7 +961,7 @@ Item {
                             }
                             Label {
                                 objectName: "takerShielding"
-                                // What the Node reports on a completed ZEC swap (ShieldReceivedTransparentZecSeparately).
+                                // What the Node reports once the Taker's ZEC claim is final (ShieldReceivedTransparentZecSeparately).
                                 text: pair.currentText === "Zcash"
                                     ? "After a transparent ZEC claim, move funds to a shielded wallet address."
                                     : "Bitcoin amounts and transaction linkage are public; use fresh wallet addresses."
@@ -1079,9 +1079,10 @@ Item {
                 color: "#68768A"; font.pixelSize: 9; font.family: "DejaVu Sans Mono"
                 elide: Text.ElideMiddle; Layout.fillWidth: true
             }
-            // The Node's own privacy guidance for this swap (a completed ZEC swap
-            // reports ShieldReceivedTransparentZecSeparately); the pair combo's
-            // label above is only the pre-take hint.
+            // The Node's own privacy guidance for this swap (a ZEC swap whose
+            // Taker claim of transparent ZEC is final reports
+            // ShieldReceivedTransparentZecSeparately); the pair combo's label
+            // above is only the pre-take hint.
             Label {
                 objectName: "takerSwapPrivacy"
                 visible: !!(root.detailSwap && root.detailSwap.privacy_display)
