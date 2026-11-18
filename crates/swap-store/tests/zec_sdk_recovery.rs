@@ -6420,6 +6420,220 @@ fn agreement_wire_direction_with_lez_amount_and_digest(
     .agreement_wire
 }
 
+/// One staged Maker ZEC negotiation (published offer, reserved, proposed)
+/// ready for completion, and the actor manifest the completion registers.
+struct StagedMakerZecCompletion {
+    offer_id: MakerOfferId,
+    reservation_id: RequestId,
+    completion_request: RequestId,
+    accepted: AcceptedZecAgreementV1,
+    actor: MakerActorManifestV1,
+}
+
+/// Configures the `TakerSellsLez` pair once and stages `count` negotiations,
+/// each on its own offer and swap.
+fn stage_maker_zec_completions(
+    path: &std::path::Path,
+    data: &std::path::Path,
+    count: usize,
+) -> Vec<StagedMakerZecCompletion> {
+    let route = MakerRouteV1::new(Pair::Zcash, SwapDirection::TakerSellsLez).unwrap();
+    let request = |value: String| RequestId::new(value).expect("bounded request ID");
+    let foreign_units = 100_000_000;
+    let lez_units = 250_000_000;
+    let mut store = SqliteSwapStore::open(path).unwrap();
+    for (label, previous, enabled) in [("create", None, false), ("enable", Some(1), true)] {
+        store
+            .configure_maker_pair(
+                &request(format!("capacity-pair-{label}")),
+                previous,
+                &MakerPairConfigurationV1::new(
+                    route,
+                    enabled,
+                    MakerPriceSourceKind::Local,
+                    foreign_units,
+                    foreign_units,
+                    300,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        if !enabled {
+            store
+                .set_local_price(
+                    &request("capacity-price-create".to_owned()),
+                    None,
+                    &LocalPriceV1::new(route, 5, 2).unwrap(),
+                )
+                .unwrap();
+        }
+    }
+    (0..count)
+        .map(|index| {
+            let offer_id = MakerOfferId::new(format!("capacity-offer-{index}")).unwrap();
+            let reservation_id = request(format!("capacity-reservation-{index}"));
+            let swap_id = format!("capacity-swap-{index}");
+            let delivery_commitment = [0x40 + u8::try_from(index).unwrap(); 32];
+            let digest: [u8; 32] = Sha256::digest([0x90 + u8::try_from(index).unwrap(); 32]).into();
+            let artifacts = negotiation_artifacts(
+                &swap_id,
+                SwapDirection::TakerSellsLez,
+                lez_units,
+                digest,
+                maker_zec_chat_session_id(&reservation_id),
+                delivery_commitment,
+                308,
+            );
+            store
+                .publish_local_offer(
+                    &request(format!("capacity-publish-{index}")),
+                    &offer_id,
+                    route,
+                    8,
+                )
+                .unwrap();
+            let staged = MakerZecNegotiationV1::proposed(
+                reservation_id.clone(),
+                delivery_commitment,
+                artifacts.maker_key,
+                artifacts.taker_key,
+                foreign_units,
+                lez_units,
+                9,
+                artifacts.agreement_commitment,
+                artifacts.proposal_wire.clone(),
+            )
+            .unwrap();
+            store
+                .stage_zec_maker_negotiation(
+                    &request(format!("capacity-stage-{index}")),
+                    &offer_id,
+                    1,
+                    &staged,
+                )
+                .unwrap();
+            let accepted = accept(&artifacts.agreement_wire, Participant::Maker);
+            let actor = MakerActorManifestV1::new(
+                accepted.agreement().coordinator().id().clone(),
+                MakerActorKindV1::Zcash,
+                data.join(format!("capacity-actor-config-{index}.json")),
+                [0xa1; 32],
+                data.join("lez-zec-reference-actor"),
+                [0xb2; 32],
+                data.join(format!("capacity-actor-state-{index}.sqlite3")),
+            )
+            .unwrap();
+            StagedMakerZecCompletion {
+                offer_id,
+                reservation_id,
+                completion_request: request(format!("capacity-completion-{index}")),
+                accepted,
+                actor,
+            }
+        })
+        .collect()
+}
+
+/// FINDING 3: a Maker settles its `TakerSellsLez` follow-up LEZ claims one at
+/// a time, so it holds at most as many open swaps as fit the profile's
+/// margin. Below the capacity a completion is accepted, at it the next one is
+/// refused by name (nothing is written), and once a swap ends the refused one
+/// is accepted. An exact replay is answered at the capacity.
+#[test]
+fn a_maker_accepts_taker_sells_lez_swaps_up_to_its_capacity_and_again_after_one_ends() {
+    let data = TempDir::new().expect("temporary maker application store");
+    let path = data.path().join("maker-capacity.sqlite3");
+    let staged = stage_maker_zec_completions(&path, data.path(), 3);
+    let recovery_store = SqliteZecRecoveryStore::open_claim_capable(
+        &path,
+        Participant::Maker,
+        claim_key("maker-capacity-key", [0x72; 32]),
+    )
+    .unwrap();
+    let complete = |swap: &StagedMakerZecCompletion| {
+        recovery_store.complete_maker_zec_negotiation_and_register_actor_within_capacity(
+            &swap.completion_request,
+            &swap.offer_id,
+            2,
+            &swap.reservation_id,
+            &swap.accepted,
+            &swap.actor,
+            10,
+            2,
+        )
+    };
+    let now = ACCEPTED_AT.value();
+
+    assert!(!complete(&staged[0]).unwrap().was_replay());
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(now)
+            .unwrap(),
+        1
+    );
+    assert!(!complete(&staged[1]).unwrap().was_replay());
+    let refused = complete(&staged[2]).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            StoreError::MakerZecTakerSellsLezCapacityReached {
+                open: 2,
+                capacity: 2
+            }
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        refused
+            .to_string()
+            .starts_with("zec_taker_sells_lez_capacity_reached"),
+        "the refusal is named: {refused}"
+    );
+    assert!(
+        complete(&staged[1]).unwrap().was_replay(),
+        "an exact replay is answered at the capacity"
+    );
+    // Swaps past their LEZ refund time no longer count.
+    let lez_refund_at = staged[0].accepted.agreement().lez_refund_at_ms() / 1_000;
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(lez_refund_at)
+            .unwrap(),
+        0
+    );
+
+    // The first swap completes: its actor's schedule ends.
+    let mut schedule = SqliteSwapStore::open(&path).unwrap();
+    let lease = schedule
+        .claim_maker_actor(
+            staged[0].accepted.agreement().coordinator().id(),
+            lez_swap_store::MakerActorLeaseOwner::new([0x7c; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .expect("the first swap's actor is due");
+    schedule
+        .resolve_maker_actor_attempt(
+            &lease,
+            lez_swap_store::MakerActorAttemptResolution::Terminal,
+            11,
+        )
+        .unwrap();
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(now)
+            .unwrap(),
+        1
+    );
+    assert!(!complete(&staged[2]).unwrap().was_replay());
+    assert_eq!(
+        recovery_store
+            .count_open_maker_zec_taker_sells_lez_swaps(now)
+            .unwrap(),
+        2
+    );
+}
+
 struct NegotiationArtifacts {
     proposal_wire: Vec<u8>,
     agreement_wire: Vec<u8>,

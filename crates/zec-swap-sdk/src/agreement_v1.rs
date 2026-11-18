@@ -648,6 +648,12 @@ impl ZecAgreementBodyV1 {
         }
     }
 
+    /// The signed profile id.
+    #[must_use]
+    pub fn profile_id(&self) -> ZecProfileId {
+        ZecProfileId::from(self.profile)
+    }
+
     /// Exact LEZ terms.
     #[must_use]
     pub const fn lez_terms(&self) -> &ZecLezTermsV1 {
@@ -1722,6 +1728,30 @@ impl<'a> BoundedWireReader<'a> {
             Err(ZecAgreementV1Error::MalformedWireRecord)
         }
     }
+}
+
+/// The signed direction and profile of a stored agreement wire, decoded
+/// without validating signatures, timing, or bindings: for a Node that must
+/// classify its stored swaps (a resume refused for its profile, a count by
+/// direction) and never for accepting an agreement. `None` for bytes that do
+/// not decode as an agreement record.
+#[must_use]
+pub fn zec_agreement_wire_terms(bytes: &[u8]) -> Option<(SwapDirection, ZecProfileId)> {
+    preflight_wire(bytes).ok()?;
+    let record = decode_bounded_record(bytes).ok()?;
+    Some((record.body.direction(), record.body.profile_id()))
+}
+
+/// Whether a stored agreement wire is a `TakerSellsLez` agreement under a
+/// profile sized for the earlier order (the Maker revealed first on LEZ).
+/// This release refuses to resume one (`ZecAgreementV1Error::LegacyRevealOrder`),
+/// so it is finished or refunded by the release that started it.
+#[must_use]
+pub fn legacy_taker_sells_lez(bytes: &[u8]) -> bool {
+    zec_agreement_wire_terms(bytes).is_some_and(|(direction, profile)| {
+        direction == SwapDirection::TakerSellsLez
+            && !ZecRefundProfile::for_id(profile).admits(SwapDirection::TakerSellsLez)
+    })
 }
 
 fn preflight_wire(bytes: &[u8]) -> Result<(), ZecAgreementV1Error> {

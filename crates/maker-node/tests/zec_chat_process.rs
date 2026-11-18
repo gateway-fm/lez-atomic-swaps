@@ -1779,6 +1779,10 @@ fn accept_proxy_connection(listener: &UnixListener) -> UnixStream {
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
+                // macOS hands the accepted stream the listener's O_NONBLOCK:
+                // a read before the peer wrote would fail as WouldBlock
+                // instead of waiting out the read timeout.
+                stream.set_nonblocking(false).unwrap();
                 configure_proxy_stream(&stream);
                 return stream;
             }

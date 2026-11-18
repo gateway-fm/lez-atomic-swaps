@@ -4,10 +4,16 @@ use std::{fs, os::unix::fs::MetadataExt as _, path::PathBuf};
 
 use anyhow::Context as _;
 
+use lez_zec_swap_sdk::ZecProfileId;
+
 use super::*;
 
 const MAX_ZEC_MAKER_AUTHORITY_TEMPLATES: usize = 256;
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the propose handler reads in order: offer, draft, capacity, signature, staging"
+)]
 pub(super) fn register_zec_chat_methods(module: &mut RpcModule<MakerRpc>) -> anyhow::Result<()> {
     module.register_blocking_method::<RpcResult<ZecChatProposalV1>, _>(
         "zec_chat_propose_v1",
@@ -60,6 +66,15 @@ pub(super) fn register_zec_chat_methods(module: &mut RpcModule<MakerRpc>) -> any
                 return Err(invalid_request(
                     "unsigned ZEC draft is not bound to the selected offer",
                 ));
+            }
+            if validated.body().direction() == SwapDirection::TakerSellsLez
+                && let Some(completion_store) = context.zec_completion_store.as_ref()
+            {
+                refuse_at_taker_sells_lez_capacity(
+                    completion_store,
+                    validated.body().profile_id(),
+                    now_unix_seconds,
+                )?;
             }
             let agreement_commitment = validated.commitment();
             let signature = Secp256k1::signing_only()
@@ -180,15 +195,15 @@ fn complete_zec_chat(
         .map_err(|_| rpc_error(INTERNAL_ERROR, "maker actor provisioning failed"))?;
     let swap_id: Box<str> = accepted.agreement().coordinator().id().as_str().into();
     let commit = completion_store
-        .complete_maker_zec_negotiation_and_register_actor_for_role(
+        .complete_maker_zec_negotiation_and_register_actor_within_capacity(
             &request.request_id,
             &request.offer_id,
             request.expected_offer_revision,
             &request.reservation_id,
             &accepted,
-            None,
             &actor,
             now_unix_seconds,
+            zec_taker_sells_lez_capacity(accepted.agreement().binding().profile_id()),
         )
         .map_err(application_store_error)?;
     Ok(ZecChatCompleteResponseV1 {
@@ -396,6 +411,106 @@ impl ZecMakerActorProvisioner {
     }
 }
 
+/// Refuses a new `TakerSellsLez` proposal while the Maker already holds as
+/// many open ones as [`zec_taker_sells_lez_capacity`] allows for its profile;
+/// the completion checks again in the transaction that accepts it.
+fn refuse_at_taker_sells_lez_capacity(
+    completion_store: &SqliteZecRecoveryStore,
+    profile: ZecProfileId,
+    now_unix_seconds: u64,
+) -> RpcResult<()> {
+    let capacity = zec_taker_sells_lez_capacity(profile);
+    let open = completion_store
+        .count_open_maker_zec_taker_sells_lez_swaps(now_unix_seconds)
+        .map_err(application_store_error)?;
+    if open >= capacity {
+        return Err(application_store_error(
+            StoreError::MakerZecTakerSellsLezCapacityReached { open, capacity },
+        ));
+    }
+    Ok(())
+}
+
+/// The safety factor on one Maker LEZ claim's slot at the one-claim gate.
+const LEZ_CLAIM_SLOT_SAFETY_FACTOR: u64 = 2;
+
+/// The worst LEZ claim submit-to-final measured on the devnet, rounded up:
+/// 6.3 s (2026-11-18, 3 LEZ claims read from the Nodes' actor lines, the same
+/// claim transaction submitted and projected; 3 LEZ escrow fundings
+/// 4.5–5.5 s). The devnet's LEZ blocks are about 1.5 s apart.
+const DEVNET_LEZ_CLAIM_WORST_MS: u64 = 7_000;
+
+/// LEZ v0.2 public testnet finality, which a claim waits out before the next
+/// one is planned: not measured for a claim. Recorded for LEZ fundings: about
+/// an hour (docs/api/README.md) and about two hours on 2026-09-19
+/// (docs/evidence/testnet4-20260919). The longer is taken.
+const PUBLIC_TESTNET_LEZ_CLAIM_WORST_MS: u64 = 2 * 3_600_000;
+
+/// How long a claim held at the gate can wait after the claim before it is
+/// final: the holder's next attempt (requeue delay) that clears its in-flight
+/// marker and the held claim's retry (failure backoff). The devnet runs the
+/// Maker at 2 s / 10 s (`LEZ_MAKER_ACTOR_REQUEUE_SECONDS`,
+/// `LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS`), every other Node at the
+/// defaults, 5 s / 30 s.
+const DEVNET_HELD_CLAIM_RETRY_MS: u64 = 12_000;
+const DEFAULT_HELD_CLAIM_RETRY_MS: u64 = 35_000;
+
+/// How many open ZEC `TakerSellsLez` swaps a Maker holds at once under
+/// `profile` (FINDING 3). The Taker chooses when to reveal, up to the claim
+/// window's close at `T_lez - M`; the Maker's follow-up LEZ claims go one at
+/// a time (one LEZ account nonce), earliest refund first. `N` swaps revealed
+/// together leave the last claim `N` slots after the reveal, so
+/// `N * slot <= M` with
+///
+/// `slot = SAFETY (2) * (worst LEZ claim submit-to-final + held-claim retry)`
+///
+/// and `capacity = floor(M / slot)`:
+///
+/// | profile | M | worst claim | retry | slot | capacity |
+/// |---|---|---|---|---|---|
+/// | devnet v7, v8 | 120 s | 7 s (measured) | 12 s | 38 s | 3 |
+/// | deterministic-local v3 (test lane) | 30 s | 7 s (devnet bound) | 35 s | 84 s | 0 → 1 |
+/// | public-testnet v3 | 7 200 s | 7 200 s (docs, not measured for a claim) | 35 s | 14 470 s | 0 → 1 |
+///
+/// A profile whose margin does not hold one slot keeps a capacity of one:
+/// the cap bounds how many claims queue behind each other, and the single
+/// claim's own fit in `M` is the profile's timing check (ADR 0216, I3),
+/// which public-testnet v3 does not meet at the recorded LEZ finality.
+#[must_use]
+pub fn zec_taker_sells_lez_capacity(profile: ZecProfileId) -> usize {
+    let (claim_worst_ms, held_retry_ms) = match profile {
+        ZecProfileId::DeterministicLocalDevnetV1
+        | ZecProfileId::DeterministicLocalDevnetV2
+        | ZecProfileId::DeterministicLocalDevnetV3
+        | ZecProfileId::DeterministicLocalDevnetV4
+        | ZecProfileId::DeterministicLocalDevnetV5
+        | ZecProfileId::DeterministicLocalDevnetV6
+        | ZecProfileId::DeterministicLocalDevnetV7
+        | ZecProfileId::DeterministicLocalDevnetV8 => {
+            (DEVNET_LEZ_CLAIM_WORST_MS, DEVNET_HELD_CLAIM_RETRY_MS)
+        }
+        ZecProfileId::PublicTestnetV1
+        | ZecProfileId::PublicTestnetV2
+        | ZecProfileId::PublicTestnetV3 => (
+            PUBLIC_TESTNET_LEZ_CLAIM_WORST_MS,
+            DEFAULT_HELD_CLAIM_RETRY_MS,
+        ),
+        ZecProfileId::DeterministicLocalV1
+        | ZecProfileId::DeterministicLocalV2
+        | ZecProfileId::DeterministicLocalV3 => {
+            (DEVNET_LEZ_CLAIM_WORST_MS, DEFAULT_HELD_CLAIM_RETRY_MS)
+        }
+    };
+    let slot_ms = LEZ_CLAIM_SLOT_SAFETY_FACTOR * (claim_worst_ms + held_retry_ms);
+    let margin_ms = ZecRefundProfile::for_id(profile)
+        .required_margin()
+        .value()
+        .saturating_mul(1_000);
+    usize::try_from(margin_ms / slot_ms)
+        .unwrap_or(usize::MAX)
+        .max(1)
+}
+
 fn validate_zec_chat_shape(request: &ZecChatProposeRequestV1) -> RpcResult<()> {
     if request.schema_version != 1 || request.foreign_units == 0 {
         return Err(invalid_request("unsupported or empty ZEC Chat proposal"));
@@ -422,4 +537,50 @@ fn zec_draft_matches_offer(
         && transcript.session_id() == &maker_zec_chat_session_id(reservation_id)
         && transcript.offer_commitment() == &authenticated.commitment()
         && transcript.expires_at_unix_seconds() == offer.expires_at_unix_seconds()
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn the_taker_sells_lez_capacity_fits_one_claim_slot_per_swap_in_the_margin() {
+        assert_eq!(
+            zec_taker_sells_lez_capacity(ZecProfileId::DeterministicLocalDevnetV7),
+            3
+        );
+        assert_eq!(
+            zec_taker_sells_lez_capacity(ZecProfileId::DeterministicLocalDevnetV8),
+            3
+        );
+        assert_eq!(
+            zec_taker_sells_lez_capacity(ZecProfileId::DeterministicLocalV3),
+            1
+        );
+        assert_eq!(
+            zec_taker_sells_lez_capacity(ZecProfileId::PublicTestnetV3),
+            1
+        );
+        // The devnet's worst case: three claims revealed together settle in
+        // the 120 s margin.
+        let slot_ms =
+            LEZ_CLAIM_SLOT_SAFETY_FACTOR * (DEVNET_LEZ_CLAIM_WORST_MS + DEVNET_HELD_CLAIM_RETRY_MS);
+        assert!(3 * slot_ms <= 120_000);
+    }
+
+    #[test]
+    fn the_capacity_refusal_reaches_the_taker_by_code_and_name() {
+        let error = application_store_error(StoreError::MakerZecTakerSellsLezCapacityReached {
+            open: 3,
+            capacity: 3,
+        });
+        assert_eq!(error.code(), ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED);
+        assert!(
+            error
+                .message()
+                .starts_with("zec_taker_sells_lez_capacity_reached"),
+            "{}",
+            error.message()
+        );
+    }
 }

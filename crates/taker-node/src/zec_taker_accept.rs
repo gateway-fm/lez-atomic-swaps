@@ -115,6 +115,30 @@ struct ZecAcceptanceReceiptV1 {
     actor_state_database: PathBuf,
 }
 
+/// The stable name of the Maker's refusal of a ZEC `TakerSellsLez` take at its
+/// capacity, as its message carries it.
+pub const ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED: &str = "zec_taker_sells_lez_capacity_reached";
+
+/// The Maker refused the take: it already holds as many open ZEC
+/// `TakerSellsLez` swaps as its one-at-a-time LEZ claims settle inside the
+/// profile's margin. Nothing was locked; the offer may be taken again once
+/// one of the Maker's swaps ends.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "zec_taker_sells_lez_capacity_reached: the Maker holds as many open ZEC TakerSellsLez swaps as it can settle; nothing was locked, take again later"
+)]
+pub struct ZecMakerCapacityReached;
+
+/// The Maker's capacity refusal as [`ZecMakerCapacityReached`]; any other
+/// failure unchanged.
+fn named_maker_refusal(error: anyhow::Error) -> anyhow::Error {
+    if format!("{error:#}").contains(ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED) {
+        anyhow::Error::new(ZecMakerCapacityReached)
+    } else {
+        error
+    }
+}
+
 /// Runs ZEC acceptance using authenticated Delivery discovery.
 pub async fn take_zec(input: ZecTakeInput<'_>) -> anyhow::Result<ZecAcceptanceOutput> {
     take_zec_inner(input, None, None).await
@@ -215,7 +239,8 @@ async fn take_zec_inner(
             unsigned_draft_wire: draft_wire.to_vec(),
         },
     )
-    .await?;
+    .await
+    .map_err(named_maker_refusal)?;
     let maker_proposal = ZecMakerAgreementProposalV1::from_wire_at(&proposal.proposal_wire, now)
         .context("validate maker-signed ZEC proposal")?;
     ensure!(
@@ -378,7 +403,8 @@ async fn resume_persisted_zec(
             final_agreement_wire: final_wire.to_vec(),
         },
     )
-    .await?;
+    .await
+    .map_err(named_maker_refusal)?;
     ensure!(
         completion.schema_version == 1
             && completion.offer_revision == 3
@@ -444,7 +470,8 @@ async fn complete_zec(
             final_agreement_wire: final_wire.clone(),
         },
     )
-    .await?;
+    .await
+    .map_err(named_maker_refusal)?;
     ensure!(
         completion.schema_version == 1
             && completion.offer_revision == 3
@@ -780,5 +807,29 @@ fn acceptance_actor_output(
         receipt_sha256: hex::encode(Sha256::digest(receipt_bytes)),
         provisioning_replay: provisioned.was_replay(),
         receipt_replay,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_makers_capacity_refusal_is_typed_for_the_taker() {
+        // As `call_local_chat_rpc` reports the Maker's refusal of a propose
+        // or a completion.
+        let refused = anyhow::anyhow!(
+            "local RPC error -32019: zec_taker_sells_lez_capacity_reached: the Maker holds 3 open ZEC TakerSellsLez swaps, its capacity is 3"
+        );
+        let named = named_maker_refusal(refused);
+        assert!(named.downcast_ref::<ZecMakerCapacityReached>().is_some());
+        assert!(
+            named
+                .to_string()
+                .starts_with(ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED)
+        );
+        let other =
+            named_maker_refusal(anyhow::anyhow!("local RPC error -32018: offer unavailable"));
+        assert!(other.downcast_ref::<ZecMakerCapacityReached>().is_none());
     }
 }

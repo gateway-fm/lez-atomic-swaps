@@ -48,7 +48,35 @@ pub use zec_application::{
     load_zcash_observation_tracker,
 };
 #[cfg(feature = "pair-zec")]
-pub use zec_chat::ZecMakerActorProvisioner;
+pub use zec_chat::{ZecMakerActorProvisioner, zec_taker_sells_lez_capacity};
+
+/// Refuses to start a Maker Node that holds an open ZEC `TakerSellsLez` swap
+/// agreed under a profile of the earlier reveal order (the Maker revealed
+/// first on LEZ): this release refuses that agreement
+/// (`ZecAgreementV1Error::LegacyRevealOrder`), so its actor could neither
+/// claim nor refund. There is no upgrade between releases before 1.0.0
+/// (issue #133): such a swap is finished or refunded by the release that
+/// started it. Completed and refunded swaps do not block.
+///
+/// # Errors
+///
+/// Names every blocking swap, or reports the store failure.
+#[cfg(feature = "pair-zec")]
+pub fn refuse_start_with_legacy_zec_swaps(store: &SqliteSwapStore) -> anyhow::Result<()> {
+    let blocking: Vec<String> = store
+        .open_maker_zec_agreement_wires()
+        .context("read the Maker's open ZEC swaps")?
+        .into_iter()
+        .filter(|(_, wire)| lez_zec_swap_sdk::legacy_taker_sells_lez(wire))
+        .map(|(swap_id, _)| swap_id)
+        .collect();
+    anyhow::ensure!(
+        blocking.is_empty(),
+        "this Maker Node holds open ZEC TakerSellsLez swaps agreed in the earlier reveal order, which this release cannot resume: {}; finish or refund them with the previous release first (no upgrade between releases before 1.0.0, issue #133), then start this one",
+        blocking.join(", ")
+    );
+    Ok(())
+}
 #[cfg(feature = "pair-zec")]
 use zec_chat::register_zec_chat_methods;
 
@@ -119,6 +147,9 @@ const NOT_FOUND: i32 = -32_004;
 const CONFLICT: i32 = -32_009;
 const RESULT_LIMIT_EXCEEDED: i32 = -32_011;
 const OFFER_UNAVAILABLE: i32 = -32_018;
+/// The Maker's named refusal of a ZEC `TakerSellsLez` take at its capacity
+/// (`zec_taker_sells_lez_capacity_reached`); the Taker may take again later.
+const ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED: i32 = -32_019;
 const INTERNAL_ERROR: i32 = -32_603;
 
 const MAXIMUM_LOGOS_OFFER_SNAPSHOT_PAGE_ENTRIES: usize = 128;
@@ -1899,6 +1930,9 @@ fn application_store_error(error: StoreError) -> ErrorObjectOwned {
         | StoreError::MakerPriceRevisionConflict
         | StoreError::StaleMakerOffer { .. } => rpc_error(CONFLICT, error.to_string()),
         StoreError::MissingMakerOffer => rpc_error(NOT_FOUND, error.to_string()),
+        StoreError::MakerZecTakerSellsLezCapacityReached { .. } => {
+            rpc_error(ZEC_TAKER_SELLS_LEZ_CAPACITY_REACHED, error.to_string())
+        }
         StoreError::MakerOfferExpired
         | StoreError::MakerOfferUnavailable
         | StoreError::MakerOfferReservationConflict => {

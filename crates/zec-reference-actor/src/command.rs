@@ -17,7 +17,7 @@ use lez_swap_core::{Participant, Phase, SwapDirection, UnixSeconds};
 use lez_swap_store::{BridgeOperationKey, SqliteBridgeOperationJournal, SqliteZecRecoveryStore};
 use lez_zebra_node_adapter::{
     ExactOutpointZcashFundingPlanner, HttpZebraRpc, HttpZebraRpcConfig, RoleKeyedZcashSigner,
-    ZebraChainIdentity, ZebraRpcChain, ZebraRpcZcashPort,
+    ZebraChainIdentity, ZebraRpc as _, ZebraRpcChain, ZebraRpcZcashPort,
 };
 use lez_zec_swap_sdk::{
     AcceptedZecAgreementV1, ClaimDriveOutcome, ClaimPreimage, ClaimStepV1, FirstLockDriveOutcome,
@@ -724,16 +724,38 @@ const fn claimant_next_action(
 }
 
 /// The Maker of `TakerSellsLez` funds Zcash only while the Taker's claim
-/// window is open (the agreement's LEZ refund time minus the required margin):
-/// a funding after it cannot be claimed by an honest Taker and only exposes the
-/// Maker to a refund race. A funding already staged (its exact bytes may be on
-/// the chain) is still driven to its observation.
+/// window is open, by time and by height (ADR 0216): before the agreement's LEZ
+/// refund time minus the required margin (`window_closed`), and while
+/// `tip + R + C < H_z` (`height_closed`, [`zcash_funding_window_closed`]). A
+/// funding after either cannot be claimed by an honest Taker and only exposes
+/// the Maker to a refund race. A funding already staged (its exact bytes may
+/// be on the chain) is still driven to its observation.
 const fn maker_funding_cut_off(
     direction: SwapDirection,
     funding_staged: bool,
     window_closed: bool,
+    height_closed: bool,
 ) -> bool {
-    matches!(direction, SwapDirection::TakerSellsLez) && !funding_staged && window_closed
+    matches!(direction, SwapDirection::TakerSellsLez)
+        && !funding_staged
+        && (window_closed || height_closed)
+}
+
+/// Whether a Zcash funding sent at `tip_height` leaves the Taker no reveal:
+/// it needs `confirmations` blocks before the Taker's gate admits it, and the
+/// Taker's claim then needs `tip + reveal_margin_blocks < refund_height` (the
+/// SDK's `ZcashRevealWindowClosed` rule). Open only while
+/// `tip + R + C < H_z`.
+const fn zcash_funding_window_closed(
+    tip_height: u32,
+    reveal_margin_blocks: u32,
+    confirmations: u32,
+    refund_height: u32,
+) -> bool {
+    tip_height
+        .saturating_add(reveal_margin_blocks)
+        .saturating_add(confirmations)
+        >= refund_height
 }
 
 fn trusted_wall_clock() -> Result<UnixSeconds, ActorCommandError> {
@@ -818,7 +840,7 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
     let zcash = ZebraRpcZcashPort::new(rpc.clone(), signer.clone(), identity, participant)
         .map_err(|_| ActorCommandError::DriveConfigurationUnavailable)?
         .with_counterparty_scan_blocks(config.counterparty_scan_blocks());
-    let planner = ExactOutpointZcashFundingPlanner::new(rpc, identity, participant, signer);
+    let planner = ExactOutpointZcashFundingPlanner::new(rpc.clone(), identity, participant, signer);
     let sdk = ZecPairSdk::new(participant, (), (), lez.clone(), zcash, store.clone());
     let mut active = sdk
         .resume_all_capable(config.swap_id())
@@ -948,15 +970,54 @@ async fn drive(config: &ActorConfig) -> Result<ActorEffectOutputV1, ActorCommand
                 .load_maker_lock_intent(active.agreement().coordinator().id())
                 .await
                 .map_err(unavailable_drive)?;
+            let window_closed = active.claim_window_closed(wall_clock_ms());
+            // The height half of the cutoff reads the Zebra tip only where it
+            // can decide: a fresh TakerSellsLez funding inside the time window.
+            let height_closed = if matches!(
+                active.agreement().direction(),
+                SwapDirection::TakerSellsLez
+            ) && staged.is_none()
+                && !window_closed
+            {
+                let tip_height = u32::from(
+                    rpc.chain_info()
+                        .await
+                        .map_err(unavailable_drive)?
+                        .tip_height(),
+                );
+                let profile = lez_zec_swap_sdk::ZecRefundProfile::for_id(
+                    active.agreement().binding().profile_id(),
+                );
+                let refund_height = active.agreement().zcash_refund_at_height();
+                let closed = zcash_funding_window_closed(
+                    tip_height,
+                    profile.zcash_reveal_margin_blocks(),
+                    profile.zcash_confirmations(),
+                    refund_height,
+                );
+                if closed {
+                    eprintln!(
+                        "actor drive: the Zcash funding is not sent: tip {tip_height} + {} reveal-margin blocks + {} confirmations reaches the refund height {refund_height}; the Taker's settlement is its LEZ refund",
+                        profile.zcash_reveal_margin_blocks(),
+                        profile.zcash_confirmations()
+                    );
+                }
+                closed
+            } else {
+                false
+            };
             if maker_funding_cut_off(
                 active.agreement().direction(),
                 staged.is_some(),
-                active.claim_window_closed(wall_clock_ms()),
+                window_closed,
+                height_closed,
             ) {
-                eprintln!(
-                    "actor drive: the Zcash funding is not sent: the Taker's claim window closed at {} ms; the Taker's settlement is its LEZ refund",
-                    active.claim_window_closes_at_ms()
-                );
+                if window_closed {
+                    eprintln!(
+                        "actor drive: the Zcash funding is not sent: the Taker's claim window closed at {} ms; the Taker's settlement is its LEZ refund",
+                        active.claim_window_closes_at_ms()
+                    );
+                }
                 break 'maker_lock ActorEffectOutcomeV1::AwaitingObservation {
                     operation: ActorOperationV1::TakerFirstLock,
                 };
@@ -1533,6 +1594,44 @@ pub fn revealing_claim_holder(role_state_db: &Path) -> Option<String> {
     valid_swap_id_text(holder).then(|| holder.to_owned())
 }
 
+/// The marker a Maker Node writes beside a swap whose LEZ claim waits at the
+/// one-claim gate, holding that swap's LEZ refund time (ms): when the claim in
+/// flight is final the gate admits the waiting claim with the earliest refund
+/// time, not the one scheduled first. Removed by the Node when the swap no
+/// longer asks for a LEZ claim, and by the actor once the claim is submitted
+/// (after its in-flight marker is written) or the swap leaves the claim's
+/// phase. (`<swap>/actor/<role>/lez-claim-waiting`.)
+#[must_use]
+pub fn lez_claim_waiting_marker(role_state_db: &Path) -> Option<PathBuf> {
+    Some(role_state_db.parent()?.parent()?.join("lez-claim-waiting"))
+}
+
+/// Records the swap's LEZ refund time in its waiting marker, or removes the
+/// marker (`None`).
+pub fn record_lez_claim_waiting(role_state_db: &Path, lez_refund_at_ms: Option<u64>) {
+    let Some(marker) = lez_claim_waiting_marker(role_state_db) else {
+        return;
+    };
+    match lez_refund_at_ms {
+        Some(at) => {
+            let _ = fs::write(marker, format!("{at}\n"));
+        }
+        None => {
+            let _ = fs::remove_file(marker);
+        }
+    }
+}
+
+/// The LEZ refund time a waiting marker records, when present and well formed.
+#[must_use]
+pub fn lez_claim_waiting_refund_at_ms(role_state_db: &Path) -> Option<u64> {
+    fs::read_to_string(lez_claim_waiting_marker(role_state_db)?)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
 fn valid_swap_id_text(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -1703,6 +1802,8 @@ fn mark_claim_submitted(config: &ActorConfig, step: ClaimStepV1) {
     }
     if in_flight {
         record_revealing_claim_holder(config.role_state_db(), None);
+        // The in-flight marker now holds the gate; the claim no longer waits.
+        record_lez_claim_waiting(config.role_state_db(), None);
     }
 }
 
@@ -1743,6 +1844,7 @@ fn clear_revealing_claim_in_flight(config: &ActorConfig) {
         let _ = fs::remove_file(marker);
     }
     record_revealing_claim_holder(config.role_state_db(), None);
+    record_lez_claim_waiting(config.role_state_db(), None);
 }
 
 /// Whether a claim re-plan was refused because the bound is spent, at the
@@ -2430,13 +2532,53 @@ mod tests {
     #[test]
     fn the_taker_sells_lez_maker_funds_zcash_only_inside_the_claim_window() {
         use SwapDirection::{TakerSellsForeign, TakerSellsLez};
-        assert!(!maker_funding_cut_off(TakerSellsLez, false, false));
-        assert!(maker_funding_cut_off(TakerSellsLez, false, true));
+        assert!(!maker_funding_cut_off(TakerSellsLez, false, false, false));
+        assert!(maker_funding_cut_off(TakerSellsLez, false, true, false));
         // A funding staged before the cutoff may already be on the chain:
         // it is still driven to its observation.
-        assert!(!maker_funding_cut_off(TakerSellsLez, true, true));
+        assert!(!maker_funding_cut_off(TakerSellsLez, true, true, false));
         // The Maker of TakerSellsForeign funds LEZ second, as before.
-        assert!(!maker_funding_cut_off(TakerSellsForeign, false, true));
+        assert!(!maker_funding_cut_off(
+            TakerSellsForeign,
+            false,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn the_taker_sells_lez_maker_funds_zcash_only_while_the_taker_can_still_reveal_by_height() {
+        use SwapDirection::{TakerSellsForeign, TakerSellsLez};
+        // devnet-v7: R = 3, C = 1, H_z = 417. The funding needs C blocks and
+        // the Taker's claim then needs tip + R < H_z: tip + R + C < H_z.
+        let (margin, confirmations, refund_height) = (3, 1, 417);
+        assert!(!zcash_funding_window_closed(
+            412,
+            margin,
+            confirmations,
+            refund_height
+        ));
+        assert!(zcash_funding_window_closed(
+            413,
+            margin,
+            confirmations,
+            refund_height
+        ));
+        assert!(zcash_funding_window_closed(
+            u32::MAX,
+            margin,
+            confirmations,
+            refund_height
+        ));
+        // The height cutoff alone stops a fresh funding, as the time cutoff does.
+        assert!(maker_funding_cut_off(TakerSellsLez, false, false, true));
+        assert!(!maker_funding_cut_off(TakerSellsLez, true, false, true));
+        assert!(!maker_funding_cut_off(
+            TakerSellsForeign,
+            false,
+            false,
+            true
+        ));
     }
 
     #[test]

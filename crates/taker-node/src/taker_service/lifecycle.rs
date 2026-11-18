@@ -502,6 +502,7 @@ const PROGRESS_GENERATION_CONFLICT_CODE: i32 = -32_015;
 const ACTION_UNAVAILABLE_CODE: i32 = -32_016;
 const ACTION_CONFLICT_CODE: i32 = -32_017;
 const FUNDING_REQUIRED_CODE: i32 = -32_018;
+const MAKER_CAPACITY_REACHED_CODE: i32 = -32_019;
 const MAXIMUM_MONITORED_SWAPS: usize = 256;
 const MAXIMUM_PREPARED_INPUT_BYTES: u64 = 256 * 1024;
 const SIGNING_KEY_BYTES: u64 = 32;
@@ -2113,6 +2114,9 @@ enum InitiationError {
     Conflict,
     Backend(TakerBackendError),
     ExecutionUnavailable,
+    /// The Maker is at its ZEC `TakerSellsLez` capacity
+    /// (`zec_taker_sells_lez_capacity_reached`); nothing was locked.
+    MakerCapacityReached,
     FundingRequired(lez_btc_role_lifecycle::FundingRequired),
     Internal,
 }
@@ -2922,7 +2926,14 @@ async fn execute_prepared_zec(
     .await
     .map_err(|error| {
         eprintln!("taker ZEC take failed: {error:#}");
-        InitiationError::ExecutionUnavailable
+        if error
+            .downcast_ref::<crate::zec_taker_accept::ZecMakerCapacityReached>()
+            .is_some()
+        {
+            InitiationError::MakerCapacityReached
+        } else {
+            InitiationError::ExecutionUnavailable
+        }
     })?;
     Ok(())
 }
@@ -3026,6 +3037,11 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
             "Taker dependency unavailable",
             "initiation_execution_unavailable",
         ),
+        InitiationError::MakerCapacityReached => rpc_error(
+            MAKER_CAPACITY_REACHED_CODE,
+            "Maker is at its ZEC TakerSellsLez capacity",
+            "zec_taker_sells_lez_capacity_reached",
+        ),
         InitiationError::FundingRequired(required) => ErrorObjectOwned::owned(
             FUNDING_REQUIRED_CODE,
             "Bitcoin funding required",
@@ -3046,6 +3062,16 @@ fn map_initiation_error(error: InitiationError) -> ErrorObjectOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_makers_capacity_refusal_reaches_the_desk_by_its_own_code_and_category() {
+        let error = map_initiation_error(InitiationError::MakerCapacityReached);
+        assert_eq!(error.code(), MAKER_CAPACITY_REACHED_CODE);
+        assert_eq!(
+            error.data().map(serde_json::value::RawValue::get),
+            Some(r#"{"category":"zec_taker_sells_lez_capacity_reached"}"#)
+        );
+    }
 
     /// REVIEW 17:58Z: a refund admitted earlier reads in progress while it is
     /// owed and its admission open, whatever the generation; a failed attempt

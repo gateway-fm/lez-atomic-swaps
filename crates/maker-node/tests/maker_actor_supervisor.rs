@@ -567,6 +567,197 @@ fn a_makers_followup_lez_claim_waits_behind_another_swaps_lez_claim_in_flight() 
     assert!(!holder_log.exists(), "the holder itself is not run here");
 }
 
+/// A Zcash Maker actor script for one swap at `claim_evidence_available`
+/// whose `claim` behaves as the actor's does at the one-claim gate: the first
+/// claim writes the in-flight marker (and drops the waiting marker the Node
+/// wrote) and is `submitted`; the next one finds the claim final, removes the
+/// in-flight marker and completes. Each submission is appended to `claims`.
+fn gated_lez_claim_program(
+    swap_id: &str,
+    state_db: &Path,
+    log: &Path,
+    claims: &Path,
+    lez_refund_at_ms: u64,
+) -> String {
+    let in_flight = zec_reference_actor::revealing_claim_in_flight_marker(state_db).unwrap();
+    let waiting = zec_reference_actor::lez_claim_waiting_marker(state_db).unwrap();
+    let done = state_db.with_file_name("claim-final");
+    format!(
+        "#!/bin/sh\n\
+         test \"$1\" = \"--config-fd\" || exit 91\n\
+         test \"$2\" = \"196\" || exit 92\n\
+         printf '%s\\n' \"$3\" >> '{log}'\n\
+         case \"$3\" in\n\
+           status)\n\
+             if [ -e '{done}' ]; then\n\
+               printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"completed\",\"revision\":6,\"next_action\":\"complete\"}}'\n\
+             else\n\
+               printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"state\":\"active\",\"phase\":\"claim_evidence_available\",\"revision\":4,\"next_action\":\"claim_lez\",\"lez_refund_at_ms\":{lez_refund_at_ms},\"revealing_claim_hold_attention_ms\":60000}}'\n\
+             fi ;;\n\
+           claim)\n\
+             if [ -e '{in_flight}' ]; then\n\
+               rm -f '{in_flight}'; : > '{done}'\n\
+               printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"completed\",\"phase\":\"completed\",\"revision\":6,\"next_action\":\"complete\"}}'\n\
+             else\n\
+               : > '{in_flight}'; rm -f '{waiting}'; printf '%s\\n' '{swap_id}' >> '{claims}'\n\
+               printf '%s\\n' '{{\"schema_version\":1,\"role\":\"maker\",\"command\":\"claim\",\"outcome\":\"submitted\",\"phase\":\"claim_evidence_available\",\"revision\":5,\"next_action\":\"claim_lez\"}}'\n\
+             fi ;;\n\
+           *) exit 95 ;;\n\
+         esac\n",
+        log = log.display(),
+        done = done.display(),
+        in_flight = in_flight.display(),
+        waiting = waiting.display(),
+        claims = claims.display(),
+    )
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one journey: both claims held, then admitted in refund order, then final"
+)]
+fn two_outstanding_maker_lez_claims_go_one_at_a_time_earliest_refund_first() {
+    // TakerSellsLez: the Taker revealed on two swaps while a third swap's
+    // Maker LEZ claim was in flight. Both follow-up LEZ claims wait at the
+    // one-claim gate. When the holder's claim is final the gate admits the
+    // swap whose LEZ refund time is earliest, not the one scheduled first,
+    // and the other waits behind it; both complete before their refund times.
+    let root = tempdir().unwrap();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut store = SqliteSwapStore::open(root.path().join("order-maker.sqlite3")).unwrap();
+    let claims = root.path().join("lez-claims-submitted");
+    let now_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+
+    let holder_root = root.path().join("holder");
+    fs::create_dir(&holder_root).unwrap();
+    fs::set_permissions(&holder_root, fs::Permissions::from_mode(0o700)).unwrap();
+    register_actor(
+        &mut store,
+        &holder_root,
+        "m5-order-holder",
+        claim_logging_program(
+            &root.path().join("holder-log"),
+            "claim_evidence_available",
+            "wait",
+        )
+        .as_bytes(),
+    );
+    let holder_state =
+        ActorConfig::load_private(&actor_deployment(&holder_root, "m5-order-holder").source_config)
+            .unwrap()
+            .role_state_db()
+            .to_path_buf();
+    let holder_marker =
+        zec_reference_actor::revealing_claim_in_flight_marker(&holder_state).unwrap();
+    fs::write(&holder_marker, b"").unwrap();
+    store
+        .claim_maker_actor(
+            &SwapId::new("m5-order-holder").unwrap(),
+            MakerActorLeaseOwner::new([0x76; 16]).unwrap(),
+            10,
+        )
+        .unwrap()
+        .expect("holder lease");
+
+    // `a` is scheduled first (swap id order) but refunds later than `b`.
+    let swaps = [
+        ("m5-order-a-later-refund", now_ms + 3_600_000),
+        ("m5-order-b-earlier-refund", now_ms + 1_800_000),
+    ];
+    for (swap_id, refund_at_ms) in swaps {
+        let swap_root = root.path().join(swap_id);
+        fs::create_dir(&swap_root).unwrap();
+        fs::set_permissions(&swap_root, fs::Permissions::from_mode(0o700)).unwrap();
+        let state = ActorConfig::load_private(&actor_deployment(&swap_root, swap_id).source_config)
+            .unwrap()
+            .role_state_db()
+            .to_path_buf();
+        let program = gated_lez_claim_program(
+            swap_id,
+            &state,
+            &root.path().join(format!("{swap_id}-log")),
+            &claims,
+            refund_at_ms,
+        );
+        register_actor(&mut store, &swap_root, swap_id, program.as_bytes());
+    }
+    let config = MakerActorSupervisorConfig::new(Duration::from_secs(2), 5, 30, 8_192).unwrap();
+    let owner = MakerActorLeaseOwner::new([0x77; 16]).unwrap();
+    let run = |store: &mut SqliteSwapStore, now: u64| {
+        let outcome = supervise_one_due_maker_actor(store, owner, now, &config)
+            .unwrap()
+            .expect("a due actor runs");
+        let class = store
+            .list_maker_actor_processes()
+            .unwrap()
+            .into_iter()
+            .find(|record| record.swap_id() == outcome.swap_id())
+            .unwrap()
+            .last_failure_class()
+            .map(str::to_owned);
+        (
+            outcome.swap_id().as_str().to_owned(),
+            outcome.resolution(),
+            class,
+        )
+    };
+
+    // Both claims wait behind the holder's.
+    for expected in ["m5-order-a-later-refund", "m5-order-b-earlier-refund"] {
+        let (swap, resolution, class) = run(&mut store, 10);
+        assert_eq!(swap, expected);
+        assert_eq!(resolution, MakerActorSupervisorResolution::Backoff);
+        assert_eq!(class.as_deref(), Some("lez_revealing_claim_in_flight"));
+    }
+    // The holder's claim is final.
+    fs::remove_file(&holder_marker).unwrap();
+
+    // `a` is due first and waits for `b`, whose refund time is earlier.
+    let (swap, resolution, class) = run(&mut store, 40);
+    assert_eq!(swap, "m5-order-a-later-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Backoff);
+    assert_eq!(class.as_deref(), Some("lez_claim_waits_for_earlier_refund"));
+    let (swap, resolution, _) = run(&mut store, 40);
+    assert_eq!(swap, "m5-order-b-earlier-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Requeued);
+    // `b`'s claim is in flight: `a` keeps waiting, now behind the nonce.
+    let (swap, resolution, _) = run(&mut store, 45);
+    assert_eq!(swap, "m5-order-b-earlier-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Terminal);
+    let (swap, resolution, _) = run(&mut store, 70);
+    assert_eq!(swap, "m5-order-a-later-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Requeued);
+    let (swap, resolution, _) = run(&mut store, 75);
+    assert_eq!(swap, "m5-order-a-later-refund");
+    assert_eq!(resolution, MakerActorSupervisorResolution::Terminal);
+
+    assert_eq!(
+        fs::read_to_string(&claims).unwrap(),
+        "m5-order-b-earlier-refund\nm5-order-a-later-refund\n",
+        "the earlier refund's claim is submitted first, one at a time"
+    );
+    let finished_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .unwrap();
+    for (swap_id, refund_at_ms) in swaps {
+        assert!(
+            finished_ms < refund_at_ms,
+            "{swap_id} completed before its LEZ refund time"
+        );
+    }
+}
+
 #[test]
 fn manual_refund_invokes_only_recover_and_atomically_completes_action() {
     let root = tempdir().unwrap();

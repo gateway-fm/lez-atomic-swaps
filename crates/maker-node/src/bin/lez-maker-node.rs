@@ -558,6 +558,10 @@ async fn main() -> anyhow::Result<()> {
     let pair_authorities = PairAuthorities::configured(&arguments)?;
     let _state_lease = acquire_state_lease(&arguments.database)?;
     #[cfg(feature = "pair-zec")]
+    lez_maker_node::refuse_start_with_legacy_zec_swaps(
+        &SqliteSwapStore::open(&arguments.database).context("open maker database")?,
+    )?;
+    #[cfg(feature = "pair-zec")]
     import_terminal_projection(&arguments).await?;
     let actor_supervisor = configured_actor_supervisor(&arguments)?;
     let (listener, _socket_guard) = bind_owner_socket(&arguments.socket)?;

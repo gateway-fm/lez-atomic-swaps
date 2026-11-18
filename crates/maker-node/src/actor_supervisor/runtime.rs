@@ -907,7 +907,8 @@ fn classify_deployment(error: &MakerActorProcessError) -> ChildRunError {
 /// `lez_revealing_claim_held_near_refund` (a stable reason identifier; the
 /// held claim is the Maker's follow-up LEZ claim) once the held swap's own LEZ
 /// refund time is near, with the holder named beside its state for the
-/// monitor.
+/// monitor; `lez_claim_waits_for_earlier_refund` while no claim is in flight
+/// and another swap's claim with an earlier LEZ refund time goes first.
 fn effect_held_back(
     store: &SqliteSwapStore,
     lease: &MakerActorLeaseV1,
@@ -922,6 +923,7 @@ fn effect_held_back(
         RevealingClaimHold::Open => None,
         RevealingClaimHold::Held => Some("lez_revealing_claim_in_flight"),
         RevealingClaimHold::HeldNearRefund => Some("lez_revealing_claim_held_near_refund"),
+        RevealingClaimHold::WaitsForEarlierRefund => Some("lez_claim_waits_for_earlier_refund"),
     }
 }
 
@@ -933,6 +935,9 @@ enum RevealingClaimHold {
     Open,
     Held,
     HeldNearRefund,
+    /// No claim is in flight, and another swap's claim waits with an earlier
+    /// LEZ refund time: it goes first.
+    WaitsForEarlierRefund,
 }
 
 /// The Maker settles every Zcash swap as one LEZ account: its LEZ claims (the
@@ -942,6 +947,13 @@ enum RevealingClaimHold {
 /// while another non-terminal Zcash actor holds its in-flight marker —
 /// written when its claim is submitted, removed when the claim is final.
 /// Durable, never released on a timer.
+///
+/// Waiting claims go in LEZ refund order, not arrival order: each records its
+/// swap's LEZ refund time in its waiting marker before it looks at the
+/// others, and with no claim in flight a claim still waits while another
+/// swap's waiting marker names an earlier refund time (ties by swap id). A
+/// waiting marker past its refund time, or of a swap the schedule ended or
+/// failed, orders nothing.
 #[cfg(feature = "pair-zec")]
 fn revealing_claim_held_back(
     store: &SqliteSwapStore,
@@ -961,21 +973,30 @@ fn revealing_claim_held_back(
         .and_then(Value::as_str);
     if !submits_maker_lez_claim(command, next_action) {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
+        zec_reference_actor::record_lez_claim_waiting(own_state, None);
         return RevealingClaimHold::Open;
     }
+    let read = |key: &str| {
+        status
+            .as_ref()
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_u64)
+    };
+    // Announced before the others are read: of two claims arriving at once,
+    // at least one sees the other.
+    let own_refund_at_ms = read("lez_refund_at_ms").unwrap_or(u64::MAX);
+    zec_reference_actor::record_lez_claim_waiting(own_state, Some(own_refund_at_ms));
     let Ok(records) = store.list_maker_actor_processes() else {
         // Unknown peers: hold the claim back rather than race a nonce.
         return RevealingClaimHold::Held;
     };
-    let holder = records.iter().find(|record| {
-        record.swap_id() != manifest.swap_id()
-            && record.manifest().kind() == MakerActorKindV1::Zcash
-            && record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal
-            && zec_reference_actor::revealing_claim_in_flight_marker(
-                record.manifest().state_database_path(),
-            )
-            .is_some_and(|marker| marker.is_file())
-    });
+    let peers = || {
+        records.iter().filter(|record| {
+            record.swap_id() != manifest.swap_id()
+                && record.manifest().kind() == MakerActorKindV1::Zcash
+                && record.schedule_state() != lez_swap_store::MakerActorScheduleState::Terminal
+        })
+    };
     let now_ms = u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -983,16 +1004,38 @@ fn revealing_claim_held_back(
             .as_millis(),
     )
     .unwrap_or(u64::MAX);
-    let read = |key: &str| {
-        status
-            .as_ref()
-            .and_then(|value| value.get(key))
-            .and_then(Value::as_u64)
-    };
+    // A submitted claim holds the nonce whatever its swap's schedule says.
+    let in_flight = peers().find(|record| {
+        zec_reference_actor::revealing_claim_in_flight_marker(
+            record.manifest().state_database_path(),
+        )
+        .is_some_and(|marker| marker.is_file())
+    });
+    let earlier = in_flight.is_none().then(|| {
+        peers().find(|record| {
+            record.schedule_state() != lez_swap_store::MakerActorScheduleState::Failed
+                && zec_reference_actor::lez_claim_waiting_refund_at_ms(
+                    record.manifest().state_database_path(),
+                )
+                .is_some_and(|refund_at_ms| {
+                    waits_behind(
+                        (own_refund_at_ms, manifest.swap_id().as_str()),
+                        (refund_at_ms, record.swap_id().as_str()),
+                        now_ms,
+                    )
+                })
+        })
+    });
+    let blocker = in_flight.or(earlier.flatten());
     let refund_and_attention_ms =
         read("lez_refund_at_ms").zip(read("revealing_claim_hold_attention_ms"));
-    let hold = claim_hold(holder.is_some(), refund_and_attention_ms, now_ms);
-    let Some(holder) = holder.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
+    let hold = match claim_hold(blocker.is_some(), refund_and_attention_ms, now_ms) {
+        RevealingClaimHold::Held if in_flight.is_none() => {
+            RevealingClaimHold::WaitsForEarlierRefund
+        }
+        hold => hold,
+    };
+    let Some(holder) = blocker.filter(|_| hold == RevealingClaimHold::HeldNearRefund) else {
         zec_reference_actor::record_revealing_claim_holder(own_state, None);
         return hold;
     };
@@ -1005,6 +1048,15 @@ fn revealing_claim_held_back(
     }
     zec_reference_actor::record_revealing_claim_holder(own_state, Some(holder));
     RevealingClaimHold::HeldNearRefund
+}
+
+/// Whether a claim (`own`: its swap's LEZ refund time in ms and swap id)
+/// waits behind another waiting claim (`other`): the other's refund time is
+/// earlier (ties by swap id) and not yet passed at `now_ms` (a claim past its
+/// refund time cannot be the one to protect).
+#[cfg(feature = "pair-zec")]
+fn waits_behind(own: (u64, &str), other: (u64, &str), now_ms: u64) -> bool {
+    other.0 > now_ms && other < own
 }
 
 /// Whether this effect is the Maker's LEZ claim, the one the gate serializes:
@@ -2404,6 +2456,22 @@ mod exit_classification_tests {
             zec_reference_actor::revealing_claim_hold_attention_ms(1_800),
             600_000
         );
+    }
+
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_waiting_lez_claim_yields_only_to_an_earlier_live_refund_time() {
+        use super::waits_behind;
+        let now = 1_000;
+        assert!(waits_behind((5_000, "a"), (4_000, "b"), now));
+        assert!(!waits_behind((4_000, "b"), (5_000, "a"), now));
+        // Ties go by swap id, so exactly one of two equal claims goes.
+        assert!(waits_behind((5_000, "b"), (5_000, "a"), now));
+        assert!(!waits_behind((5_000, "a"), (5_000, "b"), now));
+        // A claim past its refund time orders nothing.
+        assert!(!waits_behind((5_000, "a"), (900, "b"), now));
+        // A status without a refund time waits behind every live one.
+        assert!(waits_behind((u64::MAX, "a"), (5_000, "b"), now));
     }
 
     #[test]
