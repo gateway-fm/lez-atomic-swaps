@@ -472,6 +472,17 @@ pub(super) fn decide_with(
         {
             return Decision::Recover;
         }
+        // Selling LEZ, the Maker's Zcash refund is recorded (MakerLegRefunded;
+        // the actor's claim drive records it when the HTLC was spent by that
+        // refund and not by the Taker's claim): no claim of that leg can land,
+        // even one that left, so the admitted claim runs as the Taker's LEZ
+        // refund, the only settlement left.
+        if action == TakerTerminalActionV1::Claim
+            && phase == Phase::MakerLegRefunded
+            && next_action == ZecLifecycleAction::RefundLez
+        {
+            return Decision::Recover;
+        }
         let (state, available_action, privacy_guidance) = zec_actor_progress(phase, next_action);
         let status = LifecycleStatus::Active {
             phase,
@@ -1426,6 +1437,50 @@ mod tests {
         assert_eq!(
             decide_with(claimable, Some((TakerTerminalActionV1::Claim, 4)), true),
             Decision::Claim
+        );
+    }
+
+    #[test]
+    fn a_submitted_zcash_claim_lost_to_the_makers_refund_runs_as_the_takers_lez_refund() {
+        // Selling LEZ: the Taker's Zcash claim left (its marker exists), was
+        // lost, and the Maker's refund spent the HTLC; the actor's claim drive
+        // recorded that refund (MakerLegRefunded, one generation on). The
+        // admitted claim can never land, so it runs as the Taker's LEZ refund,
+        // the only settlement left, whatever the marker says.
+        let refunded = active(Phase::MakerLegRefunded, 5, ZecLifecycleAction::RefundLez);
+        for claim_submitted in [true, false] {
+            assert_eq!(
+                decide_with(
+                    refunded,
+                    Some((TakerTerminalActionV1::Claim, 4)),
+                    claim_submitted
+                ),
+                Decision::Recover
+            );
+        }
+        // The swap offers the refund to the owner (progress), and an
+        // admitted refund there runs too.
+        assert_eq!(
+            super::zec_actor_progress(Phase::MakerLegRefunded, ZecLifecycleAction::RefundLez),
+            (
+                super::TakerSwapStateV1::RefundAvailable,
+                Some(TakerTerminalActionV1::Refund),
+                None
+            )
+        );
+        assert_eq!(
+            decide_with(refunded, Some((TakerTerminalActionV1::Refund, 5)), true),
+            Decision::Recover
+        );
+        assert_eq!(decide_with(refunded, None, true), Decision::Observe);
+        // Selling ZEC is unchanged.
+        assert_eq!(
+            decide_with(
+                active(Phase::MakerLegRefunded, 5, ZecLifecycleAction::RefundZcash),
+                Some((TakerTerminalActionV1::Claim, 4)),
+                true
+            ),
+            Decision::Observe
         );
     }
 

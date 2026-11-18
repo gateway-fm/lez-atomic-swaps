@@ -4296,6 +4296,97 @@ async fn assert_zcash_claim_window(id: &str, secret: [u8; 32]) {
     assert_eq!(fixture.corridor.revealing_submission_bytes().len(), 2);
 }
 
+#[tokio::test]
+async fn a_taker_whose_zcash_claim_was_lost_to_the_makers_refund_refunds_its_lez() {
+    // TakerSellsLez: the Taker's revealing Zcash claim left, then dropped, and
+    // the Maker's refund spent the HTLC. The claim can never land; the Taker's
+    // claim drive records the Maker's refund (MakerLegRefunded) through the
+    // counterparty refund observation, and the Taker's LEZ refund follows.
+    // Without it the Taker waited on a spent HTLC forever.
+    for (id, secret, sent) in [
+        ("sdk-lost-claim-sent", [0xb7; 32], true),
+        ("sdk-lost-claim-unsent", [0xb8; 32], false),
+    ] {
+        let direction = SwapDirection::TakerSellsLez;
+        let mut fixture =
+            activate_claim_actor_fixture(id, direction, Participant::Taker, secret).await;
+        lock_claim_actor_fixture(direction, &mut fixture).await;
+        let agreement = fixture.taker.agreement().clone();
+        fixture
+            .corridor
+            .expose_funding_as(exact_zcash_funding_observation(&agreement));
+        let now = LezUnixMilliseconds::new(0);
+        if sent {
+            assert_eq!(
+                fixture.taker.drive_claim(now).await.expect("claim sent"),
+                ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash)
+            );
+            fixture.corridor.spend_zcash_htlc_as(None);
+        }
+        // The HTLC is spent and the Maker's refund is not on the chain yet: a wait.
+        fixture
+            .corridor
+            .expose_funding_as(ZcashFundingObservationV1::Spent);
+        assert_eq!(
+            fixture.taker.drive_claim(now).await.expect("spent waits"),
+            ClaimDriveOutcome::AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1::Spent)
+        );
+        assert_eq!(fixture.taker.status(), Phase::BothLegsLocked);
+        // The Maker's Zcash refund is canonical: the Taker records it.
+        fixture.refunds.set_eligibility(
+            RefundStepV1::Zcash,
+            RefundEligibilityObservationV1::canonical(refund_position(
+                &agreement,
+                RefundStepV1::Zcash,
+            )),
+        );
+        fixture.refunds.confirm(RefundStepV1::Zcash);
+        let recorded = fixture
+            .taker
+            .drive_claim(now)
+            .await
+            .expect("the Maker's refund is recorded");
+        assert_eq!(
+            recorded,
+            ClaimDriveOutcome::AwaitingSafeZcashFunding(ZcashFundingWaitReasonV1::Spent)
+        );
+        assert_eq!(fixture.taker.status(), Phase::MakerLegRefunded, "{id}");
+        assert_eq!(fixture.taker.next_action(), ZecLifecycleAction::RefundLez);
+        assert!(
+            fixture
+                .refunds
+                .events()
+                .contains(&RefundPortEvent::ObserveCounterparty(RefundStepV1::Zcash))
+        );
+        assert_eq!(
+            fixture.corridor.revealing_submission_bytes().len(),
+            usize::from(sent),
+            "nothing more went out"
+        );
+        // The Taker's own LEZ refund runs at the LEZ refund time.
+        fixture.refunds.set_eligibility(
+            RefundStepV1::Lez,
+            RefundEligibilityObservationV1::canonical(refund_position(
+                &agreement,
+                RefundStepV1::Lez,
+            )),
+        );
+        assert_eq!(
+            fixture
+                .taker
+                .drive_refund(now)
+                .await
+                .expect("the Taker's LEZ refund"),
+            RefundDriveOutcome::Submitted(RefundStepV1::Lez)
+        );
+        fixture.refunds.confirm(RefundStepV1::Lez);
+        assert!(matches!(
+            fixture.taker.drive_refund(now).await.expect("projected"),
+            RefundDriveOutcome::Refunded { .. }
+        ));
+    }
+}
+
 async fn assert_funding_wait(
     fixture: &mut ClaimActorFixture,
     observation: ZcashFundingObservationV1,

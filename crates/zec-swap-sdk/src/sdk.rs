@@ -1624,11 +1624,14 @@ where
     }
 }
 
+// The claim drive also reads the Maker's Zcash refund (`TakerSellsLez`: a Taker whose claim can no
+// longer land records it and turns to its LEZ refund), so it needs the Zcash refund observation
+// and the refund journal as well.
 impl<Lez, Zcash, Store> ActiveZecSwap<Lez, Zcash, Store>
 where
     Lez: LezClaimPort,
-    Zcash: ZcashClaimPort,
-    Store: ClaimRecoveryStore,
+    Zcash: ZcashClaimPort + ZcashRefundPort,
+    Store: ClaimRecoveryStore + RefundRecoveryStore,
 {
     /// Advances the agreement-directed claim path without accepting role, chain, or secret args.
     ///
@@ -2057,6 +2060,11 @@ where
                 ));
             }
             ZcashFundingObservationV1::Spent => {
+                // Our claim (if one left) is not on the chain and the HTLC is spent: only the
+                // Maker's refund spends it then. Once that refund is canonical it is recorded
+                // (MakerLegRefunded) and the Taker's settlement is its LEZ refund; until then
+                // this waits as before.
+                self.record_observed_maker_zcash_refund().await?;
                 return Ok(ClaimDriveOutcome::AwaitingSafeZcashFunding(
                     ZcashFundingWaitReasonV1::Spent,
                 ));
@@ -2111,6 +2119,31 @@ where
             .await
             .map_err(|error| ZecSdkError::ZcashClaim(Box::new(error)))?;
         Ok(ClaimDriveOutcome::Submitted(ClaimStepV1::RevealingZcash))
+    }
+
+    /// `TakerSellsLez`, the Taker with the Maker's Zcash HTLC spent and no claim of its own on
+    /// the chain: records the Maker's Zcash refund once it is canonical, through the same
+    /// counterparty refund observation the Taker's recovery uses. The swap then reads
+    /// `MakerLegRefunded` and the Taker's next action is its LEZ refund. While that refund is
+    /// absent or unstable nothing is recorded.
+    async fn record_observed_maker_zcash_refund(&mut self) -> Result<(), ZecSdkError> {
+        let context = self.zcash_funding_context()?;
+        let observation = self
+            .zcash
+            .observe_counterparty_refund(self.agreement(), &context)
+            .await
+            .map_err(|error| ZecSdkError::ZcashRefund(Box::new(error)))?;
+        if let RefundObservationV1::Confirmed(evidence) = observation {
+            let transition = RefundTransitionV1::from_observed(
+                self.agreement(),
+                &self.coordinator,
+                self.local_participant(),
+                self.revision,
+                evidence,
+            )?;
+            self.commit_refund_transition(transition).await?;
+        }
+        Ok(())
     }
 
     /// `TakerSellsLez`: the Maker reads the Taker's revealing Zcash claim and its preimage.
@@ -2527,6 +2560,48 @@ where
                 actual: u64::MAX,
             })
     }
+
+    async fn commit_refund_transition(
+        &mut self,
+        transition: RefundTransitionV1,
+    ) -> Result<RefundDriveOutcome, ZecSdkError> {
+        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
+        let expected = self.checked_next_refund_revision()?;
+        let commit = match self.store.commit_refund_transition(&transition).await {
+            Ok(commit) => commit,
+            Err(error) => {
+                let probe = self
+                    .store
+                    .load_refund_transition(self.coordinator.id(), self.revision)
+                    .await
+                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
+                if probe.as_ref() == Some(&transition) {
+                    FirstLockProjectionCommit::new(expected, true)
+                } else {
+                    return Err(ZecSdkError::Persistence(Box::new(error)));
+                }
+            }
+        };
+        if commit.revision() != expected {
+            return Err(ZecSdkError::InvalidProjectionRevision {
+                expected,
+                actual: commit.revision(),
+            });
+        }
+        let step = transition.evidence().step();
+        self.coordinator = next;
+        self.revision = commit.revision();
+        if self.status() == Phase::Refunded {
+            Ok(RefundDriveOutcome::Refunded {
+                revision: self.revision,
+            })
+        } else {
+            Ok(RefundDriveOutcome::Projected {
+                step,
+                revision: self.revision,
+            })
+        }
+    }
 }
 
 // The refund step the active coordinator admits now. None once a revealing claim is recorded:
@@ -2940,48 +3015,6 @@ where
                     Err(ZecSdkError::Persistence(Box::new(error)))
                 }
             }
-        }
-    }
-
-    async fn commit_refund_transition(
-        &mut self,
-        transition: RefundTransitionV1,
-    ) -> Result<RefundDriveOutcome, ZecSdkError> {
-        let next = transition.apply_to(self.agreement(), &self.coordinator, self.revision)?;
-        let expected = self.checked_next_refund_revision()?;
-        let commit = match self.store.commit_refund_transition(&transition).await {
-            Ok(commit) => commit,
-            Err(error) => {
-                let probe = self
-                    .store
-                    .load_refund_transition(self.coordinator.id(), self.revision)
-                    .await
-                    .map_err(|probe_error| ZecSdkError::Persistence(Box::new(probe_error)))?;
-                if probe.as_ref() == Some(&transition) {
-                    FirstLockProjectionCommit::new(expected, true)
-                } else {
-                    return Err(ZecSdkError::Persistence(Box::new(error)));
-                }
-            }
-        };
-        if commit.revision() != expected {
-            return Err(ZecSdkError::InvalidProjectionRevision {
-                expected,
-                actual: commit.revision(),
-            });
-        }
-        let step = transition.evidence().step();
-        self.coordinator = next;
-        self.revision = commit.revision();
-        if self.status() == Phase::Refunded {
-            Ok(RefundDriveOutcome::Refunded {
-                revision: self.revision,
-            })
-        } else {
-            Ok(RefundDriveOutcome::Projected {
-                step,
-                revision: self.revision,
-            })
         }
     }
 }
