@@ -304,11 +304,10 @@ impl RecoverySchedule {
                 actual: taker_refund.chain,
             });
         }
-        let expected_safety_order = match pair {
-            Pair::Bitcoin => [maker_refund.chain, taker_refund.chain],
-            Pair::Zcash => [Chain::Lez, Chain::Zcash],
-            Pair::Monero => unreachable!("Monero returned before deadline validation"),
-        };
+        // The Maker-funded leg refunds first for every deadline pair (AGENTS.md: swap
+        // flows are the same for every pair): the Taker claims that leg first, so the
+        // Maker's refund of it must open before the Taker's refund of its own leg.
+        let expected_safety_order = [maker_refund.chain, taker_refund.chain];
         if [safety.earlier_chain, safety.later_chain] != expected_safety_order {
             return Err(Error::WrongTimelockOrder {
                 pair,
@@ -947,16 +946,14 @@ impl SwapCoordinator {
 
     /// Participant whose claim must publish the adaptor witness or HTLC preimage first.
     ///
-    /// ZEC follows the RFP's chain-relative order: the LEZ recipient claims first and the ZEC
-    /// recipient follows. BTC's first-funding taker claims the maker-funded leg first. XMR keeps
-    /// the reviewed LEZ-first COMIT order in which the maker claims first.
+    /// BTC and ZEC follow the common flow in both directions: the first-funding Taker holds
+    /// the secret and claims the Maker-funded leg first. XMR keeps the reviewed LEZ-first COMIT
+    /// order in which the maker claims first.
     #[must_use]
     pub const fn first_claimant(&self) -> Participant {
-        match (self.pair, self.direction) {
-            (Pair::Bitcoin, _) | (Pair::Zcash, SwapDirection::TakerSellsForeign) => {
-                Participant::Taker
-            }
-            (Pair::Monero, _) | (Pair::Zcash, SwapDirection::TakerSellsLez) => Participant::Maker,
+        match self.pair {
+            Pair::Bitcoin | Pair::Zcash => Participant::Taker,
+            Pair::Monero => Participant::Maker,
         }
     }
 
