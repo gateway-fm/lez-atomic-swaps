@@ -105,8 +105,9 @@ pub enum ZecProfileId {
     /// the Maker's LEZ claim after the Taker's Zcash claim; the Taker claims
     /// only while 3 blocks remain.
     DeterministicLocalDevnetV7,
-    /// [`Self::DeterministicLocalDevnetV7`] with the 4-minute LEZ refund delay
-    /// of the refund journeys, which never claim.
+    /// [`Self::DeterministicLocalDevnetV7`] with an 8-minute LEZ refund delay
+    /// for the refund journeys, which never claim: long enough that the
+    /// Maker's funding falls inside the claim window, short of V7's 12 min.
     DeterministicLocalDevnetV8,
     /// Zcash Testnet NU7 and the LEZ v0.2 testnet, Taker reveals first: in
     /// `TakerSellsLez` the Maker's Zcash refund (95 blocks) is reached by
@@ -353,9 +354,15 @@ impl ZecRefundProfile {
                 zcash_reveal_margin_blocks: 3,
                 zcash_slowest_block_millis: None,
             },
+            // 480 s, not V6's 240 s: the Maker stops funding Zcash once the claim
+            // window (refund time minus the 120 s margin) closes, and a devnet
+            // take reaches the Maker's funding about 150 s after the anchor
+            // (provisioning to take 117 s, the Taker's lock 35 s; 2026-11-18). Under
+            // 240 s the window closed at the anchor plus 120 s and the Maker never
+            // funded.
             ZecProfileId::DeterministicLocalDevnetV8 => Self {
                 id,
-                lez_refund_delay: UnixSeconds::new(240),
+                lez_refund_delay: UnixSeconds::new(480),
                 ..Self::for_id(ZecProfileId::DeterministicLocalDevnetV7)
             },
             ZecProfileId::PublicTestnetV3 => Self {

@@ -50,7 +50,7 @@
 #                         profile.rs), per direction. TakerSellsLez: the
 #                         Taker-reveals-first deterministic-local-devnet-v7
 #                         (NU7, 12 min LEZ refund delay, 16-block Zcash
-#                         refund window) by default, -v8 (NU7, 4 min) for the
+#                         refund window) by default, -v8 (NU7, 8 min) for the
 #                         refund journeys, which never claim.
 #                         TakerSellsForeign: deterministic-local-devnet-v5
 #                         (NU7, 12 min) by default, -v6 (NU7, 4 min) for the

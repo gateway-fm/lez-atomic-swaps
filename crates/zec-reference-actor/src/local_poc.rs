@@ -670,7 +670,7 @@ enum LocalPocProfile {
     /// profile for swaps that claim (NU7, 12 min LEZ refund delay, 16-block
     /// Zcash refund window).
     DeterministicLocalDevnetV7,
-    /// `deterministic-local-devnet-v8`: V7 with a 4 min LEZ refund delay, for
+    /// `deterministic-local-devnet-v8`: V7 with an 8 min LEZ refund delay, for
     /// the devnet's refund journeys (they never claim).
     DeterministicLocalDevnetV8,
     /// `public-testnet-v3`: Zcash Testnet on NU7 and the official LEZ v0.2

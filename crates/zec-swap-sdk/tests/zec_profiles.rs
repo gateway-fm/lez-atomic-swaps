@@ -220,7 +220,7 @@ fn taker_reveals_first_profiles_match_the_reviewed_parameters() {
             ZecProfileId::DeterministicLocalDevnetV8,
             "deterministic-local-devnet-v8",
             NetworkType::Regtest,
-            240,
+            480,
             16,
             120,
             (1, 1),
