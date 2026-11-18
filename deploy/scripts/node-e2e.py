@@ -62,7 +62,7 @@ deterministic-local-devnet-v8 and every other ZEC scenario under -v7 (the
 Taker-reveals-first profiles: 16-block Zcash refund window, 120 s margin);
 selling ZEC, under -v6 and -v5 (zec-provision.sh --profile; all four NU7, the
 devnet Zebra 7's branch). The LEZ refund opens the profile's LEZ refund delay
-(4 min under -v6/-v8, 12 min under -v5/-v7) after the corridor was provisioned
+(4 min under -v6, 8 min under -v8, 12 min under -v5/-v7) after the corridor was provisioned
 and the Zcash refund at an absolute zebra height (the anchor, tip at
 provisioning + 1, plus the profile's refund blocks: + 16 under -v7/-v8, + 8
 under -v5/-v6); the refund scenarios read those from the corridor and wait for
@@ -2580,7 +2580,7 @@ def zec_profile_refund_delay(profile: str) -> int:
     return {"deterministic-local-devnet-v1": 1800, "deterministic-local-devnet-v2": 1800,
             "deterministic-local-devnet-v3": 720, "deterministic-local-devnet-v4": 240,
             "deterministic-local-devnet-v5": 720, "deterministic-local-devnet-v6": 240,
-            "deterministic-local-devnet-v7": 720, "deterministic-local-devnet-v8": 240,
+            "deterministic-local-devnet-v7": 720, "deterministic-local-devnet-v8": 480,
             "public-testnet-v2": 7200, "public-testnet-v3": 14400}.get(profile, 60)
 
 
@@ -3544,27 +3544,18 @@ def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     beside it with its own anchor (zec-provision.sh --add, Nodes recreated with
     both), taken and brought there likewise.
 
-    Selling ZEC A's revealing LEZ claim waits at claim_available while B is
-    set up and the Zcash claims overlap. Selling LEZ the Taker's revealing
-    Zcash claim is what lets the Maker claim LEZ, and the Taker sends it only
-    inside A's own claim window (its LEZ refund time minus the margin), so A
-    is claimed and completed first, the Maker's LEZ claim of A final before
-    B's LEZ steps start; then B is claimed."""
+    A's claim waits at claim_available while B is set up, then both are
+    claimed. Selling LEZ the two Taker Zcash claims reveal close together, so
+    the Maker holds two LEZ claims at once and serialises them on its one LEZ
+    account, the earlier LEZ refund time first; A's claim is still inside its
+    own claim window (B takes about a minute to add and take, the window is
+    600 s under -v7)."""
     first = zec_provision()
     swap_a = zec_take_or_resume(first["offer_id"], stamp, "-a")
     config_a = zec_taker_actor_config(first["receipt_output"])
     views = {swap_a: zec_wait_until(swap_a, config_a, {"claim_available"}, timeout=2400, corridor=first,
                                      describe=f"({swap_a}: {zec_flow()[1:-1]})")}
     claimed_first = set()
-    if zec_taker_sells_lez():
-        result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-0",
-                                                       "swap_id": swap_a, "expected_generation": views[swap_a]["progress_generation"]},
-                      timeout=300)
-        log(f"  Taker claimed Zcash on {swap_a[:12]} (replay={result.get('was_replay')}); the Maker claims LEZ before B starts")
-        zec_wait_until(swap_a, config_a, {"completed"}, timeout=900, corridor=first,
-                       describe="(A's Zcash claim, then the Maker's LEZ claim)")
-        wait_completed(swap_a, timeout=600)
-        claimed_first.add(swap_a)
     zec_provision(add=True)
     corridors = list(ZEC_CORRIDORS)
     if len(corridors) != 2 or corridors[0]["catalog_swap_id"] != swap_a:
@@ -4260,13 +4251,17 @@ def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
 
 
 def zec_maker_zcash_refund_first(swap_id: str, stamp: str, corridor: dict, funding: tuple[str, int],
-                                 timeout: int) -> tuple[str, int]:
+                                 timeout: int, queue_refund: bool = True) -> tuple[str, int]:
     """Selling LEZ with the Taker's claim never sent: the Maker-funded Zcash leg
     refunds first. Waits until the Taker's claim window has closed (the LEZ
     refund time minus the profile's margin), mines zebra to the agreement's
     refund height, queues the Maker's refund (the operator action the Maker
-    desk has no button for) and waits for its Zcash refund in a block and the
-    Maker at maker_leg_refunded. Returns the refund transaction and height."""
+    desk has no button for) unless `queue_refund` is false, and waits for its
+    Zcash refund in a block and the Maker at maker_leg_refunded. With
+    `queue_refund` false nothing is queued: the Maker Node refunds on its own
+    (its actor reports refund_zcash once the window has closed and the
+    supervisor alternates observing the Taker's claim and recovering).
+    Returns the refund transaction and height."""
     opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     closes = opens - corridor["required_margin_seconds"]
     wait_until(closes + 15, "for the Taker's claim window to close (the LEZ refund time minus the profile's margin)")
@@ -4274,7 +4269,7 @@ def zec_maker_zcash_refund_first(swap_id: str, stamp: str, corridor: dict, fundi
     height = int(zebra("getblockcount"))
     if height < corridor["zcash_refund_height"]:
         zebra_mine(corridor["zcash_refund_height"] - height, "Zcash refund height")
-    if maker_view(swap_id).get("schedule_state") != "terminal":
+    if queue_refund and maker_view(swap_id).get("schedule_state") != "terminal":
         try:
             result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
             log(f"  Maker refund queued: {json.dumps(result)[:160]}")
@@ -4302,8 +4297,9 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
     gate), so no secret is revealed. The Maker-funded leg refunds first: once
     the Taker's claim window has closed (the agreement's LEZ refund time minus
     the profile's margin) zebra is mined to the agreement's refund height and
-    the Maker refunds its Zcash; at the LEZ refund time the Taker refunds its
-    LEZ, and both Nodes end `refunded`."""
+    the Maker Node refunds its Zcash on its own, with no operator action; at
+    the LEZ refund time the Taker refunds its LEZ, and both Nodes end
+    `refunded`."""
     if not zec_taker_sells_lez():
         return scenario_zec_maker_refund_foreign(stamp)
     corridor = zec_provision(profile=zec_refund_profile())
@@ -4319,7 +4315,10 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
         raise Failure("the Taker observed the Maker's lock, but no zebra block spends the provisioned outpoint")
     log(f"  Maker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker never claims")
     opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
-    refund_tx = zec_maker_zcash_refund_first(swap_id, stamp, corridor, funding, timeout=1500)
+    # No operator action: the Maker Node's own supervisor refunds its earlier
+    # Zcash leg (ObserveThenRecover); the desk journey queues it by hand.
+    refund_tx = zec_maker_zcash_refund_first(swap_id, stamp, corridor, funding, timeout=1500,
+                                             queue_refund=False)
     refunded_at = int(time.time())
     log(f"  the Maker's Zcash refund landed {'before' if refunded_at < opens else 'after'} the LEZ refund time")
     wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
@@ -4355,7 +4354,7 @@ def scenario_zec_maker_refund_foreign(stamp: str) -> dict:
     log(f"  Taker's Zcash funding {funding[0]} is in zebra block {funding[1]}; the Taker never claims")
     opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
-    if maker_view(swap_id).get("schedule_state") != "terminal":
+    if queue_refund and maker_view(swap_id).get("schedule_state") != "terminal":
         try:
             result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
             log(f"  Maker refund queued: {json.dumps(result)[:160]}")
@@ -4616,7 +4615,7 @@ def scenario_zec_refund_then_maker_lock(stamp: str) -> dict:
         zec_restore_routes("taker", "indexer", "sequencer")
     wait_lez_view("taker", restored=True)
     log("  the Taker sees LEZ again; the Maker refunds LEZ, then the Taker its Zcash")
-    if maker_view(swap_id).get("schedule_state") != "terminal":
+    if queue_refund and maker_view(swap_id).get("schedule_state") != "terminal":
         try:
             result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
             log(f"  Maker refund queued: {json.dumps(result)[:160]}")
@@ -4825,7 +4824,7 @@ def zec_maker_refund_tail(swap_id: str, stamp: str, config: str, corridor: dict,
     # as on the desk. The queued refund runs the agreement-ordered recovery:
     # the Maker refunds its own Zcash leg at the refund height and observes
     # the Taker's LEZ refund.
-    if maker_view(swap_id).get("schedule_state") != "terminal":
+    if queue_refund and maker_view(swap_id).get("schedule_state") != "terminal":
         try:
             result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
             log(f"  Maker refund queued: {json.dumps(result)[:160]}")
