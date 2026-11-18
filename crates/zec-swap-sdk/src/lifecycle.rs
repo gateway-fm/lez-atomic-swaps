@@ -162,6 +162,20 @@ pub enum ZecSdkError {
         /// The caller's trusted clock, Unix milliseconds.
         now_ms: u64,
     },
+    /// The Taker's revealing Zcash claim (`TakerSellsLez`) is not sent: too few blocks remain
+    /// before the Maker's Zcash refund height for the claim to be buried before that refund
+    /// can be mined. The Taker's settlement is its LEZ refund.
+    #[error(
+        "the revealing Zcash claim window closed: tip {tip_height} + {margin_blocks} blocks reaches the refund height {refund_height}; the claim is not sent"
+    )]
+    ZcashRevealWindowClosed {
+        /// Canonical Zcash tip height observed with the funding.
+        tip_height: u32,
+        /// The agreement's Zcash refund height.
+        refund_height: u32,
+        /// The profile's reveal margin.
+        margin_blocks: u32,
+    },
     /// Refund driving is unavailable in the active pre-lock, claim, or completed phase, or
     /// in any phase once a revealing claim is recorded.
     #[error("refund driving is unavailable in phase {0:?}")]
@@ -230,17 +244,34 @@ pub enum ZecLifecycleAction {
     CreateAndFundLez,
     /// Construct and fund the transparent BIP-199 output.
     FundZcash,
-    /// Claim LEZ first and reveal the SHA-256 preimage.
+    /// Claim LEZ: the Taker's revealing claim in `TakerSellsForeign`, the Maker's follow-up
+    /// claim with the preimage read from the Taker's Zcash claim in `TakerSellsLez`.
     ClaimLez,
-    /// Claim the Zcash HTLC using already persisted claim material.
+    /// Claim the Zcash HTLC: the Taker's revealing claim in `TakerSellsLez`, the Maker's
+    /// follow-up claim with the preimage read from the Taker's LEZ claim in
+    /// `TakerSellsForeign`.
     ClaimZcash,
-    /// Refund the later Zcash HTLC after the earlier LEZ refund is durable.
+    /// Refund the local Zcash leg: the Taker's (later) Zcash HTLC in `TakerSellsForeign` after
+    /// the Maker's earlier LEZ refund, the Maker's (earlier) Zcash HTLC in `TakerSellsLez`.
     RefundZcash,
+    /// Refund the local LEZ leg after the other leg is refunded: the Taker's (later) LEZ escrow
+    /// in `TakerSellsLez`.
+    RefundLez,
     /// The swap has reached its completed phase.
     Complete,
 }
 
 pub(crate) fn next_action(coordinator: &SwapCoordinator, local: Participant) -> ZecLifecycleAction {
+    let direction = coordinator.direction();
+    // The Taker claims the Maker-funded leg first; the Maker follows on the Taker-funded leg.
+    let claim_of = |participant: Participant| match coordinator.funded_chain(participant.other()) {
+        lez_swap_core::Chain::Lez => ZecLifecycleAction::ClaimLez,
+        _ => ZecLifecycleAction::ClaimZcash,
+    };
+    let refund_of = |participant: Participant| match coordinator.funded_chain(participant) {
+        lez_swap_core::Chain::Lez => ZecLifecycleAction::RefundLez,
+        _ => ZecLifecycleAction::RefundZcash,
+    };
     match coordinator.phase() {
         Phase::Offered if local == Participant::Taker => match coordinator.funded_chain(local) {
             lez_swap_core::Chain::Lez => ZecLifecycleAction::CreateAndFundLez,
@@ -254,16 +285,30 @@ pub(crate) fn next_action(coordinator: &SwapCoordinator, local: Participant) -> 
                 _ => ZecLifecycleAction::Wait,
             }
         }
-        Phase::BothLegsLocked if local == coordinator.first_claimant() => {
-            ZecLifecycleAction::ClaimLez
-        }
+        Phase::BothLegsLocked if local == coordinator.first_claimant() => claim_of(local),
         Phase::ClaimEvidenceAvailable if local == coordinator.first_claimant().other() => {
-            ZecLifecycleAction::ClaimZcash
+            claim_of(local)
         }
+        // TakerSellsForeign keeps its order: after the Maker's earlier LEZ refund the Taker
+        // refunds its later Zcash HTLC.
         Phase::MakerLegRefunded | Phase::TakerLegRefunded
-            if local == coordinator.first_claimant() =>
+            if direction == lez_swap_core::SwapDirection::TakerSellsForeign
+                && local == coordinator.first_claimant() =>
         {
             ZecLifecycleAction::RefundZcash
+        }
+        // TakerSellsLez: after one leg's refund, the other leg's funder refunds its own.
+        Phase::MakerLegRefunded
+            if direction == lez_swap_core::SwapDirection::TakerSellsLez
+                && local == Participant::Taker =>
+        {
+            refund_of(local)
+        }
+        Phase::TakerLegRefunded
+            if direction == lez_swap_core::SwapDirection::TakerSellsLez
+                && local == Participant::Maker =>
+        {
+            refund_of(local)
         }
         Phase::Completed | Phase::Refunded => ZecLifecycleAction::Complete,
         _ => ZecLifecycleAction::Wait,

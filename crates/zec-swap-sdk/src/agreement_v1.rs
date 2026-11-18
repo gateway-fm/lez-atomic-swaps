@@ -500,11 +500,17 @@ pub enum ZecRolePayoutV1 {
 }
 
 /// Signed anchors and calibrated conservative bounds used to derive both refund deadlines.
+///
+/// The earlier refund is the Maker-funded leg's: LEZ in `TakerSellsForeign`, Zcash in
+/// `TakerSellsLez`. `earlier_refund_latest_ms` is the latest wall time (Unix ms) at which the
+/// earlier refund can open and must be at or after the LEZ deadline in `TakerSellsForeign`;
+/// `later_refund_earliest_unix_seconds` is the earliest wall time the later one can open and
+/// equals the LEZ deadline in `TakerSellsLez`.
 #[derive(BorshDeserialize, BorshSerialize, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ZecRefundPlanV1 {
     lez_funding_anchor_unix_seconds: u64,
     zcash_funding_anchor_height: u32,
-    earlier_refund_latest_lez_ms: u64,
+    earlier_refund_latest_ms: u64,
     later_refund_earliest_unix_seconds: u64,
 }
 
@@ -514,13 +520,13 @@ impl ZecRefundPlanV1 {
     pub const fn new(
         lez_funding_anchor_unix_seconds: u64,
         zcash_funding_anchor_height: u32,
-        earlier_refund_latest_lez_ms: u64,
+        earlier_refund_latest_ms: u64,
         later_refund_earliest_unix_seconds: u64,
     ) -> Self {
         Self {
             lez_funding_anchor_unix_seconds,
             zcash_funding_anchor_height,
-            earlier_refund_latest_lez_ms,
+            earlier_refund_latest_ms,
             later_refund_earliest_unix_seconds,
         }
     }
@@ -1336,10 +1342,29 @@ impl ZecAgreementV1 {
         role_mapping(self.record.body.direction()).0
     }
 
-    /// Role that claims LEZ first and funds the Zcash contract.
+    /// Role that receives the escrowed LEZ and funds the Zcash contract: the Taker in
+    /// `TakerSellsForeign`, the Maker in `TakerSellsLez`. Claim order is not tied to it:
+    /// the Taker always claims first ([`Self::revealing_claimant`]).
     #[must_use]
     pub const fn lez_claimant(&self) -> Participant {
         role_mapping(self.record.body.direction()).1
+    }
+
+    /// The participant that holds the preimage and claims first: the Taker, in both
+    /// directions (the common flow, AGENTS.md). It claims the Maker-funded leg.
+    #[must_use]
+    pub const fn revealing_claimant(&self) -> Participant {
+        Participant::Taker
+    }
+
+    /// Chain of the revealing (first) claim: the Maker-funded leg, LEZ in
+    /// `TakerSellsForeign` and Zcash in `TakerSellsLez`.
+    #[must_use]
+    pub const fn revealing_chain(&self) -> Chain {
+        match self.record.body.direction() {
+            SwapDirection::TakerSellsForeign => Chain::Lez,
+            SwapDirection::TakerSellsLez => Chain::Zcash,
+        }
     }
 
     /// Exact role-derived LEZ owner destination.
@@ -1859,6 +1884,10 @@ fn decode_profile(value: u8) -> Result<ZecProfileRecordV1, ZecAgreementV1Error> 
         7 => Ok(ZecProfileRecordV1::DeterministicLocalV2),
         8 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV5),
         9 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV6),
+        10 => Ok(ZecProfileRecordV1::DeterministicLocalV3),
+        11 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV7),
+        12 => Ok(ZecProfileRecordV1::DeterministicLocalDevnetV8),
+        13 => Ok(ZecProfileRecordV1::PublicTestnetV3),
         _ => Err(ZecAgreementV1Error::MalformedWireRecord),
     }
 }
@@ -1967,6 +1996,19 @@ pub enum ZecAgreementV1Error {
     /// Conservative earlier-refund bound is before the actual profile-derived LEZ deadline.
     #[error("earlier-refund latest bound precedes the actual LEZ refund deadline")]
     EarlierRefundBoundBeforeLezDeadline,
+    /// In `TakerSellsLez` the later refund's earliest time must be the LEZ deadline.
+    #[error("the later refund bound is not the LEZ refund deadline")]
+    LaterRefundBoundIsNotLezDeadline,
+    /// In `TakerSellsLez` the earlier Zcash refund's latest time is faster than the
+    /// profile's slowest Zcash pace allows.
+    #[error("the earlier Zcash refund bound is faster than the profile's slowest pace")]
+    EarlierRefundBoundBelowSlowestPace,
+    /// `TakerSellsLez` under a profile in which the LEZ recipient (the Maker) claims
+    /// first: the Maker would hold the preimage while the Taker locks first, and could
+    /// take the LEZ without funding Zcash. Refused; such agreements need a
+    /// Taker-reveals-first profile.
+    #[error("TakerSellsLez requires a Taker-reveals-first ZEC profile")]
+    LegacyRevealOrder,
     /// Funding input-set commitment is empty.
     #[error("funding input-set commitment is empty")]
     EmptyFundingInputSetCommitment,
@@ -2204,8 +2246,9 @@ fn derive_protocol(
             body.refund_plan.lez_funding_anchor_unix_seconds,
         ))
         .map_err(ZecAgreementV1Error::InvalidRefundProfile)?;
-    if body.refund_plan.earlier_refund_latest_lez_ms < lez_refund_at.value() {
-        return Err(ZecAgreementV1Error::EarlierRefundBoundBeforeLezDeadline);
+    let direction = body.direction();
+    if !profile.admits(direction) {
+        return Err(ZecAgreementV1Error::LegacyRevealOrder);
     }
     let zcash_refund_at = profile
         .zcash_refund_at(BlockHeight::from_u32(
@@ -2215,13 +2258,45 @@ fn derive_protocol(
     if binding.expected_output().contract().refund_lock_time() != u32::from(zcash_refund_at) {
         return Err(ZecAgreementV1Error::ZcashRefundDeadlineMismatch);
     }
-    let direction = body.direction();
+    match direction {
+        // The earlier refund is LEZ's: its stated latest time cannot precede it.
+        SwapDirection::TakerSellsForeign => {
+            if body.refund_plan.earlier_refund_latest_ms < lez_refund_at.value() {
+                return Err(ZecAgreementV1Error::EarlierRefundBoundBeforeLezDeadline);
+            }
+        }
+        // The later refund is LEZ's: its earliest time is the LEZ deadline itself, and
+        // the earlier Zcash refund's stated latest time cannot be faster than the
+        // profile's slowest pace from the anchor (the anchor is the tip plus one).
+        SwapDirection::TakerSellsLez => {
+            if body.refund_plan.later_refund_earliest_unix_seconds
+                != lez_refund_at.to_unix_seconds_floor().value()
+            {
+                return Err(ZecAgreementV1Error::LaterRefundBoundIsNotLezDeadline);
+            }
+            if let Some(slowest) = profile.zcash_slowest_block_millis() {
+                let floor = u64::from(profile.zcash_refund_blocks())
+                    .checked_add(1)
+                    .and_then(|blocks| blocks.checked_mul(slowest))
+                    .and_then(|window| {
+                        body.refund_plan
+                            .lez_funding_anchor_unix_seconds
+                            .checked_mul(1_000)?
+                            .checked_add(window)
+                    })
+                    .ok_or(ZecAgreementV1Error::EarlierRefundBoundBelowSlowestPace)?;
+                if body.refund_plan.earlier_refund_latest_ms < floor {
+                    return Err(ZecAgreementV1Error::EarlierRefundBoundBelowSlowestPace);
+                }
+            }
+        }
+    }
     let schedule = profile
         .recovery_schedule(
             direction,
             lez_refund_at.to_unix_seconds_floor(),
             zcash_refund_at,
-            lez_swap_core::LezUnixMilliseconds::new(body.refund_plan.earlier_refund_latest_lez_ms),
+            lez_swap_core::LezUnixMilliseconds::new(body.refund_plan.earlier_refund_latest_ms),
             Some(UnixSeconds::new(
                 body.refund_plan.later_refund_earliest_unix_seconds,
             )),
@@ -2333,12 +2408,17 @@ fn validate_lez_chain_profile(
         | ZecProfileRecordV1::DeterministicLocalDevnetV4
         | ZecProfileRecordV1::DeterministicLocalV2
         | ZecProfileRecordV1::DeterministicLocalDevnetV5
-        | ZecProfileRecordV1::DeterministicLocalDevnetV6 => matches!(
+        | ZecProfileRecordV1::DeterministicLocalDevnetV6
+        | ZecProfileRecordV1::DeterministicLocalV3
+        | ZecProfileRecordV1::DeterministicLocalDevnetV7
+        | ZecProfileRecordV1::DeterministicLocalDevnetV8 => matches!(
             terms.chain.environment,
             LezEnvironmentV1::DeterministicLocalV0_2
                 | LezEnvironmentV1::DeterministicLocalV0_1_2Compatibility
         ),
-        ZecProfileRecordV1::PublicTestnetV1 | ZecProfileRecordV1::PublicTestnetV2 => {
+        ZecProfileRecordV1::PublicTestnetV1
+        | ZecProfileRecordV1::PublicTestnetV2
+        | ZecProfileRecordV1::PublicTestnetV3 => {
             terms.chain.environment == LezEnvironmentV1::PublicTestnetV0_2
         }
     };

@@ -38,9 +38,19 @@ pub enum ZecProfileRecordV1 {
     /// The devnet profile with the 12-minute LEZ refund delay on NU7 (wire
     /// tag 8).
     DeterministicLocalDevnetV5,
-    /// The devnet refund journeys' profile on NU7 (wire tag 9). Last on
-    /// purpose: tags are append-only.
+    /// The devnet refund journeys' profile on NU7 (wire tag 9).
     DeterministicLocalDevnetV6,
+    /// The test lane's Taker-reveals-first profile on NU7 (wire tag 10).
+    DeterministicLocalV3,
+    /// The devnet's Taker-reveals-first profile for swaps that claim (wire
+    /// tag 11).
+    DeterministicLocalDevnetV7,
+    /// The devnet's Taker-reveals-first refund journeys' profile (wire tag
+    /// 12).
+    DeterministicLocalDevnetV8,
+    /// The Taker-reveals-first public-testnet profile on NU7 (wire tag 13).
+    /// Last on purpose: tags are append-only.
+    PublicTestnetV3,
 }
 
 impl From<ZecProfileId> for ZecProfileRecordV1 {
@@ -56,6 +66,10 @@ impl From<ZecProfileId> for ZecProfileRecordV1 {
             ZecProfileId::DeterministicLocalV2 => Self::DeterministicLocalV2,
             ZecProfileId::DeterministicLocalDevnetV5 => Self::DeterministicLocalDevnetV5,
             ZecProfileId::DeterministicLocalDevnetV6 => Self::DeterministicLocalDevnetV6,
+            ZecProfileId::DeterministicLocalV3 => Self::DeterministicLocalV3,
+            ZecProfileId::DeterministicLocalDevnetV7 => Self::DeterministicLocalDevnetV7,
+            ZecProfileId::DeterministicLocalDevnetV8 => Self::DeterministicLocalDevnetV8,
+            ZecProfileId::PublicTestnetV3 => Self::PublicTestnetV3,
         }
     }
 }
@@ -73,6 +87,10 @@ impl From<ZecProfileRecordV1> for ZecProfileId {
             ZecProfileRecordV1::DeterministicLocalV2 => Self::DeterministicLocalV2,
             ZecProfileRecordV1::DeterministicLocalDevnetV5 => Self::DeterministicLocalDevnetV5,
             ZecProfileRecordV1::DeterministicLocalDevnetV6 => Self::DeterministicLocalDevnetV6,
+            ZecProfileRecordV1::DeterministicLocalV3 => Self::DeterministicLocalV3,
+            ZecProfileRecordV1::DeterministicLocalDevnetV7 => Self::DeterministicLocalDevnetV7,
+            ZecProfileRecordV1::DeterministicLocalDevnetV8 => Self::DeterministicLocalDevnetV8,
+            ZecProfileRecordV1::PublicTestnetV3 => Self::PublicTestnetV3,
         }
     }
 }

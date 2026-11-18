@@ -121,7 +121,7 @@ impl From<&RevealingClaimTransitionV1> for RevealingClaimTransitionRecordV1 {
             } else {
                 CLAIM_RECORD_SCHEMA_V1
             },
-            transition_kind: "revealing_lez".into(),
+            transition_kind: step_name(value.step()).into(),
             swap_id: value.swap_id().as_str().into(),
             agreement_commitment: *value.agreement_commitment(),
             local_participant: participant_name(value.local_participant()).into(),
@@ -157,7 +157,8 @@ impl RevealingClaimTransitionRecordV1 {
         preimage: ClaimPreimage,
     ) -> Result<RevealingClaimTransitionV1, ClaimRecordError> {
         require_revealing_schema("revealing claim transition", self.schema_version)?;
-        if self.transition_kind.as_ref() != "revealing_lez"
+        let step = ClaimStepV1::revealing(accepted.agreement());
+        if self.transition_kind.as_ref() != step_name(step)
             || self.predecessor_revision != predecessor_revision
             || self.intent_staged_revision > predecessor_revision
         {
@@ -170,9 +171,7 @@ impl RevealingClaimTransitionRecordV1 {
             accepted,
         )?;
         let intent = retained_intent.revalidate(accepted, coordinator, predecessor_revision)?;
-        if intent.staged_revision() != self.intent_staged_revision
-            || intent.step() != ClaimStepV1::RevealingLez
-        {
+        if intent.staged_revision() != self.intent_staged_revision || intent.step() != step {
             return Err(ClaimRecordError::RevisionMismatch);
         }
         let evidence = match (self.schema_version, &self.canonical_lez_snapshot) {
@@ -232,7 +231,7 @@ impl From<&ObservedRevealingClaimTransitionV1> for ObservedRevealingClaimTransit
             } else {
                 CLAIM_RECORD_SCHEMA_V1
             },
-            transition_kind: "observed_revealing_lez".into(),
+            transition_kind: observed_kind(value.step()).into(),
             swap_id: value.swap_id().as_str().into(),
             agreement_commitment: *value.agreement_commitment(),
             local_participant: participant_name(value.local_participant()).into(),
@@ -270,7 +269,8 @@ impl ObservedRevealingClaimTransitionRecordV1 {
         preimage: ClaimPreimage,
     ) -> Result<ObservedRevealingClaimTransitionV1, ClaimRecordError> {
         require_revealing_schema("observed revealing claim transition", self.schema_version)?;
-        if self.transition_kind.as_ref() != "observed_revealing_lez"
+        let step = ClaimStepV1::revealing(accepted.agreement());
+        if self.transition_kind.as_ref() != observed_kind(step)
             || self.predecessor_revision != predecessor_revision
         {
             return Err(ClaimRecordError::RevisionMismatch);
@@ -333,7 +333,7 @@ impl From<&FollowupClaimTransitionV1> for FollowupClaimTransitionRecordV1 {
     fn from(value: &FollowupClaimTransitionV1) -> Self {
         Self {
             schema_version: value.schema_version(),
-            transition_kind: "followup_zcash".into(),
+            transition_kind: step_name(value.step()).into(),
             swap_id: value.swap_id().as_str().into(),
             agreement_commitment: *value.agreement_commitment(),
             local_participant: participant_name(value.local_participant()).into(),
@@ -367,7 +367,8 @@ impl FollowupClaimTransitionRecordV1 {
         predecessor_revision: u64,
     ) -> Result<FollowupClaimTransitionV1, ClaimRecordError> {
         require_schema("follow-up claim transition", self.schema_version)?;
-        if self.transition_kind.as_ref() != "followup_zcash"
+        let step = ClaimStepV1::followup(accepted.agreement());
+        if self.transition_kind.as_ref() != step_name(step)
             || self.predecessor_revision != predecessor_revision
             || self.intent_staged_revision > predecessor_revision
         {
@@ -380,9 +381,7 @@ impl FollowupClaimTransitionRecordV1 {
             accepted,
         )?;
         let intent = retained_intent.revalidate(accepted, coordinator, predecessor_revision)?;
-        if intent.staged_revision() != self.intent_staged_revision
-            || intent.step() != ClaimStepV1::FollowupZcash
-        {
+        if intent.staged_revision() != self.intent_staged_revision || intent.step() != step {
             return Err(ClaimRecordError::RevisionMismatch);
         }
         let evidence = FollowupClaimEvidenceV1::new(
@@ -424,7 +423,7 @@ impl From<&ObservedFollowupClaimTransitionV1> for ObservedFollowupClaimTransitio
     fn from(value: &ObservedFollowupClaimTransitionV1) -> Self {
         Self {
             schema_version: value.schema_version(),
-            transition_kind: "observed_followup_zcash".into(),
+            transition_kind: observed_kind(value.step()).into(),
             swap_id: value.swap_id().as_str().into(),
             agreement_commitment: *value.agreement_commitment(),
             local_participant: participant_name(value.local_participant()).into(),
@@ -456,7 +455,8 @@ impl ObservedFollowupClaimTransitionRecordV1 {
         predecessor_revision: u64,
     ) -> Result<ObservedFollowupClaimTransitionV1, ClaimRecordError> {
         require_schema("observed follow-up claim transition", self.schema_version)?;
-        if self.transition_kind.as_ref() != "observed_followup_zcash"
+        let step = ClaimStepV1::followup(accepted.agreement());
+        if self.transition_kind.as_ref() != observed_kind(step)
             || self.predecessor_revision != predecessor_revision
         {
             return Err(ClaimRecordError::RevisionMismatch);
@@ -563,6 +563,17 @@ const fn step_name(step: ClaimStepV1) -> &'static str {
     match step {
         ClaimStepV1::RevealingLez => "revealing_lez",
         ClaimStepV1::FollowupZcash => "followup_zcash",
+        ClaimStepV1::RevealingZcash => "revealing_zcash",
+        ClaimStepV1::FollowupLez => "followup_lez",
+    }
+}
+
+const fn observed_kind(step: ClaimStepV1) -> &'static str {
+    match step {
+        ClaimStepV1::RevealingLez => "observed_revealing_lez",
+        ClaimStepV1::FollowupZcash => "observed_followup_zcash",
+        ClaimStepV1::RevealingZcash => "observed_revealing_zcash",
+        ClaimStepV1::FollowupLez => "observed_followup_lez",
     }
 }
 
@@ -570,6 +581,8 @@ fn parse_step(value: &str) -> Result<ClaimStepV1, ClaimRecordError> {
     match value {
         "revealing_lez" => Ok(ClaimStepV1::RevealingLez),
         "followup_zcash" => Ok(ClaimStepV1::FollowupZcash),
+        "revealing_zcash" => Ok(ClaimStepV1::RevealingZcash),
+        "followup_lez" => Ok(ClaimStepV1::FollowupLez),
         _ => Err(ClaimRecordError::RevisionMismatch),
     }
 }

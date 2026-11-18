@@ -1923,7 +1923,12 @@ impl ClaimRecoveryStore for SqliteZecRecoveryStore {
         supersession: &lez_zec_swap_sdk::ClaimSupersessionV1,
     ) -> Result<CreateFirstLockOutcome, Self::Error> {
         self.require_role(intent.local_participant())?;
-        if intent.step() != ClaimStepV1::RevealingLez {
+        // Only an owned LEZ claim is re-planned (its signer nonce can be taken): the
+        // Taker's revealing claim in TakerSellsForeign, the Maker's follow-up in TakerSellsLez.
+        if !matches!(
+            intent.step(),
+            ClaimStepV1::RevealingLez | ClaimStepV1::FollowupLez
+        ) {
             return Err(StoreError::InvalidZecRecoveryState);
         }
         let key = self.claim_key()?;
@@ -4297,8 +4302,12 @@ fn claim_submission_context<'a>(
     intent: &'a ClaimIntentV1,
 ) -> ClaimSubmissionContext<'a> {
     let purpose = match intent.step() {
-        ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
-        ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+        ClaimStepV1::RevealingLez | ClaimStepV1::FollowupLez => {
+            ClaimMaterialPurpose::LezClaimSubmission
+        }
+        ClaimStepV1::FollowupZcash | ClaimStepV1::RevealingZcash => {
+            ClaimMaterialPurpose::ZcashClaimSubmission
+        }
     };
     ClaimSubmissionContext::new(
         ClaimMaterialContext::new(
@@ -4323,8 +4332,12 @@ fn prepared_claim_submission_context<'a>(
     prepared: &'a PreparedClaimSubmissionV1,
 ) -> ClaimSubmissionContext<'a> {
     let purpose = match prepared.step() {
-        ClaimStepV1::RevealingLez => ClaimMaterialPurpose::LezClaimSubmission,
-        ClaimStepV1::FollowupZcash => ClaimMaterialPurpose::ZcashClaimSubmission,
+        ClaimStepV1::RevealingLez | ClaimStepV1::FollowupLez => {
+            ClaimMaterialPurpose::LezClaimSubmission
+        }
+        ClaimStepV1::FollowupZcash | ClaimStepV1::RevealingZcash => {
+            ClaimMaterialPurpose::ZcashClaimSubmission
+        }
     };
     ClaimSubmissionContext::new(
         ClaimMaterialContext::new(

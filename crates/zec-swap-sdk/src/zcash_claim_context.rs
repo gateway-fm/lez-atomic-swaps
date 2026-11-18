@@ -135,7 +135,14 @@ impl ZcashClaimContextV1 {
         agreement: &ZecAgreementV1,
         coordinator: &SwapCoordinator,
     ) -> Result<Self, ZcashClaimContextError> {
-        if coordinator.phase() != Phase::ClaimEvidenceAvailable {
+        // The Zcash claim is the follow-up in TakerSellsForeign and the Taker's revealing
+        // claim in TakerSellsLez, whose phase is BothLegsLocked.
+        let claim_phase = if crate::ClaimStepV1::revealing(agreement).chain() == Chain::Zcash {
+            Phase::BothLegsLocked
+        } else {
+            Phase::ClaimEvidenceAvailable
+        };
+        if coordinator.phase() != claim_phase {
             return Err(ZcashClaimContextError::ClaimNotReady {
                 actual: coordinator.phase(),
             });

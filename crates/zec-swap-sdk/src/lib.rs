@@ -133,7 +133,8 @@ pub use ports::{
     ZcashMakerLockObservationPort, ZcashRefundPort, ZcashTakerFirstLockObservationPort,
 };
 pub use profile::{
-    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, ProfileError, ZecProfileId, ZecRefundProfile,
+    PUBLIC_TESTNET_FASTEST_BLOCK_MILLIS, PUBLIC_TESTNET_SLOWEST_BLOCK_MILLIS, ProfileError,
+    ZecProfileId, ZecRefundProfile, ZecRevealOrder,
 };
 pub use refund::{
     MAX_REFUND_SUBMISSION_BYTES, PreparedRefundSubmissionV1, RefundDriveOutcome,

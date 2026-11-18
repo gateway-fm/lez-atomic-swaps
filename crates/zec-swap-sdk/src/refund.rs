@@ -9,17 +9,20 @@ use crate::ZecAgreementV1;
 /// Maximum exact signed refund submission retained by one durable intent.
 pub const MAX_REFUND_SUBMISSION_BYTES: usize = 2_000_000;
 
-/// The fixed cross-chain refund order for transparent Zcash swaps.
+/// One refund of a transparent Zcash swap, named by its chain.
+///
+/// The Maker-funded leg's refund is the earlier one: LEZ in `TakerSellsForeign` (then the
+/// Taker's Zcash), Zcash in `TakerSellsLez` (then the Taker's LEZ).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum RefundStepV1 {
-    /// Recover the LEZ-funded leg at the earlier timestamp deadline.
+    /// Recover the LEZ-funded leg at its timestamp deadline.
     Lez,
-    /// Recover the Zcash-funded leg only after the later CLTV deadline.
+    /// Recover the Zcash-funded leg at its CLTV height.
     Zcash,
 }
 
 impl RefundStepV1 {
-    /// Returns the next refund step, preserving LEZ-before-Zcash order.
+    /// Returns the next refund step of `TakerSellsForeign`'s LEZ-before-Zcash order.
     #[must_use]
     pub const fn next(self) -> Option<Self> {
         match self {
@@ -83,19 +86,30 @@ impl RefundStepV1 {
         agreement: &ZecAgreementV1,
         phase: Phase,
     ) -> Result<(), RefundError> {
-        let ready = match self {
-            Self::Lez => {
-                matches!(
-                    phase,
-                    Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged
-                ) || Self::one_leg_lez_refund_is_valid(agreement.direction(), phase)
-            }
-            Self::Zcash => {
+        let both_locked = matches!(
+            phase,
+            Phase::BothLegsLocked | Phase::TakerLockReorged | Phase::MakerLockReorged
+        );
+        let ready = match (self, agreement.direction()) {
+            (Self::Lez, SwapDirection::TakerSellsForeign) => both_locked,
+            (Self::Zcash, SwapDirection::TakerSellsForeign) => {
                 phase == lez_refunded_phase(agreement)
-                    || (matches!(
+                    || matches!(
                         phase,
                         Phase::AwaitingTakerConfirmations | Phase::TakerLockConfirmed
-                    ) && agreement.direction() == SwapDirection::TakerSellsForeign)
+                    )
+            }
+            // TakerSellsLez: the Maker's Zcash refund is the earlier one and the Taker's LEZ
+            // refund the later one. Each funder recovers its own leg once both are locked
+            // (the Taker cannot sign the Zcash refund, so its LEZ refund never waits for it);
+            // after one leg's refund the other follows.
+            (Self::Lez, SwapDirection::TakerSellsLez) => {
+                both_locked
+                    || phase == Phase::MakerLegRefunded
+                    || Self::one_leg_lez_refund_is_valid(SwapDirection::TakerSellsLez, phase)
+            }
+            (Self::Zcash, SwapDirection::TakerSellsLez) => {
+                both_locked || phase == lez_refunded_phase(agreement)
             }
         };
         if ready {
