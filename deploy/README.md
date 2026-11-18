@@ -826,6 +826,16 @@ All services: `restart: unless-stopped`, log rotation, most are `read_only` +
 `cap_drop: ALL` + `no-new-privileges`; ports published on loopback only. No
 service holds the host Docker socket.
 
+That log rotation covers each container's own output (three files of 200 MB). It does
+not cover the log files Basecamp writes inside a Node container, under
+`/var/lez/basecamp-<role>-user/logs/`: Basecamp starts a new file every 10,000 lines and
+never removes one, and has no setting for it. The Delivery module prints every message it
+receives there (one offer announcement is one line of about 23 KB, and every Maker
+announces each offer every 10 seconds), so a Node's log directory grew by about 11 MB an
+hour idle and 70 to 96 MB an hour during tests. The files are in the container's writable
+layer and go when the container is recreated (`up.sh`, a profile switch). A Node kept
+running for weeks needs its old `basecamp_*.log` files removed from outside.
+
 ## Native-arm64 notes
 
 - LEZ services, r0vm (risc0 v3.0.5 tag), maker-node binaries, and bitcoind are
