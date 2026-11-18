@@ -176,17 +176,16 @@ fn each_direction_refunds_the_maker_funded_leg_first_while_mapping_role_deadline
         ),
         Err(ProfileError::InsufficientSafetyMargin)
     );
-    // The Taker-reveals-first profile still admits TakerSellsForeign.
-    assert!(
-        taker_first
-            .recovery_schedule(
-                SwapDirection::TakerSellsForeign,
-                UnixSeconds::new(60),
-                BlockHeight::from_u32(4),
-                LezUnixMilliseconds::new(60_000),
-                Some(UnixSeconds::new(90)),
-            )
-            .is_ok()
+    // The Taker-reveals-first profile is sized for TakerSellsLez only.
+    assert_eq!(
+        taker_first.recovery_schedule(
+            SwapDirection::TakerSellsForeign,
+            UnixSeconds::new(60),
+            BlockHeight::from_u32(4),
+            LezUnixMilliseconds::new(60_000),
+            Some(UnixSeconds::new(90)),
+        ),
+        Err(ProfileError::UnsafeRevealOrder)
     );
 }
 
@@ -255,7 +254,7 @@ fn taker_reveals_first_profiles_match_the_reviewed_parameters() {
         assert_eq!(profile.zcash_slowest_block_millis(), slowest);
         assert_eq!(profile.reveal_order(), ZecRevealOrder::TakerFirst);
         assert!(profile.admits(SwapDirection::TakerSellsLez));
-        assert!(profile.admits(SwapDirection::TakerSellsForeign));
+        assert!(!profile.admits(SwapDirection::TakerSellsForeign));
     }
     // public-testnet-v3: the anchor is the tip plus one, so the Maker's
     // Zcash refund is at most 96 blocks away: 96 x 75 s = 7 200 s, and the

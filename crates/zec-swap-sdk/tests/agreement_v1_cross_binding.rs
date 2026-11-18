@@ -1522,21 +1522,28 @@ fn taker_sells_lez_refund_plan_states_the_lez_deadline_and_a_safe_earlier_zcash_
 }
 
 #[test]
-fn taker_reveals_first_profiles_admit_both_directions_on_new_wire_tags() {
+fn taker_reveals_first_profiles_admit_only_taker_sells_lez_on_new_wire_tags() {
+    // Each profile admits only the direction whose refund order its numbers were sized for:
+    // the Taker-reveals-first profiles size the Maker's Zcash refund to open first. Under
+    // public-testnet-v3 a TakerSellsForeign swap would have the Taker's Zcash refund (95
+    // blocks, ~37 min at Testnet's pace) open long before the Maker's LEZ refund (4 h).
     for (profile, tag) in [
         (ZecProfileId::DeterministicLocalV3, 10_u8),
         (ZecProfileId::DeterministicLocalDevnetV7, 11),
         (ZecProfileId::DeterministicLocalDevnetV8, 12),
+        (ZecProfileId::PublicTestnetV3, 13),
     ] {
         let parameters = ZecRefundProfile::for_id(profile);
         let delay = parameters.lez_refund_delay().value();
         let margin = parameters.required_margin().value();
-        let mut reverse = Fixture::new(SwapDirection::TakerSellsLez);
-        reverse.body_profile = profile;
-        reverse.binding_profile = profile;
-        reverse.zcash_refund_lock = 116 + parameters.zcash_refund_blocks();
-        reverse.earlier_latest_ms = (100 + delay - margin) * 1_000;
-        reverse.later_earliest = 100 + delay;
+        // The forward-shaped terms with the reverse direction's roles, then the
+        // reverse refund plan: Zcash first, the LEZ deadline as the later bound.
+        let mut reverse = legacy_fixture(SwapDirection::TakerSellsLez, profile);
+        let slowest = parameters.zcash_slowest_block_millis().unwrap_or(0);
+        reverse.earlier_latest_ms = ((reverse.lez_anchor + delay - margin) * 1_000).max(
+            reverse.lez_anchor * 1_000 + u64::from(parameters.zcash_refund_blocks() + 1) * slowest,
+        );
+        reverse.later_earliest = reverse.lez_anchor + delay;
         let agreement = reverse
             .validate()
             .unwrap_or_else(|error| panic!("{profile:?} TakerSellsLez: {error:?}"));
@@ -1544,15 +1551,12 @@ fn taker_reveals_first_profiles_admit_both_directions_on_new_wire_tags() {
         let profile_offset = 2 + 4 + "agreement-v1".len() + 1;
         assert_eq!(wire[profile_offset], tag, "{} wire tag", profile.as_str());
 
-        let mut forward = Fixture::new(SwapDirection::TakerSellsForeign);
-        forward.body_profile = profile;
-        forward.binding_profile = profile;
-        forward.zcash_refund_lock = 116 + parameters.zcash_refund_blocks();
-        forward.earlier_latest_ms = (100 + delay) * 1_000;
-        forward.later_earliest = 100 + delay + margin;
-        forward
-            .validate()
-            .unwrap_or_else(|error| panic!("{profile:?} TakerSellsForeign: {error:?}"));
+        let forward = legacy_fixture(SwapDirection::TakerSellsForeign, profile);
+        assert_eq!(
+            forward.validate().err(),
+            Some(ZecAgreementV1Error::ProfileSizedForTakerSellsLez),
+            "{profile:?} TakerSellsForeign"
+        );
     }
 }
 

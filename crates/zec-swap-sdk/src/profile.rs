@@ -160,9 +160,11 @@ pub enum ProfileError {
     /// Supplied conservative bounds do not leave the profile's required margin.
     #[error("cross-chain bounds do not leave the profile's required margin")]
     InsufficientSafetyMargin,
-    /// The profile's reveal order is unsafe in this direction: a
-    /// `TakerSellsLez` agreement under a LEZ-recipient-first profile would
-    /// hand the preimage to the Maker while the Taker locks first.
+    /// The profile was not sized for this direction: a `TakerSellsLez`
+    /// agreement under a LEZ-recipient-first profile would hand the preimage to
+    /// the Maker while the Taker locks first, and a `TakerSellsForeign`
+    /// agreement under a Taker-reveals-first profile would let the Taker's
+    /// Zcash refund open before the Maker's LEZ refund.
     #[error("the profile's reveal order is unsafe for this swap direction")]
     UnsafeRevealOrder,
     /// Role deadlines could not form a valid core recovery schedule.
@@ -446,15 +448,18 @@ impl ZecRefundProfile {
         self.reveal_order
     }
 
-    /// Whether this profile admits the direction: every profile admits
-    /// `TakerSellsForeign`; only Taker-reveals-first profiles admit
-    /// `TakerSellsLez`.
+    /// Whether this profile admits the direction. Each profile admits only the direction
+    /// whose refund order its numbers were sized for: the LEZ-recipient-first profiles
+    /// `TakerSellsForeign` (the Maker's LEZ refund first), the Taker-reveals-first profiles
+    /// `TakerSellsLez` (the Maker's Zcash refund first).
     #[must_use]
     pub const fn admits(self, direction: SwapDirection) -> bool {
         matches!(
             (direction, self.reveal_order),
-            (SwapDirection::TakerSellsForeign, _)
-                | (SwapDirection::TakerSellsLez, ZecRevealOrder::TakerFirst)
+            (
+                SwapDirection::TakerSellsForeign,
+                ZecRevealOrder::LezRecipientFirst
+            ) | (SwapDirection::TakerSellsLez, ZecRevealOrder::TakerFirst)
         )
     }
 

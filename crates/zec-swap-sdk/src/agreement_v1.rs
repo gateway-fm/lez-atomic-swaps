@@ -2009,6 +2009,12 @@ pub enum ZecAgreementV1Error {
     /// Taker-reveals-first profile.
     #[error("TakerSellsLez requires a Taker-reveals-first ZEC profile")]
     LegacyRevealOrder,
+    /// `TakerSellsForeign` under a Taker-reveals-first profile: its numbers size the
+    /// Maker's Zcash refund to open first, so in this direction the Taker's Zcash refund
+    /// could open before the Maker's LEZ refund. Each profile admits only the direction
+    /// its refund order was sized for.
+    #[error("the ZEC profile is sized for TakerSellsLez only")]
+    ProfileSizedForTakerSellsLez,
     /// Funding input-set commitment is empty.
     #[error("funding input-set commitment is empty")]
     EmptyFundingInputSetCommitment,
@@ -2248,7 +2254,10 @@ fn derive_protocol(
         .map_err(ZecAgreementV1Error::InvalidRefundProfile)?;
     let direction = body.direction();
     if !profile.admits(direction) {
-        return Err(ZecAgreementV1Error::LegacyRevealOrder);
+        return Err(match direction {
+            SwapDirection::TakerSellsLez => ZecAgreementV1Error::LegacyRevealOrder,
+            SwapDirection::TakerSellsForeign => ZecAgreementV1Error::ProfileSizedForTakerSellsLez,
+        });
     }
     let zcash_refund_at = profile
         .zcash_refund_at(BlockHeight::from_u32(
