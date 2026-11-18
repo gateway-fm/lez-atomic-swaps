@@ -1440,6 +1440,8 @@ impl BridgeRuntime {
     ///
     /// Rejects every generic, unowned, malformed, or drifted transaction and
     /// reports an ambiguous one-attempt node result as unknown.
+    /// [`BridgeRuntimeError::Unavailable`] comes only from the lookups before
+    /// the send: the request journal tries such a request again.
     pub async fn submit_native_xmr_claim_authorization_v3(
         &self,
         request: &lez_bridge_protocol::SubmitNativeXmrClaimAuthorizationV3Request,
@@ -1504,6 +1506,8 @@ impl BridgeRuntime {
     ///
     /// Rejects unowned bytes, malformed official transactions, node failure,
     /// or an unknown one-attempt submission outcome.
+    /// [`BridgeRuntimeError::Unavailable`] comes only from the lookups before
+    /// the send: the request journal tries such a request again.
     pub async fn submit_transaction(
         &self,
         request: &SubmitTransactionRequest,
