@@ -815,11 +815,33 @@ def wait_taker(swap_id: str, states: set[str], timeout: int, mine_every: int = 0
     raise wait.failure()
 
 
-def claim(swap_id: str, stamp: str, suffix: str = "") -> dict:
+# A claim right after the Taker Node started again may be refused with the
+# documented transient envelope (ADR 0143): -32010, category
+# taker_action_execution_unavailable, while the swap's LEZ sidecar the Node
+# respawns is not answering yet. The admission is durable; a desk presses
+# again with the same request id, which replays it. After a restart the
+# harness does the same, on this schedule; any other refusal stays an answer.
+CLAIM_RETRY_BACKOFF = (5, 5, 10, 10, 15, 15)
+
+
+def claim(swap_id: str, stamp: str, suffix: str = "", after_restart: bool = False) -> dict:
     view = wait_taker(swap_id, {"claim_available"}, timeout=1500, describe="(Maker funding)")
-    result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}{suffix}",
-                                                   "swap_id": swap_id, "expected_generation": view["progress_generation"]},
-                  timeout=300)
+    request = {"schema_version": 1, "request_id": f"e2e-claim-{stamp}{suffix}", "swap_id": swap_id,
+               "expected_generation": view["progress_generation"]}
+    for attempt in range(len(CLAIM_RETRY_BACKOFF) + 1):
+        reply = rpc("taker", "taker_swap_claim_v1", request, timeout=300)
+        error = reply.get("error") or {}
+        transient = (error.get("code") == -32010
+                     and (error.get("data") or {}).get("category") == "taker_action_execution_unavailable")
+        if "result" in reply or not (after_restart and transient) or attempt == len(CLAIM_RETRY_BACKOFF):
+            break
+        delay = CLAIM_RETRY_BACKOFF[attempt]
+        log(f"  claim after the restart answered taker_action_execution_unavailable (attempt {attempt + 1}); "
+            f"replaying it in {delay} s")
+        time.sleep(delay)
+    if "error" in reply:
+        raise Failure(f"taker taker_swap_claim_v1 failed: {json.dumps(reply['error'])[:300]}")
+    result = reply["result"]
     log(f"  Taker claimed {ROUTE['pair'] if REVERSE else 'LEZ'} (replay={result.get('was_replay')})")
     return result
 
@@ -1060,7 +1082,7 @@ def scenario_kill_walk(stamp: str, role: str) -> dict:
         elif point in ("first lock final", "both legs locked"):
             wait_taker(swap_id, states | {"claim_available"}, timeout=1500, describe=f"(kill point {point})")
             killed = kill_at(role, swap_id, point, states)
-        claim(swap_id, stamp, suffix)
+        claim(swap_id, stamp, suffix, after_restart=killed is not None)
         if point == "claim sent":
             killed = kill_at(role, swap_id, point, states)
         view = wait_taker(swap_id, {"completed", "refunded"}, timeout=1800, describe=f"(killed at {point})")
