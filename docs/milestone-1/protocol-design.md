@@ -16,11 +16,11 @@ flowchart TB
     Confirm --> MakerLock["Maker submits second lock"]
     MakerLock --> Construction{"Pair-specific completion"}
     Construction -->|BTC| BTC["Taker claims second leg; maker follows with adaptor witness"]
-    Construction -->|ZEC| ZEC["LEZ recipient reveals preimage; ZEC recipient follows"]
+    Construction -->|ZEC| ZEC["Taker claims second leg revealing preimage; maker follows"]
     Construction -->|XMR| XMR["Maker claims LEZ; taker spends XMR"]
     MakerLock --> Recovery{"Pair-specific timeout"}
     Recovery -->|BTC| BR["Maker-funded refund, then taker-funded refund"]
-    Recovery -->|ZEC| ZR["LEZ refund, then later ZEC refund"]
+    Recovery -->|ZEC| ZR["Maker-funded refund, then taker-funded refund"]
     Recovery -->|XMR| XR["LEZ refund event enables maker XMR recovery"]
 ```
 
@@ -83,18 +83,28 @@ the h4sh3d/COMIT vectors and is not represented by the generic 32-byte skeleton.
 
 ## Transparent ZEC–LEZ
 
-The LEZ recipient generates a 32-byte preimage and commits
-`SHA256(preimage)` in both locks. The Zcash transparent output follows BIP-199
-with `OP_SHA256` and a consensus timelock refund branch; the LEZ escrow mirrors
-the hashlock. Both directions are supported, but participant roles never invert
-the RFP's chain order: the LEZ refund is earlier and the ZEC refund is later by
-the documented worst-case confirmation margin.
+The per-swap preparation generates a 32-byte preimage, commits
+`SHA256(preimage)` in both locks, and gives the preimage to the taker only.
+The Zcash transparent output follows BIP-199 with `OP_SHA256` and a consensus
+timelock refund branch; the LEZ escrow mirrors the hashlock. Both directions
+follow the order BTC follows
+([ADR 0216](../architecture/0216-zec-taker-reveals-first-in-both-directions.md)):
+the taker locks first, claims the maker-funded leg first and so reveals the
+preimage; the maker observes the claim canonically, extracts the preimage and
+claims the taker-funded leg. For `TakerSellsForeign` the taker funds ZEC,
+the maker funds LEZ, and the taker reveals on LEZ. For `TakerSellsLez` the
+taker funds LEZ, the maker funds ZEC, and the taker reveals on ZEC; it claims
+only while the maker's funding is at the profile's depth, the Zcash refund
+height is more than the profile's reveal margin away, and the LEZ refund
+leaves the maker its follow-up margin.
 
-After both locks, the LEZ recipient claims LEZ and reveals the preimage; the ZEC
-recipient observes it canonically and claims the transparent ZEC output. Thus the
-taker reveals first when selling ZEC, while the maker reveals first when selling
-ZEC to a taker who funded LEZ. If no preimage is published, LEZ refunds first and
-ZEC refunds later. `nExpiryHeight` is transaction-liveness policy, not the HTLC
+If no preimage is published, the maker-funded leg refunds first: the LEZ
+refund in `TakerSellsForeign`, the Zcash refund in `TakerSellsLez`. The
+taker-funded leg refunds later by the documented margin. `TakerSellsForeign`
+keeps RFP F4's chain order (LEZ refund first); `TakerSellsLez` deviates from
+it, because with the LEZ refund first the maker would have to hold the
+preimage while the taker's LEZ is locked, and could claim it without funding
+ZEC. `nExpiryHeight` is transaction-liveness policy, not the HTLC
 refund condition: builders must leave enough inclusion room and recreate an
 expired unmined transaction without changing the committed HTLC terms.
 
@@ -113,15 +123,21 @@ margin large enough for the follow-up claimant to observe the revealing claim
 and submit before the earlier refund path can defeat completion.
 
 1. Before the taker lock, neither party has funds at risk.
-2. With only the taker lock, the maker cannot receive value without funding; the
-   taker eventually uses its negotiated refund path.
+2. With only the taker lock, the maker cannot receive value without funding;
+   the taker eventually uses its negotiated refund path. The maker's claim of
+   the taker-funded leg needs a secret only the taker holds, and the taker
+   releases it only by claiming the maker-funded leg (BTC adaptor witness, ZEC
+   preimage, in both directions) or, for XMR, by publishing the Tag 14
+   authorization after the Monero funding is confirmed. Before the maker
+   funds, there is nothing for the taker to claim, so the secret stays with
+   the taker.
 3. With both locks, the construction-specific first claimant receives value only
    by publishing pair claim evidence. Witness extractability/hash preimage
    disclosure gives the counterparty the exclusive missing input for the
    follow-up claim.
-4. For BTC, the maker-funded refund matures before the taker-funded refund. For
-   ZEC, the LEZ refund matures before the ZEC refund regardless of direction, as
-   required by the RFP. For XMR, the taker refunds LEZ; that canonical event
+4. For BTC and ZEC, in both directions, the maker-funded refund matures before
+   the taker-funded refund (for ZEC `TakerSellsLez` this departs from RFP F4;
+   see ADR 0216). For XMR, the taker refunds LEZ; that canonical event
    completes the maker's persisted key-share recovery path for the maker-funded
    Monero output.
 5. A confirmation regression suspends claims and pins the committed transaction;

@@ -68,7 +68,7 @@ compared.
 | BTC, taker sells BTC | LEZ refund at +6 hours | BTC CSV at +72 blocks (~12 target hours) | 6 hours |
 | BTC, taker sells LEZ | BTC CSV at +36 blocks (~6 target hours) | LEZ refund at +12 hours | 6 hours |
 | ZEC, taker sells ZEC | LEZ refund at +2 hours | ZEC CLTV at +192 blocks (~4 target hours) | 2 hours |
-| ZEC, taker sells LEZ | LEZ refund at +2 hours | ZEC CLTV at +192 blocks (~4 target hours) | 2 hours |
+| ZEC, taker sells LEZ (`public-testnet-v3`) | Maker's ZEC CLTV at +95 blocks (at most 2 hours at 75 s/block) | Taker's LEZ refund at +4 hours | 2 hours |
 | XMR, taker sells LEZ | Taker LEZ refund at +12 hours | No Monero timelock: maker recovery follows the canonical refund event/share | Event-gated; 2 LEZ confirmations after refund before Monero recovery |
 
 The XMR row intentionally does not instantiate a fictional Monero deadline.
@@ -91,12 +91,35 @@ that Monero itself enforces a timeout. Stagenet tests may use an accelerated
 profile only when block production is controlled and the transcript names that
 profile.
 
-For ZEC, LEZ is always the earlier-refund chain and Zcash is always the
-later-refund chain, exactly matching RFP F4. Direction changes which participant
-funded each chain, not this consensus ordering. The LEZ recipient publishes the
-preimage first; the later ZEC window gives the follow-up claimant reaction time.
+For ZEC, as for BTC, the Maker-funded leg is the earlier-refund leg and the
+Taker, who holds the preimage, publishes it first by claiming that leg
+([ADR 0216](../architecture/0216-zec-taker-reveals-first-in-both-directions.md)).
+In `TakerSellsForeign` the LEZ refund is the earlier one, matching RFP F4. In
+`TakerSellsLez` the Maker's Zcash refund is the earlier one and the Taker's LEZ
+refund the later one, a deliberate deviation from F4: with the LEZ refund
+first, the Maker would hold the preimage while the Taker's LEZ is locked and
+could claim it without funding Zcash. The later window gives the Maker, the
+follow-up claimant, its reaction time.
 
-Runtime validates:
+The `TakerSellsLez` bounds, with `A` the signed LEZ anchor, `T_lez = A +` LEZ
+refund delay, `H_z` the Zcash refund height (`N` blocks after the signed
+Zcash anchor), `M` the required margin, `C` the Zcash confirmations, `R` the
+Zcash reveal margin in blocks and `slow` the slowest Zcash pace the profile is
+sized for:
+
+- order: the latest wall time of `H_z`, plus `M`, is at most `T_lez`; the
+  refund plan signs the first as `earlier_refund_latest_ms` and requires
+  `later_refund_earliest_unix_seconds = T_lez`;
+- public profiles: `earlier_refund_latest_ms >= A + (N + 1) × slow`; on
+  Regtest the harness mines every block and the provisioner declares
+  `T_lez − M`;
+- the Taker's claim gate: the Maker's funding at depth `C`, `tip + R < H_z`,
+  and `now < T_lez − M`;
+- the Maker's follow-up: a Taker claim mined as late as `H_z` reaches depth
+  `C` by the latest wall time of `H_z + C`; `M` covers `C × slow` plus the LEZ
+  claim's inclusion.
+
+Runtime validates, for whichever chain refunds first:
 
 `later_refund_earliest >= earlier_refund_latest + required_gap`
 
@@ -171,11 +194,48 @@ principal outputs never absorb an unnegotiated fee.
   certificates'.
 - `public-testnet-v1`: the values in this document; required for testnet smoke
   suites and recorded demos.
+- Taker-reveals-first profiles (wire tags 10–13), the only ones that admit
+  `TakerSellsLez`. Every profile listed above admits `TakerSellsForeign`
+  only; a `TakerSellsLez` agreement under one of them is refused
+  (`ZecAgreementV1Error::LegacyRevealOrder`). The new profiles admit both
+  directions under their own timing checks; the provisioners keep
+  `TakerSellsForeign` on the older profiles.
+
+  | Profile (wire tag) | Network | LEZ refund delay `D` | Zcash refund blocks `N` | Margin `M` | Confirmations Zcash / LEZ | Reveal margin `R` | Expiry | Slowest pace |
+  |---|---|---:|---:|---:|---|---:|---:|---|
+  | `deterministic-local-v3` (10) | Regtest NU7 | 120 s | 8 | 30 s | 1 / 1 | 2 | 40 | declared by the harness |
+  | `deterministic-local-devnet-v7` (11) | Regtest NU7 | 720 s | 16 | 120 s | 1 / 1 | 3 | 40 | declared by the harness |
+  | `deterministic-local-devnet-v8` (12) | Regtest NU7 | 240 s | 16 | 120 s | 1 / 1 | 3 | 40 | declared by the harness |
+  | `public-testnet-v3` (13) | Testnet NU7 | 14,400 s | 95 | 7,200 s | 10 / 2 | 10 | 120 | 75 s a block |
+
+  `public-testnet-v3`: `(95 + 1) × 75 s = 7,200 s` to the Zcash refund at the
+  slowest pace, plus `M = 7,200 s`, is `14,400 s = D`. The Maker's follow-up
+  needs ten Zcash confirmations of the Taker's claim, `10 × 75 s = 750 s`,
+  plus the LEZ claim's inclusion at two LEZ confirmations, well inside `M`.
+  At Testnet's 22.7 s average since NU7 the Zcash refund height is about 37
+  minutes after the anchor, so the Taker claims within about 33 minutes
+  (`H_z − 10`), after ten confirmations of the Maker's funding. The slowest
+  pace is three times NU7's 25 s target.
+
+  `deterministic-local-devnet-v7`, for devnet swaps that claim: a claim needs
+  the Maker's funding, one confirmation, the Taker's claim and one
+  confirmation — four blocks a swap, eight for the two swaps of one signer
+  at one anchor in zec-concurrent — below `N − R = 13`. The Taker's claim
+  window closes at `T_lez − M`, 600 s after the anchor; the longest measured
+  take-to-claim on the devnet is about 7 minutes.
+
+  `deterministic-local-devnet-v8`, for the devnet's refund journeys, which
+  never claim: the Maker's Zcash refund opens when the harness has mined 16
+  blocks after the anchor, the Taker's LEZ refund at 240 s.
+
+  `deterministic-local-v3`, for the in-process test lane, which mines on
+  demand: `T_lez − M = 90 s` for the whole lock-to-claim, which the lane
+  completes in seconds.
 - `mainnet`: absent by design until calibration and formal review are complete.
 
 The code representation must use named immutable profiles rather than scattered
 numeric defaults. RED tests first cover direction-to-chain mapping, the
-RFP-fixed ZEC-after-LEZ order, construction-specific claimant order, XMR's
+ZEC order per direction (ADR 0216), construction-specific claimant order, XMR's
 event-gated recovery, every exact boundary, mixed-clock rejection,
 profile/network mismatch, latency-budget exhaustion, and profile persistence
 across restart.
