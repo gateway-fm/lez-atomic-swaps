@@ -1,5 +1,8 @@
 # Full regression of `32c8bfb4`, 2026-11-17
 
+The next full run, 158 of 159 at `44e39081` (the one failure of the same class, a Maker actor
+failed as `actor_deployment_invalid`, this time with the Node's log line kept), is in [regression-m4-2026-11-18](../regression-m4-2026-11-18/).
+
 One run of every test of `deploy/scripts/regress.sh full` (159: `regress.sh list full`) on the
 Docker devnet with the Monero regtest chain up (`LEZ_MONERO=1`), three lanes at a time
 (`LEZ_LANES=3`), without desk recordings: run `runtime/regress/20261117T141249Z`, 2026-11-17

@@ -1,0 +1,11 @@
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → awaiting_observation - (phase offered, revision 0, next observe_taker_first_lock)
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → awaiting_observation - (phase offered, revision 0, next observe_taker_first_lock)
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → awaiting_observation - (phase offered, revision 0, next observe_taker_first_lock)
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → observed_then_projected - (phase taker_lock_confirmed, revision 1, next observe_maker_second_lock_or_recover_taker_leg)
+{"event":"bitcoin_maker_step_observation","detail":"absent"}
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → awaiting_observation - (phase taker_lock_confirmed, revision 1, next observe_maker_second_lock_or_recover_taker_leg)
+{"event":"bitcoin_maker_step_observation","detail":"unspent"}
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → observed_then_projected - (phase both_legs_locked, revision 2, next observe_revealing_claim)
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → awaiting_observation - (phase both_legs_locked, revision 2, next observe_revealing_claim)
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive → awaiting_observation - (phase both_legs_locked, revision 2, next observe_revealing_claim)
+maker actor a5f63bc405f6de8ca845fc5e7516845302af23c0d8ff734d80f0b9071990fb76: drive attempt fails (actor_deployment_invalid: maker actor deployment artifact is unsafe)
