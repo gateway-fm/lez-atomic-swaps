@@ -67,6 +67,8 @@ const EFFECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// A Monero effect mines its confirmations and restores a wallet.
 const MONERO_EFFECT_TIMEOUT: Duration = Duration::from_mins(2);
 const LEZ_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// How long the funding's monerod probe waits to connect and for an answer.
+const MONEROD_PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// Finalized blocks one classification request scans, and pages per drive:
 /// a page takes the swap's sidecar 0.5 to 3 s, and the Node's one actor
 /// worker drives every swap of every pair in turn, so a drive scans at most
@@ -302,6 +304,9 @@ trait MakerChains {
     fn lez_clock(&mut self) -> Result<u64>;
     /// Scans for `watched` and durably records it when found.
     fn scan(&mut self, watched: Watched) -> Result<Scan>;
+    /// Whether monerod answers, asked before the one `FundMonero` invocation
+    /// is consumed (the same daemon the Node's Monero route health asks).
+    fn monero_answers(&mut self) -> bool;
     /// Consumes the one `FundMonero` invocation and runs the funding tool.
     fn invoke_fund(&mut self) -> Result<()>;
     /// Observes a consumed funding; true once reconciled.
@@ -339,6 +344,14 @@ fn drive_once(chains: &mut impl MakerChains, now_ms: u64) -> Result<&'static str
             }
             // Never after the cutoff: the finalized LEZ clock decides.
             if chains.lez_clock()? >= facts.cutoff_ms {
+                return Ok("unchanged");
+            }
+            // The funding tool's attempts fail while monerod is down, and a
+            // tool that fails before its transfer spends the swap's one
+            // funding: the swap would expire with time left. While monerod
+            // does not answer the invocation is kept for a later drive, until
+            // the cutoff.
+            if !chains.monero_answers() {
                 return Ok("unchanged");
             }
             chains.invoke_fund()?;
@@ -1012,6 +1025,17 @@ impl MakerChains for LiveMaker {
         Ok(Scan::Found(found_block(&result)?.1))
     }
 
+    fn monero_answers(&mut self) -> bool {
+        let url = self.execution.effect_authority().monero().daemon().url();
+        let answers = monerod_answers(url.as_str());
+        if !answers {
+            eprintln!(
+                "XMR Maker actor: monerod does not answer at {url}; the Monero funding waits for a later drive"
+            );
+        }
+        answers
+    }
+
     fn invoke_fund(&mut self) -> Result<()> {
         let identity = self.execution.workflow_identity();
         let mut workflow = SqliteXmrWorkflowJournal::open_existing(
@@ -1115,6 +1139,39 @@ impl MakerChains for LiveMaker {
             error.context("the XMR Maker effect's redrive failed; it is observed and driven again")
         })
     }
+}
+
+/// Whether the daemon at `url` (a literal loopback `http://host:port/`)
+/// answers HTTP at all: monerod's Digest challenge counts. The Node's forward
+/// accepts the connection even while monerod is down, then closes it unanswered.
+fn monerod_answers(url: &str) -> bool {
+    use std::io::{Read as _, Write as _};
+    let Some(authority) = url
+        .strip_prefix("http://")
+        .and_then(|rest| rest.split('/').next())
+    else {
+        return false;
+    };
+    let Some(address) = authority.parse::<std::net::SocketAddr>().ok() else {
+        return false;
+    };
+    let body = r#"{"jsonrpc":"2.0","id":0,"method":"get_info"}"#;
+    let request = format!(
+        "POST /json_rpc HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&address, MONEROD_PROBE_TIMEOUT)
+    else {
+        return false;
+    };
+    let mut answer = [0_u8; 8];
+    stream.set_read_timeout(Some(MONEROD_PROBE_TIMEOUT)).is_ok()
+        && stream
+            .set_write_timeout(Some(MONEROD_PROBE_TIMEOUT))
+            .is_ok()
+        && stream.write_all(request.as_bytes()).is_ok()
+        && stream.read_exact(&mut answer).is_ok()
+        && answer.starts_with(b"HTTP/1.")
 }
 
 /// A Monero effect mines its confirmations; a LEZ effect asks the sidecar.
@@ -1618,6 +1675,8 @@ mod tests {
         unwritten: bool,
         observations: u32,
         redrives: u32,
+        /// monerod does not answer.
+        monero_down: bool,
     }
 
     impl Stub {
@@ -1657,6 +1716,10 @@ mod tests {
                 Watched::Refund => Scan::Absent(self.refund_scan_to_tip),
                 Watched::ClaimAuthorization => Scan::Absent(true),
             })
+        }
+
+        fn monero_answers(&mut self) -> bool {
+            !self.monero_down
         }
 
         fn invoke_fund(&mut self) -> Result<()> {
@@ -1833,6 +1896,64 @@ mod tests {
         assert_eq!(drive_once(&mut stub, 2).unwrap(), "unchanged");
         assert_eq!(derive_status(&stub.facts().unwrap(), 2).phase, "expired");
         assert_eq!(stub.funds, 0);
+    }
+
+    #[test]
+    fn a_monerod_outage_before_the_funding_keeps_it_for_a_later_drive() {
+        let mut stub = Stub::new();
+        stub.tag13 = Some(2_000);
+        stub.lez_ms = 2_000;
+        assert_eq!(drive_once(&mut stub, 2_000).unwrap(), "observed");
+        // monerod down: the one invocation is not spent, the swap stays open.
+        stub.monero_down = true;
+        for now in [3_000, 4_000, C - 1] {
+            stub.lez_ms = now;
+            assert_eq!(drive_once(&mut stub, now).unwrap(), "unchanged");
+            assert_eq!(stub.durable().funding, Funding::NotInvoked);
+            assert_eq!(
+                derive_status(&stub.facts().unwrap(), now).phase,
+                "taker_lock_confirmed"
+            );
+        }
+        // Back before the cutoff: funded once.
+        stub.monero_down = false;
+        assert_eq!(drive_once(&mut stub, C - 1).unwrap(), "submitted");
+        assert_eq!(stub.funds, 1);
+        // Down until the cutoff: never funded, and the cutoff ends the swap.
+        let mut stub = Stub::new();
+        stub.tag13 = Some(2_000);
+        assert_eq!(drive_once(&mut stub, 2_000).unwrap(), "observed");
+        stub.monero_down = true;
+        stub.lez_ms = C - 1;
+        assert_eq!(drive_once(&mut stub, C - 1).unwrap(), "unchanged");
+        stub.monero_down = false;
+        stub.lez_ms = C;
+        assert_eq!(drive_once(&mut stub, C).unwrap(), "unchanged");
+        assert_eq!(derive_status(&stub.facts().unwrap(), C).phase, "expired");
+        assert_eq!(stub.funds, 0);
+    }
+
+    #[test]
+    fn monerod_answers_only_an_http_reply() {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        // A forward that accepts and closes unanswered (monerod down).
+        let closer = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            drop(stream);
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 512];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
+        });
+        assert!(!monerod_answers(&url));
+        assert!(monerod_answers(&url));
+        closer.join().unwrap();
+        assert!(!monerod_answers("http://127.0.0.1:1/"));
+        assert!(!monerod_answers("https://127.0.0.1:1/"));
     }
 
     #[test]
