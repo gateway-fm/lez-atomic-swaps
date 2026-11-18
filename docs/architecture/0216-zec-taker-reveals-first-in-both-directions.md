@@ -84,13 +84,22 @@ Bitcoin. In ZEC `TakerSellsLez`:
    time. A claim already submitted is followed to the end.
 4. The Maker observes the spend of its exact HTLC outpoint
    (`ZcashClaimPort::observe_counterparty_revealing_claim`), extracts the
-   preimage at the profile's depth, checks it against the digest and commits
-   it with the observed transition; it then claims LEZ (`FollowupLez`).
+   preimage on first sight (in the mempool or a block, on consensus facts
+   only), checks it against the digest and commits it with the observed
+   transition; it then claims LEZ (`FollowupLez`).
 5. Refunds: the Maker's Zcash refund at the Zcash refund height is the
    earlier; the Taker's LEZ refund at the LEZ refund time is the later. In
    `BothLegsLocked` each role drives its own refund (the Taker cannot sign the
-   Zcash refund, so its LEZ refund does not wait for it). No refund is
-   admitted once claim evidence is recorded.
+   Zcash refund, so its LEZ refund does not wait for it). The Maker is offered
+   its Zcash refund as soon as the Zcash tip reaches the refund height (its
+   drive records the tip), between `H_z` and `T_lez − M`, and keeps reading
+   the HTLC for a late Taker claim until its refund is mined. A Taker whose
+   own claim was lost to that refund records the Maker's refund and refunds
+   its LEZ. No refund is admitted once claim evidence is recorded.
+6. The HTLC of the Taker-reveals-first profiles checks `OP_SIZE 32` on the
+   claim branch: a claim with a preimage of any other length is invalid on
+   Zcash, so the Taker cannot take the ZEC with a secret the LEZ escrow
+   cannot accept. The older profiles' script is unchanged byte for byte.
 
 ### Deviation from RFP-003 F4
 
@@ -114,9 +123,9 @@ required margin and `slow` the slowest Zcash pace the profile is sized for:
 - public profiles: `earlier_refund_latest_ms >= A + (N + 1) × slow` (the
   anchor is the tip plus one at agreement time); on Regtest the harness mines
   every block and the provisioner declares `T_lez − M`;
-- the Maker's follow-up: a Taker claim mined as late as `H_z` is at depth
-  `C` by the latest wall time of `H_z + C`; `M` covers `C × slow` plus the LEZ
-  claim's inclusion.
+- the Maker's follow-up: the Maker reads a Taker claim on first sight, so a
+  claim broadcast as late as the Maker's refund at `H_z` leaves the Maker `M`
+  for its LEZ claim's inclusion (plus its place in the Node's LEZ claim queue).
 
 ### Profiles and versioning
 
@@ -159,7 +168,11 @@ direction's agreements are byte-identical to those signed before.
   swaps a Maker accepts is capped so that the queue fits in the margin
   (3 under the devnet profiles, 1 under `deterministic-local-v3` and
   `public-testnet-v3`; [SDK guide](../sdk-lez-zec.md)). The Maker funds
-  Zcash only while the claim window is open and `tip + R + C < H_z`.
+  Zcash only while the claim window is open, `tip + R + C < H_z`, and, under
+  a profile with a slowest pace (`public-testnet-v3`), `H_z` can still be
+  reached before `T_lez − M` at that pace: `(H_z − tip) × slow ≤ T_lez − M − now`.
+  `public-testnet-v3` is sized with no slack at the anchor, so a Testnet slower
+  than 75 s a block in the first minutes makes the Maker decline to fund.
 - A Node refuses to start while it holds an open `TakerSellsLez` swap under a
   legacy profile (issue #133: drain before upgrading).
 

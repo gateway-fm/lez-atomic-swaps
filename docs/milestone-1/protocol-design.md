@@ -87,7 +87,9 @@ The per-swap preparation generates a 32-byte preimage, commits
 `SHA256(preimage)` in both locks, and gives the preimage to the taker's half
 only; the maker's Node and actor refuse material that carries one. The prepared ZEC setup is single-operator: the preparation ceremony (`zec-provision.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner). Node-side take-time preparation, in which the Taker's Node creates the secret and each Node its own Zcash key, is tracked in issue #162 for M5.
 The Zcash transparent output follows BIP-199 with `OP_SHA256` and a consensus
-timelock refund branch; the LEZ escrow mirrors the hashlock. Both directions
+timelock refund branch; under the Taker-reveals-first profiles its claim branch
+starts with `OP_SIZE 32 OP_EQUALVERIFY`, so only a 32-byte preimage, the size
+the LEZ escrow's `claim_native` takes, can claim the Zcash; the LEZ escrow mirrors the hashlock. Both directions
 follow the order BTC follows
 ([ADR 0216](../architecture/0216-zec-taker-reveals-first-in-both-directions.md)):
 the taker locks first, claims the maker-funded leg first and so reveals the

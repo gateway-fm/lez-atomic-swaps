@@ -1995,7 +1995,7 @@ sequenceDiagram
         Note over Maker,Taker: Both locks are proven before preimage release
         alt Canonical reveal path inside the reveal margin and claim window
             Taker->>Zebra: Claim exact ZEC output and reveal preimage
-            Zebra-->>Maker: Canonical preimage evidence at signed depth
+            Zebra-->>Maker: Preimage read on first sight, mempool or block
             alt Maker follows including after Taker disappears
                 Note over Maker,Taker: Revealer may disappear and follower uses canonical chain disclosure
                 Maker->>LezSeq: Claim taker LEZ leg with preimage
@@ -2096,8 +2096,11 @@ The ZEC construction is atomic under these explicit conditions:
 - Accepted terms, lock intents, protected preimage and claim bytes, exact
   refund intents, observations, and lifecycle revisions persist in role-local
   SQLite before the next dependent effect. Exact Zebra canonical evidence and
-  bounded finalized LEZ evidence, not peer messages or mempool presence, drive
-  projection.
+  bounded finalized LEZ evidence, not peer messages, drive projection; the one
+  exception is the Maker's reading of the Taker's Zcash preimage in
+  `TakerSellsLez`, which it commits on first sight, mempool included, since a
+  preimage that hashes to the digest is valid whatever happens to its
+  transaction.
 - Once both locks exist, the protocol construction lets a surviving role recover
   its own funded leg at the signed chain deadline. Permissionless LEZ execution
   still pays only the immutable depositor; ZEC refund remains restricted to its
