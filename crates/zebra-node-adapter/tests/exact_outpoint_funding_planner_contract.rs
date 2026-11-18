@@ -434,7 +434,7 @@ struct FakeRpcError;
 
 impl FakeRpc {
     fn stable(fixture: &Fixture) -> (Self, ZebraChainIdentity) {
-        let identity = ZebraChainIdentity::deterministic_regtest_nu6_2();
+        let identity = identity_of(&fixture.agreement);
         let info = chain_info(identity, TIP_HASH, TIP_HEIGHT);
         let outputs = fixture
             .outpoints
@@ -479,7 +479,7 @@ impl FakeRpc {
                     ZebraUnspentOutput::new(BlockHash([0xdd; 32]), 3, fixture.outputs[0].clone());
             }
             Mutation::MovingTip => {
-                let identity = ZebraChainIdentity::deterministic_regtest_nu6_2();
+                let identity = identity_of(&fixture.agreement);
                 state.infos = VecDeque::from([
                     chain_info(identity, TIP_HASH, TIP_HEIGHT),
                     chain_info(identity, BlockHash([0xaa; 32]), TIP_HEIGHT + 1),
@@ -490,7 +490,7 @@ impl FakeRpc {
                     ZebraRpcChain::Main,
                     BlockHeight::from_u32(TIP_HEIGHT),
                     TIP_HASH,
-                    BranchId::Nu6_2,
+                    identity_of(&fixture.agreement).consensus_branch_id(),
                 );
                 state.infos = VecDeque::from([wrong, wrong]);
             }
@@ -817,6 +817,14 @@ fn serialize(transaction: &Transaction) -> Vec<u8> {
     bytes
 }
 
+/// The fixed Regtest identity whose branch the agreement signs for.
+fn identity_of(agreement: &ZecAgreementV1) -> ZebraChainIdentity {
+    match agreement.binding().expected_output().consensus_branch_id() {
+        BranchId::Nu7 => ZebraChainIdentity::deterministic_regtest_nu7(),
+        _ => ZebraChainIdentity::deterministic_regtest_nu6_2(),
+    }
+}
+
 fn chain_info(identity: ZebraChainIdentity, tip_hash: BlockHash, height: u32) -> ZebraChainInfo {
     ZebraChainInfo::new(
         identity.rpc_chain(),
@@ -879,13 +887,30 @@ fn fixture(direction: SwapDirection, values: [u64; 2]) -> Fixture {
     };
     let refund_hash = public_key_hash(&refund_key);
     let claimant_hash = public_key_hash(&claimant_key);
+    // `TakerSellsLez` needs a Taker-reveals-first profile (deterministic-local-v3, Regtest
+    // NU7): Zcash anchor 116 + 8 blocks; LEZ anchor 100 s + 120 s; the earlier Zcash refund's
+    // latest time is declared 30 s (the margin) before the LEZ deadline.
+    let (profile, branch, refund_lock, refund_plan) = match direction {
+        SwapDirection::TakerSellsForeign => (
+            ZecProfileId::DeterministicLocalV1,
+            BranchId::Nu6_2,
+            120,
+            ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        ),
+        SwapDirection::TakerSellsLez => (
+            ZecProfileId::DeterministicLocalV3,
+            BranchId::Nu7,
+            124,
+            ZecRefundPlanV1::new(100, 116, 190_000, 220),
+        ),
+    };
     let binding = ZecSwapBinding::new(
-        ZecProfileId::DeterministicLocalV1,
+        profile,
         lez_zec_swap_sdk::ExpectedBip199Output::new(
             NetworkType::Regtest,
-            BranchId::Nu6_2,
+            branch,
             Zatoshis::from_u64(PRINCIPAL).expect("principal"),
-            Bip199Contract::new(120, refund_hash, [9; 32], claimant_hash),
+            Bip199Contract::new(refund_lock, refund_hash, [9; 32], claimant_hash),
         ),
     )
     .expect("binding");
@@ -895,7 +920,7 @@ fn fixture(direction: SwapDirection, values: [u64; 2]) -> Fixture {
     let body = ZecAgreementBodyV1::new(
         id,
         direction,
-        ZecProfileRecordV1::from(ZecProfileId::DeterministicLocalV1),
+        ZecProfileRecordV1::from(profile),
         ZecParticipantsV1::new(
             ZecParticipantIdentityV1::new([3; 32], maker_key.serialize()),
             ZecParticipantIdentityV1::new([4; 32], taker_key.serialize()),
@@ -923,7 +948,7 @@ fn fixture(direction: SwapDirection, values: [u64; 2]) -> Fixture {
             10_000,
             40,
         ),
-        ZecRefundPlanV1::new(100, 116, 160_000, 200),
+        refund_plan,
         NegotiationTranscriptV1::new([5; 32], [6; 32], 1_000),
     );
     let commitment = body.commitment();

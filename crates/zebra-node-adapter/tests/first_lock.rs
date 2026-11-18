@@ -1541,9 +1541,15 @@ fn mutate_authorization(raw: &[u8]) -> Vec<u8> {
 }
 
 fn agreement(direction: SwapDirection) -> ZecAgreementV1 {
-    agreement_for_profile(direction, ZecProfileId::DeterministicLocalV1)
+    // `TakerSellsLez` needs a Taker-reveals-first profile; legacy profiles refuse it.
+    let profile = match direction {
+        SwapDirection::TakerSellsForeign => ZecProfileId::DeterministicLocalV1,
+        SwapDirection::TakerSellsLez => ZecProfileId::DeterministicLocalV3,
+    };
+    agreement_for_profile(direction, profile)
 }
 
+#[allow(clippy::too_many_lines)]
 fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> ZecAgreementV1 {
     let maker_secret = SecretKey::from_slice(&[1; 32]).expect("maker key");
     let taker_secret = SecretKey::from_slice(&[2; 32]).expect("taker key");
@@ -1572,6 +1578,31 @@ fn agreement_for_profile(direction: SwapDirection, profile: ZecProfileId) -> Zec
                 120,
                 160_000,
                 200,
+            ),
+            // Taker reveals first: the later refund is LEZ's own deadline (anchor 100 s plus
+            // the delay) and the earlier Zcash refund's latest time is the margin before it
+            // (Regtest declares it; public-testnet-v3 needs 96 blocks of 75 s from the anchor).
+            ZecProfileId::DeterministicLocalV3
+            | ZecProfileId::DeterministicLocalDevnetV7
+            | ZecProfileId::DeterministicLocalDevnetV8 => {
+                let terms = ZecRefundProfile::for_id(profile);
+                let later = 100 + terms.lez_refund_delay().value();
+                (
+                    NetworkType::Regtest,
+                    LezEnvironmentV1::DeterministicLocalV0_2,
+                    116,
+                    116 + terms.zcash_refund_blocks(),
+                    (later - terms.required_margin().value()) * 1_000,
+                    later,
+                )
+            }
+            ZecProfileId::PublicTestnetV3 => (
+                NetworkType::Test,
+                LezEnvironmentV1::PublicTestnetV0_2,
+                100,
+                195,
+                7_300_000,
+                14_500,
             ),
             ZecProfileId::PublicTestnetV1 | ZecProfileId::PublicTestnetV2 => (
                 NetworkType::Test,
