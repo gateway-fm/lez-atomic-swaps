@@ -273,7 +273,11 @@ def assemble(env: dict[str, str], run_dir: pathlib.Path) -> dict:
         "lane_profile": env["LEZ_ZEC_LANE_PROFILE"],
         "swap_profile": {"id": env["LEZ_ZEC_SWAP_PROFILE"], "consensus_branch": env["LEZ_ZEC_SWAP_PROFILE_BRANCH"],
                          "zcash_confirmations": int(env["LEZ_ZEC_SWAP_PROFILE_CONFIRMATIONS"]),
-                         "zcash_refund_blocks": int(env["LEZ_ZEC_SWAP_PROFILE_REFUND_BLOCKS"])},
+                         "zcash_refund_blocks": int(env["LEZ_ZEC_SWAP_PROFILE_REFUND_BLOCKS"]),
+                         # TakerSellsForeign corridors sign under their own profile (same branch and
+                         # confirmations, another Zcash refund window).
+                         "taker_sells_foreign": {"id": env["LEZ_ZEC_SWAP_PROFILE_FOREIGN"],
+                                                 "zcash_refund_blocks": int(env["LEZ_ZEC_SWAP_PROFILE_FOREIGN_REFUND_BLOCKS"])}},
         "status": status,
         # "public-chain-swap" only when a swap transaction was found on a route
         # that proved itself Zcash Testnet; a preflight alone never is swap evidence.

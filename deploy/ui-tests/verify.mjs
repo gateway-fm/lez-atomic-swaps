@@ -699,8 +699,8 @@ if (role === "maker") {
                          "The Taker observed the Maker's Zcash refund; both legs are back and the swap is refunded"],
       refund_lez: ["The desk offers Refund for the LEZ escrow; pressing it admits the refund, which the Node drives once the escrow's refund time is reached",
                    "Refund admitted; the Taker Node submits it when the escrow allows and follows it to finality"],
-      claim_zec: [`Claim ${zecText}: the Maker's LEZ claim revealed the secret; the Taker's claim spends the Zcash HTLC on the transparent pool`,
-                  "Zcash claim broadcast; once it is in a block the swap completes. The claim is transparent: move the funds to a shielded address afterwards"],
+      claim_zec: [`Claim ${zecText}: the revealing claim spends the Maker's Zcash HTLC on the transparent pool and discloses the hashlock secret`,
+                  "Zcash claim broadcast; once it is in a block the Maker Node uses the revealed secret to claim the LEZ escrow, which completes the swap. The claim is transparent: move the funds to a shielded address afterwards"],
       refund_zec: ["The desk offers Refund for the Zcash HTLC; pressing it admits the refund, which the Node drives on the transparent pool once the HTLC's refund height is reached",
                    "Refund admitted; the Taker Node broadcasts the HTLC refund when the height allows and follows it to a block"],
     };

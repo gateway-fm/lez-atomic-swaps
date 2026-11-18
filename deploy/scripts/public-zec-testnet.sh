@@ -21,7 +21,8 @@
 # Nothing here mines. The Nodes must already run on the public networks
 # (docs/testnet-run.md: LEZ side services; this lane: the Zcash route), the
 # Maker under the owner-funded Testnet key: each corridor is provisioned by
-# zec-provision.sh --zcash-network test (profile public-testnet-v2, NU7),
+# zec-provision.sh --zcash-network test (profile public-testnet-v3 selling
+# LEZ, public-testnet-v2 selling ZEC; both NU7),
 # which spends an ordinary output of that key and reads the role keys from
 # LEZ_ZEC_TESTNET_KEY_DIR (outside the repository) and the funder search start
 # from LEZ_ZEC_TESTNET_FUNDING_FROM_HEIGHT on its first run. Credentials are
@@ -56,7 +57,7 @@ while [[ $# -gt 0 ]]; do
     --preflight-only) PREFLIGHT_ONLY=1; shift ;;
     --out) OUT="$2"; shift 2 ;;
     --intervention) INTERVENTIONS+=("$2"); shift 2 ;;
-    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
