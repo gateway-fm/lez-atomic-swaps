@@ -510,5 +510,57 @@ class ChainsOverRpc(unittest.TestCase):
         self.assertEqual(ran, [['docker', 'restart', f'{e2e.PREFIX}-taker-node']])
 
 
+class FailedTestNodeLogs(unittest.TestCase):
+    """node-logs (regress.sh, a try that did not pass): bounded, Delivery dumps
+    dropped and counted, anything shaped like a secret redacted."""
+
+    def test_secret_shapes_are_redacted_and_counted(self):
+        text = ('rpcpassword=c2VjcmV0LXZhbHVlLWZvci10ZXN0\n'
+                '{"capability_token": "0123456789abcdef0123456789abcdef"}\n'
+                'Authorization: Basic X19jb29raWVfXzpzZWNyZXQ=\n'
+                '-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIBase64Body\n-----END EC PRIVATE KEY-----\n'
+                'taker actor 0f1f91d21ec5: drive → projected maker_lock (phase both_legs_locked)\n'
+                '{"event":"taker_actor_command_failed","step":"effect","class":"ObservationUnavailable"}\n')
+        redacted, count = e2e.redact(text)
+        self.assertEqual(count, 4)
+        for secret in ('c2VjcmV0LXZhbHVlLWZvci10ZXN0', '0123456789abcdef0123456789abcdef',
+                       'X19jb29raWVfXzpzZWNyZXQ=', 'MHcCAQEEIBase64Body'):
+            self.assertNotIn(secret, redacted)
+        self.assertIn('rpcpassword=[REDACTED]', redacted)
+        # what explains a failure is kept as it was
+        self.assertIn('drive → projected maker_lock (phase both_legs_locked)', redacted)
+        self.assertIn('"class":"ObservationUnavailable"', redacted)
+
+    def test_lines_are_bounded_after_the_delivery_dumps_are_dropped(self):
+        dump = f'[delivery] {e2e.DELIVERY_DUMP} ' + 'x' * 23_000
+        text = '\n'.join(f'line {n}' if n % 3 else dump for n in range(30))
+        kept, dropped = e2e.bounded_lines(text, limit=5)
+        self.assertEqual(dropped, 10)
+        self.assertEqual(kept.splitlines(), ['line 23', 'line 25', 'line 26', 'line 28', 'line 29'])
+
+    def test_both_nodes_saved_from_logs_and_health_only(self):
+        ran = []
+
+        def fake_run(argv, **_):
+            ran.append(argv)
+            return unittest.mock.Mock(stdout=f'{argv[1]} output token=abcdefabcdefabcdef12\n'.encode())
+
+        with tempfile.TemporaryDirectory() as out, \
+                patch.object(e2e, 'NATIVE_RUN_ROOT', ''), \
+                patch.object(e2e.subprocess, 'run', fake_run), \
+                patch.object(e2e, 'rpc', lambda role, *_, **__: {'result': {'ready': True, 'role': role}}):
+            notes = e2e.keep_node_logs(pathlib.Path(out) / 'try.nodes')
+            files = sorted(p.name for p in (pathlib.Path(out) / 'try.nodes').iterdir())
+            container = (pathlib.Path(out) / 'try.nodes' / 'taker-container.log').read_text()
+        self.assertEqual(files, [f'{role}-{kind}' for role in ('maker', 'taker')
+                                 for kind in ('basecamp.log', 'container.log', 'health.json', 'node.log')])
+        self.assertEqual(len(notes), 8)
+        self.assertIn('token=[REDACTED]', container)
+        self.assertEqual(ran[0], ['docker', 'logs', '-t', '--tail', '20000', f'{e2e.PREFIX}-maker-node'])
+        # nothing but logs is read: no state directory, database, cookie or runtime/ file
+        for argv in ran:
+            self.assertFalse(any('/var/lib/lez' in part or 'runtime/' in part or 'cookie' in part for part in argv), argv)
+
+
 if __name__ == '__main__':
     unittest.main()

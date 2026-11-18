@@ -7104,6 +7104,80 @@ def lez_finalized_height() -> int:
         raise Failure(f"indexer height unreadable: {result.stdout[:120]} {result.stderr[:120]}") from error
 
 
+# ---- a failed test's Node logs (regress.sh: node-e2e.py node-logs --out <dir>) ----------
+# The next test's reset or a new chain recreates the Node containers, and with
+# them the line that explains a failure; regress.sh calls this before that,
+# for a try that did not pass. Logs and the health answer only: no state
+# directory, database, cookie, capability file or runtime/ file is read.
+NODE_LOG_LINES = 20_000
+# Basecamp prints every Delivery message it receives, ~23 KB a line: dropped and counted.
+DELIVERY_DUMP = "DeliveryModuleImpl::event_callback message:"
+# What the repository's gitleaks rules look for: a private key block, and a
+# value assigned to a key-, token-, secret- or password-like name.
+SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S),
+    re.compile(r"(?i)\b(authorization[\"']?\s*[:=]\s*[\"']?(?:basic|bearer)\s+)([A-Za-z0-9+/=._~-]{8,})"),
+    re.compile(r"(?i)((?:key|token|secret|passw(?:or)?d|auth|credential|cookie|capability|mnemonic|seed)[\w.-]{0,40}"
+               r"[\"']?\s*[:=]\s*[\"']?)([A-Za-z0-9+/=_~-]{16,})"),
+)
+
+
+def redact(text: str) -> tuple[str, int]:
+    """The text with every match of SECRET_PATTERNS replaced, and the count."""
+    total = 0
+    text, n = SECRET_PATTERNS[0].subn("[REDACTED PRIVATE KEY]", text)
+    total += n
+    for pattern in SECRET_PATTERNS[1:]:
+        text, n = pattern.subn(lambda m: m.group(1) + "[REDACTED]", text)
+        total += n
+    return text, total
+
+
+def bounded_lines(text: str, limit: int = NODE_LOG_LINES) -> tuple[str, int]:
+    """The last `limit` lines of `text` without the Delivery dumps, and how many dumps were dropped."""
+    lines = text.splitlines()
+    kept = [line for line in lines if DELIVERY_DUMP not in line]
+    return "".join(f"{line}\n" for line in kept[-limit:]), len(lines) - len(kept)
+
+
+def keep_node_logs(directory: pathlib.Path) -> list[str]:
+    """Saves both Nodes' logs and health answers into `directory`; returns one note per file."""
+    directory.mkdir(parents=True, exist_ok=True)
+    notes = []
+
+    def save(name: str, text: str) -> None:
+        text, dropped = bounded_lines(text)
+        text, redacted = redact(text)
+        (directory / name).write_text(text)
+        notes.append(f"{name}: {text.count(chr(10))} lines, {dropped} Delivery dumps dropped, {redacted} redacted")
+
+    def run_text(argv: list[str]) -> str:
+        try:
+            done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+                                  stdin=subprocess.DEVNULL, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return f"# {argv[:3]}: {error}\n"
+        return done.stdout.decode(errors="replace")
+
+    for role in ("maker", "taker"):
+        container = NODES[role][0]
+        if NATIVE_RUN_ROOT:
+            save(f"{role}-node.log", run_text(["tail", "-n", str(NODE_LOG_LINES), NATIVE_FILES[role]["log"]]))
+        else:
+            # every life of the container (a SIGKILL and start keeps its log), stdout and stderr in order
+            save(f"{role}-container.log", run_text(["docker", "logs", "-t", "--tail", str(NODE_LOG_LINES), container]))
+            # the Node's own stderr file (the launcher's LEZ_NODE_LOG_FILE): its current life only
+            save(f"{role}-node.log", run_text(["docker", "exec", container, "tail", "-n", str(NODE_LOG_LINES),
+                                               f"/run/lez/{role}/node.log"]))
+            save(f"{role}-basecamp.log", run_text(
+                ["docker", "exec", container, "sh", "-c",
+                 'f="$(ls -t /var/lez/basecamp-*-user/logs/basecamp_*.log 2>/dev/null | head -1)"; '
+                 '[ -n "$f" ] && echo "# $f" && cat "$f"']))
+        method, params = HEALTH[role]
+        save(f"{role}-health.json", json.dumps(rpc(role, method, params, timeout=20), indent=2))
+    return notes
+
+
 def run(name: str) -> bool:
     stamp = str(int(time.time()))
     # Ids made from the stamp reach the one LEZ chain the lanes share
@@ -7147,7 +7221,8 @@ def run(name: str) -> bool:
 def main() -> int:
     global MANUAL_DRIVE
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "xmr-fund", "all"])
+    parser.add_argument("scenario", choices=[*SCENARIOS, *ZEC_SCENARIOS, *XMR_SCENARIOS, "zec-wait", "zec-drive", "zec-export", "zec-refund-tail", "zec-step", "zec-publish", "zec-fund", "xmr-fund", "node-logs", "all"])
+    parser.add_argument("--out", help="node-logs: the directory both Nodes' logs and health answers are saved in")
     parser.add_argument("--swap-id", action="append", default=[],
                         help="zec-drive / zec-export / zec-refund-tail: the swap to act on (zec-drive --until takes several)")
     parser.add_argument("--mine-pending-only", action="store_true",
@@ -7166,6 +7241,12 @@ def main() -> int:
                              "Monero the xmr-* scenarios, the Taker selling LEZ")
     args = parser.parse_args()
     global REVERSE, FOREIGN_UNITS, LEZ_UNITS
+    if args.scenario == "node-logs":
+        if not args.out:
+            parser.error("node-logs needs --out")
+        for note in keep_node_logs(pathlib.Path(args.out)):
+            log(f"  kept {note}")
+        return 0
     if args.pair == "Monero":
         if (args.direction or "TakerSellsLez") != "TakerSellsLez":
             parser.error("Monero swaps have the Taker sell LEZ only (--direction TakerSellsLez)")

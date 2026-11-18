@@ -19,7 +19,9 @@
 # chain before it can freeze.
 #
 # Results go to LEZ_REGRESS_OUT (runtime/regress/<UTC stamp>): results.tsv (one
-# line per try), logs/ (each try's output), e2e/ and zec/ (the evidence the
+# line per try), logs/ (each try's output; for a try that failed, timed out or
+# was not exercised also logs/<try>.nodes/: both Nodes' container, Node and
+# Basecamp logs, bounded and redacted, and their health), e2e/ and zec/ (the evidence the
 # scenarios export), chain.tsv (the finalized height and the sequencer's tip at
 # every finality sample, at most every 30 s, with the test that was running), and
 # regress.log, whose start and verdict lines of each try carry both as well.
@@ -268,6 +270,13 @@ keep_video() {
   mkdir -p "$out/videos" && cp "$video" "$out/videos/$name.mp4"
 }
 keep() { cp runtime/e2e/*.json "$out/e2e/" 2>/dev/null; cp runtime/evidence/zec/*.json "$out/zec/" 2>/dev/null; true; }
+# keep_node_logs <verdict> <try's log>: a try that failed, timed out or was not
+# exercised leaves both of its lane's Nodes' logs and health answers in
+# logs/<try>.nodes/ before the next reset or chain recreates the containers.
+keep_node_logs() {
+  [[ "$1" =~ ^(FAILED|TIMEOUT|NOT-EXERCISED)$ ]] || return 0
+  python3 scripts/node-e2e.py node-logs --out "${2%.log}.nodes" >>"$2" 2>&1 </dev/null || true
+}
 
 run_test() { # run_test <kind:pair:scenario:direction>
   local kind pair scenario direction try rc prepared started logfile verdict price
@@ -304,6 +313,7 @@ run_test() { # run_test <kind:pair:scenario:direction>
       $(command_of "$kind" "$pair" "$scenario" "$direction"); rc=$?
     case "$rc" in 0) verdict=PASSED ;; 99) verdict=FROZEN ;; 98) verdict=NOT-EXERCISED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
     if [[ "$verdict" == FAILED || "$verdict" == TIMEOUT ]] && ! moving 30; then verdict=FROZEN; fi
+    keep_node_logs "$verdict" "$logfile"
     # what the harness spent before the scenario started (finality probe, a new
     # chain, reset-swaps.sh) apart from the scenario itself (its preflights included)
     log "=== $1 (try $try): $verdict in $(( $(date +%s) - started )) s (+$(( started - prepared )) s before it$([[ "$fresh" == 0 ]] || echo ', a new chain among them')); $(chain_state)"
@@ -411,6 +421,7 @@ lane_job() {
   case "$rc" in 0) verdict=PASSED ;; 98) verdict=NOT-EXERCISED ;; 124|137) verdict=TIMEOUT ;; *) verdict=FAILED ;; esac
   if [[ -e "$dir/void" ]]; then verdict=FROZEN
   elif [[ "$verdict" != PASSED && "$verdict" != NOT-EXERCISED ]] && ! moving "${LEZ_REGRESS_MOVING_WINDOW:-30}"; then verdict=FROZEN; fi
+  keep_node_logs "$verdict" "$logfile"
   [[ "$kind" != ui ]] || keep_video "$scenario" "$direction" "$try" "$verdict" "$started"
   printf '%s\t%s\n' "$verdict" "$(( $(date +%s) - started ))" >"$dir/verdict"
 }

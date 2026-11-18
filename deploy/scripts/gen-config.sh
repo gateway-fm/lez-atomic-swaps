@@ -278,7 +278,9 @@ jq -e '
 # --- LEZ: deployment settings ------------------------------------------------
 # The timing profile is kept across reruns (read here, before the old file is
 # replaced): a rerun without LEZ_TIMING_PROFILE must not silently move the
-# Nodes back to `local`.
+# Nodes back to `local`. So is the Bitcoin actors' trace (LEZ_BTC_ACTOR_TRACE),
+# on unless set to 0: one line per effect decision, about 3 KB in eight swaps
+# of each Node's log, and the only account of why an actor refused a step.
 previous_timing_profile=""
 previous_actor_trace=""
 previous_lez_timing=()
@@ -692,7 +694,7 @@ printf '%s\n' \
   "LEZ_LEZ_STEP_SECONDS=$lez_step_seconds" \
   "LEZ_LEZ_STALL_SECONDS=$lez_stall_seconds" \
   "LEZ_BTC_BLOCK_SECONDS=$btc_block_seconds" \
-  "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-$previous_actor_trace}" \
+  "LEZ_BTC_ACTOR_TRACE=${LEZ_BTC_ACTOR_TRACE:-${previous_actor_trace:-1}}" \
   "LEZ_MAKER_ACTOR_REQUEUE_SECONDS=${maker_actor[0]}" \
   "LEZ_MAKER_ACTOR_FAILURE_BACKOFF_SECONDS=${maker_actor[1]}" \
   "LEZ_TAKER_OBSERVER_SWEEP_SECONDS=$taker_sweep" \
