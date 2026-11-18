@@ -23,7 +23,7 @@ pub use command::{
     lez_depositor_balance_marker, record_lez_claim_waiting, record_revealing_claim_holder,
     revealing_claim_held_by_marker, revealing_claim_hold_attention_ms,
     revealing_claim_hold_needs_attention, revealing_claim_holder, revealing_claim_in_flight_marker,
-    revealing_claim_submitted_marker,
+    revealing_claim_in_flight_refund_at_ms, revealing_claim_submitted_marker,
 };
 
 /// Exit code of a drive the actor refused because the LEZ depositor cannot
@@ -57,6 +57,12 @@ pub use first_lock_attempts::{
 /// already exists without its initialization
 /// ([`ActorCommandError::LezEscrowAlreadyInitialized`]): the swap stops by name.
 pub const LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE: i32 = 7;
+/// Exit code of a claim the actor refused because the Maker's follow-up LEZ
+/// claim (`TakerSellsLez`) can no longer land
+/// ([`ActorCommandError::LezClaimCannotLand`]): the Taker's LEZ refund is on
+/// the chain, or the LEZ refund time passed with no claim of the swap in a
+/// block. Its in-flight marker is removed; the swap stops by name.
+pub const LEZ_CLAIM_CANNOT_LAND_EXIT_CODE: i32 = 8;
 pub use config::{
     ActivateMaterial, ActorConfig, ActorConfigError, ActorRole, CandidateOutpoint, DriveMaterial,
     StatusMaterial, ZcashNetworkConfig, ZebraRpcChainConfig, validate_actor_pair,
@@ -144,6 +150,9 @@ pub fn run_actor_process(expected_role: ActorRole) {
             }
             ActorCommandError::LezEscrowAlreadyInitialized => {
                 exit_with_code(error, LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE)
+            }
+            ActorCommandError::LezClaimCannotLand => {
+                exit_with_code(error, LEZ_CLAIM_CANNOT_LAND_EXIT_CODE)
             }
             _ => exit_with(error),
         });

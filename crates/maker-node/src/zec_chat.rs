@@ -441,9 +441,10 @@ const LEZ_CLAIM_SLOT_SAFETY_FACTOR: u64 = 2;
 const DEVNET_LEZ_CLAIM_WORST_MS: u64 = 7_000;
 
 /// LEZ v0.2 public testnet finality, which a claim waits out before the next
-/// one is planned: not measured for a claim. Recorded for LEZ fundings: about
-/// an hour (docs/api/README.md) and about two hours on 2026-09-19
-/// (docs/evidence/testnet4-20260919). The longer is taken.
+/// one is planned. No LEZ testnet claim latency has been measured; this is
+/// the recorded LEZ funding finality: about an hour (docs/api/README.md) and
+/// about two hours on 2026-09-19 (docs/evidence/testnet4-20260919). The
+/// longer is taken.
 const PUBLIC_TESTNET_LEZ_CLAIM_WORST_MS: u64 = 2 * 3_600_000;
 
 /// How long a claim held at the gate can wait after the claim before it is
@@ -470,12 +471,19 @@ const DEFAULT_HELD_CLAIM_RETRY_MS: u64 = 35_000;
 /// |---|---|---|---|---|---|
 /// | devnet v7, v8 | 120 s | 7 s (measured) | 12 s | 38 s | 3 |
 /// | deterministic-local v3 (test lane) | 30 s | 7 s (devnet bound) | 35 s | 84 s | 0 → 1 |
-/// | public-testnet v3 | 7 200 s | 7 200 s (docs, not measured for a claim) | 35 s | 14 470 s | 0 → 1 |
+/// | public-testnet v3 | 7 200 s | 7 200 s (LEZ funding finality; no claim measured) | 35 s | 14 470 s | 0 → 1 |
 ///
 /// A profile whose margin does not hold one slot keeps a capacity of one:
 /// the cap bounds how many claims queue behind each other, and the single
 /// claim's own fit in `M` is the profile's timing check (ADR 0216, I3),
 /// which public-testnet v3 does not meet at the recorded LEZ finality.
+///
+/// The count and the gate agree on which swaps compete: a swap past its LEZ
+/// refund time is not counted, and its claim, waiting or in flight, holds no
+/// other (it can no longer be included; its actor stops it by name,
+/// `lez_claim_cannot_land`). A claim whose attempt failed before submission
+/// does not hold the others either, so a failing swap delays the queue by
+/// at most its own attempt, not until its refund time.
 #[must_use]
 pub fn zec_taker_sells_lez_capacity(profile: ZecProfileId) -> usize {
     let (claim_worst_ms, held_retry_ms) = match profile {

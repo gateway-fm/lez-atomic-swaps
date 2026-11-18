@@ -945,15 +945,19 @@ enum RevealingClaimHold {
 /// Zcash claim) are planned at that account's committed nonce, so one is in
 /// flight at a time (FINDINGS 24). A Maker LEZ claim (`claim_lez`) waits
 /// while another non-terminal Zcash actor holds its in-flight marker —
-/// written when its claim is submitted, removed when the claim is final.
-/// Durable, never released on a timer.
+/// written when its claim is submitted, removed when the claim is final or
+/// can no longer land — until that swap's LEZ refund time, which the marker
+/// records: past it the escrow claim cannot be included any more and takes
+/// no nonce (a marker that records no time holds until it is removed).
 ///
 /// Waiting claims go in LEZ refund order, not arrival order: each records its
 /// swap's LEZ refund time in its waiting marker before it looks at the
 /// others, and with no claim in flight a claim still waits while another
 /// swap's waiting marker names an earlier refund time (ties by swap id). A
-/// waiting marker past its refund time, or of a swap the schedule ended or
-/// failed, orders nothing.
+/// waiting marker past its refund time, or of a swap the schedule ended,
+/// failed, or backed off for a reason other than this gate (its claim
+/// attempt failed before it was submitted), orders nothing
+/// ([`waiting_claim_orders`]); its next attempt at the gate orders it again.
 #[cfg(feature = "pair-zec")]
 fn revealing_claim_held_back(
     store: &SqliteSwapStore,
@@ -1015,16 +1019,20 @@ fn revealing_claim_held_back(
             .as_millis(),
     )
     .unwrap_or(u64::MAX);
-    // A submitted claim holds the nonce whatever its swap's schedule says.
+    // A submitted claim holds the nonce whatever its swap's schedule says,
+    // until its swap's LEZ refund time.
     let in_flight = peers().find(|record| {
-        zec_reference_actor::revealing_claim_in_flight_marker(
-            record.manifest().state_database_path(),
-        )
-        .is_some_and(|marker| marker.is_file())
+        let state = record.manifest().state_database_path();
+        zec_reference_actor::revealing_claim_in_flight_marker(state)
+            .is_some_and(|marker| marker.is_file())
+            && in_flight_claim_holds(
+                zec_reference_actor::revealing_claim_in_flight_refund_at_ms(state),
+                now_ms,
+            )
     });
     let earlier = in_flight.is_none().then(|| {
         peers().find(|record| {
-            record.schedule_state() != lez_swap_store::MakerActorScheduleState::Failed
+            waiting_claim_orders(record.schedule_state(), record.last_failure_class())
                 && zec_reference_actor::lez_claim_waiting_refund_at_ms(
                     record.manifest().state_database_path(),
                 )
@@ -1068,6 +1076,49 @@ fn revealing_claim_held_back(
 #[cfg(feature = "pair-zec")]
 fn waits_behind(own: (u64, &str), other: (u64, &str), now_ms: u64) -> bool {
     other.0 > now_ms && other < own
+}
+
+/// Whether another swap's LEZ claim in flight (its in-flight marker present)
+/// holds this one at `now_ms`: until the LEZ refund time the marker records.
+/// Past it the escrow claim is outside its validity window and the block
+/// builder drops it without taking the nonce. A marker without a time (one
+/// written before the time was recorded) holds until it is removed.
+#[cfg(feature = "pair-zec")]
+const fn in_flight_claim_holds(refund_at_ms: Option<u64>, now_ms: u64) -> bool {
+    match refund_at_ms {
+        Some(refund_at_ms) => refund_at_ms > now_ms,
+        None => true,
+    }
+}
+
+/// The classes this gate backs a held claim off with: a swap backed off by
+/// one of them is waiting at the gate.
+#[cfg(feature = "pair-zec")]
+const LEZ_CLAIM_GATE_CLASSES: [&str; 3] = [
+    "lez_revealing_claim_in_flight",
+    "lez_revealing_claim_held_near_refund",
+    "lez_claim_waits_for_earlier_refund",
+];
+
+/// Whether another swap's waiting marker orders this claim, by that swap's
+/// schedule: it is due, leased (at the gate, or admitted and running its
+/// claim), or backed off by this gate. A swap that ended, failed, or backed
+/// off for a reason of its own (its claim attempt failed before the claim was
+/// submitted) is not waiting at the gate: its marker would hold every later
+/// claim behind it until its refund time (review item 6).
+#[cfg(feature = "pair-zec")]
+fn waiting_claim_orders(
+    schedule_state: lez_swap_store::MakerActorScheduleState,
+    last_failure_class: Option<&str>,
+) -> bool {
+    use lez_swap_store::MakerActorScheduleState as State;
+    match schedule_state {
+        State::Queued | State::Leased => true,
+        State::Backoff => {
+            last_failure_class.is_some_and(|class| LEZ_CLAIM_GATE_CLASSES.contains(&class))
+        }
+        State::Terminal | State::Failed => false,
+    }
 }
 
 /// Whether this effect is the Maker's LEZ claim, the one the gate serializes:
@@ -1150,6 +1201,15 @@ fn classify_exit(status: ExitStatus) -> ChildRunError {
         #[cfg(feature = "pair-zec")]
         Some(zec_reference_actor::LEZ_ESCROW_ALREADY_INITIALIZED_EXIT_CODE) => {
             ChildRunError::Fail("lez_escrow_already_initialized")
+        }
+        // The Zcash actor refused the Maker's follow-up LEZ claim because it
+        // can no longer land (the Taker's LEZ refund is on the chain, or the
+        // LEZ refund time passed with no claim of the swap in a block) and
+        // removed its in-flight marker: the swap stops by name, and its claim
+        // holds no other swap's.
+        #[cfg(feature = "pair-zec")]
+        Some(zec_reference_actor::LEZ_CLAIM_CANNOT_LAND_EXIT_CODE) => {
+            ChildRunError::Fail("lez_claim_cannot_land")
         }
         _ => ChildRunError::Retry("actor_exit_failed"),
     }
@@ -2527,6 +2587,46 @@ mod exit_classification_tests {
             classify_exit(escrow_taken),
             ChildRunError::Fail("lez_escrow_already_initialized")
         ));
+        // Review item 2: a Maker LEZ claim that can no longer land stops the
+        // swap by name instead of backing off forever.
+        let cannot_land =
+            ExitStatus::from_raw(zec_reference_actor::LEZ_CLAIM_CANNOT_LAND_EXIT_CODE << 8);
+        assert!(matches!(
+            classify_exit(cannot_land),
+            ChildRunError::Fail("lez_claim_cannot_land")
+        ));
+    }
+
+    #[cfg(feature = "pair-zec")]
+    #[test]
+    fn a_claim_in_flight_holds_until_its_refund_time_and_a_failed_waiter_orders_nothing() {
+        use super::{in_flight_claim_holds, waiting_claim_orders};
+        use lez_swap_store::MakerActorScheduleState as State;
+        assert!(in_flight_claim_holds(Some(5_000), 4_999));
+        assert!(!in_flight_claim_holds(Some(5_000), 5_000));
+        assert!(in_flight_claim_holds(None, u64::MAX));
+        assert!(waiting_claim_orders(State::Queued, None));
+        assert!(waiting_claim_orders(
+            State::Leased,
+            Some("actor_exit_failed")
+        ));
+        for class in [
+            "lez_revealing_claim_in_flight",
+            "lez_revealing_claim_held_near_refund",
+            "lez_claim_waits_for_earlier_refund",
+        ] {
+            assert!(waiting_claim_orders(State::Backoff, Some(class)), "{class}");
+        }
+        assert!(!waiting_claim_orders(
+            State::Backoff,
+            Some("actor_exit_failed")
+        ));
+        assert!(!waiting_claim_orders(State::Backoff, None));
+        assert!(!waiting_claim_orders(
+            State::Failed,
+            Some("lez_claim_cannot_land")
+        ));
+        assert!(!waiting_claim_orders(State::Terminal, None));
     }
 }
 

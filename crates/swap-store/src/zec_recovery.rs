@@ -454,8 +454,9 @@ impl SqliteZecRecoveryStore {
     /// accepted Maker agreement in that direction whose actor the schedule has
     /// not ended (completed or refunded) and whose LEZ refund time is still
     /// ahead. A swap past its LEZ refund time no longer competes for the
-    /// Maker's one-at-a-time LEZ claims (the gate orders waiting claims by
-    /// refund time and passes over expired ones).
+    /// Maker's one-at-a-time LEZ claims: its claim can no longer be included,
+    /// so the Maker Node's gate passes over it, waiting or in flight, and its
+    /// actor stops it by name (`lez_claim_cannot_land`).
     ///
     /// # Errors
     ///
