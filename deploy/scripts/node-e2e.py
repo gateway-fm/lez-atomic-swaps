@@ -3555,7 +3555,6 @@ def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     config_a = zec_taker_actor_config(first["receipt_output"])
     views = {swap_a: zec_wait_until(swap_a, config_a, {"claim_available"}, timeout=2400, corridor=first,
                                      describe=f"({swap_a}: {zec_flow()[1:-1]})")}
-    claimed_first = set()
     zec_provision(add=True)
     corridors = list(ZEC_CORRIDORS)
     if len(corridors) != 2 or corridors[0]["catalog_swap_id"] != swap_a:
@@ -3564,7 +3563,7 @@ def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     second = corridors[1]
     swap_b = zec_take_or_resume(second["offer_id"], stamp, "-b")
     config_b = zec_taker_actor_config(second["receipt_output"])
-    log(f"  {swap_a} is {'completed' if claimed_first else 'claim_available'} and {swap_b} is taken beside it "
+    log(f"  {swap_a} is claim_available and {swap_b} is taken beside it "
         "(Nodes recreated with both corridors)")
     views[swap_b] = zec_wait_until(swap_b, config_b, {"claim_available"}, timeout=2400, corridor=second,
                                     describe=f"({swap_b}: {zec_flow()[1:-1]})")
@@ -3580,8 +3579,6 @@ def scenario_zec_concurrent_staggered(stamp: str) -> dict:
     if len({fundings[s[0]][0] for s in swaps}) != 2:
         raise Failure(f"the two {zec_zcash_funder()} fundings are one transaction: the corridors shared a funder output")
     for index, (swap_id, _, _) in enumerate(swaps):
-        if swap_id in claimed_first:
-            continue
         result = call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}-{index}",
                                                        "swap_id": swap_id, "expected_generation": views[swap_id]["progress_generation"]},
                       timeout=300)
@@ -3714,9 +3711,11 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
     Selling ZEC the restart comes once the Taker's first lock is final on both
     Nodes. Selling LEZ it comes at the points the Taker-reveals-first order
     adds: the Taker right after its revealing Zcash claim was broadcast (in
-    zebra's mempool, unmined); the Maker down across the Taker's reveal (it
-    is stopped at both_legs_locked, the Taker claims, the Maker starts again
-    and must read the preimage from the broadcast claim and claim LEZ). The
+    zebra's mempool, unmined); the Maker twice, first restarted between the
+    first lock and the reveal (both legs locked), then down across the
+    Taker's reveal (it is stopped at both_legs_locked, the Taker claims, the
+    Maker starts again and must read the preimage from the broadcast claim
+    and claim LEZ). The
     Maker commits a reveal on first sight, mempool included, and claims LEZ
     within seconds, so a restart between its reading the reveal and its LEZ
     claim is not a point a harness can hold; the SDK covers it
@@ -3731,6 +3730,14 @@ def scenario_zec_restart(stamp: str, role: str) -> dict:
         if role == "maker":
             wait_maker_phase(swap_id, {"both_legs_locked"}, timeout=600,
                              describe="(the Maker at both legs locked before the Taker's reveal)")
+            # First restart point: between the first lock and the reveal, with
+            # both legs locked and the Maker waiting for the Taker's claim.
+            log("  restarting the Maker Node between the first lock and the reveal")
+            node_restart("maker")
+            wait_healthy("maker")
+            wait_maker_phase(swap_id, {"both_legs_locked"}, timeout=600,
+                             describe="(the Maker back at both legs locked after its restart)")
+            # Second point: the Maker down across the Taker's reveal.
             log("  stopping the Maker Node before the Taker reveals")
             node_stop("maker")
         call("taker", "taker_swap_claim_v1", {"schema_version": 1, "request_id": f"e2e-claim-{stamp}",
@@ -4261,22 +4268,26 @@ def scenario_zec_taker_refund_foreign(stamp: str) -> dict:
 def zec_maker_zcash_refund_first(swap_id: str, stamp: str, corridor: dict, funding: tuple[str, int],
                                  timeout: int, queue_refund: bool = True) -> tuple[str, int]:
     """Selling LEZ with the Taker's claim never sent: the Maker-funded Zcash leg
-    refunds first. Waits until the Taker's claim window has closed (the LEZ
-    refund time minus the profile's margin), mines zebra to the agreement's
-    refund height, queues the Maker's refund (the operator action the Maker
-    desk has no button for) unless `queue_refund` is false, and waits for its
-    Zcash refund in a block and the Maker at maker_leg_refunded. With
-    `queue_refund` false nothing is queued: the Maker Node refunds on its own
-    (its actor reports refund_zcash once the window has closed and the
-    supervisor alternates observing the Taker's claim and recovering).
-    Returns the refund transaction and height."""
+    refunds first, between the Zcash refund height H_z and the Taker's claim
+    window close (T_lez minus the profile's margin), as ADR 0216 states. Mines
+    zebra to H_z at once (one RPC, so the Taker's reveal gate, tip + R < H_z,
+    is closed when it next looks), queues the Maker's refund (the operator
+    action the Maker desk has no button for) unless `queue_refund` is false,
+    and waits for its Zcash refund in a block and the Maker at
+    maker_leg_refunded. With `queue_refund` false nothing is queued: the Maker
+    Node refunds on its own (its drive records the Zcash tip, its actor reports
+    refund_zcash from H_z, and the supervisor alternates observing the
+    Taker's claim and recovering). Fails unless the refund is in a block before
+    the window closes. Returns the refund transaction and height."""
     opens = stamp_time(corridor["run_id"]) + corridor["lez_refund_delay_seconds"]
     closes = opens - corridor["required_margin_seconds"]
-    wait_until(closes + 15, "for the Taker's claim window to close (the LEZ refund time minus the profile's margin)")
-    log("  mining zebra to the agreement's refund height: the Maker's Zcash refund is the earlier one")
+    log("  mining zebra to the agreement's refund height now: the Maker's Zcash refund is the earlier one")
     height = int(zebra("getblockcount"))
     if height < corridor["zcash_refund_height"]:
         zebra_mine(corridor["zcash_refund_height"] - height, "Zcash refund height")
+    if time.time() >= closes:
+        raise Failure("the Zcash refund height was reached only after the Taker's claim window closed: "
+                      "the scenario cannot show the Maker refunding inside the window")
     if queue_refund and maker_view(swap_id).get("schedule_state") != "terminal":
         try:
             result = maker_action_with_fresh_generation("maker_actor_refund_v1", swap_id, f"e2e-zec-maker-refund-{stamp}")
@@ -4291,8 +4302,12 @@ def zec_maker_zcash_refund_first(swap_id: str, stamp: str, corridor: dict, fundi
         refund_tx = zec_spend_of((funding[0], 0), funding[1])
         phase = maker_phase(swap_id)
         if refund_tx and phase in {"maker_leg_refunded", "refunded"}:
-            log(f"  Maker's Zcash refund {refund_tx[0]} is in zebra block {refund_tx[1]} ({phase})")
+            log(f"  Maker's Zcash refund {refund_tx[0]} is in zebra block {refund_tx[1]} ({phase}), "
+                f"{int(closes - time.time())} s before the claim window closes")
             return refund_tx
+        if time.time() >= closes:
+            raise Failure(f"the Maker's Zcash refund was not in a block when the Taker's claim window closed "
+                          f"(maker {phase}, refund {'in a block' if refund_tx else 'not in a block'})")
         wait.note((phase, bool(refund_tx)), lambda: f"maker {phase}, refund {'in a block' if refund_tx else 'not in a block'} "
                                                     f"| zebra {zebra('getblockcount')}")
         time.sleep(5)
@@ -4329,6 +4344,8 @@ def scenario_zec_maker_refund(stamp: str) -> dict:
                                              queue_refund=False)
     refunded_at = int(time.time())
     log(f"  the Maker's Zcash refund landed {'before' if refunded_at < opens else 'after'} the LEZ refund time")
+    if refunded_at >= opens:
+        raise Failure("the Maker's Zcash refund landed after the agreement's LEZ refund time")
     wait_until(opens + 15, "for the agreement's LEZ refund time (the profile's delay after provisioning)")
     taker = zec_refund_until_terminal(swap_id, stamp, timeout=1800)
     log(f"  the Taker refunded its LEZ escrow; Taker ended {taker['state']}")

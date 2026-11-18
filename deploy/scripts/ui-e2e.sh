@@ -651,9 +651,9 @@ scenario_zec_concurrent_staggered() {
 scenario_zec_maker_refund() {
   # Selling LEZ: both legs locked, the Maker's Zcash funding kept at one
   # confirmation (below the Taker's pre-reveal gate), so the Taker never
-  # claims. The Maker-funded leg refunds first: once the Taker's claim window
-  # has closed (the LEZ refund time minus the profile's margin) zebra is mined
-  # to the refund height and the Maker Node refunds its Zcash; at the LEZ
+  # claims. The Maker-funded leg refunds first: zebra is mined to the refund
+  # height inside the Taker's claim window and the Maker Node refunds its
+  # Zcash before that window closes (asserted); at the LEZ
   # refund time (the profile's delay after provisioning: 8 min on the devnet
   # V8) the Taker refunds LEZ from its desk and the Taker Node's supervisor
   # runs the admitted refund on its own; both desks show the swap refunded.
@@ -701,6 +701,9 @@ scenario_zec_restart() { # scenario_zec_restart <maker|taker>
     zec_wait "$swap" claim_available
     wait "$maker_pid" || fail "Maker desk: awaiting_taker_claim"
     if [[ "$1" == maker ]]; then
+      note "The Maker's Basecamp, with its Node, is restarted now, between the first lock and the reveal; swaps survive a restart"
+      restart_node maker
+      maker_wait awaiting_taker_claim "$swap"
       note "The Maker's Basecamp, with its Node, is stopped before the Taker claims"
       stop_node "$container_prefix-maker-node"
     fi
