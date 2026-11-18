@@ -118,7 +118,7 @@ Who holds the secret: the per-swap preparation generates the preimage and
 gives it to the Taker's half only. `activate_with_claim_preimage` is accepted
 for the Taker and refused for the Maker in both directions; the Maker's store
 first holds the preimage when it commits the observed revealing claim, whose
-transition carries the extracted preimage checked against the digest.
+transition carries the extracted preimage checked against the digest. The prepared ZEC setup is single-operator: the preparation ceremony (`zec-provision.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner). Node-side take-time preparation, in which the Taker's Node creates the secret and each Node its own Zcash key, is tracked in issue #162 for M5.
 
 The Taker's revealing claim is gated. In `TakerSellsLez`, before it stages or
 submits its Zcash claim, the Taker requires the Maker's funding output to be
@@ -126,14 +126,43 @@ canonical, unspent and at the profile's Zcash confirmations,
 `tip + zcash_reveal_margin_blocks < zcash_refund_height`
 (else `ZecSdkError::ZcashRevealWindowClosed`), and
 `now < lez_refund_at − required_margin` (else `ClaimWindowClosed`), the margin
-being the Maker's budget for its follow-up LEZ claim. A Taker whose window
-closed with no claim sent refunds its LEZ at the LEZ refund time; a claim
-already sent is followed. The Maker learns the preimage through
+being the Maker's budget for its follow-up LEZ claim. The gates apply to the
+first send only: once the claim is staged its preimage may be public, so the
+exact stored bytes are re-broadcast whenever they are absent and the HTLC
+output is unspent, whatever the window. A Taker whose window closed with no
+claim staged refunds its LEZ at the LEZ refund time.
+
+The Maker learns the preimage through
 `ZcashClaimPort::observe_counterparty_revealing_claim`, which finds the spend
-of the exact HTLC outpoint, classifies it as claim or refund, and returns the
-preimage only for a claim at the profile's depth (a refund spend or a wrong
-preimage never yields one). The Maker's follow-up LEZ claim uses the
-`LezClaimPort` follow-up methods (`prepare_followup_claim` and the rest).
+of the exact HTLC outpoint and reads it on consensus facts only: the input
+takes this contract's claim branch and carries a 32-byte preimage of the
+digest (`read_bip199_spend_branch`). Destination, fee, other outputs, expiry
+height, sighash flags and signature form are the Taker's business; Zebra
+admits only consensus-valid transactions. A refund spend or a wrong preimage
+never yields one. The Maker commits the reveal as soon as it sees the claim,
+in the mempool or in a block (`RevealingClaimEvidenceV1::from_observed_zcash_claim`):
+a valid preimage stays valid whatever happens to that transaction, and
+waiting for depth would only spend the Maker's margin. The Taker's own
+revealing evidence still waits for the Zcash leg's depth. The Maker's
+follow-up LEZ claim uses the `LezClaimPort` follow-up methods
+(`prepare_followup_claim` and the rest).
+
+A Maker Node signs every LEZ claim with one account, so its follow-up LEZ
+claims go one at a time, the swap with the earliest LEZ refund time first,
+and it accepts at most `zec_taker_sells_lez_capacity(profile)` open
+`TakerSellsLez` ZEC swaps (refused with `zec_taker_sells_lez_capacity_reached`):
+3 under `deterministic-local-devnet-v7`/`-v8`, where `M = 120 s` holds three
+38 s slots (a LEZ claim measured at most 6.3 s from submission to final on
+the devnet, three samples on 2026-11-18, doubled with the held-claim retry),
+and 1 under `deterministic-local-v3` and `public-testnet-v3`. On the LEZ
+testnet the escrow takes the claim if it is included before the refund
+time, but the Node holds the next claim until the previous one is final,
+which is the reason for 1 there; no LEZ testnet claim latency has been
+measured.
+
+A Node refuses to start while it holds an open `TakerSellsLez` ZEC swap under
+a legacy profile and names the swaps: finish or refund them with the previous
+release first (no upgrade between releases before 1.0.0, issue #133).
 
 In `BothLegsLocked` with no claim, each role drives its own refund (the Taker
 cannot sign the Zcash refund, so its LEZ refund does not wait for it); once

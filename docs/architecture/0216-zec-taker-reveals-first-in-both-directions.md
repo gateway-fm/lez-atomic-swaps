@@ -146,10 +146,28 @@ direction's agreements are byte-identical to those signed before.
 
 ## Consequences
 
-- The Maker never holds the preimage before the Taker's Zcash claim is
-  confirmed. Its store has no claim material and no claim intent after the
-  Taker's lock or after its own funding; the first preimage it stores is the
-  one committed with the observed Zcash claim.
+- The Maker reads the preimage from any consensus-valid claim of the HTLC
+  (the claim branch of this contract with a 32-byte preimage of the digest),
+  not only from claims in the SDK's template, and commits it on first sight,
+  mempool included, so a Taker cannot keep the preimage from the Maker by
+  claiming with another destination, fee, expiry or sighash, and the
+  Maker's margin is not spent waiting for depth. The Taker re-broadcasts a
+  staged claim whatever the window, since its preimage may already be
+  public.
+- The Maker's LEZ claims go one at a time on its one LEZ account, the
+  earliest LEZ refund first, and the number of open `TakerSellsLez` ZEC
+  swaps a Maker accepts is capped so that the queue fits in the margin
+  (3 under the devnet profiles, 1 under `deterministic-local-v3` and
+  `public-testnet-v3`; [SDK guide](../sdk-lez-zec.md)). The Maker funds
+  Zcash only while the claim window is open and `tip + R + C < H_z`.
+- A Node refuses to start while it holds an open `TakerSellsLez` swap under a
+  legacy profile (issue #133: drain before upgrading).
+
+- At the Node boundary the Maker never holds the preimage before the
+  Taker's Zcash claim is seen: its store has no claim material and no claim
+  intent after the Taker's lock or after its own funding, the first preimage
+  it stores is the one read from the Taker's claim, and the Maker's Node and
+  actor refuse material that carries one. The prepared ZEC setup is single-operator: the preparation ceremony (`zec-provision.sh`, `local_poc.rs`) signs the template agreement with both roles' keys and holds both halves, the preimage included, while it runs. It is safe only where the preparer is trusted by the Taker (a devnet, a Testnet acceptance run by one owner). Node-side take-time preparation, in which the Taker's Node creates the secret and each Node its own Zcash key, is tracked in issue #162 for M5.
 - The LEZ escrow program is unchanged (ImageID unchanged). It still pays
   whoever signs as the stored claimant and presents the preimage; safety in
   `TakerSellsLez` rests on the first locker holding the secret, as it does in

@@ -197,15 +197,17 @@ principal outputs never absorb an unnegotiated fee.
 - Taker-reveals-first profiles (wire tags 10–13), the only ones that admit
   `TakerSellsLez`. Every profile listed above admits `TakerSellsForeign`
   only; a `TakerSellsLez` agreement under one of them is refused
-  (`ZecAgreementV1Error::LegacyRevealOrder`). The new profiles admit both
-  directions under their own timing checks; the provisioners keep
-  `TakerSellsForeign` on the older profiles.
+  (`ZecAgreementV1Error::LegacyRevealOrder`). The new profiles admit
+  `TakerSellsLez` only, the direction whose refund order their numbers were
+  sized for (`ZecAgreementV1Error::ProfileSizedForTakerSellsLez` otherwise):
+  under `public-testnet-v3` a `TakerSellsForeign` swap's Zcash refund would
+  open hours before the Maker's LEZ refund.
 
   | Profile (wire tag) | Network | LEZ refund delay `D` | Zcash refund blocks `N` | Margin `M` | Confirmations Zcash / LEZ | Reveal margin `R` | Expiry | Slowest pace |
   |---|---|---:|---:|---:|---|---:|---:|---|
   | `deterministic-local-v3` (10) | Regtest NU7 | 120 s | 8 | 30 s | 1 / 1 | 2 | 40 | declared by the harness |
   | `deterministic-local-devnet-v7` (11) | Regtest NU7 | 720 s | 16 | 120 s | 1 / 1 | 3 | 40 | declared by the harness |
-  | `deterministic-local-devnet-v8` (12) | Regtest NU7 | 240 s | 16 | 120 s | 1 / 1 | 3 | 40 | declared by the harness |
+  | `deterministic-local-devnet-v8` (12) | Regtest NU7 | 480 s | 16 | 120 s | 1 / 1 | 3 | 40 | declared by the harness |
   | `public-testnet-v3` (13) | Testnet NU7 | 14,400 s | 95 | 7,200 s | 10 / 2 | 10 | 120 | 75 s a block |
 
   `public-testnet-v3`: `(95 + 1) × 75 s = 7,200 s` to the Zcash refund at the
@@ -226,11 +228,22 @@ principal outputs never absorb an unnegotiated fee.
 
   `deterministic-local-devnet-v8`, for the devnet's refund journeys, which
   never claim: the Maker's Zcash refund opens when the harness has mined 16
-  blocks after the anchor, the Taker's LEZ refund at 240 s.
+  blocks after the anchor and the claim window has closed (360 s), the
+  Taker's LEZ refund at 480 s. 480 s, not 240 s: the Maker stops funding
+  Zcash once the claim window closes, and a devnet take reaches the Maker's
+  funding about 150 s after the anchor (provisioning to take 117 s, the
+  Taker's lock 35 s, measured 2026-11-18); under 240 s the window closed at
+  120 s and the Maker never funded.
 
   `deterministic-local-v3`, for the in-process test lane, which mines on
   demand: `T_lez − M = 90 s` for the whole lock-to-claim, which the lane
   completes in seconds.
+
+  On the three Regtest profiles the earlier (Zcash) refund's latest wall
+  time is declared by the provisioner as `T_lez − M` and the SDK checks no
+  lower bound on it: the harness mines every block, so the bound is the
+  harness's promise, not a measurement. These profiles are harness-only; only
+  `public-testnet-v3` checks the declared bound against a slowest pace.
 - `mainnet`: absent by design until calibration and formal review are complete.
 
 The code representation must use named immutable profiles rather than scattered
